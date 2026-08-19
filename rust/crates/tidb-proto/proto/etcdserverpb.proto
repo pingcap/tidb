@@ -38,6 +38,31 @@ service KV {
 
   // Put puts the given key into the key-value store.
   rpc Put(PutRequest) returns (PutResponse) {}
+
+  // DeleteRange deletes the given range from the key-value store.
+  rpc DeleteRange(DeleteRangeRequest) returns (DeleteRangeResponse) {}
+}
+
+message DeleteRangeRequest {
+  // key is the first key to delete in the range.
+  bytes key = 1;
+  // range_end is the key following the last key to delete for the range
+  // [key, range_end). If range_end is not given, the range is defined to
+  // contain only the key argument.
+  bytes range_end = 2;
+  // If prev_kv is set, etcd gets the previous key-value pairs before
+  // deleting it. The previous key-value pairs will be returned in the
+  // delete response.
+  bool prev_kv = 3;
+}
+
+message DeleteRangeResponse {
+  ResponseHeader header = 1;
+  // deleted is the number of keys deleted by the delete range request.
+  int64 deleted = 2;
+  // if prev_kv is set in the request, the previous key-value pairs will be
+  // returned.
+  repeated mvccpb.KeyValue prev_kvs = 3;
 }
 
 service Lease {

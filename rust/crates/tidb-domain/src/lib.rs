@@ -145,6 +145,7 @@
 
 pub mod domainutil;
 pub mod serverinfo;
+pub mod serverinfo_syncer;
 pub mod topn_slow_query;
 pub mod domain_sysvars;
 pub mod historical_stats;

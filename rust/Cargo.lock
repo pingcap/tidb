@@ -2686,6 +2686,7 @@ dependencies = [
  "tidb-config",
  "tidb-datatype",
  "tidb-distsql",
+ "tidb-domain",
  "tidb-error",
  "tidb-exec",
  "tidb-executor",

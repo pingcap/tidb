@@ -42,7 +42,7 @@ use tidb_proto::etcdserverpb::kv_client::KvClient;
 use tidb_proto::etcdserverpb::lease_client::LeaseClient;
 use tidb_proto::etcdserverpb::watch_client::WatchClient;
 use tidb_proto::etcdserverpb::{
-    watch_request::RequestUnion, PutRequest, RangeRequest, WatchCreateRequest, WatchRequest, LeaseGrantRequest, LeaseKeepAliveRequest, LeaseRevokeRequest};
+    watch_request::RequestUnion, PutRequest, RangeRequest, WatchCreateRequest, WatchRequest, LeaseGrantRequest, LeaseKeepAliveRequest, LeaseRevokeRequest, DeleteRangeRequest};
 use tidb_proto::mvccpb::event::EventType;
 use tokio::sync::watch;
 use tonic::transport::Channel;
@@ -159,6 +159,17 @@ impl From<PdClientError> for EtcdError {
 }
 
 enum EtcdCommand {
+    /// `KV.Range` over the whole `[prefix, prefix+1)` interval:
+    /// `clientv3.WithPrefix()`. Answers `(key, value)` pairs.
+    GetPrefix {
+        prefix: Vec<u8>,
+        reply: mpsc::Sender<Result<Vec<(Vec<u8>, Vec<u8>)>, EtcdError>>,
+    },
+    /// `KV.DeleteRange` of ONE key -- Go's `DeleteKeyFromEtcd`.
+    Delete {
+        key: Vec<u8>,
+        reply: mpsc::Sender<Result<(), EtcdError>>,
+    },
     /// One PUT with a lease attached -- the serverinfo key's spelling.
     PutWithLease {
         key: Vec<u8>,
@@ -365,6 +376,32 @@ impl EtcdClient {
         response.recv().unwrap_or(Err(EtcdError::Closed))
     }
 
+    /// Reads every key under the prefix -- `clientv3.WithPrefix()`.
+    pub fn get_prefix(&self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::GetPrefix {
+                prefix: prefix.to_vec(),
+                reply,
+            })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
+    /// Deletes one key -- Go's `DeleteKeyFromEtcd`.
+    pub fn delete(&self, key: &[u8]) -> Result<(), EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::Delete {
+                key: key.to_vec(),
+                reply,
+            })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
     /// Reads one key. `None` means the key is absent.
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, EtcdError> {
         let (reply, response) = mpsc::channel();
@@ -472,6 +509,12 @@ fn run_kv_worker(
                     let _ = reply.send(Err(EtcdError::Closed));
                 }
                 EtcdCommand::Get { reply, .. } => {
+                    let _ = reply.send(Err(EtcdError::Closed));
+                }
+                EtcdCommand::GetPrefix { reply, .. } => {
+                    let _ = reply.send(Err(EtcdError::Closed));
+                }
+                EtcdCommand::Delete { reply, .. } => {
                     let _ = reply.send(Err(EtcdError::Closed));
                 }
                 EtcdCommand::LeaseGrant { reply, .. } => {
@@ -606,6 +649,54 @@ fn run_kv_worker(
                 );
                 let _ = reply.send(result);
             }
+            EtcdCommand::GetPrefix { prefix, reply } => {
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut clients,
+                    timeout,
+                    security,
+                    |runtime, channel| {
+                        let mut client = KvClient::new(channel);
+                        let request = RangeRequest {
+                            key: prefix.clone(),
+                            range_end: prefix_range_end(&prefix),
+                            ..Default::default()
+                        };
+                        runtime
+                            .block_on(client.range(with_deadline(request, timeout)))
+                            .map(|response| {
+                                response
+                                    .into_inner()
+                                    .kvs
+                                    .into_iter()
+                                    .map(|kv| (kv.key, kv.value))
+                                    .collect()
+                            })
+                    },
+                );
+                let _ = reply.send(result);
+            }
+            EtcdCommand::Delete { key, reply } => {
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut clients,
+                    timeout,
+                    security,
+                    |runtime, channel| {
+                        let mut client = KvClient::new(channel);
+                        let request = DeleteRangeRequest {
+                            key: key.clone(),
+                            ..Default::default()
+                        };
+                        runtime
+                            .block_on(client.delete_range(with_deadline(request, timeout)))
+                            .map(|_| ())
+                    },
+                );
+                let _ = reply.send(result);
+            }
             EtcdCommand::Get { key, reply } => {
                 let result = across_endpoints(
                     runtime,
@@ -636,6 +727,21 @@ fn run_kv_worker(
             }
         }
     }
+}
+
+/// etcd's `WithPrefix` range end: the prefix with its LAST byte
+/// incremented, carry rippling left; an all-0xff prefix (or empty) opens
+/// the range to the keyspace end (`\0`).
+fn prefix_range_end(prefix: &[u8]) -> Vec<u8> {
+    let mut end = prefix.to_vec();
+    for i in (0..end.len()).rev() {
+        if end[i] < 0xff {
+            end[i] += 1;
+            end.truncate(i + 1);
+            return end;
+        }
+    }
+    vec![0]
 }
 
 fn with_deadline<T>(message: T, timeout: Duration) -> tonic::Request<T> {

@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use tidb_pd_client::{secure_endpoint, ClusterSecurity};
 use tidb_proto::etcdserverpb::kv_server::{Kv, KvServer};
-use tidb_proto::etcdserverpb::{PutRequest, PutResponse, RangeRequest, RangeResponse};
+use tidb_proto::etcdserverpb::{PutRequest, PutResponse, RangeRequest, RangeResponse, DeleteRangeRequest, DeleteRangeResponse};
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::{Identity, Server, ServerTlsConfig};
@@ -52,6 +52,13 @@ impl Kv for EchoKv {
 
     async fn put(&self, _request: Request<PutRequest>) -> Result<Response<PutResponse>, Status> {
         Ok(Response::new(PutResponse::default()))
+    }
+
+    async fn delete_range(
+        &self,
+        _request: Request<DeleteRangeRequest>,
+    ) -> Result<Response<DeleteRangeResponse>, Status> {
+        Ok(Response::new(DeleteRangeResponse::default()))
     }
 }
 
