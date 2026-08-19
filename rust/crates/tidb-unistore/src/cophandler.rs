@@ -157,6 +157,20 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
         return other_error("aggregation over a row cap is a later course of this port");
     }
     let scan = &context.dag_req.executors[0];
+    if scan.tp() == tipb::ExecType::TypeIndexScan {
+        let Some(idx_scan) = scan.idx_scan.as_ref() else {
+            return other_error("executor missing idx_scan body");
+        };
+        if !conditions.is_empty() || limit != usize::MAX {
+            return other_error(
+                "an index Selection/Limit is a later course of this port",
+            );
+        }
+        let Some(aggregation) = aggregation else {
+            return other_error("a bare index scan is a later course of this port");
+        };
+        return exec_index_aggregate(store, context, idx_scan, aggregation);
+    }
     if scan.tp() != tipb::ExecType::TypeTableScan {
         return other_error("index scans (closure_exec.go) are a later course of this port");
     }
@@ -164,6 +178,105 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
         return other_error("executor missing tbl_scan body");
     };
     exec_table_scan(store, context, tbl_scan, &conditions, limit, aggregation)
+}
+
+/// The covering-index aggregation: index entries scanned in range, the
+/// indexed column values decoded out of the KEY (values first, an optional
+/// non-unique handle tail ignored), and the partial aggregation applied --
+/// Go's `[IndexScan, Aggregation]` closure executor for the shapes the
+/// reader pushes (`COUNT` over the leading key column today).
+fn exec_index_aggregate(
+    store: &mut MvccStore,
+    context: &DagContext,
+    idx_scan: &tipb::IndexScan,
+    aggregation: &tipb::Aggregation,
+) -> coprocessor::Response {
+    use tidb_datatype::Datum;
+    let mut aggregator = match RegionAggregator::build(aggregation, &idx_scan.columns) {
+        Ok(aggregator) => aggregator,
+        Err(message) => return other_error(&message),
+    };
+    let width = idx_scan.columns.len();
+    for range in &context.key_ranges {
+        let pairs = store.scan(&crate::mvcc_store::ScanReq {
+            start_key: range.start.clone(),
+            end_key: range.end.clone(),
+            limit: u32::MAX,
+            version: context.start_ts,
+            sample_step: 0,
+            reverse: false,
+        });
+        for pair in pairs {
+            if let Some(err) = pair.error {
+                if let crate::mvcc_store::KvError::Locked(lock) = *err {
+                    return coprocessor::Response {
+                        locked: Some(*lock),
+                        ..coprocessor::Response::default()
+                    };
+                }
+                return other_error(&format!("scan error: {err:?}"));
+            }
+            let encoded = tidb_codec::table_key::cut_index_prefix(&pair.key);
+            let row: Vec<Datum> = match tidb_codec::decode(encoded, width) {
+                Ok(datums) => datums.into_iter().take(width).collect(),
+                Err(err) => return other_error(&format!("invalid index entry: {err:?}")),
+            };
+            if let Err(message) = aggregator.update(&row) {
+                return other_error(&message);
+            }
+        }
+    }
+    let mut chunks: Vec<tipb::Chunk> = Vec::new();
+    let mut current = Vec::new();
+    let mut current_rows = 0_usize;
+    for row in aggregator.finish() {
+        let projected: Vec<Datum> = if context.dag_req.output_offsets.is_empty() {
+            row
+        } else {
+            let mut projected = Vec::with_capacity(context.dag_req.output_offsets.len());
+            for offset in &context.dag_req.output_offsets {
+                match row.get(*offset as usize) {
+                    Some(datum) => projected.push(datum.clone()),
+                    None => {
+                        return other_error(&format!(
+                            "output offset {offset} is outside the aggregate schema"
+                        ))
+                    }
+                }
+            }
+            projected
+        };
+        let encoded = match tidb_codec::encode_value(&projected) {
+            Ok(encoded) => encoded,
+            Err(err) => return other_error(&format!("encode row failed: {err:?}")),
+        };
+        current.extend_from_slice(&encoded);
+        current_rows += 1;
+        if current_rows == CHUNK_MAX_ROWS {
+            chunks.push(tipb::Chunk {
+                rows_data: Some(std::mem::take(&mut current)),
+                ..tipb::Chunk::default()
+            });
+            current_rows = 0;
+        }
+    }
+    if !current.is_empty() {
+        chunks.push(tipb::Chunk {
+            rows_data: Some(current),
+            ..tipb::Chunk::default()
+        });
+    }
+    let select = tipb::SelectResponse {
+        chunks,
+        encode_type: Some(tipb::EncodeType::TypeDefault as i32),
+        ..tipb::SelectResponse::default()
+    };
+    let mut data = Vec::new();
+    select.encode(&mut data).expect("a select response encodes");
+    coprocessor::Response {
+        data,
+        ..coprocessor::Response::default()
+    }
 }
 
 /// Go's chunk cut: `closure_exec.go` grows the output chunk to 1024 rows
@@ -195,7 +308,7 @@ fn exec_table_scan(
     aggregation: Option<&tipb::Aggregation>,
 ) -> coprocessor::Response {
     let mut aggregator = match aggregation {
-        Some(aggregation) => match RegionAggregator::build(aggregation, tbl_scan) {
+        Some(aggregation) => match RegionAggregator::build(aggregation, &tbl_scan.columns) {
             Ok(aggregator) => Some(aggregator),
             Err(message) => return other_error(&message),
         },
@@ -451,14 +564,13 @@ enum RegionAggValue {
 impl RegionAggregator {
     fn build(
         aggregation: &tipb::Aggregation,
-        tbl_scan: &tipb::TableScan,
+        columns: &[tipb::ColumnInfo],
     ) -> Result<Self, String> {
         let collation_of_column = |expr: &SimpleExpr| -> tidb_datatype::Collation {
             let id = match expr {
-                SimpleExpr::Column(offset) => tbl_scan
-                    .columns
-                    .get(*offset)
-                    .map_or(0, |column| column.collation()),
+                SimpleExpr::Column(offset) => {
+                    columns.get(*offset).map_or(0, |column| column.collation())
+                }
                 _ => 0,
             };
             let restored = tidb_datatype::restore_collation_id_if_needed(id);

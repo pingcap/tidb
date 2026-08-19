@@ -197,6 +197,107 @@ impl<F> CopScanSource<F> {
     }
 }
 
+impl<F> CopScanSource<F>
+where
+    F: RealTiKvSessionTransportFactory + 'static,
+    <F::Transport as QueryTransport>::Response: 'static,
+{
+    /// The covering-index shape of [`PushdownScanner::open`]: the only
+    /// index request the executor sends today is a partial aggregation
+    /// over encoded index-key ranges (`pushdown_index_partial_aggregate_cursor`),
+    /// so every other index shape refuses by name.
+    fn open_index_aggregate(
+        &self,
+        request: &PushdownScanRequest,
+        index: &tidb_executor::remote_scan::PushdownIndexScan,
+        refuse: impl Fn(&str) -> PushdownScannerError,
+    ) -> Result<Box<dyn PushdownRowStream>, PushdownScannerError> {
+        let Some(aggregate) = request.aggregate.as_ref() else {
+            return Err(refuse(
+                "a bare index scan is not lowered; only the covering aggregate shape is",
+            ));
+        };
+        if !request.predicates.is_empty()
+            || request.limit.is_some()
+            || request.topn.is_some()
+            || request.output_offsets.is_some()
+            || request.desc
+        {
+            return Err(refuse(
+                "an index aggregation composes with nothing else in this lowering",
+            ));
+        }
+        let columns = request
+            .columns
+            .iter()
+            .map(scan_column)
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| refuse("a column has no bounded coprocessor descriptor"))?;
+        let field_types: Vec<FieldType> = aggregate.output_types();
+        let aggregation = aggregation_to_pb(aggregate, &columns)
+            .ok_or_else(|| refuse("a pushed aggregate has no bounded lowering"))?;
+        let index_scan = tidb_proto::tipb::IndexScan {
+            table_id: Some(request.table_id),
+            index_id: Some(index.index_id),
+            columns: columns.iter().map(crate::dag_request::column_to_pb).collect(),
+            desc: Some(false),
+            unique: Some(index.declared_unique),
+            primary_column_ids: Vec::new(),
+        };
+        let (time_zone_name, time_zone_offset_secs) = request.statement.time_zone.dag_zone();
+        let dag = crate::dag_request::construct_index_aggregated_dag_req(
+            &DagRequestContext::new(
+                time_zone_name,
+                time_zone_offset_secs,
+                request.statement.push_down_flags,
+                EncodeType::Default,
+            ),
+            index_scan,
+            aggregation,
+            field_types.len(),
+        )
+        .map_err(|error| PushdownScannerError::Unsupported(error.to_string()))?;
+        let summary = dag_summary(&dag);
+        let key_ranges: Vec<KeyRange> = request
+            .ranges
+            .iter()
+            .map(|(start, end)| KeyRange::new(start.clone(), end.clone()))
+            .collect();
+        let shapes = vec![
+            ExecutorShape::new(ExecutorKind::IndexScan),
+            ExecutorShape::new(ExecutorKind::Other),
+        ];
+        let plan = RemoteScanPlan {
+            dag,
+            envelope: RequestEnvelope::new(shapes),
+            key_ranges,
+            snapshot_ts: request.snapshot_ts,
+            field_types,
+            time_zone: request.statement.time_zone.clone(),
+            warnings: request.statement.warnings.clone(),
+        };
+        let (rows, batches) = sync_channel::<Result<Vec<Vec<Datum>>, String>>(BATCHES_AHEAD);
+        let factory = Arc::clone(&self.factory);
+        let node_rows = Arc::clone(&self.rows_returned);
+        thread::Builder::new()
+            .name("cop-scan".to_owned())
+            .spawn(move || serve_scan(&factory, plan, &rows, &node_rows))
+            .map_err(|error| {
+                PushdownScannerError::Backend(StorageError::Backend(error.to_string()))
+            })?;
+        self.scans_served.fetch_add(1, Ordering::Relaxed);
+        self.requests
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .push(summary);
+        Ok(Box::new(CopRowStream {
+            batches: Some(batches),
+            pending: Vec::new().into_iter(),
+            returned: 0,
+        }))
+    }
+}
+
 impl<F> PushdownScanner for CopScanSource<F>
 where
     F: RealTiKvSessionTransportFactory + 'static,
@@ -219,10 +320,8 @@ where
         // an aggregate or index request is wrong data, not degraded service.
         // A refused `topn` or cap is different -- the contract names those
         // best-effort and the caller retains the local stage either way.
-        if request.index.is_some() {
-            return Err(refuse(
-                "this coprocessor lowering does not build an index scan",
-            ));
+        if let Some(index) = request.index.as_ref() {
+            return self.open_index_aggregate(request, index, refuse);
         }
         if request.output_offsets.is_some() {
             return Err(refuse(
@@ -413,6 +512,13 @@ fn dag_summary(dag: &tidb_proto::tipb::DagRequest) -> String {
                     .and_then(|scan| scan.table_id)
                     .unwrap_or_default();
                 format!("TableScan(table {table}, {columns} columns)")
+            }
+            Some(tp) if tp == ExecType::TypeIndexScan as i32 => {
+                let (table, index, columns) = executor.idx_scan.as_ref().map_or(
+                    (0, 0, 0),
+                    |scan| (scan.table_id(), scan.index_id(), scan.columns.len()),
+                );
+                format!("IndexScan(table {table}, index {index}, {columns} columns)")
             }
             Some(tp) if tp == ExecType::TypeSelection as i32 => format!(
                 "Selection({} conditions)",

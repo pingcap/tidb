@@ -128,6 +128,16 @@ fn a_derived_aggregate_over_the_coprocessor_answers_its_output() {
         "the desc keep-order Limit must answer the LARGEST ids over the region walk"
     );
 
+    // The covering-index COUNT rides an [IndexScan, Aggregation] DAG:
+    // the region decodes the indexed values out of the KEY and counts
+    // them, Go's PhysicalIndexReader carrying the partial stage.
+    rows(&mut session, "CREATE INDEX walk_v ON test.walk (v)");
+    let counted_over_index = displayed(rows(
+        &mut session,
+        "SELECT count(v) FROM test.walk WHERE v > 5",
+    ));
+    assert_eq!(counted_over_index, [["4"]]);
+
     // The receipt that the partial stage ran AT THE REGION: the scanner's
     // request log names an aggregation executor in a served DAG. A refusal
     // would fall back to the local partial cursor -- same answer, but the
@@ -139,6 +149,14 @@ fn a_derived_aggregate_over_the_coprocessor_answers_its_output() {
             .iter()
             .any(|request| request.contains("HashAgg") || request.contains("StreamAgg")),
         "no served DAG carried an aggregation executor: {:?}",
+        stats.requests
+    );
+    assert!(
+        stats
+            .requests
+            .iter()
+            .any(|request| request.contains("IndexScan")),
+        "no served DAG carried the covering-index aggregate: {:?}",
         stats.requests
     );
 }

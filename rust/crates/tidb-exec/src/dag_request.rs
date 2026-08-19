@@ -304,6 +304,62 @@ pub fn construct_aggregated_read_only_dag_req_with_conditions(
     )
 }
 
+/// The covering-index half of the same shape: `[IndexScan, Aggregation]`,
+/// Go's `PhysicalIndexReader` carrying a partial aggregate. The caller
+/// hands the finished `IndexScan` executor body -- the ranges already
+/// travel as encoded index-key ranges on the request itself.
+pub fn construct_index_aggregated_dag_req(
+    context: &DagRequestContext,
+    index_scan: IndexScan,
+    aggregation: Aggregation,
+    aggregation_width: usize,
+) -> Result<DagRequest, DagRequestBuildError> {
+    let executors = vec![
+        Executor {
+            tp: Some(ExecType::TypeIndexScan as i32),
+            tbl_scan: None,
+            idx_scan: Some(index_scan),
+            selection: None,
+            aggregation: None,
+            limit: None,
+            executor_id: None,
+            parent_idx: None,
+        },
+        aggregation_to_executor(aggregation),
+    ];
+    let output_offsets = (0..aggregation_width)
+        .map(|offset| u32::try_from(offset).expect("aggregate width fits TiKV u32 offsets"))
+        .collect();
+    let (encode_type, chunk_memory_layout) = match context.encode_type {
+        DistSqlEncodeType::Default => (EncodeType::TypeDefault, None),
+        DistSqlEncodeType::Chunk => {
+            let endian = match system_endian() {
+                SystemEndian::Little => Endian::LittleEndian,
+                SystemEndian::Big => Endian::BigEndian,
+            };
+            (
+                EncodeType::TypeChunk,
+                Some(ChunkMemoryLayout {
+                    endian: Some(endian as i32),
+                }),
+            )
+        }
+    };
+    Ok(DagRequest {
+        executors,
+        time_zone_offset: Some(context.time_zone_offset),
+        flags: Some(context.push_down_flags),
+        output_offsets,
+        encode_type: Some(encode_type as i32),
+        time_zone_name: Some(context.time_zone_name.clone()),
+        collect_execution_summaries: context.collect_execution_summaries.then_some(true),
+        chunk_memory_layout,
+        div_precision_increment: (context.div_precision_increment
+            != DEFAULT_DIV_PRECISION_INCREMENT)
+            .then_some(context.div_precision_increment),
+    })
+}
+
 fn aggregation_to_executor(aggregation: Aggregation) -> Executor {
     let streamed = aggregation.streamed == Some(true);
     Executor {
@@ -590,7 +646,7 @@ fn index_payload_to_pb(spec: &TiKvIndexScanSpec, plan: &PhysicalIndexScanPlan) -
     }
 }
 
-fn column_to_pb(column: &ScanColumnInfo) -> ColumnInfo {
+pub(crate) fn column_to_pb(column: &ScanColumnInfo) -> ColumnInfo {
     ColumnInfo {
         column_id: Some(column.column_id),
         tp: Some(column.tp),
