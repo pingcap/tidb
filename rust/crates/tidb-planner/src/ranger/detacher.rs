@@ -684,6 +684,12 @@ pub struct RangeDetacher<'a> {
     pub opt_prefix_index_single_scan: bool,
     /// Go `sctx.SetSkipPlanCache`'s carrier.
     pub skip_plan_cache_reason: Option<String>,
+    /// Go `fixcontrol.Fix44389` (default false): admit the best CNF item's
+    /// NON-point ranges when no equality chain exists.
+    pub fix_44389: bool,
+    /// Go `fixcontrol.Fix54337` (default false): intersect competing CNF
+    /// item ranges instead of the pick-one heuristic.
+    pub fix_54337: bool,
 }
 
 impl RangeDetacher<'_> {
@@ -814,14 +820,12 @@ impl RangeDetacher<'_> {
         Ok((ranges, new_access, remained))
     }
 
-    /// Go `detachCNFCondAndBuildRangeForIndex` with `considerDNF = false` —
-    /// the whole branch the SIMPLE entry takes. The `considerDNF` branch
-    /// (the best-CNF-item machinery, `extractBestCNFItemRanges` and the
-    /// Fix44389 arm) lands with the full `DetachCondAndBuildRangeForIndex`
-    /// entry, its only caller.
-    fn detach_cnf_simple(
+    /// Go `detachCNFCondAndBuildRangeForIndex` (`detacher.go:397`), both
+    /// branches of `considerDNF`.
+    fn detach_cnf(
         &mut self,
         conditions: &[Expression],
+        consider_dnf: bool,
     ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
         let mut res = DetachRangeResult::default();
         let extraction = extract_eq_and_in_condition(
@@ -858,12 +862,30 @@ impl RangeDetacher<'_> {
             ranges = super::ranger::union_ranges(ranges, self.merge_consecutive)?;
         }
         res.column_values = extraction.column_values;
+        // The prefix-and-merge interplay (issue 26029): point ranges are
+        // kept SEPARATELY when consecutive-merge may fuse them.
+        let mut point_ranges = ranges.clone();
+        if super::ranger::has_prefix(self.lengths) && self.merge_consecutive {
+            point_ranges = super::ranger::union_ranges(point_ranges, false)?;
+        }
         if eq_or_in_count == self.cols.len() || new_conditions.is_empty() {
             res.ranges = ranges;
             res.access_conds = access_conds;
             res.remained_conds = filter_conds;
             res.remained_conds.extend(new_conditions);
             return Ok(res);
+        }
+        if consider_dnf {
+            return self.detach_cnf_consider_dnf(
+                conditions,
+                res,
+                ranges,
+                point_ranges,
+                access_conds,
+                filter_conds,
+                new_conditions,
+                eq_or_in_count,
+            );
         }
         let next_col = &self.cols[eq_or_in_count];
         let checker = ConditionChecker {
@@ -922,9 +944,638 @@ pub fn detach_simple_cond_and_build_range_for_index(
         regard_null_as_point: true,
         opt_prefix_index_single_scan: true,
         skip_plan_cache_reason: None,
+        fix_44389: false,
+        fix_54337: false,
     };
-    let res = detacher.detach_cnf_simple(conditions)?;
+    let res = detacher.detach_cnf(conditions, false)?;
     Ok((res.ranges, res.access_conds, res.remained_conds))
+}
+
+
+/// Go `cnfItemRangeResult`.
+struct CnfItemRangeResult {
+    range_result: DetachRangeResult,
+    offset: usize,
+    same_len_point_ranges: bool,
+    max_col_num: usize,
+    min_col_num: usize,
+}
+
+/// Go `getCNFItemRangeResult`.
+fn get_cnf_item_range_result(
+    range_result: DetachRangeResult,
+    offset: usize,
+    regard_null_as_point: bool,
+) -> CnfItemRangeResult {
+    let mut same_len_point_ranges = true;
+    let mut max_col_num = 0;
+    let mut min_col_num = 0;
+    for (i, ran) in range_result.ranges.iter().enumerate() {
+        if !ran.is_point(regard_null_as_point) {
+            same_len_point_ranges = false;
+        }
+        if i == 0 {
+            max_col_num = ran.low_val.len();
+            min_col_num = ran.low_val.len();
+        } else {
+            max_col_num = max_col_num.max(ran.low_val.len());
+            min_col_num = min_col_num.min(ran.low_val.len());
+        }
+    }
+    if min_col_num != max_col_num {
+        same_len_point_ranges = false;
+    }
+    CnfItemRangeResult {
+        range_result,
+        offset,
+        same_len_point_ranges,
+        max_col_num,
+        min_col_num,
+    }
+}
+
+/// Go `compareCNFItemRangeResult`.
+fn compare_cnf_item_range_result(cur: &CnfItemRangeResult, best: &CnfItemRangeResult) -> bool {
+    if cur.same_len_point_ranges && best.same_len_point_ranges {
+        return cur.min_col_num > best.min_col_num;
+    }
+    if !cur.same_len_point_ranges && !best.same_len_point_ranges {
+        if cur.min_col_num == best.min_col_num {
+            return cur.max_col_num > best.max_col_num;
+        }
+        return cur.min_col_num > best.min_col_num;
+    }
+    // Point ranges beat non-point ranges: later columns can append.
+    cur.same_len_point_ranges
+}
+
+/// Go `mergeTwoCNFRanges`: keep the better of two CNF-item results —
+/// Fix54337 (off by default) upgrades the heuristic to a subset/
+/// intersection comparison.
+fn merge_two_cnf_ranges(
+    cond: &Expression,
+    range_result: Option<CnfItemRangeResult>,
+    other: Option<CnfItemRangeResult>,
+    fix_54337: bool,
+) -> Option<CnfItemRangeResult> {
+    let Some(mut merged) = range_result else {
+        return other;
+    };
+    let Some(other) = other else {
+        return Some(merged);
+    };
+    let mut try_heuristic = false;
+    if fix_54337 {
+        let merged_is_subset =
+            super::types::ranges_subset(&merged.range_result.ranges, &other.range_result.ranges);
+        if !merged_is_subset {
+            let other_is_subset = super::types::ranges_subset(
+                &other.range_result.ranges,
+                &merged.range_result.ranges,
+            );
+            if other_is_subset {
+                return Some(other);
+            }
+            match super::types::intersect_ranges(
+                &other.range_result.ranges,
+                &merged.range_result.ranges,
+            ) {
+                None => try_heuristic = true,
+                Some(intersection) => {
+                    merged.range_result.ranges = intersection;
+                    merged.range_result.access_conds = append_conditions_if_not_exist(
+                        std::mem::take(&mut merged.range_result.access_conds),
+                        std::slice::from_ref(cond),
+                    );
+                }
+            }
+        }
+    } else {
+        try_heuristic = true;
+    }
+    if try_heuristic && compare_cnf_item_range_result(&other, &merged) {
+        return Some(other);
+    }
+    Some(merged)
+}
+
+/// Go `unionColumnValues`.
+fn union_column_values(
+    mut lhs: Vec<Option<ValueInfo>>,
+    rhs: &[Option<ValueInfo>],
+) -> Vec<Option<ValueInfo>> {
+    if lhs.is_empty() {
+        return rhs.to_vec();
+    }
+    for (i, val_info) in lhs.iter_mut().enumerate() {
+        if i >= rhs.len() {
+            break;
+        }
+        if val_info.is_none() && rhs[i].is_some() {
+            *val_info = rhs[i].clone();
+        }
+    }
+    lhs
+}
+
+/// Go `isSameValue`: binary-compare two extracted constants.
+fn is_same_value(lhs: &Option<ValueInfo>, rhs: &Option<ValueInfo>) -> bool {
+    match (lhs, rhs) {
+        (Some(left), Some(right)) if !left.mutable && !right.mutable => {
+            match (&left.value, &right.value) {
+                (Some(a), Some(b)) => a
+                    .compare(b, tidb_datatype::Collation::Binary)
+                    .map(|order| order == std::cmp::Ordering::Equal)
+                    .unwrap_or(false),
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// This port's stand-in for `Ranges.MemUsage` in the DNF accumulation
+/// (Go sizes with `unsafe.Sizeof`; see `ranger.rs`'s module header).
+fn ranges_mem_estimate(ranges: &super::types::Ranges) -> i64 {
+    ranges
+        .iter()
+        .map(|ran| 96 + 72 * (ran.low_val.len() as i64 + ran.high_val.len() as i64))
+        .sum()
+}
+
+impl RangeDetacher<'_> {
+    /// Go `extractBestCNFItemRanges`.
+    fn extract_best_cnf_item_ranges(
+        &mut self,
+        conds: &[Expression],
+    ) -> Result<
+        (Option<CnfItemRangeResult>, Vec<Option<ValueInfo>>),
+        super::points::PointBuilderError,
+    > {
+        if conds.len() < 2 {
+            return Ok((None, Vec::new()));
+        }
+        let mut best: Option<CnfItemRangeResult> = None;
+        let mut column_values: Vec<Option<ValueInfo>> = vec![None; self.cols.len()];
+        for (i, cond) in conds.iter().enumerate() {
+            if tidb_expr::simple_expr::extract_columns(cond).is_empty() {
+                continue;
+            }
+            // Consecutive-merge OFF here: point ranges must stay points so
+            // later columns can append (issue 41572).
+            let mut inner = RangeDetacher {
+                cols: self.cols,
+                lengths: self.lengths,
+                new_tp_slice: self.new_tp_slice.clone(),
+                merge_consecutive: false,
+                convert_to_sort_key: self.convert_to_sort_key,
+                range_max_size: self.range_max_size,
+                regard_null_as_point: self.regard_null_as_point,
+                opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
+                skip_plan_cache_reason: None,
+                fix_44389: self.fix_44389,
+                fix_54337: self.fix_54337,
+            };
+            let res = inner.detach_cond_and_build_range_for_cols(std::slice::from_ref(cond))?;
+            if let Some(reason) = inner.skip_plan_cache_reason {
+                self.skip_plan_cache_reason.get_or_insert(reason);
+            }
+            if res.ranges.is_empty() {
+                return Ok((
+                    Some(CnfItemRangeResult {
+                        range_result: res,
+                        offset: i,
+                        same_len_point_ranges: false,
+                        max_col_num: 0,
+                        min_col_num: 0,
+                    }),
+                    Vec::new(),
+                ));
+            }
+            column_values = union_column_values(column_values, &res.column_values);
+            if res.access_conds.is_empty() {
+                continue;
+            }
+            let cur = get_cnf_item_range_result(res, i, self.regard_null_as_point);
+            best = merge_two_cnf_ranges(cond, best, Some(cur), self.fix_54337);
+        }
+        if let Some(best) = &mut best {
+            best.range_result.is_dnf_cond = false;
+        }
+        Ok((best, column_values))
+    }
+
+    /// Go `chooseBetweenRangeAndPoint` (Fix54337-gated; a no-op when off).
+    fn choose_between_range_and_point(
+        &self,
+        res: &mut DetachRangeResult,
+        best: Option<&CnfItemRangeResult>,
+    ) {
+        if !self.fix_54337 {
+            return;
+        }
+        let Some(best) = best else { return };
+        if res.ranges.is_empty() {
+            return;
+        }
+        let r1_minus_r2 =
+            remove_conditions(&res.access_conds, &best.range_result.access_conds);
+        let r2_minus_r1 =
+            remove_conditions(&best.range_result.access_conds, &res.access_conds);
+        if r1_minus_r2.is_empty() && !r2_minus_r1.is_empty() {
+            res.remained_conds =
+                remove_conditions(&res.remained_conds, &best.range_result.access_conds);
+            res.ranges = best.range_result.ranges.clone();
+            res.access_conds = best.range_result.access_conds.clone();
+        }
+    }
+
+    /// The `considerDNF = true` continuation of
+    /// `detachCNFCondAndBuildRangeForIndex`.
+    #[allow(clippy::too_many_arguments)]
+    fn detach_cnf_consider_dnf(
+        &mut self,
+        conditions: &[Expression],
+        mut res: DetachRangeResult,
+        ranges: super::types::Ranges,
+        mut point_ranges: super::types::Ranges,
+        access_conds: Vec<Expression>,
+        filter_conds: Vec<Expression>,
+        mut new_conditions: Vec<Expression>,
+        mut eq_or_in_count: usize,
+    ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
+        res.ranges = ranges;
+        res.access_conds = access_conds;
+        res.remained_conds = filter_conds;
+        let (best, best_column_values) = self.extract_best_cnf_item_ranges(conditions)?;
+        res.column_values =
+            union_column_values(std::mem::take(&mut res.column_values), &best_column_values);
+        let mut best = best;
+        if let Some(candidate) = &best {
+            if candidate.range_result.ranges.is_empty() {
+                return Ok(DetachRangeResult::default());
+            }
+            if candidate.same_len_point_ranges && candidate.min_col_num > eq_or_in_count {
+                let candidate = best.take().expect("checked some");
+                let offset = candidate.offset;
+                let mut taken = candidate.range_result;
+                taken.column_values = std::mem::take(&mut res.column_values);
+                point_ranges = taken.ranges.clone();
+                eq_or_in_count = taken.ranges[0].low_val.len();
+                res = taken;
+                new_conditions.clear();
+                new_conditions.extend_from_slice(&conditions[..offset]);
+                new_conditions.extend_from_slice(&conditions[offset + 1..]);
+                if eq_or_in_count == self.cols.len() || new_conditions.is_empty() {
+                    res.remained_conds.extend(new_conditions);
+                    return Ok(res);
+                }
+            } else if self.fix_44389
+                && !candidate.same_len_point_ranges
+                && eq_or_in_count == 0
+                && candidate.min_col_num > 0
+                && candidate.max_col_num > 1
+            {
+                let candidate = best.take().expect("checked some");
+                let offset = candidate.offset;
+                let mut taken = candidate.range_result;
+                taken.column_values = std::mem::take(&mut res.column_values);
+                res = taken;
+                new_conditions.clear();
+                new_conditions.extend_from_slice(&conditions[..offset]);
+                new_conditions.extend_from_slice(&conditions[offset + 1..]);
+                res.remained_conds.extend(new_conditions);
+                return Ok(res);
+            }
+        }
+        if eq_or_in_count > 0 {
+            let new_cols = &self.cols[eq_or_in_count..];
+            let new_lengths = &self.lengths[eq_or_in_count..];
+            let new_tps: Vec<tidb_datatype::FieldType> =
+                self.new_tp_slice[eq_or_in_count..].to_vec();
+            let mut tail_detacher = RangeDetacher {
+                cols: new_cols,
+                lengths: new_lengths,
+                new_tp_slice: new_tps,
+                merge_consecutive: self.merge_consecutive,
+                convert_to_sort_key: self.convert_to_sort_key,
+                range_max_size: self.range_max_size,
+                regard_null_as_point: self.regard_null_as_point,
+                opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
+                skip_plan_cache_reason: None,
+                fix_44389: self.fix_44389,
+                fix_54337: self.fix_54337,
+            };
+            let tail_res = tail_detacher.detach_cond_and_build_range_for_cols(&new_conditions)?;
+            if let Some(reason) = tail_detacher.skip_plan_cache_reason {
+                self.skip_plan_cache_reason.get_or_insert(reason);
+            }
+            if tail_res.ranges.is_empty() {
+                return Ok(DetachRangeResult::default());
+            }
+            if !tail_res.access_conds.is_empty() {
+                // Go `AppendRanges2PointRanges` with the memory fallback.
+                let range_count = point_ranges.len() * tail_res.ranges.len();
+                if self.range_max_size > 0
+                    && (range_count as i64) * 96 > self.range_max_size
+                {
+                    res.remained_conds.extend(tail_res.access_conds);
+                    res.remained_conds = append_conditions_if_not_exist(
+                        std::mem::take(&mut res.remained_conds),
+                        &tail_res.remained_conds,
+                    );
+                    return Ok(res);
+                }
+                let mut new_ranges = super::types::Ranges::new();
+                for point_range in &point_ranges {
+                    for tail in &tail_res.ranges {
+                        let mut low_val = point_range.low_val.clone();
+                        low_val.extend(tail.low_val.iter().cloned());
+                        let mut high_val = point_range.high_val.clone();
+                        high_val.extend(tail.high_val.iter().cloned());
+                        let mut collators = point_range.collators.clone();
+                        collators.extend(tail.collators.iter().copied());
+                        new_ranges.push(super::types::Range {
+                            low_val,
+                            low_exclude: tail.low_exclude,
+                            high_val,
+                            high_exclude: tail.high_exclude,
+                            collators,
+                        });
+                    }
+                }
+                res.ranges = new_ranges;
+                res.access_conds.extend(tail_res.access_conds);
+                res.remained_conds.extend(tail_res.remained_conds);
+                // The `((a=1 AND b=1) OR (a=2 AND b=2)) AND c=1` guard:
+                // only a NON-zero EqOrInCount accumulates the tail's.
+                if res.eq_or_in_count > 0 {
+                    if res.eq_or_in_count == res.eq_cond_count {
+                        res.eq_cond_count += tail_res.eq_cond_count;
+                    }
+                    res.eq_or_in_count += tail_res.eq_or_in_count;
+                }
+                return Ok(res);
+            }
+            res.remained_conds.extend(tail_res.remained_conds);
+            self.choose_between_range_and_point(&mut res, best.as_ref());
+            return Ok(res);
+        }
+        // `eqOrInCount == 0`: the column walk over the FIRST index column.
+        let checker = ConditionChecker {
+            checker_col: Some(&self.cols[0]),
+            length: self.lengths[0],
+            opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
+        };
+        let (column_access, column_filters) =
+            detach_column_cnf_conditions(&new_conditions, &checker);
+        res.access_conds = column_access;
+        res.remained_conds = column_filters;
+        let (built_ranges, built_access, built_remained) =
+            self.build_cnf_index_range(0, &res.access_conds.clone())?;
+        res.remained_conds = append_conditions_if_not_exist(
+            std::mem::take(&mut res.remained_conds),
+            &built_remained,
+        );
+        res.ranges = built_ranges;
+        res.access_conds = built_access;
+        // Pick the best CNF item's ranges when they are a PROPER subset of
+        // the column walk's.
+        if let Some(best) = &best {
+            if !res.ranges.is_empty() {
+                let best_is_subset = super::types::ranges_subset(
+                    &best.range_result.ranges,
+                    &res.ranges,
+                );
+                let point_is_subset = super::types::ranges_subset(
+                    &res.ranges,
+                    &best.range_result.ranges,
+                );
+                if best_is_subset && !point_is_subset {
+                    res.remained_conds = remove_conditions(
+                        &res.remained_conds,
+                        &best.range_result.access_conds,
+                    );
+                    res.ranges = best.range_result.ranges.clone();
+                    res.access_conds = best.range_result.access_conds.clone();
+                }
+            }
+        }
+        Ok(res)
+    }
+
+    /// Go `detachDNFCondAndBuildRangeForIndex` (`detacher.go:849`).
+    fn detach_dnf(
+        &mut self,
+        condition: &tidb_expr::scalar_function::ScalarFunction,
+    ) -> Result<
+        (
+            super::types::Ranges,
+            Vec<Expression>,
+            Vec<Option<ValueInfo>>,
+            bool,
+            i64,
+        ),
+        super::points::PointBuilderError,
+    > {
+        let first_column_checker = ConditionChecker {
+            checker_col: Some(&self.cols[0]),
+            length: self.lengths[0],
+            opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
+        };
+        let mut builder = PointBuilder::default();
+        let dnf_items = flatten_dnf_conditions(condition);
+        let mut new_access_items = Vec::with_capacity(dnf_items.len());
+        let mut min_access_conds: i64 = -1;
+        let mut total_ranges = super::types::Ranges::new();
+        let mut total_mem: i64 = 0;
+        let mut column_values: Vec<Option<ValueInfo>> = vec![None; self.cols.len()];
+        let mut has_residual = false;
+        for (i, item) in dnf_items.iter().enumerate() {
+            let is_and = matches!(item, Expression::ScalarFunction(sf)
+                if sf.func_name.lowercase() == "and");
+            if is_and {
+                let Expression::ScalarFunction(sf) = item else {
+                    unreachable!("matched above");
+                };
+                let cnf_items = flatten_cnf_conditions(sf);
+                let res = self.detach_cnf(&cnf_items, true)?;
+                // An always-false DNF item is skipped.
+                if res.ranges.is_empty() {
+                    continue;
+                }
+                if res.access_conds.is_empty() {
+                    return Ok((super::points::full_range(), Vec::new(), Vec::new(), true, -1));
+                }
+                if !res.remained_conds.is_empty() {
+                    has_residual = true;
+                }
+                total_mem += ranges_mem_estimate(&res.ranges);
+                total_ranges.extend(res.ranges);
+                if self.range_max_size > 0 && total_mem > self.range_max_size {
+                    return Ok((super::points::full_range(), Vec::new(), Vec::new(), true, -1));
+                }
+                if let Some(composed) =
+                    tidb_expr::simple_expr::compose_cnf_condition(res.access_conds.clone())
+                {
+                    new_access_items.push(composed);
+                }
+                if i == 0 {
+                    column_values = res.column_values;
+                } else {
+                    for j in 0..column_values.len() {
+                        if column_values[j].is_none() {
+                            continue;
+                        }
+                        let other = res.column_values.get(j).cloned().flatten();
+                        if !is_same_value(&column_values[j], &other) {
+                            column_values[j] = None;
+                        }
+                    }
+                }
+                let access_len = res.access_conds.len() as i64;
+                if min_access_conds == -1 || access_len < min_access_conds {
+                    min_access_conds = access_len;
+                }
+            } else {
+                let (is_access_cond, should_reserve) = first_column_checker.check(item);
+                if !is_access_cond {
+                    return Ok((super::points::full_range(), Vec::new(), Vec::new(), true, -1));
+                }
+                if should_reserve {
+                    has_residual = true;
+                }
+                let points = builder.build(
+                    item,
+                    &self.new_tp_slice[0],
+                    self.lengths[0],
+                    self.convert_to_sort_key,
+                );
+                let tmp_new_tp = if self.convert_to_sort_key {
+                    super::ranger::convert_string_ft_to_binary_collate(&self.new_tp_slice[0])
+                } else {
+                    self.new_tp_slice[0].clone()
+                };
+                let (ranges, fallback) = super::ranger::points_to_ranges(
+                    points,
+                    &tmp_new_tp,
+                    self.range_max_size,
+                    &mut self.skip_plan_cache_reason,
+                )?;
+                if fallback {
+                    return Ok((super::points::full_range(), Vec::new(), Vec::new(), true, -1));
+                }
+                total_mem += ranges_mem_estimate(&ranges);
+                total_ranges.extend(ranges);
+                if self.range_max_size > 0 && total_mem > self.range_max_size {
+                    return Ok((super::points::full_range(), Vec::new(), Vec::new(), true, -1));
+                }
+                new_access_items.push(item.clone());
+                if i == 0 {
+                    column_values[0] = extract_value_info(item);
+                } else if column_values[0].is_some() {
+                    let val_info = extract_value_info(item);
+                    if !is_same_value(&column_values[0], &val_info) {
+                        column_values[0] = None;
+                    }
+                }
+                if min_access_conds == -1 || min_access_conds > 1 {
+                    min_access_conds = 1;
+                }
+            }
+        }
+        let total_ranges =
+            super::ranger::union_ranges(total_ranges, self.merge_consecutive)?;
+        let access = tidb_expr::simple_expr::compose_dnf_condition(new_access_items)
+            .map_or_else(Vec::new, |composed| vec![composed]);
+        Ok((total_ranges, access, column_values, has_residual, min_access_conds))
+    }
+
+    /// Go `detachCondAndBuildRangeForCols` (`detacher.go:1084`).
+    pub fn detach_cond_and_build_range_for_cols(
+        &mut self,
+        all_conds: &[Expression],
+    ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
+        let mut res = DetachRangeResult::default();
+        if all_conds.len() == 1 {
+            if let Expression::ScalarFunction(sf) = &all_conds[0] {
+                if sf.func_name.lowercase() == "or" {
+                    let (ranges, accesses, column_values, has_residual, min_access_conds) =
+                        self.detach_dnf(sf)?;
+                    res.ranges = ranges;
+                    res.access_conds = accesses;
+                    res.column_values = column_values;
+                    res.is_dnf_cond = true;
+                    if min_access_conds != -1 {
+                        res.min_access_conds_for_dnf_cond = min_access_conds;
+                    }
+                    // A DNF with an uncomputable part pushes WHOLE as
+                    // filter.
+                    if has_residual {
+                        res.remained_conds = all_conds.to_vec();
+                    }
+                    return Ok(res);
+                }
+            }
+        }
+        self.detach_cnf(all_conds, true)
+    }
+}
+
+/// Go `DetachCondAndBuildRangeForIndex` (`detacher.go:1033`): the FULL
+/// entry with DNF consideration, consecutive-merge, and sort-key
+/// conversion.
+pub fn detach_cond_and_build_range_for_index(
+    conditions: &[Expression],
+    cols: &[tidb_expr::column::Column],
+    lengths: &[i64],
+    range_max_size: i64,
+) -> Result<DetachRangeResult, super::points::PointBuilderError> {
+    detach_cond_and_build_range(conditions, cols, lengths, range_max_size, true, true)
+}
+
+/// Go `DetachCondAndBuildRangeForPartition`: no sort key, no
+/// consecutive-merge.
+pub fn detach_cond_and_build_range_for_partition(
+    conditions: &[Expression],
+    cols: &[tidb_expr::column::Column],
+    lengths: &[i64],
+    range_max_size: i64,
+) -> Result<DetachRangeResult, super::points::PointBuilderError> {
+    detach_cond_and_build_range(conditions, cols, lengths, range_max_size, false, false)
+}
+
+/// Go `detachCondAndBuildRange`.
+fn detach_cond_and_build_range(
+    conditions: &[Expression],
+    cols: &[tidb_expr::column::Column],
+    lengths: &[i64],
+    range_max_size: i64,
+    convert_to_sort_key: bool,
+    merge_consecutive: bool,
+) -> Result<DetachRangeResult, super::points::PointBuilderError> {
+    let new_tp_slice: Vec<tidb_datatype::FieldType> = cols
+        .iter()
+        .map(|col| {
+            super::ranger::new_field_type(&col.ret_type.clone().unwrap_or_else(|| {
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+            }))
+        })
+        .collect();
+    let mut detacher = RangeDetacher {
+        cols,
+        lengths,
+        new_tp_slice,
+        merge_consecutive,
+        convert_to_sort_key,
+        range_max_size,
+        regard_null_as_point: true,
+        opt_prefix_index_single_scan: true,
+        skip_plan_cache_reason: None,
+        fix_44389: false,
+        fix_54337: false,
+    };
+    detacher.detach_cond_and_build_range_for_cols(conditions)
 }
 
 #[cfg(test)]
@@ -1213,5 +1864,85 @@ mod tests {
             .map(super::super::types::Range::to_display_string)
             .collect();
         assert_eq!(shown, ["[1 5,1 5]", "[3 5,3 5]"]);
+    }
+
+    /// `DetachCondAndBuildRangeForIndex`'s DNF arm:
+    /// `(a = 1 AND b = 2) OR (a = 3 AND b = 4)` over index (a, b) —
+    /// per-arm CNF detachment, ranges unioned, one composed DNF access.
+    #[test]
+    fn dnf_detachment_unions_per_arm_ranges() {
+        let a = int_column(1);
+        let b = int_column(2);
+        let cols = [a.clone(), b.clone()];
+        let lengths = [UNSPECIFIED_LENGTH, UNSPECIFIED_LENGTH];
+        let arm = |av: i64, bv: i64| {
+            func(
+                "and",
+                vec![
+                    func("eq", vec![Expression::Column(a.clone()), int_const(av)]),
+                    func("eq", vec![Expression::Column(b.clone()), int_const(bv)]),
+                ],
+            )
+        };
+        let dnf = func("or", vec![arm(1, 2), arm(3, 4)]);
+        let res = detach_cond_and_build_range_for_index(&[dnf], &cols, &lengths, 0)
+            .expect("detaches");
+        assert!(res.is_dnf_cond);
+        assert!(res.remained_conds.is_empty(), "{:?}", res.remained_conds);
+        let shown: Vec<String> = res
+            .ranges
+            .iter()
+            .map(super::super::types::Range::to_display_string)
+            .collect();
+        assert_eq!(shown, ["[1 2,1 2]", "[3 4,3 4]"]);
+        assert_eq!(res.min_access_conds_for_dnf_cond, 2);
+
+        // An arm outside the index poisons the DNF whole: full range plus
+        // the whole condition remained.
+        let c = int_column(9);
+        let poisoned = func(
+            "or",
+            vec![
+                arm(1, 2),
+                func("eq", vec![Expression::Column(c), int_const(0)]),
+            ],
+        );
+        let res =
+            detach_cond_and_build_range_for_index(&[poisoned.clone()], &cols, &lengths, 0)
+                .expect("detaches");
+        assert!(res.is_dnf_cond);
+        assert_eq!(res.remained_conds.len(), 1);
+        assert_eq!(res.ranges.len(), 1);
+        assert_eq!(res.ranges[0].to_display_string(), "[NULL,+inf]");
+    }
+
+    /// The considerDNF branch's best-CNF-item pick: a first-column DNF
+    /// (`a = 1 OR a = 3`) AND `b = 5` — the eq/in extraction takes the DNF
+    /// as column-a equalities and appends b.
+    #[test]
+    fn a_first_column_dnf_pins_the_chain() {
+        let a = int_column(1);
+        let b = int_column(2);
+        let cols = [a.clone(), b.clone()];
+        let lengths = [UNSPECIFIED_LENGTH, UNSPECIFIED_LENGTH];
+        let conds = vec![
+            func(
+                "or",
+                vec![
+                    func("eq", vec![Expression::Column(a.clone()), int_const(1)]),
+                    func("eq", vec![Expression::Column(a.clone()), int_const(3)]),
+                ],
+            ),
+            func("eq", vec![Expression::Column(b.clone()), int_const(5)]),
+        ];
+        let res = detach_cond_and_build_range_for_index(&conds, &cols, &lengths, 0)
+            .expect("detaches");
+        let shown: Vec<String> = res
+            .ranges
+            .iter()
+            .map(super::super::types::Range::to_display_string)
+            .collect();
+        assert_eq!(shown, ["[1 5,1 5]", "[3 5,3 5]"], "{:?}", res.access_conds);
+        assert!(res.remained_conds.is_empty(), "{:?}", res.remained_conds);
     }
 }
