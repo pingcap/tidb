@@ -27,6 +27,7 @@
 
 pub mod checker;
 pub mod points;
+pub mod ranger;
 pub mod types;
 
 pub use types::{HasFullRange, Range, Ranges};
