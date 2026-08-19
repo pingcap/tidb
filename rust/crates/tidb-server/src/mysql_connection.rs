@@ -1206,6 +1206,20 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         continue;
                     }
                 };
+                // Go `conn.go:1874`: a text that parsed to ZERO statements —
+                // comments, whitespace, bare semicolons — answers one plain
+                // OK packet.
+                if statements.is_empty() {
+                    write_ok(
+                        &mut output,
+                        1,
+                        engine.wire_status(),
+                        engine.warning_count(),
+                        protocol_41,
+                    )?;
+                    queries += 1;
+                    continue;
+                }
                 let last_index = statements.len().saturating_sub(1);
                 // One COM_QUERY, one packet numbering: the chained results
                 // CONTINUE the sequence rather than restarting at 1.

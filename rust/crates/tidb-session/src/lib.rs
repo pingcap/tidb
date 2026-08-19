@@ -922,7 +922,13 @@ impl Session {
         let Ok(statements) = tidb_parser::parse_multi_with_sql_mode(sql, mode) else {
             return Ok(vec![sql.to_owned()]);
         };
-        if statements.len() <= 1 {
+        // Go `conn.go:1874`: a text that parses to ZERO statements — all
+        // whitespace, comments, or bare semicolons — is answered with a plain
+        // OK packet, never a syntax error. The empty list is that answer.
+        if statements.is_empty() {
+            return Ok(Vec::new());
+        }
+        if statements.len() == 1 {
             return Ok(vec![sql.to_owned()]);
         }
         if !client_multi_statements {

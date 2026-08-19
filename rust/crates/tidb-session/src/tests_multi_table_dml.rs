@@ -1146,6 +1146,31 @@ fn a_syntax_error_carries_gos_sentence_and_position() {
     }
 }
 
+/// Go `conn.go:1874`: a COM_QUERY text that parses to zero statements —
+/// comment-only, whitespace, or bare semicolons — splits to the EMPTY list,
+/// which the connection answers with a plain OK packet rather than routing
+/// the raw text into the single-statement parse (whose 1064 a live probe
+/// caught on `-- just a comment`).
+#[test]
+fn comment_only_text_splits_to_zero_statements() {
+    let mut session = Session::new();
+    for sql in ["-- just a comment", "  ", ";;", "/* block */", "# hash"] {
+        assert_eq!(
+            session.split_statements(sql, false).unwrap(),
+            Vec::<String>::new(),
+            "{sql:?}"
+        );
+    }
+    // A real statement wrapped in comments still runs.
+    assert_eq!(
+        session
+            .split_statements("/* lead */ SELECT 1 -- trail", false)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
 /// Go `handleQuery`'s multi-statement admission (`conn.go:1861-1904`) and
 /// the deferred parser warning (`conn.go:2262`).
 #[test]
