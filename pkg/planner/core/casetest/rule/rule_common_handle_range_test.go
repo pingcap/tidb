@@ -309,6 +309,11 @@ func TestCommonHandleIndexRangesWithTupleCompare(t *testing.T) {
 		KEY ia(a)
 	)`)
 	tk.MustExec(`insert into t_chr_tuple3 values (1, 2, 3, 4), (1, 2, 3, 5), (1, 2, 4, 1)`)
+	rows = tk.MustQuery(
+		"explain format = 'plan_tree' select * from t_chr_tuple3 use index(ia) where (a, b, c, d) > (1, 2, 3, 4)",
+	).Rows()
+	require.True(t, explainHas(rows, "range:(1 2 3 4,1 2 3 +inf], (1 2 3,1 2 +inf], (1 2,1 +inf], (1,+inf]"),
+		"expected ranges reaching the third appended handle column")
 	tk.MustQuery(
 		"select * from t_chr_tuple3 where (a, b, c, d) > (1, 2, 3, 4) order by a, b, c, d",
 	).Check(testkit.Rows("1 2 3 5", "1 2 4 1"))
