@@ -185,3 +185,166 @@ fn table_ranges_match_gos_case_table() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// Go `TestColumnRange`'s mock table:
+/// `t(a int, b double, c float(3,2), d varchar(3), e bigint unsigned)`.
+struct ColumnRangeTable {
+    columns: Vec<Column>,
+}
+
+impl ColumnRangeTable {
+    fn new() -> Self {
+        let a = Column::new(1, FieldType::new(FieldTypeCode::Long));
+        let b = Column::new(2, FieldType::new(FieldTypeCode::Double));
+        let c = Column::new(3, {
+            let mut ft = FieldType::new(FieldTypeCode::Float);
+            ft.set_flen(3);
+            ft.set_decimal(2);
+            ft
+        });
+        let d = Column::new(4, {
+            let mut ft = FieldType::new(FieldTypeCode::Varchar);
+            ft.set_flen(3);
+            ft.set_charset_name("utf8mb4");
+            ft.set_collation_name("utf8mb4_bin");
+            ft.set_collation(tidb_datatype::Collation::Utf8Mb4Bin);
+            ft
+        });
+        let e = Column::new(5, {
+            let mut ft = FieldType::new(FieldTypeCode::LongLong);
+            ft.set_flags(ft.flags() | FieldTypeFlags::UNSIGNED);
+            ft
+        });
+        Self {
+            columns: vec![a, b, c, d, e],
+        }
+    }
+
+    fn by_name(&self, name: &str) -> Option<&Column> {
+        let index = match name {
+            "a" => 0,
+            "b" => 1,
+            "c" => 2,
+            "d" => 3,
+            "e" => 4,
+            _ => return None,
+        };
+        self.columns.get(index)
+    }
+}
+
+impl ColumnResolver for ColumnRangeTable {
+    fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+        let name = path.last()?;
+        let column = self.by_name(&name.to_ascii_lowercase())?;
+        Some((
+            (column.unique_id - 1) as usize,
+            column.ret_type.clone().expect("typed"),
+            column.unique_id,
+        ))
+    }
+
+    fn resolve_column(&self, path: &[String]) -> Option<Column> {
+        let name = path.last()?;
+        self.by_name(&name.to_ascii_lowercase()).cloned()
+    }
+
+    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+        tidb_expr::SessionTimeZone::utc()
+    }
+
+    fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
+        tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+    }
+}
+
+/// Go `TestColumnRange`'s pipeline: `ExtractAccessConditionsForColumn` +
+/// `BuildColumnRange` with the case's prefix length.
+fn build_column_ranges_for(
+    expr_text: &str,
+    col_pos: usize,
+    length: i64,
+) -> Result<String, String> {
+    let table = ColumnRangeTable::new();
+    let sql = format!("select * from t where {expr_text}");
+    let stmt = tidb_parser::parse(&sql).map_err(|error| format!("parse: {error:?}"))?;
+    let tidb_ast::Stmt::Query(query) = stmt else {
+        return Err("not a query".to_owned());
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+        return Err("not a select".to_owned());
+    };
+    let where_clause = select.where_clause.ok_or("no where")?;
+    let rewritten = rewrite_expr_resolved(&where_clause, &table)
+        .map_err(|error| format!("rewrite: {error:?}"))?;
+    let ctx = tidb_expr::NoColumns;
+    let builder = RealFunctionBuilder::new(&ctx);
+    let conds: Vec<Expression> = split_cnf_items(&rewritten)
+        .iter()
+        .map(|cond| push_down_not(cond, &builder))
+        .collect();
+    let col = &table.columns[col_pos];
+    let access =
+        super::detacher::extract_access_conditions_for_column(&conds, col, true);
+    let result = super::ranger::build_column_range(
+        &access,
+        col.ret_type.as_ref().expect("typed"),
+        length,
+        0,
+    )
+    .map_err(|error| format!("build: {error:?}"))?;
+    Ok(ranges_to_go_string(&result.ranges))
+}
+
+/// Go `TestColumnRange` (`ranger_test.go:512`), the full case table.
+#[test]
+fn column_ranges_match_gos_case_table() {
+    const UNSPECIFIED: i64 = super::checker::UNSPECIFIED_LENGTH;
+    let cases: &[(usize, &str, &str, i64)] = &[
+        (0, "(a = 2 or a = 2) and (a = 2 or a = 2)", "[[2,2]]", UNSPECIFIED),
+        (0, "(a = 2 or a = 1) and (a = 3 or a = 4)", "[]", UNSPECIFIED),
+        (0, "a = 1 and b > 1", "[[1,1]]", UNSPECIFIED),
+        (1, "b > 1", "[(1,+inf]]", UNSPECIFIED),
+        (0, "1 = a", "[[1,1]]", UNSPECIFIED),
+        (0, "a != 1", "[[-inf,1) (1,+inf]]", UNSPECIFIED),
+        (0, "1 != a", "[[-inf,1) (1,+inf]]", UNSPECIFIED),
+        (0, "a > 1", "[(1,+inf]]", UNSPECIFIED),
+        (0, "1 < a", "[(1,+inf]]", UNSPECIFIED),
+        (0, "a >= 1", "[[1,+inf]]", UNSPECIFIED),
+        (0, "1 <= a", "[[1,+inf]]", UNSPECIFIED),
+        (0, "a < 1", "[[-inf,1)]", UNSPECIFIED),
+        (0, "1 > a", "[[-inf,1)]", UNSPECIFIED),
+        (0, "a <= 1", "[[-inf,1]]", UNSPECIFIED),
+        (0, "1 >= a", "[[-inf,1]]", UNSPECIFIED),
+        (0, "(a)", "[[-inf,0) (0,+inf]]", UNSPECIFIED),
+        (0, "a in (1, 3, NULL, 2)", "[[1,1] [2,2] [3,3]]", UNSPECIFIED),
+        (0, "a IN (8,8,81,45)", "[[8,8] [45,45] [81,81]]", UNSPECIFIED),
+        (0, "a between 1 and 2", "[[1,2]]", UNSPECIFIED),
+        (0, "a not between 1 and 2", "[[-inf,1) (2,+inf]]", UNSPECIFIED),
+        (0, "a between 2 and 1", "[]", UNSPECIFIED),
+        (0, "a not between 2 and 1", "[[-inf,+inf]]", UNSPECIFIED),
+        (0, "a IS NULL", "[[NULL,NULL]]", UNSPECIFIED),
+        (0, "a IS NOT NULL", "[[-inf,+inf]]", UNSPECIFIED),
+        (0, "a IS TRUE", "[[-inf,0) (0,+inf]]", UNSPECIFIED),
+        (0, "a IS NOT TRUE", "[[NULL,NULL] [0,0]]", UNSPECIFIED),
+        (0, "a IS FALSE", "[[0,0]]", UNSPECIFIED),
+        (0, "a IS NOT FALSE", "[[NULL,0) (0,+inf]]", UNSPECIFIED),
+        (1, "b in (1, '2.1')", "[[1,1] [2.1,2.1]]", UNSPECIFIED),
+        (0, "a > 9223372036854775807", "[(9223372036854775807,+inf]]", UNSPECIFIED),
+        (2, "c > 111.11111111", "[[111.111115,+inf]]", UNSPECIFIED),
+        (3, "d > 'aaaaaaaaaaaaaa'", "[(\"aaaaaaaaaaaaaa\",+inf]]", UNSPECIFIED),
+        (4, "e > 18446744073709500000", "[(18446744073709500000,+inf]]", UNSPECIFIED),
+        (4, "e > -2147483648", "[[0,+inf]]", UNSPECIFIED),
+        (3, "d = 'aab' or d = 'aac'", "[[\"a\",\"a\"]]", 1),
+        (0, "a in (1, 2, 3)", "[[1,1] [2,2] [3,3]]", UNSPECIFIED),
+    ];
+    let mut failures = Vec::new();
+    for (col_pos, expr, expected, length) in cases {
+        match build_column_ranges_for(expr, *col_pos, *length) {
+            Ok(got) if got == *expected => {}
+            Ok(got) => failures.push(format!("{expr}: got {got}, want {expected}")),
+            Err(error) => failures.push(format!("{expr}: {error}")),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

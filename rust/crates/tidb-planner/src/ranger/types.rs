@@ -439,8 +439,22 @@ fn format_datum(d: &Datum, is_left_side: bool) -> String {
         Datum::Bytes(bytes) => format!("{:?}", String::from_utf8_lossy(bytes)),
         Datum::String(s) => format!("{:?}", String::from_utf8_lossy(s.bytes())),
         // Go's default arm is `fmt.Sprintf("%v", d.GetValue())`: floats
-        // print through `strconv.FormatFloat(v, 'g', -1, 64)`.
-        Datum::Real(v) | Datum::Float32(v) => go_g_float(*v),
+        // print through `strconv.FormatFloat(v, 'g', -1, 64)` — and a
+        // KindFloat32 datum's GetValue is a float32, so its digits are the
+        // 32-bit shortest form ("111.111115", not the widened f64 tail).
+        Datum::Real(v) => go_g_float(*v),
+        Datum::Float32(v) => {
+            let narrowed = *v as f32;
+            if (-4..21).contains(&(format!("{narrowed:e}")
+                .split_once('e')
+                .and_then(|(_, exp)| exp.parse::<i32>().ok())
+                .unwrap_or(0)))
+            {
+                format!("{narrowed}")
+            } else {
+                go_g_float(f64::from(narrowed))
+            }
+        }
         // The remaining kinds print their debug shape until a caller
         // formats one (Go's `%v` of those values is type-specific).
         other => format!("{other:?}"),
