@@ -27,6 +27,7 @@
 
 pub mod checker;
 pub mod detacher;
+mod go_cases;
 pub mod points;
 pub mod ranger;
 pub mod types;
