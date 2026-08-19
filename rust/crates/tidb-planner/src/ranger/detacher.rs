@@ -2029,3 +2029,382 @@ mod tests {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// The shard-index GC-column family (`detacher.go:1228-1616`): rewriting an
+// EQ/IN over `uk(tidb_shard(a), a, ...)`'s data column into the
+// `tidb_shard(a) = xxx AND a = ...` form the index can seek.
+// ---------------------------------------------------------------------------
+
+/// Go `ExtractColumnsFromExpr`: every distinct column under the virtual
+/// expression, in first-appearance order.
+#[must_use]
+pub fn extract_columns_from_expr(
+    virtual_expr: Option<&tidb_expr::scalar_function::ScalarFunction>,
+) -> Vec<tidb_expr::column::Column> {
+    let mut fields: Vec<tidb_expr::column::Column> = Vec::new();
+    fn walk(
+        function: &tidb_expr::scalar_function::ScalarFunction,
+        fields: &mut Vec<tidb_expr::column::Column>,
+    ) {
+        for arg in &function.args {
+            match arg {
+                Expression::ScalarFunction(inner) => walk(inner, fields),
+                Expression::Column(column) => {
+                    if !fields.iter().any(|field| field.unique_id == column.unique_id) {
+                        fields.push(column.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if let Some(function) = virtual_expr {
+        walk(function, &mut fields);
+    }
+    fields
+}
+
+/// Go `IsValidShardIndex`: `index(tidb_shard(a), a, ...)` -- at least two
+/// columns, the first a GC column whose virtual expression is
+/// `tidb_shard(<the second column>)`.
+#[must_use]
+pub fn is_valid_shard_index(cols: &[tidb_expr::column::Column]) -> bool {
+    if cols.len() < 2 {
+        return false;
+    }
+    if !tidb_expr::column::gc_column_expr_is_tidb_shard(cols[0].virtual_expr.as_deref()) {
+        return false;
+    }
+    let Some(Expression::ScalarFunction(shard)) = cols[0].virtual_expr.as_deref() else {
+        return false;
+    };
+    if shard.args.len() != 1 {
+        return false;
+    }
+    let Expression::Column(argument) = &shard.args[0] else {
+        return false;
+    };
+    argument.unique_id == cols[1].unique_id
+}
+
+/// Go `NeedAddColumn4EqCond`: every index column past the shard prefix is
+/// pinned by an EQ with a knowable constant, and nothing already pins the
+/// prefix itself.
+#[must_use]
+pub fn need_add_column4_eq_cond(
+    cols: &[tidb_expr::column::Column],
+    access_cond: &[Option<Expression>],
+    column_values: &[Option<ValueInfo>],
+) -> bool {
+    if column_values.len() < 2 {
+        return false;
+    }
+    let mut matched_key_fields = 0_usize;
+    for cond in &access_cond[1..] {
+        let Some(cond) = cond else { break };
+        let Expression::ScalarFunction(function) = cond else {
+            return false;
+        };
+        if function.func_name.lowercase() != "eq" {
+            return false;
+        }
+        matched_key_fields += 1;
+    }
+    let mut value_count = 0_usize;
+    for value in &column_values[1..] {
+        if value.is_none() {
+            break;
+        }
+        value_count += 1;
+    }
+    matched_key_fields == cols.len() - 1
+        && value_count == cols.len() - 1
+        && access_cond[0].is_none()
+        && column_values[0].is_none()
+}
+
+/// Go `NeedAddColumn4InCond`: the IN names exactly the shard function's
+/// one column, every member a constant, and nothing pins the prefix.
+#[must_use]
+pub fn need_add_column4_in_cond(
+    cols: &[tidb_expr::column::Column],
+    access_cond: &[Option<Expression>],
+    function: Option<&tidb_expr::scalar_function::ScalarFunction>,
+) -> bool {
+    let Some(function) = function else {
+        return false;
+    };
+    if cols.is_empty() || access_cond.is_empty() {
+        return false;
+    }
+    if access_cond[0].is_some() {
+        return false;
+    }
+    let virtual_function = match cols[0].virtual_expr.as_deref() {
+        Some(Expression::ScalarFunction(inner)) => Some(inner),
+        _ => None,
+    };
+    let fields = extract_columns_from_expr(virtual_function);
+    let Some(Expression::Column(in_column)) = function.args.first() else {
+        return false;
+    };
+    if function.args[1..]
+        .iter()
+        .any(|member| !matches!(member, Expression::Constant(_)))
+    {
+        return false;
+    }
+    fields.len() == 1 && fields[0].unique_id == in_column.unique_id
+}
+
+/// Go `NeedAddGcColumn4ShardIndex`.
+#[must_use]
+pub fn need_add_gc_column4_shard_index(
+    cols: &[tidb_expr::column::Column],
+    access_cond: &[Option<Expression>],
+    column_values: &[Option<ValueInfo>],
+) -> bool {
+    if access_cond.len() < 2 || cols.len() < 2 {
+        return false;
+    }
+    if !is_valid_shard_index(cols) {
+        return false;
+    }
+    if let Some(Expression::ScalarFunction(function)) = &access_cond[1] {
+        match function.func_name.lowercase() {
+            "eq" => return need_add_column4_eq_cond(cols, access_cond, column_values),
+            "in" => return need_add_column4_in_cond(cols, access_cond, Some(function)),
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Evaluates the shard prefix's virtual expression at one record: the
+/// argument column replaced by the value, then folded to its constant --
+/// Go's `expr.Eval(mutRow)`.
+fn eval_virtual_expr_at(
+    virtual_expr: &Expression,
+    value: &Datum,
+) -> Result<Datum, super::points::PointBuilderError> {
+    fn substitute(expression: &Expression, value: &Datum) -> Expression {
+        match expression {
+            Expression::Column(column) => {
+                Expression::Constant(tidb_expr::constant::Constant::new(
+                    value.clone(),
+                    column.ret_type.clone().unwrap_or_else(|| {
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+                    }),
+                ))
+            }
+            Expression::ScalarFunction(function) => {
+                let mut rewritten = function.clone();
+                rewritten.args = function
+                    .args
+                    .iter()
+                    .map(|argument| substitute(argument, value))
+                    .collect();
+                Expression::ScalarFunction(rewritten)
+            }
+            other => other.clone(),
+        }
+    }
+    let mut substituted = substitute(virtual_expr, value);
+    tidb_expr::fold_constant_in_mode(
+        &mut substituted,
+        &tidb_expr::NoColumns,
+        tidb_expr::ConstantFoldMode::Normal,
+    );
+    match substituted {
+        Expression::Constant(constant) => Ok(constant.value),
+        other => Err(super::points::PointBuilderError::Unsupported(format!(
+            "tidb_shard did not fold: {other:?}"
+        ))),
+    }
+}
+
+fn eq_function(
+    left: Expression,
+    left_type: &tidb_datatype::FieldType,
+    right: Expression,
+) -> Result<Expression, super::points::PointBuilderError> {
+    tidb_expr::new_function::new_function(
+        &tidb_expr::NoColumns,
+        "eq",
+        left_type.clone(),
+        vec![left, right],
+    )
+    .map_err(|error| super::points::PointBuilderError::Unsupported(format!("{error:?}")))
+}
+
+/// Go `AddGcColumn4EqCond`: evaluates `tidb_shard` over the pinned record
+/// and fills the prefix slot with `tidb_shard(a) = <value>`.
+pub fn add_gc_column4_eq_cond(
+    cols: &[tidb_expr::column::Column],
+    access_cond: &mut [Option<Expression>],
+    column_values: &mut [Option<ValueInfo>],
+) -> Result<(), super::points::PointBuilderError> {
+    let virtual_expr = cols[0]
+        .virtual_expr
+        .as_deref()
+        .expect("a shard index carries its virtual expression");
+    // The shard function reads ONE column; Go builds the record from the
+    // data columns and evaluates over it.
+    let record = column_values[1]
+        .as_ref()
+        .and_then(|info| info.value.clone())
+        .unwrap_or(Datum::Null);
+    let evaluated = eval_virtual_expr_at(virtual_expr, &record)?;
+    let ret_type = cols[0]
+        .ret_type
+        .clone()
+        .unwrap_or_else(|| tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong));
+    let constant = Expression::Constant(tidb_expr::constant::Constant::new(
+        evaluated.clone(),
+        ret_type.clone(),
+    ));
+    access_cond[0] = Some(eq_function(
+        Expression::Column(cols[0].clone()),
+        &ret_type,
+        constant,
+    )?);
+    column_values[0] = Some(ValueInfo {
+        value: Some(evaluated),
+        mutable: false,
+    });
+    Ok(())
+}
+
+/// Go `AddGcColumn4InCond`: one `(tidb_shard(a) = h AND a = v)` disjunct
+/// per IN member, OR-chained left-deep.
+pub fn add_gc_column4_in_cond(
+    cols: &[tidb_expr::column::Column],
+    access_cond: &[Option<Expression>],
+) -> Result<Vec<Expression>, super::points::PointBuilderError> {
+    let virtual_expr = cols[0]
+        .virtual_expr
+        .as_deref()
+        .expect("a shard index carries its virtual expression");
+    let Some(Expression::ScalarFunction(function)) = &access_cond[1] else {
+        return Err(super::points::PointBuilderError::Unsupported(
+            "AddGcColumn4InCond expects the IN condition".to_owned(),
+        ));
+    };
+    let Some(Expression::Column(in_column)) = function.args.first() else {
+        return Err(super::points::PointBuilderError::Unsupported(
+            "the IN names no column".to_owned(),
+        ));
+    };
+    let and_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Tiny);
+    let shard_type = cols[0]
+        .ret_type
+        .clone()
+        .unwrap_or_else(|| tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong));
+    let column_type = in_column
+        .ret_type
+        .clone()
+        .unwrap_or_else(|| tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong));
+    let mut and_or: Option<Expression> = None;
+    for member in &function.args[1..] {
+        let Expression::Constant(constant) = member else {
+            return Err(super::points::PointBuilderError::Unsupported(
+                "an IN member is not a constant".to_owned(),
+            ));
+        };
+        let shard_value = eval_virtual_expr_at(virtual_expr, &constant.value)?;
+        let shard_constant =
+            Expression::Constant(tidb_expr::constant::Constant::new(shard_value, shard_type.clone()));
+        let shard_eq = eq_function(
+            Expression::Column(cols[0].clone()),
+            &shard_type,
+            shard_constant,
+        )?;
+        let member_eq = eq_function(
+            Expression::Column(in_column.clone()),
+            &column_type,
+            member.clone(),
+        )?;
+        let and_expr = tidb_expr::new_function::new_function(
+            &tidb_expr::NoColumns,
+            "and",
+            and_type.clone(),
+            vec![shard_eq, member_eq],
+        )
+        .map_err(|error| super::points::PointBuilderError::Unsupported(format!("{error:?}")))?;
+        and_or = Some(match and_or {
+            None => and_expr,
+            Some(previous) => tidb_expr::new_function::new_function(
+                &tidb_expr::NoColumns,
+                "or",
+                and_type.clone(),
+                vec![previous, and_expr],
+            )
+            .map_err(|error| super::points::PointBuilderError::Unsupported(format!("{error:?}")))?,
+        });
+    }
+    Ok(and_or.into_iter().collect())
+}
+
+/// Go `AddGcColumnCond`.
+pub fn add_gc_column_cond(
+    cols: &[tidb_expr::column::Column],
+    access_cond: &mut [Option<Expression>],
+    column_values: &mut [Option<ValueInfo>],
+) -> Result<Option<Vec<Expression>>, super::points::PointBuilderError> {
+    if let Some(Expression::ScalarFunction(function)) = &access_cond[1] {
+        match function.func_name.lowercase() {
+            "eq" => {
+                add_gc_column4_eq_cond(cols, access_cond, column_values)?;
+                return Ok(None);
+            }
+            "in" => return add_gc_column4_in_cond(cols, access_cond).map(Some),
+            _ => {}
+        }
+    }
+    Ok(None)
+}
+
+/// Go `AddExpr4EqAndInCondition` (`detacher.go:1379`), the planner rule's
+/// entry: rewrites `WHERE a = 1` over `uk(tidb_shard(a), a)` into
+/// `tidb_shard(a) = 214 AND a = 1`, and an IN into the OR-of-ANDs form.
+/// Anything that does not match returns the conditions untouched.
+pub fn add_expr4_eq_and_in_condition(
+    conditions: &[Expression],
+    cols: &[tidb_expr::column::Column],
+) -> Result<Vec<Expression>, super::points::PointBuilderError> {
+    let mut accesses: Vec<Option<Expression>> = vec![None; cols.len()];
+    let mut column_values: Vec<Option<ValueInfo>> = vec![None; cols.len()];
+    let mut add_gc_cond = true;
+    for cond in conditions {
+        let offset = get_potential_eq_or_in_col_offset(cond, cols, false);
+        if offset < 0 {
+            continue;
+        }
+        let offset = offset as usize;
+        if accesses[offset].is_none() {
+            accesses[offset] = Some(cond.clone());
+        } else {
+            // The same field twice (`a > 100 AND a < 200`): no rewrite.
+            add_gc_cond = false;
+        }
+    }
+    for (offset, cond) in accesses.iter().enumerate() {
+        let Some(cond) = cond else { continue };
+        if !all_eq_or_in(cond) {
+            add_gc_cond = false;
+            break;
+        }
+        column_values[offset] = extract_value_info(cond);
+    }
+    if !add_gc_cond || !need_add_gc_column4_shard_index(cols, &accesses, &column_values) {
+        return Ok(conditions.to_vec());
+    }
+    let flattened: Vec<Expression> = accesses.iter().flatten().cloned().collect();
+    let mut new_conditions = remove_conditions(conditions, &flattened);
+    match add_gc_column_cond(cols, &mut accesses, &mut column_values)? {
+        Some(replaced) => new_conditions.extend(replaced),
+        None => new_conditions.extend(accesses.into_iter().flatten()),
+    }
+    Ok(new_conditions)
+}

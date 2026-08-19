@@ -1436,3 +1436,135 @@ fn min_access_conds_for_dnf_match_go() {
     }
     assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
 }
+
+/// Go `TestShardIndexFuncSuites` (`ranger_test.go:1752`): the shard-index
+/// GC-column family's unit surface -- `IsValidShardIndex`,
+/// `ExtractColumnsFromExpr`, `NeedAddColumn4InCond`/`4EqCond`,
+/// `NeedAddGcColumn4ShardIndex`, and `AddExpr4EqAndInCondition`'s three
+/// rewrite shapes with the pinned `tidb_shard` hash values 214 and 122.
+#[test]
+fn shard_index_func_suites_match_go() {
+    use super::detacher::{
+        add_expr4_eq_and_in_condition, extract_columns_from_expr, is_valid_shard_index,
+        need_add_column4_eq_cond, need_add_column4_in_cond, need_add_gc_column4_shard_index,
+    };
+
+    let longlong = || FieldType::new(FieldTypeCode::LongLong);
+    let column = |unique_id: i64| Column::new(unique_id, longlong());
+    let ctx = tidb_expr::NoColumns;
+    let build = |name: &str, args: Vec<Expression>| {
+        tidb_expr::new_function::new_function(&ctx, name, longlong(), args).expect("builds")
+    };
+
+    let col0 = column(0);
+    let col1 = column(1);
+    // col2 is the GC column: VirtualExpr = tidb_shard(col0).
+    let mut col2 = column(2);
+    col2.virtual_expr = Some(Box::new(build(
+        "tidb_shard",
+        vec![Expression::Column(col0.clone())],
+    )));
+    // col3's virtual expression is abs(col0) -- NOT a shard prefix.
+    let mut col3 = column(3);
+    col3.virtual_expr = Some(Box::new(build("abs", vec![Expression::Column(col0.clone())])));
+    let col4 = column(4);
+
+    // ---- IsValidShardIndex ----
+    assert!(!is_valid_shard_index(&[]));
+    assert!(!is_valid_shard_index(&[col2.clone()]));
+    assert!(!is_valid_shard_index(&[col0.clone(), col1.clone()]));
+    assert!(!is_valid_shard_index(&[col2.clone(), col1.clone()]));
+    assert!(!is_valid_shard_index(&[col3.clone(), col0.clone()]));
+    assert!(is_valid_shard_index(&[col2.clone(), col0.clone()]));
+
+    // ---- ExtractColumnsFromExpr ----
+    let con1 = Expression::Constant(tidb_expr::constant::Constant::new(
+        Datum::Int(1),
+        longlong(),
+    ));
+    let con5 = Expression::Constant(tidb_expr::constant::Constant::new(
+        Datum::Int(5),
+        longlong(),
+    ));
+    let expr_eq = build("eq", vec![Expression::Column(col0.clone()), con1.clone()]);
+    let expr_in = build(
+        "in",
+        vec![Expression::Column(col0.clone()), con1.clone(), con5.clone()],
+    );
+    assert_eq!(extract_columns_from_expr(None).len(), 0);
+    let Expression::ScalarFunction(eq_function) = &expr_eq else {
+        panic!("eq is a scalar function");
+    };
+    assert_eq!(extract_columns_from_expr(Some(eq_function)).len(), 1);
+    // (col0 = 1 and abs(col0)-col3 > 1) or (col4 < 5 and 5): three distinct
+    // columns underneath.
+    let expr_gt = build("gt", vec![Expression::Column(col3.clone()), con1.clone()]);
+    let and_expr1 = build("and", vec![expr_eq.clone(), expr_gt]);
+    let expr_lt = build("lt", vec![Expression::Column(col4.clone()), con5.clone()]);
+    let and_expr2 = build("and", vec![expr_lt, con5.clone()]);
+    let or_expr2 = build("or", vec![and_expr1, and_expr2]);
+    let Expression::ScalarFunction(or_function) = &or_expr2 else {
+        panic!("or is a scalar function");
+    };
+    assert_eq!(extract_columns_from_expr(Some(or_function)).len(), 3);
+
+    // ---- NeedAddColumn4InCond ----
+    let Expression::ScalarFunction(in_function) = &expr_in else {
+        panic!("in is a scalar function");
+    };
+    let shard_cols = vec![col2.clone(), col0.clone()];
+    let access: Vec<Option<Expression>> = vec![None, Some(expr_in.clone())];
+    assert!(need_add_column4_in_cond(&shard_cols, &access, Some(in_function)));
+    assert!(!need_add_column4_in_cond(&[], &access, Some(in_function)));
+    assert!(!need_add_column4_in_cond(&shard_cols, &[], Some(in_function)));
+    assert!(!need_add_column4_in_cond(&shard_cols, &access, None));
+    // col1 in (1, 5): not the shard function's column.
+    let expr_in2 = build(
+        "in",
+        vec![Expression::Column(col1.clone()), con1.clone(), con5.clone()],
+    );
+    let Expression::ScalarFunction(in2_function) = &expr_in2 else {
+        panic!("in is a scalar function");
+    };
+    let access2: Vec<Option<Expression>> = vec![None, Some(expr_in2.clone())];
+    assert!(!need_add_column4_in_cond(&shard_cols, &access2, Some(in2_function)));
+    // col1 in (1, col1): a non-constant member.
+    let expr_in3 = build(
+        "in",
+        vec![
+            Expression::Column(col1.clone()),
+            con1.clone(),
+            Expression::Column(col1.clone()),
+        ],
+    );
+    let in3_function = match &expr_in3 {
+        Expression::ScalarFunction(function) => function.clone(),
+        _ => panic!("in is a scalar function"),
+    };
+    let access3: Vec<Option<Expression>> = vec![None, Some(expr_in3)];
+    let in3_function = &in3_function;
+    assert!(!need_add_column4_in_cond(&shard_cols, &access3, Some(in3_function)));
+
+    // ---- NeedAddColumn4EqCond / NeedAddGcColumn4ShardIndex ----
+    let eq_access: Vec<Option<Expression>> = vec![None, Some(expr_eq.clone())];
+    assert!(!need_add_column4_eq_cond(&shard_cols, &eq_access, &[]));
+    assert!(!need_add_gc_column4_shard_index(&shard_cols, &[], &[]));
+
+    // ---- AddExpr4EqAndInCondition ----
+    let column_name = |unique_id: i64| format!("Column#{unique_id}");
+    let expr_in4 = build("in", vec![Expression::Column(col0.clone()), con1.clone()]);
+    let cases: &[(&Expression, &str)] = &[
+        (&expr_eq, "[eq(Column#2, 214) eq(Column#0, 1)]"),
+        (&expr_in4, "[and(eq(Column#2, 214), eq(Column#0, 1))]"),
+        (
+            &expr_in,
+            "[or(and(eq(Column#2, 214), eq(Column#0, 1)), and(eq(Column#2, 122), eq(Column#0, 5)))]",
+        ),
+    ];
+    for (input, want) in cases {
+        let rewritten =
+            add_expr4_eq_and_in_condition(std::slice::from_ref(*input), &shard_cols)
+                .expect("rewrites");
+        assert_eq!(&stringify_conds(&rewritten, &column_name), want);
+    }
+}
