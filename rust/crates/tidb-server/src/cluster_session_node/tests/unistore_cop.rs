@@ -655,3 +655,86 @@ fn an_index_read_and_a_table_scan_agree_over_unsigned_keys() {
         ]
     );
 }
+
+/// THE DIFFERENTIAL, as a test: a predicate pushed into the coprocessor and
+/// the same predicate evaluated locally must select the same rows.
+///
+/// `WHERE p` is answered by the region's filter; `sum(CASE WHEN p ...)` is
+/// answered by the local evaluator over the same rows. Any disagreement is a
+/// silent wrong answer -- the region either invented a row or dropped one --
+/// and no single-path test can see it, because each evaluator is correct
+/// against its own inputs. This is how the UNSIGNED decode bug was found,
+/// after every existing test passed straight through it.
+///
+/// The fixture is deliberately made of boundary values: agreement on
+/// ordinary data proves nothing.
+#[test]
+fn a_pushed_down_predicate_selects_what_local_evaluation_selects() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(43))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.diff (id int primary key, i bigint, u bigint unsigned, \
+         s varchar(20) COLLATE utf8mb4_general_ci, b varchar(20) COLLATE utf8mb4_bin, \
+         dc decimal(12,3), d datetime)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.diff VALUES \
+         (1, -9223372036854775808, 18446744073709551615, 'Hello', 'Hello', -999999.999, \
+          '1000-01-01 00:00:00'), \
+         (2, 0, 0, '', '', 0.000, '2024-06-15 12:30:45'), \
+         (3, NULL, NULL, NULL, NULL, NULL, NULL), \
+         (4, 9223372036854775807, 9223372036854775808, 'HELLO', 'HELLO', 999999.999, \
+          '9999-12-31 23:59:59'), \
+         (5, -1, 1, 'world', 'world', -0.001, '2000-02-29 00:00:00')",
+    );
+
+    const PREDICATES: &[&str] = &[
+        // Signed and unsigned integers at their extremes.
+        "i > 0",
+        "i < 0",
+        "i = -9223372036854775808",
+        "u > 2",
+        "u >= 9223372036854775808",
+        "u = 18446744073709551615",
+        // Three-valued logic.
+        "i IS NULL",
+        "i IS NOT NULL AND u > 0",
+        "NOT (i > 0)",
+        "i = 0 OR u = 0",
+        "i IN (0, -1)",
+        "i NOT IN (0)",
+        // Collation-sensitive comparison, both sides of the pair.
+        "s = 'hello'",
+        "b = 'hello'",
+        "s > 'HELLO'",
+        // Other families, and cross-type coercion.
+        "dc > 0",
+        "dc = -0.001",
+        "d > '2024-01-01'",
+        "i = '0'",
+        "i BETWEEN '-1' AND '1'",
+    ];
+
+    for predicate in PREDICATES {
+        let pushed = displayed(rows(
+            &mut session,
+            &format!("SELECT count(*) FROM test.diff WHERE {predicate}"),
+        ));
+        let local = displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT coalesce(sum(CASE WHEN ({predicate}) THEN 1 ELSE 0 END), 0) \
+                 FROM test.diff"
+            ),
+        ));
+        assert_eq!(
+            pushed, local,
+            "`{predicate}`: the region and the local evaluator disagree"
+        );
+    }
+}
