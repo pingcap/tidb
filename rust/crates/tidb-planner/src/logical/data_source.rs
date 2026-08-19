@@ -97,6 +97,11 @@ pub struct DataSource {
     /// port keeps the stages as two typed lists, and the grown lists below
     /// stay empty until the costing seam fills them.
     pub enumerated_paths: Vec<crate::access_path::PossiblePath>,
+    /// The catalog's index metadata, in the SAME order
+    /// [`Self::enumerated_paths`]' `Index { index }` offsets address — what
+    /// Go reads off `ds.TableInfo.Indices` when it fills `path.IdxCols`
+    /// (`fillIndexPath`). Filled beside the newborn path list.
+    pub indexes: Vec<crate::plan_builder::catalog::SourceIndex>,
     /// Go `AllPossibleAccessPaths`, reusing this crate's own path model.
     pub all_possible_access_paths: Vec<DataSourceAccessPath>,
     /// Go `PossibleAccessPaths`: the pruned subset the optimizer enumerates.
@@ -399,6 +404,7 @@ impl DataSource {
             pushed_down_conds: self.pushed_down_conds.clone(),
             all_conds: self.all_conds.clone(),
             enumerated_paths: self.enumerated_paths.clone(),
+            indexes: self.indexes.clone(),
             all_possible_access_paths: self.all_possible_access_paths.clone(),
             possible_access_paths: self.possible_access_paths.clone(),
             pk_is_handle: self.pk_is_handle,

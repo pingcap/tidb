@@ -394,6 +394,36 @@ fn table_path_matches_order(
     item.col == pk_col.unique_id
 }
 
+/// The basic index-prefix arm of Go `matchProperty` (`find_best_task.go:1095`):
+/// the required order matches an index when every sort item is the same
+/// direction (`AllSameOrder`) and the items are a PREFIX of the index's
+/// columns, mapped to unique ids through the source's schema (an index
+/// column's `Offset` addresses the TABLE column list, which is the scan's
+/// schema order). Constant-column skipping and the common-handle suffix
+/// extension are ranger-fed refinements, named as later slices.
+fn index_path_matches_order(
+    ds: &crate::logical::DataSource,
+    index: &crate::plan_builder::catalog::SourceIndex,
+    prop: &PhysicalProperty,
+) -> bool {
+    let (all_same, _) = prop.all_same_order();
+    if prop.is_sort_item_empty() || !all_same {
+        return false;
+    }
+    let Some(schema) = ds.base.base.schema() else {
+        return false;
+    };
+    if index.columns.len() < prop.sort_items.len() {
+        return false;
+    }
+    prop.sort_items.iter().zip(&index.columns).all(|(item, col)| {
+        schema
+            .columns
+            .get(col.offset)
+            .is_some_and(|schema_col| schema_col.unique_id == item.col)
+    })
+}
+
 fn find_best_task_4_logical_data_source(
     ds: &crate::logical::DataSource,
     prop: &PhysicalProperty,
@@ -405,39 +435,74 @@ fn find_best_task_4_logical_data_source(
     if let Some(dual) = try_to_get_dual_task(ds, ctx) {
         return Ok(dual);
     }
-    // `convertToTableScan:2834`: a required order is admitted exactly when
-    // the path matches it — the int-handle arm of `matchProperty` — and the
-    // admitted scan carries `KeepOrder`/`Desc`.
-    let keep_order = !prop.is_sort_item_empty();
-    if keep_order && !table_path_matches_order(ds, prop) {
-        return Ok(Task::invalid_task());
-    }
-    let desc = keep_order && prop.sort_items[0].desc;
+    // Per-path admission, the shape of Go's candidate loop: an empty
+    // property admits every path unordered; a required order admits the
+    // paths that MATCH it — the int-handle arm for the table path
+    // (`matchProperty:1082`), the basic prefix arm for an index
+    // (`matchProperty:1095`) — and the admitted scan carries
+    // `KeepOrder`/`Desc` (`convertToTableScan:2834`).
+    let ordered = !prop.is_sort_item_empty();
+    let desc = ordered && prop.sort_items[0].desc;
     let mut best = Task::invalid_task();
     for path in &ds.enumerated_paths {
-        let crate::access_path::PossiblePath::Table { .. } = path else {
-            continue;
+        let cop = match path {
+            crate::access_path::PossiblePath::Table { .. } => {
+                let keep_order = ordered;
+                if keep_order && !table_path_matches_order(ds, prop) {
+                    continue;
+                }
+                let mut base = crate::physical::BasePhysicalPlan::new(
+                    ctx.allocator,
+                    "TableScan",
+                    ds.base.base.query_block_offset(),
+                );
+                base.base.set_stats(ds.base.base.stats_info().cloned());
+                base.base.set_schema(ds.base.base.schema().cloned());
+                let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+                    base,
+                    table_id: ds.physical_table_id,
+                    store_type: crate::physical_table_reader::StoreType::TiKv,
+                    keep_order,
+                    desc,
+                });
+                Task::Cop(crate::task::CopTask {
+                    table_plan: Some(Box::new(scan)),
+                    index_plan_finished: true,
+                    keep_order,
+                    ..crate::task::CopTask::default()
+                })
+            }
+            crate::access_path::PossiblePath::Index { index } => {
+                let Some(source_index) = ds.indexes.get(*index) else {
+                    continue;
+                };
+                let keep_order = ordered;
+                if keep_order && !index_path_matches_order(ds, source_index, prop) {
+                    continue;
+                }
+                let mut base = crate::physical::BasePhysicalPlan::new(
+                    ctx.allocator,
+                    "IndexScan",
+                    ds.base.base.query_block_offset(),
+                );
+                base.base.set_stats(ds.base.base.stats_info().cloned());
+                base.base.set_schema(ds.base.base.schema().cloned());
+                let scan = PhysicalPlan::IndexScan(crate::physical::PhysicalIndexScan {
+                    base,
+                    table_id: ds.physical_table_id,
+                    index_id: source_index.id,
+                    index_name: source_index.name.clone(),
+                    keep_order,
+                    desc,
+                });
+                Task::Cop(crate::task::CopTask {
+                    index_plan: Some(Box::new(scan)),
+                    index_plan_finished: false,
+                    keep_order,
+                    ..crate::task::CopTask::default()
+                })
+            }
         };
-        let mut base = crate::physical::BasePhysicalPlan::new(
-            ctx.allocator,
-            "TableScan",
-            ds.base.base.query_block_offset(),
-        );
-        base.base.set_stats(ds.base.base.stats_info().cloned());
-        base.base.set_schema(ds.base.base.schema().cloned());
-        let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
-            base,
-            table_id: ds.physical_table_id,
-            store_type: crate::physical_table_reader::StoreType::TiKv,
-            keep_order,
-            desc,
-        });
-        let cop = Task::Cop(crate::task::CopTask {
-            table_plan: Some(Box::new(scan)),
-            index_plan_finished: true,
-            keep_order,
-            ..crate::task::CopTask::default()
-        });
         let cur = cop.convert_to_root_task()?;
         if best.invalid() || compare_task_cost(ctx.coster, &cur, &best)? {
             best = cur;
@@ -750,6 +815,72 @@ mod tests {
         // ORDER BY a non-handle column: refused.
         let prop = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
         let task = find_best_task(&source(&allocator), &prop, &mut ctx).expect("answers");
+        assert!(task.invalid());
+    }
+
+    #[test]
+    fn an_index_prefix_order_plans_an_index_reader() {
+        // The index-read column end to end: ORDER BY the index's first
+        // column admits the index path (`matchProperty:1095` basic prefix),
+        // the cop's index half converts through `convertToRootTaskImpl`'s
+        // index branch (`task_base.go:563`), and the reader carries the
+        // scan on its IndexPlan field.
+        use crate::access_path::PossiblePath;
+        use crate::logical::DataSource;
+        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use tidb_datatype::{FieldType, FieldTypeCode};
+        use tidb_expr::column::Column;
+        use tidb_expr::schema::Schema;
+
+        let allocator = PlanIdAllocator::new();
+        let coster = CountCoster;
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
+        let source = {
+            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
+            base.base.set_stats(Some(StatsInfo::new(50.0, [])));
+            let mut schema = Schema::default();
+            schema.columns = vec![
+                Column::new(11, FieldType::new(FieldTypeCode::LongLong)),
+                Column::new(12, FieldType::new(FieldTypeCode::LongLong)),
+            ];
+            base.base.set_schema(Some(schema));
+            LogicalPlan::DataSource(DataSource {
+                base,
+                physical_table_id: 7,
+                enumerated_paths: vec![
+                    PossiblePath::Table { is_int_handle: true, primary_index: None },
+                    PossiblePath::Index { index: 0 },
+                ],
+                indexes: vec![SourceIndex {
+                    id: 3,
+                    name: "ib".to_owned(),
+                    columns: vec![SourceIndexColumn {
+                        name: "b".to_owned(),
+                        offset: 1,
+                        length: -1,
+                    }],
+                    ..SourceIndex::default()
+                }],
+                ..DataSource::default()
+            })
+        };
+
+        // ORDER BY the index's column (unique id 12): only the index path
+        // matches, and the plan is an IndexReader over a keep-order scan.
+        let prop = PhysicalProperty::new(TaskType::Root, &[12], false, f64::MAX, false);
+        let task = find_best_task(&source, &prop, &mut ctx).expect("plans");
+        let Some(PhysicalPlan::IndexReader(reader)) = task.plan() else {
+            panic!("an IndexReader, got {:?}", task.plan());
+        };
+        let Some(PhysicalPlan::IndexScan(scan)) = reader.index_plan.as_deref() else {
+            panic!("the scan hangs off IndexPlan");
+        };
+        assert_eq!(scan.index_id, 3);
+        assert!(scan.keep_order && !scan.desc);
+
+        // A two-item order the one-column index cannot cover refuses.
+        let prop = PhysicalProperty::new(TaskType::Root, &[12, 11], false, f64::MAX, false);
+        let task = find_best_task(&source, &prop, &mut ctx).expect("answers");
         assert!(task.invalid());
     }
 

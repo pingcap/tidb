@@ -991,6 +991,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             table,
             self.optimizer_use_invisible_indexes,
         );
+        data_source.indexes = table.indexes.clone();
         debug_assert!(data_source.possible_access_paths.is_empty());
 
         data_source

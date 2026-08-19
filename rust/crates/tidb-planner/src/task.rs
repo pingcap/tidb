@@ -395,11 +395,33 @@ impl CopTask {
                  PhysicalIndexMergeReader, not ported",
             ));
         }
-        if self.index_plan.is_some() {
+        if self.index_plan.is_some() && self.table_plan.is_some() {
             return Err(PlanError::internal(
-                "convertToRootTaskImpl: an index half builds \
-                 PhysicalIndexReader/BuildIndexLookUpTask, not ported",
+                "convertToRootTaskImpl: a double-read cop task builds \
+                 BuildIndexLookUpTask, not ported",
             ));
+        }
+        if let Some(index_plan) = self.index_plan.take() {
+            // Go's index branch (`task_base.go:563`): wrap the pushed-down
+            // index plan in a PhysicalIndexReader carrying its stats, at its
+            // query-block offset. The reader reuses the pushed plan's id —
+            // the same named narrowing as the table branch.
+            let mut base = crate::physical::BasePhysicalPlan::with_id(
+                index_plan.id(),
+                "IndexReader",
+                index_plan.query_block_offset(),
+            );
+            base.base.set_stats(index_plan.stats_info().cloned());
+            let reader = PhysicalPlan::IndexReader(crate::physical::PhysicalIndexReader {
+                base,
+                index_plan: Some(index_plan),
+            });
+            let mut root = RootTask::default();
+            root.set_plan(reader);
+            if self.warnings.warning_count() > 0 {
+                root.warnings.copy_of(&self.warnings);
+            }
+            return Ok(Task::Root(root));
         }
         if !self.root_task_conds.is_empty() {
             return Err(PlanError::internal(
@@ -636,16 +658,34 @@ mod tests {
     }
 
     #[test]
-    fn an_index_half_still_refuses_the_conversion_by_name() {
-        // The index shapes build PhysicalIndexReader/BuildIndexLookUpTask,
-        // still refused.
+    fn an_index_only_cop_task_converts_into_an_index_reader() {
+        // `convertToRootTaskImpl`'s index branch (`task_base.go:563`): the
+        // pushed-down index plan wraps in a PhysicalIndexReader carrying its
+        // stats; the DOUBLE-READ shape (both halves) still refuses naming
+        // BuildIndexLookUpTask.
         let task = Task::Cop(CopTask {
-            index_plan: Some(Box::new(dual_with_rows(1.0))),
+            index_plan: Some(Box::new(dual_with_rows(4.0))),
             ..CopTask::default()
         });
-        let error = task.convert_to_root_task().expect_err("refuses");
+        let converted = task.convert_to_root_task().expect("converts");
+        let Some(PhysicalPlan::IndexReader(reader)) = converted.plan() else {
+            panic!("an IndexReader, got {:?}", converted.plan());
+        };
+        assert!(reader.index_plan.is_some());
         assert!(
-            format!("{error}").contains("PhysicalIndexReader"),
+            (converted.plan().expect("plan").stats_info().expect("stats").row_count() - 4.0)
+                .abs()
+                < f64::EPSILON
+        );
+
+        let double = Task::Cop(CopTask {
+            index_plan: Some(Box::new(dual_with_rows(1.0))),
+            table_plan: Some(Box::new(dual_with_rows(1.0))),
+            ..CopTask::default()
+        });
+        let error = double.convert_to_root_task().expect_err("refuses");
+        assert!(
+            format!("{error}").contains("BuildIndexLookUpTask"),
             "{error}"
         );
     }
@@ -984,6 +1024,14 @@ pub fn attach2_task(plan: PhysicalPlan, mut tasks: Vec<Task>) -> Result<Task, Pl
         PhysicalPlan::TableReader(_) => Err(PlanError::internal(
             "a PhysicalTableReader is born by convertToRootTaskImpl \
              (task_base.go:571), never attached",
+        )),
+        PhysicalPlan::IndexScan(_) => Err(PlanError::internal(
+            "a PhysicalIndexScan is born inside a cop task by findBestTask \
+             (convertToIndexScan), never attached",
+        )),
+        PhysicalPlan::IndexReader(_) => Err(PlanError::internal(
+            "a PhysicalIndexReader is born by convertToRootTaskImpl \
+             (task_base.go:563), never attached",
         )),
         PhysicalPlan::CTETable(_) => Err(PlanError::internal(
             "a PhysicalCTETable is born inside its own root task by \

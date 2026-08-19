@@ -993,6 +993,39 @@ pub struct PhysicalTableReader {
     pub is_common_handle: bool,
 }
 
+/// Go `physicalop.PhysicalIndexScan`'s planning slice: which index the scan
+/// reads and how. The full Go struct carries ranges/columns/histograms; the
+/// enum's slice carries what the dispatcher's admission and the reader
+/// conversion decide on, like [`PhysicalTableScan`]'s slice.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalIndexScan {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `Table.ID`.
+    pub table_id: i64,
+    /// Go `Index.ID`.
+    pub index_id: i64,
+    /// Go `Index.Name.O`, for explain identity.
+    pub index_name: String,
+    /// Go `KeepOrder`.
+    pub keep_order: bool,
+    /// Go `Desc`.
+    pub desc: bool,
+}
+
+/// Go `physicalop.PhysicalIndexReader` (`physical_index_reader.go:34`): the
+/// TiDB-side operator over a pushed-down index plan, born by
+/// `convertToRootTaskImpl`'s index branch (`task_base.go:563`). The
+/// pushed-down side hangs off [`Self::index_plan`], not the child list —
+/// [`PhysicalTableReader`]'s own shape.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalIndexReader {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `IndexPlan`.
+    pub index_plan: Option<Box<PhysicalPlan>>,
+}
+
 /// A physical operator whose own port is a later batch; the physical twin of
 /// [`crate::logical::TodoLogicalOp`].
 #[derive(Clone, Debug, Default)]
@@ -1040,6 +1073,10 @@ pub enum PhysicalPlan {
     Apply(PhysicalApply),
     /// Go `physicalop.PhysicalTableReader`.
     TableReader(PhysicalTableReader),
+    /// Go `physicalop.PhysicalIndexScan` (planning slice).
+    IndexScan(PhysicalIndexScan),
+    /// Go `physicalop.PhysicalIndexReader`.
+    IndexReader(PhysicalIndexReader),
     /// An operator whose port is a later batch; see [`TodoPhysicalOp`].
     Todo(TodoPhysicalOp),
 }
@@ -1066,6 +1103,8 @@ impl PhysicalPlan {
             Self::Sequence(op) => &op.base,
             Self::Apply(op) => &op.hash_join.base,
             Self::TableReader(op) => &op.base,
+            Self::IndexScan(op) => &op.base,
+            Self::IndexReader(op) => &op.base,
             Self::Todo(op) => &op.base,
         }
     }
@@ -1090,6 +1129,8 @@ impl PhysicalPlan {
             Self::Sequence(op) => &mut op.base,
             Self::Apply(op) => &mut op.hash_join.base,
             Self::TableReader(op) => &mut op.base,
+            Self::IndexScan(op) => &mut op.base,
+            Self::IndexReader(op) => &mut op.base,
             Self::Todo(op) => &mut op.base,
         }
     }
@@ -1483,6 +1524,18 @@ impl PhysicalPlan {
                 table_plan: op.table_plan.clone(),
                 store_type: op.store_type,
                 is_common_handle: op.is_common_handle,
+            }),
+            Self::IndexScan(op) => Self::IndexScan(PhysicalIndexScan {
+                base: base_of(&op.base),
+                table_id: op.table_id,
+                index_id: op.index_id,
+                index_name: op.index_name.clone(),
+                keep_order: op.keep_order,
+                desc: op.desc,
+            }),
+            Self::IndexReader(op) => Self::IndexReader(PhysicalIndexReader {
+                base: base_of(&op.base),
+                index_plan: op.index_plan.clone(),
             }),
             Self::Todo(op) => Self::Todo(TodoPhysicalOp {
                 base: base_of(&op.base),
