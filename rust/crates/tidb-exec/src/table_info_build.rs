@@ -916,10 +916,10 @@ fn build_column(
             // (`ddl/add_column.go:577`, `errCheckConstraintIsOff`) and
             // IGNORES the option. The flag-on constraint machinery is
             // unported; a node that refused here diverged from every
-            // default-configured Go server (probe 24). KNOWN SEAM GAP: the
-            // warning lands in the LOWERING context, which the cluster DDL
-            // route does not yet drain into the connection's buffer, so
-            // `SHOW WARNINGS` over that route misses it.
+            // default-configured Go server (probe 24). The cluster DDL
+            // route drains this context's warnings into the connection's
+            // buffer at admission (Session::drain_context_warnings), so
+            // SHOW WARNINGS carries them as Go's does.
             ColumnOption::Check(_) => {
                 context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
             }

@@ -1174,7 +1174,15 @@ impl ClusterServerSession {
                     self.session.current_database(),
                     &context,
                 ) {
-                    Ok(Some(statement)) => Ok(StatementRoute::Ddl(statement)),
+                    Ok(Some(statement)) => {
+                        // Warnings the LOWERING produced (an ignored CHECK
+                        // constraint, Go ddl/create_table.go:1470) belong to
+                        // this statement; Go appends them to the session's
+                        // own context, so drain the lowering context's here.
+                        self.session.begin_ddl_statement_warnings();
+                        self.session.drain_context_warnings(&context);
+                        Ok(StatementRoute::Ddl(statement))
+                    }
                     Ok(None) => Err(SqlQueryError::unknown(
                         "this node changes the cluster's catalog for CREATE TABLE, DROP TABLE, \
                          CREATE DATABASE, DROP DATABASE, CREATE/DROP VIEW, index changes, and \

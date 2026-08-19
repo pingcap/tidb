@@ -199,6 +199,16 @@ impl Session {
     }
 
     /// Moves what evaluation recorded into the statement's warning buffer.
+    /// Drains a lowering/probe context's warnings into this session's
+    /// buffer — the cluster DDL route's half of Go's one warning handler:
+    /// Go appends `errCheckConstraintIsOff`-style DDL warnings to the SAME
+    /// session `StmtContext` the statement runs under, while this stack
+    /// lowers cluster DDL in a context of its own that would otherwise drop
+    /// them (the seam gap named at the CHECK arm of `table_info_build`).
+    pub fn drain_context_warnings(&mut self, ctx: &tidb_executor::StmtContext) {
+        self.drain_eval_warnings(ctx);
+    }
+
     pub(crate) fn drain_eval_warnings(&mut self, ctx: &tidb_executor::StmtContext) {
         for (level, code, message) in ctx.take_warnings() {
             self.append_warning(WarningLevel::from_executor(level), code, message);
@@ -240,6 +250,14 @@ impl Session {
     /// Starts the boundary for the cached prepared PointGet path. That path is
     /// known to be a SELECT rather than SHOW WARNINGS, so the previous buffer
     /// is discarded without revisiting the retained AST.
+    /// The statement boundary for a cluster-routed DDL, which bypasses the
+    /// ordinary run path: the previous statement's warnings go, and the
+    /// statement is never SHOW WARNINGS.
+    pub fn begin_ddl_statement_warnings(&mut self) {
+        self.warnings.clear();
+        self.in_show_warning = false;
+    }
+
     pub(crate) fn begin_cached_prepared_query_boundary(&mut self) {
         self.warnings.clear();
         self.in_show_warning = false;
