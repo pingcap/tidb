@@ -103,7 +103,7 @@
 //!    driver really does build all three, in that order. Because the access
 //!    path already priced those conditions, the selection does not reduce the
 //!    estimate again (see `PlanTrace::selection`).
-//! 8. **`UPDATE`/`DELETE` never show an `IndexRangeScan`.** Go's planner
+//! 8. **`UPDATE`/`DELETE` take the same access paths a `SELECT` does.** Go's planner
 //!    finds the same access paths for a write as for a `SELECT`, through the
 //!    same functions: `tryUpdatePointPlan`/`tryDeletePointPlan` run
 //!    `tryPointGetPlan` over a `SelectStmt` synthesized from the write's own
@@ -111,16 +111,19 @@
 //!    This tier's write drivers ([`crate::driver::run_update_in`],
 //!    [`crate::driver::run_delete_in`]) take the KEY and TABLE halves of
 //!    that, in Go's order, through `driver::access::write_read_path`: a
-//!    `WHERE` that pins a whole key records `Point_Get`, one the ranger bounds records
-//!    `TableRangeScan`, and anything else stays `TableFullScan`. Both
-//!    narrowed forms keep the `Selection` above them, for divergence 7's
-//!    reason.
+//!    `WHERE` that pins a whole key records `Point_Get`, several whole keys
+//!    `Batch_Point_Get`, one the ranger bounds records `TableRangeScan`, and
+//!    anything else stays `TableFullScan`.
 //!
-//!    The gap left is the INDEX path: none is offered to a write, so a
-//!    `WHERE` on a non-unique secondary index still scans the table where Go
-//!    would read the index. (A write whose `WHERE` pins a whole UNIQUE index
-//!    does get the point plan, because `try_point_get` looks that key up
-//!    exactly as it does for a read.) The recorder IS those driver
+//!    The INDEX path is offered too, through `write_index_range_path`: when
+//!    the chooser prefers an index the write reads through it and records
+//!    `IndexRangeScan`, so `UPDATE t SET ... WHERE a = 10` on a non-unique
+//!    `KEY ka(a)` plans the index rather than scanning the table. (A write
+//!    whose `WHERE` pins a whole UNIQUE index gets the point plan instead,
+//!    because `try_point_get` looks that key up exactly as it does for a
+//!    read.) A write still keeps its `Selection` above the access path, for
+//!    divergence 7's reason: the ranges are a superset of the affected rows
+//!    and the per-row filter decides. The recorder IS those driver
 //!    functions, so what is printed and what is read cannot drift apart: the
 //!    records a write reads are pinned by `actRows`, and the REQUEST KIND it
 //!    reads them with by [`crate::storage::capture_storage_ops`], both in

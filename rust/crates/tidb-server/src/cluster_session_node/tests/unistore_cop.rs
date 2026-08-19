@@ -838,3 +838,67 @@ fn analyze_does_not_stop_a_pushed_shape_reaching_the_region() {
         "the same query served no coprocessor request once statistics existed"
     );
 }
+
+/// A write takes the same access paths a `SELECT` does, which is
+/// `crate::explain`'s divergence 8 as it now stands.
+///
+/// That paragraph claimed the opposite for a while -- "none is offered to a
+/// write" -- after `write_index_range_path` landed and nothing checked the
+/// prose against the code. A doc that describes a gap which no longer exists
+/// sends the next reader to build what is already there, so the claim is
+/// pinned here rather than trusted.
+#[test]
+fn a_write_reaches_the_index_path_like_a_select() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(59))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.wi (id int primary key, a int, b int, KEY ka(a), UNIQUE KEY ub(b))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.wi VALUES (1,10,100),(2,10,200),(3,20,300)",
+    );
+
+    let plan_of = |session: &mut _, sql: &str| {
+        displayed(rows(session, sql))
+            .into_iter()
+            .map(|row| row.join(" "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    // A non-unique secondary index is chosen for a write, as it is for a read.
+    for sql in [
+        "EXPLAIN UPDATE test.wi SET b = b + 1 WHERE a = 10",
+        "EXPLAIN DELETE FROM test.wi WHERE a = 10",
+    ] {
+        let plan = plan_of(&mut session, sql);
+        assert!(
+            plan.contains("IndexRangeScan") && plan.contains("index:ka(a)"),
+            "`{sql}` did not reach the index path:\n{plan}"
+        );
+        // Divergence 7: the ranges are a superset, so the filter stays above.
+        assert!(plan.contains("Selection"), "{plan}");
+    }
+
+    // A WHERE that pins a whole UNIQUE index still takes the point plan.
+    let plan = plan_of(&mut session, "EXPLAIN UPDATE test.wi SET a = 1 WHERE b = 100");
+    assert!(plan.contains("Point_Get"), "{plan}");
+
+    // And the rows a write touches are the rows the predicate names,
+    // whichever path carried it there.
+    rows(&mut session, "UPDATE test.wi SET b = b + 1 WHERE a = 10");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT id, b FROM test.wi ORDER BY id")),
+        [["1", "101"], ["2", "201"], ["3", "300"]]
+    );
+    rows(&mut session, "DELETE FROM test.wi WHERE a = 10");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT id FROM test.wi ORDER BY id")),
+        [["3"]]
+    );
+}
