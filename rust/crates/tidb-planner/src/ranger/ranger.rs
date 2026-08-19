@@ -124,18 +124,27 @@ fn convert_points_in_place(
 fn points_total_datum_size(points: &[Point]) -> i64 {
     points
         .iter()
-        .map(|p| match &p.value {
-            Datum::Bytes(b) => 72 + b.len() as i64,
-            Datum::String(s) => 72 + s.bytes().len() as i64,
-            _ => 72,
+        .map(|p| super::types::datum_mem_usage(&p.value))
+        .sum()
+}
+
+fn ranges_total_datum_size(ranges: &super::types::Ranges) -> i64 {
+    ranges
+        .iter()
+        .map(|range| {
+            range
+                .low_val
+                .iter()
+                .chain(range.high_val.iter())
+                .map(super::types::datum_mem_usage)
+                .sum::<i64>()
         })
         .sum()
 }
 
 /// Go `estimateMemUsageForPoints2Ranges` over this port's sizes.
 fn estimate_mem_usage_for_points_to_ranges(range_points: &[Point]) -> i64 {
-    const EMPTY_RANGE_SIZE: i64 = 96;
-    (EMPTY_RANGE_SIZE + 16) * range_points.len() as i64 / 2
+    (super::types::EMPTY_RANGE_SIZE + 16) * range_points.len() as i64 / 2
         + points_total_datum_size(range_points)
 }
 
@@ -365,10 +374,15 @@ pub fn append_points_to_ranges(
     let range_points =
         convert_points_in_place(range_points, new_tp, false, false, skip_plan_cache_reason)?;
     if range_max_size > 0 {
-        let estimate = (96 + (origin.first().map_or(0, |r| r.low_val.len() as i64) + 1) * 16)
-            * origin.len() as i64
-            * (range_points.len() as i64 / 2)
-            + points_total_datum_size(&range_points) * origin.len() as i64;
+        // Go `estimateMemUsageForAppendPoints2Ranges`.
+        let len1 = origin.len() as i64;
+        let len2 = range_points.len() as i64 / 2;
+        let estimate = (super::types::EMPTY_RANGE_SIZE
+            + (origin.first().map_or(0, |r| r.low_val.len() as i64) + 1) * 16)
+            * len1
+            * len2
+            + ranges_total_datum_size(&origin) * len2
+            + points_total_datum_size(&range_points) * len1;
         if estimate > range_max_size {
             return Ok((origin, true));
         }
@@ -386,6 +400,52 @@ pub fn append_points_to_ranges(
         }
     }
     Ok((new_index_ranges, false))
+}
+
+/// Go `AppendRanges2PointRanges`: the tail ranges appended to every point
+/// range, or the point ranges UNCHANGED with `true` when Go's estimate
+/// (`estimateMemUsageForAppendRanges2PointRanges`) exceeds the quota.
+#[must_use]
+pub fn append_ranges_to_point_ranges(
+    point_ranges: super::types::Ranges,
+    ranges: &super::types::Ranges,
+    range_max_size: i64,
+) -> (super::types::Ranges, bool) {
+    if ranges.is_empty() {
+        return (point_ranges, false);
+    }
+    if range_max_size > 0 {
+        let len1 = point_ranges.len() as i64;
+        let len2 = ranges.len() as i64;
+        let collator_size = (point_ranges.first().map_or(0, |r| r.low_val.len() as i64)
+            + ranges.first().map_or(0, |r| r.low_val.len() as i64))
+            * 16;
+        let estimate = (super::types::EMPTY_RANGE_SIZE + collator_size) * len1 * len2
+            + ranges_total_datum_size(&point_ranges) * len2
+            + ranges_total_datum_size(ranges) * len1;
+        if estimate > range_max_size {
+            return (point_ranges, true);
+        }
+    }
+    let mut new_ranges = super::types::Ranges::with_capacity(point_ranges.len() * ranges.len());
+    for point_range in &point_ranges {
+        for tail in ranges {
+            let mut low_val = point_range.low_val.clone();
+            low_val.extend(tail.low_val.iter().cloned());
+            let mut high_val = point_range.high_val.clone();
+            high_val.extend(tail.high_val.iter().cloned());
+            let mut collators = point_range.collators.clone();
+            collators.extend(tail.collators.iter().copied());
+            new_ranges.push(super::types::Range {
+                low_val,
+                low_exclude: tail.low_exclude,
+                high_val,
+                high_exclude: tail.high_exclude,
+                collators,
+            });
+        }
+    }
+    (new_ranges, false)
 }
 
 /// The product of one column-range build: the ranges plus which conditions

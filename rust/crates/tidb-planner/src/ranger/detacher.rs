@@ -1274,35 +1274,21 @@ impl RangeDetacher<'_> {
                 return Ok(DetachRangeResult::default());
             }
             if !tail_res.access_conds.is_empty() {
-                // Go `AppendRanges2PointRanges` with the memory fallback.
-                let range_count = point_ranges.len() * tail_res.ranges.len();
-                if self.range_max_size > 0
-                    && (range_count as i64) * 96 > self.range_max_size
-                {
+                let (new_ranges, range_fallback) = super::ranger::append_ranges_to_point_ranges(
+                    point_ranges.clone(),
+                    &tail_res.ranges,
+                    self.range_max_size,
+                );
+                if range_fallback {
+                    // Go: the tail's ACCESS conds demote to remained, and
+                    // the point ranges stand as the answer.
+                    res.ranges = new_ranges;
                     res.remained_conds.extend(tail_res.access_conds);
                     res.remained_conds = append_conditions_if_not_exist(
                         std::mem::take(&mut res.remained_conds),
                         &tail_res.remained_conds,
                     );
                     return Ok(res);
-                }
-                let mut new_ranges = super::types::Ranges::new();
-                for point_range in &point_ranges {
-                    for tail in &tail_res.ranges {
-                        let mut low_val = point_range.low_val.clone();
-                        low_val.extend(tail.low_val.iter().cloned());
-                        let mut high_val = point_range.high_val.clone();
-                        high_val.extend(tail.high_val.iter().cloned());
-                        let mut collators = point_range.collators.clone();
-                        collators.extend(tail.collators.iter().copied());
-                        new_ranges.push(super::types::Range {
-                            low_val,
-                            low_exclude: tail.low_exclude,
-                            high_val,
-                            high_exclude: tail.high_exclude,
-                            collators,
-                        });
-                    }
                 }
                 res.ranges = new_ranges;
                 res.access_conds.extend(tail_res.access_conds);

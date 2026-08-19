@@ -1568,3 +1568,222 @@ fn shard_index_func_suites_match_go() {
         assert_eq!(&stringify_conds(&rewritten, &column_name), want);
     }
 }
+
+/// Go `TestRangeFallbackForDetachCondAndBuildRangeForIndex`
+/// (`ranger_test.go:1917`), the quota ladder: each step's quota is one
+/// byte under the previous result's `MemUsage`, and the detachment backs
+/// off one column at a time -- full three-column ranges, then the eq/in
+/// prefix pairs, then single points, then the full range with EVERY
+/// condition remained. (Go's slice-aliasing sub-tests are not ported:
+/// `Vec` cannot alias its peers by construction.)
+#[test]
+fn range_fallback_ladder_matches_go() {
+    let table = MinAccessTable::new();
+    let column_name = |unique_id: i64| -> String {
+        let name = ["a", "b", "c", "d"]
+            .get((unique_id - 1) as usize)
+            .copied()
+            .unwrap_or("?");
+        format!("test.t1.{name}")
+    };
+    let sql = "select * from t1 where a in (10,20,30) and b in (40,50,60) and c >= 70 and c <= 80";
+    let stmt = tidb_parser::parse(sql).expect("parses");
+    let tidb_ast::Stmt::Query(query) = stmt else {
+        panic!("not a query");
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+        panic!("not a select");
+    };
+    let rewritten = rewrite_expr_resolved(&select.where_clause.expect("where"), &table)
+        .expect("rewrites");
+    let conds = split_cnf_items(&rewritten);
+    assert_eq!(conds.len(), 4);
+    let cols: Vec<Column> = [0, 1, 2].iter().map(|o| table.columns[*o].clone()).collect();
+    let lengths = vec![super::checker::UNSPECIFIED_LENGTH; 3];
+
+    let detach = |quota: i64| {
+        super::detacher::detach_cond_and_build_range_for_index(&conds, &cols, &lengths, quota)
+            .expect("detaches")
+    };
+    let check = |result: &super::detacher::DetachRangeResult,
+                 want_access: &str,
+                 want_remained: &str,
+                 want_ranges: &str| {
+        assert_eq!(stringify_conds(&result.access_conds, &column_name), want_access);
+        assert_eq!(
+            stringify_conds(&result.remained_conds, &column_name),
+            want_remained
+        );
+        assert_eq!(ranges_to_go_string(&result.ranges), want_ranges);
+    };
+
+    let full = detach(0);
+    check(
+        &full,
+        "[in(test.t1.a, 10, 20, 30) in(test.t1.b, 40, 50, 60) ge(test.t1.c, 70) le(test.t1.c, 80)]",
+        "[]",
+        "[[10 40 70,10 40 80] [10 50 70,10 50 80] [10 60 70,10 60 80] [20 40 70,20 40 80] [20 50 70,20 50 80] [20 60 70,20 60 80] [30 40 70,30 40 80] [30 50 70,30 50 80] [30 60 70,30 60 80]]",
+    );
+
+    let quota = super::types::ranges_mem_usage(&full.ranges) - 1;
+    let two = detach(quota);
+    check(
+        &two,
+        "[in(test.t1.a, 10, 20, 30) in(test.t1.b, 40, 50, 60)]",
+        "[ge(test.t1.c, 70) le(test.t1.c, 80)]",
+        "[[10 40,10 40] [10 50,10 50] [10 60,10 60] [20 40,20 40] [20 50,20 50] [20 60,20 60] [30 40,30 40] [30 50,30 50] [30 60,30 60]]",
+    );
+
+    let quota = super::types::ranges_mem_usage(&two.ranges) - 1;
+    let one = detach(quota);
+    check(
+        &one,
+        "[in(test.t1.a, 10, 20, 30)]",
+        "[in(test.t1.b, 40, 50, 60) ge(test.t1.c, 70) le(test.t1.c, 80)]",
+        "[[10,10] [20,20] [30,30]]",
+    );
+
+    let quota = super::types::ranges_mem_usage(&one.ranges) - 1;
+    let none = detach(quota);
+    check(
+        &none,
+        "[]",
+        "[ge(test.t1.c, 70) le(test.t1.c, 80) in(test.t1.b, 40, 50, 60) in(test.t1.a, 10, 20, 30)]",
+        "[[NULL,+inf]]",
+    );
+}
+
+/// Go `TestRangeFallbackForBuildTableRange` (`ranger_test.go:2246`) and
+/// `TestRangeFallbackForBuildColumnRange` (`:2282`): under quota the
+/// table path answers `[[-inf,+inf]]` and the column path `[[NULL,+inf]]`
+/// (a NOT NULL column still `[[-inf,+inf]]`), with the IN moved whole to
+/// the remained side.
+#[test]
+fn build_range_fallbacks_match_go() {
+    // ---- BuildTableRange over `a int primary key` ----
+    let table = MinAccessTable::new();
+    let column_name = |unique_id: i64| -> String {
+        let name = ["a", "b", "c", "d"]
+            .get((unique_id - 1) as usize)
+            .copied()
+            .unwrap_or("?");
+        format!("test.t.{name}")
+    };
+    let parse_conds = |sql: &str| -> Vec<Expression> {
+        let stmt = tidb_parser::parse(sql).expect("parses");
+        let tidb_ast::Stmt::Query(query) = stmt else {
+            panic!("not a query");
+        };
+        let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+            panic!("not a select");
+        };
+        let rewritten = rewrite_expr_resolved(&select.where_clause.expect("where"), &table)
+            .expect("rewrites");
+        split_cnf_items(&rewritten)
+    };
+    let conds = parse_conds("select * from t where a in (10,20,30,40,50)");
+    let (conds, filters) =
+        super::detacher::detach_conds_for_column(&conds, &table.columns[0], false);
+    assert_eq!(conds.len(), 1);
+    assert_eq!(filters.len(), 0);
+    let tp = table.columns[0].ret_type.clone().expect("typed");
+    let result = super::ranger::build_table_range(&conds, &tp, 0).expect("builds");
+    assert_eq!(
+        ranges_to_go_string(&result.ranges),
+        "[[10,10] [20,20] [30,30] [40,40] [50,50]]"
+    );
+    assert_eq!(
+        stringify_conds(&result.access_conds, &column_name),
+        "[in(test.t.a, 10, 20, 30, 40, 50)]"
+    );
+    assert_eq!(stringify_conds(&result.remained_conds, &column_name), "[]");
+    let quota = super::types::ranges_mem_usage(&result.ranges) - 1;
+    let fallback = super::ranger::build_table_range(&conds, &tp, quota).expect("builds");
+    assert_eq!(ranges_to_go_string(&fallback.ranges), "[[-inf,+inf]]");
+    assert_eq!(stringify_conds(&fallback.access_conds, &column_name), "[]");
+    assert_eq!(
+        stringify_conds(&fallback.remained_conds, &column_name),
+        "[in(test.t.a, 10, 20, 30, 40, 50)]"
+    );
+
+    // ---- BuildColumnRange over `a varchar(20)` ----
+    let string_table = PrefixScanTable::new();
+    let string_name = |unique_id: i64| -> String {
+        match unique_id {
+            1 => "test.t.a".to_owned(),
+            2 => "test.t.b".to_owned(),
+            other => format!("Column#{other}"),
+        }
+    };
+    let parse_string_conds = |sql: &str| -> Vec<Expression> {
+        let stmt = tidb_parser::parse(sql).expect("parses");
+        let tidb_ast::Stmt::Query(query) = stmt else {
+            panic!("not a query");
+        };
+        let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+            panic!("not a select");
+        };
+        let rewritten =
+            rewrite_expr_resolved(&select.where_clause.expect("where"), &string_table)
+                .expect("rewrites");
+        split_cnf_items(&rewritten)
+    };
+    let conds = parse_string_conds("select * from t where a in ('aaa','bbb','ccc','ddd','eee')");
+    let (conds, filters) =
+        super::detacher::detach_conds_for_column(&conds, &string_table.a, false);
+    assert_eq!(conds.len(), 1);
+    assert_eq!(filters.len(), 0);
+    let tp = string_table.a.ret_type.clone().expect("typed");
+    let result = super::ranger::build_column_range(
+        &conds,
+        &tp,
+        super::checker::UNSPECIFIED_LENGTH,
+        0,
+    )
+    .expect("builds");
+    assert_eq!(
+        ranges_to_go_string(&result.ranges),
+        "[[\"aaa\",\"aaa\"] [\"bbb\",\"bbb\"] [\"ccc\",\"ccc\"] [\"ddd\",\"ddd\"] [\"eee\",\"eee\"]]"
+    );
+    let quota = super::types::ranges_mem_usage(&result.ranges) - 1;
+    let fallback = super::ranger::build_column_range(
+        &conds,
+        &tp,
+        super::checker::UNSPECIFIED_LENGTH,
+        quota,
+    )
+    .expect("builds");
+    assert_eq!(ranges_to_go_string(&fallback.ranges), "[[NULL,+inf]]");
+    assert_eq!(stringify_conds(&fallback.access_conds, &string_name), "[]");
+    assert_eq!(
+        stringify_conds(&fallback.remained_conds, &string_name),
+        "[in(test.t.a, aaa, bbb, ccc, ddd, eee)]"
+    );
+}
+
+/// The `AppendRanges2PointRanges` sub-case of the fallback test: two
+/// point ranges fanned out over two tail ranges give four, in point-major
+/// order, and a zero quota never falls back.
+#[test]
+fn append_ranges_to_point_ranges_matches_go() {
+    use super::types::{Range, Ranges};
+    let int_range = |low: &[i64], high: &[i64]| Range {
+        low_val: low.iter().map(|v| Datum::Int(*v)).collect(),
+        high_val: high.iter().map(|v| Datum::Int(*v)).collect(),
+        collators: vec![tidb_datatype::Collation::Binary; low.len()],
+        low_exclude: false,
+        high_exclude: false,
+    };
+    let point_ranges: Ranges = vec![int_range(&[10], &[10]), int_range(&[20], &[20])];
+    let tail_ranges: Ranges = vec![
+        int_range(&[40, 70], &[40, 80]),
+        int_range(&[50, 70], &[50, 80]),
+    ];
+    let (appended, fallback) =
+        super::ranger::append_ranges_to_point_ranges(point_ranges, &tail_ranges, 0);
+    assert!(!fallback);
+    assert_eq!(
+        ranges_to_go_string(&appended),
+        "[[10 40 70,10 40 80] [10 50 70,10 50 80] [20 40 70,20 40 80] [20 50 70,20 50 80]]"
+    );
+}

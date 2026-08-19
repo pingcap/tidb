@@ -416,6 +416,47 @@ fn is_boundary_value(d: &Datum, unsigned_int_handle: bool, is_left_side: bool) -
 }
 
 /// Go `formatDatum`.
+/// Go `EmptyRangeSize`: `unsafe.Sizeof(Range{})` -- three slice headers
+/// and two padded bools on 64-bit.
+pub const EMPTY_RANGE_SIZE: i64 = 80;
+/// Go `types.EmptyDatumSize`: `unsafe.Sizeof(Datum{})` on 64-bit.
+pub const EMPTY_DATUM_SIZE: i64 = 72;
+
+/// Go `Datum.MemUsage`: the struct size plus the byte payload's capacity
+/// and the collation name's length -- interface-held payloads (decimals,
+/// times) are deliberately not counted, exactly as Go does not count `d.x`.
+#[must_use]
+pub fn datum_mem_usage(datum: &Datum) -> i64 {
+    match datum {
+        Datum::Bytes(bytes) => EMPTY_DATUM_SIZE + bytes.len() as i64,
+        Datum::String(s) => {
+            EMPTY_DATUM_SIZE + s.bytes().len() as i64 + s.collation().name().len() as i64
+        }
+        _ => EMPTY_DATUM_SIZE,
+    }
+}
+
+impl Range {
+    /// Go `Range.MemUsage`.
+    #[must_use]
+    pub fn mem_usage(&self) -> i64 {
+        EMPTY_RANGE_SIZE
+            + self.collators.len() as i64 * 16
+            + self
+                .low_val
+                .iter()
+                .chain(self.high_val.iter())
+                .map(datum_mem_usage)
+                .sum::<i64>()
+    }
+}
+
+/// Go `Ranges.MemUsage`.
+#[must_use]
+pub fn ranges_mem_usage(ranges: &Ranges) -> i64 {
+    ranges.iter().map(Range::mem_usage).sum()
+}
+
 /// Go `strconv.Quote` over RAW bytes -- what `%q` prints for a bytes
 /// datum. Valid printable runes stay verbatim (CJK included), quote and
 /// backslash escape, and every other byte -- controls and bytes that are
