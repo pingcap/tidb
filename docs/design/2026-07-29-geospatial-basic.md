@@ -143,13 +143,39 @@ and because a 2D geometry with no SRID flag is plain OGC WKB byte for byte.
 | SRID | Carried by the SRID flag, which may be left unset where the column fixes it with `SRID n`, since that is still valid EWKB. It cannot be dropped unconditionally: an unrestricted `GEOMETRY` column holds a per-row SRID, and a geometry outside any column (function result, join or sort intermediate) has no column metadata to recover it from. |
 | Byte order | Left to EWKB, which flags it per geometry and permits both. |
 | MySQL bytes | Not matched. MySQL stores `<srid u32 LE><WKB>` and is 2D only; `ST_AsBinary`, dump/reload and the wire protocol convert at the boundary, which for a 2D value is dropping the SRID flag. |
+| Binary boundary | Each format has a matching pair, so nothing is write-only or read-only. See *Binary in and out* below. |
 | Coordinate dimension | XY, XYZ, XYM and XYZM are storable, covering GeoJSON positions (XY and XYZ) and measured geometry. Every v1 function is 2D, as in MySQL. |
 | SRIDs outside 0 and 4326 | Stored and returned unchanged in an unrestricted `GEOMETRY` column, as in MySQL. |
 
-Extended data (Z/M coordinates, unsupported SRIDs) returns as the raw column value;
-`ST_SRID` and `ST_GeometryType` answer for it, and everything that interprets coordinates
-errors. An opt-in writer that emits it is a later extension. Why EWKB rather than the
-alternatives: [Investigation & Alternatives](#investigation--alternatives).
+**Binary in and out.** A value that leaves TiDB as bytes has to be acceptable coming back
+as bytes, or an ordinary client round-trip breaks: read a column, hold the bytes, bind them
+into a later `INSERT`. The storage format is deliberately wider than MySQL's, so the two
+cannot share one bare path without guessing which format arrived. Each therefore gets a
+matched pair:
+
+| Format | Out | In |
+| --- | --- | --- |
+| MySQL internal, `<srid u32 LE><WKB>` | bare `SELECT g` | bare literal, `SET g = 0x...` |
+| EWKB, the extended format | `ST_AsEWKB(g)` | `ST_GeomFromEWKB(0x...)` |
+
+The bare path is MySQL's format in both directions, so ingest never has to guess: a bare
+literal is always MySQL's format, and the stored format stays off the user surface. It is
+what makes a Dumpling to Lightning round-trip work with no function call, and what lets a
+`mysqldump` load unchanged. The SRID in those bytes is validated against `SRID n` like any
+other ingest path.
+
+Extended data (Z/M coordinates, unsupported SRIDs) has no MySQL form, so a bare `SELECT`
+of it errors, naming `ST_AsEWKB` as the way to read it. That is opt-in: such a value only
+exists if `ST_GeomFromEWKB` put it there. `ST_SRID` and `ST_GeometryType` still answer for
+it, and everything that interprets coordinates errors.
+
+Both halves are v1 choices, not properties of the format. Later versions can widen either
+end without a migration: ingest could try to recognise the format it was handed rather than
+assume MySQL's, and bare output could do something better than erroring, so long as it is
+neither silent truncation nor a format the input side will not take back.
+
+Why EWKB rather than the alternatives:
+[Investigation & Alternatives](#investigation--alternatives).
 
 ### SRID model
 
@@ -226,6 +252,10 @@ function until a later milestone adds it.
   the rest) deferred below.
 - **`ST_As*`**, an external format from a geometry: `ST_AsText` (`ST_AsWKT`),
   `ST_AsBinary` (`ST_AsWKB`), `ST_AsGeoJSON`.
+- **`ST_AsEWKB` and `ST_GeomFromEWKB`**, the pair for the stored format, TiDB-specific
+  because the format is. They are the only way to read and write what MySQL cannot express,
+  and the name avoids shadowing MySQL's `ST_GeomFromWKB`, which takes bare WKB and a
+  separate SRID. See *Binary in and out* in [Types and storage](#types-and-storage).
 - **Option arguments.** `axis-order` on the WKT and WKB members of both groups, taking
   `lat-long`, `long-lat` or `srid-defined` (the default), rejecting anything else with
   `ERROR 3559` and having no effect at SRID 0. It is the explicit way to read or write
@@ -467,11 +497,13 @@ Out of scope here, each with a home:
 | Generated columns | `ST_*` are deterministic scalars, so they are usable in virtual and stored generated column expressions like any other builtin. A geometry-typed generated column is then an ordinary geometry column, and the row above governs indexing it. |
 | Charset and collation | Not applicable; the value is binary. |
 | Parser | Updated in this design. |
-| DDL | New column types and the `SRID` attribute, restricted to 0/4326, plus subtype constraints. In v1 `ALTER` rejects as unsupported anything that would have to validate existing rows: adding, dropping or changing `SRID n`, and narrowing the subtype (`GEOMETRY` to `POINT`). A user who needs either adds a new column with the wanted type and backfills it. The rest follows MySQL, verified on 8.4.6: widening the subtype always succeeds; converting the column to a binary type carries the bytes over; `DROP COLUMN` is ordinary. |
+| DDL | New column types and the `SRID` attribute, restricted to 0/4326, plus subtype constraints, at `CREATE TABLE` and `ADD COLUMN`. `MODIFY`/`CHANGE COLUMN` on a geometry column is rejected as unsupported in v1, whatever the change: the `SRID` attribute, the subtype in either direction, or conversion to or from another type. The exception is `NULL`/`NOT NULL`, which the generic nullability path handles without knowing the column is geometry. Anything else means adding a new column and backfilling it. `DROP COLUMN` is ordinary. |
 | `information_schema` | One new table, `st_spatial_reference_systems`, read-only with two static rows. Its two siblings in MySQL are deferred. |
 | Planner, statistics, executor | `ST_*` evaluate on the normal expression path; geometry predicates are ordinary `Selection`s with no access path of their own. No new operator, access path or statistics. `ANALYZE` skips geometry as it skips JSON and the blob types, which means adding `geometry` both to the accepted values of `tidb_analyze_skip_column_types` and to its default, today `json,blob,mediumblob,longblob,mediumtext,longtext`. |
 | TiKV | None. Values are ordinary binary strings; pushdown is deferred. |
-| TiFlash, BR, TiCDC, Dumpling, Lightning | Regular column data. Tools need only carry the bytes and the `SRID`/type metadata; dump/reload uses MySQL's internal format or WKT, not the stored bytes. |
+| BR | None. Backs up and restores bytes and metadata without interpreting column values. |
+| Dumpling, Lightning | Geometry dumps as MySQL's internal format, which reloads as a bare literal (see [Types and storage](#types-and-storage)), so the round-trip needs no function call and a `mysqldump` loads unchanged. A table holding extended values cannot be dumped that way, since a bare `SELECT` of them errors; dumping those needs `ST_AsEWKB` and emitting `ST_GeomFromEWKB(0x...)`, which is Dumpling work and TiDB-only output. |
+| TiFlash, TiCDC | Not pass-through: both decode column values against the schema, so each has to learn the type. Out of scope here and tracked separately; until then a table with a geometry column should not be assumed replicable to TiFlash. |
 | Upgrade | Additive: the type does not exist in earlier releases, so no existing schema or query changes behavior. |
 | Downgrade | A release without the type cannot read a table that has a geometry column, so those columns must be dropped first, an ordinary `DROP COLUMN`. |
 
@@ -500,9 +532,13 @@ Out of scope here, each with a home:
   SQL comparison operators keep comparing the stored bytes without erroring.
 - The catalog: `st_spatial_reference_systems` returns the two rows with the same column
   values MySQL gives for SRID 0 and 4326, and `CREATE SPATIAL REFERENCE SYSTEM` errors.
-- Extended data: Z/M values entered as WKB, and SRIDs outside 0 and 4326, store and read
-  back byte-identical, while `ST_AsBinary`/`ST_AsText`/`ST_AsGeoJSON` and every function
-  that interprets coordinates error clearly on them.
+- Extended data: Z/M values and SRIDs outside 0 and 4326 go in through `ST_GeomFromEWKB`
+  and come back byte-identical through `ST_AsEWKB`, while a bare `SELECT` of them errors
+  naming `ST_AsEWKB`, and `ST_AsBinary`/`ST_AsText`/`ST_AsGeoJSON` and every function that
+  interprets coordinates error clearly on them.
+- The bare binary boundary is symmetric: bytes from a bare `SELECT` of a MySQL-expressible
+  value insert back unchanged as a bare literal, and a `mysqldump` literal loads as the
+  same geometry.
 - GeoJSON: the table above, each row matched against MySQL 8.4 and 9.7, plus `options` 5
   and 6 keeping a Z position and differing on a fourth element, and `ST_AsGeoJSON`'s
   `digits` rounding and each `flags` bit, byte-compared to MySQL.
@@ -512,8 +548,9 @@ Out of scope here, each with a home:
 - Format version: version 1 decodes; an unknown or zero version byte is rejected with a
   clear error rather than misparsed.
 - Type plumbing: geometry through the audited operation surface returns correct bytes.
-- DDL: the `ALTER` matrix above, including that adding, dropping or changing `SRID n` and
-  narrowing the subtype are all rejected, while widening and `DROP COLUMN` succeed.
+- DDL: `MODIFY`/`CHANGE COLUMN` on a geometry column is rejected for the `SRID` attribute,
+  for both subtype directions and for conversion to another type, while `NULL`/`NOT NULL`,
+  `ADD COLUMN` and `DROP COLUMN` succeed.
 
 ### Scenario Tests
 
