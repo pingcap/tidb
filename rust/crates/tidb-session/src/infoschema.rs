@@ -628,7 +628,9 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
             Datum::Null,
             Datum::Null,
             Datum::Null,
-            text(COLLATION),
+            // Go reads `TableInfo.Collate`, which the table was created with;
+            // the server default here made a latin1 table report utf8mb4_bin.
+            text(table.charset().collation.name()),
             Datum::Null,
             text(table_create_options(table)),
             text(table.comment()),

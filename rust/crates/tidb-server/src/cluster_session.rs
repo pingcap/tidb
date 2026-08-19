@@ -489,6 +489,18 @@ pub(crate) fn cluster_table(
     // both the DDL that wrote it and the printer that renders it were
     // right.
     kv_table.set_comment(table.comment.clone());
+    // Go `TableInfo.Charset`/`Collate`: the table default `SHOW CREATE TABLE`
+    // prints, what `information_schema.tables.table_collation` reports, and
+    // the value each column's own charset is compared against when deciding
+    // whether to print an explicit CHARACTER SET clause. Dropping it made a
+    // table created as latin1 read back as utf8mb4 while its columns
+    // correctly reported latin1 -- a definition that does not round-trip.
+    kv_table.set_charset(tidb_executor::TableCharset {
+        charset: tidb_datatype::Charset::from_name(&table.charset)
+            .unwrap_or(tidb_executor::TableCharset::default().charset),
+        collation: tidb_datatype::Collation::from_name(&table.collate)
+            .unwrap_or(tidb_executor::TableCharset::default().collation),
+    });
     kv_table.set_cache_status(table.table_cache_status_type);
     // The AUTO_INCREMENT column and the counter that feeds it. Both halves
     // have to be here: marking the column without giving the counter a
@@ -1490,6 +1502,46 @@ mod tests {
         assert!(session
             .run("SELECT id FROM p WHERE s = 'alphabet'")
             .is_err());
+    }
+
+    /// Go `TableInfo.Charset`/`Collate` survive the load. They are the
+    /// table default `SHOW CREATE TABLE` prints, what
+    /// `information_schema.tables.table_collation` reports, and the value a
+    /// column's own charset is compared against when the printer decides
+    /// whether to emit an explicit CHARACTER SET clause. Dropping them made
+    /// a table created as latin1 print `DEFAULT CHARSET=utf8mb4` while its
+    /// columns correctly said latin1 -- a definition that does not
+    /// round-trip through its own output.
+    #[test]
+    fn a_stored_table_charset_survives_the_load() {
+        let table = TableInfo {
+            id: 205,
+            name: CiString::new("ch"),
+            columns: vec![column(1, 0, "id", true)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            charset: "latin1".to_owned(),
+            collate: "latin1_bin".to_owned(),
+            ..TableInfo::default()
+        };
+        let (storage, _buffer, _snapshot) = cluster_storage();
+        let (session, skipped) = session_with_cluster_storage(
+            &one_table_catalog(table),
+            &storage,
+            &StatsSnapshot::new(),
+            &LocalTableAutoIds::default(),
+        );
+        assert!(skipped.is_empty());
+        let catalog = session.shared_catalog();
+        let catalog = catalog.lock().unwrap();
+        let tidb_executor::driver::TableEntry::Kv(kv) = catalog
+            .table_in("app", "ch")
+            .expect("the table is in the catalog")
+        else {
+            panic!("a cluster table is a kv table");
+        };
+        assert_eq!(kv.charset().charset.name(), "latin1");
+        assert_eq!(kv.charset().collation.name(), "latin1_bin");
     }
 
     /// Go `DBInfo.Charset`/`Collate` survive the load: they are what
