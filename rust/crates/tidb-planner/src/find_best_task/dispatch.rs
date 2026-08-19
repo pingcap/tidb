@@ -544,7 +544,6 @@ fn find_best_task_4_logical_data_source(
                     "TableScan",
                     ds.base.base.query_block_offset(),
                 );
-                base.base.set_stats(ds.base.base.stats_info().cloned());
                 base.base.set_schema(ds.base.base.schema().cloned());
                 // Go `buildTableRange` over the pushed conditions: the
                 // int-handle scan's key ranges (full when nothing pushed).
@@ -571,6 +570,24 @@ fn find_best_task_4_logical_data_source(
                         ),
                     }
                 };
+                // Go `CountAfterAccess`: the pseudo row count over the
+                // built ranges shapes the scan's stats when conditions
+                // pushed.
+                let mut stats = ds.base.base.stats_info().cloned();
+                if !ds.pushed_down_conds.is_empty() {
+                    if let Some(base_stats) = &stats {
+                        let count = crate::ranger::stats_bridge::pseudo_count_by_int_ranges(
+                            &ranges,
+                            base_stats.row_count(),
+                            handle_type.is_unsigned(),
+                        );
+                        stats = Some(crate::stats_info::StatsInfo::new(
+                            count.min(base_stats.row_count()),
+                            [],
+                        ));
+                    }
+                }
+                base.base.set_stats(stats);
                 let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
                     base,
                     table_id: ds.physical_table_id,
@@ -609,7 +626,6 @@ fn find_best_task_4_logical_data_source(
                     "IndexScan",
                     ds.base.base.query_block_offset(),
                 );
-                base.base.set_stats(ds.base.base.stats_info().cloned());
                 base.base.set_schema(ds.base.base.schema().cloned());
                 // Go `detachCondAndBuildRangeForPath`: the index columns
                 // (schema columns at the index's offsets) detach the pushed
@@ -645,6 +661,20 @@ fn find_best_task_4_logical_data_source(
                         Err(_) => crate::ranger::points::full_range(),
                     }
                 };
+                let mut stats = ds.base.base.stats_info().cloned();
+                if !ds.pushed_down_conds.is_empty() {
+                    if let Some(base_stats) = &stats {
+                        let count = crate::ranger::stats_bridge::pseudo_count_by_ranges(
+                            &ranges,
+                            base_stats.row_count(),
+                        );
+                        stats = Some(crate::stats_info::StatsInfo::new(
+                            count.min(base_stats.row_count()),
+                            [],
+                        ));
+                    }
+                }
+                base.base.set_stats(stats);
                 let scan = PhysicalPlan::IndexScan(crate::physical::PhysicalIndexScan {
                     base,
                     table_id: ds.physical_table_id,
@@ -1100,6 +1130,9 @@ mod tests {
         assert_eq!(scan.ranges.len(), 1);
         assert_eq!(scan.ranges[0].to_display_string(), "(5,+inf]");
         assert!(!crate::ranger::types::has_full_range(&scan.ranges, false));
+        // The pseudo CountAfterAccess: 100 rows / pseudoLessRate(3).
+        let scanned = scan.base.base.stats_info().expect("stats").row_count();
+        assert!((scanned - 100.0 / 3.0).abs() < 1e-9, "{scanned}");
     }
 
     #[test]
