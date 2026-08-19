@@ -4,7 +4,6 @@ go_library(
     name = "sqlfile",
     srcs = [
         "sql.go",
-        "sqlfile.go",
         "writer.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/dumpformat/sqlfile",

@@ -22,33 +22,37 @@ import (
 	"github.com/pingcap/tidb/pkg/dumpformat"
 )
 
+// Config holds the SQL framing knobs.
+type Config struct {
+	// StatementSize splits the INSERT statement once the bytes written for the
+	// current statement reach it; 0 means a single statement per file.
+	StatementSize int64
+	// EscapeBackslash selects backslash escaping instead of single-quote doubling
+	// for string values.
+	EscapeBackslash bool
+}
+
 // Writer encodes rows into `INSERT INTO ... VALUES (..),(..);` statements and
-// writes them to an io.Writer. It owns the statement framing and splits at
-// Config.StatementSize; the caller owns buffering, file-size rotation and upload
-// and must call Close to terminate the open statement.
+// writes them to an io.Writer, splitting at Config.StatementSize. The caller owns
+// buffering and file rotation and must call Close to end the last statement.
 type Writer struct {
 	w      io.Writer
 	cfg    *Config
 	kinds  []dumpformat.FieldKind
 	prefix []byte
-	// buf is the reused per-row scratch.
-	buf []byte
-	// statementSize tracks the bytes accounted for the open statement, including
-	// the 2-byte separator anticipated after each row, matching dumpling's
-	// currentStatementSize so statements split at the same row.
+	buf    []byte
+	// statementSize and fileSize count each row's tuple plus the 2-byte separator
+	// (",\n" or ";\n") that follows it, so a size limit trips one row early and the
+	// split lands before the overflowing row. statementSize resets per statement;
+	// fileSize never resets and equals the bytes written once Close adds the final
+	// separator.
 	statementSize int64
+	fileSize      int64
 	inStatement   bool
-	// fileSize is the logical size for EstimateFileSize: like statementSize it
-	// counts the 2-byte separator anticipated after each row, but it never resets,
-	// matching dumpling's currentFileSize so files rotate at the same row. At
-	// Close the anticipated bytes equal the real ones, so it also equals the
-	// actual bytes written.
-	fileSize int64
 }
 
 // NewWriter creates a Writer over w. prefix is the INSERT statement prefix
-// (e.g. "INSERT INTO `t` VALUES\n"); kinds classifies each column; cfg holds the
-// statement-size and escaping knobs.
+// (e.g. "INSERT INTO `t` VALUES\n"); kinds classifies each column.
 func NewWriter(w io.Writer, prefix []byte, kinds []dumpformat.FieldKind, cfg *Config) *Writer {
 	return &Writer{w: w, cfg: cfg, kinds: kinds, prefix: prefix}
 }
@@ -61,8 +65,7 @@ func (sw *Writer) Write(row []sql.RawBytes) error {
 		return fmt.Errorf("sqlfile: row has %d fields, want %d", len(row), len(sw.kinds))
 	}
 	sw.buf = sw.buf[:0]
-	// Close the open statement before this row when it reached the size limit.
-	// The terminating ";\n" is the 2 bytes anticipated by the previous row.
+	// At the statement limit, close it; the ";\n" was counted as the last row's separator.
 	if sw.inStatement && sw.cfg.StatementSize > 0 && sw.statementSize >= sw.cfg.StatementSize {
 		sw.buf = append(sw.buf, ';', '\n')
 		sw.inStatement = false
@@ -73,8 +76,7 @@ func (sw *Writer) Write(row []sql.RawBytes) error {
 		sw.fileSize += int64(len(sw.prefix))
 		sw.inStatement = true
 	} else {
-		// The leading "," + "\n" of this row is the separator anticipated by the
-		// previous row, so it is not re-counted here.
+		// This row's leading ",\n" was counted as the previous row's separator.
 		sw.buf = append(sw.buf, ',', '\n')
 	}
 	start := len(sw.buf)
@@ -86,8 +88,7 @@ func (sw *Writer) Write(row []sql.RawBytes) error {
 		sw.buf = AppendValue(sw.buf, val, val == nil, sw.kinds[i], sw.cfg.EscapeBackslash)
 	}
 	sw.buf = append(sw.buf, ')')
-	// Account the tuple plus the 2-byte separator that will follow it (",\n" for
-	// the next row, or ";\n" at statement end), matching dumpling.
+	// Count the tuple plus the 2-byte separator that will follow it.
 	tupleSize := int64(len(sw.buf)-start) + 2
 	sw.statementSize += tupleSize
 	sw.fileSize += tupleSize
@@ -108,8 +109,7 @@ func (sw *Writer) Close() error {
 		return nil
 	}
 	sw.inStatement = false
-	// The final ";\n" is the 2 bytes already anticipated by the last row, so
-	// fileSize is not incremented here.
+	// The final ";\n" was already counted as the last row's separator.
 	_, err := sw.w.Write([]byte{';', '\n'})
 	return err
 }
