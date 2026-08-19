@@ -1146,7 +1146,7 @@ func (m *memArbitrator) intoBigBudget() bool {
 
 	m.state.Store(memArbitratorStateIntoBigBudget)
 
-	if maxMemHint := max(m.prevMaxMem, smallUsed); maxMemHint > 0 {
+	if maxMemHint := max(m.prevMaxMem, smallUsed, m.buffer.top3.get(m.digestID)); maxMemHint > 0 {
 		m.tryToUpdateBuffer(maxMemHint, m.approxUnixTimeSec())
 	}
 
@@ -1315,6 +1315,7 @@ func (t *Tracker) InitMemArbitrator(
 	}
 	t.MemArbitrator = m
 	m.ctx = NewArbitrationContext(
+		m.digestID,
 		m,
 		memPriority,
 		waitAverse,
@@ -1363,20 +1364,14 @@ func (m *memArbitrator) Stop(reason ArbitratorStopReason) bool {
 }
 
 func (m *memArbitrator) HeapInuse() (res HeapUsage) {
-	for {
-		if m.useBigBudget() {
-			used := m.bigBudgetUsed()
-			res = HeapUsage{
-				RootPool: used,
-				Used:     used,
-			}
-			return
+	if m.useBigBudget() {
+		used := m.bigBudgetUsed()
+		return HeapUsage{
+			RootPool: used,
+			Used:     used,
 		}
-		res = HeapUsage{
-			Used: max(m.smallBudgetUsed(), m.bigBudgetUsed()),
-		}
-		if !m.useBigBudget() {
-			return
-		}
+	}
+	return HeapUsage{
+		Used: max(m.smallBudgetUsed(), m.bigBudgetUsed()),
 	}
 }
