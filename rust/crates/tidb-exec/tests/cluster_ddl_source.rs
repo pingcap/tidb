@@ -3017,3 +3017,102 @@ fn create_table_stores_auto_id_cache() {
         "{error:?}"
     );
 }
+
+/// Go `checkAlterTableCharset` then `onModifyTableCharsetAndCollate`.
+///
+/// TiDB never rewrites stored bytes for a charset change, so it permits only
+/// the conversions whose encoding is a superset of the original. `CONVERT TO`
+/// additionally rewrites each column's own charset; the bare option moves the
+/// table default alone.
+#[test]
+fn convert_to_character_set_rewrites_columns_and_refuses_a_narrowing() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, a VARCHAR(10), b INT) \
+         CHARACTER SET latin1",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+
+    let column_charsets = |write: &tidb_exec::cluster_ddl::DdlWrite| {
+        stored_table(write, table_id)["cols"]
+            .as_array()
+            .expect("column array")
+            .iter()
+            .map(|column| {
+                (
+                    column["name"]["O"].as_str().expect("a name").to_owned(),
+                    column["type"]["Charset"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let write = plan(
+        &mut store,
+        "ALTER TABLE u6.t CONVERT TO CHARACTER SET utf8mb4",
+        200,
+    );
+    apply(&mut store, &write);
+    let stored = stored_table(&write, table_id);
+    assert_eq!(stored["charset"], serde_json::json!("utf8mb4"));
+    assert_eq!(stored["collate"], serde_json::json!("utf8mb4_bin"));
+    // A text column takes the new pair; everything else is marked binary,
+    // which is Go's `field_types.HasCharset` split.
+    let charsets = column_charsets(&write);
+    assert_eq!(
+        charsets
+            .iter()
+            .find(|(name, _)| name == "a")
+            .expect("column a")
+            .1,
+        "utf8mb4"
+    );
+    assert_eq!(
+        charsets
+            .iter()
+            .find(|(name, _)| name == "b")
+            .expect("column b")
+            .1,
+        "binary"
+    );
+
+    // Repeating it changes nothing and spends no schema version.
+    match plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t CONVERT TO CHARACTER SET utf8mb4"),
+        300,
+    )
+    .expect("an already-satisfied conversion plans")
+    {
+        DdlPlan::AlreadySatisfied { detail, .. } => {
+            assert!(detail.contains("is already utf8mb4/utf8mb4_bin"), "{detail}");
+        }
+        DdlPlan::Write(_) => panic!("a no-op conversion must publish nothing"),
+    }
+
+    // Narrowing back is refused: the stored bytes would be reinterpreted.
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t CONVERT TO CHARACTER SET latin1"),
+        400,
+    )
+    .expect_err("a narrowing conversion is refused");
+    match error {
+        DdlPlanError::Admission(ref admission) => {
+            assert_eq!(admission.code, 8200, "{admission:?}");
+            assert!(
+                admission
+                    .reason
+                    .contains("Unsupported modify charset from utf8mb4 to latin1"),
+                "{admission:?}"
+            );
+        }
+        other => panic!("expected an admission refusal, got {other:?}"),
+    }
+}

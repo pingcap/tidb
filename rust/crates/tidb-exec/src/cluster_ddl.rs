@@ -493,6 +493,26 @@ pub enum DdlStatement {
     /// allocator counter behind it. Moving only the first would leave the
     /// next INSERT allocating from the old counter, which is the silent
     /// wrong answer this change exists to avoid.
+    /// `ALTER TABLE ... CONVERT TO CHARACTER SET x [COLLATE y]` and
+    /// `ALTER TABLE ... CHARACTER SET = x`, Go's
+    /// `ActionModifyTableCharsetAndCollate`.
+    ///
+    /// The two forms differ in one flag: `CONVERT TO` also rewrites every
+    /// column's own charset, while the bare option moves the table default
+    /// alone. Neither rewrites stored bytes, which is why Go only permits
+    /// the conversions whose encodings are compatible.
+    ModifyTableCharsetAndCollate {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The target charset, empty to keep the table's own.
+        charset: String,
+        /// The target collation, empty to take the charset's default.
+        collate: String,
+        /// `CONVERT TO`: also rewrite each column's charset.
+        overwrite_columns: bool,
+    },
     /// `ALTER DATABASE <db> {CHARACTER SET | COLLATE} ...`, Go's
     /// `ActionModifySchemaCharsetAndCollate`. It changes the DEFAULT the
     /// database hands to tables created after it; existing tables keep the
@@ -901,6 +921,24 @@ fn lower_alter_table_catalog(
                     new_cache: new_cache as i64,
                 }));
             }
+            if let tidb_ast::TableOption::CharacterSet(_) | tidb_ast::TableOption::Collate(_) =
+                option
+            {
+                let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+                let (charset, collate) = match option {
+                    tidb_ast::TableOption::CharacterSet(value) => (value.clone(), String::new()),
+                    tidb_ast::TableOption::Collate(value) => (String::new(), value.clone()),
+                    _ => unreachable!("the arm matched one of the two"),
+                };
+                return Ok(Some(DdlStatement::ModifyTableCharsetAndCollate {
+                    schema,
+                    table,
+                    charset,
+                    collate,
+                    // Without CONVERT TO, Go moves the table default only.
+                    overwrite_columns: false,
+                }));
+            }
             let ignored = match option {
                 tidb_ast::TableOption::Engine(_) => Some("ENGINE"),
                 tidb_ast::TableOption::RowFormat(_) => Some("ROW_FORMAT"),
@@ -1069,6 +1107,19 @@ fn lower_alter_table_catalog(
                 table,
                 if_exists: *if_exists,
                 column: name.clone(),
+            }))
+        }
+        tidb_ast::AlterTableAction::ConvertCharacterSet { charset, collation } => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::ModifyTableCharsetAndCollate {
+                schema,
+                table,
+                // Go's `CHARACTER SET DEFAULT` form leaves the charset to be
+                // taken from the table itself at apply time.
+                charset: charset.clone().unwrap_or_default(),
+                collate: collation.clone().unwrap_or_default(),
+                // Go `NeedToOverwriteColCharset`: true exactly for CONVERT TO.
+                overwrite_columns: true,
             }))
         }
         tidb_ast::AlterTableAction::RenameIndex(action) => {
@@ -3160,6 +3211,149 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }
+        DdlStatement::ModifyTableCharsetAndCollate {
+            schema,
+            table,
+            charset,
+            collate,
+            overwrite_columns,
+        } => {
+            // Go refuses the form that names neither before it resolves
+            // anything.
+            if charset.is_empty() && collate.is_empty() {
+                return Err(DdlPlanError::Admission(
+                    crate::table_info_build::DdlAdmissionError::with_code(
+                        1115,
+                        "Unknown character set: ''".to_owned(),
+                    ),
+                ));
+            }
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let database = find_database(&catalog, schema)
+                .expect("locate_table resolved the database")
+                .info
+                .clone();
+            // Go: an omitted charset keeps the table's own, and an omitted
+            // collation becomes that charset's default.
+            let to_charset = if charset.is_empty() {
+                stored.charset.clone()
+            } else {
+                charset.clone()
+            };
+            let (to_charset, to_collate) = crate::table_info_build::resolve_charset_collation(
+                Some(to_charset.as_str()),
+                if collate.is_empty() {
+                    None
+                } else {
+                    Some(collate.as_str())
+                },
+                CATALOG_CHARSET,
+                CATALOG_COLLATION,
+            )
+            .map_err(DdlPlanError::Admission)?;
+
+            // Go `checkAlterTableCharset`'s early return: the table already
+            // matches AND, when the columns are in scope, every non-binary
+            // column matches too.
+            if stored.charset == to_charset && stored.collate == to_collate {
+                let columns_settled = !*overwrite_columns
+                    || stored.columns.iter_deref().all(|column| {
+                        let column = column.read();
+                        let column_charset = column.field_type.charset_name();
+                        column_charset == "binary"
+                            || (column_charset == to_charset
+                                && column.field_type.collation().name() == to_collate)
+                    });
+                if columns_settled {
+                    return Ok(already(format!(
+                        "`{schema}`.`{table}` is already {to_charset}/{to_collate}"
+                    )));
+                }
+            }
+
+            // Go resolves the table's ORIGINAL pair against its database
+            // before comparing, so a table that never named one is judged by
+            // what it actually inherited.
+            let (from_charset, from_collate) = crate::table_info_build::resolve_charset_collation(
+                if stored.charset.is_empty() {
+                    Some(database.charset.as_str())
+                } else {
+                    Some(stored.charset.as_str())
+                },
+                if stored.collate.is_empty() {
+                    Some(database.collate.as_str())
+                } else {
+                    Some(stored.collate.as_str())
+                },
+                CATALOG_CHARSET,
+                CATALOG_COLLATION,
+            )
+            .map_err(DdlPlanError::Admission)?;
+            check_modify_charset_and_collation(
+                &to_charset,
+                &to_collate,
+                &from_charset,
+                &from_collate,
+                false,
+            )?;
+
+            let mut info = stored.clone_like_go();
+            if *overwrite_columns {
+                // Go checks every column BEFORE it rewrites any of them, so a
+                // refusal leaves the table exactly as it was.
+                for column in info.columns.iter_deref() {
+                    let column = column.read();
+                    let name = column.name.original().to_owned();
+                    if column.field_type.code() == tidb_datatype::FieldTypeCode::Varchar {
+                        check_varchar_field_length(
+                            column.field_type.flen(),
+                            &name,
+                            &to_charset,
+                        )?;
+                    }
+                    let column_charset = column.field_type.charset_name().to_owned();
+                    if column_charset == "binary" || column_charset.is_empty() {
+                        continue;
+                    }
+                    check_modify_charset_and_collation(
+                        &to_charset,
+                        &to_collate,
+                        &column_charset,
+                        column.field_type.collation().name(),
+                        is_column_with_index(&name, stored),
+                    )?;
+                }
+            }
+            info.charset = to_charset.clone();
+            info.collate = to_collate.clone();
+            if *overwrite_columns {
+                let collation = tidb_datatype::Collation::from_name(&to_collate)
+                    .unwrap_or(tidb_datatype::Collation::Binary);
+                for column in info.columns.iter_deref() {
+                    let mut column = column.write();
+                    // Go `field_types.HasCharset`: a type that holds text
+                    // takes the new pair, everything else is marked binary.
+                    if column.field_type.has_charset() {
+                        column.field_type.set_charset_name(to_charset.clone());
+                        column.field_type.set_collation(collation);
+                    } else {
+                        column.field_type.set_charset_name("binary");
+                        column.field_type.set_collation(tidb_datatype::Collation::Binary);
+                    }
+                }
+            }
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_MODIFY_TABLE_CHARSET_AND_COLLATE;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
         DdlStatement::ModifySchemaCharsetAndCollate {
             name,
             charset,
@@ -3504,6 +3698,115 @@ fn modify_type_reorg_reason(old: &FieldType, new: &FieldType) -> Option<String> 
         new.code(),
         old.code()
     ))
+}
+
+/// Go `collate.CompatibleCollate`: the pairs whose sort orders agree, so
+/// rewriting index entries is unnecessary.
+fn compatible_collate(one: &str, other: &str) -> bool {
+    const GENERAL_CI: [&str; 2] = ["utf8mb4_general_ci", "utf8_general_ci"];
+    const BIN: [&str; 3] = ["utf8mb4_bin", "utf8_bin", "latin1_bin"];
+    const UNICODE_CI: [&str; 2] = ["utf8mb4_unicode_ci", "utf8_unicode_ci"];
+    for family in [&GENERAL_CI[..], &BIN[..], &UNICODE_CI[..]] {
+        if family.contains(&one) && family.contains(&other) {
+            return true;
+        }
+    }
+    one == other
+}
+
+/// Go `checkModifyCharsetAndCollation`.
+///
+/// TiDB never rewrites stored bytes for a charset change, so it permits only
+/// the conversions whose encodings are a superset of the original: utf8 to
+/// utf8mb4, latin1 to utf8mb4, and collation-only changes within
+/// utf8/utf8mb4/latin1. Everything else is refused rather than silently
+/// reinterpreting the rows.
+fn check_modify_charset_and_collation(
+    to_charset: &str,
+    to_collate: &str,
+    from_charset: &str,
+    from_collate: &str,
+    rewrites_collation_data: bool,
+) -> Result<(), DdlPlanError> {
+    let valid = tidb_datatype::get_collation_by_name(to_collate)
+        .is_ok_and(|info| info.charset_name.eq_ignore_ascii_case(to_charset));
+    if !valid {
+        return Err(unsupported_charset_change(
+            1115,
+            format!("Unknown character set: '{to_charset}', collation: '{to_collate}'"),
+        ));
+    }
+    if rewrites_collation_data
+        && new_collation_enabled()
+        && !compatible_collate(from_collate, to_collate)
+    {
+        return Err(unsupported_charset_change(
+            8200,
+            format!("Unsupported modifying collation of column '{from_collate}' from '{from_collate}' to '{to_collate}'"),
+        ));
+    }
+    if matches!(
+        (from_charset, to_charset),
+        ("utf8", "utf8mb4") | ("utf8", "utf8") | ("utf8mb4", "utf8mb4") | ("latin1", "utf8mb4")
+    ) {
+        return Ok(());
+    }
+    if to_charset != from_charset {
+        return Err(unsupported_charset_change(
+            8200,
+            format!("Unsupported modify charset from {from_charset} to {to_charset}"),
+        ));
+    }
+    if to_collate != from_collate {
+        return Err(unsupported_charset_change(
+            8200,
+            format!("Unsupported modify charset from {from_charset} to {to_charset}"),
+        ));
+    }
+    Ok(())
+}
+
+fn unsupported_charset_change(code: u16, reason: String) -> DdlPlanError {
+    DdlPlanError::Admission(crate::table_info_build::DdlAdmissionError::with_code(
+        code, reason,
+    ))
+}
+
+/// Go `types.IsVarcharTooBigFieldLength`: the declared length is in
+/// CHARACTERS, so a wider charset lowers the ceiling.
+fn check_varchar_field_length(
+    flen: i64,
+    name: &str,
+    to_charset: &str,
+) -> Result<(), DdlPlanError> {
+    const MAX_FIELD_VARCHAR_LENGTH: i64 = 65535;
+    let Ok(info) = tidb_datatype::get_charset_info(to_charset) else {
+        return Ok(());
+    };
+    let max = MAX_FIELD_VARCHAR_LENGTH / info.maxlen as i64;
+    if flen != tidb_datatype::UNSPECIFIED_LENGTH && flen > max {
+        return Err(unsupported_charset_change(
+            1074,
+            format!(
+                "Column length too big for column '{name}' (max = {max}); \
+                 use BLOB or TEXT instead"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Go `isColumnWithIndex`: whether any index names this column, which is what
+/// makes a collation change require rewriting the stored entries.
+fn is_column_with_index(name: &str, table: &TableInfo) -> bool {
+    let wanted = name.to_lowercase();
+    table.indices.iter_deref().any(|index| {
+        index
+            .read()
+            .columns
+            .iter_deref()
+            .any(|column| column.read().name.lowercase() == wanted)
+    })
 }
 
 fn already(detail: String) -> DdlPlan {
