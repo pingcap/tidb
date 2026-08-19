@@ -14,6 +14,9 @@ workspace = true
 tidb-error = { path = "../tidb-error" }
 tidb-model = { path = "../tidb-model" }
 tidb-ast = { path = "../tidb-ast" }
+tidb-mysql = { path = "../tidb-mysql" }
+serde.workspace = true
+serde_json.workspace = true
 tidb-vardef = { path = "../tidb-vardef" }
 # `ru_stats.go` computes interval buckets from local midnight and documents
 # DST as load-bearing; chrono replaces Go's time.Time/time.Location.
