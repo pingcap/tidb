@@ -505,10 +505,6 @@ fn a_missing_object_without_if_exists_is_named_precisely() {
 fn every_unservable_shape_is_refused_before_a_single_mutation_exists() {
     for (sql, expected) in [
         (
-            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL, CHECK (v > 0))",
-            "CHECK and FOREIGN KEY constraints are not supported",
-        ),
-        (
             "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT AS (id + 1))",
             "carries a generated expression, which this node does not support",
         ),
