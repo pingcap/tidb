@@ -1512,7 +1512,7 @@ func TestKeyspaceEtcdNamespace(t *testing.T) {
 		t.Skip("keyspace is not supported in classic kernel")
 	}
 	keyspaceMeta := keyspacepb.KeyspaceMeta{}
-	keyspaceMeta.Id = 2
+	keyspaceMeta.Keyspace = &keyspacepb.KeyspaceMeta_Id{Id: 2}
 	keyspaceMeta.Name = keyspace.System
 	makeStore(t, &keyspaceMeta, true)
 }
@@ -1555,7 +1555,7 @@ func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix 
 	t.Cleanup(func() {
 		ddl.CloseOwnerManager(mockStore)
 	})
-	dom, err := domap.getWithEtcdClient(mockStore, etcdClient, nil)
+	dom, err := domap.getWithEtcdClient(mockStore, etcdClient, nil, domainCreateOptions{})
 	require.NoError(t, err)
 	defer dom.Close()
 

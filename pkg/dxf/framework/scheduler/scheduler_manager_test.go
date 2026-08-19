@@ -31,7 +31,7 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-func TestCleanUpRoutine(t *testing.T) {
+func TestSchedulerCleaner(t *testing.T) {
 	t.Run("drains bounded batches", func(t *testing.T) {
 		t.Cleanup(proto.SetTaskCleanupBatchSizeForTest(2))
 		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
@@ -43,12 +43,12 @@ func TestCleanUpRoutine(t *testing.T) {
 		defer pool.Close()
 		ctrl := gomock.NewController(t)
 		ctx := util.WithInternalSourceType(context.Background(), "scheduler_manager")
-		mockCleanupRoutine := mock.NewMockCleanUpRoutine(ctrl)
+		mockCleaner := mock.NewMockCleaner(ctrl)
 
-		sch, mgr := MockSchedulerManager(store, pool, nil, mockCleanupRoutine)
+		sch, mgr := MockSchedulerManager(store, pool, nil, mockCleaner)
 		defer sch.Stop()
 		require.NoError(t, mgr.InitMeta(ctx, ":4000", handle.GetTargetScope()))
-		mockCleanupRoutine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).Times(3)
+		mockCleaner.EXPECT().Clean(gomock.Any(), gomock.Any()).Return(nil).Times(3)
 		for _, taskKey := range []string{"cleanup-batch-0", "cleanup-batch-1", "cleanup-batch-2"} {
 			taskID, err := mgr.CreateTask(ctx, taskKey, proto.TaskTypeExample,
 				store.GetKeyspace(), 1, handle.GetTargetScope(), 1, proto.ExtraParams{}, nil)
@@ -59,7 +59,7 @@ func TestCleanUpRoutine(t *testing.T) {
 			require.NoError(t, mgr.SucceedTask(ctx, taskID))
 		}
 
-		sch.DoCleanupRoutine()
+		sch.DoClean()
 		historyTasks, err := testutil.GetTasksFromHistoryInStates(ctx, mgr, proto.TaskStateSucceed)
 		require.NoError(t, err)
 		require.Len(t, historyTasks, 3)
@@ -79,12 +79,12 @@ func TestCleanUpRoutine(t *testing.T) {
 	defer ctrl.Finish()
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "scheduler_manager")
-	mockCleanupRoutine := mock.NewMockCleanUpRoutine(ctrl)
+	mockCleaner := mock.NewMockCleaner(ctrl)
 
 	targetScope := handle.GetTargetScope()
-	sch, mgr := MockSchedulerManager(store, pool, getNumberExampleSchedulerExt(ctrl), mockCleanupRoutine)
+	sch, mgr := MockSchedulerManager(store, pool, getNumberExampleSchedulerExt(ctrl), mockCleaner)
 	require.NoError(t, mgr.InitMeta(ctx, ":4000", targetScope))
-	mockCleanupRoutine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockCleaner.EXPECT().Clean(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	sch.Start()
 	defer sch.Stop()
 	taskID, err := mgr.CreateTask(ctx, "test", proto.TaskTypeExample, store.GetKeyspace(), 1, targetScope, 1, proto.ExtraParams{}, nil)
@@ -112,7 +112,7 @@ func TestCleanUpRoutine(t *testing.T) {
 		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateSucceed, nil)
 		require.NoError(t, err)
 	}
-	sch.DoCleanupRoutine()
+	sch.DoClean()
 	require.Eventually(t, func() bool {
 		tasks, err := testutil.GetTasksFromHistoryInStates(ctx, mgr, proto.TaskStateSucceed)
 		require.NoError(t, err)

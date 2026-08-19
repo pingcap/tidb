@@ -27,10 +27,76 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+func TestResolveCloudStorageURI(t *testing.T) {
+	originalURI := vardef.CloudStorageURI.Load()
+	t.Cleanup(func() {
+		vardef.CloudStorageURI.Store(originalURI)
+	})
+
+	const jobID int64 = 900001
+	newTestWorker := func(cachedURI string) (*worker, *ReorgContext) {
+		jc := NewReorgContext()
+		jc.cloudStorageURI = cachedURI
+		dc := &ddlCtx{}
+		dc.jobCtx.jobCtxMap = map[int64]*ReorgContext{jobID: jc}
+		return &worker{workCtx: context.Background(), ddlCtx: dc}, jc
+	}
+	newJob := func(useCloudStorage bool) *model.Job {
+		return &model.Job{
+			ID: jobID,
+			ReorgMeta: &model.DDLReorgMeta{
+				UseCloudStorage: useCloudStorage,
+			},
+		}
+	}
+
+	t.Run("configured URI recovers empty owner cache", func(t *testing.T) {
+		vardef.CloudStorageURI.Store("s3://bucket")
+		w, jc := newTestWorker("")
+		uri, err := w.resolveCloudStorageURI(newJob(true), false)
+		require.NoError(t, err)
+		require.Equal(t, "s3://bucket/dxf/", uri)
+		require.Equal(t, uri, jc.cloudStorageURI)
+	})
+
+	t.Run("missing configured URI is unretryable", func(t *testing.T) {
+		vardef.CloudStorageURI.Store("")
+		w, _ := newTestWorker("")
+		_, err := w.resolveCloudStorageURI(newJob(true), false)
+		require.ErrorContains(t, err, "cloud storage URI is empty for add-index job 900001 with cloud storage enabled")
+		require.False(t, isRetryableJobError(err, 0))
+	})
+
+	t.Run("cached URI wins over changed configuration", func(t *testing.T) {
+		vardef.CloudStorageURI.Store("s3://new-bucket")
+		w, _ := newTestWorker("s3://cached-bucket/dxf/")
+		uri, err := w.resolveCloudStorageURI(newJob(true), false)
+		require.NoError(t, err)
+		require.Equal(t, "s3://cached-bucket/dxf/", uri)
+	})
+
+	t.Run("local sort permits empty URI", func(t *testing.T) {
+		vardef.CloudStorageURI.Store("")
+		w, _ := newTestWorker("")
+		uri, err := w.resolveCloudStorageURI(newJob(false), false)
+		require.NoError(t, err)
+		require.Empty(t, uri)
+	})
+
+	t.Run("merge temp index does not require cloud storage", func(t *testing.T) {
+		vardef.CloudStorageURI.Store("")
+		w, _ := newTestWorker("")
+		uri, err := w.resolveCloudStorageURI(newJob(true), true)
+		require.NoError(t, err)
+		require.Empty(t, uri)
+	})
+}
 
 func TestShouldAutoPauseExistingKVDiskFullTask(t *testing.T) {
 	task := &proto.Task{

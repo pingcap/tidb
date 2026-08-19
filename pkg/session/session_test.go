@@ -81,8 +81,8 @@ func TestWaitSystemBootVersion(t *testing.T) {
 	store, err := mockstore.NewMockStore(
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
 		mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
-			Id:   systemKeyspaceID,
-			Name: keyspace.System,
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: systemKeyspaceID},
+			Name:     keyspace.System,
 		}),
 	)
 	require.NoError(t, err)
@@ -180,8 +180,8 @@ func TestBootstrapSessionImplUserKSVersionGuard(t *testing.T) {
 		store, err := mockstore.NewMockStore(
 			mockstore.WithStoreType(mockstore.EmbedUnistore),
 			mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
-				Id:   keyspaceID,
-				Name: keyspaceName,
+				Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: keyspaceID},
+				Name:     keyspaceName,
 			}),
 		)
 		require.NoError(t, err)
@@ -230,7 +230,7 @@ func TestBootstrapSessionImplUserKSVersionGuard(t *testing.T) {
 			defer func() {
 				panicVal = recover()
 			}()
-			return bootstrapSessionImpl(context.Background(), userStore, createSessionStub)
+			return bootstrapSessionImpl(context.Background(), userStore, createSessionStub, nil)
 		}()
 		require.NotNil(t, panicVal)
 		panicMsg := fmt.Sprint(panicVal)

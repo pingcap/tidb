@@ -385,7 +385,7 @@ func TestImportIntoValidateColAssignmentsWithEncodeCtx(t *testing.T) {
 		error string
 	}{
 		{
-			exprs: []string{"'x'", "1+@1", "concat('hello', 'world')", "getvar('var1')"},
+			exprs: []string{"'x'", "1+@1", "concat('hello', 'world')", "getvar('var1')", "uncompress(compress(@raw))"},
 		},
 		{
 			exprs: []string{"setvar('a', 'b')"},

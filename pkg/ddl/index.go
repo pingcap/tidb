@@ -3150,6 +3150,25 @@ func shouldAutoPauseExistingKVDiskFullTask(job *model.Job, task *proto.Task) boo
 		!job.HasResumeReason(model.JobResumeReasonKVDiskFull)
 }
 
+// resolveCloudStorageURI reloads the URI when a new DDL owner resumes the job.
+// UseCloudStorage is persisted in the job, but the URI loaded by loadCloudStorageURI
+// is cached only in the previous owner's in-memory ReorgContext.
+func (w *worker) resolveCloudStorageURI(job *model.Job, mergeTempIndex bool) (string, error) {
+	jc := w.jobContext(job.ID, job.ReorgMeta)
+	if mergeTempIndex || !job.ReorgMeta.UseCloudStorage || jc.cloudStorageURI != "" {
+		return jc.cloudStorageURI, nil
+	}
+
+	jc.cloudStorageURI = handle.GetCloudStorageURI(w.workCtx, w.store)
+	if jc.cloudStorageURI == "" {
+		// Recovering requires the user to restore the cloud storage URI. Retrying could leave the DDL job
+		// in write reorganization for a long time before the configuration problem is noticed, so fail it.
+		return "", dbterror.ErrIngestFailed.GenWithStackByArgs(
+			fmt.Sprintf("cloud storage URI is empty for add-index job %d with cloud storage enabled", job.ID))
+	}
+	return jc.cloudStorageURI, nil
+}
+
 func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *reorgInfo) error {
 	stepCtx := jobCtx.stepCtx
 	taskType := proto.Backfill
@@ -3254,11 +3273,15 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("required-slots", requiredSlots),
 			zap.String("task-key", taskKey))
 		rowSize := estimateTableRowSize(w.workCtx, w.store, w.sess.GetRestrictedSQLExecutor(), t)
+		cloudStorageURI, err := w.resolveCloudStorageURI(job, reorgInfo.mergingTmpIdx)
+		if err != nil {
+			return err
+		}
 		taskMeta := &BackfillTaskMeta{
 			Job:             *job.Clone(),
 			EleIDs:          extractElemIDs(reorgInfo),
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
-			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
+			CloudStorageURI: cloudStorageURI,
 			MergeTempIndex:  reorgInfo.mergingTmpIdx,
 			EstimateRowSize: rowSize,
 			Version:         BackfillTaskMetaVersion1,
@@ -3596,12 +3619,13 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 		} else {
 			// case 3 (or if not found AddingDefinitions; 4)
 			// check if recreating Global Index (during Reorg Partition)
-			pid, err = findNextPartitionID(currPhysicalTableID, pi.AddingDefinitions)
-			if err != nil {
+			var notAddingErr error
+			pid, notAddingErr = findNextPartitionID(currPhysicalTableID, pi.AddingDefinitions)
+			if notAddingErr != nil {
 				// case 4
 				// Not a partition in the AddingDefinitions, so it must be an existing
 				// non-touched partition, i.e. recreating Global Index for the non-touched partitions
-				pid, err = findNextNonTouchedPartitionID(currPhysicalTableID, pi)
+				pid = findNextNonTouchedPartitionID(currPhysicalTableID, pi)
 			}
 		}
 	} else if len(pi.DroppingDefinitions) == 0 {
@@ -3690,22 +3714,28 @@ func findNextPartitionID(currentPartition int64, defs []model.PartitionDefinitio
 	return 0, errors.Errorf("partition id not found %d", currentPartition)
 }
 
-func findNextNonTouchedPartitionID(currPartitionID int64, pi *model.PartitionInfo) (int64, error) {
+// findNextNonTouchedPartitionID finds the next partition after currPartitionID
+// that is not touched by the current DDL, i.e. the next partition in
+// pi.Definitions which is not in pi.DroppingDefinitions.
+// Returns 0 if there is no such partition left.
+func findNextNonTouchedPartitionID(currPartitionID int64, pi *model.PartitionInfo) int64 {
 	pid, err := findNextPartitionID(currPartitionID, pi.Definitions)
 	if err != nil {
-		return 0, err
+		// Should not happen, the reorg only runs on partitions of the table.
+		logutil.DDLLogger().Warn("current partition not found in the table definitions",
+			zap.Int64("partitionID", currPartitionID))
+		return 0
 	}
-	if pid == 0 {
-		return 0, nil
-	}
-	for _, notFoundErr := findNextPartitionID(pid, pi.DroppingDefinitions); notFoundErr == nil; {
-		// This can be optimized, but it is not frequently called, so keeping as-is
-		pid, err = findNextPartitionID(pid, pi.Definitions)
-		if pid == 0 {
-			break
+	for pid != 0 {
+		if _, notFoundErr := findNextPartitionID(pid, pi.DroppingDefinitions); notFoundErr != nil {
+			// Not in DroppingDefinitions, so it is a non-touched partition.
+			return pid
 		}
+		// This can be optimized, but it is not frequently called, so keeping as-is
+		// pid is from pi.Definitions, so it can always be found there.
+		pid, _ = findNextPartitionID(pid, pi.Definitions)
 	}
-	return pid, err
+	return 0
 }
 
 // AllocateIndexID allocates an index ID from TableInfo.

@@ -252,6 +252,27 @@ func TestTiFlashQuerySpillRatio(t *testing.T) {
 	require.Equal(t, 0.75, vars.TiFlashQuerySpillRatio)
 }
 
+func TestTiDBTTLJobEnableSetGlobalUpdatesLocalWithoutExternalWorkload(t *testing.T) {
+	vars := NewSessionVars(nil)
+	sv := GetSysVar(vardef.TiDBTTLJobEnable)
+	require.NotNil(t, sv)
+
+	originalEnable := vardef.EnableTTLJob.Load()
+	originalHook := UpdateExternalWorkloadTTLJobEnable
+	t.Cleanup(func() {
+		vardef.EnableTTLJob.Store(originalEnable)
+		UpdateExternalWorkloadTTLJobEnable = originalHook
+	})
+
+	vardef.EnableTTLJob.Store(false)
+	boom := fmt.Errorf("boom")
+	UpdateExternalWorkloadTTLJobEnable = func(context.Context, bool) error {
+		return boom
+	}
+	require.NoError(t, sv.SetGlobal(context.Background(), vars, vardef.On))
+	require.True(t, vardef.EnableTTLJob.Load())
+}
+
 func TestTiFlashHashJoinVersion(t *testing.T) {
 	vars := NewSessionVars(nil)
 	sv := GetSysVar(vardef.TiFlashHashJoinVersion)

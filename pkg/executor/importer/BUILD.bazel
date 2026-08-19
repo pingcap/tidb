@@ -121,7 +121,7 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-    shard_count = 44,
+    shard_count = 45,
     deps = [
         "//br/pkg/mock",
         "//br/pkg/streamhelper",

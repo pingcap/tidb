@@ -277,9 +277,9 @@ func TestNotifyGCV2AfterGCForDedicatedWorker(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, err := mockstore.NewMockStore(mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
-				Id:     1,
-				Name:   "ks",
-				Config: map[string]string{pd.KeyspaceConfigGCManagementType: tc.gcManagementType},
+				Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 1},
+				Name:     "ks",
+				Config:   map[string]string{pd.KeyspaceConfigGCManagementType: tc.gcManagementType},
 			}))
 			require.NoError(t, err)
 			t.Cleanup(func() {
@@ -1573,9 +1573,9 @@ func testResolveLocksWithKeyspacesImpl(t *testing.T, subCaseName string) {
 			gcManagementType = pd.KeyspaceConfigGCManagementTypeUnified
 		}
 		return &keyspacepb.KeyspaceMeta{
-			Id:     id,
-			Name:   name,
-			Config: map[string]string{pd.KeyspaceConfigGCManagementType: gcManagementType},
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: id},
+			Name:     name,
+			Config:   map[string]string{pd.KeyspaceConfigGCManagementType: gcManagementType},
 		}
 	}
 
