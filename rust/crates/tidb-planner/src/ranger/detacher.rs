@@ -1578,6 +1578,56 @@ fn detach_cond_and_build_range(
     detacher.detach_cond_and_build_range_for_cols(conditions)
 }
 
+
+/// Go `MergeDNFItems4Col` (`detacher.go:1191`): group single-column DNF
+/// items whose column can build ranges, composing one DNF per column —
+/// `[a > 5, b > 6, c > 7, a = 1, b > 3]` becomes
+/// `[c > 7, a > 5 OR a = 1, b > 6 OR b > 3]`. Multi-column items and the
+/// `_tidb_rowid` extra handle stay unmerged (the Selectivity recursion
+/// guard in Go's comment).
+#[must_use]
+pub fn merge_dnf_items_4_col(
+    dnf_items: &[Expression],
+    opt_prefix_index_single_scan: bool,
+) -> Vec<Expression> {
+    const EXTRA_HANDLE_ID: i64 = -1;
+    let mut merged = Vec::with_capacity(dnf_items.len());
+    let mut col_order: Vec<i64> = Vec::new();
+    let mut col_to_items: std::collections::HashMap<i64, Vec<Expression>> =
+        std::collections::HashMap::new();
+    for dnf_item in dnf_items {
+        let cols = tidb_expr::simple_expr::extract_columns(dnf_item);
+        if cols.len() != 1 || cols[0].id == EXTRA_HANDLE_ID {
+            merged.push(dnf_item.clone());
+            continue;
+        }
+        let unique_id = cols[0].unique_id;
+        let checker = ConditionChecker {
+            checker_col: Some(&cols[0]),
+            length: UNSPECIFIED_LENGTH,
+            opt_prefix_index_single_scan,
+        };
+        let (is_access_cond, _) = checker.check(dnf_item);
+        if !is_access_cond {
+            merged.push(dnf_item.clone());
+            continue;
+        }
+        if !col_to_items.contains_key(&unique_id) {
+            col_order.push(unique_id);
+        }
+        col_to_items.entry(unique_id).or_default().push(dnf_item.clone());
+    }
+    // Go iterates the map (unordered); first-seen order keeps this port
+    // deterministic without changing membership.
+    for unique_id in col_order {
+        let items = col_to_items.remove(&unique_id).expect("recorded above");
+        if let Some(composed) = compose_dnf_condition(items) {
+            merged.push(composed);
+        }
+    }
+    merged
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1944,5 +1994,38 @@ mod tests {
             .collect();
         assert_eq!(shown, ["[1 5,1 5]", "[3 5,3 5]"], "{:?}", res.access_conds);
         assert!(res.remained_conds.is_empty(), "{:?}", res.remained_conds);
+    }
+
+    /// Go's own `MergeDNFItems4Col` example: `[a > 5, b > 6, c?, a = 1,
+    /// b > 3]` groups per column (`c` here is a multi-column item that
+    /// stays put).
+    #[test]
+    fn dnf_items_merge_per_column() {
+        let a = int_column(1);
+        let b = int_column(2);
+        let c = int_column(3);
+        let multi = func(
+            "gt",
+            vec![Expression::Column(c.clone()), Expression::Column(a.clone())],
+        );
+        let items = vec![
+            func("gt", vec![Expression::Column(a.clone()), int_const(5)]),
+            func("gt", vec![Expression::Column(b.clone()), int_const(6)]),
+            multi.clone(),
+            func("eq", vec![Expression::Column(a.clone()), int_const(1)]),
+            func("gt", vec![Expression::Column(b.clone()), int_const(3)]),
+        ];
+        let merged = merge_dnf_items_4_col(&items, true);
+        assert_eq!(merged.len(), 3, "{merged:?}");
+        // The multi-column item is untouched and FIRST (unmergeable order).
+        assert!(merged[0].equal(&multi));
+        // Then one OR per column, in first-seen column order.
+        for (index, expected_arms) in [(1, 2), (2, 2)] {
+            let Expression::ScalarFunction(sf) = &merged[index] else {
+                panic!("a composed OR at {index}");
+            };
+            assert_eq!(sf.func_name.lowercase(), "or");
+            assert_eq!(sf.args.len(), expected_arms);
+        }
     }
 }

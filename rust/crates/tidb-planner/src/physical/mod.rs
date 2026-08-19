@@ -414,6 +414,9 @@ pub struct PhysicalTableScan {
     pub keep_order: bool,
     /// Go `Desc`: the scan runs backward.
     pub desc: bool,
+    /// Go `Ranges`: the scan's key ranges (`ranger.Ranges`). Empty means
+    /// the builder predates range filling and reads as the full scan.
+    pub ranges: crate::ranger::types::Ranges,
 }
 
 /// Go `physicalop.PhysicalTableDual` (`physical_table_dual.go`, whole
@@ -1011,6 +1014,8 @@ pub struct PhysicalIndexScan {
     pub keep_order: bool,
     /// Go `Desc`.
     pub desc: bool,
+    /// Go `Ranges` (`ranger.Ranges`); empty reads as the full range.
+    pub ranges: crate::ranger::types::Ranges,
 }
 
 /// Go `physicalop.PhysicalIndexReader` (`physical_index_reader.go:34`): the
@@ -1837,6 +1842,7 @@ impl PhysicalPlan {
                 desc: op.desc,
                 table_id: op.table_id,
                 store_type: op.store_type,
+                ranges: op.ranges.clone(),
             }),
             Self::TableDual(op) => Self::TableDual(PhysicalTableDual {
                 base: base_of(&op.base),
@@ -1902,6 +1908,7 @@ impl PhysicalPlan {
                 index_name: op.index_name.clone(),
                 keep_order: op.keep_order,
                 desc: op.desc,
+                ranges: op.ranges.clone(),
             }),
             Self::IndexReader(op) => Self::IndexReader(PhysicalIndexReader {
                 base: base_of(&op.base),

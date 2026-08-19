@@ -98,7 +98,10 @@ impl Ver2Coster {
                     rows,
                     row_size: ROW_SIZE_FLOOR,
                     is_child_of_inl: None,
-                    has_full_range_scan: true,
+                    // Go `ranger.HasFullRange(ts.Ranges, unsignedIntHandle)`;
+                    // an unfilled range list reads as the full scan.
+                    has_full_range_scan: scan.ranges.is_empty()
+                        || crate::ranger::types::has_full_range(&scan.ranges, false),
                     penalty: crate::plan_cost_ver2::TableScanPenaltyInput::default(),
                 },
                 if scan.desc {

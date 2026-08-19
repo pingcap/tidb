@@ -35,6 +35,7 @@ fn scan(id: i32, columns: &[i64]) -> PhysicalPlan {
         store_type: Default::default(),
         keep_order: false,
         desc: false,
+        ranges: crate::ranger::types::Ranges::new(),
     })
 }
 

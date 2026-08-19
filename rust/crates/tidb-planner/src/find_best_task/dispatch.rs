@@ -546,12 +546,38 @@ fn find_best_task_4_logical_data_source(
                 );
                 base.base.set_stats(ds.base.base.stats_info().cloned());
                 base.base.set_schema(ds.base.base.schema().cloned());
+                // Go `buildTableRange` over the pushed conditions: the
+                // int-handle scan's key ranges (full when nothing pushed).
+                let handle_type = ds
+                    .base
+                    .base
+                    .schema()
+                    .and_then(|schema| ds.get_pk_is_handle_col(schema))
+                    .and_then(|col| col.ret_type.clone())
+                    .unwrap_or_else(|| {
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+                    });
+                let ranges = if ds.pushed_down_conds.is_empty() {
+                    crate::ranger::points::full_int_range(handle_type.is_unsigned())
+                } else {
+                    match crate::ranger::ranger::build_table_range(
+                        &ds.pushed_down_conds,
+                        &handle_type,
+                        0,
+                    ) {
+                        Ok(result) => result.ranges,
+                        Err(_) => crate::ranger::points::full_int_range(
+                            handle_type.is_unsigned(),
+                        ),
+                    }
+                };
                 let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
                     base,
                     table_id: ds.physical_table_id,
                     store_type: crate::physical_table_reader::StoreType::TiKv,
                     keep_order,
                     desc,
+                    ranges,
                 });
                 Task::Cop(crate::task::CopTask {
                     table_plan: Some(Box::new(scan)),
@@ -585,6 +611,40 @@ fn find_best_task_4_logical_data_source(
                 );
                 base.base.set_stats(ds.base.base.stats_info().cloned());
                 base.base.set_schema(ds.base.base.schema().cloned());
+                // Go `detachCondAndBuildRangeForPath`: the index columns
+                // (schema columns at the index's offsets) detach the pushed
+                // conditions into this path's ranges.
+                let index_cols: Vec<tidb_expr::column::Column> = source_index
+                    .columns
+                    .iter()
+                    .filter_map(|index_column| {
+                        ds.base
+                            .base
+                            .schema()
+                            .and_then(|schema| schema.columns.get(index_column.offset))
+                            .cloned()
+                    })
+                    .collect();
+                let index_lengths: Vec<i64> = source_index
+                    .columns
+                    .iter()
+                    .map(|index_column| index_column.length)
+                    .collect();
+                let ranges = if ds.pushed_down_conds.is_empty()
+                    || index_cols.len() != source_index.columns.len()
+                {
+                    crate::ranger::points::full_range()
+                } else {
+                    match crate::ranger::detacher::detach_cond_and_build_range_for_index(
+                        &ds.pushed_down_conds,
+                        &index_cols,
+                        &index_lengths,
+                        0,
+                    ) {
+                        Ok(result) => result.ranges,
+                        Err(_) => crate::ranger::points::full_range(),
+                    }
+                };
                 let scan = PhysicalPlan::IndexScan(crate::physical::PhysicalIndexScan {
                     base,
                     table_id: ds.physical_table_id,
@@ -592,6 +652,7 @@ fn find_best_task_4_logical_data_source(
                     index_name: source_index.name.clone(),
                     keep_order,
                     desc,
+                    ranges,
                 });
                 let table_side = if single_scan {
                     None
@@ -612,6 +673,9 @@ fn find_best_task_4_logical_data_source(
                             store_type: crate::physical_table_reader::StoreType::TiKv,
                             keep_order: false,
                             desc: false,
+                            // The lookup's table side reads BY HANDLE from
+                            // the index rows, not by its own ranges.
+                            ranges: crate::ranger::types::Ranges::new(),
                         },
                     )))
                 };
@@ -944,6 +1008,100 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn pushed_conditions_become_scan_ranges() {
+        // The ranger wire-in: `WHERE pk > 5` on the int handle fills the
+        // table scan's ranges with `(5, +inf]`; an indexed `b = 7` fills
+        // the index scan's ranges with the point.
+        use crate::access_path::PossiblePath;
+        use crate::logical::data_source::DataSourceColumn;
+        use crate::logical::DataSource;
+        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+        use tidb_expr::column::Column;
+        use tidb_expr::constant::Constant;
+        use tidb_expr::expression::Expression;
+        use tidb_expr::scalar_function::ScalarFunction;
+        use tidb_expr::schema::Schema;
+
+        let allocator = PlanIdAllocator::new();
+        let coster = crate::find_best_task::coster::Ver2Coster::default();
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
+        let pk = Column::new(11, {
+            let mut ft = FieldType::new(FieldTypeCode::LongLong);
+            ft.set_flags(ft.flags() | tidb_datatype::FieldTypeFlags::PRI_KEY);
+            ft
+        });
+        let b = Column::new(12, FieldType::new(FieldTypeCode::LongLong));
+        let cmp = |name: &str, col: &Column, v: i64| {
+            Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new(name),
+                FieldType::new(FieldTypeCode::LongLong),
+                vec![
+                    Expression::Column(col.clone()),
+                    Expression::Constant(Constant::new(
+                        Datum::Int(v),
+                        FieldType::new(FieldTypeCode::LongLong),
+                    )),
+                ],
+            ))
+        };
+        let build = |conds: Vec<Expression>, paths: Vec<PossiblePath>| {
+            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
+            base.base.set_stats(Some(StatsInfo::new(100.0, [])));
+            let mut schema = Schema::default();
+            schema.columns = vec![pk.clone(), b.clone()];
+            base.base.set_schema(Some(schema));
+            LogicalPlan::DataSource(DataSource {
+                base,
+                physical_table_id: 7,
+                pk_is_handle: true,
+                columns: vec![
+                    DataSourceColumn {
+                        id: 1,
+                        name: "pk".to_owned(),
+                        is_primary_key: true,
+                    },
+                    DataSourceColumn {
+                        id: 2,
+                        name: "b".to_owned(),
+                        is_primary_key: false,
+                    },
+                ],
+                pushed_down_conds: conds,
+                enumerated_paths: paths,
+                indexes: vec![SourceIndex {
+                    id: 3,
+                    name: "ib".to_owned(),
+                    columns: vec![SourceIndexColumn {
+                        name: "b".to_owned(),
+                        offset: 1,
+                        length: -1,
+                    }],
+                    ..SourceIndex::default()
+                }],
+                ..DataSource::default()
+            })
+        };
+
+        // Table path with pk > 5.
+        let source = build(
+            vec![cmp("gt", &pk, 5)],
+            vec![PossiblePath::Table { is_int_handle: true, primary_index: None }],
+        );
+        let task = find_best_task(&source, &PhysicalProperty::default(), &mut ctx)
+            .expect("plans");
+        let Some(PhysicalPlan::TableReader(reader)) = task.plan() else {
+            panic!("a TableReader, got {:?}", task.plan());
+        };
+        let Some(PhysicalPlan::TableScan(scan)) = reader.table_plan.as_deref() else {
+            panic!("the scan");
+        };
+        assert_eq!(scan.ranges.len(), 1);
+        assert_eq!(scan.ranges[0].to_display_string(), "(5,+inf]");
+        assert!(!crate::ranger::types::has_full_range(&scan.ranges, false));
+    }
+
     #[test]
     fn a_non_covering_index_plans_the_lookup_double_read() {
         // `IsSingleScan` end to end: with the catalog's column list filled,

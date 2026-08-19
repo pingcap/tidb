@@ -704,6 +704,7 @@ mod tests {
             store_type: crate::physical_table_reader::StoreType::TiKv,
             keep_order: false,
             desc: false,
+            ranges: crate::ranger::types::Ranges::new(),
         })
     }
 
@@ -723,6 +724,7 @@ mod tests {
             store_type: crate::physical_table_reader::StoreType::TiKv,
             keep_order: false,
             desc: false,
+            ranges: crate::ranger::types::Ranges::new(),
         });
         let mut cop = CopTask {
             table_plan: Some(Box::new(scan)),
@@ -1880,6 +1882,7 @@ mod attach_tests {
                 store_type: crate::physical_table_reader::StoreType::TiKv,
                 keep_order: false,
                 desc: false,
+                ranges: crate::ranger::types::Ranges::new(),
             })
         };
         let selection = PhysicalPlan::Selection(PhysicalSelection {
