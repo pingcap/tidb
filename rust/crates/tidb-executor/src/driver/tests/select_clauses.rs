@@ -532,6 +532,13 @@ fn an_unknown_column_names_its_clause() {
         ("SELECT no_col FROM uc", "no_col", "field list"),
         ("SELECT a FROM uc WHERE nc = 1", "nc", "where clause"),
         ("SELECT uc.nc FROM uc", "uc.nc", "field list"),
+        // The aggregate path's GROUP BY rewrite — Go raises these during the
+        // gby rewrite once ONLY_FULL_GROUP_BY has passed (a covered select
+        // list), with `logical_plans_test.go:1699`'s qualified spelling.
+        ("SELECT count(*) FROM uc GROUP BY no_col", "no_col", "group statement"),
+        ("SELECT a FROM uc GROUP BY a, no_col", "no_col", "group statement"),
+        ("SELECT a FROM uc GROUP BY t11.c1, a", "t11.c1", "group statement"),
+        ("SELECT count(*) FROM uc WHERE nc = 1", "nc", "where clause"),
     ] {
         let wire = run(sql).unwrap_err().to_mysql_error();
         assert_eq!(wire.code, 1054, "{sql}: {}", wire.message);

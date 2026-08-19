@@ -1061,7 +1061,7 @@ fn lower_select_fields(
             other => {
                 // A plain field in an aggregate query rides FIRST_ROW.
                 let rewritten = rewrite_expr_resolved(other, resolver)
-                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+                    .map_err(|e| super::eval_error_in_clause(e, "field list"))?;
                 let t = rewritten
                     .static_type()
                     .cloned()
@@ -2230,7 +2230,7 @@ fn build_aggregation(
         let resolved = resolve_group_by_item(&item.expr, &select.fields, resolver)?;
         group_by.push(
             rewrite_expr_resolved(resolved.as_ref(), resolver)
-                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+                .map_err(|e| super::eval_error_in_clause(e, "group statement"))?,
         );
     }
     // Go's StreamAgg property matching removes equality-fixed index prefixes
@@ -2337,7 +2337,7 @@ fn build_aggregation(
     let scan_consumed_where = select.where_clause.is_some() && executed_where.is_none();
     if let Some(predicate) = &executed_where {
         let mut pred = rewrite_expr_resolved(predicate, resolver)
-            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            .map_err(|e| super::eval_error_in_clause(e, "where clause"))?;
         refine_comparisons(&mut pred, ctx).map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
         if let Some(explained) = &mut explained_where {
             explained.push(pred.clone());
@@ -3210,7 +3210,7 @@ fn build_having_stage(
     let out_schema = out_schema.clone();
     if let Some(having) = &state.having_expr {
         let predicate = rewrite_expr_resolved(having, &agg_resolver)
-            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            .map_err(|e| super::eval_error_in_clause(e, "having clause"))?;
         root = Box::new(SelectionExec::new(
             ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
             vec![predicate],
@@ -3329,7 +3329,7 @@ fn build_order_and_limit(
         for (expr, desc) in &state.order_by_exprs {
             by_items.push(SortByItem {
                 expr: rewrite_expr_resolved(expr, agg_resolver)
-                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+                    .map_err(|e| super::eval_error_in_clause(e, "order clause"))?,
                 desc: *desc,
             });
         }
