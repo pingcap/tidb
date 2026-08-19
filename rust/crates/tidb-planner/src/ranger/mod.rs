@@ -12,18 +12,40 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/util/ranger`: scan-range construction — the machinery that turns
-//! predicates into index/table key ranges.
+//! Go `pkg/util/ranger`, ported WHOLE: scan-range construction — the
+//! machinery that turns predicates into index/table key ranges.
 //!
-//! Ported file by file toward the whole-package claim:
-//! * [`types`] — `types.go`, the `Range`/`Ranges` model (COMPLETE, with
-//!   `types_test.go` transcreated).
-//! * [`checker`] — `checker.go`, the access-condition admission
-//!   (COMPLETE).
-//! * [`points`] — `points.go`, on the whole-file track: the point model,
-//!   comparators, full-range constructors, and constant fixups are in; the
-//!   builder dispatch continues there.
-//! * `ranger.go`, `detacher.go` follow on this track, in dependency order.
+//! * [`types`] — `types.go`: the `Range`/`Ranges` model, the Go-format
+//!   printer (`strconv.Quote` over raw bytes), and `MemUsage` with Go's
+//!   real struct sizes. `types_test.go` transcreated.
+//! * [`checker`] — `checker.go`: access-condition admission, collation
+//!   gates, prefix/single-scan rules.
+//! * [`points`] — `points.go`: the point model, the whole builder,
+//!   prefix cutting, the union/intersection sweeps.
+//! * [`ranger`] — `ranger.go`: points-to-ranges assembly, `UnionRanges`,
+//!   the append family with Go's memory-quota estimates,
+//!   `AppendRanges2PointRanges`, `BuildTableRange`/`BuildColumnRange`.
+//! * [`detacher`] — `detacher.go`: eq/in extraction (including the
+//!   unconditional NULL-valued-access drop), CNF/DNF detachment with both
+//!   fix-control arms, the best-CNF-item machinery, `MergeDNFItems4Col`,
+//!   and the shard-index GC-column family (`AddExpr4EqAndInCondition`).
+//!
+//! `ranger_test.go`'s table-driven suites are transcreated in
+//! [`go_cases`]: TableRange, ColumnRange, UnsignedAndOverflow, Year,
+//! PrefixIndexRangeScan, IndexRange, PrefixIndexRange,
+//! ShardIndexFuncSuites, MinAccessCondsForDNFCond, the three
+//! RangeFallback ladders, MemUsage, BinCollation, and issues 40997/50051.
+//!
+//! Boundaries, by name:
+//! * `RangesToString`/`RangeSingleColToString` are not ported: nothing in
+//!   the production tree consumes them (only `ranger.go` itself defines
+//!   them), and no upstream test covers them.
+//! * A `Constant`'s plan-cache mutability (`ParamMarker`/`DeferredExpr`)
+//!   is structurally absent from this expression model; `ValueInfo`'s
+//!   `mutable` leg activates with the plan-cache track.
+//! * `TestTableShardIndex` and `TestRangeFallback*`'s warning surface are
+//!   testkit/plan-level: their ranger-observable cores are pinned here,
+//!   and the plan-level halves belong to the driver's rule track.
 
 pub mod checker;
 pub mod detacher;
