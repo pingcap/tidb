@@ -110,6 +110,7 @@ pub mod pushdown;
 pub mod eliminate_unionall_dual_item;
 pub mod explain;
 pub mod explore_mark;
+pub mod final_mode_agg;
 pub mod expr_iterator;
 pub mod expression_rewriter;
 pub mod find_best_task;
