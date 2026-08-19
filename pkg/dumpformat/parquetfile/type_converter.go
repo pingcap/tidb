@@ -28,6 +28,12 @@ import (
 
 type setter[T parquet.ColumnTypes] func(T, *types.Datum) error
 
+func unsupportedParquetValueSetter[T parquet.ColumnTypes](logicalType schema.LogicalType) setter[T] {
+	return func(T, *types.Datum) error {
+		return errors.Errorf("unsupported parquet logical type %s", logicalType.String())
+	}
+}
+
 var zeroMyDecimal = types.MyDecimal{}
 
 const (
@@ -162,16 +168,15 @@ func getStringFromParquetByte(rawBytes []byte, scale int) []byte {
 func setParquetDecimalFromInt64(
 	unscaled int64,
 	dec *types.MyDecimal,
-	decimalMeta schema.DecimalMetadata,
+	scale int32,
 ) error {
 	dec.FromInt(unscaled)
 
-	scale := int(decimalMeta.Scale)
-	if err := dec.Shift(-scale); err != nil {
+	if err := dec.Shift(-int(scale)); err != nil {
 		return err
 	}
 
-	return dec.Round(dec, scale, types.ModeTruncate)
+	return dec.Round(dec, int(scale), types.ModeTruncate)
 }
 
 //nolint:all_revive
@@ -184,20 +189,21 @@ func getBoolDataSetter(val bool, d *types.Datum) error {
 	return nil
 }
 
-func getInt32Setter(converted *convertedType, loc *time.Location) setter[int32] {
+func getInt32Setter(parquetColumnType *parquetColumnType, loc *time.Location) setter[int32] {
 	// For parquet TIME/TIMESTAMP epoch values:
 	// - IsAdjustedToUTC=true: interpret as UTC instant, then render in parser location.
 	// - IsAdjustedToUTC=false: keep as local-semantics wall clock ("as-if UTC"), no loc conversion.
-	// See convertedType.IsAdjustedToUTC for details about why this is required.
-	switch converted.converted {
-	case schema.ConvertedTypes.Decimal:
+	// The LogicalType's IsAdjustedToUTC flag controls whether the decoded instant
+	// is rendered in the parser location or kept as a wall-clock value.
+	switch logicalType := parquetColumnType.logicalType.(type) {
+	case schema.DecimalLogicalType:
 		return func(val int32, d *types.Datum) error {
 			dec := initializeMyDecimal(d)
-			return setParquetDecimalFromInt64(int64(val), dec, converted.decimalMeta)
+			return setParquetDecimalFromInt64(int64(val), dec, logicalType.Scale())
 		}
-	case schema.ConvertedTypes.Date:
+	case schema.DateLogicalType:
 		return func(val int32, d *types.Datum) error {
-			if converted.sparkRebaseMicros.timeZoneID != "" {
+			if parquetColumnType.sparkRebaseMicros.timeZoneID != "" {
 				val = int32(rebaseJulianToGregorianDays(int(val)))
 			}
 			t := arrow.Date32(val).ToTime()
@@ -205,98 +211,99 @@ func getInt32Setter(converted *convertedType, loc *time.Location) setter[int32] 
 			d.SetMysqlTime(mysqlTime)
 			return nil
 		}
-	case schema.ConvertedTypes.TimeMillis:
+	case schema.TimeLogicalType:
 		return func(val int32, d *types.Datum) error {
 			// Convert milliseconds to time.Time
 			t := time.UnixMilli(int64(val)).In(time.UTC)
-			if converted.IsAdjustedToUTC {
-				t = t.In(loc)
+			return setTimestampDatum(t, d, loc, logicalType.IsAdjustedToUTC())
+		}
+	case schema.IntLogicalType:
+		return func(val int32, d *types.Datum) error {
+			if logicalType.IsSigned() {
+				d.SetInt64(int64(val))
+			} else {
+				d.SetUint64(uint64(uint32(val)))
 			}
-			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
-			d.SetMysqlTime(mysqlTime)
 			return nil
 		}
-	case schema.ConvertedTypes.Int32, schema.ConvertedTypes.Uint32,
-		schema.ConvertedTypes.Int16, schema.ConvertedTypes.Uint16,
-		schema.ConvertedTypes.Int8, schema.ConvertedTypes.Uint8,
-		schema.ConvertedTypes.None:
+	case schema.NoLogicalType, schema.UnknownLogicalType:
 		return func(val int32, d *types.Datum) error {
 			d.SetInt64(int64(val))
 			return nil
 		}
 	}
 
-	return nil
+	return unsupportedParquetValueSetter[int32](parquetColumnType.logicalType)
 }
 
-func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] {
-	switch converted.converted {
-	case schema.ConvertedTypes.Uint64,
-		schema.ConvertedTypes.Uint32, schema.ConvertedTypes.Int32,
-		schema.ConvertedTypes.Uint16, schema.ConvertedTypes.Int16,
-		schema.ConvertedTypes.Uint8, schema.ConvertedTypes.Int8:
+func getInt64Setter(parquetColumnType *parquetColumnType, loc *time.Location) setter[int64] {
+	switch logicalType := parquetColumnType.logicalType.(type) {
+	case schema.IntLogicalType:
 		return func(val int64, d *types.Datum) error {
-			d.SetUint64(uint64(val))
+			if logicalType.IsSigned() {
+				d.SetInt64(val)
+			} else {
+				d.SetUint64(uint64(val))
+			}
 			return nil
 		}
-	case schema.ConvertedTypes.None, schema.ConvertedTypes.Int64:
+	case schema.NoLogicalType, schema.UnknownLogicalType:
 		return func(val int64, d *types.Datum) error {
 			d.SetInt64(val)
 			return nil
 		}
-	case schema.ConvertedTypes.TimeMicros:
+	case schema.TimeLogicalType:
 		return func(val int64, d *types.Datum) error {
-			// Convert microseconds to time.Time
-			t := time.UnixMicro(val).In(time.UTC)
-			if converted.IsAdjustedToUTC {
-				t = t.In(loc)
+			var t time.Time
+			switch logicalType.TimeUnit() {
+			case schema.TimeUnitNanos:
+				t = time.Unix(0, val).In(time.UTC)
+			case schema.TimeUnitMicros:
+				t = time.UnixMicro(val).In(time.UTC)
+			default:
+				return errors.Errorf("unsupported parquet time unit %d", logicalType.TimeUnit())
 			}
-			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
-			d.SetMysqlTime(mysqlTime)
-			return nil
+			return setTimestampDatum(t, d, loc, logicalType.IsAdjustedToUTC())
 		}
-	case schema.ConvertedTypes.TimestampMillis:
+	case schema.TimestampLogicalType:
 		return func(val int64, d *types.Datum) error {
-			if converted.sparkRebaseMicros.timeZoneID != "" {
-				rebased, err := converted.sparkRebaseMicros.rebase(val * 1000)
+			if parquetColumnType.sparkRebaseMicros.timeZoneID != "" && logicalType.TimeUnit() != schema.TimeUnitNanos {
+				rebaseMicros := val
+				if logicalType.TimeUnit() == schema.TimeUnitMillis {
+					rebaseMicros *= 1000
+				}
+				rebased, err := parquetColumnType.sparkRebaseMicros.rebase(rebaseMicros)
 				if err != nil {
 					return err
 				}
-				val = rebased / 1000
-			}
-			t := arrow.Timestamp(val).ToTime(arrow.Millisecond)
-			if converted.IsAdjustedToUTC {
-				t = t.In(loc)
-			}
-			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
-			d.SetMysqlTime(mysqlTime)
-			return nil
-		}
-	case schema.ConvertedTypes.TimestampMicros:
-		return func(val int64, d *types.Datum) error {
-			if converted.sparkRebaseMicros.timeZoneID != "" {
-				rebased, err := converted.sparkRebaseMicros.rebase(val)
-				if err != nil {
-					return err
+				if logicalType.TimeUnit() == schema.TimeUnitMillis {
+					val = rebased / 1000
+				} else {
+					val = rebased
 				}
-				val = rebased
 			}
-			t := arrow.Timestamp(val).ToTime(arrow.Microsecond)
-			if converted.IsAdjustedToUTC {
-				t = t.In(loc)
+			unit := arrow.Microsecond
+			switch logicalType.TimeUnit() {
+			case schema.TimeUnitMillis:
+				unit = arrow.Millisecond
+			case schema.TimeUnitMicros:
+				unit = arrow.Microsecond
+			case schema.TimeUnitNanos:
+				unit = arrow.Nanosecond
+			default:
+				return errors.Errorf("unsupported parquet timestamp time unit %d", logicalType.TimeUnit())
 			}
-			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
-			d.SetMysqlTime(mysqlTime)
-			return nil
+			t := arrow.Timestamp(val).ToTime(unit)
+			return setTimestampDatum(t, d, loc, logicalType.IsAdjustedToUTC())
 		}
-	case schema.ConvertedTypes.Decimal:
+	case schema.DecimalLogicalType:
 		return func(val int64, d *types.Datum) error {
 			dec := initializeMyDecimal(d)
-			return setParquetDecimalFromInt64(val, dec, converted.decimalMeta)
+			return setParquetDecimalFromInt64(val, dec, logicalType.Scale())
 		}
 	}
 
-	return nil
+	return unsupportedParquetValueSetter[int64](parquetColumnType.logicalType)
 }
 
 // newInt96 is a utility function to create a parquet.Int96 for test,
@@ -314,13 +321,16 @@ func newInt96(microseconds int64) parquet.Int96 {
 	return parquet.Int96(b)
 }
 
-func setInt96Data(
-	val parquet.Int96,
-	d *types.Datum,
-	loc *time.Location,
-	adjustToUTC bool,
-	rebaseMicros sparkRebaseMicrosLookup,
-) error {
+func setTimestampDatum(t time.Time, d *types.Datum, loc *time.Location, adjustedToUTC bool) error {
+	if adjustedToUTC {
+		t = t.In(loc)
+	}
+	mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
+	d.SetMysqlTime(mysqlTime)
+	return nil
+}
+
+func decodeInt96ToTime(val parquet.Int96, rebaseMicros sparkRebaseMicrosLookup) (time.Time, error) {
 	// FYI: https://github.com/apache/spark/blob/d66a4e82eceb89a274edeb22c2fb4384bed5078b/sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/parquet/ParquetWriteSupport.scala#L171-L178
 	// INT96 timestamp layout
 	// --------------------------
@@ -342,16 +352,20 @@ func setInt96Data(
 		micros := int96ToUnixMicros(val)
 		rebased, err := rebaseMicros.rebase(micros)
 		if err != nil {
-			return err
+			return time.Time{}, err
 		}
 		t = arrow.Timestamp(rebased).ToTime(arrow.Microsecond)
 	}
-	if adjustToUTC {
-		t = t.In(loc)
+	return t, nil
+}
+
+func setInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location, rebaseMicros sparkRebaseMicrosLookup) error {
+	t, err := decodeInt96ToTime(val, rebaseMicros)
+	if err != nil {
+		return err
 	}
-	mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
-	d.SetMysqlTime(mysqlTime)
-	return nil
+	// INT96 has no standard LogicalType; preserve its existing UTC-normalized semantics.
+	return setTimestampDatum(t, d, loc, true)
 }
 
 func int96ToGoTime(val parquet.Int96) time.Time {
@@ -368,9 +382,9 @@ func int96ToUnixMicros(val parquet.Int96) int64 {
 	return (julianDay-julianDayOfUnixEpoch)*microsPerDay + nanosOfDay/int64(time.Microsecond)
 }
 
-func getInt96Setter(converted *convertedType, loc *time.Location) setter[parquet.Int96] {
+func getInt96Setter(parquetColumnType *parquetColumnType, loc *time.Location) setter[parquet.Int96] {
 	return func(val parquet.Int96, d *types.Datum) error {
-		return setInt96Data(val, d, loc, converted.IsAdjustedToUTC, converted.sparkRebaseMicros)
+		return setInt96Data(val, d, loc, parquetColumnType.sparkRebaseMicros)
 	}
 }
 
@@ -395,32 +409,32 @@ func getDecimalByteSetter[T parquet.ByteArray | parquet.FixedLenByteArray](scale
 	}
 }
 
-func getByteArraySetter(converted *convertedType) setter[parquet.ByteArray] {
-	switch converted.converted {
-	case schema.ConvertedTypes.None, schema.ConvertedTypes.BSON, schema.ConvertedTypes.JSON, schema.ConvertedTypes.UTF8, schema.ConvertedTypes.Enum:
+func getByteArraySetter(parquetColumnType *parquetColumnType) setter[parquet.ByteArray] {
+	switch logicalType := parquetColumnType.logicalType.(type) {
+	case schema.NoLogicalType, schema.UnknownLogicalType, schema.BSONLogicalType, schema.JSONLogicalType, schema.StringLogicalType, schema.EnumLogicalType:
 		return func(val parquet.ByteArray, d *types.Datum) error {
 			// length is unused here
 			d.SetBytesAsString(val, "utf8mb4_bin", 0)
 			return nil
 		}
-	case schema.ConvertedTypes.Decimal:
-		return getDecimalByteSetter[parquet.ByteArray](int(converted.decimalMeta.Scale))
+	case schema.DecimalLogicalType:
+		return getDecimalByteSetter[parquet.ByteArray](int(logicalType.Scale()))
 	}
 
-	return nil
+	return unsupportedParquetValueSetter[parquet.ByteArray](parquetColumnType.logicalType)
 }
 
-func getFixedLenByteArraySetter(converted *convertedType) setter[parquet.FixedLenByteArray] {
-	switch converted.converted {
-	case schema.ConvertedTypes.None, schema.ConvertedTypes.BSON, schema.ConvertedTypes.JSON, schema.ConvertedTypes.UTF8, schema.ConvertedTypes.Enum:
+func getFixedLenByteArraySetter(parquetColumnType *parquetColumnType) setter[parquet.FixedLenByteArray] {
+	switch logicalType := parquetColumnType.logicalType.(type) {
+	case schema.NoLogicalType, schema.UnknownLogicalType, schema.BSONLogicalType, schema.JSONLogicalType, schema.StringLogicalType, schema.EnumLogicalType:
 		return func(val parquet.FixedLenByteArray, d *types.Datum) error {
 			// length is unused here
 			d.SetBytesAsString(val, "utf8mb4_bin", 0)
 			return nil
 		}
-	case schema.ConvertedTypes.Decimal:
-		return getDecimalByteSetter[parquet.FixedLenByteArray](int(converted.decimalMeta.Scale))
+	case schema.DecimalLogicalType:
+		return getDecimalByteSetter[parquet.FixedLenByteArray](int(logicalType.Scale()))
 	}
 
-	return nil
+	return unsupportedParquetValueSetter[parquet.FixedLenByteArray](parquetColumnType.logicalType)
 }
