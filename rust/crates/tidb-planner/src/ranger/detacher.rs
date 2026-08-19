@@ -560,11 +560,14 @@ pub fn extract_eq_and_in_condition(
             if let Some(access) = accesses[i].clone() {
                 if all_eq_or_in(&access) {
                     column_values[i] = extract_value_info(&access);
+                    // Go drops a NULL-valued access UNCONDITIONALLY (the
+                    // detacher's first-column walk re-detaches it under the
+                    // checker, where the prefix and single-scan rules
+                    // apply); `regardNullAsPoint` never gates this drop.
                     if column_values[i]
                         .as_ref()
                         .and_then(|info| info.value.as_ref())
                         .is_some_and(|value| matches!(value, Datum::Null))
-                        && !regard_null_as_point
                     {
                         accesses[i] = None;
                     } else {

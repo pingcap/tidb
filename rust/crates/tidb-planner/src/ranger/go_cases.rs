@@ -441,8 +441,36 @@ fn planner_rewriter_stage(expr: &Expression) -> Expression {
             }
             let mut rewritten = sf.clone();
             rewritten.args = sf.args.iter().map(planner_rewriter_stage).collect();
-            // Go's `inToExpression` casts every list member to the column's
-            // type and DEDUPS the converted members, first-seen order kept.
+            // Go's rewriter compares a STRING column against NUMERIC IN
+            // members through an implicit `cast(col, double)`, so the first
+            // argument stops being a bare column and the checker refuses
+            // the IN as an access condition.
+            if name == "in" {
+                let string_column_numeric_members = matches!(
+                    rewritten.args.first(),
+                    Some(Expression::Column(column))
+                        if column.ret_type.as_ref().is_some_and(|ft| {
+                            ft.eval_type() == tidb_datatype::EvalType::String
+                        })
+                ) && rewritten.args[1..].iter().any(|member| {
+                    matches!(member, Expression::Constant(constant)
+                        if matches!(
+                            constant.value,
+                            Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_)
+                        ))
+                });
+                if string_column_numeric_members {
+                    let column = rewritten.args[0].clone();
+                    let cast = tidb_expr::expr_util::builder::FunctionBuilder::new_function(
+                        &tidb_expr::expr_util::builder::PreservingFunctionBuilder,
+                        "cast",
+                        Some(FieldType::new(FieldTypeCode::Double)),
+                        vec![column],
+                    )
+                    .expect("a preserving cast builds");
+                    rewritten.args[0] = cast;
+                }
+            }
             if name == "in" {
                 if let Some(Expression::Column(column)) = rewritten.args.first() {
                     let eval_type = column
@@ -1786,6 +1814,238 @@ fn append_ranges_to_point_ranges_matches_go() {
         ranges_to_go_string(&appended),
         "[[10 40 70,10 40 80] [10 50 70,10 50 80] [20 40 70,20 40 80] [20 50 70,20 50 80]]"
     );
+}
+
+/// `TestPrefixIndexRange`'s table: `a varchar(50), b varchar(50),
+/// c text(50), d varbinary(50)` with `idx_a(a(2)), idx_ab(a(2), b(2)),
+/// idx_c(c(2)), idx_d(d(2))`.
+struct PrefixNullTable {
+    columns: Vec<Column>,
+}
+
+impl PrefixNullTable {
+    fn new() -> Self {
+        let varchar = |unique_id: i64| {
+            let mut ft = FieldType::new(FieldTypeCode::Varchar);
+            ft.set_flen(50);
+            ft.set_charset_name("utf8mb4");
+            ft.set_collation_name("utf8mb4_bin");
+            ft.set_collation(tidb_datatype::Collation::Utf8Mb4Bin);
+            Column::new(unique_id, ft)
+        };
+        let text = |unique_id: i64| {
+            // `text(50)` is TINYTEXT: the BLOB family under a character set.
+            let mut ft = FieldType::new(FieldTypeCode::TinyBlob);
+            ft.set_charset_name("utf8mb4");
+            ft.set_collation_name("utf8mb4_bin");
+            ft.set_collation(tidb_datatype::Collation::Utf8Mb4Bin);
+            Column::new(unique_id, ft)
+        };
+        let varbinary = |unique_id: i64| {
+            let mut ft = FieldType::new(FieldTypeCode::Varchar);
+            ft.set_flen(50);
+            ft.set_charset_name("binary");
+            ft.set_collation_name("binary");
+            ft.set_collation(tidb_datatype::Collation::Binary);
+            ft.set_flags(ft.flags() | FieldTypeFlags::BINARY);
+            Column::new(unique_id, ft)
+        };
+        Self {
+            columns: vec![varchar(1), varchar(2), text(3), varbinary(4)],
+        }
+    }
+
+    fn index(&self, index_pos: usize) -> (Vec<Column>, Vec<i64>) {
+        let col = |offset: usize| self.columns[offset].clone();
+        match index_pos {
+            0 => (vec![col(0)], vec![2]),
+            1 => (vec![col(0), col(1)], vec![2, 2]),
+            2 => (vec![col(2)], vec![2]),
+            _ => (vec![col(3)], vec![2]),
+        }
+    }
+}
+
+impl ColumnResolver for PrefixNullTable {
+    fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+        let name = path.last()?;
+        let offset = match name.to_ascii_lowercase().as_str() {
+            "a" => 0,
+            "b" => 1,
+            "c" => 2,
+            "d" => 3,
+            _ => return None,
+        };
+        let column = &self.columns[offset];
+        Some((
+            offset,
+            column.ret_type.clone().expect("typed"),
+            column.unique_id,
+        ))
+    }
+
+    fn resolve_column(&self, path: &[String]) -> Option<Column> {
+        let name = path.last()?;
+        let offset = match name.to_ascii_lowercase().as_str() {
+            "a" => 0,
+            "b" => 1,
+            "c" => 2,
+            "d" => 3,
+            _ => return None,
+        };
+        Some(self.columns[offset].clone())
+    }
+
+    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+        tidb_expr::SessionTimeZone::utc()
+    }
+
+    fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
+        tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+    }
+}
+
+/// Go `TestPrefixIndexRange` (`ranger_test.go:2342`) under
+/// `tidb_opt_prefix_index_single_scan = 1`: `IS NULL` over a prefix
+/// column is a whole access condition (`[[NULL,NULL]]`, nothing
+/// reserved), `IS NOT NULL` answers `[[-inf,+inf]]`, and the eq-prefix
+/// variants keep only the PREFIX condition as a filter. The two cases
+/// whose FILTER strings carry Go's implicit `cast(..., double BINARY)`
+/// spelling assert access and ranges exactly and the filter budget by
+/// count -- the cast-printing belongs to the planner-rewriter track.
+#[test]
+fn prefix_index_null_ranges_match_go() {
+    let table = PrefixNullTable::new();
+    let column_name = |unique_id: i64| -> String {
+        let name = ["a", "b", "c", "d"]
+            .get((unique_id - 1) as usize)
+            .copied()
+            .unwrap_or("?");
+        format!("test.t.{name}")
+    };
+    // (indexPos, expr, accessConds, filterConds, resultStr); a None filter
+    // means "assert count 1, spelling owned by the rewriter track".
+    let cases: &[(usize, &str, &str, Option<&str>, &str)] = &[
+        (0, "a is null", "[isnull(test.t.a)]", Some("[]"), "[[NULL,NULL]]"),
+        (
+            0,
+            "isnull(a) or a in (1,2,3,4)",
+            "[]",
+            None,
+            "[[NULL,+inf]]",
+        ),
+        (
+            0,
+            "isnull(a) and a in (1,2,3,4)",
+            "[isnull(test.t.a)]",
+            None,
+            "[[NULL,NULL]]",
+        ),
+        (
+            0,
+            "a is not null",
+            "[not(isnull(test.t.a))]",
+            Some("[]"),
+            "[[-inf,+inf]]",
+        ),
+        (
+            1,
+            "a = 'a' and b is null",
+            "[eq(test.t.a, a) isnull(test.t.b)]",
+            Some("[eq(test.t.a, a)]"),
+            "[[\"a\" NULL,\"a\" NULL]]",
+        ),
+        (
+            1,
+            "a = 'a' and b is not null",
+            "[eq(test.t.a, a) not(isnull(test.t.b))]",
+            Some("[eq(test.t.a, a)]"),
+            "[[\"a\" -inf,\"a\" +inf]]",
+        ),
+        (2, "c is null", "[isnull(test.t.c)]", Some("[]"), "[[NULL,NULL]]"),
+        (
+            2,
+            "c is not null",
+            "[not(isnull(test.t.c))]",
+            Some("[]"),
+            "[[-inf,+inf]]",
+        ),
+        (3, "d is null", "[isnull(test.t.d)]", Some("[]"), "[[NULL,NULL]]"),
+        (
+            3,
+            "d is not null",
+            "[not(isnull(test.t.d))]",
+            Some("[]"),
+            "[[-inf,+inf]]",
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (index_pos, expr, want_access, want_filter, want_ranges) in cases {
+        let got = (|| -> Result<(String, Vec<Expression>, String), String> {
+            let sql = format!("select * from t where {expr}");
+            let stmt =
+                tidb_parser::parse(&sql).map_err(|error| format!("parse: {error:?}"))?;
+            let tidb_ast::Stmt::Query(query) = stmt else {
+                return Err("not a query".to_owned());
+            };
+            let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+                return Err("not a select".to_owned());
+            };
+            let where_clause = select.where_clause.ok_or("no where")?;
+            let rewritten = rewrite_expr_resolved(&where_clause, &table)
+                .map_err(|error| format!("rewrite: {error:?}"))?;
+            let ctx = tidb_expr::NoColumns;
+            let builder = RealFunctionBuilder::new(&ctx);
+            let conds: Vec<Expression> = split_cnf_items(&rewritten)
+                .iter()
+                .map(planner_rewriter_stage)
+                .map(|cond| push_down_not(&cond, &builder))
+                .map(|mut cond| {
+                    tidb_expr::rewriter::derive_tree_collation(&mut cond)
+                        .map(|()| cond)
+                        .map_err(|error| format!("collation: {error:?}"))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let (cols, lengths) = table.index(*index_pos);
+            let result = super::detacher::detach_cond_and_build_range_for_index(
+                &conds, &cols, &lengths, 0,
+            )
+            .map_err(|error| format!("detach: {error:?}"))?;
+            Ok((
+                stringify_conds(&result.access_conds, &column_name),
+                result.remained_conds,
+                ranges_to_go_string(&result.ranges),
+            ))
+        })();
+        match got {
+            Ok((access, remained, ranges)) => {
+                if access != *want_access {
+                    failures.push(format!("{expr}@{index_pos}: access {access}, want {want_access}"));
+                }
+                match want_filter {
+                    Some(want) => {
+                        let filter = stringify_conds(&remained, &column_name);
+                        if filter != *want {
+                            failures.push(format!("{expr}@{index_pos}: filter {filter}, want {want}"));
+                        }
+                    }
+                    None => {
+                        if remained.len() != 1 {
+                            failures.push(format!(
+                                "{expr}@{index_pos}: {} filters, want the one rewritten IN",
+                                remained.len()
+                            ));
+                        }
+                    }
+                }
+                if ranges != *want_ranges {
+                    failures.push(format!("{expr}@{index_pos}: ranges {ranges}, want {want_ranges}"));
+                }
+            }
+            Err(error) => failures.push(format!("{expr}@{index_pos}: {error}")),
+        }
+    }
+    assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
 }
 
 /// Go `TestRangeMemUsage` (`types_test.go:238`): the struct-size model --
