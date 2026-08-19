@@ -943,16 +943,16 @@ mod tests {
     /// Source: `TestBuildExpression`'s "build expression without enough
     /// columns" leg.
     ///
-    /// Go reports `[planner:1054]Unknown column 'a' in 'expression'`. This
-    /// crate's rewriter has one shared spelling for an unbound name (see the
-    /// module's unknown-column boundary), so the assertion pins that spelling
-    /// and the Go text is recorded here rather than weakened away.
+    /// Go reports `[planner:1054]Unknown column 'a' in 'expression'`. The
+    /// rewriter now carries the unresolved NAME ([`EvalError::UnknownColumn`])
+    /// and the driver's renderer supplies Go's `expression` clause, so both
+    /// halves of that message are pinned.
     #[test]
     fn build_expression_without_enough_columns() {
         let options = BuildOptions::new();
         assert_eq!(
             parse_simple_expr(&NoResolver, "1+a", &options).unwrap_err(),
-            SimpleExprError::Build(EvalError::Unsupported("unresolved column reference"))
+            SimpleExprError::Build(EvalError::UnknownColumn("a".to_owned()))
         );
 
         let table = test_table();
@@ -962,7 +962,7 @@ mod tests {
             .expect("options");
         assert_eq!(
             parse_simple_expr(&NoResolver, "(1+a)*(3+b+c)", &options).unwrap_err(),
-            SimpleExprError::Build(EvalError::Unsupported("unresolved column reference"))
+            SimpleExprError::Build(EvalError::UnknownColumn("c".to_owned()))
         );
     }
 

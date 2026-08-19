@@ -55,6 +55,11 @@ impl CurrentTso {
 pub enum EvalError {
     /// The expression uses a construct outside the currently ported domain.
     Unsupported(&'static str),
+    /// Go `plannererrors.ErrBadField` (1054): a column path no visible
+    /// schema resolves, carried AS WRITTEN (dot-joined). The clause name Go
+    /// appends (`clauseMsg`, `planbuilder.go:132`) belongs to the resolving
+    /// caller; renderers without one use Go's `expressionClause` spelling.
+    UnknownColumn(String),
     /// Go `expression.ErrFunctionNotExists` (1305).
     FunctionNotExists(String),
     /// Go `plannererrors.ErrNoDB` (1046), raised before 1305 when resolving an

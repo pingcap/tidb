@@ -509,3 +509,36 @@ fn a_table_sample_clause_is_refused_rather_than_answered_in_full() {
         ],
     );
 }
+
+/// A name no schema resolves answers Go's `ErrBadField` with the RESOLVING
+/// clause's name (`clauseMsg`, `planbuilder.go:132`) — probe round 29 caught
+/// the field-list and where-clause paths answering a generic 1105
+/// "unresolved column reference" instead.
+///
+/// Captured from real TiDB on `uc(a)`:
+///
+/// ```text
+/// select no_col from uc          -- [planner:1054] Unknown column 'no_col' in 'field list'
+/// select a from uc where nc = 1  -- [planner:1054] Unknown column 'nc' in 'where clause'
+/// select uc.nc from uc           -- [planner:1054] Unknown column 'uc.nc' in 'field list'
+/// ```
+#[test]
+fn an_unknown_column_names_its_clause() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE uc (a INT)", &mut catalog).unwrap();
+    let run = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query());
+
+    for (sql, column, clause) in [
+        ("SELECT no_col FROM uc", "no_col", "field list"),
+        ("SELECT a FROM uc WHERE nc = 1", "nc", "where clause"),
+        ("SELECT uc.nc FROM uc", "uc.nc", "field list"),
+    ] {
+        let wire = run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(wire.code, 1054, "{sql}: {}", wire.message);
+        assert_eq!(
+            wire.message,
+            format!("Unknown column '{column}' in '{clause}'"),
+            "{sql}"
+        );
+    }
+}

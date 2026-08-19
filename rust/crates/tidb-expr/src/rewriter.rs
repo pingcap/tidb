@@ -496,7 +496,7 @@ pub fn rewrite_expr_resolved(
     if let Expr::Column(path) = expr {
         let col = resolver
             .resolve_column(path)
-            .ok_or(EvalError::Unsupported("unresolved column reference"))?;
+            .ok_or_else(|| EvalError::UnknownColumn(path.join(".")))?;
         return Ok(Expression::Column(col));
     }
     let mut built = rewrite_leaf(expr, resolver)?;

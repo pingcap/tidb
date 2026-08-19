@@ -166,6 +166,13 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         // these, so there is no Go message for "not ported yet". The carried
         // text is the whole diagnostic.
         EvalError::Unsupported(reason) => MysqlError::unknown(reason),
+        // Go `ErrBadField` with `clauseMsg[expressionClause]` — the clause a
+        // resolution site without its own clause name reports.
+        EvalError::UnknownColumn(column) => MysqlError::new(
+            1054,
+            *b"42S22",
+            format!("Unknown column '{column}' in 'expression'"),
+        ),
         EvalError::UnsupportedOperandPair(lhs, rhs) => MysqlError::unknown(format!(
             "a binary operation between a {lhs:?} and a {rhs:?} value is not supported yet"
         )),

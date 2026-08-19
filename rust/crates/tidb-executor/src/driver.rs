@@ -143,6 +143,20 @@ pub fn default_field_display_name(
 
 /// Go `buildProjectionFieldNameFromExpressions`'s literal switch, over the
 /// literal `expr` and the field's own source `text`.
+/// Wraps a rewrite failure with the resolving clause's name: an
+/// [`EvalError::UnknownColumn`] becomes Go's `ErrBadField` shape
+/// (`Unknown column '<name>' in '<clause>'`, `clauseMsg`), everything else
+/// keeps its own diagnostic.
+fn eval_error_in_clause(error: tidb_expr::EvalError, clause: &'static str) -> DriverError {
+    match error {
+        tidb_expr::EvalError::UnknownColumn(column) => DriverError::UnknownColumnInClause {
+            column,
+            clause: clause.to_owned(),
+        },
+        other => DriverError::Exec(ExecError::Eval(other)),
+    }
+}
+
 fn literal_field_display_name(
     fields: &SelectFieldList,
     index: usize,
@@ -1732,7 +1746,7 @@ fn run_select_traced_with_delivery_choice(
                         scope: &filter_scope,
                     };
                     let mut physical = rewrite_expr_resolved(predicate, &resolver)
-                        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+                        .map_err(|e| eval_error_in_clause(e, "where clause"))?;
                     refine_comparisons(&mut physical, ctx)
                         .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
                     if !trace.physical_selection(
@@ -1801,7 +1815,7 @@ fn run_select_traced_with_delivery_choice(
                 scope: &current_scope,
             };
             let mut pred = rewrite_expr_resolved(&predicate, &predicate_resolver)
-                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+                .map_err(|e| eval_error_in_clause(e, "where clause"))?;
             refine_comparisons(&mut pred, ctx)
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
             let explained_where = trace.is_some().then(|| {
@@ -1871,7 +1885,7 @@ fn run_select_traced_with_delivery_choice(
                     SelectField::Wildcard(_) => unreachable!("projection gate rejects wildcards"),
                 })
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
+                .map_err(|error| eval_error_in_clause(error, "field list"))?;
             let columns = expressions
                 .iter()
                 .enumerate()
@@ -2028,7 +2042,7 @@ fn run_select_traced_with_delivery_choice(
         match field {
             SelectField::Expr { expr, .. } => {
                 let mut rewritten = rewrite_expr_resolved(expr, &resolver)
-                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+                    .map_err(|e| eval_error_in_clause(e, "field list"))?;
                 refine_comparisons(&mut rewritten, ctx)
                     .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
                 exprs.push(rewritten);
