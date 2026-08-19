@@ -3329,3 +3329,26 @@ fn a_missing_table_is_1146_everywhere_except_drop_table() {
     );
     assert_eq!(error.to_string(), "Unknown table 'u6.nosuch'");
 }
+
+/// A `DATETIME(n) DEFAULT CURRENT_TIMESTAMP(n)` column must produce a
+/// `TableInfo` this node's own catalog loader can then load.
+///
+/// Publishing one it cannot load is the worst shape a DDL can take: the
+/// CREATE reports success, the table exists as far as a later CREATE is
+/// concerned (1050), and every read of it answers 1146.
+#[test]
+fn a_fractional_current_timestamp_default_is_storable() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.dt (o DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3))",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+    let stored = stored_table(&write, table_id);
+    let column = &stored["cols"].as_array().expect("column array")[0];
+    // Go stores the marker WORD; the fsp is the column's own decimal.
+    assert_eq!(column["default"], serde_json::json!("CURRENT_TIMESTAMP"));
+    println!("origin = {}", column["origin_default"]);
+}

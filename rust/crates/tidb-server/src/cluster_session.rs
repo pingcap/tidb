@@ -1714,7 +1714,17 @@ fn stored_clock_marker(column: &tidb_model::ColumnInfo) -> Option<Option<String>
     let text = String::from_utf8_lossy(bytes.as_bytes()).into_owned();
     let upper = text.to_ascii_uppercase();
     if upper == "CURRENT_TIMESTAMP" {
-        return Some(None);
+        // Go stores the marker WORD alone; the fsp lives on the column's own
+        // decimal and is re-derived wherever the default is printed. The
+        // rebuilt expression therefore has to carry that decimal: Go's
+        // `getFuncCallDefaultValue` demands the WRITTEN fsp equal the
+        // column's, so handing it a bare word for a `DATETIME(3)` column
+        // fails a check that only ever applied to the written spelling --
+        // and the loader then refused a table its own DDL had just
+        // published, leaving it visible to CREATE (1050) and to nothing else
+        // (1146).
+        let decimal = column.field_type.decimal();
+        return Some((decimal > 0).then(|| decimal.to_string()));
     }
     let fsp = upper
         .strip_prefix("CURRENT_TIMESTAMP(")?

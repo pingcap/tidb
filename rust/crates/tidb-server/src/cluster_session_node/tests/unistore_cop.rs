@@ -336,3 +336,55 @@ fn cluster_info_reports_this_node() {
     ));
     assert_eq!(row[1], format!("{}:{}", servers[0][0], servers[0][1]));
 }
+
+/// A `DATETIME(n)`/`TIMESTAMP(n) DEFAULT CURRENT_TIMESTAMP(n)` column must
+/// survive the round trip through this node's own catalog loader.
+///
+/// Go stores the marker WORD alone and re-derives the fsp from the column's
+/// decimal wherever the default is printed. The loader used to rebuild the
+/// written spelling as a bare word and then apply Go's admission-time
+/// "written fsp must equal the column's" check to it, which no bare word can
+/// satisfy for a column with an fsp. It therefore REFUSED a table its own
+/// DDL had just published -- the worst shape a DDL can take, since CREATE
+/// then reports 1050 while every read reports 1146.
+#[test]
+fn a_fractional_clock_default_survives_the_catalog_loader() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(23))
+        .expect("session opens");
+
+    rows(
+        &mut session,
+        "CREATE TABLE test.dt (o datetime(3) DEFAULT CURRENT_TIMESTAMP(3), v int)",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE test.ts (o timestamp(6) DEFAULT CURRENT_TIMESTAMP(6))",
+    );
+
+    // The table is READABLE, which is what the refusal used to break.
+    let shown = displayed(rows(&mut session, "SHOW CREATE TABLE test.dt"));
+    assert!(
+        shown[0][1].contains("`o` datetime(3) DEFAULT CURRENT_TIMESTAMP(3)"),
+        "{}",
+        shown[0][1]
+    );
+    let shown = displayed(rows(&mut session, "SHOW CREATE TABLE test.ts"));
+    assert!(
+        shown[0][1].contains("`o` timestamp(6) DEFAULT CURRENT_TIMESTAMP(6)"),
+        "{}",
+        shown[0][1]
+    );
+
+    // And the marker still evaluates per row rather than storing the word.
+    rows(&mut session, "INSERT INTO test.dt (v) VALUES (1)");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT v, o IS NOT NULL FROM test.dt"
+        )),
+        [["1", "1"]]
+    );
+}
