@@ -170,6 +170,12 @@ enum EtcdCommand {
         key: Vec<u8>,
         reply: mpsc::Sender<Result<(), EtcdError>>,
     },
+    /// `KV.DeleteRange` over `[prefix, prefix+1)` -- Go's
+    /// `DeleteKeysWithPrefixFromEtcd`.
+    DeletePrefix {
+        prefix: Vec<u8>,
+        reply: mpsc::Sender<Result<(), EtcdError>>,
+    },
     /// One PUT with a lease attached -- the serverinfo key's spelling.
     PutWithLease {
         key: Vec<u8>,
@@ -402,6 +408,20 @@ impl EtcdClient {
         response.recv().unwrap_or(Err(EtcdError::Closed))
     }
 
+    /// Deletes every key under the prefix -- Go's
+    /// `DeleteKeysWithPrefixFromEtcd`.
+    pub fn delete_prefix(&self, prefix: &[u8]) -> Result<(), EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::DeletePrefix {
+                prefix: prefix.to_vec(),
+                reply,
+            })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
     /// Reads one key. `None` means the key is absent.
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, EtcdError> {
         let (reply, response) = mpsc::channel();
@@ -514,7 +534,8 @@ fn run_kv_worker(
                 EtcdCommand::GetPrefix { reply, .. } => {
                     let _ = reply.send(Err(EtcdError::Closed));
                 }
-                EtcdCommand::Delete { reply, .. } => {
+                EtcdCommand::Delete { reply, .. }
+                | EtcdCommand::DeletePrefix { reply, .. } => {
                     let _ = reply.send(Err(EtcdError::Closed));
                 }
                 EtcdCommand::LeaseGrant { reply, .. } => {
@@ -688,6 +709,27 @@ fn run_kv_worker(
                         let mut client = KvClient::new(channel);
                         let request = DeleteRangeRequest {
                             key: key.clone(),
+                            ..Default::default()
+                        };
+                        runtime
+                            .block_on(client.delete_range(with_deadline(request, timeout)))
+                            .map(|_| ())
+                    },
+                );
+                let _ = reply.send(result);
+            }
+            EtcdCommand::DeletePrefix { prefix, reply } => {
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut clients,
+                    timeout,
+                    security,
+                    |runtime, channel| {
+                        let mut client = KvClient::new(channel);
+                        let request = DeleteRangeRequest {
+                            key: prefix.clone(),
+                            range_end: prefix_range_end(&prefix),
                             ..Default::default()
                         };
                         runtime

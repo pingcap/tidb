@@ -83,4 +83,16 @@ impl EtcdOps for EtcdClientOps {
             .delete(key.as_bytes())
             .map_err(|error| error.to_string())
     }
+
+    fn put(&self, key: &str, value: &[u8]) -> Result<(), String> {
+        self.client
+            .put(key.as_bytes(), value)
+            .map_err(|error| error.to_string())
+    }
+
+    fn delete_prefix(&self, prefix: &str) -> Result<(), String> {
+        self.client
+            .delete_prefix(prefix.as_bytes())
+            .map_err(|error| error.to_string())
+    }
 }

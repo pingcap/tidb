@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/domain/serverinfo/syncer.go`, the SERVER-INFO half: this node's
+//! Go `pkg/domain/serverinfo/syncer.go`: this node's
 //! own `/tidb/server/info/<uuid>` entry, published under an etcd lease so
 //! it disappears when the node does, plus the reads and the stale-entry
 //! cleanup its peers depend on.
@@ -28,11 +28,15 @@
 //!
 //! # What rides here and what does not
 //!
-//! The TOPOLOGY half (`/topology/tidb/<ip:port>`, its own session and its
-//! 30-second `ttl` refresh) is a separate session with the same shape and
-//! follows on this track. `ServerInfoSyncLoop`'s min-start-ts reporting
-//! needs `MinStartTSReporter`, which reaches into the session manager, and
-//! waits on that seam.
+//! The TOPOLOGY half (`/topology/tidb/<host:port>`) is here too, on its
+//! OWN session: its `/info` key carries no lease at all -- Go says so in
+//! as many words, because that record describes a deployment rather than
+//! a process -- and the `/ttl` key beside it, refreshed under the
+//! topology session's lease, is what reports the process alive.
+//!
+//! `ServerInfoSyncLoop`'s min-start-ts reporting needs
+//! `MinStartTSReporter`, which reaches into the session manager, and
+//! waits on that seam; the loops themselves are the boot wiring's job.
 //!
 //! # Testing
 //!
@@ -46,7 +50,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::serverinfo::{ServerInfo, SERVER_INFORMATION_PATH};
+use crate::serverinfo::{
+    ServerInfo, TopologyInfo, SERVER_INFORMATION_PATH, TOPOLOGY_INFORMATION_PATH,
+    TOPOLOGY_SESSION_TTL,
+};
 
 /// Go `pkg/ddl/util.SessionTTL`: the server-info session's TTL, seconds.
 pub const SESSION_TTL_SECONDS: i64 = 90;
@@ -69,6 +76,10 @@ pub trait EtcdOps: Send + Sync {
     fn get_prefix(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, String>;
     /// `KV.DeleteRange` of one key.
     fn delete(&self, key: &str) -> Result<(), String>;
+    /// `KV.Put` with NO lease -- the topology `/info` key's spelling.
+    fn put(&self, key: &str, value: &[u8]) -> Result<(), String>;
+    /// `KV.DeleteRange` over `[prefix, prefix+1)`.
+    fn delete_prefix(&self, prefix: &str) -> Result<(), String>;
 }
 
 /// Go `serverInfoKeyPath`.
@@ -84,6 +95,9 @@ pub struct Syncer {
     server_info_path: String,
     /// The session's lease, or `None` before `new_session_and_store_server_info`.
     session: Mutex<Option<i64>>,
+    /// The TOPOLOGY session's lease: a separate session with its own TTL,
+    /// exactly as Go keeps `topologySession` beside `session`.
+    topology_session: Mutex<Option<i64>>,
 }
 
 impl Syncer {
@@ -98,6 +112,7 @@ impl Syncer {
             info: Mutex::new(info),
             server_info_path,
             session: Mutex::new(None),
+            topology_session: Mutex::new(None),
         }
     }
 
@@ -245,6 +260,114 @@ impl Syncer {
         }
     }
 
+    /// The topology session's lease, once one is held.
+    #[must_use]
+    pub fn topology_session_lease(&self) -> Option<i64> {
+        *self
+            .topology_session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// This node's topology prefix: `/topology/tidb/<host:port>`, the host
+    /// joined by Go's `net.JoinHostPort` (see [`join_host_port`]).
+    #[must_use]
+    pub fn topology_prefix(&self) -> String {
+        let info = self.local_server_info();
+        format!(
+            "{TOPOLOGY_INFORMATION_PATH}/{}",
+            join_host_port(&info.static_info.ip, info.static_info.port)
+        )
+    }
+
+    /// Go `NewTopologySessionAndStoreServerInfo`: a session of its own,
+    /// under `TopologySessionTTL` rather than the server-info TTL.
+    pub fn new_topology_session_and_store_server_info(&self) -> Result<(), String> {
+        let Some(etcd) = self.etcd.as_ref() else {
+            return Ok(());
+        };
+        let lease = etcd.lease_grant(TOPOLOGY_SESSION_TTL as i64)?;
+        *self
+            .topology_session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(lease);
+        self.store_topology_info()
+    }
+
+    /// Go `StoreTopologyInfo`: the `/info` key carries the topology JSON
+    /// with NO LEASE -- Go says so in as many words, because the topology
+    /// record describes a DEPLOYMENT and outlives one process -- and the
+    /// `/ttl` key beside it, written under the topology session's lease,
+    /// is what says the process is alive.
+    pub fn store_topology_info(&self) -> Result<(), String> {
+        let Some(etcd) = self.etcd.as_ref() else {
+            return Ok(());
+        };
+        let prefix = self.topology_prefix();
+        let topology = self.local_server_info().to_topology_info();
+        let bytes = serde_json::to_vec(&topology).map_err(|error| error.to_string())?;
+        etcd.put(&format!("{prefix}/info"), &bytes)?;
+        self.update_topology_aliveness()
+    }
+
+    /// Go `updateTopologyAliveness`: the `/ttl` key holds
+    /// `time.Now().UnixNano()` as decimal text, under the topology
+    /// session's lease so it vanishes with the process.
+    pub fn update_topology_aliveness(&self) -> Result<(), String> {
+        let Some(etcd) = self.etcd.as_ref() else {
+            return Ok(());
+        };
+        let Some(lease) = self.topology_session_lease() else {
+            return Err("[topology-syncer] no session to store the ttl under".to_owned());
+        };
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|since| since.as_nanos())
+            .unwrap_or_default();
+        etcd.put_with_lease(
+            &format!("{}/ttl", self.topology_prefix()),
+            nanos.to_string().as_bytes(),
+            lease,
+        )
+    }
+
+    /// Go `GetAllTiDBTopology`: every `/info` key under the topology path
+    /// -- the `/ttl` siblings are SKIPPED by suffix, which is why a
+    /// prefix read alone is not the answer.
+    pub fn all_tidb_topology(&self) -> Result<Vec<TopologyInfo>, String> {
+        let Some(etcd) = self.etcd.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let mut topologies = Vec::new();
+        for (key, value) in etcd.get_prefix(TOPOLOGY_INFORMATION_PATH)? {
+            if !key.ends_with("/info") {
+                continue;
+            }
+            topologies.push(
+                serde_json::from_slice(&value)
+                    .map_err(|error| format!("[topology-syncer] decode {key} failed: {error}"))?,
+            );
+        }
+        Ok(topologies)
+    }
+
+    /// Go `RemoveTopologyInfo`: the WHOLE prefix goes, `/info` and `/ttl`
+    /// together -- the info key has no lease to expire it.
+    pub fn remove_topology_info(&self) {
+        let Some(etcd) = self.etcd.as_ref() else {
+            return;
+        };
+        let _ = etcd.delete_prefix(&self.topology_prefix());
+        if let Some(lease) = self.topology_session_lease() {
+            let _ = etcd.lease_revoke(lease);
+        }
+    }
+
+    /// Go `RestartTopology`.
+    pub fn restart_topology(&self) -> Result<(), String> {
+        self.new_topology_session_and_store_server_info()
+    }
+
     /// Go `cleanupStaleServerAndOwnerInfo`, the server-info half: an entry
     /// from a PREVIOUS instance at this same IP+Port -- one that died
     /// without cleanup -- is deleted so it stops appearing as a live peer.
@@ -275,6 +398,19 @@ impl Syncer {
             }
             let _ = etcd.delete(&server_info_key_path(&id));
         }
+    }
+}
+
+/// Go `net.JoinHostPort`: a host containing a colon -- a literal IPv6
+/// address -- is BRACKETED before the port is appended, so the topology
+/// key of an IPv6 node reads `/topology/tidb/[::1]:4000`. Everything else
+/// is `host:port`.
+#[must_use]
+pub fn join_host_port(host: &str, port: u32) -> String {
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
     }
 }
 
@@ -364,6 +500,18 @@ mod tests {
                 .retain(|(stored, _, _)| stored != key);
             Ok(())
         }
+
+        fn put(&self, key: &str, value: &[u8]) -> Result<(), String> {
+            self.put_with_lease(key, value, 0)
+        }
+
+        fn delete_prefix(&self, prefix: &str) -> Result<(), String> {
+            self.keys
+                .lock()
+                .unwrap()
+                .retain(|(stored, _, _)| !stored.starts_with(prefix));
+            Ok(())
+        }
     }
 
     fn info_at(id: &str, ip: &str, port: u32) -> ServerInfo {
@@ -372,6 +520,7 @@ mod tests {
                 id: id.to_owned(),
                 ip: ip.to_owned(),
                 port,
+                status_port: port + 6080,
                 ..StaticInfo::default()
             },
             ..ServerInfo::default()
@@ -519,6 +668,106 @@ mod tests {
         assert_eq!(etcd.value("/tidb/server/info/uuid-1").unwrap().1, second);
     }
 
+
+    /// The topology pair: `/info` carries the topology JSON with NO
+    /// lease, `/ttl` carries a nanosecond timestamp UNDER the topology
+    /// session's lease, and that session is distinct from the
+    /// server-info one.
+    #[test]
+    fn topology_stores_a_leaseless_info_and_a_leased_ttl() {
+        let etcd = Arc::new(FakeEtcd::default());
+        let syncer = Syncer::new(info_at("uuid-1", "10.0.0.1", 4000), Some(etcd.clone()));
+        syncer.new_session_and_store_server_info().unwrap();
+        let info_lease = syncer.session_lease().unwrap();
+        syncer.new_topology_session_and_store_server_info().unwrap();
+        let topology_lease = syncer.topology_session_lease().unwrap();
+        assert_ne!(
+            topology_lease, info_lease,
+            "the topology session is its own session"
+        );
+
+        let (info_value, stored_lease) = etcd.value("/topology/tidb/10.0.0.1:4000/info").unwrap();
+        assert_eq!(stored_lease, 0, "Go stores the topology info WITHOUT a lease");
+        let decoded: TopologyInfo = serde_json::from_slice(&info_value).unwrap();
+        // Go's TopologyInfo reports the STATUS port, not the SQL port
+        // the key is addressed by.
+        assert_eq!(decoded.ip, "10.0.0.1");
+        assert_eq!(decoded.status_port, 10080, "the topology record carries the STATUS port");
+
+        let (ttl_value, ttl_lease) = etcd.value("/topology/tidb/10.0.0.1:4000/ttl").unwrap();
+        assert_eq!(ttl_lease, topology_lease, "the ttl rides the topology lease");
+        let nanos: u128 = String::from_utf8(ttl_value).unwrap().parse().unwrap();
+        assert!(nanos > 0, "the ttl value is a nanosecond timestamp");
+    }
+
+    /// A refresh rewrites only the `/ttl` key, and refuses outright when
+    /// no topology session is held (the leaseless write would never
+    /// expire).
+    #[test]
+    fn a_ttl_refresh_needs_its_session_and_leaves_the_info_alone() {
+        let etcd = Arc::new(FakeEtcd::default());
+        let syncer = Syncer::new(info_at("uuid-1", "10.0.0.1", 4000), Some(etcd.clone()));
+        assert!(syncer.update_topology_aliveness().is_err());
+
+        syncer.new_topology_session_and_store_server_info().unwrap();
+        let (info_before, _) = etcd.value("/topology/tidb/10.0.0.1:4000/info").unwrap();
+        let (ttl_before, _) = etcd.value("/topology/tidb/10.0.0.1:4000/ttl").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        syncer.update_topology_aliveness().unwrap();
+        let (info_after, _) = etcd.value("/topology/tidb/10.0.0.1:4000/info").unwrap();
+        let (ttl_after, _) = etcd.value("/topology/tidb/10.0.0.1:4000/ttl").unwrap();
+        assert_eq!(info_before, info_after, "a refresh does not rewrite /info");
+        assert_ne!(ttl_before, ttl_after, "the refreshed ttl is a newer stamp");
+    }
+
+    /// `GetAllTiDBTopology` reads the `/info` keys ONLY -- a `/ttl`
+    /// sibling under the same prefix is not a topology record.
+    #[test]
+    fn topology_reads_skip_the_ttl_siblings() {
+        let etcd = Arc::new(FakeEtcd::default());
+        let syncer = Syncer::new(info_at("uuid-1", "10.0.0.1", 4000), Some(etcd.clone()));
+        syncer.new_topology_session_and_store_server_info().unwrap();
+        let peer = Syncer::new(info_at("uuid-2", "10.0.0.2", 4000), Some(etcd.clone()));
+        peer.new_topology_session_and_store_server_info().unwrap();
+
+        let mut topologies = syncer.all_tidb_topology().unwrap();
+        topologies.sort_by(|left, right| left.ip.cmp(&right.ip));
+        assert_eq!(topologies.len(), 2, "two /info keys, four keys in total");
+        assert_eq!(topologies[0].ip, "10.0.0.1");
+        assert_eq!(topologies[1].ip, "10.0.0.2");
+    }
+
+    /// Shutdown removes the WHOLE topology prefix: the leaseless `/info`
+    /// has nothing to expire it, so a surviving key would advertise a
+    /// dead deployment forever. A peer's prefix is untouched.
+    #[test]
+    fn removing_topology_takes_the_whole_prefix() {
+        let etcd = Arc::new(FakeEtcd::default());
+        let syncer = Syncer::new(info_at("uuid-1", "10.0.0.1", 4000), Some(etcd.clone()));
+        syncer.new_topology_session_and_store_server_info().unwrap();
+        let peer = Syncer::new(info_at("uuid-2", "10.0.0.2", 4000), Some(etcd.clone()));
+        peer.new_topology_session_and_store_server_info().unwrap();
+
+        syncer.remove_topology_info();
+        assert!(etcd.value("/topology/tidb/10.0.0.1:4000/info").is_none());
+        assert!(etcd.value("/topology/tidb/10.0.0.1:4000/ttl").is_none());
+        assert!(etcd.value("/topology/tidb/10.0.0.2:4000/info").is_some());
+        assert!(etcd.value("/topology/tidb/10.0.0.2:4000/ttl").is_some());
+    }
+
+    /// Go's `net.JoinHostPort` brackets a literal IPv6 host, which is
+    /// visible in the topology key itself.
+    #[test]
+    fn an_ipv6_host_is_bracketed_in_the_topology_key() {
+        assert_eq!(join_host_port("10.0.0.1", 4000), "10.0.0.1:4000");
+        assert_eq!(join_host_port("::1", 4000), "[::1]:4000");
+        let etcd = Arc::new(FakeEtcd::default());
+        let syncer = Syncer::new(info_at("uuid-1", "::1", 4000), Some(etcd.clone()));
+        assert_eq!(syncer.topology_prefix(), "/topology/tidb/[::1]:4000");
+        syncer.new_topology_session_and_store_server_info().unwrap();
+        assert!(etcd.value("/topology/tidb/[::1]:4000/info").is_some());
+    }
+
     /// Go's `etcdCli == nil` deployment: nothing is published, and the
     /// reads answer from the local info alone.
     #[test]
@@ -529,6 +778,12 @@ mod tests {
         syncer.store_server_info().unwrap();
         syncer.keep_alive_once().unwrap();
         syncer.remove_server_info();
+        syncer
+            .new_topology_session_and_store_server_info()
+            .unwrap();
+        syncer.update_topology_aliveness().unwrap();
+        syncer.remove_topology_info();
+        assert!(syncer.all_tidb_topology().unwrap().is_empty());
         let all = syncer.all_server_info().unwrap();
         assert_eq!(all.len(), 1);
         assert!(all.contains_key("uuid-1"));
