@@ -52,57 +52,37 @@ func initColumnTypeSets() {
 
 var dataTypeString, dataTypeInt, dataTypeNum, dataTypeBin = make(map[string]struct{}), make(map[string]struct{}), make(map[string]struct{}), make(map[string]struct{})
 
-// MakeRowReceiver builds a RowReceiverArr with one receiver per column. Every
-// column decodes to raw bytes, so the receivers are identical; the column type
-// only feeds FieldKind classification later (see columnKinds).
+// MakeRowReceiver builds a RowReceiverArr sized for len(colTypes) columns. Every
+// column decodes to raw bytes, so only the count matters; the column type feeds
+// FieldKind classification later (see columnKinds).
 func MakeRowReceiver(colTypes []string) *RowReceiverArr {
-	receivers := make([]RowReceiverStringer, len(colTypes))
-	for i := range receivers {
-		receivers[i] = &rawReceiver{}
-	}
-	return &RowReceiverArr{receivers: receivers}
+	return &RowReceiverArr{data: make([]sql.RawBytes, len(colTypes))}
 }
 
-// RowReceiverArr is the combined RowReceiver array
+// RowReceiverArr holds one row's column values, decoded as raw bytes by Scan.
 type RowReceiverArr struct {
-	bound     bool
-	receivers []RowReceiverStringer
+	bound bool
+	data  []sql.RawBytes
 }
 
-// BindAddress implements RowReceiver.BindAddress
+// BindAddress implements RowReceiver.BindAddress, pointing Scan at each column.
 func (r *RowReceiverArr) BindAddress(args []any) {
 	if r.bound {
 		return
 	}
 	r.bound = true
-	for i := range args {
-		r.receivers[i].BindAddress(args[i : i+1])
+	for i := range r.data {
+		args[i] = &r.data[i]
 	}
 }
 
-// GetRawBytes implements Stringer.GetRawBytes.
+// GetRawBytes returns the current row's raw column values in a fresh slice.
 func (r RowReceiverArr) GetRawBytes() []sql.RawBytes {
-	return r.appendRawBytes(make([]sql.RawBytes, 0, len(r.receivers)))
+	return r.appendRawBytes(make([]sql.RawBytes, 0, len(r.data)))
 }
 
+// appendRawBytes appends the current row's raw values to dst so callers can reuse
+// one slice across rows.
 func (r RowReceiverArr) appendRawBytes(dst []sql.RawBytes) []sql.RawBytes {
-	for _, receiver := range r.receivers {
-		dst = append(dst, receiver.GetRawBytes()[0])
-	}
-	return dst
-}
-
-// rawReceiver decodes one column as raw bytes from a *sql.Rows scan.
-type rawReceiver struct {
-	sql.RawBytes
-}
-
-// BindAddress implements RowReceiver.BindAddress
-func (s *rawReceiver) BindAddress(arg []any) {
-	arg[0] = &s.RawBytes
-}
-
-// GetRawBytes implements Stringer.GetRawBytes.
-func (s *rawReceiver) GetRawBytes() []sql.RawBytes {
-	return []sql.RawBytes{s.RawBytes}
+	return append(dst, r.data...)
 }

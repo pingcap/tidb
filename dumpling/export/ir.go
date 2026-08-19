@@ -51,18 +51,7 @@ type SQLRowIter interface {
 	Close() error
 }
 
-// RowReceiverStringer is a combined interface of RowReceiver and Stringer
-type RowReceiverStringer interface {
-	RowReceiver
-	Stringer
-}
-
-// Stringer exposes a receiver's decoded values as raw bytes.
-type Stringer interface {
-	GetRawBytes() []sql.RawBytes
-}
-
-// RowReceiver is an interface which represents sql types that support bind address for *sql.Rows
+// RowReceiver is a decode target that binds its columns to *sql.Rows.Scan.
 type RowReceiver interface {
 	BindAddress([]any)
 }
