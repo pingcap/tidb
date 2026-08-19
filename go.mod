@@ -349,13 +349,13 @@ require (
 	stathat.com/c/consistent v1.0.0 // indirect
 )
 
-replace github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260814094246-4c7ab6d43e91
+replace github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260818155144-def278b487a7
 
 replace github.com/pingcap/tipb => git.pingcap.net/pingkai/tipb v0.0.0-20260725025521-4a06b885d1a1
 
 replace github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260722071941-b41ad2375362
 
-replace github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260723064513-78ea5e9e9386
+replace github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260819031445-84f60546f02f
 
 replace (
 	// Downgrade grpc to v1.63.2, as well as other related modules.

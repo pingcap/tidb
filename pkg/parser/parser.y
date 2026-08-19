@@ -18491,6 +18491,13 @@ AdminActivateStandby:
 			Mode: $5.(ast.ActivateStandbyMode),
 		}
 	}
+|	"ACTIVATE" "STANDBY" "FORCE"
+	{
+		$$ = &ast.ActivateStandby{
+			Mode:  ast.ActivateStandbyModeFlashback,
+			Force: true,
+		}
+	}
 
 ActivateStandbyMode:
 	"DEFAULT"

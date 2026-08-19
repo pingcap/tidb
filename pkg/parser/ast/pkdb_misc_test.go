@@ -86,6 +86,10 @@ func TestAdminLogReplicationRestore(t *testing.T) {
 			"ADMIN ACTIVATE STANDBY MODE = FORCE_COMMIT",
 			"ADMIN ACTIVATE STANDBY MODE = FORCE_COMMIT",
 		},
+		{
+			"ADMIN ACTIVATE STANDBY FORCE",
+			"ADMIN ACTIVATE STANDBY FORCE",
+		},
 	}
 	extractNodeFunc := func(node ast.Node) ast.Node {
 		return node

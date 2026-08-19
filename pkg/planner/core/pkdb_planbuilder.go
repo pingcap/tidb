@@ -87,7 +87,8 @@ type SwitchOverAsPrimary struct {
 type ActivateStandby struct {
 	baseSchemaProducer
 
-	Mode ast.ActivateStandbyMode
+	Mode  ast.ActivateStandbyMode
+	Force bool
 }
 
 // CancelLogReplicationWorkflow represents an ADMIN CANCEL LOG REPLICATION WORKFLOW plan.
@@ -264,7 +265,7 @@ func (*PlanBuilder) buildAdminSwitchOverAsPrimary(_ context.Context, _ *ast.Swit
 }
 
 func (*PlanBuilder) buildAdminActivateStandby(_ context.Context, a *ast.ActivateStandby) (base.Plan, error) {
-	p := &ActivateStandby{Mode: a.Mode}
+	p := &ActivateStandby{Mode: a.Mode, Force: a.Force}
 	return p, nil
 }
 

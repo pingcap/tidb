@@ -299,7 +299,8 @@ func (e *SwitchOverAsPrimaryExec) Open(ctx context.Context) error {
 type ActivateStandbyExec struct {
 	exec.BaseExecutor
 
-	Mode ast.ActivateStandbyMode
+	Mode  ast.ActivateStandbyMode
+	Force bool
 }
 
 // Open implements the Executor Open interface.
@@ -308,7 +309,8 @@ func (e *ActivateStandbyExec) Open(ctx context.Context) error {
 	pdCli := do.GetPDClient()
 
 	opts := &pd.LogReplicationOptions{
-		ActivateMode: pdpb.ActivateStandbyMode_ACTIVATE_MODE_DEFAULT,
+		ActivateMode:  pdpb.ActivateStandbyMode_ACTIVATE_MODE_DEFAULT,
+		ActivateForce: e.Force,
 	}
 	switch e.Mode {
 	case ast.ActivateStandbyModeDefault:

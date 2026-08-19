@@ -188,11 +188,16 @@ func (m ActivateStandbyMode) String() string {
 }
 
 type ActivateStandby struct {
-	Mode ActivateStandbyMode
+	Mode  ActivateStandbyMode
+	Force bool
 }
 
 func (a *ActivateStandby) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ACTIVATE STANDBY")
+	if a.Force {
+		ctx.WriteKeyWord(" FORCE")
+		return nil
+	}
 	switch a.Mode {
 	case ActivateStandbyModeDefault, ActivateStandbyModeFlashback, ActivateStandbyModeForceCommit:
 		ctx.WriteKeyWord(" MODE = ")
