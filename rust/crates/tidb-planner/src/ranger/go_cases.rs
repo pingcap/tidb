@@ -441,6 +441,37 @@ fn planner_rewriter_stage(expr: &Expression) -> Expression {
             }
             let mut rewritten = sf.clone();
             rewritten.args = sf.args.iter().map(planner_rewriter_stage).collect();
+            // Go's `inToExpression` casts every list member to the column's
+            // type and DEDUPS the converted members, first-seen order kept.
+            if name == "in" {
+                if let Some(Expression::Column(column)) = rewritten.args.first() {
+                    let eval_type = column
+                        .ret_type
+                        .as_ref()
+                        .map(tidb_datatype::FieldType::eval_type);
+                    let mut seen = Vec::new();
+                    let mut members = vec![rewritten.args[0].clone()];
+                    for member in &rewritten.args[1..] {
+                        let mut member = member.clone();
+                        if let Expression::Constant(constant) = &mut member {
+                            constant.value = convert_in_member(
+                                &constant.value,
+                                eval_type,
+                            );
+                        }
+                        let key = match &member {
+                            Expression::Constant(constant) => format!("{:?}", constant.value),
+                            other => format!("{other:?}"),
+                        };
+                        if seen.contains(&key) {
+                            continue;
+                        }
+                        seen.push(key);
+                        members.push(member);
+                    }
+                    rewritten.args = members;
+                }
+            }
             if matches!(name, "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "nulleq") {
                 let real_column = rewritten.args.iter().any(|arg| {
                     matches!(arg, Expression::Column(col)
@@ -461,6 +492,40 @@ fn planner_rewriter_stage(expr: &Expression) -> Expression {
             Expression::ScalarFunction(rewritten)
         }
         other => other.clone(),
+    }
+}
+
+/// One IN-list member as Go's rewriter would deliver it: converted to the
+/// column's evaluation type (string digits to INT/REAL, decimal to the
+/// column family), or kept as written when no conversion applies.
+fn convert_in_member(
+    value: &Datum,
+    eval_type: Option<tidb_datatype::EvalType>,
+) -> Datum {
+    use tidb_datatype::EvalType;
+    match (eval_type, value) {
+        (Some(EvalType::Int), Datum::String(text)) => {
+            match String::from_utf8_lossy(text.bytes()).trim().parse::<i64>() {
+                Ok(parsed) => Datum::Int(parsed),
+                Err(_) => value.clone(),
+            }
+        }
+        (Some(EvalType::Int), Datum::Decimal(decimal)) => {
+            let real = decimal.to_f64();
+            if real.fract() == 0.0 {
+                Datum::Int(real as i64)
+            } else {
+                value.clone()
+            }
+        }
+        (Some(EvalType::Real), Datum::String(text)) => {
+            match String::from_utf8_lossy(text.bytes()).trim().parse::<f64>() {
+                Ok(parsed) => Datum::Real(parsed),
+                Err(_) => value.clone(),
+            }
+        }
+        (Some(EvalType::Real), Datum::Decimal(decimal)) => Datum::Real(decimal.to_f64()),
+        _ => value.clone(),
     }
 }
 
@@ -728,11 +793,13 @@ fn stringify_conds(conds: &[Expression], column_name: &dyn Fn(i64) -> String) ->
 /// (unquoted, escapes kept), numbers as digits.
 fn cond_datum(datum: &Datum) -> String {
     match datum {
+        Datum::Null => "<nil>".to_owned(),
         Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
         Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
         Datum::Int(value) => value.to_string(),
         Datum::UInt(value) => value.to_string(),
         Datum::Decimal(value) => value.to_string(),
+        Datum::Real(value) => super::types::go_g_float(*value),
         other => format!("{other:?}"),
     }
 }
@@ -821,4 +888,239 @@ fn prefix_index_range_scan_matches_go() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// `TestIndexRange`'s eight-column table (`ranger_test.go:1107`):
+/// `a varchar(50), b int, c double, d varchar(10), e binary(10),
+/// f varchar(10) collate utf8mb4_general_ci, g enum('A','B','C') collate
+/// utf8mb4_general_ci, h varchar(10) collate utf8_bin`, with the eight
+/// indexes the cases address by position.
+struct IndexRangeTable {
+    columns: Vec<Column>,
+}
+
+impl IndexRangeTable {
+    fn new() -> Self {
+        let varchar = |unique_id: i64, flen: i64, collation_name: &str,
+                        collation: tidb_datatype::Collation| {
+            let mut ft = FieldType::new(FieldTypeCode::Varchar);
+            ft.set_flen(flen);
+            ft.set_charset_name(if collation_name.starts_with("utf8_") {
+                "utf8"
+            } else {
+                "utf8mb4"
+            });
+            ft.set_collation_name(collation_name);
+            ft.set_collation(collation);
+            Column::new(unique_id, ft)
+        };
+        let a = varchar(1, 50, "utf8mb4_bin", tidb_datatype::Collation::Utf8Mb4Bin);
+        let b = Column::new(2, FieldType::new(FieldTypeCode::LongLong));
+        let c = Column::new(3, FieldType::new(FieldTypeCode::Double));
+        let d = varchar(4, 10, "utf8mb4_bin", tidb_datatype::Collation::Utf8Mb4Bin);
+        let e = Column::new(5, {
+            // `binary(10)`: the CHAR family with the binary charset.
+            let mut ft = FieldType::new(FieldTypeCode::String);
+            ft.set_flen(10);
+            ft.set_charset_name("binary");
+            ft.set_collation_name("binary");
+            ft.set_collation(tidb_datatype::Collation::Binary);
+            ft.set_flags(ft.flags() | FieldTypeFlags::BINARY);
+            ft
+        });
+        let f = varchar(
+            6,
+            10,
+            "utf8mb4_general_ci",
+            tidb_datatype::Collation::Utf8Mb4GeneralCi,
+        );
+        let g = Column::new(7, {
+            let mut ft = FieldType::new(FieldTypeCode::Enum);
+            ft.set_elems(vec!["A".into(), "B".into(), "C".into()]);
+            ft.set_charset_name("utf8mb4");
+            ft.set_collation_name("utf8mb4_general_ci");
+            ft.set_collation(tidb_datatype::Collation::Utf8Mb4GeneralCi);
+            ft
+        });
+        let h = varchar(8, 10, "utf8_bin", tidb_datatype::Collation::Utf8Bin);
+        Self {
+            columns: vec![a, b, c, d, e, f, g, h],
+        }
+    }
+
+    fn name_to_offset(name: &str) -> Option<usize> {
+        Some(match name {
+            "a" => 0,
+            "b" => 1,
+            "c" => 2,
+            "d" => 3,
+            "e" => 4,
+            "f" => 5,
+            "g" => 6,
+            "h" => 7,
+            _ => return None,
+        })
+    }
+
+    /// The `(columns, prefix lengths)` of the index at `indexPos`.
+    fn index(&self, index_pos: usize) -> (Vec<Column>, Vec<i64>) {
+        let unspec = super::checker::UNSPECIFIED_LENGTH;
+        let col = |offset: usize| self.columns[offset].clone();
+        match index_pos {
+            // idx_ab(a(50), b): a's declared length EQUALS its flen, which
+            // Go normalizes to a FULL column (no prefix cut, no union pass).
+            0 => (vec![col(0), col(1)], vec![unspec, unspec]),
+            1 => (vec![col(2), col(0)], vec![unspec, unspec]), // idx_cb(c, a)
+            2 => (vec![col(3)], vec![2]),                  // idx_d(d(2))
+            3 => (vec![col(4)], vec![2]),                  // idx_e(e(2))
+            4 => (vec![col(5)], vec![unspec]),             // idx_f(f)
+            5 => (vec![col(3), col(4)], vec![2, unspec]),  // idx_de(d(2), e)
+            6 => (vec![col(6)], vec![unspec]),             // idx_g(g)
+            _ => (vec![col(7)], vec![3]),                  // idx_h(h(3))
+        }
+    }
+}
+
+impl ColumnResolver for IndexRangeTable {
+    fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+        let name = path.last()?;
+        let offset = Self::name_to_offset(&name.to_ascii_lowercase())?;
+        let column = &self.columns[offset];
+        Some((
+            offset,
+            column.ret_type.clone().expect("typed"),
+            column.unique_id,
+        ))
+    }
+
+    fn resolve_column(&self, path: &[String]) -> Option<Column> {
+        let name = path.last()?;
+        let offset = Self::name_to_offset(&name.to_ascii_lowercase())?;
+        Some(self.columns[offset].clone())
+    }
+
+    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+        tidb_expr::SessionTimeZone::utc()
+    }
+
+    fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
+        tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+    }
+}
+
+/// Go `TestIndexRange` (`ranger_test.go:1107`), the full case table:
+/// LIKE lowering, IN dedup/merge, DNF detachment, prefix cuts through
+/// multi-byte runes, `utf8mb4_general_ci` sort keys, an enum key, and the
+/// CAST-AS-BINARY compare over a CI column.
+#[test]
+fn index_ranges_match_go() {
+    let table = IndexRangeTable::new();
+    let column_name = |unique_id: i64| -> String {
+        let name = ["a", "b", "c", "d", "e", "f", "g", "h"]
+            .get((unique_id - 1) as usize)
+            .copied()
+            .unwrap_or("?");
+        format!("test.t.{name}")
+    };
+    let cases: &[(usize, &str, &str, &str, &str)] = &[
+        (0, r"a LIKE 'abc%'", r"[like(test.t.a, abc%, 92)]", r"[like(test.t.a, abc%, 92)]", r#"[["abc","abd")]"#),
+        (0, r"a LIKE 'abc_'", r"[like(test.t.a, abc_, 92)]", r"[like(test.t.a, abc_, 92)]", r#"[["abc","abd")]"#),
+        (0, r"a LIKE 'abc'", r"[like(test.t.a, abc, 92)]", r"[like(test.t.a, abc, 92)]", r#"[["abc","abc"]]"#),
+        (0, r#"a LIKE "ab\_c""#, r"[like(test.t.a, ab\_c, 92)]", r"[like(test.t.a, ab\_c, 92)]", r#"[["ab_c","ab_c"]]"#),
+        (0, r"a LIKE '%'", r"[]", r"[like(test.t.a, %, 92)]", r"[[NULL,+inf]]"),
+        (0, r"a LIKE '\%a'", r"[like(test.t.a, \%a, 92)]", r"[like(test.t.a, \%a, 92)]", r#"[["%a","%a"]]"#),
+        (0, r#"a LIKE "\\""#, r"[like(test.t.a, \, 92)]", r"[like(test.t.a, \, 92)]", r#"[["\\","\\"]]"#),
+        (0, r#"a LIKE "\\\\a%""#, r"[like(test.t.a, \\a%, 92)]", r"[like(test.t.a, \\a%, 92)]", r#"[["\\a","\\b")]"#),
+        (0, r"a > NULL", r"[gt(test.t.a, <nil>)]", r"[]", r"[]"),
+        (0, r"a = 'a' and b in (1, 2, 3)", r"[eq(test.t.a, a) in(test.t.b, 1, 2, 3)]", r"[]", r#"[["a" 1,"a" 1] ["a" 2,"a" 2] ["a" 3,"a" 3]]"#),
+        (0, r"a = 'a' and b not in (1, 2, 3)", r"[eq(test.t.a, a) not(in(test.t.b, 1, 2, 3))]", r"[]", r#"[("a" NULL,"a" 1) ("a" 3,"a" +inf]]"#),
+        (0, r"a in ('a') and b in ('1', 2.0, NULL)", r"[eq(test.t.a, a) in(test.t.b, 1, 2, <nil>)]", r"[]", r#"[["a" 1,"a" 1] ["a" 2,"a" 2]]"#),
+        (1, r"c in ('1.1', 1, 1.1) and a in ('1', 'a', NULL)", r"[in(test.t.c, 1.1, 1) in(test.t.a, 1, a, <nil>)]", r"[]", r#"[[1 "1",1 "1"] [1 "a",1 "a"] [1.1 "1",1.1 "1"] [1.1 "a",1.1 "a"]]"#),
+        (1, r"c in (1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)", r"[in(test.t.c, 1, 2, 3, 4)]", r"[]", r"[[1,1] [2,2] [3,3] [4,4]]"),
+        (1, r"c not in (1, 2, 3)", r"[not(in(test.t.c, 1, 2, 3))]", r"[]", r"[(NULL,1) (1,2) (2,3) (3,+inf]]"),
+        (1, r"c in (1, 2) and c in (1, 3)", r"[eq(test.t.c, 1)]", r"[]", r"[[1,1]]"),
+        (1, r"c = 1 and c = 2", r"[]", r"[]", r"[]"),
+        (0, r"a in (NULL)", r"[eq(test.t.a, <nil>)]", r"[]", r"[]"),
+        (0, r"a not in (NULL, '1', '2', '3')", r"[not(in(test.t.a, <nil>, 1, 2, 3))]", r"[]", r"[]"),
+        (0, r"not (a not in (NULL, '1', '2', '3') and a > '2')", r"[or(in(test.t.a, <nil>, 1, 2, 3), le(test.t.a, 2))]", r"[]", r#"[[-inf,"2"] ["3","3"]]"#),
+        (0, r"not (a not in (NULL) and a > '2')", r"[or(eq(test.t.a, <nil>), le(test.t.a, 2))]", r"[]", r#"[[-inf,"2"]]"#),
+        (0, r"not (a not in (NULL) or a > '2')", r"[and(eq(test.t.a, <nil>), le(test.t.a, 2))]", r"[]", r"[]"),
+        (0, r"(a > 'b' and a < 'bbb') or (a < 'cb' and a > 'a')", r"[or(and(gt(test.t.a, b), lt(test.t.a, bbb)), and(lt(test.t.a, cb), gt(test.t.a, a)))]", r"[]", r#"[("a","cb")]"#),
+        (0, r"(a > 'a' and a < 'b') or (a >= 'b' and a < 'c')", r"[or(and(gt(test.t.a, a), lt(test.t.a, b)), and(ge(test.t.a, b), lt(test.t.a, c)))]", r"[]", r#"[("a","c")]"#),
+        (0, r"(a > 'a' and a < 'b' and b < 1) or (a >= 'b' and a < 'c')", r"[or(and(gt(test.t.a, a), lt(test.t.a, b)), and(ge(test.t.a, b), lt(test.t.a, c)))]", r"[or(and(and(gt(test.t.a, a), lt(test.t.a, b)), lt(test.t.b, 1)), and(ge(test.t.a, b), lt(test.t.a, c)))]", r#"[("a","c")]"#),
+        (0, r"(a in ('a', 'b') and b < 1) or (a >= 'b' and a < 'c')", r"[or(and(in(test.t.a, a, b), lt(test.t.b, 1)), and(ge(test.t.a, b), lt(test.t.a, c)))]", r"[]", r#"[["a" -inf,"a" 1) ["b","c")]"#),
+        (0, r"(a > 'a') or (c > 1)", r"[]", r"[or(gt(test.t.a, a), gt(test.t.c, 1))]", r"[[NULL,+inf]]"),
+        (2, r#"d = "你好啊""#, r"[eq(test.t.d, 你好啊)]", r"[eq(test.t.d, 你好啊)]", r#"[["你好","你好"]]"#),
+        (3, r#"e = "你好啊""#, r"[eq(test.t.e, 你好啊)]", r"[eq(test.t.e, 你好啊)]", r#"[["\xe4\xbd","\xe4\xbd"]]"#),
+        (2, r#"d in ("你好啊", "再见")"#, r"[in(test.t.d, 你好啊, 再见)]", r"[in(test.t.d, 你好啊, 再见)]", r#"[["你好","你好"] ["再见","再见"]]"#),
+        (2, r#"d not in ("你好啊")"#, r"[]", r"[ne(test.t.d, 你好啊)]", r"[[NULL,+inf]]"),
+        (2, r#"d < "你好" || d > "你好""#, r"[or(lt(test.t.d, 你好), gt(test.t.d, 你好))]", r"[or(lt(test.t.d, 你好), gt(test.t.d, 你好))]", r"[[-inf,+inf]]"),
+        (2, r#"not(d < "你好" || d > "你好")"#, r"[and(ge(test.t.d, 你好), le(test.t.d, 你好))]", r"[and(ge(test.t.d, 你好), le(test.t.d, 你好))]", r#"[["你好","你好"]]"#),
+        (4, r"f >= 'a' and f <= 'B'", r"[ge(test.t.f, a) le(test.t.f, B)]", r"[]", r#"[["\x00A","\x00B"]]"#),
+        (4, r"f in ('a', 'B')", r"[in(test.t.f, a, B)]", r"[]", r#"[["\x00A","\x00A"] ["\x00B","\x00B"]]"#),
+        (4, r"f = 'a' and f = 'B' collate utf8mb4_bin", r"[eq(test.t.f, a)]", r"[eq(test.t.f, B)]", r#"[["\x00A","\x00A"]]"#),
+        (4, r"f like '@%' collate utf8mb4_bin", r"[]", r"[like(test.t.f, @%, 92)]", r"[[NULL,+inf]]"),
+        (5, r"d in ('aab', 'aac') and e = 'a'", r"[in(test.t.d, aab, aac) eq(test.t.e, a)]", r"[in(test.t.d, aab, aac)]", r#"[["aa" "a","aa" "a"]]"#),
+        (6, r"g = 'a'", r"[eq(test.t.g, a)]", r"[]", r#"[["A","A"]]"#),
+        (7, r"h LIKE 'ÿÿ%'", r"[like(test.t.h, ÿÿ%, 92)]", r"[like(test.t.h, ÿÿ%, 92)]", r#"[["ÿÿ","ÿ\xc3\xc0")]"#),
+        (4, r"f = cast('a' as binary)", r"[eq(test.t.f, a)]", r"[eq(test.t.f, a)]", r#"[["\x00A","\x00A"]]"#),
+        (4, r"f in (cast('a' as binary), cast('B' as binary))", r"[in(test.t.f, a, B)]", r"[in(test.t.f, a, B)]", r#"[["\x00A","\x00A"] ["\x00B","\x00B"]]"#),
+    ];
+    let mut failures = Vec::new();
+    for (index_pos, expr, want_access, want_filter, want_ranges) in cases {
+        let got = (|| -> Result<(String, String, String), String> {
+            let sql = format!("select * from t where {expr}");
+            let stmt =
+                tidb_parser::parse(&sql).map_err(|error| format!("parse: {error:?}"))?;
+            let tidb_ast::Stmt::Query(query) = stmt else {
+                return Err("not a query".to_owned());
+            };
+            let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+                return Err("not a select".to_owned());
+            };
+            let where_clause = select.where_clause.ok_or("no where")?;
+            let rewritten = rewrite_expr_resolved(&where_clause, &table)
+                .map_err(|error| format!("rewrite: {error:?}"))?;
+            let ctx = tidb_expr::NoColumns;
+            let builder = RealFunctionBuilder::new(&ctx);
+            // Go's PushDownNot builds through NewFunction, which DERIVES
+            // collation; this crate's `new_function` deliberately defers
+            // that, so the rewriter's tree walk runs here instead.
+            let conds: Vec<Expression> = split_cnf_items(&rewritten)
+                .iter()
+                .map(planner_rewriter_stage)
+                .map(|cond| push_down_not(&cond, &builder))
+                .map(|mut cond| {
+                    tidb_expr::rewriter::derive_tree_collation(&mut cond)
+                        .map(|()| cond)
+                        .map_err(|error| format!("collation: {error:?}"))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let (cols, lengths) = table.index(*index_pos);
+            let result = super::detacher::detach_cond_and_build_range_for_index(
+                &conds, &cols, &lengths, 0,
+            )
+            .map_err(|error| format!("detach: {error:?}"))?;
+            Ok((
+                stringify_conds(&result.access_conds, &column_name),
+                stringify_conds(&result.remained_conds, &column_name),
+                ranges_to_go_string(&result.ranges),
+            ))
+        })();
+        match got {
+            Ok((access, filter, ranges)) => {
+                if access != *want_access {
+                    failures.push(format!("{expr}: access {access}, want {want_access}"));
+                }
+                if filter != *want_filter {
+                    failures.push(format!("{expr}: filter {filter}, want {want_filter}"));
+                }
+                if ranges != *want_ranges {
+                    failures.push(format!("{expr}: ranges {ranges}, want {want_ranges}"));
+                }
+            }
+            Err(error) => failures.push(format!("{expr}: {error}")),
+        }
+    }
+    assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
 }

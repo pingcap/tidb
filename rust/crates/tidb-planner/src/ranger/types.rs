@@ -416,6 +416,51 @@ fn is_boundary_value(d: &Datum, unsigned_int_handle: bool, is_left_side: bool) -
 }
 
 /// Go `formatDatum`.
+/// Go `strconv.Quote` over RAW bytes -- what `%q` prints for a bytes
+/// datum. Valid printable runes stay verbatim (CJK included), quote and
+/// backslash escape, and every other byte -- controls and bytes that are
+/// not valid UTF-8, such as a sort key's 0x00 weight or a prefix cut
+/// through the middle of a rune -- prints as `\xNN`.
+fn go_quote(bytes: &[u8]) -> String {
+    let mut out = String::from("\"");
+    let mut rest = bytes;
+    while !rest.is_empty() {
+        match std::str::from_utf8(rest) {
+            Ok(valid) => {
+                push_go_quoted(&mut out, valid);
+                break;
+            }
+            Err(error) => {
+                let (valid, after) = rest.split_at(error.valid_up_to());
+                push_go_quoted(&mut out, std::str::from_utf8(valid).expect("just validated"));
+                let bad = error.error_len().unwrap_or(after.len());
+                for byte in &after[..bad] {
+                    out.push_str(&format!("\\x{byte:02x}"));
+                }
+                rest = &after[bad..];
+            }
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn push_go_quoted(out: &mut String, text: &str) {
+    for ch in text.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            ch if (ch as u32) < 0x20 || ch as u32 == 0x7f => {
+                out.push_str(&format!("\\x{:02x}", ch as u32));
+            }
+            ch => out.push(ch),
+        }
+    }
+}
+
 fn format_datum(d: &Datum, is_left_side: bool) -> String {
     match d {
         Datum::Null => "NULL".to_owned(),
@@ -436,8 +481,8 @@ fn format_datum(d: &Datum, is_left_side: bool) -> String {
             }
             v.to_string()
         }
-        Datum::Bytes(bytes) => format!("{:?}", String::from_utf8_lossy(bytes)),
-        Datum::String(s) => format!("{:?}", String::from_utf8_lossy(s.bytes())),
+        Datum::Bytes(bytes) => go_quote(bytes),
+        Datum::String(s) => go_quote(s.bytes()),
         // Go's default arm is `fmt.Sprintf("%v", d.GetValue())`: floats
         // print through `strconv.FormatFloat(v, 'g', -1, 64)` — and a
         // KindFloat32 datum's GetValue is a float32, so its digits are the
@@ -457,6 +502,8 @@ fn format_datum(d: &Datum, is_left_side: bool) -> String {
                 go_g_float(f64::from(narrowed))
             }
         }
+        // Go's `%v` of a MysqlEnum prints its NAME.
+        Datum::Enum(value, _) => go_quote(value.name().as_bytes()),
         // The remaining kinds print their debug shape until a caller
         // formats one (Go's `%v` of those values is type-specific).
         other => format!("{other:?}"),
@@ -577,7 +624,7 @@ fn datum_equals(a: &Datum, b: &Datum) -> bool {
 /// shortest round-trip digits, switching to `e` notation when the decimal
 /// exponent is below -4 or at/above 21, with Go's signed two-digit
 /// exponent spelling.
-fn go_g_float(value: f64) -> String {
+pub(super) fn go_g_float(value: f64) -> String {
     if value.is_nan() {
         return "NaN".to_owned();
     }
