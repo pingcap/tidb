@@ -55,12 +55,27 @@ fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
     rows.into_iter()
         .map(|row| {
             row.into_iter()
+                // Every datum a served column can hold renders as the text
+                // the wire would carry. A `{other:?}` fallback here reads as
+                // a value mismatch when the value is in fact right, which
+                // has cost this file three false failures.
                 .map(|datum| match datum {
                     Datum::Int(v) => v.to_string(),
                     Datum::UInt(v) => v.to_string(),
+                    Datum::Real(v) => v.to_string(),
                     Datum::Decimal(d) => d.to_string(),
                     Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
                     Datum::Bytes(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                    Datum::Enum(value, _) => {
+                        String::from_utf8_lossy(value.name().as_bytes()).into_owned()
+                    }
+                    Datum::Set(value, _) => {
+                        String::from_utf8_lossy(value.name().as_bytes()).into_owned()
+                    }
+                    Datum::Time(time) => time.to_string(),
+                    Datum::Duration(duration) => duration.to_string(),
+                    Datum::Json(json) => json.to_string(),
+                    Datum::Null => "NULL".to_owned(),
                     other => format!("{other:?}"),
                 })
                 .collect()
@@ -526,4 +541,56 @@ fn unsigned_columns_survive_the_coprocessor_scan() {
             "`{predicate}` over the scan path"
         );
     }
+}
+
+/// The REST of Go `fieldTypeFromPBColumn`: flag is not the only field the
+/// decode needs.
+///
+/// `elems` decides what an ENUM/SET ordinal means, and `decimal` the scale a
+/// DECIMAL and the fsp a TIME/DATETIME read back with. The scan path rebuilt
+/// none of them, so this pins each against the point-get path, which builds
+/// its types from the catalog and therefore never lost them. A disagreement
+/// here is the same class of bug as the unsigned one: one table, two paths,
+/// two answers.
+#[test]
+fn the_scan_path_decodes_elems_and_scale_like_the_point_get_path() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(37))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.tt (id int primary key, en enum('alpha','beta','gamma'), \
+         st set('p','q','r'), dc decimal(12,4), yr year, tm time(3), dt datetime(6))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.tt VALUES (1, 'gamma', 'q,r', 12345.6789, 2024, \
+         '12:34:56.789', '2024-03-04 05:06:07.891011')",
+    );
+
+    let columns = "en, st, dc, yr, tm, dt";
+    // `id = 1` is a point get; `id > 0 AND id < 2` is a scan of the same row.
+    let point_get = displayed(rows(
+        &mut session,
+        &format!("SELECT {columns} FROM test.tt WHERE id = 1"),
+    ));
+    let scanned = displayed(rows(
+        &mut session,
+        &format!("SELECT {columns} FROM test.tt WHERE id > 0 AND id < 2"),
+    ));
+    assert_eq!(point_get, scanned, "the two paths must read one row alike");
+    assert_eq!(
+        scanned,
+        [[
+            "gamma".to_owned(),
+            "q,r".to_owned(),
+            "12345.6789".to_owned(),
+            "2024".to_owned(),
+            "12:34:56.789".to_owned(),
+            "2024-03-04 05:06:07.891011".to_owned(),
+        ]],
+        "and both must read what was stored"
+    );
 }
