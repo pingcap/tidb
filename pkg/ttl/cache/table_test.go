@@ -351,6 +351,15 @@ func TestFindTTLIndex(t *testing.T) {
 			hasTTLIndex: false,
 		},
 		{
+			def:         "(id varchar(32), t datetime, primary key(id(4)) clustered, index idx_t(t)) ttl = `t` + interval 1 day",
+			hasTTLIndex: false,
+		},
+		{
+			def:         "(id varchar(32), t datetime, primary key(id(4)) clustered, index idx_t(t, id)) ttl = `t` + interval 1 day",
+			hasTTLIndex: true,
+			indexName:   "idx_t",
+		},
+		{
 			def:         "(id int primary key, t datetime, index idx_t(id, t)) ttl = `t` + interval 1 day",
 			hasTTLIndex: false,
 		},

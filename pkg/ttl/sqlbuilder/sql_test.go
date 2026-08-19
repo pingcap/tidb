@@ -627,7 +627,7 @@ func TestScanQueryGenerator(t *testing.T) {
 			path: [][]any{
 				{
 					nil, 3,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 3",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` USE INDEX () WHERE `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 3",
 				},
 				{
 					nil, 5, "",
@@ -640,7 +640,7 @@ func TestScanQueryGenerator(t *testing.T) {
 			path: [][]any{
 				{
 					nil, 3,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 3",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` USE INDEX () WHERE `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 3",
 				},
 				{
 					[][]types.Datum{}, 5, "",
@@ -655,11 +655,11 @@ func TestScanQueryGenerator(t *testing.T) {
 			path: [][]any{
 				{
 					nil, 3,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` >= 1 AND `id` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 3",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` USE INDEX () WHERE `id` >= 1 AND `id` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 3",
 				},
 				{
 					result(d(10), 3), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 10 AND `id` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` USE INDEX () WHERE `id` > 10 AND `id` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 5",
 				},
 				{
 					result(d(15), 4), 5,
@@ -673,15 +673,15 @@ func TestScanQueryGenerator(t *testing.T) {
 			path: [][]any{
 				{
 					nil, 3,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 3",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` USE INDEX () WHERE `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 3",
 				},
 				{
 					result(d(2), 3), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 2 AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` USE INDEX () WHERE `id` > 2 AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 5",
 				},
 				{
 					result(d(4), 5), 6,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 4 AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 6",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` USE INDEX () WHERE `id` > 4 AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 6",
 				},
 				{
 					result(d(7), 5), 5, "",
@@ -694,7 +694,7 @@ func TestScanQueryGenerator(t *testing.T) {
 			path: [][]any{
 				{
 					nil, 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					nil, 5, "",
@@ -707,7 +707,7 @@ func TestScanQueryGenerator(t *testing.T) {
 			path: [][]any{
 				{
 					nil, 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					nil, 5, "",
@@ -720,7 +720,7 @@ func TestScanQueryGenerator(t *testing.T) {
 			path: [][]any{
 				{
 					nil, 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					[][]types.Datum{}, 5, "",
@@ -733,7 +733,7 @@ func TestScanQueryGenerator(t *testing.T) {
 			path: [][]any{
 				{
 					nil, 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "x", []byte{0xf0}), 4), 5, "",
@@ -748,39 +748,39 @@ func TestScanQueryGenerator(t *testing.T) {
 			path: [][]any{
 				{
 					nil, 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'x' AND `c` >= x'0e' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` = 'x' AND `c` >= x'0e' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "x", []byte{0x1a}), 5), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'x' AND `c` > x'1a' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` = 'x' AND `c` > x'1a' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "x", []byte{0x20}), 4), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` > 'x' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` > 'x' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "y", []byte{0x0a}), 5), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'y' AND `c` > x'0a' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` = 'y' AND `c` > x'0a' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "y", []byte{0x11}), 4), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` > 'y' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` > 'y' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "z", []byte{0x02}), 4), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` > 1 AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` > 1 AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(3, "a", []byte{0x01}), 5), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 3 AND `b` = 'a' AND `c` > x'01' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 3 AND `b` = 'a' AND `c` > x'01' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(3, "a", []byte{0x11}), 4), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 3 AND `b` > 'a' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 3 AND `b` > 'a' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(3, "c", []byte{0x12}), 4), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` > 3 AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` > 3 AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(5, "e", []byte{0xa1}), 4), 5, "",
@@ -795,19 +795,19 @@ func TestScanQueryGenerator(t *testing.T) {
 			path: [][]any{
 				{
 					nil, 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` >= 1 AND `a` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` >= 1 AND `a` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "x", []byte{0x1a}), 5), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'x' AND `c` > x'1a' AND `a` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` = 'x' AND `c` > x'1a' AND `a` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "x", []byte{0x20}), 4), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` > 'x' AND `a` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` > 'x' AND `a` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "y", []byte{0x0a}), 4), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` > 1 AND `a` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` > 1 AND `a` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 			},
 		},
@@ -819,19 +819,19 @@ func TestScanQueryGenerator(t *testing.T) {
 			path: [][]any{
 				{
 					nil, 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` >= 'x' AND (`a`, `b`) < (100, 'z') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` >= 'x' AND (`a`, `b`) < (100, 'z') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "x", []byte{0x1a}), 5), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'x' AND `c` > x'1a' AND (`a`, `b`) < (100, 'z') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` = 'x' AND `c` > x'1a' AND (`a`, `b`) < (100, 'z') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "x", []byte{0x20}), 4), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` > 'x' AND (`a`, `b`) < (100, 'z') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` > 'x' AND (`a`, `b`) < (100, 'z') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "y", []byte{0x0a}), 4), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` > 1 AND (`a`, `b`) < (100, 'z') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` > 1 AND (`a`, `b`) < (100, 'z') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 			},
 		},

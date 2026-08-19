@@ -676,6 +676,18 @@ func TestIndexScanForAnonymizedLargeTableShape(t *testing.T) {
 	require.NotNil(t, idx)
 
 	expireTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	pkGenerator, err := sqlbuilder.NewScanQueryGenerator(ttlTbl, expireTime, nil, nil)
+	require.NoError(t, err)
+	pkScanSQL, err := pkGenerator.NextSQL(nil, 32)
+	require.NoError(t, err)
+	require.Contains(t, pkScanSQL, "USE INDEX ()")
+	pkPlan := tk.MustQuery("explain format='brief' " + pkScanSQL)
+	pkPlan.CheckContain("TableReader")
+	pkPlan.CheckNotContain("IndexReader")
+	pkPlan.CheckNotContain("IndexRangeScan")
+	pkPlan.CheckNotContain("IndexFullScan")
+	pkPlan.CheckNotContain("IndexLookUp")
+
 	generator, err := sqlbuilder.NewIndexScanQueryGenerator(ttlTbl, expireTime, nil, nil, idx)
 	require.NoError(t, err)
 	scanSQL, err := generator.NextSQL(nil, 32)

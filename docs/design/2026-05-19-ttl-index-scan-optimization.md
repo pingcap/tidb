@@ -38,7 +38,7 @@ A usable index must be an ordinary public, visible, full-column secondary index 
 
 For a non-unique index, the table key is appended to the declared index columns when it is needed to make the cursor row-unique and the planner can use that physical handle suffix for an ordered range seek. For a unique index, non-`NULL` declared index tuples are already row-unique, so the normal cursor contains only the declared index columns. In particular, a unique single-column TTL index paginates only by the TTL column while still selecting the table key for deletion.
 
-Prefix indexes, multi-valued indexes, global indexes, hidden expression columns, and handle layouts for which the planner cannot expose an ordered suffix are not selected. They fall back to the existing PK scan.
+Prefix indexes, multi-valued indexes, global indexes, hidden expression columns, and handle layouts for which the planner cannot expose an ordered suffix are not selected. This includes hidden common-handle suffixes whose primary key contains prefix columns. They fall back to the existing PK scan.
 
 The scheduler calls `PhysicalTable.FindTTLIndex()` at job creation time. If the selected index is dropped later, the worker reports an error for the affected task.
 
@@ -46,7 +46,7 @@ The scheduler calls `PhysicalTable.FindTTLIndex()` at job creation time. If the 
 
 **PK scan (existing behavior):**
 ```sql
-SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t`
+SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t` USE INDEX ()
 WHERE `id` >= ? AND `id` < ? AND `created_time` < FROM_UNIXTIME(?)
 ORDER BY `id` ASC LIMIT ?;
 ```

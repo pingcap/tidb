@@ -147,6 +147,14 @@ func (b *SQLBuilder) writeForceIndex(indexName string) error {
 	return nil
 }
 
+func (b *SQLBuilder) writeUseNoIndex() error {
+	if b.state != writeSelOrDel || !b.isReadOnly {
+		return errors.Errorf("invalid state for USE INDEX: %v", b.state)
+	}
+	b.restoreCtx.WritePlain(" USE INDEX ()")
+	return nil
+}
+
 // WriteDelete writes a delete statement without any condition
 func (b *SQLBuilder) WriteDelete() error {
 	if b.state != writeBegin {
@@ -558,6 +566,9 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 
 func (g *ScanQueryGenerator) buildSQLForPK(b *SQLBuilder) (string, error) {
 	if err := b.WriteSelect(); err != nil {
+		return "", err
+	}
+	if err := b.writeUseNoIndex(); err != nil {
 		return "", err
 	}
 	if len(g.stack) > 0 {

@@ -821,6 +821,9 @@ func (t *PhysicalTable) canUseHandleInTTLIndexOrder() bool {
 	if !t.IsCommonHandle {
 		return true
 	}
+	if t.commonHandleHasPrefixColumn() {
+		return false
+	}
 	if t.CommonHandleVersion != 0 || !collate.NewCollationEnabled() {
 		return true
 	}
@@ -830,6 +833,32 @@ func (t *PhysicalTable) canUseHandleInTTLIndexOrder() bool {
 		}
 	}
 	return true
+}
+
+func (t *PhysicalTable) commonHandleHasPrefixColumn() bool {
+	if !t.IsCommonHandle {
+		return false
+	}
+	primaryIdx := tables.FindPrimaryIndex(t.TableInfo)
+	if primaryIdx == nil {
+		return true
+	}
+	for _, idxCol := range primaryIdx.Columns {
+		if idxCol.Length == types.UnspecifiedLength {
+			continue
+		}
+		if idxCol.Offset < 0 || idxCol.Offset >= len(t.Columns) {
+			return true
+		}
+		col := t.Columns[idxCol.Offset]
+		if col == nil {
+			return true
+		}
+		if flen := col.GetFlen(); flen == types.UnspecifiedLength || idxCol.Length < flen {
+			return true
+		}
+	}
+	return false
 }
 
 // SplitIndexScanRanges splits index-scan ranges by the selected index's region distribution.
