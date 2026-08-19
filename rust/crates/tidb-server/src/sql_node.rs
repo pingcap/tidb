@@ -367,6 +367,11 @@ pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
         ClusterDdlError::Plan(error @ DdlPlanError::KeyNotExists { .. }) => {
             SqlQueryError::new(1176, *b"42000", error.to_string())
         }
+        // Go `ErrCantDropFieldOrKey` (1091, 42000): DROP INDEX and
+        // DROP PRIMARY KEY naming something the table does not have.
+        ClusterDdlError::Plan(error @ DdlPlanError::UnknownIndex(_)) => {
+            SqlQueryError::new(1091, *b"42000", error.to_string())
+        }
         // Go `ErrBadField` (1054, 42S22): the statement named a column the
         // table does not have.
         ClusterDdlError::Plan(error @ DdlPlanError::UnknownColumn { .. }) => {

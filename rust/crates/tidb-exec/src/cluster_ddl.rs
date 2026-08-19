@@ -493,6 +493,18 @@ pub enum DdlStatement {
     /// allocator counter behind it. Moving only the first would leave the
     /// next INSERT allocating from the old counter, which is the silent
     /// wrong answer this change exists to avoid.
+    /// `ALTER TABLE ... DROP PRIMARY KEY`, Go's `CheckIsDropPrimaryKey`
+    /// followed by the ordinary index drop.
+    ///
+    /// Kept distinct from `DROP INDEX` because the two answer differently
+    /// for the same table: a clustered primary key cannot be dropped at all,
+    /// since the rows are stored under it.
+    DropPrimaryKey {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+    },
     /// `CREATE TABLE <new> LIKE <source>`, Go's `BuildTableInfoWithLike`.
     ///
     /// The source is resolved from the CATALOG rather than from the
@@ -1138,6 +1150,10 @@ fn lower_alter_table_catalog(
                 // Go `NeedToOverwriteColCharset`: true exactly for CONVERT TO.
                 overwrite_columns: true,
             }))
+        }
+        tidb_ast::AlterTableAction::DropPrimaryKey(_) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::DropPrimaryKey { schema, table }))
         }
         tidb_ast::AlterTableAction::RenameIndex(action) => {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
@@ -1849,8 +1865,10 @@ impl fmt::Display for DdlPlanError {
             Self::DuplicateColumnName(name) => {
                 write!(formatter, "Duplicate column name '{name}'")
             }
+            // Go `ErrCantDropFieldOrKey`, the message DROP INDEX and
+            // DROP PRIMARY KEY both answer with.
             Self::UnknownIndex(name) => {
-                write!(formatter, "index {name} doesn't exist")
+                write!(formatter, "Can't DROP '{name}'; check that column/key exists")
             }
             Self::UnknownIndexColumn { column, index } => write!(
                 formatter,
@@ -2121,6 +2139,67 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             ))?);
             diff.action_type = ActionType::ACTION_DROP_SCHEMA;
             diff.schema_id = db_id;
+        }
+        DdlStatement::DropPrimaryKey { schema, table } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            // Go `CheckIsDropPrimaryKey`. A clustered primary key -- whether
+            // it is the int handle (`PKIsHandle`) or a composite one
+            // (`IsCommonHandle`) -- is what the rows are STORED under, so
+            // dropping it would leave every row unaddressable.
+            if stored.pk_is_handle || stored.is_common_handle {
+                return Err(DdlPlanError::Admission(
+                    crate::table_info_build::DdlAdmissionError::with_code(
+                        8200,
+                        "Unsupported drop primary key when the table is using clustered index"
+                            .to_owned(),
+                    ),
+                ));
+            }
+            // Go's `PRIMARY` lookup is by the reserved name, and a general
+            // index that merely happens to be called `primary` is not one
+            // (the #14243 fix).
+            let primary = stored.indices.iter_deref().find(|index| {
+                let index = index.read();
+                index.name.lowercase() == "primary" && index.primary
+            });
+            let Some(primary) = primary else {
+                // Go `ErrCantDropFieldOrKey` (1091), the same code DROP INDEX
+                // uses for a name that is not there.
+                return Err(DdlPlanError::UnknownIndex("PRIMARY".to_owned()));
+            };
+            let dropped = primary.read().clone_like_go();
+            let mut info = stored.clone_like_go();
+            if let Some(offset) = info.indices.iter_handles().position(|candidate| {
+                candidate
+                    .as_ref()
+                    .expect("nil *IndexInfo in TableInfo.Indices")
+                    .read()
+                    .id
+                    == dropped.id
+            }) {
+                info.indices.delete_go(offset, offset + 1);
+            }
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            // The entries have to go with the definition, exactly as
+            // `DROP INDEX` does: an index whose rows survive its `TableInfo`
+            // is invisible garbage that a later index of the same id would
+            // read as its own.
+            backfill = Some(IndexBackfill {
+                table: Box::new(stored.clone_like_go()),
+                index: GoShared::new(dropped),
+                use_new_collation,
+                add: false,
+            });
+            diff.action_type = ActionType::ACTION_DROP_PRIMARY_KEY;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
         }
         DdlStatement::CreateTableLike {
             schema,

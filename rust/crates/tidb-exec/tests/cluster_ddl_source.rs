@@ -1696,7 +1696,11 @@ fn drop_index_removes_it_and_owes_the_entry_removal() {
         470_000_004,
     )
     .expect_err("a missing index is an error");
-    assert_eq!(refused.to_string(), "index nosuch doesn't exist");
+    // Go `ErrCantDropFieldOrKey` (1091), not a message of this port's own.
+    assert_eq!(
+        refused.to_string(),
+        "Can't DROP 'nosuch'; check that column/key exists"
+    );
     match plan_ddl(
         &mut store,
         &statement("DROP INDEX IF EXISTS nosuch ON u6.minimal"),
@@ -3206,4 +3210,82 @@ fn create_table_like_copies_the_definition_and_resets_the_identity() {
         DdlPlan::AlreadySatisfied { .. } => {}
         DdlPlan::Write(_) => panic!("IF NOT EXISTS must publish nothing"),
     }
+}
+
+/// Go `CheckIsDropPrimaryKey` followed by the ordinary index drop.
+///
+/// A clustered primary key is what the rows are STORED under -- whether it is
+/// the int handle (`PKIsHandle`) or a composite one (`IsCommonHandle`) -- so
+/// dropping it would leave every row unaddressable, and Go refuses. Only a
+/// NONCLUSTERED primary key is a real index that can go.
+#[test]
+fn drop_primary_key_refuses_a_clustered_one_and_drops_a_nonclustered_one() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.clustered (id BIGINT PRIMARY KEY CLUSTERED, v BIGINT)",
+        100,
+    );
+    apply(&mut store, &write);
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.clustered DROP PRIMARY KEY"),
+        200,
+    )
+    .expect_err("a clustered primary key cannot be dropped");
+    match error {
+        DdlPlanError::Admission(ref admission) => {
+            assert_eq!(admission.code, 8200, "{admission:?}");
+            assert!(
+                admission
+                    .reason
+                    .contains("Unsupported drop primary key when the table is using clustered index"),
+                "{admission:?}"
+            );
+        }
+        other => panic!("expected an admission refusal, got {other:?}"),
+    }
+
+    // No primary key at all is Go's ErrCantDropFieldOrKey, the same 1091
+    // DROP INDEX answers for a name that is not there.
+    let write = plan(&mut store, "CREATE TABLE u6.bare (id BIGINT, v BIGINT)", 300);
+    apply(&mut store, &write);
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.bare DROP PRIMARY KEY"),
+        400,
+    )
+    .expect_err("a missing primary key is refused");
+    assert!(
+        matches!(error, DdlPlanError::UnknownIndex(ref name) if name == "PRIMARY"),
+        "{error:?}"
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("Can't DROP 'PRIMARY'; check that column/key exists"),
+        "{error}"
+    );
+
+    // A NONCLUSTERED primary key is an ordinary index and goes, entries and
+    // all -- the same backfill DROP INDEX owes.
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.plain (id BIGINT, v BIGINT, PRIMARY KEY (id) NONCLUSTERED)",
+        500,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+    let write = plan(&mut store, "ALTER TABLE u6.plain DROP PRIMARY KEY", 600);
+    assert!(
+        write.backfill.is_some(),
+        "the entries go with the definition"
+    );
+    apply(&mut store, &write);
+    assert_eq!(
+        stored_table(&write, table_id)["index_info"]
+            .as_array()
+            .map_or(0, Vec::len),
+        0
+    );
 }
