@@ -186,9 +186,14 @@ func Selectivity(
 			for i := 0; i < len(idxCols) && i < len(idxStats.Info.Columns); i++ {
 				lengths = append(lengths, idxStats.Info.Columns[i].Length)
 			}
-			// If the found columns are more than the columns held by the index. We are appending the int pk to the tail of it.
-			// When storing index data to key-value store, we use (idx_col1, ...., idx_coln, handle_col) as its key.
-			if len(idxCols) > len(idxStats.Info.Columns) {
+			// The found columns can outnumber the columns held by the index, because the handle is
+			// appended to the index key when storing index data to key-value store:
+			// (idx_col1, ...., idx_coln, handle_col1, ..., handle_colm). That is one column for an
+			// int handle and possibly several for a clustered common handle. Every appended column
+			// needs its own length entry, because range building indexes lengths in step with the
+			// columns. The handle columns are assumed full-length here, which is exact for an int
+			// handle and an approximation for a prefixed clustered handle column.
+			for range len(idxCols) - len(lengths) {
 				lengths = append(lengths, types.UnspecifiedLength)
 			}
 			maskCovered, ranges, partCover, minAccessCondsForDNFCond, err :=
