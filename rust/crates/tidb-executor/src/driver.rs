@@ -1693,6 +1693,15 @@ fn run_select_traced_with_delivery_choice(
     // `keep order`: whether the source's own walk order is the answer's, which
     // is what decides whether an index lookup reorders its handle batch.
     let order_from_access = offer_keep_order(select, index_order.as_ref(), &resolver, &mut source);
+    // A DESCENDING order is discharged only by a source that actually
+    // REVERSES its walk -- Go reads the range backwards (`desc` on the
+    // scan). The index sources do (see `IndexRangeSourceExec`); the table
+    // scan walks the record keys forward only, so its handle-order claim
+    // stands for ASC alone. Without this demotion a `WHERE id > 1 ORDER BY
+    // id DESC LIMIT 2` dropped its sort, capped the FORWARD walk, and
+    // answered the two SMALLEST ids.
+    let descending_order = select.order_by.first().is_some_and(|item| item.desc);
+    let order_satisfied = order_satisfied && (!descending_order || order_from_access);
     if order_satisfied {
         if let Some(trace) = trace.as_deref_mut() {
             trace.keep_order(select.order_by.first().is_some_and(|item| item.desc));

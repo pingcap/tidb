@@ -923,6 +923,12 @@ pub(crate) fn commit_fast_path_source(
                 // The full scan source is already installed. Keep the task
                 // receipt so a physical parent can still cost this child.
                 candidate = Some(planner_candidate);
+                // Go `matchProperty`: a scan over the clustered handle walks
+                // in handle order with no narrowing at all, so `ORDER BY`
+                // the handle prefix is discharged by the scan itself and a
+                // `LIMIT` becomes a pushed Limit rather than a TopN. One
+                // unbounded range is trivially a single range.
+                index_order = full_table_handle_order(&table);
             }
             None => {}
         }
@@ -3699,6 +3705,31 @@ impl IndexAccessOrder {
 /// `ORDER BY o_id LIMIT 1` property. More than one range is declined for the
 /// same conservative reason as an index path: each range is ordered, but this
 /// layer does not promise that their concatenation is one total order.
+/// The order claim of a WHOLE-table scan: the clustered SIGNED int handle,
+/// over the one unbounded range the scan is.
+///
+/// Narrow by construction. An UNSIGNED handle's record keys are the i64
+/// REINTERPRETATION of its values -- a value above `i64::MAX` is stored
+/// under a negative key and walks FIRST -- so key order is not `ORDER BY`
+/// order there (the same reason `handle_range` refuses to range over one).
+/// A common handle's key order matches its datum order only for the column
+/// families the ranger admits, which the range path proves per statement;
+/// the whole-table claim has no such proof and stays out.
+fn full_table_handle_order(table: &KvTable) -> Option<IndexAccessOrder> {
+    if !table.common_handle_offsets().is_empty() {
+        return None;
+    }
+    let offset = table.pk_handle_offset()?;
+    if table
+        .columns
+        .get(offset)
+        .is_none_or(|column| column.field_type.is_unsigned())
+    {
+        return None;
+    }
+    Some(IndexAccessOrder::from_ranges(&[offset], &[IndexRange::full()]))
+}
+
 fn handle_range_order(table: &KvTable, ranges: &[IndexRange]) -> Option<IndexAccessOrder> {
     let [range] = ranges else {
         return None;

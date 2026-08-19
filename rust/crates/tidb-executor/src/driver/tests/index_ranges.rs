@@ -1128,3 +1128,113 @@ fn a_handle_that_leads_its_index_is_not_appended_behind_it() {
     assert_eq!(rows.len(), 1, "the row was lost: {rows:?}");
     assert_eq!(rows[0][0], Datum::Int(1));
 }
+
+/// The probe-round regression: a DESCENDING `ORDER BY` over the clustered
+/// int handle is NOT discharged by the forward-walking table scan. Before
+/// the demotion in `run_select`, `WHERE id > 1 ORDER BY id DESC LIMIT 2`
+/// dropped its sort, capped the FORWARD walk, and answered the two
+/// SMALLEST ids.
+#[test]
+fn a_descending_handle_limit_answers_the_largest_ids() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE walk (id BIGINT PRIMARY KEY, v INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO walk VALUES (1,10),(2,20),(3,30),(5,50),(100,1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let sql = "SELECT id FROM walk WHERE id > 1 ORDER BY id DESC LIMIT 2";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(100)], vec![Datum::Int(5)]],
+        "DESC over a forward-only scan must still answer the LARGEST ids"
+    );
+
+    // The plan must keep the ordering operator: no source reverses a table
+    // walk yet, so the desc claim may not drop the sort. (Go pushes a desc
+    // keep-order Limit here by reading the range backwards -- the reverse
+    // walk is the named follow-up, and until it lands the TopN is the only
+    // correct shape.)
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let operators: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            datum_text_for_test(&row[0])
+                .trim_start_matches(|ch| matches!(ch, ' ' | '└' | '├' | '│' | '─'))
+                .to_owned()
+        })
+        .collect();
+    assert!(
+        operators.iter().any(|name| name.starts_with("TopN")),
+        "a desc handle order keeps its TopN until a source reverses: {operators:?}"
+    );
+}
+
+/// Go plans `ORDER BY <pk> LIMIT n` over a clustered int handle as a pushed
+/// `Limit` with `keep order:true` -- the whole-table scan already walks in
+/// handle order, so no TopN is needed. The full-table path used to claim no
+/// order at all and planned a TopN.
+#[test]
+fn an_ascending_handle_order_limit_pushes_a_limit_not_a_topn() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE walk (id BIGINT PRIMARY KEY, v INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO walk VALUES (1,10),(2,20),(3,30),(5,50),(100,1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let sql = "SELECT id FROM walk ORDER BY id LIMIT 2";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)], vec![Datum::Int(2)]],
+    );
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let operators: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            datum_text_for_test(&row[0])
+                .trim_start_matches(|ch| matches!(ch, ' ' | '└' | '├' | '│' | '─'))
+                .to_owned()
+        })
+        .collect();
+    assert!(
+        operators.iter().all(|name| !name.starts_with("TopN")),
+        "an asc handle order needs no TopN: {operators:?}"
+    );
+    assert!(
+        operators.iter().any(|name| name.starts_with("Limit")),
+        "the LIMIT rides the ordered scan as a Limit: {operators:?}"
+    );
+}
