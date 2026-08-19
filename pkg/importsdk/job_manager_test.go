@@ -412,5 +412,4 @@ func TestGetJobsByGroupLegacyCompatibility(t *testing.T) {
 		require.Len(t, jobs, 1)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
-
 }
