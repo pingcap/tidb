@@ -2475,3 +2475,64 @@ fn add_column_first_and_after_move_offsets_and_repoint_indexes() {
     .to_string();
     assert!(error.contains("Unknown column 'nosuch'"), "{error}");
 }
+
+/// Go `modify_column.go:704`: a MODIFY/CHANGE may also MOVE the column,
+/// and the destination is located against the column's CURRENT offset --
+/// unlike ADD COLUMN, which appends first and locates against that.
+///
+/// `MODIFY b AFTER b` names the column as its own anchor, which Go answers
+/// as `ErrColumnNotExists` on that column rather than as a no-op
+/// (`modify_column.go:700`).
+#[test]
+fn modify_column_moves_the_column_and_refuses_a_self_anchor() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, a BIGINT, b BIGINT, KEY kb(b))",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+
+    let write = plan(&mut store, "ALTER TABLE u6.t MODIFY b BIGINT FIRST", 200);
+    apply(&mut store, &write);
+    let stored = stored_table(&write, table_id);
+    let columns = stored["cols"].as_array().expect("columns array");
+    let names: Vec<&str> = columns
+        .iter()
+        .map(|column| column["name"]["O"].as_str().expect("a name"))
+        .collect();
+    assert_eq!(names, ["b", "id", "a"]);
+    for (position, column) in columns.iter().enumerate() {
+        assert_eq!(column["offset"], position);
+    }
+    assert_eq!(
+        stored["index_info"][0]["idx_cols"][0]["offset"], 0,
+        "the index follows the column it names"
+    );
+
+    // A CHANGE renames and moves in one statement.
+    let write = plan(&mut store, "ALTER TABLE u6.t CHANGE a a2 BIGINT AFTER b", 300);
+    apply(&mut store, &write);
+    let stored = stored_table(&write, table_id);
+    let names: Vec<&str> = stored["cols"]
+        .as_array()
+        .expect("columns array")
+        .iter()
+        .map(|column| column["name"]["O"].as_str().expect("a name"))
+        .collect();
+    assert_eq!(names, ["b", "a2", "id"]);
+
+    // Go's self-anchor rule, and its 1054 code.
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t MODIFY b BIGINT AFTER b"),
+        400,
+    )
+    .expect_err("a self-anchored MODIFY is refused");
+    assert!(
+        matches!(error, DdlPlanError::UnknownColumn { ref column, .. } if column == "b"),
+        "{error:?}"
+    );
+    assert!(error.to_string().contains("Unknown column 'b'"), "{error}");
+}

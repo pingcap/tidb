@@ -332,6 +332,10 @@ pub enum DdlStatement {
         /// The column as re-declared.
         column: Box<tidb_ast::ColumnDef>,
         /// The statement context the plan-time build resolves under.
+        /// Go's `ast.ColumnPosition`: a MODIFY/CHANGE may also MOVE the
+        /// column, and Go locates the destination against the column's
+        /// CURRENT offset (unlike ADD, which appends first).
+        position: tidb_ast::ColumnPosition,
         context: DdlStatementContext,
         /// `CHANGE COLUMN`'s old name; `None` is a plain MODIFY. Go gives
         /// both spellings the one ActionModifyColumn job, the rename riding
@@ -606,7 +610,7 @@ fn lower_alter_table_catalog(
                     column,
                     position,
                 } => {
-                    if *if_exists || !matches!(position, tidb_ast::ColumnPosition::Default) {
+                    if *if_exists {
                         return Ok(None);
                     }
                     if column
@@ -629,6 +633,7 @@ fn lower_alter_table_catalog(
                         schema,
                         table,
                         column: Box::new(column.clone()),
+                        position: position.clone(),
                         context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
                         rename_from: Some(old.clone()),
                     }));
@@ -777,10 +782,7 @@ fn lower_alter_table_catalog(
             column,
             position,
         } => {
-            if *if_exists
-                || !matches!(position, tidb_ast::ColumnPosition::Default)
-                || !column.qualifier.is_empty()
-            {
+            if *if_exists || !column.qualifier.is_empty() {
                 return Ok(None);
             }
             let Some(auto_random) = column.options.iter().find_map(|option| match option {
@@ -805,6 +807,7 @@ fn lower_alter_table_catalog(
                     schema,
                     table,
                     column: Box::new(column.clone()),
+                    position: position.clone(),
                     context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
                     rename_from: None,
                 }));
@@ -833,7 +836,7 @@ fn lower_alter_table_catalog(
             column,
             position,
         } => {
-            if *if_exists || !matches!(position, tidb_ast::ColumnPosition::Default) {
+            if *if_exists {
                 return Ok(None);
             }
             if column
@@ -856,6 +859,7 @@ fn lower_alter_table_catalog(
                 schema,
                 table,
                 column: Box::new(column.clone()),
+                position: position.clone(),
                 context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
                 rename_from: Some(old.clone()),
             }));
@@ -1077,10 +1081,10 @@ fn locate_offset_to_move(
             let anchor = anchor
                 .ok_or_else(|| {
                     // Go `infoschema.ErrColumnNotExists` (1054).
-                    DdlPlanError::Encode(format!(
-                        "Unknown column '{name}' in '{}'",
-                        info.name.original()
-                    ))
+                    DdlPlanError::UnknownColumn {
+                        column: name.clone(),
+                        table: info.name.original().to_owned(),
+                    }
                 })?;
             let anchor = usize::try_from(anchor).unwrap_or(0);
             if current_offset <= anchor {
@@ -1461,6 +1465,16 @@ pub enum DdlPlanError {
     DuplicateColumnName(String),
     /// The named index is not on the named table (Go 1091).
     UnknownIndex(String),
+    /// The statement names a column the table does not have (Go 1054,
+    /// `ErrBadField`). Go answers this for a MODIFY/CHANGE of a missing
+    /// column and for a `FIRST`/`AFTER` anchor that is missing or not
+    /// public; this port had folded them into the generic 1105.
+    UnknownColumn {
+        /// The column name as written.
+        column: String,
+        /// The table name as written.
+        table: String,
+    },
     /// The index names a column the table does not have (Go 1072).
     UnknownIndexColumn {
         /// The column name as written.
@@ -1499,6 +1513,9 @@ impl fmt::Display for DdlPlanError {
                 write!(formatter, "Table '{schema}.{table}' already exists")
             }
             Self::DuplicateKeyName(name) => write!(formatter, "Duplicate key name '{name}'"),
+            Self::UnknownColumn { column, table } => {
+                write!(formatter, "Unknown column '{column}' in '{table}'")
+            }
             Self::DuplicateColumnName(name) => {
                 write!(formatter, "Duplicate column name '{name}'")
             }
@@ -2263,9 +2280,10 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 .iter_deref()
                 .position(|candidate| candidate.read().name.lowercase() == wanted)
             else {
-                return Err(DdlPlanError::Encode(format!(
-                    "Unknown column '{from}' in '{table}'"
-                )));
+                return Err(DdlPlanError::UnknownColumn {
+                    column: from.clone(),
+                    table: table.clone(),
+                });
             };
             let new_name = to.to_lowercase();
             if new_name != wanted
@@ -2309,6 +2327,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             schema,
             table,
             column,
+            position: requested_position,
             context,
             rename_from,
         } => {
@@ -2325,11 +2344,13 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 .position(|candidate| candidate.read().name.lowercase() == wanted)
             else {
                 // Go 1054 ErrBadField through the modify path.
-                return Err(DdlPlanError::Encode(format!(
-                    "Unknown column '{}' in '{}'",
-                    rename_from.as_deref().unwrap_or(column.name.as_str()),
-                    table
-                )));
+                return Err(DdlPlanError::UnknownColumn {
+                        column: rename_from
+                            .as_deref()
+                            .unwrap_or(column.name.as_str())
+                            .to_owned(),
+                        table: table.clone(),
+                    });
             };
             let new_name = column.name.to_lowercase();
             if new_name != wanted
@@ -2402,6 +2423,25 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     }
                 }
             }
+            // Go `modify_column.go:700`: `MODIFY COLUMN b AFTER b` names
+            // the column as its own anchor, which Go answers as
+            // ErrColumnNotExists on THAT column rather than as a no-op.
+            if let tidb_ast::ColumnPosition::After(anchor) = requested_position {
+                if anchor.to_lowercase() == wanted {
+                    return Err(DdlPlanError::UnknownColumn {
+                        column: rename_from
+                            .as_deref()
+                            .unwrap_or(column.name.as_str())
+                            .to_owned(),
+                        table: table.clone(),
+                    });
+                }
+            }
+            // Unlike ADD COLUMN, the column is already AT its offset, so the
+            // destination is located against that rather than against an
+            // appended tail (Go `modify_column.go:704`).
+            let destination = locate_offset_to_move(position, requested_position, &info)?;
+            move_column_info(&mut info, position, destination);
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)

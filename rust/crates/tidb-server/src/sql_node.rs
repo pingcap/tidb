@@ -362,6 +362,11 @@ pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
         ClusterDdlError::Plan(error @ DdlPlanError::UnknownIndexColumn { .. }) => {
             SqlQueryError::new(1072, *b"42000", error.to_string())
         }
+        // Go `ErrBadField` (1054, 42S22): the statement named a column the
+        // table does not have.
+        ClusterDdlError::Plan(error @ DdlPlanError::UnknownColumn { .. }) => {
+            SqlQueryError::new(1054, *b"42S22", error.to_string())
+        }
         other => SqlQueryError::unknown(other.to_string()),
     }
 }
