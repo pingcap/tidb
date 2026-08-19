@@ -3289,3 +3289,43 @@ fn drop_primary_key_refuses_a_clustered_one_and_drops_a_nonclustered_one() {
         0
     );
 }
+
+/// Go answers a missing table with TWO different errors, and which one
+/// depends on the statement.
+///
+/// `DROP TABLE` uses `ErrBadTable` (1051, "Unknown table"), which Go's own
+/// `TestDropTableWithoutIfExists` pins. Every other statement resolves its
+/// table through `getSchemaAndTableByIdent` and answers
+/// `infoschema.ErrTableNotExists` (1146, "Table ... doesn't exist"). This
+/// port had used the DROP spelling everywhere.
+#[test]
+fn a_missing_table_is_1146_everywhere_except_drop_table() {
+    let mut store = bootstrapped();
+
+    for sql in [
+        "ALTER TABLE u6.nosuch COMMENT='x'",
+        "ALTER TABLE u6.nosuch AUTO_ID_CACHE = 4",
+        "ALTER TABLE u6.nosuch DROP PRIMARY KEY",
+        "ALTER TABLE u6.nosuch RENAME INDEX a TO b",
+        "ALTER TABLE u6.nosuch ALTER COLUMN a SET DEFAULT 1",
+        "CREATE INDEX i ON u6.nosuch (a)",
+        "CREATE TABLE u6.copy LIKE u6.nosuch",
+        "RENAME TABLE u6.nosuch TO u6.other",
+    ] {
+        let error = plan_ddl(&mut store, &statement(sql), 100).expect_err("refused");
+        assert!(
+            matches!(error, DdlPlanError::TableNotExists { ref table, .. } if table == "nosuch"),
+            "`{sql}` must answer Go's ErrTableNotExists, got {error:?}"
+        );
+        assert_eq!(error.to_string(), "Table 'u6.nosuch' doesn't exist");
+    }
+
+    // DROP TABLE keeps Go's own, different answer.
+    let error = plan_ddl(&mut store, &statement("DROP TABLE u6.nosuch"), 200)
+        .expect_err("refused");
+    assert!(
+        matches!(error, DdlPlanError::UnknownTable { ref table, .. } if table == "nosuch"),
+        "{error:?}"
+    );
+    assert_eq!(error.to_string(), "Unknown table 'u6.nosuch'");
+}

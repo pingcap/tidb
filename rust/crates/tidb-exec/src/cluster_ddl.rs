@@ -1770,6 +1770,20 @@ pub enum DdlPlanError {
         /// The table name as written.
         table: String,
     },
+    /// The statement named a table that is not in the catalog (Go
+    /// `infoschema.ErrTableNotExists`, 1146).
+    ///
+    /// Distinct from [`Self::UnknownTable`], which is Go's `ErrBadTable`
+    /// (1051): `DROP TABLE` answers that one, and Go's own
+    /// `TestDropTableWithoutIfExists` pins the difference. Every other
+    /// statement -- ALTER, CREATE INDEX, RENAME -- resolves its table
+    /// through `getSchemaAndTableByIdent` and answers 1146.
+    TableNotExists {
+        /// The database name as written.
+        schema: String,
+        /// The table name as written.
+        table: String,
+    },
     /// TiDB `ErrInvalidAutoRandom` (8216).
     InvalidAutoRandom(String),
     /// TiDB `ErrAutoincReadFailed` (1467), used by FORCE base zero.
@@ -1845,6 +1859,9 @@ impl fmt::Display for DdlPlanError {
             }
             Self::UnknownTable { schema, table } => {
                 write!(formatter, "Unknown table '{schema}.{table}'")
+            }
+            Self::TableNotExists { schema, table } => {
+                write!(formatter, "Table '{schema}.{table}' doesn't exist")
             }
             Self::InvalidAutoRandom(reason) => write!(formatter, "Invalid auto random: {reason}"),
             Self::AutoIdReadFailed => {
@@ -2435,7 +2452,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 return Err(DdlPlanError::UnknownDatabase(schema.clone()));
             };
             let Some(stored) = find_table(database, table) else {
-                return Err(DdlPlanError::UnknownTable {
+                return Err(DdlPlanError::TableNotExists {
                     schema: schema.clone(),
                     table: table.clone(),
                 });
@@ -2502,7 +2519,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 return Err(DdlPlanError::UnknownDatabase(schema.clone()));
             };
             let Some(stored) = find_table(database, table) else {
-                return Err(DdlPlanError::UnknownTable {
+                return Err(DdlPlanError::TableNotExists {
                     schema: schema.clone(),
                     table: table.clone(),
                 });
@@ -2537,7 +2554,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 return Err(DdlPlanError::UnknownDatabase(schema.clone()));
             };
             let Some(stored) = find_table(database, table) else {
-                return Err(DdlPlanError::UnknownTable {
+                return Err(DdlPlanError::TableNotExists {
                     schema: schema.clone(),
                     table: table.clone(),
                 });
@@ -4053,7 +4070,7 @@ fn plan_rename_tables(
         }
         let from_key = table_name_key(&from_schema, &pair.from_table.to_lowercase());
         let Some(state) = namespace.get(&from_key) else {
-            return Err(DdlPlanError::UnknownTable {
+            return Err(DdlPlanError::TableNotExists {
                 schema: pair.from_schema.clone(),
                 table: pair.from_table.clone(),
             });
@@ -4155,7 +4172,7 @@ fn locate_table<'catalog>(
         return Err(DdlPlanError::UnknownDatabase(schema.to_owned()));
     };
     let Some(stored) = find_table(database, table) else {
-        return Err(DdlPlanError::UnknownTable {
+        return Err(DdlPlanError::TableNotExists {
             schema: schema.to_owned(),
             table: table.to_owned(),
         });

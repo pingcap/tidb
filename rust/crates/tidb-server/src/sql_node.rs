@@ -347,8 +347,15 @@ pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
         ClusterDdlError::Plan(error @ DdlPlanError::DatabaseExists(_)) => {
             SqlQueryError::new(1007, *b"HY000", error.to_string())
         }
+        // Go `ErrBadTable` (1051): DROP TABLE's own missing-table answer,
+        // which Go's TestDropTableWithoutIfExists pins.
         ClusterDdlError::Plan(error @ DdlPlanError::UnknownTable { .. }) => {
             SqlQueryError::new(1051, *b"42S02", error.to_string())
+        }
+        // Go `infoschema.ErrTableNotExists` (1146): every other statement
+        // resolves its table through `getSchemaAndTableByIdent`.
+        ClusterDdlError::Plan(error @ DdlPlanError::TableNotExists { .. }) => {
+            SqlQueryError::new(1146, *b"42S02", error.to_string())
         }
         ClusterDdlError::Plan(error @ DdlPlanError::TableExists { .. }) => {
             SqlQueryError::new(1050, *b"42S01", error.to_string())
