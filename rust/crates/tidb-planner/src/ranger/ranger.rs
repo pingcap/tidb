@@ -319,6 +319,75 @@ pub fn union_ranges(
     Ok(result)
 }
 
+
+/// Go `appendPoints2IndexRange`: widen one POINT range by one more
+/// column's points.
+fn append_points_to_index_range(
+    origin: &Range,
+    range_points: &[Point],
+    ft: &FieldType,
+) -> Ranges {
+    let mut new_ranges = Ranges::with_capacity(range_points.len() / 2);
+    let extra_collator = ft.collation();
+    let mut i = 0;
+    while i + 1 < range_points.len() {
+        let start_point = &range_points[i];
+        let end_point = &range_points[i + 1];
+        let mut low_val = origin.low_val.clone();
+        low_val.push(start_point.value.clone());
+        let mut high_val = origin.high_val.clone();
+        high_val.push(end_point.value.clone());
+        let mut collators = origin.collators.clone();
+        collators.push(extra_collator);
+        new_ranges.push(Range {
+            low_val,
+            low_exclude: start_point.excl,
+            high_val,
+            high_exclude: end_point.excl,
+            collators,
+        });
+        i += 2;
+    }
+    new_ranges
+}
+
+/// Go `appendPoints2Ranges`: the additional column's points append only to
+/// POINT ranges — `(a > 1, b = 2)` cannot conjoin on an index `(a, b)` —
+/// non-point ranges pass through unchanged.
+pub fn append_points_to_ranges(
+    origin: Ranges,
+    range_points: Vec<Point>,
+    new_tp: &FieldType,
+    range_max_size: i64,
+    regard_null_as_point: bool,
+    skip_plan_cache_reason: &mut Option<String>,
+) -> Result<(Ranges, bool), PointBuilderError> {
+    let range_points =
+        convert_points_in_place(range_points, new_tp, false, false, skip_plan_cache_reason)?;
+    if range_max_size > 0 {
+        let estimate = (96 + (origin.first().map_or(0, |r| r.low_val.len() as i64) + 1) * 16)
+            * origin.len() as i64
+            * (range_points.len() as i64 / 2)
+            + points_total_datum_size(&range_points) * origin.len() as i64;
+        if estimate > range_max_size {
+            return Ok((origin, true));
+        }
+    }
+    let mut new_index_ranges = Ranges::new();
+    for o_range in origin {
+        if !o_range.is_point(regard_null_as_point) {
+            new_index_ranges.push(o_range);
+        } else {
+            new_index_ranges.extend(append_points_to_index_range(
+                &o_range,
+                &range_points,
+                new_tp,
+            ));
+        }
+    }
+    Ok((new_index_ranges, false))
+}
+
 /// The product of one column-range build: the ranges plus which conditions
 /// were CONSUMED and which REMAIN as filters (Go's trailing return pair).
 #[derive(Debug)]
