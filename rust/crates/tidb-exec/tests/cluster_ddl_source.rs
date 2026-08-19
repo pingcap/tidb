@@ -2536,3 +2536,74 @@ fn modify_column_moves_the_column_and_refuses_a_self_anchor() {
     );
     assert!(error.to_string().contains("Unknown column 'b'"), "{error}");
 }
+
+/// Go `onAlterIndexVisibility` (`ddl/index.go:720`): `ALTER TABLE ...
+/// ALTER INDEX <i> VISIBLE|INVISIBLE` is metadata only -- the index is
+/// still maintained by writes, it is only hidden from the optimizer.
+///
+/// Three of Go's rules ride with it: the index must exist AND be public,
+/// else `ErrKeyNotExists` (1176, not DROP INDEX's 1091); a visibility that
+/// already matches is an early return that spends no schema version; and
+/// `setIndexVisibility` walks EVERY index of the matching name rather than
+/// stopping at the first.
+#[test]
+fn alter_index_visibility_toggles_and_refuses_a_missing_index() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, a BIGINT, KEY ia(a))",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+
+    let invisible_of = |write: &tidb_exec::cluster_ddl::DdlWrite| {
+        let stored = stored_table(write, table_id);
+        stored["index_info"]
+            .as_array()
+            .expect("index array")
+            .iter()
+            .find(|index| index["idx_name"]["O"] == "ia")
+            .expect("the index is there")["is_invisible"]
+            .clone()
+    };
+
+    let write = plan(&mut store, "ALTER TABLE u6.t ALTER INDEX ia INVISIBLE", 200);
+    apply(&mut store, &write);
+    assert_eq!(invisible_of(&write), serde_json::json!(true));
+
+    let write = plan(&mut store, "ALTER TABLE u6.t ALTER INDEX ia VISIBLE", 300);
+    apply(&mut store, &write);
+    assert_eq!(invisible_of(&write), serde_json::json!(false));
+
+    // Go's early return: already visible, so the job finishes without
+    // touching the table and no schema version is spent.
+    match plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t ALTER INDEX ia VISIBLE"),
+        400,
+    )
+    .expect("an already-satisfied visibility plans")
+    {
+        DdlPlan::AlreadySatisfied { detail } => {
+            assert!(detail.contains("already visible"), "{detail}");
+        }
+        DdlPlan::Write(_) => panic!("a no-op visibility must publish nothing"),
+    }
+
+    // A missing index is Go's ErrKeyNotExists, not DROP INDEX's 1091.
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t ALTER INDEX nosuch INVISIBLE"),
+        500,
+    )
+    .expect_err("a missing index is refused");
+    assert!(
+        matches!(error, DdlPlanError::KeyNotExists { ref index, .. } if index == "nosuch"),
+        "{error:?}"
+    );
+    assert!(
+        error.to_string().contains("Key 'nosuch' doesn't exist in table 't'"),
+        "{error}"
+    );
+}

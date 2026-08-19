@@ -362,6 +362,11 @@ pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
         ClusterDdlError::Plan(error @ DdlPlanError::UnknownIndexColumn { .. }) => {
             SqlQueryError::new(1072, *b"42000", error.to_string())
         }
+        // Go `ErrKeyNotExists` (1176): the ALTER INDEX visibility path's
+        // own code, distinct from DROP INDEX's 1091.
+        ClusterDdlError::Plan(error @ DdlPlanError::KeyNotExists { .. }) => {
+            SqlQueryError::new(1176, *b"42000", error.to_string())
+        }
         // Go `ErrBadField` (1054, 42S22): the statement named a column the
         // table does not have.
         ClusterDdlError::Plan(error @ DdlPlanError::UnknownColumn { .. }) => {

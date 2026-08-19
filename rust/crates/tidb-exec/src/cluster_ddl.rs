@@ -462,6 +462,19 @@ pub enum DdlStatement {
         /// Whether a missing index is a no-op rather than an error.
         if_exists: bool,
     },
+    /// `ALTER TABLE ... ALTER INDEX <i> VISIBLE|INVISIBLE`, Go's
+    /// `ActionAlterIndexVisibility`. Metadata only: an invisible index is
+    /// still maintained by writes, it is only hidden from the optimizer.
+    AlterIndexVisibility {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The index name as written.
+        index: String,
+        /// The requested state.
+        invisible: bool,
+    },
 }
 
 /// One source/destination pair in [`DdlStatement::RenameTables`].
@@ -880,6 +893,15 @@ fn lower_alter_table_catalog(
                 table,
                 if_exists: *if_exists,
                 column: name.clone(),
+            }))
+        }
+        tidb_ast::AlterTableAction::AlterIndexVisibility(action) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::AlterIndexVisibility {
+                schema,
+                table,
+                index: action.name.clone(),
+                invisible: action.visibility == tidb_ast::IndexVisibility::Invisible,
             }))
         }
         tidb_ast::AlterTableAction::AddColumn {
@@ -1475,6 +1497,15 @@ pub enum DdlPlanError {
         /// The table name as written.
         table: String,
     },
+    /// The table has no such index (Go 1176, `ErrKeyNotExists`), which is
+    /// the code Go's ALTER INDEX visibility path answers -- distinct from
+    /// the 1091 a DROP INDEX answers.
+    KeyNotExists {
+        /// The index name as written.
+        index: String,
+        /// The table name as written.
+        table: String,
+    },
     /// The index names a column the table does not have (Go 1072).
     UnknownIndexColumn {
         /// The column name as written.
@@ -1513,6 +1544,9 @@ impl fmt::Display for DdlPlanError {
                 write!(formatter, "Table '{schema}.{table}' already exists")
             }
             Self::DuplicateKeyName(name) => write!(formatter, "Duplicate key name '{name}'"),
+            Self::KeyNotExists { index, table } => {
+                write!(formatter, "Key '{index}' doesn't exist in table '{table}'")
+            }
             Self::UnknownColumn { column, table } => {
                 write!(formatter, "Unknown column '{column}' in '{table}'")
             }
@@ -2770,6 +2804,55 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 add: true,
             });
             diff.action_type = ActionType::ACTION_ADD_INDEX;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::AlterIndexVisibility {
+            schema,
+            table,
+            index,
+            invisible,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            // Go `validateAlterIndexVisibility`: the index must exist AND be
+            // public, else `ErrKeyNotExists`.
+            let found = find_index(stored, index).filter(|candidate| {
+                candidate.read().state == tidb_model::SchemaState::PUBLIC
+            });
+            let Some(found) = found else {
+                return Err(DdlPlanError::KeyNotExists {
+                    index: index.clone(),
+                    table: table.clone(),
+                });
+            };
+            // Go's early return: a visibility that already matches finishes
+            // the job without touching the table, so no schema version is
+            // spent on a no-op.
+            if found.read().invisible == *invisible {
+                return Ok(already(format!(
+                    "index `{index}` on `{schema}`.`{table}` is already {}",
+                    if *invisible { "invisible" } else { "visible" }
+                )));
+            }
+            let wanted = index.to_lowercase();
+            let mut info = stored.clone_like_go();
+            // Go `setIndexVisibility` walks EVERY index and sets each one
+            // whose name matches, rather than stopping at the first.
+            for candidate in info.indices.iter_deref() {
+                let mut candidate = candidate.write();
+                if candidate.name.lowercase() == wanted {
+                    candidate.invisible = *invisible;
+                }
+            }
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_ALTER_INDEX_VISIBILITY;
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }

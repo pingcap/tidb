@@ -400,7 +400,8 @@ impl ClusterDdl for MockDdl {
                         .to_owned(),
                 ))
             }
-            DdlStatement::AddColumn { .. }
+            DdlStatement::AlterIndexVisibility { .. }
+            | DdlStatement::AddColumn { .. }
             | DdlStatement::ModifyColumn { .. }
             | DdlStatement::RenameColumn { .. }
             | DdlStatement::DropColumn { .. }
