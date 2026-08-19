@@ -2642,10 +2642,9 @@ func (m *MemArbitrator) updateTrackedHeapStats() {
 				return true
 			}
 			if ctx := e.ctx.Load(); ctx.available() {
-				if memUsed := ctx.arbitrateHelper.HeapInuse(); memUsed > 0 {
-					totalTrackedHeap += memUsed
-					maxMemUsed = max(maxMemUsed, memUsed)
-				}
+				memUsed := ctx.arbitrateHelper.HeapInuse()
+				totalTrackedHeap += memUsed.RootPool
+				maxMemUsed = max(maxMemUsed, memUsed.Used)
 			}
 			return true
 		})
@@ -2938,7 +2937,7 @@ func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed
 				}
 
 				if ctx := entry.ctx.Load(); ctx.available() {
-					memoryUsed := ctx.arbitrateHelper.HeapInuse()
+					memoryUsed := ctx.arbitrateHelper.HeapInuse().Used
 
 					if memoryUsed <= 0 {
 						continue
@@ -3088,10 +3087,15 @@ func (r ArbitratorStopReason) String() (desc string) {
 	return
 }
 
+// HeapUsage represents the heap usage of the arbitrate helper
+type HeapUsage struct {
+	RootPool, Used int64
+}
+
 // ArbitrateHelper is an interface for the arbitrate helper
 type ArbitrateHelper interface {
 	Stop(ArbitratorStopReason) bool // kill by arbitrator only when meeting oom risk; cancel by arbitrator;
-	HeapInuse() int64               // track heap usage
+	HeapInuse() HeapUsage           // track heap usage
 	Finish()
 	Done() <-chan struct{}
 }

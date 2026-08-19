@@ -223,11 +223,12 @@ func (t *arbitrateHelperForTest) cancelSelf() {
 	close(t.cancelCh)
 }
 
-func (t *arbitrateHelperForTest) HeapInuse() int64 {
+func (t *arbitrateHelperForTest) HeapInuse() HeapUsage {
 	if t.heapUsedCB != nil {
-		return t.heapUsedCB()
+		used := t.heapUsedCB()
+		return HeapUsage{RootPool: used, Used: used}
 	}
-	return 0
+	return HeapUsage{}
 }
 
 func (t *arbitrateHelperForTest) Finish() {

@@ -1362,9 +1362,21 @@ func (m *memArbitrator) Stop(reason ArbitratorStopReason) bool {
 	return true
 }
 
-func (m *memArbitrator) HeapInuse() int64 {
-	if m.useBigBudget() {
-		return m.bigBudgetUsed()
+func (m *memArbitrator) HeapInuse() (res HeapUsage) {
+	for {
+		if m.useBigBudget() {
+			used := m.bigBudgetUsed()
+			res = HeapUsage{
+				RootPool: used,
+				Used:     used,
+			}
+			return
+		}
+		res = HeapUsage{
+			Used: max(m.smallBudgetUsed(), m.bigBudgetUsed()),
+		}
+		if !m.useBigBudget() {
+			return
+		}
 	}
-	return 0
 }
