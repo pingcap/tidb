@@ -1199,16 +1199,34 @@ fn show_status() {
         row_text(session.run("SHOW STATUS LIKE 'Compression'")),
         [["Compression", "OFF"]]
     );
-    // Captured: SHOW GLOBAL STATUS LIKE 'Ssl%' lists the whole family.
+    // Captured: SHOW GLOBAL STATUS LIKE 'Ssl%' lists the whole family,
+    // including the server provider's certificate rows (`stat.go:34`).
     assert_eq!(
         row_text(session.run("SHOW GLOBAL STATUS LIKE 'Ssl%'")),
         [
             ["Ssl_cipher", ""],
             ["Ssl_cipher_list", ""],
+            ["Ssl_server_not_after", ""],
+            ["Ssl_server_not_before", ""],
             ["Ssl_verify_mode", "0"],
             ["Ssl_version", ""],
         ]
     );
+    // The server provider's Uptime (`stat.go:87`, pinned by `TestUptime`'s
+    // shape): absent until the hosting server pushes its start timestamp,
+    // then a non-negative seconds count in both scope views.
+    assert_eq!(row_text(session.run("SHOW STATUS LIKE 'Uptime'")), [[""; 2]; 0]);
+    session.set_server_start_timestamp(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("epoch")
+            .as_secs() as i64
+            - 7,
+    );
+    let uptime = row_text(session.run("SHOW GLOBAL STATUS LIKE 'Uptime'"));
+    assert_eq!(uptime.len(), 1, "{uptime:?}");
+    assert_eq!(uptime[0][0], "Uptime");
+    assert!(uptime[0][1].parse::<i64>().expect("seconds") >= 7, "{uptime:?}");
     // Captured: the WHERE form filters the same virtual rows.
     assert_eq!(
         row_text(session.run("SHOW STATUS WHERE Variable_name = 'Compression'")),

@@ -496,6 +496,9 @@ impl QuerySessionFactory for ClusterSessionFactory {
             Arc::clone(&self.transactions),
         )));
         session.set_version_info(context.version_info.clone());
+        session.set_server_start_timestamp(
+            crate::real_tikv_node::server_start_unix_timestamp(),
+        );
         if let Some(spill_storage) = self.spill_storage.as_ref() {
             session.set_spill_storage(Arc::clone(spill_storage));
         }

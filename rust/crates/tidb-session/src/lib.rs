@@ -333,6 +333,12 @@ impl DomainMap {
 /// tier (documented deferral).
 pub struct Session {
     catalog: SharedCatalog,
+    /// Go `infosync.ServerInfo.StartTimestamp`: when the hosting server
+    /// process started, which the server-tier `Statistics` provider turns
+    /// into the `Uptime` status variable (`pkg/server/stat.go:87`). `None`
+    /// (no hosting server pushed one) leaves `Uptime` unserved, matching a
+    /// session with no registered server provider.
+    server_start_timestamp: Option<i64>,
     /// Metadata snapshot cache keyed by the catalog mutation version.
     tidb_decode_key_cache: RefCell<Option<(u64, Rc<tidb_executor::TidbDecodeKeySnapshot>)>>,
     /// One connection-wide memory/disk tracker pair. Every statement gets a
@@ -519,6 +525,7 @@ impl Default for Session {
     fn default() -> Self {
         let mut session = Session {
             catalog: SharedCatalog::default(),
+            server_start_timestamp: None,
             tidb_decode_key_cache: RefCell::new(None),
             session_memory: tidb_executor::SessionMemory::new(
                 tidb_util::memory::DEF_MEM_QUOTA_QUERY,
@@ -745,6 +752,12 @@ impl Session {
     }
 
     /// Installs the immutable build identity captured by the SQL server.
+    /// Installs the hosting server's start timestamp (Go
+    /// `ServerInfo.StartTimestamp`), the `Uptime` provider's input.
+    pub fn set_server_start_timestamp(&mut self, unix_seconds: i64) {
+        self.server_start_timestamp = Some(unix_seconds);
+    }
+
     pub fn set_version_info(&mut self, version_info: tidb_util::versioninfo::VersionInfo) {
         self.vars.set_version_info(version_info);
     }

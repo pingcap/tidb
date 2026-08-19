@@ -1331,6 +1331,18 @@ pub(crate) fn apply_account_policies(
 /// skip-grant-table recovery mode where privilege storage must not be read at
 /// all. The empty registry remains writable for account/role statements that
 /// run after startup.
+/// Go `infosync.ServerInfo.StartTimestamp`: pinned the first time startup
+/// reaches the account store (every run path does, before any listener), so
+/// every session's `Uptime` measures from process bootstrap.
+pub(crate) fn server_start_unix_timestamp() -> i64 {
+    static START: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+    *START.get_or_init(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs() as i64)
+    })
+}
+
 pub(crate) fn configured_account_store(
     config: &NodeConfig,
 ) -> Result<ConfiguredUserStore, RunConfiguredNodeError> {
@@ -1341,7 +1353,9 @@ pub(crate) fn configured_account_store(
     };
     let users = apply_account_policies(config, users);
     // Go `setGlobalVars` runs before any listener starts; this store carries
-    // the node's registry, so the push happens where the store is born.
+    // the node's registry, so the push happens where the store is born. The
+    // start timestamp pins here for the same reason.
+    server_start_unix_timestamp();
     crate::set_global_vars::set_global_vars(config, &users.global_vars());
     Ok(users)
 }

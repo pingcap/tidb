@@ -1001,6 +1001,10 @@ const SHOW_STATUS_VARS: &[(&str, &str, bool)] = &[
     ("Compression_level", "0", true),
     ("Ssl_cipher", "", false),
     ("Ssl_cipher_list", "", false),
+    // The SERVER provider's static rows (`pkg/server/stat.go:34`): both
+    // empty without TLS certificates, GLOBAL|SESSION scope.
+    ("Ssl_server_not_after", "", false),
+    ("Ssl_server_not_before", "", false),
     ("Ssl_verify_mode", "0", false),
     ("Ssl_version", "", false),
 ];
@@ -1509,7 +1513,21 @@ impl Session {
                 let mut rows = Vec::new();
                 let (tls_cipher, tls_version) = self.tls_status();
                 let (tls_cipher, tls_version) = (tls_cipher.to_owned(), tls_version.to_owned());
-                for &(name, value, session_only) in SHOW_STATUS_VARS {
+                // The SERVER provider's dynamic row (`stat.go:87`):
+                // `Uptime` is the seconds since the hosting server started,
+                // GLOBAL scope (shown by both SESSION and GLOBAL views).
+                let uptime = self.server_start_timestamp.map(|start| {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |since| since.as_secs() as i64);
+                    (now - start).max(0).to_string()
+                });
+                let dynamic = uptime
+                    .as_ref()
+                    .map(|value| ("Uptime", value.as_str(), false));
+                for &(name, value, session_only) in
+                    SHOW_STATUS_VARS.iter().chain(dynamic.iter())
+                {
                     // Go fills these two per connection from the negotiated
                     // TLS state (`server.go:1329`); a plaintext connection
                     // keeps the table's empty strings.

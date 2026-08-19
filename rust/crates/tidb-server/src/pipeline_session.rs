@@ -203,6 +203,9 @@ impl QuerySessionFactory for PipelineSessionFactory {
         session
             .session
             .set_version_info(context.version_info.clone());
+        session
+            .session
+            .set_server_start_timestamp(crate::real_tikv_node::server_start_unix_timestamp());
         // Go sets `SessionVars.User` from the identity the handshake matched:
         // `CURRENT_USER()` reports that matched grant identity and `USER()`
         // the host the client actually connected from.
