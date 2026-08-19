@@ -261,6 +261,42 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		require.Equal(t, int64(3), ruStats.Metrics.ResourceManagerWriteCnt())
 	})
 
+	t.Run("explain analyze dml includes commit write metrics", func(t *testing.T) {
+		ctx := mock.NewContext()
+		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+
+		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		ctx.GetSessionVars().RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
+		require.NotNil(t, ctx.GetSessionVars().RUV2Metrics)
+		ctx.GetSessionVars().StmtCtx.SyncExecDetails.MergeExecDetails(&clientutil.CommitDetails{
+			WriteKeys: 3,
+			WriteSize: 66,
+		})
+
+		analyzeExec := &mockEmptyOperator{
+			BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(), 1),
+		}
+		targetPlan := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
+		explainExec := &ExplainExec{
+			BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(getColumns()...), 0),
+			explain: &core.Explain{
+				Analyze:    true,
+				TargetPlan: targetPlan,
+			},
+			analyzeExec: analyzeExec,
+			ruVersion:   rmclient.RUVersionV2,
+			ruv2Weights: execdetails.RUV2Weights{RUScale: 1, WriteKeys: 2},
+		}
+
+		require.NoError(t, explainExec.executeAnalyzeExec(goCtx))
+
+		rootStatsStr := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(targetPlan.ID()).String()
+		require.Contains(t, rootStatsStr, "RU:6.00")
+		require.Contains(t, rootStatsStr, `"write_keys":3`)
+		// The live statement metrics are finalized later and must not be updated twice.
+		require.Zero(t, ctx.GetSessionVars().RUV2Metrics.WriteKeys())
+	})
+
 	t.Run("detached static recordset inherits statement ru context", func(t *testing.T) {
 		ctx := mock.NewContext()
 		observer := &mockExecDetailsObserver{

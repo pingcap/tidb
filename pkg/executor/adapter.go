@@ -734,6 +734,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	if err != nil {
 		return nil, err
 	}
+	if explain, ok := e.(*ExplainExec); ok {
+		explain.ruVersion = a.ruVersion
+		explain.ruv2Weights = a.ruv2Weights
+	}
 
 	if pi != nil {
 		sql := a.getSQLForProcessInfo()
