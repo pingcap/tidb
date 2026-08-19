@@ -378,4 +378,4 @@ replace (
 
 replace github.com/tikv/pd/client => github.com/JmPotato/pd/client v0.0.0-20260819070454-a0b720772fe5
 
-replace github.com/tikv/client-go/v2 => github.com/JmPotato/client-go/v2 v2.0.0-20260819071111-07fb77e2950d
+replace github.com/tikv/client-go/v2 => github.com/JmPotato/client-go/v2 v2.0.0-20260819072708-43be567f52b3
