@@ -317,11 +317,7 @@ fn exec_table_scan(
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     let mut column_types = std::collections::BTreeMap::new();
     for column in &tbl_scan.columns {
-        let code = u8::try_from(column.tp()).unwrap_or(0);
-        column_types.insert(
-            column.column_id(),
-            FieldType::new(FieldTypeCode::from_mysql_type(code)),
-        );
+        column_types.insert(column.column_id(), field_type_from_pb_column(column));
     }
     let mut chunks: Vec<tipb::Chunk> = Vec::new();
     let mut current = Vec::new();
@@ -1041,6 +1037,27 @@ fn eval_bytes(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<Vec<u8>
 /// the registry id, so the negation is undone here -- without it every
 /// comparison silently ran under the default collator, and a
 /// `utf8mb4_general_ci` column compared case-SENSITIVELY.
+/// Go `fieldTypeFromPBColumn` (`unistore/cophandler/cop_handler.go`).
+///
+/// The type CODE alone is not the column's type. Dropping the rest decodes
+/// the stored bytes under the wrong rules: without `flag` an UNSIGNED column
+/// reads back signed, so `4294967295` in an `INT UNSIGNED` became `-1` on the
+/// scan path while the point-get path -- which builds its types from the
+/// catalog -- returned the stored value. Two paths, one table, two answers.
+fn field_type_from_pb_column(column: &tipb::ColumnInfo) -> tidb_datatype::FieldType {
+    use tidb_datatype::{FieldType, FieldTypeCode};
+    let code = u8::try_from(column.tp()).unwrap_or(0);
+    let mut field_type = FieldType::new(FieldTypeCode::from_mysql_type(code))
+        .with_flen(i64::from(column.column_len()))
+        .with_decimal(i64::from(column.decimal()));
+    field_type.add_flags(u32::try_from(column.flag()).unwrap_or(0));
+    if !column.elems.is_empty() {
+        // ENUM/SET decode their stored ordinal against this list.
+        field_type = field_type.with_elems(column.elems.iter().map(String::as_str));
+    }
+    field_type
+}
+
 fn collation_of(expr: &tipb::Expr) -> i32 {
     let protocol = expr
         .field_type
@@ -1051,13 +1068,25 @@ fn collation_of(expr: &tipb::Expr) -> i32 {
 
 /// Evaluate to MySQL's three-valued int: `Some(0/1/n)` or NULL.
 #[must_use]
-pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i64> {
+/// Evaluates one pushed-down expression against a scanned row.
+///
+/// The value is carried as `i128` because an integer column is either signed
+/// or UNSIGNED and the two domains do not fit in one 64-bit slot: a
+/// `BIGINT UNSIGNED` above `i64::MAX` and a negative `BIGINT` must both
+/// compare exactly. Go reaches the same result by selecting a signedness
+/// -specific comparison signature per operand pair; one wider integer settles
+/// every pairing at once, which is what a filter that must never invent a row
+/// needs.
+pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128> {
     use tidb_datatype::Datum;
     match expr {
         SimpleExpr::Null => None,
-        SimpleExpr::Int(value) => Some(*value),
+        SimpleExpr::Int(value) => Some(i128::from(*value)),
         SimpleExpr::Column(offset) => match row.get(*offset) {
-            Some(Datum::Int(value)) => Some(*value),
+            Some(Datum::Int(value)) => Some(i128::from(*value)),
+            // An UNSIGNED column decodes to this, and dropping it here made
+            // every predicate over such a column filter the row out.
+            Some(Datum::UInt(value)) => Some(i128::from(*value)),
             Some(Datum::Null) | None => None,
             Some(_) => None, // non-int columns wait on their course
         },
@@ -1082,7 +1111,7 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i64>
                         SimpleSig::NeInt => left != right,
                         _ => unreachable!(),
                     };
-                    Some(i64::from(truth))
+                    Some(i128::from(truth))
                 }
                 SimpleSig::LtString(collation)
                 | SimpleSig::LeString(collation)
@@ -1102,7 +1131,7 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i64>
                         SimpleSig::GeString(_) => ordering.is_ge(),
                         _ => ordering.is_eq(),
                     };
-                    Some(i64::from(truth))
+                    Some(i128::from(truth))
                 }
                 SimpleSig::NeString(collation) => {
                     let (left, right) = (
@@ -1112,7 +1141,7 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i64>
                     let equal = tidb_datatype::get_collator_by_id(*collation)
                         .compare(&left, &right)
                         .is_eq();
-                    Some(i64::from(!equal))
+                    Some(i128::from(!equal))
                 }
                 SimpleSig::LogicalAnd => {
                     // MySQL: FALSE dominates NULL.
@@ -1133,8 +1162,8 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i64>
                         _ => None,
                     }
                 }
-                SimpleSig::UnaryNot => child(0).map(|v| i64::from(v == 0)),
-                SimpleSig::IntIsNull => Some(i64::from(child(0).is_none())),
+                SimpleSig::UnaryNot => child(0).map(|v| i128::from(v == 0)),
+                SimpleSig::IntIsNull => Some(i128::from(child(0).is_none())),
                 SimpleSig::InInt => {
                     // `builtinInIntSig.evalInt`: TRUE on any match; otherwise
                     // NULL if the tested value or any element was NULL.

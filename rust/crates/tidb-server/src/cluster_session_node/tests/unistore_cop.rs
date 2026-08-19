@@ -57,6 +57,7 @@ fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
             row.into_iter()
                 .map(|datum| match datum {
                     Datum::Int(v) => v.to_string(),
+                    Datum::UInt(v) => v.to_string(),
                     Datum::Decimal(d) => d.to_string(),
                     Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
                     Datum::Bytes(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
@@ -462,5 +463,67 @@ fn every_shape_the_ddl_admits_the_loader_loads() {
         );
         // And it is actually usable, not merely listed.
         rows(&mut session, &format!("SELECT * FROM {name}"));
+    }
+}
+
+/// Go `fieldTypeFromPBColumn`: the coprocessor rebuilds each column's type
+/// from the DAG request, and the type CODE alone is not the type.
+///
+/// Dropping the rest decoded the stored bytes under the wrong rules. An
+/// `INT UNSIGNED` holding 4294967295 came back as -1 on the SCAN path while
+/// the point-get path -- which builds its types from the catalog -- returned
+/// the stored value: one table, two paths, two answers. Carrying the flag
+/// then exposed the second half, since the region's filter understood only
+/// `Datum::Int` and silently dropped every row of an unsigned column.
+#[test]
+fn unsigned_columns_survive_the_coprocessor_scan() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(31))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.un (id int primary key, a tinyint unsigned, \
+         b smallint unsigned, d int unsigned, e bigint unsigned)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.un VALUES (1, 255, 65535, 4294967295, 18446744073709551615), \
+         (2, 1, 1, 1, 1)",
+    );
+
+    // The scan path returns the stored values, not their signed
+    // reinterpretation.
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT a, b, d, e FROM test.un WHERE id > 0")),
+        [
+            ["255", "65535", "4294967295", "18446744073709551615"],
+            ["1", "1", "1", "1"],
+        ]
+    );
+    // And it agrees with the point-get path, which never lost the flag.
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT a, d, e FROM test.un WHERE id = 1")),
+        [["255", "4294967295", "18446744073709551615"]]
+    );
+
+    // A pushed-down predicate over an unsigned column compares in the
+    // unsigned domain, including past i64::MAX.
+    for (predicate, expected) in [
+        ("d > 2", "1"),
+        ("a < 255", "1"),
+        ("e > 9223372036854775807", "1"),
+        ("e = 18446744073709551615", "1"),
+        ("a IN (255, 1)", "2"),
+    ] {
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count(*) FROM test.un WHERE {predicate}"),
+            )),
+            [[expected.to_owned()]],
+            "`{predicate}` over the scan path"
+        );
     }
 }
