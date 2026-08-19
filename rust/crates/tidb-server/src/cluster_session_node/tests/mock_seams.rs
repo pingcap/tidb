@@ -409,6 +409,8 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::IgnoredTableOption { .. }
             | DdlStatement::OrderByColumns { .. }
             | DdlStatement::SetColumnDefault { .. }
+            | DdlStatement::RenameIndex { .. }
+            | DdlStatement::ModifySchemaCharsetAndCollate { .. }
             | DdlStatement::AlterIndexVisibility { .. }
             | DdlStatement::AddColumn { .. }
             | DdlStatement::ModifyColumn { .. }

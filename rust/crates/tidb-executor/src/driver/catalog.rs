@@ -469,12 +469,31 @@ impl Catalog {
     /// schemas replaces their synthetic IDs rather than silently discarding
     /// the source identity. Returns whether the schema name was newly added.
     pub fn register_database_with_id(&mut self, database: &str, id: i64) -> bool {
+        self.register_database_with_id_and_charset(database, id, TableCharset::default())
+    }
+
+    /// [`Self::register_database_with_id`] carrying the database's stored
+    /// charset and collation.
+    ///
+    /// Go's `DBInfo.Charset`/`Collate` reach `SHOW CREATE DATABASE` and
+    /// `information_schema.schemata`, and are the default a table created
+    /// without its own charset inherits. A loader that dropped them made
+    /// `ALTER DATABASE ... CHARACTER SET` apply to the stored catalog and
+    /// then be invisible to every reader.
+    pub fn register_database_with_id_and_charset(
+        &mut self,
+        database: &str,
+        id: i64,
+        charset: TableCharset,
+    ) -> bool {
         let key = database.to_lowercase();
         self.next_database_id = self.next_database_id.max(id);
         if let Some(existing) = self.databases.get_mut(&key) {
-            let changed = existing.id != id || existing.name != database;
+            let changed =
+                existing.id != id || existing.name != database || existing.charset != charset;
             existing.id = id;
             existing.name = database.to_owned();
+            existing.charset = charset;
             self.version += u64::from(changed);
             return false;
         }
@@ -483,7 +502,7 @@ impl Catalog {
             Database {
                 id,
                 name: database.to_owned(),
-                charset: TableCharset::default(),
+                charset,
                 tables: HashMap::new(),
             },
         );

@@ -1302,9 +1302,15 @@ pub(crate) fn resolve_charset_collation(
                 .map_err(|error| DdlAdmissionError::new(format!("COLLATE {collate}: {error}")))?;
             if let Some(charset) = charset.filter(|charset| !charset.is_empty()) {
                 if !charset.eq_ignore_ascii_case(&info.charset_name) {
-                    return Err(DdlAdmissionError::new(format!(
-                        "COLLATION '{collate}' is not valid for CHARACTER SET '{charset}'"
-                    )));
+                    // Go `ErrCollationCharsetMismatch` (1253), not the
+                    // generic refusal: a client that offers a charset menu
+                    // switches on this code.
+                    return Err(DdlAdmissionError::with_code(
+                        1253,
+                        format!(
+                            "COLLATION '{collate}' is not valid for CHARACTER SET '{charset}'"
+                        ),
+                    ));
                 }
             }
             return Ok((info.charset_name, info.name));

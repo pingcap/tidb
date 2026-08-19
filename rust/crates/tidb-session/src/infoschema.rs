@@ -575,11 +575,17 @@ fn schemata_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Da
         .into_iter()
         .filter(|name| visibility.allows(name, "", ANY_PRIV))
         .map(|name| {
+            // Go reads `DBInfo.Charset`/`Collate`, which `CREATE DATABASE`
+            // settles and `ALTER DATABASE ... CHARACTER SET` moves; reporting
+            // the server default here made that ALTER invisible.
+            let charset = catalog
+                .database_definition(&name)
+                .map_or_else(tidb_executor::TableCharset::default, |(_, charset)| charset);
             vec![
                 text(CATALOG),
                 text(&name),
-                text(CHARSET),
-                text(COLLATION),
+                text(charset.charset.name()),
+                text(charset.collation.name()),
                 // Go reports SQL_PATH and the placement policy as NULL.
                 Datum::Null,
                 Datum::Null,

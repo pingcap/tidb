@@ -493,6 +493,32 @@ pub enum DdlStatement {
     /// allocator counter behind it. Moving only the first would leave the
     /// next INSERT allocating from the old counter, which is the silent
     /// wrong answer this change exists to avoid.
+    /// `ALTER DATABASE <db> {CHARACTER SET | COLLATE} ...`, Go's
+    /// `ActionModifySchemaCharsetAndCollate`. It changes the DEFAULT the
+    /// database hands to tables created after it; existing tables keep the
+    /// charset they were created with.
+    ModifySchemaCharsetAndCollate {
+        /// The database name as written.
+        name: String,
+        /// The resolved charset.
+        charset: String,
+        /// The resolved collation.
+        collate: String,
+    },
+    /// `ALTER TABLE ... RENAME INDEX <from> TO <to>`, Go's
+    /// `ActionRenameIndex`. Metadata only: the entries already written keep
+    /// their key prefix, which is derived from the index ID rather than its
+    /// name.
+    RenameIndex {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The existing index name, as written.
+        from: String,
+        /// The replacement name, as written.
+        to: String,
+    },
     /// `ALTER TABLE ... ALTER [COLUMN] <c> SET DEFAULT <v>` and
     /// `... DROP DEFAULT`, Go's `ActionSetDefaultValue`. Metadata only: rows
     /// already written keep the values they were given, and only later
@@ -621,6 +647,40 @@ pub fn lower_ddl_with_context(
             Ok(Some(DdlStatement::CreateDatabase {
                 name: name.clone(),
                 if_not_exists: *if_not_exists,
+                charset,
+                collate,
+            }))
+        }
+        DdlStmt::AlterDatabase { name, options } => {
+            let mut charset = None;
+            let mut collate = None;
+            for option in options {
+                match option {
+                    DatabaseOption::CharacterSet(value) => charset = Some(value.as_str()),
+                    DatabaseOption::Collate(value) => collate = Some(value.as_str()),
+                    other => {
+                        return Err(DdlAdmissionError::new(format!(
+                            "ALTER DATABASE option {other:?} is not supported by this node"
+                        )))
+                    }
+                }
+            }
+            // Go only publishes a job when a charset or collation was
+            // written (`isAlterCharsetAndCollate`); an option list with
+            // neither is not this change at all.
+            if charset.is_none() && collate.is_none() {
+                return Ok(None);
+            }
+            let (charset, collate) = crate::table_info_build::resolve_charset_collation(
+                charset,
+                collate,
+                CATALOG_CHARSET,
+                CATALOG_COLLATION,
+            )?;
+            Ok(Some(DdlStatement::ModifySchemaCharsetAndCollate {
+                // Go permits the name to be omitted, meaning the session's
+                // current database.
+                name: name.clone().unwrap_or_else(|| default_schema.to_owned()),
                 charset,
                 collate,
             }))
@@ -1009,6 +1069,15 @@ fn lower_alter_table_catalog(
                 table,
                 if_exists: *if_exists,
                 column: name.clone(),
+            }))
+        }
+        tidb_ast::AlterTableAction::RenameIndex(action) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::RenameIndex {
+                schema,
+                table,
+                from: action.from.clone(),
+                to: action.to.clone(),
             }))
         }
         tidb_ast::AlterTableAction::AlterColumnDefault(action) => {
@@ -3088,6 +3157,90 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 add: false,
             });
             diff.action_type = ActionType::ACTION_DROP_INDEX;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::ModifySchemaCharsetAndCollate {
+            name,
+            charset,
+            collate,
+        } => {
+            let Some(database) = find_database(&catalog, name) else {
+                return Err(DdlPlanError::UnknownDatabase(name.clone()));
+            };
+            // Go's early return: the job finishes without touching the
+            // database, so no schema version is spent on a no-op.
+            if database.info.charset == *charset && database.info.collate == *collate {
+                return Ok(already(format!(
+                    "database `{name}` is already {charset}/{collate}"
+                )));
+            }
+            let mut info = database.info.clone();
+            info.charset = charset.clone();
+            info.collate = collate.clone();
+            let db_id = info.id;
+            let encoded = value::serialize_db_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::database_kv_key(db_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE;
+            diff.schema_id = db_id;
+        }
+        DdlStatement::RenameIndex {
+            schema,
+            table,
+            from,
+            to,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            // Go `ValidateRenameIndex`, in its order.
+            if find_index(stored, from).is_none() {
+                return Err(DdlPlanError::KeyNotExists {
+                    index: from.clone(),
+                    table: table.clone(),
+                });
+            }
+            // Case-SENSITIVE equality is the no-op test: `inDex` -> `IndEX`
+            // is a real rename that only changes the stored spelling.
+            if from == to {
+                return Ok(already(format!(
+                    "index `{from}` on `{schema}`.`{table}` already has that name"
+                )));
+            }
+            let from_lower = from.to_lowercase();
+            let to_lower = to.to_lowercase();
+            if from_lower != to_lower {
+                if let Some(existing) = find_index(stored, to) {
+                    return Err(DdlPlanError::DuplicateKeyName(
+                        existing.read().name.original().to_owned(),
+                    ));
+                }
+            }
+            let mut info = stored.clone_like_go();
+            // Go `renameIndexes` walks every index and renames each one whose
+            // name matches, rather than stopping at the first.
+            //
+            // Its two other passes have nothing to rename here: temp indexes
+            // exist only during a reorg this node does not run, and the
+            // hidden columns of an expression index cannot occur because this
+            // node refuses to create or load one.
+            for candidate in info.indices.iter_deref() {
+                let mut candidate = candidate.write();
+                if candidate.name.lowercase() == from_lower {
+                    candidate.name = CiString::new(to.clone());
+                }
+            }
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_RENAME_INDEX;
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }

@@ -2835,3 +2835,140 @@ fn set_and_drop_column_default_rewrite_the_stored_column() {
         "{error:?}"
     );
 }
+
+/// Go `ValidateRenameIndex` then `renameIndexes` (`ActionRenameIndex`).
+/// The entries already written are untouched: an index's key prefix comes
+/// from its ID, not its name.
+#[test]
+fn rename_index_rewrites_the_name_and_rejects_a_collision() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, a BIGINT, b BIGINT, \
+         KEY ia(a), KEY ib(b))",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+
+    let names = |write: &tidb_exec::cluster_ddl::DdlWrite| {
+        stored_table(write, table_id)["index_info"]
+            .as_array()
+            .expect("index array")
+            .iter()
+            .map(|index| index["idx_name"]["O"].as_str().expect("a name").to_owned())
+            .collect::<Vec<_>>()
+    };
+
+    let write = plan(&mut store, "ALTER TABLE u6.t RENAME INDEX ia TO renamed", 200);
+    apply(&mut store, &write);
+    assert_eq!(names(&write), ["renamed", "ib"]);
+
+    // Case-only renames are real: Go's no-op test is case-SENSITIVE, so this
+    // publishes a new spelling rather than finishing early.
+    let write = plan(
+        &mut store,
+        "ALTER TABLE u6.t RENAME INDEX renamed TO ReNamed",
+        300,
+    );
+    apply(&mut store, &write);
+    assert_eq!(names(&write), ["ReNamed", "ib"]);
+
+    // The same spelling changes nothing and spends no schema version.
+    match plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t RENAME INDEX ReNamed TO ReNamed"),
+        400,
+    )
+    .expect("an identical rename plans")
+    {
+        DdlPlan::AlreadySatisfied { detail, .. } => {
+            assert!(detail.contains("already has that name"), "{detail}");
+        }
+        DdlPlan::Write(_) => panic!("an identical rename must publish nothing"),
+    }
+
+    // Renaming onto a DIFFERENT existing index is 1061.
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t RENAME INDEX ReNamed TO ib"),
+        500,
+    )
+    .expect_err("a collision is refused");
+    assert!(
+        matches!(error, DdlPlanError::DuplicateKeyName(ref name) if name == "ib"),
+        "{error:?}"
+    );
+
+    // A missing source index is Go's ErrKeyNotExists, as in ALTER INDEX.
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t RENAME INDEX nosuch TO x"),
+        600,
+    )
+    .expect_err("a missing index is refused");
+    assert!(
+        matches!(error, DdlPlanError::KeyNotExists { ref index, .. } if index == "nosuch"),
+        "{error:?}"
+    );
+}
+
+/// Go `ModifySchemaCharsetAndCollate` then `onModifySchemaCharsetAndCollate`.
+/// A written COLLATE settles the charset and vice versa, and a change that is
+/// already true finishes without spending a schema version.
+#[test]
+fn alter_database_charset_settles_the_pair_and_no_ops_when_already_true() {
+    let mut store = bootstrapped();
+
+    let stored_database = |write: &tidb_exec::cluster_ddl::DdlWrite| -> serde_json::Value {
+        serde_json::from_slice(stored_value(write, &key::database_kv_key(112)))
+            .expect("a stored DBInfo")
+    };
+
+    // CHARACTER SET alone settles the collation to that charset's default.
+    let write = plan(&mut store, "ALTER DATABASE u6 CHARACTER SET latin1", 200);
+    apply(&mut store, &write);
+    let database = stored_database(&write);
+    assert_eq!(database["charset"], serde_json::json!("latin1"));
+    assert_eq!(database["collate"], serde_json::json!("latin1_bin"));
+
+    // COLLATE alone settles the charset it belongs to.
+    let write = plan(&mut store, "ALTER DATABASE u6 COLLATE utf8mb4_general_ci", 300);
+    apply(&mut store, &write);
+    let database = stored_database(&write);
+    assert_eq!(database["charset"], serde_json::json!("utf8mb4"));
+    assert_eq!(database["collate"], serde_json::json!("utf8mb4_general_ci"));
+
+    match plan_ddl(
+        &mut store,
+        &statement("ALTER DATABASE u6 COLLATE utf8mb4_general_ci"),
+        400,
+    )
+    .expect("an already-satisfied charset plans")
+    {
+        DdlPlan::AlreadySatisfied { detail, .. } => {
+            assert!(detail.contains("is already utf8mb4/utf8mb4_general_ci"), "{detail}");
+        }
+        DdlPlan::Write(_) => panic!("a no-op charset must publish nothing"),
+    }
+
+    // A collation that does not belong to the written charset is refused at
+    // admission, under Go's own 1253 rather than the generic 1105.
+    let parsed = tidb_parser::parse("ALTER DATABASE u6 CHARACTER SET latin1 COLLATE utf8mb4_bin")
+        .expect("the fixture SQL parses");
+    let error = lower_ddl(&parsed, "u6").expect_err("a mismatched pair is refused");
+    assert_eq!(error.code, 1253, "{error:?}");
+    assert!(
+        error
+            .reason
+            .contains("COLLATION 'utf8mb4_bin' is not valid for CHARACTER SET 'latin1'"),
+        "{error:?}"
+    );
+
+    plan_ddl(
+        &mut store,
+        &statement("ALTER DATABASE nosuch CHARACTER SET latin1"),
+        600,
+    )
+    .expect_err("a missing database is refused");
+}

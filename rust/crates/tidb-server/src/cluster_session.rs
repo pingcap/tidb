@@ -263,7 +263,18 @@ pub fn cluster_session_catalog(
     let mut skipped = Vec::new();
     for database in &loaded.databases {
         let schema = database.info.name.original().to_owned();
-        catalog.register_database_with_id(&schema, database.info.id);
+        // Go `DBInfo.Charset`/`Collate`: what `SHOW CREATE DATABASE` and
+        // `information_schema.schemata` report, and the default a table
+        // created without its own charset inherits. An unrecognised stored
+        // name falls back to the server default rather than refusing the
+        // whole database.
+        let charset = tidb_executor::TableCharset {
+            charset: tidb_datatype::Charset::from_name(&database.info.charset)
+                .unwrap_or(tidb_executor::TableCharset::default().charset),
+            collation: tidb_datatype::Collation::from_name(&database.info.collate)
+                .unwrap_or(tidb_executor::TableCharset::default().collation),
+        };
+        catalog.register_database_with_id_and_charset(&schema, database.info.id, charset);
         for table in &database.tables {
             // A view has no storage half: it maps straight to the session
             // catalog's view entry, rebuilt from the published `TableInfo`
@@ -1479,6 +1490,44 @@ mod tests {
         assert!(session
             .run("SELECT id FROM p WHERE s = 'alphabet'")
             .is_err());
+    }
+
+    /// Go `DBInfo.Charset`/`Collate` survive the load: they are what
+    /// `SHOW CREATE DATABASE` and `information_schema.schemata` report, and
+    /// the default a table created without its own charset inherits. This
+    /// loader used to register every database with the server default, so
+    /// `CREATE DATABASE ... CHARACTER SET latin1` and
+    /// `ALTER DATABASE ... CHARACTER SET` both read back as utf8mb4.
+    #[test]
+    fn a_stored_database_charset_survives_the_load() {
+        let table = TableInfo {
+            id: 204,
+            name: CiString::new("t"),
+            columns: vec![column(1, 0, "id", true)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            ..TableInfo::default()
+        };
+        let mut catalog_source = one_table_catalog(table);
+        catalog_source.databases[0].info.charset = "latin1".to_owned();
+        catalog_source.databases[0].info.collate = "latin1_bin".to_owned();
+
+        let (storage, _buffer, _snapshot) = cluster_storage();
+        let (session, skipped) = session_with_cluster_storage(
+            &catalog_source,
+            &storage,
+            &StatsSnapshot::new(),
+            &LocalTableAutoIds::default(),
+        );
+        assert!(skipped.is_empty());
+        let catalog = session.shared_catalog();
+        let catalog = catalog.lock().unwrap();
+        let (name, charset) = catalog
+            .database_definition("app")
+            .expect("the database is in the catalog");
+        assert_eq!(name, "app");
+        assert_eq!(charset.charset.name(), "latin1");
+        assert_eq!(charset.collation.name(), "latin1_bin");
     }
 
     /// Go `TableInfo.Comment` survives the load: `SHOW CREATE TABLE` prints
