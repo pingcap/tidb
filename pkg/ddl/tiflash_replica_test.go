@@ -609,6 +609,16 @@ func TestColumnarStorageEnabledGate(t *testing.T) {
 	require.Nil(t, external.GetTableByName(t, tk, "db_col", "t1").Meta().TiFlashReplica)
 	require.Nil(t, external.GetTableByName(t, tk, "db_col", "t2").Meta().TiFlashReplica)
 
+	// OFF + ALTER DATABASE is a no-op when every table already has the target replica count.
+	tk.MustExec("set global tidb_columnar_storage_enabled = 'ON'")
+	tk.MustExec("alter table db_col.t1 set tiflash replica 1")
+	tk.MustExec("alter table db_col.t2 set tiflash replica 1")
+	tk.MustExec("set global tidb_columnar_storage_enabled = 'OFF'")
+	tk.MustExec("alter database db_col set tiflash replica 1")
+	require.Equal(t, uint64(1), external.GetTableByName(t, tk, "db_col", "t1").Meta().TiFlashReplica.Count)
+	require.Equal(t, uint64(1), external.GetTableByName(t, tk, "db_col", "t2").Meta().TiFlashReplica.Count)
+	tk.MustGetErrCode("alter database db_col set tiflash replica 2", errno.ErrUnsupportedDDLOperation)
+
 	// OFF + count=0: cleanup is always allowed.
 	tk.MustExec("alter table t_col set tiflash replica 0")
 	tbl = external.GetTableByName(t, tk, "test", "t_col")
@@ -655,10 +665,33 @@ func TestColumnarStorageEnabledGateFailClosed(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t_fail(a int)")
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockColumnarStorageEnabledCheckFail", `return(true)`)
+	checkFailFP := "github.com/pingcap/tidb/pkg/ddl/mockColumnarStorageEnabledCheckFail"
+	require.NoError(t, failpoint.Enable(checkFailFP, `return(true)`))
 	tk.MustGetErrCode("alter table t_fail set tiflash replica 1", errno.ErrUnsupportedDDLOperation)
 	tk.MustContainErrMsg("alter table t_fail set tiflash replica 1", "cannot be verified")
 	require.Nil(t, external.GetTableByName(t, tk, "test", "t_fail").Meta().TiFlashReplica)
+	require.NoError(t, failpoint.Disable(checkFailFP))
+
+	// Non-normalized cache values are not treated as enabled.
+	fpName := "github.com/pingcap/tidb/pkg/ddl/mockColumnarStorageEnabledValue"
+	for _, raw := range []string{"0", "off", "garbage", ""} {
+		require.NoError(t, failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, raw)))
+		tk.MustGetErrCode("alter table t_fail set tiflash replica 1", errno.ErrUnsupportedDDLOperation)
+		tk.MustContainErrMsg("alter table t_fail set tiflash replica 1", "Columnar Storage is not enabled")
+		require.NoError(t, failpoint.Disable(fpName))
+	}
+	require.Nil(t, external.GetTableByName(t, tk, "test", "t_fail").Meta().TiFlashReplica)
+
+	// Rejected error includes the unexpected cached value for diagnosis.
+	require.NoError(t, failpoint.Enable(fpName, `return("0")`))
+	tk.MustContainErrMsg("alter table t_fail set tiflash replica 1", `(tidb_columnar_storage_enabled="0")`)
+	require.NoError(t, failpoint.Disable(fpName))
+
+	// "1" is an explicit opt-in, same as ON.
+	require.NoError(t, failpoint.Enable(fpName, `return("1")`))
+	tk.MustExec("alter table t_fail set tiflash replica 1")
+	require.NotNil(t, external.GetTableByName(t, tk, "test", "t_fail").Meta().TiFlashReplica)
+	require.NoError(t, failpoint.Disable(fpName))
 
 	// count=0 is not gated, so fail-closed does not block replica cleanup.
 	tk.MustExec("alter table t_fail set tiflash replica 0")

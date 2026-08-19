@@ -531,24 +531,19 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 	if total == 0 {
 		return infoschema.ErrEmptyDatabase.GenWithStack("Empty database '%v'", dbName.O)
 	}
-	// Two independent pre-checks:
-	//  - replica count vs live TiFlash stores (when cse.columnar-store-type is not "columnar")
-	//  - cluster Columnar Storage gate, only when adding replicas
-	//    (SET TIFLASH REPLICA 0 stays allowed when the flag is OFF)
+	// Store-count check is shared by every table in the batch.
+	// The Columnar Storage gate is deferred until shouldModifyTiFlashReplica
+	// finds a table that actually needs a job, matching AlterTableSetTiFlashReplica
+	// (batch no-ops must not fail when the gate is OFF).
 	err = checkTiFlashReplicaCount(sctx, tiflashReplica.Count)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if tiflashReplica.Count > 0 {
-		err = checkColumnarStorageEnabled(sctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
 	}
 
 	var originVersion int64
 	var pendingCount uint32
 	forceCheck := false
+	columnarGateChecked := false
 
 	logutil.DDLLogger().Info("start batch add TiFlash replicas", zap.Int("total", total), zap.Int64("schemaID", dbInfo.ID))
 	threshold := uint32(sctx.GetSessionVars().BatchPendingTiFlashCount)
@@ -582,6 +577,15 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 			sctx.GetSessionVars().StmtCtx.AppendNote(err)
 			skip++
 			continue
+		}
+
+		// SET TIFLASH REPLICA 0 stays allowed when the flag is OFF.
+		if tiflashReplica.Count > 0 && !columnarGateChecked {
+			err = checkColumnarStorageEnabled(sctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			columnarGateChecked = true
 		}
 
 		// Alter `tiflashCheckPendingTablesLimit` tables are handled, we need to check if we have reached threshold.
@@ -4071,8 +4075,19 @@ func checkColumnarStorageEnabled(ctx sessionctx.Context) error {
 			zap.Error(err))
 		return dbterror.ErrTiFlashColumnarStorageCheckFailed.GenWithStackByArgs(keyspace)
 	}
-	if strings.EqualFold(val, vardef.Off) {
-		return dbterror.ErrTiFlashColumnarStorageNotEnabled.GenWithStackByArgs(keyspace)
+	failpoint.Inject("mockColumnarStorageEnabledValue", func(v failpoint.Value) {
+		if s, ok := v.(string); ok {
+			val = s
+		}
+	})
+	// Fail-closed: only explicit opt-in values (ON/1) are accepted.
+	// Cache entries such as "0", "OFF", empty, or any other unknown string
+	// are treated as not enabled (SET GLOBAL normalizes to ON/OFF).
+	if !variable.TiDBOptOn(val) {
+		logutil.DDLLogger().Warn("columnar storage gate rejected tidb_columnar_storage_enabled value",
+			zap.String("value", val),
+			zap.String("keyspace", keyspace))
+		return dbterror.ErrTiFlashColumnarStorageNotEnabled.GenWithStackByArgs(keyspace, val)
 	}
 	return nil
 }
