@@ -9,6 +9,7 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/pkg/dumpformat/csvfile",
     visibility = ["//visibility:public"],
+    deps = ["//pkg/dumpformat"],
 )
 
 go_test(

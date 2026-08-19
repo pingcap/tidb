@@ -36,22 +36,15 @@ type Writer interface {
 
 // NewIOWriter adapts a context-carrying Writer to io.Writer, binding ctx once so
 // it can be handed to writers that expect the standard io.Writer interface.
-// errMapper, when non-nil, rewrites the error returned by each Write, letting the
-// caller annotate low-level write failures; pass nil to forward errors unchanged.
-func NewIOWriter(ctx context.Context, w Writer, errMapper func(error) error) io.Writer {
-	return &ioWriter{ctx: ctx, w: w, errMapper: errMapper}
+func NewIOWriter(ctx context.Context, w Writer) io.Writer {
+	return &ioWriter{ctx: ctx, w: w}
 }
 
 type ioWriter struct {
-	ctx       context.Context
-	w         Writer
-	errMapper func(error) error
+	ctx context.Context
+	w   Writer
 }
 
 func (a *ioWriter) Write(p []byte) (int, error) {
-	n, err := a.w.Write(a.ctx, p)
-	if err != nil && a.errMapper != nil {
-		err = a.errMapper(err)
-	}
-	return n, err
+	return a.w.Write(a.ctx, p)
 }

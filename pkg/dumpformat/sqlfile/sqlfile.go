@@ -15,16 +15,16 @@
 // Package sqlfile holds the SQL (INSERT statement) writer.
 package sqlfile
 
-// FieldKind classifies a column for SQL value framing.
-type FieldKind uint8
+import "github.com/pingcap/tidb/pkg/dumpformat"
 
+// FieldKind re-exports dumpformat.FieldKind so SQL callers keep a local name.
+type FieldKind = dumpformat.FieldKind
+
+// Column kinds, re-exported from dumpformat.
 const (
-	// KindNumber is written as the raw numeric literal.
-	KindNumber FieldKind = iota
-	// KindString is single-quoted and escaped.
-	KindString
-	// KindBytes is written as an x'..' hex literal.
-	KindBytes
+	KindNumber = dumpformat.KindNumber
+	KindString = dumpformat.KindString
+	KindBytes  = dumpformat.KindBytes
 )
 
 // Config holds the SQL framing knobs.

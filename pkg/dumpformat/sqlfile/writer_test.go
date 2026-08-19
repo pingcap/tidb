@@ -28,7 +28,7 @@ func TestSQLWriterFraming(t *testing.T) {
 	var bf bytes.Buffer
 	prefix := []byte("INSERT INTO `t` VALUES\n")
 	kinds := []FieldKind{KindNumber, KindString, KindBytes}
-	sw := NewSQLWriter(&bf, prefix, kinds, &Config{})
+	sw := NewWriter(&bf, prefix, kinds, &Config{})
 
 	require.NoError(t, sw.Write([]sql.RawBytes{raw("1"), raw("ab"), raw("ab")}))
 	require.NoError(t, sw.Write([]sql.RawBytes{raw("2"), nil, raw("")}))
@@ -46,13 +46,13 @@ func TestSQLWriterEscaping(t *testing.T) {
 	prefix := []byte("INSERT INTO `t` VALUES\n")
 
 	var backslash bytes.Buffer
-	sw := NewSQLWriter(&backslash, prefix, kinds, &Config{EscapeBackslash: true})
+	sw := NewWriter(&backslash, prefix, kinds, &Config{EscapeBackslash: true})
 	require.NoError(t, sw.Write([]sql.RawBytes{raw("a'b\nc\\d")}))
 	require.NoError(t, sw.Close())
 	require.Equal(t, "INSERT INTO `t` VALUES\n('a\\'b\\nc\\\\d');\n", backslash.String())
 
 	var double bytes.Buffer
-	sw = NewSQLWriter(&double, prefix, kinds, &Config{EscapeBackslash: false})
+	sw = NewWriter(&double, prefix, kinds, &Config{EscapeBackslash: false})
 	require.NoError(t, sw.Write([]sql.RawBytes{raw("a'b")}))
 	require.NoError(t, sw.Close())
 	require.Equal(t, "INSERT INTO `t` VALUES\n('a''b');\n", double.String())
@@ -64,7 +64,7 @@ func TestSQLWriterStatementSplit(t *testing.T) {
 	kinds := []FieldKind{KindNumber}
 	// Tuple "(1)" is 3 bytes + 2 separator = 5; prefix is 2. After the first row
 	// statementSize = 2+3+2 = 7 >= 6, so the second row starts a new statement.
-	sw := NewSQLWriter(&bf, prefix, kinds, &Config{StatementSize: 6})
+	sw := NewWriter(&bf, prefix, kinds, &Config{StatementSize: 6})
 	require.NoError(t, sw.Write([]sql.RawBytes{raw("1")}))
 	require.NoError(t, sw.Write([]sql.RawBytes{raw("2")}))
 	require.NoError(t, sw.Close())
@@ -75,7 +75,7 @@ func TestSQLWriterStatementSplit(t *testing.T) {
 func TestSQLWriterEmptyTuple(t *testing.T) {
 	var bf bytes.Buffer
 	prefix := []byte("INSERT INTO `t` VALUES\n")
-	sw := NewSQLWriter(&bf, prefix, nil, &Config{})
+	sw := NewWriter(&bf, prefix, nil, &Config{})
 	require.NoError(t, sw.Write(nil))
 	require.NoError(t, sw.Write(nil))
 	require.NoError(t, sw.Close())

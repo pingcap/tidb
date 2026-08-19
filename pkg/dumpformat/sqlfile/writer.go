@@ -20,11 +20,11 @@ import (
 	"io"
 )
 
-// SQLWriter encodes rows into `INSERT INTO ... VALUES (..),(..);` statements and
+// Writer encodes rows into `INSERT INTO ... VALUES (..),(..);` statements and
 // writes them to an io.Writer. It owns the statement framing and splits at
 // Config.StatementSize; the caller owns buffering, file-size rotation and upload
 // and must call Close to terminate the open statement.
-type SQLWriter struct {
+type Writer struct {
 	w      io.Writer
 	cfg    *Config
 	kinds  []FieldKind
@@ -44,17 +44,17 @@ type SQLWriter struct {
 	fileSize int64
 }
 
-// NewSQLWriter creates a SQLWriter over w. prefix is the INSERT statement prefix
+// NewWriter creates a Writer over w. prefix is the INSERT statement prefix
 // (e.g. "INSERT INTO `t` VALUES\n"); kinds classifies each column; cfg holds the
 // statement-size and escaping knobs.
-func NewSQLWriter(w io.Writer, prefix []byte, kinds []FieldKind, cfg *Config) *SQLWriter {
-	return &SQLWriter{w: w, cfg: cfg, kinds: kinds, prefix: prefix}
+func NewWriter(w io.Writer, prefix []byte, kinds []FieldKind, cfg *Config) *Writer {
+	return &Writer{w: w, cfg: cfg, kinds: kinds, prefix: prefix}
 }
 
 // Write encodes one row's `(..)` tuple and writes it, with the statement prefix
 // or row separator, to the underlying writer. len(row) must equal the configured
 // column count; a nil field is treated as NULL.
-func (sw *SQLWriter) Write(row []sql.RawBytes) error {
+func (sw *Writer) Write(row []sql.RawBytes) error {
 	if len(row) != len(sw.kinds) {
 		return fmt.Errorf("sqlfile: row has %d fields, want %d", len(row), len(sw.kinds))
 	}
@@ -95,13 +95,13 @@ func (sw *SQLWriter) Write(row []sql.RawBytes) error {
 
 // EstimateFileSize returns the logical file size for rotation. It excludes any
 // preamble the caller wrote directly (e.g. SQL special comments).
-func (sw *SQLWriter) EstimateFileSize() uint64 {
+func (sw *Writer) EstimateFileSize() uint64 {
 	return uint64(sw.fileSize)
 }
 
 // Close terminates the open statement with ";\n". It is a no-op if no statement
 // is open.
-func (sw *SQLWriter) Close() error {
+func (sw *Writer) Close() error {
 	if !sw.inStatement {
 		return nil
 	}

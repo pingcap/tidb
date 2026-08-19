@@ -88,7 +88,7 @@ func TestChunkRowIter(t *testing.T) {
 
 	// Consume part of the 10 rows and verify the iterator state. The size-based
 	// statement/file switching that used to be exercised here now lives in
-	// sqlfile.SQLWriter and is covered by its own tests.
+	// sqlfile.Writer and is covered by its own tests.
 	for range 4 {
 		require.True(t, sqlRowIter.HasNext())
 		require.NoError(t, sqlRowIter.Decode(res))

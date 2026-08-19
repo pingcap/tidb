@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
+	"github.com/pingcap/tidb/pkg/dumpformat"
 	"github.com/pingcap/tidb/pkg/dumpformat/csvfile"
 	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/dumpformat/sqlfile"
@@ -58,9 +59,7 @@ func WriteInsert(
 		return 0, fileRowIter.Error()
 	}
 
-	// SQLWriter writes directly into the object store writer, whose concurrent
-	// multipart upload replaces the writerPipe; it owns the per-statement framing.
-	sink := objectio.NewIOWriter(pCtx.Context, w, annotatePartLimit)
+	sink := newDumpSink(pCtx.Context, w)
 
 	selectedField := meta.SelectedField()
 	var insertStatementPrefix string
@@ -71,15 +70,15 @@ func WriteInsert(
 		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s VALUES\n",
 			wrapBackTicks(escapeString(meta.TableName())))
 	}
-	var kinds []sqlfile.FieldKind
+	var kinds []dumpformat.FieldKind
 	if selectedField != "" {
-		kinds = sqlColumnKinds(meta.ColumnTypes())
+		kinds = columnKinds(meta.ColumnTypes())
 	}
 	statementSize := int64(0)
 	if cfg.StatementSize != UnspecifiedSize {
 		statementSize = int64(cfg.StatementSize)
 	}
-	sw := sqlfile.NewSQLWriter(sink, []byte(insertStatementPrefix), kinds, &sqlfile.Config{
+	sw := sqlfile.NewWriter(sink, []byte(insertStatementPrefix), kinds, &sqlfile.Config{
 		StatementSize:   statementSize,
 		EscapeBackslash: cfg.EscapeBackslash,
 	})
@@ -112,9 +111,8 @@ func WriteInsert(
 		}
 	}()
 
-	// preambleSize counts the special comments written straight to the sink, which
-	// SQLWriter's EstimateFileSize does not see, so finishedSize covers the whole
-	// file.
+	// The special comments go straight to the sink, so the SQL writer's
+	// EstimateFileSize excludes them; preambleSize covers that gap.
 	var preambleSize int
 	specCmtIter := meta.SpecialComments()
 	for specCmtIter.HasNext() {
@@ -174,17 +172,18 @@ func WriteInsert(
 	return counter, nil
 }
 
-// columnKinds maps Dumpling column type names to csvfile FieldKinds: binary and
-// numeric types keep their kind, everything else defaults to string.
-func columnKinds(colTypes []string) []csvfile.FieldKind {
-	kinds := make([]csvfile.FieldKind, len(colTypes))
+// columnKinds classifies Dumpling column type names: binary and numeric types
+// keep their kind, everything else defaults to string. The csvfile and sqlfile
+// writers share dumpformat.FieldKind, so one classifier feeds both.
+func columnKinds(colTypes []string) []dumpformat.FieldKind {
+	kinds := make([]dumpformat.FieldKind, len(colTypes))
 	for i, ct := range colTypes {
 		if _, ok := dataTypeBin[ct]; ok {
-			kinds[i] = csvfile.KindBytes
+			kinds[i] = dumpformat.KindBytes
 		} else if _, ok := dataTypeNum[ct]; ok {
-			kinds[i] = csvfile.KindNumber
+			kinds[i] = dumpformat.KindNumber
 		} else {
-			kinds[i] = csvfile.KindString
+			kinds[i] = dumpformat.KindString
 		}
 	}
 	return kinds
@@ -200,22 +199,6 @@ func toCSVBinaryFormat(f BinaryFormat) csvfile.BinaryFormat {
 	default:
 		return csvfile.BinaryFormatUTF8
 	}
-}
-
-// sqlColumnKinds classifies column types for sqlfile: binary and numeric types
-// keep their kind, everything else defaults to string.
-func sqlColumnKinds(colTypes []string) []sqlfile.FieldKind {
-	kinds := make([]sqlfile.FieldKind, len(colTypes))
-	for i, ct := range colTypes {
-		if _, ok := dataTypeBin[ct]; ok {
-			kinds[i] = sqlfile.KindBytes
-		} else if _, ok := dataTypeNum[ct]; ok {
-			kinds[i] = sqlfile.KindNumber
-		} else {
-			kinds[i] = sqlfile.KindString
-		}
-	}
-	return kinds
 }
 
 // WriteInsertInCsv writes TableDataIR to an objectio.Writer in CSV format.
@@ -249,11 +232,11 @@ func WriteInsertInCsv(
 	// Writer writes directly into the object store writer, whose concurrent
 	// multipart upload replaces the writerPipe.
 	selectedFields := meta.SelectedField()
-	var kinds []csvfile.FieldKind
+	var kinds []dumpformat.FieldKind
 	if selectedFields != "" {
 		kinds = columnKinds(meta.ColumnTypes())
 	}
-	cw := csvfile.NewWriter(objectio.NewIOWriter(pCtx.Context, w, annotatePartLimit), kinds, csvCfg)
+	cw := csvfile.NewWriter(newDumpSink(pCtx.Context, w), kinds, csvCfg)
 
 	var (
 		row          = MakeRowReceiver(meta.ColumnTypes())
@@ -360,6 +343,19 @@ func annotatePartLimit(err error) error {
 		return errors.Annotatef(err, "a single output file exceeds the object store's per-object limit of ~%s; specify --filesize (-F) to split the output into multiple files", limit)
 	}
 	return err
+}
+
+// newDumpSink adapts the object store writer to io.Writer and annotates its
+// part-limit error.
+func newDumpSink(ctx context.Context, w objectio.Writer) io.Writer {
+	return partLimitWriter{objectio.NewIOWriter(ctx, w)}
+}
+
+type partLimitWriter struct{ io.Writer }
+
+func (p partLimitWriter) Write(b []byte) (int, error) {
+	n, err := p.Writer.Write(b)
+	return n, annotatePartLimit(err)
 }
 
 func buildFileWriter(tctx *tcontext.Context, s storeapi.Storage, fileName string, compressType compressedio.CompressType) (objectio.Writer, func(ctx context.Context) error, error) {
@@ -524,7 +520,7 @@ func WriteInsertInParquet(
 		parquetfile.WithDataPageSize(cfg.ParquetPageSize),
 		parquetfile.WithRowGroupMemoryLimit(cfg.ParquetRowGroupSize),
 	}
-	writer, err := parquetfile.NewWriter(objectio.NewIOWriter(pCtx.Context, w, annotatePartLimit), meta.ColumnInfos(), opts...)
+	writer, err := parquetfile.NewWriter(newDumpSink(pCtx.Context, w), meta.ColumnInfos(), opts...)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

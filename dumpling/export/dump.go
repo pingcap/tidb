@@ -1153,7 +1153,7 @@ func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMet
 	pkValNum := len(pkFields)
 	var iter SQLRowIter
 	rowRec := MakeRowReceiver(pkColTypes)
-	pkKinds := sqlColumnKinds(pkColTypes)
+	pkKinds := columnKinds(pkColTypes)
 	var (
 		rawRow []sql.RawBytes
 		valBuf []byte
@@ -1198,7 +1198,7 @@ func selectTiDBTableSampleForPartition(tctx *tcontext.Context, conn *BaseConn, m
 	pkValNum := len(pkFields)
 	var iter SQLRowIter
 	rowRec := MakeRowReceiver(pkColTypes)
-	pkKinds := sqlColumnKinds(pkColTypes)
+	pkKinds := columnKinds(pkColTypes)
 	var (
 		rawRow []sql.RawBytes
 		valBuf []byte

@@ -14,16 +14,16 @@
 
 package csvfile
 
-// FieldKind classifies a column for CSV framing.
-type FieldKind uint8
+import "github.com/pingcap/tidb/pkg/dumpformat"
 
+// FieldKind re-exports dumpformat.FieldKind so CSV callers keep a local name.
+type FieldKind = dumpformat.FieldKind
+
+// Column kinds, re-exported from dumpformat.
 const (
-	// KindNumber is written unquoted.
-	KindNumber FieldKind = iota
-	// KindString is delimiter-quoted and escaped.
-	KindString
-	// KindBytes is a binary value, rendered per Config.BinaryFormat.
-	KindBytes
+	KindNumber = dumpformat.KindNumber
+	KindString = dumpformat.KindString
+	KindBytes  = dumpformat.KindBytes
 )
 
 // BinaryFormat controls how KindBytes values are rendered.
