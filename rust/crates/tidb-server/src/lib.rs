@@ -69,6 +69,8 @@ mod connection_writers;
 mod cursor_state;
 mod distinct_result_set;
 pub mod handshake;
+pub mod http_status;
+pub mod shutdown_signal;
 mod handshake_response;
 mod listener;
 pub mod main_flags;

@@ -1807,6 +1807,9 @@ mod tests {
 
     fn test_config() -> NodeConfig {
         NodeConfig {
+            report_status: false,
+            status_host: "0.0.0.0".to_owned(),
+            status_port: 0,
             store_kind: crate::node_config::StoreKind::TiKv,
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,

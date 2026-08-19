@@ -49,6 +49,21 @@ use crate::real_tikv_node::{
 use crate::sql_node::ConcurrentSqlNode;
 use crate::SqlQueryError;
 
+/// Go `main.go:498-529`: after the drain, the process exits with
+/// `exitCodeForSignal(sig)`. A SIGINT-started shutdown exits 130 HERE,
+/// after every teardown above has run; any other outcome flows back to the
+/// binary's ordinary exit mapping.
+fn finish_with_signal_code(
+    result: Result<(), RunConfiguredNodeError>,
+    last_signal: &crate::shutdown_signal::LastSignal,
+) -> Result<(), RunConfiguredNodeError> {
+    let code = crate::shutdown_signal::exit_code_for_recorded(last_signal);
+    if result.is_ok() && code != 0 {
+        std::process::exit(i32::from(code));
+    }
+    result
+}
+
 /// The per-statement RPC budget an in-process call gets. Nothing waits on a
 /// network, so this bounds only local lock waits.
 const IN_PROCESS_TIMEOUT: Duration = Duration::from_secs(20);
@@ -207,10 +222,40 @@ pub(crate) fn run_unistore_node(
     let served_table = factory.served_table().clone();
     let node = ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users))
         .map_err(RunConfiguredNodeError::Node)?;
+    // Go starts the status HTTP server beside the SQL listener
+    // (`cfg.Status.ReportStatus`, default true); `/status` is the first
+    // thing `main_test.go` and every health probe reads. A failed bind
+    // logs and continues, as Go's does.
+    let _status_server = if config.report_status {
+        match crate::http_status::start_status_listener(
+            &config.status_host,
+            config.status_port,
+            node.tracker(),
+            config.version_info.server_version.clone(),
+            config.version_info.git_hash.clone(),
+        ) {
+            Ok(server) => {
+                eprintln!(
+                    "{{\"event\":\"status_listener_ready\",\"address\":\"{}\"}}",
+                    server.local_addr()
+                );
+                Some(server)
+            }
+            Err(error) => {
+                eprintln!(
+                    "{{\"event\":\"status_listener_error\",\"error\":\"{error}\"}}"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
     let address = node.local_addr().map_err(RunConfiguredNodeError::Node)?;
     let shutdown_grace_ms = node.shutdown_grace_ms();
     let shutdown = node.shutdown_handle();
-    ctrlc::set_handler(move || shutdown.shutdown()).map_err(RunConfiguredNodeError::Signal)?;
+    let last_signal = crate::shutdown_signal::install(move || shutdown.shutdown())
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     let table_descriptors = served_table_descriptor(&served_table);
     eprintln!(
         "{{\"event\":\"sql_node_ready\",\"address\":\"{address}\",\"store\":\"unistore\",\"cluster_id\":{IN_PROCESS_CLUSTER_ID},\"tables\":[{table_descriptors}],\"max_connections\":{},\"account_count\":{},\"shutdown_grace_ms\":{shutdown_grace_ms}}}",
@@ -222,7 +267,7 @@ pub(crate) fn run_unistore_node(
     // construction; drop order alone ends the store with the node.
     drop(admission);
     drop(read_authority);
-    result
+    finish_with_signal_code(result, &last_signal)
 }
 
 /// Runs the wide cluster-session surface over the embedded store.
@@ -251,10 +296,10 @@ pub(crate) fn run_unistore_cluster_session(
     // The bootstrap: every boot, because the store is empty every boot.
     let (outcome, schema_version) =
         crate::bootstrap_publish::publish_bootstrap(&opener, IN_PROCESS_TIMEOUT)
-            .map_err(|error| engine(SqlQueryError::unknown(error)))?;
+            .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
     let schema_version =
         crate::bootstrap_publish::notify_committed_bootstrap(&outcome, schema_version, None)
-            .map_err(|error| engine(SqlQueryError::unknown(error)))?;
+            .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
     eprintln!("{{\"event\":\"bootstrap_committed\",\"schema_version\":{schema_version}}}");
 
     // Go's bootstrap INSERTs `root@%` into `mysql.user`; this node provisions
@@ -363,9 +408,39 @@ pub(crate) fn run_unistore_cluster_session(
 
     let node = ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users))
         .map_err(RunConfiguredNodeError::Node)?;
+    // Go starts the status HTTP server beside the SQL listener
+    // (`cfg.Status.ReportStatus`, default true); `/status` is the first
+    // thing `main_test.go` and every health probe reads. A failed bind
+    // logs and continues, as Go's does.
+    let _status_server = if config.report_status {
+        match crate::http_status::start_status_listener(
+            &config.status_host,
+            config.status_port,
+            node.tracker(),
+            config.version_info.server_version.clone(),
+            config.version_info.git_hash.clone(),
+        ) {
+            Ok(server) => {
+                eprintln!(
+                    "{{\"event\":\"status_listener_ready\",\"address\":\"{}\"}}",
+                    server.local_addr()
+                );
+                Some(server)
+            }
+            Err(error) => {
+                eprintln!(
+                    "{{\"event\":\"status_listener_error\",\"error\":\"{error}\"}}"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
     let address = node.local_addr().map_err(RunConfiguredNodeError::Node)?;
     let shutdown = node.shutdown_handle();
-    ctrlc::set_handler(move || shutdown.shutdown()).map_err(RunConfiguredNodeError::Signal)?;
+    let last_signal = crate::shutdown_signal::install(move || shutdown.shutdown())
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     eprintln!(
         "{{\"event\":\"cluster_session_node_ready\",\"address\":\"{address}\",\"store\":\"unistore\",\"schema_version\":{schema_version},\"max_connections\":{},\"account_count\":{},\"stats_loaded\":{},\"stats_pseudo\":{}}}",
         config.max_connections,
@@ -378,5 +453,5 @@ pub(crate) fn run_unistore_cluster_session(
     drop(sysvar_reloader);
     drop(stats_reloader);
     drop(read_authority);
-    result
+    finish_with_signal_code(result, &last_signal)
 }

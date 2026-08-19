@@ -821,43 +821,128 @@ pub fn attach2_task(plan: PhysicalPlan, mut tasks: Vec<Task>) -> Result<Task, Pl
         // `attach2Task4PhysicalSort` (`task.go:843`): copy, attach. No
         // conversion — findBestTask only asks a Sort under a root property.
         PhysicalPlan::Sort(_) => Ok(attach_plan_to_task(plan, first.copy())),
-        // `attach2Task4PhysicalSelection` (`task.go:1598`): the MPP branch
-        // needs `CanExprsPushDown`; the tail is convert-then-attach.
+        // `attach2Task4PhysicalSelection` (`task.go:1598`): Go has NO cop
+        // push at attach — a cop child CONVERTS and the selection lands at
+        // root (pushed filters ride the DataSource's PushedDownConds
+        // instead). Only the MPP arm pushes, gated on the TiFlash
+        // `CanExprsPushDown`; refused by name.
         PhysicalPlan::Selection(_) => match &first {
-            Task::Root(_) => {
+            Task::Root(_) | Task::Cop(_) => {
                 let converted = first.convert_to_root_task()?;
                 Ok(attach_plan_to_task(plan, converted))
             }
-            Task::Cop(_) | Task::Mpp(_) => Err(PlanError::internal(
-                "attach2Task4PhysicalSelection: the cop/MPP branches need \
-                 expression.CanExprsPushDown and convertToRootTaskImpl",
+            Task::Mpp(_) => Err(PlanError::internal(
+                "attach2Task4PhysicalSelection's MPP arm needs the TiFlash \
+                 CanExprsPushDown, not ported",
             )),
         },
-        // `attach2Task4PhysicalProjection` (`task.go:1506`): copy; the cop
-        // branch needs `CanExprsPushDown`/`canPushToIndexPlan`, the MPP
-        // branch `CanExprsPushDown`; the tail is convert-then-attach.
+        // `attach2Task4PhysicalProjection` (`task.go:1506`): the cop arm
+        // pushes the projection onto the cop task — staying a COP task —
+        // when there are no root conds, no index-merge parts, and every
+        // expr passes the TiKV gate (`crate::pushdown`); an unfinished
+        // index half finishes first (the conservative arm of
+        // `canPushToIndexPlan`'s column check). Otherwise, and for a root
+        // child, convert-then-attach. The MPP arm refuses by name.
         PhysicalPlan::Projection(_) => match &first {
             Task::Root(_) => {
                 let converted = first.copy().convert_to_root_task()?;
                 Ok(attach_plan_to_task(plan, converted))
             }
-            Task::Cop(_) | Task::Mpp(_) => Err(PlanError::internal(
-                "attach2Task4PhysicalProjection: the cop/MPP branches need \
-                 expression.CanExprsPushDown and canPushToIndexPlan",
-            )),
-        },
-        // `attach2Task4PhysicalLimit` (`task.go:625`): copy; the cop branch
-        // builds a pushed-down limit; the tail is convert-then-attach.
-        PhysicalPlan::Limit(_) => match &first {
-            Task::Root(_) => {
-                let converted = first.copy().convert_to_root_task()?;
-                Ok(attach_plan_to_task(plan, converted))
+            Task::Cop(cop_ref) => {
+                let PhysicalPlan::Projection(projection) = &plan else {
+                    unreachable!("the arm matched Projection");
+                };
+                let pushable = cop_ref.root_task_conds.is_empty()
+                    && cop_ref.idx_merge_part_plans.is_empty()
+                    && crate::pushdown::can_exprs_push_down_tikv(&projection.exprs);
+                if pushable {
+                    let Task::Cop(mut cop) = first.copy() else {
+                        unreachable!("the arm matched Cop");
+                    };
+                    if !cop.index_plan_finished {
+                        cop.finish_index_plan();
+                    }
+                    Ok(attach_plan_to_task(plan, Task::Cop(cop)))
+                } else {
+                    let converted = first.copy().convert_to_root_task()?;
+                    Ok(attach_plan_to_task(plan, converted))
+                }
             }
-            Task::Cop(_) | Task::Mpp(_) => Err(PlanError::internal(
-                "attach2Task4PhysicalLimit: the cop/MPP branches build a \
-                 pushed-down PhysicalLimit over DeriveLimitStats",
+            Task::Mpp(_) => Err(PlanError::internal(
+                "attach2Task4PhysicalProjection's MPP arm needs the TiFlash \
+                 CanExprsPushDown, not ported",
             )),
         },
+        // `attach2Task4PhysicalLimit` (`task.go:619`): the SINGLE-READ cop
+        // branch pushes a partial limit — `Count = Offset + Count`, offset
+        // removed, `DeriveLimitStats` over the open half's profile, the
+        // child's schema shared — onto the cop task, converts, and attaches
+        // the ROOT limit above (unless a partition-by skips it: "a derived
+        // topN and window function will take care of the filter").
+        // `sinkIntoIndexLookUp` and the index-merge/MPP arms narrow with
+        // their readers, named here.
+        PhysicalPlan::Limit(_) => {
+            let PhysicalPlan::Limit(limit) = &plan else {
+                unreachable!("the arm matched Limit");
+            };
+            let t = match first {
+                Task::Root(_) => first.copy().convert_to_root_task()?,
+                Task::Cop(_) => {
+                    let Task::Cop(mut cop) = first.copy() else {
+                        unreachable!("the arm matched Cop");
+                    };
+                    let pushable = (!cop.keep_order
+                        || !cop.index_plan_finished
+                        || cop.index_plan.is_none())
+                        && cop.root_task_conds.is_empty();
+                    if pushable {
+                        let new_count = limit.offset + limit.count;
+                        let stats = cop
+                            .plan()
+                            .and_then(PhysicalPlan::stats_info)
+                            .map(|profile| profile.derive_limit_stats(new_count as f64));
+                        let mut base = crate::physical::BasePhysicalPlan::with_id(
+                            plan.id(),
+                            "Limit",
+                            plan.query_block_offset(),
+                        );
+                        base.base.set_stats(stats);
+                        // "Don't use clone() so that Limit and its children
+                        // share the same schema": the pushed limit reports
+                        // the open half's schema.
+                        base.base.set_schema(
+                            cop.plan().and_then(PhysicalPlan::schema).cloned(),
+                        );
+                        let pushed = PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+                            base,
+                            partition_by: limit.partition_by.clone(),
+                            offset: 0,
+                            count: new_count,
+                            prefix_col: None,
+                            prefix_len: 0,
+                        });
+                        let Task::Cop(pushed_cop) =
+                            attach_plan_to_task(pushed, Task::Cop(cop))
+                        else {
+                            unreachable!("attaching onto a cop task answers a cop task");
+                        };
+                        cop = pushed_cop;
+                    }
+                    Task::Cop(cop).convert_to_root_task()?
+                }
+                Task::Mpp(_) => {
+                    return Err(PlanError::internal(
+                        "attach2Task4PhysicalLimit's MPP arm (task.go:713) is \
+                         not ported",
+                    ))
+                }
+            };
+            // "Skip limit with partition on the root."
+            if !limit.partition_by.is_empty() {
+                return Ok(t);
+            }
+            Ok(attach_plan_to_task(plan, t))
+        }
         // `PhysicalMaxOneRow` has no override: `BasePhysicalPlan.Attach2Task`
         // (`base_physical_plan.go:202`) is convert-to-root then attach, on
         // ANY task kind — a cop/MPP child propagates
@@ -1319,14 +1404,39 @@ mod attach_tests {
     }
 
     #[test]
-    fn attaching_onto_a_cop_task_refuses_by_name() {
+    fn a_selection_over_a_cop_child_converts_and_lands_at_root() {
+        // `attach2Task4PhysicalSelection` (`task.go:1598`): Go pushes NO
+        // selection at attach time — the cop child converts through its
+        // reader and the selection sits above it at root.
+        let scan = {
+            let allocator = PlanIdAllocator::new();
+            let mut base = crate::physical::BasePhysicalPlan::default();
+            base.base = crate::plan_base::BasePlan::new(&allocator, "TableScan", 0);
+            base.base.set_stats(Some(StatsInfo::new(9.0, [])));
+            PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+                base,
+                table_id: 1,
+                store_type: crate::physical_table_reader::StoreType::TiKv,
+                keep_order: false,
+                desc: false,
+            })
+        };
         let selection = PhysicalPlan::Selection(PhysicalSelection {
             base: op_with_stats("Selection", 8.0),
             ..PhysicalSelection::default()
         });
-        let error = attach2_task(selection, vec![Task::Cop(CopTask::default())])
-            .expect_err("the cop branch is unported");
-        assert!(format!("{error:?}").contains("CanExprsPushDown"));
+        let cop = Task::Cop(CopTask {
+            table_plan: Some(Box::new(scan)),
+            index_plan_finished: true,
+            ..CopTask::default()
+        });
+        let task = attach2_task(selection, vec![cop]).expect("converts and attaches");
+        let plan = task.plan().expect("a plan");
+        assert!(matches!(plan, PhysicalPlan::Selection(_)));
+        assert!(
+            matches!(plan.children().first(), Some(PhysicalPlan::TableReader(_))),
+            "the selection sits ABOVE the reader"
+        );
     }
 
     #[test]

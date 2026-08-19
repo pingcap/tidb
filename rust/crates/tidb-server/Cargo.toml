@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 base64.workspace = true
 ctrlc.workspace = true
+signal-hook.workspace = true
 rcgen.workspace = true
 rustix.workspace = true
 rustls.workspace = true

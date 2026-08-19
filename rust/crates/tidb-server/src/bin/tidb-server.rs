@@ -73,6 +73,23 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
+    // `cmd/tidb-server/main_test.go` (343 lines), dispositioned test by
+    // test:
+    // * `TestExitCodeForSignal` — TRANSCREATED in
+    //   `crate::shutdown_signal`, whose handler is also the WIRING: a
+    //   SIGINT-started shutdown exits 130 live.
+    // * `TestSetVersionByConfig{InNextGen,InvalidNextGenReleaseVersion,
+    //   NormalizeLegacyPlaceholderForNextGen}` — Go's own suite SKIPS all
+    //   three on the classic kernel, which is the kernel this port builds
+    //   ("Kernel Type"=Classic); skipped here for the same reason.
+    // * `TestOverrideConfigKeyspaceActivateMode`, `TestInitDeployMode`,
+    //   `TestCreateMgrClientRequiresPodIdentityInStarter`,
+    //   `TestSetupKeyspaceObservabilityForStarter{,SkipsNonTiKV}` —
+    //   nextgen keyspace/starter infrastructure, out of the ported scope
+    //   by name.
+    // * `TestRunMain` — the coverage-server harness, not a behavior test.
+    // * `TestSetGlobalVars` — the config→sysvar wiring; portable in part
+    //   once the instance-scope sysvar surface lands, named as future work.
     use super::*;
 
     #[test]

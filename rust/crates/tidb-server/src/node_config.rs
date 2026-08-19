@@ -140,6 +140,13 @@ pub enum StoreKind {
 /// Complete startup input consumed by the concurrent SQL node.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodeConfig {
+    /// Go `cfg.Status.ReportStatus` (default true): whether the status
+    /// HTTP listener starts.
+    pub report_status: bool,
+    /// Go `cfg.Status.StatusHost`.
+    pub status_host: String,
+    /// Go `cfg.Status.StatusPort` (default 10080).
+    pub status_port: u16,
     /// Address on which MySQL protocol connections are accepted.
     pub host: IpAddr,
     /// MySQL protocol port. Zero requests an ephemeral test port.
@@ -902,6 +909,20 @@ impl NodeConfig {
         )?;
 
         Ok(Self {
+            report_status: main_flags.report_status.unwrap_or(true),
+            status_host: main_flags
+                .status_host
+                .clone()
+                .unwrap_or_else(|| "0.0.0.0".to_owned()),
+            status_port: main_flags
+                .status_port
+                .as_deref()
+                .map(|port| {
+                    port.parse::<u16>()
+                        .map_err(|_| invalid("--status", "expected a port number"))
+                })
+                .transpose()?
+                .unwrap_or(10080),
             host,
             port,
             affinity_cpus,

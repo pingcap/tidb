@@ -1026,6 +1026,93 @@ pub struct PhysicalIndexReader {
     pub index_plan: Option<Box<PhysicalPlan>>,
 }
 
+/// Go `GetPropByOrderByItems` (`physical_sort.go:268`): the sort property a
+/// by-item list implies — every item must be a bare column ("In order to
+/// simplify the problem, we only consider the case that all expression are
+/// columns"), else no property can be derived.
+#[must_use]
+pub fn get_prop_by_order_by_items(
+    items: &[tidb_expr::aggregation::ByItems],
+) -> Option<Vec<crate::physical_property::SortItem>> {
+    let mut prop_items = Vec::with_capacity(items.len());
+    for item in items {
+        let tidb_expr::expression::Expression::Column(col) = &item.expr else {
+            return None;
+        };
+        prop_items.push(crate::physical_property::SortItem::new(
+            col.unique_id,
+            item.desc,
+        ));
+    }
+    Some(prop_items)
+}
+
+/// Go `MatchItems` (`physical_sort.go:253`): whether the required order is a
+/// PREFIX of the by-item list — same column (`EqualColumn` is unique-id
+/// equality), same direction, non-columns never match.
+#[must_use]
+pub fn match_items(
+    prop: &PhysicalProperty,
+    items: &[tidb_expr::aggregation::ByItems],
+) -> bool {
+    if items.len() < prop.sort_items.len() {
+        return false;
+    }
+    prop.sort_items.iter().zip(items).all(|(col, item)| {
+        if item.desc != col.desc {
+            return false;
+        }
+        matches!(&item.expr,
+            tidb_expr::expression::Expression::Column(c) if c.unique_id == col.col)
+    })
+}
+
+/// Go `getPhysLimits` (`physical_limit.go:198`): TopN's LIMIT half — when
+/// the by-items derive a sort property, one Limit candidate per task type
+/// whose CHILD property carries that ORDER and the `Count + Offset` cap, so
+/// the keep-order paths serve it and the Limit attach's push-down finishes
+/// the job. MPP and the TopN half's own operators are separate slices.
+#[must_use]
+pub fn get_phys_limits(
+    topn: &crate::logical::LogicalTopN,
+    allocator: &PlanIdAllocator,
+) -> Vec<PhysicalPlan> {
+    let Some(sort_items) = get_prop_by_order_by_items(&topn.by_items) else {
+        return Vec::new();
+    };
+    let all_task_types = [
+        TaskType::CopSingleRead,
+        TaskType::CopMultiRead,
+        TaskType::Root,
+    ];
+    let mut ret = Vec::with_capacity(all_task_types.len());
+    for tp in all_task_types {
+        let result_prop = PhysicalProperty {
+            task_tp: tp,
+            expected_cnt: (topn.count + topn.offset) as f64,
+            sort_items: sort_items.clone(),
+            ..PhysicalProperty::default()
+        };
+        let mut base = BasePhysicalPlan::new(
+            allocator,
+            crate::logical::LogicalLimit::TYPE,
+            topn.base.base.query_block_offset(),
+        );
+        base.base.set_stats(topn.base.base.stats_info().cloned());
+        base.base.set_schema(topn.base.base.schema().cloned());
+        base.set_children_req_props(vec![Some(result_prop)]);
+        ret.push(PhysicalPlan::Limit(PhysicalLimit {
+            base,
+            partition_by: topn.partition_by.clone(),
+            offset: topn.offset,
+            count: topn.count,
+            prefix_col: None,
+            prefix_len: 0,
+        }));
+    }
+    ret
+}
+
 /// A physical operator whose own port is a later batch; the physical twin of
 /// [`crate::logical::TodoLogicalOp`].
 #[derive(Clone, Debug, Default)]

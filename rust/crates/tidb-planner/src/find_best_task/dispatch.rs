@@ -202,6 +202,24 @@ fn exhaust_physical_plans(
             prop,
             ctx.allocator,
         ))),
+        LogicalPlan::TopN(op) => {
+            // `ExhaustPhysicalPlans4LogicalTopN` (`physical_topn.go:55`):
+            // admitted only when the required order matches the by-items
+            // (`MatchItems`); TWO preference slices — the TopN operators
+            // and the LIMIT half. The TopN half needs the expression-borne
+            // push-down machinery (`getPhysTopN`/`CanExprsPushDown`) and
+            // refuses as an EMPTY slice here, named; the LIMIT half rides
+            // the keep-order paths (`getPhysLimits`).
+            if !physical::match_items(prop, &op.by_items) {
+                return Ok(Vec::new());
+            }
+            let limits = physical::get_phys_limits(op, ctx.allocator);
+            Ok(if limits.is_empty() {
+                Vec::new()
+            } else {
+                vec![limits]
+            })
+        }
         LogicalPlan::Join(_) | LogicalPlan::Apply(_) => Err(PlanError::internal(
             "exhaustPhysicalPlans4LogicalJoin: joins are enumerated by \
              crate::find_best_task's specialized search, not this dispatcher",
@@ -429,9 +447,16 @@ fn find_best_task_4_logical_data_source(
     prop: &PhysicalProperty,
     ctx: &mut DispatchContext<'_>,
 ) -> Result<Task, PlanError> {
-    if prop.task_tp != TaskType::Root {
-        return Ok(Task::invalid_task());
-    }
+    // Go's DataSource findBestTask serves COP-typed properties too: a
+    // single-read child property (`CopSingleReadTaskType`) answers the COP
+    // task itself, for the parent's push-down attach to grow
+    // (`convertToTableScan` refuses only `CopMultiReadTaskType`, the
+    // double-read type, which this slice's lookup-less world cannot serve).
+    let cop_answer = match prop.task_tp {
+        TaskType::Root => false,
+        TaskType::CopSingleRead => true,
+        _ => return Ok(Task::invalid_task()),
+    };
     if let Some(dual) = try_to_get_dual_task(ds, ctx) {
         return Ok(dual);
     }
@@ -503,7 +528,11 @@ fn find_best_task_4_logical_data_source(
                 })
             }
         };
-        let cur = cop.convert_to_root_task()?;
+        let cur = if cop_answer {
+            cop
+        } else {
+            cop.convert_to_root_task()?
+        };
         if best.invalid() || compare_task_cost(ctx.coster, &cur, &best)? {
             best = cur;
         }
@@ -882,6 +911,143 @@ mod tests {
         let prop = PhysicalProperty::new(TaskType::Root, &[12, 11], false, f64::MAX, false);
         let task = find_best_task(&source, &prop, &mut ctx).expect("answers");
         assert!(task.invalid());
+    }
+
+    #[test]
+    fn a_limit_pushes_its_partial_half_into_the_reader() {
+        // The single-read push-down chain end to end
+        // (`attach2Task4PhysicalLimit`, `task.go:619`): the Limit's cop
+        // child property reaches the DataSource, which answers the raw COP
+        // task; the attach pushes a partial limit — Count = Offset + Count,
+        // offset removed — under the reader, and the ROOT limit above keeps
+        // the offset. `derive_limit_stats`' recorded verdict ("awaiting
+        // core/task.go") is hereby closed: its Go caller arrived.
+        use crate::access_path::PossiblePath;
+        use crate::logical::{DataSource, LogicalLimit};
+
+        let allocator = PlanIdAllocator::new();
+        let coster = CountCoster;
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
+        let source = {
+            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
+            base.base.set_stats(Some(StatsInfo::new(100.0, [])));
+            base.base.set_schema(Some(tidb_expr::schema::Schema::default()));
+            LogicalPlan::DataSource(DataSource {
+                base,
+                physical_table_id: 5,
+                enumerated_paths: vec![PossiblePath::Table {
+                    is_int_handle: true,
+                    primary_index: None,
+                }],
+                ..DataSource::default()
+            })
+        };
+        let mut base = BaseLogicalPlan::new(&allocator, LogicalLimit::TYPE, 0);
+        base.base.set_stats(Some(StatsInfo::new(7.0, [])));
+        base.set_children(vec![source]);
+        let limit = LogicalPlan::Limit(LogicalLimit::new(base, 2, 5));
+
+        let task = find_best_task(&limit, &PhysicalProperty::default(), &mut ctx)
+            .expect("plans");
+        let plan = task.plan().expect("a plan");
+        let PhysicalPlan::Limit(root_limit) = plan else {
+            panic!("the root Limit tops the plan, got {plan:?}");
+        };
+        assert_eq!((root_limit.offset, root_limit.count), (2, 5));
+        let Some(PhysicalPlan::TableReader(reader)) = plan.children().first() else {
+            panic!("a TableReader under the root limit, got {:?}", plan.children());
+        };
+        let Some(PhysicalPlan::Limit(pushed)) = reader.table_plan.as_deref() else {
+            panic!("the pushed partial limit inside the reader");
+        };
+        assert_eq!(
+            (pushed.offset, pushed.count),
+            (0, 7),
+            "offset removed, Count = Offset + Count"
+        );
+        assert!(
+            (pushed
+                .base
+                .base
+                .stats_info()
+                .expect("stats")
+                .row_count()
+                - 7.0)
+                .abs()
+                < f64::EPSILON,
+            "DeriveLimitStats caps the pushed profile at the new count"
+        );
+        assert!(matches!(
+            pushed.base.children().first(),
+            Some(PhysicalPlan::TableScan(_))
+        ));
+    }
+
+    #[test]
+    fn a_topn_over_the_handle_plans_as_a_keep_order_limit_chain() {
+        // TopN's LIMIT half end to end (`getPhysLimits`,
+        // `physical_limit.go:198`): ORDER BY pk LIMIT plans the keep-order
+        // scan through the child property's order, the pushed partial limit
+        // inside the reader, and the root limit above — no Sort anywhere.
+        use crate::access_path::PossiblePath;
+        use crate::logical::{DataSource, LogicalTopN};
+        use tidb_datatype::{FieldType, FieldTypeCode};
+        use tidb_expr::aggregation::ByItems;
+        use tidb_expr::column::Column;
+        use tidb_expr::expression::Expression;
+
+        let allocator = PlanIdAllocator::new();
+        let coster = CountCoster;
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
+        let source = {
+            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
+            base.base.set_stats(Some(StatsInfo::new(100.0, [])));
+            base.base.set_schema(Some(tidb_expr::schema::Schema::default()));
+            LogicalPlan::DataSource(DataSource {
+                base,
+                physical_table_id: 5,
+                pk_is_handle: true,
+                handle_is_int: true,
+                handle_cols: vec![Column::new(9, FieldType::new(FieldTypeCode::LongLong))],
+                enumerated_paths: vec![PossiblePath::Table {
+                    is_int_handle: true,
+                    primary_index: None,
+                }],
+                ..DataSource::default()
+            })
+        };
+        let mut base = BaseLogicalPlan::new(&allocator, LogicalTopN::TYPE, 0);
+        base.base.set_stats(Some(StatsInfo::new(3.0, [])));
+        base.set_children(vec![source]);
+        let topn = LogicalPlan::TopN(LogicalTopN {
+            base,
+            by_items: vec![ByItems::new(
+                Expression::Column(Column::new(9, FieldType::new(FieldTypeCode::LongLong))),
+                false,
+            )],
+            offset: 1,
+            count: 2,
+            ..LogicalTopN::default()
+        });
+
+        let task = find_best_task(&topn, &PhysicalProperty::default(), &mut ctx)
+            .expect("plans");
+        let plan = task.plan().expect("a plan");
+        let PhysicalPlan::Limit(root_limit) = plan else {
+            panic!("the root Limit tops the plan, got {plan:?}");
+        };
+        assert_eq!((root_limit.offset, root_limit.count), (1, 2));
+        let Some(PhysicalPlan::TableReader(reader)) = plan.children().first() else {
+            panic!("a TableReader, got {:?}", plan.children());
+        };
+        let Some(PhysicalPlan::Limit(pushed)) = reader.table_plan.as_deref() else {
+            panic!("the pushed partial limit inside the reader");
+        };
+        assert_eq!((pushed.offset, pushed.count), (0, 3));
+        let Some(PhysicalPlan::TableScan(scan)) = pushed.base.children().first() else {
+            panic!("the scan under the pushed limit");
+        };
+        assert!(scan.keep_order, "the child property's order rode down");
     }
 
     #[test]
