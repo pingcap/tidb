@@ -729,3 +729,46 @@ fn an_unsupported_begin_opens_no_half_transaction() {
     assert_eq!(cluster.rows(), 1);
     assert_eq!(cluster.publications.load(Ordering::Acquire), 1);
 }
+
+/// Go `sysvar.go:297`: `@@tidb_current_ts`'s GetSession hook returns
+/// `s.TxnCtx.StartTS` -- the OPEN transaction's timestamp, and `0` when
+/// none is open. The variable table's entry carries only the type and the
+/// read-only flag, so answering the read from that table reported 0 for
+/// every transaction, which is what this pins against.
+///
+/// It is the same value `TIDB_CURRENT_TSO()` reports, by construction:
+/// both read the session's published timestamp.
+#[test]
+fn tidb_current_ts_reports_the_open_transactions_timestamp() {
+    let (mut session, _cluster) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed");
+
+    assert_eq!(
+        rows(&mut session, "SELECT @@tidb_current_ts"),
+        vec![vec![Datum::Int(0)]],
+        "no transaction is open outside one"
+    );
+
+    session.control_transaction("BEGIN").expect("begin");
+    let read = rows(&mut session, "SELECT count(*) FROM t");
+    assert_eq!(read, vec![vec![Datum::Int(1)]]);
+    let inside = rows(&mut session, "SELECT @@tidb_current_ts");
+    let Datum::Int(start_ts) = inside[0][0] else {
+        panic!("@@tidb_current_ts must return a signed integer")
+    };
+    assert!(start_ts > 0, "the open transaction's start ts is reported");
+    assert_eq!(
+        rows(&mut session, "SELECT TIDB_CURRENT_TSO()"),
+        inside,
+        "the variable and the builtin read the same published timestamp"
+    );
+
+    session.control_transaction("COMMIT").expect("commit");
+    assert_eq!(
+        rows(&mut session, "SELECT @@tidb_current_ts"),
+        vec![vec![Datum::Int(0)]],
+        "a committed transaction is no longer open"
+    );
+}

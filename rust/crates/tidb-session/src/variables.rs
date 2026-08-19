@@ -858,6 +858,17 @@ impl Session {
                         i32::from(self.last_plan_from_binding()).to_string(),
                     ));
                 }
+                // `@@tidb_current_ts` is Go's `s.TxnCtx.StartTS` read
+                // (`sysvar.go:297`'s GetSession hook): the timestamp the
+                // OPEN transaction is reading at, and `0` when none is
+                // open. The variable table's entry carries only the type
+                // and the read-only flag, so answering from it -- which
+                // this port did -- reported 0 for every transaction.
+                if *scope != Some(tidb_ast::SysVarScope::Global)
+                    && name.eq_ignore_ascii_case("tidb_current_ts")
+                {
+                    return Ok(Expr::Int(self.current_tso().value().to_string()));
+                }
                 // A no-scope server property uses the same read authority as
                 // an unqualified session read. Most answer their registry
                 // default; `version_comment` is derived from the immutable
