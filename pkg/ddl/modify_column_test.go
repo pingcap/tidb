@@ -683,6 +683,52 @@ func TestModifyColumnWithSkipReorg(t *testing.T) {
 	require.Equal(t, model.ModifyTypeNoReorgWithCheck, gotTp)
 }
 
+// TestModifyColumnIndexReorgPrecheck exercises the pre-check gating added in
+// doModifyColumnIndexReorg's StateDeleteOnly branch: char/varchar flen
+// widening skips the pre-check, narrowing still runs it, and a reorg-phase
+// failure rolls back cleanly.
+func TestModifyColumnIndexReorgPrecheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	precheckCalls := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkModifyColumnDataEntry", func(string) {
+		precheckCalls++
+	})
+
+	// Widening: char(20) -> varchar(30) on an indexed column skips the
+	// pre-check and the ALTER succeeds.
+	tk.MustExec("create table t1 (a char(20) collate utf8mb4_bin, key i1(a))")
+	tk.MustExec("insert into t1 values ('short')")
+	tk.MustExec("alter table t1 modify column a varchar(30) collate utf8mb4_bin")
+	require.Zero(t, precheckCalls)
+	require.Equal(t, mysql.TypeVarchar, external.GetModifyColumn(t, tk, "test", "t1", "a", false).FieldType.GetType())
+
+	// Narrowing: char(20) -> varchar(10) with a 15-byte row. Pre-check runs
+	// and catches the violation.
+	tk.MustExec("create table t2 (a char(20) collate utf8mb4_bin, key i1(a))")
+	tk.MustExec("insert into t2 values ('abcdefghijklmno')")
+	tk.MustGetErrMsg(
+		"alter table t2 modify column a varchar(10) collate utf8mb4_bin",
+		"[types:1265]Data truncated for column 'a', value is 'abcdefghijklmno'",
+	)
+	require.Equal(t, 1, precheckCalls)
+
+	// Reorg-phase failure (errorMockPanic -> ErrReorgPanic) rolls back
+	// cleanly. Cap the retry count so the panic loop terminates quickly.
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 3")
+	defer tk.MustExec("set @@global.tidb_ddl_error_count_limit = default")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/errorMockPanic", "return(true)")
+	tk.MustExec("create table t3 (a char(20) collate utf8mb4_bin, key i1(a))")
+	tk.MustExec("insert into t3 values ('short')")
+	require.Error(t, tk.ExecToErr("alter table t3 modify column a varchar(30) collate utf8mb4_bin"))
+	col := external.GetModifyColumn(t, tk, "test", "t3", "a", false)
+	require.Equal(t, mysql.TypeString, col.FieldType.GetType())
+	require.Equal(t, 20, col.FieldType.GetFlen())
+	tk.MustExec("admin check table t3")
+}
+
 func TestGetModifyColumnType(t *testing.T) {
 	type testCase struct {
 		beforeType string
