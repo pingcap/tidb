@@ -26,6 +26,27 @@
 //! [`Syncer::store_server_info`] refuses to run without a session: a
 //! leaseless PUT would leave an immortal entry claiming a dead node is up.
 //!
+//! # Package completeness
+//!
+//! `info.go` is ported whole in [`crate::serverinfo`]: its six constants,
+//! five types, and all six methods (`IsAssumed`, both `Clone`s,
+//! `Marshal`, `Unmarshal`, `ToTopologyInfo`) with the two wire quirks the
+//! model documents. `syncer.go`'s functions are ported here except four,
+//! each waiting on a seam this port does not have yet -- named rather
+//! than silently dropped:
+//!
+//! * `NewCrossKSSyncer` -- keyspaces, which arrive with their own track.
+//!   `Keyspace`/`AssumedKeyspace` stay empty for the same reason.
+//! * `ServerInfoSyncLoop`'s `ReportMinStartTS` leg and its
+//!   `MinStartTSReporter` interface, which reach into the session manager
+//!   to report the oldest live statement's timestamp for GC.
+//! * the DDL-owner half of `cleanupStaleServerAndOwnerInfo`
+//!   (`owner.DeleteOwnerKeyByID`), which needs owner election. The
+//!   server-info half -- the stale same-IP+Port record -- is here.
+//! * `Done`/`TopologyDone`, which are channels over a `concurrency.Session`
+//!   object this port has no counterpart for; see the mapping under
+//!   [`SyncerRunner`].
+//!
 //! # What rides here and what does not
 //!
 //! The TOPOLOGY half (`/topology/tidb/<host:port>`) is here too, on its
