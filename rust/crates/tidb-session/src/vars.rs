@@ -698,7 +698,15 @@ impl SessionVars {
         // instance-scoped variable answers `SELECT @@global.max_connections`,
         // which some drivers ask for at connect.
         if !def.has_global_scope() && !def.has_instance_scope() {
-            return Err(VarError::NoGlobalCopy(name.to_ascii_lowercase()));
+            // A NONE-scope variable (`port`, `socket`) has exactly ONE
+            // value, the node's own, and Go answers it for `@@global.x` and
+            // `SHOW GLOBAL VARIABLES` alike (`GetScopeNoneSystemVar`). Only
+            // a SESSION-only variable has no global copy to read (Go's
+            // ErrIncorrectGlobalLocalVar).
+            if def.has_session_scope() {
+                return Err(VarError::NoGlobalCopy(name.to_ascii_lowercase()));
+            }
+            return self.globals.get(name);
         }
         self.globals.get(name)
     }

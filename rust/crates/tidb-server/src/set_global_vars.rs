@@ -111,6 +111,14 @@ mod tests {
             "tikv,tidb"
         );
         assert_eq!(globals.get("port").expect("readable"), "4157");
+        // The SHOW GLOBAL VARIABLES / `@@global.x` read path answers a
+        // NONE-scope variable from the same node tier (probe: SHOW GLOBAL
+        // VARIABLES LIKE 'socket' reported the stale registry default while
+        // `@@socket` reported the configured path).
+        let mut vars = tidb_session::SessionVars::default();
+        let _ = vars.swap_globals(globals.clone());
+        assert_eq!(vars.get_global("socket").expect("readable"), "/tmp/tidb-4157.sock");
+        assert_eq!(vars.get_global("port").expect("readable"), "4157");
         assert_eq!(globals.get("socket").expect("readable"), "/tmp/tidb-4157.sock");
 
         // Go's hostname leg: `os.Hostname()` when it resolves. The sem tier
