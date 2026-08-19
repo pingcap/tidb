@@ -403,6 +403,59 @@ impl Syncer {
 
 
 
+
+/// Go `uuid.New().String()`: the random (version 4) UUID a TiDB node mints
+/// for its DDL owner and then publishes as its server-info id.
+///
+/// Go's `domain.NewDomain` takes this id once per process and hands it to
+/// the syncer; it is what `TIDB_SERVERS_INFO.DDL_ID` reports and what a
+/// peer's stale-entry cleanup matches on. The RFC 4122 layout is
+/// observable through those readers -- version nibble `4`, variant bits
+/// `10` -- so it is reproduced rather than approximated.
+///
+/// Falls back to a zero-filled id when the OS random source is
+/// unavailable, which keeps a node startable rather than failing on a
+/// name.
+#[must_use]
+pub fn new_node_id() -> String {
+    let mut bytes = [0_u8; 16];
+    if getrandom::fill(&mut bytes).is_err() {
+        bytes = [0; 16];
+    }
+    // RFC 4122 §4.4: version 4 in the high nibble of byte 6, variant 10 in
+    // the top bits of byte 8.
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex = |slice: &[u8]| -> String {
+        slice.iter().map(|byte| format!("{byte:02x}")).collect()
+    };
+    format!(
+        "{}-{}-{}-{}-{}",
+        hex(&bytes[0..4]),
+        hex(&bytes[4..6]),
+        hex(&bytes[6..8]),
+        hex(&bytes[8..10]),
+        hex(&bytes[10..16])
+    )
+}
+
+/// Go `stringutil.BuildStringFromLabels`: `k=v` pairs joined by commas in
+/// SORTED KEY order -- Go sorts explicitly so the rendering is stable --
+/// and the empty map renders as the empty string rather than a stray
+/// separator.
+#[must_use]
+pub fn build_string_from_labels(labels: &HashMap<String, String>) -> String {
+    if labels.is_empty() {
+        return String::new();
+    }
+    let mut keys: Vec<&String> = labels.keys().collect();
+    keys.sort();
+    keys.into_iter()
+        .map(|key| format!("{key}={}", labels[key]))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// Go `getServerInfo` (`syncer.go:481`): this node's own record, read out
 /// of the global config at startup.
 ///
@@ -1063,6 +1116,49 @@ mod tests {
         );
         assert_eq!(topology.status_port, 10081);
         assert_eq!(topology.ip, "10.0.0.7");
+    }
+
+
+    /// Go's uuid v4 layout is observable through `TIDB_SERVERS_INFO.DDL_ID`
+    /// and through the stale-entry match, so the shape is pinned: 36
+    /// characters, dashes in the RFC 4122 positions, version nibble `4`,
+    /// variant in `8..=b`, and a fresh value per call.
+    #[test]
+    fn a_node_id_has_gos_uuid_v4_shape() {
+        let id = new_node_id();
+        assert_eq!(id.len(), 36, "{id}");
+        let parts: Vec<&str> = id.split('-').collect();
+        assert_eq!(
+            parts.iter().map(|p| p.len()).collect::<Vec<_>>(),
+            [8, 4, 4, 4, 12],
+            "{id}"
+        );
+        assert!(id.chars().all(|c| c == '-' || c.is_ascii_hexdigit()), "{id}");
+        assert_eq!(parts[2].as_bytes()[0], b'4', "version nibble: {id}");
+        assert!(
+            matches!(parts[3].as_bytes()[0], b'8' | b'9' | b'a' | b'b'),
+            "variant bits: {id}"
+        );
+        assert_ne!(new_node_id(), id, "each call mints a fresh id");
+    }
+
+    /// Go `BuildStringFromLabels`: sorted keys, `k=v` joined by commas, and
+    /// an empty map renders empty rather than leaving a separator behind.
+    #[test]
+    fn labels_render_in_sorted_key_order() {
+        assert_eq!(build_string_from_labels(&HashMap::new()), "");
+        assert_eq!(
+            build_string_from_labels(&HashMap::from([("z".to_owned(), "1".to_owned())])),
+            "z=1"
+        );
+        assert_eq!(
+            build_string_from_labels(&HashMap::from([
+                ("zone".to_owned(), "east".to_owned()),
+                ("dc".to_owned(), "one".to_owned()),
+                ("rack".to_owned(), "r2".to_owned()),
+            ])),
+            "dc=one,rack=r2,zone=east"
+        );
     }
 
     /// Go's `etcdCli == nil` deployment: nothing is published, and the

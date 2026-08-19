@@ -2360,6 +2360,7 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "getrandom 0.3.4",
  "serde",
  "serde_json",
  "tidb-ast",
@@ -2716,6 +2717,7 @@ dependencies = [
  "serde_json",
  "tidb-ast",
  "tidb-datatype",
+ "tidb-domain",
  "tidb-executor",
  "tidb-metadef",
  "tidb-mysql",

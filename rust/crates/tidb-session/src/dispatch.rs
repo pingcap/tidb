@@ -364,6 +364,8 @@ impl Session {
                 self.deadlock_history_table_rows()?
             } else if table_name.eq_ignore_ascii_case("USER_PRIVILEGES") {
                 self.user_privileges_table_rows()
+            } else if table_name.eq_ignore_ascii_case("TIDB_SERVERS_INFO") {
+                self.tidb_servers_info_table_rows()
             } else {
                 let visibility = self.schema_visibility();
                 self.with_catalog_mut(|catalog| {

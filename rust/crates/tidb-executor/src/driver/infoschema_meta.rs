@@ -1053,6 +1053,73 @@ const REFERENTIAL_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
     },
 ];
 
+/// Go `infoschema.tableTiDBServersInfoCols` (`pkg/infoschema/tables.go:1123`).
+/// Every column is declared with only a name, type and size upstream -- no
+/// flags and no defaults -- so all eight are nullable with no default here.
+///
+/// Rows come from the server-info syncer rather than the catalog (Go's
+/// `setDataForServersInfo` reads `GetAllServerInfo`), which is why this
+/// table has no `*_rows` function beside it in this module; see
+/// `Session::tidb_servers_info_table_rows`.
+const TIDB_SERVERS_INFO_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "DDL_ID",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "IP",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "PORT",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "STATUS_PORT",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "LEASE",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "VERSION",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "GIT_HASH",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "LABELS",
+        tp: FieldTypeCode::Varchar,
+        size: 128,
+        flag: 0,
+        deflt: None,
+    },
+];
+
 /// Go `infoschema.tableProcesslistCols`, CAPTURED from `pkg/infoschema/tables.go`
 /// (`ID, USER, HOST, DB, COMMAND, TIME, STATE, INFO` are the `SHOW
 /// PROCESSLIST` columns; the rest are this table's own extras). Rows come
@@ -1492,6 +1559,7 @@ const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
     ("TABLES", TABLES_COLUMNS),
     ("TABLE_CONSTRAINTS", TABLE_CONSTRAINTS_COLUMNS),
     ("TABLE_PRIVILEGES", TABLE_PRIVILEGES_COLUMNS),
+    ("TIDB_SERVERS_INFO", TIDB_SERVERS_INFO_COLUMNS),
     ("USER_PRIVILEGES", USER_PRIVILEGES_COLUMNS),
     ("VIEWS", VIEWS_COLUMNS),
 ];

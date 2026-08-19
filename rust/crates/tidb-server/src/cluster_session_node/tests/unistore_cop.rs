@@ -58,6 +58,8 @@ fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
                 .map(|datum| match datum {
                     Datum::Int(v) => v.to_string(),
                     Datum::Decimal(d) => d.to_string(),
+                    Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
                     other => format!("{other:?}"),
                 })
                 .collect()
@@ -159,4 +161,39 @@ fn a_derived_aggregate_over_the_coprocessor_answers_its_output() {
         "no served DAG carried the covering-index aggregate: {:?}",
         stats.requests
     );
+}
+
+/// Go `setDataForServersInfo` (`infoschema_reader.go:2730`) over
+/// `GetAllServerInfo`: one row per server, in Go's eight-column order.
+/// With no etcd client the syncer answers THIS node alone -- Go's
+/// `etcdCli == nil` path -- which is what a single-node deployment shows.
+#[test]
+fn tidb_servers_info_reports_this_node() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(11))
+        .expect("session opens");
+
+    let rows = displayed(rows(
+        &mut session,
+        "SELECT DDL_ID, IP, PORT, STATUS_PORT, LEASE, VERSION, GIT_HASH, LABELS \
+         FROM information_schema.tidb_servers_info",
+    ));
+    assert_eq!(rows.len(), 1, "a single node reports itself alone");
+    let row = &rows[0];
+
+    // Go's DDL_ID is `uuid.New().String()`; the shape is what a peer's
+    // stale-entry match and this reader both see.
+    assert_eq!(row[0].len(), 36, "DDL_ID is a uuid: {}", row[0]);
+    assert_eq!(row[0].matches('-').count(), 4, "{}", row[0]);
+    // The port the node was configured with, as an integer column.
+    assert_eq!(row[2], "0", "the fixture binds an ephemeral port");
+    assert_eq!(row[3], "10080", "the default status port");
+    // The lease travels as text, and the version pair is the build's.
+    assert!(row[4].ends_with("ms"), "LEASE is text: {}", row[4]);
+    assert!(!row[5].is_empty(), "VERSION is reported");
+    // No labels are configured, which renders as the empty string rather
+    // than a stray separator (Go `BuildStringFromLabels`).
+    assert_eq!(row[7], "");
 }

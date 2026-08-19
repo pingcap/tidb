@@ -356,6 +356,31 @@ pub(crate) fn run_unistore_cluster_session(
     finish_with_signal_code(result, &last_signal)
 }
 
+/// Go `getServerInfo` over the node's own configuration.
+///
+/// `NodeConfig` is this tier's spelling of the pieces Go reads from the
+/// global config, so the two are mapped here rather than in `tidb-domain`:
+/// the ADVERTISE address is what a peer would dial, the DDL lease travels
+/// as the text Go stores, and the labels are empty until the config file's
+/// `labels` section is threaded (named, not silently dropped).
+fn node_server_info(config: &crate::node_config::NodeConfig) -> tidb_domain::serverinfo::ServerInfo {
+    let mut info = tidb_domain::serverinfo::ServerInfo::default();
+    info.static_info.id = tidb_domain::serverinfo_syncer::new_node_id();
+    info.static_info.ip = config.advertise_address.clone();
+    info.static_info.port = u32::from(config.port);
+    info.static_info.status_port = u32::from(config.status_port);
+    info.static_info.lease = format!("{}ms", config.schema_lease.as_millis());
+    info.static_info.start_timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_secs() as i64)
+        .unwrap_or_default();
+    info.static_info.version_info = tidb_domain::serverinfo::VersionInfo {
+        version: config.version_info.server_version.clone(),
+        git_hash: config.version_info.git_hash.clone(),
+    };
+    info
+}
+
 /// The cluster-session factory over the embedded store, plus the guards
 /// that keep its store and reload threads alive. One build, two callers:
 /// the running node and the in-tree tests that pin coprocessor-backed
@@ -455,6 +480,15 @@ pub(crate) fn unistore_cluster_session_stack(
         read_opener: read_authority.opener(),
         lock_timestamp_source: CapabilityTimestampSource(_pd.clone()),
     });
+    // This node's own server-info record: the id Go mints with `uuid.New()`
+    // for its DDL owner, and the address/ports/labels a peer would read.
+    // With no etcd client the syncer publishes nothing and answers reads
+    // with this node alone -- Go's `etcdCli == nil` path, and exactly what
+    // `information_schema.TIDB_SERVERS_INFO` shows on a single node.
+    let server_info = Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(
+        node_server_info(config),
+        None,
+    ));
     let cop_source = Arc::new(tidb_exec::cop_scan::CopScanSource::new(transport_factory));
     let cop_scans: Arc<dyn tidb_executor::remote_scan::PushdownScanner> =
         Arc::clone(&cop_source) as _;
@@ -499,7 +533,8 @@ pub(crate) fn unistore_cluster_session_stack(
             IN_PROCESS_TIMEOUT,
         )),
     )
-    .with_cop_scans(cop_scans);
+    .with_cop_scans(cop_scans)
+    .with_server_info(server_info);
 
     Ok(UnistoreClusterStack {
         factory,

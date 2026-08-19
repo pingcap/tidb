@@ -11,6 +11,9 @@ autotests = false
 build = "../../scripts/aggregate-tests.rs"
 
 [dependencies]
+# `information_schema.TIDB_SERVERS_INFO` reads the server-info syncer, the
+# same source Go's `setDataForServersInfo` reads through `GetAllServerInfo`.
+tidb-domain = { path = "../tidb-domain" }
 tidb-ast = { path = "../tidb-ast" }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }

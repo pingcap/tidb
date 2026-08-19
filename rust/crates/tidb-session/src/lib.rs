@@ -406,6 +406,14 @@ pub struct Session {
     /// lazily opened cluster snapshot becomes visible inside the statement
     /// that opened it.
     current_tso: tidb_executor::CurrentTso,
+    /// The node's server-info syncer, when the deployment has one.
+    ///
+    /// Go reads `information_schema.TIDB_SERVERS_INFO` through
+    /// `infosync.GetAllServerInfo`, which answers the whole cluster when an
+    /// etcd client is present and THIS node alone when it is not. `None`
+    /// here is the tier that has no node identity at all -- an embedded
+    /// session -- and reads back as an empty table.
+    server_info_syncer: Option<std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>>,
     /// Go `StmtCtx.LastInsertID`/`LastInsertIDSet`: the id the RUNNING
     /// statement publishes. The session owns the cell and lends it to every
     /// [`tidb_executor::StmtContext`] the statement builds, so an allocating
@@ -549,6 +557,7 @@ impl Default for Session {
             last_found_rows: 0,
             statement_kind: StatementKind::Other,
             current_tso: tidb_executor::CurrentTso::default(),
+            server_info_syncer: None,
             published_last_insert_id: Rc::default(),
             retry_auto_ids: Rc::default(),
             row_id_shards: Rc::default(),
@@ -648,6 +657,55 @@ impl Session {
     #[must_use]
     pub fn current_tso(&self) -> tidb_executor::CurrentTso {
         self.current_tso.clone()
+    }
+
+    /// Binds the node's server-info syncer, which is what
+    /// `information_schema.TIDB_SERVERS_INFO` reads.
+    pub fn set_server_info_syncer(
+        &mut self,
+        syncer: std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>,
+    ) {
+        self.server_info_syncer = Some(syncer);
+    }
+
+    /// Go `setDataForServersInfo` (`infoschema_reader.go:2730`): one row per
+    /// server `GetAllServerInfo` reports, in Go's column order.
+    ///
+    /// Without a syncer the table is EMPTY rather than invented: a tier with
+    /// no node identity has no server to report. With one and no etcd
+    /// client, the syncer answers this node alone -- Go's `etcdCli == nil`
+    /// path -- and the same call picks up peers once a client is present.
+    ///
+    /// The rows are ordered by id so the table reads deterministically;
+    /// Go's map iteration leaves the order unspecified.
+    pub(crate) fn tidb_servers_info_table_rows(&self) -> Vec<Vec<tidb_datatype::Datum>> {
+        use tidb_datatype::Datum;
+        let Some(syncer) = self.server_info_syncer.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(all) = syncer.all_server_info() else {
+            return Vec::new();
+        };
+        let mut ids: Vec<&String> = all.keys().collect();
+        ids.sort();
+        ids.into_iter()
+            .map(|id| {
+                let info = &all[id];
+                let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
+                vec![
+                    text(&info.static_info.id),
+                    text(&info.static_info.ip),
+                    Datum::Int(i64::from(info.static_info.port)),
+                    Datum::Int(i64::from(info.static_info.status_port)),
+                    text(&info.static_info.lease),
+                    text(&info.static_info.version_info.version),
+                    text(&info.static_info.version_info.git_hash),
+                    text(&tidb_domain::serverinfo_syncer::build_string_from_labels(
+                        &info.dynamic_info.labels,
+                    )),
+                ]
+            })
+            .collect()
     }
 
     /// A fresh session with its own empty catalog.

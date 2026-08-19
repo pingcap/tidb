@@ -8,6 +8,13 @@
 # `TiDBStrictIntegerDisplayWidth` is set, which it is on a server). The
 # integer display widths below were therefore stripped; every other byte is
 # the capture verbatim.
+#
+# ONE BLOCK IS DERIVED, NOT CAPTURED: `TIDB_SERVERS_INFO` was added after
+# this capture was taken, so its block is written from Go's own column
+# declarations (`pkg/infoschema/tables.go`'s `tableTiDBServersInfoCols`:
+# name, type and size, with no flags and no defaults) rendered under the
+# conventions every captured block above establishes. Re-capture it the
+# next time `gorun` is available.
 CREATE TABLE `SCHEMATA` (
   `CATALOG_NAME` varchar(512) DEFAULT NULL,
   `SCHEMA_NAME` varchar(64) DEFAULT NULL,
@@ -171,6 +178,16 @@ CREATE TABLE `SCHEMA_PRIVILEGES` (
   `TABLE_SCHEMA` varchar(64) NOT NULL,
   `PRIVILEGE_TYPE` varchar(64) NOT NULL,
   `IS_GRANTABLE` varchar(3) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+CREATE TABLE `TIDB_SERVERS_INFO` (
+  `DDL_ID` varchar(64) DEFAULT NULL,
+  `IP` varchar(64) DEFAULT NULL,
+  `PORT` bigint DEFAULT NULL,
+  `STATUS_PORT` bigint DEFAULT NULL,
+  `LEASE` varchar(64) DEFAULT NULL,
+  `VERSION` varchar(64) DEFAULT NULL,
+  `GIT_HASH` varchar(64) DEFAULT NULL,
+  `LABELS` varchar(128) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 CREATE TABLE `TABLE_PRIVILEGES` (
   `GRANTEE` varchar(81) NOT NULL,

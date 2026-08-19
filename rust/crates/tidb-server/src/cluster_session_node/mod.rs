@@ -357,6 +357,11 @@ pub struct ClusterSessionFactory {
     /// The coprocessor this node's sessions serve base-table scans with, when
     /// it was given one. `None` keeps every scan on the raw key/value path.
     cop_scans: Option<Arc<dyn PushdownScanner>>,
+    /// This node's server-info syncer, which
+    /// `information_schema.TIDB_SERVERS_INFO` reads. `None` leaves that
+    /// table empty, which is the honest answer for a node that never
+    /// established an identity.
+    server_info: Option<Arc<tidb_domain::serverinfo_syncer::Syncer>>,
     /// Go's one process-wide `GlobalVarsAccessor`.
     global_vars: GlobalSysvars,
     /// The tables of the boot catalog no session can include, kept so the
@@ -411,6 +416,7 @@ impl ClusterSessionFactory {
             processes: ProcessRegistry::default(),
             auto_ids,
             cop_scans: None,
+            server_info: None,
             global_vars,
             boot_skipped,
             stats,
@@ -451,6 +457,17 @@ impl ClusterSessionFactory {
     /// merged client-side and re-tested by the same predicate (see
     /// [`tidb_executor::remote_scan`]).
     #[must_use]
+    /// Binds the node's server-info syncer for
+    /// `information_schema.TIDB_SERVERS_INFO`.
+    #[must_use]
+    pub fn with_server_info(
+        mut self,
+        syncer: Arc<tidb_domain::serverinfo_syncer::Syncer>,
+    ) -> Self {
+        self.server_info = Some(syncer);
+        self
+    }
+
     pub fn with_cop_scans(mut self, scanner: Arc<dyn PushdownScanner>) -> Self {
         self.cop_scans = Some(scanner);
         self
@@ -496,6 +513,9 @@ impl QuerySessionFactory for ClusterSessionFactory {
             Arc::clone(&self.transactions),
         )));
         session.set_version_info(context.version_info.clone());
+        if let Some(syncer) = self.server_info.as_ref() {
+            session.set_server_info_syncer(Arc::clone(syncer));
+        }
         session.set_server_start_timestamp(
             crate::real_tikv_node::server_start_unix_timestamp(),
         );
