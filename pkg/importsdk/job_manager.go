@@ -232,7 +232,7 @@ func scanRawStatus(rows *sql.Rows) (*JobStatus, error) {
 		return nil, errors.Trace(err)
 	}
 
-	stats := &jobstats.RawImportJobStats{}
+	stats := &jobstats.RawStats{}
 	if err := json.Unmarshal([]byte(rawStats), stats); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -252,7 +252,7 @@ func scanRawStatus(rows *sql.Rows) (*JobStatus, error) {
 	return statusFromRaw(stats), nil
 }
 
-func statusFromRaw(stats *jobstats.RawImportJobStats) *JobStatus {
+func statusFromRaw(stats *jobstats.RawStats) *JobStatus {
 	status := &JobStatus{
 		JobID:               stats.JobID,
 		GroupKey:            stats.GroupKey,
@@ -263,7 +263,6 @@ func statusFromRaw(stats *jobstats.RawImportJobStats) *JobStatus {
 		Status:              stats.Status,
 		ContractVersion:     stats.Version,
 		StatusCategory:      stats.StatusCategory,
-		Terminal:            stats.Terminal,
 		SourceFileSizeBytes: stats.SourceFileSizeBytes,
 		Error:               stats.Error,
 		Summary:             stats.Summary,
@@ -301,7 +300,7 @@ func statusFromRaw(stats *jobstats.RawImportJobStats) *JobStatus {
 	return status
 }
 
-func fillLegacyProgress(status *JobStatus, step *jobstats.RawImportJobStepStats) {
+func fillLegacyProgress(status *JobStatus, step *jobstats.RawStepStats) {
 	status.Step = step.Name
 	conflictStep := step.Name == "collect-conflicts" || step.Name == "conflict-resolution"
 	var processed, total int64
@@ -331,7 +330,7 @@ func fillLegacyProgress(status *JobStatus, step *jobstats.RawImportJobStepStats)
 	}
 }
 
-func legacyResult(stats *jobstats.RawImportJobStats) string {
+func legacyResult(stats *jobstats.RawStats) string {
 	if stats.Status != importer.JobStatusFinished {
 		if stats.Error != nil {
 			return stats.Error.Message

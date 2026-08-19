@@ -114,9 +114,8 @@ type JobStatus struct {
 	// structured fields below are unavailable and retain their zero values.
 	ContractVersion int
 	StatusCategory  string
-	Terminal        bool
-	Error           *jobstats.RawImportJobError
-	Summary         *jobstats.RawImportJobSummary
+	Error           *jobstats.RawError
+	Summary         *jobstats.RawSummary
 	CreateTime      time.Time
 	StartTime       time.Time
 	EndTime         time.Time
@@ -126,7 +125,7 @@ type JobStatus struct {
 	StartTimeUnix   int64
 	EndTimeUnix     int64
 	UpdateTimeUnix  int64
-	CurrentStep     *jobstats.RawImportJobStepStats
+	CurrentStep     *jobstats.RawStepStats
 	Step            string
 	ProcessedSize   string
 	TotalSize       string
@@ -153,7 +152,7 @@ func (s *JobStatus) IsCancelled() bool {
 // IsCompleted returns true if the job is in a terminal state.
 func (s *JobStatus) IsCompleted() bool {
 	if s.ContractVersion > 0 {
-		return s.Terminal
+		return s.StatusCategory == jobstats.StatusCategoryTerminal
 	}
 	return s.IsFinished() || s.IsFailed() || s.IsCancelled()
 }

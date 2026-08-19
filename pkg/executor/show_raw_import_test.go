@@ -29,7 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildRawImportJobStats(t *testing.T) {
+func TestBuildRawStats(t *testing.T) {
 	loc := time.UTC
 	t2024 := types.NewTime(types.FromGoTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)), mysql.TypeTimestamp, 0)
 	t2025 := types.NewTime(types.FromGoTime(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)), mysql.TypeTimestamp, 0)
@@ -72,7 +72,7 @@ func TestBuildRawImportJobStats(t *testing.T) {
 	require.Equal(t, "importing", stats.Phase)
 	require.Equal(t, importer.JobStatusRunning, stats.Status)
 	require.Equal(t, jobstats.StatusCategoryRunning, stats.StatusCategory)
-	require.False(t, stats.Terminal)
+	require.False(t, stats.IsCompleted())
 	require.Equal(t, int64(123), stats.SourceFileSizeBytes)
 	require.Equal(t, "u@h", stats.CreatedBy)
 	rawJSON, err := json.Marshal(stats)
@@ -80,6 +80,7 @@ func TestBuildRawImportJobStats(t *testing.T) {
 	require.NotContains(t, string(rawJSON), "job_id")
 	require.NotContains(t, string(rawJSON), "group_key")
 	require.NotContains(t, string(rawJSON), "error_message")
+	require.NotContains(t, string(rawJSON), "terminal")
 	require.Contains(t, string(rawJSON), "job_phase")
 
 	require.NotNil(t, stats.ImportedRows)
@@ -127,7 +128,6 @@ func TestBuildRawImportJobStats(t *testing.T) {
 	require.NotNil(t, stats.ImportedRows)
 	require.Equal(t, int64(99), *stats.ImportedRows)
 	require.Equal(t, jobstats.StatusCategoryTerminal, stats.StatusCategory)
-	require.True(t, stats.Terminal)
 	require.True(t, stats.IsCompleted())
 	require.NotNil(t, stats.Summary)
 	require.Equal(t, int64(99), stats.Summary.ImportedRows)

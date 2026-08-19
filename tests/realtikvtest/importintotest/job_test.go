@@ -170,7 +170,7 @@ func (s *mockGCSSuite) TestShowJob() {
 		rawRows := s.tk.MustQuery(fmt.Sprintf("show raw import job %d", importer.TestLastImportJobID.Load())).Rows()
 		s.Len(rawRows, 1)
 		rawStatsBytes := []byte(fmt.Sprintf("%s", rawRows[0][2]))
-		var rawStats jobstats.RawImportJobStats
+		var rawStats jobstats.RawStats
 		s.NoError(json.Unmarshal(rawStatsBytes, &rawStats))
 		s.Equal(strconv.Itoa(int(jobInfo.ID)), rawRows[0][0])
 		s.Equal("<nil>", fmt.Sprintf("%v", rawRows[0][1]))
@@ -189,7 +189,7 @@ func (s *mockGCSSuite) TestShowJob() {
 		s.Equal(jobInfo.Step, rawStats.Phase)
 		s.Equal(jobInfo.Status, rawStats.Status)
 		s.Equal(jobstats.StatusCategoryTerminal, rawStats.StatusCategory)
-		s.True(rawStats.Terminal)
+		s.True(rawStats.IsCompleted())
 		s.Equal(jobInfo.SourceFileSize, rawStats.SourceFileSizeBytes)
 		s.NotNil(rawStats.ImportedRows)
 		s.Equal(jobInfo.Summary.ImportedRows, *rawStats.ImportedRows)
@@ -312,15 +312,15 @@ func (s *mockGCSSuite) TestShowJob() {
 						}
 					}
 					s.NotNil(rawFromList)
-					var singularStats, pluralStats jobstats.RawImportJobStats
+					var singularStats, pluralStats jobstats.RawStats
 					s.NoError(json.Unmarshal([]byte(fmt.Sprintf("%s", rawByID[0][2])), &singularStats))
 					s.NoError(json.Unmarshal([]byte(fmt.Sprintf("%s", rawFromList[2])), &pluralStats))
 					s.Equal("running", singularStats.Status)
-					s.False(singularStats.Terminal)
+					s.False(singularStats.IsCompleted())
 					s.NotNil(singularStats.CurrentStep)
 					s.NotEmpty(singularStats.CurrentStep.Name)
 					s.Equal(singularStats.Status, pluralStats.Status)
-					s.Equal(singularStats.Terminal, pluralStats.Terminal)
+					s.Equal(singularStats.StatusCategory, pluralStats.StatusCategory)
 					s.Equal(singularStats.CurrentStep, pluralStats.CurrentStep)
 				}
 
@@ -374,7 +374,7 @@ func (s *mockGCSSuite) TestShowJob() {
 		wantJobIDs := map[int64]struct{}{jobID4: {}, jobID5: {}}
 		for _, r := range rawList {
 			b := []byte(fmt.Sprintf("%s", r[2]))
-			var st jobstats.RawImportJobStats
+			var st jobstats.RawStats
 			s.NoError(json.Unmarshal(b, &st))
 			s.Equal(groupKey, r[1])
 			jobID, err := strconv.ParseInt(fmt.Sprintf("%s", r[0]), 10, 64)

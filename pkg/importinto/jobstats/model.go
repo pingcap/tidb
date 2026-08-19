@@ -29,24 +29,24 @@ const (
 	StatusCategoryUnknown         = "unknown"
 )
 
-// ClassifyStatus derives all stable status metadata from one source of truth.
-func ClassifyStatus(status string) (category string, terminal bool) {
+// ClassifyStatus derives the stable status category.
+func ClassifyStatus(status string) string {
 	switch status {
 	case "pending":
-		return StatusCategoryPending, false
+		return StatusCategoryPending
 	case "running":
-		return StatusCategoryRunning, false
+		return StatusCategoryRunning
 	case "finished", "failed", "cancelled":
-		return StatusCategoryTerminal, true
+		return StatusCategoryTerminal
 	case "awaiting-resolution":
-		return StatusCategoryAttentionNeeded, false
+		return StatusCategoryAttentionNeeded
 	default:
-		return StatusCategoryUnknown, false
+		return StatusCategoryUnknown
 	}
 }
 
-// RawImportJobStats is the versioned machine-readable import-job contract.
-type RawImportJobStats struct {
+// RawStats is the versioned machine-readable import-job contract.
+type RawStats struct {
 	// JobID and GroupKey are supplied by the top-level SQL columns and are not
 	// duplicated in Raw_Stats JSON.
 	JobID    int64  `json:"-"`
@@ -62,15 +62,14 @@ type RawImportJobStats struct {
 	Phase          string `json:"job_phase,omitempty"`
 	Status         string `json:"status,omitempty"`
 	StatusCategory string `json:"status_category,omitempty"`
-	Terminal       bool   `json:"terminal"`
 
 	SourceFileSizeBytes int64  `json:"source_file_size_bytes,omitempty"`
 	ImportedRows        *int64 `json:"imported_rows,omitempty"`
 
-	Error   *RawImportJobError   `json:"error,omitempty"`
-	Summary *RawImportJobSummary `json:"summary,omitempty"`
+	Error   *RawError   `json:"error,omitempty"`
+	Summary *RawSummary `json:"summary,omitempty"`
 
-	CurrentStep *RawImportJobStepStats `json:"current_step,omitempty"`
+	CurrentStep *RawStepStats `json:"current_step,omitempty"`
 
 	// Times are UNIX seconds.
 	CreateTimeUnix int64 `json:"create_time_unix,omitempty"`
@@ -81,33 +80,32 @@ type RawImportJobStats struct {
 	CreatedBy string `json:"created_by,omitempty"`
 }
 
-// RawImportJobError contains one canonical diagnostic message plus actionable
-// metadata. Job outcome and terminal state are represented by the parent stats.
-type RawImportJobError struct {
+// RawError contains one canonical diagnostic message plus actionable metadata.
+type RawError struct {
 	Message            string `json:"message,omitempty"`
 	Retryable          *bool  `json:"retryable,omitempty"`
 	UserActionRequired bool   `json:"user_action_required,omitempty"`
 }
 
-// RawImportJobSummary is a persisted summary snapshot. It may be partial while
-// Terminal is false; consumers must use Terminal to determine finality.
-type RawImportJobSummary struct {
-	Steps            []RawImportJobStepSummary `json:"steps,omitempty"`
-	ImportedRows     int64                     `json:"imported_rows,omitempty"`
-	ConflictRows     uint64                    `json:"conflict_rows,omitempty"`
-	TooManyConflicts bool                      `json:"too_many_conflicts,omitempty"`
+// RawSummary is a persisted summary snapshot. It may be partial while the job
+// is non-terminal; consumers must use StatusCategory to determine finality.
+type RawSummary struct {
+	Steps            []RawStepSummary `json:"steps,omitempty"`
+	ImportedRows     int64            `json:"imported_rows,omitempty"`
+	ConflictRows     uint64           `json:"conflict_rows,omitempty"`
+	TooManyConflicts bool             `json:"too_many_conflicts,omitempty"`
 }
 
-// RawImportJobStepSummary describes persisted per-step job-domain totals.
-type RawImportJobStepSummary struct {
+// RawStepSummary describes persisted per-step job-domain totals.
+type RawStepSummary struct {
 	Name           string `json:"name,omitempty"`
 	InputBytes     int64  `json:"input_bytes,omitempty"`
 	InputRows      int64  `json:"input_rows,omitempty"`
 	InputConflicts int64  `json:"input_conflicts,omitempty"`
 }
 
-// RawImportJobStepStats describes progress for the currently running step.
-type RawImportJobStepStats struct {
+// RawStepStats describes progress for the currently running step.
+type RawStepStats struct {
 	Name string `json:"name,omitempty"`
 
 	ProcessedBytes   int64 `json:"processed_bytes,omitempty"`
@@ -122,13 +120,13 @@ type RawImportJobStepStats struct {
 }
 
 // IsFinished reports successful completion.
-func (s *RawImportJobStats) IsFinished() bool { return s.Status == "finished" }
+func (s *RawStats) IsFinished() bool { return s.Status == "finished" }
 
 // IsFailed reports failed completion.
-func (s *RawImportJobStats) IsFailed() bool { return s.Status == "failed" }
+func (s *RawStats) IsFailed() bool { return s.Status == "failed" }
 
 // IsCancelled reports cancelled completion.
-func (s *RawImportJobStats) IsCancelled() bool { return s.Status == "cancelled" }
+func (s *RawStats) IsCancelled() bool { return s.Status == "cancelled" }
 
-// IsCompleted consumes the contract's normalized terminal signal.
-func (s *RawImportJobStats) IsCompleted() bool { return s.Terminal }
+// IsCompleted consumes the contract's normalized status category.
+func (s *RawStats) IsCompleted() bool { return s.StatusCategory == StatusCategoryTerminal }

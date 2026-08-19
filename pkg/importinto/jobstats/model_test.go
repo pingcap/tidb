@@ -24,23 +24,20 @@ func TestClassifyStatus(t *testing.T) {
 	tests := []struct {
 		status   string
 		category string
-		terminal bool
 	}{
-		{"pending", StatusCategoryPending, false},
-		{"running", StatusCategoryRunning, false},
-		{"finished", StatusCategoryTerminal, true},
-		{"failed", StatusCategoryTerminal, true},
-		{"cancelled", StatusCategoryTerminal, true},
-		{"awaiting-resolution", StatusCategoryAttentionNeeded, false},
-		{"future-status", StatusCategoryUnknown, false},
+		{"pending", StatusCategoryPending},
+		{"running", StatusCategoryRunning},
+		{"finished", StatusCategoryTerminal},
+		{"failed", StatusCategoryTerminal},
+		{"cancelled", StatusCategoryTerminal},
+		{"awaiting-resolution", StatusCategoryAttentionNeeded},
+		{"future-status", StatusCategoryUnknown},
 	}
 	for _, tt := range tests {
-		category, terminal := ClassifyStatus(tt.status)
-		require.Equal(t, tt.category, category)
-		require.Equal(t, tt.terminal, terminal)
+		require.Equal(t, tt.category, ClassifyStatus(tt.status))
 	}
 
-	// Completion consumes the normalized field rather than duplicating status
+	// Completion consumes the normalized category rather than duplicating status
 	// string classification in each consumer.
-	require.True(t, (&RawImportJobStats{Status: "future-terminal", Terminal: true}).IsCompleted())
+	require.True(t, (&RawStats{Status: "future-terminal", StatusCategory: StatusCategoryTerminal}).IsCompleted())
 }

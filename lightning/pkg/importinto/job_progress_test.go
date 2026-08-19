@@ -34,7 +34,7 @@ func TestJobProgressEstimator_NonGlobalSort(t *testing.T) {
 		JobID:  jobID,
 		Status: "running",
 		Phase:  "importing",
-		CurrentStep: &jobstats.RawImportJobStepStats{
+		CurrentStep: &jobstats.RawStepStats{
 			Name:           "import",
 			ProcessedBytes: 50 * mb,
 			TotalBytes:     100 * mb,
@@ -67,7 +67,7 @@ func TestJobProgressEstimator_GlobalSort(t *testing.T) {
 		JobID:  jobID,
 		Status: "running",
 		Phase:  "global-sorting",
-		CurrentStep: &jobstats.RawImportJobStepStats{
+		CurrentStep: &jobstats.RawStepStats{
 			Name:           "encode",
 			ProcessedBytes: 50 * mb,
 			TotalBytes:     100 * mb,
@@ -93,7 +93,7 @@ func TestJobProgressEstimator_GlobalSort(t *testing.T) {
 		JobID:  jobID,
 		Status: "running",
 		Phase:  "global-sorting",
-		CurrentStep: &jobstats.RawImportJobStepStats{
+		CurrentStep: &jobstats.RawStepStats{
 			Name:           "merge-sort",
 			ProcessedBytes: 0,
 			TotalBytes:     100 * mb,
@@ -105,7 +105,7 @@ func TestJobProgressEstimator_GlobalSort(t *testing.T) {
 		JobID:  jobID,
 		Status: "running",
 		Phase:  "resolving-conflicts",
-		CurrentStep: &jobstats.RawImportJobStepStats{
+		CurrentStep: &jobstats.RawStepStats{
 			Name:               "conflict-resolution",
 			ProcessedConflicts: 3,
 			TotalConflicts:     4,

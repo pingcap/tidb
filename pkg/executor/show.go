@@ -2650,19 +2650,19 @@ func rawBool(v bool) *bool {
 	return &v
 }
 
-func buildRawJobError(status, message string) *jobstats.RawImportJobError {
+func buildRawJobError(status, message string) *jobstats.RawError {
 	switch status {
 	case "failed":
-		return &jobstats.RawImportJobError{
+		return &jobstats.RawError{
 			Message: message,
 		}
 	case "cancelled":
-		return &jobstats.RawImportJobError{
+		return &jobstats.RawError{
 			Message:   message,
 			Retryable: rawBool(false),
 		}
 	case string(proto.TaskStateAwaitingResolution):
-		return &jobstats.RawImportJobError{
+		return &jobstats.RawError{
 			Message:            message,
 			UserActionRequired: true,
 		}
@@ -2670,17 +2670,17 @@ func buildRawJobError(status, message string) *jobstats.RawImportJobError {
 		if message == "" {
 			return nil
 		}
-		return &jobstats.RawImportJobError{
+		return &jobstats.RawError{
 			Message: message,
 		}
 	}
 }
 
-func buildRawJobSummary(summary *importer.Summary) *jobstats.RawImportJobSummary {
+func buildRawJobSummary(summary *importer.Summary) *jobstats.RawSummary {
 	if summary == nil {
 		return nil
 	}
-	raw := &jobstats.RawImportJobSummary{
+	raw := &jobstats.RawSummary{
 		ImportedRows:     summary.ImportedRows,
 		ConflictRows:     summary.ConflictRowCnt,
 		TooManyConflicts: summary.TooManyConflicts,
@@ -2689,7 +2689,7 @@ func buildRawJobSummary(summary *importer.Summary) *jobstats.RawImportJobSummary
 		if summary.Bytes == 0 && summary.RowCnt == 0 {
 			return
 		}
-		step := jobstats.RawImportJobStepSummary{Name: name}
+		step := jobstats.RawStepSummary{Name: name}
 		if conflictStep {
 			step.InputConflicts = summary.RowCnt
 		} else {
@@ -2711,7 +2711,7 @@ func buildRawJobStats(
 	location *time.Location,
 	info *importer.JobInfo,
 	runInfo *importinto.RuntimeInfo,
-) (*jobstats.RawImportJobStats, error) {
+) (*jobstats.RawStats, error) {
 	if location == nil {
 		location = time.UTC
 	}
@@ -2728,8 +2728,8 @@ func buildRawJobStats(
 		return nil
 	}
 
-	statusCategory, terminal := jobstats.ClassifyStatus(info.Status)
-	stats := &jobstats.RawImportJobStats{
+	statusCategory := jobstats.ClassifyStatus(info.Status)
+	stats := &jobstats.RawStats{
 		Version:             jobstats.ContractVersion,
 		JobID:               info.ID,
 		GroupKey:            info.GroupKey,
@@ -2739,7 +2739,6 @@ func buildRawJobStats(
 		Phase:               info.Step,
 		Status:              info.Status,
 		StatusCategory:      statusCategory,
-		Terminal:            terminal,
 		SourceFileSizeBytes: info.SourceFileSize,
 		Error:               buildRawJobError(info.Status, info.ErrorMessage),
 		Summary:             buildRawJobSummary(info.Summary),
@@ -2750,7 +2749,7 @@ func buildRawJobStats(
 		importedRows := runInfo.ImportRows
 		stats.ImportedRows = &importedRows
 
-		step := jobstats.RawImportJobStepStats{
+		step := jobstats.RawStepStats{
 			Name: proto.Step2Str(proto.ImportInto, runInfo.Step),
 		}
 		if isImportConflictStep(runInfo.Step) {

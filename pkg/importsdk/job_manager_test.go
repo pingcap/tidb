@@ -82,7 +82,7 @@ func TestGetJobStatus(t *testing.T) {
 	cols := []string{"Job_ID", "Group_Key", "Raw_Stats"}
 
 	// Case 1: Success
-	raw := []byte(`{"version":1,"status":"finished","status_category":"terminal","terminal":true,"source_file_size_bytes":100,"imported_rows":1000,"summary":{"imported_rows":1000,"conflict_rows":3,"too_many_conflicts":true},"create_time_unix":1672567200,"created_by":"root@%"}`)
+	raw := []byte(`{"version":1,"status":"finished","status_category":"terminal","source_file_size_bytes":100,"imported_rows":1000,"summary":{"imported_rows":1000,"conflict_rows":3,"too_many_conflicts":true},"create_time_unix":1672567200,"created_by":"root@%"}`)
 	rows := sqlmock.NewRows(cols).AddRow(jobID, nil, raw)
 	mock.ExpectQuery("SHOW RAW IMPORT JOB 123").WillReturnRows(rows)
 
@@ -96,7 +96,7 @@ func TestGetJobStatus(t *testing.T) {
 	require.Equal(t, "3 conflicted rows. Too many conflicted rows, checksum skipped.", status.ResultMessage)
 	require.Equal(t, jobstats.ContractVersion, status.ContractVersion)
 	require.Equal(t, jobstats.StatusCategoryTerminal, status.StatusCategory)
-	require.True(t, status.Terminal)
+	require.True(t, status.IsCompleted())
 	require.NotNil(t, status.Summary)
 	require.Equal(t, int64(1000), status.Summary.ImportedRows)
 	require.Equal(t, "root@%", status.CreatedBy)
@@ -134,11 +134,11 @@ func TestRawJobStatusRejectsUnsupportedContractVersion(t *testing.T) {
 
 func TestJobStatusFromRawStatsPreservesLegacyFields(t *testing.T) {
 	remaining := int64(9)
-	status := statusFromRaw(&jobstats.RawImportJobStats{
+	status := statusFromRaw(&jobstats.RawStats{
 		Version:             jobstats.ContractVersion,
 		Status:              importer.JobStatusRunning,
 		SourceFileSizeBytes: 100 * 1024 * 1024,
-		CurrentStep: &jobstats.RawImportJobStepStats{
+		CurrentStep: &jobstats.RawStepStats{
 			Name:             "import",
 			ProcessedBytes:   50 * 1024 * 1024,
 			TotalBytes:       100 * 1024 * 1024,
@@ -180,10 +180,10 @@ func TestJobStatusFromRawStatsPreservesLegacyFields(t *testing.T) {
 	require.NoError(t, rows.Close())
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	status = statusFromRaw(&jobstats.RawImportJobStats{
+	status = statusFromRaw(&jobstats.RawStats{
 		Version: jobstats.ContractVersion,
 		Status:  importer.JobStatusFinished,
-		Summary: &jobstats.RawImportJobSummary{
+		Summary: &jobstats.RawSummary{
 			ConflictRows:     2,
 			TooManyConflicts: true,
 		},
@@ -332,10 +332,10 @@ func TestGetJobsByGroup(t *testing.T) {
 	// Case 1: Success
 	rows := sqlmock.NewRows(cols).
 		AddRow(
-			int64(1), groupKey, []byte(`{"version":1,"status":"finished","status_category":"terminal","terminal":true}`),
+			int64(1), groupKey, []byte(`{"version":1,"status":"finished","status_category":"terminal"}`),
 		).
 		AddRow(
-			int64(2), groupKey, []byte(`{"version":1,"status":"running","status_category":"running","terminal":false,"job_phase":"importing","current_step":{"name":"import","processed_bytes":50,"total_bytes":100}}`),
+			int64(2), groupKey, []byte(`{"version":1,"status":"running","status_category":"running","job_phase":"importing","current_step":{"name":"import","processed_bytes":50,"total_bytes":100}}`),
 		)
 	mock.ExpectQuery("SHOW RAW IMPORT JOBS WHERE GROUP_KEY = 'test_group'").WillReturnRows(rows)
 

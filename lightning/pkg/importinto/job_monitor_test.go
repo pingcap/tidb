@@ -59,7 +59,7 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 						JobID:  1,
 						Status: "running",
 						Phase:  "importing",
-						CurrentStep: &jobstats.RawImportJobStepStats{
+						CurrentStep: &jobstats.RawStepStats{
 							Name:           "import",
 							ProcessedBytes: 50 * mb,
 							TotalBytes:     100 * mb,
@@ -193,7 +193,7 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 						JobID:  1,
 						Status: "running",
 						Phase:  "importing",
-						CurrentStep: &jobstats.RawImportJobStepStats{
+						CurrentStep: &jobstats.RawStepStats{
 							Name:           "import",
 							ProcessedBytes: 100 * mb,
 							TotalBytes:     100 * mb,
@@ -212,7 +212,7 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 						JobID:  2,
 						Status: "running",
 						Phase:  "importing",
-						CurrentStep: &jobstats.RawImportJobStepStats{
+						CurrentStep: &jobstats.RawStepStats{
 							Name:           "import",
 							ProcessedBytes: 2 * mb,
 							TotalBytes:     400 * mb,
@@ -273,14 +273,14 @@ func TestJobMonitorVersionedTerminalStates(t *testing.T) {
 		{
 			name: "finished",
 			statuses: [][]*importsdk.JobStatus{{
-				{JobID: 1, Status: "finished", ContractVersion: jobstats.ContractVersion, Terminal: true},
+				{JobID: 1, Status: "finished", ContractVersion: jobstats.ContractVersion, StatusCategory: jobstats.StatusCategoryTerminal},
 			}},
 			wantStatus: importinto.CheckpointStatusFinished,
 		},
 		{
 			name: "failed",
 			statuses: [][]*importsdk.JobStatus{{
-				{JobID: 1, Status: "failed", ContractVersion: jobstats.ContractVersion, Terminal: true},
+				{JobID: 1, Status: "failed", ContractVersion: jobstats.ContractVersion, StatusCategory: jobstats.StatusCategoryTerminal},
 			}},
 			wantStatus: importinto.CheckpointStatusFailed,
 			wantErr:    true,
@@ -288,7 +288,7 @@ func TestJobMonitorVersionedTerminalStates(t *testing.T) {
 		{
 			name: "cancelled",
 			statuses: [][]*importsdk.JobStatus{{
-				{JobID: 1, Status: "cancelled", ContractVersion: jobstats.ContractVersion, Terminal: true},
+				{JobID: 1, Status: "cancelled", ContractVersion: jobstats.ContractVersion, StatusCategory: jobstats.StatusCategoryTerminal},
 			}},
 			wantStatus: importinto.CheckpointStatusFailed,
 			wantErr:    true,
@@ -296,15 +296,15 @@ func TestJobMonitorVersionedTerminalStates(t *testing.T) {
 		{
 			name: "awaiting resolution is not terminal",
 			statuses: [][]*importsdk.JobStatus{
-				{{JobID: 1, Status: "awaiting-resolution", ContractVersion: jobstats.ContractVersion, Terminal: false}},
-				{{JobID: 1, Status: "finished", ContractVersion: jobstats.ContractVersion, Terminal: true}},
+				{{JobID: 1, Status: "awaiting-resolution", ContractVersion: jobstats.ContractVersion, StatusCategory: jobstats.StatusCategoryAttentionNeeded}},
+				{{JobID: 1, Status: "finished", ContractVersion: jobstats.ContractVersion, StatusCategory: jobstats.StatusCategoryTerminal}},
 			},
 			wantStatus: importinto.CheckpointStatusFinished,
 		},
 		{
 			name: "unknown terminal status is an error",
 			statuses: [][]*importsdk.JobStatus{{
-				{JobID: 1, Status: "future-terminal", ContractVersion: jobstats.ContractVersion, Terminal: true},
+				{JobID: 1, Status: "future-terminal", ContractVersion: jobstats.ContractVersion, StatusCategory: jobstats.StatusCategoryTerminal},
 			}},
 			wantStatus: importinto.CheckpointStatusFailed,
 			wantErr:    true,
