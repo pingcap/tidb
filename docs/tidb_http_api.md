@@ -761,7 +761,7 @@ timezone.*
      }
      ```
 
-     `can_disable` is true only when `table_count` is 0. If schema reload fails, the API returns HTTP 5xx instead of an empty success body.
+     `can_disable` is true only when `table_count` is 0. `tidb_columnar_storage_enabled` is always present as `ON` or `OFF` on HTTP 200; if the sysvar cannot be read, the API returns HTTP 5xx instead of omitting the field. If schema reload fails, the API also returns HTTP 5xx instead of an empty success body. Old kernels do not serve this endpoint.
 
 ## Test-only APIs (enableTestAPI failpoint)
 
