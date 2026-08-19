@@ -401,6 +401,137 @@ impl Syncer {
     }
 }
 
+
+/// How often each loop ticks. Go's own intervals are the defaults; the
+/// tests below shorten them, which is the only reason this is a struct
+/// rather than two constants.
+#[derive(Clone, Copy, Debug)]
+pub struct SyncIntervals {
+    /// How often the server-info session's lease is refreshed. Go has no
+    /// explicit constant: `concurrency.Session`'s keepalive runs at the
+    /// lease's own cadence, so half the TTL is the port's spelling of
+    /// "comfortably before it expires".
+    pub keep_alive: std::time::Duration,
+    /// Go `TopologyTimeToRefresh` (30s): how often the topology record and
+    /// its ttl stamp are rewritten.
+    pub topology_refresh: std::time::Duration,
+}
+
+impl Default for SyncIntervals {
+    fn default() -> Self {
+        Self {
+            keep_alive: std::time::Duration::from_secs(SESSION_TTL_SECONDS as u64 / 2),
+            topology_refresh: crate::serverinfo::TOPOLOGY_TIME_TO_REFRESH,
+        }
+    }
+}
+
+/// Go `ServerInfoSyncLoop` + `TopologySyncLoop`, as one owner.
+///
+/// # Go's `Done` channel, here
+///
+/// Go selects on `session.Done()`, which `concurrency.Session` closes when
+/// its keepalive loop loses the lease, and restarts the syncer. This port
+/// has no session object of its own, so the SAME event arrives as a
+/// FAILING keepalive (or a failing store): the loop then takes a new
+/// session and republishes, which is exactly what Go's restart does.
+///
+/// Dropping the runner stops both loops and removes this node's entries --
+/// Go's `RemoveServerInfo`/`RemoveTopologyInfo` on the shutdown path.
+pub struct SyncerRunner {
+    syncer: Arc<Syncer>,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    threads: Vec<std::thread::JoinHandle<()>>,
+}
+
+impl SyncerRunner {
+    /// Takes both sessions, publishes, and starts the two refresh loops.
+    ///
+    /// A failure to publish is returned rather than logged: startup has
+    /// nothing to keep alive if the first store never landed.
+    pub fn start(syncer: Arc<Syncer>, intervals: SyncIntervals) -> Result<Self, String> {
+        syncer.new_session_and_store_server_info()?;
+        syncer.new_topology_session_and_store_server_info()?;
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut threads = Vec::with_capacity(2);
+
+        let keepalive_syncer = Arc::clone(&syncer);
+        let keepalive_stop = Arc::clone(&stop);
+        let keep_alive = intervals.keep_alive;
+        threads.push(
+            std::thread::Builder::new()
+                .name("server-info-syncer".to_owned())
+                .spawn(move || {
+                    while !sleep_until_stopped(&keepalive_stop, keep_alive) {
+                        if keepalive_syncer.keep_alive_once().is_err() {
+                            // The lease is gone: Go's `Done` fired.
+                            let _ = keepalive_syncer.restart();
+                        }
+                    }
+                })
+                .map_err(|error| error.to_string())?,
+        );
+
+        let topology_syncer = Arc::clone(&syncer);
+        let topology_stop = Arc::clone(&stop);
+        let topology_refresh = intervals.topology_refresh;
+        threads.push(
+            std::thread::Builder::new()
+                .name("topology-syncer".to_owned())
+                .spawn(move || {
+                    while !sleep_until_stopped(&topology_stop, topology_refresh) {
+                        if topology_syncer.store_topology_info().is_err() {
+                            let _ = topology_syncer.restart_topology();
+                        }
+                    }
+                })
+                .map_err(|error| error.to_string())?,
+        );
+
+        Ok(Self {
+            syncer,
+            stop,
+            threads,
+        })
+    }
+
+    /// The syncer these loops refresh, for the reads a caller still wants.
+    #[must_use]
+    pub fn syncer(&self) -> &Arc<Syncer> {
+        &self.syncer
+    }
+}
+
+impl Drop for SyncerRunner {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        for thread in self.threads.drain(..) {
+            let _ = thread.join();
+        }
+        self.syncer.remove_server_info();
+        self.syncer.remove_topology_info();
+    }
+}
+
+/// Sleeps in short steps so a stop is noticed promptly rather than one
+/// whole interval later. Answers `true` when the loop must exit.
+fn sleep_until_stopped(
+    stop: &std::sync::atomic::AtomicBool,
+    interval: std::time::Duration,
+) -> bool {
+    const STEP: std::time::Duration = std::time::Duration::from_millis(20);
+    let mut slept = std::time::Duration::ZERO;
+    while slept < interval {
+        if stop.load(std::sync::atomic::Ordering::Acquire) {
+            return true;
+        }
+        let step = STEP.min(interval - slept);
+        std::thread::sleep(step);
+        slept += step;
+    }
+    stop.load(std::sync::atomic::Ordering::Acquire)
+}
+
 /// Go `net.JoinHostPort`: a host containing a colon -- a literal IPv6
 /// address -- is BRACKETED before the port is appended, so the topology
 /// key of an IPv6 node reads `/topology/tidb/[::1]:4000`. Everything else
@@ -432,8 +563,11 @@ mod tests {
     use super::*;
     use crate::serverinfo::StaticInfo;
 
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     #[derive(Default)]
     struct FakeEtcd {
+        fail_keepalives: AtomicBool,
         keys: Mutex<Vec<(String, Vec<u8>, i64)>>,
         leases: Mutex<Vec<i64>>,
         revoked: Mutex<Vec<i64>>,
@@ -466,6 +600,9 @@ mod tests {
         }
 
         fn lease_keep_alive_once(&self, lease: i64) -> Result<(), String> {
+            if self.fail_keepalives.load(Ordering::Acquire) {
+                return Err("lease not found".to_owned());
+            }
             self.keepalives.lock().unwrap().push(lease);
             Ok(())
         }
@@ -766,6 +903,74 @@ mod tests {
         assert_eq!(syncer.topology_prefix(), "/topology/tidb/[::1]:4000");
         syncer.new_topology_session_and_store_server_info().unwrap();
         assert!(etcd.value("/topology/tidb/[::1]:4000/info").is_some());
+    }
+
+
+    /// The runner publishes both halves at start, keeps the server-info
+    /// lease alive on its own cadence, rewrites the topology stamp on
+    /// its own, and removes BOTH entries when dropped.
+    #[test]
+    fn the_runner_refreshes_both_halves_and_cleans_up_on_drop() {
+        let etcd = Arc::new(FakeEtcd::default());
+        let syncer = Arc::new(Syncer::new(
+            info_at("uuid-1", "10.0.0.1", 4000),
+            Some(etcd.clone()),
+        ));
+        let intervals = SyncIntervals {
+            keep_alive: std::time::Duration::from_millis(20),
+            topology_refresh: std::time::Duration::from_millis(20),
+        };
+        let runner = SyncerRunner::start(Arc::clone(&syncer), intervals).unwrap();
+        assert!(etcd.value("/tidb/server/info/uuid-1").is_some());
+        assert!(etcd.value("/topology/tidb/10.0.0.1:4000/info").is_some());
+        let (first_ttl, _) = etcd.value("/topology/tidb/10.0.0.1:4000/ttl").unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert!(
+            !etcd.keepalives.lock().unwrap().is_empty(),
+            "the server-info lease is kept alive"
+        );
+        let (later_ttl, _) = etcd.value("/topology/tidb/10.0.0.1:4000/ttl").unwrap();
+        assert_ne!(first_ttl, later_ttl, "the topology stamp is refreshed");
+
+        drop(runner);
+        assert!(etcd.value("/tidb/server/info/uuid-1").is_none());
+        assert!(etcd.value("/topology/tidb/10.0.0.1:4000/info").is_none());
+        assert!(etcd.value("/topology/tidb/10.0.0.1:4000/ttl").is_none());
+    }
+
+    /// Go's `Done` case: a lost lease -- here, a failing keepalive --
+    /// makes the loop take a NEW session and republish, rather than
+    /// leaving this node invisible to its peers.
+    #[test]
+    fn a_lost_lease_restarts_the_session_and_republishes() {
+        let etcd = Arc::new(FakeEtcd::default());
+        let syncer = Arc::new(Syncer::new(
+            info_at("uuid-1", "10.0.0.1", 4000),
+            Some(etcd.clone()),
+        ));
+        let intervals = SyncIntervals {
+            keep_alive: std::time::Duration::from_millis(20),
+            // Long enough that only the keepalive loop acts here.
+            topology_refresh: std::time::Duration::from_secs(60),
+        };
+        let runner = SyncerRunner::start(Arc::clone(&syncer), intervals).unwrap();
+        let first = syncer.session_lease().unwrap();
+
+        // The lease is gone, and the entry with it -- what etcd does when
+        // a session expires.
+        etcd.fail_keepalives.store(true, Ordering::Release);
+        etcd.delete("/tidb/server/info/uuid-1").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        etcd.fail_keepalives.store(false, Ordering::Release);
+
+        let second = syncer.session_lease().expect("a new session was taken");
+        assert_ne!(second, first, "the restart takes a fresh lease");
+        let (_, lease) = etcd
+            .value("/tidb/server/info/uuid-1")
+            .expect("the entry is republished");
+        assert_eq!(lease, second);
+        drop(runner);
     }
 
     /// Go's `etcdCli == nil` deployment: nothing is published, and the
