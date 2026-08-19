@@ -557,7 +557,40 @@ impl Expression {
         match self {
             Expression::Column(c) => c.equal_column(other),
             Expression::CorrelatedColumn(c) => c.equal_column(other),
-            Expression::Constant(_) | Expression::ScalarFunction(_) => false,
+            // Go `Constant.Equal` (`constant.go:508`): both constants,
+            // values binary-compare equal. The deferred-expression Eval
+            // legs are this port's materialized values.
+            Expression::Constant(c) => {
+                let Expression::Constant(y) = other else {
+                    return false;
+                };
+                c.value
+                    .compare(&y.value, tidb_datatype::Collation::Binary)
+                    .map(|order| order == std::cmp::Ordering::Equal)
+                    .unwrap_or(false)
+            }
+            // Go `ScalarFunction.Equal` (`scalar_function.go:377`): same
+            // lowercased name, equal return types, pairwise-equal
+            // arguments.
+            Expression::ScalarFunction(sf) => {
+                let Expression::ScalarFunction(fun) = other else {
+                    return false;
+                };
+                if sf.func_name.lowercase() != fun.func_name.lowercase() {
+                    return false;
+                }
+                match (&sf.ret_type, &fun.ret_type) {
+                    (Some(left), Some(right)) if left.equal(right) => {}
+                    (None, None) => {}
+                    _ => return false,
+                }
+                sf.args.len() == fun.args.len()
+                    && sf
+                        .args
+                        .iter()
+                        .zip(&fun.args)
+                        .all(|(left, right)| left.equal(right))
+            }
         }
     }
 

@@ -26,6 +26,7 @@
 //! * `ranger.go`, `detacher.go` follow on this track, in dependency order.
 
 pub mod checker;
+pub mod detacher;
 pub mod points;
 pub mod ranger;
 pub mod types;
