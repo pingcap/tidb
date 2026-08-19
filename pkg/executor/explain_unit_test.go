@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	clientutil "github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 var (
@@ -171,6 +173,18 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
 		ctx.GetSessionVars().RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
 		require.NotNil(t, ctx.GetSessionVars().RUV2Metrics)
+		ruDetails := goCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
+		ruDetails.UpdateWithRUCalculation(&rmpb.Consumption{RRU: 1.5}, 0, rmclient.RUCalculation{
+			Config: rmclient.RUCalculationConfig{
+				Version:      rmclient.RUVersionV1,
+				Source:       rmclient.RUCalculationSourceTiKV,
+				FactorsKnown: true,
+				Factors:      rmclient.RUFactorSnapshot{ReadBaseCost: 1.5},
+			},
+			Inputs:        rmclient.RUCalculationInputs{ReadRPCCount: 1},
+			Contributions: rmclient.RUCalculationContributions{ReadBaseRU: 1.5},
+			RRU:           1.5,
+		})
 
 		analyzeExec := &mockEmptyOperator{
 			BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(), 1),
@@ -194,6 +208,12 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		// Verify the stats are registered and contain "RU:" prefix.
 		rootStatsStr := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(targetPlan.ID()).String()
 		require.Contains(t, rootStatsStr, "RU:")
+		require.Contains(t, rootStatsStr, `RU_detail:{"version":1`)
+		require.Contains(t, rootStatsStr, `"read_base_cost":1.5`)
+
+		jsonResult, err := core.JSONToString([]*core.ExplainInfoForEncode{{ExecuteInfo: rootStatsStr}})
+		require.NoError(t, err)
+		require.Contains(t, jsonResult, `RU_detail:{\"version\":1`)
 
 		require.Equal(t, int64(15), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())
 	})

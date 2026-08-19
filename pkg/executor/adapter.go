@@ -86,6 +86,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	tikvtrace "github.com/tikv/client-go/v2/trace"
 	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -369,6 +370,9 @@ type ExecStmt struct {
 	// or a test hook installs it. It must be installed before the ExecStmt
 	// is published and must not be replaced after execution begins.
 	statementRUOwner *statementRUOwner
+	ruSnapshotReady  bool
+	ruVersion        rmclient.RUVersion
+	ruv2Weights      execdetails.RUV2Weights
 
 	StmtNode ast.StmtNode
 
@@ -396,6 +400,18 @@ type ExecStmt struct {
 	OutputNames []*types.FieldName
 	PsStmt      *plannercore.PlanCacheStmt
 	Ti          *TelemetryInfo
+}
+
+func (a *ExecStmt) captureRUCalculationSnapshot() {
+	if a.ruSnapshotReady {
+		return
+	}
+	a.ruVersion = rmclient.DefaultRUVersion
+	if do := domain.GetDomain(a.Ctx); do != nil {
+		a.ruVersion = do.GetRUVersion()
+	}
+	a.ruv2Weights = a.Ctx.GetSessionVars().RUV2Weights()
+	a.ruSnapshotReady = true
 }
 
 // GetStmtNode returns the stmtNode inside Statement
@@ -1710,6 +1726,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
 
+	a.captureRUCalculationSnapshot()
 	a.finalizeStatementRUV2Metrics()
 	a.updateNetworkTrafficStatsAndMetrics()
 	a.finishStatementRU(err)
@@ -1820,6 +1837,7 @@ func recordInsertRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowsCol
 // TopRU samples see ResourceManager{Read,Write}Cnt as zero until this runs;
 // per-statement totals telescope correctly across the post-finalize sample.
 func (a *ExecStmt) finalizeStatementRUV2Metrics() {
+	a.captureRUCalculationSnapshot()
 	sessVars := a.Ctx.GetSessionVars()
 	if sessVars.RUV2Metrics == nil || sessVars.RUV2Metrics.Bypass() {
 		return
@@ -1835,8 +1853,7 @@ func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	}
 	execdetails.SyncRUV2MetricsFromRUDetails(sessVars.RUV2Metrics, ruDetail)
 
-	weights := sessVars.RUV2Weights()
-	tidbRU := sessVars.RUV2Metrics.CalculateRUValues(weights)
+	tidbRU := sessVars.RUV2Metrics.CalculateRUValues(a.ruv2Weights)
 
 	dctx := a.Ctx.GetDistSQLCtx()
 	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
@@ -2424,6 +2441,7 @@ func (a *ExecStmt) updatePrevStmt() {
 }
 
 func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.Context {
+	a.captureRUCalculationSnapshot()
 	topSQL, topRU := topsqlstate.TopSQLEnabled(), topsqlstate.TopRUEnabled()
 	topProfiling := topsqlstate.TopProfilingEnabled()
 	if !topProfiling && IsFastPlan(a.Plan) {
@@ -2453,14 +2471,11 @@ func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.
 		if topRU {
 			beginInfo.Ctx = a.GoCtx
 			beginInfo.RUV2Metrics = vars.RUV2Metrics
-			beginInfo.RUV2Weights = vars.RUV2Weights()
+			beginInfo.RUV2Weights = a.ruv2Weights
 			if vars.User != nil {
 				beginInfo.User = vars.User.String()
 			}
-			beginInfo.RUVersion = stmtstats.DefaultRUVersion()
-			if do := domain.GetDomain(a.Ctx); do != nil {
-				beginInfo.RUVersion = stmtstats.NormalizeRUVersion(do.GetRUVersion())
-			}
+			beginInfo.RUVersion = stmtstats.NormalizeRUVersion(a.ruVersion)
 		}
 	}
 	if !topProfiling {

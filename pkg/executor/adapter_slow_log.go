@@ -195,6 +195,7 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	CompleteSlowLogItemsForRules(a.GoCtx, a.Ctx.GetSessionVars(), items)
 
 	sessVars := a.Ctx.GetSessionVars()
+	a.captureRUCalculationSnapshot()
 	stmtCtx := sessVars.StmtCtx
 	var indexNames string
 	if len(stmtCtx.IndexNames) > 0 {
@@ -266,6 +267,9 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.ResourceGroupName = stmtCtx.ResourceGroupName
 	items.RUDetails = ruDetails
 	items.RUV2Metrics = ruv2Metrics
+	items.RUVersion = a.ruVersion
+	ruv2Weights := a.ruv2Weights
+	items.RUV2Weights = &ruv2Weights
 	items.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	items.StorageKV = stmtCtx.IsTiKV.Load()
 	items.StorageMPP = stmtCtx.IsTiFlash.Load()
