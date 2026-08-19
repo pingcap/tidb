@@ -143,6 +143,7 @@
 //! ported in full as `tidb_exec::topn_slow_query`. That was verified
 //! symbol-by-symbol rather than assumed.
 
+pub mod domainutil;
 pub mod domain_sysvars;
 pub mod historical_stats;
 pub mod optimize_trace;
