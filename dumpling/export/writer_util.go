@@ -59,7 +59,7 @@ func WriteInsert(
 		return 0, fileRowIter.Error()
 	}
 
-	sink := newDumpSink(pCtx.Context, w)
+	sink := newSink(pCtx.Context, w)
 
 	selectedField := meta.SelectedField()
 	var insertStatementPrefix string
@@ -236,7 +236,7 @@ func WriteInsertInCsv(
 	if selectedFields != "" {
 		kinds = columnKinds(meta.ColumnTypes())
 	}
-	cw := csvfile.NewWriter(newDumpSink(pCtx.Context, w), kinds, csvCfg)
+	cw := csvfile.NewWriter(newSink(pCtx.Context, w), kinds, csvCfg)
 
 	var (
 		row          = MakeRowReceiver(meta.ColumnTypes())
@@ -345,15 +345,15 @@ func annotatePartLimit(err error) error {
 	return err
 }
 
-// newDumpSink adapts the object store writer to io.Writer and annotates its
+// newSink adapts the object store writer to io.Writer and annotates its
 // part-limit error.
-func newDumpSink(ctx context.Context, w objectio.Writer) io.Writer {
-	return partLimitWriter{objectio.NewIOWriter(ctx, w)}
+func newSink(ctx context.Context, w objectio.Writer) io.Writer {
+	return partLimitSink{objectio.NewIOWriter(ctx, w)}
 }
 
-type partLimitWriter struct{ io.Writer }
+type partLimitSink struct{ io.Writer }
 
-func (p partLimitWriter) Write(b []byte) (int, error) {
+func (p partLimitSink) Write(b []byte) (int, error) {
 	n, err := p.Writer.Write(b)
 	return n, annotatePartLimit(err)
 }
@@ -520,7 +520,7 @@ func WriteInsertInParquet(
 		parquetfile.WithDataPageSize(cfg.ParquetPageSize),
 		parquetfile.WithRowGroupMemoryLimit(cfg.ParquetRowGroupSize),
 	}
-	writer, err := parquetfile.NewWriter(newDumpSink(pCtx.Context, w), meta.ColumnInfos(), opts...)
+	writer, err := parquetfile.NewWriter(newSink(pCtx.Context, w), meta.ColumnInfos(), opts...)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
