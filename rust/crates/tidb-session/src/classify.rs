@@ -235,9 +235,15 @@ impl Session {
                     .map_or(StmtKind::Query, |inner| self.statement_kind_parsed(&inner)),
                 _ => StmtKind::Write,
             },
-            // `KILL` is the one admin statement that answers with an OK
-            // packet rather than a result set, as it does in Go.
-            Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::Kill(_)) => {
+            // `KILL` and `FLUSH` are the admin statements that answer with an
+            // OK packet rather than a result set, as they do in Go: both are
+            // `SimpleExec` there, which produces no rows.
+            Stmt::Admin(admin)
+                if matches!(
+                    &**admin,
+                    tidb_ast::AdminStmt::Kill(_) | tidb_ast::AdminStmt::Flush(_)
+                ) =>
+            {
                 StmtKind::Write
             }
             // `SHOW`/`DESCRIBE`/`EXPLAIN` all answer with a result set.

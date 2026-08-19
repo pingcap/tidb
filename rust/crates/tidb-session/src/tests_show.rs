@@ -2342,3 +2342,105 @@ fn show_status_reports_the_negotiated_tls_names() {
     let (_, rows) = query_text(&mut session, "SHOW STATUS LIKE 'Ssl_cipher'");
     assert_eq!(rows[0][1], "");
 }
+
+/// The statements a MySQL client or dump tool issues that Go answers from
+/// `SimpleExec`/`ShowExec` without touching any table.
+///
+/// `SHOW PLUGINS` is Go's `fetchShowPlugins` over `plugin.GetAll()` and
+/// `SHOW PROFILES` is its literal `// empty result` arm, so both answer
+/// their column list and no rows. `SHOW MASTER STATUS` reports the pseudo
+/// binlog file and the CURRENT transaction's start timestamp -- which is
+/// zero outside a transaction, exactly as `@@tidb_current_ts` is, because
+/// Go reads the same `TxnCtx.StartTS`.
+#[test]
+fn plugins_profiles_and_master_status() {
+    let mut session = Session::new();
+
+    let plugins = session.run_with_columns("SHOW PLUGINS").expect("plugins");
+    let StmtOutput::Rows { columns, rows } = plugins else {
+        panic!("SHOW PLUGINS answers a result set");
+    };
+    assert_eq!(
+        columns
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        ["Name", "Status", "Type", "Library", "License", "Version"]
+    );
+    assert!(rows.is_empty(), "no plugin framework runs here");
+
+    let profiles = session.run_with_columns("SHOW PROFILES").expect("profiles");
+    let StmtOutput::Rows { columns, rows } = profiles else {
+        panic!("SHOW PROFILES answers a result set");
+    };
+    assert_eq!(
+        columns
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        ["Query_ID", "Duration", "Query"]
+    );
+    assert!(rows.is_empty(), "SHOW PROFILES is deprecated and empty");
+
+    let status = session
+        .run_with_columns("SHOW MASTER STATUS")
+        .expect("master status");
+    let StmtOutput::Rows { columns, rows } = status else {
+        panic!("SHOW MASTER STATUS answers a result set");
+    };
+    assert_eq!(
+        columns
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "File",
+            "Position",
+            "Binlog_Do_DB",
+            "Binlog_Ignore_DB",
+            "Executed_Gtid_Set"
+        ]
+    );
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        row_text(Ok(StmtResult::Rows(rows)))[0][0],
+        "tidb-binlog".to_owned()
+    );
+}
+
+/// Go `SimpleExec.executeFlush`. Every target it accepts answers with an OK
+/// packet and no rows; the two it does not keep Go's own diagnostics.
+#[test]
+fn flush_targets_follow_gos_switch() {
+    let mut session = Session::new();
+
+    for sql in [
+        "FLUSH PRIVILEGES",
+        "FLUSH STATUS",
+        "FLUSH TABLES",
+        "FLUSH HOSTS",
+        "FLUSH CLIENT_ERRORS_SUMMARY",
+    ] {
+        assert!(
+            matches!(session.run(sql), Ok(StmtResult::Done(_))),
+            "`{sql}` is accepted"
+        );
+    }
+
+    // Go returns this as a plain error -- the double space is its own.
+    let error = session
+        .run("FLUSH TABLES WITH READ LOCK")
+        .expect_err("read lock is refused");
+    assert!(
+        error
+            .to_string()
+            .contains("FLUSH TABLES WITH READ LOCK is not supported.  Please use @@tidb_snapshot"),
+        "{error}"
+    );
+
+    // Go `plugin.NotifyFlush` fails for a name no loaded plugin answers to.
+    let error = session
+        .run("FLUSH TIDB PLUGINS nosuch")
+        .expect_err("an unknown plugin is refused");
+    assert!(error.to_string().contains("plugin 'nosuch' not found"), "{error}");
+}

@@ -840,6 +840,23 @@ pub(crate) fn column_key_flag(table: &tidb_executor::KvTable, offset: usize) -> 
 
 /// A one-column result set of strings, the shape SHOW DATABASES and SHOW
 /// TABLES produce.
+/// A result set with the named VARCHAR columns and no rows, which is what
+/// several Go `SHOW` arms answer when the feature they report on is absent.
+pub(crate) fn text_columns_output(columns: &[&str]) -> StmtOutput {
+    StmtOutput::Rows {
+        columns: columns
+            .iter()
+            .map(|name| {
+                (
+                    (*name).to_owned(),
+                    FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
+                )
+            })
+            .collect(),
+        rows: Vec::new(),
+    }
+}
+
 pub(crate) fn string_column_output(column: &str, values: Vec<String>) -> StmtOutput {
     let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
     StmtOutput::Rows {
@@ -1788,6 +1805,87 @@ impl Session {
             //
             // DEFERRED (documented, and refused rather than ignored): the
             // optional filter Go's shared SHOW grammar accepts here.
+            // Go `SimpleExec.executeFlush`. Most targets are accepted and
+            // do nothing observable here: the counters and caches they reset
+            // are per-instance, and this node re-reads accounts from the
+            // cluster rather than holding the privilege cache Go notifies.
+            // The two that are NOT no-ops keep Go's exact answers.
+            tidb_ast::AdminStmt::Flush(flush) => {
+                match &flush.target {
+                    tidb_ast::FlushTarget::Tables { read_lock, .. } => {
+                        if *read_lock {
+                            // Go returns this as a plain error, double space
+                            // and all.
+                            return Err(DriverError::unsupported(
+                                "FLUSH TABLES WITH READ LOCK is not supported.  Please use @@tidb_snapshot",
+                            ));
+                        }
+                    }
+                    // Go `plugin.NotifyFlush` fails for a name no loaded
+                    // plugin answers to, and no plugin framework runs here,
+                    // so every name fails.
+                    tidb_ast::FlushTarget::TiDbPlugins(plugins) => {
+                        if let Some(name) = plugins.first() {
+                            return Err(DriverError::unsupported(format!(
+                                "plugin '{name}' not found"
+                            )));
+                        }
+                    }
+                    // Go dumps this node's buffered statistics deltas to the
+                    // store. Refused by name rather than silently accepted:
+                    // reporting success without writing them would make a
+                    // later ANALYZE read stale counts.
+                    tidb_ast::FlushTarget::StatsDelta { .. } => {
+                        return Err(DriverError::unsupported(
+                            "FLUSH STATS_DELTA is not supported by this node",
+                        ));
+                    }
+                    tidb_ast::FlushTarget::Status
+                    | tidb_ast::FlushTarget::Privileges
+                    | tidb_ast::FlushTarget::Hosts
+                    | tidb_ast::FlushTarget::Logs(_)
+                    | tidb_ast::FlushTarget::ClientErrorsSummary => {}
+                }
+                return Ok(Some(StmtOutput::Done(true)));
+            }
+            // Go `ShowExec.fetchShowMasterStatus`: one row naming TiDB's
+            // pseudo binlog file and the CURRENT transaction's start
+            // timestamp as the position, with the three replication columns
+            // empty. Tools that call this to fence a dump read the position.
+            tidb_ast::AdminStmt::ShowMasterStatus => {
+                let position = self.current_tso().value();
+                return Ok(Some(StmtOutput::Rows {
+                    columns: vec![
+                        (
+                            "File".to_owned(),
+                            FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
+                        ),
+                        (
+                            "Position".to_owned(),
+                            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                        ),
+                        (
+                            "Binlog_Do_DB".to_owned(),
+                            FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
+                        ),
+                        (
+                            "Binlog_Ignore_DB".to_owned(),
+                            FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
+                        ),
+                        (
+                            "Executed_Gtid_Set".to_owned(),
+                            FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
+                        ),
+                    ],
+                    rows: vec![vec![
+                        Datum::Bytes(b"tidb-binlog".to_vec()),
+                        Datum::Int(position as i64),
+                        Datum::Bytes(Vec::new()),
+                        Datum::Bytes(Vec::new()),
+                        Datum::Bytes(Vec::new()),
+                    ]],
+                }));
+            }
             tidb_ast::AdminStmt::ShowWarnings(show) => {
                 if show.filter.is_some() {
                     return Err(DriverError::unsupported(
@@ -1811,6 +1909,35 @@ impl Session {
                 // `crate::binding_arm`.
                 if show.kind == tidb_ast::ShowInspectionKind::BindingCacheStatus {
                     return Ok(Some(self.binding_cache_status_stmt()?));
+                }
+                // Go `ShowExec.fetchShowPlugins` over `plugin.GetAll()`. No
+                // plugin framework runs here, so the answer is the empty set
+                // -- which is also what a stock `tidb-server` reports.
+                if show.kind == tidb_ast::ShowInspectionKind::Plugins {
+                    return Ok(Some(text_columns_output(&[
+                        "Name", "Status", "Type", "Library", "License", "Version",
+                    ])));
+                }
+                // Go's `ShowProfiles` arm is literally `// empty result`;
+                // the statement is deprecated and answers no rows.
+                if show.kind == tidb_ast::ShowInspectionKind::Profiles {
+                    return Ok(Some(StmtOutput::Rows {
+                        columns: vec![
+                            (
+                                "Query_ID".to_owned(),
+                                FieldType::new(tidb_datatype::FieldTypeCode::Long),
+                            ),
+                            (
+                                "Duration".to_owned(),
+                                FieldType::new(tidb_datatype::FieldTypeCode::Double),
+                            ),
+                            (
+                                "Query".to_owned(),
+                                FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
+                            ),
+                        ],
+                        rows: Vec::new(),
+                    }));
                 }
                 if show.kind != tidb_ast::ShowInspectionKind::ProcessList {
                     return Ok(None);
