@@ -18,6 +18,7 @@ import (
 	"net/http"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/session"
@@ -31,6 +32,7 @@ type FlashReplicaSummary struct {
 	Keyspace                   string `json:"keyspace"`
 	KeyspaceID                 uint32 `json:"keyspace_id"`
 	TiDBColumnarStorageEnabled string `json:"tidb_columnar_storage_enabled"`
+	ColumnarStoreType          string `json:"columnar_store_type"`
 	CanDisable                 bool   `json:"can_disable"`
 	TableCount                 int    `json:"table_count"`
 }
@@ -86,6 +88,7 @@ func (h FlashReplicaSummaryHandler) ServeHTTP(w http.ResponseWriter, req *http.R
 		Keyspace:                   h.Store.GetKeyspace(),
 		KeyspaceID:                 uint32(h.Store.GetCodec().GetKeyspaceID()),
 		TiDBColumnarStorageEnabled: variable.BoolToOnOff(variable.TiDBOptOn(enabledVal)),
+		ColumnarStoreType:          config.GetGlobalConfig().CSE.ColumnarStoreType,
 		CanDisable:                 tableCount == 0,
 		TableCount:                 tableCount,
 	})

@@ -1814,8 +1814,22 @@ partition by range (a)
 	require.True(t, summary.CanDisable)
 	require.Equal(t, 0, summary.TableCount)
 	require.Equal(t, "ON", summary.TiDBColumnarStorageEnabled)
+	require.Equal(t, config.GetGlobalConfig().CSE.ColumnarStoreType, summary.ColumnarStoreType)
 	require.Equal(t, ts.store.GetKeyspace(), summary.Keyspace)
 	require.Equal(t, uint32(ts.store.GetCodec().GetKeyspaceID()), summary.KeyspaceID)
+
+	originStoreType := config.GetGlobalConfig().CSE.ColumnarStoreType
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = "columnar"
+	})
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = originStoreType
+	})
+	summary = fetchTiFlashReplicaSummary(t, ts)
+	require.Equal(t, "columnar", summary.ColumnarStoreType)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = originStoreType
+	})
 
 	tk.MustExec("alter table t_rep set tiflash replica 1")
 	summary = fetchTiFlashReplicaSummary(t, ts)
