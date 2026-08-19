@@ -282,7 +282,7 @@ func getInt64Setter(parquetColumnType *parquetColumnType, loc *time.Location) se
 					val = rebased
 				}
 			}
-			unit := arrow.Microsecond
+			var unit arrow.TimeUnit
 			switch logicalType.TimeUnit() {
 			case schema.TimeUnitMillis:
 				unit = arrow.Millisecond
