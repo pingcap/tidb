@@ -1127,3 +1127,71 @@ fn a_having_subquery_may_only_correlate_to_the_aggregations_output() {
     )
     .is_ok());
 }
+
+/// Go's `rule_decorrelate` turns a correlated `EXISTS` in the WHERE into
+/// a SEMI JOIN, and it does so under an `Aggregation` exactly as under a
+/// plain SELECT. This port ran that rule only on the plain path, so an
+/// aggregate over a correlated EXISTS reached the expression rewriter
+/// with the subquery still in the tree and failed as an unsupported form
+/// (1105) -- while the same predicate without the aggregate, and the same
+/// aggregate over a NON-correlated EXISTS, both worked.
+///
+/// A semi join emits left rows only, so the schema the aggregate resolves
+/// against is unchanged -- which is what makes running the rule here safe
+/// for the group keys and the aggregate arguments alike.
+#[test]
+fn an_aggregate_over_a_correlated_exists_decorrelates() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on("CREATE TABLE w (g VARCHAR(5), v INT)", &mut catalog).unwrap();
+    run_insert_on(
+        "INSERT INTO w VALUES ('a',1),('a',2),('b',3),('b',4),('c',NULL)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    // The NULL row matches no `b.v = a.v`, so four of the five survive.
+    assert_eq!(
+        run_select_on(
+            "SELECT count(*) FROM w a WHERE EXISTS (SELECT 1 FROM w b WHERE b.v = a.v)",
+            &catalog,
+            &ctx
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(4)]],
+    );
+
+    // NOT EXISTS keeps exactly the row the semi join dropped.
+    assert_eq!(
+        run_select_on(
+            "SELECT count(*) FROM w a WHERE NOT EXISTS (SELECT 1 FROM w b WHERE b.v = a.v)",
+            &catalog,
+            &ctx
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(1)]],
+    );
+
+    // The grouped form resolves its group key against the same schema.
+    let grouped: Vec<Vec<String>> = run_select_on(
+        "SELECT g, sum(v) FROM w a WHERE EXISTS (SELECT 1 FROM w b WHERE b.v = a.v) \
+         GROUP BY g ORDER BY g",
+        &catalog,
+        &ctx,
+    )
+    .unwrap()
+    .into_iter()
+    .map(|row| {
+        row.into_iter()
+            .map(|datum| match datum {
+                Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
+                Datum::Bytes(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                Datum::Decimal(value) => value.to_string(),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    })
+    .collect();
+    assert_eq!(grouped, [["a", "3"], ["b", "7"]]);
+}

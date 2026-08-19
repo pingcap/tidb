@@ -107,9 +107,27 @@ fn native_response(password: &[u8], salt: &[u8]) -> [u8; 20] {
 }
 
 fn write_raw_packet(stream: &mut TcpStream, sequence: u8, payload: &[u8]) {
+    try_write_raw_packet(stream, sequence, payload).expect("the packet is written");
+}
+
+/// The same write, but reporting a failure instead of panicking.
+///
+/// A connection the SERVER has already closed fails the write with
+/// `BrokenPipe` rather than letting it through to a failing read, and
+/// which side notices first is a TCP timing detail. A test asserting that
+/// a connection closed must accept either.
+fn try_write_raw_packet(
+    stream: &mut TcpStream,
+    sequence: u8,
+    payload: &[u8],
+) -> std::io::Result<()> {
     let mut writer = PacketWriter::with_sequence(stream, sequence);
-    writer.write_packet(payload).unwrap();
-    writer.flush().unwrap();
+    writer
+        .write_packet(payload)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    writer
+        .flush()
+        .map_err(|error| std::io::Error::other(error.to_string()))
 }
 
 fn authenticate(
@@ -229,9 +247,13 @@ fn session_wait_timeout_closes_the_next_idle_command_read() {
     assert_eq!(reader.read_packet().unwrap()[0], 0, "SET OK");
 
     std::thread::sleep(Duration::from_millis(1_300));
-    write_raw_packet(&mut client, 0, &[COM_PING]);
+    // The close can surface on either side of the exchange: the write of
+    // this PING may already hit a closed socket, or it may land and the
+    // read that follows return nothing. Both are the timeout doing its
+    // job, so both count.
+    let write_failed = try_write_raw_packet(&mut client, 0, &[COM_PING]).is_err();
     reader.set_sequence(1);
-    let timed_out = reader.read_packet().is_err();
+    let timed_out = write_failed || reader.read_packet().is_err();
     if !timed_out {
         write_raw_packet(&mut client, 0, &[COM_QUIT]);
     }

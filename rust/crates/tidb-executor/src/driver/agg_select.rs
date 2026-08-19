@@ -2336,19 +2336,44 @@ fn build_aggregation(
     let mut explained_where = trace.is_some().then_some(pushed_where);
     let scan_consumed_where = select.where_clause.is_some() && executed_where.is_none();
     if let Some(predicate) = &executed_where {
-        let mut pred = rewrite_expr_resolved(predicate, resolver)
-            .map_err(|e| super::eval_error_in_clause(e, "where clause"))?;
-        refine_comparisons(&mut pred, ctx).map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-        if let Some(explained) = &mut explained_where {
-            explained.push(pred.clone());
-        }
-        source = Box::new(SelectionExec::new(
-            ExecutorMeta::new(source_schema, 1, INIT_CAP, MAX_CHUNK_SIZE),
-            vec![pred],
+        // A correlated `EXISTS` conjunct becomes a SEMI JOIN before the
+        // predicate is rewritten -- Go's `rule_decorrelate` reaching the
+        // same shape under an `Aggregation` as under a plain SELECT. The
+        // plain path runs this too (`run_select_traced_with_delivery`);
+        // without it here, an aggregate over a correlated EXISTS reached
+        // the expression rewriter with the subquery still in the tree and
+        // failed as an unsupported form.
+        //
+        // A semi join emits LEFT rows only, so the source schema and the
+        // resolver's scope are the same afterwards and every downstream
+        // stage -- the group keys, the aggregate arguments, the HAVING --
+        // resolves exactly as it did before.
+        let decorrelated = super::decorrelate_exists::decorrelate_where(
             source,
-            ctx.clone(),
-            ctx.statement_memory(),
-        ));
+            resolver.scope,
+            predicate,
+            catalog,
+            current_db,
+            ctx,
+            trace.as_deref_mut(),
+        )?;
+        source = decorrelated.source;
+        if let Some(residual) = decorrelated.residual {
+            let mut pred = rewrite_expr_resolved(&residual, resolver)
+                .map_err(|e| super::eval_error_in_clause(e, "where clause"))?;
+            refine_comparisons(&mut pred, ctx)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            if let Some(explained) = &mut explained_where {
+                explained.push(pred.clone());
+            }
+            source = Box::new(SelectionExec::new(
+                ExecutorMeta::new(source_schema, 1, INIT_CAP, MAX_CHUNK_SIZE),
+                vec![pred],
+                source,
+                ctx.clone(),
+                ctx.statement_memory(),
+            ));
+        }
     }
     // The `Selection` is RECORDED whenever the statement wrote a `WHERE`,
     // whether or not an executor survived above the scan: Go prints one
