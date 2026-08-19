@@ -525,10 +525,6 @@ fn every_unservable_shape_is_refused_before_a_single_mutation_exists() {
             "TEMPORARY is not supported",
         ),
         (
-            "CREATE TABLE u6.t LIKE u6.other",
-            "... LIKE is not supported",
-        ),
-        (
             "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, ID BIGINT NOT NULL)",
             "declares column `ID` twice",
         ),
@@ -3114,5 +3110,100 @@ fn convert_to_character_set_rewrites_columns_and_refuses_a_narrowing() {
             );
         }
         other => panic!("expected an admission refusal, got {other:?}"),
+    }
+}
+
+/// Go `BuildTableInfoWithLike`: the copy inherits the source's definition and
+/// nothing that identifies it.
+///
+/// The reset list is where the bugs live -- an inherited auto-increment
+/// counter would make the copy's first row collide with the source's handles,
+/// and an inherited foreign key would name a constraint that already exists.
+#[test]
+fn create_table_like_copies_the_definition_and_resets_the_identity() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.src (id BIGINT PRIMARY KEY AUTO_INCREMENT, a VARCHAR(10), KEY ia(a)) \
+         COMMENT='the source' AUTO_INCREMENT=500",
+        100,
+    );
+    apply(&mut store, &write);
+    let source_id = write.created_id.expect("CREATE TABLE allocates an id");
+
+    let write = plan(&mut store, "CREATE TABLE u6.cp LIKE u6.src", 200);
+    apply(&mut store, &write);
+    let copy_id = write.created_id.expect("CREATE TABLE LIKE allocates an id");
+    assert_ne!(copy_id, source_id, "the copy is its own table");
+
+    let copy = stored_table(&write, copy_id);
+    assert_eq!(copy["name"]["O"], serde_json::json!("cp"));
+    // The definition is inherited whole.
+    assert_eq!(copy["comment"], serde_json::json!("the source"));
+    assert_eq!(
+        copy["cols"]
+            .as_array()
+            .expect("column array")
+            .iter()
+            .map(|column| column["name"]["O"].as_str().expect("a name"))
+            .collect::<Vec<_>>(),
+        ["id", "a"]
+    );
+    assert_eq!(
+        copy["index_info"]
+            .as_array()
+            .expect("index array")
+            .iter()
+            .map(|index| index["idx_name"]["O"].as_str().expect("a name"))
+            .collect::<Vec<_>>(),
+        ["ia"]
+    );
+    // The identity is NOT: Go's `tblInfo.AutoIncID = 0` means the copy's
+    // first row is handle 1 however far the source has run.
+    assert!(
+        copy["auto_inc_id"].is_null() || copy["auto_inc_id"] == serde_json::json!(0),
+        "{}",
+        copy["auto_inc_id"]
+    );
+
+    // Go `ErrWrongObject`: the source has to be a real table.
+    // A view's `TableInfo` is finished at the statement ROUTE (the columns
+    // come from resolving the body), so it is built here rather than lowered
+    // from text like the rest of the fixture.
+    let view = tidb_exec::cluster_ddl::DdlStatement::CreateView {
+        schema: "u6".to_owned(),
+        name: "v".to_owned(),
+        or_replace: false,
+        info: Box::new(tidb_model::TableInfo {
+            name: tidb_ast::CiString::new("v"),
+            state: tidb_model::SchemaState::PUBLIC,
+            view: Some(tidb_model::GoShared::new(tidb_model::table::ViewInfo::default())),
+            ..tidb_model::TableInfo::default()
+        }),
+    };
+    let DdlPlan::Write(write) = plan_ddl(&mut store, &view, 300).expect("the view plans") else {
+        panic!("CREATE VIEW publishes a write");
+    };
+    apply(&mut store, &write);
+    let error = plan_ddl(&mut store, &statement("CREATE TABLE u6.c2 LIKE u6.v"), 400)
+        .expect_err("a view source is refused");
+    assert!(error.to_string().contains("is not BASE TABLE"), "{error}");
+
+    // The new name still collides the ordinary way.
+    let error = plan_ddl(&mut store, &statement("CREATE TABLE u6.cp LIKE u6.src"), 500)
+        .expect_err("an existing name is refused");
+    assert!(
+        matches!(error, DdlPlanError::TableExists { ref table, .. } if table == "cp"),
+        "{error:?}"
+    );
+    match plan_ddl(
+        &mut store,
+        &statement("CREATE TABLE IF NOT EXISTS u6.cp LIKE u6.src"),
+        600,
+    )
+    .expect("IF NOT EXISTS plans")
+    {
+        DdlPlan::AlreadySatisfied { .. } => {}
+        DdlPlan::Write(_) => panic!("IF NOT EXISTS must publish nothing"),
     }
 }

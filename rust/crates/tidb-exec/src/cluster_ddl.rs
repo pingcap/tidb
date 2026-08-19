@@ -493,6 +493,23 @@ pub enum DdlStatement {
     /// allocator counter behind it. Moving only the first would leave the
     /// next INSERT allocating from the old counter, which is the silent
     /// wrong answer this change exists to avoid.
+    /// `CREATE TABLE <new> LIKE <source>`, Go's `BuildTableInfoWithLike`.
+    ///
+    /// The source is resolved from the CATALOG rather than from the
+    /// statement, so this cannot be lowered into a column list the way an
+    /// ordinary CREATE TABLE is.
+    CreateTableLike {
+        /// The resolved database of the table being created.
+        schema: String,
+        /// The new table's name as written.
+        table: String,
+        /// The resolved database of the source table.
+        source_schema: String,
+        /// The source table's name as written.
+        source_table: String,
+        /// `IF NOT EXISTS`.
+        if_not_exists: bool,
+    },
     /// `ALTER TABLE ... CONVERT TO CHARACTER SET x [COLLATE y]` and
     /// `ALTER TABLE ... CHARACTER SET = x`, Go's
     /// `ActionModifyTableCharsetAndCollate`.
@@ -1564,6 +1581,19 @@ fn lower_create_table(
     context: &tidb_executor::StmtContext,
 ) -> Result<DdlStatement, DdlAdmissionError> {
     let (schema, table) = split_name(&create.name, default_schema, "table")?;
+    // Go `BuildTableInfoWithLike` copies a table that already exists, so the
+    // statement carries no column list to build from and the source has to be
+    // resolved against the catalog at apply time.
+    if let Some(source) = &create.like_table {
+        let (source_schema, source_table) = split_name(source, default_schema, "table")?;
+        return Ok(DdlStatement::CreateTableLike {
+            schema,
+            table,
+            source_schema,
+            source_table,
+            if_not_exists: create.if_not_exists,
+        });
+    }
     // The same gate [`lower_create_index`] applies, for the same reason and
     // with the same words: a prefix-length index in the INLINE list would be
     // published into a `TableInfo` that this node's own catalog loader then
@@ -2091,6 +2121,80 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             ))?);
             diff.action_type = ActionType::ACTION_DROP_SCHEMA;
             diff.schema_id = db_id;
+        }
+        DdlStatement::CreateTableLike {
+            schema,
+            table,
+            source_schema,
+            source_table,
+            if_not_exists,
+        } => {
+            let Some(database) = find_database(&catalog, schema) else {
+                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+            };
+            if let Some(existing) = find_table(database, table) {
+                if *if_not_exists {
+                    return Ok(already(format!(
+                        "table `{schema}`.`{}` already exists",
+                        existing.name.original()
+                    )));
+                }
+                return Err(DdlPlanError::TableExists {
+                    schema: schema.clone(),
+                    table: table.clone(),
+                });
+            }
+            let (_, source) = locate_table(&catalog, source_schema, source_table)?;
+            // Go `ErrWrongObject`: the source must be a real table. A view
+            // has no rows to describe, and copying its definition under a
+            // table's name would produce something neither statement means.
+            if source.view.is_some() || source.sequence.is_some() {
+                return Err(DdlPlanError::Unsupported(format!(
+                    "'{source_schema}.{source_table}' is not BASE TABLE"
+                )));
+            }
+            let db_id = database.info.id;
+            let table_id = allocate(snapshot, &mut writes, 1)?[0];
+            created_id = Some(table_id);
+            let mut info = source.clone_like_go();
+            // Go keeps only the PUBLIC columns and indices: a column or index
+            // still being added is not part of the definition being copied.
+            info.columns = tidb_model::GoSharedPointerSlice::from_handles(
+                info.columns
+                    .iter_deref()
+                    .filter(|column| column.read().state == tidb_model::SchemaState::PUBLIC)
+                    .map(Some)
+                    .collect(),
+            );
+            info.indices = tidb_model::GoSharedPointerSlice::from_handles(
+                info.indices
+                    .iter_deref()
+                    .filter(|index| index.read().state == tidb_model::SchemaState::PUBLIC)
+                    .map(Some)
+                    .collect(),
+            );
+            info.name = CiString::new(table.clone());
+            info.id = table_id;
+            // Go's reset list. Each line matters on its own: an inherited
+            // counter would make the copy's first row collide with the
+            // source's handles, and an inherited foreign key would name a
+            // constraint that already exists.
+            info.auto_inc_id = 0;
+            info.auto_rand_id = 0;
+            info.foreign_keys = tidb_model::GoSharedPointerSlice::from_handles(Vec::new());
+            info.max_foreign_key_id = 0;
+            info.table_cache_status_type = tidb_model::TableCacheStatusType::DISABLE;
+            info.tiflash_replica = None;
+            info.update_ts = start_ts;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_CREATE_TABLE;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
         }
         DdlStatement::CreateTable {
             schema,

@@ -412,6 +412,7 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::RenameIndex { .. }
             | DdlStatement::ModifySchemaCharsetAndCollate { .. }
             | DdlStatement::ModifyTableCharsetAndCollate { .. }
+            | DdlStatement::CreateTableLike { .. }
             | DdlStatement::AlterIndexVisibility { .. }
             | DdlStatement::AddColumn { .. }
             | DdlStatement::ModifyColumn { .. }
