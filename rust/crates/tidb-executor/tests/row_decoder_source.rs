@@ -31,6 +31,7 @@ fn column(id: i64, name: &str, field_type: FieldType) -> KvColumn {
         id,
         field_type,
         column_info_version: 1,
+        comment: String::new(),
         generated: None,
         default_value: None,
         origin_default: None,

@@ -327,6 +327,8 @@ pub(crate) fn add_index_to_table(
             id: table.next_column_id(),
             field_type: column.field_type,
             column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            // A hidden expression-index column carries no user comment.
+            comment: String::new(),
             generated: Some(column.generated),
             default_value: None,
             origin_default: None,

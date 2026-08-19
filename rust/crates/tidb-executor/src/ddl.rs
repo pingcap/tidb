@@ -392,6 +392,18 @@ fn auto_random_base_option(options: &[tidb_ast::TableOption]) -> Result<Option<i
 const MAX_TABLE_COMMENT_BYTES: usize = 2048;
 
 /// The final `COMMENT=` option a CREATE or ALTER TABLE applies.
+/// The `COMMENT` a column definition names, if it names one.
+///
+/// `None` and `Some("")` are different answers: Go's MODIFY overlays only the
+/// options that are present, so an absent COMMENT keeps the column's existing
+/// one while `COMMENT ''` clears it.
+pub(crate) fn column_comment_option(options: &[tidb_ast::ColumnOption]) -> Option<String> {
+    options.iter().find_map(|option| match option {
+        tidb_ast::ColumnOption::Comment(text) => Some(text.clone()),
+        _ => None,
+    })
+}
+
 pub(crate) fn table_comment_option(
     options: &[tidb_ast::TableOption],
     table: &str,
@@ -826,6 +838,9 @@ pub fn run_create_table_in(
         col.version = tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION;
         col.offset =
             i64::try_from(i).expect("a parsed table cannot exceed the model column-offset domain");
+        // Go `columnDefToCol` copies the definition's COMMENT onto the
+        // ColumnInfo, which is what every metadata reader then reports.
+        col.comment = column_comment_option(&def.options).unwrap_or_default();
         columns.push(col);
     }
 
@@ -1108,6 +1123,7 @@ pub fn run_create_table_in(
             // Keeping that position directly avoids narrowing the model's
             // signed i64 offset back into a host index.
             column_info_version: c.version,
+            comment: c.comment.clone(),
             generated: generated[position].clone(),
             default_value: defaults[position].clone(),
             // A column present at CREATE TABLE has no pre-existing rows.
@@ -1184,6 +1200,7 @@ pub fn run_create_table_in(
             id: table.next_column_id(),
             field_type: hidden.field_type,
             column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            comment: String::new(),
             generated: Some(hidden.generated),
             default_value: None,
             origin_default: None,

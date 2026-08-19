@@ -2444,3 +2444,69 @@ fn flush_targets_follow_gos_switch() {
         .expect_err("an unknown plugin is refused");
     assert!(error.to_string().contains("plugin 'nosuch' not found"), "{error}");
 }
+
+/// Go `ColumnInfo.Comment` reaches all four readers, and `MODIFY COLUMN`
+/// treats an absent `COMMENT` differently from an empty one.
+///
+/// Go's `getModifiableColumnJob` CLONES the old column and lets
+/// `ProcessModifyColumnOptions` overlay only the options the spec names, so
+/// a MODIFY that does not repeat COMMENT keeps the existing one while
+/// `COMMENT ''` clears it. Before this, no column comment was stored at all:
+/// the DDL accepted it and every reader showed nothing.
+#[test]
+fn column_comments_round_trip_and_modify_overlays_them() {
+    let mut session = Session::new();
+    session.run("CREATE DATABASE d").unwrap();
+    session.run("USE d").unwrap();
+    session
+        .run("CREATE TABLE t (a int COMMENT 'kept', b int COMMENT 'replaced', \
+              c int COMMENT 'cleared', d int)")
+        .unwrap();
+
+    let created = row_text(session.run("SHOW CREATE TABLE t"))[0][1].clone();
+    assert!(created.contains("`a` int DEFAULT NULL COMMENT 'kept'"), "{created}");
+    assert!(
+        created.contains("`d` int DEFAULT NULL\n"),
+        "an unset comment prints nothing: {created}"
+    );
+
+    // `information_schema.columns` and `SHOW FULL COLUMNS` are separate
+    // readers with separate cells; both used to report empty.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT column_name, column_comment FROM information_schema.columns \
+             WHERE table_name = 't' ORDER BY column_name"
+        )),
+        [
+            ["a", "kept"],
+            ["b", "replaced"],
+            ["c", "cleared"],
+            ["d", ""],
+        ]
+    );
+    let full = row_text(session.run("SHOW FULL COLUMNS FROM t"));
+    assert_eq!(full[0][8], "kept");
+    assert_eq!(full[3][8], "");
+
+    // Absent COMMENT keeps, a written one replaces, and an empty one clears.
+    session.run("ALTER TABLE t MODIFY COLUMN a bigint").unwrap();
+    session
+        .run("ALTER TABLE t MODIFY COLUMN b bigint COMMENT 'new'")
+        .unwrap();
+    session
+        .run("ALTER TABLE t MODIFY COLUMN c bigint COMMENT ''")
+        .unwrap();
+    let altered = row_text(session.run("SHOW CREATE TABLE t"))[0][1].clone();
+    assert!(
+        altered.contains("`a` bigint DEFAULT NULL COMMENT 'kept'"),
+        "an absent COMMENT keeps the old one: {altered}"
+    );
+    assert!(
+        altered.contains("`b` bigint DEFAULT NULL COMMENT 'new'"),
+        "{altered}"
+    );
+    assert!(
+        altered.contains("`c` bigint DEFAULT NULL,"),
+        "COMMENT '' clears it: {altered}"
+    );
+}

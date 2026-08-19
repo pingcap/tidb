@@ -307,6 +307,13 @@ fn show_create_table_text(
                 ));
             }
         }
+        // Go prints the column comment last, after AUTO_RANDOM and before the
+        // next column's line.
+        if !column.comment.is_empty() {
+            clause.push_str(" COMMENT '");
+            clause.push_str(&tidb_util::format::output_format(&column.comment));
+            clause.push('\'');
+        }
         clauses.push(clause);
     }
 
@@ -699,7 +706,8 @@ fn column_description(
         default,
         Datum::Bytes(extra.into_bytes()),
         Datum::Bytes(FULL_COL_DESC_PRIVILEGES.as_bytes().to_vec()),
-        Datum::Bytes(Vec::new()), // Comment: no per-column comments modelled.
+        // Go `table.NewColDesc`'s `Comment`, from `ColumnInfo.Comment`.
+        Datum::Bytes(column.comment.clone().into_bytes()),
     ])
 }
 

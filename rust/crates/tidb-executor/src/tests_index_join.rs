@@ -57,6 +57,7 @@ fn column(name: &str, id: i64) -> KvColumn {
         column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
         default_value: None,
         origin_default: None,
+        comment: String::new(),
         generated: None,
     }
 }

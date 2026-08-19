@@ -1955,7 +1955,11 @@ fn modify_column_action(
             | tidb_ast::ColumnOption::Generated { .. }
             // The old table definition decides whether this is an allowed bit
             // increase or AUTO_INCREMENT conversion, so it is checked below.
-            | tidb_ast::ColumnOption::AutoRandom(_) => {}
+            | tidb_ast::ColumnOption::AutoRandom(_)
+            // Go `ProcessModifyColumnOptions` handles COMMENT here; the new
+            // value is read from the option list below, where an ABSENT one
+            // keeps the old column's.
+            | tidb_ast::ColumnOption::Comment(_) => {}
             tidb_ast::ColumnOption::OnUpdate(expr) => {
                 crate::column_default::validate_on_update_current_timestamp(expr, &field_type)
                     .map_err(|_| DriverError::InvalidOnUpdate(def.name.clone()))?;
@@ -2390,6 +2394,13 @@ fn modify_column_action(
         id: table.columns[offset].id,
         field_type,
         column_info_version: table.columns[offset].column_info_version,
+        // Go `getModifiableColumnJob` CLONES the old column and then lets
+        // `ProcessModifyColumnOptions` overlay only what the spec names, so
+        // a MODIFY that does not repeat COMMENT keeps the existing one.
+        comment: match super::column_comment_option(&def.options) {
+            Some(comment) => comment,
+            None => table.columns[offset].comment.clone(),
+        },
         // A generated column option is refused above, so a MODIFY never
         // produces one.
         generated: None,
@@ -2580,6 +2591,8 @@ fn add_column_action(
             id,
             field_type,
             column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            // A column being ADDED has no prior comment to keep.
+            comment: super::column_comment_option(&def.options).unwrap_or_default(),
             generated,
             default_value: prepared_default.default,
             // Rows written before this column existed read back the default.

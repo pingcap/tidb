@@ -71,6 +71,10 @@ struct InfoColumn {
     /// prints. Go stores `any`, but every default in the tables this tier
     /// serves is a string or a small integer, and both print the same way.
     deflt: Option<&'static str>,
+    /// Go `columnInfo.comment`, which `SHOW CREATE TABLE` prints after the
+    /// column. Among the tables this tier serves only `CLUSTER_INFO`'s
+    /// `SERVER_ID` declares one.
+    comment: Option<&'static str>,
 }
 
 impl InfoColumn {
@@ -120,6 +124,7 @@ const CHARACTER_SETS_COLUMNS: &[InfoColumn] = &[
         size: 32,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "DEFAULT_COLLATE_NAME",
@@ -127,6 +132,7 @@ const CHARACTER_SETS_COLUMNS: &[InfoColumn] = &[
         size: 32,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "DESCRIPTION",
@@ -134,6 +140,7 @@ const CHARACTER_SETS_COLUMNS: &[InfoColumn] = &[
         size: 60,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "MAXLEN",
@@ -141,6 +148,7 @@ const CHARACTER_SETS_COLUMNS: &[InfoColumn] = &[
         size: 3,
         flag: 0,
         deflt: None,
+        comment: None,
     },
 ];
 
@@ -152,6 +160,7 @@ const COLLATIONS_COLUMNS: &[InfoColumn] = &[
         size: 32,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CHARACTER_SET_NAME",
@@ -159,6 +168,7 @@ const COLLATIONS_COLUMNS: &[InfoColumn] = &[
         size: 32,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "ID",
@@ -166,6 +176,7 @@ const COLLATIONS_COLUMNS: &[InfoColumn] = &[
         size: 11,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "IS_DEFAULT",
@@ -173,6 +184,7 @@ const COLLATIONS_COLUMNS: &[InfoColumn] = &[
         size: 3,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "IS_COMPILED",
@@ -180,6 +192,7 @@ const COLLATIONS_COLUMNS: &[InfoColumn] = &[
         size: 3,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "SORTLEN",
@@ -187,6 +200,7 @@ const COLLATIONS_COLUMNS: &[InfoColumn] = &[
         size: 3,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "PAD_ATTRIBUTE",
@@ -194,6 +208,7 @@ const COLLATIONS_COLUMNS: &[InfoColumn] = &[
         size: 9,
         flag: 0,
         deflt: None,
+        comment: None,
     },
 ];
 
@@ -206,6 +221,7 @@ const COLLATION_CHARACTER_SET_APPLICABILITY_COLUMNS: &[InfoColumn] = &[
         size: 32,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CHARACTER_SET_NAME",
@@ -213,6 +229,7 @@ const COLLATION_CHARACTER_SET_APPLICABILITY_COLUMNS: &[InfoColumn] = &[
         size: 32,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
 ];
 
@@ -223,6 +240,7 @@ const SCHEMATA_COLUMNS: &[InfoColumn] = &[
         size: 512,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "SCHEMA_NAME",
@@ -230,6 +248,7 @@ const SCHEMATA_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "DEFAULT_CHARACTER_SET_NAME",
@@ -237,6 +256,7 @@ const SCHEMATA_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "DEFAULT_COLLATION_NAME",
@@ -244,6 +264,7 @@ const SCHEMATA_COLUMNS: &[InfoColumn] = &[
         size: 32,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "SQL_PATH",
@@ -251,6 +272,7 @@ const SCHEMATA_COLUMNS: &[InfoColumn] = &[
         size: 512,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TIDB_PLACEMENT_POLICY_NAME",
@@ -258,6 +280,7 @@ const SCHEMATA_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
 ];
 
@@ -269,6 +292,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 512,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_SCHEMA",
@@ -276,6 +300,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_NAME",
@@ -283,6 +308,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_TYPE",
@@ -290,6 +316,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "ENGINE",
@@ -297,6 +324,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "VERSION",
@@ -304,6 +332,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "ROW_FORMAT",
@@ -311,6 +340,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 10,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_ROWS",
@@ -318,6 +348,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "AVG_ROW_LENGTH",
@@ -325,6 +356,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "DATA_LENGTH",
@@ -332,6 +364,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "MAX_DATA_LENGTH",
@@ -339,6 +372,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "INDEX_LENGTH",
@@ -346,6 +380,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "DATA_FREE",
@@ -353,6 +388,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "AUTO_INCREMENT",
@@ -360,6 +396,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CREATE_TIME",
@@ -367,6 +404,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 19,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "UPDATE_TIME",
@@ -374,6 +412,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 19,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CHECK_TIME",
@@ -381,6 +420,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 19,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_COLLATION",
@@ -388,6 +428,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 32,
         flag: 0,
         deflt: Some(COLLATION),
+        comment: None,
     },
     InfoColumn {
         name: "CHECKSUM",
@@ -395,6 +436,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CREATE_OPTIONS",
@@ -402,6 +444,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 255,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_COMMENT",
@@ -409,6 +452,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 2048,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TIDB_TABLE_ID",
@@ -416,6 +460,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TIDB_ROW_ID_SHARDING_INFO",
@@ -423,6 +468,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 255,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TIDB_PK_TYPE",
@@ -430,6 +476,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TIDB_PLACEMENT_POLICY_NAME",
@@ -437,6 +484,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TIDB_TABLE_MODE",
@@ -444,6 +492,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 16,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TIDB_AFFINITY",
@@ -451,6 +500,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 128,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TIDB_STORAGE_CLASS",
@@ -458,6 +508,7 @@ const TABLES_COLUMNS: &[InfoColumn] = &[
         size: 32,
         flag: 0,
         deflt: None,
+        comment: None,
     },
 ];
 
@@ -469,6 +520,7 @@ const VIEWS_COLUMNS: &[InfoColumn] = &[
         size: 512,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_SCHEMA",
@@ -476,6 +528,7 @@ const VIEWS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_NAME",
@@ -483,6 +536,7 @@ const VIEWS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "VIEW_DEFINITION",
@@ -490,6 +544,7 @@ const VIEWS_COLUMNS: &[InfoColumn] = &[
         size: 0,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CHECK_OPTION",
@@ -497,6 +552,7 @@ const VIEWS_COLUMNS: &[InfoColumn] = &[
         size: 8,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "IS_UPDATABLE",
@@ -504,6 +560,7 @@ const VIEWS_COLUMNS: &[InfoColumn] = &[
         size: 3,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "DEFINER",
@@ -511,6 +568,7 @@ const VIEWS_COLUMNS: &[InfoColumn] = &[
         size: 77,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "SECURITY_TYPE",
@@ -518,6 +576,7 @@ const VIEWS_COLUMNS: &[InfoColumn] = &[
         size: 7,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CHARACTER_SET_CLIENT",
@@ -525,6 +584,7 @@ const VIEWS_COLUMNS: &[InfoColumn] = &[
         size: 32,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "COLLATION_CONNECTION",
@@ -532,6 +592,7 @@ const VIEWS_COLUMNS: &[InfoColumn] = &[
         size: 32,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
 ];
 
@@ -543,6 +604,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_SCHEMA",
@@ -550,6 +612,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_NAME",
@@ -557,6 +620,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "COLUMN_NAME",
@@ -564,6 +628,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "ORDINAL_POSITION",
@@ -571,6 +636,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 0,
         flag: UNSIGNED_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "COLUMN_DEFAULT",
@@ -578,6 +644,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 0,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "IS_NULLABLE",
@@ -585,6 +652,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 3,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "DATA_TYPE",
@@ -592,6 +660,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 0,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CHARACTER_MAXIMUM_LENGTH",
@@ -599,6 +668,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 0,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CHARACTER_OCTET_LENGTH",
@@ -606,6 +676,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 0,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "NUMERIC_PRECISION",
@@ -613,6 +684,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 0,
         flag: UNSIGNED_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "NUMERIC_SCALE",
@@ -620,6 +692,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 0,
         flag: UNSIGNED_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "DATETIME_PRECISION",
@@ -627,6 +700,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 0,
         flag: UNSIGNED_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CHARACTER_SET_NAME",
@@ -634,6 +708,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "COLLATION_NAME",
@@ -641,6 +716,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "COLUMN_TYPE",
@@ -648,6 +724,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 0,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "COLUMN_KEY",
@@ -655,6 +732,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 3,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "EXTRA",
@@ -662,6 +740,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 256,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "PRIVILEGES",
@@ -669,6 +748,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 154,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "COLUMN_COMMENT",
@@ -676,6 +756,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 0,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "GENERATION_EXPRESSION",
@@ -683,6 +764,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 0,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "SRS_ID",
@@ -690,6 +772,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
         size: 0,
         flag: UNSIGNED_FLAG,
         deflt: None,
+        comment: None,
     },
 ];
 
@@ -710,6 +793,7 @@ const KEY_COLUMN_USAGE_COLUMNS: &[InfoColumn] = &[
         size: 512,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CONSTRAINT_SCHEMA",
@@ -717,6 +801,7 @@ const KEY_COLUMN_USAGE_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CONSTRAINT_NAME",
@@ -724,6 +809,7 @@ const KEY_COLUMN_USAGE_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_CATALOG",
@@ -731,6 +817,7 @@ const KEY_COLUMN_USAGE_COLUMNS: &[InfoColumn] = &[
         size: 512,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_SCHEMA",
@@ -738,6 +825,7 @@ const KEY_COLUMN_USAGE_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_NAME",
@@ -745,6 +833,7 @@ const KEY_COLUMN_USAGE_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "COLUMN_NAME",
@@ -752,6 +841,7 @@ const KEY_COLUMN_USAGE_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "ORDINAL_POSITION",
@@ -759,6 +849,7 @@ const KEY_COLUMN_USAGE_COLUMNS: &[InfoColumn] = &[
         size: 10,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "POSITION_IN_UNIQUE_CONSTRAINT",
@@ -766,6 +857,7 @@ const KEY_COLUMN_USAGE_COLUMNS: &[InfoColumn] = &[
         size: 10,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "REFERENCED_TABLE_SCHEMA",
@@ -773,6 +865,7 @@ const KEY_COLUMN_USAGE_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "REFERENCED_TABLE_NAME",
@@ -780,6 +873,7 @@ const KEY_COLUMN_USAGE_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "REFERENCED_COLUMN_NAME",
@@ -787,6 +881,7 @@ const KEY_COLUMN_USAGE_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
 ];
 
@@ -799,6 +894,7 @@ const TABLE_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
         size: 512,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CONSTRAINT_SCHEMA",
@@ -806,6 +902,7 @@ const TABLE_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CONSTRAINT_NAME",
@@ -813,6 +910,7 @@ const TABLE_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_SCHEMA",
@@ -820,6 +918,7 @@ const TABLE_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_NAME",
@@ -827,6 +926,7 @@ const TABLE_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CONSTRAINT_TYPE",
@@ -834,6 +934,7 @@ const TABLE_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
 ];
 
@@ -849,6 +950,7 @@ const STATISTICS_COLUMNS: &[InfoColumn] = &[
         size: 512,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_SCHEMA",
@@ -856,6 +958,7 @@ const STATISTICS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_NAME",
@@ -863,6 +966,7 @@ const STATISTICS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "NON_UNIQUE",
@@ -870,6 +974,7 @@ const STATISTICS_COLUMNS: &[InfoColumn] = &[
         size: 1,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "INDEX_SCHEMA",
@@ -877,6 +982,7 @@ const STATISTICS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "INDEX_NAME",
@@ -884,6 +990,7 @@ const STATISTICS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "SEQ_IN_INDEX",
@@ -891,6 +998,7 @@ const STATISTICS_COLUMNS: &[InfoColumn] = &[
         size: 2,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "COLUMN_NAME",
@@ -898,6 +1006,7 @@ const STATISTICS_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "COLLATION",
@@ -905,6 +1014,7 @@ const STATISTICS_COLUMNS: &[InfoColumn] = &[
         size: 1,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CARDINALITY",
@@ -912,6 +1022,7 @@ const STATISTICS_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "SUB_PART",
@@ -919,6 +1030,7 @@ const STATISTICS_COLUMNS: &[InfoColumn] = &[
         size: 3,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "PACKED",
@@ -926,6 +1038,7 @@ const STATISTICS_COLUMNS: &[InfoColumn] = &[
         size: 10,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "NULLABLE",
@@ -933,6 +1046,7 @@ const STATISTICS_COLUMNS: &[InfoColumn] = &[
         size: 3,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "INDEX_TYPE",
@@ -940,6 +1054,7 @@ const STATISTICS_COLUMNS: &[InfoColumn] = &[
         size: 16,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "COMMENT",
@@ -947,6 +1062,7 @@ const STATISTICS_COLUMNS: &[InfoColumn] = &[
         size: 16,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "INDEX_COMMENT",
@@ -954,6 +1070,7 @@ const STATISTICS_COLUMNS: &[InfoColumn] = &[
         size: 1024,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "IS_VISIBLE",
@@ -961,6 +1078,7 @@ const STATISTICS_COLUMNS: &[InfoColumn] = &[
         size: 3,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "Expression",
@@ -968,6 +1086,7 @@ const STATISTICS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
 ];
 
@@ -980,6 +1099,7 @@ const REFERENTIAL_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
         size: 512,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CONSTRAINT_SCHEMA",
@@ -987,6 +1107,7 @@ const REFERENTIAL_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CONSTRAINT_NAME",
@@ -994,6 +1115,7 @@ const REFERENTIAL_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "UNIQUE_CONSTRAINT_CATALOG",
@@ -1001,6 +1123,7 @@ const REFERENTIAL_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
         size: 512,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "UNIQUE_CONSTRAINT_SCHEMA",
@@ -1008,6 +1131,7 @@ const REFERENTIAL_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "UNIQUE_CONSTRAINT_NAME",
@@ -1015,6 +1139,7 @@ const REFERENTIAL_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "MATCH_OPTION",
@@ -1022,6 +1147,7 @@ const REFERENTIAL_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "UPDATE_RULE",
@@ -1029,6 +1155,7 @@ const REFERENTIAL_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "DELETE_RULE",
@@ -1036,6 +1163,7 @@ const REFERENTIAL_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_NAME",
@@ -1043,6 +1171,7 @@ const REFERENTIAL_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "REFERENCED_TABLE_NAME",
@@ -1050,6 +1179,7 @@ const REFERENTIAL_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
 ];
 
@@ -1072,6 +1202,7 @@ const CLUSTER_INFO_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "INSTANCE",
@@ -1079,6 +1210,7 @@ const CLUSTER_INFO_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "STATUS_ADDRESS",
@@ -1086,6 +1218,7 @@ const CLUSTER_INFO_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "VERSION",
@@ -1093,6 +1226,7 @@ const CLUSTER_INFO_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "GIT_HASH",
@@ -1100,6 +1234,7 @@ const CLUSTER_INFO_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "START_TIME",
@@ -1107,6 +1242,7 @@ const CLUSTER_INFO_COLUMNS: &[InfoColumn] = &[
         size: 19,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "UPTIME",
@@ -1114,6 +1250,7 @@ const CLUSTER_INFO_COLUMNS: &[InfoColumn] = &[
         size: 32,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "SERVER_ID",
@@ -1121,6 +1258,7 @@ const CLUSTER_INFO_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: 0,
         deflt: None,
+        comment: Some("invalid if the configuration item `enable-global-kill` is set to FALSE"),
     },
 ];
 
@@ -1131,6 +1269,7 @@ const TIDB_SERVERS_INFO_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "IP",
@@ -1138,6 +1277,7 @@ const TIDB_SERVERS_INFO_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "PORT",
@@ -1145,6 +1285,7 @@ const TIDB_SERVERS_INFO_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "STATUS_PORT",
@@ -1152,6 +1293,7 @@ const TIDB_SERVERS_INFO_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "LEASE",
@@ -1159,6 +1301,7 @@ const TIDB_SERVERS_INFO_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "VERSION",
@@ -1166,6 +1309,7 @@ const TIDB_SERVERS_INFO_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "GIT_HASH",
@@ -1173,6 +1317,7 @@ const TIDB_SERVERS_INFO_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "LABELS",
@@ -1180,6 +1325,7 @@ const TIDB_SERVERS_INFO_COLUMNS: &[InfoColumn] = &[
         size: 128,
         flag: 0,
         deflt: None,
+        comment: None,
     },
 ];
 
@@ -1196,6 +1342,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: NOT_NULL_FLAG | UNSIGNED_FLAG,
         deflt: Some("0"),
+        comment: None,
     },
     InfoColumn {
         name: "USER",
@@ -1203,6 +1350,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 16,
         flag: NOT_NULL_FLAG,
         deflt: Some(""),
+        comment: None,
     },
     InfoColumn {
         name: "HOST",
@@ -1210,6 +1358,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: Some(""),
+        comment: None,
     },
     InfoColumn {
         name: "DB",
@@ -1217,6 +1366,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "COMMAND",
@@ -1224,6 +1374,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 16,
         flag: NOT_NULL_FLAG,
         deflt: Some(""),
+        comment: None,
     },
     InfoColumn {
         name: "TIME",
@@ -1231,6 +1382,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 7,
         flag: NOT_NULL_FLAG,
         deflt: Some("0"),
+        comment: None,
     },
     InfoColumn {
         name: "STATE",
@@ -1238,6 +1390,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 7,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "INFO",
@@ -1245,6 +1398,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: UNSPECIFIED_LENGTH,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "DIGEST",
@@ -1252,6 +1406,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: Some(""),
+        comment: None,
     },
     InfoColumn {
         name: "MEM",
@@ -1259,6 +1414,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: UNSIGNED_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "MEM_ARBITRATION",
@@ -1266,6 +1422,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 22,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "MEM_WAIT_ARBITRATE_START",
@@ -1273,6 +1430,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 32,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "MEM_WAIT_ARBITRATE_BYTES",
@@ -1280,6 +1438,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "DISK",
@@ -1287,6 +1446,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: UNSIGNED_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TxnStart",
@@ -1294,6 +1454,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: Some(""),
+        comment: None,
     },
     InfoColumn {
         name: "RESOURCE_GROUP",
@@ -1301,6 +1462,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: RESOURCE_GROUP_NAME_LENGTH,
         flag: NOT_NULL_FLAG,
         deflt: Some(""),
+        comment: None,
     },
     InfoColumn {
         name: "SESSION_ALIAS",
@@ -1308,6 +1470,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: Some(""),
+        comment: None,
     },
     InfoColumn {
         name: "ROWS_AFFECTED",
@@ -1315,6 +1478,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: UNSIGNED_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TIDB_CPU",
@@ -1322,6 +1486,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: NOT_NULL_FLAG,
         deflt: Some("0"),
+        comment: None,
     },
     InfoColumn {
         name: "TIKV_CPU",
@@ -1329,6 +1494,7 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: NOT_NULL_FLAG,
         deflt: Some("0"),
+        comment: None,
     },
 ];
 
@@ -1340,6 +1506,7 @@ const DEADLOCKS_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "OCCUR_TIME",
@@ -1347,6 +1514,7 @@ const DEADLOCKS_COLUMNS: &[InfoColumn] = &[
         size: 26,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "RETRYABLE",
@@ -1354,6 +1522,7 @@ const DEADLOCKS_COLUMNS: &[InfoColumn] = &[
         size: 1,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TRY_LOCK_TRX_ID",
@@ -1361,6 +1530,7 @@ const DEADLOCKS_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: NOT_NULL_FLAG | UNSIGNED_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CURRENT_SQL_DIGEST",
@@ -1368,6 +1538,7 @@ const DEADLOCKS_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "CURRENT_SQL_DIGEST_TEXT",
@@ -1375,6 +1546,7 @@ const DEADLOCKS_COLUMNS: &[InfoColumn] = &[
         size: UNSPECIFIED_LENGTH,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "KEY",
@@ -1382,6 +1554,7 @@ const DEADLOCKS_COLUMNS: &[InfoColumn] = &[
         size: UNSPECIFIED_LENGTH,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "KEY_INFO",
@@ -1389,6 +1562,7 @@ const DEADLOCKS_COLUMNS: &[InfoColumn] = &[
         size: UNSPECIFIED_LENGTH,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TRX_HOLDING_LOCK",
@@ -1396,6 +1570,7 @@ const DEADLOCKS_COLUMNS: &[InfoColumn] = &[
         size: 21,
         flag: NOT_NULL_FLAG | UNSIGNED_FLAG,
         deflt: None,
+        comment: None,
     },
 ];
 
@@ -1415,6 +1590,7 @@ const USER_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 81,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_CATALOG",
@@ -1422,6 +1598,7 @@ const USER_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 512,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "PRIVILEGE_TYPE",
@@ -1429,6 +1606,7 @@ const USER_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: 0,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "IS_GRANTABLE",
@@ -1436,6 +1614,7 @@ const USER_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 3,
         flag: 0,
         deflt: None,
+        comment: None,
     },
 ];
 
@@ -1460,6 +1639,7 @@ const SCHEMA_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 81,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_CATALOG",
@@ -1467,6 +1647,7 @@ const SCHEMA_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 512,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_SCHEMA",
@@ -1474,6 +1655,7 @@ const SCHEMA_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "PRIVILEGE_TYPE",
@@ -1481,6 +1663,7 @@ const SCHEMA_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "IS_GRANTABLE",
@@ -1488,6 +1671,7 @@ const SCHEMA_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 3,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
 ];
 
@@ -1500,6 +1684,7 @@ const TABLE_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 81,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_CATALOG",
@@ -1507,6 +1692,7 @@ const TABLE_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 512,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_SCHEMA",
@@ -1514,6 +1700,7 @@ const TABLE_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_NAME",
@@ -1521,6 +1708,7 @@ const TABLE_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "PRIVILEGE_TYPE",
@@ -1528,6 +1716,7 @@ const TABLE_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "IS_GRANTABLE",
@@ -1535,6 +1724,7 @@ const TABLE_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 3,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
 ];
 
@@ -1547,6 +1737,7 @@ const COLUMN_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 81,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_CATALOG",
@@ -1554,6 +1745,7 @@ const COLUMN_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 512,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_SCHEMA",
@@ -1561,6 +1753,7 @@ const COLUMN_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "TABLE_NAME",
@@ -1568,6 +1761,7 @@ const COLUMN_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "COLUMN_NAME",
@@ -1575,6 +1769,7 @@ const COLUMN_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "PRIVILEGE_TYPE",
@@ -1582,6 +1777,7 @@ const COLUMN_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 64,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
     InfoColumn {
         name: "IS_GRANTABLE",
@@ -1589,6 +1785,7 @@ const COLUMN_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         size: 3,
         flag: NOT_NULL_FLAG,
         deflt: None,
+        comment: None,
     },
 ];
 
@@ -1656,6 +1853,7 @@ pub fn register_tables(catalog: &mut Catalog) {
                 id: i64::try_from(offset).unwrap_or(0),
                 field_type: column.field_type(),
                 column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                comment: column.comment.unwrap_or_default().to_owned(),
                 default_value: column
                     .deflt
                     .map(|text| ColumnDefault::Value(Datum::Bytes(text.as_bytes().to_vec()))),

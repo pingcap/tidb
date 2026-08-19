@@ -691,6 +691,10 @@ pub struct KvColumn {
     /// existing rows 7, not NULL, and the row bytes are never rewritten --
     /// the value is filled in on read.
     pub origin_default: Option<Datum>,
+    /// Go `ColumnInfo.Comment`: what `SHOW CREATE TABLE` prints after the
+    /// column and what `information_schema.columns.column_comment` reports.
+    /// Empty when the column was declared without one.
+    pub comment: String,
     /// Go `ColumnInfo.GeneratedExprString`/`GeneratedStored`: the column's
     /// value comes from an expression rather than from the row bytes. `None`
     /// is an ordinary column. See [`crate::generated_column`].

@@ -2437,6 +2437,7 @@ mod tests {
                     default_value: None,
                     // A column present at CREATE TABLE has no pre-existing rows.
                     origin_default: None,
+                    comment: String::new(),
                     generated: None,
                 },
                 KvColumn {
@@ -2447,6 +2448,7 @@ mod tests {
                     default_value: None,
                     // A column present at CREATE TABLE has no pre-existing rows.
                     origin_default: None,
+                    comment: String::new(),
                     generated: None,
                 },
             ],
@@ -2683,6 +2685,7 @@ mod tests {
                     column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
                     default_value: None,
                     origin_default: None,
+                    comment: String::new(),
                     generated: None,
                 }],
                 Box::new(MemTableStorage::new()),
@@ -2709,6 +2712,7 @@ mod tests {
                     column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
                     default_value: None,
                     origin_default: None,
+                    comment: String::new(),
                     generated: None,
                 })
                 .collect(),
@@ -2919,6 +2923,7 @@ mod tests {
                     column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
                     default_value: None,
                     origin_default: None,
+                    comment: String::new(),
                     generated: None,
                 },
                 KvColumn {
@@ -2928,6 +2933,7 @@ mod tests {
                     column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
                     default_value: None,
                     origin_default: None,
+                    comment: String::new(),
                     generated: None,
                 },
             ],

@@ -857,7 +857,8 @@ fn column_row(
                 .is_some_and(tidb_executor::column_default::ColumnDefault::is_default_generated),
         )),
         text(PRIVILEGES),
-        text(""),
+        // Go `COLUMN_COMMENT`, from `ColumnInfo.Comment`.
+        text(&column.comment),
         text(""),
         Datum::Null,
     ]

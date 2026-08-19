@@ -17,12 +17,9 @@
 # captured block above establishes. Re-capture them the next time `gorun` is
 # available.
 #
-# ONE KNOWN DEVIATION in the derived `CLUSTER_INFO`: Go declares a `comment`
-# on `SERVER_ID` ("invalid if the configuration item `enable-global-kill` is
-# set to FALSE"), which a real capture would render as a trailing
-# `COMMENT '...'`. This tier's `InfoColumn` carries no comment field at all,
-# so no served table can print one; the block below omits it rather than
-# claiming a rendering this code cannot produce.
+# Go declares a `comment` on `CLUSTER_INFO`'s `SERVER_ID`, which renders as a
+# trailing `COMMENT '...'`; among the served tables it is the only one that
+# declares any. It is the sole column comment below.
 CREATE TABLE `SCHEMATA` (
   `CATALOG_NAME` varchar(512) DEFAULT NULL,
   `SCHEMA_NAME` varchar(64) DEFAULT NULL,
@@ -195,7 +192,7 @@ CREATE TABLE `CLUSTER_INFO` (
   `GIT_HASH` varchar(64) DEFAULT NULL,
   `START_TIME` datetime DEFAULT NULL,
   `UPTIME` varchar(32) DEFAULT NULL,
-  `SERVER_ID` bigint DEFAULT NULL
+  `SERVER_ID` bigint DEFAULT NULL COMMENT 'invalid if the configuration item `enable-global-kill` is set to FALSE'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 CREATE TABLE `TIDB_SERVERS_INFO` (
   `DDL_ID` varchar(64) DEFAULT NULL,

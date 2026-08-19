@@ -472,6 +472,9 @@ pub(crate) fn cluster_table(
             id: column.id,
             field_type: column.field_type.clone(),
             column_info_version: column.version,
+            // Go `ColumnInfo.Comment`, which `SHOW CREATE TABLE` prints and
+            // `information_schema.columns.column_comment` reports.
+            comment: column.comment.clone(),
             // The cluster catalog loader refuses a generated column outright
             // (`tidb_exec::cluster_catalog`), so a table that reaches here
             // never has one.
