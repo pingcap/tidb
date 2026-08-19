@@ -186,6 +186,22 @@ impl GlobalSysvars {
         self.write(name, value, SCOPE_INSTANCE)
     }
 
+    /// Go `variable.SetSysVar`: the STARTUP write `setGlobalVars`
+    /// (`cmd/tidb-server/main.go:1105`) pushes config-derived values with —
+    /// it replaces the registry default directly, with no scope or read-only
+    /// validation, which is how read-only NONE-scope variables like `port`,
+    /// `socket` and `hostname` get their per-process values. Runtime `SET`
+    /// statements never come through here.
+    pub fn set_startup(&self, name: &str, value: String) {
+        let Some(def) = get_sys_var(name) else {
+            return;
+        };
+        self.store(def)
+            .lock()
+            .expect("global sysvar lock poisoned")
+            .insert(name.to_ascii_lowercase(), value);
+    }
+
     fn write(&self, name: &str, value: String, scope: u8) -> Result<bool, VarError> {
         let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
@@ -616,8 +632,10 @@ impl SessionVars {
         // An INSTANCE-scoped variable has no session copy either, and its
         // node-wide value is the only one there is: without this arm a
         // `SET GLOBAL tidb_general_log = 1` would store a value that
-        // `SELECT @@tidb_general_log` never consults.
-        if !def.has_session_scope() && (def.has_global_scope() || def.has_instance_scope()) {
+        // `SELECT @@tidb_general_log` never consults. A NONE-scope variable
+        // (`port`, `socket`) reads the same node tier, which is where the
+        // startup `set_global_vars` push (Go `variable.SetSysVar`) lives.
+        if !def.has_session_scope() {
             return self.globals.get(name);
         }
         Ok(self

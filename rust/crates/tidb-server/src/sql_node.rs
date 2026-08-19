@@ -1810,6 +1810,8 @@ mod tests {
             report_status: false,
             status_host: "0.0.0.0".to_owned(),
             status_port: 0,
+            socket: String::new(),
+            isolation_read_engines: Vec::new(),
             store_kind: crate::node_config::StoreKind::TiKv,
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,

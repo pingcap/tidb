@@ -87,6 +87,7 @@ mod secure_transport;
 mod session_transaction;
 pub mod signal_exit;
 mod sorting_result_set;
+mod set_global_vars;
 mod sql_node;
 mod transaction_overlay_result_set;
 mod unistore_node;

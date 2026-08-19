@@ -147,6 +147,13 @@ pub struct NodeConfig {
     pub status_host: String,
     /// Go `cfg.Status.StatusPort` (default 10080).
     pub status_port: u16,
+    /// Go `cfg.Socket` after `setGlobalVars`' `{Port}` substitution
+    /// (`main.go:1110`) — the value `@@socket` reports. The listener itself
+    /// remains TCP-only; the unix-socket LISTENER is unported.
+    pub socket: String,
+    /// Go `cfg.IsolationRead.Engines` (default `tikv,tiflash,tidb`), the
+    /// startup value of `@@tidb_isolation_read_engines`.
+    pub isolation_read_engines: Vec<String>,
     /// Address on which MySQL protocol connections are accepted.
     pub host: IpAddr,
     /// MySQL protocol port. Zero requests an ephemeral test port.
@@ -529,6 +536,7 @@ impl NodeConfig {
         let mut tidb_edition = None;
         let mut tidb_release_version = None;
         let mut server_version = None;
+        let mut socket = None;
 
         while let Some(argument) = pending.next() {
             if argument == "--help" || argument == "-h" {
@@ -594,6 +602,7 @@ impl NodeConfig {
                 "--host" => set_once(&mut host, option, value)?,
                 "--affinity-cpus" => set_once(&mut affinity_cpus, option, value)?,
                 "--port" => set_once(&mut port, option, value)?,
+                "--socket" => set_once(&mut socket, option, value)?,
                 "--path" => set_once(&mut path, option, value)?,
                 "--store" => set_once(&mut store, option, value)?,
                 "--read-table" => {
@@ -923,6 +932,16 @@ impl NodeConfig {
                 })
                 .transpose()?
                 .unwrap_or(10080),
+            // Go's config default plus `setGlobalVars`' one `{Port}`
+            // replacement (`main.go:1109`).
+            socket: socket
+                .unwrap_or_else(|| "/tmp/tidb-{Port}.sock".to_owned())
+                .replacen("{Port}", &port.to_string(), 1),
+            isolation_read_engines: vec![
+                "tikv".to_owned(),
+                "tiflash".to_owned(),
+                "tidb".to_owned(),
+            ],
             host,
             port,
             affinity_cpus,

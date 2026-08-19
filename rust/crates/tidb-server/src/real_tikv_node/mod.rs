@@ -1339,7 +1339,11 @@ pub(crate) fn configured_account_store(
     } else {
         ConfiguredUserStore::load(&config.auth_file).map_err(RunConfiguredNodeError::Auth)?
     };
-    Ok(apply_account_policies(config, users))
+    let users = apply_account_policies(config, users);
+    // Go `setGlobalVars` runs before any listener starts; this store carries
+    // the node's registry, so the push happens where the store is born.
+    crate::set_global_vars::set_global_vars(config, &users.global_vars());
+    Ok(users)
 }
 
 /// Starts the bounded concurrent production Rust SQL node.

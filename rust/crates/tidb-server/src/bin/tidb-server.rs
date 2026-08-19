@@ -88,8 +88,10 @@ mod tests {
     //   nextgen keyspace/starter infrastructure, out of the ported scope
     //   by name.
     // * `TestRunMain` — the coverage-server harness, not a behavior test.
-    // * `TestSetGlobalVars` — the config→sysvar wiring; portable in part
-    //   once the instance-scope sysvar surface lands, named as future work.
+    // * `TestSetGlobalVars` — TRANSCREATED in part in
+    //   `crate::set_global_vars` (port/socket/isolation-engines legs plus
+    //   the registry defaults); the instance-scope promotion leg stays with
+    //   `setInstanceVar`, named there.
     use super::*;
 
     #[test]
