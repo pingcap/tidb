@@ -74,16 +74,17 @@ use tidb_distsql::{
 };
 use tidb_executor::predicate_pushdown::ScanPredicate;
 use tidb_executor::remote_scan::{
-    PushdownRowStream, PushdownScanColumn, PushdownScanRequest, PushdownScanner,
-    PushdownScannerError, EXTRA_HANDLE_COLUMN_ID,
+    PushdownAggregateKind, PushdownPartialAggregate, PushdownRowStream, PushdownScanColumn,
+    PushdownScanRequest, PushdownScanner, PushdownScannerError, EXTRA_HANDLE_COLUMN_ID,
 };
 use tidb_executor::storage::StorageError;
 use tidb_planner::physical_table_scan::PhysicalTableScanPlan;
 use tidb_planner::tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec};
-use tidb_proto::tipb::{ExecType, Expr};
+use tidb_proto::tipb::{Aggregation, ExecType, Expr, ExprType, ScalarFuncSig};
 use tidb_txnkv::KeyRange;
 
 use crate::dag_request::{
+    construct_aggregated_read_only_dag_req_with_conditions,
     construct_capped_read_only_dag_req_with_conditions, DagRequestContext, TiKvScanPlan,
 };
 use crate::real_tikv_read::RealTiKvSessionTransportFactory;
@@ -218,11 +219,6 @@ where
         // an aggregate or index request is wrong data, not degraded service.
         // A refused `topn` or cap is different -- the contract names those
         // best-effort and the caller retains the local stage either way.
-        if request.aggregate.is_some() {
-            return Err(refuse(
-                "this coprocessor lowering does not build a partial aggregation",
-            ));
-        }
         if request.index.is_some() {
             return Err(refuse(
                 "this coprocessor lowering does not build an index scan",
@@ -239,11 +235,17 @@ where
             .map(scan_column)
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| refuse("a column has no bounded coprocessor descriptor"))?;
-        let field_types: Vec<FieldType> = request
-            .columns
-            .iter()
-            .map(|column| column.field_type.clone())
-            .collect();
+        // With an aggregation the response rows ARE the aggregate schema --
+        // results first, group keys last -- so the decoder's types come from
+        // the aggregate, not the scanned columns.
+        let field_types: Vec<FieldType> = match &request.aggregate {
+            Some(aggregate) => aggregate.output_types(),
+            None => request
+                .columns
+                .iter()
+                .map(|column| column.field_type.clone())
+                .collect(),
+        };
         let output_offsets: Vec<u32> = (0..columns.len() as u32).collect();
 
         // Every conjunct this lowering accepts travels; the rest simply stay
@@ -274,6 +276,30 @@ where
             None
         };
 
+        // The contract on [`PushdownScanRequest::aggregate`]: when present,
+        // every predicate must be lowered -- an aggregated row cannot be
+        // re-filtered locally -- and no cap may ride along, because TiKV
+        // would cap SOURCE rows while the caller asked to cap nothing.
+        let aggregation = match &request.aggregate {
+            Some(aggregate) => {
+                if lowered.len() != request.predicates.len() {
+                    return Err(refuse(
+                        "a partial aggregation requires every predicate to lower",
+                    ));
+                }
+                if request.limit.is_some() {
+                    return Err(refuse(
+                        "a partial aggregation does not compose with a row cap",
+                    ));
+                }
+                Some(
+                    aggregation_to_pb(aggregate, &columns)
+                        .ok_or_else(|| refuse("a pushed aggregate has no bounded lowering"))?,
+                )
+            }
+            None => None,
+        };
+
         let mut spec = TiKvTableScanSpec::new(request.table_id, columns.clone());
         // A CLUSTERED table's primary key lives in the row key, so the
         // coprocessor needs the ids to rebuild those columns from it -- Go's
@@ -289,22 +315,32 @@ where
         // Go `ConstructDAGReq`: the zone comes from the SESSION VARIABLES of
         // the statement that issued this request, read fresh every time.
         let (time_zone_name, time_zone_offset_secs) = request.statement.time_zone.dag_zone();
-        let dag = construct_capped_read_only_dag_req_with_conditions(
-            &DagRequestContext::new(
-                time_zone_name,
-                time_zone_offset_secs,
-                // Go `builder_utils.go`'s `sc.PushDownFlags()`. The literal
-                // `0` this replaced is TiKV's strictest branch: a truncation
-                // TiDB degrades to a 1292 warning failed the whole region
-                // request instead.
-                request.statement.push_down_flags,
-                EncodeType::Default,
+        let dag_context = DagRequestContext::new(
+            time_zone_name,
+            time_zone_offset_secs,
+            // Go `builder_utils.go`'s `sc.PushDownFlags()`. The literal
+            // `0` this replaced is TiKV's strictest branch: a truncation
+            // TiDB degrades to a 1292 warning failed the whole region
+            // request instead.
+            request.statement.push_down_flags,
+            EncodeType::Default,
+        );
+        let dag = match aggregation {
+            Some(aggregation) => construct_aggregated_read_only_dag_req_with_conditions(
+                &dag_context,
+                TiKvScanPlan::Table(&scan),
+                &conditions,
+                aggregation,
+                field_types.len(),
             ),
-            TiKvScanPlan::Table(&scan),
-            &conditions,
-            remote_limit,
-            &output_offsets,
-        )
+            None => construct_capped_read_only_dag_req_with_conditions(
+                &dag_context,
+                TiKvScanPlan::Table(&scan),
+                &conditions,
+                remote_limit,
+                &output_offsets,
+            ),
+        }
         .map_err(|error| PushdownScannerError::Unsupported(error.to_string()))?;
 
         let summary = dag_summary(&dag);
@@ -315,6 +351,9 @@ where
             .collect();
         let mut shapes = vec![ExecutorShape::new(ExecutorKind::TableScan)];
         if !conditions.is_empty() {
+            shapes.push(ExecutorShape::new(ExecutorKind::Other));
+        }
+        if request.aggregate.is_some() {
             shapes.push(ExecutorShape::new(ExecutorKind::Other));
         }
         if remote_limit.is_some() {
@@ -387,6 +426,20 @@ fn dag_summary(dag: &tidb_proto::tipb::DagRequest) -> String {
                     .and_then(|limit| limit.limit)
                     .unwrap_or_default()
             ),
+            Some(tp)
+                if tp == ExecType::TypeAggregation as i32
+                    || tp == ExecType::TypeStreamAgg as i32 =>
+            {
+                let (functions, groups) = executor.aggregation.as_ref().map_or((0, 0), |agg| {
+                    (agg.agg_func.len(), agg.group_by.len())
+                });
+                let name = if tp == ExecType::TypeStreamAgg as i32 {
+                    "StreamAgg"
+                } else {
+                    "HashAgg"
+                };
+                format!("{name}({functions} functions, {groups} group keys)")
+            }
             other => format!("executor {other:?}"),
         })
         .collect();
@@ -566,6 +619,109 @@ impl Drop for CopRowStream {
 /// The refusal is the honest half: a descriptor built from a guessed
 /// collation, length or flag set would make TiKV decode a column differently
 /// from the client, which is a wrong answer rather than a slow one.
+/// Lowers the pushed partial aggregate into the TiPB `Aggregation` message
+/// -- Go `PhysicalHashAgg.ToPB`/`PhysicalStreamAgg.ToPB` over
+/// `aggregation.AggFuncToPBExpr`, narrowed to the column-argument shapes
+/// [`PushdownPartialAggregate`] models. `None` refuses the whole scan.
+///
+/// The aggregate leaves carry no `field_type`: every argument is a scan
+/// column whose full descriptor already travels in the `TableScan`
+/// executor, which is where the region reads types and collations from.
+fn aggregation_to_pb(
+    aggregate: &PushdownPartialAggregate,
+    columns: &[ScanColumnInfo],
+) -> Option<Aggregation> {
+    let encode_signed = |value: i64| {
+        let mut encoded = Vec::with_capacity(8);
+        tidb_codec::encode_int(&mut encoded, value);
+        encoded
+    };
+    let column_ref = |offset: usize| -> Option<Expr> {
+        (offset < columns.len()).then(|| Expr {
+            tp: Some(ExprType::ColumnRef as i32),
+            val: Some(encode_signed(i64::try_from(offset).expect("scan width fits i64"))),
+            children: Vec::new(),
+            sig: Some(ScalarFuncSig::Unspecified as i32),
+            field_type: None,
+            has_distinct: Some(false),
+        })
+    };
+    let agg = |tp: ExprType, child: Expr| Expr {
+        tp: Some(tp as i32),
+        val: None,
+        children: vec![child],
+        sig: Some(ScalarFuncSig::Unspecified as i32),
+        field_type: None,
+        has_distinct: Some(false),
+    };
+    // Go lowers `COUNT(*)` as `COUNT(1)` before it reaches the coprocessor.
+    let one = Expr {
+        tp: Some(ExprType::Int64 as i32),
+        val: Some(encode_signed(1)),
+        children: Vec::new(),
+        sig: Some(ScalarFuncSig::Unspecified as i32),
+        field_type: None,
+        has_distinct: Some(false),
+    };
+    let message = |group_by: Vec<Expr>, agg_func: Vec<Expr>, streamed: bool| Aggregation {
+        group_by,
+        agg_func,
+        streamed: Some(streamed),
+    };
+    match aggregate {
+        PushdownPartialAggregate::Count { input_offset, .. } => Some(message(
+            Vec::new(),
+            vec![agg(ExprType::Count, column_ref(*input_offset)?)],
+            false,
+        )),
+        PushdownPartialAggregate::Sum { input_offset, .. } => Some(message(
+            Vec::new(),
+            vec![agg(ExprType::Sum, column_ref(*input_offset)?)],
+            false,
+        )),
+        PushdownPartialAggregate::GroupBy { input_offset, .. } => {
+            Some(message(vec![column_ref(*input_offset)?], Vec::new(), false))
+        }
+        PushdownPartialAggregate::GroupBySum {
+            group_offset,
+            sum_offset,
+            ..
+        } => Some(message(
+            vec![column_ref(*group_offset)?],
+            vec![agg(ExprType::Sum, column_ref(*sum_offset)?)],
+            false,
+        )),
+        PushdownPartialAggregate::Grouped {
+            group_offsets,
+            functions,
+            streamed,
+            ..
+        } => {
+            let group_by = group_offsets
+                .iter()
+                .map(|offset| column_ref(*offset))
+                .collect::<Option<Vec<_>>>()?;
+            let agg_func = functions
+                .iter()
+                .map(|function| {
+                    let argument = match function.input_offset {
+                        Some(offset) => column_ref(offset)?,
+                        None => one.clone(),
+                    };
+                    let tp = match function.kind {
+                        PushdownAggregateKind::Count => ExprType::Count,
+                        PushdownAggregateKind::Sum => ExprType::Sum,
+                        PushdownAggregateKind::Min => ExprType::Min,
+                        PushdownAggregateKind::Max => ExprType::Max,
+                    };
+                    Some(agg(tp, argument))
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(message(group_by, agg_func, *streamed))
+        }
+    }
+}
+
 fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
     // The integer family, with MySQL's default display width for each. The
     // width is metadata TiKV does not evaluate with -- the value is an integer

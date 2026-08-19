@@ -109,4 +109,18 @@ fn a_derived_aggregate_over_the_coprocessor_answers_its_output() {
         "SELECT * FROM (SELECT g, count(*) AS c FROM test.rep GROUP BY g) s ORDER BY g",
     ));
     assert_eq!(counted, [["1", "3"], ["2", "2"]]);
+
+    // The receipt that the partial stage ran AT THE REGION: the scanner's
+    // request log names an aggregation executor in a served DAG. A refusal
+    // would fall back to the local partial cursor -- same answer, but the
+    // lowering this test pins would silently be dead.
+    let stats = stack.cop_source.stats();
+    assert!(
+        stats
+            .requests
+            .iter()
+            .any(|request| request.contains("HashAgg") || request.contains("StreamAgg")),
+        "no served DAG carried an aggregation executor: {:?}",
+        stats.requests
+    );
 }

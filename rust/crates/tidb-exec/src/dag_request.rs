@@ -37,8 +37,8 @@ use tidb_planner::{
     },
 };
 use tidb_proto::tipb::{
-    ChunkMemoryLayout, ColumnInfo, DagRequest, EncodeType, Endian, EngineType, ExecType, Executor,
-    Expr, IndexScan, Limit, Selection, TableScan,
+    Aggregation, ChunkMemoryLayout, ColumnInfo, DagRequest, EncodeType, Endian, EngineType,
+    ExecType, Executor, Expr, IndexScan, Limit, Selection, TableScan,
 };
 
 /// Go's default `div_precision_increment`; the field is omitted at this value.
@@ -192,6 +192,7 @@ pub fn limit_to_pb(limit: u64) -> Executor {
         tbl_scan: None,
         idx_scan: None,
         selection: None,
+        aggregation: None,
         limit: Some(Limit { limit: Some(limit) }),
         executor_id: Some(String::new()),
         parent_idx: None,
@@ -276,12 +277,75 @@ pub fn construct_capped_read_only_dag_req(
     )
 }
 
+/// [`construct_capped_read_only_dag_req_with_conditions`] with a partial
+/// aggregation above the Selection -- the executor list Go builds when a
+/// final/partial split pushes the partial stage into a TiKV reader
+/// (`PhysicalHashAgg.ToPB` in the list form). The DAG's output offsets
+/// enumerate the AGGREGATION's schema -- aggregate results first, then
+/// group keys -- not the scan's.
+pub fn construct_aggregated_read_only_dag_req_with_conditions(
+    context: &DagRequestContext,
+    scan: TiKvScanPlan<'_>,
+    conditions: &[Expr],
+    aggregation: Aggregation,
+    aggregation_width: usize,
+) -> Result<DagRequest, DagRequestBuildError> {
+    construct_dag_req_assembled(
+        context,
+        &[scan],
+        if conditions.is_empty() {
+            SelectionSource::None
+        } else {
+            SelectionSource::Conditions(conditions)
+        },
+        None,
+        None,
+        Some((aggregation, aggregation_width)),
+    )
+}
+
+fn aggregation_to_executor(aggregation: Aggregation) -> Executor {
+    let streamed = aggregation.streamed == Some(true);
+    Executor {
+        tp: Some(if streamed {
+            ExecType::TypeStreamAgg
+        } else {
+            ExecType::TypeAggregation
+        } as i32),
+        tbl_scan: None,
+        idx_scan: None,
+        selection: None,
+        aggregation: Some(aggregation),
+        limit: None,
+        executor_id: Some(String::new()),
+        parent_idx: None,
+    }
+}
+
 fn construct_dag_req_inner(
     context: &DagRequestContext,
     plans: &[TiKvScanPlan<'_>],
     selection: SelectionSource<'_>,
     requested_output_offsets: Option<&[u32]>,
     limit: Option<u64>,
+) -> Result<DagRequest, DagRequestBuildError> {
+    construct_dag_req_assembled(
+        context,
+        plans,
+        selection,
+        requested_output_offsets,
+        limit,
+        None,
+    )
+}
+
+fn construct_dag_req_assembled(
+    context: &DagRequestContext,
+    plans: &[TiKvScanPlan<'_>],
+    selection: SelectionSource<'_>,
+    requested_output_offsets: Option<&[u32]>,
+    limit: Option<u64>,
+    aggregation: Option<(Aggregation, usize)>,
 ) -> Result<DagRequest, DagRequestBuildError> {
     let [plan] = plans else {
         return Err(DagRequestBuildError::PlanCount {
@@ -302,12 +366,18 @@ fn construct_dag_req_inner(
                 .as_slice(),
         ),
     };
+    let output_width = match &aggregation {
+        // The aggregation replaces the scan row: the reader addresses the
+        // aggregate results and group keys, never the scanned columns.
+        Some((_, width)) => *width,
+        None => scan_columns.len(),
+    };
     let output_offsets = match requested_output_offsets {
         Some(offsets) => {
-            validate_output_offsets(offsets, scan_columns.len())?;
+            validate_output_offsets(offsets, output_width)?;
             offsets.to_vec()
         }
-        None => (0..scan_columns.len())
+        None => (0..output_width)
             .map(|offset| {
                 u32::try_from(offset).expect("executor output width fits TiKV u32 offsets")
             })
@@ -322,6 +392,9 @@ fn construct_dag_req_inner(
         SelectionSource::Conditions(conditions) => {
             executors.push(selection_executor(conditions.to_vec())?);
         }
+    }
+    if let Some((aggregation, _)) = aggregation {
+        executors.push(aggregation_to_executor(aggregation));
     }
     if let Some(limit) = limit {
         executors.push(limit_to_pb(limit));
@@ -395,6 +468,7 @@ fn selection_executor(conditions: Vec<Expr>) -> Result<Executor, DagRequestBuild
         tbl_scan: None,
         idx_scan: None,
         selection: Some(Selection { conditions }),
+        aggregation: None,
         limit: None,
         // PhysicalSelection.ToPB always takes the address of executorID; it
         // remains empty for TiKV's list form.
@@ -468,6 +542,7 @@ fn table_scan_to_pb(spec: &TiKvTableScanSpec) -> Result<Executor, DagRequestBuil
         }),
         idx_scan: None,
         selection: None,
+        aggregation: None,
         limit: None,
         // PhysicalTableScan.ToPB takes the address of its initially empty ID
         // even for TiKV, so field 10 is present with an empty string.
@@ -493,6 +568,7 @@ fn index_scan_to_pb(plan: &PhysicalIndexScanPlan) -> Result<Executor, DagRequest
         tbl_scan: None,
         idx_scan: Some(index_payload_to_pb(spec, plan)),
         selection: None,
+        aggregation: None,
         limit: None,
         executor_id: None,
         parent_idx: None,

@@ -15,7 +15,10 @@ enum ExecType {
   TypeTableScan = 0;
   TypeIndexScan = 1;
   TypeSelection = 2;
+  // Upstream's hash aggregation; the name predates TiKV's stream support.
+  TypeAggregation = 3;
   TypeLimit = 5;
+  TypeStreamAgg = 6;
 }
 
 enum EngineType {
@@ -85,6 +88,13 @@ enum ExprType {
   // deliberately absent -- no leaf this path builds is that kind.
   String = 5;
   ColumnRef = 201;
+  // The aggregate-function family a partial TiKV aggregation carries. Only
+  // the kinds the pushed-aggregate lowering builds are projected; upstream
+  // also numbers Avg (3003), First (3006) and GroupConcat (3007).
+  Count = 3001;
+  Sum = 3002;
+  Min = 3004;
+  Max = 3005;
   ScalarFunc = 10000;
 }
 
@@ -191,11 +201,21 @@ message Limit {
   optional uint64 limit = 1;
 }
 
+// The TiKV list-form partial aggregation above the scan/Selection. The
+// upstream message also carries RPN spellings, a TiFlash tree child and a
+// pre-aggregation mode; none has a place in this bounded projection.
+message Aggregation {
+  repeated Expr group_by = 1;
+  repeated Expr agg_func = 2;
+  optional bool streamed = 3;
+}
+
 message Executor {
   optional ExecType tp = 1;
   optional TableScan tbl_scan = 2;
   optional IndexScan idx_scan = 3;
   optional Selection selection = 4;
+  optional Aggregation aggregation = 5;
   optional Limit limit = 7;
   optional string executor_id = 10;
   optional uint32 parent_idx = 25;

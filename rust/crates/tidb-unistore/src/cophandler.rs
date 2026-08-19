@@ -122,6 +122,7 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
     // checked at `:597`).
     let mut limit = usize::MAX;
     let mut conditions: Vec<SimpleExpr> = Vec::new();
+    let mut aggregation: Option<&tipb::Aggregation> = None;
     for above in &context.dag_req.executors[1..] {
         if above.tp() == tipb::ExecType::TypeLimit {
             let Some(body) = above.limit.as_ref() else {
@@ -138,11 +139,22 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
                     Err(message) => return other_error(&message),
                 }
             }
+        } else if above.tp() == tipb::ExecType::TypeAggregation
+            || above.tp() == tipb::ExecType::TypeStreamAgg
+        {
+            let Some(body) = above.aggregation.as_ref() else {
+                return other_error("executor missing aggregation body");
+            };
+            aggregation = Some(body);
         } else {
-            return other_error(
-                "closure_exec.go's top-n and aggregation processors are later courses",
-            );
+            return other_error("closure_exec.go's top-n processor is a later course");
         }
+    }
+    if aggregation.is_some() && limit != usize::MAX {
+        // Go's closure executor composes them; this port's one lowering
+        // never builds the pair, so the combination refuses by name rather
+        // than guessing which of Go's two cap positions was meant.
+        return other_error("aggregation over a row cap is a later course of this port");
     }
     let scan = &context.dag_req.executors[0];
     if scan.tp() != tipb::ExecType::TypeTableScan {
@@ -151,7 +163,7 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
     let Some(tbl_scan) = scan.tbl_scan.as_ref() else {
         return other_error("executor missing tbl_scan body");
     };
-    exec_table_scan(store, context, tbl_scan, &conditions, limit)
+    exec_table_scan(store, context, tbl_scan, &conditions, limit, aggregation)
 }
 
 /// Go's chunk cut: `closure_exec.go` grows the output chunk to 1024 rows
@@ -180,7 +192,15 @@ fn exec_table_scan(
     tbl_scan: &tipb::TableScan,
     conditions: &[SimpleExpr],
     limit: usize,
+    aggregation: Option<&tipb::Aggregation>,
 ) -> coprocessor::Response {
+    let mut aggregator = match aggregation {
+        Some(aggregation) => match RegionAggregator::build(aggregation, tbl_scan) {
+            Ok(aggregator) => Some(aggregator),
+            Err(message) => return other_error(&message),
+        },
+        None => None,
+    };
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     let mut column_types = std::collections::BTreeMap::new();
     for column in &tbl_scan.columns {
@@ -277,6 +297,14 @@ fn exec_table_scan(
             {
                 continue;
             }
+            // A partial aggregation consumes the surviving row instead of
+            // emitting it; the grouped rows leave after the scan.
+            if let Some(aggregator) = aggregator.as_mut() {
+                if let Err(message) = aggregator.update(&row_datums) {
+                    return other_error(&message);
+                }
+                continue;
+            }
             // Go's closure executor emits exactly `DAGRequest.output_offsets`
             // when the request names them: the request's own projection, in
             // its order. An empty list is the whole scanned column set.
@@ -316,6 +344,41 @@ fn exec_table_scan(
             }
         }
     }
+    if let Some(aggregator) = aggregator {
+        // TiKV's aggregation schema: aggregate results first, group keys
+        // last, one row per group. `output_offsets` addresses THAT row.
+        for row in aggregator.finish() {
+            let projected: Vec<Datum> = if context.dag_req.output_offsets.is_empty() {
+                row
+            } else {
+                let mut projected = Vec::with_capacity(context.dag_req.output_offsets.len());
+                for offset in &context.dag_req.output_offsets {
+                    match row.get(*offset as usize) {
+                        Some(datum) => projected.push(datum.clone()),
+                        None => {
+                            return other_error(&format!(
+                                "output offset {offset} is outside the aggregate schema"
+                            ))
+                        }
+                    }
+                }
+                projected
+            };
+            let encoded = match tidb_codec::encode_value(&projected) {
+                Ok(encoded) => encoded,
+                Err(err) => return other_error(&format!("encode row failed: {err:?}")),
+            };
+            current.extend_from_slice(&encoded);
+            current_rows += 1;
+            if current_rows == CHUNK_MAX_ROWS {
+                chunks.push(tipb::Chunk {
+                    rows_data: Some(std::mem::take(&mut current)),
+                    ..tipb::Chunk::default()
+                });
+                current_rows = 0;
+            }
+        }
+    }
     if !current.is_empty() {
         chunks.push(tipb::Chunk {
             rows_data: Some(current),
@@ -333,6 +396,303 @@ fn exec_table_scan(
         data,
         ..coprocessor::Response::default()
     }
+}
+
+/// Go `buildHashAggProcessor` / `buildStreamAggProcessor`
+/// (`closure_exec.go`): the region-side partial aggregation over the
+/// surviving scan rows, narrowed to the shapes
+/// [`crate::cophandler::convert_expr`]'s column/literal leaves can carry --
+/// COUNT/SUM/MIN/MAX over one column (or `COUNT(1)`), grouped by columns.
+///
+/// The partial-row contract is the one the reader's FINAL stage consumes:
+/// aggregate results first, then the group keys, `COUNT` as `BIGINT`,
+/// `SUM` as `DECIMAL` (MySQL's sum type for integer input), extremes as
+/// the input datum. Hash groups leave in group-key order; a streamed
+/// aggregation emits each group as the ordered scan leaves it.
+struct RegionAggregator {
+    group_by: Vec<(SimpleExpr, tidb_datatype::Collation)>,
+    functions: Vec<(RegionAggKind, SimpleExpr, tidb_datatype::Collation)>,
+    streamed: bool,
+    hash: std::collections::BTreeMap<Vec<u8>, (Vec<tidb_datatype::Datum>, Vec<RegionAggValue>)>,
+    current: Option<(Vec<u8>, Vec<tidb_datatype::Datum>, Vec<RegionAggValue>)>,
+    ordered: Vec<Vec<tidb_datatype::Datum>>,
+}
+
+#[derive(Clone, Copy)]
+enum RegionAggKind {
+    Count,
+    Sum,
+    Min,
+    Max,
+}
+
+enum RegionAggValue {
+    Count(i64),
+    Sum(Option<tidb_datatype::Decimal>),
+    Extreme(Option<tidb_datatype::Datum>),
+}
+
+impl RegionAggregator {
+    fn build(
+        aggregation: &tipb::Aggregation,
+        tbl_scan: &tipb::TableScan,
+    ) -> Result<Self, String> {
+        let collation_of_column = |expr: &SimpleExpr| -> tidb_datatype::Collation {
+            let id = match expr {
+                SimpleExpr::Column(offset) => tbl_scan
+                    .columns
+                    .get(*offset)
+                    .map_or(0, |column| column.collation()),
+                _ => 0,
+            };
+            let restored = tidb_datatype::restore_collation_id_if_needed(id);
+            tidb_datatype::Collation::from_name(&tidb_datatype::proto_to_collation(restored))
+                .unwrap_or(tidb_datatype::Collation::Binary)
+        };
+        let group_by = aggregation
+            .group_by
+            .iter()
+            .map(|expr| {
+                let converted = convert_expr(expr)?;
+                if !matches!(converted, SimpleExpr::Column(_)) {
+                    return Err("a computed group-by key is a later course".to_owned());
+                }
+                let collation = collation_of_column(&converted);
+                Ok((converted, collation))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let functions = aggregation
+            .agg_func
+            .iter()
+            .map(|func| {
+                let kind = match func.tp() {
+                    tipb::ExprType::Count => RegionAggKind::Count,
+                    tipb::ExprType::Sum => RegionAggKind::Sum,
+                    tipb::ExprType::Min => RegionAggKind::Min,
+                    tipb::ExprType::Max => RegionAggKind::Max,
+                    other => {
+                        return Err(format!(
+                            "aggregate function {other:?} is a later course of this port"
+                        ))
+                    }
+                };
+                let [argument] = func.children.as_slice() else {
+                    return Err("an aggregate function takes exactly one argument".to_owned());
+                };
+                let argument = convert_expr(argument)?;
+                let collation = collation_of_column(&argument);
+                Ok((kind, argument, collation))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        if group_by.is_empty() && functions.is_empty() {
+            return Err("an aggregation names a group key or a function".to_owned());
+        }
+        Ok(Self {
+            group_by,
+            functions,
+            streamed: aggregation.streamed == Some(true),
+            hash: std::collections::BTreeMap::new(),
+            current: None,
+            ordered: Vec::new(),
+        })
+    }
+
+    fn new_values(&self) -> Vec<RegionAggValue> {
+        self.functions
+            .iter()
+            .map(|(kind, _, _)| match kind {
+                RegionAggKind::Count => RegionAggValue::Count(0),
+                RegionAggKind::Sum => RegionAggValue::Sum(None),
+                RegionAggKind::Min | RegionAggKind::Max => RegionAggValue::Extreme(None),
+            })
+            .collect()
+    }
+
+    fn update(&mut self, row: &[tidb_datatype::Datum]) -> Result<(), String> {
+        let mut key = Vec::new();
+        let mut groups = Vec::with_capacity(self.group_by.len());
+        for (expr, collation) in &self.group_by {
+            let value = eval_datum(expr, row)?;
+            // The fallback cursor's own key rule: collation sort key for
+            // byte values, the codec hash for everything else, one 0xff
+            // fence between parts.
+            match value.as_raw_bytes() {
+                Some(bytes) => {
+                    tidb_codec::encode_compact_bytes(&mut key, &collation.key(bytes));
+                }
+                None => key.extend_from_slice(&tidb_codec::hash_code(&value)),
+            }
+            key.push(0xff);
+            groups.push(value);
+        }
+
+        if self.streamed {
+            if self
+                .current
+                .as_ref()
+                .is_some_and(|(current_key, _, _)| current_key != &key)
+            {
+                let (_, groups, values) = self.current.take().expect("current group exists");
+                self.ordered.push(Self::finish_group(groups, values));
+            }
+            if self.current.is_none() {
+                let values = self.new_values();
+                self.current = Some((key, groups, values));
+            }
+            let functions = &self.functions;
+            let (_, _, values) = self.current.as_mut().expect("just ensured");
+            return Self::accumulate(functions, values, row);
+        }
+
+        if !self.hash.contains_key(&key) {
+            let values = self.new_values();
+            self.hash.insert(key.clone(), (groups, values));
+        }
+        let functions = &self.functions;
+        let (_, values) = self.hash.get_mut(&key).expect("just ensured");
+        Self::accumulate(functions, values, row)
+    }
+
+    fn accumulate(
+        functions: &[(RegionAggKind, SimpleExpr, tidb_datatype::Collation)],
+        values: &mut [RegionAggValue],
+        row: &[tidb_datatype::Datum],
+    ) -> Result<(), String> {
+        use tidb_datatype::{Datum, Decimal};
+        for ((kind, argument, collation), value) in functions.iter().zip(values.iter_mut()) {
+            let input = eval_datum(argument, row)?;
+            match (kind, value) {
+                (RegionAggKind::Count, RegionAggValue::Count(count)) => {
+                    if !matches!(input, Datum::Null) {
+                        *count += 1;
+                    }
+                }
+                (RegionAggKind::Sum, RegionAggValue::Sum(sum)) => {
+                    let addend = match input {
+                        Datum::Null => continue,
+                        Datum::Int(value) => Decimal::from_int(value),
+                        Datum::UInt(value) => Decimal::from_uint(value),
+                        Datum::Decimal(value) => value,
+                        _ => {
+                            return Err(
+                                "partial SUM requires an integer or decimal input".to_owned()
+                            )
+                        }
+                    };
+                    *sum = Some(match sum.take() {
+                        Some(current) => current.add(&addend),
+                        None => addend,
+                    });
+                }
+                (RegionAggKind::Min | RegionAggKind::Max, RegionAggValue::Extreme(value)) => {
+                    if matches!(input, Datum::Null) {
+                        continue;
+                    }
+                    let is_max = matches!(kind, RegionAggKind::Max);
+                    let replace = match value.as_ref() {
+                        None => true,
+                        Some(current) => {
+                            let ordering = extreme_ordering(&input, current, collation)?;
+                            if is_max {
+                                ordering.is_gt()
+                            } else {
+                                ordering.is_lt()
+                            }
+                        }
+                    };
+                    if replace {
+                        *value = Some(input);
+                    }
+                }
+                _ => return Err("aggregate value kind mismatch".to_owned()),
+            }
+        }
+        Ok(())
+    }
+
+    fn finish_group(
+        groups: Vec<tidb_datatype::Datum>,
+        values: Vec<RegionAggValue>,
+    ) -> Vec<tidb_datatype::Datum> {
+        use tidb_datatype::Datum;
+        values
+            .into_iter()
+            .map(|value| match value {
+                RegionAggValue::Count(count) => Datum::Int(count),
+                RegionAggValue::Sum(sum) => sum.map_or(Datum::Null, Datum::Decimal),
+                RegionAggValue::Extreme(value) => value.unwrap_or(Datum::Null),
+            })
+            .chain(groups)
+            .collect()
+    }
+
+    fn finish(mut self) -> Vec<Vec<tidb_datatype::Datum>> {
+        if self.streamed {
+            if let Some((_, groups, values)) = self.current.take() {
+                self.ordered.push(Self::finish_group(groups, values));
+            }
+            return self.ordered;
+        }
+        self.hash
+            .into_values()
+            .map(|(groups, values)| Self::finish_group(groups, values))
+            .collect()
+    }
+}
+
+/// The datum a leaf answers for one row: the column value, or the literal.
+fn eval_datum(
+    expr: &SimpleExpr,
+    row: &[tidb_datatype::Datum],
+) -> Result<tidb_datatype::Datum, String> {
+    use tidb_datatype::Datum;
+    match expr {
+        SimpleExpr::Column(offset) => row
+            .get(*offset)
+            .cloned()
+            .ok_or_else(|| "aggregate input is outside the scanned row".to_owned()),
+        SimpleExpr::Int(value) => Ok(Datum::Int(*value)),
+        SimpleExpr::Bytes(bytes) => Ok(Datum::Bytes(bytes.clone())),
+        SimpleExpr::Null => Ok(Datum::Null),
+        SimpleExpr::Func(..) => Err("a computed aggregate argument is a later course".to_owned()),
+    }
+}
+
+/// MIN/MAX ordering over the datum kinds a lowered scan can produce.
+/// Byte values order under the argument column's collation; the numeric
+/// kinds compare by value, crossing signedness the way Go's `CompareDatum`
+/// does for the int/uint pair.
+fn extreme_ordering(
+    candidate: &tidb_datatype::Datum,
+    current: &tidb_datatype::Datum,
+    collation: &tidb_datatype::Collation,
+) -> Result<std::cmp::Ordering, String> {
+    use std::cmp::Ordering;
+    use tidb_datatype::Datum;
+    let ordering = match (candidate, current) {
+        (Datum::Int(left), Datum::Int(right)) => left.cmp(right),
+        (Datum::UInt(left), Datum::UInt(right)) => left.cmp(right),
+        (Datum::Int(left), Datum::UInt(right)) => {
+            if *left < 0 {
+                Ordering::Less
+            } else {
+                (*left as u64).cmp(right)
+            }
+        }
+        (Datum::UInt(left), Datum::Int(right)) => {
+            if *right < 0 {
+                Ordering::Greater
+            } else {
+                left.cmp(&(*right as u64))
+            }
+        }
+        (Datum::Decimal(left), Datum::Decimal(right)) => left.cmp(right),
+        _ => match (candidate.as_raw_bytes(), current.as_raw_bytes()) {
+            (Some(left), Some(right)) => collation.key(left).cmp(&collation.key(right)),
+            _ => return Err("MIN/MAX over this datum pair is a later course".to_owned()),
+        },
+    };
+    Ok(ordering)
 }
 
 /// Go `buildDAG` (`cop_handler.go`), the guards and decode.
@@ -1318,6 +1678,248 @@ mod tests {
                 &row
             ),
             Some(1)
+        );
+    }
+
+    /// The region-side partial aggregation, end to end through the store:
+    /// grouped `SUM` and `COUNT` follow MySQL's NULL rules -- a NULL adds
+    /// nothing and counts nothing -- and the hash groups leave in
+    /// group-key order, each row as `[aggregates..., group keys...]`.
+    ///
+    /// Focused test: Go's `cophandler` covers aggregation through
+    /// `closure_exec.go`'s builder against testkit DAGs, which this trimmed
+    /// wire path cannot replay verbatim.
+    #[test]
+    fn a_grouped_partial_aggregation_answers_per_group_rows() {
+        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_datatype::Datum;
+        use tidb_proto::{KvrpcMutation, KvrpcOp};
+
+        let mut store = MvccStore::new();
+        let table_id = 77_i64;
+        // (g, v): (1,10), (1,20), (2,40), (2,80), (1,NULL).
+        let rows = [
+            (1_i64, Datum::Int(1), Datum::Int(10)),
+            (2, Datum::Int(1), Datum::Int(20)),
+            (3, Datum::Int(2), Datum::Int(40)),
+            (4, Datum::Int(2), Datum::Int(80)),
+            (5, Datum::Int(1), Datum::Null),
+        ];
+        for (handle, g, v) in rows {
+            let key = encode_row_key_with_handle(table_id, &RecordHandle::Int(handle));
+            // The OLD row format: `EncodeInt(colID) ++ EncodeDatum(value)`
+            // per column -- column 1 carries g, column 2 carries v.
+            let value = tidb_codec::encode_value(&[Datum::Int(1), g, Datum::Int(2), v])
+                .expect("row");
+            store
+                .prewrite(&crate::mvcc_store::PrewriteReq {
+                    mutations: vec![KvrpcMutation {
+                        op: KvrpcOp::Put as i32,
+                        key: key.clone(),
+                        value,
+                        ..KvrpcMutation::default()
+                    }],
+                    primary_lock: key.clone(),
+                    start_version: 10,
+                    ..crate::mvcc_store::PrewriteReq::default()
+                })
+                .expect("prewrites");
+            store.commit(&[key], 10, 11).expect("commits");
+        }
+
+        let column = |id: i64| tipb::ColumnInfo {
+            column_id: Some(id),
+            tp: Some(8), // TypeLonglong
+            ..tipb::ColumnInfo::default()
+        };
+        let scan = tipb::Executor {
+            tp: Some(tipb::ExecType::TypeTableScan as i32),
+            tbl_scan: Some(tipb::TableScan {
+                table_id: Some(table_id),
+                columns: vec![column(1), column(2)],
+                ..tipb::TableScan::default()
+            }),
+            ..tipb::Executor::default()
+        };
+        let column_ref = |offset: i64| tipb::Expr {
+            tp: Some(tipb::ExprType::ColumnRef as i32),
+            val: Some({
+                let mut encoded = Vec::new();
+                tidb_codec::encode_int(&mut encoded, offset);
+                encoded
+            }),
+            ..tipb::Expr::default()
+        };
+        let agg_of = |tp: tipb::ExprType, child: tipb::Expr| tipb::Expr {
+            tp: Some(tp as i32),
+            children: vec![child],
+            ..tipb::Expr::default()
+        };
+        let aggregation = tipb::Executor {
+            tp: Some(tipb::ExecType::TypeAggregation as i32),
+            aggregation: Some(tipb::Aggregation {
+                group_by: vec![column_ref(0)],
+                agg_func: vec![
+                    agg_of(tipb::ExprType::Sum, column_ref(1)),
+                    agg_of(tipb::ExprType::Count, column_ref(1)),
+                ],
+                streamed: Some(false),
+            }),
+            ..tipb::Executor::default()
+        };
+        let dag = tipb::DagRequest {
+            executors: vec![scan, aggregation],
+            output_offsets: vec![0, 1, 2],
+            ..tipb::DagRequest::default()
+        };
+        let mut data = Vec::new();
+        dag.encode(&mut data).expect("encodes");
+        let (range_start, range_end) = tidb_codec::table_key::get_table_handle_key_range(table_id);
+        let resp = handle_cop_request(
+            &mut store,
+            &coprocessor::Request {
+                tp: REQ_TYPE_DAG,
+                data,
+                ranges: vec![coprocessor::KeyRange {
+                    start: range_start,
+                    end: range_end,
+                }],
+                start_ts: 20,
+                ..coprocessor::Request::default()
+            },
+        );
+        assert!(resp.other_error.is_empty(), "{}", resp.other_error);
+        let select = tipb::SelectResponse::decode(resp.data.as_slice()).expect("a select response");
+        assert_eq!(select.chunks.len(), 1);
+        let rows_data = select.chunks[0].rows_data.as_deref().expect("rows");
+        // 2 groups x 3 columns: [sum, count, g] each.
+        let decoded = tidb_codec::decode(rows_data, 6).expect("six datums");
+        let shown: Vec<String> = decoded
+            .iter()
+            .map(|datum| match datum {
+                Datum::Int(value) => value.to_string(),
+                Datum::Decimal(value) => value.to_string(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        // g=1: SUM skips the NULL (30), COUNT(v) skips the NULL (2).
+        // g=2: 40+80 and both rows count.
+        assert_eq!(shown, ["30", "2", "1", "120", "2", "2"]);
+    }
+
+    /// A STREAMED partial aggregation emits each group as the ordered scan
+    /// leaves it -- scan order, not group-key order -- and `COUNT(1)`
+    /// (Go's lowering of `COUNT(*)`) counts a row whose column is NULL.
+    #[test]
+    fn a_streamed_partial_aggregation_emits_groups_in_scan_order() {
+        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_datatype::Datum;
+        use tidb_proto::{KvrpcMutation, KvrpcOp};
+
+        let mut store = MvccStore::new();
+        let table_id = 78_i64;
+        // Scan order (by handle): g = 5, 5, 3 -- group 5 leaves first.
+        let rows = [
+            (1_i64, Datum::Int(5), Datum::Null),
+            (2, Datum::Int(5), Datum::Int(7)),
+            (3, Datum::Int(3), Datum::Int(9)),
+        ];
+        for (handle, g, v) in rows {
+            let key = encode_row_key_with_handle(table_id, &RecordHandle::Int(handle));
+            // The OLD row format: `EncodeInt(colID) ++ EncodeDatum(value)`
+            // per column -- column 1 carries g, column 2 carries v.
+            let value = tidb_codec::encode_value(&[Datum::Int(1), g, Datum::Int(2), v])
+                .expect("row");
+            store
+                .prewrite(&crate::mvcc_store::PrewriteReq {
+                    mutations: vec![KvrpcMutation {
+                        op: KvrpcOp::Put as i32,
+                        key: key.clone(),
+                        value,
+                        ..KvrpcMutation::default()
+                    }],
+                    primary_lock: key.clone(),
+                    start_version: 10,
+                    ..crate::mvcc_store::PrewriteReq::default()
+                })
+                .expect("prewrites");
+            store.commit(&[key], 10, 11).expect("commits");
+        }
+
+        let column = |id: i64| tipb::ColumnInfo {
+            column_id: Some(id),
+            tp: Some(8),
+            ..tipb::ColumnInfo::default()
+        };
+        let scan = tipb::Executor {
+            tp: Some(tipb::ExecType::TypeTableScan as i32),
+            tbl_scan: Some(tipb::TableScan {
+                table_id: Some(table_id),
+                columns: vec![column(1), column(2)],
+                ..tipb::TableScan::default()
+            }),
+            ..tipb::Executor::default()
+        };
+        let column_ref = |offset: i64| tipb::Expr {
+            tp: Some(tipb::ExprType::ColumnRef as i32),
+            val: Some({
+                let mut encoded = Vec::new();
+                tidb_codec::encode_int(&mut encoded, offset);
+                encoded
+            }),
+            ..tipb::Expr::default()
+        };
+        let one = tipb::Expr {
+            tp: Some(tipb::ExprType::Int64 as i32),
+            val: Some({
+                let mut encoded = Vec::new();
+                tidb_codec::encode_int(&mut encoded, 1);
+                encoded
+            }),
+            ..tipb::Expr::default()
+        };
+        let aggregation = tipb::Executor {
+            tp: Some(tipb::ExecType::TypeStreamAgg as i32),
+            aggregation: Some(tipb::Aggregation {
+                group_by: vec![column_ref(0)],
+                agg_func: vec![tipb::Expr {
+                    tp: Some(tipb::ExprType::Count as i32),
+                    children: vec![one],
+                    ..tipb::Expr::default()
+                }],
+                streamed: Some(true),
+            }),
+            ..tipb::Executor::default()
+        };
+        let dag = tipb::DagRequest {
+            executors: vec![scan, aggregation],
+            output_offsets: vec![0, 1],
+            ..tipb::DagRequest::default()
+        };
+        let mut data = Vec::new();
+        dag.encode(&mut data).expect("encodes");
+        let (range_start, range_end) = tidb_codec::table_key::get_table_handle_key_range(table_id);
+        let resp = handle_cop_request(
+            &mut store,
+            &coprocessor::Request {
+                tp: REQ_TYPE_DAG,
+                data,
+                ranges: vec![coprocessor::KeyRange {
+                    start: range_start,
+                    end: range_end,
+                }],
+                start_ts: 20,
+                ..coprocessor::Request::default()
+            },
+        );
+        assert!(resp.other_error.is_empty(), "{}", resp.other_error);
+        let select = tipb::SelectResponse::decode(resp.data.as_slice()).expect("a select response");
+        let rows_data = select.chunks[0].rows_data.as_deref().expect("rows");
+        // [count, g] per group, group 5 first: the NULL row still counts.
+        let decoded = tidb_codec::decode(rows_data, 4).expect("four datums");
+        assert_eq!(
+            decoded,
+            vec![Datum::Int(2), Datum::Int(5), Datum::Int(1), Datum::Int(3)]
         );
     }
 }
