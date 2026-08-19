@@ -191,8 +191,15 @@ func Selectivity(
 			// (idx_col1, ...., idx_coln, handle_col1, ..., handle_colm). That is one column for an
 			// int handle and possibly several for a clustered common handle. Every appended column
 			// needs its own length entry, because range building indexes lengths in step with the
-			// columns. The handle columns are assumed full-length here, which is exact for an int
-			// handle and an approximation for a prefixed clustered handle column.
+			// columns.
+			//
+			// The appended columns are given the full length even when the clustered index declares
+			// a prefix for them. These lengths only shape the ranges built here for estimation -
+			// the ranges the storage layer scans come from path.IdxColLens, which fillIndexPath
+			// fills from the primary key prefix metadata, and getMaskAndRanges takes those ranges
+			// verbatim whenever a filled path exists. The appended dimensions are estimated from
+			// the handle columns' own column statistics, which hold untruncated values, so bounds
+			// truncated to the stored prefix would be compared against the wrong domain.
 			for range len(idxCols) - len(lengths) {
 				lengths = append(lengths, types.UnspecifiedLength)
 			}
