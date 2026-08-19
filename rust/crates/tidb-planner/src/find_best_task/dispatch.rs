@@ -453,6 +453,32 @@ fn table_path_matches_order(
 /// column's `Offset` addresses the TABLE column list, which is the scan's
 /// schema order). Constant-column skipping and the common-handle suffix
 /// extension are ranger-fed refinements, named as later slices.
+/// Go `DataSource.IsSingleScan` (`logical_datasource.go:677`) over the
+/// catalog's offset/name model, in the `ColsRequiringFullLen == nil`
+/// fallback branch this pipeline is always in (column pruning does not fill
+/// that list here): every schema column must be covered by the index or the
+/// handle (`IsIndexCoveringColumns`).
+///
+/// `indexCoveringColumn`, ported arm by arm: the int-handle primary key
+/// covers its column (`stateCoveredByIntHandle`); a plain index column
+/// covers only at FULL length (`isIndexColsCoveringCol` refuses a prefix
+/// unless ignoreLen, and this caller never ignores). The common-handle and
+/// new-collation clustered-index arms sit behind the unported
+/// common-handle world and refuse conservatively with it.
+fn index_path_is_single_scan(
+    ds: &crate::logical::DataSource,
+    source_index: &crate::plan_builder::catalog::SourceIndex,
+) -> bool {
+    ds.columns.iter().all(|column| {
+        if ds.pk_is_handle && column.is_primary_key {
+            return true;
+        }
+        source_index.columns.iter().any(|index_column| {
+            index_column.length < 0 && index_column.name.eq_ignore_ascii_case(&column.name)
+        })
+    })
+}
+
 fn index_path_matches_order(
     ds: &crate::logical::DataSource,
     index: &crate::plan_builder::catalog::SourceIndex,
@@ -537,6 +563,14 @@ fn find_best_task_4_logical_data_source(
                 };
                 let keep_order = ordered;
                 if keep_order && !index_path_matches_order(ds, source_index, prop) {
+                    continue;
+                }
+                // `convertToIndexScan`: a path that is NOT a single scan
+                // reads the table rows back through an IndexLookUp double
+                // read — `BuildIndexLookUpTask`, the named next column. Until
+                // it lands, a non-covering index refuses rather than serving
+                // an index reader that lacks columns.
+                if !index_path_is_single_scan(ds, source_index) {
                     continue;
                 }
                 let mut base = crate::physical::BasePhysicalPlan::new(
@@ -882,6 +916,95 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn a_non_covering_index_refuses_until_the_lookup_lands() {
+        // `IsSingleScan` end to end: with the catalog's column list filled,
+        // an index that lacks a schema column is NOT a single scan, and its
+        // path refuses (the IndexLookUp double read is the named next
+        // column) — the same query over a covering index still plans the
+        // IndexReader.
+        use crate::access_path::PossiblePath;
+        use crate::logical::data_source::DataSourceColumn;
+        use crate::logical::DataSource;
+        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use tidb_datatype::{FieldType, FieldTypeCode};
+        use tidb_expr::column::Column;
+        use tidb_expr::schema::Schema;
+
+        let allocator = PlanIdAllocator::new();
+        let coster = crate::find_best_task::coster::Ver2Coster::default();
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
+        let build = |index_columns: Vec<SourceIndexColumn>| {
+            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
+            base.base.set_stats(Some(StatsInfo::new(50.0, [])));
+            let mut schema = Schema::default();
+            schema.columns = vec![
+                Column::new(11, FieldType::new(FieldTypeCode::LongLong)),
+                Column::new(12, FieldType::new(FieldTypeCode::LongLong)),
+            ];
+            base.base.set_schema(Some(schema));
+            LogicalPlan::DataSource(DataSource {
+                base,
+                physical_table_id: 7,
+                columns: vec![
+                    DataSourceColumn {
+                        id: 1,
+                        name: "a".to_owned(),
+                        is_primary_key: false,
+                    },
+                    DataSourceColumn {
+                        id: 2,
+                        name: "b".to_owned(),
+                        is_primary_key: false,
+                    },
+                ],
+                enumerated_paths: vec![
+                    PossiblePath::Table { is_int_handle: true, primary_index: None },
+                    PossiblePath::Index { index: 0 },
+                ],
+                indexes: vec![SourceIndex {
+                    id: 3,
+                    name: "ib".to_owned(),
+                    columns: index_columns,
+                    ..SourceIndex::default()
+                }],
+                ..DataSource::default()
+            })
+        };
+        let order_by_b = PhysicalProperty::new(TaskType::Root, &[12], false, f64::MAX, false);
+
+        // Index on (b) alone: column `a` is uncovered, the path refuses, and
+        // the ordered property has no server — invalid, not a wrong reader.
+        let narrow = build(vec![SourceIndexColumn {
+            name: "b".to_owned(),
+            offset: 1,
+            length: -1,
+        }]);
+        let task = find_best_task(&narrow, &order_by_b, &mut ctx).expect("answers");
+        assert!(task.invalid(), "a non-covering index must not serve");
+
+        // Index on (b, a): covering, the reader plans as before.
+        let covering = build(vec![
+            SourceIndexColumn { name: "b".to_owned(), offset: 1, length: -1 },
+            SourceIndexColumn { name: "a".to_owned(), offset: 0, length: -1 },
+        ]);
+        let task = find_best_task(&covering, &order_by_b, &mut ctx).expect("plans");
+        assert!(
+            matches!(task.plan(), Some(PhysicalPlan::IndexReader(_))),
+            "got {:?}",
+            task.plan()
+        );
+
+        // A PREFIX index column does not cover its own column
+        // (`isIndexColsCoveringCol` requires full length).
+        let prefix = build(vec![
+            SourceIndexColumn { name: "b".to_owned(), offset: 1, length: 10 },
+            SourceIndexColumn { name: "a".to_owned(), offset: 0, length: -1 },
+        ]);
+        let task = find_best_task(&prefix, &order_by_b, &mut ctx).expect("answers");
+        assert!(task.invalid(), "a prefix column is not covering");
+    }
+
     fn an_index_prefix_order_plans_an_index_reader() {
         // The index-read column end to end: ORDER BY the index's first
         // column admits the index path (`matchProperty:1095` basic prefix),
