@@ -2646,7 +2646,7 @@ func isImportConflictStep(step proto.Step) bool {
 	return step == proto.ImportStepCollectConflicts || step == proto.ImportStepConflictResolution
 }
 
-func rawBool(v bool) *bool {
+func boolPtr(v bool) *bool {
 	return &v
 }
 
@@ -2659,7 +2659,7 @@ func buildRawJobError(status, message string) *jobstats.RawError {
 	case "cancelled":
 		return &jobstats.RawError{
 			Message:   message,
-			Retryable: rawBool(false),
+			Retryable: boolPtr(false),
 		}
 	case string(proto.TaskStateAwaitingResolution):
 		return &jobstats.RawError{
@@ -2685,12 +2685,12 @@ func buildRawJobSummary(summary *importer.Summary) *jobstats.RawSummary {
 		ConflictRows:     summary.ConflictRowCnt,
 		TooManyConflicts: summary.TooManyConflicts,
 	}
-	appendStep := func(name string, summary importer.StepSummary, conflictStep bool) {
+	appendStep := func(name string, summary importer.StepSummary, isConflictStep bool) {
 		if summary.Bytes == 0 && summary.RowCnt == 0 {
 			return
 		}
 		step := jobstats.RawStepSummary{Name: name}
-		if conflictStep {
+		if isConflictStep {
 			step.InputConflicts = summary.RowCnt
 		} else {
 			step.InputBytes = summary.Bytes
@@ -2762,8 +2762,8 @@ func buildRawJobStats(
 			step.SpeedBytesPerSec = runInfo.Speed
 		}
 		if runInfo.Speed > 0 && runInfo.Total > 0 {
-			remainSeconds := max((runInfo.Total-runInfo.Processed)/runInfo.Speed, 0)
-			step.RemainingSeconds = &remainSeconds
+			remainingSeconds := max((runInfo.Total-runInfo.Processed)/runInfo.Speed, 0)
+			step.RemainingSeconds = &remainingSeconds
 		}
 		stats.CurrentStep = &step
 	} else if info.IsSuccess() && info.Summary != nil {

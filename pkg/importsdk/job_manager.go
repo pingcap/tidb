@@ -223,17 +223,17 @@ func isRawUnsupportedErr(err error) bool {
 
 func scanRawStatus(rows *sql.Rows) (*JobStatus, error) {
 	var (
-		jobID    int64
-		groupKey sql.NullString
-		rawStats string
+		jobID        int64
+		groupKey     sql.NullString
+		rawStatsJSON string
 	)
 
-	if err := rows.Scan(&jobID, &groupKey, &rawStats); err != nil {
+	if err := rows.Scan(&jobID, &groupKey, &rawStatsJSON); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	stats := &jobstats.RawStats{}
-	if err := json.Unmarshal([]byte(rawStats), stats); err != nil {
+	if err := json.Unmarshal([]byte(rawStatsJSON), stats); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if stats.Version != jobstats.ContractVersion {
