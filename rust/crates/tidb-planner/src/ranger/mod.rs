@@ -18,9 +18,12 @@
 //! Ported file by file toward the whole-package claim:
 //! * [`types`] — `types.go`, the `Range`/`Ranges` model (COMPLETE, with
 //!   `types_test.go` transcreated).
-//! * `checker.go`, `points.go`, `ranger.go`, `detacher.go` follow on this
-//!   track, in dependency order.
+//! * [`checker`] — `checker.go`, the access-condition admission
+//!   (COMPLETE).
+//! * `points.go`, `ranger.go`, `detacher.go` follow on this track, in
+//!   dependency order.
 
+pub mod checker;
 pub mod types;
 
 pub use types::{HasFullRange, Range, Ranges};
