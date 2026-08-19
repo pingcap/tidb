@@ -462,8 +462,8 @@ Out of scope here, each with a home:
 
 | Area | Effect |
 | --- | --- |
-| Partition table, clustered index, async commit | None. Geometry cannot be a primary or clustering key, having no meaningful ordering. |
-| Indexes on a geometry column | None in v1, of any kind: not a primary, unique, secondary or composite member. The useful one is the spatial index, which is the other design; a B-tree over the stored bytes would be well-defined but not spatially meaningful, so it is deferred rather than ruled out. |
+| Partition table, clustered index | None. Geometry cannot be a primary or clustering key, having no meaningful ordering. |
+| Indexes on a geometry column | None in v1, of any kind: not a primary, unique, secondary or composite member. The useful one is the spatial index, which is the other design. |
 | Generated columns | `ST_*` are deterministic scalars, so they are usable in virtual and stored generated column expressions like any other builtin. A geometry-typed generated column is then an ordinary geometry column, and the row above governs indexing it. |
 | Charset and collation | Not applicable; the value is binary. |
 | Parser | One-time type and `SRID` grammar change; regenerates `parser.go`, run `make bazel_prepare`. `ST_*` are generic calls. |
