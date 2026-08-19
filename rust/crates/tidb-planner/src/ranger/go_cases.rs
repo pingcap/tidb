@@ -1787,3 +1787,40 @@ fn append_ranges_to_point_ranges_matches_go() {
         "[[10 40 70,10 40 80] [10 50 70,10 50 80] [20 40 70,20 40 80] [20 50 70,20 50 80]]"
     );
 }
+
+/// Go `TestRangeMemUsage` (`types_test.go:238`): the struct-size model --
+/// an int pair is the empty sizes plus one collator, and a string pair
+/// adds its byte payloads and collation-name lengths.
+#[test]
+fn range_mem_usage_matches_go() {
+    use super::types::{datum_mem_usage, ranges_mem_usage, Range, EMPTY_DATUM_SIZE, EMPTY_RANGE_SIZE};
+    let r1 = Range {
+        low_val: vec![Datum::Int(0)],
+        high_val: vec![Datum::Int(1)],
+        collators: vec![tidb_datatype::Collation::Binary],
+        low_exclude: false,
+        high_exclude: false,
+    };
+    let mem1 = EMPTY_RANGE_SIZE + 2 * EMPTY_DATUM_SIZE + 16;
+    assert_eq!(r1.mem_usage(), mem1);
+    let string_datum = |text: &str| {
+        Datum::String(tidb_datatype::StringDatum::new(
+            text.as_bytes().to_vec(),
+            tidb_datatype::Collation::Utf8Mb4Bin,
+        ))
+    };
+    let r2 = Range {
+        low_val: vec![string_datum("abcde")],
+        high_val: vec![string_datum("fghij")],
+        collators: vec![tidb_datatype::Collation::Binary],
+        low_exclude: false,
+        high_exclude: false,
+    };
+    let mem2 = mem1
+        + 5 + "utf8mb4_bin".len() as i64
+        + 5 + "utf8mb4_bin".len() as i64;
+    assert_eq!(r2.mem_usage(), mem2);
+    assert_eq!(datum_mem_usage(&Datum::Int(7)), EMPTY_DATUM_SIZE);
+    let ranges = vec![r1, r2];
+    assert_eq!(ranges_mem_usage(&ranges), mem1 + mem2);
+}
