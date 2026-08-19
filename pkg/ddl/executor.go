@@ -531,6 +531,10 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 	if total == 0 {
 		return infoschema.ErrEmptyDatabase.GenWithStack("Empty database '%v'", dbName.O)
 	}
+	// Two independent pre-checks:
+	//  - replica count vs live TiFlash stores (when cse.columnar-store-type is not "columnar")
+	//  - cluster Columnar Storage gate, only when adding replicas
+	//    (SET TIFLASH REPLICA 0 stays allowed when the flag is OFF)
 	err = checkTiFlashReplicaCount(sctx, tiflashReplica.Count)
 	if err != nil {
 		return errors.Trace(err)
@@ -3837,15 +3841,14 @@ func (e *executor) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast
 		return e.setHypoTiFlashReplica(ctx, schema.Name, tb.Meta().Name, replicaInfo)
 	}
 
-	checkTiFlash := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
-
-	if checkTiFlash {
-		err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	// Two independent pre-checks:
+	//  - replica count vs live TiFlash stores (when cse.columnar-store-type is not "columnar")
+	//  - cluster Columnar Storage gate, only when adding replicas
+	//    (SET TIFLASH REPLICA 0 stays allowed when the flag is OFF)
+	err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
+	if err != nil {
+		return errors.Trace(err)
 	}
-
 	if replicaInfo.Count > 0 {
 		err = checkColumnarStorageEnabled(ctx)
 		if err != nil {
@@ -4025,8 +4028,9 @@ func isTableTiFlashSupported(dbName ast.CIStr, tbl *model.TableInfo) error {
 }
 
 func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {
-	tiflashEnabled := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
-	if !tiflashEnabled {
+	// Callers can invoke this unconditionally. Classic TiFlash is absent when
+	// cse.columnar-store-type is "columnar", so there is no store count to check.
+	if !config.GetGlobalConfig().CSE.IsTiFlashEnabled() {
 		return nil
 	}
 	// Check the tiflash replica count should be less than the total tiflash stores.
