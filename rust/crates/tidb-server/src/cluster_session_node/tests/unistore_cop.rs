@@ -738,3 +738,56 @@ fn a_pushed_down_predicate_selects_what_local_evaluation_selects() {
         );
     }
 }
+
+/// Statistics may change the PLAN; they must never change the ANSWER.
+///
+/// `ANALYZE` replaces pseudo estimates with real ones, and the optimizer then
+/// picks differently -- on this node it stops pushing the scan down, which is
+/// a plan-shape divergence from Go worth its own work (Go keeps a
+/// `TableReader` over a `cop[tikv]` scan). What must hold either way is that
+/// every query returns the same rows before and after, since a cost decision
+/// that alters results is a wrong answer no estimate can justify.
+#[test]
+fn analyze_changes_the_plan_and_never_the_answer() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(47))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.st (id int primary key, a int, u bigint unsigned, \
+         s varchar(10), KEY ka(a), KEY ku(u))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.st VALUES (1,1,18446744073709551615,'x'), (2,1,0,'y'), \
+         (3,2,9223372036854775808,'z'), (4,3,1,'w'), (5,3,NULL,NULL)",
+    );
+
+    const QUERIES: &[&str] = &[
+        "SELECT id FROM test.st WHERE a = 1 ORDER BY id",
+        "SELECT id FROM test.st WHERE a >= 2 ORDER BY id",
+        "SELECT count(*) FROM test.st WHERE u > 2",
+        "SELECT id FROM test.st WHERE u = 18446744073709551615",
+        "SELECT a, count(*) FROM test.st GROUP BY a ORDER BY a",
+        "SELECT id FROM test.st WHERE s IS NULL",
+        "SELECT id FROM test.st ORDER BY u DESC LIMIT 2",
+        "SELECT max(u), min(u) FROM test.st",
+    ];
+
+    let before: Vec<_> = QUERIES
+        .iter()
+        .map(|query| displayed(rows(&mut session, query)))
+        .collect();
+
+    rows(&mut session, "ANALYZE TABLE test.st");
+
+    for (query, expected) in QUERIES.iter().zip(before) {
+        assert_eq!(
+            displayed(rows(&mut session, query)),
+            expected,
+            "`{query}` answered differently once statistics existed"
+        );
+    }
+}
