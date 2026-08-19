@@ -1312,6 +1312,12 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	if np.Schema().Len() == 1 {
 		rexpr = np.Schema().Columns[0]
 		rCol := rexpr.(*expression.Column)
+		if expression.IsBinaryStringAndBitCmp(lexpr.GetType(er.sctx.GetEvalCtx()), rCol.GetType(er.sctx.GetEvalCtx())) {
+			rColCopy := *rCol
+			rColCopy.InOperand = true
+			rexpr = &rColCopy
+			lexpr = expression.SetExprColumnInOperand(lexpr)
+		}
 		// For AntiSemiJoin/LeftOuterSemiJoin/AntiLeftOuterSemiJoin, we cannot treat `in` expression as
 		// normal column equal condition, so we specially mark the inner operand here.
 		if markInOperand {
