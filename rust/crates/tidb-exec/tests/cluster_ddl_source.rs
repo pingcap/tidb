@@ -3410,3 +3410,61 @@ fn an_add_column_refusal_names_the_option_and_keeps_gos_code() {
         );
     }
 }
+
+/// No DDL refusal may reach a client carrying this port's own vocabulary.
+///
+/// The failure this guards has recurred three times at different sites: a
+/// coded `DdlAdmissionError` wrapped into `DdlPlanError::Encode`, which
+/// flattens Go's error number to the generic 1105 AND prefixes the message
+/// with "catalog encode failed" -- naming an internal step the statement
+/// never reached. A brace in the text means a Rust `Debug` dump escaped, as
+/// it did for `ADD COLUMN ... AS (a+1) VIRTUAL`, which echoed the byte
+/// spelling of the user's own expression back at them.
+///
+/// A sweep of the whole file found the two `build_added_column` call sites
+/// were the last; this keeps the class from returning.
+#[test]
+fn no_ddl_refusal_leaks_this_ports_vocabulary() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, a BIGINT, b VARCHAR(10))",
+        100,
+    );
+    apply(&mut store, &write);
+
+    // Shapes this node refuses, at admission or while planning.
+    const REFUSED: &[&str] = &[
+        "ALTER TABLE u6.t ADD COLUMN c BIGINT AS (a+1) VIRTUAL",
+        "ALTER TABLE u6.t ADD COLUMN c BIGINT AS (a+1) STORED",
+        "ALTER TABLE u6.t ADD COLUMN c BIGINT AUTO_INCREMENT",
+        "ALTER TABLE u6.t ADD COLUMN c BIGINT COLLATE utf8mb4_bin",
+        "ALTER TABLE u6.t ALTER COLUMN a SET DEFAULT 'zz'",
+        "ALTER TABLE u6.t DROP PRIMARY KEY",
+        "ALTER TABLE u6.t RENAME INDEX nosuch TO other",
+        "ALTER TABLE u6.t DROP INDEX nosuch",
+        "ALTER TABLE u6.nosuch COMMENT='x'",
+        "DROP TABLE u6.nosuch",
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY)",
+        "CREATE TABLE u6.c2 LIKE u6.nosuch",
+    ];
+
+    for sql in REFUSED {
+        let Err(error) = plan_ddl(&mut store, &statement(sql), 200) else {
+            panic!("[{sql}] was expected to be refused");
+        };
+        let text = error.to_string();
+        assert!(
+            !text.contains("catalog encode failed"),
+            "[{sql}] blames an encode step it never reached: {text}"
+        );
+        assert!(
+            !text.contains('{') && !text.contains("::"),
+            "[{sql}] leaks a Rust value into the client's message: {text}"
+        );
+        assert!(
+            text.chars().next().is_some_and(char::is_uppercase),
+            "[{sql}] should read as a sentence: {text}"
+        );
+    }
+}
