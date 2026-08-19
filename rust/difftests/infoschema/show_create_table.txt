@@ -9,12 +9,20 @@
 # integer display widths below were therefore stripped; every other byte is
 # the capture verbatim.
 #
-# ONE BLOCK IS DERIVED, NOT CAPTURED: `TIDB_SERVERS_INFO` was added after
-# this capture was taken, so its block is written from Go's own column
-# declarations (`pkg/infoschema/tables.go`'s `tableTiDBServersInfoCols`:
-# name, type and size, with no flags and no defaults) rendered under the
-# conventions every captured block above establishes. Re-capture it the
-# next time `gorun` is available.
+# TWO BLOCKS ARE DERIVED, NOT CAPTURED: `TIDB_SERVERS_INFO` and
+# `CLUSTER_INFO` were added after this capture was taken, so their blocks are
+# written from Go's own column declarations (`pkg/infoschema/tables.go`'s
+# `tableTiDBServersInfoCols` and `tableClusterInfoCols`: name, type and size,
+# with no flags and no defaults) rendered under the conventions every
+# captured block above establishes. Re-capture them the next time `gorun` is
+# available.
+#
+# ONE KNOWN DEVIATION in the derived `CLUSTER_INFO`: Go declares a `comment`
+# on `SERVER_ID` ("invalid if the configuration item `enable-global-kill` is
+# set to FALSE"), which a real capture would render as a trailing
+# `COMMENT '...'`. This tier's `InfoColumn` carries no comment field at all,
+# so no served table can print one; the block below omits it rather than
+# claiming a rendering this code cannot produce.
 CREATE TABLE `SCHEMATA` (
   `CATALOG_NAME` varchar(512) DEFAULT NULL,
   `SCHEMA_NAME` varchar(64) DEFAULT NULL,
@@ -178,6 +186,16 @@ CREATE TABLE `SCHEMA_PRIVILEGES` (
   `TABLE_SCHEMA` varchar(64) NOT NULL,
   `PRIVILEGE_TYPE` varchar(64) NOT NULL,
   `IS_GRANTABLE` varchar(3) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+CREATE TABLE `CLUSTER_INFO` (
+  `TYPE` varchar(64) DEFAULT NULL,
+  `INSTANCE` varchar(64) DEFAULT NULL,
+  `STATUS_ADDRESS` varchar(64) DEFAULT NULL,
+  `VERSION` varchar(64) DEFAULT NULL,
+  `GIT_HASH` varchar(64) DEFAULT NULL,
+  `START_TIME` datetime DEFAULT NULL,
+  `UPTIME` varchar(32) DEFAULT NULL,
+  `SERVER_ID` bigint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 CREATE TABLE `TIDB_SERVERS_INFO` (
   `DDL_ID` varchar(64) DEFAULT NULL,

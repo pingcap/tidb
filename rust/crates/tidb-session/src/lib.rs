@@ -723,6 +723,65 @@ impl Session {
         ]]
     }
 
+    /// Go `dataForTiDBClusterInfo` (`infoschema_reader.go:1842`) over
+    /// `GetClusterServerInfo`: one row per node in the cluster.
+    ///
+    /// NOT reported (documented, not invented): Go's `GetClusterServerInfo`
+    /// chains five retrievers, and only the first -- `GetTiDBServerInfo`,
+    /// which reads the same `GetAllServerInfo` that `TIDB_SERVERS_INFO`
+    /// does -- has a source here. `GetPDServerInfo` needs PD's members API,
+    /// `GetStoreServerInfo` the store list, and the TiProxy/TiCDC pair their
+    /// own topology keys; a node with none of those reports the TiDB rows
+    /// alone rather than inventing peers it cannot see.
+    pub(crate) fn cluster_info_table_rows(&self) -> Vec<Vec<tidb_datatype::Datum>> {
+        use tidb_datatype::Datum;
+        let Some(syncer) = self.server_info_syncer.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(all) = syncer.all_server_info() else {
+            return Vec::new();
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs() as i64);
+        let mut ids: Vec<&String> = all.keys().collect();
+        ids.sort();
+        ids.into_iter()
+            .map(|id| {
+                let info = &all[id].static_info;
+                let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
+                // Go leaves UPTIME empty and START_TIME at "now" when the
+                // node reports no start timestamp.
+                let (start_time, uptime) = if info.start_timestamp > 0 {
+                    (
+                        info.start_timestamp,
+                        // Go prints `time.Since(startTime).String()`.
+                        go_uptime_string(now - info.start_timestamp),
+                    )
+                } else {
+                    (now, String::new())
+                };
+                vec![
+                    text("tidb"),
+                    text(&tidb_domain::serverinfo_syncer::join_host_port(
+                        &info.ip, info.port,
+                    )),
+                    text(&tidb_domain::serverinfo_syncer::join_host_port(
+                        &info.ip,
+                        info.status_port,
+                    )),
+                    text(&info.version_info.version),
+                    text(&info.version_info.git_hash),
+                    // Go stores this as a DATETIME with no fractional part,
+                    // built from the node's own clock (`types.FromGoTime`).
+                    datetime_datum(start_time),
+                    text(&uptime),
+                    Datum::Int(info.json_server_id as i64),
+                ]
+            })
+            .collect()
+    }
+
     /// Go `setDataForServersInfo` (`infoschema_reader.go:2730`): one row per
     /// server `GetAllServerInfo` reports, in Go's column order.
     ///
@@ -1372,3 +1431,40 @@ mod tests_window;
 mod tests_write_conversion;
 #[cfg(test)]
 mod tests_zero_date;
+
+/// Go `time.Duration.String()` for a whole number of seconds, which is what
+/// `UPTIME` carries: `time.Since(startTime).String()` with the sub-second
+/// part always zero here because the start timestamp has second granularity.
+fn go_uptime_string(seconds: i64) -> String {
+    let seconds = seconds.max(0);
+    let (hours, minutes, seconds) = (seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+    if hours > 0 {
+        format!("{hours}h{minutes}m{seconds}s")
+    } else if minutes > 0 {
+        format!("{minutes}m{seconds}s")
+    } else {
+        format!("{seconds}s")
+    }
+}
+
+/// A `DATETIME` cell for a unix timestamp, in the node's own clock -- Go's
+/// `types.NewTime(types.FromGoTime(time.Unix(ts, 0)), mysql.TypeDatetime, 0)`.
+fn datetime_datum(unix_seconds: i64) -> tidb_datatype::Datum {
+    use chrono::{Datelike, Timelike};
+    let Some(moment) = chrono::DateTime::from_timestamp(unix_seconds, 0) else {
+        return tidb_datatype::Datum::Null;
+    };
+    let local = moment.naive_local();
+    tidb_datatype::Time::from_date_checked(
+        local.year(),
+        local.month() as i32,
+        local.day() as i32,
+        local.hour() as i32,
+        local.minute() as i32,
+        local.second() as i32,
+        0,
+        tidb_datatype::TimeType::DateTime,
+        0,
+    )
+    .map_or(tidb_datatype::Datum::Null, tidb_datatype::Datum::Time)
+}

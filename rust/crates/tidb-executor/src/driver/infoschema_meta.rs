@@ -1061,6 +1061,69 @@ const REFERENTIAL_CONSTRAINTS_COLUMNS: &[InfoColumn] = &[
 /// `setDataForServersInfo` reads `GetAllServerInfo`), which is why this
 /// table has no `*_rows` function beside it in this module; see
 /// `Session::tidb_servers_info_table_rows`.
+/// Go `tableClusterInfoCols`. One row per node in the cluster.
+///
+/// Rows come from the server-info syncer, like `TIDB_SERVERS_INFO`; see
+/// `Session::cluster_info_table_rows`.
+const CLUSTER_INFO_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "TYPE",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "INSTANCE",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "STATUS_ADDRESS",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "VERSION",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "GIT_HASH",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "START_TIME",
+        tp: FieldTypeCode::Datetime,
+        size: 19,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "UPTIME",
+        tp: FieldTypeCode::Varchar,
+        size: 32,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "SERVER_ID",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: 0,
+        deflt: None,
+    },
+];
+
 const TIDB_SERVERS_INFO_COLUMNS: &[InfoColumn] = &[
     InfoColumn {
         name: "DDL_ID",
@@ -1540,10 +1603,11 @@ const COLUMN_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
 ///
 /// DIVERGENCE (documented, measured): Go serves 94 tables in this schema
 /// (captured: `use information_schema; show tables` returns 94 names), of
-/// which these 14 are ported. `SHOW TABLES` therefore under-reports rather
+/// which these are ported. `SHOW TABLES` therefore under-reports rather
 /// than reporting nothing, and naming an unported one still refuses with
 /// 1146 -- the same honest shape `mysql` has.
 const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
+    ("CLUSTER_INFO", CLUSTER_INFO_COLUMNS),
     ("COLUMNS", COLUMNS_COLUMNS),
     ("COLUMN_PRIVILEGES", COLUMN_PRIVILEGES_COLUMNS),
     ("CHARACTER_SETS", CHARACTER_SETS_COLUMNS),

@@ -291,3 +291,48 @@ fn admin_show_ddl_reports_this_node_and_the_followed_version() {
     ));
     assert_eq!(servers, [[row[4].clone()]]);
 }
+
+/// Go `dataForTiDBClusterInfo` (`infoschema_reader.go:1842`) over
+/// `GetClusterServerInfo`: one row per node, describing where it is and how
+/// long it has been up.
+///
+/// Go chains five retrievers there and only the first has a source here, so
+/// this reports the TiDB rows alone -- see `Session::cluster_info_table_rows`
+/// for the four it cannot see and why inventing them would be worse.
+#[test]
+fn cluster_info_reports_this_node() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(19))
+        .expect("session opens");
+
+    let reported = displayed(rows(
+        &mut session,
+        "SELECT TYPE, INSTANCE, STATUS_ADDRESS, VERSION, GIT_HASH, UPTIME, SERVER_ID \
+         FROM information_schema.cluster_info",
+    ));
+    assert_eq!(reported.len(), 1, "a single node reports itself alone");
+    let row = &reported[0];
+    assert_eq!(row[0], "tidb");
+    // Both addresses are host:port, and they are the node's own two ports.
+    assert!(row[1].contains(':'), "INSTANCE is host:port: {}", row[1]);
+    assert!(row[2].contains(':'), "STATUS_ADDRESS is host:port: {}", row[2]);
+    assert_ne!(row[1], row[2], "the SQL and status ports differ");
+    assert!(!row[3].is_empty(), "VERSION is reported");
+    assert!(!row[4].is_empty(), "GIT_HASH is reported");
+    // Go prints `time.Since(startTime).String()`, so the unit is spelled out.
+    assert!(
+        row[5].ends_with('s'),
+        "UPTIME is a Go duration string: {}",
+        row[5]
+    );
+
+    // The instance is the same node TIDB_SERVERS_INFO describes, which is the
+    // point of the two tables agreeing.
+    let servers = displayed(rows(
+        &mut session,
+        "SELECT IP, PORT FROM information_schema.tidb_servers_info",
+    ));
+    assert_eq!(row[1], format!("{}:{}", servers[0][0], servers[0][1]));
+}
