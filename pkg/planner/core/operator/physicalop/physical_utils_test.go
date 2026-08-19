@@ -158,6 +158,60 @@ func TestStorageEngineUsage(t *testing.T) {
 	require.True(t, hasTiFlash)
 }
 
+func TestHasSingleScanIndexJoin(t *testing.T) {
+	// newIndexJoin wires an index join with the inner side on child 1, the
+	// layout the planner produces for a right-side inner.
+	newIndexJoin := func(inner base.PhysicalPlan) *PhysicalIndexJoin {
+		ij := &PhysicalIndexJoin{}
+		ij.InnerChildIdx = 1
+		ij.SetChildren(&PhysicalTableReader{StoreType: kv.TiFlash}, inner)
+		return ij
+	}
+	// A Selection wrapping the inner reader must not hide it.
+	wrapped := &PhysicalSelection{}
+	wrapped.SetChildren(&PhysicalTableReader{StoreType: kv.TiKV})
+
+	inners := []struct {
+		name       string
+		inner      base.PhysicalPlan
+		singleScan bool
+	}{
+		{"handle-probe", &PhysicalTableReader{StoreType: kv.TiKV}, true},
+		{"covering-index", &PhysicalIndexReader{}, true},
+		{"wrapped-handle-probe", wrapped, true},
+		{"double-read", &PhysicalIndexLookUpReader{}, false},
+		{"index-merge", &PhysicalIndexMergeReader{}, false},
+		{"tiflash-reader", &PhysicalTableReader{StoreType: kv.TiFlash}, false},
+	}
+	for _, c := range inners {
+		require.Equal(t, c.singleScan, HasSingleScanIndexJoin(newIndexJoin(c.inner)), c.name)
+	}
+
+	// The hash and merge variants embed PhysicalIndexJoin by value, so they must
+	// be recognised too.
+	hashJoin := &PhysicalIndexHashJoin{PhysicalIndexJoin: *newIndexJoin(&PhysicalIndexReader{})}
+	require.True(t, HasSingleScanIndexJoin(hashJoin))
+	mergeJoin := &PhysicalIndexMergeJoin{PhysicalIndexJoin: *newIndexJoin(&PhysicalIndexReader{})}
+	require.True(t, HasSingleScanIndexJoin(mergeJoin))
+
+	// Only the inner side counts: a single-scan reader on the outer side of a
+	// double-reading index join is not the access method being protected.
+	outerSingleScan := &PhysicalIndexJoin{}
+	outerSingleScan.InnerChildIdx = 1
+	outerSingleScan.SetChildren(&PhysicalTableReader{StoreType: kv.TiKV}, &PhysicalIndexLookUpReader{})
+	require.False(t, HasSingleScanIndexJoin(outerSingleScan))
+
+	// A plan without any index join reports false, and one buried under other
+	// operators is still found.
+	plainJoin := &PhysicalHashJoin{}
+	plainJoin.SetChildren(&PhysicalTableReader{StoreType: kv.TiKV}, &PhysicalIndexReader{})
+	require.False(t, HasSingleScanIndexJoin(plainJoin))
+	buried := &PhysicalHashAgg{}
+	buried.SetChildren(newIndexJoin(&PhysicalIndexReader{}))
+	require.True(t, HasSingleScanIndexJoin(buried))
+	require.False(t, HasSingleScanIndexJoin(nil))
+}
+
 func TestFlattenTreePushDownPlan(t *testing.T) {
 	//  Though the below tree is not a valid plan tree, it is only used to test the FlattenTreePushDownPlan function.
 	//	         Limit1

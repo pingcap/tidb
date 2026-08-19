@@ -511,9 +511,11 @@ type StatementContext struct {
 	// when round 1's native plan is executable.
 	AlternativeLogicalPlanHasPredicateContextMatch bool
 	// AlternativeLogicalPlanMixedStorageEngines indicates that round 1's chosen
-	// physical plan reads from both TiKV and TiFlash. The round driver uses this
-	// to enable the tikv-only / tiflash-only rounds, which rebuild the plan with
-	// a single storage engine so a fully homogeneous plan competes on cost.
+	// physical plan reads from both TiKV and TiFlash, and holds no single-scan
+	// index join that an engine-restricted rebuild could trade for a full scan.
+	// The round driver uses this to enable the tikv-only / tiflash-only rounds,
+	// which rebuild the plan with a single storage engine so a fully homogeneous
+	// plan competes on cost.
 	AlternativeLogicalPlanMixedStorageEngines bool
 	// AlternativeLogicalPlanMissingTiFlashPath indicates that some DataSource in
 	// round 1's build ended up without any TiFlash access path (no replica, a
@@ -744,7 +746,8 @@ func (sc *StatementContext) MarkAlternativeLogicalPlanSemiJoinRewrite() {
 }
 
 // MarkAlternativeLogicalPlanMixedStorageEngines records that round 1's chosen
-// physical plan reads from both TiKV and TiFlash.
+// physical plan reads from both TiKV and TiFlash and is eligible for the
+// engine-restricted rounds.
 func (sc *StatementContext) MarkAlternativeLogicalPlanMixedStorageEngines() {
 	sc.AlternativeLogicalPlanMixedStorageEngines = true
 }

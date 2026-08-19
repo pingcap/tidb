@@ -100,18 +100,24 @@ const engineRoundPointSQL = "select sum(alt_engine_flash.b) from alt_engine_flas
 // mean something while it holds. Checking it explicitly turns a fixture that
 // stops producing a mixed plan into a readable failure instead of a confusing
 // "an error is expected but got nil" from the round assertion itself.
-func requireMixedEngineRound1Plan(t *testing.T, tk *testkit.TestKit, sql string) {
+func requireMixedEngineRound1Plan(t *testing.T, tk *testkit.TestKit, sql string) string {
 	t.Helper()
-	// The alternative rounds would rewrite the plan, so read round 1's plan with
-	// the feature off and restore the caller's setting afterwards.
-	enabled := tk.MustQuery("select @@tidb_opt_enable_alternative_logical_plans").Rows()[0][0]
-	tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=off")
-	defer tk.MustExec(fmt.Sprintf("set @@tidb_opt_enable_alternative_logical_plans='%v'", enabled))
-	plan := strings.Join(testdata.ConvertRowsToStrings(
-		tk.MustQuery("explain format = 'plan_tree' "+sql).Rows()), "\n")
+	plan := round1Plan(tk, sql)
 	require.True(t, strings.Contains(plan, "Point_Get") || strings.Contains(plan, "cop[tikv]"),
 		"round 1 plan must read from TiKV:\n%s", plan)
 	require.Contains(t, plan, "[tiflash]", "round 1 plan must read from TiFlash:\n%s", plan)
+	return plan
+}
+
+// round1Plan returns the plan sql gets from the first (default) round. The
+// alternative rounds would rewrite it, so read it with the feature off and
+// restore the caller's setting afterwards.
+func round1Plan(tk *testkit.TestKit, sql string) string {
+	enabled := tk.MustQuery("select @@tidb_opt_enable_alternative_logical_plans").Rows()[0][0]
+	tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=off")
+	defer tk.MustExec(fmt.Sprintf("set @@tidb_opt_enable_alternative_logical_plans='%v'", enabled))
+	return strings.Join(testdata.ConvertRowsToStrings(
+		tk.MustQuery("explain format = 'plan_tree' "+sql).Rows()), "\n")
 }
 
 // execToErrDrained runs sql and returns its error, draining the result set
@@ -260,5 +266,64 @@ func TestAlternativeEngineRestrictedRoundGates(t *testing.T) {
 	requireMixedEngineRound1Plan(t, tk, engineRoundPointSQL)
 	require.NoError(t, failpoint.Enable(engineRoundFailpoint, fmt.Sprintf("return(%q)", "tiflash-only:"+engineRoundPointSQL)))
 	require.ErrorContains(t, execToErrDrained(tk, engineRoundPointSQL), "unexpected alternative logical plan round")
+	require.NoError(t, failpoint.Disable(engineRoundFailpoint))
+}
+
+// TestAlternativeEngineRoundsSkipSingleScanIndexJoin covers the single-scan
+// index join carve-out. A mixed-engine plan whose index join probes the primary
+// key reads only the rows the outer side asks for, and no engine-restricted
+// rebuild can be trusted to keep that access method, so both rounds must stay
+// disarmed. An index join that double-reads through a secondary index has no
+// such advantage and must keep competing.
+func TestAlternativeEngineRoundsSkipSingleScanIndexJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlashNodes(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table alt_ij_flash(a int, b int, c int)")
+	valsFlash := make([]string, 0, 20000)
+	for i := range 20000 {
+		valsFlash = append(valsFlash, fmt.Sprintf("(%d, %d, %d)", i, i%5000, i%200))
+	}
+	tk.MustExec("insert into alt_ij_flash values " + strings.Join(valsFlash, ","))
+	tk.MustExec("create table alt_ij_probe(a int primary key, b int, c int, key idx_b(b))")
+	valsProbe := make([]string, 0, 20000)
+	for i := range 20000 {
+		valsProbe = append(valsProbe, fmt.Sprintf("(%d, %d, %d)", i, i, i))
+	}
+	tk.MustExec("insert into alt_ij_probe values " + strings.Join(valsProbe, ","))
+	tk.MustExec("analyze table alt_ij_flash, alt_ij_probe")
+	setRealTiFlashReplica(t, tk, "alt_ij_flash")
+	setRealTiFlashReplica(t, tk, "alt_ij_probe")
+
+	tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=on")
+	t.Cleanup(func() {
+		_ = failpoint.Disable(engineRoundFailpoint)
+	})
+
+	// Inner side probes the primary key: a single scan, so neither round runs
+	// and the query executes round 1's plan.
+	singleScanSQL := "select /*+ inl_join(alt_ij_probe) */ alt_ij_probe.c from alt_ij_flash" +
+		" join alt_ij_probe on alt_ij_flash.b = alt_ij_probe.a where alt_ij_flash.c = 7"
+	plan := requireMixedEngineRound1Plan(t, tk, singleScanSQL)
+	require.Contains(t, plan, "IndexJoin", "fixture must produce an IndexJoin:\n%s", plan)
+	require.Contains(t, plan, "TableRangeScan", "inner side must be a handle probe:\n%s", plan)
+	singleScanResult := tk.MustQuery(singleScanSQL).Sort().Rows()
+	for _, round := range []string{"tikv-only", "tiflash-only"} {
+		require.NoError(t, failpoint.Enable(engineRoundFailpoint,
+			fmt.Sprintf("return(%q)", round+":"+singleScanSQL)))
+		tk.MustQuery(singleScanSQL).Sort().Check(singleScanResult)
+		require.NoError(t, failpoint.Disable(engineRoundFailpoint))
+	}
+
+	// Inner side reads idx_b and then looks c up in the table: a double read,
+	// which stays in the cost competition, so the rounds arm as before.
+	doubleReadSQL := "select /*+ inl_join(alt_ij_probe) */ alt_ij_probe.c from alt_ij_flash" +
+		" join alt_ij_probe on alt_ij_flash.b = alt_ij_probe.b where alt_ij_flash.c = 7"
+	plan = requireMixedEngineRound1Plan(t, tk, doubleReadSQL)
+	require.Contains(t, plan, "IndexJoin", "fixture must produce an IndexJoin:\n%s", plan)
+	require.Contains(t, plan, "IndexLookUp", "inner side must be a double read:\n%s", plan)
+	require.NoError(t, failpoint.Enable(engineRoundFailpoint,
+		fmt.Sprintf("return(%q)", "tikv-only:"+doubleReadSQL)))
+	require.ErrorContains(t, execToErrDrained(tk, doubleReadSQL), "unexpected alternative logical plan round")
 	require.NoError(t, failpoint.Disable(engineRoundFailpoint))
 }

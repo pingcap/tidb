@@ -835,8 +835,18 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	// of round 1's chosen plan rather than on a build-time signal: only a plan
 	// that actually mixes TiKV and TiFlash reads leaves a homogeneous
 	// alternative uncosted.
+	//
+	// A single-scan index join is the exception. Its inner side probes the
+	// handle or a covering index, so it reads only the rows the outer side asks
+	// for, and no engine-restricted rebuild is guaranteed to keep that: TiFlash
+	// has no index join at all, and pinning the outer side to TiKV can re-cost
+	// the join into a full-scan hash join. Trading a bounded probe for a full
+	// scan is the way this feature can turn a good mixed plan into a slow one,
+	// so leave those plans exactly as round 1 built them instead of putting
+	// them up for a cost comparison.
 	if needRestoreLogicalPlanCtx && bestPlan != nil {
-		if hasTiKV, hasTiFlash := physicalop.StorageEngineUsage(bestPlan); hasTiKV && hasTiFlash {
+		hasTiKV, hasTiFlash := physicalop.StorageEngineUsage(bestPlan)
+		if hasTiKV && hasTiFlash && !physicalop.HasSingleScanIndexJoin(bestPlan) {
 			sessVars.StmtCtx.MarkAlternativeLogicalPlanMixedStorageEngines()
 		}
 	}
