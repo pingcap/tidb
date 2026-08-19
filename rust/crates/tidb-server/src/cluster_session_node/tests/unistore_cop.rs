@@ -244,3 +244,50 @@ fn a_rebased_auto_increment_reaches_the_next_insert() {
         warnings[0][2]
     );
 }
+
+/// Go `ShowDDLExec.Next` (`executor/show_ddl.go`): six columns describing the
+/// DDL owner and this node.
+///
+/// `SCHEMA_VER` is the version this node currently follows, so it moves when a
+/// catalog change lands. The owner columns name THIS node, which is what a
+/// single-node deployment reports and what this node truthfully is: it runs no
+/// election, and every catalog change it accepts, it performs itself. The two
+/// job-list columns are structurally empty because a change is published in
+/// one transaction rather than queued, so no later statement can observe one
+/// in flight.
+#[test]
+fn admin_show_ddl_reports_this_node_and_the_followed_version() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(17))
+        .expect("session opens");
+
+    let before = displayed(rows(&mut session, "ADMIN SHOW DDL"));
+    assert_eq!(before.len(), 1);
+    let row = &before[0];
+    let version: i64 = row[0].parse().expect("SCHEMA_VER is an integer");
+    // Go's DDL_ID is a uuid, and the owner and self are the same node here.
+    assert_eq!(row[1].len(), 36, "OWNER_ID is a uuid: {}", row[1]);
+    assert_eq!(row[1], row[4], "this node is its own owner");
+    assert!(row[2].contains(':'), "OWNER_ADDRESS is host:port: {}", row[2]);
+    assert_eq!(row[3], "", "no job is ever observably in flight");
+    assert_eq!(row[5], "", "and so no query is either");
+
+    // The reported version follows the catalog, so a change moves it.
+    rows(&mut session, "CREATE TABLE test.ddl_probe (id int primary key)");
+    let after = displayed(rows(&mut session, "ADMIN SHOW DDL"));
+    let moved: i64 = after[0][0].parse().expect("SCHEMA_VER is an integer");
+    assert!(
+        moved > version,
+        "a published change moves SCHEMA_VER: {version} -> {moved}"
+    );
+    assert_eq!(after[0][4], row[4], "the node identity is stable");
+
+    // The identity is the one TIDB_SERVERS_INFO reports for this node.
+    let servers = displayed(rows(
+        &mut session,
+        "SELECT DDL_ID FROM information_schema.tidb_servers_info",
+    ));
+    assert_eq!(servers, [[row[4].clone()]]);
+}

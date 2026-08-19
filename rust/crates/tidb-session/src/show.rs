@@ -1848,6 +1848,28 @@ impl Session {
                 }
                 return Ok(Some(StmtOutput::Done(true)));
             }
+            // Go `ShowDDLExec`, whose six columns describe the DDL owner and
+            // this node; see `Session::show_ddl_rows` for what the two
+            // job-list columns mean here.
+            tidb_ast::AdminStmt::ShowDdl => {
+                let varchar = |size: i64| {
+                    FieldType::new(tidb_datatype::FieldTypeCode::Varchar).with_flen(size)
+                };
+                return Ok(Some(StmtOutput::Rows {
+                    columns: vec![
+                        (
+                            "SCHEMA_VER".to_owned(),
+                            FieldType::new(tidb_datatype::FieldTypeCode::LongLong).with_flen(4),
+                        ),
+                        ("OWNER_ID".to_owned(), varchar(64)),
+                        ("OWNER_ADDRESS".to_owned(), varchar(32)),
+                        ("RUNNING_JOBS".to_owned(), varchar(256)),
+                        ("SELF_ID".to_owned(), varchar(64)),
+                        ("QUERY".to_owned(), varchar(256)),
+                    ],
+                    rows: self.show_ddl_rows(),
+                }));
+            }
             // Go `ShowExec.fetchShowMasterStatus`: one row naming TiDB's
             // pseudo binlog file and the CURRENT transaction's start
             // timestamp as the position, with the three replication columns

@@ -516,6 +516,13 @@ impl QuerySessionFactory for ClusterSessionFactory {
         if let Some(syncer) = self.server_info.as_ref() {
             session.set_server_info_syncer(Arc::clone(syncer));
         }
+        // `ADMIN SHOW DDL` reports the version this node currently follows,
+        // which moves as the reloader picks up peers' changes -- so it is
+        // read at statement time rather than captured when the session opens.
+        let catalog_versions = Arc::clone(&self.catalog);
+        session.set_cluster_schema_version_source(Arc::new(move || {
+            catalog_versions.load().schema_version
+        }));
         session.set_server_start_timestamp(
             crate::real_tikv_node::server_start_unix_timestamp(),
         );

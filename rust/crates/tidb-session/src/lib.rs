@@ -414,6 +414,11 @@ pub struct Session {
     /// here is the tier that has no node identity at all -- an embedded
     /// session -- and reads back as an empty table.
     server_info_syncer: Option<std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>>,
+    /// The cluster schema version this node follows, which `ADMIN SHOW DDL`
+    /// reports. Absent on the in-process tier, whose catalog is not a
+    /// cluster's.
+    cluster_schema_version:
+        Option<std::sync::Arc<dyn Fn() -> i64 + Send + Sync>>,
     /// Go `StmtCtx.LastInsertID`/`LastInsertIDSet`: the id the RUNNING
     /// statement publishes. The session owns the cell and lends it to every
     /// [`tidb_executor::StmtContext`] the statement builds, so an allocating
@@ -558,6 +563,7 @@ impl Default for Session {
             statement_kind: StatementKind::Other,
             current_tso: tidb_executor::CurrentTso::default(),
             server_info_syncer: None,
+            cluster_schema_version: None,
             published_last_insert_id: Rc::default(),
             retry_auto_ids: Rc::default(),
             row_id_shards: Rc::default(),
@@ -666,6 +672,55 @@ impl Session {
         syncer: std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>,
     ) {
         self.server_info_syncer = Some(syncer);
+    }
+
+    /// Binds the node's cluster schema version, which `ADMIN SHOW DDL`
+    /// reports as `SCHEMA_VER`.
+    pub fn set_cluster_schema_version_source(
+        &mut self,
+        source: std::sync::Arc<dyn Fn() -> i64 + Send + Sync>,
+    ) {
+        self.cluster_schema_version = Some(source);
+    }
+
+    /// Go `ShowDDLExec.Next` (`executor/show_ddl.go`): one row describing the
+    /// DDL owner and this node.
+    ///
+    /// Two of Go's six columns are structurally empty here rather than
+    /// invented. `RUNNING_JOBS` and `QUERY` join the owner's in-flight job
+    /// list, and this node publishes a catalog change in one transaction
+    /// instead of queueing a job, so no later statement can ever observe one
+    /// in flight. The owner columns name THIS node: it runs no election
+    /// (`pkg/owner` is unported), and every catalog change it accepts, it
+    /// performs itself, which is what a single-node deployment reports.
+    pub(crate) fn show_ddl_rows(&self) -> Vec<Vec<tidb_datatype::Datum>> {
+        use tidb_datatype::Datum;
+        let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
+        let schema_version = self
+            .cluster_schema_version
+            .as_ref()
+            .map_or(0, |source| source());
+        let (id, address) = self.server_info_syncer.as_ref().map_or_else(
+            || (String::new(), String::new()),
+            |syncer| {
+                let info = syncer.local_server_info();
+                (
+                    info.static_info.id.clone(),
+                    tidb_domain::serverinfo_syncer::join_host_port(
+                        &info.static_info.ip,
+                        info.static_info.port,
+                    ),
+                )
+            },
+        );
+        vec![vec![
+            Datum::Int(schema_version),
+            text(&id),
+            text(&address),
+            text(""),
+            text(&id),
+            text(""),
+        ]]
     }
 
     /// Go `setDataForServersInfo` (`infoschema_reader.go:2730`): one row per
