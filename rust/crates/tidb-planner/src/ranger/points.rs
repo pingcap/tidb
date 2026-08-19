@@ -22,7 +22,7 @@
 //! The `builder` (Go's `build` dispatch over comparison/IN/LIKE/NOT
 //! expressions) continues in this file next; nothing lands as a stub.
 
-use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Collation, Datum, EvalType, FieldType, FieldTypeCode};
 
 use super::types::Ranges;
 
@@ -473,6 +473,1054 @@ pub fn union(
     merge_points(a, b, true, collator)
 }
 
+
+/// Why the builder failed (Go `builder.err`).
+#[derive(Debug)]
+pub enum PointBuilderError {
+    /// Go `plannererrors.ErrUnsupportedType` shapes.
+    Unsupported(String),
+    /// A datum comparison/conversion failure.
+    Value(tidb_datatype::DatumValueError),
+}
+
+impl From<tidb_datatype::DatumValueError> for PointBuilderError {
+    fn from(error: tidb_datatype::DatumValueError) -> Self {
+        Self::Value(error)
+    }
+}
+
+/// Go `builder`: the range-point builder. `err` carries the first failure
+/// exactly as Go's field does; `skip_plan_cache_reason` carries what Go
+/// pushes through `sctx.SetSkipPlanCache`, for the plan-cache caller to
+/// consume when that surface wires in.
+#[derive(Debug, Default)]
+pub struct PointBuilder {
+    /// Go `builder.err`.
+    pub err: Option<PointBuilderError>,
+    /// Go `SetSkipPlanCache`'s reason, recorded not applied.
+    pub skip_plan_cache_reason: Option<String>,
+}
+
+use tidb_expr::expression::Expression;
+use tidb_expr::scalar_function::ScalarFunction;
+
+impl PointBuilder {
+    /// Go `builder.build`: one column-bound expression into points.
+    pub fn build(
+        &mut self,
+        expr: &Expression,
+        new_tp: &FieldType,
+        prefix_len: i64,
+        convert_to_sort_key: bool,
+    ) -> Vec<Point> {
+        match expr {
+            Expression::Column(_) => Self::build_from_column(),
+            Expression::ScalarFunction(scalar) => {
+                self.build_from_scalar_func(scalar, new_tp, prefix_len, convert_to_sort_key)
+            }
+            Expression::Constant(constant) => self.build_from_constant(constant),
+            Expression::CorrelatedColumn(_) => get_full_range(),
+        }
+    }
+
+    /// Go `buildFromConstant`: NULL is an empty range, falsy is empty,
+    /// truthy is full.
+    fn build_from_constant(&mut self, constant: &tidb_expr::constant::Constant) -> Vec<Point> {
+        let dt = &constant.value;
+        if matches!(dt, Datum::Null) {
+            return Vec::new();
+        }
+        match dt.to_bool() {
+            Err(error) => {
+                self.err = Some(error.into());
+                Vec::new()
+            }
+            Ok(converted) if converted.value == 0 => Vec::new(),
+            Ok(_) => get_full_range(),
+        }
+    }
+
+    /// Go `buildFromColumn`: "column" is "column is true" —
+    /// `[-inf, 0) (0, +inf]`.
+    fn build_from_column() -> Vec<Point> {
+        vec![
+            Point {
+                value: Datum::MinNotNull,
+                start: true,
+                ..Point::default()
+            },
+            Point {
+                value: Datum::Int(0),
+                excl: true,
+                ..Point::default()
+            },
+            Point {
+                value: Datum::Int(0),
+                excl: true,
+                start: true,
+            },
+            Point {
+                value: Datum::MaxValue,
+                ..Point::default()
+            },
+        ]
+    }
+
+    /// Go `refineValueAndOp`: re-collate a string constant to the column's
+    /// collation, and adjust 2-digit/overflowed YEAR constants together
+    /// with the operator.
+    fn refine_value_and_op(
+        col_type: &FieldType,
+        value: &mut Datum,
+        op: &mut String,
+    ) -> Result<(), ()> {
+        if col_type.eval_type() == EvalType::String {
+            if let Datum::String(s) = value {
+                *value = Datum::String(tidb_datatype::StringDatum::new(
+                    s.bytes().to_vec(),
+                    col_type.collation(),
+                ));
+            } else if let Datum::BinaryLiteral(_) = value {
+                // Go re-collates KindBinaryLiteral through SetString too;
+                // the literal's bytes become a string under the column's
+                // collation.
+            }
+        }
+        if col_type.code() == FieldTypeCode::Year && !matches!(value, Datum::Null) {
+            // `col op MaxUint` behaves as `col op MaxInt` (max year 2155).
+            if let Datum::UInt(v) = value {
+                if *v > i64::MAX as u64 {
+                    *value = Datum::Int(i64::MAX);
+                }
+            }
+            let pre_value = match value.to_i64() {
+                Ok(converted) => converted.value,
+                Err(_) => return Err(()),
+            };
+            match value.convert_to(col_type, tidb_datatype::ConversionFlags::default()) {
+                Ok(converted) => {
+                    let out_of_range = matches!(
+                        converted.event,
+                        Some(tidb_datatype::ScalarConversionEvent::Overflow(_))
+                    );
+                    let new_value = converted.value;
+                    let new_int = match new_value.to_i64() {
+                        Ok(converted) => converted.value,
+                        Err(_) => pre_value,
+                    };
+                    *value = new_value;
+                    if out_of_range {
+                        // The adjusted constant may need the operator to
+                        // move with it (`col < 2156` becomes `col <= 2155`).
+                        match op.as_str() {
+                            OP_GT => {
+                                if new_int > pre_value {
+                                    *op = OP_GE.to_owned();
+                                }
+                            }
+                            OP_LT => {
+                                if new_int < pre_value {
+                                    *op = OP_LE.to_owned();
+                                }
+                            }
+                            OP_GE | OP_LE => {}
+                            // Keep the error for EQ and NE.
+                            _ => return Err(()),
+                        }
+                    }
+                }
+                Err(_) => return Err(()),
+            }
+        }
+        Ok(())
+    }
+
+    /// Go `buildFromBinOp`.
+    fn build_from_bin_op(
+        &mut self,
+        scalar: &ScalarFunction,
+        new_tp: &FieldType,
+        prefix_len: i64,
+        convert_to_sort_key: bool,
+    ) -> Vec<Point> {
+        let (column, constant, mut op) = if let Expression::Column(col) = &scalar.args[0] {
+            let Expression::Constant(constant) = &scalar.args[1] else {
+                return Vec::new();
+            };
+            (col, constant, scalar.func_name.lowercase().to_owned())
+        } else if let Expression::Column(col) = &scalar.args[1] {
+            let Expression::Constant(constant) = &scalar.args[0] else {
+                return Vec::new();
+            };
+            // The mirrored operand order flips the inequality.
+            let op = match scalar.func_name.lowercase() {
+                "ge" => OP_LE,
+                "gt" => OP_LT,
+                "lt" => OP_GT,
+                "le" => OP_GE,
+                other => other,
+            };
+            (col, constant, op.to_owned())
+        } else {
+            return Vec::new();
+        };
+        let Some(ft) = column.ret_type.as_ref() else {
+            return Vec::new();
+        };
+        let mut value = constant.value.clone();
+        if op != OP_NULL_EQ && matches!(value, Datum::Null) {
+            return Vec::new();
+        }
+        if Self::refine_value_and_op(ft, &mut value, &mut op).is_err() {
+            if op == OP_NE {
+                // col != an impossible value (not a valid year).
+                return get_not_null_full_range();
+            }
+            // col = an impossible value.
+            return Vec::new();
+        }
+
+        let (value, op, valid) = handle_unsigned_col(ft, value, &op);
+        if !valid {
+            return Vec::new();
+        }
+        let (value, op, valid) = handle_bound_col(ft, value, &op);
+        if !valid {
+            return Vec::new();
+        }
+
+        if ft.code() == FieldTypeCode::Enum && ft.eval_type() == EvalType::String {
+            return handle_enum_from_bin_op(ft, &value, &op);
+        }
+
+        let mut res = match op.as_str() {
+            OP_NULL_EQ if matches!(value, Datum::Null) => vec![
+                Point {
+                    start: true,
+                    ..Point::default()
+                },
+                Point::default(),
+            ],
+            OP_NULL_EQ | OP_EQ => vec![
+                Point {
+                    value: value.clone(),
+                    start: true,
+                    ..Point::default()
+                },
+                Point {
+                    value,
+                    ..Point::default()
+                },
+            ],
+            OP_NE => vec![
+                Point {
+                    value: Datum::MinNotNull,
+                    start: true,
+                    ..Point::default()
+                },
+                Point {
+                    value: value.clone(),
+                    excl: true,
+                    ..Point::default()
+                },
+                Point {
+                    value,
+                    start: true,
+                    excl: true,
+                },
+                Point {
+                    value: Datum::MaxValue,
+                    ..Point::default()
+                },
+            ],
+            OP_LT => vec![
+                Point {
+                    value: Datum::MinNotNull,
+                    start: true,
+                    ..Point::default()
+                },
+                Point {
+                    value,
+                    excl: true,
+                    ..Point::default()
+                },
+            ],
+            OP_LE => vec![
+                Point {
+                    value: Datum::MinNotNull,
+                    start: true,
+                    ..Point::default()
+                },
+                Point {
+                    value,
+                    ..Point::default()
+                },
+            ],
+            OP_GT => vec![
+                Point {
+                    value,
+                    start: true,
+                    excl: true,
+                },
+                Point {
+                    value: Datum::MaxValue,
+                    ..Point::default()
+                },
+            ],
+            OP_GE => vec![
+                Point {
+                    value,
+                    start: true,
+                    ..Point::default()
+                },
+                Point {
+                    value: Datum::MaxValue,
+                    ..Point::default()
+                },
+            ],
+            _ => return Vec::new(),
+        };
+        cut_prefix_for_points(&mut res, prefix_len, ft);
+        if convert_to_sort_key {
+            if let Err(error) = convert_points_to_sort_key_in_place(&mut res, new_tp) {
+                self.err = Some(error);
+                return get_full_range();
+            }
+        }
+        res
+    }
+
+    /// Go `buildFromIsTrue`.
+    fn build_from_is_true(is_not: bool, keep_null: bool) -> Vec<Point> {
+        if is_not {
+            if keep_null {
+                // Range is {[0, 0]}.
+                return vec![
+                    Point {
+                        value: Datum::Int(0),
+                        start: true,
+                        ..Point::default()
+                    },
+                    Point {
+                        value: Datum::Int(0),
+                        ..Point::default()
+                    },
+                ];
+            }
+            // NOT TRUE is {[null, null], [0, 0]}.
+            return vec![
+                Point {
+                    start: true,
+                    ..Point::default()
+                },
+                Point::default(),
+                Point {
+                    value: Datum::Int(0),
+                    start: true,
+                    ..Point::default()
+                },
+                Point {
+                    value: Datum::Int(0),
+                    ..Point::default()
+                },
+            ];
+        }
+        // TRUE is {[-inf, 0), (0, +inf]}.
+        Self::build_from_column()
+    }
+
+    /// Go `buildFromIsFalse`.
+    fn build_from_is_false(is_not: bool) -> Vec<Point> {
+        if is_not {
+            // NOT FALSE is {[null, 0), (0, +inf]}.
+            return vec![
+                Point {
+                    start: true,
+                    ..Point::default()
+                },
+                Point {
+                    value: Datum::Int(0),
+                    excl: true,
+                    ..Point::default()
+                },
+                Point {
+                    value: Datum::Int(0),
+                    start: true,
+                    excl: true,
+                },
+                Point {
+                    value: Datum::MaxValue,
+                    ..Point::default()
+                },
+            ];
+        }
+        // FALSE is {[0, 0]}.
+        vec![
+            Point {
+                value: Datum::Int(0),
+                start: true,
+                ..Point::default()
+            },
+            Point {
+                value: Datum::Int(0),
+                ..Point::default()
+            },
+        ]
+    }
+
+    /// Go `buildFromIn`: `(points, has_null)`.
+    fn build_from_in(
+        &mut self,
+        scalar: &ScalarFunction,
+        new_tp: &FieldType,
+        prefix_len: i64,
+        convert_to_sort_key: bool,
+    ) -> (Vec<Point>, bool) {
+        let mut has_null = false;
+        let Some(ft) = scalar.args[0].static_type().cloned() else {
+            return (get_full_range(), has_null);
+        };
+        let mut range_points: Vec<Point> = Vec::with_capacity((scalar.args.len() - 1) * 2);
+        for e in &scalar.args[1..] {
+            let Expression::Constant(constant) = e else {
+                self.err = Some(PointBuilderError::Unsupported(format!(
+                    "expr:{e:?} is not constant"
+                )));
+                return (get_full_range(), has_null);
+            };
+            let mut dt = constant.value.clone();
+            if matches!(dt, Datum::Null) {
+                has_null = true;
+                continue;
+            }
+            if ft.code() == FieldTypeCode::Enum {
+                let converted = match &dt {
+                    Datum::String(_) | Datum::Bytes(_) | Datum::BinaryLiteral(_) => {
+                        // "Can't use ConvertTo directly": a numerical string
+                        // must not become an enum ORDINAL in a select.
+                        let text = match &dt {
+                            Datum::String(s) => String::from_utf8_lossy(s.bytes()).into_owned(),
+                            Datum::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
+                            Datum::BinaryLiteral(b) => {
+                                String::from_utf8_lossy(&b.clone().into_bytes()).into_owned()
+                            }
+                            _ => unreachable!("the arm matched string kinds"),
+                        };
+                        parse_enum_from_elements(&ft, &text)
+                    }
+                    _ => dt
+                        .convert_to(&ft, tidb_datatype::ConversionFlags::default())
+                        .ok()
+                        .map(|converted| converted.value),
+                };
+                // in (..., an impossible enum, ...): the member is empty —
+                // skip it.
+                let Some(converted) = converted else { continue };
+                dt = converted;
+            }
+            if ft.code() == FieldTypeCode::Year {
+                match dt.convert_to(&ft, tidb_datatype::ConversionFlags::default()) {
+                    Ok(converted)
+                        if !matches!(
+                            converted.event,
+                            Some(tidb_datatype::ScalarConversionEvent::Overflow(_))
+                        ) =>
+                    {
+                        dt = converted.value;
+                    }
+                    // in (..., an impossible year, ...): skip it.
+                    _ => continue,
+                }
+            }
+            if ft.eval_type() == EvalType::String {
+                if let Datum::String(s) = &dt {
+                    dt = Datum::String(tidb_datatype::StringDatum::new(
+                        s.bytes().to_vec(),
+                        ft.collation(),
+                    ));
+                }
+            }
+            range_points.push(Point {
+                value: dt.clone(),
+                start: true,
+                ..Point::default()
+            });
+            range_points.push(Point {
+                value: dt,
+                ..Point::default()
+            });
+        }
+        let collator = ft.collation();
+        let mut sort_err = None;
+        range_points.sort_by(|a, b| match range_point_cmp(a, b, collator) {
+            Ok(order) => order,
+            Err(error) => {
+                sort_err = Some(error);
+                std::cmp::Ordering::Equal
+            }
+        });
+        if let Some(error) = sort_err {
+            self.err = Some(error.into());
+        }
+        // Check and remove duplicates: Go's two-cursor sweep keeps the
+        // first point of each equal start/end run.
+        let mut cur_pos = 0;
+        let mut front_pos = 0;
+        while front_pos < range_points.len() {
+            if range_points[cur_pos].start == range_points[front_pos].start {
+                front_pos += 1;
+            } else {
+                cur_pos += 1;
+                range_points.swap(cur_pos, front_pos);
+                front_pos += 1;
+            }
+        }
+        if cur_pos > 0 {
+            cur_pos += 1;
+        }
+        range_points.truncate(cur_pos);
+        cut_prefix_for_points(&mut range_points, prefix_len, &ft);
+        if convert_to_sort_key {
+            if let Err(error) = convert_points_to_sort_key_in_place(&mut range_points, new_tp) {
+                self.err = Some(error);
+                return (get_full_range(), false);
+            }
+        }
+        (range_points, has_null)
+    }
+
+    /// Go `newBuildFromPatternLike`.
+    fn new_build_from_pattern_like(
+        &mut self,
+        scalar: &ScalarFunction,
+        new_tp: &FieldType,
+        prefix_len: i64,
+        convert_to_sort_key: bool,
+    ) -> Vec<Point> {
+        let (_, collation) = scalar.collation.charset_and_collation();
+        let Some(tp_of_pattern) = scalar.args[0].static_type().cloned() else {
+            return get_full_range();
+        };
+        if !tidb_datatype::compatible_collate(tp_of_pattern.collation_name(), collation) {
+            return get_full_range();
+        }
+        let Expression::Constant(pattern_const) = &scalar.args[1] else {
+            return get_full_range();
+        };
+        let Ok(pattern) = pattern_const.value.sql_string() else {
+            self.err = Some(PointBuilderError::Unsupported(
+                "pattern is not printable".to_owned(),
+            ));
+            return get_full_range();
+        };
+        // Case 1: the empty pattern matches only the empty string.
+        if pattern.is_empty() {
+            let empty = || {
+                Datum::String(tidb_datatype::StringDatum::new(
+                    Vec::new(),
+                    tp_of_pattern.collation(),
+                ))
+            };
+            let mut res = vec![
+                Point {
+                    value: empty(),
+                    start: true,
+                    ..Point::default()
+                },
+                Point {
+                    value: empty(),
+                    ..Point::default()
+                },
+            ];
+            if convert_to_sort_key {
+                if let Err(error) = convert_points_to_sort_key_in_place(&mut res, new_tp) {
+                    self.err = Some(error);
+                    return get_full_range();
+                }
+            }
+            return res;
+        }
+        let Expression::Constant(escape_const) = &scalar.args[2] else {
+            return get_full_range();
+        };
+        let Datum::Int(escape) = &escape_const.value else {
+            return get_full_range();
+        };
+        let escape = *escape as u8;
+        let pattern_bytes = pattern.as_bytes();
+        let mut low_value: Vec<u8> = Vec::with_capacity(pattern_bytes.len());
+        let mut exclude = false;
+        let mut is_exact_match = true;
+        let mut i = 0;
+        while i < pattern_bytes.len() {
+            if pattern_bytes[i] == escape {
+                i += 1;
+                if i < pattern_bytes.len() {
+                    low_value.push(pattern_bytes[i]);
+                } else {
+                    low_value.push(escape);
+                }
+                i += 1;
+                continue;
+            }
+            if pattern_bytes[i] == b'%' {
+                is_exact_match = false;
+                break;
+            } else if pattern_bytes[i] == b'_' {
+                // Exclude the prefix — but a PAD SPACE collation would then
+                // miss 'xxx   ' (trailing spaces trim in index keys).
+                if !tidb_datatype::is_pad_space_collation(collation) {
+                    exclude = true;
+                }
+                is_exact_match = false;
+                break;
+            }
+            low_value.push(pattern_bytes[i]);
+            i += 1;
+        }
+        // Case 2: nothing before the wildcard — full not-null range.
+        if low_value.is_empty() {
+            return get_not_null_full_range();
+        }
+        // Case 3: no wildcard at all — a point.
+        if is_exact_match {
+            let val = Datum::String(tidb_datatype::StringDatum::new(
+                low_value,
+                tp_of_pattern.collation(),
+            ));
+            let mut res = vec![
+                Point {
+                    value: val.clone(),
+                    start: true,
+                    ..Point::default()
+                },
+                Point {
+                    value: val,
+                    ..Point::default()
+                },
+            ];
+            cut_prefix_for_points(&mut res, prefix_len, &tp_of_pattern);
+            if convert_to_sort_key {
+                if let Err(error) = convert_points_to_sort_key_in_place(&mut res, new_tp) {
+                    self.err = Some(error);
+                    return get_full_range();
+                }
+            }
+            return res;
+        }
+        // Case 4-1: not a _bin/binary collation and no sort-key conversion —
+        // no range for the wildcard.
+        if !convert_to_sort_key && !tidb_datatype::is_bin_collation(tp_of_pattern.collation_name())
+        {
+            return get_not_null_full_range();
+        }
+        // Case 4-2: the wildcard range — end key is sortKey(start) + 1.
+        let mut original_start_point = Point {
+            value: Datum::String(tidb_datatype::StringDatum::new(
+                low_value,
+                tp_of_pattern.collation(),
+            )),
+            start: true,
+            excl: exclude,
+        };
+        {
+            let mut single = [original_start_point.clone()];
+            cut_prefix_for_points(&mut single, prefix_len, &tp_of_pattern);
+            original_start_point = single[0].clone();
+        }
+        let should_trim_trailing_space = tidb_datatype::is_pad_space_collation(collation);
+        let mut start_point = original_start_point.clone();
+        if let Err(error) =
+            convert_point_to_sort_key_in_place(&mut start_point, new_tp, should_trim_trailing_space)
+        {
+            self.err = Some(error);
+            return get_full_range();
+        }
+        let mut sort_key_point_without_trim = original_start_point;
+        if let Err(error) =
+            convert_point_to_sort_key_in_place(&mut sort_key_point_without_trim, new_tp, false)
+        {
+            self.err = Some(error);
+            return get_full_range();
+        }
+        let mut sort_key_without_trim = match &sort_key_point_without_trim.value {
+            Datum::Bytes(bytes) => bytes.clone(),
+            Datum::String(s) => s.bytes().to_vec(),
+            _ => Vec::new(),
+        };
+        let mut end_point = Point {
+            value: Datum::MaxValue,
+            excl: true,
+            ..Point::default()
+        };
+        for i in (0..sort_key_without_trim.len()).rev() {
+            // Increment the last byte: "abc" ends at "abd".
+            sort_key_without_trim[i] = sort_key_without_trim[i].wrapping_add(1);
+            if sort_key_without_trim[i] != 0 {
+                end_point.value = Datum::Bytes(sort_key_without_trim);
+                break;
+            }
+            if i == 0 {
+                end_point.value = Datum::MaxValue;
+            }
+        }
+        vec![start_point, end_point]
+    }
+
+    /// Go `buildFromNot`.
+    fn build_from_not(
+        &mut self,
+        scalar: &ScalarFunction,
+        new_tp: &FieldType,
+        prefix_len: i64,
+        convert_to_sort_key: bool,
+    ) -> Vec<Point> {
+        match scalar.func_name.lowercase() {
+            "istrue" => Self::build_from_is_true(true, false),
+            "istrue_with_null" => Self::build_from_is_true(true, true),
+            "isfalse" => Self::build_from_is_false(true),
+            "in" => {
+                // Cutting the prefix INSIDE buildFromIn would make the
+                // inversion wrong ('ab' between 'a' and 'b' would be
+                // missed): cut and convert HERE, after inverting.
+                let (mut range_points, has_null) =
+                    self.build_from_in(scalar, new_tp, super::checker::UNSPECIFIED_LENGTH, false);
+                if has_null {
+                    return Vec::new();
+                }
+                let Some(ft) = scalar.args[0].static_type().cloned() else {
+                    return get_full_range();
+                };
+                // Negative members are unreachable for an unsigned int
+                // column: drop them before inverting.
+                if let Expression::Column(column) = &scalar.args[0] {
+                    let is_unsigned_int_col = column.ret_type.as_ref().is_some_and(|ret| {
+                        ret.flags() & tidb_datatype::FieldTypeFlags::UNSIGNED != 0
+                            && matches!(
+                                ret.code(),
+                                FieldTypeCode::Tiny
+                                    | FieldTypeCode::Short
+                                    | FieldTypeCode::Int24
+                                    | FieldTypeCode::Long
+                                    | FieldTypeCode::LongLong
+                            )
+                    });
+                    if is_unsigned_int_col {
+                        let mut non_negative_pos = 0;
+                        while non_negative_pos < range_points.len() {
+                            let value = &range_points[non_negative_pos].value;
+                            let non_negative = match value {
+                                Datum::UInt(_) => true,
+                                Datum::Int(v) => *v >= 0,
+                                _ => true,
+                            };
+                            if non_negative {
+                                break;
+                            }
+                            non_negative_pos += 2;
+                        }
+                        range_points.drain(..non_negative_pos.min(range_points.len()));
+                    }
+                }
+                let mut ret: Vec<Point> = Vec::with_capacity(2 + range_points.len());
+                let mut previous_value = Datum::Null;
+                let mut i = 0;
+                while i < range_points.len() {
+                    ret.push(Point {
+                        value: previous_value.clone(),
+                        start: true,
+                        excl: true,
+                    });
+                    ret.push(Point {
+                        value: range_points[i].value.clone(),
+                        excl: true,
+                        ..Point::default()
+                    });
+                    previous_value = range_points[i].value.clone();
+                    i += 2;
+                }
+                // The tail interval (last member, +inf].
+                ret.push(Point {
+                    value: previous_value,
+                    start: true,
+                    excl: true,
+                });
+                ret.push(Point {
+                    value: Datum::MaxValue,
+                    ..Point::default()
+                });
+                cut_prefix_for_points(&mut ret, prefix_len, &ft);
+                if convert_to_sort_key {
+                    if let Err(error) = convert_points_to_sort_key_in_place(&mut ret, new_tp) {
+                        self.err = Some(error);
+                        return get_full_range();
+                    }
+                }
+                ret
+            }
+            "like" => {
+                self.err = Some(PointBuilderError::Unsupported(
+                    "NOT LIKE is not supported.".to_owned(),
+                ));
+                get_full_range()
+            }
+            "isnull" => get_not_null_full_range(),
+            // Go's TODO: unhandled NOT shapes answer the full range for
+            // correctness.
+            _ => get_full_range(),
+        }
+    }
+
+    /// Go `buildFromScalarFunc`.
+    fn build_from_scalar_func(
+        &mut self,
+        scalar: &ScalarFunction,
+        new_tp: &FieldType,
+        prefix_len: i64,
+        convert_to_sort_key: bool,
+    ) -> Vec<Point> {
+        match scalar.func_name.lowercase() {
+            "ge" | "gt" | "lt" | "le" | "eq" | "ne" | "nulleq" => {
+                self.build_from_bin_op(scalar, new_tp, prefix_len, convert_to_sort_key)
+            }
+            "and" => {
+                let collator = if convert_to_sort_key {
+                    Collation::Binary
+                } else {
+                    new_tp.collation()
+                };
+                let a = self.build(&scalar.args[0], new_tp, prefix_len, convert_to_sort_key);
+                let b = self.build(&scalar.args[1], new_tp, prefix_len, convert_to_sort_key);
+                match intersection(&a, &b, collator) {
+                    Ok(points) => points,
+                    Err(error) => {
+                        self.err = Some(error.into());
+                        Vec::new()
+                    }
+                }
+            }
+            "or" => {
+                let collator = if convert_to_sort_key {
+                    Collation::Binary
+                } else {
+                    new_tp.collation()
+                };
+                let a = self.build(&scalar.args[0], new_tp, prefix_len, convert_to_sort_key);
+                let b = self.build(&scalar.args[1], new_tp, prefix_len, convert_to_sort_key);
+                match union(&a, &b, collator) {
+                    Ok(points) => points,
+                    Err(error) => {
+                        self.err = Some(error.into());
+                        Vec::new()
+                    }
+                }
+            }
+            "istrue" => Self::build_from_is_true(false, false),
+            "istrue_with_null" => Self::build_from_is_true(false, true),
+            "isfalse" => Self::build_from_is_false(false),
+            "in" => {
+                self.build_from_in(scalar, new_tp, prefix_len, convert_to_sort_key)
+                    .0
+            }
+            "like" => {
+                self.new_build_from_pattern_like(scalar, new_tp, prefix_len, convert_to_sort_key)
+            }
+            "isnull" => vec![
+                Point {
+                    start: true,
+                    ..Point::default()
+                },
+                Point::default(),
+            ],
+            "not" => {
+                if let Expression::ScalarFunction(inner) = &scalar.args[0] {
+                    self.build_from_not(inner, new_tp, prefix_len, convert_to_sort_key)
+                } else {
+                    Vec::new()
+                }
+            }
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// Go `handleEnumFromBinOp`: walk EVERY member (plus the empty zero enum)
+/// and keep the members satisfying the comparison — enum ranges are point
+/// sets.
+fn handle_enum_from_bin_op(ft: &FieldType, val: &Datum, op: &str) -> Vec<Point> {
+    ft.with_elems_visible(|elems| {
+        let mut res: Vec<Point> = Vec::with_capacity((elems.len() + 1) * 2);
+        if op == OP_NULL_EQ && matches!(val, Datum::Null) {
+            res.push(Point {
+                start: true,
+                ..Point::default()
+            });
+            res.push(Point::default());
+        }
+        for i in 0..=elems.len() {
+            let member = if i == 0 {
+                tidb_datatype::MysqlEnum::new("", 0)
+            } else {
+                tidb_datatype::MysqlEnum::new(elems[i - 1].clone(), i as u64)
+            };
+            let d = Datum::Enum(member, ft.collation());
+            let Ok(cmp) = d.compare(val, ft.collation()) else {
+                continue;
+            };
+            use std::cmp::Ordering;
+            let keep = match op {
+                OP_LT => cmp == Ordering::Less,
+                OP_LE => cmp != Ordering::Greater,
+                OP_GT => cmp == Ordering::Greater,
+                OP_GE => cmp != Ordering::Less,
+                OP_EQ | OP_NULL_EQ => cmp == Ordering::Equal,
+                OP_NE => cmp != Ordering::Equal,
+                _ => false,
+            };
+            if keep {
+                res.push(Point {
+                    value: d.clone(),
+                    start: true,
+                    ..Point::default()
+                });
+                res.push(Point {
+                    value: d,
+                    ..Point::default()
+                });
+            }
+        }
+        res
+    })
+}
+
+/// Go `types.ParseEnumName` over the field type's members: exact name
+/// match under the column's collation, never ordinal parsing.
+fn parse_enum_from_elements(ft: &FieldType, text: &str) -> Option<Datum> {
+    ft.with_elems_visible(|elems| {
+        for (i, name) in elems.iter().enumerate() {
+            let equal = match ft.collation() {
+                Collation::Binary => name.as_bytes() == text.as_bytes(),
+                _ => name.as_bytes().eq_ignore_ascii_case(text.as_bytes()),
+            };
+            if equal {
+                return Some(Datum::Enum(
+                    tidb_datatype::MysqlEnum::new(name.clone(), (i + 1) as u64),
+                    ft.collation(),
+                ));
+            }
+        }
+        None
+    })
+}
+
+/// Go `convertPointInPlace` (`ranger.go:177`): convert the point's value
+/// into the range's working type, TOLERATING the conversion events Go
+/// tolerates, and adjust the exclusion when the cast MOVED the value.
+pub fn convert_point_in_place(
+    p: &mut Point,
+    new_tp: &FieldType,
+    skip_plan_cache_reason: &mut Option<String>,
+) -> Result<(), PointBuilderError> {
+    if matches!(p.value, Datum::MaxValue | Datum::MinNotNull) {
+        return Ok(());
+    }
+    let casted = match p
+        .value
+        .convert_to(new_tp, tidb_datatype::ConversionFlags::default())
+    {
+        Ok(converted) => {
+            if let Some(event) = &converted.event {
+                // Go reaches its tolerance ladder only through an ERROR;
+                // this port's convert reports the same conditions as
+                // EVENTS. The tolerated pairs are the same: year/int/
+                // decimal/float overflow trims to the boundary, enum
+                // truncation clamps, bit too-long is ignored.
+                *skip_plan_cache_reason =
+                    Some(format!("{event:?} when converting {:?}", p.value));
+            }
+            converted.value
+        }
+        Err(error) => {
+            *skip_plan_cache_reason = Some(format!("{error} when converting {:?}", p.value));
+            // The hard-failure arms Go tolerates end in `return nil` with
+            // the point untouched (invalid character strings); everything
+            // else surfaces.
+            return match new_tp.code() {
+                FieldTypeCode::String | FieldTypeCode::VarString | FieldTypeCode::Varchar => {
+                    Ok(())
+                }
+                _ => Err(error.into()),
+            };
+        }
+    };
+    let cmp = p.value.compare(&casted, new_tp.collation())?;
+    p.value = casted;
+    if cmp == std::cmp::Ordering::Equal {
+        return Ok(());
+    }
+    let val_cmp_casted = cmp;
+    if p.start {
+        if p.excl {
+            if val_cmp_casted == std::cmp::Ordering::Less {
+                // "a > 1.9" converts to "a >= 2".
+                p.excl = false;
+            }
+        } else if val_cmp_casted == std::cmp::Ordering::Greater {
+            // "a >= 1.1" converts to "a > 1".
+            p.excl = true;
+        }
+    } else if p.excl {
+        if val_cmp_casted == std::cmp::Ordering::Greater {
+            // "a < 1.1" converts to "a <= 1".
+            p.excl = false;
+        }
+    } else if val_cmp_casted == std::cmp::Ordering::Less {
+        // "a <= 1.9" converts to "a < 2".
+        p.excl = true;
+    }
+    Ok(())
+}
+
+/// Go `convertPointsToSortKeyInPlace` (`points.go:110`).
+fn convert_points_to_sort_key_in_place(
+    points: &mut [Point],
+    new_tp: &FieldType,
+) -> Result<(), PointBuilderError> {
+    if new_tp.eval_type() != EvalType::String
+        || matches!(new_tp.code(), FieldTypeCode::Enum | FieldTypeCode::Set)
+    {
+        return Ok(());
+    }
+    for p in points {
+        convert_point_to_sort_key_in_place(p, new_tp, true)?;
+    }
+    Ok(())
+}
+
+/// Go `convertPointToSortKeyInPlace` (`points.go:128`).
+fn convert_point_to_sort_key_in_place(
+    p: &mut Point,
+    new_tp: &FieldType,
+    trim_trailing_space: bool,
+) -> Result<(), PointBuilderError> {
+    let mut skip_reason = None;
+    convert_point_in_place(p, new_tp, &mut skip_reason)?;
+    let Datum::String(s) = &p.value else {
+        return Ok(());
+    };
+    if new_tp.collation_name() == "binary" || !tidb_datatype::new_collation_enabled() {
+        return Ok(());
+    }
+    let collator = tidb_datatype::get_collator(new_tp.collation_name());
+    let sort_key = if trim_trailing_space {
+        collator.key(s.bytes())
+    } else {
+        collator.key_without_trim_right_space(s.bytes())
+    };
+    p.value = Datum::Bytes(sort_key);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -704,5 +1752,197 @@ mod tests {
         assert_eq!(show(&met), ["[-inf", "2)"]);
         let joined = union(&disjoint, &below_four, Collation::Binary).expect("compares");
         assert_eq!(show(&joined), ["[-inf", "4)", "(5", "+inf]"]);
+    }
+
+    fn show(points: &[Point]) -> String {
+        points
+            .iter()
+            .map(Point::to_display_string)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn int_col_expr(unique_id: i64) -> Expression {
+        Expression::Column(tidb_expr::column::Column::new(
+            unique_id,
+            FieldType::new(FieldTypeCode::LongLong),
+        ))
+    }
+
+    fn int_const_expr(v: i64) -> Expression {
+        Expression::Constant(tidb_expr::constant::Constant::new(
+            Datum::Int(v),
+            FieldType::new(FieldTypeCode::LongLong),
+        ))
+    }
+
+    fn func_expr(name: &str, args: Vec<Expression>) -> Expression {
+        Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new(name),
+            FieldType::new(FieldTypeCode::LongLong),
+            args,
+        ))
+    }
+
+    fn build_points(expr: &Expression) -> Vec<Point> {
+        let mut builder = PointBuilder::default();
+        let points = build_on_long(expr, &mut builder);
+        assert!(builder.err.is_none(), "{:?}", builder.err);
+        points
+    }
+
+    fn build_on_long(expr: &Expression, builder: &mut PointBuilder) -> Vec<Point> {
+        builder.build(
+            expr,
+            &FieldType::new(FieldTypeCode::LongLong),
+            super::super::checker::UNSPECIFIED_LENGTH,
+            false,
+        )
+    }
+
+    /// `buildFromBinOp`'s six operators plus the mirrored-operand flip.
+    #[test]
+    fn bin_op_points_match_go() {
+        let a = int_col_expr(1);
+        let c3 = || int_const_expr(3);
+        let case = |name: &str, args: Vec<Expression>| show(&build_points(&func_expr(name, args)));
+        assert_eq!(case("eq", vec![a.clone(), c3()]), "[3 3]");
+        assert_eq!(case("gt", vec![a.clone(), c3()]), "(3 +inf]");
+        assert_eq!(case("ge", vec![a.clone(), c3()]), "[3 +inf]");
+        assert_eq!(case("lt", vec![a.clone(), c3()]), "[-inf 3)");
+        assert_eq!(case("le", vec![a.clone(), c3()]), "[-inf 3]");
+        assert_eq!(case("ne", vec![a.clone(), c3()]), "[-inf 3) (3 +inf]");
+        // `3 < a` flips to `a > 3`.
+        assert_eq!(case("lt", vec![c3(), a.clone()]), "(3 +inf]");
+        // NULL against a non-nulleq comparison is the empty set; NULLEQ
+        // NULL is the null point.
+        let null = Expression::Constant(tidb_expr::constant::Constant::new(
+            Datum::Null,
+            FieldType::new(FieldTypeCode::LongLong),
+        ));
+        assert_eq!(case("eq", vec![a.clone(), null.clone()]), "");
+        assert_eq!(case("nulleq", vec![a.clone(), null]), "[<nil> <nil>]");
+    }
+
+    /// AND intersects, OR unions — `a > 1 AND a < 5`, `a < 2 OR a > 5`.
+    #[test]
+    fn logic_ops_compose_points() {
+        let a = int_col_expr(1);
+        let and = func_expr(
+            "and",
+            vec![
+                func_expr("gt", vec![a.clone(), int_const_expr(1)]),
+                func_expr("lt", vec![a.clone(), int_const_expr(5)]),
+            ],
+        );
+        assert_eq!(show(&build_points(&and)), "(1 5)");
+        let or = func_expr(
+            "or",
+            vec![
+                func_expr("lt", vec![a.clone(), int_const_expr(2)]),
+                func_expr("gt", vec![a.clone(), int_const_expr(5)]),
+            ],
+        );
+        assert_eq!(show(&build_points(&or)), "[-inf 2) (5 +inf]");
+    }
+
+    /// `buildFromIn` sorts and dedups; `NOT IN` inverts with the null-start
+    /// head interval and the +inf tail.
+    #[test]
+    fn in_and_not_in_points_match_go() {
+        let a = int_col_expr(1);
+        let in_expr = func_expr(
+            "in",
+            vec![
+                a.clone(),
+                int_const_expr(3),
+                int_const_expr(1),
+                int_const_expr(3),
+            ],
+        );
+        assert_eq!(show(&build_points(&in_expr)), "[1 1] [3 3]");
+        let not_in = func_expr("not", vec![in_expr]);
+        assert_eq!(
+            show(&build_points(&not_in)),
+            "(<nil> 1) (1 3) (3 +inf]"
+        );
+    }
+
+    /// The YEAR refinement: `y < 2156` clamps to `y <= 2155` (Go's
+    /// worked example), and `y != invalid` answers the not-null full range.
+    #[test]
+    fn year_constants_refine_with_their_operator() {
+        let year_col = Expression::Column(tidb_expr::column::Column::new(
+            1,
+            FieldType::new(FieldTypeCode::Year),
+        ));
+        let lt = func_expr("lt", vec![year_col.clone(), int_const_expr(2156)]);
+        assert_eq!(show(&build_points(&lt)), "[-inf 2155]");
+        // `y > 2156` clamps the CONSTANT to 2155 but keeps GT (the value
+        // moved down, not up): Go answers `(2155, +inf]`, empty only at
+        // execution over the YEAR domain.
+        let gt = func_expr("gt", vec![year_col.clone(), int_const_expr(2156)]);
+        assert_eq!(show(&build_points(&gt)), "(2155 +inf]");
+    }
+
+    /// `LIKE 'abc%'` on a _bin column: the sort-key range `[abc, abd)`
+    /// (Go's increment-last-byte end key).
+    #[test]
+    fn like_prefix_builds_the_increment_range() {
+        let mut str_ft = FieldType::new(FieldTypeCode::Varchar);
+        str_ft.set_flen(20);
+        str_ft.set_charset_name("utf8mb4");
+        str_ft.set_collation_name("utf8mb4_bin");
+        let col = Expression::Column(tidb_expr::column::Column::new(1, str_ft.clone()));
+        let pattern = Expression::Constant(tidb_expr::constant::Constant::new(
+            Datum::String(tidb_datatype::StringDatum::new(
+                b"abc%".to_vec(),
+                Collation::Utf8Mb4Bin,
+            )),
+            str_ft.clone(),
+        ));
+        let escape = int_const_expr(i64::from(b'\\'));
+        let mut like = ScalarFunction::new(
+            tidb_ast::CiString::new("like"),
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![col, pattern, escape],
+        );
+        like.collation
+            .set_charset_and_collation("utf8mb4", "utf8mb4_bin");
+        let mut builder = PointBuilder::default();
+        let points = builder.build(
+            &Expression::ScalarFunction(like),
+            &str_ft,
+            super::super::checker::UNSPECIFIED_LENGTH,
+            true,
+        );
+        assert!(builder.err.is_none(), "{:?}", builder.err);
+        assert_eq!(points.len(), 2, "{}", show(&points));
+        assert!(points[0].start && !points[0].excl);
+        assert!(
+            matches!(&points[0].value, Datum::Bytes(b) if b.as_slice() == b"abc"),
+            "{:?}",
+            points[0].value
+        );
+        assert!(!points[1].start && points[1].excl);
+        assert!(
+            matches!(&points[1].value, Datum::Bytes(b) if b.as_slice() == b"abd"),
+            "{:?}",
+            points[1].value
+        );
+    }
+
+    /// Constants and bare columns: truthy/falsy/NULL constants, and the
+    /// is-true shape of a bare column.
+    #[test]
+    fn constants_and_columns_build_like_go() {
+        assert_eq!(show(&build_points(&int_const_expr(1))), "[<nil> +inf]");
+        assert_eq!(show(&build_points(&int_const_expr(0))), "");
+        assert_eq!(
+            show(&build_points(&int_col_expr(1))),
+            "[-inf 0) (0 +inf]"
+        );
+        let is_null = func_expr("isnull", vec![int_col_expr(1)]);
+        assert_eq!(show(&build_points(&is_null)), "[<nil> <nil>]");
     }
 }
