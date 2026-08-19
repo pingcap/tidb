@@ -642,6 +642,291 @@ pub fn extract_eq_and_in_condition(
     }
 }
 
+
+/// Go `DetachRangeResult`.
+#[derive(Debug, Default)]
+pub struct DetachRangeResult {
+    /// Go `Ranges`.
+    pub ranges: super::types::Ranges,
+    /// Go `AccessConds`.
+    pub access_conds: Vec<Expression>,
+    /// Go `RemainedConds`.
+    pub remained_conds: Vec<Expression>,
+    /// Go `ColumnValues`.
+    pub column_values: Vec<Option<ValueInfo>>,
+    /// Go `EqCondCount`.
+    pub eq_cond_count: usize,
+    /// Go `EqOrInCount`.
+    pub eq_or_in_count: usize,
+    /// Go `IsDNFCond`.
+    pub is_dnf_cond: bool,
+    /// Go `MinAccessCondsForDNFCond`.
+    pub min_access_conds_for_dnf_cond: i64,
+}
+
+/// Go `rangeDetacher`: one detach run's inputs.
+pub struct RangeDetacher<'a> {
+    /// Go `cols`.
+    pub cols: &'a [tidb_expr::column::Column],
+    /// Go `lengths`.
+    pub lengths: &'a [i64],
+    /// Go `newTpSlice`.
+    pub new_tp_slice: Vec<tidb_datatype::FieldType>,
+    /// Go `mergeConsecutive`.
+    pub merge_consecutive: bool,
+    /// Go `convertToSortKey`.
+    pub convert_to_sort_key: bool,
+    /// Go `rangeMaxSize`.
+    pub range_max_size: i64,
+    /// Go's session `RegardNULLAsPoint` (default true).
+    pub regard_null_as_point: bool,
+    /// Go's session `OptPrefixIndexSingleScan` (default true).
+    pub opt_prefix_index_single_scan: bool,
+    /// Go `sctx.SetSkipPlanCache`'s carrier.
+    pub skip_plan_cache_reason: Option<String>,
+}
+
+impl RangeDetacher<'_> {
+    /// Go `buildRangeOnColsByCNFCond` (`ranger.go:553`): the leading eq/in
+    /// chain appends column by column; the tail's non-equal conditions
+    /// intersect into ONE more column's points.
+    fn build_range_on_cols_by_cnf_cond(
+        &mut self,
+        eq_and_in_count: usize,
+        access_conds: &[Expression],
+    ) -> Result<
+        (super::types::Ranges, Vec<Expression>, Vec<Expression>),
+        super::points::PointBuilderError,
+    > {
+        let mut builder = PointBuilder::default();
+        let mut ranges = super::types::Ranges::new();
+        for i in 0..eq_and_in_count {
+            let point = builder.build(
+                &access_conds[i],
+                &self.new_tp_slice[i],
+                self.lengths[i],
+                self.convert_to_sort_key,
+            );
+            if let Some(error) = builder.err.take() {
+                return Err(error);
+            }
+            let tmp_new_tp = if self.convert_to_sort_key {
+                super::ranger::convert_string_ft_to_binary_collate(&self.new_tp_slice[i])
+            } else {
+                self.new_tp_slice[i].clone()
+            };
+            let (new_ranges, fallback) = if i == 0 {
+                super::ranger::points_to_ranges(
+                    point,
+                    &tmp_new_tp,
+                    self.range_max_size,
+                    &mut self.skip_plan_cache_reason,
+                )?
+            } else {
+                super::ranger::append_points_to_ranges(
+                    ranges,
+                    point,
+                    &tmp_new_tp,
+                    self.range_max_size,
+                    self.regard_null_as_point,
+                    &mut self.skip_plan_cache_reason,
+                )?
+            };
+            ranges = new_ranges;
+            if fallback {
+                return Ok((
+                    ranges,
+                    access_conds[..i].to_vec(),
+                    access_conds[i..].to_vec(),
+                ));
+            }
+        }
+        let mut range_points = super::points::get_full_range();
+        for cond in &access_conds[eq_and_in_count..] {
+            let collator = if self.convert_to_sort_key {
+                tidb_datatype::Collation::Binary
+            } else {
+                self.new_tp_slice[eq_and_in_count].collation()
+            };
+            let built = builder.build(
+                cond,
+                &self.new_tp_slice[eq_and_in_count],
+                self.lengths[eq_and_in_count],
+                self.convert_to_sort_key,
+            );
+            range_points = super::points::intersection(&range_points, &built, collator)?;
+            if let Some(error) = builder.err.take() {
+                return Err(error);
+            }
+        }
+        if eq_and_in_count == 0 || eq_and_in_count < access_conds.len() {
+            let tmp_new_tp = if self.convert_to_sort_key {
+                super::ranger::convert_string_ft_to_binary_collate(
+                    &self.new_tp_slice[eq_and_in_count],
+                )
+            } else {
+                self.new_tp_slice[eq_and_in_count].clone()
+            };
+            let (new_ranges, fallback) = if eq_and_in_count == 0 {
+                super::ranger::points_to_ranges(
+                    range_points,
+                    &tmp_new_tp,
+                    self.range_max_size,
+                    &mut self.skip_plan_cache_reason,
+                )?
+            } else {
+                super::ranger::append_points_to_ranges(
+                    ranges,
+                    range_points,
+                    &tmp_new_tp,
+                    self.range_max_size,
+                    self.regard_null_as_point,
+                    &mut self.skip_plan_cache_reason,
+                )?
+            };
+            ranges = new_ranges;
+            if fallback {
+                return Ok((
+                    ranges,
+                    access_conds[..eq_and_in_count].to_vec(),
+                    access_conds[eq_and_in_count..].to_vec(),
+                ));
+            }
+        }
+        Ok((ranges, access_conds.to_vec(), Vec::new()))
+    }
+
+    /// Go `buildCNFIndexRange` (`ranger.go:629`).
+    fn build_cnf_index_range(
+        &mut self,
+        eq_and_in_count: usize,
+        access_conds: &[Expression],
+    ) -> Result<
+        (super::types::Ranges, Vec<Expression>, Vec<Expression>),
+        super::points::PointBuilderError,
+    > {
+        let (mut ranges, new_access, remained) =
+            self.build_range_on_cols_by_cnf_cond(eq_and_in_count, access_conds)?;
+        // Take prefix indexes into consideration.
+        if super::ranger::has_prefix(self.lengths) {
+            ranges = super::ranger::union_ranges(ranges, self.merge_consecutive)?;
+        }
+        Ok((ranges, new_access, remained))
+    }
+
+    /// Go `detachCNFCondAndBuildRangeForIndex` with `considerDNF = false` —
+    /// the whole branch the SIMPLE entry takes. The `considerDNF` branch
+    /// (the best-CNF-item machinery, `extractBestCNFItemRanges` and the
+    /// Fix44389 arm) lands with the full `DetachCondAndBuildRangeForIndex`
+    /// entry, its only caller.
+    fn detach_cnf_simple(
+        &mut self,
+        conditions: &[Expression],
+    ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
+        let mut res = DetachRangeResult::default();
+        let extraction = extract_eq_and_in_condition(
+            conditions,
+            self.cols,
+            self.lengths,
+            self.regard_null_as_point,
+        );
+        if extraction.empty_range {
+            return Ok(res);
+        }
+        let mut filter_conds = extraction.filters;
+        let mut new_conditions = extraction.new_conditions;
+        let (ranges, access_conds, remained_conds) =
+            self.build_range_on_cols_by_cnf_cond(extraction.accesses.len(), &extraction.accesses)?;
+        let mut ranges = ranges;
+        let mut access_conds = access_conds;
+        if !remained_conds.is_empty() {
+            filter_conds = remove_conditions(&filter_conds, &remained_conds);
+            new_conditions.extend(remained_conds);
+        }
+        let mut eq_count = 0;
+        for cond in &access_conds {
+            let Expression::ScalarFunction(f) = cond else { break };
+            if f.func_name.lowercase() != "eq" {
+                break;
+            }
+            eq_count += 1;
+        }
+        let eq_or_in_count = access_conds.len();
+        res.eq_cond_count = eq_count;
+        res.eq_or_in_count = eq_or_in_count;
+        if super::ranger::has_prefix(self.lengths) {
+            ranges = super::ranger::union_ranges(ranges, self.merge_consecutive)?;
+        }
+        res.column_values = extraction.column_values;
+        if eq_or_in_count == self.cols.len() || new_conditions.is_empty() {
+            res.ranges = ranges;
+            res.access_conds = access_conds;
+            res.remained_conds = filter_conds;
+            res.remained_conds.extend(new_conditions);
+            return Ok(res);
+        }
+        let next_col = &self.cols[eq_or_in_count];
+        let checker = ConditionChecker {
+            checker_col: Some(next_col),
+            length: self.lengths[eq_or_in_count],
+            opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
+        };
+        for cond in &new_conditions {
+            let (is_access_cond, should_reserve) = checker.check(cond);
+            if !is_access_cond {
+                filter_conds.push(cond.clone());
+                continue;
+            }
+            access_conds.push(cond.clone());
+            if should_reserve {
+                filter_conds.push(cond.clone());
+            }
+        }
+        let (built_ranges, built_access, built_remained) =
+            self.build_cnf_index_range(eq_or_in_count, &access_conds)?;
+        filter_conds.extend(built_remained);
+        res.ranges = built_ranges;
+        res.access_conds = built_access;
+        res.remained_conds = filter_conds;
+        Ok(res)
+    }
+}
+
+/// Go `DetachSimpleCondAndBuildRangeForIndex` (`detacher.go:1117`): the
+/// point-query-first detachment WITHOUT DNF consideration —
+/// `(ranges, access_conds, remained_conds)`.
+pub fn detach_simple_cond_and_build_range_for_index(
+    conditions: &[Expression],
+    cols: &[tidb_expr::column::Column],
+    lengths: &[i64],
+    range_max_size: i64,
+) -> Result<
+    (super::types::Ranges, Vec<Expression>, Vec<Expression>),
+    super::points::PointBuilderError,
+> {
+    let new_tp_slice: Vec<tidb_datatype::FieldType> = cols
+        .iter()
+        .map(|col| {
+            super::ranger::new_field_type(&col.ret_type.clone().unwrap_or_else(|| {
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+            }))
+        })
+        .collect();
+    let mut detacher = RangeDetacher {
+        cols,
+        lengths,
+        new_tp_slice,
+        merge_consecutive: true,
+        convert_to_sort_key: true,
+        range_max_size,
+        regard_null_as_point: true,
+        opt_prefix_index_single_scan: true,
+        skip_plan_cache_reason: None,
+    };
+    let res = detacher.detach_cnf_simple(conditions)?;
+    Ok((res.ranges, res.access_conds, res.remained_conds))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -875,5 +1160,58 @@ mod tests {
         let result =
             extract_eq_and_in_condition(&conds, &cols, &[UNSPECIFIED_LENGTH], true);
         assert_eq!(result.accesses.len(), 1);
+    }
+
+    /// `DetachSimpleCondAndBuildRangeForIndex` end to end over a
+    /// two-column index: the eq chain appends the tail column's interval —
+    /// `a = 1 AND b > 2` builds `(1 2, 1 +inf]`.
+    #[test]
+    fn simple_detachment_builds_multi_column_ranges() {
+        let a = int_column(1);
+        let b = int_column(2);
+        let cols = [a.clone(), b.clone()];
+        let lengths = [UNSPECIFIED_LENGTH, UNSPECIFIED_LENGTH];
+        let conds = vec![
+            func("eq", vec![Expression::Column(a.clone()), int_const(1)]),
+            func("gt", vec![Expression::Column(b.clone()), int_const(2)]),
+        ];
+        let (ranges, access, remained) =
+            detach_simple_cond_and_build_range_for_index(&conds, &cols, &lengths, 0)
+                .expect("detaches");
+        assert_eq!(access.len(), 2);
+        assert!(remained.is_empty(), "{remained:?}");
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].to_display_string(), "(1 2,1 +inf]");
+
+        // A condition on a column OUTSIDE the index stays remained.
+        let c = int_column(9);
+        let conds = vec![
+            func("eq", vec![Expression::Column(a.clone()), int_const(1)]),
+            func("gt", vec![Expression::Column(c), int_const(0)]),
+        ];
+        let (ranges, access, remained) =
+            detach_simple_cond_and_build_range_for_index(&conds, &cols, &lengths, 0)
+                .expect("detaches");
+        assert_eq!(access.len(), 1);
+        assert_eq!(remained.len(), 1);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].to_display_string(), "[1,1]");
+
+        // An IN chain fans out: `a IN (1, 3) AND b = 5`.
+        let conds = vec![
+            func(
+                "in",
+                vec![Expression::Column(a.clone()), int_const(1), int_const(3)],
+            ),
+            func("eq", vec![Expression::Column(b.clone()), int_const(5)]),
+        ];
+        let (ranges, _, _) =
+            detach_simple_cond_and_build_range_for_index(&conds, &cols, &lengths, 0)
+                .expect("detaches");
+        let shown: Vec<String> = ranges
+            .iter()
+            .map(super::super::types::Range::to_display_string)
+            .collect();
+        assert_eq!(shown, ["[1 5,1 5]", "[3 5,3 5]"]);
     }
 }
