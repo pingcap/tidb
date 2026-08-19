@@ -26,7 +26,7 @@ import (
 type Config struct {
 	// StatementSize splits the INSERT statement once the bytes written for the
 	// current statement reach it; 0 means a single statement per file.
-	StatementSize int64
+	StatementSize uint64
 	// EscapeBackslash selects backslash escaping instead of single-quote doubling
 	// for string values.
 	EscapeBackslash bool
@@ -46,8 +46,8 @@ type Writer struct {
 	// split lands before the overflowing row. statementSize resets per statement;
 	// fileSize never resets and equals the bytes written once Close adds the final
 	// separator.
-	statementSize int64
-	fileSize      int64
+	statementSize uint64
+	fileSize      uint64
 	inStatement   bool
 }
 
@@ -72,8 +72,8 @@ func (sw *Writer) Write(row []sql.RawBytes) error {
 	}
 	if !sw.inStatement {
 		sw.buf = append(sw.buf, sw.prefix...)
-		sw.statementSize = int64(len(sw.prefix))
-		sw.fileSize += int64(len(sw.prefix))
+		sw.statementSize = uint64(len(sw.prefix))
+		sw.fileSize += uint64(len(sw.prefix))
 		sw.inStatement = true
 	} else {
 		// This row's leading ",\n" was counted as the previous row's separator.
@@ -89,7 +89,7 @@ func (sw *Writer) Write(row []sql.RawBytes) error {
 	}
 	sw.buf = append(sw.buf, ')')
 	// Count the tuple plus the 2-byte separator that will follow it.
-	tupleSize := int64(len(sw.buf)-start) + 2
+	tupleSize := uint64(len(sw.buf)-start) + 2
 	sw.statementSize += tupleSize
 	sw.fileSize += tupleSize
 	_, err := sw.w.Write(sw.buf)
@@ -99,7 +99,7 @@ func (sw *Writer) Write(row []sql.RawBytes) error {
 // EstimateFileSize returns the logical file size for rotation. It excludes any
 // preamble the caller wrote directly (e.g. SQL special comments).
 func (sw *Writer) EstimateFileSize() uint64 {
-	return uint64(sw.fileSize)
+	return sw.fileSize
 }
 
 // Close terminates the open statement with ";\n". It is a no-op if no statement

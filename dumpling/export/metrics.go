@@ -14,12 +14,10 @@ import (
 type metrics struct {
 	finishedSizeGauge              *prometheus.GaugeVec
 	finishedRowsGauge              *prometheus.GaugeVec
-	finishedTablesCounter          *prometheus.CounterVec
-	estimateTotalRowsCounter       *prometheus.CounterVec
-	writeTimeHistogram             *prometheus.HistogramVec
-	receiveWriteChunkTimeHistogram *prometheus.HistogramVec
-	errorCount                     *prometheus.CounterVec
-	taskChannelCapacity            *prometheus.GaugeVec
+	finishedTablesCounter    *prometheus.CounterVec
+	estimateTotalRowsCounter *prometheus.CounterVec
+	errorCount               *prometheus.CounterVec
+	taskChannelCapacity      *prometheus.GaugeVec
 	// todo: add these to metrics
 	totalChunks     atomic.Int64
 	completedChunks atomic.Int64
@@ -60,24 +58,6 @@ func newMetrics(f promutil.Factory, constLabels prometheus.Labels) *metrics {
 			Help:        "counter for dumpling finished tables",
 			ConstLabels: constLabels,
 		}, []string{})
-	m.writeTimeHistogram = f.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace:   "dumpling",
-			Subsystem:   "write",
-			Name:        "write_duration_time",
-			Help:        "Bucketed histogram of write time (s) of files",
-			Buckets:     prometheus.ExponentialBuckets(0.00005, 2, 20),
-			ConstLabels: constLabels,
-		}, []string{})
-	m.receiveWriteChunkTimeHistogram = f.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace:   "dumpling",
-			Subsystem:   "write",
-			Name:        "receive_chunk_duration_time",
-			Help:        "Bucketed histogram of receiving time (s) of chunks",
-			Buckets:     prometheus.ExponentialBuckets(0.00005, 2, 20),
-			ConstLabels: constLabels,
-		}, []string{})
 	m.errorCount = f.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace:   "dumpling",
@@ -102,8 +82,6 @@ func (m *metrics) registerTo(registry promutil.Registry) {
 	registry.MustRegister(m.finishedRowsGauge)
 	registry.MustRegister(m.estimateTotalRowsCounter)
 	registry.MustRegister(m.finishedTablesCounter)
-	registry.MustRegister(m.writeTimeHistogram)
-	registry.MustRegister(m.receiveWriteChunkTimeHistogram)
 	registry.MustRegister(m.errorCount)
 	registry.MustRegister(m.taskChannelCapacity)
 }
@@ -113,8 +91,6 @@ func (m *metrics) unregisterFrom(registry promutil.Registry) {
 	registry.Unregister(m.finishedRowsGauge)
 	registry.Unregister(m.estimateTotalRowsCounter)
 	registry.Unregister(m.finishedTablesCounter)
-	registry.Unregister(m.writeTimeHistogram)
-	registry.Unregister(m.receiveWriteChunkTimeHistogram)
 	registry.Unregister(m.errorCount)
 	registry.Unregister(m.taskChannelCapacity)
 }

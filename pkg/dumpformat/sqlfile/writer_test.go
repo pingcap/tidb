@@ -48,9 +48,9 @@ func TestSQLWriterEscaping(t *testing.T) {
 
 	var backslash bytes.Buffer
 	sw := NewWriter(&backslash, prefix, kinds, &Config{EscapeBackslash: true})
-	require.NoError(t, sw.Write([]sql.RawBytes{raw("a'b\nc\\d")}))
+	require.NoError(t, sw.Write([]sql.RawBytes{raw("a'b\nc\rd\\e\x00f\"g\x1ah")}))
 	require.NoError(t, sw.Close())
-	require.Equal(t, "INSERT INTO `t` VALUES\n('a\\'b\\nc\\\\d');\n", backslash.String())
+	require.Equal(t, "INSERT INTO `t` VALUES\n('a\\'b\\nc\\rd\\\\e\\0f\\\"g\\Zh');\n", backslash.String())
 
 	var double bytes.Buffer
 	sw = NewWriter(&double, prefix, kinds, &Config{EscapeBackslash: false})

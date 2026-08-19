@@ -74,12 +74,10 @@ func WriteInsert(
 	if selectedField != "" {
 		kinds = columnKinds(meta.ColumnTypes())
 	}
-	statementSize := int64(0)
-	if cfg.StatementSize != UnspecifiedSize {
-		statementSize = int64(cfg.StatementSize)
-	}
+	// StatementSize is UnspecifiedSize (0) when unset, which the writer treats as
+	// no per-statement split.
 	sw := sqlfile.NewWriter(sink, []byte(insertStatementPrefix), kinds, &sqlfile.Config{
-		StatementSize:   statementSize,
+		StatementSize:   cfg.StatementSize,
 		EscapeBackslash: cfg.EscapeBackslash,
 	})
 
@@ -147,6 +145,9 @@ func WriteInsert(
 		if counter%1000 == 0 {
 			AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
 			lastCounter = counter
+			curSize := uint64(preambleSize) + sw.EstimateFileSize()
+			AddGauge(metrics.finishedSizeGauge, float64(curSize-finishedSize))
+			finishedSize = curSize
 		}
 		failpoint.Inject("ChaosBrokenWriterConn", func(_ failpoint.Value) {
 			failpoint.Return(0, errors.New("connection is closed"))
@@ -164,8 +165,9 @@ func WriteInsert(
 	if err = sw.Close(); err != nil {
 		return counter, errors.Trace(err)
 	}
-	finishedSize = uint64(preambleSize) + sw.EstimateFileSize()
-	AddGauge(metrics.finishedSizeGauge, float64(finishedSize))
+	curSize := uint64(preambleSize) + sw.EstimateFileSize()
+	AddGauge(metrics.finishedSizeGauge, float64(curSize-finishedSize))
+	finishedSize = curSize
 	if err = fileRowIter.Error(); err != nil {
 		return counter, errors.Trace(err)
 	}
@@ -229,8 +231,6 @@ func WriteInsertInCsv(
 		NullValue:          []byte(cfg.CsvNullValue),
 		BinaryFormat:       toCSVBinaryFormat(DialectBinaryFormatMap[cfg.CsvOutputDialect]),
 	}
-	// Writer writes directly into the object store writer, whose concurrent
-	// multipart upload replaces the writerPipe.
 	selectedFields := meta.SelectedField()
 	var kinds []dumpformat.FieldKind
 	if selectedFields != "" {

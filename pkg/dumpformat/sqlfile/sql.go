@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dumpformat"
 )
 
-// nullToken is the SQL NULL literal, matching dumpling's nullValue.
+// nullToken is the SQL NULL literal written for NULL fields.
 var nullToken = []byte("NULL")
 
 // AppendValue appends one field's SQL encoding (a numeric literal, a quoted and
