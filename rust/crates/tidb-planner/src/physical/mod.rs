@@ -1045,6 +1045,18 @@ pub struct PhysicalIndexLookUpReader {
     /// Go `ExpectedCnt`, from the cop task's `ExpectCnt` — the paging
     /// decision in the ver2 cost reads it.
     pub expect_cnt: u64,
+    /// Go `PushedLimit` (`physicalop.PushedDownLimit`), sunk by
+    /// `sinkIntoIndexLookUp` after conversion.
+    pub pushed_limit: Option<PushedDownLimit>,
+}
+
+/// Go `physicalop.PushedDownLimit`.
+#[derive(Clone, Copy, Debug)]
+pub struct PushedDownLimit {
+    /// Go `Offset`.
+    pub offset: u64,
+    /// Go `Count`.
+    pub count: u64,
 }
 
 /// Go `GetPropByOrderByItems` (`physical_sort.go:268`): the sort property a
@@ -1901,6 +1913,7 @@ impl PhysicalPlan {
                 table_plan: op.table_plan.clone(),
                 keep_order: op.keep_order,
                 expect_cnt: op.expect_cnt,
+                pushed_limit: op.pushed_limit,
             }),
             Self::TopN(op) => Self::TopN(PhysicalTopN {
                 base: base_of(&op.base),

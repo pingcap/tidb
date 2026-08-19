@@ -464,6 +464,7 @@ impl CopTask {
                 table_plan: Some(table_plan),
                 keep_order: self.keep_order,
                 expect_cnt: self.expect_cnt,
+                pushed_limit: None,
             });
         let mut root = RootTask::default();
         root.set_plan(reader);
@@ -692,6 +693,20 @@ mod tests {
         PhysicalPlan::TableDual(crate::physical::PhysicalTableDual { base, row_count: 0 })
     }
 
+    fn table_scan_with_rows(rows: f64) -> PhysicalPlan {
+        let allocator = PlanIdAllocator::new();
+        let mut base = crate::physical::BasePhysicalPlan::default();
+        base.base = crate::plan_base::BasePlan::new(&allocator, "TableScan", 0);
+        base.base.set_stats(Some(StatsInfo::new(rows, [])));
+        PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+            base,
+            table_id: 1,
+            store_type: crate::physical_table_reader::StoreType::TiKv,
+            keep_order: false,
+            desc: false,
+        })
+    }
+
     #[test]
     fn a_table_only_cop_task_converts_into_a_table_reader() {
         // `convertToRootTaskImpl`'s table branch (`task_base.go:571`): the
@@ -740,6 +755,48 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn a_limit_sinks_into_the_index_lookup_reader() {
+        // `sinkIntoIndexLookUp` (`task.go:733`): a root Limit over a
+        // converted double read becomes the reader's PushedLimit — no root
+        // Limit operator survives — and the reader plus its bare table scan
+        // adopt the limit's stats.
+        let double = Task::Cop(CopTask {
+            index_plan: Some(Box::new(dual_with_rows(100.0))),
+            table_plan: Some(Box::new(table_scan_with_rows(100.0))),
+            keep_order: true,
+            ..CopTask::default()
+        });
+        let mut base = crate::physical::BasePhysicalPlan::with_id(9, "Limit", 0);
+        base.base.set_stats(Some(crate::stats_info::StatsInfo::new(5.0, [])));
+        let limit = PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+            base,
+            partition_by: Vec::new(),
+            offset: 2,
+            count: 3,
+            prefix_col: None,
+            prefix_len: 0,
+        });
+        let task = attach2_task(limit, vec![double], None).expect("attaches");
+        let Some(PhysicalPlan::IndexLookUpReader(reader)) = task.plan() else {
+            panic!("the limit sinks, leaving the reader on top: {:?}", task.plan());
+        };
+        let pushed = reader.pushed_limit.expect("the sunk limit");
+        assert_eq!((pushed.offset, pushed.count), (2, 3));
+        assert!(
+            (reader.base.base.stats_info().expect("stats").row_count() - 5.0).abs()
+                < f64::EPSILON
+        );
+        let Some(PhysicalPlan::TableScan(scan)) = reader.table_plan.as_deref() else {
+            panic!("the bare table side");
+        };
+        assert!(
+            (scan.base.base.stats_info().expect("stats").row_count() - 5.0).abs()
+                < f64::EPSILON,
+            "the table side adopts the smaller stats"
+        );
+    }
+
     #[test]
     fn root_task_conds_land_as_a_selection_above_the_reader() {
         // `handleRootTaskConds` (`physicalop/task.go:47`): the unpushable
@@ -938,6 +995,116 @@ pub fn attach_plan_to_task(mut plan: PhysicalPlan, mut task: Task) -> Task {
 /// TopN/Limit constructions — and REFUSE naming those symbols rather than
 /// composing something Go would not compose. A wrong push-down is a silent
 /// wrong plan; a refusal is a loud gap.
+/// Go `sinkIntoIndexLookUp` (`task.go:733`): after conversion, a root Limit
+/// SINKS into the `PhysicalIndexLookUpReader` (directly or under one
+/// Projection) as its `PushedLimit`, cutting the double read short — but
+/// only when the table side is a bare `PhysicalTableScan`. The table scan
+/// and reader adopt the limit's stats when smaller (Go's `StatsVersion`
+/// carry-over has no counterpart field here). The schema-mending extra
+/// projection (issue 14428's inlined-Projection shape) compares schema
+/// LENGTHS; schemas absent on both sides compare equal.
+fn sink_into_index_look_up(limit: &crate::physical::PhysicalLimit, task: &mut Task) -> bool {
+    let Task::Root(root) = task else {
+        return false;
+    };
+    let Some(mut plan) = root.take_plan() else {
+        return false;
+    };
+    let limit_schema_len = limit.base.base.schema().map_or(0, |schema| schema.len());
+    let limit_stats = limit.base.base.stats_info().cloned();
+    let sunk = {
+        let (reader, via_proj) = match &mut plan {
+            PhysicalPlan::IndexLookUpReader(reader) => (Some(reader), false),
+            PhysicalPlan::Projection(_) => {
+                let is_lookup = matches!(
+                    plan.children().first(),
+                    Some(PhysicalPlan::IndexLookUpReader(_))
+                );
+                if is_lookup {
+                    let PhysicalPlan::Projection(proj) = &mut plan else {
+                        unreachable!("the arm matched Projection");
+                    };
+                    let Some(PhysicalPlan::IndexLookUpReader(reader)) =
+                        proj.base.children_mut().first_mut()
+                    else {
+                        unreachable!("checked above");
+                    };
+                    (Some(reader), true)
+                } else {
+                    (None, false)
+                }
+            }
+            _ => (None, false),
+        };
+        match reader {
+            None => false,
+            Some(reader) => {
+                // Only a bare table scan admits the sink: a Selection on the
+                // table side must see every row.
+                let ts_stats = match reader.table_plan.as_deref() {
+                    Some(PhysicalPlan::TableScan(scan)) => {
+                        scan.base.base.stats_info().cloned()
+                    }
+                    _ => {
+                        root.set_plan(plan);
+                        return false;
+                    }
+                };
+                let reader_schema_len =
+                    reader.base.base.schema().map_or(0, |schema| schema.len());
+                reader.pushed_limit = Some(crate::physical::PushedDownLimit {
+                    offset: limit.offset,
+                    count: limit.count,
+                });
+                let limit_rows = limit_stats.as_ref().map_or(0.0, |stats| stats.row_count());
+                if let Some(PhysicalPlan::TableScan(scan)) = reader.table_plan.as_deref_mut()
+                {
+                    if ts_stats
+                        .as_ref()
+                        .is_some_and(|stats| stats.row_count() >= limit_rows)
+                    {
+                        scan.base.base.set_stats(limit_stats.clone());
+                    }
+                }
+                reader.base.base.set_stats(limit_stats.clone());
+                if via_proj {
+                    if let PhysicalPlan::Projection(proj) = &mut plan {
+                        proj.base.base.set_stats(limit_stats.clone());
+                    }
+                }
+                // The schema-mending projection above the reader.
+                if limit_schema_len != reader_schema_len {
+                    let mut base = crate::physical::BasePhysicalPlan::with_id(
+                        limit.base.base.id(),
+                        "Projection",
+                        limit.base.base.query_block_offset(),
+                    );
+                    base.base.set_stats(limit_stats);
+                    base.base.set_schema(limit.base.base.schema().cloned());
+                    let exprs = limit.base.base.schema().map_or_else(Vec::new, |schema| {
+                        schema
+                            .columns
+                            .iter()
+                            .cloned()
+                            .map(tidb_expr::expression::Expression::Column)
+                            .collect()
+                    });
+                    base.set_children(vec![plan]);
+                    plan = PhysicalPlan::Projection(crate::physical::PhysicalProjection {
+                        base,
+                        exprs,
+                        avoid_column_evaluator: false,
+                        calculate_no_delay: false,
+                    });
+                }
+                true
+            }
+        }
+    };
+    root.set_plan(plan);
+    sunk
+}
+
 /// The shared cop body of Go `attach2Task4PhysicalStreamAgg` and
 /// `...HashAgg` after their gates: split via `NewPartialAggregate`, hang the
 /// partial half on the cop task's live side, convert, and attach the final
@@ -1099,7 +1266,13 @@ pub fn attach2_task(
                         };
                         cop = pushed_cop;
                     }
-                    Task::Cop(cop).convert_to_root_task()?
+                    let mut t = Task::Cop(cop).convert_to_root_task()?;
+                    // `sunk = sinkIntoIndexLookUp(p, t)`: a converted double
+                    // read absorbs the limit itself.
+                    if sink_into_index_look_up(limit, &mut t) {
+                        return Ok(t);
+                    }
+                    t
                 }
                 Task::Mpp(_) => {
                     return Err(PlanError::internal(

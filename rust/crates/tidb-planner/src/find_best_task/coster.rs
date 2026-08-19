@@ -149,18 +149,22 @@ impl Ver2Coster {
             // (`plan_cost_ver2.go:359`): index side + (table side +
             // double-read CPU/request) / IndexLookupConcurrency, each side
             // divided by DistSQLScanConcurrency; the paging discount when the
-            // expected count sits under the paging threshold. `PushedLimit`
-            // is unported and absent; row widths at the floor (module
+            // expected count sits under the paging threshold. row widths at the floor (module
             // header).
             PhysicalPlan::IndexLookUpReader(reader) => {
-                let index_rows = reader
+                let mut index_rows = reader
                     .index_plan
                     .as_deref()
                     .map_or(rows, |plan| Self::rows(plan));
-                let table_rows = reader
+                let mut table_rows = reader
                     .table_plan
                     .as_deref()
                     .map_or(rows, |plan| Self::rows(plan));
+                if let Some(pushed) = &reader.pushed_limit {
+                    // Go clamps both sides to the pushed count.
+                    index_rows = index_rows.min(pushed.count as f64);
+                    table_rows = table_rows.min(pushed.count as f64);
+                }
                 let dist_concurrency = self.session.distsql_scan_concurrency;
                 let double_read_concurrency = self.session.index_lookup_concurrency;
 
