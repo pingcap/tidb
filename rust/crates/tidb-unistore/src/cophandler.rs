@@ -1055,6 +1055,22 @@ fn field_type_from_pb_column(column: &tipb::ColumnInfo) -> tidb_datatype::FieldT
         // ENUM/SET decode their stored ordinal against this list.
         field_type = field_type.with_elems(column.elems.iter().map(String::as_str));
     }
+    // Go `RestoreCollationIDIfNeeded` then `GetCharsetInfoByID`. A zero id is
+    // the wire's "unset" and would resolve to a collation the column does not
+    // have, so it is left alone.
+    //
+    // Nothing in this handler's filter CONSULTS this: a pushed-down string
+    // comparison carries its collation on the expression
+    // (`SimpleSig::EqString(collation)`), which is where Go reads it from
+    // too. It is carried for fidelity with `fieldTypeFromPBColumn`, so a
+    // later reader that does consult the column's own collation finds the
+    // one the request named rather than a default.
+    if column.collation() != 0 {
+        let name = tidb_datatype::proto_to_collation(column.collation());
+        if !name.is_empty() {
+            field_type.set_collation_name(name);
+        }
+    }
     field_type
 }
 
