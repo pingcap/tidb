@@ -587,6 +587,37 @@ fn index_type_of(options: &IndexOptions) -> Option<IndexType> {
 /// serves: existing rows then read the implicit NULL default with no rewrite,
 /// which is also MySQL's answer. Every option that would need a row rewrite
 /// or a second allocator is refused BY NAME.
+/// Names a column option the way the statement spelled it.
+///
+/// A refusal reaches the client verbatim, so it must not carry a Rust `Debug`
+/// dump: `ADD COLUMN ... AS (a+1) VIRTUAL` used to be refused with
+/// `Generated { expression: Binary(Plus, Column(["a"]), Int("1")),
+/// expression_text: [97, 43, 49], stored: false }`, which names this port's
+/// AST rather than the user's SQL and leaks the byte spelling of their own
+/// expression back at them.
+fn column_option_sql_name(option: &ColumnOption) -> &'static str {
+    match option {
+        ColumnOption::InlineKey(_) => "an inline key option",
+        ColumnOption::NotNull => "NOT NULL",
+        ColumnOption::Null => "NULL",
+        ColumnOption::AutoIncrement => "AUTO_INCREMENT",
+        ColumnOption::Default(_) => "DEFAULT",
+        ColumnOption::Generated { stored: true, .. } => "a STORED generated expression",
+        ColumnOption::Generated { .. } => "a VIRTUAL generated expression",
+        ColumnOption::OnUpdate(_) => "ON UPDATE",
+        ColumnOption::Comment(_) => "COMMENT",
+        ColumnOption::Collate(_) => "COLLATE",
+        ColumnOption::Check(_) => "CHECK",
+        ColumnOption::Reference(_) => "REFERENCES",
+        ColumnOption::ColumnFormat(_) => "COLUMN_FORMAT",
+        ColumnOption::Storage(_) => "STORAGE",
+        ColumnOption::AutoRandom(_) => "AUTO_RANDOM",
+        ColumnOption::SecondaryEngineAttribute(_) => "SECONDARY_ENGINE_ATTRIBUTE",
+        ColumnOption::MariaDbRowStart => "ROW START",
+        ColumnOption::MariaDbRowEnd => "ROW END",
+    }
+}
+
 pub fn build_added_column(
     column: &ColumnDef,
     table_charset: &str,
@@ -601,7 +632,8 @@ pub fn build_added_column(
             | ColumnOption::Default(_) => {}
             other => {
                 return Err(DdlAdmissionError::unsupported(format!(
-                    "ADD COLUMN option {other:?} waits on its DDL course"
+                    "ADD COLUMN {} waits on its DDL course",
+                    column_option_sql_name(other)
                 )))
             }
         }

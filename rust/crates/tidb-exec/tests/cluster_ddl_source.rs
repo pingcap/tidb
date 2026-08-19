@@ -3352,3 +3352,61 @@ fn a_fractional_current_timestamp_default_is_storable() {
     assert_eq!(column["default"], serde_json::json!("CURRENT_TIMESTAMP"));
     println!("origin = {}", column["origin_default"]);
 }
+
+/// A refusal reaches the client verbatim, so it must name the user's SQL and
+/// carry Go's own error number.
+///
+/// `ADD COLUMN ... AS (a+1) VIRTUAL` used to be refused as
+/// `1105 catalog encode failed: Unsupported ADD COLUMN option Generated {
+/// expression: Binary(Plus, Column(["a"]), Int("1")), expression_text:
+/// [97, 43, 49], stored: false }` -- this port's AST, the byte spelling of
+/// the user's own expression, an internal step the statement never reached,
+/// and the generic code in place of `ErrUnsupportedDDLOperation` (8200),
+/// which `DdlAdmissionError::unsupported` had set all along.
+#[test]
+fn an_add_column_refusal_names_the_option_and_keeps_gos_code() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, a BIGINT, b BIGINT)",
+        100,
+    );
+    apply(&mut store, &write);
+
+    for (sql, expected) in [
+        (
+            "ALTER TABLE u6.t ADD COLUMN c BIGINT AS (a+b) VIRTUAL",
+            "a VIRTUAL generated expression",
+        ),
+        (
+            "ALTER TABLE u6.t ADD COLUMN d BIGINT AS (a*2) STORED",
+            "a STORED generated expression",
+        ),
+        (
+            "ALTER TABLE u6.t ADD COLUMN e BIGINT AUTO_INCREMENT",
+            "AUTO_INCREMENT",
+        ),
+        (
+            "ALTER TABLE u6.t ADD COLUMN f BIGINT COLLATE utf8mb4_bin",
+            "COLLATE",
+        ),
+    ] {
+        let error = plan_ddl(&mut store, &statement(sql), 200).expect_err("refused");
+        match error {
+            DdlPlanError::Admission(ref admission) => {
+                assert_eq!(admission.code, 8200, "`{sql}`: {admission:?}");
+                assert_eq!(
+                    admission.reason,
+                    format!("Unsupported ADD COLUMN {expected} waits on its DDL course"),
+                );
+            }
+            other => panic!("`{sql}` expected an admission refusal, got {other:?}"),
+        }
+        // Nothing of the port's own vocabulary reaches the client.
+        assert!(
+            !error.to_string().contains("catalog encode failed")
+                && !error.to_string().contains('{'),
+            "{error}"
+        );
+    }
+}

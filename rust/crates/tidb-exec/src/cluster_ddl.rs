@@ -1343,9 +1343,14 @@ fn apply_add_column(
         }
         return Err(DdlPlanError::DuplicateColumnName(column.name.clone()));
     }
+    // An admission refusal already carries Go's own error number (8200 for
+    // `ErrUnsupportedDDLOperation`); wrapping it as an encode failure both
+    // flattened that to the generic 1105 and prefixed the client's message
+    // with "catalog encode failed", which names an internal step the
+    // statement never reached.
     let mut added =
         crate::table_info_build::build_added_column(column, &info.charset, &info.collate, context)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            .map_err(DdlPlanError::Admission)?;
     // Go `AllocateColumnID`: ids only ever grow, so a dropped column's id is
     // never reused.
     info.max_column_id += 1;
@@ -2885,7 +2890,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 &stored.collate,
                 &context.0,
             )
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            .map_err(DdlPlanError::Admission)?;
             // Go `dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(reason)`
             // renders exactly "Unsupported modify column: <reason>", and the
             // reason strings below are Go's own.
