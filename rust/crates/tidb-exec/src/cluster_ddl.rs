@@ -160,12 +160,14 @@ impl CreateTableBuild {
 /// One column sub-action of a multi-action `ALTER TABLE`.
 #[derive(Clone, Debug)]
 pub enum AlterColumnAction {
-    /// `ADD COLUMN`, appended at the end.
+    /// `ADD COLUMN`, at its written position.
     Add {
         /// Whether an existing column of the same name is a no-op.
         if_not_exists: bool,
         /// The column as written.
         column: Box<tidb_ast::ColumnDef>,
+        /// Go's `ast.ColumnPosition`; see [`DdlStatement::AddColumn`].
+        position: tidb_ast::ColumnPosition,
         /// The context the plan-time build resolves defaults under.
         context: DdlStatementContext,
     },
@@ -286,6 +288,11 @@ pub enum DdlStatement {
         /// The column as written; built against the stored table's charset
         /// at plan time, exactly as Go's add-column job builds it.
         column: Box<tidb_ast::ColumnDef>,
+        /// Go's `ast.ColumnPosition`: where the new column lands in the
+        /// table's column ORDER. The stored rows are keyed by column id
+        /// and never rewritten; what moves is the offset every reader and
+        /// every index column addresses the column by.
+        position: tidb_ast::ColumnPosition,
         /// The statement context the plan-time build resolves defaults under.
         /// `StmtContext` carries no Debug; the build recipe pattern above
         /// (`CreateTableBuild`) hides it the same way.
@@ -585,10 +592,11 @@ fn lower_alter_table_catalog(
                     if_not_exists,
                     column,
                     position,
-                } if matches!(position, tidb_ast::ColumnPosition::Default) => {
+                } => {
                     actions.push(AlterColumnAction::Add {
                         if_not_exists: *if_not_exists,
                         column: Box::new(column.clone()),
+                        position: position.clone(),
                         context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
                     });
                 }
@@ -875,20 +883,13 @@ fn lower_alter_table_catalog(
             column,
             position,
         } => {
-            // Go's job appends at the end unless FIRST/AFTER reorders; the
-            // reorder rewrites every row's offset map, so it is refused by
-            // name rather than silently appended.
-            if !matches!(position, tidb_ast::ColumnPosition::Default) {
-                return Err(DdlAdmissionError::unsupported(
-                    "ADD COLUMN FIRST/AFTER reorders stored offsets; this node appends only",
-                ));
-            }
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
             Ok(Some(DdlStatement::AddColumn {
                 schema,
                 table,
                 if_not_exists: *if_not_exists,
                 column: Box::new(column.clone()),
+                position: position.clone(),
                 context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
             }))
         }
@@ -1003,11 +1004,13 @@ enum AlterColumnOutcome {
 /// Go's add-column job body over an EVOLVING `TableInfo` — the same rules a
 /// single-action ADD COLUMN commits, applied to whatever the previous
 /// sub-action of a multi-schema change left behind.
+#[allow(clippy::too_many_arguments)]
 fn apply_add_column(
     info: &mut TableInfo,
     schema: &str,
     table: &str,
     column: &tidb_ast::ColumnDef,
+    position: &tidb_ast::ColumnPosition,
     if_not_exists: bool,
     context: &tidb_executor::StmtContext,
 ) -> Result<AlterColumnOutcome, DdlPlanError> {
@@ -1035,7 +1038,107 @@ fn apply_add_column(
     added.offset = info.columns.len() as i64;
     added.state = tidb_model::SchemaState::PUBLIC;
     info.columns.push_handle_go(Some(GoShared::new(added)));
+    // Go `onAddColumn`'s write-reorganization step: the column is APPENDED
+    // first and only then moved to where `FIRST`/`AFTER` asked for, which
+    // is why the destination is computed against the appended layout.
+    let appended = info.columns.len() - 1;
+    let destination = locate_offset_to_move(appended, position, info)?;
+    move_column_info(info, appended, destination);
     Ok(AlterColumnOutcome::Applied)
+}
+
+/// Go `LocateOffsetToMove` (`ddl/column.go:516`): where a column at
+/// `current_offset` must end up for this position clause.
+///
+/// `AFTER` names a column that must EXIST and be public; Go answers
+/// `ErrColumnNotExists` otherwise. The `current_offset <= c.Offset` arm is
+/// Go's: a column already left of its anchor lands ON the anchor's offset,
+/// because removing it first shifts the anchor down by one.
+fn locate_offset_to_move(
+    current_offset: usize,
+    position: &tidb_ast::ColumnPosition,
+    info: &TableInfo,
+) -> Result<usize, DdlPlanError> {
+    match position {
+        tidb_ast::ColumnPosition::Default => Ok(current_offset),
+        tidb_ast::ColumnPosition::First => Ok(0),
+        tidb_ast::ColumnPosition::After(name) => {
+            let wanted = name.to_lowercase();
+            let mut anchor = None;
+            for column in info.columns.iter_deref() {
+                let column = column.read();
+                if column.name.lowercase() == wanted
+                    && column.state == tidb_model::SchemaState::PUBLIC
+                {
+                    anchor = Some(column.offset);
+                    break;
+                }
+            }
+            let anchor = anchor
+                .ok_or_else(|| {
+                    // Go `infoschema.ErrColumnNotExists` (1054).
+                    DdlPlanError::Encode(format!(
+                        "Unknown column '{name}' in '{}'",
+                        info.name.original()
+                    ))
+                })?;
+            let anchor = usize::try_from(anchor).unwrap_or(0);
+            if current_offset <= anchor {
+                Ok(anchor)
+            } else {
+                Ok(anchor + 1)
+            }
+        }
+    }
+}
+
+/// Go `TableInfo.MoveColumnInfo` (`meta/model/table.go:434`): moves one
+/// column within the ordered list, renumbering every offset it passed and
+/// re-pointing every INDEX column that addressed one of them.
+///
+/// The stored rows are untouched -- a row's values are keyed by column id,
+/// not by position -- so this is purely a reordering of the descriptor
+/// every reader resolves names through.
+fn move_column_info(info: &mut TableInfo, from: usize, to: usize) {
+    if from == to {
+        return;
+    }
+    // Go builds `updatedOffsets` while shifting, then re-points the index
+    // columns through it; the same map, built the same way.
+    let mut updated: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+    let handles: Vec<_> = (0..info.columns.len())
+        .map(|position| info.columns.get(position))
+        .collect();
+    let source = handles[from].clone();
+    let mut reordered = handles;
+    if from < to {
+        for index in from..to {
+            reordered[index] = reordered[index + 1].clone();
+            updated.insert((index + 1) as i64, index as i64);
+        }
+    } else {
+        for index in (to + 1..=from).rev() {
+            reordered[index] = reordered[index - 1].clone();
+            updated.insert((index - 1) as i64, index as i64);
+        }
+    }
+    reordered[to] = source;
+    for (position, handle) in reordered.iter().enumerate() {
+        if let Some(handle) = handle {
+            handle.write().offset = position as i64;
+        }
+    }
+    info.columns = tidb_model::GoSharedPointerSlice::from_handles(reordered);
+    updated.insert(from as i64, to as i64);
+    for index in info.indices.iter_deref() {
+        let index = index.read();
+        for column in index.columns.iter_deref() {
+            let mut column = column.write();
+            if let Some(moved) = updated.get(&column.offset) {
+                column.offset = *moved;
+            }
+        }
+    }
 }
 
 /// Go `isDroppableColumn` + `onDropColumn` over the same evolving info.
@@ -2094,11 +2197,20 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             table,
             if_not_exists,
             column,
+            position,
             context,
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
             let mut info = stored.clone_like_go();
-            match apply_add_column(&mut info, schema, table, column, *if_not_exists, &context.0)? {
+            match apply_add_column(
+                &mut info,
+                schema,
+                table,
+                column,
+                position,
+                *if_not_exists,
+                &context.0,
+            )? {
                 AlterColumnOutcome::AlreadySatisfied(detail) => return Ok(already(detail)),
                 AlterColumnOutcome::Applied => {}
             }
@@ -2316,12 +2428,14 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     AlterColumnAction::Add {
                         if_not_exists,
                         column,
+                        position,
                         context,
                     } => apply_add_column(
                         &mut info,
                         schema,
                         table,
                         column,
+                        position,
                         *if_not_exists,
                         &context.0,
                     )?,

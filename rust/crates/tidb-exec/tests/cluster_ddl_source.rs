@@ -2397,3 +2397,81 @@ fn a_check_constraint_is_ignored_with_gos_warning() {
         "one warning per ignored CHECK spelling"
     );
 }
+
+/// Go `onAddColumn`'s write-reorganization step: the column is appended,
+/// then `MoveColumnInfo` puts it where `FIRST`/`AFTER` asked -- renumbering
+/// every offset it passed and re-pointing every INDEX column that addressed
+/// one of them (`meta/model/table.go:434`).
+///
+/// The stored rows are untouched: a row's values are keyed by column id,
+/// not by position, so what moves is only the descriptor readers resolve
+/// names through. The column ID therefore stays at its allocation order
+/// while the OFFSET follows the request.
+#[test]
+fn add_column_first_and_after_move_offsets_and_repoint_indexes() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, a BIGINT, b BIGINT, KEY kb(b))",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+
+    // AFTER lands between `a` and `b`, so `b` shifts right by one and the
+    // index on `b` must follow it.
+    let write = plan(
+        &mut store,
+        "ALTER TABLE u6.t ADD COLUMN mid BIGINT AFTER a",
+        200,
+    );
+    apply(&mut store, &write);
+    let stored = stored_table(&write, table_id);
+    let columns = stored["cols"].as_array().expect("columns array");
+    let names: Vec<&str> = columns
+        .iter()
+        .map(|column| column["name"]["O"].as_str().expect("a name"))
+        .collect();
+    assert_eq!(names, ["id", "a", "mid", "b"]);
+    for (position, column) in columns.iter().enumerate() {
+        assert_eq!(column["offset"], position, "offsets are renumbered");
+    }
+    // The id keeps its allocation order even though the offset moved.
+    assert_eq!(columns[2]["id"], 4, "mid was allocated after id/a/b");
+    let index_column = &stored["index_info"][0]["idx_cols"][0];
+    assert_eq!(index_column["name"]["O"], "b");
+    assert_eq!(index_column["offset"], 3, "the index follows the column it names");
+
+    // FIRST pushes everything right by one, index included.
+    let write = plan(
+        &mut store,
+        "ALTER TABLE u6.t ADD COLUMN head BIGINT FIRST",
+        300,
+    );
+    apply(&mut store, &write);
+    let stored = stored_table(&write, table_id);
+    let columns = stored["cols"].as_array().expect("columns array");
+    let names: Vec<&str> = columns
+        .iter()
+        .map(|column| column["name"]["O"].as_str().expect("a name"))
+        .collect();
+    assert_eq!(names, ["head", "id", "a", "mid", "b"]);
+    for (position, column) in columns.iter().enumerate() {
+        assert_eq!(column["offset"], position);
+    }
+    assert_eq!(
+        stored["index_info"][0]["idx_cols"][0]["offset"], 4,
+        "the index follows again"
+    );
+
+    // Go `LocateOffsetToMove`'s AFTER arm answers ErrColumnNotExists (1054)
+    // for a column that is not there.
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t ADD COLUMN late BIGINT AFTER nosuch"),
+        400,
+    )
+    .expect_err("AFTER an unknown column is refused")
+    .to_string();
+    assert!(error.contains("Unknown column 'nosuch'"), "{error}");
+}
