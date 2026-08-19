@@ -41,11 +41,16 @@
 //!
 //! # Divergences from Go's EXPLAIN, each deliberate and named
 //!
-//! 1. **No `cop[tikv]` task, no `TableReader`.** Go pushes scans, selections,
-//!    limits and the first aggregate phase into a coprocessor task under a
-//!    `TableReader_N` root operator. This tier has no `TableReader`
-//!    executor: the pipeline is one tree of root executors, and the scan
-//!    appears directly under its parent, so every row reports task `root`.
+//! 1. **The TABLE path reports task `root`; index paths do not.** Go pushes
+//!    scans, selections, limits and the first aggregate phase into a
+//!    coprocessor task under a `TableReader_N` root operator. A table scan
+//!    here still appears directly under its parent -- `EXPLAIN SELECT id
+//!    FROM t WHERE a > 0` on an unindexed table is `Projection > Selection >
+//!    TableFullScan`, all `root`. The INDEX paths do print Go's shape:
+//!    `IndexReader`/`IndexLookUp` over `IndexRangeScan`/`IndexFullScan`/
+//!    `TableRowIDScan` at `cop[tikv]`. Audited live 2026-08-19; the blanket
+//!    "no `cop[tikv]`, no reader" this said before is true only of the
+//!    table path.
 //!
 //!    What that no longer means is "nothing is pushed down". Against a
 //!    cluster backend the scan's PREDICATE, row cap, column projection and
@@ -74,35 +79,40 @@
 //!    shows a `Sort` and a `Limit`: this tier's dedup sits between them, so
 //!    fusing would discard rows before they were deduplicated, while Go
 //!    lands its `TopN` above the aggregation instead.
-//! 3. **`Projection` is always present.** Go elides the projection when a
-//!    query selects exactly the source columns (`select * from t` shows no
-//!    `Projection`). The driver always builds a
-//!    [`crate::projection::ProjectionExec`], so the recorder prints it.
-//! 4. **One-phase `HashAgg`.** Go splits an aggregate into a cop-side and a
-//!    root-side `HashAgg` communicating through `Column#N` slots allocated by
-//!    the planner. This tier has one [`crate::hash_agg::HashAggExec`] and no
-//!    column-id allocator, so `funcs:` prints the aggregate as written
-//!    (`count(*)`) rather than Go's `count(1)->Column#6`.
+//! 3. **The table path always shows a `Projection`.** Go elides it when a
+//!    query selects exactly the source columns. The driver builds a
+//!    [`crate::projection::ProjectionExec`] over a table scan and the
+//!    recorder prints it; over an index path it does not, so
+//!    `select * from t` on an indexed table shows a bare `IndexFullScan`
+//!    like Go. Audited live 2026-08-19.
+//! 4. **RESOLVED (was: one-phase `HashAgg`).** This said the tier had one
+//!    `HashAggExec` and no column-id allocator, so `funcs:` printed
+//!    `count(*)` rather than Go's `count(1)->Column#6`. It no longer does:
+//!    `EXPLAIN SELECT a, count(*) FROM t GROUP BY a` prints
+//!    `HashAgg ... funcs:count(Column#0)->Column#0,
+//!    funcs:firstrow(t.a)->t.a` over an `IndexReader` whose `index:HashAgg`
+//!    names the cop-side phase. Audited live 2026-08-19.
 //! 5. **Operator ids are build-order, not Go's plan-construction order.**
 //!    Ids are assigned bottom-up in the order the driver builds executors,
 //!    starting at 1 -- literally the order the trace recorded them in. Go's
 //!    counter also advances for logical operators that optimization later
 //!    removes, so `TableFullScan_4` (Go) is `TableFullScan_1` here. The NAMES
 //!    are Go's.
-//! 6. **Join `estRows` is `N/A`.** Go's `12500.00` for a two-table equi-join
-//!    comes from NDV-based cardinality estimation, which needs statistics
-//!    this tier does not have. Rather than invent a number, the recorder
-//!    prints Go's own not-available sentinel, the same one Go prints for
-//!    `Insert_1`.
-//! 7. **A point get keeps its Selection.** Go's fast plan REPLACES the whole
-//!    pipeline, so `explain select * from t where a = 1` is one
-//!    `Point_Get_1` row. Here the point get only narrows the SOURCE:
-//!    `run_select_stmt` deliberately leaves the WHERE in place so a conjunct
-//!    the handle did not pin still filters. The plan therefore shows
-//!    `Projection > Selection > Point_Get` -- and it shows that because the
-//!    driver really does build all three, in that order. Because the access
-//!    path already priced those conditions, the selection does not reduce the
-//!    estimate again (see `PlanTrace::selection`).
+//! 6. **RESOLVED (was: join `estRows` is `N/A`).** The recorder printed Go's
+//!    not-available sentinel because NDV-based cardinality estimation was
+//!    missing. It now estimates: a two-table equi-join prints
+//!    `HashJoin_7 12487.50` beside Go's `12500.00`, the two differing only
+//!    in the null-filtering the operands price. Audited live 2026-08-19.
+//! 7. **A point get keeps its Selection only when the `WHERE` says more than
+//!    the key.** Go's fast plan REPLACES the whole pipeline. So does this
+//!    one when the predicate is exactly the handle:
+//!    `explain select * from t where id = 1` is a single `Point_Get_1` row,
+//!    audited live 2026-08-19. A conjunct the handle did not pin still
+//!    filters above, and then the plan shows `Projection > Selection >
+//!    Point_Get` -- `write_read_path_consumes_predicate` makes the same call
+//!    for writes (divergence 8). Because the access path already priced those
+//!    conditions, the selection does not reduce the estimate again (see
+//!    `PlanTrace::selection`).
 //! 8. **`UPDATE`/`DELETE` take the same access paths a `SELECT` does.** Go's planner
 //!    finds the same access paths for a write as for a `SELECT`, through the
 //!    same functions: `tryUpdatePointPlan`/`tryDeletePointPlan` run
@@ -115,20 +125,33 @@
 //!    `Batch_Point_Get`, one the ranger bounds records `TableRangeScan`, and
 //!    anything else stays `TableFullScan`.
 //!
+//!    Whether the `Selection` survives above them is decided per path by
+//!    `write_read_path_consumes_predicate`, not by divergence 7's blanket
+//!    rule: `Batch_Point_Get` always consumes the predicate, `Point_Get` and
+//!    `TableRangeScan` consume it when the `WHERE` is exactly the key or the
+//!    handle bounds it read, and an index path never does.
+//!
 //!    The INDEX path is offered too, through `write_index_range_path`: when
 //!    the chooser prefers an index the write reads through it and records
 //!    `IndexRangeScan`, so `UPDATE t SET ... WHERE a = 10` on a non-unique
 //!    `KEY ka(a)` plans the index rather than scanning the table. (A write
 //!    whose `WHERE` pins a whole UNIQUE index gets the point plan instead,
 //!    because `try_point_get` looks that key up exactly as it does for a
-//!    read.) A write still keeps its `Selection` above the access path, for
-//!    divergence 7's reason: the ranges are a superset of the affected rows
-//!    and the per-row filter decides. The recorder IS those driver
+//!    read.) An index path always keeps its `Selection`: the ranges are a
+//!    superset of the affected rows, so the per-row filter decides. The
+//!    recorder IS those driver
 //!    functions, so what is printed and what is read cannot drift apart: the
 //!    records a write reads are pinned by `actRows`, and the REQUEST KIND it
 //!    reads them with by [`crate::storage::capture_storage_ops`], both in
 //!    `tidb_session::tests_sysbench_access`.
-//! 9. **An empty-range `TableDual` keeps its parents.** Go's `findBestTask`
+//! 9. **An empty range is scanned, not folded to a `TableDual`.** Audited
+//!    live 2026-08-19: `select * from t use index(ka) where a < 0` over an
+//!    UNSIGNED key plans `IndexReader > IndexRangeScan range:[-inf,0)`
+//!    rather than any dual, and answers correctly with no rows -- the scan
+//!    finds nothing, so the fold is a cost saving Go makes and this does
+//!    not. The rest of this entry describes the dual where one IS built.
+//!
+//!    Go's `findBestTask`
 //!    returns a `PhysicalTableDual` for a chosen path with no ranges, and
 //!    that dual REPLACES the whole `DataSource` task, so
 //!    `select * from t1 use index(a) where a < -1` over an UNSIGNED key is
