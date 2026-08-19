@@ -121,8 +121,8 @@ func (killer *SQLKiller) SendKillSignalWithKillEventReason(killSignal killSignal
 
 func (killer *SQLKiller) sendKillSignal(reason killSignal) {
 	if atomic.CompareAndSwapUint32(&killer.Signal, 0, reason) {
-		status := atomic.LoadUint32(&killer.Signal)
-		err := killer.getKillError(status)
+		failpoint.InjectCall("afterSendKillSignalCAS")
+		err := killer.getKillError(reason)
 		logutil.BgLogger().Warn("kill initiated", zap.Uint64("connection ID", killer.ConnID.Load()), zap.String("reason", err.Error()))
 	}
 }
@@ -236,11 +236,14 @@ func (killer *SQLKiller) HandleSignal() error {
 
 // Reset resets the SqlKiller.
 func (killer *SQLKiller) Reset() {
-	if atomic.LoadUint32(&killer.Signal) != 0 {
+	status := atomic.SwapUint32(&killer.Signal, UnspecifiedKillSignal)
+	if status != UnspecifiedKillSignal {
 		logutil.BgLogger().Warn("kill finished", zap.Uint64("conn", killer.ConnID.Load()))
 	}
 
-	atomic.StoreUint32(&killer.Signal, 0)
+	// Keep this hook immediately after the atomic clear. If Reset is ever split
+	// into separate observation and clear operations, place it between them.
+	failpoint.InjectCall("afterResetKillSignalSwap")
 	killer.resetKillEvent()
 	killer.lastCheckTime.Store(nil)
 }

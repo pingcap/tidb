@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "sqlkiller",
@@ -11,5 +11,17 @@ go_library(
         "//pkg/util/logutil",
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "sqlkiller_test",
+    timeout = "short",
+    srcs = ["sqlkiller_test.go"],
+    embed = [":sqlkiller"],
+    flaky = True,
+    deps = [
+        "//pkg/testkit/testfailpoint",
+        "@com_github_stretchr_testify//require",
     ],
 )
