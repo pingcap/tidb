@@ -466,8 +466,8 @@ Out of scope here, each with a home:
 | Indexes on a geometry column | None in v1, of any kind: not a primary, unique, secondary or composite member. The useful one is the spatial index, which is the other design. |
 | Generated columns | `ST_*` are deterministic scalars, so they are usable in virtual and stored generated column expressions like any other builtin. A geometry-typed generated column is then an ordinary geometry column, and the row above governs indexing it. |
 | Charset and collation | Not applicable; the value is binary. |
-| Parser | One-time type and `SRID` grammar change; regenerates `parser.go`, run `make bazel_prepare`. `ST_*` are generic calls. |
-| DDL | New column types and the `SRID` attribute, restricted to 0/4326, plus subtype constraints. `ALTER` follows MySQL, verified on 8.4.6: adding or changing `SRID n` validates every existing row and fails with `ERROR 3643` on the first mismatch; dropping the attribute always succeeds; narrowing the subtype (`GEOMETRY` to `POINT`) succeeds only if every value fits, else `ERROR 1416`; widening always succeeds; converting the column to a binary type carries the bytes over; `DROP COLUMN` is ordinary. An SRID change is validation, never a coordinate rewrite. |
+| Parser | Updated in this design. |
+| DDL | New column types and the `SRID` attribute, restricted to 0/4326, plus subtype constraints. In v1 `ALTER` rejects as unsupported anything that would have to validate existing rows: adding, dropping or changing `SRID n`, and narrowing the subtype (`GEOMETRY` to `POINT`). A user who needs either adds a new column with the wanted type and backfills it. The rest follows MySQL, verified on 8.4.6: widening the subtype always succeeds; converting the column to a binary type carries the bytes over; `DROP COLUMN` is ordinary. |
 | `information_schema` | One new table, `st_spatial_reference_systems`, read-only with two static rows. Its two siblings in MySQL are deferred. |
 | Planner, statistics, executor | `ST_*` evaluate on the normal expression path; geometry predicates are ordinary `Selection`s with no access path of their own. No new operator, access path or statistics. `ANALYZE` skips geometry as it skips JSON and the blob types, which means adding `geometry` both to the accepted values of `tidb_analyze_skip_column_types` and to its default, today `json,blob,mediumblob,longblob,mediumtext,longtext`. |
 | TiKV | None. Values are ordinary binary strings; pushdown is deferred. |
@@ -512,8 +512,8 @@ Out of scope here, each with a home:
 - Format version: version 1 decodes; an unknown or zero version byte is rejected with a
   clear error rather than misparsed.
 - Type plumbing: geometry through the audited operation surface returns correct bytes.
-- DDL: the `ALTER` matrix above, including `ERROR 3643` on an SRID change that existing rows
-  violate and `ERROR 1416` on a narrowing that they do not fit.
+- DDL: the `ALTER` matrix above, including that adding, dropping or changing `SRID n` and
+  narrowing the subtype are all rejected, while widening and `DROP COLUMN` succeed.
 
 ### Scenario Tests
 
