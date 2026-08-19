@@ -388,6 +388,40 @@ impl CopTask {
     /// the context; this conversion path carries no allocator, so the
     /// reader reuses the pushed-down plan's id — a named narrowing, visible
     /// only in explain-id suffixes.
+    /// Go `CopTask.handleRootTaskConds` (`physicalop/task.go:47`): the
+    /// conditions that could not push down (virtual columns) become a
+    /// `PhysicalSelection` at root, `FromDataSource`, its stats scaled by
+    /// the conditions' selectivity. `cardinality.Selectivity` reads the
+    /// table's histograms (`TblColHists`), which this port's tasks do not
+    /// carry — the scaling therefore takes Go's OWN error fallback,
+    /// `cost.SelectionFactor` (0.8), the value Go uses whenever the
+    /// histogram read fails. The skew ratio is Go's default 1.0.
+    fn handle_root_task_conds(conds: Vec<Expression>, mut root: RootTask) -> RootTask {
+        if conds.is_empty() {
+            return root;
+        }
+        let Some(plan) = root.take_plan() else {
+            return root;
+        };
+        let selectivity = crate::cost_factors::SELECTION_FACTOR;
+        let mut base = crate::physical::BasePhysicalPlan::with_id(
+            plan.id(),
+            "Selection",
+            plan.query_block_offset(),
+        );
+        base.base
+            .set_stats(plan.stats_info().map(|stats| stats.scale(selectivity, 1.0)));
+        base.base.set_schema(plan.schema().cloned());
+        base.set_children(vec![plan]);
+        let selection = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+            base,
+            conditions: conds,
+            from_data_source: true,
+        });
+        root.set_plan(selection);
+        root
+    }
+
     /// Go `BuildIndexLookUpTask` (`physical_indexlookup_reader.go:284`): the
     /// double-read cop task becomes a root task holding a
     /// `PhysicalIndexLookUpReader` whose schema and stats are the TABLE
@@ -447,7 +481,11 @@ impl CopTask {
             ));
         }
         if self.index_plan.is_some() && self.table_plan.is_some() {
-            return self.build_index_look_up_task();
+            let conds = std::mem::take(&mut self.root_task_conds);
+            return self.build_index_look_up_task().map(|task| match task {
+                Task::Root(root) => Task::Root(Self::handle_root_task_conds(conds, root)),
+                other => other,
+            });
         }
         if let Some(index_plan) = self.index_plan.take() {
             // Go's index branch (`task_base.go:563`): wrap the pushed-down
@@ -469,13 +507,8 @@ impl CopTask {
             if self.warnings.warning_count() > 0 {
                 root.warnings.copy_of(&self.warnings);
             }
-            return Ok(Task::Root(root));
-        }
-        if !self.root_task_conds.is_empty() {
-            return Err(PlanError::internal(
-                "handleRootTaskConds (core/task.go): cardinality.Selectivity \
-                 over a built PhysicalSelection, not ported",
-            ));
+            let conds = std::mem::take(&mut self.root_task_conds);
+            return Ok(Task::Root(Self::handle_root_task_conds(conds, root)));
         }
         self.finish_index_plan();
         let Some(table_plan) = self.table_plan.take() else {
@@ -512,7 +545,8 @@ impl CopTask {
         if self.warnings.warning_count() > 0 {
             root.warnings.copy_of(&self.warnings);
         }
-        Ok(Task::Root(root))
+        let conds = std::mem::take(&mut self.root_task_conds);
+        Ok(Task::Root(Self::handle_root_task_conds(conds, root)))
     }
 
     /// Go `GetStoreType` (`task.go:84-96`): walk the table half; more than
@@ -706,6 +740,42 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn root_task_conds_land_as_a_selection_above_the_reader() {
+        // `handleRootTaskConds` (`physicalop/task.go:47`): the unpushable
+        // conditions become a FromDataSource Selection above the converted
+        // reader, stats scaled by Go's own histogram-miss fallback
+        // (`cost.SelectionFactor` = 0.8).
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+        use tidb_expr::constant::Constant;
+        use tidb_expr::expression::Expression;
+
+        let cond = Expression::Constant(Constant::new(
+            Datum::Int(1),
+            FieldType::new(FieldTypeCode::LongLong),
+        ));
+        let task = Task::Cop(CopTask {
+            index_plan: Some(Box::new(dual_with_rows(10.0))),
+            root_task_conds: vec![cond],
+            ..CopTask::default()
+        });
+        let converted = task.convert_to_root_task().expect("converts");
+        let Some(PhysicalPlan::Selection(selection)) = converted.plan() else {
+            panic!("a Selection above the reader, got {:?}", converted.plan());
+        };
+        assert!(selection.from_data_source);
+        assert_eq!(selection.conditions.len(), 1);
+        assert!(
+            (selection.base.base.stats_info().expect("stats").row_count() - 8.0).abs()
+                < f64::EPSILON,
+            "10 rows * SelectionFactor 0.8"
+        );
+        assert!(matches!(
+            selection.base.children().first(),
+            Some(PhysicalPlan::IndexReader(_))
+        ));
+    }
+
     fn an_index_only_cop_task_converts_into_an_index_reader() {
         // `convertToRootTaskImpl`'s index branch (`task_base.go:563`): the
         // pushed-down index plan wraps in a PhysicalIndexReader carrying its
