@@ -157,6 +157,13 @@ pub(crate) fn datum_text(value: &Datum) -> Option<String> {
         // included -- what `mysql.bind_info`'s TIMESTAMP(6) rows read back
         // as.
         Datum::Time(t) => Some(t.to_string()),
+        // Go `Datum.ToString` for the two set-valued types prints the NAME,
+        // not the bit value: an ENUM default read back as `''` instead of
+        // `'x'` is what a metadata reader would otherwise report for a
+        // column whose stored default is correct.
+        Datum::Enum(value, _) => Some(String::from_utf8_lossy(value.name().as_bytes()).into_owned()),
+        Datum::Set(value, _) => Some(String::from_utf8_lossy(value.name().as_bytes()).into_owned()),
+        Datum::Duration(value) => Some(value.to_string()),
         _ => None,
     }
 }

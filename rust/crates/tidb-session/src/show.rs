@@ -101,6 +101,17 @@ pub(crate) fn literal_column_default_text(
     })
 }
 
+/// Go prints the column comment last, after AUTO_RANDOM and before the next
+/// column's line, for every column that carries one.
+fn push_column_comment(clause: &mut String, column: &tidb_executor::KvColumn) {
+    if column.comment.is_empty() {
+        return;
+    }
+    clause.push_str(" COMMENT '");
+    clause.push_str(&tidb_util::format::output_format(&column.comment));
+    clause.push('\'');
+}
+
 /// Go `stringutil.Escape` with a non-ANSI_QUOTES sql_mode: backtick-quoted,
 /// with an embedded backtick doubled.
 fn escape_name(name: &str) -> String {
@@ -212,6 +223,11 @@ fn show_create_table_text(
             // Go writes the pair together for an auto column and prints no
             // default for it.
             clause.push_str(" NOT NULL AUTO_INCREMENT");
+            // Go does NOT stop here: its column loop falls through to the
+            // comment, which an auto-increment column can carry like any
+            // other. Everything between is inapplicable to one -- it has no
+            // DEFAULT, no generation expression, and no ON UPDATE.
+            push_column_comment(&mut clause, column);
             clauses.push(clause);
             continue;
         }
@@ -307,13 +323,7 @@ fn show_create_table_text(
                 ));
             }
         }
-        // Go prints the column comment last, after AUTO_RANDOM and before the
-        // next column's line.
-        if !column.comment.is_empty() {
-            clause.push_str(" COMMENT '");
-            clause.push_str(&tidb_util::format::output_format(&column.comment));
-            clause.push('\'');
-        }
+        push_column_comment(&mut clause, column);
         clauses.push(clause);
     }
 

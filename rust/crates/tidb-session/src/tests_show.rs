@@ -2510,3 +2510,58 @@ fn column_comments_round_trip_and_modify_overlays_them() {
         "COMMENT '' clears it: {altered}"
     );
 }
+
+/// Two `SHOW CREATE TABLE` rendering bugs found by round-tripping a
+/// feature-rich definition through its own output.
+///
+/// Go's column loop does NOT stop at an auto-increment column: it falls
+/// through to the comment, which such a column carries like any other. And
+/// Go `Datum.ToString` prints an ENUM/SET value's NAME, so a default of `'x'`
+/// reads back as `'x'` rather than the empty string. In both cases the stored
+/// metadata was already right and only the reader was wrong, which is why
+/// `information_schema` and an omitted INSERT disagreed with SHOW.
+#[test]
+fn show_create_table_renders_auto_increment_comments_and_enum_defaults() {
+    let mut session = Session::new();
+    session.run("CREATE DATABASE d").unwrap();
+    session.run("USE d").unwrap();
+    session
+        .run(
+            "CREATE TABLE t (\
+               id bigint NOT NULL AUTO_INCREMENT COMMENT 'pk', \
+               d enum('x','y') DEFAULT 'x', \
+               e set('p','q') DEFAULT 'p', \
+               PRIMARY KEY (id))",
+        )
+        .unwrap();
+
+    let created = row_text(session.run("SHOW CREATE TABLE t"))[0][1].clone();
+    assert!(
+        created.contains("`id` bigint NOT NULL AUTO_INCREMENT COMMENT 'pk'"),
+        "an auto-increment column still prints its comment: {created}"
+    );
+    assert!(
+        created.contains("`d` enum('x','y') DEFAULT 'x'"),
+        "an ENUM default prints its name: {created}"
+    );
+    assert!(
+        created.contains("`e` set('p','q') DEFAULT 'p'"),
+        "a SET default prints its name: {created}"
+    );
+
+    // The stored value was always right; these are the readers that used to
+    // disagree with it.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT column_name, column_default FROM information_schema.columns \
+             WHERE table_name = 't' AND column_name IN ('d','e') ORDER BY column_name"
+        )),
+        [["d", "x"], ["e", "p"]]
+    );
+    session.run("INSERT INTO t (id) VALUES (1)").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT d, e FROM t")),
+        [["x", "p"]],
+        "an omitted column takes the default the definition named"
+    );
+}
