@@ -21,7 +21,7 @@ const (
 	ImportInto TaskType = "ImportInto"
 	// Backfill is TaskType of add index Backfilling process.
 	Backfill TaskType = "backfill"
-	// Export is TaskType of distributed table-set export (EXPORT TABLE / SCHEMA).
+	// Export is TaskType of distributed table-set export.
 	Export TaskType = "Export"
 )
 

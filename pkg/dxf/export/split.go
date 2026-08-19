@@ -21,6 +21,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -42,12 +43,12 @@ const (
 	// chunkSize is the per-chunk work granularity. Assumed (not enforced against
 	// TaskMeta.FileSize) to stay above FileSize so each chunk leaves at most one
 	// partial tail file.
-	chunkSize = 10 * 1024 * 1024 * 1024
+	chunkSize = 10 * units.GiB
 	// chunksPerWorker sizes a subtask's byte budget at this many chunks' worth of
 	// bytes per worker slot (chunksPerWorker*concurrency*chunkSize).
 	chunksPerWorker = 2
 	// maxChunksPerSubtask is a hard ceiling on the chunk count per subtask (the
-	// usual bound is byte size), so a schema of many tiny tables stays bounded.
+	// usual bound is byte size), so a table set of many tiny tables stays bounded.
 	maxChunksPerSubtask = 4000
 )
 

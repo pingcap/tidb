@@ -46,9 +46,7 @@ const (
 	baseSizePerConc = 25 * units.GiB
 	// The maximum number of nodes that can be used for add-index.
 	maxNodeCountLimitForAddIndex = 30
-	// The maximum number of nodes that can be used for export. Export reads record
-	// data and writes files to object storage; this conservative initial value can
-	// be tuned once we have performance data.
+	// The maximum number of nodes that can be used for export.
 	maxNodeCountLimitForExport = 30
 	// The maximum number of nodes that can be used for import-into.
 	// this value is based on previous performance test, for a quite common scenario,

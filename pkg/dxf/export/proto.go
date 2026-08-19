@@ -24,7 +24,7 @@ type TableSpec struct {
 }
 
 // TaskMeta is the task meta of an export task, table-set-native: Tables holds
-// one table for EXPORT TABLE and all base tables for EXPORT SCHEMA.
+// the tables to export.
 type TaskMeta struct {
 	Tables     []TableSpec `json:"tables"`
 	SnapshotTS uint64      `json:"snapshot_ts"`
