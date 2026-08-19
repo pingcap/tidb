@@ -301,6 +301,9 @@ where
         };
 
         let mut spec = TiKvTableScanSpec::new(request.table_id, columns.clone());
+        // Go's `desc` on the TableScan executor: the region walks the
+        // ranges backwards. The ranges themselves stay ascending.
+        spec.desc = request.desc;
         // A CLUSTERED table's primary key lives in the row key, so the
         // coprocessor needs the ids to rebuild those columns from it -- Go's
         // `newRowDecoder` falls back to exactly this list when no column

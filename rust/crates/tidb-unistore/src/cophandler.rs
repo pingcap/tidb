@@ -214,14 +214,30 @@ fn exec_table_scan(
     let mut current = Vec::new();
     let mut current_rows = 0_usize;
     let mut emitted = 0_usize;
-    'ranges: for range in &context.key_ranges {
+    // Go's `desc` scan: the ranges (ascending on the wire) are walked
+    // last-to-first, each one reversed, so rows leave in descending record
+    // order and a Limit above stops after the LARGEST keys.
+    let descending = tbl_scan.desc();
+    let mut ordered_ranges: Vec<_> = context.key_ranges.iter().collect();
+    if descending {
+        ordered_ranges.reverse();
+    }
+    'ranges: for range in ordered_ranges {
+        // Go's reverse `Scan` contract: the CALLER hands the bounds
+        // swapped -- `start_key` is the upper bound, `end_key` the lower
+        // -- and the store swaps them back (`mvcc.go`'s `Reverse` arm).
+        let (start_key, end_key) = if descending {
+            (range.end.clone(), range.start.clone())
+        } else {
+            (range.start.clone(), range.end.clone())
+        };
         let pairs = store.scan(&crate::mvcc_store::ScanReq {
-            start_key: range.start.clone(),
-            end_key: range.end.clone(),
+            start_key,
+            end_key,
             limit: u32::MAX,
             version: context.start_ts,
             sample_step: 0,
-            reverse: false,
+            reverse: descending,
         });
         for pair in pairs {
             if let Some(err) = pair.error {

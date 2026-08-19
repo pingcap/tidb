@@ -552,11 +552,17 @@ impl TableStorage for ClusterTableStorage {
         // every range is dropped for the same reason a snapshot row there is:
         // the ranges bound the `WHERE`'s access conditions, so no row outside
         // them can satisfy the statement.
-        let staged: Vec<_> = request
+        let mut staged: Vec<_> = request
             .ranges
             .iter()
             .flat_map(|(start, end)| self.buffer.range(start, end))
             .collect();
+        // A `desc` request's remote stream arrives in DESCENDING key order;
+        // the staged slice reverses to match, so the caller's one-pass merge
+        // walks both sides the same way.
+        if request.desc {
+            staged.reverse();
+        }
         let mut request = request.clone();
         request.snapshot_ts = snapshot_ts;
         if !staged.is_empty() {

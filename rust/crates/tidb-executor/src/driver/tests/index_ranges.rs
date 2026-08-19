@@ -1129,11 +1129,12 @@ fn a_handle_that_leads_its_index_is_not_appended_behind_it() {
     assert_eq!(rows[0][0], Datum::Int(1));
 }
 
-/// The probe-round regression: a DESCENDING `ORDER BY` over the clustered
-/// int handle is NOT discharged by the forward-walking table scan. Before
-/// the demotion in `run_select`, `WHERE id > 1 ORDER BY id DESC LIMIT 2`
-/// dropped its sort, capped the FORWARD walk, and answered the two
-/// SMALLEST ids.
+/// The probe-round regression: `WHERE id > 1 ORDER BY id DESC LIMIT 2`
+/// once dropped its sort on the handle-order claim while the scan still
+/// walked FORWARD, answering the two SMALLEST ids. The scan now REVERSES
+/// its walk when it accepts a descending keep-order (Go's `desc` on the
+/// `TableScan`), so the desc shape both answers right and keeps Go's
+/// pushed-Limit plan.
 #[test]
 fn a_descending_handle_limit_answers_the_largest_ids() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
@@ -1158,11 +1159,8 @@ fn a_descending_handle_limit_answers_the_largest_ids() {
         "DESC over a forward-only scan must still answer the LARGEST ids"
     );
 
-    // The plan must keep the ordering operator: no source reverses a table
-    // walk yet, so the desc claim may not drop the sort. (Go pushes a desc
-    // keep-order Limit here by reading the range backwards -- the reverse
-    // walk is the named follow-up, and until it lands the TopN is the only
-    // correct shape.)
+    // Go's plan: the sort is discharged by the reverse walk, so no TopN --
+    // a pushed Limit over a `keep order:true, desc` range scan.
     let stmt = tidb_parser::parse(sql).unwrap();
     let Stmt::Query(query) = &stmt else {
         panic!("not a query");
@@ -1181,8 +1179,24 @@ fn a_descending_handle_limit_answers_the_largest_ids() {
         })
         .collect();
     assert!(
-        operators.iter().any(|name| name.starts_with("TopN")),
-        "a desc handle order keeps its TopN until a source reverses: {operators:?}"
+        operators.iter().all(|name| !name.starts_with("TopN")),
+        "a desc handle order is discharged by the reverse walk: {operators:?}"
+    );
+    assert!(
+        operators.iter().any(|name| name.starts_with("Limit")),
+        "the LIMIT rides the reversed scan: {operators:?}"
+    );
+    let scan_info = rows
+        .iter()
+        .find(|row| {
+            datum_text_for_test(&row[0]).contains("TableRangeScan")
+                || datum_text_for_test(&row[0]).contains("TableFullScan")
+        })
+        .map(|row| datum_text_for_test(&row[4]))
+        .expect("the plan reads a table scan");
+    assert!(
+        scan_info.contains("keep order:true, desc") || scan_info.contains("desc"),
+        "the scan declares its reverse walk: {scan_info}"
     );
 }
 

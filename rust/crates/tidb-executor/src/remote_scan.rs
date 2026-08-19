@@ -308,6 +308,11 @@ pub struct PushdownScanRequest {
     /// A partial aggregation above the scan/Selection. When present, every
     /// predicate must be lowered and no staged write may be merged locally.
     pub aggregate: Option<PushdownPartialAggregate>,
+    /// Read the ranges BACKWARDS -- Go's `desc` on the `TableScan`
+    /// executor. The ranges themselves stay in ascending key order; the
+    /// backend walks them last-to-first, each reversed, and the caller's
+    /// staged-write merge runs in the same descending key order.
+    pub desc: bool,
     /// The timestamp the remote scan must read at: the statement's own
     /// snapshot, filled in by the storage that owns it.
     pub snapshot_ts: u64,

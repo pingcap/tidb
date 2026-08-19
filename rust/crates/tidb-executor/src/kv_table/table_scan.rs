@@ -127,8 +127,21 @@ impl KvTable {
         handle_ranges: Option<&[IndexRange]>,
         context: &RowDecodeContext,
     ) -> Result<RowCursor, KvTableError> {
+        self.row_cursor_projected_directed_with_context(keep, handle_ranges, false, context)
+    }
+
+    /// [`Self::row_cursor_projected_with_context`] with a walk direction:
+    /// `descending` reads the ranges last-to-first, each backwards -- the
+    /// local half of Go's `desc` table scan.
+    pub fn row_cursor_projected_directed_with_context(
+        &mut self,
+        keep: Option<&[usize]>,
+        handle_ranges: Option<&[IndexRange]>,
+        descending: bool,
+        context: &RowDecodeContext,
+    ) -> Result<RowCursor, KvTableError> {
         let decoder = self.row_decoder_projected(keep, context)?;
-        self.row_cursor_with_decoder(decoder, handle_ranges, context.zone())
+        self.row_cursor_with_decoder(decoder, handle_ranges, descending, context.zone())
     }
 
     /// One handle lookup decoded with the same physical-column projection as
@@ -157,15 +170,22 @@ impl KvTable {
         &mut self,
         decoder: RowDecoder,
         handle_ranges: Option<&[IndexRange]>,
+        descending: bool,
         zone: &SessionTimeZone,
     ) -> Result<RowCursor, KvTableError> {
         let mut iterators = Vec::new();
         for (low, upper) in self.record_key_ranges(handle_ranges, zone)? {
             iterators.push(
-                self.store
-                    .iter(Some(&low), Some(&upper))
-                    .map_err(|e| KvTableError::Storage(format!("{e:?}")))?,
+                if descending {
+                    self.store.iter_reverse(Some(&upper), Some(&low))
+                } else {
+                    self.store.iter(Some(&low), Some(&upper))
+                }
+                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?,
             );
+        }
+        if descending {
+            iterators.reverse();
         }
         Ok(RowCursor {
             iterators: iterators.into_iter(),
@@ -261,6 +281,7 @@ impl KvTable {
     /// a scan whose handle ranges cover no record at all, which a coprocessor
     /// request cannot express.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub fn pushdown_row_cursor_with_context(
         &mut self,
         keep: &[usize],
@@ -269,6 +290,7 @@ impl KvTable {
         topn: Option<&PushdownTopN>,
         limit: Option<u64>,
         handle_ranges: Option<&[IndexRange]>,
+        descending: bool,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
@@ -372,6 +394,7 @@ impl KvTable {
             topn: topn.cloned(),
             limit,
             aggregate: None,
+            desc: descending,
             // The storage that owns the snapshot fills this in; the table has
             // no timestamp of its own.
             snapshot_ts: 0,
@@ -409,6 +432,7 @@ impl KvTable {
             handle_index,
             table_id: self.table_id,
             noted_rows: 0,
+            descending,
         }))
     }
 
@@ -430,6 +454,7 @@ impl KvTable {
             None,
             limit,
             handle_ranges,
+            false,
             &RowDecodeContext::legacy_default(zone),
             statement,
         )
@@ -503,6 +528,7 @@ impl KvTable {
             topn: None,
             limit: None,
             aggregate: Some(aggregate.clone()),
+            desc: false,
             snapshot_ts: 0,
             ranges,
             statement: statement.clone(),
@@ -602,6 +628,7 @@ impl KvTable {
             topn: None,
             limit: None,
             aggregate: Some(remote_aggregate),
+            desc: false,
             snapshot_ts: 0,
             ranges: key_ranges,
             statement: statement.clone(),
@@ -661,7 +688,7 @@ impl KvTable {
         context: &RowDecodeContext,
     ) -> Result<Vec<(i64, TableHandle, Vec<Datum>)>, KvTableError> {
         let decoder = self.row_decoder_projected(None, context)?;
-        let mut cursor = self.row_cursor_with_decoder(decoder, None, context.zone())?;
+        let mut cursor = self.row_cursor_with_decoder(decoder, None, false, context.zone())?;
         let mut rows = Vec::new();
         while let Some(entry) = cursor.next_physical_row()? {
             rows.push(entry);
@@ -705,7 +732,7 @@ impl KvTable {
         context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
         let decoder = self.row_decoder_recomputed(context)?;
-        let mut cursor = self.row_cursor_with_decoder(decoder, None, context.zone())?;
+        let mut cursor = self.row_cursor_with_decoder(decoder, None, false, context.zone())?;
         let mut rows = Vec::new();
         while let Some(entry) = cursor.next_row()? {
             rows.push(entry);
@@ -1075,6 +1102,10 @@ pub struct RemoteRowCursor {
     /// reported to the storage probe, so each row is counted once. See
     /// [`note_wire_rows`].
     noted_rows: u64,
+    /// Both merge inputs arrive in DESCENDING key order (a `desc` request's
+    /// remote stream, and the staged slice the storage reversed to match),
+    /// so the winner of each step is the GREATER key.
+    descending: bool,
 }
 
 impl RemoteRowCursor {
@@ -1168,7 +1199,13 @@ impl RemoteRowCursor {
                     // newer version of that row, so it replaces the snapshot's
                     // and a tombstone drops it entirely.
                     if let Some((remote_key, _)) = &remote {
-                        match remote_key.as_slice().cmp(staged_key.as_slice()) {
+                        let ordering = remote_key.as_slice().cmp(staged_key.as_slice());
+                        let ordering = if self.descending {
+                            ordering.reverse()
+                        } else {
+                            ordering
+                        };
+                        match ordering {
                             std::cmp::Ordering::Less => {
                                 let (_, row) = self.pending_remote.take().expect("just peeked");
                                 return Ok(Some(row));
@@ -1285,6 +1322,11 @@ pub struct TableScanExec {
     /// Access-path cardinality selected by the optimizer. Go chooses the
     /// partial/final split only above the one-row floor for these workloads.
     estimated_rows: Option<f64>,
+    /// Go's `desc` on the `TableScan`: walk the record ranges BACKWARDS.
+    /// Set by [`crate::table_access::TableAccess::accept_keep_order`], and
+    /// honored on the remote and the local cursor alike -- acceptance is a
+    /// guarantee for EVERY path the scan may fall back to.
+    descending: bool,
     /// Conjuncts this scan took over from the `Selection` above it.
     filter: Option<crate::predicate_pushdown::ScanFilterProbe>,
     /// The same conjuncts as a description, for a backend that can evaluate
@@ -1350,6 +1392,7 @@ impl TableScanExec {
             partial_done: false,
             partial_aggregate: None,
             estimated_rows: None,
+            descending: false,
             filter: None,
             pushed: Vec::new(),
             post_filter_projection: None,
@@ -1412,9 +1455,10 @@ impl TableScanExec {
         let handle_ranges = self.handle_ranges.clone();
         self.cursor = Some(
             self.table
-                .row_cursor_projected_with_context(
+                .row_cursor_projected_directed_with_context(
                     projection,
                     handle_ranges.as_deref(),
+                    self.descending,
                     &self.decode_context,
                 )
                 .map_err(|error| {
@@ -1830,6 +1874,7 @@ impl Executor for TableScanExec {
                 self.remote_topn.as_ref(),
                 self.limit,
                 self.handle_ranges.as_deref(),
+                self.descending,
                 &self.decode_context,
                 &self.statement,
             )
@@ -1966,6 +2011,14 @@ impl Executor for TableScanExec {
 impl crate::table_access::TableAccess for TableScanExec {
     fn accept_scan_estimate(&mut self, rows: f64) {
         self.estimated_rows = Some(rows);
+    }
+
+    /// Go's `keep order:true` on a table scan. ASC is the walk the scan
+    /// already does; DESC flips both cursors to the reverse walk, which is
+    /// what lets the driver discharge a descending `ORDER BY` here.
+    fn accept_keep_order(&mut self, descending: bool) -> bool {
+        self.descending = descending;
+        true
     }
 
     fn accept_partial_aggregate(&mut self, aggregate: &PushdownPartialAggregate) -> bool {

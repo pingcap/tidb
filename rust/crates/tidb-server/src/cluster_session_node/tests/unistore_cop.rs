@@ -110,6 +110,24 @@ fn a_derived_aggregate_over_the_coprocessor_answers_its_output() {
     ));
     assert_eq!(counted, [["1", "3"], ["2", "2"]]);
 
+    // The desc keep-order Limit rides the REVERSED region walk -- the
+    // shape whose first live draft returned NOTHING because the reverse
+    // scan's caller-swaps-the-bounds contract was missed.
+    rows(&mut session, "CREATE TABLE test.walk (id bigint primary key, v int)");
+    rows(
+        &mut session,
+        "INSERT INTO test.walk VALUES (1, 10), (2, 20), (3, 30), (5, 50), (100, 1)",
+    );
+    let descending = displayed(rows(
+        &mut session,
+        "SELECT id FROM test.walk WHERE id > 1 ORDER BY id DESC LIMIT 2",
+    ));
+    assert_eq!(
+        descending,
+        [["100"], ["5"]],
+        "the desc keep-order Limit must answer the LARGEST ids over the region walk"
+    );
+
     // The receipt that the partial stage ran AT THE REGION: the scanner's
     // request log names an aggregation executor in a served DAG. A refusal
     // would fall back to the local partial cursor -- same answer, but the
