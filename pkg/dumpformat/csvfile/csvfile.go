@@ -14,18 +14,6 @@
 
 package csvfile
 
-import "github.com/pingcap/tidb/pkg/dumpformat"
-
-// FieldKind re-exports dumpformat.FieldKind so CSV callers keep a local name.
-type FieldKind = dumpformat.FieldKind
-
-// Column kinds, re-exported from dumpformat.
-const (
-	KindNumber = dumpformat.KindNumber
-	KindString = dumpformat.KindString
-	KindBytes  = dumpformat.KindBytes
-)
-
 // BinaryFormat controls how KindBytes values are rendered.
 type BinaryFormat uint8
 

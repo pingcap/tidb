@@ -18,6 +18,8 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+
+	"github.com/pingcap/tidb/pkg/dumpformat"
 )
 
 // Writer encodes rows into `INSERT INTO ... VALUES (..),(..);` statements and
@@ -27,7 +29,7 @@ import (
 type Writer struct {
 	w      io.Writer
 	cfg    *Config
-	kinds  []FieldKind
+	kinds  []dumpformat.FieldKind
 	prefix []byte
 	// buf is the reused per-row scratch.
 	buf []byte
@@ -47,7 +49,7 @@ type Writer struct {
 // NewWriter creates a Writer over w. prefix is the INSERT statement prefix
 // (e.g. "INSERT INTO `t` VALUES\n"); kinds classifies each column; cfg holds the
 // statement-size and escaping knobs.
-func NewWriter(w io.Writer, prefix []byte, kinds []FieldKind, cfg *Config) *Writer {
+func NewWriter(w io.Writer, prefix []byte, kinds []dumpformat.FieldKind, cfg *Config) *Writer {
 	return &Writer{w: w, cfg: cfg, kinds: kinds, prefix: prefix}
 }
 

@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package dumpformat holds definitions shared across the dump output formats.
 package dumpformat
 
 // FieldKind classifies a column so a format writer can render its value. The

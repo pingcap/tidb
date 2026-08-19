@@ -12,20 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package sqlfile holds the SQL (INSERT statement) writer.
 package sqlfile
-
-import "github.com/pingcap/tidb/pkg/dumpformat"
-
-// FieldKind re-exports dumpformat.FieldKind so SQL callers keep a local name.
-type FieldKind = dumpformat.FieldKind
-
-// Column kinds, re-exported from dumpformat.
-const (
-	KindNumber = dumpformat.KindNumber
-	KindString = dumpformat.KindString
-	KindBytes  = dumpformat.KindBytes
-)
 
 // Config holds the SQL framing knobs.
 type Config struct {

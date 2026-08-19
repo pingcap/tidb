@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/dumpformat"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,7 +28,7 @@ func raw(s string) sql.RawBytes { return sql.RawBytes(s) }
 func TestSQLWriterFraming(t *testing.T) {
 	var bf bytes.Buffer
 	prefix := []byte("INSERT INTO `t` VALUES\n")
-	kinds := []FieldKind{KindNumber, KindString, KindBytes}
+	kinds := []dumpformat.FieldKind{dumpformat.KindNumber, dumpformat.KindString, dumpformat.KindBytes}
 	sw := NewWriter(&bf, prefix, kinds, &Config{})
 
 	require.NoError(t, sw.Write([]sql.RawBytes{raw("1"), raw("ab"), raw("ab")}))
@@ -42,7 +43,7 @@ func TestSQLWriterFraming(t *testing.T) {
 }
 
 func TestSQLWriterEscaping(t *testing.T) {
-	kinds := []FieldKind{KindString}
+	kinds := []dumpformat.FieldKind{dumpformat.KindString}
 	prefix := []byte("INSERT INTO `t` VALUES\n")
 
 	var backslash bytes.Buffer
@@ -61,7 +62,7 @@ func TestSQLWriterEscaping(t *testing.T) {
 func TestSQLWriterStatementSplit(t *testing.T) {
 	var bf bytes.Buffer
 	prefix := []byte("P\n")
-	kinds := []FieldKind{KindNumber}
+	kinds := []dumpformat.FieldKind{dumpformat.KindNumber}
 	// Tuple "(1)" is 3 bytes + 2 separator = 5; prefix is 2. After the first row
 	// statementSize = 2+3+2 = 7 >= 6, so the second row starts a new statement.
 	sw := NewWriter(&bf, prefix, kinds, &Config{StatementSize: 6})

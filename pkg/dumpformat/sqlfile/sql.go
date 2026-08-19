@@ -17,6 +17,8 @@ package sqlfile
 import (
 	"bytes"
 	"fmt"
+
+	"github.com/pingcap/tidb/pkg/dumpformat"
 )
 
 // nullToken is the SQL NULL literal, matching dumpling's nullValue.
@@ -27,16 +29,16 @@ var nullToken = []byte("NULL")
 // slice. val is the caller-produced raw value bytes; isNull selects NULL. It is
 // the per-value framing used by Writer, exported for callers that format a
 // single value rather than a whole INSERT row (e.g. primary-key chunk bounds).
-func AppendValue(dst, val []byte, isNull bool, kind FieldKind, escapeBackslash bool) []byte {
+func AppendValue(dst, val []byte, isNull bool, kind dumpformat.FieldKind, escapeBackslash bool) []byte {
 	if isNull {
 		return append(dst, nullToken...)
 	}
 	switch kind {
-	case KindNumber:
+	case dumpformat.KindNumber:
 		return append(dst, val...)
-	case KindBytes:
+	case dumpformat.KindBytes:
 		return fmt.Appendf(dst, "x'%x'", val)
-	default: // KindString
+	default: // dumpformat.KindString
 		dst = append(dst, '\'')
 		dst = appendEscaped(dst, val, escapeBackslash)
 		return append(dst, '\'')
