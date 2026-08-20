@@ -40,11 +40,34 @@ type DownstreamID = int64
 
 // TableReplace specifies table information mapping from up-stream cluster to down-stream cluster.
 type TableReplace struct {
-	Name         string
-	TableID      DownstreamID
-	PartitionMap map[UpstreamID]DownstreamID
-	IndexMap     map[UpstreamID]DownstreamID
-	FilteredOut  bool
+	Name           string
+	TableID        DownstreamID
+	TargetDBName   string
+	TargetDBID     DownstreamID
+	HasForeignKeys bool
+	IsView         bool
+	PartitionMap   map[UpstreamID]DownstreamID
+	IndexMap       map[UpstreamID]DownstreamID
+	FilteredOut    bool
+}
+
+// EffectiveDBName returns the table-level target database name when present.
+// Old ID maps don't contain table-level database information, so they fall
+// back to the database mapping that contains the table.
+func (tr *TableReplace) EffectiveDBName(parent *DBReplace) string {
+	if tr.TargetDBName != "" {
+		return tr.TargetDBName
+	}
+	return parent.Name
+}
+
+// EffectiveDBID returns the table-level target database ID when present.
+// A zero ID is reserved for backward-compatible fallback to the parent map.
+func (tr *TableReplace) EffectiveDBID(parent *DBReplace) DownstreamID {
+	if tr.TargetDBID != 0 {
+		return tr.TargetDBID
+	}
+	return parent.DbID
 }
 
 // DBReplace specifies database information mapping from up-stream cluster to down-stream cluster.
@@ -54,6 +77,29 @@ type DBReplace struct {
 	TableMap    map[UpstreamID]*TableReplace
 	FilteredOut bool
 	Reused      bool
+}
+
+// RestoresDatabaseMetadata reports whether this mapping still owns its target
+// database metadata. When every selected table is explicitly routed to another
+// schema, replaying the parent DBInfo would create an unrelated empty source
+// schema. The decision is derived from persisted table routes so resume follows
+// the same behavior without another checkpoint field.
+func (dr *DBReplace) RestoresDatabaseMetadata() bool {
+	if dr.FilteredOut {
+		return false
+	}
+	hasSelectedTable := false
+	for _, tableReplace := range dr.TableMap {
+		if tableReplace.FilteredOut {
+			continue
+		}
+		hasSelectedTable = true
+		if tableReplace.TargetDBName == "" ||
+			ast.NewCIStr(tableReplace.TargetDBName).L == ast.NewCIStr(dr.Name).L {
+			return true
+		}
+	}
+	return !hasSelectedTable
 }
 
 // SchemasReplace specifies schemas information mapping from up-stream cluster to down-stream cluster.
@@ -70,7 +116,8 @@ type SchemasReplace struct {
 	setRestoreTableMode   bool
 
 	// track deleted tables, maps dbID -> tableIDs
-	deletedTables map[UpstreamID]map[UpstreamID]struct{}
+	deletedTables        map[UpstreamID]map[UpstreamID]struct{}
+	protectedTargetDBIDs map[DownstreamID]struct{}
 }
 
 // NewTableReplace creates a TableReplace struct.
@@ -105,28 +152,41 @@ func NewSchemasReplace(
 	setRestoreTableMode bool,
 ) *SchemasReplace {
 	globalTableIdMap := make(map[UpstreamID]DownstreamID)
+	protectedTargetDBIDs := make(map[DownstreamID]struct{})
+	targetDBReferenceCounts := make(map[DownstreamID]int)
 	for _, dr := range dbReplaceMap {
 		if dr.FilteredOut {
 			continue
 		}
+		targetDBReferenceCounts[dr.DbID]++
 		for tblID, tr := range dr.TableMap {
 			if tr.FilteredOut {
 				continue
 			}
 			globalTableIdMap[tblID] = tr.TableID
 			maps.Copy(globalTableIdMap, tr.PartitionMap)
+			if tr.TargetDBID != 0 && (tr.TargetDBID != dr.DbID ||
+				ast.NewCIStr(tr.EffectiveDBName(dr)).L != ast.NewCIStr(dr.Name).L) {
+				protectedTargetDBIDs[tr.TargetDBID] = struct{}{}
+			}
+		}
+	}
+	for targetDBID, count := range targetDBReferenceCounts {
+		if count > 1 {
+			protectedTargetDBIDs[targetDBID] = struct{}{}
 		}
 	}
 
 	return &SchemasReplace{
-		DbReplaceMap:        dbReplaceMap,
-		fromPitrIdMap:       fromPitrIdMap,
-		delRangeRecorder:    newDelRangeExecWrapper(globalTableIdMap, recordDeleteRange),
-		ingestRecorder:      ingestrec.New(),
-		TiflashRecorder:     tiflashRecorder,
-		RewriteTS:           restoreTS,
-		setRestoreTableMode: setRestoreTableMode,
-		deletedTables:       make(map[UpstreamID]map[UpstreamID]struct{}),
+		DbReplaceMap:         dbReplaceMap,
+		fromPitrIdMap:        fromPitrIdMap,
+		delRangeRecorder:     newDelRangeExecWrapper(globalTableIdMap, recordDeleteRange),
+		ingestRecorder:       ingestrec.New(),
+		TiflashRecorder:      tiflashRecorder,
+		RewriteTS:            restoreTS,
+		setRestoreTableMode:  setRestoreTableMode,
+		deletedTables:        make(map[UpstreamID]map[UpstreamID]struct{}),
+		protectedTargetDBIDs: protectedTargetDBIDs,
 	}
 }
 
@@ -149,7 +209,7 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, error)
 		}
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
 	}
-	if dbMap.FilteredOut || dbMap.Reused {
+	if !dbMap.RestoresDatabaseMetadata() || dbMap.Reused {
 		return nil, nil
 	}
 
@@ -174,11 +234,14 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, error) {
 		}
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbInfo.ID)
 	}
-	if dbMap.FilteredOut || dbMap.Reused {
+	if !dbMap.RestoresDatabaseMetadata() || dbMap.Reused {
 		return nil, nil
 	}
 
 	dbInfo.ID = dbMap.DbID
+	if dbMap.Name != "" {
+		dbInfo.Name = ast.NewCIStr(dbMap.Name)
+	}
 	newValue, err := json.Marshal(dbInfo)
 	if err != nil {
 		return nil, err
@@ -215,6 +278,18 @@ func (sr *SchemasReplace) rewriteEntryForDB(e *kv.Entry, cf string) (*kv.Entry, 
 	}
 	if newKey == nil {
 		return nil, nil
+	}
+	// A table-level cross-schema route uses a target schema as an independent
+	// container. A DBInfo delete from another source database must not remove
+	// that shared container and all routed tables in it.
+	if r.Deleted {
+		dbReplace, exists := sr.DbReplaceMap[dbID]
+		if !exists {
+			return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
+		}
+		if _, protected := sr.protectedTargetDBIDs[dbReplace.DbID]; protected {
+			return nil, nil
+		}
 	}
 
 	// track deleted databases in the same structure as deleted tables
@@ -275,11 +350,11 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 	}
 
 	// don't restore meta kv change for system db, not supported yet
-	if tableReplace.FilteredOut || utils.IsSysOrTempSysDB(dbReplace.Name) {
+	if tableReplace.FilteredOut || utils.IsSysOrTempSysDB(tableReplace.EffectiveDBName(dbReplace)) {
 		return nil, nil
 	}
 
-	rawMetaKey.UpdateKey(meta.DBkey(dbReplace.DbID))
+	rawMetaKey.UpdateKey(meta.DBkey(tableReplace.EffectiveDBID(dbReplace)))
 	rawMetaKey.UpdateField(encodeField(tableReplace.TableID))
 	if cf == consts.WriteCF {
 		rawMetaKey.UpdateTS(sr.RewriteTS)
@@ -326,6 +401,7 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 
 	// update table ID and partition ID.
 	tableInfo.ID = tableReplace.TableID
+	tableInfo.DBID = tableReplace.EffectiveDBID(dbReplace)
 	partitions := tableInfo.GetPartitionInfo()
 	if partitions != nil {
 		for i, tbl := range partitions.Definitions {
@@ -410,7 +486,12 @@ func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entr
 		}
 		sr.deletedTables[dbID][oldTableID] = struct{}{}
 		if sr.AfterTableRewrittenFn != nil {
-			sr.AfterTableRewrittenFn(true, &model.TableInfo{ID: newTableID})
+			dbReplace := sr.DbReplaceMap[dbID]
+			tableReplace := dbReplace.TableMap[oldTableID]
+			sr.AfterTableRewrittenFn(true, &model.TableInfo{
+				ID:   newTableID,
+				DBID: tableReplace.EffectiveDBID(dbReplace),
+			})
 		}
 	} else if result.Put {
 		// handle the rename/exchange partition back case:

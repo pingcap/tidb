@@ -61,20 +61,21 @@ func (rc *LogClient) saveIDMap(
 	ctx context.Context,
 	manager *stream.TableMappingManager,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+	routeFingerprint string,
 ) error {
 	dbmaps := manager.ToProto()
 	if checkpointStorage := rc.tryGetCheckpointStorage(logCheckpointMetaManager); checkpointStorage != nil {
 		log.Info("checkpoint storage is specified, load pitr id map from the checkpoint storage.")
-		if err := rc.saveIDMap2Storage(ctx, checkpointStorage, dbmaps); err != nil {
+		if err := rc.saveIDMap2Storage(ctx, checkpointStorage, dbmaps, routeFingerprint); err != nil {
 			return errors.Trace(err)
 		}
 	} else if rc.pitrIDMapTableExists() {
-		if err := rc.saveIDMap2Table(ctx, dbmaps); err != nil {
+		if err := rc.saveIDMap2Table(ctx, dbmaps, routeFingerprint); err != nil {
 			return errors.Trace(err)
 		}
 	} else {
 		log.Info("the table mysql.tidb_pitr_id_map does not exist, maybe the cluster version is old.")
-		if err := rc.saveIDMap2Storage(ctx, rc.storage, dbmaps); err != nil {
+		if err := rc.saveIDMap2Storage(ctx, rc.storage, dbmaps, routeFingerprint); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -94,6 +95,7 @@ func (rc *LogClient) saveIDMap2Storage(
 	ctx context.Context,
 	storage storeapi.Storage,
 	dbMaps []*backuppb.PitrDBMap,
+	routeFingerprint string,
 ) error {
 	clusterID := rc.GetClusterID(ctx)
 	metaFileName := PitrIDMapsFilename(clusterID, rc.restoreTS)
@@ -101,14 +103,20 @@ func (rc *LogClient) saveIDMap2Storage(
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		m.ClusterId = clusterID
 		m.DbMaps = dbMaps
+		m.PitrIdMapRouteFingerprint = routeFingerprint
 	})
 	return metaWriter.FlushBackupMeta(ctx)
 }
 
-func (rc *LogClient) saveIDMap2Table(ctx context.Context, dbMaps []*backuppb.PitrDBMap) error {
+func (rc *LogClient) saveIDMap2Table(
+	ctx context.Context,
+	dbMaps []*backuppb.PitrDBMap,
+	routeFingerprint string,
+) error {
 	backupmeta := &backuppb.BackupMeta{
-		BackupSchemaVersion: backuppb.BackupSchemaVersion,
-		DbMaps:              dbMaps,
+		BackupSchemaVersion:       backuppb.BackupSchemaVersion,
+		DbMaps:                    dbMaps,
+		PitrIdMapRouteFingerprint: routeFingerprint,
 	}
 	data, err := proto.Marshal(backupmeta)
 	if err != nil {
@@ -160,19 +168,19 @@ func (rc *LogClient) loadSchemasMap(
 	ctx context.Context,
 	restoredTS uint64,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-) ([]*backuppb.PitrDBMap, error) {
+) (*backuppb.BackupMeta, error) {
 	if checkpointStorage := rc.tryGetCheckpointStorage(logCheckpointMetaManager); checkpointStorage != nil {
 		log.Info("checkpoint storage is specified, load pitr id map from the checkpoint storage.")
-		dbMaps, err := rc.loadSchemasMapFromStorage(ctx, checkpointStorage, restoredTS)
-		return dbMaps, errors.Trace(err)
+		backupMeta, err := rc.loadSchemasMapFromStorage(ctx, checkpointStorage, restoredTS)
+		return backupMeta, errors.Trace(err)
 	}
 	if rc.pitrIDMapTableExists() {
-		dbMaps, err := rc.loadSchemasMapFromTable(ctx, restoredTS)
-		return dbMaps, errors.Trace(err)
+		backupMeta, err := rc.loadSchemasMapFromTable(ctx, restoredTS)
+		return backupMeta, errors.Trace(err)
 	}
 	log.Info("the table mysql.tidb_pitr_id_map does not exist, maybe the cluster version is old.")
-	dbMaps, err := rc.loadSchemasMapFromStorage(ctx, rc.storage, restoredTS)
-	return dbMaps, errors.Trace(err)
+	backupMeta, err := rc.loadSchemasMapFromStorage(ctx, rc.storage, restoredTS)
+	return backupMeta, errors.Trace(err)
 }
 
 func (rc *LogClient) loadPITRIDMapBackupMeta(metaData []byte) (*backuppb.BackupMeta, error) {
@@ -193,7 +201,7 @@ func (rc *LogClient) loadSchemasMapFromStorage(
 	ctx context.Context,
 	storage storeapi.Storage,
 	restoredTS uint64,
-) ([]*backuppb.PitrDBMap, error) {
+) (*backuppb.BackupMeta, error) {
 	clusterID := rc.GetClusterID(ctx)
 	metaFileName := PitrIDMapsFilename(clusterID, restoredTS)
 	exist, err := storage.FileExists(ctx, metaFileName)
@@ -213,13 +221,13 @@ func (rc *LogClient) loadSchemasMapFromStorage(
 	if err != nil {
 		return nil, err
 	}
-	return backupMeta.GetDbMaps(), nil
+	return backupMeta, nil
 }
 
 func (rc *LogClient) loadSchemasMapFromTable(
 	ctx context.Context,
 	restoredTS uint64,
-) ([]*backuppb.PitrDBMap, error) {
+) (*backuppb.BackupMeta, error) {
 	hasRestoreIDColumn := rc.pitrIDMapHasRestoreIDColumn()
 
 	var getPitrIDMapSQL string
@@ -267,5 +275,5 @@ func (rc *LogClient) loadSchemasMapFromTable(
 		return nil, err
 	}
 
-	return backupMeta.GetDbMaps(), nil
+	return backupMeta, nil
 }

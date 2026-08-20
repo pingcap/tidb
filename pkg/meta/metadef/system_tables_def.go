@@ -717,6 +717,9 @@ const (
 		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		filter_strings TEXT NOT NULL,
 		filter_hash VARCHAR(64) NOT NULL,
+		source_filter_strings MEDIUMTEXT NOT NULL DEFAULT '',
+		route_strings MEDIUMTEXT NOT NULL DEFAULT '',
+		route_hash VARCHAR(64) NOT NULL DEFAULT '',
 		start_ts BIGINT UNSIGNED NOT NULL,
 		restored_ts BIGINT UNSIGNED NOT NULL,
 		upstream_cluster_id BIGINT UNSIGNED,
@@ -725,8 +728,9 @@ const (
 		cmd TEXT,
 		task_start_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
 		last_heartbeat_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
-		UNIQUE KEY unique_registration_params (
+		UNIQUE KEY unique_registration_params_v2 (
 			filter_hash,
+			route_hash,
 			start_ts,
 			restored_ts,
 			upstream_cluster_id,

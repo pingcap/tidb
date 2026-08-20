@@ -1485,6 +1485,11 @@ func RunStreamRestore(
 		}
 		dbReplace := metaInfoProcessor.GetTableMappingManager().DBReplaceMap
 		stream.LogDBReplaceMap("scanned log meta kv before snapshot restore", dbReplace)
+		nameRouter, err := cfg.getNameRouter()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		applyNameRoutesToTableMapping(nameRouter, metaInfoProcessor.GetTableHistoryManager(), metaInfoProcessor.GetTableMappingManager())
 	}
 
 	// Save PITR-related info to cfg for blocklist creation in defer function
@@ -1676,8 +1681,13 @@ func restoreStream(
 
 	var sstCheckpointSets map[string]struct{}
 	if cfg.UseCheckpoint {
+		routeFingerprint, err := cfg.nameRouteFingerprint()
+		if err != nil {
+			return errors.Trace(err)
+		}
 		gcRatioFromCheckpoint, oldRocksDBMaxBackgroundJobsFromCheckpoint, snapshotRestoreDataSize, err := client.LoadOrCreateCheckpointMetadataForLogRestore(
-			ctx, cfg.RestoreStartTS, cfg.StartTS, cfg.RestoreTS, oldGCRatio, oldRocksDBMaxBackgroundJobs, cfg.tiflashRecorder, cfg.logCheckpointMetaManager, cfg.snapshotRestoreDataSize)
+			ctx, cfg.RestoreStartTS, cfg.StartTS, cfg.RestoreTS, oldGCRatio, oldRocksDBMaxBackgroundJobs,
+			cfg.tiflashRecorder, cfg.logCheckpointMetaManager, cfg.snapshotRestoreDataSize, routeFingerprint)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -2265,6 +2275,10 @@ func getFullBackupTS(
 		}
 		log.Warn("skip backupmeta compatibility check error", logutil.ShortError(err))
 	}
+	if cfg.hasNameRouting() && backupmeta.StartVersion != 0 && backupmeta.StartVersion != backupmeta.EndVersion {
+		return 0, 0, errors.Annotatef(berrors.ErrInvalidArgument,
+			"--%s is not supported for incremental snapshot restore", FlagRename)
+	}
 
 	// start and end are identical in full backup, pick random one
 	return backupmeta.GetEndVersion(), backupmeta.GetClusterId(), nil
@@ -2464,24 +2478,83 @@ func buildSchemaReplace(client *logclient.LogClient, cfg *LogRestoreConfig) (*st
 	return schemasReplace, nil
 }
 
+type restoreConflictChecker interface {
+	CheckTablesWithRegisteredTasksAndRoutes(
+		context.Context,
+		uint64,
+		*utils.PiTRIdTracker,
+		[]*metautil.Database,
+		[]*metautil.Table,
+		[]string,
+	) error
+}
+
+func checkLogOnlyPiTRRegistryConflicts(
+	ctx context.Context,
+	cfg *LogRestoreConfig,
+	checker restoreConflictChecker,
+) error {
+	if len(cfg.FullBackupStorage) != 0 || cfg.RestoreID == 0 || checker == nil {
+		return nil
+	}
+
+	// The mapping has merged the previous PiTR ID map, applied name routes,
+	// and filtered unselected objects. Pass effective names with no routes so
+	// they cannot be applied twice by the registry.
+	targets := utils.NewPiTRIdTracker()
+	for _, dbReplace := range cfg.tableMappingManager.DBReplaceMap {
+		if dbReplace.FilteredOut {
+			continue
+		}
+		hasSelectedTable := false
+		for _, tableReplace := range dbReplace.TableMap {
+			if tableReplace.FilteredOut {
+				continue
+			}
+			hasSelectedTable = true
+			targets.TrackTableName(tableReplace.EffectiveDBName(dbReplace), tableReplace.Name)
+		}
+		if !hasSelectedTable {
+			targets.DBNameToTableNames[dbReplace.Name] = make(map[string]struct{})
+		}
+	}
+
+	log.Info("checking log-only PiTR target conflicts using restore registry",
+		zap.Int("target_schemas_count", len(targets.DBNameToTableNames)),
+		zap.Uint64("current_restore_id", cfg.RestoreID))
+	return checker.CheckTablesWithRegisteredTasksAndRoutes(
+		ctx, cfg.RestoreID, targets, nil, nil, nil)
+}
+
 func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient, cfg *LogRestoreConfig) error {
-	// get the schemas ID replace information.
-	saved := isCurrentIdMapSaved(cfg.checkpointTaskInfo)
-	hasFullBackupStorage := len(cfg.FullBackupStorage) != 0
-	err := client.GetBaseIDMapAndMerge(ctx, hasFullBackupStorage, saved,
-		cfg.logCheckpointMetaManager, cfg.tableMappingManager)
+	routeFingerprint, err := cfg.nameRouteFingerprint()
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	if saved {
-		return nil
+	// get the schemas ID replace information.
+	saved := isCurrentIdMapSaved(cfg.checkpointTaskInfo)
+	hasFullBackupStorage := len(cfg.FullBackupStorage) != 0
+	err = client.GetBaseIDMapAndMerge(ctx, hasFullBackupStorage, saved,
+		cfg.logCheckpointMetaManager, cfg.tableMappingManager, routeFingerprint)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	// either getting base id map from previous pitr or this is a new task and get base map from snapshot restore phase
 	// do filter
 	if cfg.PiTRTableTracker != nil {
 		cfg.tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
+	}
+	// The dependency classification is persisted with the ID map, so a direct
+	// phase-2 run makes the same pre-DDL decision as the initial scan.
+	if err := cfg.tableMappingManager.ValidateRoutedDependencies(); err != nil {
+		return errors.Trace(err)
+	}
+	if err := checkLogOnlyPiTRRegistryConflicts(ctx, cfg, cfg.RestoreRegistry); err != nil {
+		return errors.Trace(err)
+	}
+	if saved {
+		return client.ValidateTableRouteTargetDatabases(ctx, cfg.tableMappingManager)
 	}
 	// reuse existing database ids if it exists in the current cluster
 	cfg.tableMappingManager.ReuseExistingDatabaseIDs(client.GetDomain().InfoSchema())
@@ -2490,7 +2563,9 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = client.SaveIdMapWithFailPoints(ctx, cfg.tableMappingManager, cfg.logCheckpointMetaManager); err != nil {
+	if err = client.SaveIdMapWithFailPoints(
+		ctx, cfg.tableMappingManager, cfg.logCheckpointMetaManager, routeFingerprint,
+	); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -2545,10 +2620,15 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 	}
 
 	originalRestoreTS := cfg.RestoreTS
+	router, err := cfg.getNameRouter()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	registrationInfo := registry.RegistrationInfo{
 		StartTS:           cfg.StartTS,
 		RestoredTS:        cfg.RestoreTS,
 		FilterStrings:     cfg.FilterStr,
+		RouteStrings:      router.CanonicalRules(),
 		UpstreamClusterID: cfg.UpstreamClusterID,
 		WithSysTable:      cfg.WithSysTable,
 		Cmd:               cmdName,
