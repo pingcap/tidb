@@ -628,7 +628,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	progress, err := bq.acquireTask(taskCtx, taskID)
 	if err != nil {
-		err = mapBRIEErr(taskCtx, e.Ctx(), err, nil)
+		err = mapBRIEErr(e.Ctx(), err, nil)
 		e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
 		e.info.message = err.Error()
 		return err
@@ -641,9 +641,9 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	switch e.info.kind {
 	case ast.BRIEKindBackup:
-		err = mapBRIEErr(taskCtx, e.Ctx(), task.RunBackup(taskCtx, glue, "Backup", e.backupCfg), exeerrors.ErrBRIEBackupFailed)
+		err = mapBRIEErr(e.Ctx(), task.RunBackup(taskCtx, glue, "Backup", e.backupCfg), exeerrors.ErrBRIEBackupFailed)
 	case ast.BRIEKindRestore:
-		err = mapBRIEErr(taskCtx, e.Ctx(), task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), exeerrors.ErrBRIERestoreFailed)
+		err = mapBRIEErr(e.Ctx(), task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), exeerrors.ErrBRIERestoreFailed)
 	default:
 		err = errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}
@@ -682,7 +682,7 @@ func handleBRIEError(err error, terror *terror.Error) error {
 // KILL (QueryInterrupted) becomes 1317. Non-KILL failures still go through
 // handleBRIEError when brieErr is non-nil, including CANCEL BR JOB which
 // cancels taskCtx without setting SQLKiller (8124/8125).
-func mapBRIEErr(taskCtx context.Context, sctx sessionctx.Context, err error, brieErr *terror.Error) error {
+func mapBRIEErr(sctx sessionctx.Context, err error, brieErr *terror.Error) error {
 	if err == nil {
 		return nil
 	}
