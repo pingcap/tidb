@@ -128,7 +128,6 @@ func (killer *SQLKiller) sendKillSignal(reason killSignal) {
 
 func (killer *SQLKiller) sendKillSignalLocked(reason killSignal) (bool, string) {
 	if atomic.CompareAndSwapUint32(&killer.Signal, 0, reason) {
-		failpoint.InjectCall("afterSendKillSignalCAS")
 		return true, killer.killEvent.desc
 	}
 	return false, ""
@@ -147,6 +146,7 @@ func (killer *SQLKiller) SendKillSignal(reason killSignal) {
 	killer.killEvent.Unlock()
 
 	if signalSent {
+		failpoint.InjectCall("beforeLogKillSignal")
 		killer.logKillSignal(reason, eventDesc)
 	}
 }
