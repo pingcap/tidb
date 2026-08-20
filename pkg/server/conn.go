@@ -2194,13 +2194,27 @@ func (cc *clientConn) cancelDispatch() {
 }
 
 func shouldInstallConnectionAlive(stmt ast.StmtNode, sessVars *variable.SessionVars) bool {
-	if executeStmt, ok := stmt.(*ast.ExecuteStmt); ok {
-		prepared, err := plannercore.GetPreparedStmt(executeStmt, sessVars)
-		if err != nil || prepared.PreparedAst == nil {
-			return false
+unwrapStmt:
+	for {
+		switch wrappedStmt := stmt.(type) {
+		case *ast.ExecuteStmt:
+			prepared, err := plannercore.GetPreparedStmt(wrappedStmt, sessVars)
+			if err != nil || prepared.PreparedAst == nil {
+				return false
+			}
+			stmt = prepared.PreparedAst.Stmt
+		case *ast.TraceStmt:
+			stmt = wrappedStmt.Stmt
+		case *ast.ExplainStmt:
+			if !wrappedStmt.Analyze {
+				return true
+			}
+			stmt = wrappedStmt.Stmt
+		default:
+			break unwrapStmt
 		}
-		stmt = prepared.PreparedAst.Stmt
 	}
+
 	switch stmt := stmt.(type) {
 	case *ast.BRIEStmt:
 		switch stmt.Kind {

@@ -540,6 +540,16 @@ func TestShouldInstallConnectionAlive(t *testing.T) {
 		{name: "show BR job", stmt: &ast.BRIEStmt{Kind: ast.BRIEKindShowJob}, autocommit: true, expected: true},
 		{name: "commit", stmt: &ast.CommitStmt{}, autocommit: true, inTxn: true, expected: false},
 		{name: "rollback", stmt: &ast.RollbackStmt{}, autocommit: true, inTxn: true, expected: false},
+		{name: "trace select", stmt: &ast.TraceStmt{Stmt: &ast.SelectStmt{}}, autocommit: true, expected: true},
+		{name: "trace analyze", stmt: &ast.TraceStmt{Stmt: &ast.AnalyzeTableStmt{}}, autocommit: true, expected: false},
+		{name: "trace load data", stmt: &ast.TraceStmt{Stmt: &ast.LoadDataStmt{}}, autocommit: true, expected: false},
+		{name: "trace commit", stmt: &ast.TraceStmt{Stmt: &ast.CommitStmt{}}, autocommit: true, inTxn: true, expected: false},
+		{name: "trace rollback", stmt: &ast.TraceStmt{Stmt: &ast.RollbackStmt{}}, autocommit: true, inTxn: true, expected: false},
+		{name: "explain DDL", stmt: &ast.ExplainStmt{Stmt: &ast.AlterTableStmt{}}, autocommit: true, expected: true},
+		{name: "explain import into", stmt: &ast.ExplainStmt{Stmt: &ast.ImportIntoStmt{}}, autocommit: true, expected: true},
+		{name: "explain analyze select", stmt: &ast.ExplainStmt{Stmt: &ast.SelectStmt{}, Analyze: true}, autocommit: true, expected: true},
+		{name: "explain analyze DDL", stmt: &ast.ExplainStmt{Stmt: &ast.AlterTableStmt{}, Analyze: true}, autocommit: true, expected: false},
+		{name: "explain analyze import into", stmt: &ast.ExplainStmt{Stmt: &ast.ImportIntoStmt{}, Analyze: true}, autocommit: true, expected: false},
 	}
 
 	for _, tt := range tests {
