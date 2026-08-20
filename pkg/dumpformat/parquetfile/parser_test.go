@@ -113,6 +113,229 @@ func newInt96FromUnixNanos(nanoseconds int64) parquet.Int96 {
 	return parquet.Int96(b)
 }
 
+type parquetListEncoding int
+
+const (
+	parquetList3LevelOptional parquetListEncoding = iota
+	parquetList3LevelRequired
+	parquetList2Level
+)
+
+func buildListField(t *testing.T, encoding parquetListEncoding, physicalType parquet.Type) schema.Node {
+	t.Helper()
+
+	var child schema.Node
+	switch encoding {
+	case parquetList3LevelOptional, parquetList3LevelRequired:
+		elementRepetition := parquet.Repetitions.Optional
+		if encoding == parquetList3LevelRequired {
+			elementRepetition = parquet.Repetitions.Required
+		}
+		element, err := schema.NewPrimitiveNode(
+			"element", elementRepetition, physicalType, -1, -1,
+		)
+		require.NoError(t, err)
+		child, err = schema.NewGroupNode(
+			"list", parquet.Repetitions.Repeated, []schema.Node{element}, -1,
+		)
+		require.NoError(t, err)
+	case parquetList2Level:
+		element, err := schema.NewPrimitiveNode(
+			"element", parquet.Repetitions.Repeated, physicalType, -1, -1,
+		)
+		require.NoError(t, err)
+		child = element
+	default:
+		require.FailNow(t, "unknown parquet list encoding")
+	}
+
+	field, err := schema.NewGroupNodeConverted(
+		"vector",
+		parquet.Repetitions.Optional,
+		[]schema.Node{child},
+		schema.ConvertedTypes.List,
+		-1,
+	)
+	require.NoError(t, err)
+	return field
+}
+
+func writeParquetListFile(
+	t *testing.T,
+	dir, fileName string,
+	encoding parquetListEncoding,
+	physicalType parquet.Type,
+	values any,
+	defLevels, repLevels []int16,
+) {
+	t.Helper()
+
+	root, err := schema.NewGroupNode(
+		"schema",
+		parquet.Repetitions.Required,
+		[]schema.Node{buildListField(t, encoding, physicalType)},
+		-1,
+	)
+	require.NoError(t, err)
+
+	output, err := os.Create(filepath.Join(dir, fileName))
+	require.NoError(t, err)
+	writer := file.NewParquetWriter(output, root)
+	rowGroup := writer.AppendRowGroup()
+	chunkWriter, err := rowGroup.NextColumn()
+	require.NoError(t, err)
+	switch typedWriter := chunkWriter.(type) {
+	case *file.Float32ColumnChunkWriter:
+		typedValues, ok := values.([]float32)
+		require.True(t, ok, "unexpected values type %T", values)
+		_, err = typedWriter.WriteBatch(typedValues, defLevels, repLevels)
+		require.NoError(t, err)
+	case *file.Int64ColumnChunkWriter:
+		typedValues, ok := values.([]int64)
+		require.True(t, ok, "unexpected values type %T", values)
+		_, err = typedWriter.WriteBatch(typedValues, defLevels, repLevels)
+		require.NoError(t, err)
+	default:
+		require.FailNow(t, "unexpected column writer", "%T", chunkWriter)
+	}
+	require.NoError(t, chunkWriter.Close())
+	require.NoError(t, rowGroup.Close())
+	require.NoError(t, writer.Close())
+}
+
+func readVectorRows(t *testing.T, parser *Parser) (rows [][]float32, isNull []bool) {
+	t.Helper()
+	for {
+		err := parser.ReadRow()
+		if err == io.EOF {
+			return rows, isNull
+		}
+		require.NoError(t, err)
+
+		row := parser.LastRow()
+		require.Len(t, row.Row, 1)
+		value := row.Row[0]
+		if value.IsNull() {
+			rows = append(rows, nil)
+			isNull = append(isNull, true)
+		} else {
+			require.Equal(t, types.KindVectorFloat32, value.Kind())
+			rows = append(rows, append([]float32{}, value.GetVectorFloat32().Elements()...))
+			isNull = append(isNull, false)
+		}
+		parser.RecycleRow(row)
+	}
+}
+
+func TestParquetVectorList(t *testing.T) {
+	originalBatchSize := readBatchSize
+	readBatchSize = 1
+	t.Cleanup(func() { readBatchSize = originalBatchSize })
+
+	for _, test := range []struct {
+		name      string
+		encoding  parquetListEncoding
+		defLevels []int16
+		repLevels []int16
+	}{
+		{
+			name:      "3-level-optional",
+			encoding:  parquetList3LevelOptional,
+			defLevels: []int16{0, 1, 3, 3, 3},
+			repLevels: []int16{0, 0, 0, 1, 0},
+		},
+		{
+			name:      "3-level-required",
+			encoding:  parquetList3LevelRequired,
+			defLevels: []int16{0, 1, 2, 2, 2},
+			repLevels: []int16{0, 0, 0, 1, 0},
+		},
+		{
+			name:      "2-level",
+			encoding:  parquetList2Level,
+			defLevels: []int16{0, 1, 2, 2, 2},
+			repLevels: []int16{0, 0, 0, 1, 0},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			fileName := "vector-list.parquet"
+			writeParquetListFile(
+				t,
+				dir,
+				fileName,
+				test.encoding,
+				parquet.Types.Float,
+				[]float32{1, 2, 3},
+				test.defLevels,
+				test.repLevels,
+			)
+
+			parser := newParquetParserForTest(context.Background(), t, dir, fileName, 0, FileMeta{})
+			rows, isNull := readVectorRows(t, parser)
+			require.Equal(t, []bool{true, false, false, false}, isNull)
+			require.Equal(t, [][]float32{nil, {}, {1, 2}, {3}}, rows)
+		})
+	}
+
+	t.Run("null-element", func(t *testing.T) {
+		dir := t.TempDir()
+		fileName := "vector-null-element.parquet"
+		writeParquetListFile(
+			t,
+			dir,
+			fileName,
+			parquetList3LevelOptional,
+			parquet.Types.Float,
+			[]float32{1, 2, 3},
+			[]int16{0, 1, 3, 3, 3, 2},
+			[]int16{0, 0, 0, 1, 0, 1},
+		)
+
+		parser := newParquetParserForTest(context.Background(), t, dir, fileName, 0, FileMeta{})
+		for range 3 {
+			require.NoError(t, parser.ReadRow())
+			parser.RecycleRow(parser.LastRow())
+		}
+		require.ErrorIs(t, parser.ReadRow(), errParquetListNullElement)
+	})
+
+	t.Run("unsupported-int64", func(t *testing.T) {
+		dir := t.TempDir()
+		fileName := "int64-list.parquet"
+		writeParquetListFile(
+			t,
+			dir,
+			fileName,
+			parquetList3LevelOptional,
+			parquet.Types.Int64,
+			[]int64{101, 102, 201, 401, 402, 403},
+			[]int16{3, 3, 3, 1, 3, 3, 3},
+			[]int16{0, 1, 0, 0, 0, 1, 1},
+		)
+
+		store, err := objstore.NewLocalStorage(dir)
+		require.NoError(t, err)
+		parser, err := NewParser(context.Background(), store, func(ctx context.Context) (io.ReadSeekCloser, error) {
+			return store.Open(ctx, fileName, nil)
+		}, fileName, 0, FileMeta{})
+		require.Nil(t, parser)
+		require.ErrorContains(t, err, "unsupported parquet list encoding: element physical type=INT64")
+	})
+
+	t.Run("malformed-continuation-repetition-level", func(t *testing.T) {
+		iter := newVectorFloat32Iterator(2)
+		iter.maxDef = 3
+		iter.levelsBuffered = 2
+		iter.values[0], iter.values[1] = 1, 2
+		iter.defLevels[0], iter.defLevels[1] = 3, 3
+		iter.repLevels[0], iter.repLevels[1] = 0, 2
+
+		var value types.Datum
+		require.ErrorContains(t, iter.Next(&value), "invalid repetition level 2 within list")
+	})
+}
+
 func TestParquetParser(t *testing.T) {
 	pc := []testutils.ParquetColumn{
 		{
