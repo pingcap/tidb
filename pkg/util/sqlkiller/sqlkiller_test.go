@@ -22,34 +22,77 @@ import (
 )
 
 func TestSQLKillerConcurrentReset(t *testing.T) {
+	assertStateLockHeld := func(t *testing.T, killer *SQLKiller) {
+		t.Helper()
+		if killer.killEvent.TryLock() {
+			killer.killEvent.Unlock()
+			require.FailNow(t, "the SQLKiller state mutex is not held")
+		}
+	}
+	getKillEventState := func(killer *SQLKiller) (bool, string) {
+		killer.killEvent.Lock()
+		defer killer.killEvent.Unlock()
+		return killer.killEvent.triggered, killer.killEvent.desc
+	}
+	assertChanOpen := func(t *testing.T, ch <-chan struct{}) {
+		t.Helper()
+		select {
+		case <-ch:
+			require.Fail(t, "kill event channel is closed")
+		default:
+		}
+	}
+	assertChanClosed := func(t *testing.T, ch <-chan struct{}) {
+		t.Helper()
+		select {
+		case <-ch:
+		default:
+			require.Fail(t, "kill event channel is open")
+		}
+	}
+
 	t.Run("reset after successful kill signal CAS", func(t *testing.T) {
 		killer := &SQLKiller{}
+		resetDone := make(chan struct{})
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/util/sqlkiller/afterSendKillSignalCAS", func() {
-			resetDone := make(chan struct{})
+			assertStateLockHeld(t, killer)
 			go func() {
+				defer close(resetDone)
 				killer.Reset()
-				close(resetDone)
 			}()
-			<-resetDone
 		})
 
-		require.NotPanics(t, func() {
-			killer.SendKillSignal(QueryInterrupted)
-		})
+		killer.SendKillSignal(QueryInterrupted)
+		<-resetDone
+
+		require.Equal(t, UnspecifiedKillSignal, killer.GetKillSignal())
+		require.NoError(t, killer.HandleSignal())
+		triggered, desc := getKillEventState(killer)
+		require.False(t, triggered)
+		require.Empty(t, desc)
+		assertChanOpen(t, killer.GetKillEventChan())
 	})
 
 	t.Run("kill signal after reset clear", func(t *testing.T) {
 		killer := &SQLKiller{}
+		killSent := make(chan struct{})
+		const reason = "memory usage exceeds the instance limit"
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/util/sqlkiller/afterResetKillSignalSwap", func() {
-			killSent := make(chan struct{})
+			assertStateLockHeld(t, killer)
 			go func() {
-				killer.sendKillSignal(QueryInterrupted)
-				close(killSent)
+				defer close(killSent)
+				killer.SendKillSignalWithKillEventReason(KilledByMemArbitrator, reason)
 			}()
-			<-killSent
 		})
 
 		killer.Reset()
-		require.Equal(t, QueryInterrupted, killer.GetKillSignal())
+		<-killSent
+
+		require.Equal(t, KilledByMemArbitrator, killer.GetKillSignal())
+		require.ErrorContains(t, killer.HandleSignal(), reason)
+		triggered, desc := getKillEventState(killer)
+		require.True(t, triggered)
+		require.Equal(t, reason, desc)
+		assertChanClosed(t, killer.GetKillEventChan())
 	})
 }
