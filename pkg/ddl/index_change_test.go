@@ -150,7 +150,7 @@ func TestAddIndexAutoPreSplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 	}
 	var loadedTopNFromStorage atomic.Pointer[topNFromStorageArgs]
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAutoPresplitConfig", "return(5)")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeTopNFromStorageWithPriority",
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeTopNFromStorageWithParams",
 		func(_ int64, isIndex int, histID int64, priority int) {
 			loadedTopNFromStorage.Store(&topNFromStorageArgs{
 				isIndex:  isIndex,

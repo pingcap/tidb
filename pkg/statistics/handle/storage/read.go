@@ -124,7 +124,9 @@ func LoadColumnDistributionStats(
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 	}
 	if histMeta.NullCount < 0 {
-		return nil, errors.Errorf("negative null count %d", histMeta.NullCount)
+		return nil, errors.Errorf(
+			"negative null count %d for physical table %d, column %s(%d)",
+			histMeta.NullCount, physicalTableID, colInfo.Name.O, colInfo.ID)
 	}
 	if statsVer != statistics.Version2 {
 		return column, nil
@@ -353,7 +355,7 @@ func topNFromStorageWithParams(
 	params topNLoadParams,
 ) (_ *statistics.TopN, err error) {
 	failpoint.InjectCall(
-		"beforeTopNFromStorageWithPriority",
+		"beforeTopNFromStorageWithParams",
 		params.tableID, params.isIndex, params.histID, params.priority)
 	query := statsSelectPrefix(params.priority) + "value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?"
 	args := []any{params.tableID, params.isIndex, params.histID}
@@ -389,7 +391,7 @@ func execRowsAtSnapshot(
 	if snapshot == 0 {
 		return util.ExecRowsWithCtx(ctx, sctx, sql, args...)
 	}
-	return sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{
+	return util.ExecWithOptsWithCtx(ctx, sctx, []sqlexec.OptionFuncAlias{
 		sqlexec.ExecOptionWithSnapshot(snapshot),
 		sqlexec.ExecOptionUseCurSession,
 	}, sql, args...)
@@ -1041,15 +1043,9 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 
 // StatsMetaByTableIDFromStorage gets the stats meta of a table from storage.
 func StatsMetaByTableIDFromStorage(sctx sessionctx.Context, tableID int64, snapshot uint64) (version uint64, modifyCount, count int64, err error) {
-	var rows []chunk.Row
-	if snapshot == 0 {
-		rows, _, err = util.ExecRows(sctx,
-			"SELECT version, modify_count, count from mysql.stats_meta where table_id = %? order by version", tableID)
-	} else {
-		rows, _, err = util.ExecWithOpts(sctx,
-			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(snapshot), sqlexec.ExecOptionUseCurSession},
-			"SELECT version, modify_count, count from mysql.stats_meta where table_id = %? order by version", tableID)
-	}
+	rows, _, err := execRowsAtSnapshot(
+		util.StatsCtx, sctx, snapshot,
+		"SELECT version, modify_count, count from mysql.stats_meta where table_id = %? order by version", tableID)
 	if err != nil || len(rows) == 0 {
 		return
 	}

@@ -42,16 +42,9 @@ func topNMetaToDatum(val TopNMeta,
 // DecodeColumnTopNValue decodes an encoded column TopN value for consumers that
 // need to preserve string comparison bytes.
 func DecodeColumnTopNValue(encoded []byte, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
-	var dat types.Datum
-	var err error
-	tp := ft.GetType()
-	switch {
-	case types.IsTypeTime(tp):
-		_, dat, err = codec.DecodeAsDateTime(encoded, tp, loc)
-	case types.IsTypeFloat(tp):
-		_, dat, err = codec.DecodeAsFloat32(encoded, tp)
-	default:
-		_, dat, err = codec.DecodeOne(encoded)
+	_, dat, err := codec.DecodeOne(encoded)
+	if err != nil || types.IsString(ft.GetType()) {
+		return dat, err
 	}
-	return dat, err
+	return tablecodec.Unflatten(dat, ft, loc)
 }
