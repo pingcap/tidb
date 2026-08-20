@@ -157,6 +157,10 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// schema version like prepared plan cache key
 		stmt.PointGet.Executor = nil
 		stmt.PointGet.ColumnInfos = nil
+		// The plan shape may change under the new schema (e.g. a unique index was
+		// dropped, turning a point get into a stats-dependent scan), so the
+		// stats-independent classification must be re-derived from the new plan.
+		stmt.statsIndependent = false
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		// Example:
@@ -256,6 +260,32 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	paramTypes := parseParamTypes(sctx, params)
 	if stmtCtx.UseCache() {
 		plan, outputCols, stmtHints, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
+		if !hit && !stmt.statsIndependent && instancePlanCacheEnabled(ctx) && couldBeStatsIndependent(stmt) {
+			// Another session may have stored a stats-independent plan for this statement
+			// under a statsIndependent=true key in the shared instance plan cache. Probe
+			// that key as well: a hit implies the plan is stats-independent, because such
+			// keys are only written when the stored plan was classified so (see the
+			// statsIndependent byte in newPlanCacheKeyWithMatchedBinding) and key equality
+			// means all other planning inputs match. On a miss the flag is re-derived from
+			// the new plan in generateNewPlan.
+			//
+			// The extra key build and lookup are only paid on a miss (where they are
+			// dwarfed by the replan that follows), and only when adoption is possible at
+			// all: the session-level cache needs no probe since this statement's own flag
+			// already tracks everything this session stored, and couldBeStatsIndependent
+			// rules out statements that can never classify, so post-ANALYZE misses of
+			// ordinary stats-dependent queries don't probe.
+			stmt.statsIndependent = true
+			probeKey, _, probeCacheable, _, probeErr := newPlanCacheKeyWithMatchedBinding(sctx, stmt, matchedBinding, bindingMatched)
+			if probeErr == nil && probeCacheable {
+				plan, outputCols, stmtHints, hit = lookupPlanCache(ctx, sctx, probeKey, paramTypes)
+			}
+			if hit {
+				cacheKey = probeKey
+			} else {
+				stmt.statsIndependent = false
+			}
+		}
 		skipPrivCheck := stmt.PointGet.Executor != nil // this case is specially handled
 		if hit && instancePlanCacheEnabled(ctx) {
 			plan, hit = clonePlanForInstancePlanCache(ctx, sctx, stmt, plan)
@@ -365,6 +395,12 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	core_metrics.GetPlanCacheMissCounter(isNonPrepared).Inc()
 	nodeW := resolve.NewNodeWWithCtx(stmtAst.Stmt, stmt.ResolveCtx)
+	if stmt.statsIndependent {
+		// The plan is known to be stats-independent from a previous execution, so this
+		// replanning (e.g. after cache eviction) cannot be influenced by statistics:
+		// don't trigger any sync/async stats loading for it.
+		stmtCtx.SkipStatsLoad = true
+	}
 	p, names, err := OptimizeAstNodeNoCache(ctx, sctx, nodeW, is)
 	if err != nil {
 		return nil, nil, err
@@ -379,6 +415,25 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// put this plan into the plan cache.
 	if stmtCtx.UseCache() {
+		if statsIndependent := isPlanStatsIndependent(p, stmt.hasSubquery); statsIndependent != stmt.statsIndependent {
+			// Re-derive the stats-independent classification from the plan we just built,
+			// in both directions. A stats-independent plan excludes the stats version from
+			// its cache key, so ANALYZE no longer invalidates its entry. The reverse
+			// transition matters for correctness: planning inputs that are not part of the
+			// cache key (e.g. tidb_opt_fix_control) can turn a formerly stats-independent
+			// statement into a stats-dependent plan, which must get the stats version back
+			// into its key so ANALYZE invalidates it again. The key computed before
+			// optimization used the old classification, so it must be recomputed.
+			stmt.statsIndependent = statsIndependent
+			var cacheable bool
+			cacheKey, binding, cacheable, _, err = newPlanCacheKeyWithMatchedBinding(sctx, stmt, nil, false)
+			if err != nil {
+				return nil, nil, err
+			}
+			// The key was cacheable before optimization with the same inputs, so it must
+			// still be cacheable here.
+			intest.Assert(cacheable)
+		}
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		cached := NewPlanCacheValue(sctx, stmt, cacheKey, binding, p, names, paramTypes, &stmtCtx.StmtHints)
 		stmtCtx.SetPlan(p)
@@ -400,6 +455,44 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err
+}
+
+// couldBeStatsIndependent cheaply rules out statements whose plan can never be classified
+// stats-independent, so the probe lookup in GetPlanFromPlanCache is only paid for actual
+// candidates. It must stay a superset of isPlanStatsIndependent: PointGet/BatchPointGet
+// roots only arise from single-table SELECTs without LIMIT, Insert without SelectPlan only
+// from INSERT ... VALUES, and subqueries disqualify classification entirely.
+func couldBeStatsIndependent(stmt *PlanCacheStmt) bool {
+	if stmt.hasSubquery || len(stmt.limits) > 0 || len(stmt.tables) != 1 {
+		return false
+	}
+	switch x := stmt.PreparedAst.Stmt.(type) {
+	case *ast.SelectStmt:
+		return true
+	case *ast.InsertStmt:
+		return x.Select == nil
+	}
+	return false
+}
+
+// isPlanStatsIndependent reports whether this plan's shape can never be affected by
+// statistics changes. PointGet and BatchPointGet are chosen by deterministic rules
+// (a full match on the primary key or a unique key) rather than by cost, and
+// INSERT ... VALUES involves no access-path decision at all. Plans containing
+// subqueries are excluded because subquery plans are chosen by cost. For qualifying
+// plans the stats version hash is excluded from the plan cache key, so ANALYZE
+// doesn't needlessly invalidate their cached entries.
+func isPlanStatsIndependent(p base.Plan, hasSubquery bool) bool {
+	if hasSubquery {
+		return false
+	}
+	switch x := p.(type) {
+	case *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan:
+		return true
+	case *physicalop.Insert:
+		return x.SelectPlan == nil
+	}
+	return false
 }
 
 // checkPreparedPriv checks the privilege of the prepared statement
