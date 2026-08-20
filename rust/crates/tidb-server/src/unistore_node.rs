@@ -314,13 +314,18 @@ pub(crate) fn run_unistore_cluster_session(
     // logs and continues, as Go's does.
     let _status_server = if config.report_status {
         let schema_factory = Arc::clone(&factory);
-        match crate::http_status::start_status_listener_with_schema(
+        match crate::http_status::start_status_listener_with_routes(
             &config.status_host,
             config.status_port,
             node.tracker(),
             config.version_info.server_version.clone(),
             config.version_info.git_hash.clone(),
-            Some(Arc::new(move || schema_factory.catalog_snapshot())),
+            crate::http_status::StatusRoutes {
+                schema: Some(Arc::new(move || schema_factory.catalog_snapshot())),
+                // The SAME bytes the startup log prints, so the log and the
+                // endpoint cannot disagree about what this node is running.
+                settings_json: Some(config.startup_config_json()),
+            },
         ) {
             Ok(server) => {
                 eprintln!(
