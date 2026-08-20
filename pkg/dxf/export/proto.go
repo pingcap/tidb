@@ -18,6 +18,7 @@ import "github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 
 // DBSpec is a database and the ids of its tables to export.
 type DBSpec struct {
+	DBID     int64   `json:"db_id"`
 	DBName   string  `json:"db_name"`
 	TableIDs []int64 `json:"table_ids"`
 }
@@ -26,10 +27,10 @@ type DBSpec struct {
 type TaskMeta struct {
 	DBs        []DBSpec `json:"dbs"`
 	SnapshotTS uint64   `json:"snapshot_ts"`
-	// PhysicalSizes maps a physical table (or partition) id to its estimated size.
-	PhysicalSizes map[int64]int64 `json:"physical_sizes"`
-	Dest          string          `json:"dest"`
-	Format        string          `json:"format"`
+	// PreparedPlanPath is the external-storage path of the chunks built during prepare.
+	PreparedPlanPath string `json:"prepared_plan_path"`
+	Dest             string `json:"dest"`
+	Format           string `json:"format"`
 	// FileSize is the size in bytes at which the executor cuts output files.
 	FileSize int64 `json:"file_size"`
 }
@@ -54,7 +55,8 @@ type Chunk struct {
 	Ordinal    int    `json:"ordinal"`
 }
 
-// SubtaskMeta is a batch of chunks.
+// SubtaskMeta is the external representation of a chunk batch. The prepared
+// plan uses the same format before its chunks are grouped into subtasks.
 type SubtaskMeta struct {
 	dxfutil.BaseExternalMeta
 	Chunks []Chunk `json:"chunks" external:"true"`

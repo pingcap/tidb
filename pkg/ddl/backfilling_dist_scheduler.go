@@ -22,7 +22,6 @@ import (
 	goerrors "errors"
 	"fmt"
 	"math"
-	"sort"
 	"time"
 
 	"github.com/docker/go-units"
@@ -896,31 +895,18 @@ func genMergeTempPlanForOneIndex(
 	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
 	err := handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
 		regionCache := store.(helper.Storage).GetRegionCache()
-		regionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), start, end)
-		if err != nil {
-			return false, err
-		}
-		sort.Slice(regionMetas, func(i, j int) bool {
-			return bytes.Compare(regionMetas[i].StartKey(), regionMetas[j].StartKey()) < 0
+		regionMetas, err := copr.LoadSortedContinuousRegions(
+			tikv.NewBackofferWithVars(context.Background(), 20000, nil), regionCache, start, end)
+		failpoint.Inject("mockMergeTempIndexRegionDiscontinuity", func() {
+			err = copr.ErrRegionsNotContinuous
 		})
-
 		// LoadRegionsInKeyRange can combine multiple PD scans. A concurrent region
 		// split or merge can make those scans discontinuous, so retry the full scan.
-		shouldRetry := false
-		cur := regionMetas[0]
-		for _, m := range regionMetas[1:] {
-			if !bytes.Equal(cur.EndKey(), m.StartKey()) {
-				shouldRetry = true
-				break
-			}
-			cur = m
+		if errors.ErrorEqual(err, copr.ErrRegionsNotContinuous) {
+			return true, err
 		}
-		failpoint.Inject("mockMergeTempIndexRegionDiscontinuity", func() {
-			shouldRetry = true
-		})
-
-		if shouldRetry {
-			return true, errors.New("regions are not continuous")
+		if err != nil {
+			return false, err
 		}
 
 		attemptMetas := make([][]byte, 0, 4)

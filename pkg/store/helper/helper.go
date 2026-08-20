@@ -853,7 +853,8 @@ func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexSta
 // RegionApproximateSizes returns each region's raw end key and byte size over
 // [startKey, endKey) via PD, in key order. Size is max(ApproximateSize,
 // ApproximateKvSize): the KV size best tracks logical data but can be 0 when TiKV
-// does not report it. PD keys are decoded from the codec keyspace back to raw.
+// does not report it. PD keys are decoded from the codec keyspace back to raw;
+// the empty end key of the terminal region is returned as endKey.
 func (h *Helper) RegionApproximateSizes(ctx context.Context, startKey, endKey kv.Key) (endKeys []kv.Key, sizes []int64, err error) {
 	pdCli, err := h.TryGetPDHTTPClient()
 	if err != nil {
@@ -870,18 +871,25 @@ func (h *Helper) RegionApproximateSizes(ctx context.Context, startKey, endKey kv
 			break
 		}
 		for _, r := range regions.Regions {
-			encoded, err := hex.DecodeString(r.EndKey)
-			if err != nil {
-				return nil, nil, err
+			rawEndKey := endKey
+			if r.EndKey != "" {
+				encoded, err := hex.DecodeString(r.EndKey)
+				if err != nil {
+					return nil, nil, err
+				}
+				rawEndKey, err = codec.DecodeRegionKey(encoded)
+				if err != nil {
+					return nil, nil, err
+				}
 			}
-			raw, err := codec.DecodeRegionKey(encoded)
-			if err != nil {
-				return nil, nil, err
-			}
-			endKeys = append(endKeys, raw)
+			endKeys = append(endKeys, rawEndKey)
 			sizes = append(sizes, max(r.ApproximateSize, r.ApproximateKvSize)*units.MiB)
 		}
-		cur, err = hex.DecodeString(regions.Regions[len(regions.Regions)-1].EndKey)
+		lastEndKey := regions.Regions[len(regions.Regions)-1].EndKey
+		if lastEndKey == "" {
+			break
+		}
+		cur, err = hex.DecodeString(lastEndKey)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -908,7 +916,11 @@ func (h *Helper) EstimateKeyRangeSize(ctx context.Context, pdCli pd.Client, star
 		for _, r := range regions.Regions {
 			totalSize += max(r.ApproximateSize, r.ApproximateKvSize) * units.MiB
 		}
-		start, err = hex.DecodeString(regions.Regions[len(regions.Regions)-1].EndKey)
+		lastEndKey := regions.Regions[len(regions.Regions)-1].EndKey
+		if lastEndKey == "" {
+			break
+		}
+		start, err = hex.DecodeString(lastEndKey)
 		if err != nil {
 			return 0, err
 		}

@@ -27,7 +27,7 @@ import (
 
 const metaName = "meta.json"
 
-// marshalWithOverride marshals the provided struct with the ability to override
+// marshalWithOverride marshals src while hiding fields that match hideCond.
 func marshalWithOverride(src any, hideCond func(f reflect.StructField) bool) ([]byte, error) {
 	v := reflect.ValueOf(src)
 	if v.Kind() == reflect.Ptr {

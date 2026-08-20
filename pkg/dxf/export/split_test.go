@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 )
@@ -69,16 +70,34 @@ func TestDivideSubtasks(t *testing.T) {
 
 	// Data below subtaskSize stays a single subtask (count floored at 1).
 	require.Len(t, divideSubtasks(chunks[:1], 1), 1)
+	zeroSizeChunks := []Chunk{{Ordinal: 0}, {Ordinal: 1}, {Ordinal: 2}}
+	require.Equal(t, [][]Chunk{zeroSizeChunks}, divideSubtasks(zeroSizeChunks, 3))
 	require.Nil(t, divideSubtasks(nil, 2))
 }
 
 func TestSubtaskMetaExternal(t *testing.T) {
 	store := objstore.NewMemStorage()
+	extstore.SetGlobalExtStorageForTest(store)
+	t.Cleanup(func() { extstore.SetGlobalExtStorageForTest(nil) })
 	ctx := context.Background()
 	chunks := []Chunk{
 		{TableIdx: 1, PhysicalID: 100, Start: []byte("aaaa"), End: []byte("bbbb"), Size: chunkSize, Ordinal: 0},
 		{TableIdx: 1, PhysicalID: 100, Start: []byte("bbbb"), End: []byte("cccc"), Size: chunkSize, Ordinal: 1},
 	}
+	preparedPath, err := writePreparedPlan(ctx, 1, chunks)
+	require.NoError(t, err)
+	require.Equal(t, "1/plan/prepared/meta.json", preparedPath)
+	preparedChunks, err := readPreparedPlan(ctx, preparedPath)
+	require.NoError(t, err)
+	require.Equal(t, chunks, preparedChunks)
+	metaJSON, err := json.Marshal(&TaskMeta{PreparedPlanPath: preparedPath})
+	require.NoError(t, err)
+	decodedMeta := &TaskMeta{}
+	require.NoError(t, json.Unmarshal(metaJSON, decodedMeta))
+	require.Equal(t, preparedPath, decodedMeta.PreparedPlanPath)
+	_, err = readPreparedPlan(ctx, "")
+	require.ErrorContains(t, err, "prepared plan path is empty")
+
 	sm := &SubtaskMeta{Chunks: chunks}
 	sm.ExternalPath = "1/plan/dump/1/meta"
 	require.NoError(t, sm.WriteJSONToExternalStorage(ctx, store, sm))

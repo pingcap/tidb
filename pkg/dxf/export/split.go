@@ -23,7 +23,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/store/copr"
@@ -33,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/zap"
 )
 
 const (
@@ -46,75 +44,50 @@ const (
 	subtaskSize = 200 * units.GiB
 )
 
-// generateSubtasks carves the task's tables into chunks and groups them into subtasks.
-func generateSubtasks(ctx context.Context, store kv.Storage, is infoschema.InfoSchema, meta *TaskMeta, nodeCount int) ([][]Chunk, error) {
+// generateChunks carves the task's tables into chunks and returns their total size.
+func generateChunks(
+	ctx context.Context,
+	store kv.Storage,
+	tableInfos map[int64]*model.TableInfo,
+	meta *TaskMeta,
+) ([]Chunk, int64, error) {
 	chunks := make([]Chunk, 0, meta.tableCount())
+	var total int64
 	tableIdx := 0
 	for i := range meta.DBs {
 		for _, tid := range meta.DBs[i].TableIDs {
-			tableChunks, err := splitTable(ctx, store, is, meta, tid, tableIdx)
+			tableChunks, err := splitTable(ctx, store, tableInfos, tid, tableIdx)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
+			}
+			for _, chunk := range tableChunks {
+				total += chunk.Size
 			}
 			chunks = append(chunks, tableChunks...)
 			tableIdx++
 		}
 	}
-	return divideSubtasks(chunks, nodeCount), nil
+	return chunks, total, nil
 }
 
-func tableInfoByID(ctx context.Context, is infoschema.InfoSchema, id int64) (*model.TableInfo, error) {
-	tbl, ok := is.TableByID(ctx, id)
+func tableInfoByID(tableInfos map[int64]*model.TableInfo, id int64) (*model.TableInfo, error) {
+	tblInfo, ok := tableInfos[id]
 	if !ok {
 		return nil, errors.Errorf("export: table %d not found in snapshot infoschema", id)
 	}
-	return tbl.Meta(), nil
-}
-
-// estimateExportSize returns each physical table's estimated byte size and the
-// total across the whole export task, from PD. It is the prepare-step data-volume
-// estimate that sizes the task's resources and seeds the split fallback.
-func estimateExportSize(ctx context.Context, store kv.Storage, is infoschema.InfoSchema, meta *TaskMeta) (map[int64]int64, int64, error) {
-	hStore, ok := store.(helper.Storage)
-	if !ok {
-		return nil, 0, errors.New("storage does not support region cache")
-	}
-	h := helper.NewHelper(hStore)
-	pdCli, err := h.TryGetPDHTTPClient()
-	if err != nil {
-		return nil, 0, errors.Trace(err)
-	}
-	sizes := make(map[int64]int64)
-	var total int64
-	for i := range meta.DBs {
-		for _, tid := range meta.DBs[i].TableIDs {
-			tblInfo, err := tableInfoByID(ctx, is, tid)
-			if err != nil {
-				return nil, 0, err
-			}
-			for _, pid := range physicalIDs(tblInfo) {
-				start, end := physicalTableRange(tblInfo, pid)
-				var size int64
-				backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
-				err = handle.RunWithRetry(ctx, loadRegionMaxRetry, backoffer, logutil.BgLogger(), func(context.Context) (bool, error) {
-					size, err = h.EstimateKeyRangeSize(ctx, pdCli, start, end)
-					return err != nil, err
-				})
-				if err != nil {
-					return nil, 0, errors.Trace(err)
-				}
-				sizes[pid] = size
-				total += size
-			}
-		}
-	}
-	return sizes, total, nil
+	return tblInfo, nil
 }
 
 // splitTable carves one table into ~chunkSize key-ordered chunks, with a
 // table-local ordinal spanning its partitions so file names stay unique.
-func splitTable(ctx context.Context, store kv.Storage, is infoschema.InfoSchema, meta *TaskMeta, tableID int64, tableIdx int) ([]Chunk, error) {
-	tblInfo, err := tableInfoByID(ctx, is, tableID)
+func splitTable(
+	ctx context.Context,
+	store kv.Storage,
+	tableInfos map[int64]*model.TableInfo,
+	tableID int64,
+	tableIdx int,
+) ([]Chunk, error) {
+	tblInfo, err := tableInfoByID(tableInfos, tableID)
 	if err != nil {
 		return nil, err
 	}
@@ -124,42 +97,40 @@ func splitTable(ctx context.Context, store kv.Storage, is infoschema.InfoSchema,
 	for _, pid := range pids {
 		start, end := physicalTableRange(tblInfo, pid)
 		var tableChunks []Chunk
-		if endKeys, sizes, ok := loadRegionSizes(ctx, store, start, end); ok {
+		endKeys, sizes, err := loadRegionSizes(ctx, store, start, end)
+		if err != nil {
+			return nil, err
+		}
+		if len(sizes) > 0 {
 			tableChunks, ordinal = chunksBySize(tableIdx, pid, start, end, endKeys, sizes, ordinal)
 		} else {
 			boundaries, err := loadRegionBoundaries(ctx, store, start, end)
 			if err != nil {
 				return nil, err
 			}
-			tableChunks, ordinal = chunksByCount(tableIdx, pid, boundaries, meta.PhysicalSizes[pid], ordinal)
+			tableChunks, ordinal = chunksByCount(tableIdx, pid, boundaries, 0, ordinal)
 		}
 		chunks = append(chunks, tableChunks...)
 	}
 	return chunks, nil
 }
 
-// loadRegionSizes returns each region's end key and byte size over [start, end)
-// from a fresh PD estimate with best effort.
-func loadRegionSizes(ctx context.Context, store kv.Storage, start, end kv.Key) (endKeys []kv.Key, sizes []int64, ok bool) {
+// loadRegionSizes returns each region's end key and byte size over [start, end).
+func loadRegionSizes(ctx context.Context, store kv.Storage, start, end kv.Key) (endKeys []kv.Key, sizes []int64, err error) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
-		return nil, nil, false
+		return nil, nil, errors.New("storage does not support region cache")
 	}
 	h := helper.NewHelper(hStore)
-	var err error
 	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
 	err = handle.RunWithRetry(ctx, loadRegionMaxRetry, backoffer, logutil.BgLogger(), func(context.Context) (bool, error) {
 		endKeys, sizes, err = h.RegionApproximateSizes(ctx, start, end)
-		return err != nil, err
+		return isRetryablePlanningError(err), err
 	})
 	if err != nil {
-		logutil.BgLogger().Warn("export: per-region size estimate failed, using region-count split", zap.Error(err))
-		return nil, nil, false
+		return nil, nil, errors.Trace(err)
 	}
-	if len(sizes) == 0 {
-		return nil, nil, false
-	}
-	return endKeys, sizes, true
+	return endKeys, sizes, nil
 }
 
 // chunksBySize starts a new chunk each time the accumulated region size reaches
@@ -234,7 +205,7 @@ func divideSubtasks(chunks []Chunk, nodeCount int) [][]Chunk {
 	if n := int64(max(nodeCount, 1)); n > 1 {
 		count = (count + n - 1) / n * n
 	}
-	budget := (total + count - 1) / count
+	budget := max(int64(1), (total+count-1)/count)
 
 	subtasks := make([][]Chunk, 0, count)
 	batch := make([]Chunk, 0, budget/chunkSize+1)

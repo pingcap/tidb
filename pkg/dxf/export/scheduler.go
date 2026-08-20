@@ -21,26 +21,28 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type exportScheduler struct {
 	*scheduler.BaseScheduler
-	store         kv.Storage
-	taskMeta      *TaskMeta
-	taskKSTaskMgr scheduler.TaskManager
-	logger        *zap.Logger
+	store    kv.Storage
+	taskMeta *TaskMeta
+	logger   *zap.Logger
 }
 
 var _ scheduler.Scheduler = (*exportScheduler)(nil)
@@ -72,20 +74,24 @@ func (*exportScheduler) OnTick(context.Context, *proto.Task) {}
 
 // OnPrepare implements scheduler.Extension.
 func (s *exportScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
-	is, err := s.snapshotInfoSchema()
+	tableInfos, err := s.snapshotTableInfos()
 	if err != nil {
 		return err
 	}
-	sizes, total, err := estimateExportSize(ctx, s.store, is, s.taskMeta)
+	chunks, total, err := generateChunks(ctx, s.store, tableInfos, s.taskMeta)
 	if err != nil {
 		return err
 	}
-	s.taskMeta.PhysicalSizes = sizes
 	if kerneltype.IsNextGen() {
 		if err := s.setResources(ctx, task, total); err != nil {
 			return err
 		}
 	}
+	preparedPlanPath, err := writePreparedPlan(ctx, task.ID, chunks)
+	if err != nil {
+		return err
+	}
+	s.taskMeta.PreparedPlanPath = preparedPlanPath
 	meta, err := json.Marshal(s.taskMeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -110,25 +116,37 @@ func (s *exportScheduler) setResources(ctx context.Context, task *proto.Task, to
 	return nil
 }
 
-func (s *exportScheduler) taskKSMgr() scheduler.TaskManager {
-	if s.taskKSTaskMgr == nil {
-		if kv.IsUserKS(s.TaskRuntime.Store()) {
-			s.taskKSTaskMgr = storage.NewTaskManager(s.TaskRuntime.SysSessionPool())
-		} else {
-			s.taskKSTaskMgr = s.GetTaskMgr()
+func (s *exportScheduler) snapshotTableInfos() (map[int64]*model.TableInfo, error) {
+	reader := meta.NewReader(s.store.GetSnapshot(kv.NewVersion(s.taskMeta.SnapshotTS)))
+	tableInfos := make(map[int64]*model.TableInfo, s.taskMeta.tableCount())
+	for i := range s.taskMeta.DBs {
+		db := &s.taskMeta.DBs[i]
+		dbInfo, err := reader.GetDatabase(db.DBID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if dbInfo == nil {
+			return nil, errors.Errorf("export: database %d not found in snapshot metadata", db.DBID)
+		}
+		if dbInfo.State != model.StatePublic {
+			return nil, errors.Errorf("export: database %d is not public", db.DBID)
+		}
+		db.DBName = dbInfo.Name.O
+		for _, tableID := range db.TableIDs {
+			tableInfo, err := reader.GetTable(db.DBID, tableID)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if tableInfo == nil {
+				return nil, errors.Errorf("export: table %d not found in snapshot metadata", tableID)
+			}
+			if tableInfo.State != model.StatePublic {
+				return nil, errors.Errorf("export: table %d is not public", tableID)
+			}
+			tableInfos[tableID] = tableInfo
 		}
 	}
-	return s.taskKSTaskMgr
-}
-
-func (s *exportScheduler) snapshotInfoSchema() (infoschema.InfoSchema, error) {
-	var is infoschema.InfoSchema
-	err := s.taskKSMgr().WithNewSession(func(se sessionctx.Context) error {
-		var err error
-		is, err = domain.GetDomain(se).GetSnapshotInfoSchema(s.taskMeta.SnapshotTS)
-		return err
-	})
-	return is, errors.Trace(err)
+	return tableInfos, nil
 }
 
 // GetNextStep implements scheduler.Extension.
@@ -152,14 +170,11 @@ func (s *exportScheduler) OnNextSubtasksBatch(
 ) ([][]byte, error) {
 	switch nextStep {
 	case proto.ExportStepDump:
-		is, err := s.snapshotInfoSchema()
+		chunks, err := readPreparedPlan(ctx, s.taskMeta.PreparedPlanPath)
 		if err != nil {
 			return nil, err
 		}
-		groups, err := generateSubtasks(ctx, s.store, is, s.taskMeta, max(task.MaxNodeCount, 1))
-		if err != nil {
-			return nil, err
-		}
+		groups := divideSubtasks(chunks, max(task.MaxNodeCount, 1))
 		metas, err := marshalSubtasks(ctx, task.ID, nextStep, groups)
 		if err != nil {
 			return nil, err
@@ -170,6 +185,35 @@ func (s *exportScheduler) OnNextSubtasksBatch(
 	default:
 		return nil, errors.Errorf("unexpected nextStep %s", proto.Step2Str(task.Type, nextStep))
 	}
+}
+
+func writePreparedPlan(ctx context.Context, taskID int64, chunks []Chunk) (string, error) {
+	store, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	plan := &SubtaskMeta{Chunks: chunks}
+	plan.ExternalPath = dxfutil.PreparedMetaPath(taskID)
+	if err := plan.WriteJSONToExternalStorage(ctx, store, plan); err != nil {
+		return "", errors.Trace(err)
+	}
+	return plan.ExternalPath, nil
+}
+
+func readPreparedPlan(ctx context.Context, planPath string) ([]Chunk, error) {
+	if planPath == "" {
+		return nil, errors.New("export: prepared plan path is empty")
+	}
+	store, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	plan := &SubtaskMeta{}
+	plan.ExternalPath = planPath
+	if err := plan.ReadJSONFromExternalStorage(ctx, store, plan); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return plan.Chunks, nil
 }
 
 // marshalSubtasks serializes each chunk group into a subtask meta, offloading the
@@ -211,8 +255,23 @@ func (*exportScheduler) GetEligibleInstances(context.Context, *proto.Task) ([]st
 }
 
 // IsRetryableErr implements scheduler.Extension.
-func (*exportScheduler) IsRetryableErr(error) bool {
-	return true
+func (*exportScheduler) IsRetryableErr(err error) bool {
+	return isRetryablePlanningError(err)
+}
+
+func isRetryablePlanningError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if rpcStatus, ok := status.FromError(errors.Cause(err)); ok {
+		switch rpcStatus.Code() {
+		case codes.DeadlineExceeded, codes.ResourceExhausted, codes.Aborted, codes.Unavailable, codes.DataLoss:
+			return true
+		default:
+			return false
+		}
+	}
+	return common.IsRetryableError(err)
 }
 
 // ModifyMeta implements scheduler.Extension.
@@ -223,5 +282,18 @@ func (*exportScheduler) ModifyMeta(oldMeta []byte, _ []proto.Modification) ([]by
 // TaskKey returns the DXF task key from the root id (the table id) and the
 // snapshot.
 func TaskKey(rootID int64, snapshotTS uint64) string {
+	return TaskKeyInKeyspace(keyspace.GetKeyspaceNameBySettings(), rootID, snapshotTS)
+}
+
+// TaskKeyInKeyspace returns the task key scoped to keyspaceName in NextGen.
+// Classic ignores keyspaceName because its task keys are not keyspace-scoped.
+func TaskKeyInKeyspace(keyspaceName string, rootID int64, snapshotTS uint64) string {
+	if kerneltype.IsNextGen() {
+		return taskKeyInKeyspace(keyspaceName, rootID, snapshotTS)
+	}
 	return fmt.Sprintf("export/%d/%d", rootID, snapshotTS)
+}
+
+func taskKeyInKeyspace(keyspaceName string, rootID int64, snapshotTS uint64) string {
+	return fmt.Sprintf("%s/export/%d/%d", keyspaceName, rootID, snapshotTS)
 }
