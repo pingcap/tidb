@@ -1692,9 +1692,79 @@ impl IndexJoinLookupExec {
                     LookupProbePart::Constant(value) => Some(value.clone()),
                 })
                 .collect::<Option<Vec<_>>>()
+                .and_then(|probe| self.probe_in_key_domain(probe))
             {
                 return Some(probe);
             }
+        }
+    }
+
+    /// Go `innerWorker.constructDatumLookupKey`
+    /// (`executor/join/index_lookup_join.go`): the outer value is converted to
+    /// the INNER key column's type, and the lookup happens with the converted
+    /// value -- `dLookupKey = append(dLookupKey, innerValue)`.
+    ///
+    /// Both of Go's refusals are kept, because each one is a row that must NOT
+    /// match rather than an optimization: a conversion that overflows the
+    /// inner type means no inner row can hold the value, and a converted value
+    /// that no longer compares equal to the original means the conversion was
+    /// lossy (`if cmp != 0 { return nil, nil, nil }`). A NULL outer key never
+    /// probes at all under a plain `=`.
+    ///
+    /// Probing with the RAW outer value was a wrong-answer bug, not a slower
+    /// path: an index key is encoded from the value, so
+    /// `t(c1 decimal(4,1))` holding `0.0` never found `t1(c1 decimal(4,2))`
+    /// holding `0.00`, and `select /*+ INL_JOIN(t1) */ * from t left join t1
+    /// on t1.c1 = t.c1` null-extended a row TiDB matches. The hash join is
+    /// unaffected because it compares numerically instead of by encoded key,
+    /// so the same statement answered differently with and without the hint.
+    fn probe_in_key_domain(&self, probe: Vec<Datum>) -> Option<Vec<Datum>> {
+        let Some(types) = self.probe_key_types() else {
+            return Some(probe);
+        };
+        probe
+            .into_iter()
+            .enumerate()
+            .map(|(at, value)| match types.get(at) {
+                Some(column) => crate::driver::point_get_key::point_get_value(column, &value),
+                // A probe wider than the key it opens is left alone; the
+                // cursor below refuses it on its own terms.
+                None => Some(value),
+            })
+            .collect()
+    }
+
+    /// The field types of the object-key columns a probe is encoded against,
+    /// or `None` for an object whose own arm already screens its probe.
+    fn probe_key_types(&self) -> Option<Vec<FieldType>> {
+        let columns = self.table.visible_columns();
+        match &self.object {
+            LookupObject::Index(index_id) => {
+                let index = self
+                    .table
+                    .indexes()
+                    .iter()
+                    .find(|index| index.id == *index_id)?;
+                Some(
+                    index
+                        .column_offsets
+                        .iter()
+                        .filter_map(|offset| columns.get(*offset))
+                        .map(|column| column.field_type.clone())
+                        .collect(),
+                )
+            }
+            LookupObject::CommonHandle => Some(
+                self.table
+                    .common_handle_offsets()
+                    .iter()
+                    .filter_map(|offset| columns.get(*offset))
+                    .map(|column| column.field_type.clone())
+                    .collect(),
+            ),
+            // The integer-handle arm already refuses a value that is not an
+            // integer handle, which is the same screen in that domain.
+            LookupObject::Handle => None,
         }
     }
 

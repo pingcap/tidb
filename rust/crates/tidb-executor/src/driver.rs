@@ -326,7 +326,7 @@ mod only_full_group_by;
 mod outer_join_elimination;
 pub(crate) mod outer_join_simplify;
 mod params;
-mod point_get_key;
+pub(crate) mod point_get_key;
 mod predicate_push_down;
 mod recursive_cte;
 mod set_opr;
