@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
@@ -513,7 +514,7 @@ func generateGlobalSortIngestPlan(
 	}
 	// write external meta to storage when using global sort
 	for i, m := range metaArr {
-		if err := writeExternalBackfillSubTaskMeta(ctx, objStore, m, globalsort.PlanMetaPath(
+		if err := writeExternalBackfillSubTaskMeta(ctx, objStore, m, dxfutil.PlanMetaPath(
 			task.ID,
 			proto.Step2Str(proto.Backfill, proto.BackfillStepWriteAndIngest),
 			i+1,
@@ -724,7 +725,7 @@ func generateMergeSortPlan(
 
 	// write external meta to storage when using global sort
 	for i, m := range metaArr {
-		if err := writeExternalBackfillSubTaskMeta(ctx, objStore, m, globalsort.PlanMetaPath(
+		if err := writeExternalBackfillSubTaskMeta(ctx, objStore, m, dxfutil.PlanMetaPath(
 			task.ID,
 			proto.Step2Str(proto.Backfill, proto.BackfillStepMergeSort),
 			i+1)); err != nil {

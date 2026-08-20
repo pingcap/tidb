@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
@@ -60,7 +61,7 @@ type TaskMeta struct {
 
 // PreparedMeta stores metadata generated in prepare stage.
 type PreparedMeta struct {
-	globalsort.BaseExternalMeta
+	dxfutil.BaseExternalMeta
 	ChunkMap map[int32][]importer.Chunk `json:"chunk_map,omitempty" external:"true"`
 }
 
@@ -73,7 +74,7 @@ func (m *PreparedMeta) Marshal() ([]byte, error) {
 // Scheduler will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
 type ImportStepMeta struct {
-	globalsort.BaseExternalMeta
+	dxfutil.BaseExternalMeta
 	// this is the engine ID, not the id in tidb_background_subtask table.
 	ID       int32
 	Chunks   []importer.Chunk   `external:"true"`
@@ -100,7 +101,7 @@ func (m *ImportStepMeta) Marshal() ([]byte, error) {
 
 // MergeSortStepMeta is the meta of merge sort step.
 type MergeSortStepMeta struct {
-	globalsort.BaseExternalMeta
+	dxfutil.BaseExternalMeta
 	// KVGroup is the group name of the sorted kv, either dataKVGroup or index-id.
 	KVGroup                 string   `json:"kv-group"`
 	DataFiles               []string `json:"data-files" external:"true"`
@@ -116,7 +117,7 @@ func (m *MergeSortStepMeta) Marshal() ([]byte, error) {
 // WriteIngestStepMeta is the meta of write and ingest step.
 // only used when global sort is enabled.
 type WriteIngestStepMeta struct {
-	globalsort.BaseExternalMeta
+	dxfutil.BaseExternalMeta
 	KVGroup                 string `json:"kv-group"`
 	globalsort.SortedKVMeta `json:"sorted-kv-meta" external:"true"`
 	RecordedConflictKVCount uint64   `json:"recorded-conflict-kv-count,omitempty"`
@@ -163,7 +164,7 @@ func (gci *KVGroupConflictInfos) addConflictInfo(kvGroup string, other *engineap
 
 // CollectConflictsStepMeta is the meta of collect conflicts step.
 type CollectConflictsStepMeta struct {
-	globalsort.BaseExternalMeta
+	dxfutil.BaseExternalMeta
 	Infos                   KVGroupConflictInfos `json:"infos" external:"true"`
 	RecordedDataKVConflicts int64                `json:"recorded-data-kv-conflicts,omitempty"`
 	// Checksum is the checksum of all conflicts rows.
@@ -188,7 +189,7 @@ func (m *CollectConflictsStepMeta) Marshal() ([]byte, error) {
 
 // ConflictResolutionStepMeta is the meta of conflict resolution step.
 type ConflictResolutionStepMeta struct {
-	globalsort.BaseExternalMeta
+	dxfutil.BaseExternalMeta
 	Infos KVGroupConflictInfos `json:"infos" external:"true"`
 }
 

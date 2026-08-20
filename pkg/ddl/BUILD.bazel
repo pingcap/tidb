@@ -102,6 +102,7 @@ go_library(
         "//pkg/domain/affinity",
         "//pkg/domain/infosync",
         "//pkg/dxf/framework/dxfmetric",
+        "//pkg/dxf/framework/dxfutil",
         "//pkg/dxf/framework/handle",
         "//pkg/dxf/framework/metering",
         "//pkg/dxf/framework/proto",
