@@ -596,6 +596,32 @@ pub fn decode_one_typed_in_timezone<'a, TZ: TimeZone>(
     field_type: &FieldType,
     timezone: Option<&TZ>,
 ) -> Result<(&'a [u8], Datum), CodecError> {
+    // Most row values already carry the Datum kind the schema needs. Keep the
+    // source's schema-aware conversion for temporal, decimal, enum/set, bit,
+    // duration and FLOAT values, but avoid matching the decoded Datum again
+    // for the common integer/string/DOUBLE/JSON families. This is especially
+    // important for wide default-encoded coprocessor batches, where the same
+    // field-type dispatch otherwise runs once per value.
+    if matches!(
+        field_type.code(),
+        FieldTypeCode::Tiny
+            | FieldTypeCode::Short
+            | FieldTypeCode::Int24
+            | FieldTypeCode::Long
+            | FieldTypeCode::LongLong
+            | FieldTypeCode::Double
+            | FieldTypeCode::String
+            | FieldTypeCode::Varchar
+            | FieldTypeCode::VarString
+            | FieldTypeCode::Blob
+            | FieldTypeCode::TinyBlob
+            | FieldTypeCode::MediumBlob
+            | FieldTypeCode::LongBlob
+            | FieldTypeCode::Json
+            | FieldTypeCode::VectorFloat32
+    ) {
+        return decode_one(input);
+    }
     let (remain, mut value) = decode_one(input)?;
     value = match (field_type.code(), value) {
         (FieldTypeCode::Float, Datum::Real(value)) => Datum::new_float32_from_f64(value),

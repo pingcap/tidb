@@ -157,6 +157,33 @@ impl ColumnSlot {
         matches!((self, other), (Self::Shared(left), Self::Shared(right)) if Arc::ptr_eq(left, right))
     }
 
+    pub(crate) fn append_cell_from(&mut self, source: &Self, row: usize) {
+        if let (Self::Owned(destination), Self::Owned(source)) = (&mut *self, source) {
+            destination.column.append_cell_from(&source.column, row);
+            return;
+        }
+
+        // A shared source may be the same owner as the destination. Snapshot
+        // that one cell before taking the write lock so an alias append never
+        // tries to read-lock a column it already write-locks.
+        if self.same_identity(source) {
+            let (not_null, source_is_fixed, cell) = {
+                let source = source.read();
+                let raw = source.get_raw(row);
+                let cell = raw.to_vec();
+                (!source.is_null(row), source.is_fixed(), cell)
+            };
+            self.write()
+                .append_prepared_cell(not_null, source_is_fixed, &cell);
+            return;
+        }
+
+        let source = source.read();
+        let raw = source.get_raw(row);
+        self.write()
+            .append_prepared_cell(!source.is_null(row), source.is_fixed(), &raw);
+    }
+
     pub(crate) fn is_shared(&self) -> bool {
         matches!(self, Self::Shared(_))
     }

@@ -723,9 +723,8 @@ impl Chunk {
     /// Go `AppendDatum`: append a [`Datum`] value into column `col_idx`,
     /// dispatching on its kind (the inverse of [`Row::get_datum`]).
     ///
-    /// A `Datum::Decimal` carries the digit-string `Decimal`, so it reaches
-    /// the raw 40-byte cell through `MyDecimal::from_string` over its
-    /// canonical text -- the same text `Row::get_datum` reads back out. A
+    /// A `Datum::Decimal` carries the value-layer `Decimal`, so it is converted
+    /// directly to Go's raw 40-byte `MyDecimal` layout. A
     /// value too large for the `MyDecimal` buffer panics rather than being
     /// silently truncated into the cell; callers holding a `MyDecimal`
     /// already should use the exact [`Chunk::append_my_decimal`].
@@ -759,12 +758,11 @@ impl Chunk {
             Datum::Time(t) => self.append_time(col_idx, *t),
             Datum::Duration(d) => self.append_duration(col_idx, *d),
             Datum::Decimal(dec) => {
-                let text = dec.to_string();
-                let (value, err) = MyDecimal::from_string(text.as_bytes());
-                assert!(
-                    err.is_none(),
-                    "Chunk::append_datum: decimal {text} does not fit a MyDecimal cell ({err:?})"
-                );
+                let value = dec.to_chunk_my_decimal().unwrap_or_else(|error| {
+                    panic!(
+                        "Chunk::append_datum: decimal {dec} does not fit a MyDecimal cell ({error:?})"
+                    )
+                });
                 self.append_my_decimal(col_idx, &value);
             }
             Datum::MinNotNull | Datum::MaxValue => {}
@@ -782,15 +780,7 @@ impl Chunk {
     }
 
     fn append_cell_between(destination: &mut ColumnSlot, source: &ColumnSlot, row: usize) {
-        let (not_null, source_is_fixed, cell) = {
-            let source = source.read();
-            let raw = source.get_raw(row);
-            let cell = raw.to_vec();
-            (!source.is_null(row), source.is_fixed(), cell)
-        };
-        destination
-            .write()
-            .append_prepared_cell(not_null, source_is_fixed, &cell);
+        destination.append_cell_from(source, row);
     }
 
     /// Go `AppendRow`: append a whole row (from another chunk) to this chunk.
@@ -1215,6 +1205,24 @@ mod tests {
             ["1.50", "-273.15", "0", "12345678901234567890.123456789"]
         );
         assert!(chunk.get_row(4).is_null(0));
+    }
+
+    #[test]
+    fn decimal_datum_append_preserves_hidden_fraction_words() {
+        use tidb_datatype::{Decimal, FieldTypeCode};
+        let ft = FieldType::new(FieldTypeCode::NewDecimal);
+        let decimal = Decimal::from_literal("8")
+            .true_div(&Decimal::from_literal("7"), 7)
+            .unwrap();
+        let mut chunk = Chunk::new(std::slice::from_ref(&ft), 1, 1);
+        chunk.append_datum(0, &Datum::Decimal(decimal));
+
+        let stored = chunk.get_row(0).get_my_decimal(0);
+        assert_eq!(stored.result_frac(), 7);
+        assert_eq!(stored.digits_frac(), 9);
+        let round_trip = Decimal::from_my_decimal(&stored);
+        assert_eq!(round_trip.to_string(), "1.1428571");
+        assert_eq!(round_trip.storage_string(), "1.142857142");
     }
 
     #[test]

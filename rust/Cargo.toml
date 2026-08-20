@@ -139,6 +139,10 @@ flate2 = "1"
 zstd = "0.13"
 crc32fast = "1"
 num-traits = "0.2"
+# Go's MyDecimal keeps ordinary coefficients inline. Preserve that hot-path
+# ownership model in the Rust value layer while retaining heap fallback for
+# the full DECIMAL precision range.
+smallvec = "1"
 # `pkg/util/hack` reaches into Go's private Swiss-map ABI to account for the
 # allocation behind a map. Rust's standard HashMap deliberately hides that
 # layout. Pin hashbrown, the table implementation, so the Rust transcreation
