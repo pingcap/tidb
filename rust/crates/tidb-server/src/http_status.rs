@@ -192,7 +192,8 @@ mod tests {
 }
 
 /// Go `SchemaHandler.ServeHTTP` (`tikvhandler/tikv_handler.go`): the three
-/// `/schema` routes, answered from the node's current catalog.
+/// `/schema` routes and the three form values they read, answered from the
+/// node's current catalog.
 ///
 /// `None` means the path is not a schema route at all, which the caller
 /// answers 404 as before. `Some(Err(..))` is Go's `WriteError`, which it uses
@@ -201,12 +202,35 @@ mod tests {
 /// The bodies are the SAME `DBInfo`/`TableInfo` JSON the catalog stores, so
 /// what this serves and what a peer reads back cannot drift: both go through
 /// `tidb_meta::value`'s serializers.
+/// Go `getTableByIDStr`: a table id is unique cluster-wide, so the search
+/// crosses databases.
+fn find_table_by_id(
+    catalog: &tidb_exec::cluster_catalog::ClusterCatalog,
+    id: i64,
+) -> Option<&tidb_model::TableInfo> {
+    catalog
+        .databases
+        .iter()
+        .find_map(|database| database.tables.iter().find(|table| table.id == id))
+}
+
 fn schema_response(
     path: &str,
     source: &dyn Fn() -> tidb_exec::cluster_catalog::ClusterCatalog,
 ) -> Option<Result<String, String>> {
-    // Go's mux strips the query string before matching; so does this.
-    let path = path.split('?').next().unwrap_or(path);
+    // Go's mux strips the query string before matching, and the handler then
+    // reads its own form values from it.
+    let (path, query) = match path.split_once('?') {
+        Some((path, query)) => (path, query),
+        None => (path, ""),
+    };
+    let form = |name: &str| {
+        query.split('&').find_map(|pair| {
+            pair.split_once('=')
+                .filter(|(key, _)| *key == name)
+                .map(|(_, value)| value)
+        })
+    };
     let rest = path.strip_prefix("/schema")?;
     let parts: Vec<&str> = rest.split('/').filter(|part| !part.is_empty()).collect();
     if !rest.is_empty() && !rest.starts_with('/') {
@@ -217,6 +241,47 @@ fn schema_response(
     let encode = |bytes: Result<Vec<u8>, String>| -> Result<String, String> {
         bytes.and_then(|body| String::from_utf8(body).map_err(|error| error.to_string()))
     };
+    // Go reads `table_id`/`table_ids` BEFORE falling through to all
+    // databases, so they only apply to the bare `/schema` route.
+    if parts.is_empty() {
+        if let Some(id) = form("table_id") {
+            return Some(match id.parse::<i64>() {
+                Ok(id) => match find_table_by_id(&catalog, id) {
+                    Some(found) => encode(tidb_exec::cluster_catalog::stored_table_info_json(found)),
+                    // Go `getTableByIDStr`'s own message.
+                    None => Err(format!("[schema:1146]Table which ID = {id} does not exist.")),
+                },
+                Err(error) => Err(error.to_string()),
+            });
+        }
+        if let Some(ids) = form("table_ids") {
+            // Go builds a map keyed by the id, skipping ids it cannot find,
+            // and errors only when NONE resolved.
+            let mut out = String::from("{");
+            let mut found_any = false;
+            for id in ids.split(',').filter_map(|id| id.parse::<i64>().ok()) {
+                let Some(found) = find_table_by_id(&catalog, id) else {
+                    continue;
+                };
+                match encode(tidb_exec::cluster_catalog::stored_table_info_json(found)) {
+                    Ok(body) => {
+                        if found_any {
+                            out.push(',');
+                        }
+                        out.push_str(&format!("\"{id}\":{body}"));
+                        found_any = true;
+                    }
+                    Err(error) => return Some(Err(error)),
+                }
+            }
+            out.push('}');
+            return Some(if found_any {
+                Ok(out)
+            } else {
+                Err("All tables are not found".to_owned())
+            });
+        }
+    }
     match parts.as_slice() {
         // All databases' schemas: Go `WriteData(w, schema.AllSchemas())`.
         [] => {
@@ -243,6 +308,24 @@ fn schema_response(
             else {
                 return Some(Err(format!("[schema:1049]Unknown database '{database}'")));
             };
+            // Go `SchemaSimpleTableInfos`: `{id, name}` per table, for a
+            // caller that wants the listing without every column.
+            if form("id_name_only") == Some("true") {
+                let mut out = String::from("[");
+                for (index, table) in found.tables.iter().enumerate() {
+                    if index > 0 {
+                        out.push(',');
+                    }
+                    let name = table.name.original();
+                    out.push_str(&format!(
+                        "{{\"id\":{},\"name\":{{\"O\":\"{name}\",\"L\":\"{}\"}}}}",
+                        table.id,
+                        table.name.lowercase(),
+                    ));
+                }
+                out.push(']');
+                return Some(Ok(out));
+            }
             let mut out = String::from("[");
             for (index, table) in found.tables.iter().enumerate() {
                 if index > 0 {
@@ -306,13 +389,64 @@ mod schema_route_tests {
     }
 
     fn table(name: &str) -> tidb_model::TableInfo {
+        // Distinct ids, so a lookup by id proves it found the right one.
+        let id = 30 + i64::from(name.as_bytes().last().copied().unwrap_or(b'0') - b'0');
         tidb_model::TableInfo {
-            id: 30,
+            id,
             name: tidb_ast::CiString::new(name),
             state: tidb_model::SchemaState::PUBLIC,
             ..tidb_model::TableInfo::default()
         }
     }
+
+    /// Go reads three form values on `/schema`, and each changes the answer.
+    ///
+    /// `table_id`/`table_ids` search across databases, because a table id is
+    /// unique cluster-wide; `id_name_only` narrows a database listing to
+    /// `{id, name}` for a caller that does not want every column.
+    #[test]
+    fn the_schema_form_values_answer_gos_shapes() {
+        let source = catalog_with(vec![database("test", vec![table("t1"), table("t2")])]);
+
+        // `id_name_only` is the listing, not the definitions.
+        let listing = schema_response("/schema/test?id_name_only=true", source.as_ref())
+            .expect("a schema route")
+            .expect("serialises");
+        assert!(listing.contains("\"id\":31") && listing.contains("\"t1\""), "{listing}");
+        assert!(
+            !listing.contains("\"cols\""),
+            "id_name_only must not carry column definitions: {listing}"
+        );
+
+        // A single id answers a bare TableInfo.
+        let one = schema_response("/schema?table_id=31", source.as_ref())
+            .expect("a schema route")
+            .expect("serialises");
+        assert!(one.starts_with('{') && one.contains("\"t1\""), "{one}");
+
+        // Several ids answer a map KEYED by id, skipping ones not found.
+        let many = schema_response("/schema?table_ids=31,32,999999", source.as_ref())
+            .expect("a schema route")
+            .expect("serialises");
+        assert!(many.starts_with("{\"31\":"), "{many}");
+        assert!(many.contains("\"32\":"), "{many}");
+        assert!(!many.contains("999999"), "a missing id is skipped: {many}");
+
+        // Go errors only when NONE of the ids resolved.
+        let none = schema_response("/schema?table_ids=999999", source.as_ref())
+            .expect("a schema route")
+            .expect_err("refused");
+        assert!(none.contains("All tables are not found"), "{none}");
+
+        let missing = schema_response("/schema?table_id=999999", source.as_ref())
+            .expect("a schema route")
+            .expect_err("refused");
+        assert!(
+            missing.contains("1146") && missing.contains("999999"),
+            "{missing}"
+        );
+    }
+
 
     /// Go `SchemaHandler.ServeHTTP`: three routes over the live catalog.
     ///
