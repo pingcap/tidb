@@ -1206,6 +1206,43 @@ impl Drop for WorkerTerminalGuard {
     }
 }
 
+/// Go's `ErrConCount` reply: a client arriving when every worker is busy is
+/// told `1040 Too many connections` and closed, rather than left waiting in
+/// the listen backlog.
+///
+/// `server.go` returns `servererr.ErrConCount` from its capacity check and
+/// `onConn` answers it with `conn.writeError(ctx, err)`, so the packet goes
+/// out before any handshake -- which is why the sequence number is 0 and the
+/// packet carries NO SQLSTATE marker. Go writes it through the same
+/// `writeError`, whose 4.1 form is conditioned on
+/// `cc.capability&mysql.ClientProtocol41`, and at this point the client has
+/// sent no capability flags at all, so that bit is clear. Sending the marker
+/// anyway is not cosmetic: the client parses the packet in the old form and
+/// the marker lands INSIDE the message, which reads
+/// `ERROR 1040 (HY000): #08004Too many connections`.
+///
+/// Failures are ignored on purpose: the connection is being refused, and a
+/// peer that has already gone away is the ordinary case.
+fn refuse_over_capacity(stream: &TcpStream) {
+    let Ok(socket) = stream.try_clone() else {
+        return;
+    };
+    let Ok(mut output) =
+        tidb_protocol::PacketIoWriter::new(socket, tidb_protocol::CompressionAlgorithm::None)
+    else {
+        return;
+    };
+    let _ = crate::connection_writers::write_error(
+        &mut output,
+        0,
+        tidb_error::mysql::errcode::ErrConCount,
+        *b"08004",
+        "Too many connections",
+        false,
+    );
+    let _ = stream.shutdown(Shutdown::Both);
+}
+
 fn acquire_worker(
     available: &mpsc::Receiver<usize>,
     terminal: &mpsc::Receiver<WorkerTerminal>,
@@ -1487,24 +1524,69 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             if limit == Some(accepted) || self.shutdown.is_shutdown_requested() {
                 break Ok(());
             }
+            // Go ACCEPTS first and checks capacity after
+            // (`server.go`'s `onConn` -> `checkConnectionCount`):
+            //
+            //     if conns >= int(s.cfg.Instance.MaxConnections) {
+            //         return servererr.ErrConCount
+            //     }
+            //     ...
+            //     case servererr.ErrConCount:
+            //         if err := conn.writeError(ctx, err); ...
+            //
+            // so a client over the limit is TOLD `1040 Too many connections`
+            // and closed. Acquiring a worker BEFORE accepting left that client
+            // in the listen backlog instead, where it waited out its own
+            // connect timeout and reported "Lost connection ... waiting for
+            // initial communication packet" -- a pooler cannot tell that from
+            // a dead server, and 1040 is what tells it to back off.
+            let (stream, peer_addr) = match self.listener.accept() {
+                Ok(connection) => connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    // The terminal-worker check `acquire_worker` performed on
+                    // every poll still has to happen while the loop idles, or
+                    // a panicked worker goes unnoticed until a client arrives.
+                    match terminal_workers.try_recv() {
+                        Ok(worker) => {
+                            break Err(SqlNodeError::WorkerTerminated {
+                                index: worker.index,
+                                panicked: worker.kind == WorkerTerminalKind::Panicked,
+                            })
+                        }
+                        Err(mpsc::TryRecvError::Empty) => {}
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            break Err(SqlNodeError::WorkerQueueClosed)
+                        }
+                    }
+                    std::thread::sleep(ACCEPT_POLL_INTERVAL);
+                    continue;
+                }
+                Err(error) => break Err(SqlNodeError::Listener(error)),
+            };
+            // Go's capacity test is a COUNT, not a token: `conns :=
+            // s.ConnectionCount(); if conns >= int(...MaxConnections)`. That
+            // distinction is the whole of this arm.
+            //
+            // Claiming the worker with `try_recv` and refusing on an empty
+            // channel looks equivalent and is not: the pool is filled by the
+            // worker threads as they come up and refilled as they finish, so
+            // an empty channel also means "momentarily between hands", not
+            // only "at capacity". A client arriving in that window was refused
+            // with 1040 while a slot was free -- and, measured, three clients
+            // that had to be live at once for a barrier deadlocked when one of
+            // them was spuriously turned away.
+            //
+            // The count says exactly what Go's says, so the acquisition below
+            // may go back to WAITING for the worker whose slot this connection
+            // already owns.
+            if self.tracker.active() >= self.worker_count {
+                refuse_over_capacity(&stream);
+                continue;
+            }
             let Some(worker_index) =
                 acquire_worker(&available_workers, &terminal_workers, &self.shutdown)?
             else {
                 break Ok(());
-            };
-            let (stream, peer_addr) = match self.listener.accept() {
-                Ok(connection) => connection,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    available_sender
-                        .send(worker_index)
-                        .map_err(|_| SqlNodeError::WorkerQueueClosed)?;
-                    std::thread::sleep(ACCEPT_POLL_INTERVAL);
-                    continue;
-                }
-                Err(error) => {
-                    let _ = available_sender.send(worker_index);
-                    break Err(SqlNodeError::Listener(error));
-                }
             };
             prepare_stream(&stream, self.connection_timeout)?;
             let connection_key = u64::try_from(accepted)
