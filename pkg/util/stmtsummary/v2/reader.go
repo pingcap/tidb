@@ -581,40 +581,50 @@ func (f *stmtFiles) close() {
 }
 
 func newStmtFiles(ctx context.Context) (*stmtFiles, error) {
+	return newStmtFilesWithReadDir(ctx, os.ReadDir)
+}
+
+func newStmtFilesWithReadDir(
+	ctx context.Context,
+	readDir func(string) ([]os.DirEntry, error),
+) (*stmtFiles, error) {
 	filename := config.GetGlobalConfig().Instance.StmtSummaryFilename
 	ext := filepath.Ext(filename)
 	prefix := filename[:len(filename)-len(ext)]
 
-	dir := filepath.Dir(filename)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
+	if isCtxDone(ctx) {
+		return nil, ctx.Err()
 	}
-
-	// Keep the active file open so a rotation after this snapshot cannot replace
-	// the inode read by this query. Rotated files are still opened on demand.
-	var currentFile *stmtFile
-	for _, entry := range entries {
-		path := filepath.Join(dir, entry.Name())
-		if path != filename || entry.IsDir() {
-			continue
+	// Pin the active inode before enumerating rotated files. If rotation happens
+	// during enumeration, the directory entry for this inode is deduplicated below.
+	currentFile, err := openStmtFile(filename)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			logutil.BgLogger().Warn("failed to snapshot current statements file", zap.Error(err), zap.String("path", filename))
 		}
-		if isCtxDone(ctx) {
-			return nil, ctx.Err()
-		}
-		currentFile, err = openStmtFile(path)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				logutil.BgLogger().Warn("failed to snapshot current statements file", zap.Error(err), zap.String("path", path))
-			}
-			currentFile = nil
-		}
-		break
+		currentFile = nil
 	}
 
 	var files []*stmtFile
+	var currentFileInfo os.FileInfo
 	if currentFile != nil {
 		files = append(files, currentFile)
+		currentFileInfo, err = currentFile.file.Stat()
+		if err != nil {
+			logutil.BgLogger().Warn("failed to stat current statements file", zap.Error(err), zap.String("path", filename))
+			currentFileInfo = nil
+		}
+	}
+
+	dir := filepath.Dir(filename)
+	entries, err := readDir(dir)
+	if err != nil {
+		(&stmtFiles{files: files}).close()
+		return nil, err
+	}
+	if isCtxDone(ctx) {
+		(&stmtFiles{files: files}).close()
+		return nil, ctx.Err()
 	}
 	walkFn := func(path string, entry os.DirEntry) error {
 		if entry.IsDir() {
@@ -631,6 +641,12 @@ func newStmtFiles(ctx context.Context) (*stmtFiles, error) {
 				files = append(files, &stmtFile{path: path})
 			}
 			return nil
+		}
+		if currentFileInfo != nil {
+			fileInfo, infoErr := entry.Info()
+			if infoErr == nil && os.SameFile(currentFileInfo, fileInfo) {
+				return nil
+			}
 		}
 		files = append(files, &stmtFile{path: path})
 		return nil

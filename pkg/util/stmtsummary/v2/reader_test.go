@@ -132,58 +132,84 @@ func TestStmtFiles(t *testing.T) {
 	require.Nil(t, files.files[0].file)
 	require.NotNil(t, files.files[1].file)
 
-	t.Run("preserves current file across rotation", func(t *testing.T) {
-		restore := config.RestoreFunc()
-		defer restore()
+	for _, tc := range []struct {
+		name                   string
+		rotateAfterEnumeration bool
+	}{
+		{name: "rotation follows directory snapshot", rotateAfterEnumeration: true},
+		{name: "rotation precedes directory snapshot"},
+	} {
+		t.Run("preserves current file when "+tc.name, func(t *testing.T) {
+			restore := config.RestoreFunc()
+			defer restore()
 
-		dir := t.TempDir()
-		currentPath := filepath.Join(dir, "tidb-statements.log")
-		rotatedPath := filepath.Join(dir, "tidb-statements-2022-12-27T16-21-20.245.log")
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.Instance.StmtSummaryFilename = currentPath
+			dir := t.TempDir()
+			currentPath := filepath.Join(dir, "tidb-statements.log")
+			rotatedPath := filepath.Join(dir, "tidb-statements-2022-12-27T16-21-20.245.log")
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.Instance.StmtSummaryFilename = currentPath
+			})
+
+			const oldRecord = `{"begin":1,"end":2,"digest":"old"}`
+			const newRecord = `{"begin":3,"end":4,"digest":"new"}`
+			require.NoError(t, os.WriteFile(currentPath, []byte(oldRecord+"\n"), 0o600))
+			rotate := func() error {
+				if err := os.Rename(currentPath, rotatedPath); err != nil {
+					return err
+				}
+				return os.WriteFile(currentPath, []byte(newRecord+"\n"), 0o600)
+			}
+
+			files, err := newStmtFilesWithReadDir(context.Background(), func(dir string) ([]os.DirEntry, error) {
+				if !tc.rotateAfterEnumeration {
+					if err := rotate(); err != nil {
+						return nil, err
+					}
+					return os.ReadDir(dir)
+				}
+				entries, err := os.ReadDir(dir)
+				if err != nil {
+					return nil, err
+				}
+				if err := rotate(); err != nil {
+					return nil, err
+				}
+				return entries, nil
+			})
+			require.NoError(t, err)
+			require.Len(t, files.files, 1)
+			snapshot := files.files[0]
+			require.NotNil(t, snapshot.file)
+
+			columns := []*model.ColumnInfo{{Name: ast.NewCIStr(DigestStr)}}
+			ctx, cancel := context.WithCancel(context.Background())
+			rowsCh := make(chan [][]types.Datum, 2)
+			errCh := make(chan error, 2)
+			reader := &HistoryReader{
+				ctx:             ctx,
+				cancel:          cancel,
+				timeLocation:    time.Local,
+				columnFactories: makeColumnFactories(columns),
+				checker:         &stmtChecker{},
+				files:           files,
+				concurrent:      2,
+				rowsCh:          rowsCh,
+				errCh:           errCh,
+			}
+			reader.wg.Add(1)
+			go func() {
+				defer reader.wg.Done()
+				reader.scheduleTasks(rowsCh, errCh)
+			}()
+			defer func() {
+				require.NoError(t, reader.Close())
+			}()
+
+			rows := readAllRows(t, reader)
+			require.Len(t, rows, 1)
+			require.Equal(t, "old", rows[0][0].GetString())
 		})
-
-		const oldRecord = `{"begin":1,"end":2,"digest":"old"}`
-		const newRecord = `{"begin":3,"end":4,"digest":"new"}`
-		require.NoError(t, os.WriteFile(currentPath, []byte(oldRecord+"\n"), 0o600))
-
-		files, err := newStmtFiles(context.Background())
-		require.NoError(t, err)
-		require.Len(t, files.files, 1)
-		snapshot := files.files[0]
-		require.NotNil(t, snapshot.file)
-
-		require.NoError(t, os.Rename(currentPath, rotatedPath))
-		require.NoError(t, os.WriteFile(currentPath, []byte(newRecord+"\n"), 0o600))
-
-		columns := []*model.ColumnInfo{{Name: ast.NewCIStr(DigestStr)}}
-		ctx, cancel := context.WithCancel(context.Background())
-		rowsCh := make(chan [][]types.Datum, 2)
-		errCh := make(chan error, 2)
-		reader := &HistoryReader{
-			ctx:             ctx,
-			cancel:          cancel,
-			timeLocation:    time.Local,
-			columnFactories: makeColumnFactories(columns),
-			checker:         &stmtChecker{},
-			files:           files,
-			concurrent:      2,
-			rowsCh:          rowsCh,
-			errCh:           errCh,
-		}
-		reader.wg.Add(1)
-		go func() {
-			defer reader.wg.Done()
-			reader.scheduleTasks(rowsCh, errCh)
-		}()
-		defer func() {
-			require.NoError(t, reader.Close())
-		}()
-
-		rows := readAllRows(t, reader)
-		require.Len(t, rows, 1)
-		require.Equal(t, "old", rows[0][0].GetString())
-	})
+	}
 }
 
 func TestStmtChecker(t *testing.T) {
