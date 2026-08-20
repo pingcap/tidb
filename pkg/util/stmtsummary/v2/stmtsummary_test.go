@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -408,4 +409,40 @@ func TestDefaultConfig(t *testing.T) {
 
 	// Verify RefreshInterval (should be 1800 = 30 min)
 	require.Equal(t, uint32(1800), ss.RefreshInterval())
+}
+
+// TestEvictedConcurrentWithRotate verifies that Evicted() is safe to call
+// concurrently with rotate (V2-25 data race fix).
+func TestEvictedConcurrentWithRotate(t *testing.T) {
+	ss := NewStmtSummary4Test(2)
+	defer ss.Close()
+
+	ss.Add(GenerateStmtExecInfo4Test("digest1"))
+	ss.Add(GenerateStmtExecInfo4Test("digest2"))
+	ss.Add(GenerateStmtExecInfo4Test("digest3"))
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			_ = ss.Evicted()
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			ss.windowLock.Lock()
+			ss.rotate(timeNow())
+			ss.windowLock.Unlock()
+			ss.Add(GenerateStmtExecInfo4Test("digest_new"))
+			ss.Add(GenerateStmtExecInfo4Test("digest_new2"))
+			ss.Add(GenerateStmtExecInfo4Test("digest_new3"))
+		}
+	}()
+
+	wg.Wait()
 }

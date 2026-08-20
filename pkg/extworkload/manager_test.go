@@ -56,7 +56,7 @@ func startManagerStub(t *testing.T, stub *managerStubServer) (string, func()) {
 }
 
 func TestNewManagerLifecycle(t *testing.T) {
-	meta := &keyspacepb.KeyspaceMeta{Id: 42, Name: "starter-ks"}
+	meta := &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 42}, Name: "starter-ks"}
 	cfg := config.ExternalWorkload{
 		Enable:         true,
 		Role:           config.RoleMaster,
@@ -88,7 +88,7 @@ func TestNewManagerPingFailure(t *testing.T) {
 	})
 	defer cleanup()
 
-	mgr, err := NewManager(context.Background(), &keyspacepb.KeyspaceMeta{Id: 1, Name: "ks"}, config.ExternalWorkload{
+	mgr, err := NewManager(context.Background(), &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 1}, Name: "ks"}, config.ExternalWorkload{
 		Enable:         true,
 		Role:           config.RoleMaster,
 		TidbPool:       "super-vip-tidb-pool",

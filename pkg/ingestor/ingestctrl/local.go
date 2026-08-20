@@ -1654,13 +1654,15 @@ func (local *Backend) doImport(
 		clusterID = local.pdCli.GetClusterID(ctx)
 	}
 
+	// Workers must use wctx so OnError cancels their in-flight work before
+	// Release waits for them to exit.
+	wctx := workerpool.NewContext(workerCtx)
 	pool := getRegionJobWorkerPool(
-		workerCtx, &jobWg,
+		wctx, &jobWg,
 		local, balancer,
 		jobToWorkerCh, jobFromWorkerCh,
 		clusterID,
 	)
-	wctx := workerpool.NewContext(workerCtx)
 
 	if e, ok := engine.(*globalsort.Engine); ok {
 		e.SetWorkerPool(pool)
@@ -1670,13 +1672,20 @@ func (local *Backend) doImport(
 		failpoint.Goto("afterStartWorker")
 	})
 
-	workGroup.Go(func() error {
-		pool.Start(wctx)
-		<-wctx.Done()
-		return wctx.OperatorErr()
-	})
+	pool.Start(wctx)
 
 	failpoint.Label("afterStartWorker")
+
+	workGroup.Go(func() error {
+		<-wctx.Done()
+		failpoint.InjectCall("beforeReleaseRegionJobWorkerPool")
+		pool.Release()
+		operatorErr := wctx.OperatorErr()
+		if operatorErr == nil && workerCtx.Err() == nil {
+			dispatcher.markAllJobsSucceeded()
+		}
+		return operatorErr
+	})
 
 	workGroup.Go(func() error {
 		err := local.prepareAndSendJob(
@@ -1707,11 +1716,7 @@ func (local *Backend) doImport(
 			})
 		}
 
-		// Close the pool, as well as the channel.
 		wctx.Cancel()
-		pool.Release()
-		// The worker may set operator error after jobWg.Wait() is unblocked. Re-check
-		// here to avoid losing worker errors due to cancellation ordering.
 		return wctx.OperatorErr()
 	})
 

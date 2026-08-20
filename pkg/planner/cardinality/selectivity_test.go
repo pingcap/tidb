@@ -1868,6 +1868,75 @@ func TestIndexRangeEstimationWithTruncatedHandleRange(t *testing.T) {
 	require.Equal(t, "1.00", estRows)
 }
 
+// TestIndexRangeEstimationWithPrefixedCommonHandle covers a clustered handle whose leading
+// column is a prefixed index column. The handle appended to a non-unique secondary index
+// stores that column truncated, so the execution ranges must keep prefix semantics and
+// re-check the predicate as a filter. Estimation follows a different route: a tuple
+// comparison spanning the index column and the whole handle reaches Selectivity() without
+// a filled access path (through the index merge OR path estimation), where the ranges are
+// built from the length slice assembled in Selectivity() itself. That slice must hold one
+// entry per column of the extended index key; see issue #70532, where the appended handle
+// counted as a single column and range building read past the end of the slice.
+func TestIndexRangeEstimationWithPrefixedCommonHandle(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(p1 varchar(64), p2 int, c int, primary key(p1(2), p2) clustered, key ic(c))")
+	vals := make([]string, 0, 100)
+	for i := 1; i <= 100; i++ {
+		// Every p1 shares the same 2-character prefix, so the prefix stored in the index
+		// key carries no information beyond "some row of this table".
+		vals = append(vals, fmt.Sprintf("('pp_%03d', %d, %d)", i, i, i%10))
+	}
+	tk.MustExec("insert into t values " + strings.Join(vals, ","))
+	tk.MustExec("analyze table t all columns")
+
+	// Returns the estRows and operator info of the named operator in the plan.
+	planRow := func(sql, operator string) (estRows, operatorInfo string) {
+		rows := tk.MustQuery("explain format='brief' " + sql).Rows()
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), operator) {
+				return row[1].(string), row[4].(string)
+			}
+		}
+		t.Fatalf("no %s in plan for %q", operator, sql)
+		return "", ""
+	}
+
+	// Equality on the prefixed handle column ranges over the stored prefix only, and the
+	// full predicate stays as a filter on the table side, where the untruncated value is
+	// available.
+	sql := "select * from t use index(ic) where c = 5 and p1 = 'pp_055'"
+	_, opInfo := planRow(sql, "IndexRangeScan")
+	require.Contains(t, opInfo, `range:[5 "pp",5 "pp"]`, "the handle range must use the stored prefix")
+	_, opInfo = planRow(sql, "Selection")
+	require.Contains(t, opInfo, `eq(test.t.p1, "pp_055")`, "the prefixed predicate must be re-checked")
+	tk.MustQuery(sql).Check(testkit.Rows("pp_055 55 5"))
+
+	// The column after the prefixed one is still ranged over: the prefix only widens its
+	// own dimension of the key.
+	sql = "select * from t use index(ic) where c = 5 and p1 = 'pp_055' and p2 = 55"
+	_, opInfo = planRow(sql, "IndexRangeScan")
+	require.Contains(t, opInfo, `range:[5 "pp" 55,5 "pp" 55]`, "the handle range must keep the p2 dimension")
+	tk.MustQuery(sql).Check(testkit.Rows("pp_055 55 5"))
+
+	// A tuple comparison spanning the index column and the whole handle. Planning this
+	// panicked before the length slice was extended per appended column. The estimate is
+	// the Selectivity() result over the tuple predicate: the appended dimensions are
+	// estimated from the handle columns' own statistics, which hold untruncated values,
+	// so the bounds handed to estimation stay untruncated as well.
+	sql = "select * from t where (c, p1, p2) > (5, 'pp_055', 55)"
+	estRows, _ := planRow(sql, "Selection")
+	require.Equal(t, "40.00", estRows)
+	require.Len(t, tk.MustQuery(sql).Rows(), 44)
+
+	sql = "select * from t use index(ic) where (c, p1, p2) > (5, 'pp_055', 55)"
+	estRows, opInfo = planRow(sql, "IndexRangeScan")
+	require.Contains(t, opInfo, `range:[5 "pp",5 +inf], (5,+inf]`, "the handle range must use the stored prefix")
+	require.Equal(t, "50.00", estRows)
+	require.Len(t, tk.MustQuery(sql).Rows(), 44)
+}
+
 func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
