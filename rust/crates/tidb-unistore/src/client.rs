@@ -246,14 +246,15 @@ impl tidb_txnkv::rpc::PendingRequest for ImmediatePending {
     }
 }
 
-/// Go `rpc.go`'s typed arms: `CmdGet`, `CmdScan`, `CmdPrewrite`, `CmdCommit`,
-/// `CmdBatchRollback`, `CmdPessimisticLock`, `CmdPessimisticRollback`,
-/// `CmdTxnHeartBeat` each dispatch the typed kvrpcpb request straight into the
-/// embedded store. Every command completes synchronously, so the publication
-/// receipt is minted here — the store DID see the command — with the
-/// in-process address and a client-monotone request identity.
+/// Go `rpc.go`'s typed arms: `CmdGet`, `CmdBatchGet`, `CmdScan`, `CmdPrewrite`,
+/// `CmdCommit`, `CmdBatchRollback`, `CmdPessimisticLock`,
+/// `CmdPessimisticRollback`, `CmdTxnHeartBeat` each dispatch the typed kvrpcpb
+/// request straight into the embedded store. Every command completes
+/// synchronously, so the publication receipt is minted here — the store DID
+/// see the command — with the in-process address and a client-monotone request
+/// identity.
 macro_rules! publish_in_process {
-    ($self:ident, $request:ident, $tag:ident, $method:ident) => {{
+    ($self:ident, $request:expr, $tag:ident, $method:ident) => {{
         let response = $self
             .handler
             .lock()
@@ -280,6 +281,18 @@ impl TransactionCommandClient for InProcessClient {
         _call: &UnaryCallContext,
     ) -> PublishedCommand<tidb_proto::KvrpcGetResponse> {
         publish_in_process!(self, request, Get, kv_get)
+    }
+
+    fn publish_transaction_batch_get(
+        &mut self,
+        _address: &str,
+        request: &tidb_proto::KvrpcBatchGetRequest,
+        context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> PublishedCommand<tidb_proto::KvrpcBatchGetResponse> {
+        let mut request = request.clone();
+        request.context = Some(context.clone());
+        publish_in_process!(self, &request, BatchGet, kv_batch_get)
     }
 
     fn publish_transaction_scan(
@@ -443,6 +456,53 @@ mod tests {
                 .expect("the committed key reads without lock errors");
             assert_eq!(read, Some(value), "the committed value is the one written");
         });
+    }
+
+    #[test]
+    fn transaction_batch_get_dispatches_and_records_its_publication() {
+        use tidb_proto::{KvrpcBatchGetRequest, KvrpcContext, KvrpcMutation, KvrpcOp};
+
+        let mut client = InProcessClient::new();
+        let key = b"batch-get-key".to_vec();
+        let value = b"batch-get-value".to_vec();
+        client.with_store(|store| {
+            store
+                .prewrite(&crate::mvcc_store::PrewriteReq {
+                    mutations: vec![KvrpcMutation {
+                        op: KvrpcOp::Put as i32,
+                        key: key.clone(),
+                        value: value.clone(),
+                        ..KvrpcMutation::default()
+                    }],
+                    primary_lock: key.clone(),
+                    start_version: 10,
+                    ..crate::mvcc_store::PrewriteReq::default()
+                })
+                .expect("prewrites");
+            store.commit(&[key.clone()], 10, 11).expect("commits");
+        });
+
+        let call = UnaryCallContext::with_timeout(Duration::from_secs(1));
+        let published = client.publish_transaction_batch_get(
+            IN_PROCESS_ADDRESS,
+            &KvrpcBatchGetRequest {
+                keys: vec![key.clone()],
+                version: 20,
+                ..KvrpcBatchGetRequest::default()
+            },
+            &KvrpcContext::default(),
+            &call,
+        );
+        let PublishedCommand::Response(response) = published else {
+            panic!("the in-process BatchGet must complete synchronously");
+        };
+
+        assert_eq!(response.response.pairs.len(), 1);
+        assert_eq!(response.response.pairs[0].key, key);
+        assert_eq!(response.response.pairs[0].value, value);
+        assert_eq!(response.publication.tag(), BatchCommandTag::BatchGet);
+        assert_eq!(response.publication.physical_address(), IN_PROCESS_ADDRESS);
+        assert_ne!(response.publication.request_id(), 0);
     }
 
     #[test]
