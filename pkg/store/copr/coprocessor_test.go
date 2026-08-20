@@ -62,8 +62,8 @@ func TestEnsureMonotonicKeyRanges(t *testing.T) {
 	require.False(t, reordered)
 }
 
-func TestRequestAttemptAdmissionLimiterPrecedence(t *testing.T) {
-	type admissionResult struct {
+func TestRequestAttemptLimiterPrecedence(t *testing.T) {
+	type limiterResult struct {
 		release func()
 		err     error
 	}
@@ -82,17 +82,17 @@ func TestRequestAttemptAdmissionLimiterPrecedence(t *testing.T) {
 				stats:    &copIteratorRuntimeStats{},
 			}
 			rpcReq := tikvrpc.NewRequest(tikvrpc.CmdCop, &coprocessor.Request{})
-			worker.setRequestAttemptAdmission(rpcReq, &copTask{storeType: kv.TiKV})
-			require.NotNil(t, rpcReq.RequestAttemptAdmission)
+			worker.setRequestAttemptLimiter(rpcReq, &copTask{storeType: kv.TiKV})
+			require.NotNil(t, rpcReq.RequestAttemptLimiter)
 
-			release, err := rpcReq.RequestAttemptAdmission(context.Background(), 42)
+			release, err := rpcReq.RequestAttemptLimiter(context.Background(), 42)
 			require.NoError(t, err)
 			require.NotNil(t, release)
-			require.False(t, requestLimiter.TryAcquire(), "per-store admission must not consume or wait for the request-local limiter")
-			secondResult := make(chan admissionResult, 1)
+			require.False(t, requestLimiter.TryAcquire(), "per-store limiter must not consume or wait for the request-local limiter")
+			secondResult := make(chan limiterResult, 1)
 			go func() {
-				release, err := rpcReq.RequestAttemptAdmission(context.Background(), 42)
-				secondResult <- admissionResult{release: release, err: err}
+				release, err := rpcReq.RequestAttemptLimiter(context.Background(), 42)
+				secondResult <- limiterResult{release: release, err: err}
 			}()
 			synctest.Wait()
 			time.Sleep(time.Millisecond)
@@ -116,10 +116,10 @@ func TestRequestAttemptAdmissionLimiterPrecedence(t *testing.T) {
 		stats:    &copIteratorRuntimeStats{},
 	}
 	rpcReq := tikvrpc.NewRequest(tikvrpc.CmdCop, &coprocessor.Request{})
-	worker.setRequestAttemptAdmission(rpcReq, &copTask{storeType: kv.TiKV})
-	require.NotNil(t, rpcReq.RequestAttemptAdmission)
+	worker.setRequestAttemptLimiter(rpcReq, &copTask{storeType: kv.TiKV})
+	require.NotNil(t, rpcReq.RequestAttemptLimiter)
 
-	release, err := rpcReq.RequestAttemptAdmission(context.Background(), 42)
+	release, err := rpcReq.RequestAttemptLimiter(context.Background(), 42)
 	require.NoError(t, err)
 	require.NotNil(t, release)
 	require.False(t, requestLimiter.TryAcquire(), "request-local limiter must remain the fallback")
@@ -135,13 +135,13 @@ func TestRequestAttemptAdmissionLimiterPrecedence(t *testing.T) {
 				stats:    &copIteratorRuntimeStats{},
 			}
 			rpcReq := tikvrpc.NewRequest(tikvrpc.CmdCop, &coprocessor.Request{})
-			worker.setRequestAttemptAdmission(rpcReq, &copTask{storeType: kv.TiKV})
+			worker.setRequestAttemptLimiter(rpcReq, &copTask{storeType: kv.TiKV})
 
 			ctx, cancel := context.WithCancel(context.Background())
-			resultCh := make(chan admissionResult, 1)
+			resultCh := make(chan limiterResult, 1)
 			go func() {
-				release, err := rpcReq.RequestAttemptAdmission(ctx, 42)
-				resultCh <- admissionResult{release: release, err: err}
+				release, err := rpcReq.RequestAttemptLimiter(ctx, 42)
+				resultCh <- limiterResult{release: release, err: err}
 			}()
 			synctest.Wait()
 			time.Sleep(time.Millisecond)
@@ -152,7 +152,7 @@ func TestRequestAttemptAdmissionLimiterPrecedence(t *testing.T) {
 			require.True(t, worker.stats.getLimiterWait().IsZero())
 
 			limiter.Release()
-			require.True(t, limiter.TryAcquire(), "canceled admission must not leak a token")
+			require.True(t, limiter.TryAcquire(), "a canceled limiter wait must not leak a token")
 			limiter.Release()
 		})
 	})
@@ -168,15 +168,15 @@ func TestRequestAttemptAdmissionLimiterPrecedence(t *testing.T) {
 			stats:    &copIteratorRuntimeStats{},
 		}
 		rpcReq := tikvrpc.NewRequest(tikvrpc.CmdCop, &coprocessor.Request{})
-		worker.setRequestAttemptAdmission(rpcReq, &copTask{storeType: kv.TiKV})
+		worker.setRequestAttemptLimiter(rpcReq, &copTask{storeType: kv.TiKV})
 
-		release, err := rpcReq.RequestAttemptAdmission(context.Background(), 42)
+		release, err := rpcReq.RequestAttemptLimiter(context.Background(), 42)
 		require.ErrorIs(t, err, errCoprRequestLimiterFinished)
 		require.Nil(t, release)
 		require.True(t, worker.stats.getLimiterWait().IsZero())
 
 		limiter.Release()
-		require.True(t, limiter.TryAcquire(), "finished admission must not leak a token")
+		require.True(t, limiter.TryAcquire(), "a finished limiter wait must not leak a token")
 		limiter.Release()
 	})
 
@@ -188,9 +188,9 @@ func TestRequestAttemptAdmissionLimiterPrecedence(t *testing.T) {
 		MaxTime:   3 * time.Millisecond,
 	}, aggregateStats.getLimiterWait())
 
-	rpcReq.RequestAttemptAdmission = nil
-	worker.setRequestAttemptAdmission(rpcReq, &copTask{storeType: kv.TiFlash})
-	require.Nil(t, rpcReq.RequestAttemptAdmission)
+	rpcReq.RequestAttemptLimiter = nil
+	worker.setRequestAttemptLimiter(rpcReq, &copTask{storeType: kv.TiFlash})
+	require.Nil(t, rpcReq.RequestAttemptLimiter)
 }
 
 func TestBuildTasksWithoutBuckets(t *testing.T) {

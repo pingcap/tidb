@@ -17,7 +17,7 @@
     - [Architecture](#architecture)
     - [Statement Lifetime and Ownership](#statement-lifetime-and-ownership)
     - [Limiter Implementation](#limiter-implementation)
-    - [Request Attempt Admission in client-go](#request-attempt-admission-in-client-go)
+    - [Request Attempt Limiter in client-go](#request-attempt-limiter-in-client-go)
     - [Retries](#retries)
     - [Cancellation and Errors](#cancellation-and-errors)
     - [Interaction with the Request-Local Limiter](#interaction-with-the-request-local-limiter)
@@ -36,7 +36,7 @@
 
 ## Introduction
 
-This document proposes a statement-scoped, per-store concurrency limit for TiKV coprocessor request attempts. The limit applies after client-go selects the actual target TiKV store, so synchronous requests, asynchronous requests, and retries are all admitted against the correct store.
+This document proposes a statement-scoped, per-store concurrency limit for TiKV coprocessor request attempts. The limit applies after client-go selects the actual target TiKV store, so synchronous requests, asynchronous requests, and retries are all limited against the correct store.
 
 The feature adds the `tidb_query_cop_store_limit` system variable. Its value is the maximum number of request attempts from one statement that may be in flight to one TiKV store. The default is `15`; `0` disables the statement-level per-store limit.
 
@@ -54,17 +54,17 @@ Consequently, a single statement can create uneven pressure on individual TiKV s
 ### Goals
 
 - Limit the number of in-flight TiKV coprocessor request attempts from one statement to each TiKV store.
-- Apply admission to the actual store selected for every client-go attempt, including retries.
+- Apply the limiter to the actual store selected for every client-go attempt, including retries.
 - Share the same per-store limit across all DistSQL requests belonging to the statement.
 - Preserve prompt cancellation and release every acquired token exactly once.
 - Keep the disabled path compatible with existing request-local limiting.
-- Expose blocking admission wait in `EXPLAIN ANALYZE`.
+- Expose blocking limiter wait in `EXPLAIN ANALYZE`.
 
 ### Non-Goals
 
 - Limit aggregate traffic from all statements on one TiDB instance.
 - Coordinate limits across TiDB instances.
-- Provide a cluster-wide TiKV admission-control or resource-control policy.
+- Provide a cluster-wide TiKV traffic-control policy.
 - Limit TiFlash, TiDB endpoint, transactional KV, or non-coprocessor requests.
 - Guarantee FIFO ordering or workload fairness between statements.
 - Replace TiKV Resource Control, client-go's process-wide store limit, or `tidb_distsql_scan_concurrency`.
@@ -111,10 +111,10 @@ A global value becomes the default for new sessions. A session or `SET_VAR` valu
 For a configured value `N`, the following invariant is maintained for every statement and TiKV store ID:
 
 ```text
-0 <= admitted_attempts(statement, store_id) <= N
+0 <= in_flight_attempts(statement, store_id) <= N
 ```
 
-An attempt starts when admission succeeds. It ends when that client-go attempt finishes or when client-go aborts before sending it, for example because client-go's process-wide store-token acquisition fails. The release happens before a retry is admitted.
+An attempt starts when it acquires the limiter token. It ends when that client-go attempt finishes or when client-go aborts before sending it, for example because client-go's process-wide store-token acquisition fails. The release happens before a retry acquires its token.
 
 The key is the target TiKV store ID, not the region ID, store address, or proxy store ID. Limiters are created lazily, so a statement allocates limiter state only for stores that it attempts to access.
 
@@ -127,7 +127,7 @@ flowchart TD
     A["SessionVars.QueryCopStoreLimit"] --> B["StatementContext cached DistSQLContext"]
     B --> C["One QueryCopStoreLimiter per statement"]
     C --> D["All TiKV kv.Request values created by the statement"]
-    D --> E["copIteratorWorker installs RequestAttemptAdmission"]
+    D --> E["copIteratorWorker installs RequestAttemptLimiter"]
     E --> F["client-go selects the actual target store"]
     F --> G["GetStoreLimiter(storeID)"]
     G --> H["Acquire one attempt token"]
@@ -144,7 +144,7 @@ The TiDB data flow is:
 SessionVars.QueryCopStoreLimit
     -> StatementContext.DistSQLContext.QueryCopStoreLimiter
     -> kv.Request.QueryCopStoreLimiter
-    -> tikvrpc.Request.RequestAttemptAdmission
+    -> tikvrpc.Request.RequestAttemptLimiter
     -> client-go RegionRequestSender
     -> QueryCopStoreLimiter.GetStoreLimiter(actualStoreID)
 ```
@@ -179,7 +179,7 @@ type CoprRequestLimiter struct {
 It provides:
 
 - `TryAcquire()` for the uncontended fast path;
-- `AcquireWithContext(ctx, done)` for blocking admission that observes both the request context and iterator shutdown;
+- `AcquireWithContext(ctx, done)` for a blocking acquire that observes both the request context and iterator shutdown;
 - `Release()` to return one acquired token;
 - `Capacity()` for inspection and tests.
 
@@ -187,14 +187,14 @@ It provides:
 
 The channel implementation does not promise strict FIFO ordering among waiting goroutines. The feature guarantees only the concurrency bound and cancellation behavior.
 
-### Request Attempt Admission in client-go
+### Request Attempt Limiter in client-go
 
 TiDB cannot reliably acquire the per-store token before calling client-go. Region cache changes, replica selection, forwarding, retry, or leader changes can make the final target store differ from TiDB's earlier expectation.
 
 The associated client-go change adds:
 
 ```go
-type RequestAttemptAdmissionFunc func(
+type RequestAttemptLimiterFunc func(
     ctx context.Context,
     storeID uint64,
 ) (release func(), err error)
@@ -204,9 +204,9 @@ client-go calls this hook after selecting the actual target store and before eac
 
 If the hook returns a non-nil release function and no error, client-go calls the release function exactly once after that attempt terminates. If a defensive implementation returns both a release function and an error, client-go releases the token immediately because no attempt will be sent.
 
-Admission follows the request context. The per-attempt RPC timeout starts after admission succeeds and therefore does not bound admission wait. This avoids using up the RPC execution timeout while the request is intentionally queued, but an outer statement timeout or cancellation still stops the wait.
+Limiter acquisition follows the request context. The per-attempt RPC timeout starts after the limiter allows the attempt and therefore does not bound the limiter wait. This avoids using up the RPC execution timeout while the request is intentionally queued, but an outer statement timeout or cancellation still stops the wait.
 
-Asynchronous sends acquire admission asynchronously instead of blocking the caller of the asynchronous API.
+Asynchronous sends wait for the limiter asynchronously instead of blocking the caller of the asynchronous API.
 
 ### Retries
 
@@ -217,7 +217,7 @@ Each retry is a new request attempt:
 3. client-go sends or aborts the attempt;
 4. client-go releases the token;
 5. retry processing selects a store again;
-6. the next attempt is admitted against that newly selected store.
+6. the next attempt acquires the limiter for that newly selected store.
 
 This ordering is important when a retry moves from store `A` to store `B`. Holding the token for `A` while waiting for or sending to `B` would incorrectly charge the old store and could leak capacity across retries.
 
@@ -228,11 +228,11 @@ The blocking acquire observes two cancellation sources:
 - the client-go request context;
 - the cop iterator's `finishCh`.
 
-If the request context is canceled, admission returns the context error. If the iterator is already closing, TiDB uses an internal `errCoprRequestLimiterFinished` sentinel and treats it as normal iterator shutdown.
+If the request context is canceled, the limiter callback returns the context error. If the iterator is already closing, TiDB uses an internal `errCoprRequestLimiterFinished` sentinel and treats it as normal iterator shutdown.
 
-Cancellation before admission does not consume a token. Cancellation after admission is handled by client-go's normal attempt cleanup and releases the token exactly once.
+Cancellation before limiter acquisition does not consume a token. Cancellation after acquisition is handled by client-go's normal attempt cleanup and releases the token exactly once.
 
-An admission error terminates the client-go request without sending an RPC. The existing TiDB send-error path converts and propagates non-shutdown errors.
+A limiter error terminates the client-go request without sending an RPC. The existing TiDB send-error path converts and propagates non-shutdown errors.
 
 ### Interaction with the Request-Local Limiter
 
@@ -244,16 +244,16 @@ QueryCopStoreLimiter != nil
 QueryCopStoreLimiter == nil && CoprRequestLimiter != nil
     -> use the request-local limiter
 both nil
-    -> no TiDB cop request admission
+    -> no TiDB cop request limiter
 ```
 
 The limiters are not acquired together. Acquiring both would introduce double-throttling and would make one scope hold capacity while waiting for another scope. It would also make cancellation and tuning behavior harder to explain.
 
-This decision has an intentional consequence: with the default statement-level limit enabled, the request-local aggregate limit becomes a fallback rather than an additional bound. A statement can have up to `N` admitted attempts to each of several stores, even if the request-local limiter would have imposed a lower aggregate bound. The scenario and benchmark tests must cover this trade-off.
+This decision has an intentional consequence: with the default statement-level limit enabled, the request-local aggregate limit becomes a fallback rather than an additional bound. A statement can have up to `N` in-flight attempts to each of several stores, even if the request-local limiter would have imposed a lower aggregate bound. The scenario and benchmark tests must cover this trade-off.
 
 ### Observability
 
-TiDB records admission wait only when an acquire blocks:
+TiDB records limiter wait only when an acquire blocks:
 
 ```go
 type LimiterWaitStats struct {
@@ -264,8 +264,8 @@ type LimiterWaitStats struct {
 
 - `TotalTime` is the sum of blocking waits across request attempts and cop iterators participating in the runtime-stat entry.
 - `MaxTime` is the longest single blocking wait.
-- Fast-path admission is not recorded as a wait.
-- The initial design intentionally does not collect an admission count.
+- A fast-path acquire is not recorded as a wait.
+- The initial design intentionally does not collect an acquire count.
 
 The response is closed before the final limiter statistics are collected. This ordering waits for cop iterator workers to exit so their wait statistics are complete.
 
@@ -287,7 +287,7 @@ The default value of `15` is a behavior change: statements that previously had m
 
 #### TiKV and protocol compatibility
 
-There is no request protobuf or TiKV server dependency. Old and new TiKV versions behave identically because admission happens in TiDB and client-go.
+There is no request protobuf or TiKV server dependency. Old and new TiKV versions behave identically because limiting happens in TiDB and client-go.
 
 The TiDB source change requires the client-go API introduced by the related client-go PR. This is a compile-time dependency, not an on-wire rolling-upgrade dependency.
 
@@ -297,7 +297,7 @@ During a rolling TiDB upgrade, statements executed by upgraded TiDB instances ca
 
 #### TiFlash and other request types
 
-The cop worker installs the admission callback only when the task store type is TiKV. TiFlash and TiDB endpoint tasks remain unchanged. Transactional KV and other client-go request types do not receive this callback.
+The cop worker installs the limiter callback only when the task store type is TiKV. TiFlash and TiDB endpoint tasks remain unchanged. Transactional KV and other client-go request types do not receive this callback.
 
 ## Test Design
 
@@ -320,13 +320,13 @@ TiDB limiter tests:
 
 client-go tests:
 
-- synchronous and asynchronous admission;
-- admission rejection and context cancellation;
+- synchronous and asynchronous limiter acquisition;
+- limiter rejection and context cancellation;
 - release on store-token failure;
 - exactly-once release for success and failure;
-- retry admission using the newly selected store;
-- release of the previous attempt before admitting a retry;
-- asynchronous runtime statistics excluding admission wait.
+- retry acquisition using the newly selected store;
+- release of the previous attempt before the retry acquires a token;
+- asynchronous runtime statistics excluding limiter wait.
 
 Tests that assert blocking should use deterministic synchronization or `testing/synctest`, not wall-clock sleeps as a scheduling precondition.
 
@@ -336,7 +336,7 @@ Tests that assert blocking should use deterministic synchronization or `testing/
 - One statement targets several stores and can use up to `N` attempts independently on each store.
 - Multiple DistSQL requests from one statement share the same per-store limit.
 - A store change during retry releases the old store and acquires the new store.
-- Query cancellation while admission is blocked returns promptly and leaks no tokens.
+- Query cancellation while limiter acquisition is blocked returns promptly and leaks no tokens.
 - Merge-sort index lookup behaves correctly with the statement-level limiter enabled and with it disabled.
 - TiFlash queries remain unaffected.
 
@@ -355,8 +355,8 @@ This verifies that the limiter and its observability are exercised. It does not 
 - Run against TiKV versions that do not know about this TiDB feature.
 - Verify a mixed-version TiDB deployment does not require shared limiter state.
 - Verify `SET_VAR(tidb_query_cop_store_limit=0)` restores the disabled path.
-- Verify existing SQL result sets, transaction state, and error semantics are unchanged when admission is not canceled.
-- Verify TiFlash, transactional KV, and non-coprocessor client requests do not install admission callbacks.
+- Verify existing SQL result sets, transaction state, and error semantics are unchanged when limiter acquisition is not canceled.
+- Verify TiFlash, transactional KV, and non-coprocessor client requests do not install limiter callbacks.
 
 ### Benchmark Tests
 
@@ -388,7 +388,7 @@ The benchmark should determine whether `15` is a safe default across common clus
 | Default `15` is too low for some workloads | Latency regression or existing outer timeouts | Benchmark common workloads; allow session and `SET_VAR` override; `0` disables |
 | Per-statement scope is mistaken for store protection | Many concurrent statements can still overload one store | Document the scope; consider a separate instance-level policy |
 | Request-local limiter is bypassed when the statement limiter is enabled | Aggregate cross-store concurrency can increase | Test merge-sort paths and benchmark multi-store fan-out |
-| Admission wait is not bounded by per-attempt RPC timeout | An attempt can wait longer than its RPC timeout setting | Continue to honor statement/request cancellation and outer timeouts |
+| Limiter wait is not bounded by per-attempt RPC timeout | An attempt can wait longer than its RPC timeout setting | Continue to honor statement/request cancellation and outer timeouts |
 | Channel semaphore has no strict fairness guarantee | Some waiting attempts can experience longer waits | Track max wait; consider a fair queue only if starvation is observed |
 | Limiter statistics are collected only by plan runtime stats | No statement-summary or instance-level view | Add a separate statement-level aggregation path in a follow-up |
 | Missing release in a new client-go path | Token leak and eventual statement stall | Centralize exactly-once cleanup and cover every exit/retry path |
@@ -398,7 +398,7 @@ The benchmark should determine whether `15` is a safe default across common clus
 
 ### Use `tidb_distsql_scan_concurrency`
 
-This controls workers for one DistSQL request. It cannot provide a statement-wide per-store attempt bound and does not observe client-go retries. It remains useful for controlling scan execution concurrency but is not a replacement for attempt admission.
+This controls workers for one DistSQL request. It cannot provide a statement-wide per-store attempt bound and does not observe client-go retries. It remains useful for controlling scan execution concurrency but is not a replacement for the request-attempt limiter.
 
 ### Acquire a store limiter in TiDB before `SendReqCtx`
 
@@ -426,5 +426,5 @@ An instance-level limiter would protect a store from aggregate traffic across st
 - Should the merge-sort request-local aggregate limit remain active together with the per-store statement limit?
 - Should limiter wait be added to statement summary, slow logs, or Prometheus metrics?
 - Is an instance-level per-store ceiling needed in addition to the statement-level limit?
-- Is non-FIFO semaphore admission sufficient, or do observed workloads require stronger fairness?
+- Is non-FIFO limiter acquisition sufficient, or do observed workloads require stronger fairness?
 - Should a future version support TiFlash with a separate default and observability contract?

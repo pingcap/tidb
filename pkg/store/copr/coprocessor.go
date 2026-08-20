@@ -1617,10 +1617,10 @@ type HasUnconsumedCopRuntimeStats interface {
 	CollectUnconsumedCopRuntimeStats() []*CopRuntimeStats
 }
 
-// HasLimiterWaitStats indicates whether a response exposes request admission
+// HasLimiterWaitStats indicates whether a response exposes request limiter
 // wait statistics.
 type HasLimiterWaitStats interface {
-	// GetLimiterWaitStats returns aggregated request admission wait statistics.
+	// GetLimiterWaitStats returns aggregated request limiter wait statistics.
 	GetLimiterWaitStats() LimiterWaitStats
 }
 
@@ -1635,7 +1635,7 @@ func (it *copIterator) CollectUnconsumedCopRuntimeStats() []*CopRuntimeStats {
 	return stats
 }
 
-// GetLimiterWaitStats returns aggregated request admission wait statistics.
+// GetLimiterWaitStats returns aggregated request limiter wait statistics.
 func (it *copIterator) GetLimiterWaitStats() LimiterWaitStats {
 	if it == nil || it.stats == nil {
 		return LimiterWaitStats{}
@@ -1814,7 +1814,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		}
 	}
 	req.StoreTp = getEndPointType(task.storeType)
-	worker.setRequestAttemptAdmission(req, task)
+	worker.setRequestAttemptLimiter(req, task)
 	startTime := time.Now()
 	if worker.stats != nil && worker.kvclient.Stats == nil {
 		worker.kvclient.Stats = tikv.NewRegionRequestRuntimeStats()
@@ -1837,7 +1837,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		ops = append(ops, tikv.WithMatchStores([]uint64{*task.redirect2Replica}))
 	}
 
-	if req.RequestAttemptAdmission == nil {
+	if req.RequestAttemptLimiter == nil {
 		failpoint.InjectCall("onBeforeSendReqCtx", req)
 	}
 	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
@@ -1891,7 +1891,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 
 var errCoprRequestLimiterFinished = errors.New("cop request limiter finished")
 
-func (worker *copIteratorWorker) setRequestAttemptAdmission(req *tikvrpc.Request, task *copTask) {
+func (worker *copIteratorWorker) setRequestAttemptLimiter(req *tikvrpc.Request, task *copTask) {
 	if task.storeType != kv.TiKV {
 		return
 	}
@@ -1901,7 +1901,7 @@ func (worker *copIteratorWorker) setRequestAttemptAdmission(req *tikvrpc.Request
 		return
 	}
 
-	req.RequestAttemptAdmission = func(ctx context.Context, storeID uint64) (func(), error) {
+	req.RequestAttemptLimiter = func(ctx context.Context, storeID uint64) (func(), error) {
 		limiter := requestLimiter
 		failpoint.InjectCall("onBeforeAcquireCoprRequestLimiter", req, storeID)
 		if queryLimiter != nil {
@@ -2791,14 +2791,14 @@ func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer,
 	}
 }
 
-// LimiterWaitStats contains aggregated blocking wait statistics for coprocessor
-// request admission.
+// LimiterWaitStats contains aggregated blocking wait statistics for the
+// coprocessor request limiter.
 type LimiterWaitStats struct {
 	TotalTime time.Duration
 	MaxTime   time.Duration
 }
 
-// Record adds one blocking admission wait.
+// Record adds one blocking limiter wait.
 func (s *LimiterWaitStats) Record(waitTime time.Duration) {
 	s.TotalTime += waitTime
 	if waitTime > s.MaxTime {
@@ -2814,7 +2814,7 @@ func (s *LimiterWaitStats) Merge(other LimiterWaitStats) {
 	}
 }
 
-// IsZero reports whether no blocking admission wait was recorded.
+// IsZero reports whether no blocking limiter wait was recorded.
 func (s LimiterWaitStats) IsZero() bool {
 	return s.TotalTime == 0
 }
