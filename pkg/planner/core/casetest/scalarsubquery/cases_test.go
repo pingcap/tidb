@@ -155,3 +155,59 @@ func TestSubqueryInExplainAnalyze(t *testing.T) {
 		}
 	})
 }
+
+// TestNotNotInSubquery covers issue 69926: an even number of NOTs directly wrapping
+// an IN-subquery filter is polarity-equivalent to the bare IN and must produce the same
+// InnerJoin/SemiJoin plan shape instead of falling back to the LeftOuterSemiJoin-with-
+// marker-column shape used for genuinely negated or scalar-context IN. See
+// evenNotFilterDepth and handleInSubquery in pkg/planner/core/expression_rewriter.go.
+func TestNotNotInSubquery(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		var (
+			input []struct {
+				SQL              string
+				IsExplainAnalyze bool
+				HasErr           bool
+			}
+			output []struct {
+				SQL   string
+				Plan  []string
+				Error string
+			}
+		)
+		planSuiteData := GetPlanSuiteData()
+		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t1, t2")
+		testKit.MustExec("create table t1(a int, b int, c int)")
+		testKit.MustExec("create table t2(a int, b int, c int)")
+
+		for i, ts := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = ts.SQL
+				if ts.HasErr {
+					err := testKit.ExecToErr(ts.SQL)
+					require.NotNil(t, err, fmt.Sprintf("Failed at case #%d", i))
+					output[i].Error = err.Error()
+					output[i].Plan = nil
+				} else {
+					rows := testKit.MustQuery(ts.SQL).Rows()
+					output[i].Plan = testdata.ConvertRowsToStrings(rows)
+					output[i].Error = ""
+				}
+			})
+			if ts.HasErr {
+				err := testKit.ExecToErr(ts.SQL)
+				require.NotNil(t, err, fmt.Sprintf("Failed at case #%d", i))
+			} else {
+				rows := testKit.MustQuery(ts.SQL).Rows()
+				require.Equal(t,
+					testdata.ConvertRowsToStrings(testkit.Rows(output[i].Plan...)),
+					testdata.ConvertRowsToStrings(rows),
+					fmt.Sprintf("Failed at case #%d, SQL: %v", i, ts.SQL),
+				)
+			}
+		}
+	})
+}
