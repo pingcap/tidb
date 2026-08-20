@@ -2817,13 +2817,25 @@ fn build_join_with_choice(
     )?;
     if forced_merge {
         if let Some(decision) = &merge {
-            let keys = decision
-                .plan
-                .keys
+            // Resolved off the CHILD's own scope by name rather than read out
+            // of `plan.keys`: those offsets were fixed before column pruning
+            // decided what this child would actually produce. It is the same
+            // reason `merged` below re-reads its keys off the final scope.
+            // `t right join t t1 on t.a = t1.b` projecting only `t1.b` leaves
+            // that child ONE column wide while its recorded key offset is
+            // still 1, and the enforced sort indexed off the end of the
+            // child's field types.
+            //
+            // A name that no longer resolves drops the enforced sort instead
+            // of guessing an offset -- fail-closed, exactly as `merged` does.
+            let keys: Option<Vec<usize>> = decision
+                .names
                 .iter()
-                .map(|key| key.left)
-                .collect::<Vec<_>>();
-            if !crate::driver::merge_decision::delivers(&left_delivered, &keys) {
+                .map(|(left, _)| scope_offset_of(&left_scope, left))
+                .collect();
+            if let Some(keys) =
+                keys.filter(|keys| !crate::driver::merge_decision::delivers(&left_delivered, keys))
+            {
                 let names = decision
                     .names
                     .iter()
@@ -2886,13 +2898,16 @@ fn build_join_with_choice(
     )?;
     if forced_merge {
         if let Some(decision) = &merge {
-            let keys = decision
-                .plan
-                .keys
+            // Resolved off this child's own scope, for the reason spelled out
+            // on the left side above.
+            let keys: Option<Vec<usize>> = decision
+                .names
                 .iter()
-                .map(|key| key.right)
-                .collect::<Vec<_>>();
-            if !crate::driver::merge_decision::delivers(&right_delivered, &keys) {
+                .map(|(_, right)| scope_offset_of(&right_scope, right))
+                .collect();
+            if let Some(keys) =
+                keys.filter(|keys| !crate::driver::merge_decision::delivers(&right_delivered, keys))
+            {
                 let names = decision
                     .names
                     .iter()

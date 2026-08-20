@@ -1178,10 +1178,33 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
     // Therefore only `compared` and `both_agree` move in the current oracle:
     // `left: (232, 144, 88, 78, 8)`.
     //
-    const COMPARED: usize = 232;
-    const BOTH_AGREE: usize = 149;
-    const RECORDED_MERGE_PAIRS: usize = 88;
-    const AGREED_MERGE_PAIRS: usize = 82;
+    // (232, 149, 88, 82, 5) -> (246, 168, 90, 86, 5): this assertion had not
+    // been REACHED. `executor/merge_join` aborted the run on a panic in
+    // `driver::from::enforced_merge_sort` -- a hint-forced merge indexed its
+    // sort keys with offsets fixed before column pruning ran, and
+    // `select /*+ TIDB_SMJ(t, t1) */ t.a, t1.b from t right join t t1 on
+    // t.a = t1.b order by t.a` prunes that child to ONE column while its
+    // recorded key offset is still 1. With the keys resolved off the child's
+    // own scope, the topic replays to its end and prints `12 of 16 join plans
+    // agree, ordered-merge pairs 0/0 (+0 extra)`.
+    //
+    // Every component rose or held: `compared` +14 -- the direction this test
+    // itself names as the meaningful one, plans that had stopped being
+    // comparable are comparable again -- `both_agree` +19,
+    // `agreed_merge_pairs` +4 against `recorded_merge_pairs` +2, and
+    // `extra_merge_pairs` FLAT at 5, so no merge join appeared that TiDB does
+    // not record. `both_agree` outrunning `compared` is the parenthesis
+    // stripping in `predicate_push_down::column_equality` and
+    // `join_reorder::classify` landing in the same build: a `WHERE` equality
+    // that reaches its join is one this tier can shape the way TiDB recorded.
+    //
+    // NOT done, so the next reader does not assume it: the 19 newly-agreeing
+    // statements were not opened one at a time against their witnesses. The
+    // evidence is the aggregate direction plus the one named cause.
+    const COMPARED: usize = 246;
+    const BOTH_AGREE: usize = 168;
+    const RECORDED_MERGE_PAIRS: usize = 90;
+    const AGREED_MERGE_PAIRS: usize = 86;
     const EXTRA_MERGE_PAIRS: usize = 5;
 
     assert_eq!(

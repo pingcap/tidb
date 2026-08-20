@@ -198,7 +198,7 @@ fn control_rows(session: &mut Session, count: usize) -> Vec<Vec<Datum>> {
     let used = &TABLES[..count];
     let mut columns: Vec<String> = used.iter().map(|t| format!("x{}", &t[1..])).collect();
     let projected = columns.len();
-    let mut offset_of = |columns: &mut Vec<String>, name: &str| -> usize {
+    let offset_of = |columns: &mut Vec<String>, name: &str| -> usize {
         if let Some(at) = columns.iter().position(|column| column == name) {
             return at;
         }
