@@ -83,10 +83,14 @@ message FieldType {
 enum ExprType {
   Null = 0;
   Int64 = 1;
+  Float32 = 3;
+  Float64 = 4;
   // Go `constantToPBExpr`'s `KindString`/`KindBinaryLiteral` arm: the raw
   // bytes as `Val`, with no codec around them. `Bytes` (6, `KindBytes`) is
   // deliberately absent -- no leaf this path builds is that kind.
   String = 5;
+  MysqlDecimal = 102;
+  MysqlTime = 107;
   ColumnRef = 201;
   // The aggregate-function family a partial TiKV aggregation carries. Only
   // the kinds the pushed-aggregate lowering builds are projected; upstream
@@ -108,6 +112,18 @@ enum ScalarFuncSig {
   GEInt = 130;
   EQInt = 140;
   NEInt = 150;
+  LTDecimal = 102;
+  LEDecimal = 112;
+  GTDecimal = 122;
+  GEDecimal = 132;
+  EQDecimal = 142;
+  NEDecimal = 152;
+  LTTime = 104;
+  LETime = 114;
+  GTTime = 124;
+  GETime = 134;
+  EQTime = 144;
+  NETime = 154;
   // The same six operators over an `ETString` argument pair. Go's
   // `getCmpFunction` picks these whenever `GetAccurateCmpType` answers
   // `ETString`; which collator TiKV then uses is carried by the comparison
@@ -125,6 +141,7 @@ enum ScalarFuncSig {
   IntIsNull = 3116;
   // The set-membership group.
   InInt = 4001;
+  InString = 4004;
 
   // The implicit casts `newBaseBuiltinFuncWithTp` inserts when a builtin's
   // argument does not already evaluate as the type the chosen signature
@@ -137,6 +154,12 @@ enum ScalarFuncSig {
   CastDecimalAsReal = 21;
   CastStringAsInt = 30;
   CastStringAsReal = 31;
+
+  // Decimal arithmetic used by pushdown-safe aggregate arguments. The numeric
+  // ids are the upstream tipb ScalarFuncSig contract.
+  PlusDecimal = 201;
+  MinusDecimal = 205;
+  MultiplyDecimal = 209;
 
   // The arithmetic `MOD` family. Go picks between the four integer
   // signatures by the two arguments' UNSIGNED flags, not by their width.
@@ -177,8 +200,9 @@ enum ScalarFuncSig {
   LowerUTF8 = 7066;
 }
 
-// Dependency-closed projection of expression.proto Expr. RPN, aggregate, and
-// order-by fields are intentionally outside this bounded scalar path.
+// Dependency-closed projection of expression.proto Expr. RPN and order-by
+// fields are intentionally outside this bounded scalar/aggregate path. The
+// omitted aggFuncMode defaults to Partial1Mode in TiDB's PB decoder.
 message Expr {
   optional ExprType tp = 1;
   optional bytes val = 2;
@@ -194,20 +218,19 @@ message Selection {
   repeated Expr conditions = 1;
 }
 
+// TiKV's list-based partial aggregation. Aggregate functions precede group-by
+// expressions in the result schema for both global and grouped HashAgg.
+message Aggregation {
+  repeated Expr group_by = 1;
+  repeated Expr agg_func = 2;
+  optional bool streamed = 3;
+}
+
 // The coprocessor-side row cap. The upstream message also carries a child
 // executor and a partition_by list for the tree-based TiFlash form; neither
 // has a place in the TiKV list form this projection covers.
 message Limit {
   optional uint64 limit = 1;
-}
-
-// The TiKV list-form partial aggregation above the scan/Selection. The
-// upstream message also carries RPN spellings, a TiFlash tree child and a
-// pre-aggregation mode; none has a place in this bounded projection.
-message Aggregation {
-  repeated Expr group_by = 1;
-  repeated Expr agg_func = 2;
-  optional bool streamed = 3;
 }
 
 message Executor {

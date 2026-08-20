@@ -20,7 +20,8 @@
 //! mirrors exactly.
 
 use tidb_proto::{
-    KvrpcGetRequest, KvrpcGetResponse, KvrpcKeyError, KvrpcScanRequest, KvrpcScanResponse,
+    KvrpcBatchGetRequest, KvrpcGetRequest, KvrpcGetResponse, KvrpcKeyError, KvrpcScanRequest,
+    KvrpcScanResponse,
 };
 
 use crate::gc_state::GcStateCache;
@@ -31,8 +32,10 @@ use crate::region::{RegionBackoffBudget, RegionRecoveryLoader};
 use crate::rpc::{TransactionBatchPublication, TransactionBatchResponse, UnaryCallContext};
 use crate::SharedReadRuntime;
 
-use super::super::command_client::{PublishedCommand, TransactionCommandClient};
-use super::super::region_batches::{point_route, RegionKeyBatch};
+use super::super::command_client::{
+    PublishedCommand, TransactionBatchGetRequest, TransactionCommandClient,
+};
+use super::super::region_batches::{group_keys, point_route, RegionKeyBatch};
 use super::super::state::{CoordinatorState, SnapshotReadReceipt};
 use super::{
     alive_retry_delay, recover_region_error_with, wait_with_call, OptimisticCoordinatorError,
@@ -331,6 +334,154 @@ where
                 publication: result.publication.clone(),
             });
             return Ok(result);
+        }
+    }
+
+    /// Reads a set of encoded keys at one transaction timestamp. Keys are
+    /// grouped by serving region and admitted in one BatchCommands packet per
+    /// region, matching Go's `BatchGet` transport shape while retaining the
+    /// same lock, region-retry, and visibility checks as point Get.
+    pub fn snapshot_batch_get(
+        &mut self,
+        keys: &[Vec<u8>],
+        call: &UnaryCallContext,
+    ) -> Result<SnapshotScanPairs, OptimisticCoordinatorError> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        if keys.iter().any(Vec::is_empty) {
+            return Err(OptimisticCoordinatorError::SnapshotGet(
+                "encoded batch-get key is empty".to_owned(),
+            ));
+        }
+        self.state
+            .transition(CoordinatorState::Reading)
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        let mut lock_attempts = 0usize;
+        loop {
+            let groups = group_keys(&self.runtime, keys)
+                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+            let mut values = Vec::new();
+            let mut successful_reads = Vec::new();
+            let mut locked = Vec::new();
+            let mut lock_context = None;
+            let mut retry_region = false;
+            let mut requests = Vec::with_capacity(groups.len());
+            for batch in &groups {
+                let mut context = batch.context().clone();
+                self.resolved_locks.stamp(&mut context);
+                let request = KvrpcBatchGetRequest {
+                    keys: batch.keys().to_vec(),
+                    version: self.start_ts,
+                    need_commit_ts: true,
+                    ..KvrpcBatchGetRequest::default()
+                };
+                requests.push(TransactionBatchGetRequest {
+                    address: batch.address(),
+                    request,
+                    context,
+                });
+            }
+            let published = self
+                .runtime
+                .client()
+                .try_borrow_mut()
+                .map_err(|_| {
+                    OptimisticCoordinatorError::SnapshotGet(
+                        "TiKV client is already borrowed".to_owned(),
+                    )
+                })?
+                .publish_transaction_batch_gets(&requests, call);
+            for ((batch, request), published) in groups.iter().zip(&requests).zip(published) {
+                let response = match published {
+                    PublishedCommand::Response(response) => response,
+                    PublishedCommand::BeforePublication(error)
+                    | PublishedCommand::AfterPublication { error, .. } => {
+                        return Err(OptimisticCoordinatorError::SnapshotGet(error));
+                    }
+                };
+                if let Some(region_error) = response.response.region_error.as_ref() {
+                    self.recover_region_error(
+                        RecoveryPhase::Forward,
+                        region_error,
+                        batch.attempt(),
+                        call,
+                    )
+                    .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+                    retry_region = true;
+                    break;
+                }
+                if let Some(key_error) = response.response.error.as_ref() {
+                    if let Some(lock_info) = key_error.locked.as_ref() {
+                        locked.extend(decode_lock_observation(lock_info).map_err(|error| {
+                            OptimisticCoordinatorError::SnapshotGet(error.to_string())
+                        })?);
+                        lock_context = Some(request.context.clone());
+                        continue;
+                    }
+                    return Err(OptimisticCoordinatorError::SnapshotGet(format!(
+                        "TiKV key error: {key_error:?}"
+                    )));
+                }
+                let mut batch_has_locks = false;
+                for pair in response.response.pairs {
+                    if let Some(key_error) = pair.error.as_ref() {
+                        if let Some(lock_info) = key_error.locked.as_ref() {
+                            locked.extend(decode_lock_observation(lock_info).map_err(|error| {
+                                OptimisticCoordinatorError::SnapshotGet(error.to_string())
+                            })?);
+                            lock_context = Some(request.context.clone());
+                            batch_has_locks = true;
+                            continue;
+                        }
+                        return Err(OptimisticCoordinatorError::SnapshotGet(format!(
+                            "TiKV key error: {key_error:?}"
+                        )));
+                    }
+                    values.push((pair.key, pair.value));
+                }
+                if !batch_has_locks {
+                    successful_reads.extend(batch.keys().iter().cloned().map(|key| {
+                        SnapshotReadReceipt {
+                            key,
+                            region: batch.region(),
+                            publication: response.publication.clone(),
+                        }
+                    }));
+                }
+            }
+            if retry_region {
+                continue;
+            }
+            if !locked.is_empty() {
+                if lock_attempts >= MAX_LOCK_ATTEMPTS {
+                    return Err(OptimisticCoordinatorError::SnapshotGet(
+                        "snapshot lock retry budget exhausted".to_owned(),
+                    ));
+                }
+                let context = lock_context.unwrap_or_default();
+                let recovery = resolve_optimistic_locks(
+                    &self.runtime,
+                    &locked,
+                    self.start_ts,
+                    &context,
+                    call,
+                    &self.timestamps,
+                    true,
+                )
+                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+                self.resolved_locks.absorb(&recovery);
+                if recovery.is_alive() {
+                    wait_with_call(call, alive_retry_delay(recovery.ttl)).map_err(|error| {
+                        OptimisticCoordinatorError::SnapshotGet(error.to_string())
+                    })?;
+                }
+                lock_attempts += 1;
+                continue;
+            }
+            self.check_visibility()?;
+            self.snapshot_reads.extend(successful_reads);
+            return Ok(values);
         }
     }
 

@@ -118,6 +118,16 @@ message BatchGetRequest {
   bool need_commit_ts = 4;
 }
 
+message BatchGetResponse {
+  errorpb.Error region_error = 1;
+  repeated KvPair pairs = 2;
+  reserved 3;
+  // Upstream field 4 is ExecDetailsV2 and is outside this bounded owner.
+  // A response-level error means TiKV could not inspect every key, so the
+  // caller must resolve it and retry the complete request key set.
+  KeyError error = 5;
+}
+
 // Exact pinned transactional forward range read. The catalog loader reads the
 // `m` meta namespace, which no coprocessor DAG can describe.
 message ScanRequest {

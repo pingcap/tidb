@@ -65,7 +65,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
+use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_distsql::{
     CancelHandle, DistSqlContext, EncodeType, ExecutorKind, ExecutorShape, InjectedQueryRuntime,
@@ -84,9 +86,24 @@ use tidb_proto::tipb::{Aggregation, ExecType, Expr, ExprType, ScalarFuncSig};
 use tidb_txnkv::KeyRange;
 
 use crate::dag_request::{
+    construct_aggregate_read_only_dag_req_with_conditions,
     construct_aggregated_read_only_dag_req_with_conditions,
-    construct_capped_read_only_dag_req_with_conditions, DagRequestContext, TiKvScanPlan,
+    construct_capped_read_only_dag_req_with_conditions,
+    construct_grouped_aggregate_read_only_dag_req_with_conditions, DagRequestContext, TiKvScanPlan,
 };
+
+enum LoweredAggregate {
+    Legacy {
+        message: Aggregation,
+        output_width: usize,
+    },
+    Global(Vec<Expr>),
+    Grouped {
+        functions: Vec<Expr>,
+        group_by: Vec<Expr>,
+        streamed: bool,
+    },
+}
 use crate::real_tikv_read::RealTiKvSessionTransportFactory;
 use crate::wide_scan_selection::{accepts, wide_scan_selection_conditions};
 
@@ -94,8 +111,6 @@ use crate::wide_scan_selection::{accepts, wide_scan_selection_conditions};
 const NOT_NULL_FLAG: i32 = 1;
 /// Go `mysql.PriKeyFlag`.
 const PRI_KEY_FLAG: i32 = 2;
-/// Go `mysql.UnsignedFlag`.
-const UNSIGNED_FLAG: i32 = 32;
 /// Go `charset.CollationBin`, the coprocessor collation of a numeric column.
 const BINARY_COLLATION_ID: i32 = 63;
 /// Go `mysql.TypeLonglong`.
@@ -114,8 +129,8 @@ const MYSQL_TYPE_TINY: i32 = 1;
 /// The point of the bound is that it *is* a bound: a scan holds a few batches
 /// of decoded rows, never the relation, so the streaming property the scan
 /// source has above the seam survives the thread hop below it.
-const BATCH_ROWS: usize = 1024;
-const BATCHES_AHEAD: usize = 2;
+const BATCH_ROWS: usize = 8192;
+const MAX_BATCHES_AHEAD: usize = 64;
 
 /// One coprocessor scan capability for a node's sessions.
 ///
@@ -271,15 +286,18 @@ where
             ExecutorShape::new(ExecutorKind::Other),
         ];
         let plan = RemoteScanPlan {
+            table_id: request.table_id,
             dag,
             envelope: RequestEnvelope::new(shapes),
             key_ranges,
             snapshot_ts: request.snapshot_ts,
-            field_types,
+            keep_order: request.keep_order,
+            field_types: field_types.clone(),
             time_zone: request.statement.time_zone.clone(),
             warnings: request.statement.warnings.clone(),
         };
-        let (rows, batches) = sync_channel::<Result<Vec<Vec<Datum>>, String>>(BATCHES_AHEAD);
+        let batches_ahead = request.read_ahead_batches.clamp(1, MAX_BATCHES_AHEAD);
+        let (rows, batches) = sync_channel::<Result<Chunk, String>>(batches_ahead);
         let factory = Arc::clone(&self.factory);
         let node_rows = Arc::clone(&self.rows_returned);
         thread::Builder::new()
@@ -295,8 +313,11 @@ where
             .push(summary);
         Ok(Box::new(CopRowStream {
             batches: Some(batches),
-            pending: Vec::new().into_iter(),
+            pending: None,
+            pending_row: 0,
             returned: 0,
+            field_types,
+            predicates_applied: request.predicates.is_empty(),
         }))
     }
 }
@@ -337,18 +358,11 @@ where
             .map(scan_column)
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| refuse("a column has no bounded coprocessor descriptor"))?;
-        // With an aggregation the response rows ARE the aggregate schema --
-        // results first, group keys last -- so the decoder's types come from
-        // the aggregate, not the scanned columns.
-        let field_types: Vec<FieldType> = match &request.aggregate {
-            Some(aggregate) => aggregate.output_types(),
-            None => request
-                .columns
-                .iter()
-                .map(|column| column.field_type.clone())
-                .collect(),
-        };
-        let output_offsets: Vec<u32> = (0..columns.len() as u32).collect();
+        let mut field_types: Vec<FieldType> = request
+            .columns
+            .iter()
+            .map(|column| column.field_type.clone())
+            .collect();
 
         // Every conjunct this lowering accepts travels; the rest simply stay
         // behind, because the scan source tests all of them locally anyway.
@@ -358,6 +372,7 @@ where
             .filter(|predicate| accepts(predicate, &columns))
             .cloned()
             .collect();
+        let predicates_applied = lowered.len() == request.predicates.len();
         let conditions: Vec<Expr> = if lowered.is_empty() {
             Vec::new()
         } else {
@@ -372,35 +387,77 @@ where
         // those -- fewer rows than the query asked for, with nothing to say so.
         // This is the same hazard the staged buffer already guards against by
         // dropping the cap whenever rows are merged in locally.
-        let remote_limit = if lowered.len() == request.predicates.len() {
-            request.limit
-        } else {
-            None
-        };
+        let remote_limit =
+            if lowered.len() == request.predicates.len() && request.aggregate.is_none() {
+                request.limit
+            } else {
+                None
+            };
 
-        // The contract on [`PushdownScanRequest::aggregate`]: when present,
-        // every predicate must be lowered -- an aggregated row cannot be
-        // re-filtered locally -- and no cap may ride along, because TiKV
-        // would cap SOURCE rows while the caller asked to cap nothing.
-        let aggregation = match &request.aggregate {
-            Some(aggregate) => {
-                if lowered.len() != request.predicates.len() {
-                    return Err(refuse(
-                        "a partial aggregation requires every predicate to lower",
-                    ));
-                }
-                if request.limit.is_some() {
-                    return Err(refuse(
-                        "a partial aggregation does not compose with a row cap",
-                    ));
-                }
-                Some(
-                    aggregation_to_pb(aggregate, &columns)
-                        .ok_or_else(|| refuse("a pushed aggregate has no bounded lowering"))?,
-                )
-            }
+        let aggregate = match request.aggregate.as_ref() {
             None => None,
+            Some(PushdownPartialAggregate::Global { functions }) => {
+                if lowered.len() != request.predicates.len()
+                    || request.limit.is_some()
+                    || request.topn.is_some()
+                    || request.output_offsets.is_some()
+                {
+                    return Err(refuse(
+                        "partial aggregation requires a complete Selection and no competing pushdown",
+                    ));
+                }
+                let lowered = lower_global_aggregate(functions, &columns).ok_or_else(|| {
+                    refuse("a global aggregate function cannot be lowered to TiPB")
+                })?;
+                field_types = functions
+                    .iter()
+                    .map(|function| function.output_type.clone())
+                    .collect();
+                Some(LoweredAggregate::Global(lowered))
+            }
+            Some(PushdownPartialAggregate::Grouped {
+                group_offsets,
+                group_types,
+                functions,
+                streamed,
+            }) => {
+                if lowered.len() != request.predicates.len()
+                    || request.limit.is_some()
+                    || request.topn.is_some()
+                    || request.output_offsets.is_some()
+                {
+                    return Err(refuse(
+                        "partial aggregation requires a complete Selection and no competing pushdown",
+                    ));
+                }
+                let lowered_functions =
+                    lower_grouped_aggregate(functions, &columns).ok_or_else(|| {
+                        refuse("a grouped aggregate function cannot be lowered to TiPB")
+                    })?;
+                let group_by = lower_group_by(group_offsets, group_types, &columns)
+                    .ok_or_else(|| refuse("a grouped aggregate key cannot be lowered to TiPB"))?;
+                field_types = functions
+                    .iter()
+                    .map(|function| function.output_type.clone())
+                    .chain(group_types.iter().cloned())
+                    .collect();
+                Some(LoweredAggregate::Grouped {
+                    functions: lowered_functions,
+                    group_by,
+                    streamed: *streamed,
+                })
+            }
+            Some(aggregate) => {
+                let message = aggregation_to_pb(aggregate, &columns)
+                    .ok_or_else(|| refuse("a pushed aggregate has no bounded lowering"))?;
+                field_types = aggregate.output_types();
+                Some(LoweredAggregate::Legacy {
+                    message,
+                    output_width: field_types.len(),
+                })
+            }
         };
+        let output_offsets: Vec<u32> = (0..field_types.len() as u32).collect();
 
         let mut spec = TiKvTableScanSpec::new(request.table_id, columns.clone());
         // Go's `desc` on the TableScan executor: the region walks the
@@ -415,12 +472,12 @@ where
         spec.primary_prefix_column_ids = request.primary_prefix_column_ids.clone();
         // The merge above reads the remote rows in record-key order, which is
         // the order it merges the staged buffer against.
-        spec.keep_order = true;
+        spec.keep_order = request.keep_order;
         let scan = PhysicalTableScanPlan::init(0, 0, spec);
         // Go `ConstructDAGReq`: the zone comes from the SESSION VARIABLES of
         // the statement that issued this request, read fresh every time.
         let (time_zone_name, time_zone_offset_secs) = request.statement.time_zone.dag_zone();
-        let dag_context = DagRequestContext::new(
+        let context = DagRequestContext::new(
             time_zone_name,
             time_zone_offset_secs,
             // Go `builder_utils.go`'s `sc.PushDownFlags()`. The literal
@@ -428,18 +485,46 @@ where
             // TiDB degrades to a 1292 warning failed the whole region
             // request instead.
             request.statement.push_down_flags,
-            EncodeType::Default,
+            // Go's table readers use chunk RPC when the store supports it.
+            // The response iterator transfers decoded TypeChunks directly to
+            // this scan's bounded handoff, without per-row materialization.
+            EncodeType::Chunk,
         );
-        let dag = match aggregation {
-            Some(aggregation) => construct_aggregated_read_only_dag_req_with_conditions(
-                &dag_context,
+        let dag = match aggregate.as_ref() {
+            Some(LoweredAggregate::Legacy {
+                message,
+                output_width,
+            }) => construct_aggregated_read_only_dag_req_with_conditions(
+                &context,
                 TiKvScanPlan::Table(&scan),
                 &conditions,
-                aggregation,
-                field_types.len(),
+                message.clone(),
+                *output_width,
+            ),
+            Some(LoweredAggregate::Global(functions)) => {
+                construct_aggregate_read_only_dag_req_with_conditions(
+                    &context,
+                    TiKvScanPlan::Table(&scan),
+                    &conditions,
+                    functions,
+                    &output_offsets,
+                )
+            }
+            Some(LoweredAggregate::Grouped {
+                functions,
+                group_by,
+                streamed,
+            }) => construct_grouped_aggregate_read_only_dag_req_with_conditions(
+                &context,
+                TiKvScanPlan::Table(&scan),
+                &conditions,
+                functions,
+                group_by,
+                *streamed,
+                &output_offsets,
             ),
             None => construct_capped_read_only_dag_req_with_conditions(
-                &dag_context,
+                &context,
                 TiKvScanPlan::Table(&scan),
                 &conditions,
                 remote_limit,
@@ -449,6 +534,18 @@ where
         .map_err(|error| PushdownScannerError::Unsupported(error.to_string()))?;
 
         let summary = dag_summary(&dag);
+        if std::env::var_os("TIDB_DEBUG_COP_SCAN").is_some() {
+            eprintln!(
+                "COP_SCAN_OPEN table_id={} ranges={} columns={} predicates={} lowered={} keep_order={} summary={}",
+                request.table_id,
+                request.ranges.len(),
+                request.columns.len(),
+                request.predicates.len(),
+                lowered.len(),
+                request.keep_order,
+                summary,
+            );
+        }
         let key_ranges: Vec<KeyRange> = request
             .ranges
             .iter()
@@ -458,22 +555,25 @@ where
         if !conditions.is_empty() {
             shapes.push(ExecutorShape::new(ExecutorKind::Other));
         }
-        if request.aggregate.is_some() {
-            shapes.push(ExecutorShape::new(ExecutorKind::Other));
-        }
         if remote_limit.is_some() {
             shapes.push(ExecutorShape::new(ExecutorKind::Other));
         }
+        if aggregate.is_some() {
+            shapes.push(ExecutorShape::new(ExecutorKind::Other));
+        }
         let plan = RemoteScanPlan {
+            table_id: request.table_id,
             dag,
             envelope: RequestEnvelope::new(shapes),
             key_ranges,
             snapshot_ts: request.snapshot_ts,
-            field_types,
+            keep_order: request.keep_order,
+            field_types: field_types.clone(),
             time_zone: request.statement.time_zone.clone(),
             warnings: request.statement.warnings.clone(),
         };
-        let (rows, batches) = sync_channel::<Result<Vec<Vec<Datum>>, String>>(BATCHES_AHEAD);
+        let batches_ahead = request.read_ahead_batches.clamp(1, MAX_BATCHES_AHEAD);
+        let (rows, batches) = sync_channel::<Result<Chunk, String>>(batches_ahead);
         let factory = Arc::clone(&self.factory);
         let node_rows = Arc::clone(&self.rows_returned);
         thread::Builder::new()
@@ -489,8 +589,11 @@ where
             .push(summary);
         Ok(Box::new(CopRowStream {
             batches: Some(batches),
-            pending: Vec::new().into_iter(),
+            pending: None,
+            pending_row: 0,
+            field_types,
             returned: 0,
+            predicates_applied,
         }))
     }
 }
@@ -530,6 +633,13 @@ fn dag_summary(dag: &tidb_proto::tipb::DagRequest) -> String {
                     .as_ref()
                     .map_or(0, |selection| selection.conditions.len())
             ),
+            Some(tp) if tp == ExecType::TypeAggregation as i32 => format!(
+                "HashAgg({} functions)",
+                executor
+                    .aggregation
+                    .as_ref()
+                    .map_or(0, |aggregation| aggregation.agg_func.len())
+            ),
             Some(tp) if tp == ExecType::TypeLimit as i32 => format!(
                 "Limit({})",
                 executor
@@ -565,6 +675,7 @@ fn dag_summary(dag: &tidb_proto::tipb::DagRequest) -> String {
 
 /// Everything the reader thread needs, owned independently of the caller.
 struct RemoteScanPlan {
+    table_id: i64,
     dag: tidb_proto::tipb::DagRequest,
     /// The executor shapes the request builder reads for concurrency, which
     /// must match the DAG's own executor list.
@@ -574,6 +685,8 @@ struct RemoteScanPlan {
     /// handle range, and the coprocessor request carries them all.
     key_ranges: Vec<KeyRange>,
     snapshot_ts: u64,
+    /// Whether region tasks and the response stream must preserve key order.
+    keep_order: bool,
     field_types: Vec<FieldType>,
     time_zone: tidb_datatype::SessionTimeZone,
     /// The statement's warning sink, carried onto the scan thread. It is an
@@ -587,7 +700,7 @@ struct RemoteScanPlan {
 fn serve_scan<F>(
     factory: &Arc<F>,
     plan: RemoteScanPlan,
-    rows: &SyncSender<Result<Vec<Vec<Datum>>, String>>,
+    rows: &SyncSender<Result<Chunk, String>>,
     node_rows: &Arc<AtomicU64>,
 ) where
     F: RealTiKvSessionTransportFactory,
@@ -601,7 +714,7 @@ fn serve_scan<F>(
 fn drain_scan<F>(
     factory: &Arc<F>,
     plan: RemoteScanPlan,
-    rows: &SyncSender<Result<Vec<Vec<Datum>>, String>>,
+    rows: &SyncSender<Result<Chunk, String>>,
     node_rows: &Arc<AtomicU64>,
 ) -> Result<(), String>
 where
@@ -609,6 +722,9 @@ where
     <F::Transport as QueryTransport>::Response: 'static,
 {
     use prost::Message;
+
+    let started = Instant::now();
+    let debug = std::env::var_os("TIDB_DEBUG_COP_SCAN").is_some();
 
     let mut transport = factory.open_session_transport()?;
     let cancellation = Arc::new(CancelHandle::default());
@@ -627,7 +743,7 @@ where
     let mut builder = RequestBuilder::from_context(&DistSqlContext::new());
     builder
         .set_start_ts(plan.snapshot_ts)
-        .set_keep_order(true)
+        .set_keep_order(plan.keep_order)
         .set_non_partitioned_key_ranges(plan.key_ranges)
         .set_dag_request(plan.envelope, plan.dag.encode_to_vec());
     let request = builder
@@ -641,39 +757,63 @@ where
             // THE SESSION'S collector, not a fresh one: `response_channel`
             // appends TiKV's warnings in Go's order into whatever it is
             // given, and a fresh collector is dropped with them inside.
-            QueryResultContext::new(plan.field_types, plan.warnings).with_time_zone(plan.time_zone),
+            QueryResultContext::new(plan.field_types.clone(), plan.warnings)
+                .with_time_zone(plan.time_zone),
             vec![0],
             0,
             true,
         )
         .map_err(|error| error.to_string())?;
     let mut iter = result.into_select_iter(Vec::new());
-    let mut batch = Vec::with_capacity(BATCH_ROWS);
+    let mut rows_received = 0u64;
+    let mut iterator_elapsed = Duration::ZERO;
+    let mut handoff_elapsed = Duration::ZERO;
+    let mut batches_sent = 0u64;
     loop {
-        let row = iter.next_row().map_err(|error| error.to_string())?;
-        let done = row.is_none();
-        if let Some(row) = row {
-            batch.push(row.row);
-            if batch.len() < BATCH_ROWS {
-                continue;
-            }
+        let batch = if debug {
+            let next_started = Instant::now();
+            let batch = iter.next_chunk_with_required_rows(BATCH_ROWS);
+            iterator_elapsed += next_started.elapsed();
+            batch
+        } else {
+            iter.next_chunk_with_required_rows(BATCH_ROWS)
         }
-        if !batch.is_empty() {
-            let sent = batch.len() as u64;
+        .map_err(|error| error.to_string())?;
+        let Some(batch) = batch else {
+            break;
+        };
+        if batch.row.num_rows() != 0 {
+            let sent = batch.row.num_rows() as u64;
+            rows_received += sent;
             // A consumer that stopped pulling -- an early-stopping `LIMIT`, or
             // a failed statement -- drops its receiver, and this is where the
             // scan learns it: the rest of the relation is never read.
-            if rows.send(Ok(std::mem::take(&mut batch))).is_err() {
+            let handoff_started = Instant::now();
+            let send_result = rows.send(Ok(batch.row));
+            if debug {
+                handoff_elapsed += handoff_started.elapsed();
+            }
+            if send_result.is_err() {
                 break;
             }
+            batches_sent += 1;
             node_rows.fetch_add(sent, Ordering::Relaxed);
-            batch = Vec::with_capacity(BATCH_ROWS);
-        }
-        if done {
-            break;
         }
     }
     iter.close();
+    if debug {
+        eprintln!(
+            "COP_SCAN_DONE table_id={} thread={:?} snapshot_ts={} rows={} batches={} elapsed_ms={} iterator_ms={} handoff_ms={}",
+            plan.table_id,
+            std::thread::current().id(),
+            plan.snapshot_ts,
+            rows_received,
+            batches_sent,
+            started.elapsed().as_secs_f64() * 1000.0,
+            iterator_elapsed.as_secs_f64() * 1000.0,
+            handoff_elapsed.as_secs_f64() * 1000.0,
+        );
+    }
     Ok(())
 }
 
@@ -681,23 +821,39 @@ where
 struct CopRowStream {
     /// Dropping this is what tells the reader thread to stop; see
     /// `drain_scan`.
-    batches: Option<Receiver<Result<Vec<Vec<Datum>>, String>>>,
-    pending: std::vec::IntoIter<Vec<Datum>>,
+    batches: Option<Receiver<Result<Chunk, String>>>,
+    pending: Option<Chunk>,
+    pending_row: usize,
+    field_types: Vec<FieldType>,
     returned: u64,
+    predicates_applied: bool,
 }
 
 impl PushdownRowStream for CopRowStream {
     fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
         loop {
-            if let Some(row) = self.pending.next() {
-                self.returned += 1;
-                return Ok(Some(row));
+            if let Some(batch) = &self.pending {
+                if self.pending_row < batch.num_rows() {
+                    let row = batch
+                        .get_row(self.pending_row)
+                        .try_get_datum_row(&self.field_types)
+                        .map_err(|error| StorageError::Backend(error.to_string()))?;
+                    self.pending_row += 1;
+                    if self.pending_row == batch.num_rows() {
+                        self.pending = None;
+                        self.pending_row = 0;
+                    }
+                    self.returned += 1;
+                    return Ok(Some(row));
+                }
+                self.pending = None;
+                self.pending_row = 0;
             }
             let Some(batches) = self.batches.as_ref() else {
                 return Ok(None);
             };
             match batches.recv() {
-                Ok(Ok(batch)) => self.pending = batch.into_iter(),
+                Ok(Ok(batch)) => self.pending = Some(batch),
                 Ok(Err(error)) => {
                     self.batches = None;
                     return Err(StorageError::Backend(error));
@@ -711,12 +867,60 @@ impl PushdownRowStream for CopRowStream {
         }
     }
 
+    fn supports_chunks(&self) -> bool {
+        true
+    }
+
+    fn next_chunk(&mut self) -> Result<Option<Chunk>, StorageError> {
+        if let Some(batch) = self.pending.take() {
+            let start = self.pending_row;
+            self.pending_row = 0;
+            if start == 0 {
+                self.returned += batch.num_rows() as u64;
+                return Ok(Some(batch));
+            }
+            let mut remainder = Chunk::new(
+                &self.field_types,
+                batch.num_rows().saturating_sub(start),
+                batch.num_rows().saturating_sub(start),
+            );
+            for row in start..batch.num_rows() {
+                remainder.append_row(batch.get_row(row));
+            }
+            self.returned += remainder.num_rows() as u64;
+            return Ok(Some(remainder));
+        }
+        let Some(batches) = self.batches.as_ref() else {
+            return Ok(None);
+        };
+        match batches.recv() {
+            Ok(Ok(batch)) => {
+                self.returned += batch.num_rows() as u64;
+                Ok(Some(batch))
+            }
+            Ok(Err(error)) => {
+                self.batches = None;
+                Err(StorageError::Backend(error))
+            }
+            Err(_) => {
+                self.batches = None;
+                Ok(None)
+            }
+        }
+    }
+
     fn rows_returned(&self) -> u64 {
         self.returned
     }
 
+    fn predicates_applied(&self) -> bool {
+        self.predicates_applied
+    }
+
     fn close(&mut self) {
         self.batches = None;
+        self.pending = None;
+        self.pending_row = 0;
     }
 }
 
@@ -769,15 +973,6 @@ fn aggregation_to_pb(
         field_type: None,
         has_distinct: Some(false),
     };
-    // Go lowers `COUNT(*)` as `COUNT(1)` before it reaches the coprocessor.
-    let one = Expr {
-        tp: Some(ExprType::Int64 as i32),
-        val: Some(encode_signed(1)),
-        children: Vec::new(),
-        sig: Some(ScalarFuncSig::Unspecified as i32),
-        field_type: None,
-        has_distinct: Some(false),
-    };
     let message = |group_by: Vec<Expr>, agg_func: Vec<Expr>, streamed: bool| Aggregation {
         group_by,
         agg_func,
@@ -819,21 +1014,21 @@ fn aggregation_to_pb(
             let agg_func = functions
                 .iter()
                 .map(|function| {
-                    let argument = match function.input_offset {
-                        Some(offset) => column_ref(offset)?,
-                        None => one.clone(),
-                    };
-                    let tp = match function.kind {
-                        PushdownAggregateKind::Count => ExprType::Count,
-                        PushdownAggregateKind::Sum => ExprType::Sum,
-                        PushdownAggregateKind::Min => ExprType::Min,
-                        PushdownAggregateKind::Max => ExprType::Max,
-                    };
-                    Some(agg(tp, argument))
+                    lower_aggregate_function(
+                        function.kind,
+                        function.input.as_ref(),
+                        &function.output_type,
+                        columns,
+                    )
                 })
                 .collect::<Option<Vec<_>>>()?;
             Some(message(group_by, agg_func, *streamed))
         }
+        PushdownPartialAggregate::Global { functions } => Some(message(
+            Vec::new(),
+            lower_global_aggregate(functions, columns)?,
+            false,
+        )),
     }
 }
 
@@ -843,12 +1038,22 @@ fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
     // either way -- but it is what the catalog declares, so it is what the
     // descriptor carries.
     let code = column.field_type.code();
-    let (tp, column_len) = match code {
-        FieldTypeCode::LongLong => (MYSQL_TYPE_LONGLONG, 20),
-        FieldTypeCode::Long => (MYSQL_TYPE_LONG, 11),
-        FieldTypeCode::Int24 => (MYSQL_TYPE_INT24, 9),
-        FieldTypeCode::Short => (MYSQL_TYPE_SHORT, 6),
-        FieldTypeCode::Tiny => (MYSQL_TYPE_TINY, 4),
+    let (tp, column_len, decimal) = match code {
+        FieldTypeCode::LongLong => (MYSQL_TYPE_LONGLONG, 20, 0),
+        FieldTypeCode::Long => (MYSQL_TYPE_LONG, 11, 0),
+        FieldTypeCode::Int24 => (MYSQL_TYPE_INT24, 9, 0),
+        FieldTypeCode::Short => (MYSQL_TYPE_SHORT, 6, 0),
+        FieldTypeCode::Tiny => (MYSQL_TYPE_TINY, 4, 0),
+        FieldTypeCode::NewDecimal => (
+            i32::from(code.mysql_type()),
+            i32::try_from(column.field_type.flen()).ok()?,
+            i32::try_from(column.field_type.decimal()).ok()?,
+        ),
+        FieldTypeCode::Date | FieldTypeCode::Datetime => (
+            i32::from(code.mysql_type()),
+            i32::try_from(column.field_type.flen()).ok()?,
+            i32::try_from(column.field_type.decimal()).ok()?,
+        ),
         // The character-string family. Unlike the integer widths above, a
         // string column's declared LENGTH is not decoration TiKV ignores: it
         // is what a `VARCHAR(n)` value is checked and compared against, so it
@@ -863,13 +1068,11 @@ fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
         | FieldTypeCode::LongBlob => (
             i32::from(code.mysql_type()),
             i32::try_from(column.field_type.flen()).unwrap_or(-1),
+            i32::try_from(column.field_type.decimal()).unwrap_or(-1),
         ),
         _ => return None,
     };
-    let mut flag = 0;
-    if column.field_type.is_unsigned() {
-        flag |= UNSIGNED_FLAG;
-    }
+    let mut flag = i32::try_from(column.field_type.flags()).ok()?;
     if column.is_handle {
         flag |= NOT_NULL_FLAG | PRI_KEY_FLAG;
     }
@@ -898,12 +1101,121 @@ fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
         tp,
         collation,
         column_len,
-        decimal: 0,
+        decimal,
         flag,
         pk_handle: column.is_handle,
         default_val,
         ..ScanColumnInfo::default()
     })
+}
+
+fn scan_column_descriptor(
+    columns: &[ScanColumnInfo],
+    offset: u32,
+) -> Option<tidb_expr::pushdown_catalog::ColumnDescriptor> {
+    let column = columns.get(offset as usize)?;
+    let collation = tidb_datatype::proto_to_collation(column.collation);
+    let charset = tidb_datatype::get_collation_by_name(&collation)
+        .map_or_else(|_| "binary".to_owned(), |row| row.charset_name);
+    Some(tidb_expr::pushdown_catalog::ColumnDescriptor {
+        tp: column.tp,
+        flag: u32::try_from(column.flag).ok()?,
+        flen: column.column_len,
+        decimal: column.decimal,
+        charset,
+        collation,
+    })
+}
+
+fn lower_global_aggregate(
+    functions: &[tidb_executor::remote_scan::PushdownGlobalAggregateFunction],
+    columns: &[ScanColumnInfo],
+) -> Option<Vec<Expr>> {
+    functions
+        .iter()
+        .map(|function| {
+            lower_aggregate_function(
+                function.kind,
+                function.input.as_ref(),
+                &function.output_type,
+                columns,
+            )
+        })
+        .collect()
+}
+
+fn lower_grouped_aggregate(
+    functions: &[tidb_executor::remote_scan::PushdownAggregateFunction],
+    columns: &[ScanColumnInfo],
+) -> Option<Vec<Expr>> {
+    functions
+        .iter()
+        .map(|function| {
+            lower_aggregate_function(
+                function.kind,
+                function.input.as_ref(),
+                &function.output_type,
+                columns,
+            )
+        })
+        .collect()
+}
+
+fn lower_aggregate_function(
+    kind: PushdownAggregateKind,
+    input: Option<&tidb_expr::expression::Expression>,
+    output_type: &FieldType,
+    columns: &[ScanColumnInfo],
+) -> Option<Expr> {
+    let children = match input {
+        Some(input) => vec![tidb_expr::pushdown_catalog::expression_to_pb(
+            input,
+            &|offset| scan_column_descriptor(columns, offset),
+        )?],
+        None if kind == PushdownAggregateKind::Count => {
+            vec![tidb_expr::pushdown_catalog::to_pb(
+                &tidb_expr::pushdown_catalog::PbScalar::IntLiteral(1),
+                &|_| None,
+            )?]
+        }
+        None => return None,
+    };
+    let tp = match kind {
+        PushdownAggregateKind::Count => ExprType::Count,
+        PushdownAggregateKind::Sum => ExprType::Sum,
+        PushdownAggregateKind::Min => ExprType::Min,
+        PushdownAggregateKind::Max => ExprType::Max,
+    };
+    Some(Expr {
+        tp: Some(tp as i32),
+        val: None,
+        children,
+        sig: Some(ScalarFuncSig::Unspecified as i32),
+        field_type: Some(tidb_expr::pushdown_catalog::field_type_to_pb(output_type)?),
+        has_distinct: Some(false),
+    })
+}
+
+fn lower_group_by(
+    group_offsets: &[usize],
+    group_types: &[FieldType],
+    columns: &[ScanColumnInfo],
+) -> Option<Vec<Expr>> {
+    if group_offsets.len() != group_types.len() {
+        return None;
+    }
+    group_offsets
+        .iter()
+        .zip(group_types)
+        .map(|(offset, field_type)| {
+            let mut column = tidb_expr::column::Column::new(*offset as i64 + 1, field_type.clone());
+            column.index = *offset as i64;
+            tidb_expr::pushdown_catalog::expression_to_pb(
+                &tidb_expr::expression::Expression::Column(column),
+                &|offset| scan_column_descriptor(columns, offset),
+            )
+        })
+        .collect()
 }
 
 /// Whether a request names the implicit `_tidb_rowid` handle column, which is

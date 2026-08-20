@@ -23,7 +23,7 @@
 //! unconsumed work.
 
 use std::cell::{RefCell, RefMut};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -45,7 +45,10 @@ use tidb_txnkv::region::{
     StoreLabel as RoutingStoreLabel,
 };
 use tidb_txnkv::{
-    rpc::{AsyncRequestDispatcher, AsyncRequestPublication, CompletionError, PendingRequest},
+    rpc::{
+        AsyncRequestDispatcher, AsyncRequestPublication, CompletionError, CompletionNotifier,
+        PendingRequest,
+    },
     EndpointType, SharedReadOpener, SharedReadRuntime, TraceInfo, UnaryCallContext,
     UnaryCancellation, DEFAULT_STORE_LIVENESS_TIMEOUT,
 };
@@ -703,7 +706,14 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         let mut read_policy =
             read_policy_from_metadata(metadata).map_err(|error| error.to_string())?;
         read_policy.forwarding = self.config.enable_forwarding;
-        CopPagingState::validate_read_request(metadata)
+        // The SQL request may legitimately allow unordered region responses
+        // (`PhysicalTableScan.KeepOrder=false`). This response owner still
+        // consumes logical tasks in range order, so give the paging
+        // coordinator the stronger internal ordering contract while leaving
+        // the wire DAG/request metadata untouched.
+        let mut coordinator_metadata = metadata.clone();
+        coordinator_metadata.keep_order = true;
+        CopPagingState::validate_read_request(&coordinator_metadata)
             .map_err(|error| DirectUnaryTransportError::from(error).to_string())?;
         let requested_ranges =
             metadata_region_ranges(metadata).map_err(|error| error.to_string())?;
@@ -726,7 +736,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         let cache = CoprCache::from_optional_config(self.config.cache.as_ref())
             .map_err(|error| DirectUnaryTransportError::Cache(error.to_string()).to_string())?;
         let runtime = CopPagingState::prepare_read_tasks(
-            metadata,
+            &coordinator_metadata,
             &topology,
             cache,
             self.config.read_engine_generation,
@@ -782,7 +792,10 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             region_backoffs: BTreeMap::new(),
             request_selectors: BTreeMap::new(),
             sync_only_chains: BTreeSet::new(),
-            pending_batch: None,
+            pending_batches: BTreeMap::new(),
+            completion_notifier: CompletionNotifier::new(),
+            unordered_inflight: BTreeSet::new(),
+            unordered_ready: VecDeque::new(),
             network_metrics: UnaryNetworkMetrics::default(),
             evidence: Rc::clone(&self.evidence),
             publication_observer: Rc::clone(&self.publication_observer),
@@ -908,7 +921,18 @@ pub struct DirectUnaryQueryResponse<C, L> {
     // clears this state so the next page can begin a fresh BatchCommands
     // attempt, matching SendReqAsync-per-call behavior.
     sync_only_chains: BTreeSet<u64>,
-    pending_batch: Option<PendingBatchAttempt>,
+    /// BatchCommands requests already admitted for logical tasks. The
+    /// response owner consumes task channels in range order, but admission is
+    /// concurrent so a large table scan does not serialize one region RPC at
+    /// a time.
+    pending_batches: BTreeMap<u64, PendingBatchAttempt>,
+    /// Shared completion-order queue corresponding to Go's unordered
+    /// `copIterator.respChan`.
+    completion_notifier: CompletionNotifier,
+    /// Logical tasks occupying the bounded unordered worker window.
+    unordered_inflight: BTreeSet<u64>,
+    /// Settled tasks whose response channels still need to be drained.
+    unordered_ready: VecDeque<u64>,
     network_metrics: UnaryNetworkMetrics,
     evidence: Rc<RefCell<DirectUnaryTransportEvidence>>,
     publication_observer: Rc<RefCell<Option<PublicationObserver>>>,
@@ -940,7 +964,7 @@ struct PendingBatchAttempt {
 
 impl<C, L> Drop for DirectUnaryQueryResponse<C, L> {
     fn drop(&mut self) {
-        if let Some(attempt) = self.pending_batch.as_mut() {
+        for attempt in self.pending_batches.values_mut() {
             attempt.pending.cancel();
         }
     }
@@ -974,6 +998,9 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
     ) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         if self.closed {
             return Ok(None);
+        }
+        if !self.metadata.keep_order {
+            return self.pull_unordered();
         }
         loop {
             let Some(&logical_task_id) = self.logical_order.get(self.logical_index) else {
@@ -1015,8 +1042,8 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                     "open logical task has no active attempt",
                 ));
             };
-            let dispatch_result = if self.pending_batch.is_some() {
-                self.complete_batch_attempt()
+            let dispatch_result = if self.pending_batches.contains_key(&logical_task_id) {
+                self.complete_batch_attempt(logical_task_id)
             } else {
                 self.dispatch_attempt(logical_task_id, attempt_id)
             };
@@ -1024,6 +1051,143 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 return self.fail(error);
             }
         }
+    }
+
+    fn pull_unordered(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
+        loop {
+            self.prefetch_attempts()
+                .map_err(|error| QueryResponseError::Source(error.to_string()))?;
+
+            while let Some(logical_task_id) = self.unordered_ready.pop_front() {
+                match self.runtime.next_response(logical_task_id) {
+                    Some(ResponseChannelEvent::Result(data)) => {
+                        self.unordered_ready.push_back(logical_task_id);
+                        return Ok(Some(QueryResultSubset {
+                            data,
+                            runtime: None,
+                        }));
+                    }
+                    Some(ResponseChannelEvent::Closed) => {
+                        self.active_attempts.remove(&logical_task_id);
+                        self.request_selectors.remove(&logical_task_id);
+                        self.unordered_inflight.remove(&logical_task_id);
+                        self.prefetch_attempts()
+                            .map_err(|error| QueryResponseError::Source(error.to_string()))?;
+                    }
+                    Some(ResponseChannelEvent::Error(message)) => {
+                        return self.fail(DirectUnaryTransportError::Coordinator(message));
+                    }
+                    Some(ResponseChannelEvent::Warning(_)) => {
+                        return self.fail(DirectUnaryTransportError::ResponseState(
+                            "unexpected warning event",
+                        ));
+                    }
+                    Some(ResponseChannelEvent::ResultWithRuntime { .. }) => {
+                        return self.fail(DirectUnaryTransportError::ResponseState(
+                            "unexpected runtime event",
+                        ));
+                    }
+                    // The response channel may not have a decoded chunk yet
+                    // even though the region request has completed. Keep the
+                    // logical task in the ready queue; dropping it here loses
+                    // rows from unordered scans such as TPC-H q12.
+                    None => self.unordered_ready.push_back(logical_task_id),
+                }
+            }
+
+            let completion = self
+                .completion_notifier
+                .try_take()
+                .map_err(Self::completion_error)?;
+            if let Some(logical_task_id) = completion {
+                if self.pending_batches.contains_key(&logical_task_id)
+                    && self
+                        .try_complete_batch_attempt(logical_task_id)
+                        .map_err(|error| QueryResponseError::Source(error.to_string()))?
+                {
+                    self.unordered_ready.push_back(logical_task_id);
+                }
+                continue;
+            }
+
+            if self.pending_batches.is_empty() {
+                if self.active_attempts.is_empty()
+                    && self.unordered_inflight.is_empty()
+                    && self.unordered_ready.is_empty()
+                {
+                    self.closed = true;
+                    return Ok(None);
+                }
+                continue;
+            }
+
+            let logical_task_id = self
+                .completion_notifier
+                .wait(&self.call)
+                .map_err(Self::completion_error)?;
+            if self.pending_batches.contains_key(&logical_task_id)
+                && self
+                    .try_complete_batch_attempt(logical_task_id)
+                    .map_err(|error| QueryResponseError::Source(error.to_string()))?
+            {
+                self.unordered_ready.push_back(logical_task_id);
+            }
+        }
+    }
+
+    fn completion_error(error: CompletionError) -> QueryResponseError {
+        match error {
+            CompletionError::Cancelled => QueryResponseError::Cancelled,
+            CompletionError::DeadlineExceeded => {
+                QueryResponseError::Source(DirectUnaryTransportError::DeadlineExceeded.to_string())
+            }
+            other => QueryResponseError::Source(
+                DirectUnaryTransportError::Client(DirectUnaryClientError::Runtime(
+                    other.to_string(),
+                ))
+                .to_string(),
+            ),
+        }
+    }
+
+    /// Admits a bounded window of region requests before the consumer waits
+    /// for the first logical task. Go's distsql worker pool does the same: the
+    /// result stream remains ordered when requested by the reader, while
+    /// independent regions execute concurrently in TiKV.
+    fn prefetch_attempts(&mut self) -> Result<(), DirectUnaryTransportError> {
+        let concurrency = usize::try_from(self.metadata.concurrency)
+            .ok()
+            .filter(|concurrency| *concurrency > 0)
+            .unwrap_or(1);
+        let start = if self.metadata.keep_order {
+            self.logical_index
+        } else {
+            0
+        };
+        for index in start..self.logical_order.len() {
+            let logical_task_id = self.logical_order[index];
+            if self.pending_batches.contains_key(&logical_task_id) {
+                continue;
+            }
+            let Some(attempt_id) = self.active_attempts.get(&logical_task_id).copied() else {
+                continue;
+            };
+            if self.metadata.keep_order {
+                if self.pending_batches.len() >= concurrency {
+                    break;
+                }
+            } else if !self.unordered_inflight.contains(&logical_task_id) {
+                if self.unordered_inflight.len() >= concurrency {
+                    continue;
+                }
+                self.unordered_inflight.insert(logical_task_id);
+            }
+            self.dispatch_attempt(logical_task_id, attempt_id)?;
+            if !self.metadata.keep_order && !self.pending_batches.contains_key(&logical_task_id) {
+                self.unordered_ready.push_back(logical_task_id);
+            }
+        }
+        Ok(())
     }
 
     fn dispatch_attempt(
@@ -1198,8 +1362,14 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 prepared_dispatch.traffic_location,
             );
             match begin_result {
-                Ok(pending) => {
+                Ok(mut pending) => {
                     let publication = pending.publication();
+                    if !self.metadata.keep_order {
+                        pending.set_notifier(
+                            self.completion_notifier.clone(),
+                            prepared_dispatch.logical_task_id,
+                        );
+                    }
                     record_physical_dispatch(
                         &self.evidence,
                         &self.publication_observer,
@@ -1207,11 +1377,14 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                         true,
                         publication,
                     );
-                    self.pending_batch = Some(PendingBatchAttempt {
-                        dispatch: prepared_dispatch,
-                        pending,
-                        started_at: dispatch_started,
-                    });
+                    self.pending_batches.insert(
+                        prepared_dispatch.logical_task_id,
+                        PendingBatchAttempt {
+                            dispatch: prepared_dispatch,
+                            pending,
+                            started_at: dispatch_started,
+                        },
+                    );
                     return Ok(());
                 }
                 Err(error) => {
@@ -1248,24 +1421,24 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         self.settle_dispatch(prepared_dispatch, send_result, dispatch_duration)
     }
 
-    fn complete_batch_attempt(&mut self) -> Result<(), DirectUnaryTransportError> {
+    fn complete_batch_attempt(
+        &mut self,
+        logical_task_id: u64,
+    ) -> Result<(), DirectUnaryTransportError> {
         if let Err(error) = self.check_retry_active() {
-            if let Some(attempt) = self.pending_batch.as_mut() {
+            if let Some(attempt) = self.pending_batches.get_mut(&logical_task_id) {
                 attempt.pending.cancel();
             }
             return Err(error);
         }
         let completion = {
-            let attempt =
-                self.pending_batch
-                    .as_mut()
-                    .ok_or(DirectUnaryTransportError::ResponseState(
-                        "missing pending BatchCommands attempt",
-                    ))?;
+            let attempt = self.pending_batches.get_mut(&logical_task_id).ok_or(
+                DirectUnaryTransportError::ResponseState("missing pending BatchCommands attempt"),
+            )?;
             attempt.pending.complete(&self.call)
         };
         if let Err(error) = self.check_retry_active() {
-            if let Some(attempt) = self.pending_batch.as_mut() {
+            if let Some(attempt) = self.pending_batches.get_mut(&logical_task_id) {
                 attempt.pending.cancel();
             }
             return Err(error);
@@ -1273,26 +1446,53 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         let send_result = match completion {
             Ok(result) => result,
             Err(CompletionError::Cancelled) => {
-                if let Some(attempt) = self.pending_batch.as_mut() {
+                if let Some(attempt) = self.pending_batches.get_mut(&logical_task_id) {
                     attempt.pending.cancel();
                 }
                 return Err(DirectUnaryTransportError::CallerCancelled);
             }
             Err(CompletionError::DeadlineExceeded) => {
-                if let Some(attempt) = self.pending_batch.as_mut() {
+                if let Some(attempt) = self.pending_batches.get_mut(&logical_task_id) {
                     attempt.pending.cancel();
                 }
                 return Err(DirectUnaryTransportError::DeadlineExceeded);
             }
             Err(error) => Err(DirectUnaryClientError::Runtime(error.to_string())),
         };
-        let pending = self
-            .pending_batch
-            .take()
-            .ok_or(DirectUnaryTransportError::ResponseState(
-                "completed BatchCommands attempt vanished",
-            ))?;
+        let pending = self.pending_batches.remove(&logical_task_id).ok_or(
+            DirectUnaryTransportError::ResponseState("completed BatchCommands attempt vanished"),
+        )?;
         self.settle_dispatch(pending.dispatch, send_result, pending.started_at.elapsed())
+    }
+
+    fn try_complete_batch_attempt(
+        &mut self,
+        logical_task_id: u64,
+    ) -> Result<bool, DirectUnaryTransportError> {
+        self.check_retry_active()?;
+        let completion = {
+            let attempt = self.pending_batches.get_mut(&logical_task_id).ok_or(
+                DirectUnaryTransportError::ResponseState("missing pending BatchCommands attempt"),
+            )?;
+            attempt.pending.try_complete()
+        };
+        let send_result = match completion {
+            Ok(None) => return Ok(false),
+            Ok(Some(result)) => result,
+            Err(CompletionError::Cancelled) => {
+                return Err(DirectUnaryTransportError::CallerCancelled);
+            }
+            Err(CompletionError::DeadlineExceeded) => {
+                return Err(DirectUnaryTransportError::DeadlineExceeded);
+            }
+            Err(error) => Err(DirectUnaryClientError::Runtime(error.to_string())),
+        };
+        self.check_retry_active()?;
+        let pending = self.pending_batches.remove(&logical_task_id).ok_or(
+            DirectUnaryTransportError::ResponseState("completed BatchCommands attempt vanished"),
+        )?;
+        self.settle_dispatch(pending.dispatch, send_result, pending.started_at.elapsed())?;
+        Ok(true)
     }
 
     fn settle_dispatch(
@@ -1751,19 +1951,32 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 "region rebuild produced an invalid active tail",
             ));
         }
-        let failed_logical_task_id = self.logical_order.get(self.logical_index).copied().ok_or(
-            DirectUnaryTransportError::ResponseState("region rebuild has no current logical task"),
-        )?;
-        if replacement.logical_task_ids[0] != failed_logical_task_id {
-            return Err(DirectUnaryTransportError::ResponseState(
-                "region rebuild changed the failed logical task identity",
-            ));
-        }
+        let failed_logical_task_id = replacement.logical_task_ids[0];
+        let replacement_index = if self.metadata.keep_order {
+            let current = self.logical_order.get(self.logical_index).copied().ok_or(
+                DirectUnaryTransportError::ResponseState(
+                    "region rebuild has no current logical task",
+                ),
+            )?;
+            if current != failed_logical_task_id {
+                return Err(DirectUnaryTransportError::ResponseState(
+                    "region rebuild changed the failed logical task identity",
+                ));
+            }
+            self.logical_index
+        } else {
+            self.logical_order
+                .iter()
+                .position(|logical_task_id| *logical_task_id == failed_logical_task_id)
+                .ok_or(DirectUnaryTransportError::ResponseState(
+                    "region rebuild has no matching unordered logical task",
+                ))?
+        };
         let sync_only_chain = self.sync_only_chains.contains(&failed_logical_task_id);
         self.active_attempts.remove(&failed_logical_task_id);
         self.request_selectors.remove(&failed_logical_task_id);
         self.logical_order.splice(
-            self.logical_index..=self.logical_index,
+            replacement_index..=replacement_index,
             replacement.logical_task_ids.iter().copied(),
         );
         for (logical_task_id, attempt_id) in replacement

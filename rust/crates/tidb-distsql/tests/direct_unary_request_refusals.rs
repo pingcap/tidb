@@ -30,6 +30,7 @@ fn missing_cluster_loader_failure_and_empty_pd_address_fail_before_client_dispat
             events: Rc::new(RefCell::new(Vec::new())),
             liveness: RefCell::new(VecDeque::new()),
             batch_errors: RefCell::new(VecDeque::new()),
+            batch_ready_immediately: RefCell::new(VecDeque::new()),
             batch_completion_gate: None,
         },
         RegionCache::new(ScriptedLoader {
@@ -108,12 +109,10 @@ fn unsupported_request_shape_fails_before_pd_or_tikv() {
     tiflash.store_type = StoreType::TiFlash;
     let mut analyze = metadata("a", "z");
     analyze.request_type = RequestType::Analyze;
-    let mut unordered = metadata("a", "z");
-    unordered.keep_order = false;
     let mut batched = metadata("a", "z");
     batched.batch_cop = true;
 
-    for invalid in [tiflash, analyze, unordered, batched] {
+    for invalid in [tiflash, analyze, batched] {
         let calls = Rc::new(RefCell::new(Vec::new()));
         let loader_calls = Rc::new(RefCell::new(Vec::new()));
         let mut runtime = InjectedQueryRuntime::new(transport_with_loader_calls(

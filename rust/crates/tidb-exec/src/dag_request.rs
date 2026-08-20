@@ -125,6 +125,8 @@ pub enum DagRequestBuildError {
     },
     /// A metadata-only Selection cannot enter the executable TiKV DAG.
     EmptySelection,
+    /// A metadata-only Aggregation cannot enter the executable TiKV DAG.
+    EmptyAggregation,
     /// The bounded expression owner rejected a condition.
     Expression(PbPredicateError),
 }
@@ -158,6 +160,9 @@ impl fmt::Display for DagRequestBuildError {
             Self::EmptySelection => {
                 f.write_str("TiKV Selection requires at least one resolved condition")
             }
+            Self::EmptyAggregation => {
+                f.write_str("TiKV Aggregation requires at least one resolved function")
+            }
             Self::Expression(error) => write!(f, "cannot lower TiKV Selection expression: {error}"),
         }
     }
@@ -176,7 +181,16 @@ pub fn construct_dag_req(
     context: &DagRequestContext,
     plans: &[TiKvScanPlan<'_>],
 ) -> Result<DagRequest, DagRequestBuildError> {
-    construct_dag_req_inner(context, plans, SelectionSource::None, None, None)
+    construct_dag_req_inner(
+        context,
+        plans,
+        SelectionSource::None,
+        None,
+        None,
+        None,
+        false,
+        None,
+    )
 }
 
 /// Go's `PhysicalLimit.ToPB` in the TiKV list form: the coprocessor stops
@@ -217,6 +231,9 @@ pub fn construct_read_only_dag_req(
         selection.map_or(SelectionSource::None, SelectionSource::Bounded),
         Some(output_offsets),
         None,
+        None,
+        false,
+        None,
     )
 }
 
@@ -254,7 +271,64 @@ pub fn construct_capped_read_only_dag_req_with_conditions(
             SelectionSource::Conditions(conditions)
         },
         Some(output_offsets),
+        None,
+        None,
+        false,
         limit,
+    )
+}
+
+/// A TiKV list DAG with a global partial aggregation above the complete
+/// Selection. Aggregate functions are already resolved TiPB expressions; an
+/// empty slice is rejected rather than silently changing the output schema.
+pub fn construct_aggregate_read_only_dag_req_with_conditions(
+    context: &DagRequestContext,
+    scan: TiKvScanPlan<'_>,
+    conditions: &[Expr],
+    aggregate_functions: &[Expr],
+    output_offsets: &[u32],
+) -> Result<DagRequest, DagRequestBuildError> {
+    construct_dag_req_inner(
+        context,
+        &[scan],
+        if conditions.is_empty() {
+            SelectionSource::None
+        } else {
+            SelectionSource::Conditions(conditions)
+        },
+        Some(output_offsets),
+        Some(aggregate_functions),
+        None,
+        false,
+        None,
+    )
+}
+
+/// A TiKV list DAG with a grouped partial aggregation above the complete
+/// Selection. TiKV's output schema is aggregate functions first, followed by
+/// the group-key expressions in source order.
+pub fn construct_grouped_aggregate_read_only_dag_req_with_conditions(
+    context: &DagRequestContext,
+    scan: TiKvScanPlan<'_>,
+    conditions: &[Expr],
+    aggregate_functions: &[Expr],
+    group_by: &[Expr],
+    streamed: bool,
+    output_offsets: &[u32],
+) -> Result<DagRequest, DagRequestBuildError> {
+    construct_dag_req_inner(
+        context,
+        &[scan],
+        if conditions.is_empty() {
+            SelectionSource::None
+        } else {
+            SelectionSource::Conditions(conditions)
+        },
+        Some(output_offsets),
+        Some(aggregate_functions),
+        Some(group_by),
+        streamed,
+        None,
     )
 }
 
@@ -273,6 +347,9 @@ pub fn construct_capped_read_only_dag_req(
         &[scan],
         selection.map_or(SelectionSource::None, SelectionSource::Bounded),
         Some(output_offsets),
+        None,
+        None,
+        false,
         limit,
     )
 }
@@ -299,6 +376,9 @@ pub fn construct_aggregated_read_only_dag_req_with_conditions(
             SelectionSource::Conditions(conditions)
         },
         None,
+        None,
+        None,
+        false,
         None,
         Some((aggregation, aggregation_width)),
     )
@@ -383,6 +463,9 @@ fn construct_dag_req_inner(
     plans: &[TiKvScanPlan<'_>],
     selection: SelectionSource<'_>,
     requested_output_offsets: Option<&[u32]>,
+    aggregate_functions: Option<&[Expr]>,
+    aggregate_group_by: Option<&[Expr]>,
+    aggregate_streamed: bool,
     limit: Option<u64>,
 ) -> Result<DagRequest, DagRequestBuildError> {
     construct_dag_req_assembled(
@@ -390,6 +473,9 @@ fn construct_dag_req_inner(
         plans,
         selection,
         requested_output_offsets,
+        aggregate_functions,
+        aggregate_group_by,
+        aggregate_streamed,
         limit,
         None,
     )
@@ -400,6 +486,9 @@ fn construct_dag_req_assembled(
     plans: &[TiKvScanPlan<'_>],
     selection: SelectionSource<'_>,
     requested_output_offsets: Option<&[u32]>,
+    aggregate_functions: Option<&[Expr]>,
+    aggregate_group_by: Option<&[Expr]>,
+    aggregate_streamed: bool,
     limit: Option<u64>,
     aggregation: Option<(Aggregation, usize)>,
 ) -> Result<DagRequest, DagRequestBuildError> {
@@ -422,11 +511,19 @@ fn construct_dag_req_assembled(
                 .as_slice(),
         ),
     };
+    if aggregate_functions.is_some_and(<[Expr]>::is_empty) {
+        return Err(DagRequestBuildError::EmptyAggregation);
+    }
+    if aggregate_group_by.is_some_and(<[Expr]>::is_empty) {
+        return Err(DagRequestBuildError::EmptyAggregation);
+    }
     let output_width = match &aggregation {
         // The aggregation replaces the scan row: the reader addresses the
         // aggregate results and group keys, never the scanned columns.
         Some((_, width)) => *width,
-        None => scan_columns.len(),
+        None => aggregate_functions.map_or(scan_columns.len(), |functions| {
+            functions.len() + aggregate_group_by.map_or(0, <[Expr]>::len)
+        }),
     };
     let output_offsets = match requested_output_offsets {
         Some(offsets) => {
@@ -451,6 +548,12 @@ fn construct_dag_req_assembled(
     }
     if let Some((aggregation, _)) = aggregation {
         executors.push(aggregation_to_executor(aggregation));
+    } else if let Some(functions) = aggregate_functions {
+        executors.push(aggregation_to_pb(
+            functions,
+            aggregate_group_by.unwrap_or_default(),
+            aggregate_streamed,
+        )?);
     }
     if let Some(limit) = limit {
         executors.push(limit_to_pb(limit));
@@ -528,6 +631,30 @@ fn selection_executor(conditions: Vec<Expr>) -> Result<Executor, DagRequestBuild
         limit: None,
         // PhysicalSelection.ToPB always takes the address of executorID; it
         // remains empty for TiKV's list form.
+        executor_id: Some(String::new()),
+        parent_idx: None,
+    })
+}
+
+fn aggregation_to_pb(
+    functions: &[Expr],
+    group_by: &[Expr],
+    streamed: bool,
+) -> Result<Executor, DagRequestBuildError> {
+    if functions.is_empty() {
+        return Err(DagRequestBuildError::EmptyAggregation);
+    }
+    Ok(Executor {
+        tp: Some(ExecType::TypeAggregation as i32),
+        tbl_scan: None,
+        idx_scan: None,
+        selection: None,
+        aggregation: Some(Aggregation {
+            group_by: group_by.to_vec(),
+            agg_func: functions.to_vec(),
+            streamed: Some(streamed),
+        }),
+        limit: None,
         executor_id: Some(String::new()),
         parent_idx: None,
     })

@@ -403,6 +403,7 @@ mod tests {
                 row_count: 0,
                 columns: Vec::new(),
                 indexes: Vec::new(),
+                load_state: Default::default(),
             })),
         )
     }
@@ -467,6 +468,7 @@ mod tests {
                 cms: None,
             }],
             indexes: Vec::new(),
+            load_state: Default::default(),
         };
         let state = TableStatsState::Loaded(Arc::new(stats));
         assert_eq!(state.version(), Some(42));

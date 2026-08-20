@@ -97,7 +97,8 @@ pub use kvrpcpb::prewrite_request::PessimisticAction as KvrpcPessimisticAction;
 pub use kvrpcpb::{
     Action as KvrpcTxnAction, AlreadyExist as KvrpcAlreadyExist, Assertion as KvrpcAssertion,
     AssertionFailed as KvrpcAssertionFailed, AssertionLevel as KvrpcAssertionLevel,
-    BatchGetRequest as KvrpcBatchGetRequest, BatchRollbackRequest as KvrpcBatchRollbackRequest,
+    BatchGetRequest as KvrpcBatchGetRequest, BatchGetResponse as KvrpcBatchGetResponse,
+    BatchRollbackRequest as KvrpcBatchRollbackRequest,
     BatchRollbackResponse as KvrpcBatchRollbackResponse,
     CheckSecondaryLocksRequest as KvrpcCheckSecondaryLocksRequest,
     CheckSecondaryLocksResponse as KvrpcCheckSecondaryLocksResponse,

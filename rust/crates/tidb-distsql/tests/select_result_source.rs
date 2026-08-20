@@ -246,6 +246,75 @@ fn new_sel_resp_channel_iter_uses_each_channel_schema_and_rejects_invalid_layout
 }
 
 #[test]
+fn type_chunk_response_transfers_decoded_batches_in_channel_order() {
+    let response = SelectResponse {
+        encode_type: Some(EncodeType::TypeChunk as i32),
+        chunks: vec![type_chunk(&[vec![Cell::Int(7), Cell::Int(8)]])],
+        intermediate_outputs: vec![intermediate(
+            EncodeType::TypeChunk,
+            vec![type_chunk(&[vec![Cell::Int(1), Cell::Int(2)]])],
+        )],
+        ..Default::default()
+    };
+    let mut iter = response_source([response]).into_select_iter(
+        vec![int_type()],
+        vec![vec![int_type()]],
+        WarningCollector::new(),
+    );
+
+    let final_chunk = iter
+        .next_chunk_with_required_rows(1024)
+        .unwrap()
+        .unwrap();
+    assert_eq!(final_chunk.channel_index, 1);
+    assert_eq!(final_chunk.row.num_rows(), 2);
+    assert_eq!(final_chunk.row.get_row(0).get_int64(0), 7);
+    assert_eq!(final_chunk.row.get_row(1).get_int64(0), 8);
+
+    let intermediate = iter
+        .next_chunk_with_required_rows(1024)
+        .unwrap()
+        .unwrap();
+    assert_eq!(intermediate.channel_index, 0);
+    assert_eq!(intermediate.row.num_rows(), 2);
+    assert_eq!(intermediate.row.get_row(0).get_int64(0), 1);
+    assert_eq!(intermediate.row.get_row(1).get_int64(0), 2);
+    assert!(iter
+        .next_chunk_with_required_rows(1024)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn type_chunk_response_coalesces_small_chunks_to_required_rows() {
+    let response = SelectResponse {
+        encode_type: Some(EncodeType::TypeChunk as i32),
+        chunks: vec![
+            type_chunk(&[vec![Cell::Int(1)]]),
+            type_chunk(&[vec![Cell::Int(2)]]),
+            type_chunk(&[vec![Cell::Int(3), Cell::Int(4)]]),
+        ],
+        ..Default::default()
+    };
+    let mut iter = response_source([response]).into_select_iter(
+        vec![int_type()],
+        Vec::new(),
+        WarningCollector::new(),
+    );
+
+    let chunk = iter
+        .next_chunk_with_required_rows(4)
+        .unwrap()
+        .unwrap();
+    assert_eq!(chunk.row.num_rows(), 4);
+    assert_eq!(chunk.row.get_row(0).get_int64(0), 1);
+    assert_eq!(chunk.row.get_row(1).get_int64(0), 2);
+    assert_eq!(chunk.row.get_row(2).get_int64(0), 3);
+    assert_eq!(chunk.row.get_row(3).get_int64(0), 4);
+    assert!(iter.next_chunk_with_required_rows(4).unwrap().is_none());
+}
+
+#[test]
 fn sel_resp_channel_iter_reads_default_and_type_chunk_rows_across_empty_chunks() {
     for encode_type in [EncodeType::TypeDefault, EncodeType::TypeChunk] {
         let rows = [

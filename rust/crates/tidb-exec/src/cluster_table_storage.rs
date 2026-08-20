@@ -89,6 +89,10 @@ enum TransactionRequest {
         key: Vec<u8>,
         reply: Sender<Result<Option<Vec<u8>>, StorageError>>,
     },
+    BatchGet {
+        keys: Vec<Vec<u8>>,
+        reply: Sender<Result<SnapshotPairs, StorageError>>,
+    },
     Scan {
         start: Vec<u8>,
         end: Vec<u8>,
@@ -366,6 +370,12 @@ fn serve_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapabil
                     .map_err(classify);
                 let _ = reply.send(answer);
             }
+            TransactionRequest::BatchGet { keys, reply } => {
+                let answer = transaction
+                    .snapshot_batch_get(&keys, call)
+                    .map_err(classify);
+                let _ = reply.send(answer);
+            }
             TransactionRequest::Scan {
                 start,
                 end,
@@ -521,6 +531,13 @@ impl ClusterSnapshot for StatementSnapshot {
         ask(&self.thread.sender()?, |reply| TransactionRequest::Get {
             key: bytes,
             reply,
+        })
+    }
+
+    fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
+        let keys = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
+        ask(&self.thread.sender()?, |reply| {
+            TransactionRequest::BatchGet { keys, reply }
         })
     }
 
@@ -754,6 +771,14 @@ impl ClusterSnapshot for SessionSnapshot {
         let bytes = key.as_bytes().to_vec();
         ask(&self.requests, |reply| TransactionRequest::Get {
             key: bytes,
+            reply,
+        })
+    }
+
+    fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
+        let keys = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
+        ask(&self.requests, |reply| TransactionRequest::BatchGet {
+            keys,
             reply,
         })
     }

@@ -16,15 +16,19 @@
 //! conditions and encoded into a DAG.
 
 use prost::Message;
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, Decimal, FieldType, FieldTypeCode, Time, TimeType};
 use tidb_distsql::EncodeType as DistSqlEncodeType;
 use tidb_exec::dag_request::{
-    construct_capped_read_only_dag_req_with_conditions, DagRequestContext, TiKvScanPlan,
+    construct_aggregate_read_only_dag_req_with_conditions,
+    construct_capped_read_only_dag_req_with_conditions,
+    construct_grouped_aggregate_read_only_dag_req_with_conditions, DagRequestContext, TiKvScanPlan,
 };
 use tidb_exec::wide_scan_selection::{
     accepts, wide_scan_selection_conditions, WideScanSelectionError,
 };
-use tidb_executor::predicate_pushdown::{ScanComparison, ScanComparisonOp, ScanPredicate};
+use tidb_executor::predicate_pushdown::{
+    ScanColumnComparison, ScanComparison, ScanComparisonOp, ScanPredicate,
+};
 use tidb_planner::{
     physical_table_scan::PhysicalTableScanPlan,
     tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec},
@@ -62,6 +66,12 @@ fn bigint() -> FieldType {
     FieldType::new(FieldTypeCode::LongLong)
 }
 
+fn date() -> FieldType {
+    FieldType::new(FieldTypeCode::Date)
+        .with_flen(10)
+        .with_decimal(0)
+}
+
 fn pushed(
     column_offset: u32,
     op: ScanComparisonOp,
@@ -71,9 +81,25 @@ fn pushed(
     ScanPredicate::Compare(ScanComparison {
         column_offset,
         column_type: bigint(),
+        literal_type: bigint(),
         op,
         literal,
         column_on_left,
+    })
+}
+
+fn column_compare(
+    left_offset: u32,
+    right_offset: u32,
+    op: ScanComparisonOp,
+    field_type: FieldType,
+) -> ScanPredicate {
+    ScanPredicate::ColumnCompare(ScanColumnComparison {
+        left_offset,
+        left_type: field_type.clone(),
+        right_offset,
+        right_type: field_type,
+        op,
     })
 }
 
@@ -102,7 +128,10 @@ fn a_wide_path_pushed_predicate_is_carried_by_the_encoded_dag() {
     // Decoding the bytes that would go on the wire, not the in-memory value.
     let decoded = DagRequest::decode(request.encode_to_vec().as_slice()).unwrap();
     assert_eq!(decoded.executors.len(), 2);
-    assert_eq!(decoded.executors[0].tp, Some(ExecType::TypeTableScan as i32));
+    assert_eq!(
+        decoded.executors[0].tp,
+        Some(ExecType::TypeTableScan as i32)
+    );
     let selection_executor = &decoded.executors[1];
     assert_eq!(selection_executor.tp, Some(ExecType::TypeSelection as i32));
     let conditions = &selection_executor.selection.as_ref().unwrap().conditions;
@@ -123,6 +152,290 @@ fn a_wide_path_pushed_predicate_is_carried_by_the_encoded_dag() {
         conditions[1].children[1].tp,
         Some(ExprType::ColumnRef as i32)
     );
+}
+
+/// Go sends DATE-vs-DATE comparisons as two ColumnRef children using the
+/// `*Time` signature. NULL remains UNKNOWN, so the local filter and TiKV must
+/// agree on three-valued logic as well as the wire shape.
+#[test]
+fn a_column_date_comparison_lowers_to_two_time_column_refs() {
+    let columns = vec![
+        ScanColumnInfo {
+            tp: i32::from(FieldTypeCode::Date.mysql_type()),
+            column_len: 10,
+            ..column_info(1, 1)
+        },
+        ScanColumnInfo {
+            tp: i32::from(FieldTypeCode::Date.mysql_type()),
+            column_len: 10,
+            ..column_info(2, 1)
+        },
+    ];
+    let predicate = column_compare(0, 1, ScanComparisonOp::Gt, date());
+    assert!(accepts(&predicate, &columns));
+    let condition = wide_scan_selection_conditions(&[predicate], &columns)
+        .unwrap()
+        .remove(0);
+    assert_eq!(condition.sig, Some(ScalarFuncSig::GtTime as i32));
+    assert_eq!(condition.children.len(), 2);
+    assert!(condition
+        .children
+        .iter()
+        .all(|child| child.tp == Some(ExprType::ColumnRef as i32)));
+}
+
+/// TPC-H q6's complete coprocessor shape: temporal and decimal
+/// predicates all travel before the global partial aggregation. Go's
+/// `PbConverter` keeps source operand order, encodes DECIMAL with
+/// `EncodeDecimal(..., 0, 0)`, and encodes DATE as a packed `MysqlTime`.
+#[test]
+fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
+    const MYSQL_TYPE_DATE: i32 = 10;
+    const MYSQL_TYPE_NEW_DECIMAL: i32 = 246;
+
+    let date_column = ScanColumnInfo {
+        column_id: 1,
+        tp: MYSQL_TYPE_DATE,
+        collation: 63,
+        column_len: 10,
+        decimal: 0,
+        ..ScanColumnInfo::default()
+    };
+    let decimal_column = ScanColumnInfo {
+        column_id: 2,
+        tp: MYSQL_TYPE_NEW_DECIMAL,
+        collation: 63,
+        column_len: 5,
+        decimal: 2,
+        ..ScanColumnInfo::default()
+    };
+    let quantity_column = ScanColumnInfo {
+        column_id: 3,
+        tp: MYSQL_TYPE_NEW_DECIMAL,
+        collation: 63,
+        column_len: 15,
+        decimal: 2,
+        ..ScanColumnInfo::default()
+    };
+    let columns = vec![date_column, decimal_column, quantity_column];
+
+    let date = Time::from_date_checked(1994, 1, 1, 0, 0, 0, 0, TimeType::DateTime, 6)
+        .expect("valid q6 lower bound");
+    let next_year = Time::from_date_checked(1995, 1, 1, 0, 0, 0, 0, TimeType::DateTime, 6)
+        .expect("valid q6 upper bound");
+    let lower_discount = Decimal::from_literal("0.05");
+    let upper_discount = Decimal::from_literal("0.07");
+    let predicates = vec![
+        ScanPredicate::Compare(ScanComparison {
+            column_offset: 0,
+            column_type: FieldType::new(FieldTypeCode::Date),
+            literal_type: FieldType::new(FieldTypeCode::Datetime)
+                .with_flen(26)
+                .with_decimal(6),
+            op: ScanComparisonOp::Ge,
+            literal: Datum::Time(date),
+            column_on_left: true,
+        }),
+        ScanPredicate::Compare(ScanComparison {
+            column_offset: 0,
+            column_type: FieldType::new(FieldTypeCode::Date),
+            literal_type: FieldType::new(FieldTypeCode::Datetime)
+                .with_flen(26)
+                .with_decimal(6),
+            op: ScanComparisonOp::Lt,
+            literal: Datum::Time(next_year),
+            column_on_left: true,
+        }),
+        ScanPredicate::And(vec![
+            ScanPredicate::Compare(ScanComparison {
+                column_offset: 1,
+                column_type: FieldType::new(FieldTypeCode::NewDecimal)
+                    .with_flen(5)
+                    .with_decimal(2),
+                literal_type: FieldType::new(FieldTypeCode::NewDecimal)
+                    .with_flen(3)
+                    .with_decimal(2),
+                op: ScanComparisonOp::Ge,
+                literal: Datum::Decimal(lower_discount.clone()),
+                column_on_left: true,
+            }),
+            ScanPredicate::Compare(ScanComparison {
+                column_offset: 1,
+                column_type: FieldType::new(FieldTypeCode::NewDecimal)
+                    .with_flen(5)
+                    .with_decimal(2),
+                literal_type: FieldType::new(FieldTypeCode::NewDecimal)
+                    .with_flen(3)
+                    .with_decimal(2),
+                op: ScanComparisonOp::Le,
+                literal: Datum::Decimal(upper_discount),
+                column_on_left: true,
+            }),
+        ]),
+        ScanPredicate::Compare(ScanComparison {
+            column_offset: 2,
+            column_type: FieldType::new(FieldTypeCode::NewDecimal)
+                .with_flen(15)
+                .with_decimal(2),
+            literal_type: FieldType::new(FieldTypeCode::NewDecimal)
+                .with_flen(2)
+                .with_decimal(0),
+            op: ScanComparisonOp::Lt,
+            literal: Datum::Decimal(Decimal::from_int(24)),
+            column_on_left: true,
+        }),
+    ];
+    let conditions = wide_scan_selection_conditions(&predicates, &columns)
+        .expect("every q6 predicate family has an exact TiPB lowering");
+
+    assert_eq!(conditions[0].sig, Some(134), "GETime");
+    assert_eq!(
+        conditions[0].children[0].tp,
+        Some(ExprType::ColumnRef as i32)
+    );
+    assert_eq!(conditions[0].children[1].tp, Some(107), "MysqlTime");
+    let mut packed_time = Vec::new();
+    tidb_codec::encode_uint(&mut packed_time, date.to_packed_uint().unwrap());
+    assert_eq!(conditions[0].children[1].val.as_ref(), Some(&packed_time));
+
+    assert_eq!(conditions.len(), 5);
+    assert_eq!(conditions[1].sig, Some(104), "LTTime");
+    assert_eq!(conditions[2].sig, Some(132), "GEDecimal");
+    assert_eq!(
+        conditions[2].children[0].tp,
+        Some(ExprType::ColumnRef as i32)
+    );
+    assert_eq!(conditions[2].children[1].tp, Some(102), "MysqlDecimal");
+    let mut encoded_decimal = Vec::new();
+    tidb_codec::encode_decimal_fixed(&mut encoded_decimal, &lower_discount, 0, 0).unwrap();
+    assert_eq!(
+        conditions[2].children[1].val.as_ref(),
+        Some(&encoded_decimal)
+    );
+    assert_eq!(conditions[3].sig, Some(112), "LEDecimal");
+    assert_eq!(conditions[4].sig, Some(102), "LTDecimal");
+
+    let aggregate = Expr {
+        tp: Some(ExprType::Sum as i32),
+        val: None,
+        children: vec![conditions[2].children[0].clone()],
+        sig: Some(ScalarFuncSig::Unspecified as i32),
+        field_type: conditions[2].children[0].field_type.clone(),
+        has_distinct: Some(false),
+    };
+    let scan = PhysicalTableScanPlan::init(0, 0, TiKvTableScanSpec::new(46, columns));
+    let request = construct_aggregate_read_only_dag_req_with_conditions(
+        &DagRequestContext::new("UTC", 0, 0, DistSqlEncodeType::Default),
+        TiKvScanPlan::Table(&scan),
+        &conditions,
+        &[aggregate],
+        &[0],
+    )
+    .expect("q6 DAG builds");
+    let decoded = DagRequest::decode(request.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(
+        decoded
+            .executors
+            .iter()
+            .map(|executor| executor.tp.unwrap())
+            .collect::<Vec<_>>(),
+        vec![
+            ExecType::TypeTableScan as i32,
+            ExecType::TypeSelection as i32,
+            ExecType::TypeAggregation as i32,
+        ]
+    );
+    assert_eq!(
+        decoded.executors[2]
+            .aggregation
+            .as_ref()
+            .unwrap()
+            .agg_func
+            .len(),
+        1
+    );
+}
+
+/// TPC-H q1's grouped partial stage must be a real TiKV Aggregation, not only
+/// an EXPLAIN node backed by a root-side fallback. TiPB returns aggregate
+/// states before the two group keys, which is also the reader schema contract.
+#[test]
+fn tpch_q1_grouped_partial_aggregation_keeps_functions_and_group_keys_on_the_wire() {
+    let group_type = FieldType::new(FieldTypeCode::LongLong);
+    let value_type = FieldType::new(FieldTypeCode::NewDecimal)
+        .with_flen(15)
+        .with_decimal(2);
+    let columns = vec![
+        column_of(MYSQL_TYPE_LONGLONG, 0),
+        column_of(MYSQL_TYPE_LONGLONG, 0),
+        ScanColumnInfo {
+            column_id: 3,
+            tp: 246,
+            collation: 63,
+            column_len: 15,
+            decimal: 2,
+            ..ScanColumnInfo::default()
+        },
+    ];
+    let column_ref = |offset: i64, field_type: &FieldType| {
+        let mut val = Vec::new();
+        tidb_codec::encode_int(&mut val, offset);
+        Expr {
+            tp: Some(ExprType::ColumnRef as i32),
+            val: Some(val),
+            children: Vec::new(),
+            sig: Some(ScalarFuncSig::Unspecified as i32),
+            field_type: Some(
+                tidb_expr::pushdown_catalog::field_type_to_pb(field_type)
+                    .expect("numeric q1 field type lowers"),
+            ),
+            has_distinct: Some(false),
+        }
+    };
+    let aggregate = |tp: ExprType, child: Expr, field_type: &FieldType| Expr {
+        tp: Some(tp as i32),
+        val: None,
+        children: vec![child],
+        sig: Some(ScalarFuncSig::Unspecified as i32),
+        field_type: Some(
+            tidb_expr::pushdown_catalog::field_type_to_pb(field_type)
+                .expect("numeric q1 aggregate type lowers"),
+        ),
+        has_distinct: Some(false),
+    };
+    let functions = vec![
+        aggregate(ExprType::Count, column_ref(2, &value_type), &group_type),
+        aggregate(ExprType::Sum, column_ref(2, &value_type), &value_type),
+    ];
+    let group_by = vec![column_ref(0, &group_type), column_ref(1, &group_type)];
+    let scan = PhysicalTableScanPlan::init(0, 0, TiKvTableScanSpec::new(47, columns));
+    let request = construct_grouped_aggregate_read_only_dag_req_with_conditions(
+        &DagRequestContext::new("UTC", 0, 0, DistSqlEncodeType::Default),
+        TiKvScanPlan::Table(&scan),
+        &[],
+        &functions,
+        &group_by,
+        false,
+        &[0, 1, 2, 3],
+    )
+    .expect("q1 grouped DAG builds");
+    let decoded = DagRequest::decode(request.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(
+        decoded
+            .executors
+            .iter()
+            .map(|executor| executor.tp.unwrap())
+            .collect::<Vec<_>>(),
+        vec![
+            ExecType::TypeTableScan as i32,
+            ExecType::TypeAggregation as i32,
+        ]
+    );
+    let aggregation = decoded.executors[1].aggregation.as_ref().unwrap();
+    assert_eq!(aggregation.agg_func.len(), 2);
+    assert_eq!(aggregation.group_by.len(), 2);
+    assert_eq!(aggregation.streamed, Some(false));
+    assert_eq!(decoded.output_offsets, vec![0, 1, 2, 3]);
 }
 
 /// The whole integer column family lowers, because Go picks the same `*Int`
@@ -234,6 +547,8 @@ fn string_compare(op: ScanComparisonOp, literal: &[u8], column_on_left: bool) ->
     ScanPredicate::Compare(ScanComparison {
         column_offset: 0,
         column_type: FieldType::new(FieldTypeCode::Varchar),
+        literal_type: FieldType::new(FieldTypeCode::VarString)
+            .with_flen(i64::try_from(literal.len()).unwrap_or(-1)),
         op,
         // A parsed SQL string literal is Go's `KindString`, which is the kind
         // `constantToPBExpr` sends as `ExprType_String`.
@@ -243,6 +558,18 @@ fn string_compare(op: ScanComparisonOp, literal: &[u8], column_on_left: bool) ->
         )),
         column_on_left,
     })
+}
+
+fn string_scalar_in(
+    tested: tidb_expr::pushdown_catalog::PbScalar,
+    literals: Vec<Datum>,
+    negated: bool,
+) -> ScanPredicate {
+    ScanPredicate::ScalarIn {
+        tested,
+        literals,
+        negated,
+    }
 }
 
 /// A string comparison travels, as the `*String` signature Go's
@@ -304,9 +631,11 @@ fn a_string_comparison_lowers_to_the_string_signature_go_resolves() {
 
     // And it all survives the encoding that actually goes on the wire.
     let scan = PhysicalTableScanPlan::init(0, 0, TiKvTableScanSpec::new(7, text.clone()));
-    let conditions =
-        wide_scan_selection_conditions(&[string_compare(ScanComparisonOp::Eq, literal, true)], &text)
-            .unwrap();
+    let conditions = wide_scan_selection_conditions(
+        &[string_compare(ScanComparisonOp::Eq, literal, true)],
+        &text,
+    )
+    .unwrap();
     let request = construct_capped_read_only_dag_req_with_conditions(
         &DagRequestContext::new("UTC", 0, 0, DistSqlEncodeType::Default),
         TiKvScanPlan::Table(&scan),
@@ -319,6 +648,63 @@ fn a_string_comparison_lowers_to_the_string_signature_go_resolves() {
     let sent = &decoded.executors[1].selection.as_ref().unwrap().conditions[0];
     assert_eq!(sent.sig, Some(ScalarFuncSig::EqString as i32));
     assert_eq!(sent.children[1].val.as_deref(), Some(literal));
+}
+
+/// Go chooses `InString` from the tested expression's type, retains the
+/// nested scalar as the first TiPB child, and removes constants equal under
+/// the function's derived collation before serialization.
+#[test]
+fn string_expression_in_lowers_with_the_tested_collation() {
+    use tidb_expr::pushdown_catalog::{build_call, PbScalar};
+
+    let phone_type = FieldType::new(FieldTypeCode::Varchar)
+        .with_flen(15)
+        .with_charset_name("utf8mb4")
+        .with_collation_name("utf8mb4_general_ci");
+    let tested = build_call(
+        "substring",
+        vec![
+            PbScalar::Column {
+                offset: 0,
+                field_type: phone_type,
+            },
+            PbScalar::IntLiteral(1),
+            PbScalar::IntLiteral(2),
+        ],
+    )
+    .unwrap();
+    let predicate = string_scalar_in(
+        tested,
+        vec![
+            Datum::new_string("A"),
+            Datum::Bytes(b"a".to_vec()),
+            Datum::new_string("B"),
+        ],
+        false,
+    );
+    let columns = vec![string_column("utf8mb4_general_ci")];
+
+    assert!(accepts(&predicate, &columns));
+    let condition = wide_scan_selection_conditions(&[predicate], &columns)
+        .unwrap()
+        .remove(0);
+    assert_eq!(condition.sig, Some(ScalarFuncSig::InString as i32));
+    assert_eq!(
+        condition.children[0].sig,
+        Some(ScalarFuncSig::Substring3ArgsUtf8 as i32),
+        "the tested SUBSTRING is the first child"
+    );
+    assert_eq!(
+        condition.children.len(),
+        3,
+        "general_ci removes the duplicate A/a and preserves B"
+    );
+    assert_eq!(condition.children[1].val.as_deref(), Some(b"A".as_slice()));
+    assert_eq!(condition.children[2].val.as_deref(), Some(b"B".as_slice()));
+    assert_eq!(
+        condition.field_type.as_ref().unwrap().collate,
+        Some(tidb_datatype::collation_to_proto("utf8mb4_general_ci"))
+    );
 }
 
 /// The collation on the comparison node is the one TiKV compares with, and it
@@ -623,9 +1009,6 @@ fn a_pushed_cap_becomes_a_limit_executor_above_the_selection() {
             .iter()
             .map(|executor| executor.tp.unwrap())
             .collect::<Vec<_>>(),
-        vec![
-            ExecType::TypeTableScan as i32,
-            ExecType::TypeLimit as i32
-        ]
+        vec![ExecType::TypeTableScan as i32, ExecType::TypeLimit as i32]
     );
 }

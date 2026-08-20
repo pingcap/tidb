@@ -233,6 +233,58 @@ fn rebuild_splits_failed_task_in_place_and_keeps_future_task_order_and_attempt()
 }
 
 #[test]
+fn unordered_rebuild_replaces_the_completed_region_instead_of_the_first_region() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let retry_control = Rc::new(RecordingRetryControl::default());
+    let transport = batch_first_transport_with_config(
+        Rc::clone(&calls),
+        [
+            Ok(response(b"left-pending")),
+            Ok(region_not_found(2)),
+            Ok(response(b"split-middle")),
+            Ok(response(b"split-right")),
+        ],
+        [
+            location(1, "a", "m", "tikv-old-1:20160"),
+            location(2, "m", "z", "tikv-old-2:20160"),
+            location(20, "m", "t", "tikv-new-20:20160"),
+            location(21, "t", "z", "tikv-new-21:20160"),
+        ],
+        [false, true, true, true],
+        Rc::clone(&loader_calls),
+        DirectUnaryRuntimeConfig {
+            region_retry_waiter: retry_control,
+            ..DirectUnaryRuntimeConfig::default()
+        },
+    );
+    let mut request_metadata = metadata("a", "z");
+    request_metadata.keep_order = false;
+    request_metadata.concurrency = 2;
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &transport_request(request_metadata));
+
+    assert_eq!(
+        result.next_raw().unwrap(),
+        Some(b"split-middle".to_vec())
+    );
+    assert_eq!(result.next_raw().unwrap(), Some(b"split-right".to_vec()));
+    assert_eq!(
+        calls
+            .borrow()
+            .iter()
+            .map(|call| call.address.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "tikv-old-1:20160",
+            "tikv-old-2:20160",
+            "tikv-new-20:20160",
+            "tikv-new-21:20160",
+        ]
+    );
+}
+
+#[test]
 fn one_region_budget_is_shared_by_sender_and_outer_rebuild_backoff() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let retry_control = Rc::new(RecordingRetryControl::default());

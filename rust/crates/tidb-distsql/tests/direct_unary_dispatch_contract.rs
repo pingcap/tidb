@@ -21,6 +21,96 @@
 #![allow(missing_docs)]
 
 use crate::direct_unary_client_fixture::*;
+
+fn completion_order_transport(
+    calls: Rc<RefCell<Vec<ObservedCall>>>,
+    ready_on_try: impl IntoIterator<Item = bool>,
+) -> DirectUnaryQueryTransport<ScriptedClient, ScriptedLoader> {
+    batch_first_transport(
+        calls,
+        [Ok(response(b"left")), Ok(response(b"right"))],
+        [
+            location(1, "a", "m", "tikv-1:20160"),
+            location(2, "m", "z", "tikv-2:20160"),
+        ],
+        ready_on_try,
+    )
+}
+
+#[test]
+fn unordered_regions_publish_first_completed_response() {
+    // pkg/store/copr/coprocessor.go:1184-1192, 1416-1465. Unordered
+    // workers share respChan, so the first completed region reaches Next.
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut request_metadata = metadata("a", "z");
+    request_metadata.keep_order = false;
+    request_metadata.concurrency = 2;
+    let mut runtime = InjectedQueryRuntime::new(completion_order_transport(
+        Rc::clone(&calls),
+        [false, true],
+    ));
+    let mut result = select_result(&mut runtime, &transport_request(request_metadata));
+
+    assert_eq!(result.next_raw().unwrap(), Some(b"right".to_vec()));
+    assert_eq!(calls.borrow().len(), 2, "prefetch stays bounded by concurrency");
+}
+
+#[test]
+fn ordered_regions_retain_logical_range_order() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut request_metadata = metadata("a", "z");
+    request_metadata.concurrency = 2;
+    let mut runtime = InjectedQueryRuntime::new(completion_order_transport(
+        Rc::clone(&calls),
+        [false, true],
+    ));
+    let mut result = select_result(&mut runtime, &transport_request(request_metadata));
+
+    assert_eq!(result.next_raw().unwrap(), Some(b"left".to_vec()));
+    assert_eq!(calls.borrow().len(), 2, "ordered reads still prefetch regions");
+}
+
+#[test]
+fn unordered_region_window_is_bounded_and_results_are_not_lost() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut request_metadata = metadata("a", "z");
+    request_metadata.keep_order = false;
+    request_metadata.concurrency = 2;
+    let mut runtime = InjectedQueryRuntime::new(batch_first_transport(
+        Rc::clone(&calls),
+        [
+            Ok(response(b"left")),
+            Ok(response(b"right")),
+            Ok(response(b"third")),
+        ],
+        [
+            location(1, "a", "m", "tikv-1:20160"),
+            location(2, "m", "t", "tikv-2:20160"),
+            location(3, "t", "z", "tikv-3:20160"),
+        ],
+        [false, true, true],
+    ));
+    let mut result = select_result(&mut runtime, &transport_request(request_metadata));
+
+    assert_eq!(result.next_raw().unwrap(), Some(b"right".to_vec()));
+    assert_eq!(calls.borrow().len(), 2);
+    assert_eq!(result.next_raw().unwrap(), Some(b"third".to_vec()));
+    assert_eq!(calls.borrow().len(), 3);
+
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut request_metadata = metadata("a", "z");
+    request_metadata.keep_order = false;
+    request_metadata.concurrency = 2;
+    let mut runtime = InjectedQueryRuntime::new(completion_order_transport(
+        calls,
+        [true, true],
+    ));
+    let mut result = select_result(&mut runtime, &transport_request(request_metadata));
+    assert_eq!(result.next_raw().unwrap(), Some(b"left".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), Some(b"right".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), None);
+}
+
 #[test]
 fn client_go_shaped_dispatch_is_lazy_address_directed_and_logically_ordered() {
     // client-go/internal/client/client.go:96-105 Client.SendRequest

@@ -146,6 +146,7 @@ fn a_real_table_s_six_histograms_fit_one_analyze_transaction() {
         row_count: 10_240,
         columns: (1..=4).map(|id| full_histogram(id, false)).collect(),
         indexes: (1..=2).map(|id| full_histogram(id, true)).collect(),
+        load_state: Default::default(),
     };
     let plan = plan_stats_write(&mut store, &catalog, &stats, now())
         .expect("a full-sized analyze result plans");

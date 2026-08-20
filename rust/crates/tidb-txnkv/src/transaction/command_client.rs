@@ -26,11 +26,12 @@
 
 use prost::Message;
 use tidb_proto::{
-    KvrpcBatchRollbackRequest, KvrpcBatchRollbackResponse, KvrpcCommitRequest, KvrpcCommitResponse,
-    KvrpcContext, KvrpcGetRequest, KvrpcGetResponse, KvrpcPessimisticLockRequest,
-    KvrpcPessimisticLockResponse, KvrpcPessimisticRollbackRequest,
-    KvrpcPessimisticRollbackResponse, KvrpcPrewriteRequest, KvrpcPrewriteResponse,
-    KvrpcScanRequest, KvrpcScanResponse, KvrpcTxnHeartBeatRequest, KvrpcTxnHeartBeatResponse,
+    KvrpcBatchGetRequest, KvrpcBatchGetResponse, KvrpcBatchRollbackRequest,
+    KvrpcBatchRollbackResponse, KvrpcCommitRequest, KvrpcCommitResponse, KvrpcContext,
+    KvrpcGetRequest, KvrpcGetResponse, KvrpcPessimisticLockRequest, KvrpcPessimisticLockResponse,
+    KvrpcPessimisticRollbackRequest, KvrpcPessimisticRollbackResponse, KvrpcPrewriteRequest,
+    KvrpcPrewriteResponse, KvrpcScanRequest, KvrpcScanResponse, KvrpcTxnHeartBeatRequest,
+    KvrpcTxnHeartBeatResponse,
 };
 
 use crate::rpc::{
@@ -63,6 +64,20 @@ pub enum PublishedCommand<R> {
     Response(TransactionBatchResponse<R>),
 }
 
+/// One region-routed BatchGet submitted as part of a concurrent read round.
+///
+/// The address is borrowed from the caller's region batch; the request and
+/// context are owned so all commands can be admitted before any completion is
+/// awaited.
+pub struct TransactionBatchGetRequest<'a> {
+    /// Physical TiKV leader address selected by the region cache.
+    pub address: &'a str,
+    /// Region-scoped transactional BatchGet request.
+    pub request: KvrpcBatchGetRequest,
+    /// Region context stamped with the transaction's resolved locks.
+    pub context: KvrpcContext,
+}
+
 /// Typed transaction commands required from the sole shared TiKV client.
 ///
 /// Every method publishes one command on an already-selected route and
@@ -76,6 +91,37 @@ pub trait TransactionCommandClient {
         context: &KvrpcContext,
         call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcGetResponse>;
+
+    /// Publishes one transactional BatchGet for keys in one selected region.
+    fn publish_transaction_batch_get(
+        &mut self,
+        address: &str,
+        request: &KvrpcBatchGetRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> PublishedCommand<KvrpcBatchGetResponse>;
+
+    /// Publishes a round of region-routed BatchGets before waiting for any
+    /// response. Implementations may override this to retain all in-flight
+    /// requests on the shared transport; the default preserves the original
+    /// sequential behavior for alternate clients.
+    fn publish_transaction_batch_gets(
+        &mut self,
+        requests: &[TransactionBatchGetRequest<'_>],
+        call: &UnaryCallContext,
+    ) -> Vec<PublishedCommand<KvrpcBatchGetResponse>> {
+        requests
+            .iter()
+            .map(|request| {
+                self.publish_transaction_batch_get(
+                    request.address,
+                    &request.request,
+                    &request.context,
+                    call,
+                )
+            })
+            .collect()
+    }
 
     /// Publishes one forward Scan at the caller's snapshot timestamp.
     ///
@@ -160,6 +206,72 @@ impl TransactionCommandClient for TonicCoprocessorClient {
                 .map_err(|error| error.to_string()),
             call,
         )
+    }
+
+    fn publish_transaction_batch_get(
+        &mut self,
+        address: &str,
+        request: &KvrpcBatchGetRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> PublishedCommand<KvrpcBatchGetResponse> {
+        complete_published(
+            self.begin_transaction_batch_get(address, None, request, context, call)
+                .map_err(|error| error.to_string()),
+            call,
+        )
+    }
+
+    fn publish_transaction_batch_gets(
+        &mut self,
+        requests: &[TransactionBatchGetRequest<'_>],
+        call: &UnaryCallContext,
+    ) -> Vec<PublishedCommand<KvrpcBatchGetResponse>> {
+        let mut results = std::iter::repeat_with(|| None)
+            .take(requests.len())
+            .collect::<Vec<Option<PublishedCommand<KvrpcBatchGetResponse>>>>();
+        let mut pending = Vec::with_capacity(requests.len());
+
+        // Admission is synchronous only up to the transport publication
+        // receipt. Keeping each pending completion alive lets the worker
+        // overlap requests routed to different regions (and addresses).
+        for (index, request) in requests.iter().enumerate() {
+            match self.begin_transaction_batch_get(
+                request.address,
+                None,
+                &request.request,
+                &request.context,
+                call,
+            ) {
+                Ok(pending_request) => pending.push((index, pending_request)),
+                Err(error) => {
+                    results[index] = Some(PublishedCommand::BeforePublication(error.to_string()));
+                }
+            }
+        }
+
+        for (index, mut pending_request) in pending {
+            let publication = pending_request
+                .publication()
+                .expect("Stage A binds a nonzero publication before pending escapes")
+                .clone();
+            results[index] = Some(match pending_request.complete(call) {
+                Ok(Ok(response)) => PublishedCommand::Response(response),
+                Ok(Err(error)) => PublishedCommand::AfterPublication {
+                    publication,
+                    error: error.to_string(),
+                },
+                Err(error) => PublishedCommand::AfterPublication {
+                    publication,
+                    error: error.to_string(),
+                },
+            });
+        }
+
+        results
+            .into_iter()
+            .map(|result| result.expect("every admitted BatchGet has a completion result"))
+            .collect()
     }
 
     fn publish_transaction_scan(

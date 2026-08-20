@@ -1541,18 +1541,18 @@ fn the_snapshot_read_path_stamps_its_lock_sets_on_every_send() {
             .join("src/transaction/coordinator/snapshot_read.rs"),
     )
     .unwrap();
-    // One stamp per read command, both taken from the freshly routed context.
+    // One stamp per read command, all taken from the freshly routed context.
     assert_eq!(
         snapshot
             .matches("self.resolved_locks.stamp(&mut context)")
             .count(),
-        2
+        3
     );
     assert_eq!(
         snapshot
             .matches("self.resolved_locks.absorb(&recovery)")
             .count(),
-        2
+        3
     );
     assert!(!snapshot.contains("route.context(), call)"));
     // Every read-command call must pass the FRESHLY routed context, never a
@@ -1580,4 +1580,6 @@ fn the_snapshot_read_path_stamps_its_lock_sets_on_every_send() {
             );
         }
     }
+    assert!(snapshot
+        .contains(".publish_transaction_batch_get(batch.address(), &request, &context, call)"));
 }

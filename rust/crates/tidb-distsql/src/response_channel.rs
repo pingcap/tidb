@@ -25,6 +25,7 @@
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
+use std::time::Instant;
 
 use tidb_chunk::chunk::Chunk as DecodedChunk;
 use tidb_chunk::codec::Codec as ChunkCodec;
@@ -594,6 +595,60 @@ impl DecodedChannel {
             rows.close();
         }
     }
+
+    /// Go `selectResult.readFromChunk`: append small response chunks until the
+    /// caller's required row count is reached, but transfer a large typed
+    /// chunk directly when the output is still empty.
+    ///
+    /// `true` means `output` is ready to return. `false` means this decoded
+    /// channel is exhausted and the caller may continue with the next chunk.
+    fn fill_chunk(
+        &mut self,
+        output: &mut DecodedChunk,
+        required_rows: usize,
+    ) -> Result<bool, ResponseChannelError> {
+        match self {
+            Self::Rows(rows) => {
+                while output.num_rows() < required_rows {
+                    let Some(row) = rows.next_row().map_err(map_channel_error)? else {
+                        return Ok(false);
+                    };
+                    for (column, value) in row.row.iter().enumerate() {
+                        output.append_datum(column, value);
+                    }
+                }
+                Ok(true)
+            }
+            Self::TypeChunk {
+                chunk,
+                next_row_index,
+            } => {
+                if *next_row_index >= chunk.num_rows() {
+                    return Ok(false);
+                }
+
+                let remaining = chunk.num_rows() - *next_row_index;
+                let reuse_threshold = required_rows.saturating_mul(4) / 5;
+                if remaining > reuse_threshold {
+                    if output.num_rows() != 0 {
+                        return Ok(true);
+                    }
+                    if *next_row_index == 0 {
+                        *output = std::mem::take(chunk);
+                    } else {
+                        output.append_range_from(chunk, *next_row_index, chunk.num_rows());
+                        *next_row_index = chunk.num_rows();
+                    }
+                    return Ok(true);
+                }
+
+                let take = remaining.min(required_rows - output.num_rows());
+                output.append_range_from(chunk, *next_row_index, *next_row_index + take);
+                *next_row_index += take;
+                Ok(output.num_rows() >= required_rows)
+            }
+        }
+    }
 }
 
 impl SelectResponseChannel {
@@ -610,6 +665,7 @@ impl SelectResponseChannel {
             let Some(chunk) = self.chunks.get(self.next_chunk_index) else {
                 return Ok(None);
             };
+            let decode_started = Instant::now();
             let decoded = decode_channel(
                 self.channel_index,
                 self.raw_encode_type,
@@ -617,6 +673,18 @@ impl SelectResponseChannel {
                 &self.field_types,
                 &self.time_zone,
             )?;
+            if std::env::var_os("TIDB_DEBUG_COP_SCAN").is_some() {
+                eprintln!(
+                    "COP_RESPONSE_CHUNK thread={:?} channel={} encode_type={} fields={} bytes={} decode_ms={}",
+                    std::thread::current().id(),
+                    self.channel_index,
+                    self.raw_encode_type
+                        .unwrap_or(EncodeType::TypeDefault as i32),
+                    self.field_types.len(),
+                    chunk.rows_data.as_deref().map_or(0, <[u8]>::len),
+                    decode_started.elapsed().as_secs_f64() * 1000.0,
+                );
+            }
             self.next_chunk_index += 1;
             self.decoded = Some(decoded);
         }
@@ -627,6 +695,32 @@ impl SelectResponseChannel {
             decoded.close();
         }
         self.chunks.clear();
+    }
+
+    fn fill_chunk(
+        &mut self,
+        output: &mut DecodedChunk,
+        required_rows: usize,
+    ) -> Result<bool, ResponseChannelError> {
+        loop {
+            if let Some(decoded) = &mut self.decoded {
+                if decoded.fill_chunk(output, required_rows)? {
+                    return Ok(true);
+                }
+                self.decoded = None;
+            }
+            let Some(chunk) = self.chunks.get(self.next_chunk_index) else {
+                return Ok(false);
+            };
+            self.next_chunk_index += 1;
+            self.decoded = Some(decode_channel(
+                self.channel_index,
+                self.raw_encode_type,
+                chunk,
+                &self.field_types,
+                &self.time_zone,
+            )?);
+        }
     }
 }
 
@@ -689,9 +783,114 @@ impl SelectResponseIter {
                 }
             }
 
+            let source_started = Instant::now();
             let event = match self.source.next_event(required_rows) {
                 Ok(event) => event,
                 Err(ResponseChannelError::Pending) => return Err(ResponseChannelError::Pending),
+                Err(error) => {
+                    self.close();
+                    return Err(error);
+                }
+            };
+            if std::env::var_os("TIDB_DEBUG_COP_SCAN").is_some() {
+                eprintln!(
+                    "COP_RESPONSE_WAIT thread={:?} required_rows={} wait_ms={}",
+                    std::thread::current().id(),
+                    required_rows,
+                    source_started.elapsed().as_secs_f64() * 1000.0,
+                );
+            }
+            match event {
+                Some(ResponseChannelEvent::Result(bytes)) => {
+                    if let Err(error) = self.install_encoded_response(&bytes, None) {
+                        self.close();
+                        return Err(error);
+                    }
+                }
+                Some(ResponseChannelEvent::ResultWithRuntime {
+                    result,
+                    runtime_stats,
+                }) => {
+                    if let Err(error) = self.install_encoded_response(&result, Some(&runtime_stats))
+                    {
+                        self.close();
+                        return Err(error);
+                    }
+                }
+                Some(ResponseChannelEvent::Warning(warning)) => {
+                    append_warning(&self.warnings, warning);
+                }
+                Some(ResponseChannelEvent::Error(message)) => {
+                    let error = ResponseChannelError::Source(message);
+                    self.close();
+                    return Err(error);
+                }
+                Some(ResponseChannelEvent::Closed) => {
+                    self.closed = true;
+                    return Ok(None);
+                }
+                None => return Err(ResponseChannelError::Pending),
+            }
+        }
+    }
+
+    /// Returns the next decoded response batch while preserving the same
+    /// reverse channel priority and response lifecycle as [`Self::next_row`].
+    /// TypeChunk responses transfer their decoded chunk directly; default-row
+    /// responses are collected into one chunk for compatibility.
+    pub fn next_chunk_with_required_rows(
+        &mut self,
+        required_rows: usize,
+    ) -> Result<Option<SelectResultRow<DecodedChunk>>, ResponseChannelError> {
+        if required_rows == 0 {
+            return Ok(None);
+        }
+        if self.closed {
+            return Ok(None);
+        }
+        let mut output: Option<SelectResultRow<DecodedChunk>> = None;
+        loop {
+            while let Some(channel_index) =
+                self.channels.last().map(|channel| channel.channel_index)
+            {
+                if output
+                    .as_ref()
+                    .is_some_and(|chunk| chunk.channel_index != channel_index)
+                {
+                    return Ok(output);
+                }
+                let output_chunk = output.get_or_insert_with(|| {
+                    let field_types = &self
+                        .channels
+                        .last()
+                        .expect("the channel index was just read")
+                        .field_types;
+                    SelectResultRow::new(
+                        channel_index,
+                        DecodedChunk::new_with_capacity(field_types, required_rows),
+                    )
+                });
+                let ready = self
+                    .channels
+                    .last_mut()
+                    .expect("the channel index was just read")
+                    .fill_chunk(&mut output_chunk.row, required_rows)?;
+                if ready {
+                    return Ok(output.take());
+                }
+                self.channels.pop();
+                let output_is_empty = output_chunk.row.num_rows() == 0;
+                if output_is_empty {
+                    output = None;
+                }
+            }
+
+            let event = match self.source.next_event(required_rows) {
+                Ok(event) => event,
+                Err(ResponseChannelError::Pending) => {
+                    return output
+                        .map_or(Err(ResponseChannelError::Pending), |chunk| Ok(Some(chunk)))
+                }
                 Err(error) => {
                     self.close();
                     return Err(error);
@@ -724,9 +923,12 @@ impl SelectResponseIter {
                 }
                 Some(ResponseChannelEvent::Closed) => {
                     self.closed = true;
-                    return Ok(None);
+                    return Ok(output);
                 }
-                None => return Err(ResponseChannelError::Pending),
+                None => {
+                    return output
+                        .map_or(Err(ResponseChannelError::Pending), |chunk| Ok(Some(chunk)))
+                }
             }
         }
     }
@@ -836,8 +1038,17 @@ impl SelectResponseIter {
         bytes: &[u8],
         runtime_stats: Option<&ResponseRuntimeStats>,
     ) -> Result<(), ResponseChannelError> {
+        let decode_started = Instant::now();
         let response = decode_select_response(bytes)
             .map_err(|error| ResponseChannelError::Decode(error.to_string()))?;
+        if std::env::var_os("TIDB_DEBUG_COP_SCAN").is_some() {
+            eprintln!(
+                "COP_RESPONSE_PROTO thread={:?} bytes={} decode_ms={}",
+                std::thread::current().id(),
+                bytes.len(),
+                decode_started.elapsed().as_secs_f64() * 1000.0,
+            );
+        }
         self.install_response(response, runtime_stats)
     }
 
