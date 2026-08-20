@@ -65,8 +65,8 @@ func (s *exportScheduler) Init() error {
 func (*exportScheduler) OnTick(context.Context, *proto.Task) {}
 
 // OnPrepare implements scheduler.Extension. In prepare mode it estimates the
-// export set's data size after submit, seeds the per-physical sizes for the
-// split, and (in nextgen) sizes the task's resources from the total.
+// export task's data size after submit, seeds the per-physical sizes for the
+// split, and in nextgen sizes the task's resources from the total.
 func (s *exportScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
 	sizes, total, err := estimateExportSize(ctx, s.store, s.taskMeta)
 	if err != nil {
@@ -123,9 +123,11 @@ func (s *exportScheduler) OnNextSubtasksBatch(
 ) ([][]byte, error) {
 	switch nextStep {
 	case proto.ExportStepDump:
-		// Size subtasks by the worker concurrency; the framework spreads the
-		// resulting subtasks across the scaled-out nodes.
-		metas, err := generateSubtasks(ctx, s.store, s.taskMeta, max(task.RequiredSlots, 1))
+		groups, err := generateSubtasks(ctx, s.store, s.taskMeta, max(task.MaxNodeCount, 1))
+		if err != nil {
+			return nil, err
+		}
+		metas, err := marshalSubtasks(ctx, task.ID, nextStep, groups)
 		if err != nil {
 			return nil, err
 		}

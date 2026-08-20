@@ -12,19 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package export implements the DXF task type for distributed table-set export.
+// Package export implements the DXF task type for distributed export.
 package export
 
-import "github.com/pingcap/tidb/pkg/meta/model"
+import (
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
+	"github.com/pingcap/tidb/pkg/meta/model"
+)
 
-// TableSpec identifies one table in the export set.
+// TableSpec identifies one table in the export task.
 type TableSpec struct {
 	DBName    string           `json:"db_name"`
 	TableInfo *model.TableInfo `json:"table_info"`
 }
 
-// TaskMeta is the task meta of an export task, table-set-native: Tables holds
-// the tables to export.
+// TaskMeta is the task meta of an export task.
 type TaskMeta struct {
 	Tables     []TableSpec `json:"tables"`
 	SnapshotTS uint64      `json:"snapshot_ts"`
@@ -33,18 +35,14 @@ type TaskMeta struct {
 	// The split prefers a fresh estimate and falls back to this only when PD is
 	// unavailable.
 	PhysicalSizes map[int64]int64 `json:"physical_sizes"`
-	// Dest is the destination URI, with credentials in the query part.
-	Dest string `json:"dest"`
-	// Format is the output file format, e.g. "csv".
-	Format string `json:"format"`
+	Dest          string          `json:"dest"`
+	Format        string          `json:"format"`
 	// FileSize is the size in bytes at which the executor cuts output files.
 	FileSize int64 `json:"file_size"`
 }
 
-// Chunk is the atomic unit of export work: a key range of one physical table
-// sized to ~chunkSize. Its table-local Ordinal fixes the output file-name prefix
-// at split time, independent of the worker count, so any concurrency or retry
-// produces the same files.
+// Chunk is a ~chunkSize key range of one physical table. Its table-local Ordinal
+// fixes the output file name at split time, so retries produce the same files.
 type Chunk struct {
 	TableIdx   int    `json:"table_idx"`
 	PhysicalID int64  `json:"physical_id"`
@@ -54,7 +52,9 @@ type Chunk struct {
 	Ordinal    int    `json:"ordinal"`
 }
 
-// SubtaskMeta is the Dump-step subtask meta: a batch of chunks.
+// SubtaskMeta is a batch of chunks. The chunk list is offloaded to external
+// storage (see BaseExternalMeta), so the row the framework stores stays small.
 type SubtaskMeta struct {
-	Chunks []Chunk `json:"chunks"`
+	dxfutil.BaseExternalMeta
+	Chunks []Chunk `json:"chunks" external:"true"`
 }

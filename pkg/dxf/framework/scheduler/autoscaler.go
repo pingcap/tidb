@@ -102,6 +102,9 @@ func (rc *ResourceCalc) CalcMaxNodeCountForAddIndex() int {
 }
 
 // CalcMaxNodeCountForExport calculates the maximum number of nodes to execute export.
+//
+// TODO: also size by file/table count, since S3 PUT rate can dominate the
+// wall-clock for many small tables.
 func (rc *ResourceCalc) CalcMaxNodeCountForExport() int {
 	size := rc.getAmplifiedDataSize()
 	limit := rc.factors.AmplifyFactor * maxNodeCountLimitForExport

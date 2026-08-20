@@ -102,7 +102,7 @@ func exampleStep2Str(s Step) string {
 // StepInit -> ExportStepDump -> StepDone
 // (PostProcess is inserted before StepDone by a later milestone.)
 const (
-	// ExportStepDump scans key-ordered spans of the table set and writes data files.
+	// ExportStepDump scans key-ordered spans of the export task and writes data files.
 	ExportStepDump Step = 1
 )
 

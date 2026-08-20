@@ -17,15 +17,17 @@ package export
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"math"
 	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -44,16 +46,12 @@ const (
 	// TaskMeta.FileSize) to stay above FileSize so each chunk leaves at most one
 	// partial tail file.
 	chunkSize = 10 * units.GiB
-	// chunksPerWorker sizes a subtask's byte budget at this many chunks' worth of
-	// bytes per worker slot (chunksPerWorker*concurrency*chunkSize).
-	chunksPerWorker = 2
-	// maxChunksPerSubtask is a hard ceiling on the chunk count per subtask (the
-	// usual bound is byte size), so a table set of many tiny tables stays bounded.
-	maxChunksPerSubtask = 4000
+	// subtaskSize is the nominal per-subtask size used to estimate the subtask count.
+	subtaskSize = 200 * units.GiB
 )
 
 // generateSubtasks carves the task's tables into chunks and groups them into subtasks.
-func generateSubtasks(ctx context.Context, store kv.Storage, meta *TaskMeta, concurrency int) ([][]byte, error) {
+func generateSubtasks(ctx context.Context, store kv.Storage, meta *TaskMeta, nodeCount int) ([][]Chunk, error) {
 	chunks := make([]Chunk, 0, len(meta.Tables))
 	for tableIdx := range meta.Tables {
 		tableChunks, err := splitTable(ctx, store, meta, tableIdx)
@@ -62,11 +60,38 @@ func generateSubtasks(ctx context.Context, store kv.Storage, meta *TaskMeta, con
 		}
 		chunks = append(chunks, tableChunks...)
 	}
-	return divideSubtasks(chunks, concurrency)
+	return divideSubtasks(chunks, nodeCount), nil
+}
+
+// marshalSubtasks serializes each chunk group into a subtask meta, offloading the
+// chunk list to external storage so the row stored by the framework stays small.
+func marshalSubtasks(ctx context.Context, taskID int64, step proto.Step, groups [][]Chunk) ([][]byte, error) {
+	if len(groups) == 0 {
+		return nil, nil
+	}
+	store, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	stepStr := proto.Step2Str(proto.Export, step)
+	metas := make([][]byte, 0, len(groups))
+	for i, g := range groups {
+		sm := &SubtaskMeta{Chunks: g}
+		sm.ExternalPath = dxfutil.PlanMetaPath(taskID, stepStr, i+1)
+		if err := sm.WriteJSONToExternalStorage(ctx, store, sm); err != nil {
+			return nil, errors.Trace(err)
+		}
+		bs, err := sm.Marshal(sm)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		metas = append(metas, bs)
+	}
+	return metas, nil
 }
 
 // estimateExportSize returns each physical table's estimated byte size and the
-// total across the whole export set, from PD. It is the prepare-step data-volume
+// total across the whole export task, from PD. It is the prepare-step data-volume
 // estimate that sizes the task's resources and seeds the split fallback.
 func estimateExportSize(ctx context.Context, store kv.Storage, meta *TaskMeta) (map[int64]int64, int64, error) {
 	hStore, ok := store.(helper.Storage)
@@ -206,40 +231,41 @@ func chunksByCount(tableIdx int, pid int64, boundaries []kv.Key, totalSize int64
 	return chunks, ord
 }
 
-// divideSubtasks groups the chunks into subtasks by byte budget.
-func divideSubtasks(chunks []Chunk, concurrency int) ([][]byte, error) {
+// divideSubtasks packs chunks into subtasks. The subtask count is estimated from
+// subtaskSize and rounded up to a multiple of nodeCount so the framework can
+// spread them evenly across nodes; chunks are then packed to the uniform budget.
+func divideSubtasks(chunks []Chunk, nodeCount int) [][]Chunk {
 	if len(chunks) == 0 {
-		return nil, nil
-	}
-	maxSubtaskSize := int64(chunksPerWorker*max(concurrency, 1)) * chunkSize
-
-	var subtasks [][]byte
-	emit := func(batch []Chunk) error {
-		bs, err := json.Marshal(&SubtaskMeta{Chunks: batch})
-		if err != nil {
-			return errors.Trace(err)
-		}
-		subtasks = append(subtasks, bs)
 		return nil
 	}
-	batch := make([]Chunk, 0, chunksPerWorker*max(concurrency, 1))
+	var total int64
+	for _, c := range chunks {
+		total += c.Size
+	}
+	count := int64(1)
+	if total > subtaskSize {
+		count = (total + subtaskSize/2) / subtaskSize
+	}
+	if n := int64(max(nodeCount, 1)); n > 1 {
+		count = (count + n - 1) / n * n
+	}
+	budget := (total + count - 1) / count
+
+	subtasks := make([][]Chunk, 0, count)
+	batch := make([]Chunk, 0, budget/chunkSize+1)
 	var acc int64
 	for _, c := range chunks {
 		batch = append(batch, c)
 		acc += c.Size
-		if acc >= maxSubtaskSize || len(batch) >= maxChunksPerSubtask {
-			if err := emit(batch); err != nil {
-				return nil, err
-			}
-			batch, acc = nil, 0
+		if acc >= budget {
+			subtasks = append(subtasks, batch)
+			batch, acc = make([]Chunk, 0, budget/chunkSize+1), 0
 		}
 	}
 	if len(batch) > 0 {
-		if err := emit(batch); err != nil {
-			return nil, err
-		}
+		subtasks = append(subtasks, batch)
 	}
-	return subtasks, nil
+	return subtasks
 }
 
 func physicalIDs(tblInfo *model.TableInfo) []int64 {

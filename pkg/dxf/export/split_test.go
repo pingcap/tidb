@@ -16,12 +16,14 @@ package export
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 )
@@ -35,49 +37,64 @@ func keys(ss ...string) []kv.Key {
 }
 
 func TestDivideSubtasks(t *testing.T) {
-	// concurrency=2 → a subtask holds chunksPerWorker*2 chunks worth of bytes.
-	const perSubtask = chunksPerWorker * 2
-	n := perSubtask * 2
+	// 40 chunks of chunkSize → total = 4 * subtaskSize.
+	const n = 4 * subtaskSize / chunkSize
 	chunks := make([]Chunk, n)
 	for i := range chunks {
 		chunks[i] = Chunk{Ordinal: i, Size: chunkSize}
 	}
-	metas, err := divideSubtasks(chunks, 2)
-	require.NoError(t, err)
-	require.Len(t, metas, 2)
-	var seen []int
-	for _, bs := range metas {
-		st := &SubtaskMeta{}
-		require.NoError(t, json.Unmarshal(bs, st))
-		require.Len(t, st.Chunks, perSubtask)
-		for _, c := range st.Chunks {
-			seen = append(seen, c.Ordinal)
+	assertCovers := func(groups [][]Chunk) {
+		var seen []int
+		for _, g := range groups {
+			for _, c := range g {
+				seen = append(seen, c.Ordinal)
+			}
 		}
+		want := make([]int, n)
+		for i := range want {
+			want[i] = i
+		}
+		require.Equal(t, want, seen)
 	}
-	want := make([]int, n)
-	for i := range want {
-		want[i] = i
+
+	// nodeCount=1: count = round(total/subtaskSize) = 4.
+	groups := divideSubtasks(chunks, 1)
+	require.Len(t, groups, 4)
+	assertCovers(groups)
+
+	// nodeCount=3: 4 rounds up to the next multiple of 3 → 6 subtasks.
+	groups = divideSubtasks(chunks, 3)
+	require.Len(t, groups, 6)
+	assertCovers(groups)
+
+	// Data below subtaskSize stays a single subtask (count floored at 1).
+	require.Len(t, divideSubtasks(chunks[:1], 1), 1)
+	require.Nil(t, divideSubtasks(nil, 2))
+}
+
+func TestSubtaskMetaExternal(t *testing.T) {
+	store := objstore.NewMemStorage()
+	ctx := context.Background()
+	chunks := []Chunk{
+		{TableIdx: 1, PhysicalID: 100, Start: []byte("aaaa"), End: []byte("bbbb"), Size: chunkSize, Ordinal: 0},
+		{TableIdx: 1, PhysicalID: 100, Start: []byte("bbbb"), End: []byte("cccc"), Size: chunkSize, Ordinal: 1},
 	}
-	require.Equal(t, want, seen)
+	sm := &SubtaskMeta{Chunks: chunks}
+	sm.ExternalPath = "1/plan/dump/1/meta"
+	require.NoError(t, sm.WriteJSONToExternalStorage(ctx, store, sm))
 
-	// A subtask is cut as soon as its bytes reach the limit.
-	big := []Chunk{{Ordinal: 0, Size: chunksPerWorker * chunkSize}, {Ordinal: 1, Size: chunkSize}}
-	m2, err := divideSubtasks(big, 1) // limit = chunksPerWorker*chunkSize
+	// The framework row keeps only the reference, not the chunk payload.
+	row, err := sm.Marshal(sm)
 	require.NoError(t, err)
-	require.Len(t, m2, 2)
+	require.Contains(t, string(row), sm.ExternalPath)
+	require.NotContains(t, string(row), "aaaa")
 
-	empty, err := divideSubtasks(nil, 2)
-	require.NoError(t, err)
-	require.Nil(t, empty)
-
-	// Hard chunk-count ceiling for a flood of tiny chunks.
-	tiny := make([]Chunk, maxChunksPerSubtask+1)
-	for i := range tiny {
-		tiny[i] = Chunk{Ordinal: i, Size: 1}
-	}
-	m3, err := divideSubtasks(tiny, 1)
-	require.NoError(t, err)
-	require.Len(t, m3, 2)
+	// Reading the row back and then the external file reconstructs the chunks.
+	got := &SubtaskMeta{}
+	require.NoError(t, json.Unmarshal(row, got))
+	require.Empty(t, got.Chunks)
+	require.NoError(t, got.ReadJSONFromExternalStorage(ctx, store, got))
+	require.Equal(t, chunks, got.Chunks)
 }
 
 func TestChunksBySize(t *testing.T) {
