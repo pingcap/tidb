@@ -142,10 +142,11 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_allow_tiflash_cop":                          {},
 	"tidb_enable_cache_prepare_stmt":                  {},
 	// Variables that is compatible with MySQL.
-	"cte_max_recursion_depth": {},
-	"sql_mode":                {},
-	"max_execution_time":      {},
-	"tidb_max_keys_read":      {},
+	"cte_max_recursion_depth":     {},
+	"sql_mode":                    {},
+	"max_execution_time":          {},
+	"tidb_dml_max_execution_time": {},
+	"tidb_max_keys_read":          {},
 }
 
 func setHintUpdatable(vars []*SysVar) {

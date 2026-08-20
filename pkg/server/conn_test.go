@@ -68,6 +68,7 @@ import (
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func TestMatchIdentityWithVariantsStarter(t *testing.T) {
@@ -1114,6 +1115,109 @@ func TestConnExecutionTimeout(t *testing.T) {
 
 	err = cc.handleQuery(context.Background(), "alter table testTable2 add index idx(age);")
 	require.NoError(t, err)
+}
+
+func TestConnDMLExecutionTimeout(t *testing.T) {
+	const dmlTimeout = 500
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	setup := testkit.NewTestKit(t, store)
+	setup.MustExec("use test")
+	setup.MustExec("create table dml_timeout (id int primary key)")
+
+	srv := CreateMockServer(t, store)
+	defer srv.Close()
+	go dom.ExpensiveQueryHandle().SetSessionManager(srv).Run()
+
+	runBlockedPrewrite := func(t *testing.T, conn MockConn, sql string, timeout uint64) error {
+		t.Helper()
+		require.NoError(t, failpoint.Enable("tikvclient/onRPCFinishedHook", "return"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("tikvclient/onRPCFinishedHook"))
+		}()
+
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		var enteredOnce, releaseOnce sync.Once
+		releaseHook := func() {
+			releaseOnce.Do(func() { close(release) })
+		}
+		defer releaseHook()
+
+		hook := func(req *tikvrpc.Request, resp *tikvrpc.Response, rpcErr error) (*tikvrpc.Response, error) {
+			if req.Type != tikvrpc.CmdPrewrite {
+				return resp, rpcErr
+			}
+			enteredOnce.Do(func() { close(entered) })
+			<-release
+			return nil, context.Canceled
+		}
+		ctx := context.WithValue(context.Background(), "onRPCFinishedHook", hook)
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- conn.Dispatch(ctx, append([]byte{mysql.ComQuery}, sql...))
+		}()
+
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("prewrite RPC was not reached")
+		}
+		require.Eventually(t, func() bool {
+			pi := conn.Context().ShowProcess()
+			return pi != nil && pi.MaxExecutionTime == timeout &&
+				conn.Context().GetSessionVars().SQLKiller.GetKillSignal() == sqlkiller.MaxExecTimeExceeded
+		}, 5*time.Second, 10*time.Millisecond)
+
+		releaseHook()
+		select {
+		case err := <-errCh:
+			return err
+		case <-time.After(5 * time.Second):
+			t.Fatal("statement did not return after releasing the RPC hook")
+		}
+		return nil
+	}
+
+	configureConn := func(t *testing.T) (MockConn, *testkit.TestKit) {
+		t.Helper()
+		conn := CreateMockConn(t, srv)
+		tk := testkit.NewTestKitWithSession(t, store, conn.Context().Session)
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_enable_1pc = OFF")
+		tk.MustExec("set tidb_enable_async_commit = OFF")
+		tk.MustExec("set tidb_dml_max_execution_time = 500")
+		return conn, tk
+	}
+
+	t.Run("autocommit DML", func(t *testing.T) {
+		conn, _ := configureConn(t)
+		defer conn.Close()
+		err := runBlockedPrewrite(t, conn, "insert into dml_timeout values (1)", dmlTimeout)
+		require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err), "%v", err)
+		require.NoError(t, conn.Dispatch(context.Background(), append([]byte{mysql.ComQuery}, "select 1"...)))
+	})
+
+	t.Run("explicit commit", func(t *testing.T) {
+		conn, tk := configureConn(t)
+		defer conn.Close()
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into dml_timeout values (2)")
+		err := runBlockedPrewrite(t, conn, "commit", dmlTimeout)
+		require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err), "%v", err)
+		require.NoError(t, conn.Dispatch(context.Background(), append([]byte{mysql.ComQuery}, "select 1"...)))
+	})
+
+	t.Run("prepared commit", func(t *testing.T) {
+		conn, tk := configureConn(t)
+		defer conn.Close()
+		tk.MustExec("prepare prepared_commit from 'commit'")
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into dml_timeout values (3)")
+		err := runBlockedPrewrite(t, conn, "execute prepared_commit", dmlTimeout)
+		require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err), "%v", err)
+		require.NoError(t, conn.Dispatch(context.Background(), append([]byte{mysql.ComQuery}, "select 1"...)))
+	})
 }
 
 func TestShutDown(t *testing.T) {

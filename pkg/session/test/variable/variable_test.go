@@ -307,6 +307,7 @@ func TestMaxExecutionTime(t *testing.T) {
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.HasMaxExecutionTime)
 	require.Equal(t, uint64(500), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
 	require.Equal(t, uint64(500), tk.Session().GetSessionVars().GetMaxExecutionTime())
+	require.Equal(t, uint64(500), tk.Session().ShowProcess().MaxExecutionTime)
 
 	tk.MustQuery("select @@MAX_EXECUTION_TIME;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.MAX_EXECUTION_TIME;").Check(testkit.Rows("0"))
@@ -320,6 +321,7 @@ func TestMaxExecutionTime(t *testing.T) {
 	require.Equal(t, uint64(150), tk.Session().GetSessionVars().GetMaxExecutionTime())
 	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(1000) */ * FROM MaxExecTime;")
 	require.Equal(t, uint64(1000), tk.Session().GetSessionVars().GetMaxExecutionTime())
+	require.Equal(t, uint64(1000), tk.Session().ShowProcess().MaxExecutionTime)
 
 	tk.MustQuery("select @@global.MAX_EXECUTION_TIME;").Check(testkit.Rows("300"))
 	tk.MustQuery("select @@MAX_EXECUTION_TIME;").Check(testkit.Rows("150"))
@@ -337,6 +339,87 @@ func TestMaxExecutionTime(t *testing.T) {
 	tk.MustExec("set @@MAX_EXECUTION_TIME = 0;")
 	tk.MustExec("commit")
 	tk.MustExec("drop table if exists MaxExecTime;")
+}
+
+func TestDMLMaxExecutionTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table dml_timeout (id int primary key, v int)")
+
+	tk.MustQuery("select @@tidb_dml_max_execution_time").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_dml_max_execution_time = 200")
+	require.Equal(t, uint64(200), tk.Session().GetSessionVars().DMLMaxExecutionTime)
+
+	// The TiDB-specific DML timeout and MySQL-compatible SELECT timeout are independent.
+	tk.MustExec("set @@max_execution_time = 100")
+	tk.MustQuery("select 1")
+	require.Equal(t, uint64(100), tk.Session().ShowProcess().MaxExecutionTime)
+	tk.MustExec("insert into dml_timeout values (1, 1)")
+	require.Equal(t, uint64(200), tk.Session().ShowProcess().MaxExecutionTime)
+	tk.MustExec("prepare prepared_select from 'select 1'")
+	tk.MustQuery("execute prepared_select")
+	require.Equal(t, uint64(100), tk.Session().ShowProcess().MaxExecutionTime)
+	tk.MustExec("deallocate prepare prepared_select")
+	tk.MustExec("prepare prepared_insert from 'insert into dml_timeout values (7, 7)'")
+	tk.MustExec("execute prepared_insert")
+	require.Equal(t, uint64(200), tk.Session().ShowProcess().MaxExecutionTime)
+	tk.MustExec("deallocate prepare prepared_insert")
+
+	// SET_VAR applies to the complete autocommit DML, then is restored for the next statement.
+	tk.MustExec("insert /*+ set_var(tidb_dml_max_execution_time=300) */ into dml_timeout values (2, 2)")
+	require.Equal(t, uint64(300), tk.Session().ShowProcess().MaxExecutionTime)
+	tk.MustExec("update dml_timeout set v = v + 1 where id = 1")
+	require.Equal(t, uint64(200), tk.Session().ShowProcess().MaxExecutionTime)
+
+	// COMMIT has its own timeout budget, including when it is executed as a prepared statement.
+	tk.MustExec("begin")
+	tk.MustExec("delete from dml_timeout where id = 2")
+	tk.MustExec("commit")
+	require.Equal(t, uint64(200), tk.Session().ShowProcess().MaxExecutionTime)
+	tk.MustExec("prepare prepared_commit from 'commit'")
+	tk.MustExec("begin")
+	tk.MustExec("insert into dml_timeout values (3, 3)")
+	tk.MustExec("execute prepared_commit")
+	require.Equal(t, uint64(200), tk.Session().ShowProcess().MaxExecutionTime)
+	tk.MustExec("deallocate prepare prepared_commit")
+
+	// EXPLAIN ANALYZE DML commits before returning a result set, so it is excluded
+	// to avoid reporting a timeout after the write has already committed.
+	tk.MustQuery("explain analyze insert into dml_timeout values (4, 4)")
+	require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
+
+	// Deprecated batch DML can commit earlier batches, so it is also excluded.
+	originalEnableBatchDML := vardef.EnableBatchDML.Load()
+	vardef.EnableBatchDML.Store(true)
+	t.Cleanup(func() { vardef.EnableBatchDML.Store(originalEnableBatchDML) })
+	tk.MustExec("set tidb_batch_insert = ON")
+	tk.MustExec("set tidb_dml_batch_size = 1")
+	tk.MustExec("insert into dml_timeout values (5, 5), (6, 6)")
+	require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
+	// Batch insert is disabled inside an explicit transaction, so the regular
+	// transactional DML timeout still applies there.
+	tk.MustExec("begin")
+	tk.MustExec("insert into dml_timeout values (9, 9)")
+	require.Equal(t, uint64(200), tk.Session().ShowProcess().MaxExecutionTime)
+	tk.MustExec("rollback")
+	tk.MustExec("set tidb_batch_insert = OFF")
+	tk.MustExec("set tidb_dml_batch_size = 0")
+	tk.MustExec("set tidb_batch_commit = ON")
+	tk.MustExec("begin")
+	tk.MustExec("insert into dml_timeout values (8, 8)")
+	require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
+	tk.MustExec("commit")
+	require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
+	tk.MustExec("set tidb_batch_commit = OFF")
+
+	tk.MustExec("set @@tidb_dml_max_execution_time = 0")
+	tk.MustExec("update dml_timeout set v = v + 1 where id = 1")
+	require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
+	tk.MustExec("set @@max_execution_time = 0")
+	tk.MustExec("set @@tidb_dml_max_execution_time = 200")
+	tk.MustQuery("select 1")
+	require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
 }
 
 func TestReplicaRead(t *testing.T) {

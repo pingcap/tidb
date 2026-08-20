@@ -515,6 +515,7 @@ func TestNonTransactionalDmlIgnoreMaxExecutionTime(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=10")
 	tk.MustExec("set @@max_execution_time=1000")
+	tk.MustExec("set @@tidb_dml_max_execution_time=1000")
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, key(a))")
 	for i := range 100 {
@@ -523,4 +524,6 @@ func TestNonTransactionalDmlIgnoreMaxExecutionTime(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/CheckMaxExecutionTime", `return(true)`))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/session/CheckMaxExecutionTime")
 	tk.MustExec("batch on a limit 10 update t set b = b + 1 where b > 0")
+	require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
+	require.Equal(t, uint64(1000), tk.Session().GetSessionVars().DMLMaxExecutionTime)
 }

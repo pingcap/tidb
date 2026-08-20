@@ -855,7 +855,15 @@ func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
 			// Use range scan instead of point get to avoid optimization
 			startTime := time.Now()
 			if tc.expectTimeout {
-				err := tk.QueryToErr("select * from t where a >= 1")
+				rs, err := tk.Exec("select * from t where a >= 1")
+				if err == nil {
+					require.NotNil(t, rs)
+					_, err = session.GetRows4Test(context.Background(), tk.Session(), rs)
+					closeErr := rs.Close()
+					if err == nil {
+						err = closeErr
+					}
+				}
 				if err != nil {
 					require.Contains(t, err.Error(), "maximum statement execution time exceeded")
 				} else {

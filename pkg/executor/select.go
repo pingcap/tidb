@@ -305,30 +305,28 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return doLockKeys(ctx, e.Ctx(), lockCtx, e.keys...)
 }
 
-// checkMaxExecutionTimeExceeded validates whether the current statement already hit the
-// max_execution_time limit. Centralized here so different executors share the same behaviour.
-func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
+// getMaxExecutionDeadline returns the elapsed-time deadline stored in ProcessInfo.
+// ProcessInfo contains the effective timeout for the current statement, regardless of
+// whether it comes from max_execution_time or tidb_dml_max_execution_time.
+func getMaxExecutionDeadline(sctx sessionctx.Context) (time.Time, bool) {
 	if sctx == nil {
-		return nil
+		return time.Time{}, false
 	}
-
-	sessVars := sctx.GetSessionVars()
-	if sessVars == nil {
-		return nil
-	}
-
-	maxExecTimeMS := sessVars.GetMaxExecutionTime()
-	if maxExecTimeMS == 0 {
-		return nil
-	}
-
 	processInfo := sctx.ShowProcess()
-	if processInfo == nil || processInfo.Time.IsZero() {
+	if processInfo == nil || processInfo.Time.IsZero() || processInfo.MaxExecutionTime == 0 {
+		return time.Time{}, false
+	}
+	return processInfo.Time.Add(time.Duration(processInfo.MaxExecutionTime) * time.Millisecond), true
+}
+
+// checkMaxExecutionTimeExceeded validates whether the current statement already hit its
+// maximum execution time. Centralized here so different executors share the same behavior.
+func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
+	deadline, ok := getMaxExecutionDeadline(sctx)
+	if !ok {
 		return nil
 	}
-
-	elapsed := time.Since(processInfo.Time)
-	if elapsed >= time.Duration(maxExecTimeMS)*time.Millisecond {
+	if !time.Now().Before(deadline) {
 		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
 	}
 
@@ -346,13 +344,8 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int, inShar
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
 	lockCtx.InShareMode = inSharedMode
 
-	// Set max_execution_time deadline for SELECT statements
-	maxExectionTime := seVars.GetMaxExecutionTime()
-	if maxExectionTime > 0 {
-		if processInfo := sctx.ShowProcess(); processInfo != nil {
-			maxExecTimeMs := time.Duration(maxExectionTime) * time.Millisecond
-			lockCtx.MaxExecutionDeadline = processInfo.Time.Add(maxExecTimeMs)
-		}
+	if deadline, ok := getMaxExecutionDeadline(sctx); ok {
+		lockCtx.MaxExecutionDeadline = deadline
 	}
 
 	lockCtx.ResourceGroupTagger = func(req *kvrpcpb.PessimisticLockRequest) []byte {

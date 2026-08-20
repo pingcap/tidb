@@ -2044,6 +2044,18 @@ var defaultSysVars = []*SysVar{
 			return nil
 		}},
 	{
+		Scope:    vardef.ScopeGlobal | vardef.ScopeSession,
+		Name:     vardef.TiDBDMLMaxExecutionTime,
+		Value:    strconv.Itoa(vardef.DefTiDBDMLMaxExecutionTime),
+		Type:     vardef.TypeUnsigned,
+		MinValue: 0,
+		MaxValue: math.MaxInt32,
+		SetSession: func(s *SessionVars, val string) error {
+			timeoutMS := tidbOptPositiveInt32(val, vardef.DefTiDBDMLMaxExecutionTime)
+			s.DMLMaxExecutionTime = uint64(timeoutMS)
+			return nil
+		}},
+	{
 		Scope:                   vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:                    vardef.TiDBMaxKeysRead,
 		Value:                   "0",
