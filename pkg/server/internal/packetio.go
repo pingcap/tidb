@@ -117,6 +117,32 @@ func (p *PacketIO) ResetBufWriter(w io.Writer) {
 	p.bufWriter.Reset(w)
 }
 
+// AvailableWriteBuffer returns bufWriter's remaining buffer when it can hold
+// at least capacity bytes. If the current remaining buffer is insufficient but
+// the writer buffer is large enough, it flushes buffered bytes first and returns
+// a fresh available buffer. The returned slice is only valid until the next
+// write operation on p.bufWriter and must not be reused after WritePacket.
+func (p *PacketIO) AvailableWriteBuffer(capacity int) ([]byte, error) {
+	if p.compressionAlgorithm != mysql.CompressionNone || p.bufWriter == nil {
+		return nil, nil
+	}
+	if capacity < 4 {
+		capacity = 4
+	}
+	if capacity > p.bufWriter.Size() {
+		return nil, nil
+	}
+	if p.bufWriter.Available() < capacity {
+		if err := p.bufWriter.Flush(); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if p.bufWriter.Available() < capacity {
+		return nil, nil
+	}
+	return p.bufWriter.AvailableBuffer(), nil
+}
+
 // SetCompressionAlgorithm sets the compression algorithm of PacketIO.
 func (p *PacketIO) SetCompressionAlgorithm(ca int) {
 	p.compressionAlgorithm = ca
