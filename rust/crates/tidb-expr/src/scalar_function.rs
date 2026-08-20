@@ -347,27 +347,13 @@ impl ScalarFunction {
         if same_eval_family(&value, ret_type) {
             return Ok(value);
         }
-        // COALESCE is the one control function built with
-        // `newBaseBuiltinFuncWithTp`: each argument is cast only to the
-        // merged EVAL FAMILY. `WrapWithCastAsDecimal` therefore preserves an
-        // integer argument's own scale (zero); it does not cast the selected
-        // value to the merged result's wider scale. IF/IFNULL/CASE use
-        // `newBaseBuiltinFuncWithFieldTypes` instead and intentionally cast
-        // to the full merged FieldType. Keep that source-owned distinction so
-        // `COALESCE(1, 1/0)` returns decimal `1`, not decimal `1.0000`.
-        if ret_type.eval_type() == tidb_datatype::EvalType::Decimal
-            && self.func_name.lowercase() == "coalesce"
-        {
-            match value {
-                Datum::Int(value) => {
-                    return Ok(Datum::Decimal(tidb_datatype::Decimal::from_int(value)));
-                }
-                Datum::UInt(value) => {
-                    return Ok(Datum::Decimal(tidb_datatype::Decimal::from_uint(value)));
-                }
-                _ => {}
-            }
-        }
+        // COALESCE is built with `newBaseBuiltinFuncWithTp`, so its ARGUMENTS
+        // are cast only to the merged eval family -- but `getFunction` then
+        // assigns `bf.tp = resultFieldType`, and that merged type is what the
+        // selected value is presented as. `select coalesce(1, 2.55, 3)`
+        // answers `1.00`, not `1`: the integer branch is widened to the
+        // merged scale, exactly as IF/IFNULL/CASE widen theirs. Handled by
+        // the shared conversion below rather than a COALESCE-only rule.
         match value.convert_to(ret_type, tidb_datatype::DEFAULT_STATEMENT_FLAGS) {
             Ok(converted) => Ok(converted.value),
             Err(_) => Ok(value),
@@ -2022,8 +2008,9 @@ mod tests {
         assert_eq!(coalesce.eval(&NoColumns, row).unwrap(), Datum::Int(7));
 
         // `InferType4ControlFuncs` widens the result metadata to the widest
-        // branch scale, but Go's `WrapWithCastAsDecimal` converts this
-        // selected integer argument at scale zero before COALESCE returns it.
+        // branch scale, and `bf.tp = resultFieldType` makes that merged type
+        // the one the selected argument is presented as: recorded TiDB
+        // answers `select coalesce(1, 2.55, 3)` with `1.00`.
         let mut decimal_four = FieldType::new(FieldTypeCode::NewDecimal);
         decimal_four.set_flen(15);
         decimal_four.set_decimal(4);
@@ -2034,7 +2021,7 @@ mod tests {
         );
         assert_eq!(
             decimal_coalesce.eval(&NoColumns, row).unwrap(),
-            Datum::Decimal(tidb_datatype::Decimal::from_int(1))
+            Datum::Decimal(tidb_datatype::Decimal::from_literal("1.0000"))
         );
 
         // A column argument feeds the builtin from the chunk row: ABS(col).
