@@ -117,7 +117,12 @@ use super::{BaseLogicalPlan, LogicalPlan};
 ///
 /// See this module's header for why this exists and when to use it.
 ///
-/// ```ignore
+/// Fenced `text` and not `ignore`: the `...` placeholders make this a shape
+/// sketch rather than Rust that could compile, while `ignore` would file it
+/// as a doctest that merely goes unrun -- which is the thing
+/// `difftest-result-tests::doctest_gate` counts and asks to have reviewed.
+///
+/// ```text
 /// match plan {
 ///     LogicalPlan::Selection(op) => ...,
 ///     base_arms![Sort, Limit, TopN] => ...,
