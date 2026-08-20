@@ -26,6 +26,7 @@ go_test(
         "//pkg/dxf/importinto/jobhistory",
         "//pkg/dxf/importinto/taskkey",
         "//pkg/executor/mppcoordmanager",
+        "//pkg/extension",
         "//pkg/infoschema",
         "//pkg/keyspace",
         "//pkg/kv",
