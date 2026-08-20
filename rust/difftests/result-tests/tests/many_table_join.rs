@@ -348,6 +348,11 @@ fn an_equality_is_executed_whatever_it_is_spelled_like() {
         "((a40))=((b14))",
         "b14=a40",
         "(b14)=a40",
+        // The whole conjunct parenthesized, which `classify` and
+        // `local_constant_equality` match on their outermost node.
+        "(a40=b14)",
+        "((a40=b14))",
+        "((a40)=(b14))",
     ] {
         let sql = format!("SELECT x35,x40,x14 FROM t35,t40,t14 WHERE {spelling}");
         assert_eq!(rows(&mut session, &sql), expected, "{sql}");

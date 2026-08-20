@@ -3398,13 +3398,23 @@ pub(crate) fn name_value_pairs(
     zone: &tidb_datatype::SessionTimeZone,
 ) -> bool {
     use tidb_ast::{BinaryOp, Expr};
+    fn unparenthesized(expr: &Expr) -> &Expr {
+        match expr {
+            Expr::Paren(inner) => unparenthesized(inner),
+            other => other,
+        }
+    }
     match expr {
         Expr::Paren(inner) => name_value_pairs(inner, pairs, zone),
         Expr::Binary(BinaryOp::LogicAnd, lhs, rhs) => {
             name_value_pairs(lhs, pairs, zone) && name_value_pairs(rhs, pairs, zone)
         }
         Expr::Binary(BinaryOp::Eq, lhs, rhs) => {
-            let (column, value) = match (&**lhs, &**rhs) {
+            // Stripped on both sides for the reason the arm above recurses
+            // through `Expr::Paren`: parentheses are syntax, and Go has
+            // unwrapped them before a point-get key is ever looked for, so
+            // `(a)=1` names the same key that `a=1` does.
+            let (column, value) = match (unparenthesized(lhs), unparenthesized(rhs)) {
                 (Expr::Column(path), other) => (path, other),
                 (other, Expr::Column(path)) => (path, other),
                 _ => return false,

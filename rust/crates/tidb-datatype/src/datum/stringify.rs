@@ -76,7 +76,19 @@ impl Datum {
             Self::Duration(value) => format!("DUR:{value}"),
             Self::Enum(value, _) => label_bytes("ENUM", value.name_bytes()),
             Self::Set(value, _) => label_bytes("SET", value.name_bytes()),
-            Self::Time(value) => format!("TIME:{value}"),
+            // Go's oracle labels `KindMysqlTime` through `labelString`, the
+            // same `STR:`/`STR_HEX:` contract a string takes
+            // (`difftests/goeval/main.go`). A `TIME:` label of its own read
+            // as a divergence for every `CAST(... AS DATE)` in the corpus
+            // when only the two labellers disagreed -- the values were
+            // identical -- and a unit test papered over it by rewriting the
+            // oracle's `STR:` into `TIME:` before comparing.
+            //
+            // `DUR:`, `ENUM:`, `SET:`, `JSON:` and the rest below stay
+            // richer than the oracle on purpose: Go's `labelDatum` has no
+            // case for those kinds, so it answers `SKIP:<kind>` and no
+            // golden ever asserts them.
+            Self::Time(value) => label_bytes("STR", value.to_string().as_bytes()),
             Self::Json(value) => format!("JSON:{value}"),
             Self::Raw(value) => label_bytes("RAW", value),
             Self::VectorFloat32(value) => format!("VECTOR:{value}"),

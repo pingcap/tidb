@@ -625,7 +625,14 @@ fn classify<'a>(
             None => return Some(Classified::Foreign),
         }
     }
-    if let Expr::Binary(BinaryOp::Eq, lhs, rhs) = conjunct {
+    // `strip(conjunct)` and not `conjunct`: a WHOLE conjunct may be written
+    // parenthesized (`WHERE (a40=b14)`) just as its sides may be, and Go has
+    // no parenthesis node left by the time any rule reads the expression.
+    // Matching the outer node here is also what keeps this in step with
+    // `predicate_push_down::column_equality`, which strips: were only one of
+    // them to see the equality, the conjunct would either run twice or -- the
+    // bug that motivated the stripping -- not at all.
+    if let Expr::Binary(BinaryOp::Eq, lhs, rhs) = strip(conjunct) {
         if touched.len() == 2 {
             let (Expr::Column(left), Expr::Column(right)) = (strip(lhs), strip(rhs)) else {
                 return None;
@@ -2725,7 +2732,10 @@ fn local_constant_equality(
     predicate: &Expr,
     leaves: &[Leaf<'_>],
 ) -> Option<((usize, usize), Expr)> {
-    let Expr::Binary(BinaryOp::Eq, lhs, rhs) = predicate else {
+    // Stripped for the same reason [`classify`] strips: `WHERE (a31=7)` is
+    // the same predicate as `WHERE a31=7`, and only the constant propagation
+    // is lost when the parentheses hide it.
+    let Expr::Binary(BinaryOp::Eq, lhs, rhs) = strip(predicate) else {
         return None;
     };
     let (column, value) = match (strip(lhs), strip(rhs)) {

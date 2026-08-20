@@ -899,9 +899,9 @@ fn cast_and_convert() {
         ("cast('  123  ' as char)", "STR:  123  "),
         ("cast(1 as char(1))", "STR:1"),
         ("cast('hello' as char(3))", "STR:hel"),
-        ("cast('2021-01-01' as date)", "TIME:2021-01-01"),
-        ("cast('2021-01-01 10:30:00' as date)", "TIME:2021-01-01"),
-        ("cast('2021-01-01' as datetime)", "TIME:2021-01-01 00:00:00"),
+        ("cast('2021-01-01' as date)", "STR:2021-01-01"),
+        ("cast('2021-01-01 10:30:00' as date)", "STR:2021-01-01"),
+        ("cast('2021-01-01' as datetime)", "STR:2021-01-01 00:00:00"),
         ("cast('not a date' as date)", "NULL"),
         ("cast(NULL as date)", "NULL"),
         ("cast('2021-01-01' as year)", "INT:2021"),
@@ -1251,12 +1251,10 @@ fn timestamp_and_timestampadd_match_the_captured_session_answers() {
         ("timestampadd(second, 1, '9999-12-31 23:59:59')", "NULL"),
     ] {
         assert_eq!(e(expr), want, "{expr}");
-        let chunk_want = if expr.starts_with("timestamp(") {
-            want.replacen("STR:", "TIME:", 1)
-        } else {
-            want.to_owned()
-        };
-        assert_eq!(chunk_e(expr), chunk_want, "{expr} (chunk tier)");
+        // Both tiers answer the oracle's own label now that a time is
+        // labelled `STR:` exactly as `difftests/goeval` labels it. This used
+        // to rewrite `STR:` into `TIME:` for the chunk tier alone.
+        assert_eq!(chunk_e(expr), want, "{expr} (chunk tier)");
     }
 }
 
@@ -1305,7 +1303,7 @@ fn an_etdatetime_argument_is_cast_before_the_signature_runs() {
     // Captured `RS:739325`.
     assert_eq!(e("to_days(20240315123045)"), "INT:739325");
     assert_eq!(e("to_seconds(20240315123045)"), "INT:63877725045");
-    assert_eq!(e("date(20240315123045)"), "TIME:2024-03-15");
+    assert_eq!(e("date(20240315123045)"), "STR:2024-03-15");
     assert_eq!(e("datediff(20240315123045,'2024-03-01')"), "INT:14");
 
     // These classes declare the same `ETDatetime` argument and must not
@@ -1374,17 +1372,17 @@ fn an_etdatetime_argument_is_cast_before_the_signature_runs() {
         ),
         ("to_days(20240315123045)", "INT:739325"),
         ("to_seconds(20240315123045)", "INT:63877725045"),
-        ("date(20240315123045)", "TIME:2024-03-15"),
+        ("date(20240315123045)", "STR:2024-03-15"),
         ("datediff(20240315123045,'2024-03-01')", "INT:14"),
         ("monthname(20240315123045)", "STR:March"),
         ("dayname(20240315123045)", "STR:Friday"),
         ("dayofweek(20240315123045)", "INT:6"),
         ("dayofyear(20240315123045)", "INT:75"),
         ("weekday(20240315123045)", "INT:4"),
-        ("last_day(20240315123045)", "TIME:2024-03-31"),
+        ("last_day(20240315123045)", "STR:2024-03-31"),
         (
             "convert_tz(20240315123045,'+00:00','+08:00')",
-            "TIME:2024-03-15 20:30:45",
+            "STR:2024-03-15 20:30:45",
         ),
         (
             "timestampadd(day,1,20240315123045)",
