@@ -1124,6 +1124,16 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		}
 	}
 
+	if ds.HasUnsignedIntHandleSuffix(path) {
+		// An unsigned handle above math.MaxInt64 is stored in the index key as a negative
+		// int64, so the appended dimension is not scanned in SQL order and cannot satisfy
+		// an ordering on the primary key. Range building may also happen again after
+		// planning (plan cache, index join), with values that cross the boundary even
+		// when the ranges seen here do not.
+		idxCols = idxCols[:len(path.Index.Columns)]
+		idxColLens = idxColLens[:len(path.Index.Columns)]
+	}
+
 	if len(idxCols) < len(prop.SortItems) {
 		return property.PropNotMatched
 	}

@@ -150,7 +150,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ctx context.Context, ranges []*ran
 	if e.isCommonHandle && e.idxInfo.Primary {
 		kvReqBuilder = builder.SetHandleRangesForTables(e.ctx.GetDistSQLCtx(), []int64{e.tableID.GetStatisticsID()}, true, ranges)
 	} else {
-		kvReqBuilder = builder.SetIndexRangesForTables(e.ctx.GetDistSQLCtx(), []int64{e.tableID.GetStatisticsID()}, e.idxInfo.ID, ranges)
+		kvReqBuilder = builder.SetIndexRangesForTables(e.ctx.GetDistSQLCtx(), []int64{e.tableID.GetStatisticsID()}, e.idxInfo.ID, ranges, distsql.NoIntHandleSuffix)
 	}
 	kvReqBuilder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	startTS := uint64(math.MaxUint64)

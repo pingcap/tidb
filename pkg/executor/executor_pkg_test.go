@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -205,7 +206,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 
 	keyOff2IdxOff := []int{1, 3}
 	ctx := mock.NewContext()
-	kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, nil, nil)
+	kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, nil, nil, distsql.NoIntHandleSuffix)
 	require.NoError(t, err)
 	// Check the kvRanges is in order.
 	for i, kvRange := range kvRanges {
@@ -235,7 +236,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 		keyOff2IdxOff := []int{1, 3}
 		ctx := mock.NewContext()
 		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
-		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil, distsql.NoIntHandleSuffix)
 		require.NoError(t, err)
 		// Check the kvRanges is in order.
 		for i, kvRange := range kvRanges {
@@ -257,7 +258,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 		keyOff2IdxOff := []int{1, 3}
 		ctx := mock.NewContext()
 		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
-		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil, distsql.NoIntHandleSuffix)
 		require.NoError(t, err)
 		// Check the kvRanges is in order.
 		for i, kvRange := range kvRanges {

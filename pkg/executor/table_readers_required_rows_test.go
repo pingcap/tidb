@@ -216,6 +216,7 @@ func buildIndexReader(sctx sessionctx.Context) exec.Executor {
 		indexReaderExecutorContext: newIndexReaderExecutorContext(sctx),
 		BaseExecutorV2:             buildMockBaseExec(sctx),
 		dagPB:                      buildMockDAGRequest(sctx),
+		table:                      tables.MockTableFromMeta(&model.TableInfo{}),
 		index:                      &model.IndexInfo{},
 		selectResultHook:           selectResultHook{mockSelectResult},
 	}
