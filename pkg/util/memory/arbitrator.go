@@ -2636,7 +2636,7 @@ func (m *MemArbitrator) tryUpdateTrackedMemStats(utimeMilli int64) bool {
 }
 
 type Top3DigestData struct {
-	DigestID uint64 `json:"digest_id"`
+	DigestID uint64 `json:"id"`
 	Size     int64  `json:"size"`
 	UtimeSec int64  `json:"utime_sec"`
 }
@@ -2665,7 +2665,7 @@ func (t *Top3Digest) merge(other Top3DigestDataGroup, utimeSec int64) {
 func (t *Top3DigestDataGroup) clean(utimeSec int64) Top3DigestDataGroup {
 	res := Top3DigestDataGroup{}
 	j := 0
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if t.d[i].UtimeSec+24*60*60 >= utimeSec {
 			res.d[j] = t.d[i]
 			j++
@@ -2691,7 +2691,7 @@ func (t *Top3Digest) get(digestID uint64) int64 {
 
 func (t *Top3DigestDataGroup) merge(other Top3DigestDataGroup) Top3DigestDataGroup {
 	res := *t
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if other.d[i].DigestID != 0 {
 			res.update(other.d[i].DigestID, other.d[i].Size, other.d[i].UtimeSec)
 		}
@@ -2703,7 +2703,7 @@ func (t *Top3DigestDataGroup) update(digestID uint64, size int64, utimeSec int64
 	if size <= t.d[2].Size {
 		return
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if t.d[i].DigestID == digestID {
 			t.d[i].UtimeSec = utimeSec
 			if size <= t.d[i].Size {
@@ -2758,8 +2758,8 @@ func (m *MemArbitrator) updateTrackedHeapStats() (top3 Top3DigestDataGroup) {
 			if ctx := e.ctx.Load(); ctx.available() {
 				inuse := ctx.arbitrateHelper.HeapInuse()
 				totalTrackedHeap += inuse.RootPool
-				if ctx.arbitrateHelperID != 0 {
-					top3.update(ctx.arbitrateHelperID, inuse.Used, m.approxUnixTimeSec())
+				if ctx.id != 0 {
+					top3.update(ctx.id, inuse.Used, m.approxUnixTimeSec())
 				}
 			}
 			return true
@@ -3216,8 +3216,8 @@ type ArbitrateHelper interface {
 
 // ArbitrationContext represents the context & properties of the root pool which is accessible for the global mem-arbitrator
 type ArbitrationContext struct {
-	arbitrateHelperID uint64
-	arbitrateHelper   ArbitrateHelper
+	id              uint64
+	arbitrateHelper ArbitrateHelper
 
 	memPriority     ArbitrationPriority
 	stopped         atomic.Bool
@@ -3248,11 +3248,11 @@ func NewArbitrationContext(
 	preferPrivilege bool,
 ) *ArbitrationContext {
 	return &ArbitrationContext{
-		arbitrateHelperID: arbitrateHelperID,
-		arbitrateHelper:   arbitrateHelper,
-		memPriority:       memPriority,
-		waitAverse:        waitAverse,
-		preferPrivilege:   preferPrivilege,
+		id:              arbitrateHelperID,
+		arbitrateHelper: arbitrateHelper,
+		memPriority:     memPriority,
+		waitAverse:      waitAverse,
+		preferPrivilege: preferPrivilege,
 	}
 }
 

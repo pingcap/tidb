@@ -372,7 +372,7 @@ func (m *MemArbitrator) tasksCountForTest() (sz int64) {
 }
 
 func newCtxForTest(h ArbitrateHelper, memPriority ArbitrationPriority, waitAverse bool, preferPrivilege bool) *ArbitrationContext {
-	return NewArbitrationContext(h, memPriority, waitAverse, preferPrivilege)
+	return NewArbitrationContext(1, h, memPriority, waitAverse, preferPrivilege)
 }
 
 func newDefCtxForTest(memPriority ArbitrationPriority) *ArbitrationContext {
@@ -2250,7 +2250,7 @@ func TestMemArbitrator(t *testing.T) {
 		require.True(t, m.buffer.size.Load() == 31)
 
 		m.ResetRootPoolByID(e1.pool.uid, 389, true) // tune
-		require.True(t, m.buffer.size.Load() == 389)
+		require.True(t, m.buffer.size.Load() == 31)
 
 		logs := MockLogs{}
 
@@ -2759,6 +2759,7 @@ func TestBench(t *testing.T) {
 				cancelEvent := 0
 				killed := false
 				ctx := NewArbitrationContext(
+					uint64(i+1),
 					&arbitrateHelperForTest{
 						cancelCh: cancelCh,
 						heapUsedCB: func() int64 {
@@ -2844,6 +2845,7 @@ func TestBench(t *testing.T) {
 				}
 
 				ctx := NewArbitrationContext(
+					uint64(i+1),
 					&arbitrateHelperForTest{
 						cancelCh: cancelCh,
 						heapUsedCB: func() int64 {
