@@ -251,6 +251,237 @@ func TestPartitionTableRandomlyIndexLookUpReader(t *testing.T) {
 	}
 }
 
+func TestAdaptiveLimitExecution(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table adaptive_outer (
+		id int primary key, order_key int not null, join_key int not null,
+		filter_col int not null, payload varchar(32), key idx_order_key(order_key))`)
+	tk.MustExec(`create table adaptive_inner (
+		id int primary key, join_key int not null, v int not null,
+		key idx_join_key(join_key))`)
+	outerValues := make([]string, 0, 128)
+	for i := 1; i <= 128; i++ {
+		filterCol := 0
+		if i == 1 || i == 3 || i == 6 || i == 9 || i == 12 || i%16 == 0 {
+			filterCol = 1
+		}
+		outerValues = append(outerValues, fmt.Sprintf("(%d,%d,%d,%d,'payload_%d')", i, i, i, filterCol, i))
+	}
+	tk.MustExec("insert into adaptive_outer values " + strings.Join(outerValues, ","))
+	innerValues := make([]string, 0, 80)
+	for i := 1; i <= 64; i++ {
+		innerValues = append(innerValues, fmt.Sprintf("(%d,1,%d)", i, i))
+	}
+	innerValues = append(innerValues, "(65,3,3)", "(66,6,6)", "(67,9,9)", "(68,12,12)")
+	for i := 16; i <= 128; i += 16 {
+		innerValues = append(innerValues, fmt.Sprintf("(%d,%d,%d)", 1000+i, i, i))
+	}
+	tk.MustExec("insert into adaptive_inner values " + strings.Join(innerValues, ","))
+	tk.MustQuery("select @@tidb_enable_adaptive_limit_scan").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_enable_adaptive_limit_scan = on")
+	tk.MustExec("set tidb_index_join_batch_size = 32")
+	tk.MustExec("set tidb_index_lookup_size = 32")
+	tk.MustExec("set tidb_index_lookup_join_concurrency = 2")
+	tk.MustExec("set tidb_index_lookup_concurrency = 2")
+	tk.MustExec("set tidb_init_chunk_size = 32")
+	tk.MustExec("set tidb_max_chunk_size = 32")
+
+	sql := `select /*+ inl_join(i) */ o.payload, i.v
+		from adaptive_outer o use index(idx_order_key)
+		join adaptive_inner i use index(idx_join_key) on o.join_key = i.join_key
+		where o.order_key between 1 and 4 and o.filter_col > 0
+		order by o.order_key limit 40`
+	plan := fmt.Sprint(tk.MustQuery("explain " + sql).Rows())
+	require.Contains(t, plan, "IndexJoin")
+	require.Contains(t, plan, "keep order:true")
+	onRows := tk.MustQuery(sql).Sort().Rows()
+	require.Len(t, onRows, 40)
+
+	analyze := fmt.Sprint(tk.MustQuery("explain analyze " + sql).Rows())
+	require.Contains(t, analyze, "adaptive:{")
+	require.Contains(t, analyze, "outer:")
+	require.Contains(t, analyze, "lookup:")
+	require.Contains(t, analyze, "outstanding:")
+	require.Contains(t, analyze, "blocked:")
+	budgetSQL := `select /*+ inl_join(i) */ o.payload, i.v
+		from adaptive_outer o use index(idx_order_key)
+		join adaptive_inner i use index(idx_join_key) on o.join_key = i.join_key
+		where o.order_key between 1 and 128 and o.filter_col >= 0
+		order by o.order_key limit 4`
+	recordKeepOrderConcurrency := func(maxConcurrency *atomic.Int64, req *kv.Request) {
+		if !req.KeepOrder {
+			return
+		}
+		concurrency := int64(req.Concurrency)
+		for current := maxConcurrency.Load(); concurrency > current; current = maxConcurrency.Load() {
+			if maxConcurrency.CompareAndSwap(current, concurrency) {
+				return
+			}
+		}
+	}
+	var adaptiveRequestRateLimitSeen atomic.Bool
+	var adaptiveRequestConcurrency atomic.Int64
+	budgetCtx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+		recordKeepOrderConcurrency(&adaptiveRequestConcurrency, req)
+		if req.CoprRequestRateLimit != nil {
+			adaptiveRequestRateLimitSeen.Store(true)
+		}
+	})
+	budgetAnalyze := fmt.Sprint(tk.MustQueryWithContext(budgetCtx, "explain analyze "+budgetSQL).Rows())
+	require.False(t, adaptiveRequestRateLimitSeen.Load())
+	tk.MustExec("set tidb_enable_adaptive_limit_scan = off")
+	var baselineRequestConcurrency atomic.Int64
+	baselineCtx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+		recordKeepOrderConcurrency(&baselineRequestConcurrency, req)
+	})
+	baselineAnalyze := fmt.Sprint(tk.MustQueryWithContext(baselineCtx, "explain analyze "+budgetSQL).Rows())
+	require.NotContains(t, baselineAnalyze, "adaptive:{")
+	require.Positive(t, baselineRequestConcurrency.Load())
+	require.Equal(t, baselineRequestConcurrency.Load(), adaptiveRequestConcurrency.Load())
+	tk.MustExec("set tidb_enable_adaptive_limit_scan = on")
+	statsStart := strings.Index(budgetAnalyze, "adaptive:{outer:")
+	require.NotEqual(t, -1, statsStart)
+	require.Regexp(t, `adaptive:\{[^}]*outstanding:[0-9]+/[0-9]+, blocked:outer=[^,]+,lookup=[^}]+\}`, budgetAnalyze[statsStart:])
+	var outerFetched, outerConsumed, lookupHandles, lookupRows, outerOutstanding, lookupOutstanding uint64
+	_, err := fmt.Sscanf(
+		budgetAnalyze[statsStart:],
+		"adaptive:{outer:%d/%d, lookup:%d/%d, outstanding:%d/%d, blocked:",
+		&outerFetched, &outerConsumed, &lookupHandles, &lookupRows, &outerOutstanding, &lookupOutstanding,
+	)
+	require.NoError(t, err)
+	require.LessOrEqual(t, outerFetched, uint64(4))
+	require.LessOrEqual(t, lookupHandles, uint64(4))
+	require.LessOrEqual(t, outerConsumed, outerFetched)
+	require.LessOrEqual(t, lookupRows, lookupHandles)
+	require.LessOrEqual(t, outerOutstanding, uint64(4))
+	require.LessOrEqual(t, lookupOutstanding, uint64(4))
+	lowSelectivitySQL := `select /*+ inl_join(i) */ o.order_key, i.v
+		from adaptive_outer o use index(idx_order_key)
+		join adaptive_inner i use index(idx_join_key) on o.join_key = i.join_key
+		where o.order_key between 13 and 128 and o.filter_col = 1
+		order by o.order_key limit 4`
+	lowSelectivityPlan := fmt.Sprint(tk.MustQuery("explain " + lowSelectivitySQL).Rows())
+	require.Contains(t, lowSelectivityPlan, "IndexLookUp")
+	require.Contains(t, lowSelectivityPlan, "Selection")
+	require.Contains(t, lowSelectivityPlan, "TableRowIDScan")
+	lowSelectivityOnRows := tk.MustQuery(lowSelectivitySQL).Rows()
+	require.Equal(t, testkit.Rows("16 16", "32 32", "48 48", "64 64"), lowSelectivityOnRows)
+	lowSelectivityAnalyze := fmt.Sprint(tk.MustQuery("explain analyze " + lowSelectivitySQL).Rows())
+	smallLimitSQL := strings.Replace(lowSelectivitySQL, "limit 4", "limit 1", 1)
+	smallLimitOnRows := tk.MustQuery(smallLimitSQL).Rows()
+	require.Equal(t, testkit.Rows("16 16"), smallLimitOnRows)
+	smallLimitAnalyze := fmt.Sprint(tk.MustQuery("explain analyze " + smallLimitSQL).Rows())
+	tableTaskMatches := regexp.MustCompile(`table_task: \{[^}]*num: ([0-9]+)`).FindAllStringSubmatch(smallLimitAnalyze, -1)
+	require.NotEmpty(t, tableTaskMatches)
+	maxTableTasks := 0
+	for _, match := range tableTaskMatches {
+		taskCount, err := strconv.Atoi(match[1])
+		require.NoError(t, err)
+		maxTableTasks = max(maxTableTasks, taskCount)
+	}
+	require.Equal(t, 1, maxTableTasks)
+	statsStart = strings.Index(lowSelectivityAnalyze, "adaptive:{outer:")
+	require.NotEqual(t, -1, statsStart)
+	require.Regexp(t, `adaptive:\{[^}]*outstanding:[0-9]+/[0-9]+, blocked:outer=[^,]+,lookup=[^}]+\}`, lowSelectivityAnalyze[statsStart:])
+	_, err = fmt.Sscanf(
+		lowSelectivityAnalyze[statsStart:],
+		"adaptive:{outer:%d/%d, lookup:%d/%d, outstanding:%d/%d, blocked:",
+		&outerFetched, &outerConsumed, &lookupHandles, &lookupRows, &outerOutstanding, &lookupOutstanding,
+	)
+	require.NoError(t, err)
+	require.Greater(t, lookupHandles, lookupRows)
+	require.GreaterOrEqual(t, lookupRows, uint64(4))
+	require.LessOrEqual(t, outerConsumed, outerFetched)
+	require.LessOrEqual(t, lookupRows, lookupHandles)
+	orderedSQL := `select /*+ inl_join(i) */ o.order_key, i.v
+		from adaptive_outer o use index(idx_order_key)
+		join adaptive_inner i use index(idx_join_key) on o.join_key = i.join_key
+		where o.order_key between 2 and 12 and o.filter_col > 0
+		order by o.order_key limit 4`
+	orderedOnRows := tk.MustQuery(orderedSQL).Rows()
+	require.Equal(t, testkit.Rows("3 3", "6 6", "9 9", "12 12"), orderedOnRows)
+
+	tk.MustExec("set tidb_enable_adaptive_limit_scan = off")
+	offRows := tk.MustQuery(sql).Sort().Rows()
+	require.Equal(t, onRows, offRows)
+	require.Equal(t, lowSelectivityOnRows, tk.MustQuery(lowSelectivitySQL).Rows())
+	require.Equal(t, smallLimitOnRows, tk.MustQuery(smallLimitSQL).Rows())
+	require.Equal(t, orderedOnRows, tk.MustQuery(orderedSQL).Rows())
+	require.NotContains(t, fmt.Sprint(tk.MustQuery("explain analyze "+sql).Rows()), "adaptive:{")
+}
+
+func TestAdaptiveLimitDirectIndexLookUpExecution(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table adaptive_direct_lookup (
+		id int primary key, order_key int not null, filter_col int not null,
+		payload varchar(32), key idx_order_key(order_key))`)
+	values := make([]string, 0, 128)
+	for i := 1; i <= 128; i++ {
+		filterCol := 0
+		if i == 1 || i == 3 || i == 6 || i == 9 || i == 12 || i%16 == 0 {
+			filterCol = 1
+		}
+		values = append(values, fmt.Sprintf("(%d,%d,%d,'payload_%d')", i, i, filterCol, i))
+	}
+	tk.MustExec("insert into adaptive_direct_lookup values " + strings.Join(values, ","))
+	tk.MustExec("set tidb_index_lookup_size = 32")
+	tk.MustExec("set tidb_index_lookup_concurrency = 2")
+	tk.MustExec("set tidb_init_chunk_size = 32")
+	tk.MustExec("set tidb_max_chunk_size = 32")
+
+	sql := `select order_key, payload
+		from adaptive_direct_lookup use index(idx_order_key)
+		where order_key between 1 and 128 and filter_col = 1
+		order by order_key limit 4`
+	plan := fmt.Sprint(tk.MustQuery("explain " + sql).Rows())
+	require.Contains(t, plan, "IndexLookUp")
+	require.Contains(t, plan, "Selection")
+	require.Contains(t, plan, "keep order:true")
+
+	tk.MustExec("set tidb_enable_adaptive_limit_scan = on")
+	onRows := tk.MustQuery(sql).Rows()
+	require.Equal(t, testkit.Rows(
+		"1 payload_1", "3 payload_3", "6 payload_6", "9 payload_9",
+	), onRows)
+	onAnalyze := fmt.Sprint(tk.MustQuery("explain analyze " + sql).Rows())
+	require.Contains(t, onAnalyze, "adaptive:{lookup:")
+	require.NotContains(t, onAnalyze, "outer:")
+	require.Regexp(t, `adaptive:\{lookup:[0-9]+/[0-9]+, outstanding:[0-9]+, blocked:[^}]+\}`, onAnalyze)
+
+	pagingSQL := `select order_key, payload
+		from adaptive_direct_lookup use index(idx_order_key)
+		where order_key between 1 and 128 and filter_col >= 0
+		order by order_key limit 1`
+	pagingPlan := fmt.Sprint(tk.MustQuery("explain " + pagingSQL).Rows())
+	require.Contains(t, pagingPlan, "IndexLookUp")
+	require.Contains(t, pagingPlan, "Selection")
+	require.Contains(t, pagingPlan, "keep order:true")
+	require.Equal(t, testkit.Rows("1 payload_1"), tk.MustQuery(pagingSQL).Rows())
+	pagingAnalyze := fmt.Sprint(tk.MustQuery("explain analyze " + pagingSQL).Rows())
+	require.Contains(t, pagingAnalyze, "adaptive:{lookup:1/1, outstanding:0,")
+
+	offsetSQL := strings.Replace(sql, "limit 4", "limit 2, 2", 1)
+	require.Equal(t, testkit.Rows("6 payload_6", "9 payload_9"), tk.MustQuery(offsetSQL).Rows())
+	emptySQL := strings.Replace(sql, "filter_col = 1", "filter_col = 2", 1)
+	tk.MustQuery(emptySQL).Check(testkit.Rows())
+	require.Contains(t, fmt.Sprint(tk.MustQuery("explain analyze "+emptySQL).Rows()), "adaptive:{lookup:")
+	largeLimitSQL := strings.Replace(sql, "limit 4", "limit 100", 1)
+	largeLimitRows := tk.MustQuery(largeLimitSQL).Rows()
+	require.Len(t, largeLimitRows, 13)
+
+	tk.MustExec("set tidb_enable_adaptive_limit_scan = off")
+	require.Equal(t, onRows, tk.MustQuery(sql).Rows())
+	require.Equal(t, testkit.Rows("1 payload_1"), tk.MustQuery(pagingSQL).Rows())
+	require.Equal(t, testkit.Rows("6 payload_6", "9 payload_9"), tk.MustQuery(offsetSQL).Rows())
+	tk.MustQuery(emptySQL).Check(testkit.Rows())
+	require.Equal(t, largeLimitRows, tk.MustQuery(largeLimitSQL).Rows())
+	require.NotContains(t, fmt.Sprint(tk.MustQuery("explain analyze "+sql).Rows()), "adaptive:{")
+}
+
 func TestIndexLookUpStats(t *testing.T) {
 	stats := &executor.IndexLookUpRunTimeStats{
 		FetchHandleTotal:         int64(5 * time.Second),

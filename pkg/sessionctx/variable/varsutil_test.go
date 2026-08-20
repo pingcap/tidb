@@ -58,6 +58,8 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, vardef.DefIndexLookupSize, vars.IndexLookupSize)
 	require.Equal(t, vardef.ConcurrencyUnset, vars.indexLookupConcurrency)
 	require.Equal(t, vardef.ConcurrencyUnset, vars.indexLookupJoinConcurrency)
+	require.False(t, vardef.DefTiDBEnableAdaptiveLimitScan)
+	require.False(t, vars.EnableAdaptiveLimitScan)
 	require.Equal(t, vardef.DefTiDBHashJoinConcurrency, vars.hashJoinConcurrency)
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.IndexLookupConcurrency())
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.IndexLookupJoinConcurrency())

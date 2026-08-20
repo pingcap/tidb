@@ -858,6 +858,7 @@ func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor 
 		begin:        v.Offset,
 		end:          v.Offset + v.Count,
 	}
+	b.attachAdaptiveLimitController(v, e, childExec)
 
 	childSchemaLen := v.Children()[0].Schema().Len()
 	childUsedSchema := markChildrenUsedCols(v.Schema().Columns, v.Children()[0].Schema())[0]
@@ -870,6 +871,146 @@ func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor 
 		e.columnSwapHelper = chunk.NewColumnSwapHelper(e.columnIdxsUsedByChild)
 	}
 	return e
+}
+
+func (b *executorBuilder) attachAdaptiveLimitController(
+	limitPlan *physicalop.PhysicalLimit, limitExec *LimitExec, childExec exec.Executor,
+) {
+	if !b.sctx.GetSessionVars().EnableAdaptiveLimitScan {
+		return
+	}
+	// V1 recognizes two roots. Unsupported reader modes retain the existing path:
+	//
+	//	Limit -> Projection* -> ordered IndexLookUpJoin
+	//	Limit -> Projection* -> keep-order IndexLookUp
+	indexJoin := findAdaptiveLimitIndexJoin(childExec)
+	if indexJoin != nil {
+		if !indexJoin.AdaptiveLimitEligible {
+			return
+		}
+		outerIndexLookup := findAdaptiveLimitIndexLookupCandidate(indexJoin.Children(0))
+		if outerIndexLookup == nil {
+			return
+		}
+		demandRows := limitPlan.Offset + limitPlan.Count
+		config := b.buildAdaptiveLimitConfig(demandRows, outerIndexLookup)
+		config.InitialOuterWindow = adaptiveLimitInitialWindow(demandRows, b.sctx.GetSessionVars().IndexJoinBatchSize)
+		config.MaxOuterWindow = uint64(b.sctx.GetSessionVars().IndexJoinBatchSize) *
+			uint64(b.sctx.GetSessionVars().IndexLookupJoinConcurrency())
+		controller := exec.NewAdaptiveLimitController(config)
+		outerIndexLookup.adaptiveLimitController = controller
+		indexJoin.AdaptiveLimitController = controller
+		limitExec.adaptiveLimitController = controller
+		return
+	}
+
+	indexLookup := findAdaptiveLimitIndexLookupCandidate(childExec)
+	if indexLookup == nil {
+		return
+	}
+	controller := exec.NewAdaptiveLimitLookupController(b.buildAdaptiveLimitConfig(
+		limitPlan.Offset+limitPlan.Count,
+		indexLookup,
+	))
+	indexLookup.adaptiveLimitController = controller
+	indexLookup.reportAdaptiveLimitStats = true
+	limitExec.adaptiveLimitController = controller
+}
+
+func (b *executorBuilder) buildAdaptiveLimitConfig(
+	demandRows uint64, indexLookup *IndexLookUpExecutor,
+) exec.AdaptiveLimitConfig {
+	sessionVars := b.sctx.GetSessionVars()
+	initialLookupWindow := adaptiveLimitInitialWindow(demandRows, sessionVars.IndexLookupSize)
+	return exec.AdaptiveLimitConfig{
+		DemandRows:          demandRows,
+		InitialLookupWindow: initialLookupWindow,
+		MaxLookupWindow: uint64(sessionVars.IndexLookupSize) *
+			uint64(sessionVars.IndexLookupConcurrency()),
+		InitialLookupBatchSize: adaptiveLimitInitialLookupBatchSize(
+			initialLookupWindow,
+			indexLookup.indexPaging,
+			sessionVars.MaxChunkSize,
+			sessionVars.IndexLookupSize,
+		),
+		MaxLookupBatchSize: uint64(sessionVars.IndexLookupSize),
+	}
+}
+
+func adaptiveLimitInitialWindow(demandRows uint64, ceiling int) uint64 {
+	if demandRows == 0 || ceiling <= 1 {
+		return 1
+	}
+	return min(demandRows, uint64(ceiling))
+}
+
+// adaptiveLimitInitialLookupBatchSize keeps paging tasks aligned with the
+// initial logical window. Without paging, it preserves at least one chunk of
+// execution granularity while respecting the configured lookup batch limit.
+func adaptiveLimitInitialLookupBatchSize(initialWindow uint64, indexPaging bool, maxChunkSize, maxBatchSize int) uint64 {
+	if indexPaging {
+		return initialWindow
+	}
+	return min(max(initialWindow, uint64(maxChunkSize)), uint64(maxBatchSize))
+}
+
+func findAdaptiveLimitIndexJoin(executor exec.Executor) *join.IndexLookUpJoin {
+	if indexJoin, ok := executor.(*join.IndexLookUpJoin); ok {
+		return indexJoin
+	}
+	if _, ok := executor.(*ProjectionExec); !ok {
+		return nil
+	}
+	children := executor.AllChildren()
+	if len(children) != 1 {
+		return nil
+	}
+	return findAdaptiveLimitIndexJoin(children[0])
+}
+
+func findAdaptiveLimitIndexLookupCandidate(executor exec.Executor) *IndexLookUpExecutor {
+	for {
+		switch e := executor.(type) {
+		case *IndexLookUpExecutor:
+			if e.adaptiveLimitController != nil || !adaptiveLimitIndexLookupEligible(e) {
+				return nil
+			}
+			return e
+		case *ProjectionExec:
+			children := e.AllChildren()
+			if len(children) != 1 {
+				return nil
+			}
+			executor = children[0]
+		default:
+			return nil
+		}
+	}
+}
+
+func adaptiveLimitIndexLookupEligible(indexLookup *IndexLookUpExecutor) bool {
+	// Merge-sort double reads create all SelectResults before rolling handle
+	// admission. PushedLimit already applies its own index-side offset/count
+	// boundary, and pushed-down lookup does not preserve order. Concurrency 1
+	// cannot run the index and table workers at the same time in the shared pool.
+	// Keep these paths unchanged in v1.
+	return indexLookup.PushedLimit == nil && indexLookup.keepOrder && indexLookup.indexLookupConcurrency > 1 &&
+		!adaptiveLimitIndexLookupMayNeedMergeSort(indexLookup) && !indexLookup.indexLookUpPushDown
+}
+
+func adaptiveLimitIndexLookupMayNeedMergeSort(indexLookup *IndexLookUpExecutor) bool {
+	if indexLookup.partitionTableMode || len(indexLookup.groupedRanges) > 0 {
+		return true
+	}
+	if len(indexLookup.byItems) == 0 {
+		return false
+	}
+	if len(indexLookup.idxPlans) == 0 {
+		return true
+	}
+	// Correlated access can rebuild groupedRanges from GroupByColIdxs in Open.
+	indexScan, ok := indexLookup.idxPlans[0].(*physicalop.PhysicalIndexScan)
+	return !ok || len(indexScan.GroupByColIdxs) > 0
 }
 
 func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) exec.Executor {
@@ -3658,12 +3799,13 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 			ColLens:       v.IdxColLens,
 			HasPrefixCol:  hasPrefixCol,
 		},
-		WorkerWg:      new(sync.WaitGroup),
-		IsOuterJoin:   v.JoinType.IsOuterJoin(),
-		IndexRanges:   v.Ranges,
-		KeyOff2IdxOff: v.KeyOff2IdxOff,
-		LastColHelper: v.CompareFilters,
-		Finished:      &atomic.Value{},
+		WorkerWg:              new(sync.WaitGroup),
+		IsOuterJoin:           v.JoinType.IsOuterJoin(),
+		IndexRanges:           v.Ranges,
+		KeyOff2IdxOff:         v.KeyOff2IdxOff,
+		LastColHelper:         v.CompareFilters,
+		Finished:              &atomic.Value{},
+		AdaptiveLimitEligible: v.GetChildReqProps(1 - v.InnerChildIdx).NeedKeepOrder(),
 	}
 	colsFromChildren := v.Schema().Columns
 	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {

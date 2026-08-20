@@ -94,6 +94,67 @@ func TestUpgradeToVer279BackfillsIgnoreInlistPlanDigest(t *testing.T) {
 	require.NoError(t, res.Close())
 }
 
+func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	se := CreateSessionAndSetID(t, store)
+	assertValue := func(expected string) {
+		res := MustExecToRecodeSet(t, se, fmt.Sprintf(
+			"select variable_value from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+			vardef.TiDBEnableAdaptiveLimitScan,
+		))
+		chk := res.NewChunk(nil)
+		require.NoError(t, res.Next(ctx, chk))
+		require.Equal(t, 1, chk.NumRows())
+		require.Equal(t, expected, chk.GetRow(0).GetString(0))
+		require.NoError(t, res.Close())
+
+		res = MustExecToRecodeSet(t, se, "select @@global.tidb_enable_adaptive_limit_scan, @@session.tidb_enable_adaptive_limit_scan")
+		chk = res.NewChunk(nil)
+		require.NoError(t, res.Next(ctx, chk))
+		require.Equal(t, 1, chk.NumRows())
+		require.Equal(t, expected == vardef.On, chk.GetRow(0).GetInt64(0) == 1)
+		require.Equal(t, expected == vardef.On, chk.GetRow(0).GetInt64(1) == 1)
+		require.NoError(t, res.Close())
+	}
+
+	// Initial bootstrap uses the new-cluster policy.
+	assertValue(vardef.On)
+
+	// The upgrade is idempotent and must not overwrite an existing setting.
+	MustExec(t, se, "set global tidb_enable_adaptive_limit_scan=ON")
+	upgradeToVer284(se, version283)
+	assertValue(vardef.On)
+
+	// Simulate a v283 cluster where this unreleased variable does not exist.
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version283)))
+	RevertVersionAndVariables(t, se, version283)
+	MustExec(t, se, fmt.Sprintf(
+		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+		vardef.TiDBEnableAdaptiveLimitScan,
+	))
+	require.NoError(t, txn.Commit(ctx))
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	dom.Close()
+	dom, err = BootstrapSession(store)
+	require.NoError(t, err)
+	defer dom.Close()
+	se = CreateSessionAndSetID(t, store)
+
+	ver, err := GetBootstrapVersion(se)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	assertValue(vardef.Off)
+}
+
 func TestUpgradeToVer282RefreshesBindingDigest(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
