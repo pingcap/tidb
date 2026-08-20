@@ -225,7 +225,7 @@ func getInt32Setter(colType *parquetColumnType, loc *time.Location) setter[int32
 			}
 			return nil
 		}
-	case schema.NoLogicalType, schema.UnknownLogicalType:
+	case schema.NoLogicalType:
 		return func(val int32, d *types.Datum) error {
 			d.SetInt64(int64(val))
 			return nil
@@ -246,7 +246,7 @@ func getInt64Setter(colType *parquetColumnType, loc *time.Location) setter[int64
 			}
 			return nil
 		}
-	case schema.NoLogicalType, schema.UnknownLogicalType:
+	case schema.NoLogicalType:
 		return func(val int64, d *types.Datum) error {
 			d.SetInt64(val)
 			return nil
@@ -316,7 +316,9 @@ func newInt96(microseconds int64) parquet.Int96 {
 }
 
 // setTimestampDatum converts a decoded timestamp to a MySQL TIMESTAMP datum,
-// applying the parser location only for UTC-adjusted values.
+// applying the parser location only for UTC-adjusted values. The location must
+// be applied before types.FromGoTime so the converted wall-clock fields retain
+// the intended timezone semantics in TiDB's internal representation.
 func setTimestampDatum(t time.Time, d *types.Datum, loc *time.Location, adjustedToUTC bool) error {
 	if adjustedToUTC {
 		t = t.In(loc)

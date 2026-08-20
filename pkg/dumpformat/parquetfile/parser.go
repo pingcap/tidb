@@ -59,11 +59,13 @@ var (
 func validateParquetLogicalType(logicalType schema.LogicalType, physicalType parquet.Type, typeLength int) error {
 	switch logicalType.(type) {
 	case schema.ListLogicalType, schema.MapLogicalType, schema.IntervalLogicalType,
-		schema.UnknownLogicalType, schema.Float16LogicalType, schema.VariantLogicalType:
+		schema.UnknownLogicalType, schema.NullLogicalType, schema.Float16LogicalType, schema.VariantLogicalType:
 		// These types are not used by Aurora or Snowflake exports, so they remain
 		// outside the row-oriented import parser's supported scalar scope.
 		return errors.Errorf("unsupported parquet logical type %s", logicalType.String())
 	}
+	// Keep the physical encoding limits enforced by Parquet logical types. For
+	// example, INT32 DECIMAL values cannot represent precision greater than 9.
 	if !logicalType.IsApplicable(physicalType, int32(typeLength)) {
 		return errors.Errorf("logical type %s is not applicable to physical type %s", logicalType.String(), physicalType)
 	}

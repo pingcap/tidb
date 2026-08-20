@@ -389,6 +389,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		}
 
 		for _, logicalType := range []schema.LogicalType{
+			schema.NullLogicalType{},
 			schema.Float16LogicalType{},
 			schema.VariantLogicalType{},
 		} {
