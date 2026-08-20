@@ -302,8 +302,7 @@ pub fn run_prepared_point_get(
             .get_prepared_point_row(handle, &plan.row_decoder, ctx)
             .map_err(|error| {
                 ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
-            })?
-        {
+            })? {
             None => Vec::new(),
             Some(row) => vec![row],
         },

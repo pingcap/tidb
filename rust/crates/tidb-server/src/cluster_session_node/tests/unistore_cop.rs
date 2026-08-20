@@ -1014,3 +1014,51 @@ fn a_negative_bound_on_an_unsigned_column_follows_gos_rewrite() {
         [["0"]],
     );
 }
+
+/// `CREATE VIEW` over the real embedded store creates the view, and it reads
+/// back.
+///
+/// This is the path `--store unistore --cluster-session` actually serves, and
+/// it had NO coverage: the mock-seam modules in this directory serve
+/// `cop_scans: None`, and the pipeline session's own `CREATE VIEW` wire test
+/// exercises a different session. That blind spot is how seven commits landed
+/// on a working feature and broke it in silence.
+///
+/// Bisected, one build and one live server per point: `9b893f4abd` still
+/// creates the view; `b1f979cc76` ("rust: complete unistore transaction batch
+/// get") answers
+///
+/// ```text
+/// ERROR 1105 (HY000): table bytes failed to decode
+/// ```
+///
+/// and leaves no view behind. The real cause is
+/// `Storage("Backend(\"query deadline exceeded\")")`, and the shape of the
+/// failure is the clue: this test sits for ~20s before reporting, so the
+/// coprocessor request never COMPLETES and the wait runs out. It is a request
+/// that goes unanswered, not a deadline that was mis-set.
+#[test]
+fn a_view_over_the_coprocessor_is_created_and_reads_back() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(9))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.vsrc (id int primary key, v int)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.vsrc VALUES (1, 10), (2, 20)",
+    );
+    rows(
+        &mut session,
+        "CREATE VIEW test.vview AS SELECT id FROM test.vsrc WHERE id > 1",
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT id FROM test.vview")),
+        [["2"]],
+        "the view reads back its defining query"
+    );
+}
