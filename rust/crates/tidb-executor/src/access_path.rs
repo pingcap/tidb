@@ -786,6 +786,14 @@ impl IndexRangeSourceExec {
                         &range,
                         self.decode_context.zone(),
                         self.descending,
+                        // Go's `byItems`, the half of `needMergeSort` this
+                        // tier was missing: non-empty exactly when the answer
+                        // has to come back in index order, which is what
+                        // `can_reorder_handles` being FALSE already records
+                        // here -- a covering read, or a `keep order:true`
+                        // lookup. An unordered read may answer partition by
+                        // partition, and Go's index worker does.
+                        !self.can_reorder_handles,
                     )
                     .map_err(|_| ExecError::unsupported("index range is not scannable"))?,
             );

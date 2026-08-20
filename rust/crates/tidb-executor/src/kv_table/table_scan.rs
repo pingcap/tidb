@@ -814,7 +814,9 @@ impl KvTable {
         range: &IndexRange,
         zone: &SessionTimeZone,
     ) -> Result<IndexRangeCursor, KvTableError> {
-        self.index_range_cursor_with_direction(index_id, range, zone, false)
+        // `ordered`: this entry point serves reads whose answer is the index
+        // walk itself, so it keeps the cross-partition merge.
+        self.index_range_cursor_with_direction(index_id, range, zone, false, true)
     }
 
     /// A cursor over one index range in the physical scan direction Go put
@@ -825,6 +827,7 @@ impl KvTable {
         range: &IndexRange,
         zone: &SessionTimeZone,
         descending: bool,
+        ordered: bool,
     ) -> Result<IndexRangeCursor, KvTableError> {
         self.index_ranges_cursor_for_physical_ids(
             index_id,
@@ -832,6 +835,7 @@ impl KvTable {
             zone,
             &self.record_physical_ids(),
             descending,
+            ordered,
         )
     }
 
@@ -845,7 +849,14 @@ impl KvTable {
         zone: &SessionTimeZone,
     ) -> Result<IndexRangeCursor, KvTableError> {
         let physical_ids = self.record_physical_ids();
-        self.index_ranges_cursor_for_physical_ids(index_id, ranges, zone, &physical_ids, false)
+        self.index_ranges_cursor_for_physical_ids(
+            index_id,
+            ranges,
+            zone,
+            &physical_ids,
+            false,
+            true,
+        )
     }
 
     fn index_ranges_cursor_for_physical_ids(
@@ -855,6 +866,7 @@ impl KvTable {
         zone: &SessionTimeZone,
         physical_ids: &[i64],
         descending: bool,
+        ordered: bool,
     ) -> Result<IndexRangeCursor, KvTableError> {
         let Some(index) = self
             .indexes
@@ -901,7 +913,21 @@ impl KvTable {
         if descending {
             iterators.reverse();
         }
-        let merge_by_index_key = physical_ids.len() > 1;
+        // Go `needMergeSort` (`executor/distsql.go`):
+        //
+        //     len(byItems) > 0 && kvRangesCount > 1
+        //
+        // BOTH halves. `byItems` is the read's own sort items, non-empty only
+        // when the answer has to come back in index order; `ordered` is this
+        // tier's spelling of it. Testing the range count ALONE merged every
+        // partitioned read, so a partitioned `LIMIT` took the globally
+        // smallest index keys where Go takes the first partitions' rows:
+        // `select * from tp2 where a > 33 limit 5` over
+        // `PARTITION BY RANGE COLUMNS(id1)` answered rows b..f where TiDB
+        // records a..e. Unordered, Go drains one partition's result to
+        // exhaustion before the next (its `for i := 0; i < len(results);`
+        // loop), which is what concatenating these iterators does.
+        let merge_by_index_key = ordered && physical_ids.len() > 1;
         let mut merge_heap = IndexMergeHeap::new(descending);
         if merge_by_index_key {
             for (position, iterator) in iterators.iter().enumerate() {
