@@ -354,7 +354,7 @@ func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, erro
 	results := make([]kv.KeyRange, 0, len(groupedRanges))
 	for _, ranges := range groupedRanges {
 		kvRanges, err := buildKeyRanges(e.dctx, ranges, e.partRangeMap, tableIDs, e.index.ID, e.rangeMemTracker,
-			distsql.UnsignedIntHandleSuffixDim(e.table.Meta(), e.index))
+			unsignedIntHandleSuffixDim(e.table, e.index))
 		if err != nil {
 			return nil, err
 		}
@@ -634,6 +634,17 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	return e.open(ctx)
 }
 
+// unsignedIntHandleSuffixDim resolves the index-range dimension that carries the unsigned
+// integer handle TiKV appends to a non-unique secondary index key. A nil table resolves to
+// no suffix: reader executors assembled directly, without the table they read, have no
+// index key layout to reason about, and must not fault here.
+func unsignedIntHandleSuffixDim(tbl table.Table, idx *model.IndexInfo) int {
+	if tbl == nil {
+		return distsql.NoIntHandleSuffix
+	}
+	return distsql.UnsignedIntHandleSuffixDim(tbl.Meta(), idx)
+}
+
 func buildKeyRanges(dctx *distsqlctx.DistSQLContext,
 	ranges []*ranger.Range,
 	rangeOverrideForPartitionID map[int64][]*ranger.Range,
@@ -687,7 +698,7 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 	}
 	for _, ranges := range groupedRanges {
 		kvRange, err := buildKeyRanges(e.dctx, ranges, e.partitionRangeMap, tableIDs, e.index.ID, rangeMemTracker,
-			distsql.UnsignedIntHandleSuffixDim(e.table.Meta(), e.index))
+			unsignedIntHandleSuffixDim(e.table, e.index))
 		if err != nil {
 			return err
 		}
