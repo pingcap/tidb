@@ -61,7 +61,13 @@ func TestEnsureMonotonicKeyRanges(t *testing.T) {
 	require.False(t, reordered)
 }
 
-func TestSetRequestAttemptLimiter(t *testing.T) {
+func TestCoprRequestLimiter(t *testing.T) {
+	t.Run("SetAttemptLimiter", testSetRequestAttemptLimiter)
+	t.Run("Finished", testRequestAttemptLimiterFinished)
+	t.Run("WaitStats", testLimiterWaitStats)
+}
+
+func testSetRequestAttemptLimiter(t *testing.T) {
 	newAttemptLimiter := func(req *kv.Request, finishCh chan struct{}, storeType kv.StoreType) tikvrpc.RequestAttemptLimiterFunc {
 		worker := &copIteratorWorker{
 			req:      req,
@@ -114,7 +120,7 @@ func TestSetRequestAttemptLimiter(t *testing.T) {
 	})
 }
 
-func TestRequestAttemptLimiterFinished(t *testing.T) {
+func testRequestAttemptLimiterFinished(t *testing.T) {
 	finishCh := make(chan struct{})
 	close(finishCh)
 	limiter := kv.NewCoprRequestLimiter(1)
@@ -133,7 +139,7 @@ func TestRequestAttemptLimiterFinished(t *testing.T) {
 	limiter.Release()
 }
 
-func TestLimiterWaitStats(t *testing.T) {
+func testLimiterWaitStats(t *testing.T) {
 	stats := LimiterWaitStats{}
 	require.True(t, stats.IsZero())
 	stats.Record(time.Millisecond)
@@ -145,7 +151,12 @@ func TestLimiterWaitStats(t *testing.T) {
 	require.False(t, stats.IsZero())
 }
 
-func TestBuildTasksWithoutBuckets(t *testing.T) {
+func TestBuildTasks(t *testing.T) {
+	t.Run("WithoutBuckets", testBuildTasksWithoutBuckets)
+	t.Run("ByBuckets", testBuildTasksByBuckets)
+}
+
+func testBuildTasksWithoutBuckets(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -271,7 +282,7 @@ func TestBuildTasksWithoutBuckets(t *testing.T) {
 	taskEqual(t, tasks[1], regionIDs[2], 0, "n", "p")
 }
 
-func TestBuildTasksByBuckets(t *testing.T) {
+func testBuildTasksByBuckets(t *testing.T) {
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
 	defer func() {
