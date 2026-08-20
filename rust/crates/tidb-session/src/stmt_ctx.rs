@@ -500,6 +500,21 @@ impl Session {
             .ok()
             .and_then(|value| value.parse::<i32>().ok())
             .unwrap_or(tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD as i32);
+        let default_string_match_selectivity = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_DEFAULT_STR_MATCH_SELECTIVITY)
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        // Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`. Only an explicit
+        // OFF selects the legacy framework; unreadable state keeps the shipped
+        // ON default.
+        let advanced_join_reorder = !matches!(
+            self.vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER)
+                .as_deref(),
+            Ok("OFF" | "off" | "0")
+        );
         let ordering_index_selectivity_ratio = self
             .vars
             .get_system("tidb_opt_ordering_index_selectivity_ratio")
@@ -675,6 +690,7 @@ impl Session {
                 .with_date_modes(date_modes)
                 .with_cte_max_recursion_depth(cte_depth)
                 .with_join_reorder_threshold(join_reorder_threshold)
+                .with_advanced_join_reorder(advanced_join_reorder)
                 .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
                 .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
                 .with_optimizer_cost_env(optimizer_cost_env.clone(), hash_join_concurrency)
@@ -718,6 +734,7 @@ impl Session {
                 .with_sql_mode(scanner_sql_mode_of(&mode))
                 .with_no_unsigned_subtraction(has("NO_UNSIGNED_SUBTRACTION"))
                 .with_like_default_escape(like_default_escape)
+                .with_default_string_match_selectivity(default_string_match_selectivity)
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_clock(clock, zone);
             return ctx;
@@ -763,12 +780,14 @@ impl Session {
         .with_sql_mode(scanner_sql_mode_of(&mode))
         .with_no_unsigned_subtraction(has("NO_UNSIGNED_SUBTRACTION"))
         .with_like_default_escape(like_default_escape)
+        .with_default_string_match_selectivity(default_string_match_selectivity)
         .with_auto_increment_step(increment, offset)
         .with_auto_increment_zero_explicit(has("NO_AUTO_VALUE_ON_ZERO"))
         .with_foreign_key_checks(self.foreign_key_checks())
         .with_allow_remove_auto_inc(self.allow_remove_auto_inc())
         .with_cte_max_recursion_depth(cte_depth)
         .with_join_reorder_threshold(join_reorder_threshold)
+        .with_advanced_join_reorder(advanced_join_reorder)
         .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
         .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
         .with_optimizer_cost_env(optimizer_cost_env, hash_join_concurrency)

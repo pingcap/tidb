@@ -17,6 +17,7 @@
 //! dropped before the reloader it nudges.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use tidb_exec::cop_scan::CopScanSource;
 use tidb_exec::real_tikv_catalog::load_catalog_from_cluster;
@@ -39,6 +40,11 @@ use super::{
     ClusterSessionFactory, RealClusterDdl, RealClusterTransactions, CONTROL_PLANE_TIMEOUT,
 };
 
+/// The coprocessor read deadline is a statement-runtime budget, not the
+/// five-second boot/catalog control-plane deadline. TPC-H partial aggregates
+/// legitimately spend more than five seconds in TiKV on a cold SF1 cache.
+const COPROCESSOR_QUERY_TIMEOUT: Duration = Duration::from_secs(300);
+
 /// Starts the convergence node: wide SQL over cluster storage and cluster
 /// accounts, served on the MySQL port.
 pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
@@ -55,10 +61,10 @@ pub(crate) fn run_cluster_session_node_with_spill(
     let mut loaded = None;
     let authority = ProductionReadProcessAuthority::connect_with_catalog(
         config.pd_endpoints.clone(),
-        CONTROL_PLANE_TIMEOUT,
+        COPROCESSOR_QUERY_TIMEOUT,
         |opener| {
             loaded = Some(
-                load_catalog_from_cluster(opener, CONTROL_PLANE_TIMEOUT)
+                load_catalog_from_cluster(opener, COPROCESSOR_QUERY_TIMEOUT)
                     .map_err(|error| error.to_string())?,
             );
             // The authority insists on naming one bounded-read table because
@@ -100,7 +106,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         Arc::clone(&catalog),
         authority.transaction_opener(),
         config.schema_lease,
-        CONTROL_PLANE_TIMEOUT,
+        COPROCESSOR_QUERY_TIMEOUT,
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     // The watch only makes the reload *prompt*; the tick above is what makes

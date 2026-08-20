@@ -609,6 +609,226 @@ fn analyzed_selectivity_estimates_a_disjunction_and_never_drops_below_one_row() 
     }
 }
 
+/// Go's statistics loader publishes physical-access requests to the shared
+/// domain cache after the statement that requested them. The next statement
+/// observes the load even when it comes from another connection, and later
+/// statement boundaries do not apply the same request again.
+///
+/// This is the q3-to-q7 ordering contract exercised by TPC-H. The first plan
+/// synchronously loads `c_mktsegment` and asynchronously requests the customer
+/// handle while costing its physical access. The peer's plan is the next
+/// client statement over the same catalog, so its q7 estimate must use the
+/// newly resident handle statistics.
+#[test]
+fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
+    std::thread::Builder::new()
+        .name("statistics-load-statement-boundary".to_owned())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut session = Session::new();
+            session
+                .run(
+                    "CREATE TABLE customer (\
+                 c_custkey INT PRIMARY KEY, \
+                 c_nationkey INT, \
+                 c_mktsegment VARCHAR(10))",
+                )
+                .unwrap();
+            session
+                .run("CREATE TABLE orders (o_orderkey INT PRIMARY KEY, o_custkey INT)")
+                .unwrap();
+            session
+                .run("CREATE TABLE supplier (s_suppkey INT PRIMARY KEY, s_nationkey INT)")
+                .unwrap();
+            session
+                .run("CREATE TABLE lineitem (l_suppkey INT, l_orderkey INT, l_shipdate DATE)")
+                .unwrap();
+            session
+                .run("CREATE TABLE nation (n_nationkey INT PRIMARY KEY, n_name VARCHAR(25))")
+                .unwrap();
+            session
+                .run("INSERT INTO customer VALUES (1,1,'AUTOMOBILE'),(2,2,'BUILDING')")
+                .unwrap();
+            session
+                .run("INSERT INTO orders VALUES (1,1),(2,2)")
+                .unwrap();
+            session
+                .run("INSERT INTO supplier VALUES (1,1),(2,2)")
+                .unwrap();
+            session
+                .run(
+                    "INSERT INTO lineitem VALUES \
+             (1,1,'1995-01-01'),(2,2,'1995-06-01'),\
+             (1,1,'1996-01-01'),(2,2,'1996-06-01')",
+                )
+                .unwrap();
+            session
+                .run("INSERT INTO nation VALUES (1,'JAPAN'),(2,'INDIA')")
+                .unwrap();
+
+            let ctx = session.statement_context(false);
+            let shared = session.shared_catalog();
+            let mut catalog = shared.lock().unwrap();
+            for (table_name, row_count, requested_ndvs) in [
+                (
+                    "customer",
+                    150_000,
+                    &[
+                        ("c_custkey", 149_568),
+                        ("c_nationkey", 25),
+                        ("c_mktsegment", 5),
+                    ][..],
+                ),
+                (
+                    "orders",
+                    1_500_000,
+                    &[("o_orderkey", 1_487_616), ("o_custkey", 99_248)][..],
+                ),
+                (
+                    "supplier",
+                    10_000,
+                    &[("s_suppkey", 10_000), ("s_nationkey", 25)][..],
+                ),
+                (
+                    "lineitem",
+                    6_001_215,
+                    &[
+                        ("l_suppkey", 10_000),
+                        ("l_orderkey", 1_487_616),
+                        ("l_shipdate", 2_526),
+                    ][..],
+                ),
+                ("nation", 25, &[("n_nationkey", 25), ("n_name", 25)][..]),
+            ] {
+                let (table_id, column_ndvs, indexes, mut statistics) = {
+                    let tidb_executor::TableEntry::Kv(table) =
+                        catalog.table_mut_in("test", table_name).unwrap()
+                    else {
+                        panic!("{table_name} is not a KV table");
+                    };
+                    let table_id = table.table_id;
+                    let requested = requested_ndvs
+                        .iter()
+                        .copied()
+                        .collect::<std::collections::BTreeMap<_, _>>();
+                    let column_ndvs = table
+                        .visible_columns()
+                        .iter()
+                        .map(|column| (column.id, requested[column.name.as_str()]))
+                        .collect::<std::collections::BTreeMap<_, _>>();
+                    let indexes = table
+                        .indexes()
+                        .iter()
+                        .map(|index| {
+                            let columns = index
+                                .column_offsets
+                                .iter()
+                                .filter_map(|offset| table.visible_columns().get(*offset))
+                                .map(|column| column.id)
+                                .collect::<Vec<_>>();
+                            (index.id, columns)
+                        })
+                        .collect::<Vec<_>>();
+                    let mut options = tidb_executor::analyze::AnalyzeOptions::default();
+                    options.num_topn = 0;
+                    let statistics =
+                        tidb_executor::analyze::kv::analyze_kv_table(table, &options, None, &ctx)
+                            .unwrap();
+                    (table_id, column_ndvs, indexes, statistics)
+                };
+
+                macro_rules! scale_histogram {
+                    ($histogram:expr, $ndv:expr) => {{
+                        let histogram = $histogram;
+                        let original_non_null = histogram.not_null_count().max(1.0);
+                        let bucket_count = histogram.buckets.len() as i64;
+                        let bounded_ndv = $ndv.max(1).min(row_count);
+                        let mut previous_count = 0;
+                        for (position, bucket) in histogram.buckets.iter_mut().enumerate() {
+                            let count = if position + 1 == bucket_count as usize {
+                                row_count
+                            } else {
+                                ((bucket.count as f64 / original_non_null) * row_count as f64)
+                                    .round() as i64
+                            }
+                            .max(previous_count)
+                            .min(row_count);
+                            let rows_in_bucket = count - previous_count;
+                            bucket.count = count;
+                            bucket.repeat = (row_count / bounded_ndv).max(1).min(rows_in_bucket);
+                            bucket.ndv = bounded_ndv / bucket_count
+                                + i64::from((position as i64) < bounded_ndv % bucket_count);
+                            previous_count = count;
+                        }
+                        histogram.ndv = bounded_ndv;
+                        histogram.null_count = 0;
+                    }};
+                }
+
+                for (column_id, column) in &mut statistics.columns {
+                    scale_histogram!(&mut column.histogram, column_ndvs[column_id]);
+                }
+                if table_name == "customer" {
+                    statistics
+                        .columns
+                        .values_mut()
+                        .find(|column| column.histogram.ndv == 5)
+                        .and_then(|column| column.histogram.buckets.last_mut())
+                        .expect("customer.c_mktsegment histogram")
+                        .count = 149_998;
+                }
+                for (index_id, index_columns) in indexes {
+                    let index_ndv = index_columns
+                        .iter()
+                        .try_fold(1_i64, |ndv, column_id| {
+                            ndv.checked_mul(column_ndvs[column_id])
+                        })
+                        .unwrap_or(row_count)
+                        .min(row_count)
+                        .max(1);
+                    scale_histogram!(
+                        &mut statistics.indexes.get_mut(&index_id).unwrap().histogram,
+                        index_ndv
+                    );
+                }
+                statistics.row_count = row_count;
+                catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+            }
+            drop(catalog);
+
+            let q3 = "EXPLAIN SELECT * FROM customer, orders \
+        WHERE c_mktsegment = 'AUTOMOBILE' AND c_custkey = o_custkey";
+            assert!(!row_text(session.run(q3)).is_empty());
+            let mut peer = Session::with_catalog(shared);
+            let q7 = "EXPLAIN SELECT supp_nation, cust_nation, l_year, SUM(volume) AS revenue \
+        FROM (SELECT n1.n_name AS supp_nation, n2.n_name AS cust_nation, \
+                     EXTRACT(YEAR FROM l_shipdate) AS l_year, 1 AS volume \
+              FROM supplier, lineitem, orders, customer, nation n1, nation n2 \
+              WHERE s_suppkey = l_suppkey \
+                AND o_orderkey = l_orderkey \
+                AND c_custkey = o_custkey \
+                AND s_nationkey = n1.n_nationkey \
+                AND c_nationkey = n2.n_nationkey \
+                AND ((n1.n_name = 'JAPAN' AND n2.n_name = 'INDIA') \
+                  OR (n1.n_name = 'INDIA' AND n2.n_name = 'JAPAN')) \
+                AND l_shipdate BETWEEN '1995-01-01' AND '1996-12-31') shipping \
+        GROUP BY supp_nation, cust_nation, l_year \
+        ORDER BY supp_nation, cust_nation, l_year";
+            let rows = row_text(peer.run(q7));
+            let final_nation_join = rows
+                .iter()
+                .find(|row| row[0].contains("HashJoin") && row[4].contains("customer.c_nationkey"))
+                .unwrap_or_else(|| panic!("no final nation join in q7 plan: {rows:#?}"));
+            assert_eq!(
+                final_nation_join[1], "38877.73",
+                "the next connection did not observe q3's physical handle request and its +                 first same-version resident column"
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
 /// Go `getColumnRowCount`'s sort-key conversion
 /// (`pkg/planner/cardinality/row_count_column.go:126-132`): a string range
 /// endpoint is replaced by its COLLATION SORT KEY before it is encoded,

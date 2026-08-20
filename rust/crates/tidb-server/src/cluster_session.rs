@@ -26,9 +26,10 @@
 //!
 //! # What a table must be to run here
 //!
-//! Every loaded table is admitted whose *storage layout* this tier encodes and
-//! decodes: a non-partitioned base table (not a view, not a sequence) whose
-//! columns are public. A view, a sequence, a partitioned table, or a table
+//! Every loaded base table is admitted whose *storage layout* this tier
+//! encodes and decodes: a non-partitioned table whose columns are public.
+//! Views are metadata-only objects and are registered from their stored
+//! `TableInfo.View` definition; a sequence, a partitioned table, or a table
 //! still mid-DDL is refused by name, and the refusal is kept and reported
 //! rather than making the table silently disappear -- the same choice
 //! [`configure_loaded_table`] makes for the bounded read path.
@@ -42,7 +43,7 @@ use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
 use tidb_exec::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_executor::access_cost::TableStatistics;
 use tidb_executor::cluster_storage::ClusterTableStorage;
-use tidb_executor::driver::Catalog;
+use tidb_executor::driver::{Catalog, ViewDef};
 use tidb_executor::kv_table::{KvColumn, KvIndex, KvTable, TableAutoId};
 use tidb_executor::storage::TableStorage;
 use tidb_model::{GoShared, SchemaState, TableInfo};
@@ -276,60 +277,16 @@ pub fn cluster_session_catalog(
         };
         catalog.register_database_with_id_and_charset(&schema, database.info.id, charset);
         for table in &database.tables {
-            // A view has no storage half: it maps straight to the session
-            // catalog's view entry, rebuilt from the published `TableInfo`
-            // exactly as `build_view_table_info` wrote it (the enum ordinals
-            // are `ast/model.go`'s).
-            if let Some(view) = &table.view {
-                let view = view.read();
-                let mut columns = Vec::with_capacity(table.columns.len());
-                for i in 0..table.columns.len() {
-                    if let Some(column) = table.columns.get(i) {
-                        let column = column.read();
-                        columns
-                            .push((column.name.original().to_owned(), column.field_type.clone()));
-                    }
-                }
-                let (definer_user, definer_host) = view.definer.as_ref().map_or_else(
-                    || (String::new(), String::new()),
-                    |definer| (definer.username.clone(), definer.hostname.clone()),
-                );
-                let view_def = tidb_executor::ViewDef {
-                    name: table.name.original().to_owned(),
-                    columns,
-                    select_sql: view.select_stmt.clone(),
-                    definer_user,
-                    definer_host,
-                    character_set_client: table.charset.clone(),
-                    collation_connection: table.collate.clone(),
-                    algorithm: match view.algorithm.0 {
-                        1 => "MERGE",
-                        2 => "TEMPTABLE",
-                        _ => "UNDEFINED",
-                    }
-                    .to_owned(),
-                    security: if view.security.0 == 1 {
-                        "INVOKER"
-                    } else {
-                        "DEFINER"
-                    }
-                    .to_owned(),
-                    check_option: if view.check_option.0 == 0 {
-                        "LOCAL"
-                    } else {
-                        "CASCADED"
-                    }
-                    .to_owned(),
-                };
-                if let Err(reason) = catalog.register_view_in(
-                    database.info.name.original(),
-                    table.name.original(),
-                    view_def,
-                ) {
-                    skipped.push(SkippedTable {
-                        name: format!("{schema}.{}", table.name.original()),
-                        reason: format!("view registration failed: {reason:?}"),
-                    });
+            if table.is_view() {
+                let name = table.name.original();
+                match cluster_view(table) {
+                    Ok(view) => catalog
+                        .register_view_in(&schema, name, view)
+                        .expect("the schema was created just above this loop"),
+                    Err(reason) => skipped.push(SkippedTable {
+                        name: format!("{schema}.{name}"),
+                        reason,
+                    }),
                 }
                 continue;
             }
@@ -363,6 +320,48 @@ pub fn cluster_session_catalog(
         }
     }
     ClusterSessionCatalog { catalog, skipped }
+}
+
+/// Translates Go's persisted `TableInfo.View` into the driver's metadata-only
+/// view entry. The body is parsed and planned when the view is read, as Go's
+/// `BuildDataSourceFromView` does, so an invalidated definition remains in the
+/// infoschema and reports a view error instead of disappearing at load time.
+fn cluster_view(table: &TableInfo) -> Result<ViewDef, String> {
+    if table.state != SchemaState::PUBLIC {
+        return Err(format!(
+            "its schema state is {} rather than public",
+            table.state.0
+        ));
+    }
+    let view = table
+        .view
+        .as_ref()
+        .ok_or_else(|| "its view metadata is missing".to_owned())?
+        .read();
+    let columns = table
+        .present_cols()
+        .into_iter()
+        .map(|column| {
+            let column = column.read();
+            (column.name.original().to_owned(), column.field_type.clone())
+        })
+        .collect();
+    let (definer_user, definer_host) = view.definer.as_deref().map_or_else(
+        || (String::new(), String::new()),
+        |definer| (definer.username.clone(), definer.hostname.clone()),
+    );
+    Ok(ViewDef {
+        name: table.name.original().to_owned(),
+        columns,
+        select_sql: view.select_stmt.clone(),
+        definer_user,
+        definer_host,
+        character_set_client: table.charset.clone(),
+        collation_connection: table.collate.clone(),
+        algorithm: view.algorithm.sql().to_owned(),
+        security: view.security.sql().to_owned(),
+        check_option: view.check_option.sql().to_owned(),
+    })
 }
 
 /// Opens a session on a catalog loaded from the cluster.
@@ -710,6 +709,7 @@ fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStat
         columns,
         indexes,
     )
+    .with_shared_load_state(Arc::clone(&stats.load_state))
 }
 
 /// Go `Column.StatsAvailable()` / `IsColumnAnalyzedOrSynthesized`: whether
@@ -775,12 +775,13 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use tidb_ast::CiString;
-    use tidb_datatype::{FieldType, FieldTypeCode};
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_executor::cluster_storage::{ClusterSnapshot, MutationBuffer, SnapshotPairs};
     use tidb_executor::storage::StorageError;
     use tidb_model::column::{ColumnDefaultValue, ColumnInfo};
     use tidb_model::db::DBInfo;
     use tidb_model::index::{IndexColumn, IndexInfo};
+    use tidb_model::table::ViewInfo;
     use tidb_model::GoAny;
     use tidb_session::StmtResult;
     use tidb_txnkv::Key;
@@ -870,6 +871,67 @@ mod tests {
     }
 
     #[test]
+    fn cluster_views_are_registered_from_go_table_info() {
+        let base = TableInfo {
+            id: 101,
+            name: CiString::new("t"),
+            columns: vec![column(1, 0, "id", true), column(2, 1, "v", false)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            ..TableInfo::default()
+        };
+        let view = TableInfo {
+            id: 102,
+            name: CiString::new("revenue0"),
+            charset: "utf8mb4".to_owned(),
+            collate: "utf8mb4_bin".to_owned(),
+            columns: vec![
+                column(1, 0, "supplier_no", false),
+                column(2, 1, "total_revenue", false),
+            ]
+            .into(),
+            state: SchemaState::PUBLIC,
+            view: Some(GoShared::new(ViewInfo {
+                select_stmt: "SELECT `app`.`t`.`id` AS `supplier_no`, \
+                    SUM(`app`.`t`.`v`) AS `total_revenue` FROM `app`.`t` \
+                    GROUP BY `app`.`t`.`id`"
+                    .to_owned(),
+                ..ViewInfo::default()
+            })),
+            ..TableInfo::default()
+        };
+        let loaded = ClusterCatalog {
+            schema_version: 7,
+            databases: vec![tidb_exec::cluster_catalog::LoadedDatabase {
+                info: DBInfo {
+                    id: 5,
+                    name: CiString::new("app"),
+                    ..DBInfo::default()
+                },
+                tables: vec![base, view],
+            }],
+        };
+        let (storage, _, _) = cluster_storage();
+        let (mut session, skipped) = session_with_cluster_storage(
+            &loaded,
+            &storage,
+            &StatsSnapshot::new(),
+            &LocalTableAutoIds::default(),
+        );
+        assert!(
+            skipped.is_empty(),
+            "cluster view must not be skipped: {skipped:?}"
+        );
+        session.run("USE app").unwrap();
+        session
+            .run(
+                "EXPLAIN FORMAT='brief' SELECT supplier_no, total_revenue FROM revenue0 \
+                 WHERE total_revenue = (SELECT MAX(total_revenue) FROM revenue0)",
+            )
+            .expect("the stored view body is planned through the cluster catalog");
+    }
+
+    #[test]
     fn loaded_column_ndv_reaches_grouped_cluster_plans() {
         let table = TableInfo {
             id: 130,
@@ -913,6 +975,7 @@ mod tests {
             row_count: 3_000_065,
             columns: vec![item(1, 3_000_065), item(2, 10), item(3, 3_000_065)],
             indexes: Vec::new(),
+            load_state: Default::default(),
         };
         let translated = planner_statistics(&loaded_stats, &table);
         assert!(!translated.pseudo);
@@ -1092,6 +1155,91 @@ mod tests {
         let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
             .expect("the cached table is otherwise ordinary");
         assert!(loaded.is_cached());
+    }
+
+    /// Go's `getPossibleAccessPaths` attaches a clustered composite PRIMARY
+    /// to the table path and skips it in the ordinary-index loop. The stored
+    /// `IndexInfo` still has to reach the executor because common-handle range
+    /// building reads it, but it must not become a second PRIMARY declaration
+    /// or an `IndexFullScan` candidate after the cluster catalog is loaded.
+    #[test]
+    fn a_clustered_composite_primary_remains_the_table_path() {
+        let mut primary = index(1, "PRIMARY", "a", 0, -1);
+        primary.primary = true;
+        primary.unique = true;
+        primary.columns = vec![
+            IndexColumn {
+                name: CiString::new("a"),
+                offset: 0,
+                length: -1,
+                ..IndexColumn::default()
+            },
+            IndexColumn {
+                name: CiString::new("b"),
+                offset: 1,
+                length: -1,
+                ..IndexColumn::default()
+            },
+        ]
+        .into();
+        let table = TableInfo {
+            id: 303,
+            name: CiString::new("clustered"),
+            columns: vec![
+                column(1, 0, "a", true),
+                column(2, 1, "b", true),
+                column(3, 2, "v", false),
+            ]
+            .into(),
+            indices: vec![primary].into(),
+            is_common_handle: true,
+            state: SchemaState::PUBLIC,
+            ..TableInfo::default()
+        };
+        let (storage, _, _) = cluster_storage();
+        let (mut session, skipped) = session_with_cluster_storage(
+            &one_table_catalog(table),
+            &storage,
+            &StatsSnapshot::new(),
+            &LocalTableAutoIds::default(),
+        );
+        assert!(skipped.is_empty(), "{skipped:?}");
+        session.run("USE app").unwrap();
+
+        let StmtResult::Rows(rows) = session
+            .run("EXPLAIN FORMAT='brief' SELECT SUM(v) FROM clustered")
+            .unwrap()
+        else {
+            panic!("expected EXPLAIN rows");
+        };
+        let operators: Vec<_> = rows
+            .iter()
+            .filter_map(|row| match &row[0] {
+                Datum::Bytes(value) => Some(String::from_utf8_lossy(value)),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            operators
+                .iter()
+                .any(|operator| operator.contains("TableFullScan")),
+            "{operators:#?}"
+        );
+        assert!(
+            operators
+                .iter()
+                .all(|operator| !operator.contains("IndexFullScan")),
+            "{operators:#?}"
+        );
+
+        let StmtResult::Rows(rows) = session.run("SHOW CREATE TABLE clustered").unwrap() else {
+            panic!("expected SHOW CREATE rows");
+        };
+        let Datum::Bytes(create) = &rows[0][1] else {
+            panic!("expected CREATE TABLE text");
+        };
+        let create = String::from_utf8_lossy(create);
+        assert_eq!(create.matches("PRIMARY KEY").count(), 1, "{create}");
     }
 
     /// A default whose value is not a literal -- `CURRENT_TIMESTAMP`, whose

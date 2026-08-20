@@ -1197,6 +1197,10 @@ impl Session {
         execute: impl FnOnce(&mut Self) -> Result<StmtOutput, DriverError>,
     ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
         self.check_sandbox_mode(sql)?;
+        self.with_catalog_mut(|catalog| {
+            catalog.advance_statistics_loads();
+            Ok(())
+        })?;
         // A statement is visible to a peer's SHOW PROCESSLIST for exactly as
         // long as it runs, which is why the process list is updated here --
         // the one door every statement of this session goes through -- rather
