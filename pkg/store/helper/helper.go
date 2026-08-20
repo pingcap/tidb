@@ -30,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -853,7 +854,11 @@ func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexSta
 // [startKey, endKey) via PD, in key order. Size is max(ApproximateSize,
 // ApproximateKvSize): the KV size best tracks logical data but can be 0 when TiKV
 // does not report it. PD keys are decoded from the codec keyspace back to raw.
-func (h *Helper) RegionApproximateSizes(ctx context.Context, pdCli pd.Client, startKey, endKey kv.Key) (endKeys []kv.Key, sizes []int64, err error) {
+func (h *Helper) RegionApproximateSizes(ctx context.Context, startKey, endKey kv.Key) (endKeys []kv.Key, sizes []int64, err error) {
+	pdCli, err := h.TryGetPDHTTPClient()
+	if err != nil {
+		return nil, nil, err
+	}
 	codec := h.Store.GetCodec()
 	cur, end := codec.EncodeRegionRange(startKey, endKey)
 	for {
@@ -874,7 +879,7 @@ func (h *Helper) RegionApproximateSizes(ctx context.Context, pdCli pd.Client, st
 				return nil, nil, err
 			}
 			endKeys = append(endKeys, raw)
-			sizes = append(sizes, max(r.ApproximateSize, r.ApproximateKvSize)*1024*1024)
+			sizes = append(sizes, max(r.ApproximateSize, r.ApproximateKvSize)*units.MiB)
 		}
 		cur, err = hex.DecodeString(regions.Regions[len(regions.Regions)-1].EndKey)
 		if err != nil {
@@ -902,7 +907,7 @@ func (h *Helper) EstimateKeyRangeSize(ctx context.Context, pdCli pd.Client, star
 			break
 		}
 		for _, r := range regions.Regions {
-			totalSize += max(r.ApproximateSize, r.ApproximateKvSize) * 1024 * 1024
+			totalSize += max(r.ApproximateSize, r.ApproximateKvSize) * units.MiB
 		}
 		start, err = hex.DecodeString(regions.Regions[len(regions.Regions)-1].EndKey)
 		if err != nil {

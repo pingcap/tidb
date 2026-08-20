@@ -125,7 +125,7 @@ func (s *exportScheduler) OnNextSubtasksBatch(
 	case proto.ExportStepDump:
 		// Size subtasks by the worker concurrency; the framework spreads the
 		// resulting subtasks across the scaled-out nodes.
-		metas, err := splitTables(ctx, s.store, s.taskMeta, max(task.RequiredSlots, 1))
+		metas, err := generateSubtasks(ctx, s.store, s.taskMeta, max(task.RequiredSlots, 1))
 		if err != nil {
 			return nil, err
 		}

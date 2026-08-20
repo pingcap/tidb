@@ -53,15 +53,12 @@ const (
 	locationSummaryMaxDisplay = 5
 )
 
-// ErrRegionsNotContinuous is returned by LoadSortedContinuousRegions when the
-// loaded regions do not fully cover the range without a gap. It is retryable:
-// the caller can reload against a refreshed region cache.
+// ErrRegionsNotContinuous is the retryable error LoadSortedContinuousRegions
+// returns when the loaded regions have a gap.
 var ErrRegionsNotContinuous = errors.New("regions are not continuous")
 
-// LoadSortedContinuousRegions loads the regions covering [startKey, endKey) via
-// the region cache, sorted by start key, and verifies they are continuous — a
-// gap would silently drop rows. It returns ErrRegionsNotContinuous when the
-// loaded regions are empty or have a gap.
+// LoadSortedContinuousRegions returns the regions covering [startKey, endKey)
+// sorted by start key, or ErrRegionsNotContinuous if they are empty or have a gap.
 func LoadSortedContinuousRegions(bo *tikv.Backoffer, regionCache *tikv.RegionCache, startKey, endKey []byte) ([]*tikv.Region, error) {
 	regions, err := regionCache.LoadRegionsInKeyRange(bo, startKey, endKey)
 	if err != nil {

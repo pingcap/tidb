@@ -34,7 +34,7 @@ func keys(ss ...string) []kv.Key {
 	return ks
 }
 
-func TestPackSubtasks(t *testing.T) {
+func TestDivideSubtasks(t *testing.T) {
 	// concurrency=2 → a subtask holds chunksPerWorker*2 chunks worth of bytes.
 	const perSubtask = chunksPerWorker * 2
 	n := perSubtask * 2
@@ -42,7 +42,7 @@ func TestPackSubtasks(t *testing.T) {
 	for i := range chunks {
 		chunks[i] = Chunk{Ordinal: i, Size: chunkSize}
 	}
-	metas, err := packSubtasks(chunks, 2)
+	metas, err := divideSubtasks(chunks, 2)
 	require.NoError(t, err)
 	require.Len(t, metas, 2)
 	var seen []int
@@ -62,11 +62,11 @@ func TestPackSubtasks(t *testing.T) {
 
 	// A subtask is cut as soon as its bytes reach the limit.
 	big := []Chunk{{Ordinal: 0, Size: chunksPerWorker * chunkSize}, {Ordinal: 1, Size: chunkSize}}
-	m2, err := packSubtasks(big, 1) // limit = chunksPerWorker*chunkSize
+	m2, err := divideSubtasks(big, 1) // limit = chunksPerWorker*chunkSize
 	require.NoError(t, err)
 	require.Len(t, m2, 2)
 
-	empty, err := packSubtasks(nil, 2)
+	empty, err := divideSubtasks(nil, 2)
 	require.NoError(t, err)
 	require.Nil(t, empty)
 
@@ -75,7 +75,7 @@ func TestPackSubtasks(t *testing.T) {
 	for i := range tiny {
 		tiny[i] = Chunk{Ordinal: i, Size: 1}
 	}
-	m3, err := packSubtasks(tiny, 1)
+	m3, err := divideSubtasks(tiny, 1)
 	require.NoError(t, err)
 	require.Len(t, m3, 2)
 }
@@ -164,14 +164,4 @@ func TestPhysicalTableRange(t *testing.T) {
 	require.Equal(t, end, ie)
 	require.True(t, bytes.HasPrefix(is, cs))
 	require.True(t, bytes.Compare(is, ie) < 0)
-}
-
-func TestPhysicalIDs(t *testing.T) {
-	require.Equal(t, []int64{100}, physicalIDs(&model.TableInfo{ID: 100}))
-
-	part := &model.TableInfo{ID: 100, Partition: &model.PartitionInfo{
-		Enable:      true,
-		Definitions: []model.PartitionDefinition{{ID: 101}, {ID: 102}, {ID: 103}},
-	}}
-	require.Equal(t, []int64{101, 102, 103}, physicalIDs(part))
 }

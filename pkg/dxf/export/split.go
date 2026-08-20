@@ -52,9 +52,8 @@ const (
 	maxChunksPerSubtask = 4000
 )
 
-// splitTables carves every table into ~chunkSize chunks, then packs the chunks
-// into subtasks sized to the worker concurrency.
-func splitTables(ctx context.Context, store kv.Storage, meta *TaskMeta, concurrency int) ([][]byte, error) {
+// generateSubtasks carves the task's tables into chunks and groups them into subtasks.
+func generateSubtasks(ctx context.Context, store kv.Storage, meta *TaskMeta, concurrency int) ([][]byte, error) {
 	chunks := make([]Chunk, 0, len(meta.Tables))
 	for tableIdx := range meta.Tables {
 		tableChunks, err := splitTable(ctx, store, meta, tableIdx)
@@ -63,7 +62,7 @@ func splitTables(ctx context.Context, store kv.Storage, meta *TaskMeta, concurre
 		}
 		chunks = append(chunks, tableChunks...)
 	}
-	return packSubtasks(chunks, concurrency)
+	return divideSubtasks(chunks, concurrency)
 }
 
 // estimateExportSize returns each physical table's estimated byte size and the
@@ -87,7 +86,7 @@ func estimateExportSize(ctx context.Context, store kv.Storage, meta *TaskMeta) (
 			start, end := physicalTableRange(tblInfo, pid)
 			var size int64
 			backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
-			err := handle.RunWithRetry(ctx, loadRegionMaxRetry, backoffer, logutil.BgLogger(), func(context.Context) (bool, error) {
+			err = handle.RunWithRetry(ctx, loadRegionMaxRetry, backoffer, logutil.BgLogger(), func(context.Context) (bool, error) {
 				size, err = h.EstimateKeyRangeSize(ctx, pdCli, start, end)
 				return err != nil, err
 			})
@@ -136,13 +135,10 @@ func loadRegionSizes(ctx context.Context, store kv.Storage, start, end kv.Key) (
 		return nil, nil, false
 	}
 	h := helper.NewHelper(hStore)
-	pdCli, err := h.TryGetPDHTTPClient()
-	if err != nil {
-		return nil, nil, false
-	}
+	var err error
 	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
 	err = handle.RunWithRetry(ctx, loadRegionMaxRetry, backoffer, logutil.BgLogger(), func(context.Context) (bool, error) {
-		endKeys, sizes, err = h.RegionApproximateSizes(ctx, pdCli, start, end)
+		endKeys, sizes, err = h.RegionApproximateSizes(ctx, start, end)
 		return err != nil, err
 	})
 	if err != nil {
@@ -210,10 +206,8 @@ func chunksByCount(tableIdx int, pid int64, boundaries []kv.Key, totalSize int64
 	return chunks, ord
 }
 
-// packSubtasks cuts a new subtask once it reaches chunksPerWorker*concurrency
-// chunks worth of bytes (bounding failover redo), or the maxChunksPerSubtask
-// ceiling.
-func packSubtasks(chunks []Chunk, concurrency int) ([][]byte, error) {
+// divideSubtasks groups the chunks into subtasks by byte budget.
+func divideSubtasks(chunks []Chunk, concurrency int) ([][]byte, error) {
 	if len(chunks) == 0 {
 		return nil, nil
 	}
