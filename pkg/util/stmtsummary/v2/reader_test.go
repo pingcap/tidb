@@ -96,6 +96,14 @@ func TestStmtFileInvalidLine(t *testing.T) {
 	require.Equal(t, time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local).Unix(), f.end)
 }
 
+type stmtDirEntryInfoError struct {
+	os.DirEntry
+}
+
+func (stmtDirEntryInfoError) Info() (os.FileInfo, error) {
+	return nil, os.ErrPermission
+}
+
 func TestStmtFiles(t *testing.T) {
 	t1 := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
 	filename1 := "tidb-statements-2022-12-27T16-21-20.245.log"
@@ -133,11 +141,13 @@ func TestStmtFiles(t *testing.T) {
 	require.NotNil(t, files.files[1].file)
 
 	for _, tc := range []struct {
-		name                   string
-		rotateAfterEnumeration bool
+		name                     string
+		rotateAfterEnumeration   bool
+		failRotatedEntryMetadata bool
 	}{
 		{name: "rotation follows directory snapshot", rotateAfterEnumeration: true},
 		{name: "rotation precedes directory snapshot"},
+		{name: "rotated entry metadata lookup fails", failRotatedEntryMetadata: true},
 	} {
 		t.Run("preserves current file when "+tc.name, func(t *testing.T) {
 			restore := config.RestoreFunc()
@@ -165,7 +175,18 @@ func TestStmtFiles(t *testing.T) {
 					if err := rotate(); err != nil {
 						return nil, err
 					}
-					return os.ReadDir(dir)
+					entries, err := os.ReadDir(dir)
+					if err != nil {
+						return nil, err
+					}
+					if tc.failRotatedEntryMetadata {
+						for i, entry := range entries {
+							if filepath.Join(dir, entry.Name()) == rotatedPath {
+								entries[i] = stmtDirEntryInfoError{DirEntry: entry}
+							}
+						}
+					}
+					return entries, nil
 				}
 				entries, err := os.ReadDir(dir)
 				if err != nil {
@@ -177,8 +198,19 @@ func TestStmtFiles(t *testing.T) {
 				return entries, nil
 			})
 			require.NoError(t, err)
-			require.Len(t, files.files, 1)
-			snapshot := files.files[0]
+			expectedFiles := 1
+			if tc.failRotatedEntryMetadata {
+				expectedFiles = 2
+			}
+			require.Len(t, files.files, expectedFiles)
+			var snapshot *stmtFile
+			for _, file := range files.files {
+				if file.file != nil {
+					snapshot = file
+					break
+				}
+			}
+			require.NotNil(t, snapshot)
 			require.NotNil(t, snapshot.file)
 
 			columns := []*model.ColumnInfo{{Name: ast.NewCIStr(DigestStr)}}

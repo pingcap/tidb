@@ -368,6 +368,21 @@ func (r *HistoryReader) scheduleTasks(
 						logutil.BgLogger().Warn("failed to open or parse statements file", zap.Error(err), zap.String("path", candidate.path))
 						continue
 					}
+					if r.files.currentFileInfo != nil {
+						fileInfo, err := file.file.Stat()
+						if err != nil {
+							file.closeAndLogError()
+							select {
+							case innerErrCh <- err:
+							case <-ctx.Done():
+							}
+							return
+						}
+						if os.SameFile(r.files.currentFileInfo, fileInfo) {
+							file.closeAndLogError()
+							continue
+						}
+					}
 				}
 				if !r.checker.isTimeValid(file.begin, file.end) {
 					file.closeAndLogError()
@@ -571,7 +586,8 @@ func (f *stmtFile) closeAndLogError() {
 }
 
 type stmtFiles struct {
-	files []*stmtFile
+	files           []*stmtFile
+	currentFileInfo os.FileInfo
 }
 
 func (f *stmtFiles) close() {
@@ -608,12 +624,12 @@ func newStmtFilesWithReadDir(
 	var files []*stmtFile
 	var currentFileInfo os.FileInfo
 	if currentFile != nil {
-		files = append(files, currentFile)
 		currentFileInfo, err = currentFile.file.Stat()
 		if err != nil {
-			logutil.BgLogger().Warn("failed to stat current statements file", zap.Error(err), zap.String("path", filename))
-			currentFileInfo = nil
+			currentFile.closeAndLogError()
+			return nil, err
 		}
+		files = append(files, currentFile)
 	}
 
 	dir := filepath.Dir(filename)
@@ -647,6 +663,7 @@ func newStmtFilesWithReadDir(
 			if infoErr == nil && os.SameFile(currentFileInfo, fileInfo) {
 				return nil
 			}
+			// If Info fails, keep the path and deduplicate the opened inode later.
 		}
 		files = append(files, &stmtFile{path: path})
 		return nil
@@ -661,7 +678,7 @@ func newStmtFilesWithReadDir(
 	slices.SortFunc(files, func(i, j *stmtFile) int {
 		return cmp.Compare(i.path, j.path)
 	})
-	return &stmtFiles{files: files}, nil
+	return &stmtFiles{files: files, currentFileInfo: currentFileInfo}, nil
 }
 
 type stmtScanWorker struct {
