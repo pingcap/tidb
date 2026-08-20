@@ -48,9 +48,10 @@ id	task	access object	operator info
 HashJoin	root		Null-aware anti semi join, left side:HashAgg, equal:[eq(planner__core__casetest__expression_rewriter.t1.a, planner__core__casetest__expression_rewriter.t2.a) eq(Column, planner__core__casetest__expression_rewriter.t2.b)]
 ├─TableReader(Build)	root		data:TableFullScan
 │ └─TableFullScan	cop[tikv]	table:t2	keep order:false
-└─HashAgg(Probe)	root		group by:planner__core__casetest__expression_rewriter.t1.a, funcs:count(1)->Column, funcs:firstrow(planner__core__casetest__expression_rewriter.t1.a)->planner__core__casetest__expression_rewriter.t1.a
-  └─TableReader	root		data:TableFullScan
-    └─TableFullScan	cop[tikv]	table:t1	keep order:false
+└─HashAgg(Probe)	root		group by:planner__core__casetest__expression_rewriter.t1.a, funcs:count(Column)->Column, funcs:firstrow(planner__core__casetest__expression_rewriter.t1.a)->planner__core__casetest__expression_rewriter.t1.a
+  └─TableReader	root		data:HashAgg
+    └─HashAgg	cop[tikv]		group by:planner__core__casetest__expression_rewriter.t1.a, funcs:count(1)->Column
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false
 select t1.a from t1 group by t1.a having (a, count(1)) not in (select a, b from t2);
 a
 4
