@@ -770,7 +770,8 @@ impl Session {
                         Ok(StmtOutput::Affected(0))
                     })
                 }
-                DdlStmt::CreateIndex(_) => {
+                DdlStmt::CreateIndex(create) => {
+                    let if_not_exists = create.if_not_exists;
                     let current_db = self.current_db.clone();
                     // An index backfill WRITES the entries it computes, so it
                     // evaluates at the write level: captured from TiDB,
@@ -790,7 +791,25 @@ impl Session {
                     // does too: the buffer belongs to the statement, not to
                     // its outcome.
                     self.drain_eval_warnings(&ctx);
-                    result
+                    // Go `executor.go`'s `CreateIndex`:
+                    //
+                    //     if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
+                    //         ctx.GetSessionVars().StmtCtx.AppendNote(err)
+                    //         return nil
+                    //     }
+                    //
+                    // The note carries the SUPPRESSED ERROR itself, so its
+                    // code and text are 1061's and cannot drift from it --
+                    // which is exactly what `append_suppressed` files. Only
+                    // 1061 is swallowed: `IF NOT EXISTS` says the index may
+                    // already be there, not that any failure is acceptable.
+                    match result {
+                        Err(DriverError::DuplicateKeyName(name)) if if_not_exists => {
+                            self.append_suppressed(DriverError::DuplicateKeyName(name));
+                            Ok(StmtOutput::Affected(0))
+                        }
+                        other => other,
+                    }
                 }
                 DdlStmt::DropIndex(_) => {
                     let current_db = self.current_db.clone();

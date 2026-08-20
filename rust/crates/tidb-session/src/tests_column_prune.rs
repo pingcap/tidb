@@ -433,13 +433,26 @@ fn the_join_gate_refuses_the_shapes_it_cannot_see_all_the_references_of() {
         "correlated join decoded {decoded:?}"
     );
 
-    // A window function over the join.
+    // A window function over the join names its columns in its OWN tree, so
+    // the join prunes around it: Go `LogicalWindow.extractUsedCols` keeps the
+    // descriptors' args, `PARTITION BY` and `ORDER BY`, and prunes its child
+    // by exactly those. Here that is `t.b` from the `ORDER BY` plus `t.a` for
+    // the join key -- `c` and `d` are read by nothing.
+    //
+    // This asserted `all` while `driver::leaf_demand` gave up on
+    // `Expr::Window` and fell back to the statement-wide "every column"
+    // demand, which is the fallback that also cost `select sum(a) over()
+    // from t` the covering index TiDB reads.
     let (rows, decoded) = rows_and_decoded(
         &mut session,
         "SELECT ROW_NUMBER() OVER (ORDER BY t.b) FROM t JOIN j ON t.a = j.k",
     );
     assert_eq!(rows, vec![vec!["1"], vec!["2"]]);
-    assert_eq!(decoded, all);
+    assert_eq!(
+        decoded,
+        BTreeSet::from([A, B]),
+        "the window's ORDER BY and the join key, not the whole row"
+    );
 
     // A side no clause mentions keeps its full width: the scan refuses an
     // empty prune, because a zero-column row is not a shape any source here
