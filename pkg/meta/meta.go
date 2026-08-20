@@ -1284,7 +1284,6 @@ type MustLoadFilterAttr struct {
 }
 
 var checkAttributesInOrder = []MustLoadFilterAttr{
-	{Attr: `"partition":null`, LoadIfMissing: true},
 	{Attr: `"Lock":null`, LoadIfMissing: true},
 	{Attr: `"tiflash_replica":null`, LoadIfMissing: true},
 	{Attr: `"temp_table_type":0`, LoadIfMissing: true},
@@ -1342,16 +1341,74 @@ func Unescape(s string) string {
 	return s
 }
 
+// partitionKeyMarker is used to quickly check whether a table JSON might contain partition info.
+// This avoids the cost of ExtractPartitionIDs for non-partitioned tables.
+var partitionKeyMarker = []byte(`"partition":`)
+
+// partitionDefIDRegex matches "id":<number> inside the definitions array of partition info.
+var partitionDefIDRegex = regexp.MustCompile(`"id":(\d+)`)
+
+// ExtractPartitionIDs extracts partition definition IDs from raw JSON bytes.
+// Caller should first check bytes.Contains(json, partitionKeyMarker) to avoid calling this
+// for non-partitioned tables. Exported for testing purposes only.
+func ExtractPartitionIDs(json []byte) []int64 {
+	partitionKey := []byte(`"partition":{`)
+	defsKey := []byte(`"definitions":[`)
+	idx := bytes.Index(json, partitionKey)
+	if idx == -1 {
+		return nil
+	}
+	// Search for "definitions":[ only within the partition section.
+	rest := json[idx:]
+	defIdx := bytes.Index(rest, defsKey)
+	if defIdx == -1 {
+		return nil
+	}
+	// Extract from the start of definitions array content.
+	defsContent := rest[defIdx+len(defsKey):]
+	// Find the closing "]" of the definitions array.
+	depth := 1
+	end := 0
+	for end < len(defsContent) {
+		switch defsContent[end] {
+		case '[':
+			depth++
+		case ']':
+			depth--
+			if depth == 0 {
+				defsContent = defsContent[:end]
+				goto extractIDs
+			}
+		}
+		end++
+	}
+	return nil
+extractIDs:
+	matches := partitionDefIDRegex.FindAllSubmatch(defsContent, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(matches))
+	for _, m := range matches {
+		id, err := strconv.ParseInt(string(m[1]), 10, 64)
+		if err != nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // GetAllNameToIDAndTheMustLoadedTableInfo gets all the fields and values and table info for special attributes in a hash.
 // It's used to get some infos for information schema cache in a faster way.
 // If a table contains any of the attributes listed in checkSubstringsInOrder, it must be loaded during schema full load.
 // hasSpecialAttributes() is a subset of it, the difference is that:
 // If a table need to be resident in-memory, its table info MUST be loaded.
 // If a table info is loaded, it's NOT NECESSARILY to be keep in-memory.
-func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[string]int64, []*model.TableInfo, error) {
+func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[string]int64, []*model.TableInfo, map[int64]int64, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 
 	res := make(map[string]int64)
@@ -1359,6 +1416,7 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 	nameLRegex := regexp.MustCompile(NameExtractRegexp)
 
 	tableInfos := make([]*model.TableInfo, 0)
+	pid2tid := make(map[int64]int64)
 
 	err := m.txn.IterateHash(dbKey, func(field []byte, value []byte) error {
 		if !strings.HasPrefix(string(hack.String(field)), "Table") {
@@ -1374,6 +1432,16 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 
 		key := Unescape(nameLMatch[1])
 		res[strings.Clone(key)] = int64(id)
+		tableID := int64(id)
+
+		if bytes.Contains(value, partitionKeyMarker) {
+			if partitionIDs := ExtractPartitionIDs(value); len(partitionIDs) > 0 {
+				for _, pid := range partitionIDs {
+					pid2tid[pid] = tableID
+				}
+			}
+		}
+
 		if isTableInfoMustLoad(value, true, checkAttributesInOrder...) {
 			tbInfo := &model.TableInfo{}
 			err = json.Unmarshal(value, tbInfo)
@@ -1386,7 +1454,7 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 		return nil
 	})
 
-	return res, tableInfos, errors.Trace(err)
+	return res, tableInfos, pid2tid, errors.Trace(err)
 }
 
 // GetTableInfoWithAttributes retrieves all the table infos for a given db.

@@ -527,7 +527,8 @@ func (s *Syncer) GetSchemaValidator() validatorapi.Validator {
 // FetchAllSchemasWithTables fetches all schemas with their tables.
 func (s *Syncer) FetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, error) {
 	schemaCacheSize := vardef.SchemaCacheSize.Load()
-	return s.loader.fetchAllSchemasWithTables(m, schemaCacheSize)
+	schemas, _, err := s.loader.fetchAllSchemasWithTables(m, schemaCacheSize)
+	return schemas, err
 }
 
 // ChangeSchemaCacheSize changes the schema cache size.
