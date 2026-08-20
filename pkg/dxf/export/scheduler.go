@@ -165,7 +165,7 @@ func (s *exportScheduler) OnNextSubtasksBatch(
 			return nil, err
 		}
 		s.logger.Info("split export dump subtasks",
-			zap.Int("table-cnt", len(s.taskMeta.Tables)), zap.Int("subtask-cnt", len(metas)))
+			zap.Int("table-cnt", s.taskMeta.tableCount()), zap.Int("subtask-cnt", len(metas)))
 		return metas, nil
 	default:
 		return nil, errors.Errorf("unexpected nextStep %s", proto.Step2Str(task.Type, nextStep))

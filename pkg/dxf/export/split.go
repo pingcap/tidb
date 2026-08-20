@@ -48,13 +48,17 @@ const (
 
 // generateSubtasks carves the task's tables into chunks and groups them into subtasks.
 func generateSubtasks(ctx context.Context, store kv.Storage, is infoschema.InfoSchema, meta *TaskMeta, nodeCount int) ([][]Chunk, error) {
-	chunks := make([]Chunk, 0, len(meta.Tables))
-	for tableIdx := range meta.Tables {
-		tableChunks, err := splitTable(ctx, store, is, meta, tableIdx)
-		if err != nil {
-			return nil, err
+	chunks := make([]Chunk, 0, meta.tableCount())
+	tableIdx := 0
+	for i := range meta.DBs {
+		for _, tid := range meta.DBs[i].TableIDs {
+			tableChunks, err := splitTable(ctx, store, is, meta, tid, tableIdx)
+			if err != nil {
+				return nil, err
+			}
+			chunks = append(chunks, tableChunks...)
+			tableIdx++
 		}
-		chunks = append(chunks, tableChunks...)
 	}
 	return divideSubtasks(chunks, nodeCount), nil
 }
@@ -82,24 +86,26 @@ func estimateExportSize(ctx context.Context, store kv.Storage, is infoschema.Inf
 	}
 	sizes := make(map[int64]int64)
 	var total int64
-	for i := range meta.Tables {
-		tblInfo, err := tableInfoByID(ctx, is, meta.Tables[i].TableID)
-		if err != nil {
-			return nil, 0, err
-		}
-		for _, pid := range physicalIDs(tblInfo) {
-			start, end := physicalTableRange(tblInfo, pid)
-			var size int64
-			backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
-			err = handle.RunWithRetry(ctx, loadRegionMaxRetry, backoffer, logutil.BgLogger(), func(context.Context) (bool, error) {
-				size, err = h.EstimateKeyRangeSize(ctx, pdCli, start, end)
-				return err != nil, err
-			})
+	for i := range meta.DBs {
+		for _, tid := range meta.DBs[i].TableIDs {
+			tblInfo, err := tableInfoByID(ctx, is, tid)
 			if err != nil {
-				return nil, 0, errors.Trace(err)
+				return nil, 0, err
 			}
-			sizes[pid] = size
-			total += size
+			for _, pid := range physicalIDs(tblInfo) {
+				start, end := physicalTableRange(tblInfo, pid)
+				var size int64
+				backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
+				err = handle.RunWithRetry(ctx, loadRegionMaxRetry, backoffer, logutil.BgLogger(), func(context.Context) (bool, error) {
+					size, err = h.EstimateKeyRangeSize(ctx, pdCli, start, end)
+					return err != nil, err
+				})
+				if err != nil {
+					return nil, 0, errors.Trace(err)
+				}
+				sizes[pid] = size
+				total += size
+			}
 		}
 	}
 	return sizes, total, nil
@@ -107,8 +113,8 @@ func estimateExportSize(ctx context.Context, store kv.Storage, is infoschema.Inf
 
 // splitTable carves one table into ~chunkSize key-ordered chunks, with a
 // table-local ordinal spanning its partitions so file names stay unique.
-func splitTable(ctx context.Context, store kv.Storage, is infoschema.InfoSchema, meta *TaskMeta, tableIdx int) ([]Chunk, error) {
-	tblInfo, err := tableInfoByID(ctx, is, meta.Tables[tableIdx].TableID)
+func splitTable(ctx context.Context, store kv.Storage, is infoschema.InfoSchema, meta *TaskMeta, tableID int64, tableIdx int) ([]Chunk, error) {
+	tblInfo, err := tableInfoByID(ctx, is, tableID)
 	if err != nil {
 		return nil, err
 	}

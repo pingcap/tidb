@@ -16,22 +16,31 @@ package export
 
 import "github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 
-// TableSpec identifies one table in the export task.
-type TableSpec struct {
-	DBName  string `json:"db_name"`
-	TableID int64  `json:"table_id"`
+// DBSpec is a database and the ids of its tables to export.
+type DBSpec struct {
+	DBName   string  `json:"db_name"`
+	TableIDs []int64 `json:"table_ids"`
 }
 
 // TaskMeta is the task meta of an export task.
 type TaskMeta struct {
-	Tables     []TableSpec `json:"tables"`
-	SnapshotTS uint64      `json:"snapshot_ts"`
+	DBs        []DBSpec `json:"dbs"`
+	SnapshotTS uint64   `json:"snapshot_ts"`
 	// PhysicalSizes maps a physical table (or partition) id to its estimated size.
 	PhysicalSizes map[int64]int64 `json:"physical_sizes"`
 	Dest          string          `json:"dest"`
 	Format        string          `json:"format"`
 	// FileSize is the size in bytes at which the executor cuts output files.
 	FileSize int64 `json:"file_size"`
+}
+
+// tableCount returns the total number of tables across all databases.
+func (m *TaskMeta) tableCount() int {
+	n := 0
+	for i := range m.DBs {
+		n += len(m.DBs[i].TableIDs)
+	}
+	return n
 }
 
 // Chunk is a ~chunkSize key range of one physical table. Its table-local Ordinal
