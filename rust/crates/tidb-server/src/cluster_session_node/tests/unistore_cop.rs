@@ -1037,22 +1037,7 @@ fn a_negative_bound_on_an_unsigned_column_follows_gos_rewrite() {
 /// failure is the clue: this test sits for ~20s before reporting, so the
 /// coprocessor request never COMPLETES and the wait runs out. It is a request
 /// that goes unanswered, not a deadline that was mis-set.
-/// IGNORED ONLY WHILE THAT REGRESSION STANDS, and it must be un-ignored the
-/// moment it is fixed -- the assertion below is the correct behaviour, not a
-/// wish. While broken it cannot fail fast: the request is never answered, so
-/// it waits out `unistore_node::IN_PROCESS_TIMEOUT` (20s), which is eight
-/// times this crate's entire suite (507 tests in 2.4s). Making every run pay
-/// that to re-learn a known regression is not a trade worth taking.
-///
-/// Run it by name:
-///
-/// ```text
-/// cargo nextest run -p tidb-server --run-ignored all \
-///     -E 'test(a_view_over_the_coprocessor_is_created_and_reads_back)'
-/// ```
 #[test]
-#[ignore = "reproduces the b1f979cc76 CREATE VIEW regression; costs a 20s \
-            IN_PROCESS_TIMEOUT until it is fixed"]
 fn a_view_over_the_coprocessor_is_created_and_reads_back() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack

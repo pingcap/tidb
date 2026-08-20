@@ -85,8 +85,27 @@ impl RealTiKvSessionTransportFactory for InProcessReadSessionFactory {
     type Transport = InProcessReadTransport;
 
     fn open_session_transport(&self) -> Result<Self::Transport, String> {
-        DirectUnaryQueryTransport::from_read_authority(
-            &self.read_opener,
+        // `from_read_authority` builds the BATCH-FIRST transport, which takes
+        // "one BatchCommands attempt before the response-owned synchronous
+        // retry loop". In process there is no BatchCommands transport to
+        // attempt: `InProcessClient::begin` runs the coprocessor inline and
+        // hands back an `ImmediatePending` already holding the answer, and
+        // nothing drives `pending_batches` to collect it. Measured on this
+        // tip -- the handler returns 8 bytes with no error, `try_complete` is
+        // never called, and the attempt burns the whole `IN_PROCESS_TIMEOUT`
+        // before reporting `query deadline exceeded`. Every query carrying an
+        // expression or an aggregate died that way, `select count(*)`
+        // included.
+        //
+        // So this node opens the session itself and takes the SYNCHRONOUS
+        // transport, which is what `async_begin: None` selects. The batch
+        // attempt is not merely unhelpful here; it is unanswerable.
+        let runtime = self
+            .read_opener
+            .open_session()
+            .map_err(|_| "region cache lifecycle".to_owned())?;
+        DirectUnaryQueryTransport::with_shared_runtime(
+            runtime,
             DirectUnaryRuntimeConfig {
                 default_timeout: IN_PROCESS_TIMEOUT,
                 ..DirectUnaryRuntimeConfig::default()
