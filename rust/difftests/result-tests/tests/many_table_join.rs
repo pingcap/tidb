@@ -24,14 +24,23 @@
 //!
 //! # The control, and why it is exact
 //!
-//! Each prefix is run TWICE, and the second spelling is the control: every
-//! equality is written `(a40)=b42` instead of `a40=b42`. Parentheses do not
-//! change what an expression MEANS -- so the two statements must return the
-//! same rows -- but `predicate_push_down::column_equality` matches a bare
-//! `Expr::Column` on each side and a `Expr::Paren` is not one, so the
-//! parenthesized spelling gets NO pushdown at all. The control therefore runs
-//! the pre-pushdown plan against the post-pushdown one on the same data, in
-//! the same process, with no knob to set and nothing to trust.
+//! The control is the same `FROM` with NO `WHERE` at all -- a plain cross
+//! product, which no predicate rule has anything to reshape -- with the
+//! equalities then applied in Rust to the rows that come back. It shares no
+//! planner code with the statement under test, so it cannot fail the same way.
+//!
+//! The control used to be the same statement with every equality
+//! parenthesized (`(a40)=b42`), on the reasoning that parentheses change no
+//! meaning while `predicate_push_down::column_equality` matched only a bare
+//! `Expr::Column`, so the parenthesized spelling got no pushdown. That control
+//! was itself broken, and this test is what caught it:
+//! `join_reorder::classify` DID see through the parentheses and classified the
+//! conjunct as a join edge, which removed it from the residual `WHERE` as
+//! join-executed, while `column_equality` refused to recognize it and the join
+//! never installed it. The predicate ran NOWHERE, so the "control" returned
+//! the unfiltered cross product -- 16 rows where 8 are correct. Both matchers
+//! strip parentheses now, which is exactly why the control can no longer be a
+//! parser artifact.
 //!
 //! Row equality is checked up to [`CONTROL_TABLES`] tables only, because the
 //! control is the exponential plan: it is the thing being measured, and
@@ -146,38 +155,81 @@ fn open() -> Session {
     session
 }
 
-/// The statement over the first `count` tables, with each equality's left side
-/// parenthesized when `parenthesize` -- the control spelling.
-fn statement(count: usize, parenthesize: bool) -> Option<String> {
+/// The predicates over the first `count` tables, as `(left, right)` column
+/// pairs plus the one literal test the fixture writes.
+fn predicates(count: usize) -> (Vec<(String, String)>, bool) {
+    let used = &TABLES[..count];
+    let owns = |column: &str| used.contains(&&*format!("t{}", &column[1..]));
+    let pairs = EQUALITIES
+        .iter()
+        .filter(|(left, right)| owns(left) && owns(right))
+        .map(|(left, right)| ((*left).to_owned(), (*right).to_owned()))
+        .collect();
+    (pairs, used.contains(&"t31"))
+}
+
+/// The statement over the first `count` tables.
+fn statement(count: usize) -> Option<String> {
     let used = &TABLES[..count];
     let columns: Vec<String> = used.iter().map(|t| format!("x{}", &t[1..])).collect();
-    let mut predicates = Vec::new();
-    if used.contains(&"t31") {
-        predicates.push(if parenthesize {
-            "(a31)=7".to_owned()
-        } else {
-            "a31=7".to_owned()
-        });
+    let (pairs, literal) = predicates(count);
+    let mut written = Vec::new();
+    if literal {
+        written.push("a31=7".to_owned());
     }
-    for (left, right) in EQUALITIES {
-        let owns = |column: &str| used.contains(&&*format!("t{}", &column[1..]));
-        if owns(left) && owns(right) {
-            predicates.push(if parenthesize {
-                format!("({left})={right}")
-            } else {
-                format!("{left}={right}")
-            });
-        }
-    }
-    if predicates.is_empty() {
+    written.extend(pairs.iter().map(|(left, right)| format!("{left}={right}")));
+    if written.is_empty() {
         return None;
     }
     Some(format!(
         "SELECT {} FROM {} WHERE {}",
         columns.join(","),
         used.join(","),
-        predicates.join(" AND ")
+        written.join(" AND ")
     ))
+}
+
+/// The control rows: the same `FROM` with no `WHERE` at all, filtered here.
+///
+/// The cross product is selected with every predicate column alongside the
+/// projected ones, so the filtering this function does needs nothing from the
+/// engine beyond the rows themselves.
+fn control_rows(session: &mut Session, count: usize) -> Vec<Vec<Datum>> {
+    let used = &TABLES[..count];
+    let mut columns: Vec<String> = used.iter().map(|t| format!("x{}", &t[1..])).collect();
+    let projected = columns.len();
+    let mut offset_of = |columns: &mut Vec<String>, name: &str| -> usize {
+        if let Some(at) = columns.iter().position(|column| column == name) {
+            return at;
+        }
+        columns.push(name.to_owned());
+        columns.len() - 1
+    };
+    let (pairs, literal) = predicates(count);
+    let tests: Vec<(usize, usize)> = pairs
+        .iter()
+        .map(|(left, right)| {
+            (
+                offset_of(&mut columns, left),
+                offset_of(&mut columns, right),
+            )
+        })
+        .collect();
+    let literal_offset = literal.then(|| offset_of(&mut columns, "a31"));
+    let sql = format!("SELECT {} FROM {}", columns.join(","), used.join(","));
+    let mut kept: Vec<Vec<Datum>> = rows(session, &sql)
+        .into_iter()
+        .filter(|row| {
+            tests.iter().all(|(left, right)| row[*left] == row[*right])
+                && literal_offset.is_none_or(|at| row[at] == Datum::Int(7))
+        })
+        .map(|mut row| {
+            row.truncate(projected);
+            row
+        })
+        .collect();
+    kept.sort_by_key(|row| format!("{row:?}"));
+    kept
 }
 
 fn rows(session: &mut Session, sql: &str) -> Vec<Vec<Datum>> {
@@ -202,15 +254,14 @@ fn pushdown_rows_on_this_stack() {
     for count in 2..=CONTROL_TABLES {
         // The first few tables in the statement's own order share no
         // equality, so there is nothing to push and nothing to compare.
-        let Some(sql) = statement(count, false) else {
+        let Some(sql) = statement(count) else {
             continue;
         };
-        let control_sql = statement(count, true).expect("the same predicates, parenthesized");
         let pushed = rows(&mut session, &sql);
-        let control = rows(&mut session, &control_sql);
+        let control = control_rows(&mut session, count);
         assert_eq!(
             pushed, control,
-            "the row set moved at {count} tables:\n  pushed:  {sql}\n  control: {control_sql}"
+            "the row set moved at {count} tables:\n  statement: {sql}"
         );
     }
 }
@@ -241,7 +292,7 @@ fn scale_probe() {
 fn scale_probe_on_this_stack() {
     let mut session = open();
     for count in 2..=TABLES.len() {
-        let Some(sql) = statement(count, false) else {
+        let Some(sql) = statement(count) else {
             continue;
         };
         let start = Instant::now();
@@ -257,7 +308,7 @@ fn twenty_one_tables_finish_within_budget_with_tidb_s_answer() {
 
 fn twenty_one_tables_on_this_stack() {
     let mut session = open();
-    let sql = statement(TABLES.len(), false).expect("the full statement has predicates");
+    let sql = statement(TABLES.len()).expect("the full statement has predicates");
     let start = Instant::now();
     let answer = rows(&mut session, &sql);
     let elapsed = start.elapsed();
@@ -272,4 +323,33 @@ fn twenty_one_tables_on_this_stack() {
          `WHERE` equalities are no longer reaching the joins, so every join \
          node is back to a cartesian nested loop"
     );
+}
+
+/// A `WHERE` equality must be executed SOMEWHERE, whatever it is spelled like.
+///
+/// `join_reorder::classify` strips parentheses and
+/// `predicate_push_down::column_equality` did not, so `(a40)=b14` was removed
+/// from the residual `WHERE` as join-executed and then never installed on the
+/// join: it ran nowhere and the statement returned its whole cross product.
+/// The spellings here are all the same predicate, so they must all return the
+/// same rows -- and, with two rows per table and `a` a primary key, that is 4
+/// of the 8 the cross product holds.
+#[test]
+fn an_equality_is_executed_whatever_it_is_spelled_like() {
+    let mut session = open();
+    let expected = rows(
+        &mut session,
+        "SELECT x35,x40,x14 FROM t35,t40,t14 WHERE a40=b14",
+    );
+    assert_eq!(expected.len(), 4, "the fixture's own answer moved");
+    for spelling in [
+        "(a40)=b14",
+        "a40=(b14)",
+        "((a40))=((b14))",
+        "b14=a40",
+        "(b14)=a40",
+    ] {
+        let sql = format!("SELECT x35,x40,x14 FROM t35,t40,t14 WHERE {spelling}");
+        assert_eq!(rows(&mut session, &sql), expected, "{sql}");
+    }
 }

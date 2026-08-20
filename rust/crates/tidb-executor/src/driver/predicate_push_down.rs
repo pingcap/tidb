@@ -631,10 +631,24 @@ pub(crate) fn offered_conjuncts(where_clause: Option<&Expr>) -> Vec<&Expr> {
     conjuncts
 }
 
-/// The two column paths of a bare `col = col`, or `None` for anything else.
+/// The two column paths of a `col = col`, or `None` for anything else.
+///
+/// Parentheses are stripped from both sides. Go has no parenthesis node in an
+/// `expression.Expression` at all -- `ast.ParenthesesExpr` is unwrapped while
+/// the expression is rewritten, so every rule downstream sees the bare column
+/// -- and this tier keeps `Expr::Paren` in the tree instead, which makes
+/// seeing through it each matcher's own job.
+///
+/// Not stripping here was a WRONG-ANSWER bug rather than a lost optimization.
+/// `join_reorder::classify` already strips, so `WHERE (a40)=b14` classified as
+/// an `Edge`: dropped from the residual `WHERE` because the join was expected
+/// to run it, while this matcher refused to recognize it and the join never
+/// installed it. The predicate then executed NOWHERE, and
+/// `SELECT ... FROM t35,t40,t14 WHERE (a40)=b14` returned the whole cross
+/// product. The two matchers have to agree on what an equality is.
 fn column_equality(expr: &Expr) -> Option<(&[String], &[String])> {
-    match expr {
-        Expr::Binary(BinaryOp::Eq, lhs, rhs) => match (&**lhs, &**rhs) {
+    match strip_parens(expr) {
+        Expr::Binary(BinaryOp::Eq, lhs, rhs) => match (strip_parens(lhs), strip_parens(rhs)) {
             (Expr::Column(left), Expr::Column(right)) => Some((left, right)),
             _ => None,
         },
