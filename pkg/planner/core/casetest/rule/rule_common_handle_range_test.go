@@ -264,3 +264,57 @@ func TestCommonHandleIndexRanges(t *testing.T) {
 		).Check(testkit.Rows("2.50 10"))
 	})
 }
+
+// TestCommonHandleIndexRangesWithTupleCompare covers a tuple comparison that spans the
+// declared index column and the whole appended common handle. Its DNF form has an
+// equality prefix reaching into the second handle column, which estimation must be able
+// to build ranges for; see issue #70532, where the appended handle columns were counted
+// as a single column and the extra columns had no matching prefix length.
+func TestCommonHandleIndexRangesWithTupleCompare(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_chr_tuple")
+	tk.MustExec(`CREATE TABLE t_chr_tuple (
+		a bigint not null,
+		b bigint not null,
+		c bigint not null,
+		PRIMARY KEY(b, c) CLUSTERED,
+		KEY ia(a)
+	)`)
+	tk.MustExec(`insert into t_chr_tuple values
+		(1, 2, 3),
+		(1, 2, 4),
+		(1, 3, 1),
+		(2, 1, 1)`)
+
+	// The index key is (a, b, c), so the tuple comparison is fully covered by ranges.
+	rows := tk.MustQuery(
+		"explain format = 'plan_tree' select * from t_chr_tuple where (a, b, c) > (1, 2, 3)",
+	).Rows()
+	require.True(t, explainHas(rows, "range:(1 2 3,1 2 +inf], (1 2,1 +inf], (1,+inf]"),
+		"expected the tuple comparison to become index ranges over the appended handle")
+	tk.MustQuery(
+		"select * from t_chr_tuple where (a, b, c) > (1, 2, 3) order by a, b, c",
+	).Check(testkit.Rows("1 2 4", "1 3 1", "2 1 1"))
+
+	// A three-column handle reaches one column further into the appended tail.
+	tk.MustExec("drop table if exists t_chr_tuple3")
+	tk.MustExec(`CREATE TABLE t_chr_tuple3 (
+		a bigint not null,
+		b bigint not null,
+		c bigint not null,
+		d bigint not null,
+		PRIMARY KEY(b, c, d) CLUSTERED,
+		KEY ia(a)
+	)`)
+	tk.MustExec(`insert into t_chr_tuple3 values (1, 2, 3, 4), (1, 2, 3, 5), (1, 2, 4, 1)`)
+	rows = tk.MustQuery(
+		"explain format = 'plan_tree' select * from t_chr_tuple3 use index(ia) where (a, b, c, d) > (1, 2, 3, 4)",
+	).Rows()
+	require.True(t, explainHas(rows, "range:(1 2 3 4,1 2 3 +inf], (1 2 3,1 2 +inf], (1 2,1 +inf], (1,+inf]"),
+		"expected ranges reaching the third appended handle column")
+	tk.MustQuery(
+		"select * from t_chr_tuple3 where (a, b, c, d) > (1, 2, 3, 4) order by a, b, c, d",
+	).Check(testkit.Rows("1 2 3 5", "1 2 4 1"))
+}
