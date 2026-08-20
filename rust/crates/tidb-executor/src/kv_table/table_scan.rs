@@ -2292,7 +2292,9 @@ impl Executor for TableScanExec {
                 }
                 if let Some(appended) = remote
                     .append_clean_chunk(req, target, self.limit.is_none())
-                    .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?
+                    .map_err(|error| {
+                        ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+                    })?
                 {
                     self.scanned
                         .set(self.scanned.get().saturating_add(appended as u64));
