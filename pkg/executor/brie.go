@@ -628,9 +628,13 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	progress, err := bq.acquireTask(taskCtx, taskID)
 	if err != nil {
-		return mapBRIEErr(taskCtx, e.Ctx(), err, nil)
+		err = mapBRIEErr(taskCtx, e.Ctx(), err, nil)
+		e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
+		e.info.message = err.Error()
+		return err
 	}
 	defer bq.releaseTask()
+	failpoint.InjectCall("beforeRunBRIETask")
 
 	e.info.execTime = types.CurrentTime(mysql.TypeDatetime)
 	glue := &tidbGlue{se: e.Ctx(), progress: progress, info: e.info}
