@@ -793,3 +793,60 @@ func TestIssue60926(t *testing.T) {
 	tk.MustQuery("select * from t1 join (select col0, sum(col1) from t2 group by col0) as r on t1.col0 = r.col0;")
 	require.True(t, join.IsChildCloseCalledForTest.Load())
 }
+
+func TestIssue67614(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t_json_filter_order")
+	tk.MustExec(`create table t_json_filter_order (
+		id bigint primary key auto_increment,
+		d date not null,
+		category varchar(64) not null,
+		payload varchar(2048) default null,
+		key idx_d (d)
+	)`)
+	tk.MustExec(`insert into t_json_filter_order (d, category, payload) values
+		('2026-03-29', 'OTHER', ''),
+		('2026-03-29', 'OTHER', 'not-json-{broken'),
+		('2026-03-29', 'TARGET', '{"k":"CHN","other":1}')`)
+
+	query1 := `select id from t_json_filter_order
+		where d = str_to_date('20260329', '%Y%m%d')
+		  and category = 'TARGET'
+		  and json_extract(payload, '$.k') = 'CHN'`
+	query2 := `select id from t_json_filter_order
+		where d = str_to_date('20260329', '%Y%m%d')
+		  and json_extract(payload, '$.k') = 'CHN'
+		  and category = 'TARGET'`
+
+	tk.MustQuery(query1).Check(testkit.Rows("3"))
+	tk.MustQuery(query2).Check(testkit.Rows("3"))
+
+	planRows := tk.MustQuery("explain format = 'brief' " + query2).Rows()
+	plan := fmt.Sprintf("%v", planRows)
+	require.NotContains(t, plan, "Selection cop[tikv]  eq(json_extract")
+	require.Contains(t, plan, "root  eq(json_extract(cast(test.t_json_filter_order.payload, json BINARY), \"$.k\")")
+
+	tk.MustExec("drop table if exists t_json_pushdown_control")
+	tk.MustExec(`create table t_json_pushdown_control (
+		id bigint primary key auto_increment,
+		d date not null,
+		category varchar(64) not null,
+		payload json,
+		key idx_d (d)
+	)`)
+	tk.MustExec(`insert into t_json_pushdown_control (d, category, payload) values
+		('2026-03-29', 'OTHER', '{}'),
+		('2026-03-29', 'TARGET', '{"k":"CHN","other":1}')`)
+
+	controlQuery := `select id from t_json_pushdown_control
+		where d = str_to_date('20260329', '%Y%m%d')
+		  and json_extract(payload, '$.k') = 'CHN'
+		  and category = 'TARGET'`
+	controlPlanRows := tk.MustQuery("explain format = 'brief' " + controlQuery).Rows()
+	controlPlan := fmt.Sprintf("%v", controlPlanRows)
+	require.Contains(t, controlPlan, "cop[tikv]")
+	require.Contains(t, controlPlan, "json_extract(test.t_json_pushdown_control.payload")
+}
