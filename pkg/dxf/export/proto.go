@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package export implements the DXF task type for distributed export.
 package export
 
 import "github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
@@ -29,10 +28,7 @@ type TableSpec struct {
 type TaskMeta struct {
 	Tables     []TableSpec `json:"tables"`
 	SnapshotTS uint64      `json:"snapshot_ts"`
-	// PhysicalSizes maps a physical table (or partition) id to its estimated byte
-	// size, computed in the prepare step (where it also feeds resource scaling).
-	// The split prefers a fresh estimate and falls back to this only when PD is
-	// unavailable.
+	// PhysicalSizes maps a physical table (or partition) id to its estimated size.
 	PhysicalSizes map[int64]int64 `json:"physical_sizes"`
 	Dest          string          `json:"dest"`
 	Format        string          `json:"format"`
@@ -51,8 +47,7 @@ type Chunk struct {
 	Ordinal    int    `json:"ordinal"`
 }
 
-// SubtaskMeta is a batch of chunks. The chunk list is offloaded to external
-// storage (see BaseExternalMeta), so the row the framework stores stays small.
+// SubtaskMeta is a batch of chunks.
 type SubtaskMeta struct {
 	dxfutil.BaseExternalMeta
 	Chunks []Chunk `json:"chunks" external:"true"`

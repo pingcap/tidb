@@ -22,12 +22,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -68,9 +70,7 @@ func (s *exportScheduler) Init() error {
 // OnTick implements scheduler.Extension.
 func (*exportScheduler) OnTick(context.Context, *proto.Task) {}
 
-// OnPrepare implements scheduler.Extension. In prepare mode it estimates the
-// export task's data size after submit, seeds the per-physical sizes for the
-// split, and in nextgen sizes the task's resources from the total.
+// OnPrepare implements scheduler.Extension.
 func (s *exportScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
 	is, err := s.snapshotInfoSchema()
 	if err != nil {
@@ -110,9 +110,6 @@ func (s *exportScheduler) setResources(ctx context.Context, task *proto.Task, to
 	return nil
 }
 
-// taskKSMgr returns a task manager whose sessions run in the task's keyspace, so
-// keyspace-scoped lookups (e.g. snapshot infoschema) resolve in the store that
-// owns the tables rather than the scheduler's system keyspace.
 func (s *exportScheduler) taskKSMgr() scheduler.TaskManager {
 	if s.taskKSTaskMgr == nil {
 		if kv.IsUserKS(s.TaskRuntime.Store()) {
@@ -124,7 +121,6 @@ func (s *exportScheduler) taskKSMgr() scheduler.TaskManager {
 	return s.taskKSTaskMgr
 }
 
-// snapshotInfoSchema returns the task keyspace's infoschema at SnapshotTS.
 func (s *exportScheduler) snapshotInfoSchema() (infoschema.InfoSchema, error) {
 	var is infoschema.InfoSchema
 	err := s.taskKSMgr().WithNewSession(func(se sessionctx.Context) error {
@@ -174,6 +170,33 @@ func (s *exportScheduler) OnNextSubtasksBatch(
 	default:
 		return nil, errors.Errorf("unexpected nextStep %s", proto.Step2Str(task.Type, nextStep))
 	}
+}
+
+// marshalSubtasks serializes each chunk group into a subtask meta, offloading the
+// chunk list to external storage so the row stored by the framework stays small.
+func marshalSubtasks(ctx context.Context, taskID int64, step proto.Step, groups [][]Chunk) ([][]byte, error) {
+	if len(groups) == 0 {
+		return nil, nil
+	}
+	store, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	stepStr := proto.Step2Str(proto.Export, step)
+	metas := make([][]byte, 0, len(groups))
+	for i, g := range groups {
+		sm := &SubtaskMeta{Chunks: g}
+		sm.ExternalPath = dxfutil.PlanMetaPath(taskID, stepStr, i+1)
+		if err := sm.WriteJSONToExternalStorage(ctx, store, sm); err != nil {
+			return nil, errors.Trace(err)
+		}
+		bs, err := sm.Marshal(sm)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		metas = append(metas, bs)
+	}
+	return metas, nil
 }
 
 // OnDone implements scheduler.Extension.

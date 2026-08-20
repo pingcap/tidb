@@ -22,13 +22,10 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
-	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -43,11 +40,9 @@ const (
 	loadRegionMaxRetry    = 8
 	scanRegionBackoffBase = 200 * time.Millisecond
 	scanRegionBackoffMax  = 2 * time.Second
-	// chunkSize is the per-chunk work granularity. Assumed (not enforced against
-	// TaskMeta.FileSize) to stay above FileSize so each chunk leaves at most one
-	// partial tail file.
+	// chunkSize is the per-chunk work granularity.
 	chunkSize = 10 * units.GiB
-	// subtaskSize is the nominal per-subtask size used to estimate the subtask count.
+	// subtaskSize is the nominal size used to estimate the subtask count.
 	subtaskSize = 200 * units.GiB
 )
 
@@ -64,40 +59,12 @@ func generateSubtasks(ctx context.Context, store kv.Storage, is infoschema.InfoS
 	return divideSubtasks(chunks, nodeCount), nil
 }
 
-// tableInfoByID resolves a table's schema from the snapshot infoschema.
 func tableInfoByID(ctx context.Context, is infoschema.InfoSchema, id int64) (*model.TableInfo, error) {
 	tbl, ok := is.TableByID(ctx, id)
 	if !ok {
 		return nil, errors.Errorf("export: table %d not found in snapshot infoschema", id)
 	}
 	return tbl.Meta(), nil
-}
-
-// marshalSubtasks serializes each chunk group into a subtask meta, offloading the
-// chunk list to external storage so the row stored by the framework stays small.
-func marshalSubtasks(ctx context.Context, taskID int64, step proto.Step, groups [][]Chunk) ([][]byte, error) {
-	if len(groups) == 0 {
-		return nil, nil
-	}
-	store, err := extstore.GetGlobalExtStorage(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	stepStr := proto.Step2Str(proto.Export, step)
-	metas := make([][]byte, 0, len(groups))
-	for i, g := range groups {
-		sm := &SubtaskMeta{Chunks: g}
-		sm.ExternalPath = dxfutil.PlanMetaPath(taskID, stepStr, i+1)
-		if err := sm.WriteJSONToExternalStorage(ctx, store, sm); err != nil {
-			return nil, errors.Trace(err)
-		}
-		bs, err := sm.Marshal(sm)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		metas = append(metas, bs)
-	}
-	return metas, nil
 }
 
 // estimateExportSize returns each physical table's estimated byte size and the
@@ -166,10 +133,7 @@ func splitTable(ctx context.Context, store kv.Storage, is infoschema.InfoSchema,
 }
 
 // loadRegionSizes returns each region's end key and byte size over [start, end)
-// from a fresh PD estimate, retried on error. ok is false — and the caller falls
-// back to loadRegionBoundaries with count-based sizing — when the store has no
-// region cache, PD is unavailable, the retries are exhausted, or PD returns no
-// regions.
+// from a fresh PD estimate with best effort.
 func loadRegionSizes(ctx context.Context, store kv.Storage, start, end kv.Key) (endKeys []kv.Key, sizes []int64, ok bool) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
@@ -193,8 +157,7 @@ func loadRegionSizes(ctx context.Context, store kv.Storage, start, end kv.Key) (
 }
 
 // chunksBySize starts a new chunk each time the accumulated region size reaches
-// chunkSize, so each chunk holds ~chunkSize of real data. endKeys[i] is region
-// i's end; the final chunk ends at end.
+// chunkSize, so each chunk holds ~chunkSize of real data.
 func chunksBySize(tableIdx int, pid int64, start, end kv.Key, endKeys []kv.Key, sizes []int64, startOrdinal int) ([]Chunk, int) {
 	chunks := make([]Chunk, 0, len(sizes))
 	ord := startOrdinal
