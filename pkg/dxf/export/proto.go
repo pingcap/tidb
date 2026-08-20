@@ -15,15 +15,14 @@
 // Package export implements the DXF task type for distributed export.
 package export
 
-import (
-	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
-	"github.com/pingcap/tidb/pkg/meta/model"
-)
+import "github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 
-// TableSpec identifies one table in the export task.
+// TableSpec identifies one table in the export task. Only the id is stored; the
+// schema is resolved from a snapshot infoschema at SnapshotTS, so the task meta
+// stays bounded regardless of table count.
 type TableSpec struct {
-	DBName    string           `json:"db_name"`
-	TableInfo *model.TableInfo `json:"table_info"`
+	DBName  string `json:"db_name"`
+	TableID int64  `json:"table_id"`
 }
 
 // TaskMeta is the task meta of an export task.

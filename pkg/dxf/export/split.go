@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
@@ -51,16 +52,25 @@ const (
 )
 
 // generateSubtasks carves the task's tables into chunks and groups them into subtasks.
-func generateSubtasks(ctx context.Context, store kv.Storage, meta *TaskMeta, nodeCount int) ([][]Chunk, error) {
+func generateSubtasks(ctx context.Context, store kv.Storage, is infoschema.InfoSchema, meta *TaskMeta, nodeCount int) ([][]Chunk, error) {
 	chunks := make([]Chunk, 0, len(meta.Tables))
 	for tableIdx := range meta.Tables {
-		tableChunks, err := splitTable(ctx, store, meta, tableIdx)
+		tableChunks, err := splitTable(ctx, store, is, meta, tableIdx)
 		if err != nil {
 			return nil, err
 		}
 		chunks = append(chunks, tableChunks...)
 	}
 	return divideSubtasks(chunks, nodeCount), nil
+}
+
+// tableInfoByID resolves a table's schema from the snapshot infoschema.
+func tableInfoByID(ctx context.Context, is infoschema.InfoSchema, id int64) (*model.TableInfo, error) {
+	tbl, ok := is.TableByID(ctx, id)
+	if !ok {
+		return nil, errors.Errorf("export: table %d not found in snapshot infoschema", id)
+	}
+	return tbl.Meta(), nil
 }
 
 // marshalSubtasks serializes each chunk group into a subtask meta, offloading the
@@ -93,7 +103,7 @@ func marshalSubtasks(ctx context.Context, taskID int64, step proto.Step, groups 
 // estimateExportSize returns each physical table's estimated byte size and the
 // total across the whole export task, from PD. It is the prepare-step data-volume
 // estimate that sizes the task's resources and seeds the split fallback.
-func estimateExportSize(ctx context.Context, store kv.Storage, meta *TaskMeta) (map[int64]int64, int64, error) {
+func estimateExportSize(ctx context.Context, store kv.Storage, is infoschema.InfoSchema, meta *TaskMeta) (map[int64]int64, int64, error) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
 		return nil, 0, errors.New("storage does not support region cache")
@@ -106,7 +116,10 @@ func estimateExportSize(ctx context.Context, store kv.Storage, meta *TaskMeta) (
 	sizes := make(map[int64]int64)
 	var total int64
 	for i := range meta.Tables {
-		tblInfo := meta.Tables[i].TableInfo
+		tblInfo, err := tableInfoByID(ctx, is, meta.Tables[i].TableID)
+		if err != nil {
+			return nil, 0, err
+		}
 		for _, pid := range physicalIDs(tblInfo) {
 			start, end := physicalTableRange(tblInfo, pid)
 			var size int64
@@ -127,8 +140,11 @@ func estimateExportSize(ctx context.Context, store kv.Storage, meta *TaskMeta) (
 
 // splitTable carves one table into ~chunkSize key-ordered chunks, with a
 // table-local ordinal spanning its partitions so file names stay unique.
-func splitTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx int) ([]Chunk, error) {
-	tblInfo := meta.Tables[tableIdx].TableInfo
+func splitTable(ctx context.Context, store kv.Storage, is infoschema.InfoSchema, meta *TaskMeta, tableIdx int) ([]Chunk, error) {
+	tblInfo, err := tableInfoByID(ctx, is, meta.Tables[tableIdx].TableID)
+	if err != nil {
+		return nil, err
+	}
 	pids := physicalIDs(tblInfo)
 	chunks := make([]Chunk, 0, len(pids))
 	ordinal := 0

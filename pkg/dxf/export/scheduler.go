@@ -21,20 +21,24 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 type exportScheduler struct {
 	*scheduler.BaseScheduler
-	store    kv.Storage
-	taskMeta *TaskMeta
-	logger   *zap.Logger
+	store         kv.Storage
+	taskMeta      *TaskMeta
+	taskKSTaskMgr scheduler.TaskManager
+	logger        *zap.Logger
 }
 
 var _ scheduler.Scheduler = (*exportScheduler)(nil)
@@ -68,7 +72,11 @@ func (*exportScheduler) OnTick(context.Context, *proto.Task) {}
 // export task's data size after submit, seeds the per-physical sizes for the
 // split, and in nextgen sizes the task's resources from the total.
 func (s *exportScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
-	sizes, total, err := estimateExportSize(ctx, s.store, s.taskMeta)
+	is, err := s.snapshotInfoSchema()
+	if err != nil {
+		return err
+	}
+	sizes, total, err := estimateExportSize(ctx, s.store, is, s.taskMeta)
 	if err != nil {
 		return err
 	}
@@ -102,6 +110,31 @@ func (s *exportScheduler) setResources(ctx context.Context, task *proto.Task, to
 	return nil
 }
 
+// taskKSMgr returns a task manager whose sessions run in the task's keyspace, so
+// keyspace-scoped lookups (e.g. snapshot infoschema) resolve in the store that
+// owns the tables rather than the scheduler's system keyspace.
+func (s *exportScheduler) taskKSMgr() scheduler.TaskManager {
+	if s.taskKSTaskMgr == nil {
+		if kv.IsUserKS(s.TaskRuntime.Store()) {
+			s.taskKSTaskMgr = storage.NewTaskManager(s.TaskRuntime.SysSessionPool())
+		} else {
+			s.taskKSTaskMgr = s.GetTaskMgr()
+		}
+	}
+	return s.taskKSTaskMgr
+}
+
+// snapshotInfoSchema returns the task keyspace's infoschema at SnapshotTS.
+func (s *exportScheduler) snapshotInfoSchema() (infoschema.InfoSchema, error) {
+	var is infoschema.InfoSchema
+	err := s.taskKSMgr().WithNewSession(func(se sessionctx.Context) error {
+		var err error
+		is, err = domain.GetDomain(se).GetSnapshotInfoSchema(s.taskMeta.SnapshotTS)
+		return err
+	})
+	return is, errors.Trace(err)
+}
+
 // GetNextStep implements scheduler.Extension.
 func (*exportScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	switch task.Step {
@@ -123,7 +156,11 @@ func (s *exportScheduler) OnNextSubtasksBatch(
 ) ([][]byte, error) {
 	switch nextStep {
 	case proto.ExportStepDump:
-		groups, err := generateSubtasks(ctx, s.store, s.taskMeta, max(task.MaxNodeCount, 1))
+		is, err := s.snapshotInfoSchema()
+		if err != nil {
+			return nil, err
+		}
+		groups, err := generateSubtasks(ctx, s.store, is, s.taskMeta, max(task.MaxNodeCount, 1))
 		if err != nil {
 			return nil, err
 		}
