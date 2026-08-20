@@ -257,6 +257,9 @@ const (
 	// TiDBFoundInPlanCache indicates whether the last statement was found in plan cache
 	TiDBFoundInPlanCache = "last_plan_from_cache"
 
+	// TiDBFoundInTrivialPlan indicates whether the last statement used the trivial plan fast path.
+	TiDBFoundInTrivialPlan = "last_plan_from_trivial"
+
 	// TiDBFoundInBinding indicates whether the last statement was matched with the hints in the binding.
 	TiDBFoundInBinding = "last_plan_from_binding"
 
