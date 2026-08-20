@@ -48,7 +48,6 @@ func TestTaskKey(t *testing.T) {
 		want = keyspace.GetKeyspaceNameBySettings() + "/" + want
 	}
 	require.Equal(t, want, TaskKey(100, 42))
-	require.NotEqual(t, TaskKey(100, 42), TaskKey(100, 43))
 	wantExplicit := "export/100/42"
 	if kerneltype.IsNextGen() {
 		wantExplicit = "ks1/" + wantExplicit

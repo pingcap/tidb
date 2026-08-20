@@ -48,9 +48,6 @@ func (*exportCleaner) Clean(ctx context.Context, task *proto.Task) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(files) == 0 {
-		return nil
-	}
 	return errors.Trace(store.DeleteFiles(ctx, files))
 }
 

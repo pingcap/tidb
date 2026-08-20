@@ -15,7 +15,6 @@
 package export
 
 import (
-	"bytes"
 	"context"
 	"math"
 	"time"
@@ -25,13 +24,10 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
 const (
@@ -96,20 +92,12 @@ func splitTable(
 	ordinal := 0
 	for _, pid := range pids {
 		start, end := physicalTableRange(tblInfo, pid)
-		var tableChunks []Chunk
 		endKeys, sizes, err := loadRegionSizes(ctx, store, start, end)
 		if err != nil {
 			return nil, err
 		}
-		if len(sizes) > 0 {
-			tableChunks, ordinal = chunksBySize(tableIdx, pid, start, end, endKeys, sizes, ordinal)
-		} else {
-			boundaries, err := loadRegionBoundaries(ctx, store, start, end)
-			if err != nil {
-				return nil, err
-			}
-			tableChunks, ordinal = chunksByCount(tableIdx, pid, boundaries, 0, ordinal)
-		}
+		tableChunks, nextOrdinal := chunksBySize(tableIdx, pid, start, end, endKeys, sizes, ordinal)
+		ordinal = nextOrdinal
 		chunks = append(chunks, tableChunks...)
 	}
 	return chunks, nil
@@ -129,6 +117,9 @@ func loadRegionSizes(ctx context.Context, store kv.Storage, start, end kv.Key) (
 	})
 	if err != nil {
 		return nil, nil, errors.Trace(err)
+	}
+	if len(sizes) == 0 {
+		return nil, nil, errors.New("export: PD returned no regions for table range")
 	}
 	return endKeys, sizes, nil
 }
@@ -160,29 +151,6 @@ func chunksBySize(tableIdx int, pid int64, start, end kv.Key, endKeys []kv.Key, 
 		ord++
 		chunkStart = chunkEnd
 		acc = 0
-	}
-	return chunks, ord
-}
-
-// chunksByCount is the fallback when per-region sizes are unavailable: equal
-// region-count groups, apportioning totalSize by region count.
-func chunksByCount(tableIdx int, pid int64, boundaries []kv.Key, totalSize int64, startOrdinal int) ([]Chunk, int) {
-	regionCnt := len(boundaries) - 1
-	chunkCnt := max(1, min(int((totalSize+chunkSize-1)/chunkSize), regionCnt))
-	sizes := mathutil.Divide2Batches(regionCnt, chunkCnt)
-	chunks := make([]Chunk, 0, len(sizes))
-	ord, lo := startOrdinal, 0
-	for _, n := range sizes {
-		chunks = append(chunks, Chunk{
-			TableIdx:   tableIdx,
-			PhysicalID: pid,
-			Start:      boundaries[lo],
-			End:        boundaries[lo+n],
-			Size:       totalSize * int64(n) / int64(regionCnt),
-			Ordinal:    ord,
-		})
-		lo += n
-		ord++
 	}
 	return chunks, ord
 }
@@ -244,36 +212,4 @@ func physicalTableRange(tblInfo *model.TableInfo, pid int64) (start, end kv.Key)
 		return prefix, prefix.PrefixNext()
 	}
 	return tablecodec.EncodeRowKeyWithHandle(pid, kv.IntHandle(math.MinInt64)), prefix.PrefixNext()
-}
-
-// loadRegionBoundaries returns the sorted boundaries spanning [start, end] (both
-// included), retrying with backoff while the regions are not continuous.
-func loadRegionBoundaries(ctx context.Context, store kv.Storage, start, end kv.Key) ([]kv.Key, error) {
-	hStore, ok := store.(helper.Storage)
-	if !ok {
-		return nil, errors.New("storage does not support region cache")
-	}
-	var boundaries []kv.Key
-	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
-	err := handle.RunWithRetry(ctx, loadRegionMaxRetry, backoffer, logutil.BgLogger(), func(context.Context) (bool, error) {
-		regions, err := copr.LoadSortedContinuousRegions(
-			tikv.NewBackofferWithVars(ctx, 20000, nil), hStore.GetRegionCache(), start, end)
-		if errors.ErrorEqual(err, copr.ErrRegionsNotContinuous) {
-			return true, err
-		}
-		if err != nil {
-			return false, err
-		}
-		boundaries = make([]kv.Key, 0, len(regions)+1)
-		boundaries = append(boundaries, start)
-		for _, r := range regions[:len(regions)-1] {
-			k := kv.Key(r.EndKey())
-			if bytes.Compare(k, start) > 0 && bytes.Compare(k, end) < 0 {
-				boundaries = append(boundaries, k)
-			}
-		}
-		boundaries = append(boundaries, end)
-		return false, nil
-	})
-	return boundaries, err
 }

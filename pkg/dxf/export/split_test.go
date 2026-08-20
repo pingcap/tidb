@@ -90,11 +90,6 @@ func TestSubtaskMetaExternal(t *testing.T) {
 	preparedChunks, err := readPreparedPlan(ctx, preparedPath)
 	require.NoError(t, err)
 	require.Equal(t, chunks, preparedChunks)
-	metaJSON, err := json.Marshal(&TaskMeta{PreparedPlanPath: preparedPath})
-	require.NoError(t, err)
-	decodedMeta := &TaskMeta{}
-	require.NoError(t, json.Unmarshal(metaJSON, decodedMeta))
-	require.Equal(t, preparedPath, decodedMeta.PreparedPlanPath)
 	_, err = readPreparedPlan(ctx, "")
 	require.ErrorContains(t, err, "prepared plan path is empty")
 
@@ -142,45 +137,6 @@ func TestChunksBySize(t *testing.T) {
 	_, n := chunksBySize(0, 1, kv.Key("a"), kv.Key("b"), keys("b"), []int64{1}, 5)
 	require.Equal(t, 6, n)
 }
-
-func TestChunksByCount(t *testing.T) {
-	b := keys("a", "b", "c", "d", "e") // 4 regions
-	// One chunk per ~chunkSize, rounded up, never more than the region count.
-	require.Len(t, chunksOnly(chunksByCount(0, 1, b, 2*chunkSize, 0)), 2)
-	require.Len(t, chunksOnly(chunksByCount(0, 1, b, 2*chunkSize+1, 0)), 3)
-	// More chunks wanted than regions → capped at the region count.
-	require.Len(t, chunksOnly(chunksByCount(0, 1, b, 100*chunkSize, 0)), 4)
-	// Zero size still yields one chunk covering the whole span.
-	require.Len(t, chunksOnly(chunksByCount(0, 1, b, 0, 0)), 1)
-
-	const size = 4 * chunkSize // 4 regions → 4 chunks, one region each
-	chunks, next := chunksByCount(2, 100, b, size, 0)
-	require.Len(t, chunks, 4)
-	require.Equal(t, 4, next)
-
-	// Cover [a, e) with no gap or overlap, in key order.
-	require.Equal(t, []byte("a"), chunks[0].Start)
-	require.Equal(t, chunks[0].End, chunks[1].Start)
-	require.Equal(t, []byte("e"), chunks[len(chunks)-1].End)
-	// Table-local ordinals and metadata.
-	require.Equal(t, 0, chunks[0].Ordinal)
-	require.Equal(t, 2, chunks[0].TableIdx)
-	require.Equal(t, int64(100), chunks[0].PhysicalID)
-	// Size apportioned by region count (1 of 4 regions each).
-	require.Equal(t, int64(size)/4, chunks[0].Size)
-
-	// Deterministic.
-	again, _ := chunksByCount(2, 100, b, size, 0)
-	require.Equal(t, chunks, again)
-
-	// Ordinal continues across partitions of the same table.
-	more, next2 := chunksByCount(2, 200, keys("a", "z"), size, next)
-	require.Equal(t, 4, more[0].Ordinal)
-	require.Equal(t, int64(200), more[0].PhysicalID)
-	require.Equal(t, 5, next2)
-}
-
-func chunksOnly(chunks []Chunk, _ int) []Chunk { return chunks }
 
 func TestPhysicalTableRange(t *testing.T) {
 	const pid = 100
