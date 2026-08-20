@@ -74,25 +74,22 @@ func TestBRIEKillMonitorHandlesWrappedQueryInterrupted(t *testing.T) {
 
 func TestMapBRIEErrPreservesCancelCause(t *testing.T) {
 	sctx := mock.NewContext()
-	taskCtx := context.Background()
 
-	err := mapBRIEErr(taskCtx, sctx, errors.New("disk full"), exeerrors.ErrBRIEBackupFailed)
+	err := mapBRIEErr(sctx, errors.New("disk full"), exeerrors.ErrBRIEBackupFailed)
 	require.True(t, exeerrors.ErrBRIEBackupFailed.Equal(err), err)
 
 	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-	err = mapBRIEErr(taskCtx, sctx, context.Canceled, exeerrors.ErrBRIEBackupFailed)
+	err = mapBRIEErr(sctx, context.Canceled, exeerrors.ErrBRIEBackupFailed)
 	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
 	require.False(t, exeerrors.ErrBRIEBackupFailed.Equal(err))
 
-	canceledCtx, cancel := context.WithCancel(context.Background())
-	cancel()
 	sctxNoKill := mock.NewContext()
 	// CANCEL BR JOB cancels taskCtx without SQLKiller; keep 8124/8125.
-	err = mapBRIEErr(canceledCtx, sctxNoKill, context.Canceled, exeerrors.ErrBRIEBackupFailed)
+	err = mapBRIEErr(sctxNoKill, context.Canceled, exeerrors.ErrBRIEBackupFailed)
 	require.True(t, exeerrors.ErrBRIEBackupFailed.Equal(err), err)
 	require.False(t, exeerrors.ErrQueryInterrupted.Equal(err))
 
-	err = mapBRIEErr(canceledCtx, sctxNoKill, context.Canceled, nil)
+	err = mapBRIEErr(sctxNoKill, context.Canceled, nil)
 	require.ErrorIs(t, err, context.Canceled)
 }
 
