@@ -886,81 +886,6 @@ pub(crate) fn string_column_output(column: &str, values: Vec<String>) -> StmtOut
     }
 }
 
-/// The `SHOW TABLE STATUS` header, with the columns Go reports as numbers
-/// marked.
-const SHOW_TABLE_STATUS_COLUMNS: &[(&str, bool)] = &[
-    ("Name", false),
-    ("Engine", false),
-    ("Version", true),
-    ("Row_format", false),
-    ("Rows", true),
-    ("Avg_row_length", true),
-    ("Data_length", true),
-    ("Max_data_length", true),
-    ("Index_length", true),
-    ("Data_free", true),
-    ("Auto_increment", true),
-    ("Create_time", false),
-    ("Update_time", false),
-    ("Check_time", false),
-    ("Collation", false),
-    ("Checksum", false),
-    ("Create_options", false),
-    ("Comment", false),
-];
-
-fn show_table_status_row(
-    name: &str,
-    auto_increment: Option<i64>,
-    charset: tidb_executor::TableCharset,
-    comment: &str,
-) -> Vec<Datum> {
-    let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
-    vec![
-        text(name),
-        text("InnoDB"),
-        Datum::Int(10),
-        text("Compact"),
-        Datum::Int(0), // Rows
-        Datum::Int(0), // Avg_row_length
-        Datum::Int(0), // Data_length
-        Datum::Int(0), // Max_data_length
-        Datum::Int(0), // Index_length
-        Datum::Int(0), // Data_free
-        match auto_increment {
-            Some(next) => Datum::Int(next),
-            None => Datum::Null,
-        },
-        Datum::Null, // Create_time: no per-table creation timestamp here.
-        Datum::Null, // Update_time
-        Datum::Null, // Check_time
-        text(charset.collation.name()),
-        text(""),      // Checksum
-        text(""),      // Create_options
-        text(comment), // Comment
-    ]
-}
-
-/// One `SHOW TABLE STATUS` row for a view. Captured from Go: a view answers
-/// its name, NULL for every storage cell -- engine, version, row format,
-/// counts, sizes, collation and create options alike -- an empty `Checksum`,
-/// and the literal `VIEW` as its comment, which is how the two kinds of
-/// object are told apart in this output.
-fn show_table_status_view_row(name: &str) -> Vec<Datum> {
-    let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
-    let mut row = vec![text(name)];
-    // Engine through Auto_increment: ten cells a view has no value for.
-    row.extend(std::iter::repeat_n(Datum::Null, 10));
-    // Create_time, which Go fills and this tier has no source for, then
-    // Update_time, Check_time and Collation, which are NULL for a view in Go
-    // too.
-    row.extend(std::iter::repeat_n(Datum::Null, 4));
-    row.push(text("")); // Checksum
-    row.push(Datum::Null); // Create_options
-    row.push(text("VIEW")); // Comment
-    row
-}
-
 /// The collations `SHOW COLLATION` reports, in mock TiDB's own capture order
 /// (alphabetical by collation name). `Utf8Mb4ZhPinyinTiDbAsCs` is
 /// deliberately excluded: it is a reserved stub collation, and Go's own
@@ -1383,9 +1308,9 @@ impl Session {
                             _ => (None, tidb_executor::TableCharset::default(), ""),
                         };
                         let row = if entry.is_some_and(tidb_executor::TableEntry::is_view) {
-                            show_table_status_view_row(&name)
+                            crate::show_admin::show_table_status_view_row(&name)
                         } else {
-                            show_table_status_row(&name, auto_increment, table_charset, comment)
+                            crate::show_admin::show_table_status_row(&name, auto_increment, table_charset, comment)
                         };
                         rows.push(row);
                     }
@@ -1395,7 +1320,7 @@ impl Session {
                     || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
                 let number =
                     || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-                let columns = SHOW_TABLE_STATUS_COLUMNS
+                let columns = crate::show_admin::SHOW_TABLE_STATUS_COLUMNS
                     .iter()
                     .map(|(name, numeric)| {
                         ((*name).to_owned(), if *numeric { number() } else { text() })
@@ -1823,108 +1748,22 @@ impl Session {
             //
             // DEFERRED (documented, and refused rather than ignored): the
             // optional filter Go's shared SHOW grammar accepts here.
-            // Go `SimpleExec.executeFlush`. Most targets are accepted and
-            // do nothing observable here: the counters and caches they reset
-            // are per-instance, and this node re-reads accounts from the
-            // cluster rather than holding the privilege cache Go notifies.
-            // The two that are NOT no-ops keep Go's exact answers.
+            // Go `SimpleExec.executeFlush`, `ShowDDLExec` and
+            // `fetchShowMasterStatus` live in `crate::show_admin`: they
+            // answer without touching a user table, and keeping them here
+            // pushed this file past the repository's 2200-line ceiling.
             tidb_ast::AdminStmt::Flush(flush) => {
-                match &flush.target {
-                    tidb_ast::FlushTarget::Tables { read_lock, .. } => {
-                        if *read_lock {
-                            // Go returns this as a plain error, double space
-                            // and all.
-                            return Err(DriverError::unsupported(
-                                "FLUSH TABLES WITH READ LOCK is not supported.  Please use @@tidb_snapshot",
-                            ));
-                        }
-                    }
-                    // Go `plugin.NotifyFlush` fails for a name no loaded
-                    // plugin answers to, and no plugin framework runs here,
-                    // so every name fails.
-                    tidb_ast::FlushTarget::TiDbPlugins(plugins) => {
-                        if let Some(name) = plugins.first() {
-                            return Err(DriverError::unsupported(format!(
-                                "plugin '{name}' not found"
-                            )));
-                        }
-                    }
-                    // Go dumps this node's buffered statistics deltas to the
-                    // store. Refused by name rather than silently accepted:
-                    // reporting success without writing them would make a
-                    // later ANALYZE read stale counts.
-                    tidb_ast::FlushTarget::StatsDelta { .. } => {
-                        return Err(DriverError::unsupported(
-                            "FLUSH STATS_DELTA is not supported by this node",
-                        ));
-                    }
-                    tidb_ast::FlushTarget::Status
-                    | tidb_ast::FlushTarget::Privileges
-                    | tidb_ast::FlushTarget::Hosts
-                    | tidb_ast::FlushTarget::Logs(_)
-                    | tidb_ast::FlushTarget::ClientErrorsSummary => {}
-                }
-                return Ok(Some(StmtOutput::Done(true)));
+                return crate::show_admin::flush_stmt(flush).map(Some);
             }
-            // Go `ShowDDLExec`, whose six columns describe the DDL owner and
-            // this node; see `Session::show_ddl_rows` for what the two
-            // job-list columns mean here.
             tidb_ast::AdminStmt::ShowDdl => {
-                let varchar = |size: i64| {
-                    FieldType::new(tidb_datatype::FieldTypeCode::Varchar).with_flen(size)
-                };
-                return Ok(Some(StmtOutput::Rows {
-                    columns: vec![
-                        (
-                            "SCHEMA_VER".to_owned(),
-                            FieldType::new(tidb_datatype::FieldTypeCode::LongLong).with_flen(4),
-                        ),
-                        ("OWNER_ID".to_owned(), varchar(64)),
-                        ("OWNER_ADDRESS".to_owned(), varchar(32)),
-                        ("RUNNING_JOBS".to_owned(), varchar(256)),
-                        ("SELF_ID".to_owned(), varchar(64)),
-                        ("QUERY".to_owned(), varchar(256)),
-                    ],
-                    rows: self.show_ddl_rows(),
-                }));
+                return Ok(Some(crate::show_admin::show_ddl_output(
+                    &self.show_ddl_rows(),
+                )));
             }
-            // Go `ShowExec.fetchShowMasterStatus`: one row naming TiDB's
-            // pseudo binlog file and the CURRENT transaction's start
-            // timestamp as the position, with the three replication columns
-            // empty. Tools that call this to fence a dump read the position.
             tidb_ast::AdminStmt::ShowMasterStatus => {
-                let position = self.current_tso().value();
-                return Ok(Some(StmtOutput::Rows {
-                    columns: vec![
-                        (
-                            "File".to_owned(),
-                            FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
-                        ),
-                        (
-                            "Position".to_owned(),
-                            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                        ),
-                        (
-                            "Binlog_Do_DB".to_owned(),
-                            FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
-                        ),
-                        (
-                            "Binlog_Ignore_DB".to_owned(),
-                            FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
-                        ),
-                        (
-                            "Executed_Gtid_Set".to_owned(),
-                            FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
-                        ),
-                    ],
-                    rows: vec![vec![
-                        Datum::Bytes(b"tidb-binlog".to_vec()),
-                        Datum::Int(position as i64),
-                        Datum::Bytes(Vec::new()),
-                        Datum::Bytes(Vec::new()),
-                        Datum::Bytes(Vec::new()),
-                    ]],
-                }));
+                return Ok(Some(crate::show_admin::master_status_output(
+                    self.current_tso().value(),
+                )));
             }
             tidb_ast::AdminStmt::ShowWarnings(show) => {
                 if show.filter.is_some() {
@@ -1953,31 +1792,10 @@ impl Session {
                 // Go `ShowExec.fetchShowPlugins` over `plugin.GetAll()`. No
                 // plugin framework runs here, so the answer is the empty set
                 // -- which is also what a stock `tidb-server` reports.
-                if show.kind == tidb_ast::ShowInspectionKind::Plugins {
-                    return Ok(Some(text_columns_output(&[
-                        "Name", "Status", "Type", "Library", "License", "Version",
-                    ])));
-                }
-                // Go's `ShowProfiles` arm is literally `// empty result`;
-                // the statement is deprecated and answers no rows.
-                if show.kind == tidb_ast::ShowInspectionKind::Profiles {
-                    return Ok(Some(StmtOutput::Rows {
-                        columns: vec![
-                            (
-                                "Query_ID".to_owned(),
-                                FieldType::new(tidb_datatype::FieldTypeCode::Long),
-                            ),
-                            (
-                                "Duration".to_owned(),
-                                FieldType::new(tidb_datatype::FieldTypeCode::Double),
-                            ),
-                            (
-                                "Query".to_owned(),
-                                FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
-                            ),
-                        ],
-                        rows: Vec::new(),
-                    }));
+                // Go answers these two without a source: see
+                // `crate::show_admin`.
+                if let Some(output) = crate::show_admin::inspection_output(show.kind) {
+                    return Ok(Some(output));
                 }
                 if show.kind != tidb_ast::ShowInspectionKind::ProcessList {
                     return Ok(None);

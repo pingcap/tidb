@@ -646,6 +646,7 @@ pub mod privilege;
 pub mod process;
 mod process_arm;
 mod show;
+mod show_admin;
 mod show_create_database;
 mod show_index;
 pub mod sysvar;
@@ -1399,7 +1400,9 @@ mod tests_recursive_cte;
 mod tests_savepoint;
 mod tests_sequence;
 #[cfg(test)]
+mod tests_check_constraints;
 mod tests_show;
+mod tests_show_admin;
 #[cfg(test)]
 mod tests_sql_mode_scanner;
 #[cfg(test)]
