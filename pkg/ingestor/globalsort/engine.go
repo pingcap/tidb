@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -93,7 +94,7 @@ func getEngineMemoryLimit(memCapacity int64) int {
 
 type memKVsAndBuffers struct {
 	mu  sync.Mutex
-	kvs []KVPair
+	kvs []simplesst.KVPair
 	// memKVBuffers contains two types of buffer, first half are used for small block
 	// buffer, second half are used for large one.
 	memKVBuffers []*membuf.Buffer
@@ -101,7 +102,7 @@ type memKVsAndBuffers struct {
 	droppedSize  int
 
 	// temporary fields to store KVs to reduce slice allocations.
-	kvsPerFile         [][]KVPair
+	kvsPerFile         [][]simplesst.KVPair
 	droppedSizePerFile []int
 }
 
@@ -120,7 +121,7 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 		zap.Int("sumKVCnt", sumKVCnt),
 		zap.Int("droppedSize", b.droppedSize))
 
-	b.kvs = make([]KVPair, 0, sumKVCnt)
+	b.kvs = make([]simplesst.KVPair, 0, sumKVCnt)
 	for i := range b.kvsPerFile {
 		b.kvs = append(b.kvs, b.kvsPerFile[i]...)
 		b.kvsPerFile[i] = nil
@@ -180,7 +181,7 @@ type Engine struct {
 	recordedDupSize int64
 	dupFile         string
 	dupWriter       objectio.Writer
-	dupKVStore      *KeyValueStore
+	dupKVStore      *simplesst.KeyValueStore
 }
 
 var _ engineapi.Engine = (*Engine)(nil)
@@ -232,7 +233,7 @@ func NewExternalEngine(
 		largeBlockBufPool: membuf.NewPool(
 			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
-			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+			membuf.WithBlockSize(simplesst.ConcurrentReaderBufferSizePerConc),
 		),
 		checkHotspot:      checkHotspot,
 		workerConcurrency: *atomic.NewInt32(int32(workerConcurrency)),
@@ -263,8 +264,8 @@ func (e *Engine) loadRangeBatchData(
 	sortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("sort")
 
 	failpoint.Inject("mockLoadBatchRegionData", func(_ failpoint.Value) {
-		kvs := make([]KVPair, 0, 1)
-		kvs = append(kvs, KVPair{[]byte{}, []byte{}})
+		kvs := make([]simplesst.KVPair, 0, 1)
+		kvs = append(kvs, simplesst.KVPair{Key: []byte{}, Value: []byte{}})
 		data := e.buildIngestData(kvs, nil)
 		data.IncRef()
 		select {
@@ -368,7 +369,7 @@ func (e *Engine) loadRangeBatchData(
 	sortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / sortSecond)
 
 	var (
-		deduplicatedKVs, dups []KVPair
+		deduplicatedKVs, dups []simplesst.KVPair
 		dupCount              int
 		deduplicateDur        time.Duration
 	)
@@ -380,16 +381,16 @@ func (e *Engine) loadRangeBatchData(
 			if err = e.lazyInitDupWriter(ctx); err != nil {
 				return err
 			}
-			deduplicatedKVs, dups, dupCount = removeDuplicates(deduplicatedKVs, getPairKey, true)
+			deduplicatedKVs, dups, dupCount = simplesst.RemoveDuplicates(deduplicatedKVs, getPairKey, true)
 			e.recordedDupCnt += len(dups)
 			for _, p := range dups {
 				e.recordedDupSize += int64(len(p.Key) + len(p.Value))
-				if err = e.dupKVStore.addRawKV(p.Key, p.Value); err != nil {
+				if err = e.dupKVStore.AddRawKV(p.Key, p.Value); err != nil {
 					return err
 				}
 			}
 		} else if e.onDup == engineapi.OnDuplicateKeyRemove {
-			deduplicatedKVs, _, dupCount = removeDuplicates(deduplicatedKVs, getPairKey, false)
+			deduplicatedKVs, _, dupCount = simplesst.RemoveDuplicates(deduplicatedKVs, getPairKey, false)
 		}
 		deduplicateDur = time.Since(start)
 	}
@@ -563,7 +564,7 @@ func (e *Engine) LoadIngestData(
 	currBatchSize := int(e.workerConcurrency.Load())
 	logutil.Logger(ctx).Info("load ingest data", zap.Int("current batchSize", currBatchSize))
 
-	readRangesPerKey, err := getReadRangeFromProps(ctx, e.jobKeys, e.statsFiles, e.storage)
+	readRangesPerKey, err := simplesst.GetReadRangeFromProps(ctx, e.jobKeys, e.statsFiles, e.storage)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -599,14 +600,14 @@ func (e *Engine) lazyInitDupWriter(ctx context.Context) error {
 		// max 150GiB duplicates can be saved, it should be enough, as we split
 		// subtask into 100G each.
 		Concurrency: 1,
-		PartSize:    3 * MinUploadPartSize})
+		PartSize:    3 * simplesst.MinUploadPartSize})
 	if err != nil {
 		logutil.Logger(ctx).Error("create dup writer failed", zap.Error(err))
 		return err
 	}
 	e.dupFile = dupFile
 	e.dupWriter = dupWriter
-	e.dupKVStore = NewKeyValueStore(ctx, e.dupWriter, nil)
+	e.dupKVStore = simplesst.NewKeyValueStore(ctx, e.dupWriter, nil)
 	return nil
 }
 
@@ -616,7 +617,7 @@ func (e *Engine) closeDupWriterAsNeeded(ctx context.Context) error {
 	}
 	kvStore, writer := e.dupKVStore, e.dupWriter
 	e.dupKVStore, e.dupWriter = nil, nil
-	kvStore.finish()
+	kvStore.Finish()
 	if err := writer.Close(ctx); err != nil {
 		logutil.Logger(ctx).Error("close dup writer failed", zap.Error(err))
 		return err
@@ -624,7 +625,7 @@ func (e *Engine) closeDupWriterAsNeeded(ctx context.Context) error {
 	return nil
 }
 
-func (e *Engine) buildIngestData(kvs []KVPair, buf []*membuf.Buffer) *MemoryIngestData {
+func (e *Engine) buildIngestData(kvs []simplesst.KVPair, buf []*membuf.Buffer) *MemoryIngestData {
 	e.inFlightDataCount.Inc()
 	return &MemoryIngestData{
 		kvs:             kvs,
@@ -767,14 +768,14 @@ func (e *Engine) Reset() {
 		e.largeBlockBufPool = membuf.NewPool(
 			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
-			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+			membuf.WithBlockSize(simplesst.ConcurrentReaderBufferSizePerConc),
 		)
 	}
 }
 
 // MemoryIngestData is the in-memory implementation of IngestData.
 type MemoryIngestData struct {
-	kvs []KVPair
+	kvs []simplesst.KVPair
 	ts  uint64
 
 	memBuf          []*membuf.Buffer
@@ -825,7 +826,7 @@ func (m *MemoryIngestData) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]
 }
 
 type memoryDataIter struct {
-	kvs []KVPair
+	kvs []simplesst.KVPair
 
 	firstKeyIdx int
 	lastKeyIdx  int
@@ -927,4 +928,8 @@ func (m *MemoryIngestData) release() {
 func (m *MemoryIngestData) Finish(totalBytes, totalCount int64) {
 	m.importedKVSize.Add(totalBytes)
 	m.importedKVCount.Add(totalCount)
+}
+
+func getPairKey(p *simplesst.KVPair) []byte {
+	return p.Key
 }

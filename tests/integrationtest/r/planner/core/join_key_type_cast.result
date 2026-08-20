@@ -161,6 +161,7 @@ insert into t_overflow_str values ('9223372036854775807', 10), ('922337203685477
 select * from t_overflow_int join t_overflow_str on t_overflow_int.id = t_overflow_str.id;
 id	v	id	v
 9223372036854775807	1	9223372036854775807	10
+9223372036854775807	1	9223372036854775808	20
 select * from t_int, t_varchar where t_int.id = t_varchar.id order by t_int.id;
 id	v	id	v
 0	0	abc	99

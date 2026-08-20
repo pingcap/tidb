@@ -22,6 +22,7 @@ import (
 
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
@@ -36,7 +37,7 @@ import (
 // Using 1 readAllData and 1 writer.
 func MergeOverlappingFilesV2(
 	ctx context.Context,
-	multiFileStat []MultipleFilesStat,
+	multiFileStat []simplesst.MultipleFilesStat,
 	store storeapi.Storage,
 	startKey []byte,
 	endKey []byte,
@@ -47,7 +48,7 @@ func MergeOverlappingFilesV2(
 	writeBatchCount uint64,
 	propSizeDist uint64,
 	propKeysDist uint64,
-	onWriterClose OnWriterCloseFunc,
+	onWriterClose simplesst.OnWriterCloseFunc,
 	concurrency int,
 	checkHotspot bool,
 ) (err error) {
@@ -86,8 +87,8 @@ func MergeOverlappingFilesV2(
 		return err
 	}
 
-	writer := NewWriterBuilder().
-		SetMemorySizeLimit(DefaultMemSizeLimit).
+	writer := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(simplesst.DefaultMemSizeLimit).
 		SetBlockSize(blockSize).
 		SetPropKeysDistance(propKeysDist).
 		SetPropSizeDistance(propSizeDist).
@@ -129,7 +130,7 @@ func MergeOverlappingFilesV2(
 		now := time.Now()
 
 		var readRanges [][]uint64
-		readRanges, err = getReadRangeFromProps(
+		readRanges, err = simplesst.GetReadRangeFromProps(
 			ctx, [][]byte{curStart, curEnd}, statFilesOfGroup, store)
 		if err != nil {
 			return err

@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -138,6 +140,39 @@ func TestToPhysicalPlan(t *testing.T) {
 	_, err = logicalPlan.ToPhysicalPlan(planCtx)
 	// error when build controller plan
 	require.ErrorContains(t, err, "provide a valid URI")
+
+	t.Run("prepared chunk map external path is preferred", func(t *testing.T) {
+		cloudStorageURI := "local://" + filepath.ToSlash(t.TempDir())
+		store, err := importer.GetSortStore(context.Background(), cloudStorageURI)
+		require.NoError(t, err)
+		defer store.Close()
+
+		preparedChunkMap := map[int32][]importer.Chunk{
+			1: {{Path: "gs://test-load/2.csv"}},
+		}
+		externalPath := globalsort.PreparedMetaPath(100)
+		preparedMeta := PreparedMeta{
+			BaseExternalMeta: globalsort.BaseExternalMeta{ExternalPath: externalPath},
+			ChunkMap:         preparedChunkMap,
+		}
+		require.NoError(t, preparedMeta.WriteJSONToExternalStorage(context.Background(), store, preparedMeta))
+
+		specs, err := generateImportSpecs(planner.PlanCtx{Ctx: context.Background()}, &LogicalPlan{
+			Plan: importer.Plan{
+				CloudStorageURI: cloudStorageURI,
+			},
+			ChunkMap: map[int32][]importer.Chunk{
+				2: {{Path: "gs://test-load/ignored.csv"}},
+			},
+			PreparedChunkMapExternalPath: externalPath,
+		})
+		require.NoError(t, err)
+		require.Len(t, specs, 1)
+		importSpec := specs[0].(*ImportSpec)
+		require.Equal(t, int32(1), importSpec.ID)
+		require.Len(t, importSpec.Chunks, 1)
+		require.Equal(t, "gs://test-load/2.csv", importSpec.Chunks[0].Path)
+	})
 }
 
 func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
@@ -150,7 +185,7 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 				StartKey:    []byte(prefix + "a"),
 				EndKey:      []byte(prefix + "c"),
 				TotalKVSize: 12,
-				MultipleFilesStats: []globalsort.MultipleFilesStat{
+				MultipleFilesStats: []simplesst.MultipleFilesStat{
 					{
 						Filenames: [][2]string{
 							{prefix + "/1", prefix + "/1.stat"},
@@ -163,7 +198,7 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 					StartKey:    []byte(idxPrefix + "a"),
 					EndKey:      []byte(idxPrefix + "c"),
 					TotalKVSize: 12,
-					MultipleFilesStats: []globalsort.MultipleFilesStat{
+					MultipleFilesStats: []simplesst.MultipleFilesStat{
 						{
 							Filenames: [][2]string{
 								{idxPrefix + "/1", idxPrefix + "/1.stat"},
@@ -181,10 +216,10 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 }
 
 func TestGenerateMergeSortSpecs(t *testing.T) {
-	stepBak := globalsort.MaxMergeSortFileCountStep
-	globalsort.MaxMergeSortFileCountStep = 2
+	stepBak := simplesst.MaxMergeSortFileCountStep
+	simplesst.MaxMergeSortFileCountStep = 2
 	t.Cleanup(func() {
-		globalsort.MaxMergeSortFileCountStep = stepBak
+		simplesst.MaxMergeSortFileCountStep = stepBak
 	})
 	// force merge sort for data kv
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/dxf/importinto/forceMergeSort", `return("data")`))
@@ -264,7 +299,7 @@ func genMergeStepMetas(t *testing.T, cnt int) [][]byte {
 				StartKey:    []byte(prefix + "a"),
 				EndKey:      []byte(prefix + "c"),
 				TotalKVSize: 12,
-				MultipleFilesStats: []globalsort.MultipleFilesStat{
+				MultipleFilesStats: []simplesst.MultipleFilesStat{
 					{
 						Filenames: [][2]string{
 							{prefix + "/1", prefix + "/1.stat"},
@@ -335,13 +370,13 @@ func TestSplitForOneSubtask(t *testing.T) {
 		values[i] = largeValue
 	}
 
-	var multiFileStat []globalsort.MultipleFilesStat
-	writer := globalsort.NewWriterBuilder().
+	var multiFileStat []simplesst.MultipleFilesStat
+	writer := simplesst.NewWriterBuilder().
 		SetMemorySizeLimit(40*1024*1024).
 		SetBlockSize(20*1024*1024).
 		SetPropSizeDistance(5*1024*1024).
 		SetPropKeysDistance(5).
-		SetOnCloseFunc(func(s *globalsort.WriterSummary) {
+		SetOnCloseFunc(func(s *simplesst.WriterSummary) {
 			multiFileStat = s.MultipleFilesStats
 		}).
 		Build(store, "/mock-test", "0")
@@ -357,11 +392,11 @@ func TestSplitForOneSubtask(t *testing.T) {
 		MultipleFilesStats: multiFileStat,
 	}
 
-	bak := importer.NewClientWithContext
+	bak := importer.NewClientWithAPIContext
 	t.Cleanup(func() {
-		importer.NewClientWithContext = bak
+		importer.NewClientWithAPIContext = bak
 	})
-	importer.NewClientWithContext = func(_ context.Context, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
+	importer.NewClientWithAPIContext = func(_ context.Context, _ pd.APIContext, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
 		return nil, errors.New("mock error")
 	}
 

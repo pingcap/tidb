@@ -757,7 +757,7 @@ func TestCodecUtil(t *testing.T) {
 	}
 	tps[3] = types.NewFieldType(mysql.TypeNull)
 	sc := stmtctx.NewStmtCtx()
-	oldRow, err := tablecodec.EncodeOldRow(sc.TimeZone(), types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
+	oldRow, err := tablecodec.EncodeOldRow(codec.NewEncoder(collate.NewCollationEnabled()), sc.TimeZone(), types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
 	require.NoError(t, err)
 
 	var (
@@ -807,7 +807,7 @@ func TestOldRowCodec(t *testing.T) {
 	}
 	tps[3] = types.NewFieldType(mysql.TypeNull)
 	sc := stmtctx.NewStmtCtx()
-	oldRow, err := tablecodec.EncodeOldRow(sc.TimeZone(), types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
+	oldRow, err := tablecodec.EncodeOldRow(codec.NewEncoder(collate.NewCollationEnabled()), sc.TimeZone(), types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
 	require.NoError(t, err)
 
 	var (

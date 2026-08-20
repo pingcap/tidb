@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -415,11 +416,8 @@ func BuildHistAndTopN(
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(sampleNum)
-	// If a numTopn value other than default is passed in, we assume it's a value that the user wants us to honor
-	allowPruning := true
-	if numTopN != DefaultTopNValue {
-		allowPruning = false
-	}
+	// If a numTopN value other than the active analyze default is passed in, we assume it's a value that the user wants us to honor.
+	allowPruning := isAnalyzeDefaultValue(numTopN, vardef.AnalyzeDefaultNumTopN.Load())
 
 	// Step1: collect topn from samples using bounded min-heap and track their index ranges
 	boundedMinHeap := generic.NewBoundedMinHeap(numTopN, func(a, b TopNWithRange) int {
@@ -529,7 +527,7 @@ func BuildHistAndTopN(
 	if samplesExcludingTopN > 0 {
 		remainingNDV := ndv - lenTopN
 		// if we pruned the topN, it means that there are no remaining skewed values in the samples
-		if lenTopN < int64(numTopN) && numBuckets == DefaultHistogramBuckets {
+		if lenTopN < int64(numTopN) && isAnalyzeDefaultValue(numBuckets, vardef.AnalyzeDefaultNumBuckets.Load()) {
 			// set the number of buckets to be the number of remaining distinct values divided by bucketNDVDivisor
 			// but no less than 1 and no more than the original number of buckets
 			numBuckets = int(min(max(1, remainingNDV/bucketNDVDivisor), int64(numBuckets)))
@@ -546,6 +544,10 @@ func BuildHistAndTopN(
 	}
 
 	return hg, topn, nil
+}
+
+func isAnalyzeDefaultValue(value int, defaultValue uint64) bool {
+	return value >= 0 && uint64(value) == defaultValue
 }
 
 // pruneTopNItem tries to prune the least common values in the top-n list if it is not significantly more common than the values not in the list.

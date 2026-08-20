@@ -55,12 +55,16 @@ func TestNeedReportExecutionSummary(t *testing.T) {
 }
 
 func mockTaskZoneInfoHelper(isRoot bool, taskZone string, tidbZone string, storeZoneMpp map[string]string, exchangeZoneInfo map[string][]string) taskZoneInfoHelper {
+	allTiFlashStoreInfo := make(map[string]tiFlashStoreInfo, len(storeZoneMpp))
+	for addr, zone := range storeZoneMpp {
+		allTiFlashStoreInfo[addr] = tiFlashStoreInfo{zone: zone}
+	}
 	helper := taskZoneInfoHelper{
-		tidbZone:           tidbZone,
-		currentTaskZone:    taskZone,
-		isRoot:             isRoot,
-		allTiFlashZoneInfo: storeZoneMpp,
-		exchangeZoneInfo:   exchangeZoneInfo,
+		tidbZone:            tidbZone,
+		currentTaskZone:     taskZone,
+		isRoot:              isRoot,
+		allTiFlashStoreInfo: allTiFlashStoreInfo,
+		exchangeZoneInfo:    exchangeZoneInfo,
 	}
 	return helper
 }

@@ -1,13 +1,14 @@
 package export
 
 import (
-	"bytes"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
 
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/dumpformat"
+	"github.com/pingcap/tidb/pkg/dumpformat/sqlfile"
 )
 
 // getStringOrNumericIndexColumns picks up indices for chunking, including string columns
@@ -127,12 +128,9 @@ func getStringOrNumericIndexColumns(tctx *tcontext.Context, db *BaseConn, meta T
 // and does NOT affect the dumpling data output format. Data output escaping is controlled
 // separately by the global --escape-backslash flag in the WriteToBuffer methods.
 func escapeSQLString(s string) string {
-	var buf bytes.Buffer
-	buf.WriteByte('\'')
-	// Use the existing escapeSQL function with escapeBackslash=true for proper SQL escaping
-	escapeSQL([]byte(s), &buf, true)
-	buf.WriteByte('\'')
-	return buf.String()
+	// sqlfile.AppendValue with KindString quotes the value and applies
+	// backslash escaping, matching the former escapeSQL(escapeBackslash=true).
+	return string(sqlfile.AppendValue(nil, []byte(s), false, dumpformat.KindString, true))
 }
 
 // Helper functions for streaming boundary generation

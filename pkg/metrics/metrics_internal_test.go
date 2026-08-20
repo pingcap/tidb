@@ -37,6 +37,13 @@ func readGaugeValue(t *testing.T, gauge prometheus.Gauge) float64 {
 	return m.GetGauge().GetValue()
 }
 
+func readCounterValue(t *testing.T, counter prometheus.Counter) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	require.NoError(t, counter.Write(m))
+	return m.GetCounter().GetValue()
+}
+
 func countCollectedMetrics(collector prometheus.Collector) int {
 	ch := make(chan prometheus.Metric, 16)
 	collector.Collect(ch)
@@ -49,10 +56,90 @@ func countCollectedMetrics(collector prometheus.Collector) int {
 	return count
 }
 
+func TestRUV2ExecutorCounterReturnsCachedKnownLabels(t *testing.T) {
+	cases := []struct {
+		level    int
+		label    string
+		expected prometheus.Counter
+	}{
+		{1, "BatchPointGetExec", ruv2ExecutorL1BatchPointGetExec},
+		{1, "PointGetExecutor", ruv2ExecutorL1PointGetExecutor},
+		{1, "LimitExec", ruv2ExecutorL1LimitExec},
+		{2, "ExpandExec", ruv2ExecutorL2ExpandExec},
+		{2, "HashAggExec", ruv2ExecutorL2HashAggExec},
+		{2, "HashJoinExec", ruv2ExecutorL2HashJoinExec},
+		{2, "HashJoinV1Exec", ruv2ExecutorL2HashJoinV1Exec},
+		{2, "HashJoinV2Exec", ruv2ExecutorL2HashJoinV2Exec},
+		{2, "IndexLookUpJoin", ruv2ExecutorL2IndexLookUpJoin},
+		{2, "IndexLookUpMergeJoin", ruv2ExecutorL2IndexLookUpMergeJoin},
+		{2, "IndexNestedLoopHashJoin", ruv2ExecutorL2IndexNestedLoopHashJoin},
+		{2, "IndexLookUpExecutor", ruv2ExecutorL2IndexLookUpExec},
+		{2, "IndexReaderExecutor", ruv2ExecutorL2IndexReaderExec},
+		{2, "MemTableReaderExec", ruv2ExecutorL2MemTableReaderExec},
+		{2, "MergeJoinExec", ruv2ExecutorL2MergeJoinExec},
+		{2, "ProjectionExec", ruv2ExecutorL2ProjectionExec},
+		{2, "SelectionExec", ruv2ExecutorL2SelectionExec},
+		{2, "TableDualExec", ruv2ExecutorL2TableDualExec},
+		{2, "TableReaderExecutor", ruv2ExecutorL2TableReaderExec},
+		{2, "TopNExec", ruv2ExecutorL2TopNExec},
+		{2, "UnionScanExec", ruv2ExecutorL2UnionScanExec},
+		{2, "SelectLockExec", ruv2ExecutorL2SelectLockExec},
+		{2, "WindowExec", ruv2ExecutorL2WindowExec},
+		{3, "SortExec", ruv2ExecutorL3SortExec},
+		{3, "StreamAggExec", ruv2ExecutorL3StreamAggExec},
+	}
+
+	for _, tc := range cases {
+		require.NotNil(t, tc.expected, tc.label)
+		require.True(t, tc.expected == RUV2ExecutorCounter(tc.level, tc.label), tc.label)
+	}
+}
+
+func TestRUV3MetricDefinitions(t *testing.T) {
+	require.Equal(t,
+		[]string{"ddl", "read", "write", "analyze", "other"},
+		[]string{LblSQLTypeDDL, LblSQLTypeRead, LblSQLTypeWrite, LblSQLTypeAnalyze, LblSQLTypeOther},
+	)
+	require.Equal(t, []string{"tikv", "tiflash"}, []string{LblEngineTiKV, LblEngineTiFlash})
+
+	InitRUV3Metrics()
+	RUV3Total.Add(1)
+	RUV3BySQLType.WithLabelValues(LblSQLTypeRead).Add(2)
+	RUV3ByEngine.WithLabelValues(LblEngineTiKV).Add(3)
+
+	registry := prometheus.NewRegistry()
+	require.NoError(t, registry.Register(RUV3Total))
+	require.NoError(t, registry.Register(RUV3BySQLType))
+	require.NoError(t, registry.Register(RUV3ByEngine))
+	families, err := registry.Gather()
+	require.NoError(t, err)
+
+	require.NotNil(t, findMetricFamily(families, "tidb_ruv3_ru_total"))
+	requireMetricFamilyHasLabel(
+		t, families, "tidb_ruv3_ru_by_sql_type_total", LblSQLType, LblSQLTypeRead,
+	)
+	requireMetricFamilyHasLabel(
+		t, families, "tidb_ruv3_ru_by_engine_total", LblEngine, LblEngineTiKV,
+	)
+}
+
+func requireMetricFamilyHasLabel(t *testing.T, families []*dto.MetricFamily, familyName, labelName, labelValue string) {
+	t.Helper()
+	family := findMetricFamily(families, familyName)
+	require.NotNil(t, family)
+	for _, metric := range family.GetMetric() {
+		if metricHasLabelValue(metric, labelName, labelValue) {
+			return
+		}
+	}
+	require.Failf(t, "missing metric label", "metric family %s has no label %s=%s", familyName, labelName, labelValue)
+}
+
 func TestStmtSummaryMetricLabels(t *testing.T) {
 	InitStmtSummaryMetrics()
 	require.Equal(t, 0, countCollectedMetrics(StmtSummaryWindowRecordCount))
 	require.Equal(t, 0, countCollectedMetrics(StmtSummaryWindowEvictedCount))
+	require.Equal(t, 0, countCollectedMetrics(StmtSummaryEvictedLogCounter))
 
 	SetStmtSummaryWindowMetrics(StmtSummaryTypeV1, 3, 1)
 	require.Equal(t, 1, countCollectedMetrics(StmtSummaryWindowRecordCount))
@@ -65,6 +152,12 @@ func TestStmtSummaryMetricLabels(t *testing.T) {
 	require.Equal(t, 2, countCollectedMetrics(StmtSummaryWindowEvictedCount))
 	require.Equal(t, 5.0, readGaugeValue(t, StmtSummaryWindowRecordCount.WithLabelValues(StmtSummaryTypeV2)))
 	require.Equal(t, 2.0, readGaugeValue(t, StmtSummaryWindowEvictedCount.WithLabelValues(StmtSummaryTypeV2)))
+
+	StmtSummaryEvictedLogCounter.WithLabelValues(StmtSummaryTypeV2, StmtSummaryEvictedLogResultPersisted).Add(3)
+	StmtSummaryEvictedLogCounter.WithLabelValues(StmtSummaryTypeV2, StmtSummaryEvictedLogResultDropped).Inc()
+	require.Equal(t, 2, countCollectedMetrics(StmtSummaryEvictedLogCounter))
+	require.Equal(t, 3.0, readCounterValue(t, StmtSummaryEvictedLogCounter.WithLabelValues(StmtSummaryTypeV2, StmtSummaryEvictedLogResultPersisted)))
+	require.Equal(t, 1.0, readCounterValue(t, StmtSummaryEvictedLogCounter.WithLabelValues(StmtSummaryTypeV2, StmtSummaryEvictedLogResultDropped)))
 }
 
 func TestGrpcChannelzCollectorSingleton(t *testing.T) {

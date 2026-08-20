@@ -371,6 +371,9 @@ const (
 	VecFromText             = "vec_from_text"
 	VecAsText               = "vec_as_text"
 
+	// embedding functions (TiDB extension)
+	EmbedText = "embed_text"
+
 	// FTS functions (tidb extension)
 	FTSMatchWord         = "fts_match_word"
 	FTSMysqlMatchAgainst = "match_against"
@@ -530,12 +533,12 @@ func (n *FuncCallExpr) customRestore(ctx *format.RestoreCtx) (bool, error) {
 	}
 	if n.FnName.L == JSONMemberOf {
 		if len(n.Args) == 2 {
-			if err := n.Args[0].Restore(ctx); err != nil {
+			if err := restoreExprWithBinaryOpParent(ctx, n.Args[0], restoreOpMemberOf, binaryOpLeftSide); err != nil {
 				return true, errors.Annotatef(err, "An error occurred while restore FuncCallExpr.(MEMBER OF).Args[0]")
 			}
 			ctx.WriteKeyWord(" MEMBER OF ")
 			ctx.WritePlain("(")
-			if err := n.Args[1].Restore(ctx); err != nil {
+			if err := restoreExprWithBinaryOpParent(ctx, n.Args[1], restoreOpMemberOf, binaryOpRightSide); err != nil {
 				return true, errors.Annotatef(err, "An error occurred while restore FuncCallExpr.(MEMBER OF).Args[1]")
 			}
 			ctx.WritePlain(")")
@@ -703,7 +706,7 @@ func (n *FuncCastExpr) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	case CastBinaryOperator:
 		ctx.WriteKeyWord("BINARY ")
-		if err := n.Expr.Restore(ctx); err != nil {
+		if err := restoreExprWithUnaryOpParent(ctx, n.Expr); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore FuncCastExpr.Expr")
 		}
 	}
@@ -820,6 +823,8 @@ const (
 	AggFuncCount = "count"
 	// AggFuncSum is the name of Sum function.
 	AggFuncSum = "sum"
+	// AggFuncSumInt is the name of SumInt function.
+	AggFuncSumInt = "sum_int"
 	// AggFuncAvg is the name of Avg function.
 	AggFuncAvg = "avg"
 	// AggFuncFirstRow is the name of FirstRowColumn function.
@@ -828,6 +833,10 @@ const (
 	AggFuncMax = "max"
 	// AggFuncMin is the name of min function.
 	AggFuncMin = "min"
+	// AggFuncMaxCount is the name of max_count function.
+	AggFuncMaxCount = "max_count"
+	// AggFuncMinCount is the name of min_count function.
+	AggFuncMinCount = "min_count"
 	// AggFuncGroupConcat is the name of group_concat function.
 	AggFuncGroupConcat = "group_concat"
 	// AggFuncBitOr is the name of bit_or function.

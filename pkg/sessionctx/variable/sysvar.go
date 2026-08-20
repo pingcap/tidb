@@ -81,6 +81,36 @@ func withMinValue(minVal int64) execConcurrencySysVarOption {
 	return func(sv *SysVar) { sv.MinValue = minVal }
 }
 
+func newEmbeddingAPIKeySysVar(name string, load func() string, swap func(string) string) *SysVar {
+	return &SysVar{
+		Scope: vardef.ScopeGlobal,
+		Name:  name,
+		Value: "",
+		Type:  vardef.TypeStr,
+		SetGlobal: func(_ context.Context, _ *SessionVars, value string) error {
+			if oldValue := swap(value); oldValue != value {
+				vardef.EmbeddingConfigVersion.Inc()
+			}
+			return nil
+		},
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return maskEmbeddingAPIKey(load()), nil
+		},
+	}
+}
+
+// maskEmbeddingAPIKey keeps a short suffix so SQL users can identify
+// the configured credential. Log paths must fully redact the value instead.
+func maskEmbeddingAPIKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	if len(key) <= 6 {
+		return "******"
+	}
+	return "******" + key[len(key)-4:]
+}
+
 // newExecConcurrencySysVar creates a session/global SysVar for executor concurrency settings.
 func newExecConcurrencySysVar(name string, defValue int, setter concurrencySetter, opts ...execConcurrencySysVarOption) *SysVar {
 	sv := &SysVar{
@@ -103,6 +133,23 @@ func newExecConcurrencySysVar(name string, defValue int, setter concurrencySette
 	}
 
 	return sv
+}
+
+func allowSetForeignKeyCheckInSharedLock() bool {
+	if !kerneltype.IsNextGen() {
+		return true
+	}
+	return config.GetGlobalConfig().Experimental.AllowEnableForeignKeyCheckInSharedLock
+}
+
+func getForeignKeyCheckInSharedLockSession(s *SessionVars) (string, error) {
+	if val, ok := s.systems[vardef.TiDBForeignKeyCheckInSharedLock]; ok {
+		return val, nil
+	}
+	if s.GlobalVarsAccessor != nil {
+		return s.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBForeignKeyCheckInSharedLock)
+	}
+	return BoolToOnOff(vardef.DefTiDBForeignKeyCheckInSharedLock), nil
 }
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
@@ -953,6 +1000,14 @@ var defaultSysVars = []*SysVar{
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return stmtsummaryv2.SetMaxSQLLength(TidbOptInt(val, vardef.DefTiDBStmtSummaryMaxSQLLength))
 		}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBStmtSummaryPersistEvicted, Value: BoolToOnOff(vardef.DefTiDBStmtSummaryPersistEvicted), Type: vardef.TypeBool, AllowEmpty: true,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			return stmtsummaryv2.SetPersistEvicted(TiDBOptOn(val))
+		}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBStmtSummaryGroupByUser, Value: BoolToOnOff(vardef.DefTiDBStmtSummaryGroupByUser), Type: vardef.TypeBool, AllowEmpty: true,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			return stmtsummaryv2.SetGroupByUser(TiDBOptOn(val))
+		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBCapturePlanBaseline, Value: vardef.DefTiDBCapturePlanBaseline, Type: vardef.TypeBool, AllowEmptyAll: true},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEvolvePlanTaskMaxTime, Value: strconv.Itoa(vardef.DefTiDBEvolvePlanTaskMaxTime), Type: vardef.TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEvolvePlanTaskStartTime, Value: vardef.DefTiDBEvolvePlanTaskStartTime, Type: vardef.TypeTime},
@@ -1197,6 +1252,40 @@ var defaultSysVars = []*SysVar{
 				)
 			}
 			return normalizedValue, nil
+		},
+	},
+	{
+		Scope:    vardef.ScopeGlobal,
+		Name:     vardef.TiDBAnalyzeDefaultNumBuckets,
+		Value:    strconv.FormatUint(vardef.DefTiDBAnalyzeDefaultNumBuckets, 10),
+		Type:     vardef.TypeUnsigned,
+		MinValue: vardef.MinTiDBAnalyzeDefaultNumBuckets, MaxValue: vardef.MaxTiDBAnalyzeDefaultNumBuckets,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatUint(vardef.AnalyzeDefaultNumBuckets.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			num, err := strconv.ParseUint(val, 10, 64)
+			if err == nil {
+				vardef.AnalyzeDefaultNumBuckets.Store(num)
+			}
+			return err
+		},
+	},
+	{
+		Scope:    vardef.ScopeGlobal,
+		Name:     vardef.TiDBAnalyzeDefaultNumTopN,
+		Value:    strconv.FormatUint(vardef.DefTiDBAnalyzeDefaultNumTopN, 10),
+		Type:     vardef.TypeUnsigned,
+		MinValue: vardef.MinTiDBAnalyzeDefaultNumTopN, MaxValue: vardef.MaxTiDBAnalyzeDefaultNumTopN,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatUint(vardef.AnalyzeDefaultNumTopN.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			num, err := strconv.ParseUint(val, 10, 64)
+			if err == nil {
+				vardef.AnalyzeDefaultNumTopN.Store(num)
+			}
+			return err
 		},
 	},
 	{
@@ -1793,6 +1882,17 @@ var defaultSysVars = []*SysVar{
 			vardef.HistoricalStatsDuration.Store(d)
 			return nil
 		}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBPlanReplayerFileRetentionTime, Value: vardef.DefTiDBPlanReplayerFileRetentionTime.String(), Type: vardef.TypeDuration, MaxValue: uint64(time.Hour * 24 * 365),
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return vardef.GetPlanReplayerFileRetentionTime().String(), nil
+		}, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return err
+			}
+			vardef.SetPlanReplayerFileRetentionTime(d)
+			return nil
+		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBLowResolutionTSOUpdateInterval, Value: strconv.Itoa(vardef.DefTiDBLowResolutionTSOUpdateInterval), Type: vardef.TypeInt, MinValue: 10, MaxValue: 60000,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			vardef.LowResolutionTSOUpdateInterval.Store(uint32(TidbOptInt64(val, vardef.DefTiDBLowResolutionTSOUpdateInterval)))
@@ -2018,9 +2118,21 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.ForeignKeyChecks, originalValue)
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBForeignKeyCheckInSharedLock, Value: BoolToOnOff(vardef.DefTiDBForeignKeyCheckInSharedLock), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBForeignKeyCheckInSharedLock, Value: BoolToOnOff(vardef.DefTiDBForeignKeyCheckInSharedLock), Type: vardef.TypeBool, Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
+		if TiDBOptOn(normalizedValue) && !allowSetForeignKeyCheckInSharedLock() {
+			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBForeignKeyCheckInSharedLock, originalValue)
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
 		s.ForeignKeyCheckInSharedLock = TiDBOptOn(val)
 		return nil
+	}, GetSession: func(s *SessionVars) (string, error) {
+		return getForeignKeyCheckInSharedLockSession(s)
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		if s.GlobalVarsAccessor == nil {
+			return BoolToOnOff(vardef.DefTiDBForeignKeyCheckInSharedLock), nil
+		}
+		return s.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBForeignKeyCheckInSharedLock)
 	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableForeignKey, Value: BoolToOnOff(true), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		vardef.EnableForeignKey.Store(TiDBOptOn(val))
@@ -2852,6 +2964,10 @@ var defaultSysVars = []*SysVar{
 		s.DisableHashJoin = !TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableFullOuterJoin, Value: BoolToOnOff(vardef.DefTiDBEnableFullOuterJoin), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableFullOuterJoin = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableIndexMergeJoin, Value: BoolToOnOff(vardef.DefTiDBEnableIndexMergeJoin), Hidden: true, Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableIndexMergeJoin = TiDBOptOn(val)
 		return nil
@@ -3028,6 +3144,10 @@ var defaultSysVars = []*SysVar{
 		s.MaxPagingSize = tidbOptPositiveInt32(val, vardef.DefMaxPagingSize)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPagingSizeBytes, Value: strconv.Itoa(vardef.DefPagingSizeBytes), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, IsHintUpdatableVerified: true, SetSession: func(s *SessionVars, val string) error {
+		s.PagingSizeBytes = int(TidbOptInt64(val, int64(vardef.DefPagingSizeBytes)))
+		return nil
+	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBMemoryDebugModeMinHeapInUse, Value: strconv.Itoa(0), Type: vardef.TypeInt, MinValue: math.MinInt64, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.MemoryDebugModeMinHeapInUse = TidbOptInt64(val, 0)
 		return nil
@@ -3139,10 +3259,27 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
-		Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMergePartitionStatsConcurrency, Value: strconv.FormatInt(vardef.DefTiDBMergePartitionStatsConcurrency, 10), Type: vardef.TypeInt, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency,
-		SetSession: func(s *SessionVars, val string) error {
-			s.AnalyzePartitionMergeConcurrency = TidbOptInt(val, vardef.DefTiDBMergePartitionStatsConcurrency)
+		Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMergePartitionStatsConcurrency, Value: "1", Type: vardef.TypeInt, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency,
+		SetSession: func(_ *SessionVars, _ string) error {
+			// Deprecated: do nothing.
 			return nil
+		},
+		// Both read paths return "1" unconditionally. Validation alone is
+		// not enough: session.GetGlobalSysVar() applies only
+		// ValidateFromType on the persisted value (skipping the
+		// Validation callback), so a cluster upgraded from an older
+		// TiDB with a non-1 value persisted in mysql.global_variables
+		// would otherwise read that stale value.
+		GetSession: func(_ *SessionVars) (string, error) { return "1", nil },
+		GetGlobal:  func(_ context.Context, _ *SessionVars) (string, error) { return "1", nil },
+		Validation: func(vars *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
+			if normalizedValue != "1" {
+				// Use errWarnDeprecatedSyntax (MySQL code 1287) for
+				// consistency with other deprecated sysvar warnings
+				// such as tidb_index_serial_scan_concurrency.
+				vars.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGen("tidb_merge_partition_stats_concurrency is deprecated: the merge no longer runs concurrently, so this setting has no effect. Kept for backward compatibility."))
+			}
+			return "1", nil
 		},
 	},
 	{
@@ -3872,6 +4009,28 @@ var defaultSysVars = []*SysVar{
 			return (*SetPDClientDynamicOption.Load())(vardef.TiDBTSOClientRPCMode, val)
 		},
 	},
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedJinaAIAPIKey, vardef.EmbedJinaAPIKey.Load, vardef.EmbedJinaAPIKey.Swap),
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedOpenAIAPIKey, vardef.EmbedOpenAIAPIKey.Load, vardef.EmbedOpenAIAPIKey.Swap),
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBExpEmbedOpenAIAPIBase, Value: vardef.DefTiDBEmbedOpenAIAPIBase, Type: vardef.TypeStr, AllowEmpty: true,
+		SetGlobal: func(_ context.Context, _ *SessionVars, value string) error {
+			normalized, err := NormalizeOpenAIEmbeddingAPIBase(value)
+			if err != nil {
+				return err
+			}
+			oldValue := vardef.EmbedOpenAIAPIBase.Swap(normalized)
+			if resolveOpenAIEmbeddingBaseURL(oldValue) != resolveOpenAIEmbeddingBaseURL(normalized) {
+				vardef.EmbeddingConfigVersion.Inc()
+			}
+			return nil
+		},
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return GetOpenAIEmbeddingBaseURL(), nil
+		},
+	},
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedCohereAPIKey, vardef.EmbedCohereAPIKey.Load, vardef.EmbedCohereAPIKey.Swap),
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedHuggingFaceAPIKey, vardef.EmbedHuggingFaceAPIKey.Load, vardef.EmbedHuggingFaceAPIKey.Swap),
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedNvidiaNIMAPIKey, vardef.EmbedNvidiaNIMAPIKey.Load, vardef.EmbedNvidiaNIMAPIKey.Swap),
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedGeminiAPIKey, vardef.EmbedGeminiAPIKey.Load, vardef.EmbedGeminiAPIKey.Swap),
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio, Value: strconv.FormatFloat(vardef.DefTiDBCircuitBreakerPDMetaErrorRateRatio, 'f', -1, 64),
 		Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
@@ -3994,6 +4153,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableCachePrepareStmt, Value: BoolToOnOff(vardef.DefEnableCachePrepareStmt), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableCachePrepareStmt = TiDBOptOn(val)
 		return nil
+	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableConnectionEventLog, Value: BoolToOnOff(vardef.DefTiDBEnableConnectionEventLog), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+		vardef.EnableConnectionEventLog.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return BoolToOnOff(vardef.EnableConnectionEventLog.Load()), nil
 	}},
 }
 

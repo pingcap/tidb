@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -55,7 +57,11 @@ type LogicalPlan struct {
 	Stmt              string
 	EligibleInstances []*serverinfo.ServerInfo
 	ChunkMap          map[int32][]importer.Chunk
-	Logger            *zap.Logger
+	PrepareMode       proto.PrepareMode
+	// PreparedChunkMapExternalPath points to externally persisted chunk
+	// metadata produced during framework prepare stage.
+	PreparedChunkMapExternalPath string
+	Logger                       *zap.Logger
 
 	// summary for next step
 	summary importer.StepSummary
@@ -65,17 +71,19 @@ type LogicalPlan struct {
 func (p *LogicalPlan) GetTaskExtraParams() proto.ExtraParams {
 	return proto.ExtraParams{
 		ManualRecovery: p.Plan.ManualRecovery,
+		PrepareMode:    p.PrepareMode,
 	}
 }
 
 // ToTaskMeta converts the logical plan to task meta.
 func (p *LogicalPlan) ToTaskMeta() ([]byte, error) {
 	taskMeta := TaskMeta{
-		JobID:             p.JobID,
-		Plan:              p.Plan,
-		Stmt:              p.Stmt,
-		EligibleInstances: p.EligibleInstances,
-		ChunkMap:          p.ChunkMap,
+		JobID:                    p.JobID,
+		Plan:                     p.Plan,
+		Stmt:                     p.Stmt,
+		EligibleInstances:        p.EligibleInstances,
+		ChunkMap:                 p.ChunkMap,
+		PreparedMetaExternalPath: p.PreparedChunkMapExternalPath,
 	}
 	return json.Marshal(taskMeta)
 }
@@ -91,6 +99,7 @@ func (p *LogicalPlan) FromTaskMeta(bs []byte) error {
 	p.Stmt = taskMeta.Stmt
 	p.EligibleInstances = taskMeta.EligibleInstances
 	p.ChunkMap = taskMeta.ChunkMap
+	p.PreparedChunkMapExternalPath = taskMeta.PreparedMetaExternalPath
 	return nil
 }
 
@@ -343,7 +352,11 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error) {
 	plan, stmt := &p.Plan, p.Stmt
 	idAlloc := kv.NewPanickingAllocators(plan.TableInfo.SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, plan.TableInfo)
+	tbl, err := tables.TableFromMetaWithCollate(
+		plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
+		idAlloc,
+		plan.TableInfo,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -361,7 +374,13 @@ func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error
 
 func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
 	var chunkMap map[int32][]importer.Chunk
-	if len(p.ChunkMap) > 0 {
+	if p.PreparedChunkMapExternalPath != "" {
+		var err error
+		chunkMap, err = readPreparedChunkMap(pCtx.Ctx, &p.Plan, p.PreparedChunkMapExternalPath)
+		if err != nil {
+			return nil, err
+		}
+	} else if len(p.ChunkMap) > 0 {
 		chunkMap = p.ChunkMap
 	} else {
 		controller, err2 := buildControllerForPlan(p)
@@ -401,14 +420,33 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 	return importSpecs, nil
 }
 
-func skipMergeSort(kvGroup string, stats []globalsort.MultipleFilesStat, concurrency int) bool {
+func readPreparedChunkMap(
+	ctx context.Context,
+	plan *importer.Plan,
+	externalPath string,
+) (map[int32][]importer.Chunk, error) {
+	store, err := importer.GetSortStore(ctx, plan.CloudStorageURI)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	preparedChunkMapMeta := PreparedMeta{
+		BaseExternalMeta: globalsort.BaseExternalMeta{ExternalPath: externalPath},
+	}
+	if err := preparedChunkMapMeta.ReadJSONFromExternalStorage(ctx, store, &preparedChunkMapMeta); err != nil {
+		return nil, err
+	}
+	return preparedChunkMapMeta.ChunkMap, nil
+}
+
+func skipMergeSort(kvGroup string, stats []simplesst.MultipleFilesStat, concurrency int) bool {
 	failpoint.Inject("forceMergeSort", func(val failpoint.Value) {
 		in := val.(string)
 		if in == kvGroup || in == "*" {
 			failpoint.Return(false)
 		}
 	})
-	return globalsort.GetMaxOverlappingTotal(stats) <= globalsort.GetAdjustedMergeSortOverlapThreshold(concurrency)
+	return simplesst.GetMaxOverlappingTotal(stats) <= simplesst.GetAdjustedMergeSortOverlapThreshold(concurrency)
 }
 
 func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {

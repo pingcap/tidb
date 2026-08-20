@@ -268,6 +268,7 @@ func (c *MPPClient) EstablishMPPConns(param kv.EstablishMPPConnsParam) (*tikvrpc
 		if stream != nil {
 			stream.Close()
 		}
+		logutil.BgLogger().Warn("establish mpp connection meet error", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId), zap.Int64("mpp-version", taskMeta.MppVersion))
 		if config.GetGlobalConfig().DisaggregatedTiFlash && !config.GetGlobalConfig().UseAutoScaler {
 			c.store.GetRegionCache().InvalidateTiFlashComputeStores()
 		}

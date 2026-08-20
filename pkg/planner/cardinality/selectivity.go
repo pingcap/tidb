@@ -108,6 +108,13 @@ func Selectivity(
 			// column stats can be ignored.
 			continue
 		}
+		if col.RetType != nil && col.RetType.EvalType() == types.ETJson {
+			// JSON columns have no column statistics (ANALYZE builds none; only
+			// multi-valued indexes over them are analyzed), so they contribute no
+			// selectivity. Skip them to avoid recording a meaningless, stats-load-
+			// timing-dependent status that surfaces as stats:partial[<json col>:...].
+			continue
+		}
 		id := col.UniqueID
 		colStats := coll.GetCol(id)
 		if colStats != nil {
@@ -179,9 +186,21 @@ func Selectivity(
 			for i := 0; i < len(idxCols) && i < len(idxStats.Info.Columns); i++ {
 				lengths = append(lengths, idxStats.Info.Columns[i].Length)
 			}
-			// If the found columns are more than the columns held by the index. We are appending the int pk to the tail of it.
-			// When storing index data to key-value store, we use (idx_col1, ...., idx_coln, handle_col) as its key.
-			if len(idxCols) > len(idxStats.Info.Columns) {
+			// The found columns can outnumber the columns held by the index, because the handle is
+			// appended to the index key when storing index data to key-value store:
+			// (idx_col1, ...., idx_coln, handle_col1, ..., handle_colm). That is one column for an
+			// int handle and possibly several for a clustered common handle. Every appended column
+			// needs its own length entry, because range building indexes lengths in step with the
+			// columns.
+			//
+			// The appended columns are given the full length even when the clustered index declares
+			// a prefix for them. These lengths only shape the ranges built here for estimation -
+			// the ranges the storage layer scans come from path.IdxColLens, which fillIndexPath
+			// fills from the primary key prefix metadata, and getMaskAndRanges takes those ranges
+			// verbatim whenever a filled path exists. The appended dimensions are estimated from
+			// the handle columns' own column statistics, which hold untruncated values, so bounds
+			// truncated to the stored prefix would be compared against the wrong domain.
+			for range len(idxCols) - len(lengths) {
 				lengths = append(lengths, types.UnspecifiedLength)
 			}
 			maskCovered, ranges, partCover, minAccessCondsForDNFCond, err :=
@@ -189,7 +208,7 @@ func Selectivity(
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			countResult, err := GetRowCountByIndexRanges(ctx, coll, id, ranges, nil)
+			countResult, err := GetRowCountByIndexRanges(ctx, coll, id, ranges, idxCols)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -997,7 +1016,14 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	// The buckets lower bounds are used as random samples and are regarded equally.
 	if hist != nil && histTotalCnt > 0 {
 		selected = selected[:0]
-		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, []expression.Expression{filters}, chunk.NewIterator4Chunk(hist.Bounds), selected)
+		// hist.Bounds is a stats-cache chunk that can be shared by planner sessions.
+		// VectorizedFilter reads the input chunk's existing Sel as a caller mask
+		// and also rewrites Sel while evaluating the filter. Use a shallow chunk
+		// header copy so the bound column data is reused, but the evaluation owns
+		// its Sel state; then clear that Sel to sample all histogram bounds.
+		histBounds := hist.Bounds.Prune([]int{0})
+		histBounds.SetSel(nil)
+		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, []expression.Expression{filters}, chunk.NewIterator4Chunk(histBounds), selected)
 		if err != nil {
 			return false, 0, err
 		}

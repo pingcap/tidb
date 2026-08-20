@@ -24,6 +24,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
@@ -42,16 +43,16 @@ func TestReadAllDataBasic(t *testing.T) {
 	memStore := objstore.NewMemStorage()
 	memSizeLimit := (rand.Intn(10) + 1) * 400
 
-	var summary *WriterSummary
-	w := NewWriterBuilder().
+	var summary *simplesst.WriterSummary
+	w := simplesst.NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(uint64(memSizeLimit)).
 		SetBlockSize(memSizeLimit).
-		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+		SetOnCloseFunc(func(s *simplesst.WriterSummary) { summary = s }).
 		Build(memStore, "/test", "0")
 
-	writer := NewEngineWriter(w)
+	writer := simplesst.NewEngineWriter(w)
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)
 	for i := range kvCnt {
@@ -82,12 +83,12 @@ func TestReadAllOneFile(t *testing.T) {
 	memStore := objstore.NewMemStorage()
 	memSizeLimit := (rand.Intn(10) + 1) * 400
 
-	var summary *WriterSummary
-	w := NewWriterBuilder().
+	var summary *simplesst.WriterSummary
+	w := simplesst.NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(uint64(memSizeLimit)).
-		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+		SetOnCloseFunc(func(s *simplesst.WriterSummary) { summary = s }).
 		BuildOneFile(memStore, "/test", "0")
 
 	w.InitPartSizeAndLogger(ctx, int64(5*size.MB))
@@ -116,17 +117,17 @@ func TestReadAllOneFile(t *testing.T) {
 func TestReadLargeFile(t *testing.T) {
 	ctx := context.Background()
 	memStore := objstore.NewMemStorage()
-	backup := ConcurrentReaderBufferSizePerConc
+	backup := simplesst.ConcurrentReaderBufferSizePerConc
 	t.Cleanup(func() {
-		ConcurrentReaderBufferSizePerConc = backup
+		simplesst.ConcurrentReaderBufferSizePerConc = backup
 	})
-	ConcurrentReaderBufferSizePerConc = 512 * 1024
+	simplesst.ConcurrentReaderBufferSizePerConc = 512 * 1024
 
-	var summary *WriterSummary
-	w := NewWriterBuilder().
+	var summary *simplesst.WriterSummary
+	w := simplesst.NewWriterBuilder().
 		SetPropSizeDistance(128*1024).
 		SetPropKeysDistance(1000).
-		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+		SetOnCloseFunc(func(s *simplesst.WriterSummary) { summary = s }).
 		BuildOneFile(memStore, "/test", "0")
 
 	w.InitPartSizeAndLogger(ctx, int64(5*size.MB))
@@ -150,13 +151,13 @@ func TestReadLargeFile(t *testing.T) {
 	)
 	largeBlockBufPool := membuf.NewPool(
 		membuf.WithBlockNum(0),
-		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+		membuf.WithBlockSize(simplesst.ConcurrentReaderBufferSizePerConc),
 	)
 	output := &memKVsAndBuffers{}
 	startKey := []byte("key000000")
 	maxKey := []byte("key004998")
 	endKey := []byte("key004999")
-	readRanges, err := getReadRangeFromProps(ctx, [][]byte{startKey, endKey}, stats, memStore)
+	readRanges, err := simplesst.GetReadRangeFromProps(ctx, [][]byte{startKey, endKey}, stats, memStore)
 	require.NoError(t, err)
 
 	err = readAllData(
@@ -175,11 +176,11 @@ func TestReadKVFilesAsync(t *testing.T) {
 	ctx := context.Background()
 	memStore := objstore.NewMemStorage()
 
-	var summary *WriterSummary
-	w := NewWriterBuilder().
+	var summary *simplesst.WriterSummary
+	w := simplesst.NewWriterBuilder().
 		SetBlockSize(units.KiB).
 		SetMemorySizeLimit(units.KiB).
-		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+		SetOnCloseFunc(func(s *simplesst.WriterSummary) { summary = s }).
 		Build(memStore, "/test", "0")
 
 	const kvCnt = 100
