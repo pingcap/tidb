@@ -16,6 +16,7 @@ use super::*;
 use tidb_ast::CiString;
 use tidb_datatype::FieldTypeCode;
 use tidb_expr::column::Column;
+use tidb_expr::constant::Constant;
 use tidb_expr::scalar_function::ScalarFunction;
 pub(super) use tidb_expr::NoColumns;
 
@@ -25,11 +26,37 @@ fn long() -> FieldType {
     FieldType::new(FieldTypeCode::Long)
 }
 
+fn decimal(text: &str) -> Decimal {
+    let (value, error) = Decimal::parse_mysql(text);
+    assert_eq!(error, None, "invalid decimal fixture {text}");
+    value
+}
+
+#[test]
+fn decimal_residual_multiply_preserves_mysql_hidden_scale() {
+    let average = Decimal::from_int(100)
+        .div_mysql(&Decimal::from_int(4), 4)
+        .expect("nonzero divisor");
+    let factor = decimal("0.2");
+
+    // `div_mysql` retains whole base-1e9 fraction words behind the visible
+    // scale. The fast predicate must still use the bounded SQL multiplication
+    // API and compare the same value as the expression evaluator.
+    assert!(decimal_mul_lt_mysql(&decimal("4.99999"), &factor, &average,).unwrap());
+    assert!(!decimal_mul_lt_mysql(&decimal("5.00000"), &factor, &average,).unwrap());
+}
+
 fn schema_of(width: usize) -> Schema {
+    schema_with_types(&vec![long(); width])
+}
+
+fn schema_with_types(types: &[FieldType]) -> Schema {
     Schema::new(
-        (0..width)
-            .map(|i| {
-                let mut column = Column::new(i as i64 + 1, long());
+        types
+            .iter()
+            .enumerate()
+            .map(|(i, field_type)| {
+                let mut column = Column::new(i as i64 + 1, field_type.clone());
                 column.index = i as i64;
                 column
             })
@@ -85,8 +112,12 @@ struct RowSource {
 
 impl RowSource {
     fn new(rows: Vec<Vec<Datum>>, width: usize) -> Self {
+        Self::with_types(rows, &vec![long(); width])
+    }
+
+    fn with_types(rows: Vec<Vec<Datum>>, types: &[FieldType]) -> Self {
         RowSource {
-            meta: ExecutorMeta::new(schema_of(width), 0, CHUNK, CHUNK),
+            meta: ExecutorMeta::new(schema_with_types(types), 0, CHUNK, CHUNK),
             rows,
             cursor: 0,
         }
@@ -184,6 +215,107 @@ pub(super) fn join_with_memory(
     )
 }
 
+fn join_with_types(
+    conditions: Vec<Expression>,
+    left: Vec<Vec<Datum>>,
+    left_types: &[FieldType],
+    right: Vec<Vec<Datum>>,
+    right_types: &[FieldType],
+) -> JoinExec<NoColumns> {
+    let output_types = left_types
+        .iter()
+        .chain(right_types)
+        .cloned()
+        .collect::<Vec<_>>();
+    JoinExec::new(
+        ExecutorMeta::new(schema_with_types(&output_types), 1, CHUNK, CHUNK),
+        JoinKind::Inner,
+        conditions,
+        Box::new(RowSource::with_types(left, left_types)),
+        Box::new(RowSource::with_types(right, right_types)),
+        NoColumns,
+        StatementMemory::default(),
+    )
+}
+
+fn run_datums(join: &mut JoinExec<NoColumns>) -> Vec<Vec<Datum>> {
+    join.open().unwrap();
+    let types = join.ret_field_types().to_vec();
+    let mut out = Vec::new();
+    let mut req = join.new_chunk();
+    loop {
+        join.next(&mut req).unwrap();
+        if req.num_rows() == 0 {
+            break;
+        }
+        for row in 0..req.num_rows() {
+            out.push(req.get_row(row).get_datum_row(&types));
+        }
+    }
+    join.close().unwrap();
+    out
+}
+
+#[test]
+fn decimal_residual_fast_path_matches_general_join_evaluator() {
+    let decimal_type = FieldType::new(FieldTypeCode::NewDecimal);
+    let column = |index: usize, field_type: FieldType| {
+        let mut column = Column::new(index as i64 + 1, field_type);
+        column.index = index as i64;
+        Expression::Column(column)
+    };
+    let residual = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("lt"),
+        long(),
+        vec![
+            column(1, decimal_type.clone()),
+            Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("mul"),
+                decimal_type.clone(),
+                vec![
+                    Expression::Constant(Constant::new(
+                        Datum::Decimal(decimal("0.2")),
+                        decimal_type.clone(),
+                    )),
+                    column(3, decimal_type.clone()),
+                ],
+            )),
+        ],
+    ));
+    let conditions = vec![eq_on(0, 0, 2), residual];
+    let left = vec![
+        vec![Datum::Int(1), Datum::Decimal(decimal("3.00"))],
+        vec![Datum::Int(1), Datum::Decimal(decimal("12.00"))],
+    ];
+    let right = vec![vec![Datum::Int(1), Datum::Decimal(decimal("25.00"))]];
+    let types = [long(), decimal_type];
+
+    let mut fast = join_with_types(
+        conditions.clone(),
+        left.clone(),
+        &types,
+        right.clone(),
+        &types,
+    );
+    assert!(fast.residual_decimal_mul_lt.is_some());
+    let fast_rows = run_datums(&mut fast);
+
+    let mut general = join_with_types(conditions, left, &types, right, &types);
+    general.residual_decimal_mul_lt = None;
+    let general_rows = run_datums(&mut general);
+
+    assert_eq!(fast_rows, general_rows);
+    assert_eq!(
+        fast_rows,
+        vec![vec![
+            Datum::Int(1),
+            Datum::Decimal(decimal("3.00")),
+            Datum::Int(1),
+            Datum::Decimal(decimal("25.00")),
+        ]]
+    );
+}
+
 /// Drains a join to completion, exactly as a caller does: repeated
 /// `next()` until an empty chunk.
 pub(super) fn run(join: &mut JoinExec<NoColumns>) -> Vec<Vec<i64>> {
@@ -258,6 +390,123 @@ fn hash_path_matches_the_nested_loop_row_for_row() {
     }
 }
 
+/// Go hash join v2 may build the preserved side of an outer join. Matches are
+/// emitted while the non-preserved side probes, then unmatched build rows are
+/// emitted by scanning the row table. Both orientations must still produce
+/// the same SQL result as the nested-loop reference.
+#[test]
+fn outer_hash_join_can_build_the_preserved_side() {
+    let cases = [
+        (
+            JoinKind::Left,
+            true,
+            vec![
+                vec![1, 10, 1, 100],
+                vec![1, 11, 1, 100],
+                vec![1, 10, 1, 101],
+                vec![1, 11, 1, 101],
+                vec![2, 20, -1, -1],
+                vec![-1, 30, -1, -1],
+            ],
+        ),
+        (
+            JoinKind::Right,
+            false,
+            vec![
+                vec![1, 10, 1, 100],
+                vec![1, 10, 1, 101],
+                vec![1, 11, 1, 100],
+                vec![1, 11, 1, 101],
+                vec![-1, -1, 3, 300],
+                vec![-1, -1, -1, 400],
+            ],
+        ),
+    ];
+
+    for (kind, build_is_left, expected) in cases {
+        let left = vec![
+            vec![Datum::Int(1), Datum::Int(10)],
+            vec![Datum::Int(2), Datum::Int(20)],
+            vec![Datum::Null, Datum::Int(30)],
+            vec![Datum::Int(1), Datum::Int(11)],
+        ];
+        let right = vec![
+            vec![Datum::Int(1), Datum::Int(100)],
+            vec![Datum::Int(3), Datum::Int(300)],
+            vec![Datum::Int(1), Datum::Int(101)],
+            vec![Datum::Null, Datum::Int(400)],
+        ];
+        let conditions = vec![eq_on(0, 0, 2)];
+        let mut hashed = join_of(kind, conditions.clone(), left.clone(), right.clone(), 2);
+        hashed.set_hash_build_is_left(build_is_left);
+        let actual = run(&mut hashed);
+        assert_eq!(actual, expected, "{kind:?} build_is_left={build_is_left}");
+
+        let mut looped = join_of(kind, conditions, left, right, 2);
+        looped.force_nested_loop();
+        let mut actual_set = actual;
+        let mut reference_set = run(&mut looped);
+        actual_set.sort();
+        reference_set.sort();
+        assert_eq!(
+            actual_set, reference_set,
+            "{kind:?} build_is_left={build_is_left}"
+        );
+    }
+}
+
+/// Go hash join v2 may also build the preserved left side of a semi or
+/// anti-semi join. The build rows are emitted only after the right probe has
+/// marked them, once for semi and only when unmarked for anti-semi.
+#[test]
+fn semi_hash_join_can_build_the_preserved_left_side() {
+    for kind in [JoinKind::Semi, JoinKind::AntiSemi] {
+        let left = fixture(200, 7);
+        let right = fixture(200, 5);
+        let conditions = vec![eq_on(0, 0, 2)];
+        let mut hashed = join_of(kind, conditions.clone(), left.clone(), right.clone(), 2);
+        hashed.set_hash_build_is_left(true);
+        assert!(hashed.hash_build_is_left());
+        let mut actual = run(&mut hashed);
+
+        let mut looped = join_of(kind, conditions, left, right, 2);
+        looped.force_nested_loop();
+        let mut expected = run(&mut looped);
+        actual.sort();
+        expected.sort();
+        assert_eq!(
+            actual, expected,
+            "{kind:?} with the preserved left side built"
+        );
+    }
+}
+
+#[test]
+fn preserved_build_row_is_matched_only_after_every_on_condition_passes() {
+    for (kind, build_is_left) in [(JoinKind::Left, true), (JoinKind::Right, false)] {
+        let left = vec![vec![Datum::Int(1), Datum::Int(10)]];
+        let right = vec![vec![Datum::Int(1), Datum::Int(20)]];
+        let conditions = vec![eq_on(0, 0, 2), eq_on(1, 1, 2)];
+
+        let mut hashed = join_of(kind, conditions.clone(), left.clone(), right.clone(), 2);
+        hashed.set_hash_build_is_left(build_is_left);
+        let actual = run(&mut hashed);
+
+        let mut looped = join_of(kind, conditions, left, right, 2);
+        looped.force_nested_loop();
+        assert_eq!(actual, run(&mut looped), "{kind:?}");
+        assert_eq!(
+            actual,
+            if kind == JoinKind::Left {
+                vec![vec![1, 10, -1, -1]]
+            } else {
+                vec![vec![-1, -1, 1, 20]]
+            },
+            "the equal hash key alone must not mark a preserved row"
+        );
+    }
+}
+
 /// The same, with a non-equi conjunct riding along: the hash table
 /// selects candidates on the equal condition, and the residue still has
 /// to reject the pairs it rejects.
@@ -312,7 +561,10 @@ fn ten_thousand_by_ten_thousand_is_linear_not_quadratic() {
 
     let evals = join.condition_evals();
     let nested_loop_evals = (rows * rows) as u64;
-    assert_eq!(evals, rows as u64, "one candidate pair per probe row");
+    assert_eq!(
+        evals, 0,
+        "pure equal conditions are enforced by the hash key"
+    );
     // Stated as a ratio so the assertion says what it means: at least
     // four orders of magnitude fewer, not a tuned constant.
     assert!(

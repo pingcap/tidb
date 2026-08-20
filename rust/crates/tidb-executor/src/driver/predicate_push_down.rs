@@ -64,7 +64,7 @@ use tidb_ast::{
     BinaryOp, Expr, Join, JoinNode, JoinType, TableRef, FLAG_HAS_AGGREGATE_FUNC, FLAG_HAS_SUBQUERY,
     FLAG_HAS_VARIABLE, FLAG_HAS_WINDOW_FUNC,
 };
-use tidb_datatype::FieldType;
+use tidb_datatype::{FieldType, FieldTypeCode};
 
 use super::{
     catalog::split_table_path,
@@ -77,7 +77,7 @@ use tidb_expr::rewriter::ColumnResolver;
 ///
 /// Empty for every caller that has no `WHERE` to offer -- a subquery built
 /// through [`super::from::build_join`] directly, or a `FROM` with no filter.
-pub(crate) type Offered<'a> = &'a [&'a Expr];
+pub(crate) type Offered<'a> = &'a [Expr];
 
 /// Predicates each base-table leaf may evaluate before its parent join.
 #[derive(Default)]
@@ -117,10 +117,7 @@ pub(crate) fn plan(
     else {
         return Plan::default();
     };
-    let mut inherited = Vec::new();
-    if let Some(predicate) = where_clause {
-        collect_conjuncts(predicate, &mut inherited);
-    }
+    let inherited = where_clause.map(extracted_conjuncts).unwrap_or_default();
     let mut plan = Plan::default();
     distribute_join(join, &inherited, &bindings, catalog, current_db, &mut plan);
     plan
@@ -135,9 +132,7 @@ fn distribute_join(
     plan: &mut Plan,
 ) {
     if join.right.is_none() && join.on.is_none() && join.using.is_empty() && !join.natural {
-        if let JoinNode::Join(inner) = &join.left {
-            distribute_join(inner, inherited, bindings, catalog, current_db, plan);
-        }
+        distribute_node(&join.left, inherited, bindings, catalog, current_db, plan);
         return;
     }
     let Some(right) = &join.right else {
@@ -302,7 +297,7 @@ fn derive_for_sides(
 /// predicate distribution. Variables and subqueries are rejected at the AST
 /// boundary as well: they can change between evaluations or own execution
 /// state, so evaluating the original predicate plus a pushed copy is unsound.
-fn safe_to_duplicate(expr: &Expr) -> bool {
+pub(crate) fn safe_to_duplicate(expr: &Expr) -> bool {
     const UNSAFE_FLAGS: u64 =
         FLAG_HAS_AGGREGATE_FUNC | FLAG_HAS_SUBQUERY | FLAG_HAS_VARIABLE | FLAG_HAS_WINDOW_FUNC;
     if expr.flags() & UNSAFE_FLAGS != 0 {
@@ -455,7 +450,10 @@ fn derive_not_null(
         });
         if nullable {
             out.push(Expr::Is {
-                expr: Box::new(Expr::Column(path.clone())),
+                expr: Box::new(Expr::Column(vec![
+                    binding.qualifier.clone(),
+                    column.clone(),
+                ])),
                 target: tidb_ast::IsTarget::Null,
                 not: true,
             });
@@ -480,10 +478,23 @@ fn bindings(node: &JoinNode, catalog: &Catalog, current_db: &str) -> Option<Vec<
     match node {
         JoinNode::Table(table) => {
             let (database, name) = split_table_path(&table.name, current_db).ok()?;
-            Some(vec![Binding {
-                qualifier: table.alias.clone().unwrap_or_else(|| name.to_owned()),
-                columns: catalog.get_in(database, name)?.column_list(),
-            }])
+            let qualifier = table.alias.clone().unwrap_or_else(|| name.to_owned());
+            let mut columns = catalog.get_in(database, name)?.column_list();
+            for (column, field_type) in &mut columns {
+                if super::merge_decision::physical_column_is_nullable(
+                    node,
+                    &super::merge_decision::RelColumn {
+                        relation: qualifier.clone(),
+                        column: column.clone(),
+                    },
+                    catalog,
+                    current_db,
+                ) == Some(false)
+                {
+                    field_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+                }
+            }
+            Some(vec![Binding { qualifier, columns }])
         }
         JoinNode::Join(join) => {
             let mut result = bindings(&join.left, catalog, current_db)?;
@@ -492,7 +503,33 @@ fn bindings(node: &JoinNode, catalog: &Catalog, current_db: &str) -> Option<Vec<
             }
             Some(result)
         }
-        JoinNode::Derived { .. } => None,
+        JoinNode::Derived {
+            subquery,
+            alias: Some(alias),
+            column_names,
+            ..
+        } => {
+            let mut names = super::from::derived_field_names_query(subquery)?;
+            if !column_names.is_empty() {
+                if column_names.len() != names.len() {
+                    return None;
+                }
+                names.clone_from(column_names);
+            }
+            // Side classification needs the derived relation's namespace even
+            // when this rule cannot push through its projection. Keep output
+            // types nullable here; a later physical boundary owns exact type
+            // inference and may safely eliminate redundant NOT NULL demands.
+            let columns = names
+                .into_iter()
+                .map(|name| (name, FieldType::new(FieldTypeCode::LongLong)))
+                .collect();
+            Some(vec![Binding {
+                qualifier: alias.clone(),
+                columns,
+            }])
+        }
+        JoinNode::Derived { alias: None, .. } => None,
     }
 }
 
@@ -533,7 +570,15 @@ fn column_paths(expr: &Expr) -> Vec<Vec<String>> {
     impl tidb_ast::Visitor for Collect {
         fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
             if let Some(Expr::Column(path)) = node.downcast_ref::<Expr>() {
-                self.0.push(path.clone());
+                // Go's `ScalarSubQueryExpr` embeds `expression.Constant`, so
+                // `ExtractColumns` does not assign it to either join child.
+                // Rust retains a scoped pseudo-column for resolution and
+                // EXPLAIN identity; keep that representation out of the
+                // physical relation set as well.
+                if !matches!(path.as_slice(), [scope, _] if scope == super::from::SCALAR_QUERY_SCOPE)
+                {
+                    self.0.push(path.clone());
+                }
             }
             false
         }
@@ -553,6 +598,57 @@ fn collect_conjuncts(expr: &Expr, out: &mut Vec<Expr>) {
     out.extend(borrowed.into_iter().cloned());
 }
 
+/// Go's expression rewriter lowers `BETWEEN` before logical predicate
+/// pushdown runs. Preserve that ordering so a bound shared by every DNF branch
+/// is visible to [`extract_filters_from_dnfs`].
+fn expand_between(expr: &Expr) -> Expr {
+    struct ExpandBetween;
+
+    impl tidb_ast::Visitor for ExpandBetween {
+        fn enter(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            false
+        }
+
+        fn leave(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expression) = node.downcast_mut::<Expr>() else {
+                return true;
+            };
+            let Expr::Between {
+                expr,
+                low,
+                high,
+                not,
+            } = expression
+            else {
+                return true;
+            };
+            let bounds = Expr::Binary(
+                BinaryOp::LogicAnd,
+                Box::new(Expr::Binary(
+                    BinaryOp::Ge,
+                    Box::new((**expr).clone()),
+                    Box::new((**low).clone()),
+                )),
+                Box::new(Expr::Binary(
+                    BinaryOp::Le,
+                    Box::new((**expr).clone()),
+                    Box::new((**high).clone()),
+                )),
+            );
+            *expression = if *not {
+                Expr::Unary(tidb_ast::UnaryOp::NotKeyword, Box::new(bounds))
+            } else {
+                bounds
+            };
+            true
+        }
+    }
+
+    let mut expanded = expr.clone();
+    tidb_ast::Visitable::accept(&mut expanded, &mut ExpandBetween);
+    expanded
+}
+
 fn flatten<'a>(expr: &'a Expr, op: BinaryOp, out: &mut Vec<&'a Expr>) {
     match strip_parens(expr) {
         Expr::Binary(found, left, right) if *found == op => {
@@ -563,7 +659,7 @@ fn flatten<'a>(expr: &'a Expr, op: BinaryOp, out: &mut Vec<&'a Expr>) {
     }
 }
 
-fn compose(op: BinaryOp, expressions: Vec<Expr>) -> Expr {
+pub(crate) fn compose(op: BinaryOp, expressions: Vec<Expr>) -> Expr {
     fn balanced(op: BinaryOp, expressions: &[Expr]) -> Expr {
         match expressions {
             [only] => only.clone(),
@@ -579,6 +675,75 @@ fn compose(op: BinaryOp, expressions: Vec<Expr>) -> Expr {
     }
     assert!(!expressions.is_empty(), "a derived predicate is nonempty");
     balanced(op, &expressions)
+}
+
+/// Go `expression.ExtractFiltersFromDNFs`: lift every CNF item present in
+/// every branch of a DNF, and leave the branch-specific residue as one OR.
+fn extract_filters_from_dnfs(mut conditions: Vec<Expr>) -> Vec<Expr> {
+    let mut extracted = Vec::new();
+    for index in (0..conditions.len()).rev() {
+        let mut branches = Vec::new();
+        flatten(&conditions[index], BinaryOp::LogicOr, &mut branches);
+        if branches.len() < 2 {
+            continue;
+        }
+
+        let mut common = Vec::new();
+        flatten(branches[0], BinaryOp::LogicAnd, &mut common);
+        let mut unique = Vec::with_capacity(common.len());
+        for candidate in common {
+            if !unique.contains(&candidate) {
+                unique.push(candidate);
+            }
+        }
+        let mut common = unique;
+        common.retain(|candidate| {
+            branches[1..].iter().all(|branch| {
+                let mut conjuncts = Vec::new();
+                flatten(branch, BinaryOp::LogicAnd, &mut conjuncts);
+                conjuncts.contains(candidate)
+            })
+        });
+        if common.is_empty() {
+            continue;
+        }
+
+        let mut only_extracted = false;
+        let mut residual_branches = Vec::with_capacity(branches.len());
+        for branch in branches {
+            let mut conjuncts = Vec::new();
+            flatten(branch, BinaryOp::LogicAnd, &mut conjuncts);
+            let residual = conjuncts
+                .into_iter()
+                .filter(|conjunct| !common.contains(conjunct))
+                .cloned()
+                .collect::<Vec<_>>();
+            if residual.is_empty() {
+                only_extracted = true;
+                break;
+            }
+            residual_branches.push(compose(BinaryOp::LogicAnd, residual));
+        }
+
+        let common = common.into_iter().cloned().collect::<Vec<_>>();
+        if only_extracted {
+            conditions.remove(index);
+        } else {
+            conditions[index] = compose(BinaryOp::LogicOr, residual_branches);
+        }
+        extracted.extend(common);
+    }
+    conditions.extend(extracted);
+    conditions
+}
+
+/// The logical CNF conditions Go exposes after common DNF filters are
+/// extracted. The source WHERE remains intact above the join.
+pub(crate) fn extracted_conjuncts(expr: &Expr) -> Vec<Expr> {
+    let expanded = expand_between(expr);
+    let mut conditions = Vec::new();
+    collect_conjuncts(&expanded, &mut conditions);
+    extract_filters_from_dnfs(conditions)
 }
 
 /// One display/selectivity expression for a leaf's condition list.
@@ -621,13 +786,12 @@ fn dedup(expressions: &mut Vec<Expr>) {
 }
 
 /// Splits `select`'s `WHERE` into the conjuncts eligible for pushdown.
-pub(crate) fn offered_conjuncts(where_clause: Option<&Expr>) -> Vec<&Expr> {
+pub(crate) fn offered_conjuncts(where_clause: Option<&Expr>) -> Vec<Expr> {
     let Some(expr) = where_clause else {
         return Vec::new();
     };
-    let mut conjuncts = Vec::new();
-    crate::plan_trace::collect_and(expr, &mut conjuncts);
-    conjuncts.retain(|c| column_equality(c).is_some());
+    let mut conjuncts = extracted_conjuncts(expr);
+    conjuncts.retain(|conjunct| column_equality(conjunct).is_some());
     conjuncts
 }
 
@@ -685,6 +849,5 @@ pub(crate) fn spanning_conjuncts<'a>(
             };
             (left_offset < left_width) != (right_offset < left_width)
         })
-        .copied()
         .collect()
 }

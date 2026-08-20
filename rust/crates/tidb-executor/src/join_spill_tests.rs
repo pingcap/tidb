@@ -49,7 +49,7 @@ fn inner_join(memory: StatementMemory) -> JoinExec<NoColumns> {
 /// A quota the build side cannot fit in, but which is still far larger
 /// than a single chunk -- so the spill has something to release and the
 /// read-path cancellation #289 describes is not what is being measured.
-const TIGHT_QUOTA_BYTES: i64 = 300 * 1024;
+const TIGHT_QUOTA_BYTES: i64 = 250 * 1024;
 
 fn tight_quota() -> StatementMemory {
     StatementMemory::new(TIGHT_QUOTA_BYTES, OomAction::Cancel, 1)
@@ -191,6 +191,42 @@ fn a_spilled_outer_join_pads_exactly_where_the_unspilled_one_does() {
     let mut tight = build(tight_quota());
     let spilled = run(&mut tight);
     assert!(tight.build_side_spilled());
+    assert_eq!(spilled, expected);
+}
+
+/// When the preserved side itself is the spilled build, matches are emitted
+/// during probe and misses during the final row-table scan. Both phases must
+/// read the same disk-backed row addresses as the in-memory control.
+#[test]
+fn a_spilled_preserved_build_side_scans_unmatched_rows() {
+    let build = |memory| {
+        let mut join = join_with_memory(
+            JoinKind::Left,
+            vec![eq_on(0, 0, 2)],
+            fixture(BUILD_ROWS, BUILD_KEYS),
+            fixture(PROBE_ROWS, BUILD_KEYS),
+            2,
+            memory,
+        );
+        join.set_hash_build_is_left(true);
+        join
+    };
+    let mut roomy = build(StatementMemory::default());
+    let expected = run(&mut roomy);
+    assert!(!roomy.build_side_spilled());
+
+    let mut looped = build(StatementMemory::default());
+    looped.force_nested_loop();
+    assert_eq!(
+        as_multiset(expected.clone()),
+        as_multiset(run(&mut looped)),
+        "the preserved-build hash path must agree with the nested loop"
+    );
+
+    let mut tight = build(tight_quota());
+    let spilled = run(&mut tight);
+    assert!(tight.build_side_spilled());
+    assert!(tight.spilled_bytes() > 0);
     assert_eq!(spilled, expected);
 }
 

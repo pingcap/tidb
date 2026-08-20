@@ -1519,6 +1519,14 @@ impl KvTable {
         self.columns.len() - self.hidden_columns
     }
 
+    /// Columns Go's logical `DataSource` allocates before appending its
+    /// synthetic handle and commit-ts columns. Unlike user-facing wildcard
+    /// expansion, this includes hidden expression-index columns.
+    #[must_use]
+    pub(crate) fn logical_data_source_column_count(&self) -> usize {
+        self.columns.len()
+    }
+
     /// Whether the column at `offset` is hidden.
     #[must_use]
     pub fn is_hidden(&self, offset: usize) -> bool {

@@ -25,7 +25,24 @@ use super::*;
 
 pub(crate) struct DecorrelatedWhere {
     pub(crate) source: Box<dyn Executor>,
+    pub(crate) scope: FromScope,
     pub(crate) residual: Option<tidb_ast::Expr>,
+    pub(crate) delivered: crate::driver::from::Delivered,
+    pub(crate) semi_join_count: usize,
+    /// The first semi join's left Projection absorbed the enclosing join
+    /// reorder's written-schema restoration.
+    pub(crate) consumed_outer_projection: bool,
+}
+
+pub(crate) fn has_top_level_exists(predicate: Option<&tidb_ast::Expr>) -> bool {
+    let Some(predicate) = predicate else {
+        return false;
+    };
+    let mut conjuncts = Vec::new();
+    crate::plan_trace::collect_and(predicate, &mut conjuncts);
+    conjuncts
+        .into_iter()
+        .any(|conjunct| exists(conjunct).is_some())
 }
 
 /// Replaces each eligible top-level EXISTS conjunct with a semi join and
@@ -35,15 +52,193 @@ pub(crate) fn decorrelate_where(
     mut source: Box<dyn Executor>,
     outer: &FromScope,
     predicate: &tidb_ast::Expr,
+    select: &tidb_ast::SelectStmt,
+    mut delivered: crate::driver::from::Delivered,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    outer_rows_hint: Option<f64>,
+    outer_projection: Option<&super::agg_select::JoinOutputProjection>,
     mut trace: Option<&mut PlanTrace>,
 ) -> Result<DecorrelatedWhere, DriverError> {
     let mut conjuncts = Vec::new();
     crate::plan_trace::collect_and(predicate, &mut conjuncts);
     let mut residual = Vec::new();
 
+    let mut physical_conjuncts = Vec::new();
+    crate::plan_trace::collect_and(
+        select.where_clause.as_ref().unwrap_or(predicate),
+        &mut physical_conjuncts,
+    );
+    let eligible = physical_conjuncts
+        .iter()
+        .enumerate()
+        .filter_map(|(index, conjunct)| {
+            let (query, not) = exists(conjunct)?;
+            Some((index, query, not))
+        })
+        .collect::<Vec<_>>();
+    if !eligible.is_empty() {
+        let mut prepared = Vec::with_capacity(eligible.len());
+        for (target, query, not) in &eligible {
+            let Some(subquery) = prepare(query, outer, catalog, current_db, ctx)? else {
+                prepared.clear();
+                break;
+            };
+            prepared.push((*target, subquery, *not));
+        }
+        if let Some(outer_from) = select
+            .from
+            .as_ref()
+            .filter(|_| prepared.len() == eligible.len())
+        {
+            let semi_join_count = prepared.len();
+            let local = physical_conjuncts
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| !eligible.iter().any(|(target, ..)| target == index))
+                .map(|(_, conjunct)| (*conjunct).clone())
+                .collect::<Vec<_>>();
+            let pending_local = conjuncts
+                .iter()
+                .filter(|conjunct| exists(conjunct).is_none())
+                .map(|conjunct| (*conjunct).clone())
+                .collect::<Vec<_>>();
+            let local_where = crate::driver::predicate_push_down::combined(&local);
+            // Go's Apply decorrelation starts from the preserved DataSource
+            // after its ordinary local predicates. A candidate built from the
+            // original SELECT may already include the semi predicate's
+            // fallback selectivity (q4), while a scalar-subquery predicate
+            // may only be represented by the candidate (q22). Prefer the
+            // loaded-statistics local count, then Go's outer logical receipt,
+            // and only then the physical candidate.
+            let local_outer_rows = crate::driver::access::select_predicate_stats_rows(
+                select,
+                local_where.as_ref(),
+                catalog,
+                current_db,
+                outer,
+            );
+            let candidate_outer_rows = delivered.candidate.as_ref().map(|candidate| {
+                tidb_planner::candidate_cost::evaluate(
+                    candidate,
+                    &tidb_planner::candidate_cost::CostEnv::default(),
+                    tidb_planner::task_type::TaskType::Root,
+                )
+                .rows
+            });
+            let initial_outer_rows = local_outer_rows
+                .or(outer_rows_hint)
+                .or(candidate_outer_rows);
+            let mut logical_outer_rows = initial_outer_rows;
+            let mut final_residual = local_where.clone();
+            let mut physical_outer_scope = outer.clone();
+            let mut consumed_outer_projection = false;
+            for (position, (_, prepared, not)) in prepared.into_iter().enumerate() {
+                let physical_join = tidb_ast::Join {
+                    left: tidb_ast::JoinNode::Join(Box::new(outer_from.clone())),
+                    right: Some(tidb_ast::JoinNode::Join(Box::new(
+                        prepared
+                            .select
+                            .from
+                            .as_ref()
+                            .expect("prepared SELECT has FROM")
+                            .clone(),
+                    ))),
+                    tp: tidb_ast::JoinType::Cross,
+                    straight: false,
+                    on: crate::driver::predicate_push_down::combined(
+                        &prepared
+                            .conditions
+                            .iter()
+                            .map(|condition| (*condition).clone())
+                            .collect::<Vec<_>>(),
+                    ),
+                    using: Vec::new(),
+                    natural: false,
+                    explicit_parens: false,
+                };
+                let mut physical_select = select.clone();
+                physical_select.from = Some(physical_join.clone());
+                physical_select.where_clause = local_where.clone();
+                let offered = crate::driver::predicate_push_down::offered_conjuncts(
+                    physical_select.where_clause.as_ref(),
+                );
+                let pushdown = crate::driver::predicate_push_down::plan(
+                    &physical_join,
+                    physical_select.where_clause.as_ref(),
+                    catalog,
+                    current_db,
+                );
+                let wanted = crate::driver::leaf_demand::LeafDemand::of_select(&physical_select);
+                let output_wanted =
+                    crate::driver::leaf_demand::LeafDemand::of_select_output(&physical_select);
+                let Some(rows) = crate::driver::join_reorder::row_source(
+                    &physical_join,
+                    physical_select.where_clause.as_ref(),
+                    catalog,
+                    current_db,
+                    ctx,
+                ) else {
+                    break;
+                };
+                let local_join_rows =
+                    crate::driver::join_search::estimated_rows(&physical_join, Some(&rows));
+                let next_outer_rows = logical_outer_rows
+                    .or_else(|| local_join_rows.map(|estimated| estimated.left))
+                    .map(|left| left * crate::plan_trace::SELECTIVITY_FACTOR);
+                let demand = crate::driver::leaf_demand::FromDemand {
+                    offered: &offered,
+                    pushdown: Some(&pushdown),
+                    columns: Some(&wanted),
+                    output_columns: Some(&output_wanted),
+                    rows: Some(&rows),
+                    join_hints: None,
+                    physical_source_names: false,
+                    plan_columns: &[],
+                    runtime_lookup: None,
+                };
+                let (planned, planned_scope, planned_delivered) =
+                    crate::driver::from::build_semi_join(
+                        &physical_join,
+                        source,
+                        physical_outer_scope,
+                        delivered,
+                        catalog,
+                        current_db,
+                        ctx,
+                        trace.as_deref_mut(),
+                        Some(&physical_select),
+                        demand,
+                        not,
+                        if position == 0 {
+                            pending_local.clone()
+                        } else {
+                            Vec::new()
+                        },
+                        (position == 0).then_some(outer_projection).flatten(),
+                        logical_outer_rows,
+                        initial_outer_rows,
+                    )?;
+                consumed_outer_projection |= position == 0 && outer_projection.is_some();
+                source = planned;
+                physical_outer_scope = planned_scope;
+                delivered = planned_delivered;
+                logical_outer_rows = next_outer_rows;
+                final_residual = rows.residual_where();
+            }
+            return Ok(DecorrelatedWhere {
+                source,
+                scope: physical_outer_scope,
+                residual: final_residual,
+                delivered,
+                semi_join_count,
+                consumed_outer_projection,
+            });
+        }
+    }
+
+    let mut semi_join_count = 0;
     for conjunct in conjuncts {
         let Some((query, not)) = exists(conjunct) else {
             residual.push(conjunct.clone());
@@ -104,6 +299,8 @@ pub(crate) fn decorrelate_where(
             ctx.clone(),
             ctx.statement_memory(),
         ));
+        semi_join_count += 1;
+        delivered.clear();
         if let Some(trace) = trace.as_deref_mut() {
             trace
                 .semi_join(
@@ -120,7 +317,11 @@ pub(crate) fn decorrelate_where(
 
     Ok(DecorrelatedWhere {
         source,
+        scope: outer.clone(),
         residual: crate::driver::predicate_push_down::combined(&residual),
+        delivered,
+        semi_join_count,
+        consumed_outer_projection: false,
     })
 }
 

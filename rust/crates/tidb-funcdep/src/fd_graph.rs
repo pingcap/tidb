@@ -555,7 +555,7 @@ impl FdSet {
 
     /// Go `FindPrimaryKey`: a strict determinant whose closure covers every
     /// column currently represented by the relation.
-    fn primary_key(&self) -> Option<ColSet> {
+    pub(crate) fn primary_key(&self) -> Option<ColSet> {
         let all_cols = self.all_cols();
         self.edges
             .iter()

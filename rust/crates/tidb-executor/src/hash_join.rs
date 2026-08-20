@@ -59,16 +59,101 @@
 //! key at all, so it is never inserted into the table and never probes it.
 //! A NaN `DOUBLE` is treated the same way, because `NaN = NaN` is false.
 
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DiskError;
 use tidb_chunk::list::RowPtr;
+use tidb_chunk::row::Row;
 use tidb_chunk::row_container::{RowContainer, SpillDiskAction};
 use tidb_datatype::{Collation, Datum, EvalType, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_util::disk::SpillStorage;
 use tidb_util::memory::Tracker;
+
+/// Go's hash join feeds encoded key columns to `hash/fnv.New64`. The complete
+/// encoded key is still compared after a bucket hit, so this hash is only a
+/// fast bucket selector and collisions cannot change SQL results.
+#[derive(Default)]
+pub(crate) struct FastBytesHasher {
+    hash: u64,
+    initialized: bool,
+}
+
+impl Hasher for FastBytesHasher {
+    fn finish(&self) -> u64 {
+        if self.initialized {
+            self.hash
+        } else {
+            0xcbf29ce484222325
+        }
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        let mut hash = if self.initialized {
+            self.hash
+        } else {
+            self.initialized = true;
+            0xcbf29ce484222325
+        };
+        for byte in bytes {
+            hash = hash.wrapping_mul(0x100000001b3);
+            hash ^= u64::from(*byte);
+        }
+        self.hash = hash;
+    }
+}
+
+pub(crate) type FastBytesMap<V> = HashMap<Vec<u8>, V, BuildHasherDefault<FastBytesHasher>>;
+
+#[derive(Default)]
+struct IdentityU64Hasher(u64);
+
+impl Hasher for IdentityU64Hasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        let mut hash = FastBytesHasher::default();
+        hash.write(bytes);
+        self.0 = hash.finish();
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = value;
+    }
+}
+
+type HashBuckets<V> = HashMap<u64, V, BuildHasherDefault<IdentityU64Hasher>>;
+
+/// Hashes the complete integer equality key while retaining the exact
+/// `i128` value in the map. The ordinary hash-join table stores only Go's
+/// 64-bit FNV bucket and must re-check every candidate for collisions; this
+/// narrower table is used only for one non-NULL-safe integer key, where the
+/// signed/unsigned comparison domain has an exact `i128` representation.
+#[derive(Default)]
+struct ExactIntHasher {
+    hash: FastBytesHasher,
+}
+
+impl Hasher for ExactIntHasher {
+    fn finish(&self) -> u64 {
+        self.hash.finish()
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        self.hash.write(bytes);
+    }
+
+    fn write_i128(&mut self, value: i128) {
+        self.hash.write(&value.to_be_bytes());
+    }
+}
+
+type ExactIntBuckets<V> = HashMap<i128, V, BuildHasherDefault<ExactIntHasher>>;
 
 /// The comparison domain a hash join key column is encoded in.
 ///
@@ -319,23 +404,404 @@ pub(crate) fn row_key(
     row: &[Datum],
     offset: impl Fn(&EquiKey) -> usize,
 ) -> Result<Option<Vec<u8>>, KeyError> {
-    let mut encoded = Vec::new();
+    row_key_by(keys, |key| row[offset(key)].clone())
+}
+
+/// Encodes a row key through a lazy key-column accessor. Index lookup joins
+/// use this when the source row has many projected columns but the join key is
+/// narrow; decoding only the key columns avoids materializing the rest of the
+/// inner row before the chunk-backed output path consumes it.
+pub(crate) fn row_key_by(
+    keys: &[EquiKey],
+    mut datum: impl FnMut(&EquiKey) -> Datum,
+) -> Result<Option<Vec<u8>>, KeyError> {
+    // Integer and floating-point key parts are fixed-width. Reserving their
+    // framing up front avoids the repeated reallocations that otherwise show
+    // up in every probe of a TPC-H index/hash join. Variable-width decimal and
+    // string keys still grow naturally below.
+    let mut encoded = Vec::with_capacity(keys.len().saturating_mul(24));
     for key in keys {
-        let datum = &row[offset(key)];
-        if matches!(datum, Datum::Null) && key.null_safe {
-            // A real part length can never be u64::MAX. This gives NULL one
-            // collision-free key identity without inventing a value in any
-            // SQL comparison domain.
-            encoded.extend_from_slice(&u64::MAX.to_be_bytes());
-            continue;
-        }
-        let Some(part) = key_part(key.class, datum)? else {
+        let value = datum(key);
+        if matches!(value, Datum::Null) {
+            if key.null_safe {
+                // A real part length can never be u64::MAX. This gives NULL
+                // one collision-free key identity without inventing a value
+                // in any SQL comparison domain.
+                encoded.extend_from_slice(&u64::MAX.to_be_bytes());
+                continue;
+            }
             return Ok(None);
+        }
+        let part_start = encoded.len();
+        encoded.resize(part_start + 8, 0);
+        let value_start = encoded.len();
+        let present = match key.class {
+            KeyClass::Int => match value {
+                Datum::Int(value) => {
+                    encoded.extend_from_slice(&i128::from(value).to_be_bytes());
+                    true
+                }
+                Datum::UInt(value) => {
+                    encoded.extend_from_slice(&i128::from(value).to_be_bytes());
+                    true
+                }
+                _ => return Err(KeyError),
+            },
+            KeyClass::Real => {
+                let value = match value {
+                    Datum::Real(value) | Datum::Float32(value) => value,
+                    Datum::Int(value) => value as f64,
+                    Datum::UInt(value) => value as f64,
+                    _ => return Err(KeyError),
+                };
+                if value.is_nan() {
+                    false
+                } else {
+                    encoded
+                        .extend_from_slice(&(if value == 0.0 { 0.0 } else { value }).to_be_bytes());
+                    true
+                }
+            }
+            _ => match key_part(key.class, &value)? {
+                Some(part) => {
+                    encoded.extend_from_slice(&part);
+                    true
+                }
+                None => false,
+            },
         };
-        encoded.extend_from_slice(&(part.len() as u64).to_be_bytes());
-        encoded.extend_from_slice(&part);
+        if !present {
+            encoded.truncate(part_start);
+            return Ok(None);
+        }
+        let part_len = encoded.len() - value_start;
+        encoded[part_start..value_start].copy_from_slice(&(part_len as u64).to_be_bytes());
     }
     Ok(Some(encoded))
+}
+
+/// Go `hashChunkSelected`: hashes the encoded key directly into one FNV-64
+/// bucket without retaining a temporary byte slice. The bucket hit is only a
+/// candidate; [`equi_keys_equal`] performs Go's `matchJoinKey` collision
+/// check before any row is emitted.
+pub(crate) fn row_hash(
+    keys: &[EquiKey],
+    row: &[Datum],
+    offset: impl Fn(&EquiKey) -> usize,
+) -> Result<Option<u64>, KeyError> {
+    row_hash_by(keys, |key| row[offset(key)].clone())
+}
+
+pub(crate) fn row_hash_by(
+    keys: &[EquiKey],
+    mut datum: impl FnMut(&EquiKey) -> Datum,
+) -> Result<Option<u64>, KeyError> {
+    let mut encoded = FastBytesHasher::default();
+    for key in keys {
+        let value = datum(key);
+        if matches!(value, Datum::Null) {
+            if key.null_safe {
+                encoded.write(&u64::MAX.to_be_bytes());
+                continue;
+            }
+            return Ok(None);
+        }
+        let present = match key.class {
+            KeyClass::Int => {
+                encoded.write(&16u64.to_be_bytes());
+                match value {
+                    Datum::Int(value) => encoded.write(&i128::from(value).to_be_bytes()),
+                    Datum::UInt(value) => encoded.write(&i128::from(value).to_be_bytes()),
+                    _ => return Err(KeyError),
+                }
+                true
+            }
+            KeyClass::Real => {
+                let value = match value {
+                    Datum::Real(value) | Datum::Float32(value) => value,
+                    Datum::Int(value) => value as f64,
+                    Datum::UInt(value) => value as f64,
+                    _ => return Err(KeyError),
+                };
+                if value.is_nan() {
+                    false
+                } else {
+                    encoded.write(&8u64.to_be_bytes());
+                    encoded.write(&(if value == 0.0 { 0.0 } else { value }).to_be_bytes());
+                    true
+                }
+            }
+            _ => match key_part(key.class, &value)? {
+                Some(part) => {
+                    encoded.write(&(part.len() as u64).to_be_bytes());
+                    encoded.write(&part);
+                    true
+                }
+                None => false,
+            },
+        };
+        if !present {
+            return Ok(None);
+        }
+    }
+    Ok(Some(encoded.finish()))
+}
+
+/// Chunk-backed hash construction used by the build worker. Fixed-width key
+/// columns are already typed in the chunk, so decoding them into temporary
+/// `Datum`s would only add work and allocations before the FNV write.
+pub(crate) fn row_hash_chunk(
+    keys: &[EquiKey],
+    row: Row<'_>,
+    types: &[FieldType],
+    offset: impl Fn(&EquiKey) -> usize,
+) -> Result<Option<u64>, KeyError> {
+    let mut encoded = FastBytesHasher::default();
+    for key in keys {
+        let at = offset(key);
+        if row.is_null(at) {
+            if key.null_safe {
+                encoded.write(&u64::MAX.to_be_bytes());
+                continue;
+            }
+            return Ok(None);
+        }
+        match key.class {
+            KeyClass::Int => {
+                encoded.write(&16u64.to_be_bytes());
+                if types[at].is_unsigned() {
+                    encoded.write(&i128::from(row.get_uint64(at)).to_be_bytes());
+                } else {
+                    encoded.write(&i128::from(row.get_int64(at)).to_be_bytes());
+                }
+            }
+            KeyClass::Real => {
+                let value = match types[at].code() {
+                    tidb_datatype::FieldTypeCode::Float => f64::from(row.get_float32(at)),
+                    _ => row.get_float64(at),
+                };
+                if value.is_nan() {
+                    return Ok(None);
+                }
+                encoded.write(&8u64.to_be_bytes());
+                encoded.write(&(if value == 0.0 { 0.0 } else { value }).to_be_bytes());
+            }
+            _ => {
+                let value = row.get_datum(at, &types[at]);
+                let Some(part) = key_part(key.class, &value)? else {
+                    return Ok(None);
+                };
+                encoded.write(&(part.len() as u64).to_be_bytes());
+                encoded.write(&part);
+            }
+        }
+    }
+    Ok(Some(encoded.finish()))
+}
+
+/// Returns the exact signed comparison-domain value for the one-key integer
+/// fast path. The caller has already proved that the key is not NULL-safe, so
+/// NULL is an unmatchable row and can be represented by `None`.
+pub(crate) fn exact_int_key_chunk(
+    row: Row<'_>,
+    offset: usize,
+    field_type: &FieldType,
+) -> Option<i128> {
+    if row.is_null(offset) {
+        return None;
+    }
+    if field_type.is_unsigned() {
+        Some(i128::from(row.get_uint64(offset)))
+    } else {
+        Some(i128::from(row.get_int64(offset)))
+    }
+}
+
+/// Go `hashRowContainer.matchJoinKey`: a 64-bit hash match selects candidates
+/// but equality of every original key column decides whether the rows join.
+pub(crate) fn equi_keys_equal(
+    keys: &[EquiKey],
+    left: &[Datum],
+    right: &[Datum],
+) -> Result<bool, KeyError> {
+    for key in keys {
+        let left = &left[key.left];
+        let right = &right[key.right];
+        if matches!(left, Datum::Null) || matches!(right, Datum::Null) {
+            if key.null_safe && matches!((left, right), (Datum::Null, Datum::Null)) {
+                continue;
+            }
+            return Ok(false);
+        }
+        let equal = match key.class {
+            KeyClass::Int => match (left, right) {
+                (Datum::Int(left), Datum::Int(right)) => left == right,
+                (Datum::UInt(left), Datum::UInt(right)) => left == right,
+                (Datum::Int(left), Datum::UInt(right)) => {
+                    *left >= 0 && u64::try_from(*left).ok() == Some(*right)
+                }
+                (Datum::UInt(left), Datum::Int(right)) => {
+                    *right >= 0 && u64::try_from(*right).ok() == Some(*left)
+                }
+                _ => return Err(KeyError),
+            },
+            KeyClass::Real => {
+                let number = |datum: &Datum| match datum {
+                    Datum::Real(value) | Datum::Float32(value) => Some(*value),
+                    Datum::Int(value) => Some(*value as f64),
+                    Datum::UInt(value) => Some(*value as f64),
+                    _ => None,
+                };
+                let (Some(left), Some(right)) = (number(left), number(right)) else {
+                    return Err(KeyError);
+                };
+                left == right
+            }
+            KeyClass::Decimal | KeyClass::Str(_) => {
+                key_part(key.class, left)? == key_part(key.class, right)?
+            }
+        };
+        if !equal {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Compares a materialized row on one side with a typed chunk row on the
+/// other. Hash probing uses this before decoding a complete build row: Go's
+/// `matchJoinKey` only needs the equality columns, while the old Rust path
+/// decoded every projected column before doing the same check.
+pub(crate) fn equi_keys_equal_row(
+    keys: &[EquiKey],
+    datums: &[Datum],
+    datums_are_left: bool,
+    row: Row<'_>,
+    row_types: &[FieldType],
+) -> Result<bool, KeyError> {
+    for key in keys {
+        let row_at = if datums_are_left { key.right } else { key.left };
+        let datum_at = if datums_are_left { key.left } else { key.right };
+        let datum = datums.get(datum_at).ok_or(KeyError)?;
+        if row.is_null(row_at) {
+            if key.null_safe && matches!(datum, Datum::Null) {
+                continue;
+            }
+            return Ok(false);
+        }
+        if matches!(datum, Datum::Null) {
+            return Ok(false);
+        }
+        let field_type = row_types.get(row_at).ok_or(KeyError)?;
+        let equal = match key.class {
+            KeyClass::Int => {
+                if field_type.is_unsigned() {
+                    let value = row.get_uint64(row_at);
+                    match datum {
+                        Datum::UInt(other) => value == *other,
+                        Datum::Int(other) => *other >= 0 && value == *other as u64,
+                        _ => return Err(KeyError),
+                    }
+                } else {
+                    let value = row.get_int64(row_at);
+                    match datum {
+                        Datum::Int(other) => value == *other,
+                        Datum::UInt(other) => value >= 0 && value as u64 == *other,
+                        _ => return Err(KeyError),
+                    }
+                }
+            }
+            KeyClass::Real => {
+                let value = match field_type.code() {
+                    tidb_datatype::FieldTypeCode::Float => f64::from(row.get_float32(row_at)),
+                    _ => row.get_float64(row_at),
+                };
+                let other = match datum {
+                    Datum::Real(other) | Datum::Float32(other) => *other,
+                    Datum::Int(other) => *other as f64,
+                    Datum::UInt(other) => *other as f64,
+                    _ => return Err(KeyError),
+                };
+                value == other
+            }
+            KeyClass::Decimal | KeyClass::Str(_) => {
+                let row_datum = row.get_datum(row_at, field_type);
+                let (left, right) = if datums_are_left {
+                    (datum, &row_datum)
+                } else {
+                    (&row_datum, datum)
+                };
+                equi_keys_equal(
+                    std::slice::from_ref(key),
+                    std::slice::from_ref(left),
+                    std::slice::from_ref(right),
+                )?
+            }
+        };
+        if !equal {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Compares the equality keys of two typed chunk rows without materializing
+/// either complete row. The hash join keeps both sides in chunks and calls
+/// `matchJoinKey` on the key columns; doing the same here is
+/// important for wide probe rows, where building a `Vec<Datum>` per row would
+/// decode and allocate columns the equality check never reads.
+pub(crate) fn equi_keys_equal_chunk_rows(
+    keys: &[EquiKey],
+    left: Row<'_>,
+    left_types: &[FieldType],
+    right: Row<'_>,
+    right_types: &[FieldType],
+) -> Result<bool, KeyError> {
+    for key in keys {
+        let left_type = left_types.get(key.left).ok_or(KeyError)?;
+        let right_type = right_types.get(key.right).ok_or(KeyError)?;
+        let left_null = left.is_null(key.left);
+        let right_null = right.is_null(key.right);
+        if left_null || right_null {
+            if key.null_safe && left_null && right_null {
+                continue;
+            }
+            return Ok(false);
+        }
+        let equal = match key.class {
+            KeyClass::Int => match (left_type.is_unsigned(), right_type.is_unsigned()) {
+                (false, false) => left.get_int64(key.left) == right.get_int64(key.right),
+                (true, true) => left.get_uint64(key.left) == right.get_uint64(key.right),
+                (false, true) => {
+                    let left = left.get_int64(key.left);
+                    left >= 0 && left as u64 == right.get_uint64(key.right)
+                }
+                (true, false) => {
+                    let right = right.get_int64(key.right);
+                    right >= 0 && left.get_uint64(key.left) == right as u64
+                }
+            },
+            KeyClass::Real => {
+                let number = |row: Row<'_>, offset: usize, field_type: &FieldType| {
+                    if field_type.code() == tidb_datatype::FieldTypeCode::Float {
+                        f64::from(row.get_float32(offset))
+                    } else {
+                        row.get_float64(offset)
+                    }
+                };
+                number(left, key.left, left_type) == number(right, key.right, right_type)
+            }
+            KeyClass::Decimal | KeyClass::Str(_) => {
+                let left = left.get_datum(key.left, left_type);
+                let right = right.get_datum(key.right, right_type);
+                key_part(key.class, &left)? == key_part(key.class, &right)?
+            }
+        };
+        if !equal {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// The materialized build side: Go v1's `hashRowContainer` -- a
@@ -358,8 +824,18 @@ pub(crate) fn row_key(
 /// is what v2 does, with a completely different partitioned machinery.
 pub(crate) struct BuildTable {
     rows: RowContainer,
-    buckets: HashMap<Vec<u8>, Vec<RowPtr>>,
+    buckets: HashBuckets<Vec<RowPtr>>,
+    exact_int_buckets: Option<ExactIntBuckets<Vec<RowPtr>>>,
+    /// Go v1's `outerMatchedStatus` / v2's row-table used flag. Present only
+    /// when an outer join builds its preserved side, so the post-probe scan
+    /// can emit build rows that never satisfied the complete ON condition.
+    matched: Option<Vec<Vec<u8>>>,
     bucket_bytes: i64,
+    /// Sum of the capacities of all bucket pointer vectors. Keeping this
+    /// incrementally avoids walking every bucket after each input chunk.
+    bucket_pointer_capacity: usize,
+    /// Sum of the capacities of the per-chunk matched bitmaps.
+    matched_bitmap_capacity: usize,
 }
 
 // Go v1 allocates 320 concurrent-map shards before the first build row. On
@@ -384,11 +860,17 @@ impl BuildTable {
         field_types: &[FieldType],
         chunk_size: usize,
         spill_storage: Arc<SpillStorage>,
+        track_matches: bool,
+        use_exact_int: bool,
     ) -> Self {
         BuildTable {
             rows: RowContainer::new(field_types, chunk_size, spill_storage),
-            buckets: HashMap::new(),
+            buckets: HashBuckets::default(),
+            exact_int_buckets: use_exact_int.then(ExactIntBuckets::default),
+            matched: track_matches.then(Vec::new),
             bucket_bytes: 0,
+            bucket_pointer_capacity: 0,
+            matched_bitmap_capacity: 0,
         }
     }
 
@@ -412,20 +894,57 @@ impl BuildTable {
         build_is_left: bool,
     ) -> Result<(), BuildError> {
         let offset = |key: &EquiKey| if build_is_left { key.left } else { key.right };
+        let exact_int = keys
+            .first()
+            .filter(|key| keys.len() == 1 && key.class == KeyClass::Int && !key.null_safe);
         let chk_idx = u32::try_from(self.rows.num_chunks()).map_err(|_| BuildError::Key)?;
+        if let Some(matched) = &mut self.matched {
+            let bitmap = vec![0; chunk.num_rows().div_ceil(8)];
+            self.matched_bitmap_capacity = self
+                .matched_bitmap_capacity
+                .saturating_add(bitmap.capacity());
+            matched.push(bitmap);
+        }
         for row_idx in 0..chunk.num_rows() {
             let chunk_row = chunk.get_row(row_idx);
-            let row = chunk_row.get_datum_row(types);
             // An ordinary equality key containing NULL is not indexed. A
             // NULL-safe key is indexed under row_key's dedicated NULL
             // identity, matching Go's `ignoreNulls[keyIdx]` path. Every row
             // is still stored because the container owns the build data.
-            if let Some(key) = row_key(keys, &row, offset).map_err(|_| BuildError::Key)? {
+            let key = row_hash_chunk(keys, chunk_row, types, |key| offset(key))
+                .map_err(|_| BuildError::Key)?;
+            if let Some(key) = key {
                 let row_idx = u32::try_from(row_idx).map_err(|_| BuildError::Key)?;
-                self.buckets
-                    .entry(key)
-                    .or_default()
-                    .push(RowPtr { chk_idx, row_idx });
+                let pointer = RowPtr { chk_idx, row_idx };
+                if let Some(exact_key) = self.exact_int_buckets.as_ref().and_then(|_| {
+                    exact_int.and_then(|key| {
+                        exact_int_key_chunk(chunk_row, offset(key), &types[offset(key)])
+                    })
+                }) {
+                    let pointers = self
+                        .exact_int_buckets
+                        .as_mut()
+                        .expect("exact integer buckets initialized");
+                    pointers.entry(exact_key).or_default().push(pointer);
+                    continue;
+                }
+                match self.buckets.entry(key) {
+                    Entry::Occupied(mut entry) => {
+                        let pointers = entry.get_mut();
+                        let before = pointers.capacity();
+                        pointers.push(pointer);
+                        self.bucket_pointer_capacity = self
+                            .bucket_pointer_capacity
+                            .saturating_add(pointers.capacity().saturating_sub(before));
+                    }
+                    Entry::Vacant(entry) => {
+                        let pointers = vec![pointer];
+                        self.bucket_pointer_capacity = self
+                            .bucket_pointer_capacity
+                            .saturating_add(pointers.capacity());
+                        entry.insert(pointers);
+                    }
+                }
             }
         }
         self.rows.add(chunk).map_err(BuildError::disk)?;
@@ -437,8 +956,64 @@ impl BuildTable {
     }
 
     /// The build rows that could match `key`, in build order.
-    pub(crate) fn probe(&self, key: &[u8]) -> &[RowPtr] {
-        self.buckets.get(key).map_or(&[], Vec::as_slice)
+    pub(crate) fn probe(&self, key: u64) -> &[RowPtr] {
+        self.buckets.get(&key).map_or(&[], Vec::as_slice)
+    }
+
+    pub(crate) fn probe_exact_int(&self, key: i128) -> &[RowPtr] {
+        self.exact_int_buckets
+            .as_ref()
+            .and_then(|buckets| buckets.get(&key))
+            .map_or(&[], Vec::as_slice)
+    }
+
+    pub(crate) fn has_exact_int(&self) -> bool {
+        self.exact_int_buckets.is_some()
+    }
+
+    /// Marks one preserved build row as matched after every ON conjunct has
+    /// succeeded. A hash-key collision or a rejected residual condition must
+    /// not set this bit.
+    pub(crate) fn mark_matched(&mut self, ptr: RowPtr) {
+        let Some(chunk) = self
+            .matched
+            .as_mut()
+            .and_then(|chunks| chunks.get_mut(ptr.chk_idx as usize))
+        else {
+            return;
+        };
+        let row = ptr.row_idx as usize;
+        chunk[row / 8] |= 1 << (row % 8);
+    }
+
+    /// Whether a preserved build row has produced at least one joined row.
+    pub(crate) fn is_matched(&self, ptr: RowPtr) -> bool {
+        let Some(chunk) = self
+            .matched
+            .as_ref()
+            .and_then(|chunks| chunks.get(ptr.chk_idx as usize))
+        else {
+            return false;
+        };
+        let row = ptr.row_idx as usize;
+        chunk[row / 8] & (1 << (row % 8)) != 0
+    }
+
+    /// First build row in input order, for Go's post-probe row-table scan.
+    pub(crate) fn first_ptr(&self) -> Option<RowPtr> {
+        (self.rows.num_chunks() != 0).then_some(RowPtr::new(0, 0))
+    }
+
+    /// Next build row in input order, including rows whose NULL key kept them
+    /// out of every hash bucket.
+    pub(crate) fn next_ptr(&self, ptr: RowPtr) -> Option<RowPtr> {
+        let chunk_index = ptr.chk_idx as usize;
+        let next_row = ptr.row_idx as usize + 1;
+        if next_row < self.rows.num_rows_of_chunk(chunk_index) {
+            return Some(RowPtr::new(ptr.chk_idx, next_row as u32));
+        }
+        let next_chunk = chunk_index + 1;
+        (next_chunk < self.rows.num_chunks()).then_some(RowPtr::new(next_chunk as u32, 0))
     }
 
     /// Materializes the row `ptr` names, reading it back from the spill file
@@ -461,6 +1036,18 @@ impl BuildTable {
         buf.reset();
         let loaded = self.rows.get_row_and_append_to_chunk_if_in_disk(ptr, buf)?;
         Ok(loaded.row(buf).get_datum_row(types))
+    }
+
+    /// Visits a stored row without materializing columns that the caller does
+    /// not need. In-memory rows remain shallow views; spilled rows use the
+    /// same reusable buffer as [`Self::row`].
+    pub(crate) fn with_row<T>(
+        &self,
+        ptr: RowPtr,
+        buf: &mut Chunk,
+        f: impl FnOnce(Row<'_>) -> T,
+    ) -> Result<T, DiskError> {
+        self.rows.with_row(ptr, buf, f)
     }
 
     /// Go `hashRowContainer.GetMemTracker`, which the build worker attaches
@@ -489,29 +1076,35 @@ impl BuildTable {
     pub(crate) fn close(&mut self) {
         self.rows.mem_tracker().consume(-self.bucket_bytes);
         self.bucket_bytes = 0;
-        self.buckets = HashMap::new();
+        self.buckets = HashBuckets::default();
+        self.exact_int_buckets = None;
+        self.matched = None;
+        self.bucket_pointer_capacity = 0;
+        self.matched_bitmap_capacity = 0;
         self.rows.close();
     }
 
     fn refresh_bucket_memory(&mut self) {
         let map_slots = self.buckets.capacity().saturating_mul(
-            std::mem::size_of::<(Vec<u8>, Vec<RowPtr>)>() + std::mem::size_of::<usize>(),
+            std::mem::size_of::<(u64, Vec<RowPtr>)>() + std::mem::size_of::<usize>(),
         );
         let retained = GO_V1_HASH_TABLE_FIXED_BYTES
             .saturating_add(map_slots)
-            .saturating_add(std::mem::size_of::<HashMap<Vec<u8>, Vec<RowPtr>>>())
+            .saturating_add(std::mem::size_of::<HashBuckets<Vec<RowPtr>>>())
             .saturating_add(
-                self.buckets
-                    .iter()
-                    .map(|(key, pointers)| {
-                        key.capacity().saturating_add(
-                            pointers
-                                .capacity()
-                                .saturating_mul(std::mem::size_of::<RowPtr>()),
-                        )
-                    })
-                    .sum::<usize>(),
-            );
+                self.bucket_pointer_capacity
+                    .saturating_mul(std::mem::size_of::<RowPtr>()),
+            )
+            .saturating_add(self.exact_int_buckets.as_ref().map_or(0, |buckets| {
+                buckets.capacity()
+                    * (std::mem::size_of::<(i128, Vec<RowPtr>)>() + std::mem::size_of::<usize>())
+            }))
+            .saturating_add(self.matched.as_ref().map_or(0, |chunks| {
+                chunks
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Vec<u8>>())
+                    + self.matched_bitmap_capacity
+            }));
         let retained = i64::try_from(retained).unwrap_or(i64::MAX);
         self.rows
             .mem_tracker()
@@ -538,10 +1131,17 @@ impl BuildError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_datatype::Decimal;
+    use tidb_datatype::{Decimal, FieldTypeCode};
 
     fn int_key(datum: &Datum) -> Option<Vec<u8>> {
         key_part(KeyClass::Int, datum).unwrap()
+    }
+
+    #[test]
+    fn fast_hasher_matches_go_hash_fnv_new64() {
+        let mut hasher = FastBytesHasher::default();
+        hasher.write(b"hello");
+        assert_eq!(hasher.finish(), 0x7b49_5389_bdbd_d4c7);
     }
 
     /// The signed/unsigned boundary the nested loop's `join_key_eq` calls
@@ -594,6 +1194,97 @@ mod tests {
         assert!(row_key(&[key], &[Datum::Null], |key| key.left)
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn lazy_row_key_accessor_encodes_only_requested_key_columns() {
+        let keys = [
+            EquiKey {
+                left: 1,
+                right: 1,
+                class: KeyClass::Int,
+                null_safe: false,
+            },
+            EquiKey {
+                left: 3,
+                right: 3,
+                class: KeyClass::Int,
+                null_safe: false,
+            },
+        ];
+        let mut calls = Vec::new();
+        let encoded = row_key_by(&keys, |key| {
+            calls.push(key.left);
+            Datum::Int(if key.left == 1 { 7 } else { 11 })
+        })
+        .unwrap()
+        .expect("non-null key parts produce a key");
+        assert_eq!(calls, vec![1, 3]);
+        assert_eq!(
+            encoded,
+            row_key(
+                &keys,
+                &[Datum::Null, Datum::Int(7), Datum::Null, Datum::Int(11)],
+                |key| key.left,
+            )
+            .unwrap()
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn typed_chunk_key_equality_matches_materialized_key_equality() {
+        let types = vec![FieldType::new(FieldTypeCode::Long)];
+        let mut chunk = Chunk::new_with_capacity(&types, 1);
+        chunk.append_int64(0, 7);
+        let key = EquiKey {
+            left: 0,
+            right: 0,
+            class: KeyClass::Int,
+            null_safe: false,
+        };
+        let row = chunk.get_row(0);
+        assert!(equi_keys_equal_row(&[key], &[Datum::Int(7)], true, row, &types,).unwrap());
+        assert!(!equi_keys_equal_row(&[key], &[Datum::Int(8)], true, row, &types,).unwrap());
+    }
+
+    #[test]
+    fn direct_row_hash_matches_hashing_the_complete_encoding() {
+        let keys = [
+            EquiKey {
+                left: 0,
+                right: 0,
+                class: KeyClass::Int,
+                null_safe: false,
+            },
+            EquiKey {
+                left: 1,
+                right: 1,
+                class: KeyClass::Str(Collation::Utf8Mb4Bin),
+                null_safe: false,
+            },
+        ];
+        let row = [Datum::Int(42), Datum::new_string("key")];
+        let encoded = row_key(&keys, &row, |key| key.left).unwrap().unwrap();
+        let mut expected = FastBytesHasher::default();
+        expected.write(&encoded);
+        assert_eq!(
+            row_hash(&keys, &row, |key| key.left).unwrap(),
+            Some(expected.finish())
+        );
+    }
+
+    #[test]
+    fn bucket_hits_recheck_complete_equality_keys() {
+        let key = EquiKey {
+            left: 0,
+            right: 0,
+            class: KeyClass::Int,
+            null_safe: false,
+        };
+        assert!(equi_keys_equal(&[key], &[Datum::Int(7)], &[Datum::UInt(7)]).unwrap());
+        assert!(!equi_keys_equal(&[key], &[Datum::Int(7)], &[Datum::UInt(8)]).unwrap());
+        assert!(!equi_keys_equal(&[key], &[Datum::Int(-1)], &[Datum::UInt(u64::MAX)]).unwrap());
     }
 
     /// `NaN = NaN` is FALSE, and `-0.0 = 0.0` is TRUE.

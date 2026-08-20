@@ -7,25 +7,380 @@
 
 use super::*;
 
-/// EXPLAIN infers a correlated scalar subquery's output type from its plan.
-/// It must not execute the inner query merely to discover that type: on TPCC
-/// condition 10 that planning-time scan alone exceeds the protocol timeout.
+/// Go TPC-H q2 pushes the selective `part` predicates below join search, uses
+/// that filtered table to drive the clustered `(ps_partkey, ps_suppkey)`
+/// prefix, and retains the grouped key needed by the outer scalar comparison.
 #[test]
-fn explaining_a_correlated_scalar_type_reads_no_storage() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
-
+fn tpch_q2_correlated_min_uses_filtered_index_hash_join() {
     let mut catalog = Catalog::default();
-    crate::run_create_table_on("CREATE TABLE outer_t (k BIGINT)", &mut catalog).unwrap();
-    crate::run_create_table_on(
-        "CREATE TABLE inner_t (k BIGINT, v DECIMAL(6,2))",
+    for table in [
+        "CREATE TABLE part (p_partkey BIGINT PRIMARY KEY CLUSTERED, \
+         p_mfgr VARCHAR(32), p_type VARCHAR(32), p_size BIGINT)",
+        "CREATE TABLE supplier (s_suppkey BIGINT PRIMARY KEY CLUSTERED, \
+         s_name VARCHAR(32), s_address VARCHAR(64), s_nationkey BIGINT, \
+         s_phone VARCHAR(32), s_acctbal DECIMAL(15,2), s_comment VARCHAR(128))",
+        "CREATE TABLE partsupp (ps_partkey BIGINT NOT NULL, ps_suppkey BIGINT NOT NULL, \
+         ps_supplycost DECIMAL(15,2), PRIMARY KEY (ps_partkey, ps_suppkey) CLUSTERED)",
+        "CREATE TABLE nation (n_nationkey BIGINT PRIMARY KEY CLUSTERED, \
+         n_name VARCHAR(32), n_regionkey BIGINT)",
+        "CREATE TABLE region (r_regionkey BIGINT PRIMARY KEY CLUSTERED, r_name VARCHAR(32))",
+    ] {
+        crate::run_create_table_on(table, &mut catalog).unwrap();
+    }
+    let ctx = crate::StmtContext::for_query();
+    for insert in [
+        "INSERT INTO part VALUES (1, 'Manufacturer#1', 'ECONOMY ANODIZED STEEL', 30)",
+        "INSERT INTO supplier VALUES \
+         (1, 'Supplier#1', 'Address#1', 1, '10-000-000-0000', 100.00, 'Comment')",
+        "INSERT INTO partsupp VALUES (1, 1, 10.00)",
+        "INSERT INTO nation VALUES (1, 'INDIA', 1)",
+        "INSERT INTO region VALUES (1, 'ASIA')",
+    ] {
+        run_insert_on(insert, &mut catalog, &ctx).unwrap();
+    }
+    for (table, rows, ndvs) in [
+        (
+            "part",
+            200_000,
+            vec![
+                ("p_partkey", 196_960),
+                ("p_mfgr", 5),
+                ("p_type", 150),
+                ("p_size", 50),
+            ],
+        ),
+        (
+            "supplier",
+            10_000,
+            vec![("s_suppkey", 10_000), ("s_nationkey", 25)],
+        ),
+        (
+            "partsupp",
+            800_000,
+            vec![
+                ("ps_partkey", 196_960),
+                ("ps_suppkey", 10_000),
+                ("ps_supplycost", 99_865),
+            ],
+        ),
+        (
+            "nation",
+            25,
+            vec![("n_nationkey", 25), ("n_name", 25), ("n_regionkey", 5)],
+        ),
+        ("region", 5, vec![("r_regionkey", 5), ("r_name", 5)]),
+    ] {
+        scale_analyzed_tpcc_table(&mut catalog, table, rows, &ndvs, &ctx);
+    }
+
+    let sql = "SELECT s_acctbal, s_name, n_name, p_partkey, p_mfgr, \
+        s_address, s_phone, s_comment FROM part, supplier, partsupp, nation, region \
+        WHERE p_partkey = ps_partkey AND s_suppkey = ps_suppkey \
+        AND p_size = 30 AND p_type LIKE '%STEEL' \
+        AND s_nationkey = n_nationkey AND n_regionkey = r_regionkey \
+        AND r_name = 'ASIA' AND ps_supplycost = \
+        (SELECT MIN(ps_supplycost) FROM partsupp, supplier, nation, region \
+         WHERE p_partkey = ps_partkey AND s_suppkey = ps_suppkey \
+         AND s_nationkey = n_nationkey AND n_regionkey = r_regionkey \
+         AND r_name = 'ASIA') \
+        ORDER BY s_acctbal DESC, n_name, s_name, p_partkey LIMIT 100";
+    let statement = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, plan) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &ctx,
+        crate::explain::ExplainFormat::Brief,
+    )
+    .expect("q2 must remain explainable after scalar-MIN decorrelation");
+    let text = |row: &[Datum], column: usize| match &row[column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+
+    let mut missing = Vec::new();
+    if !plan.iter().any(|row| {
+        text(row, 0).contains("Selection")
+            && text(row, 2) == "cop[tikv]"
+            && text(row, 4).contains("part.p_size")
+            && text(row, 4).contains("part.p_type")
+    }) {
+        missing.push("part predicates below its TableReader");
+    }
+    if plan.iter().any(|row| {
+        text(row, 0).contains("Selection")
+            && text(row, 2) == "root"
+            && text(row, 4).contains("part.p_size")
+            && text(row, 4).contains("part.p_type")
+    }) {
+        missing.push("part predicates retained above join search");
+    }
+    if !plan.iter().any(|row| {
+        text(row, 0).contains("IndexHashJoin")
+            && text(row, 4).contains("part.p_partkey")
+            && text(row, 4).contains("partsupp.ps_partkey")
+    }) {
+        missing.push("filtered part driving an IndexHashJoin into partsupp");
+    }
+    if !plan.iter().any(|row| {
+        text(row, 0).contains("TableRangeScan")
+            && text(row, 3) == "table:partsupp"
+            && text(row, 4).contains("range: decided by")
+            && text(row, 4).contains("ps_partkey")
+    }) {
+        missing.push("partsupp clustered-prefix dynamic range");
+    }
+    let min_aggregate = plan.iter().find(|row| {
+        text(row, 0).contains("HashAgg")
+            && text(row, 4).contains("group by:test.partsupp.ps_partkey")
+            && text(row, 4).contains("funcs:min(test.partsupp.ps_supplycost)")
+    });
+    if min_aggregate.is_none_or(|row| !text(row, 4).contains("funcs:firstrow(")) {
+        missing.push("FIRST_ROW carrier for the grouped MIN key");
+    }
+    if !plan.iter().any(|row| {
+        text(row, 0).contains("Selection") && text(row, 4).contains("not(isnull(Column#")
+    }) {
+        missing.push("null rejection above the scalar MIN output");
+    }
+    let readable_plan = plan
+        .iter()
+        .map(|row| {
+            (0..row.len())
+                .map(|column| text(row, column))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        missing.is_empty(),
+        "Go q2 physical contracts missing {missing:?}: {readable_plan:#?}",
+    );
+    let rows = run_select_on(sql, &catalog, &ctx)
+        .expect("the composite dynamic lookup must execute, not only explain");
+    assert_eq!(
+        rows.len(),
+        1,
+        "the one matching q2 fixture row must survive"
+    );
+    assert_eq!(rows[0].len(), 8);
+}
+
+/// Go `handleInSubquery` lowers TPC-H q16's non-null `NOT IN` predicate to
+/// an anti-semi join before physical join search. The grouped aggregate must
+/// keep the DISTINCT bit on its supplier count after that rewrite.
+#[test]
+fn tpch_q16_non_null_not_in_is_an_anti_semi_join() {
+    let mut catalog = Catalog::default();
+    for table in [
+        "CREATE TABLE part (P_PARTKEY BIGINT PRIMARY KEY CLUSTERED, \
+         P_BRAND VARCHAR(16), P_TYPE VARCHAR(32), P_SIZE BIGINT)",
+        "CREATE TABLE partsupp (PS_PARTKEY BIGINT NOT NULL, PS_SUPPKEY BIGINT NOT NULL, \
+         PRIMARY KEY (PS_PARTKEY, PS_SUPPKEY) CLUSTERED)",
+        "CREATE TABLE supplier (S_SUPPKEY BIGINT PRIMARY KEY CLUSTERED, S_COMMENT VARCHAR(128))",
+    ] {
+        crate::run_create_table_on(table, &mut catalog).unwrap();
+    }
+    let ctx = crate::StmtContext::for_query();
+    for (table, rows, ndvs) in [
+        (
+            "part",
+            200_000,
+            vec![
+                ("P_PARTKEY", 200_000),
+                ("P_BRAND", 25),
+                ("P_TYPE", 150),
+                ("P_SIZE", 50),
+            ],
+        ),
+        (
+            "partsupp",
+            800_000,
+            vec![("PS_PARTKEY", 200_000), ("PS_SUPPKEY", 10_000)],
+        ),
+        (
+            "supplier",
+            10_000,
+            vec![("S_SUPPKEY", 10_000), ("S_COMMENT", 10_000)],
+        ),
+    ] {
+        scale_analyzed_tpcc_table(&mut catalog, table, rows, &ndvs, &ctx);
+    }
+
+    let sql = "SELECT p_brand, p_type, p_size, COUNT(DISTINCT ps_suppkey) AS supplier_cnt \
+        FROM partsupp, part WHERE p_partkey = ps_partkey \
+        AND p_brand <> 'Brand#34' AND p_type NOT LIKE 'LARGE BRUSHED%' \
+        AND p_size IN (48, 19, 12, 4, 41, 7, 21, 39) \
+        AND ps_suppkey NOT IN (SELECT s_suppkey FROM supplier \
+          WHERE s_comment LIKE '%Customer%Complaints%') \
+        GROUP BY p_brand, p_type, p_size \
+        ORDER BY supplier_cnt DESC, p_brand, p_type, p_size";
+    let statement = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, plan) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &ctx,
+        crate::explain::ExplainFormat::Brief,
+    )
+    .expect("q16 must remain explainable after NOT IN decorrelation");
+    let text = |row: &[Datum], column: usize| match &row[column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("Join") && text(row, 4).starts_with("anti semi join")
+        }),
+        "the non-null NOT IN must become an anti-semi join: {plan:#?}",
+    );
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("Join")
+                && text(row, 4).starts_with("anti semi join")
+                && text(row, 4).contains("left side:Projection")
+        }),
+        "the anti-semi join must consume the pruned left schema Go builds before physical search: \
+         {plan:#?}",
+    );
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("Projection(")
+                && text(row, 4)
+                    == "test.partsupp.ps_suppkey, test.part.p_brand, test.part.p_type, \
+                        test.part.p_size"
+        }),
+        "the semi-join input must restore the written join schema before aggregation: {plan:#?}",
+    );
+    let anti_join_rows = plan
+        .iter()
+        .find(|row| text(row, 0).contains("Join") && text(row, 4).starts_with("anti semi join"))
+        .and_then(|row| text(row, 1).parse::<f64>().ok())
+        .expect("q16 anti-semi join estimate");
+    let preserved_rows = plan
+        .iter()
+        .find(|row| text(row, 0).contains("Projection("))
+        .and_then(|row| text(row, 1).parse::<f64>().ok())
+        .expect("q16 preserved input estimate");
+    assert!(
+        (anti_join_rows - preserved_rows * crate::plan_trace::SELECTIVITY_FACTOR).abs() < 0.02,
+        "Go LogicalJoin derives an anti-semi join from its already-filtered left child: \
+         {plan:#?}",
+    );
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("Join")
+                && text(row, 4).contains("part.p_partkey")
+                && text(row, 4).contains("partsupp.ps_partkey")
+        }),
+        "the anti-semi join must stop the aggregate order from forcing a MergeJoin below it: \
+         {plan:#?}",
+    );
+    assert!(
+        plan.iter().all(|row| !text(row, 0).contains("MergeJoin")),
+        "q16's unordered anti-semi join input must not retain a MergeJoin property: {plan:#?}",
+    );
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("HashAgg")
+                && text(row, 4).contains("count(distinct test.partsupp.ps_suppkey)")
+        }),
+        "the physical aggregate must retain COUNT(DISTINCT): {plan:#?}",
+    );
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("Selection") && text(row, 4).contains("supplier.s_comment")
+        }),
+        "the subquery predicate must remain on the supplier input: {plan:#?}",
+    );
+}
+
+/// Go `handleInSubquery` adds duplicate elimination above the inner query, but
+/// `AggregationEliminator` removes it when that query already groups by its
+/// complete one-column output. The surviving grouped relation remains
+/// reorderable and can use the ordered partial/final StreamAgg selected for its
+/// clustered-key prefix.
+#[test]
+fn grouped_in_subquery_reuses_its_unique_group_output() {
+    let mut catalog = Catalog::default();
+    for table in [
+        "CREATE TABLE customer (c_custkey BIGINT PRIMARY KEY CLUSTERED, c_name VARCHAR(32))",
+        "CREATE TABLE orders (o_orderkey BIGINT PRIMARY KEY CLUSTERED, o_custkey BIGINT, \
+         o_orderdate DATE, o_totalprice DECIMAL(15,2))",
+        "CREATE TABLE lineitem (l_orderkey BIGINT, l_linenumber BIGINT, l_quantity DECIMAL(15,2), \
+         PRIMARY KEY (l_orderkey, l_linenumber) CLUSTERED)",
+    ] {
+        crate::run_create_table_on(table, &mut catalog).unwrap();
+    }
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO customer VALUES (1, 'a'), (2, 'b')",
         &mut catalog,
+        &ctx,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
-    run_insert_on("INSERT INTO inner_t VALUES (1, 2.50)", &mut catalog, &ctx).unwrap();
+    run_insert_on(
+        "INSERT INTO orders VALUES \
+         (1, 1, '1995-01-01', 100.00), (2, 2, '1995-01-02', 200.00)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO lineitem VALUES (1, 1, 10.00), (1, 2, 20.00), (2, 1, 30.00)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    for (table, rows, ndvs) in [
+        (
+            "customer",
+            150_000,
+            vec![("c_custkey", 150_000), ("c_name", 150_000)],
+        ),
+        (
+            "orders",
+            1_500_000,
+            vec![
+                ("o_orderkey", 1_500_000),
+                ("o_custkey", 100_000),
+                ("o_orderdate", 2_406),
+                ("o_totalprice", 1_400_000),
+            ],
+        ),
+        (
+            "lineitem",
+            6_001_215,
+            vec![
+                ("l_orderkey", 1_487_616),
+                ("l_linenumber", 7),
+                ("l_quantity", 50),
+            ],
+        ),
+    ] {
+        scale_analyzed_tpcc_table(&mut catalog, table, rows, &ndvs, &ctx);
+    }
 
     let statement = tidb_parser::parse(
-        "SELECT (SELECT SUM(v) FROM inner_t WHERE inner_t.k=outer_t.k) FROM outer_t",
+        "SELECT c_name, c_custkey, o_orderkey, o_orderdate, o_totalprice, SUM(l_quantity) \
+         FROM customer, orders, lineitem \
+         WHERE o_orderkey IN (SELECT l_orderkey FROM lineitem GROUP BY l_orderkey \
+           HAVING SUM(l_quantity) > 314) \
+         AND c_custkey = o_custkey AND o_orderkey = l_orderkey \
+         GROUP BY c_name, c_custkey, o_orderkey, o_orderdate, o_totalprice \
+         ORDER BY o_totalprice DESC, o_orderdate LIMIT 100",
     )
     .unwrap();
     let Stmt::Query(query) = &statement else {
@@ -34,11 +389,1150 @@ fn explaining_a_correlated_scalar_type_reads_no_storage() {
     let QueryStmt::Select(select) = &**query else {
         panic!("not a SELECT");
     };
-    let (explained, operations) = crate::storage::capture_storage_ops(|| {
-        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief)
+    let (_, plan) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &ctx,
+        crate::explain::ExplainFormat::Brief,
+    )
+    .expect("the grouped IN relation remains explainable after duplicate elimination");
+    let text = |row: &[Datum], column: usize| match &row[column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+
+    assert!(
+        plan.iter().all(|row| {
+            !(text(row, 0).contains("Selection")
+                && text(row, 4).contains("customer.c_custkey")
+                && text(row, 4).contains("orders.o_orderkey"))
+        }),
+        "join equalities consumed by the rebuilt join group must not survive as a Selection: \
+         {plan:#?}",
+    );
+    assert!(
+        plan.iter()
+            .filter(|row| text(row, 0).contains("Join"))
+            .all(|row| text(row, 1) != "N/A"),
+        "the grouped derived relation must participate in join cardinality derivation: {plan:#?}",
+    );
+    let stream_aggs = plan
+        .iter()
+        .filter(|row| text(row, 0).contains("StreamAgg"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        stream_aggs.len(),
+        2,
+        "the grouped inner query must split into root and cop StreamAgg stages: {plan:#?}",
+    );
+    assert!(
+        stream_aggs
+            .iter()
+            .all(|row| { text(row, 1) == "1487616.00" && text(row, 4).contains("funcs:sum(") }),
+        "HAVING's SUM must survive in both Go partial/final StreamAgg stages: {plan:#?}",
+    );
+    assert!(
+        stream_aggs.iter().any(|row| {
+            text(row, 2) == "cop[tikv]" && text(row, 4).contains("sum(test.lineitem.l_quantity)")
+        }),
+        "the cop StreamAgg must read the SUM argument required only by HAVING: {plan:#?}",
+    );
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("TableReader") && text(row, 4) == "data:StreamAgg"
+        }),
+        "the partial StreamAgg must remain below a TableReader boundary: {plan:#?}",
+    );
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("TableFullScan")
+                && text(row, 2) == "cop[tikv]"
+                && text(row, 3) == "table:lineitem"
+                && text(row, 4) == "keep order:true"
+        }),
+        "the clustered l_orderkey prefix must satisfy the StreamAgg order: {plan:#?}",
+    );
+}
+
+/// Go evaluates an uncorrelated scalar subquery before decorrelating a sibling
+/// NOT EXISTS. The resulting constant predicate is therefore pushed into the
+/// preserved DataSource together with its ordinary local predicates.
+#[test]
+fn evaluated_scalar_predicate_is_pushed_below_a_sibling_anti_semi_join() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE customer (c_custkey BIGINT PRIMARY KEY CLUSTERED, \
+         c_phone VARCHAR(16), c_acctbal DECIMAL(15,2))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on("CREATE TABLE orders (o_custkey BIGINT)", &mut catalog).unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO customer VALUES (1, '20-1', 100.00), (2, '40-2', 10.00)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on("INSERT INTO orders VALUES (2)", &mut catalog, &ctx).unwrap();
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "customer",
+        150_000,
+        &[
+            ("c_custkey", 150_000),
+            ("c_phone", 150_000),
+            ("c_acctbal", 140_000),
+        ],
+        &ctx,
+    );
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "orders",
+        1_500_000,
+        &[("o_custkey", 100_000)],
+        &ctx,
+    );
+
+    let statement = tidb_parser::parse(
+        "SELECT cntrycode, COUNT(*), SUM(c_acctbal) FROM ( \
+           SELECT SUBSTRING(c_phone, 1, 2) AS cntrycode, c_acctbal FROM customer \
+           WHERE SUBSTRING(c_phone, 1, 2) IN ('20', '40') \
+           AND c_acctbal > (SELECT AVG(c_acctbal) FROM customer \
+             WHERE c_acctbal > 0.00 AND SUBSTRING(c_phone, 1, 2) IN ('20', '40')) \
+           AND NOT EXISTS (SELECT 1 FROM orders WHERE o_custkey = c_custkey) \
+         ) AS custsale GROUP BY cntrycode ORDER BY cntrycode",
+    )
+    .unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, plan) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &ctx,
+        crate::explain::ExplainFormat::Brief,
+    )
+    .unwrap();
+    let text = |row: &[Datum], column: usize| match &row[column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+
+    let anti_join = plan
+        .iter()
+        .position(|row| text(row, 0).contains("Join") && text(row, 4).starts_with("anti semi join"))
+        .expect("q22 must contain an anti-semi join");
+    let outer_agg = plan[..anti_join]
+        .iter()
+        .rposition(|row| text(row, 0).contains("HashAgg"))
+        .expect("q22 must aggregate the anti-semi result");
+    assert!(
+        plan[outer_agg + 1..anti_join].iter().any(|row| {
+            let info = text(row, 4);
+            text(row, 0).contains("Projection")
+                && info.contains("test.customer.c_acctbal")
+                && info.contains("substring(test.customer.c_phone")
+        }),
+        "Go InjectProjBelowAgg must evaluate q22's scalar group item between the outer HashAgg \
+         and anti-semi join: {plan:#?}",
+    );
+    let scalar_subquery = plan
+        .iter()
+        .position(|row| text(row, 0).contains("ScalarSubQuery"))
+        .expect("q22 must retain the scalar child as a separate EXPLAIN root");
+    assert_eq!(
+        text(&plan[scalar_subquery], 4),
+        "Output: ScalarQueryCol#14",
+        "Go builds the derived source's scalar child before allocating the outer aggregate columns: \
+         {plan:#?}",
+    );
+    let customer_selection = plan[anti_join + 1..scalar_subquery]
+        .iter()
+        .find(|row| {
+            let info = text(row, 4);
+            text(row, 0).contains("Selection")
+                && info.contains("ScalarQueryCol#")
+                && info.contains("substring(test.customer.c_phone")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "the evaluated scalar and ordinary customer predicates must reach one DataSource \
+                 Selection below the anti-semi join: {plan:#?}"
+            )
+        });
+    assert_ne!(
+        text(customer_selection, 1),
+        "120000.00",
+        "the evaluated scalar constant must participate in loaded-statistics selectivity instead \
+         of charging the whole predicate Go's 0.8 fallback: {plan:#?}",
+    );
+    let filtered_left_rows = text(customer_selection, 1).parse::<f64>().unwrap();
+    let anti_join_rows = text(&plan[anti_join], 1).parse::<f64>().unwrap();
+    let outer_agg_rows = text(&plan[outer_agg], 1).parse::<f64>().unwrap();
+    assert!(
+        outer_agg_rows <= anti_join_rows + 0.02,
+        "a grouped aggregation cannot produce more groups than its filtered anti-semi input: \
+         {plan:#?}",
+    );
+    assert!(
+        (anti_join_rows - filtered_left_rows * crate::plan_trace::SELECTIVITY_FACTOR).abs() < 0.02,
+        "Go LogicalJoin derives an anti-semi join from its filtered left child: {plan:#?}",
+    );
+    assert!(
+        plan[..anti_join].iter().all(|row| {
+            let info = text(row, 4);
+            !(text(row, 0).contains("Selection")
+                && info.contains("ScalarQueryCol#")
+                && info.contains("substring(test.customer.c_phone"))
+        }),
+        "a predicate accepted by the preserved DataSource must not remain as a duplicate root \
+         Selection above the anti-semi join: {plan:#?}",
+    );
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("Join") && text(row, 4).starts_with("anti semi join")
+        }),
+        "NOT EXISTS must still decorrelate after scalar evaluation: {plan:#?}",
+    );
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("Join")
+                && text(row, 4).starts_with("anti semi join")
+                && text(row, 4).contains("left side:TableReader")
+        }),
+        "the smaller filtered customer side must build the anti-semi hash table: {plan:#?}",
+    );
+    assert!(
+        plan[scalar_subquery + 1..].iter().any(|row| {
+            text(row, 0).contains("HashAgg")
+                && text(row, 2).contains("cop")
+                && text(row, 4).contains("funcs:count(test.customer.c_acctbal)")
+                && text(row, 4).contains("funcs:sum(test.customer.c_acctbal)")
+        }),
+        "the scalar AVG must split into TiKV COUNT/SUM and a root final AVG: {plan:#?}",
+    );
+}
+
+/// Go's default plain-EXPLAIN path registers the scalar child plan, evaluates
+/// it once, and leaves a `Constant` carrying `SubqueryRefID` in the outer
+/// predicate. The non-evaluating behavior is an opt-in session variable.
+#[test]
+fn plain_explain_evaluates_and_labels_an_uncorrelated_scalar_subquery() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE balances (v DECIMAL(10,2))", &mut catalog).unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO balances VALUES (1.00), (3.00)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let statement =
+        tidb_parser::parse("SELECT v FROM balances WHERE v > (SELECT AVG(v) FROM balances)")
+            .unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let ((_, plan), operations) = crate::storage::capture_storage_ops(|| {
+        crate::explain::explain_select_stmt(
+            select,
+            &catalog,
+            "test",
+            &ctx,
+            crate::explain::ExplainFormat::Brief,
+        )
+        .unwrap()
     });
-    explained.unwrap();
-    assert_eq!(operations, crate::storage::StorageOps::default());
+    assert_ne!(
+        operations,
+        crate::storage::StorageOps::default(),
+        "the default Go branch evaluates the scalar child once",
+    );
+    let text = |row: &[Datum], column: usize| match &row[column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert!(
+        plan.iter()
+            .any(|row| text(row, 0).contains("ScalarSubQuery")),
+        "the evaluated child plan must remain a separate EXPLAIN root: {plan:#?}",
+    );
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("Selection")
+                && text(row, 4).contains("ScalarQueryCol#")
+                && text(row, 4).contains('(')
+        }),
+        "the outer predicate must display the evaluated subquery constant: {plan:#?}",
+    );
+
+    let statement = tidb_parser::parse(
+        "SELECT v, SUM(v) FROM balances GROUP BY v \
+         HAVING SUM(v) > (SELECT AVG(v) FROM balances)",
+    )
+    .unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, grouped_plan) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &ctx,
+        crate::explain::ExplainFormat::Brief,
+    )
+    .unwrap();
+    assert!(
+        grouped_plan.iter().any(|row| {
+            let info = text(row, 4);
+            text(row, 0).contains("Selection")
+                && info.contains("ScalarQueryCol#")
+                && info.contains("(2.000000)")
+        }),
+        "HAVING must resolve the evaluated subquery through the aggregate output: \
+         {grouped_plan:#?}",
+    );
+
+    crate::run_create_table_on(
+        "CREATE TABLE inventory (k INT, price DECIMAL(10,2), qty INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on("CREATE TABLE inventory_key (k INT)", &mut catalog).unwrap();
+    run_insert_on(
+        "INSERT INTO inventory VALUES (1, 2.00, 3), (2, 4.00, 5)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO inventory_key VALUES (1), (2)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let statement = tidb_parser::parse(
+        "SELECT inventory.k, SUM(inventory.price * inventory.qty) AS value \
+         FROM inventory, inventory_key WHERE inventory.k = inventory_key.k \
+         GROUP BY inventory.k \
+         HAVING SUM(inventory.price * inventory.qty) > \
+             (SELECT SUM(price * qty) * 0.1 FROM inventory) \
+         ORDER BY value DESC",
+    )
+    .unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, q11_plan) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &ctx,
+        crate::explain::ExplainFormat::Brief,
+    )
+    .unwrap();
+    let operators = q11_plan
+        .iter()
+        .map(|row| {
+            text(row, 0)
+                .trim_start_matches(&[' ', '│', '├', '└', '─'][..])
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        &operators[..5],
+        ["Projection", "Sort", "Selection", "HashAgg", "Projection"],
+        "the visible aggregate projection must stay above an unbounded sort: {q11_plan:#?}",
+    );
+    assert!(
+        text(&q11_plan[0], 4).contains("Column#14->Column#27"),
+        "the final projection must retain Go's input-to-output column identity: {q11_plan:#?}",
+    );
+    assert!(
+        q11_plan.iter().any(|row| {
+            text(row, 0).contains("ScalarSubQuery") && text(row, 4) == "Output: ScalarQueryCol#25"
+        }),
+        "the scalar placeholder must use Go's statement-wide plan-column allocator: \
+         {q11_plan:#?}",
+    );
+    let hash_agg = text(&q11_plan[3], 4);
+    assert_eq!(
+        hash_agg.matches("funcs:sum(").count(),
+        1,
+        "HAVING must reuse the selected SUM: {q11_plan:#?}",
+    );
+    assert!(
+        text(&q11_plan[4], 4).contains("cast(test.inventory.qty, decimal(10,0) BINARY)"),
+        "DECIMAL arithmetic must cast its integer column like Go: {q11_plan:#?}",
+    );
+}
+
+/// Plain EXPLAIN infers correlated-subquery and view output types from their
+/// plans. It must not execute those children merely to discover a type; an
+/// uncorrelated scalar subquery is different and is evaluated by the default
+/// Go branch pinned above.
+#[test]
+fn explaining_a_correlated_scalar_type_reads_no_storage() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    fn explain_without_storage(
+        sql: &str,
+        catalog: &Catalog,
+        ctx: &crate::StmtContext,
+    ) -> Vec<Vec<Datum>> {
+        let statement = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &statement else {
+            panic!("not a query");
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("not a SELECT");
+        };
+        let (explained, operations) = crate::storage::capture_storage_ops(|| {
+            explain_select_stmt(select, catalog, "test", ctx, ExplainFormat::Brief)
+        });
+        let (_, plan) = explained.unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        assert_eq!(
+            operations,
+            crate::storage::StorageOps::default(),
+            "plain EXPLAIN read storage for {sql}"
+        );
+        plan
+    }
+
+    fn operators(plan: &[Vec<Datum>]) -> Vec<String> {
+        plan.iter()
+            .map(|row| match &row[0] {
+                Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    }
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE outer_t (k BIGINT PRIMARY KEY CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE inner_t (k BIGINT NOT NULL, v DECIMAL(6,2))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on("CREATE TABLE inner_u (k BIGINT PRIMARY KEY)", &mut catalog)
+        .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on("INSERT INTO outer_t VALUES (1)", &mut catalog, &ctx).unwrap();
+    run_insert_on("INSERT INTO inner_t VALUES (1, 2.50)", &mut catalog, &ctx).unwrap();
+    scale_analyzed_tpcc_table(&mut catalog, "outer_t", 10_000, &[("k", 10_000)], &ctx);
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "inner_t",
+        10_000,
+        &[("k", 500), ("v", 10_000)],
+        &ctx,
+    );
+    catalog
+        .register_view_in(
+            "test",
+            "inner_v",
+            crate::driver::catalog::ViewDef {
+                name: "inner_v".to_owned(),
+                columns: vec![(
+                    "v".to_owned(),
+                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::NewDecimal),
+                )],
+                select_sql: "SELECT `v` AS `v` FROM `test`.`inner_t`".to_owned(),
+                definer_user: String::new(),
+                definer_host: String::new(),
+                character_set_client: "utf8mb4".to_owned(),
+                collation_connection: "utf8mb4_bin".to_owned(),
+                algorithm: "UNDEFINED".to_owned(),
+                security: "DEFINER".to_owned(),
+                check_option: "CASCADED".to_owned(),
+            },
+        )
+        .unwrap();
+    catalog
+        .register_view_in(
+            "test",
+            "revenue_v",
+            crate::driver::catalog::ViewDef {
+                name: "revenue_v".to_owned(),
+                columns: vec![
+                    (
+                        "supplier_no".to_owned(),
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                    ),
+                    (
+                        "total_revenue".to_owned(),
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::NewDecimal),
+                    ),
+                ],
+                select_sql: "SELECT k AS supplier_no, SUM(v) AS total_revenue \
+                    FROM inner_t GROUP BY k"
+                    .to_owned(),
+                definer_user: String::new(),
+                definer_host: String::new(),
+                character_set_client: "utf8mb4".to_owned(),
+                collation_connection: "utf8mb4_bin".to_owned(),
+                algorithm: "UNDEFINED".to_owned(),
+                security: "DEFINER".to_owned(),
+                check_option: "CASCADED".to_owned(),
+            },
+        )
+        .unwrap();
+
+    for sql in [
+        "SELECT (SELECT SUM(v) FROM inner_t WHERE inner_t.k=outer_t.k) FROM outer_t",
+        "SELECT * FROM inner_v",
+    ] {
+        explain_without_storage(sql, &catalog, &ctx);
+    }
+
+    for (sql, expected) in [
+        (
+            "SELECT k FROM outer_t WHERE k=(SELECT MAX(v) FROM inner_v)",
+            "Output: ScalarQueryCol#8",
+        ),
+        (
+            "SELECT k FROM outer_t WHERE k=(SELECT MAX(total_revenue) FROM revenue_v)",
+            "Output: ScalarQueryCol#10",
+        ),
+    ] {
+        let statement = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &statement else {
+            panic!("not a query");
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("not a SELECT");
+        };
+        let (_, plan) = explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief)
+            .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        assert!(
+            plan.iter().any(|row| {
+                operators(std::slice::from_ref(row))[0].contains("ScalarSubQuery")
+                    && match &row[4] {
+                        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes) == expected,
+                        _ => false,
+                    }
+            }),
+            "query-source allocation must match Go for {sql}: {plan:#?}",
+        );
+    }
+
+    let q15 = tidb_parser::parse(
+        "SELECT outer_t.k, total_revenue FROM outer_t, revenue_v \
+         WHERE outer_t.k=supplier_no AND total_revenue=(SELECT MAX(total_revenue) FROM revenue_v) \
+         ORDER BY outer_t.k",
+    )
+    .unwrap();
+    let Stmt::Query(q15) = &q15 else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(q15) = &**q15 else {
+        panic!("not a SELECT");
+    };
+    let (_, q15_plan) = explain_select_stmt(q15, &catalog, "test", &ctx, ExplainFormat::Brief)
+        .expect("the scalar output must remain resolvable while the outer join is built");
+    let info = |row: &[Datum]| match &row[4] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let estimate = |row: &[Datum]| match &row[1] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let q15_operators = operators(&q15_plan)
+        .into_iter()
+        .map(|operator| {
+            operator
+                .trim_start_matches(&[' ', '│', '├', '└', '─'][..])
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(q15_operators[0], "Sort", "{q15_plan:#?}");
+    assert!(
+        q15_operators[1].starts_with("Index") && q15_operators[1].ends_with("Join"),
+        "the filtered grouped view must drive a dynamic index lookup: {q15_plan:#?}",
+    );
+    assert_eq!(
+        &q15_operators[2..4],
+        ["Selection(Build)", "HashAgg"],
+        "the view-output filter must stay directly above its aggregate: {q15_plan:#?}",
+    );
+    assert_eq!(
+        estimate(&q15_plan[1]),
+        "400.00",
+        "the view-output Selection must use Go's fixed SelectionFactor: {q15_plan:#?}",
+    );
+    assert!(
+        info(&q15_plan[2]).contains("ScalarQueryCol#"),
+        "{q15_plan:#?}"
+    );
+    assert!(
+        info(&q15_plan[1]).contains("test.inner_t.k")
+            && !info(&q15_plan[1]).contains("test.revenue_v.supplier_no"),
+        "an eliminated view projection must retain the grouped base-column identity: {q15_plan:#?}",
+    );
+    assert!(
+        info(&q15_plan[2]).contains("eq(Column#")
+            && !info(&q15_plan[2]).contains("test.revenue_v")
+            && !info(&q15_plan[2]).contains("not(isnull("),
+        "the computed view output is internal and its non-null group key needs no filter: {q15_plan:#?}",
+    );
+    let scalar = q15_operators
+        .iter()
+        .position(|operator| operator == "ScalarSubQuery")
+        .expect("plain EXPLAIN must retain the scalar subquery root");
+    assert_eq!(
+        info(&q15_plan[scalar]),
+        "Output: ScalarQueryCol#15",
+        "a view body must consume Go's plan-column IDs before the outer scalar subquery: \
+         {q15_plan:#?}",
+    );
+    let dynamic_range = q15_operators[..scalar]
+        .iter()
+        .position(|operator| operator == "TableRangeScan")
+        .expect("the index join must retain its dynamic range source");
+    assert!(
+        info(&q15_plan[dynamic_range]).contains("test.inner_t.k"),
+        "the dynamic range must name the grouped base column: {q15_plan:#?}",
+    );
+    assert_eq!(
+        &q15_operators[scalar..scalar + 6],
+        [
+            "ScalarSubQuery",
+            "MaxOneRow",
+            "StreamAgg",
+            "TopN",
+            "Selection",
+            "HashAgg",
+        ],
+        "a single global MAX must follow Go's max/min elimination: {q15_plan:#?}",
+    );
+    assert_eq!(estimate(&q15_plan[scalar + 4]), "400.00", "{q15_plan:#?}",);
+    assert!(
+        info(&q15_plan[scalar + 4]).contains("not(isnull("),
+        "{q15_plan:#?}",
+    );
+    assert!(
+        !info(&q15_plan[scalar + 5]).contains("firstrow("),
+        "column pruning must remove the unused grouped output below MAX: {q15_plan:#?}",
+    );
+
+    let non_unique = explain_without_storage(
+        "SELECT k FROM outer_t WHERE k IN (SELECT k FROM inner_t)",
+        &catalog,
+        &ctx,
+    );
+    let non_unique_operators = operators(&non_unique);
+    assert!(
+        non_unique_operators
+            .iter()
+            .any(|operator| operator.contains("HashJoin")),
+        "{non_unique:#?}"
+    );
+    assert!(
+        non_unique_operators
+            .iter()
+            .any(|operator| operator.contains("HashAgg")),
+        "{non_unique:#?}"
+    );
+
+    let unique = explain_without_storage(
+        "SELECT k FROM outer_t WHERE k IN (SELECT k FROM inner_u)",
+        &catalog,
+        &ctx,
+    );
+    let unique_operators = operators(&unique);
+    assert!(
+        unique_operators
+            .iter()
+            .any(|operator| operator.contains("HashJoin")),
+        "{unique:#?}"
+    );
+    assert!(
+        unique_operators
+            .iter()
+            .all(|operator| !operator.contains("HashAgg")),
+        "{unique:#?}"
+    );
+}
+
+/// Go's `DecorrelateSolver` pulls equality predicates below a scalar
+/// aggregation into join keys and appends those keys to the inner grouping.
+/// The scalar value then participates in the outer predicate as an ordinary
+/// aggregate column instead of remaining an opaque per-row subquery.
+#[test]
+fn correlated_avg_predicate_decorrelates_to_grouped_join() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE part (p_partkey BIGINT PRIMARY KEY, p_brand VARCHAR(16), \
+         p_container VARCHAR(16))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE lineitem (l_partkey BIGINT, l_quantity DECIMAL(15,2), \
+         l_extendedprice DECIMAL(15,2))",
+        &mut catalog,
+    )
+    .unwrap();
+
+    let statement = tidb_parser::parse(
+        "SELECT SUM(l_extendedprice) / 7.0 FROM lineitem, part \
+         WHERE p_partkey = l_partkey AND p_brand = 'Brand#44' \
+         AND p_container = 'WRAP PKG' AND l_quantity < \
+         (SELECT 0.2 * AVG(l_quantity) FROM lineitem \
+          WHERE l_partkey = p_partkey)",
+    )
+    .unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, plan) = explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &crate::StmtContext::for_query(),
+        ExplainFormat::Brief,
+    )
+    .unwrap();
+    let text = |row: &[Datum], column: usize| match &row[column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("HashAgg")
+                && text(row, 4).contains("group by:test.lineitem.l_partkey")
+                && text(row, 4).contains("avg(")
+        }),
+        "the correlated AVG must become a grouped inner aggregation: {plan:#?}"
+    );
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("HashJoin")
+                && text(row, 4).contains("test.part.p_partkey")
+                && text(row, 4).contains("test.lineitem.l_partkey")
+        }),
+        "the correlation equality must become a join key: {plan:#?}"
+    );
+    assert!(
+        plan.iter()
+            .all(|row| !text(row, 4).contains("SELECT 0.2*AVG")),
+        "the outer predicate must not retain an opaque scalar subquery: {plan:#?}"
+    );
+}
+
+#[test]
+fn correlated_sum_predicate_pulls_above_unique_outer_join() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE part (p_partkey BIGINT PRIMARY KEY, p_name VARCHAR(32))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE partsupp (ps_partkey BIGINT NOT NULL, ps_suppkey BIGINT NOT NULL, \
+         ps_availqty BIGINT, PRIMARY KEY(ps_partkey, ps_suppkey) CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE lineitem (l_partkey BIGINT, l_suppkey BIGINT, \
+         l_quantity DECIMAL(15,2), l_shipdate DATE)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE supplier (s_suppkey BIGINT PRIMARY KEY, s_name VARCHAR(32), \
+         s_address VARCHAR(64), s_nationkey BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE nation (n_nationkey BIGINT PRIMARY KEY, n_name VARCHAR(32))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    let part_values = (1..=128)
+        .map(|key| {
+            let name = if key == 1 {
+                "green alpha".to_owned()
+            } else {
+                format!("red {key:03}")
+            };
+            format!("({key}, '{name}')")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    crate::run_insert_on(
+        &format!("INSERT INTO part VALUES {part_values}"),
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    crate::run_insert_on("INSERT INTO partsupp VALUES (1, 1, 10)", &mut catalog, &ctx).unwrap();
+    crate::run_insert_on(
+        "INSERT INTO lineitem VALUES \
+         (1, 1, 1.00, '1992-01-01'), \
+         (1, 1, 2.00, '1993-06-01'), \
+         (2, 2, 3.00, '1994-06-01')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    crate::run_insert_on(
+        "INSERT INTO supplier VALUES (1, 'Supplier#1', 'Address#1', 1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    crate::run_insert_on(
+        "INSERT INTO nation VALUES (1, 'ALGERIA')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "part",
+        200_000,
+        &[("p_partkey", 196_960), ("p_name", 198_848)],
+        &ctx,
+    );
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "partsupp",
+        800_000,
+        &[
+            ("ps_partkey", 196_960),
+            ("ps_suppkey", 10_000),
+            ("ps_availqty", 9_999),
+        ],
+        &ctx,
+    );
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "lineitem",
+        6_001_215,
+        &[
+            ("l_partkey", 200_000),
+            ("l_suppkey", 10_000),
+            ("l_quantity", 50),
+            ("l_shipdate", 2_526),
+        ],
+        &ctx,
+    );
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "supplier",
+        10_000,
+        &[("s_suppkey", 10_000), ("s_nationkey", 25)],
+        &ctx,
+    );
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "nation",
+        25,
+        &[("n_nationkey", 25), ("n_name", 25)],
+        &ctx,
+    );
+
+    let statement = tidb_parser::parse(
+        "SELECT ps_suppkey FROM partsupp WHERE ps_partkey IN \
+         (SELECT p_partkey FROM part WHERE p_name LIKE 'green%') \
+         AND ps_availqty > (SELECT 0.5 * SUM(l_quantity) FROM lineitem \
+         WHERE l_partkey = ps_partkey AND l_suppkey = ps_suppkey \
+         AND l_shipdate >= '1993-01-01' \
+         AND l_shipdate < DATE_ADD('1993-01-01', INTERVAL '1' YEAR))",
+    )
+    .unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let planned_select = (**select).clone();
+    let planned_catalog = catalog.clone();
+    let (_, plan) = std::thread::Builder::new()
+        .name("correlated-sum-plan".to_owned())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            explain_select_stmt(
+                &planned_select,
+                &planned_catalog,
+                "test",
+                &crate::StmtContext::for_query(),
+                ExplainFormat::Brief,
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+    let text = |row: &[Datum], column: usize| match &row[column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("HashJoin")
+                && text(row, 4).contains("left outer join")
+                && text(row, 4).contains("partsupp.ps_partkey")
+                && text(row, 4).contains("lineitem.l_partkey")
+        }),
+        "the scalar SUM input must be left-joined before aggregation: {plan:#?}"
+    );
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("HashAgg")
+                && text(row, 4).contains("group by:test.partsupp.ps_partkey")
+                && text(row, 4).contains("test.partsupp.ps_suppkey")
+                && text(row, 4).contains("sum(")
+        }),
+        "the complete unique key must group the pulled aggregate: {plan:#?}"
+    );
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("Selection")
+                && text(row, 4).contains("gt(")
+                && text(row, 4).contains("mul(0.5")
+        }),
+        "the scalar comparison must remain above the pulled aggregate: {plan:#?}"
+    );
+
+    let statement = tidb_parser::parse(
+        "SELECT s_name, s_address FROM supplier, nation \
+         WHERE s_nationkey = n_nationkey AND s_suppkey IN \
+         (SELECT ps_suppkey FROM partsupp WHERE ps_partkey IN \
+          (SELECT p_partkey FROM part WHERE p_name LIKE 'green%') \
+          AND ps_availqty > (SELECT 0.5 * SUM(l_quantity) FROM lineitem \
+           WHERE l_partkey = ps_partkey AND l_suppkey = ps_suppkey \
+           AND l_shipdate >= '1993-01-01' \
+           AND l_shipdate < DATE_ADD('1993-01-01', INTERVAL '1' YEAR))) \
+         AND n_name = 'ALGERIA' ORDER BY s_name",
+    )
+    .unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let reorder_select = (**select).clone();
+    let reorder_catalog = catalog.clone();
+    let reordered = std::thread::Builder::new()
+        .name("nested-correlated-sum-reorder".to_owned())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let reorder_ctx = crate::StmtContext::for_query();
+            let rewritten = crate::driver::subquery::rewrite_filter_in_subqueries(
+                &reorder_select,
+                &reorder_catalog,
+                "test",
+                &reorder_ctx,
+            )
+            .unwrap()
+            .expect("the outer q20 IN predicate must become a distinct join leaf");
+            crate::driver::join_reorder::reorder(
+                rewritten.from.as_ref().unwrap(),
+                &rewritten,
+                rewritten.where_clause.as_ref(),
+                &reorder_catalog,
+                "test",
+                &reorder_ctx,
+            )
+            .expect("the rewritten q20 inner join group must remain reorderable")
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(
+        reordered.written_order,
+        vec![1, 0, 2],
+        "the filtered nation input must seed the rewritten q20 join group",
+    );
+    let nested_select = (**select).clone();
+    let nested_catalog = catalog.clone();
+    let (_, nested_plan) = std::thread::Builder::new()
+        .name("nested-correlated-sum-plan".to_owned())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            explain_select_stmt(
+                &nested_select,
+                &nested_catalog,
+                "test",
+                &crate::StmtContext::for_query(),
+                ExplainFormat::Brief,
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+
+    assert!(
+        nested_plan.iter().any(|row| {
+            text(row, 0).contains("HashJoin")
+                && text(row, 4).contains("left outer join")
+                && text(row, 4).contains("partsupp.ps_partkey")
+                && text(row, 4).contains("lineitem.l_partkey")
+        }),
+        "the scalar SUM must be pulled up before the outer IN rewrite: {nested_plan:#?}"
+    );
+    let pulled_outer_join = nested_plan
+        .iter()
+        .position(|row| {
+            text(row, 0).contains("HashJoin")
+                && text(row, 4).contains("left outer join")
+                && text(row, 4).contains("partsupp.ps_partkey")
+                && text(row, 4).contains("lineitem.l_partkey")
+        })
+        .expect("pulled scalar-SUM left outer join");
+    let pulled_outer_join_rows = nested_plan
+        .iter()
+        .skip(pulled_outer_join)
+        .take(7)
+        .map(|row| {
+            (0..row.len())
+                .map(|column| text(row, column))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !text(&nested_plan[0], 0).contains("Projection"),
+        "a direct output containing every ORDER BY column must be pruned into the join: \
+         {nested_plan:#?}"
+    );
+    let supplier_membership = nested_plan
+        .iter()
+        .find(|row| {
+            text(row, 0).contains("HashJoin") && text(row, 4).contains("supplier.s_suppkey")
+        })
+        .expect("supplier membership join");
+    assert!(
+        text(supplier_membership, 4).contains("partsupp.ps_suppkey"),
+        "the DISTINCT relation key must retain its base-column identity: {nested_plan:#?}"
+    );
+    assert!(
+        nested_plan.iter().any(|row| {
+            text(row, 0).contains("HashJoin")
+                && text(row, 4)
+                    .contains("equal:[eq(test.nation.n_nationkey, test.supplier.s_nationkey)]")
+        }),
+        "the filtered nation seed must remain the logical left side, independently of the \
+         physical build side: {nested_plan:#?}"
+    );
+    let scalar_selection = nested_plan
+        .iter()
+        .position(|row| text(row, 0).contains("Selection") && text(row, 4).contains("mul(0.5"))
+        .expect("scalar aggregate predicate Selection");
+    let selection_rows = text(&nested_plan[scalar_selection], 1)
+        .parse::<f64>()
+        .unwrap();
+    let aggregate_rows = text(&nested_plan[scalar_selection + 1], 1)
+        .parse::<f64>()
+        .unwrap();
+    assert!(
+        (selection_rows - aggregate_rows * crate::plan_trace::SELECTIVITY_FACTOR).abs() < 0.02,
+        "LogicalSelection.DeriveStats scales its aggregate child by SelectivityFactor: \
+         selection={selection_rows}, aggregate={aggregate_rows}, expected={}; \
+         {nested_plan:#?}",
+        aggregate_rows * crate::plan_trace::SELECTIVITY_FACTOR
+    );
+    let selection_info = text(&nested_plan[scalar_selection], 4);
+    assert!(
+        selection_info.contains("cast(test.partsupp.ps_availqty, decimal(20,0) BINARY)")
+            && selection_info.contains("mul(0.5, Column#"),
+        "decorrelation carriers must print as a base column and an aggregate result: \
+         {nested_plan:#?}"
+    );
+    assert!(
+        text(&nested_plan[pulled_outer_join + 1], 0).contains("IndexHashJoin(Build)"),
+        "HashJoin v2 must cost the preserved side as a build candidate: \
+         {pulled_outer_join_rows:#?}"
+    );
+    let leaked_aliases = nested_plan
+        .iter()
+        .map(|row| text(row, 4))
+        .filter(|info| info.contains("__decorrelated_"))
+        .collect::<Vec<_>>();
+    assert!(
+        leaked_aliases.is_empty(),
+        "internal decorrelation aliases must not escape their query block: {leaked_aliases:#?}"
+    );
+    assert!(
+        nested_plan.iter().any(|row| {
+            text(row, 0).contains("HashJoin")
+                && text(row, 4).contains("supplier.s_suppkey")
+                && text(row, 1) != "N/A"
+        }),
+        "the DISTINCT IN relation must retain a modeled row count: {nested_plan:#?}"
+    );
+    let part_partsupp_join = nested_plan
+        .iter()
+        .find(|row| {
+            text(row, 0).contains("Join")
+                && text(row, 4).contains("part.p_partkey")
+                && text(row, 4).contains("partsupp.ps_partkey")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "the selective part input must drive partsupp's clustered-key prefix lookup: \
+                 {nested_plan:#?}"
+            )
+        });
+    let part_selection_rows = nested_plan
+        .iter()
+        .find(|row| text(row, 0).contains("Selection") && text(row, 4).contains("part.p_name"))
+        .and_then(|row| text(row, 1).parse::<f64>().ok())
+        .expect("part LIKE Selection estimate");
+    let part_scan_rows = nested_plan
+        .iter()
+        .find(|row| text(row, 0).contains("TableFullScan") && text(row, 3) == "table:part")
+        .and_then(|row| text(row, 1).parse::<f64>().ok())
+        .expect("part full-scan estimate");
+    assert!(
+        part_selection_rows < part_scan_rows,
+        "a sibling outer join must not erase the derived child's loaded-statistics selectivity: \
+         {nested_plan:#?}"
+    );
+    let part_partsupp_rows = text(part_partsupp_join, 1).parse::<f64>().unwrap();
+    let expected_part_partsupp_rows = part_selection_rows * 800_000.0 / 196_960.0;
+    assert!(
+        (part_partsupp_rows - expected_part_partsupp_rows).abs() < 0.02,
+        "Go LogicalJoin derives the filtered join from the analyzed ps_partkey NDV: \
+         expected {expected_part_partsupp_rows}, got {part_partsupp_rows}; {nested_plan:#?}"
+    );
 }
 
 /// Go decorrelates a scalar SUM over equality-correlated keys by pulling the
@@ -694,6 +2188,385 @@ fn subqueries() {
         .unwrap(),
         Vec::<Vec<Datum>>::new()
     );
+
+    // Go rewrites a correlated scalar subquery before join reorder. The row
+    // source must therefore leave this predicate above the outer join for the
+    // existing Apply/decorrelation path, rather than treating columns inside
+    // the subquery as a multi-table `OtherCondition` of that join.
+    for table in [
+        "CREATE TABLE outer_a (id BIGINT)",
+        "CREATE TABLE outer_b (id BIGINT, v BIGINT)",
+        "CREATE TABLE outer_c (id BIGINT)",
+    ] {
+        crate::run_create_table_on(table, &mut catalog).unwrap();
+    }
+    let sql = "SELECT outer_a.id FROM outer_a, outer_b, outer_c \
+        WHERE outer_a.id = outer_b.id AND outer_b.id = outer_c.id \
+        AND outer_b.v = (SELECT MIN(v) FROM outer_b \
+        WHERE outer_a.id = outer_b.id AND outer_b.id = outer_c.id)";
+    let statement = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &crate::StmtContext::for_query(),
+        crate::explain::ExplainFormat::Brief,
+    )
+    .expect("the correlated scalar subquery remains a residual until Apply rewriting");
+
+    for table in [
+        "CREATE TABLE tpch_orders (o_orderkey BIGINT PRIMARY KEY CLUSTERED, \
+         o_custkey BIGINT, o_orderstatus VARCHAR(1), o_totalprice DECIMAL(15,2), \
+         o_orderdate DATE, o_orderpriority VARCHAR(16), o_clerk VARCHAR(16), \
+         o_shippriority BIGINT, o_comment VARCHAR(128))",
+        "CREATE TABLE tpch_lineitem (l_orderkey BIGINT, l_linenumber BIGINT, \
+         l_commitdate DATE, l_receiptdate DATE, \
+         PRIMARY KEY (l_orderkey, l_linenumber) CLUSTERED)",
+    ] {
+        crate::run_create_table_on(table, &mut catalog).unwrap();
+    }
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "tpch_orders",
+        1_500_000,
+        &[
+            ("o_orderkey", 1_500_000),
+            ("o_orderdate", 2_406),
+            ("o_orderpriority", 5),
+        ],
+        &crate::StmtContext::for_query(),
+    );
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "tpch_lineitem",
+        6_001_215,
+        &[
+            ("l_orderkey", 1_500_000),
+            ("l_linenumber", 7),
+            ("l_commitdate", 2_466),
+            ("l_receiptdate", 2_554),
+        ],
+        &crate::StmtContext::for_query(),
+    );
+    let sql = "SELECT o_orderpriority, COUNT(*) FROM tpch_orders \
+        WHERE o_orderdate >= '1995-01-01' \
+        AND o_orderdate < DATE_ADD('1995-01-01', INTERVAL '3' MONTH) \
+        AND EXISTS (SELECT * FROM tpch_lineitem \
+        WHERE tpch_lineitem.l_orderkey = tpch_orders.o_orderkey \
+        AND l_commitdate < l_receiptdate) GROUP BY o_orderpriority ORDER BY o_orderpriority";
+    let statement = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, plan) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &crate::StmtContext::for_query(),
+        crate::explain::ExplainFormat::Brief,
+    )
+    .expect("the correlated EXISTS reaches semi-join decorrelation before scalar rewriting");
+    let text = |row: &[Datum], column: usize| match &row[column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let operators = plan.iter().map(|row| text(row, 0)).collect::<Vec<_>>();
+    assert_eq!(
+        &operators[..3],
+        ["Sort", "└─Projection", "  └─HashAgg"],
+        "Go restores SELECT-field order between the grouped HashAgg and Sort: {plan:#?}",
+    );
+    let aggregate_info = plan
+        .iter()
+        .find(|row| text(row, 0).contains("HashAgg"))
+        .map(|row| text(row, 4))
+        .expect("q4 has a grouped HashAgg");
+    let count_position = aggregate_info
+        .find("funcs:count(1)")
+        .expect("q4 HashAgg contains COUNT(1)");
+    let first_row_position = aggregate_info
+        .find("funcs:firstrow(test.tpch_orders.o_orderpriority)")
+        .expect("q4 HashAgg carries its group column with FIRST_ROW");
+    assert!(
+        count_position < first_row_position,
+        "physical HashAgg states precede FIRST_ROW group carriers: {plan:#?}",
+    );
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("Join")
+                && text(row, 4)
+                    .starts_with("semi join, inner:TableReader, left side:TableReader, outer key:")
+                && text(row, 4).contains("tpch_orders.o_orderkey")
+                && text(row, 4).contains("tpch_lineitem.l_orderkey")
+        }),
+        "Go decorrelates EXISTS into a semi join over the compact orders schema: {plan:#?}"
+    );
+    let semi_join = plan
+        .iter()
+        .find(|row| text(row, 0).contains("Join") && text(row, 4).starts_with("semi join"))
+        .expect("q4 has a physical semi join");
+    let semi_index = plan
+        .iter()
+        .position(|row| std::ptr::eq(row, semi_join))
+        .expect("q4 semi join row is part of the plan");
+    let build_rows = plan[semi_index + 1..]
+        .iter()
+        .find(|row| text(row, 0).contains("TableReader(Build)"))
+        .map(|row| text(row, 1).parse::<f64>().unwrap())
+        .expect("q4 has a preserved build reader");
+    let semi_rows = text(semi_join, 1).parse::<f64>().unwrap();
+    assert!(
+        (semi_rows - build_rows * crate::plan_trace::SELECTIVITY_FACTOR).abs() < 0.02,
+        "the semi selectivity must be applied once to q4's filtered orders: {plan:#?}",
+    );
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("Selection") && text(row, 4).contains("tpch_orders.o_orderdate")
+        }),
+        "the outer date range must stay below the semi join: {plan:#?}"
+    );
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("Selection")
+                && text(row, 4).contains("tpch_lineitem.l_commitdate")
+                && text(row, 4).contains("tpch_lineitem.l_receiptdate")
+        }),
+        "the inner residual predicate must stay below the semi join: {plan:#?}"
+    );
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("TableRangeScan")
+                && text(row, 3).contains("table:tpch_lineitem")
+                && text(row, 4).contains("range: decided by")
+        }),
+        "the inner clustered key must be rebuilt from each outer order key: {plan:#?}"
+    );
+
+    for table in [
+        "CREATE TABLE wait_supplier (s_suppkey BIGINT PRIMARY KEY CLUSTERED, \
+         s_name VARCHAR(32), s_nationkey BIGINT)",
+        "CREATE TABLE wait_lineitem (l_orderkey BIGINT, l_linenumber BIGINT, \
+         l_suppkey BIGINT, l_commitdate DATE, l_receiptdate DATE, \
+         PRIMARY KEY (l_orderkey, l_linenumber) CLUSTERED)",
+        "CREATE TABLE wait_orders (o_orderkey BIGINT PRIMARY KEY CLUSTERED, \
+         o_orderstatus VARCHAR(1))",
+        "CREATE TABLE wait_nation (n_nationkey BIGINT PRIMARY KEY CLUSTERED, \
+         n_name VARCHAR(32))",
+    ] {
+        crate::run_create_table_on(table, &mut catalog).unwrap();
+    }
+    for (table, rows, ndvs) in [
+        (
+            "wait_supplier",
+            10_000,
+            vec![
+                ("s_suppkey", 10_000),
+                ("s_name", 10_000),
+                ("s_nationkey", 25),
+            ],
+        ),
+        (
+            "wait_lineitem",
+            6_001_215,
+            vec![
+                ("l_orderkey", 1_500_000),
+                ("l_linenumber", 7),
+                ("l_suppkey", 10_000),
+                ("l_commitdate", 2_466),
+                ("l_receiptdate", 2_554),
+            ],
+        ),
+        (
+            "wait_orders",
+            1_500_000,
+            vec![("o_orderkey", 1_500_000), ("o_orderstatus", 3)],
+        ),
+        ("wait_nation", 25, vec![("n_nationkey", 25), ("n_name", 25)]),
+    ] {
+        scale_analyzed_tpcc_table(
+            &mut catalog,
+            table,
+            rows,
+            &ndvs,
+            &crate::StmtContext::for_query(),
+        );
+    }
+    let statement = tidb_parser::parse(
+        "SELECT o_orderkey, COUNT(*) AS numwait FROM wait_orders \
+         WHERE o_orderstatus = 'F' AND o_orderkey < 100000 \
+         AND EXISTS (SELECT * FROM wait_lineitem l2 \
+          WHERE l2.l_orderkey = wait_orders.o_orderkey) \
+         AND NOT EXISTS (SELECT * FROM wait_lineitem l3 \
+          WHERE l3.l_orderkey = wait_orders.o_orderkey \
+          AND l3.l_receiptdate > l3.l_commitdate) \
+         GROUP BY o_orderkey ORDER BY numwait DESC, o_orderkey LIMIT 100",
+    )
+    .unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, plan) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &crate::StmtContext::for_query(),
+        crate::explain::ExplainFormat::Brief,
+    )
+    .expect("both q21 EXISTS predicates decorrelate into physical semi joins");
+    let semi_joins = plan
+        .iter()
+        .filter(|row| text(row, 0).contains("IndexHashJoin") && text(row, 4).contains("semi join"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        semi_joins.len(),
+        2,
+        "each decorrelated predicate must use ordinary physical join search: {plan:#?}",
+    );
+    assert!(
+        semi_joins
+            .iter()
+            .any(|row| text(row, 4).starts_with("semi join, inner:TableReader")),
+        "the positive EXISTS must become an index semi join: {plan:#?}",
+    );
+    assert!(
+        semi_joins
+            .iter()
+            .any(|row| text(row, 4).starts_with("anti semi join, inner:TableReader")),
+        "the NOT EXISTS must become an index anti-semi join: {plan:#?}",
+    );
+    for alias in ["l2", "l3"] {
+        assert!(
+            plan.iter().any(|row| {
+                text(row, 0).contains("TableRangeScan")
+                    && text(row, 3) == format!("table:{alias}")
+                    && text(row, 4).contains("range: decided by")
+            }),
+            "the {alias} clustered key must be rebuilt for each outer order: {plan:#?}",
+        );
+    }
+    let semi_rows = semi_joins
+        .iter()
+        .map(|row| text(row, 1).parse::<f64>().unwrap())
+        .collect::<Vec<_>>();
+    assert!(
+        (semi_rows[0] - semi_rows[1] * crate::plan_trace::SELECTIVITY_FACTOR).abs() < 0.02,
+        "the outer anti-semi join must derive from the inner semi join: {plan:#?}",
+    );
+    let statement = tidb_parser::parse(
+        "SELECT s_name, COUNT(*) AS numwait \
+         FROM wait_supplier, wait_lineitem l1, wait_orders, wait_nation \
+         WHERE s_suppkey = l1.l_suppkey AND o_orderkey = l1.l_orderkey \
+         AND o_orderstatus = 'F' AND l1.l_receiptdate > l1.l_commitdate \
+         AND EXISTS (SELECT * FROM wait_lineitem l2 \
+          WHERE l2.l_orderkey = l1.l_orderkey AND l2.l_suppkey <> l1.l_suppkey) \
+         AND NOT EXISTS (SELECT * FROM wait_lineitem l3 \
+          WHERE l3.l_orderkey = l1.l_orderkey AND l3.l_suppkey <> l1.l_suppkey \
+          AND l3.l_receiptdate > l3.l_commitdate) \
+         AND s_nationkey = n_nationkey AND n_name = 'EGYPT' \
+         GROUP BY s_name ORDER BY numwait DESC, s_name LIMIT 100",
+    )
+    .unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let reordered = crate::driver::join_reorder::reorder(
+        select.from.as_ref().unwrap(),
+        select,
+        select.where_clause.as_ref(),
+        &catalog,
+        "test",
+        &crate::StmtContext::for_query(),
+    )
+    .expect("subquery conjuncts must not block reordering their outer join group");
+    assert_eq!(
+        reordered.written_order,
+        vec![1, 2, 3, 0],
+        "Go reorders q21's outer group before physicalizing its two semi joins",
+    );
+    let (_, q21_plan) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &crate::StmtContext::for_query(),
+        crate::explain::ExplainFormat::Brief,
+    )
+    .expect("q21's reordered outer group remains explainable");
+    assert!(
+        q21_plan.iter().any(|row| {
+            text(row, 0).contains("Selection")
+                && text(row, 4).contains(
+                    "gt(test.wait_lineitem.l_receiptdate, test.wait_lineitem.l_commitdate)",
+                )
+        }),
+        "projection elimination must preserve q21's base-table identity: {q21_plan:#?}",
+    );
+    assert!(
+        q21_plan
+            .iter()
+            .all(|row| !text(row, 4).contains("test.l1.")),
+        "q21's SQL alias must not replace its physical source identity: {q21_plan:#?}",
+    );
+
+    for table in [
+        "CREATE TABLE mix_customer (id BIGINT, balance DECIMAL(12,2))",
+        "CREATE TABLE mix_orders (customer_id BIGINT)",
+        "CREATE TABLE mix_part (id BIGINT)",
+        "CREATE TABLE mix_supply (part_id BIGINT, supplier_id BIGINT, avail_qty BIGINT)",
+        "CREATE TABLE mix_line (part_id BIGINT, supplier_id BIGINT, qty BIGINT)",
+    ] {
+        crate::run_create_table_on(table, &mut catalog).unwrap();
+    }
+    // Go rewrites each subquery node in expression order. An uncorrelated
+    // scalar/IN sibling is therefore folded even when another sibling in the
+    // same WHERE is correlated and must remain for Apply decorrelation.
+    for sql in [
+        "SELECT prefix, COUNT(*) FROM (SELECT id AS prefix, balance \
+         FROM mix_customer WHERE balance > (SELECT AVG(balance) FROM mix_customer) \
+         AND NOT EXISTS (SELECT 1 FROM mix_orders \
+         WHERE mix_orders.customer_id = mix_customer.id)) AS eligible \
+         GROUP BY prefix ORDER BY prefix",
+        "SELECT supplier_id FROM mix_supply \
+         WHERE part_id IN (SELECT id FROM mix_part) \
+         AND avail_qty > (SELECT 0.5 * SUM(qty) FROM mix_line \
+         WHERE mix_line.part_id = mix_supply.part_id \
+         AND mix_line.supplier_id = mix_supply.supplier_id)",
+    ] {
+        let statement = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &statement else {
+            panic!("not a query");
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("not a SELECT");
+        };
+        crate::explain::explain_select_stmt(
+            select,
+            &catalog,
+            "test",
+            &crate::StmtContext::for_query(),
+            crate::explain::ExplainFormat::Brief,
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "mixed correlated and uncorrelated subqueries are rewritten independently: \
+                 {sql}: {error:?}"
+            )
+        });
+    }
 }
 
 /// A correlated subquery becomes an Apply: the inner query re-runs once
@@ -769,6 +2642,17 @@ fn correlated_subqueries() {
         )
         .unwrap(),
         vec![vec![Datum::Int(3)]]
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT id FROM o WHERE EXISTS (SELECT 1 FROM i WHERE i.id = o.id) \
+             AND NOT EXISTS (SELECT 1 FROM i WHERE i.id = o.id AND i.w > 20) \
+             ORDER BY id",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(1)]]
     );
 
     // An unqualified inner reference to an outer column still correlates.
@@ -1031,16 +2915,24 @@ fn grouped_correlated_subqueries() {
         Err(DriverError::UnknownColumnInClause { .. })
     ));
 
-    // DEFERRED: two-level nesting (a correlated subquery whose own body
-    // contains a subquery correlated to ITS outer scope) is refused
-    // rather than mis-evaluated.
-    assert!(run_select_on(
-        "SELECT g, (SELECT COUNT(*) FROM s WHERE s.k = t.g \
-         AND s.x > (SELECT AVG(x) FROM s s2 WHERE s2.k = s.k)) FROM t GROUP BY g",
-        &catalog,
-        &crate::StmtContext::for_query()
-    )
-    .is_err());
+    // Go decorrelates both levels: the AVG groups the innermost `s2` by
+    // `s.k`, and the COUNT then groups its surviving rows by `t.g`.
+    assert_eq!(
+        run_select_on(
+            "SELECT g, (SELECT COUNT(*) FROM s WHERE s.k = t.g \
+             AND s.x > (SELECT AVG(x) FROM s s2 WHERE s2.k = s.k)) \
+             FROM t GROUP BY g ORDER BY g",
+            &catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap(),
+        vec![
+            vec![Datum::Null, Datum::Int(0)],
+            vec![Datum::Int(1), Datum::Int(1)],
+            vec![Datum::Int(2), Datum::Int(0)],
+            vec![Datum::Int(3), Datum::Int(0)],
+        ]
+    );
 }
 
 /// A subquery does not launder a `HAVING` column reference: the name it

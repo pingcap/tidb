@@ -127,6 +127,7 @@
 //! property (`keep order:true, desc`), and can stop at the pushed `LIMIT`.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
 
 use tidb_chunk::codec::estimate_type_width;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -230,6 +231,188 @@ const MIN_ROW_SIZE: f64 = 2.0;
 /// [`table_scan_penalty_rows`] charges a risky full scan.
 const MAX_PENALTY_ROW_COUNT: f64 = 1000.0;
 
+/// The full statistics items resident in one stats-cache table version.
+///
+/// Go keeps this state on the domain's shared `statistics.Table`, so a load
+/// triggered while planning one statement is visible to later statements and
+/// connections until that table version is replaced. Rust eagerly carries the
+/// histogram payloads, but this state preserves the same residency contract
+/// for cardinality decisions that depend on `IsFullLoad`.
+#[derive(Debug, Default)]
+pub struct StatsLoadState {
+    loaded: Mutex<LoadedStatistics>,
+}
+
+/// A statement-planning checkpoint for one table's shared statistics cache.
+///
+/// Physical candidates are speculative: Go derives the logical statistics once
+/// and only publishes physical-access loads after the statement. Rust's
+/// StreamAgg/HashAgg and derived-source probes can otherwise make one branch's
+/// residency visible while another branch is still being costed.
+#[derive(Clone, Debug)]
+pub(crate) struct StatsLoadCheckpoint {
+    loaded: LoadedStatistics,
+}
+
+#[derive(Clone, Debug, Default)]
+struct LoadedStatistics {
+    columns: BTreeSet<i64>,
+    indexes: BTreeSet<i64>,
+    column_order: Vec<i64>,
+    index_order: Vec<i64>,
+    pending_columns: BTreeSet<i64>,
+    pending_indexes: BTreeSet<i64>,
+    pending_column_order: Vec<i64>,
+    pending_index_order: Vec<i64>,
+}
+
+impl StatsLoadState {
+    pub(crate) fn checkpoint(&self) -> StatsLoadCheckpoint {
+        let loaded = self
+            .loaded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        StatsLoadCheckpoint {
+            loaded: loaded.clone(),
+        }
+    }
+
+    pub(crate) fn restore(&self, checkpoint: &StatsLoadCheckpoint) {
+        *self
+            .loaded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = checkpoint.loaded.clone();
+    }
+
+    /// Atomically publishes one statement's loads and returns the cumulative
+    /// cache contents. `fallback_column` implements Go's determinate-mode rule:
+    /// when the statement has no analyzed full-load predicate and the table has
+    /// no resident full item at all, load its first analyzed public column.
+    pub(crate) fn mark_and_snapshot(
+        &self,
+        mut columns: BTreeSet<i64>,
+        indexes: BTreeSet<i64>,
+        fallback_column: Option<i64>,
+    ) -> (BTreeSet<i64>, BTreeSet<i64>) {
+        let mut loaded = self
+            .loaded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if columns.is_empty() && loaded.columns.is_empty() && loaded.indexes.is_empty() {
+            columns.extend(fallback_column);
+        }
+        for id in columns {
+            if loaded.columns.insert(id) {
+                loaded.column_order.push(id);
+            }
+        }
+        for id in indexes {
+            if loaded.indexes.insert(id) {
+                loaded.index_order.push(id);
+            }
+        }
+        (loaded.columns.clone(), loaded.indexes.clone())
+    }
+
+    /// Queues statistics touched while costing a physical access path.
+    /// Logical derivation has already taken its snapshot when this runs, so
+    /// these items affect later statements without retroactively changing the
+    /// statement that triggered Go's asynchronous load.
+    fn mark_accessed(&self, columns: BTreeSet<i64>, indexes: BTreeSet<i64>) {
+        let mut loaded = self
+            .loaded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for id in columns {
+            if loaded.pending_columns.insert(id) {
+                loaded.pending_column_order.push(id);
+            }
+        }
+        for id in indexes {
+            if loaded.pending_indexes.insert(id) {
+                loaded.pending_index_order.push(id);
+            }
+        }
+    }
+
+    fn advance(&self) {
+        let mut loaded = self
+            .loaded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let pending_columns = std::mem::take(&mut loaded.pending_columns);
+        let pending_indexes = std::mem::take(&mut loaded.pending_indexes);
+        let pending_column_order = std::mem::take(&mut loaded.pending_column_order);
+        let pending_index_order = std::mem::take(&mut loaded.pending_index_order);
+        for id in pending_column_order {
+            if pending_columns.contains(&id) && loaded.columns.insert(id) {
+                loaded.column_order.push(id);
+            }
+        }
+        for id in pending_index_order {
+            if pending_indexes.contains(&id) && loaded.indexes.insert(id) {
+                loaded.index_order.push(id);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn snapshot(&self) -> (BTreeSet<i64>, BTreeSet<i64>) {
+        let loaded = self
+            .loaded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (loaded.columns.clone(), loaded.indexes.clone())
+    }
+
+    #[cfg(test)]
+    fn pending(&self) -> (BTreeSet<i64>, BTreeSet<i64>) {
+        let loaded = self
+            .loaded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (
+            loaded.pending_columns.clone(),
+            loaded.pending_indexes.clone(),
+        )
+    }
+
+    fn ordered_columns(&self, requested: &BTreeSet<i64>) -> Vec<i64> {
+        self.ordered_ids(requested, false)
+    }
+
+    fn ordered_indexes(&self, requested: &BTreeSet<i64>) -> Vec<i64> {
+        self.ordered_ids(requested, true)
+    }
+
+    fn ordered_ids(&self, requested: &BTreeSet<i64>, indexes: bool) -> Vec<i64> {
+        let loaded = self
+            .loaded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (resident, order) = if indexes {
+            (&loaded.indexes, &loaded.index_order)
+        } else {
+            (&loaded.columns, &loaded.column_order)
+        };
+        let mut ordered = Vec::with_capacity(requested.len());
+        for id in order {
+            if requested.contains(id) {
+                ordered.push(*id);
+            }
+        }
+        // Callers that deliberately model an eager payload (for example the
+        // physical index-join floor) may request IDs that were never observed
+        // by the shared residency state. Keep those IDs deterministic.
+        for id in requested {
+            if !resident.contains(id) || !ordered.contains(id) {
+                ordered.push(*id);
+            }
+        }
+        ordered
+    }
+}
+
 /// One table's loaded statistics, in the shape the estimator reads them.
 ///
 /// This is `statistics.Table` reduced to the fields
@@ -258,6 +441,8 @@ pub struct TableStatistics {
     pub columns: BTreeMap<i64, ColumnStats>,
     /// Index statistics by index ID.
     pub indexes: BTreeMap<i64, IndexStats>,
+    /// Go domain-cache residency for this exact statistics-table version.
+    load_state: Arc<StatsLoadState>,
 }
 
 impl TableStatistics {
@@ -294,7 +479,51 @@ impl TableStatistics {
             modify_count,
             columns,
             indexes,
+            load_state: Arc::default(),
         }
+    }
+
+    /// Installs the state owned by the shared cluster statistics snapshot.
+    #[must_use]
+    pub fn with_shared_load_state(mut self, load_state: Arc<StatsLoadState>) -> Self {
+        self.load_state = load_state;
+        self
+    }
+
+    pub(crate) fn mark_loaded_statistics(
+        &self,
+        columns: BTreeSet<i64>,
+        indexes: BTreeSet<i64>,
+        fallback_column: Option<i64>,
+    ) -> (BTreeSet<i64>, BTreeSet<i64>) {
+        self.load_state
+            .mark_and_snapshot(columns, indexes, fallback_column)
+    }
+
+    pub(crate) fn mark_accessed_statistics(&self, columns: BTreeSet<i64>, indexes: BTreeSet<i64>) {
+        self.load_state.mark_accessed(columns, indexes);
+    }
+
+    pub(crate) fn advance_statistics_loads(&self) {
+        self.load_state.advance();
+    }
+
+    pub(crate) fn load_checkpoint(&self) -> StatsLoadCheckpoint {
+        self.load_state.checkpoint()
+    }
+
+    pub(crate) fn restore_load_checkpoint(&self, checkpoint: &StatsLoadCheckpoint) {
+        self.load_state.restore(checkpoint);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn loaded_statistics(&self) -> (BTreeSet<i64>, BTreeSet<i64>) {
+        self.load_state.snapshot()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_statistics(&self) -> (BTreeSet<i64>, BTreeSet<i64>) {
+        self.load_state.pending()
     }
 
     /// Go `cardinality.EstimateColumnNDV` and its `getTotalRowCount` helper.
@@ -313,27 +542,30 @@ impl TableStatistics {
     ) -> Option<f64> {
         let column = self.columns.get(&column_id)?;
         let version = column.histogram.last_update_version;
+        let ordered_indexes = self.load_state.ordered_indexes(full_loaded_indexes);
+        let ordered_columns = self.load_state.ordered_columns(full_loaded_columns);
         let analyzed_count = if full_loaded_columns.contains(&column_id) {
             column.total_row_count() as i64
         } else {
-            self.indexes
+            ordered_indexes
                 .iter()
-                .find(|(id, index)| {
-                    full_loaded_indexes.contains(id)
-                        && index.histogram.last_update_version == version
+                .find_map(|id| {
+                    self.indexes.get(id).and_then(|index| {
+                        (index.histogram.last_update_version == version)
+                            .then(|| index.total_row_count() as i64)
+                    })
                 })
-                .map_or_else(
-                    || {
-                        self.columns
-                            .iter()
-                            .find(|(id, candidate)| {
-                                full_loaded_columns.contains(id)
-                                    && candidate.histogram.last_update_version == version
+                .unwrap_or_else(|| {
+                    ordered_columns
+                        .iter()
+                        .find_map(|id| {
+                            self.columns.get(id).and_then(|candidate| {
+                                (candidate.histogram.last_update_version == version)
+                                    .then(|| candidate.total_row_count() as i64)
                             })
-                            .map_or(0, |(_, candidate)| candidate.total_row_count() as i64)
-                    },
-                    |(_, index)| index.total_row_count() as i64,
-                )
+                        })
+                        .unwrap_or(0)
+                })
         };
         let mut ndv = column.histogram.ndv as f64;
         if analyzed_count > 0 {
@@ -1865,9 +2097,29 @@ pub(crate) fn selectivity(
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
 ) -> f64 {
+    selectivity_with_default_string_match_selectivity(predicate, table, resolver, stats, 0.0)
+}
+
+/// [`selectivity`] with the session's raw
+/// `tidb_default_string_match_selectivity` value. A non-zero value disables
+/// Go's TopN-assisted string-match estimation and uses that value as the
+/// fallback selectivity instead.
+pub(crate) fn selectivity_with_default_string_match_selectivity(
+    predicate: &tidb_ast::Expr,
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+    default_string_match_selectivity: f64,
+) -> f64 {
     let mut conjuncts = Vec::new();
     crate::plan_trace::collect_and(predicate, &mut conjuncts);
-    selectivity_of_conjuncts(&conjuncts, table, resolver, stats)
+    selectivity_of_conjuncts_with_default_string_match_selectivity(
+        &conjuncts,
+        table,
+        resolver,
+        stats,
+        default_string_match_selectivity,
+    )
 }
 
 /// [`selectivity`] over conditions already split out of the `AND` tree, which
@@ -1888,7 +2140,39 @@ pub(crate) fn selectivity_of_conjuncts(
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
 ) -> f64 {
-    selectivity_of_conjuncts_with_path_context(conjuncts, table, resolver, stats, true)
+    selectivity_of_conjuncts_with_default_string_match_selectivity(
+        conjuncts, table, resolver, stats, 0.0,
+    )
+}
+
+/// [`selectivity_of_conjuncts`] with the session's raw string-match setting.
+pub(crate) fn selectivity_of_conjuncts_with_default_string_match_selectivity(
+    conjuncts: &[&tidb_ast::Expr],
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+    default_string_match_selectivity: f64,
+) -> f64 {
+    selectivity_of_conjuncts_with_defaults(
+        conjuncts,
+        table,
+        resolver,
+        stats,
+        SelectivityDefaults::from_session(
+            default_string_match_selectivity,
+            tidb_planner::cost_factors::SELECTION_FACTOR,
+        ),
+    )
+}
+
+fn selectivity_of_conjuncts_with_defaults(
+    conjuncts: &[&tidb_ast::Expr],
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+    defaults: SelectivityDefaults,
+) -> f64 {
+    selectivity_of_conjuncts_with_path_context(conjuncts, table, resolver, stats, true, defaults)
 }
 
 /// Go `cardinality.Selectivity(..., nil)` for filters estimated after an
@@ -1900,7 +2184,61 @@ pub(crate) fn selectivity_of_conjuncts_without_paths(
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
 ) -> f64 {
-    selectivity_of_conjuncts_with_path_context(conjuncts, table, resolver, stats, false)
+    selectivity_of_conjuncts_with_path_context(
+        conjuncts,
+        table,
+        resolver,
+        stats,
+        false,
+        SelectivityDefaults::default(),
+    )
+}
+
+/// Materializes planner-owned constant columns before the ranger sees them.
+///
+/// Go's expression rewriter replaces an evaluated scalar subquery with an
+/// `expression.Constant` before `cardinality.Selectivity` runs. Rust retains a
+/// column-shaped AST node so EXPLAIN can print `ScalarQueryCol#N(value)`, while
+/// [`tidb_expr::rewriter::ColumnResolver::resolve_constant`] exposes the same
+/// typed value to expression consumers. The ranger still reads the AST, so it
+/// needs an estimation-only copy with those nodes replaced by equivalent
+/// literals; the statement AST remains unchanged for execution and display.
+fn materialize_resolved_constants(
+    expr: &tidb_ast::Expr,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+) -> tidb_ast::Expr {
+    struct Materializer<'a> {
+        resolver: &'a dyn tidb_expr::rewriter::ColumnResolver,
+    }
+
+    impl tidb_ast::Visitor for Materializer<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
+                return false;
+            };
+            let tidb_ast::Expr::Column(path) = expr else {
+                return false;
+            };
+            let path = path.clone();
+            let Some(tidb_expr::expression::Expression::Constant(constant)) =
+                self.resolver.resolve_constant(&path)
+            else {
+                return false;
+            };
+            if let Ok(literal) = crate::driver::datum_to_literal(&constant.value) {
+                *expr = literal;
+            }
+            true
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut materialized = expr.clone();
+    tidb_ast::Visitable::accept(&mut materialized, &mut Materializer { resolver });
+    materialized
 }
 
 fn selectivity_of_conjuncts_with_path_context(
@@ -1909,16 +2247,21 @@ fn selectivity_of_conjuncts_with_path_context(
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
     has_filled_paths: bool,
+    defaults: SelectivityDefaults,
 ) -> f64 {
     let realtime = realtime_row_count(stats);
     // `selectivity.go:61`: no rows or no conditions is 100% selectivity.
     if conjuncts.is_empty() || realtime <= 0.0 {
         return 1.0;
     }
+    let materialized = conjuncts
+        .iter()
+        .map(|conjunct| materialize_resolved_constants(conjunct, resolver))
+        .collect::<Vec<_>>();
     // Go has no parenthesis node -- `ParenthesesExpr` is gone before
     // `Selectivity` runs -- so strip them once, here, and every structural
     // test downstream sees the shape the source sees.
-    let conjuncts: Vec<&tidb_ast::Expr> = conjuncts.iter().map(|c| strip_parens(c)).collect();
+    let conjuncts: Vec<&tidb_ast::Expr> = materialized.iter().map(strip_parens).collect();
 
     // `selectivity.go:69-73`: past 63 conditions the mask no longer fits an
     // int64, and the source gives up on nodes entirely -- for a loaded
@@ -1932,7 +2275,7 @@ fn selectivity_of_conjuncts_with_path_context(
             &predicates,
             &pseudo_unique_indexes(table),
             realtime as i64,
-            crate::plan_trace::SELECTIVITY_FACTOR,
+            defaults.selectivity_factor,
         );
     }
 
@@ -1963,7 +2306,7 @@ fn selectivity_of_conjuncts_with_path_context(
         let not_null_mask = conjuncts
             .iter()
             .enumerate()
-            .filter(|(_, conjunct)| is_not_null_on_column(conjunct, offset, resolver))
+            .filter(|(_, conjunct)| is_not_null_on_column(conjunct, offset, table, resolver))
             .fold(0_i64, |mask, (index, _)| mask | (1_i64 << index));
         // Go `getMaskAndRanges` down the `ranger.ColumnRangeType` arm: a range
         // over the COLUMN itself, so no index prefix length is in play.
@@ -2111,21 +2454,16 @@ fn selectivity_of_conjuncts_with_path_context(
 
     let conditions: Vec<ConditionKind> = conjuncts
         .iter()
-        .map(|conjunct| condition_kind(conjunct, table, resolver, stats))
+        .map(|conjunct| condition_kind(conjunct, table, resolver, stats, defaults))
         .collect();
-    combine_selectivity(
-        &mut nodes,
-        &conditions,
-        1.0,
-        realtime as i64,
-        SelectivityDefaults::default(),
-    )
+    combine_selectivity(&mut nodes, &conditions, 1.0, realtime as i64, defaults)
 }
 
 /// Whether one statistics condition is `column IS NOT NULL` for `offset`.
 fn is_not_null_on_column(
     conjunct: &tidb_ast::Expr,
     offset: usize,
+    table: &KvTable,
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
 ) -> bool {
     let tidb_ast::Expr::Is {
@@ -2139,9 +2477,7 @@ fn is_not_null_on_column(
     let tidb_ast::Expr::Column(path) = strip_parens(expr) else {
         return false;
     };
-    resolver
-        .resolve(path)
-        .is_some_and(|(resolved, _, _)| resolved == offset)
+    physical_column_offset(path, table, resolver).is_some_and(|resolved| resolved == offset)
 }
 
 /// Go's `expression.ExtractColumnsMapFromExpressions` over the whole condition
@@ -2157,12 +2493,62 @@ fn extracted_column_offsets(
 ) -> Vec<usize> {
     let mut offsets: Vec<usize> = conjuncts
         .iter()
-        .filter_map(|conjunct| crate::column_prune::expr_column_offsets(conjunct, resolver))
+        .filter_map(|conjunct| physical_column_offsets(conjunct, table, resolver))
         .flatten()
         .collect();
     offsets.sort_by_key(|offset| table.columns.get(*offset).map(|column| column.id));
     offsets.dedup();
     offsets
+}
+
+/// Resolves the columns an expression reads to the base table's physical
+/// offsets. A statement scope may already be compacted by column pruning, so
+/// its row offsets are execution-layout identities and cannot index the
+/// unpruned [`KvTable`] or its histograms. Go keeps `Column.UniqueID` stable
+/// across pruning; rebinding the validated AST name to the physical table is
+/// the equivalent identity at this boundary.
+fn physical_column_offsets(
+    expr: &tidb_ast::Expr,
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+) -> Option<Vec<usize>> {
+    struct Paths(Vec<Vec<String>>);
+
+    impl tidb_ast::Visitor for Paths {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(tidb_ast::Expr::Column(path)) = node.downcast_ref::<tidb_ast::Expr>() {
+                self.0.push(path.clone());
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut paths = Paths(Vec::new());
+    let mut owned = expr.clone();
+    tidb_ast::Visitable::accept(&mut owned, &mut paths);
+    paths
+        .0
+        .iter()
+        .map(|path| physical_column_offset(path, table, resolver))
+        .collect()
+}
+
+fn physical_column_offset(
+    path: &[String],
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+) -> Option<usize> {
+    // Preserve the statement resolver's unknown/ambiguous/qualifier checks.
+    resolver.resolve(path)?;
+    let name = path.last()?;
+    table
+        .columns
+        .iter()
+        .position(|column| column.name.eq_ignore_ascii_case(name))
 }
 
 /// Go's `mask` for one statistics node: the bit of every condition the column
@@ -2235,6 +2621,7 @@ fn dnf_selectivity(
     table: &KvTable,
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
+    defaults: SelectivityDefaults,
 ) -> Option<f64> {
     let mut items = Vec::new();
     collect_or(conjunct, &mut items);
@@ -2245,7 +2632,8 @@ fn dnf_selectivity(
     for item in items {
         let mut cnf = Vec::new();
         crate::plan_trace::collect_and(strip_parens(item), &mut cnf);
-        let current = selectivity_of_conjuncts(&cnf, table, resolver, stats);
+        let current =
+            selectivity_of_conjuncts_with_defaults(&cnf, table, resolver, stats, defaults);
         selectivity = selectivity + current - selectivity * current;
     }
     (selectivity != 0.0).then_some(selectivity)
@@ -2273,6 +2661,7 @@ fn row_in_selectivity(
     table: &KvTable,
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
+    defaults: SelectivityDefaults,
 ) -> Option<f64> {
     let tidb_ast::Expr::In { expr, list, not } = strip_parens(conjunct) else {
         return None;
@@ -2307,7 +2696,8 @@ fn row_in_selectivity(
             })
             .collect();
         let conjuncts: Vec<&tidb_ast::Expr> = equalities.iter().collect();
-        let current = selectivity_of_conjuncts(&conjuncts, table, resolver, stats);
+        let current =
+            selectivity_of_conjuncts_with_defaults(&conjuncts, table, resolver, stats, defaults);
         selectivity = selectivity + current - selectivity * current;
     }
     (selectivity != 0.0).then_some(selectivity)
@@ -2324,25 +2714,150 @@ fn condition_kind(
     table: &KvTable,
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
+    defaults: SelectivityDefaults,
 ) -> ConditionKind {
     match conjunct {
         // Go's `NOT LIKE` is `unaryNot(like(...))`, which the source unwraps
         // before classifying; this AST carries the negation on the node.
-        tidb_ast::Expr::Like { not, .. } | tidb_ast::Expr::Regexp { not, .. } => {
+        tidb_ast::Expr::Like { not, .. } => {
+            let selectivity = defaults
+                .eval_topn_string_match
+                .then(|| string_match_selectivity(conjunct, table, resolver, stats))
+                .flatten();
             if *not {
-                ConditionKind::NegatedStringMatch
+                ConditionKind::NegatedStringMatch(selectivity)
             } else {
-                ConditionKind::StringMatch
+                ConditionKind::StringMatch(selectivity)
+            }
+        }
+        tidb_ast::Expr::Regexp { not, .. } => {
+            if *not {
+                ConditionKind::NegatedStringMatch(None)
+            } else {
+                ConditionKind::StringMatch(None)
             }
         }
         tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, _, _) => {
-            ConditionKind::Disjunction(dnf_selectivity(conjunct, table, resolver, stats))
+            ConditionKind::Disjunction(dnf_selectivity(conjunct, table, resolver, stats, defaults))
         }
-        tidb_ast::Expr::In { .. } => {
-            ConditionKind::Disjunction(row_in_selectivity(conjunct, table, resolver, stats))
-        }
+        tidb_ast::Expr::In { .. } => ConditionKind::Disjunction(row_in_selectivity(
+            conjunct, table, resolver, stats, defaults,
+        )),
         _ => ConditionKind::Other,
     }
+}
+
+/// Go `GetSelectivityByFilter` for a direct-column `LIKE`/`ILIKE` over a
+/// fully available StatsVer2 column. This tier eagerly loads every statistics
+/// payload, so the presence of the column histogram and TopN is its
+/// `IsFullLoad` proof.
+fn string_match_selectivity(
+    predicate: &tidb_ast::Expr,
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+) -> Option<f64> {
+    let stats = stats.filter(|stats| !stats.pseudo)?;
+    let tidb_ast::Expr::Like {
+        expr,
+        pattern,
+        not,
+        ilike,
+        escape,
+    } = strip_parens(predicate)
+    else {
+        return None;
+    };
+    let tidb_ast::Expr::Column(path) = strip_parens(expr) else {
+        return None;
+    };
+    let pattern = match strip_parens(pattern) {
+        tidb_ast::Expr::String(pattern) | tidb_ast::Expr::RawString(pattern) => pattern.as_bytes(),
+        _ => return None,
+    };
+    let offset = physical_column_offset(path, table, resolver)?;
+    let column = table.columns.get(offset)?;
+    if !tidb_datatype::is_bin_collation(column.field_type.collation_name()) {
+        return None;
+    }
+    let column_stats = stats.columns.get(&column.id)?;
+    if column_stats.stats_ver != 2 {
+        return None;
+    }
+
+    let datum_matches = |datum: &Datum| -> Option<bool> {
+        let value = match datum {
+            Datum::Bytes(value) => value.as_slice(),
+            Datum::String(value) => value.bytes(),
+            _ => return None,
+        };
+        let matched = if *ilike {
+            tidb_expr::ilike_match(value, pattern, escape.unwrap_or(b'\\'))
+        } else {
+            tidb_expr::like_match_with_collation(
+                value,
+                pattern,
+                *escape,
+                column.field_type.collation(),
+            )
+        };
+        Some(if *not { !matched } else { matched })
+    };
+
+    let topn_total = column_stats
+        .topn
+        .as_ref()
+        .map_or(0_u64, tidb_stats::cmsketch::TopN::total_count);
+    let histogram_total = column_stats.histogram.not_null_count();
+    let total =
+        topn_total as f64 + histogram_total + column_stats.histogram.null_count.max(0) as f64;
+    if total <= 0.0 {
+        return None;
+    }
+
+    let mut topn_selected = 0_u64;
+    if let Some(topn) = &column_stats.topn {
+        for (index, entry) in topn.entries().iter().enumerate() {
+            let encoded = topn.entry_bytes(index)?;
+            let (remaining, datum) = tidb_codec::decode_one(&encoded).ok()?;
+            if !remaining.is_empty() {
+                return None;
+            }
+            if datum_matches(&datum)? {
+                topn_selected = topn_selected.wrapping_add(entry.count);
+            }
+        }
+    }
+
+    let buckets = &column_stats.histogram.buckets;
+    let mut repeat_total = 0_i64;
+    let mut repeat_selected = 0_i64;
+    let mut lower_selected = 0_usize;
+    for bucket in buckets {
+        repeat_total = repeat_total.wrapping_add(bucket.repeat);
+        if datum_matches(&bucket.lower_bound)? {
+            lower_selected += 1;
+        }
+        if datum_matches(&bucket.upper_bound)? {
+            repeat_selected = repeat_selected.wrapping_add(bucket.repeat);
+        }
+    }
+
+    let histogram_selectivity = if histogram_total > 0.0 && !buckets.is_empty() {
+        let upper_ratio = (repeat_total.max(0) as f64 / histogram_total).min(1.0);
+        let lower_ratio = 1.0 - upper_ratio;
+        let lower_selectivity = lower_selected as f64 / buckets.len() as f64;
+        let upper_selectivity = if repeat_total > 0 {
+            repeat_selected as f64 / repeat_total as f64
+        } else {
+            0.0
+        };
+        (lower_selectivity * lower_ratio + upper_selectivity * upper_ratio) * histogram_total
+            / total
+    } else {
+        0.0
+    };
+    Some(topn_selected as f64 / total + histogram_selectivity)
 }
 
 /// One condition as `pseudoSelectivity` reads it (`pseudo.go:44-67`).
@@ -2381,7 +2896,7 @@ fn pseudo_predicate(
         (true, false) => args[1],
         _ => return PseudoPredicate::Unresolved,
     };
-    let Some(offsets) = crate::column_prune::expr_column_offsets(column, resolver) else {
+    let Some(offsets) = physical_column_offsets(column, table, resolver) else {
         return PseudoPredicate::Unresolved;
     };
     let [offset] = offsets[..] else {
@@ -2603,6 +3118,51 @@ mod tests {
     }
 
     #[test]
+    fn estimate_column_ndv_preserves_resident_load_precedence() {
+        let later_handle_id = 1;
+        let target_id = 2;
+        let first_predicate_id = 3;
+        let version = 42;
+        let column = |id, ndv, count| ColumnStats {
+            histogram: histogram_with_count(id, ndv, count, version),
+            topn: None,
+            cms: None,
+            stats_ver: 2,
+            unsigned: false,
+        };
+        let statistics = TableStatistics::new(
+            150_000,
+            0,
+            [
+                (later_handle_id, column(later_handle_id, 149_568, 150_000)),
+                (target_id, column(target_id, 25, 150_000)),
+                (first_predicate_id, column(first_predicate_id, 5, 149_998)),
+            ]
+            .into_iter()
+            .collect(),
+            BTreeMap::new(),
+        );
+
+        statistics.mark_loaded_statistics(
+            [first_predicate_id].into_iter().collect(),
+            BTreeSet::new(),
+            None,
+        );
+        statistics
+            .mark_accessed_statistics([later_handle_id].into_iter().collect(), BTreeSet::new());
+        statistics.advance_statistics_loads();
+        let (full_columns, full_indexes) =
+            statistics.mark_loaded_statistics(BTreeSet::new(), BTreeSet::new(), None);
+
+        let ndv = statistics
+            .estimate_column_ndv(target_id, &full_columns, &full_indexes)
+            .unwrap();
+        assert!((ndv - 25.000_333_337_777_837).abs() < 1e-12, "{ndv:.17}");
+        let joined_rows = 5.0 * statistics.row_count as f64 / ndv;
+        assert!((joined_rows - 29_999.6).abs() < 1e-9, "{joined_rows:.17}");
+    }
+
+    #[test]
     fn new_date_uses_chunk_estimate_type_width() {
         let field_type = FieldType::new(FieldTypeCode::NewDate);
         assert_eq!(schema_avg_row_size(&[field_type]), 32.0);
@@ -2741,6 +3301,87 @@ mod tests {
         );
         let expected = 1.0_f64 - (1.0_f64 - 1.0_f64 / 10_000.0_f64).powi(10);
         assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
+    }
+
+    /// Go `GetSelectivityByFilter` evaluates one-column string predicates
+    /// against every StatsVer2 TopN value and both histogram bounds. Lower
+    /// bounds are equal-weight samples while upper bounds retain `Repeat`.
+    #[test]
+    fn stats_v2_string_match_evaluates_topn_and_histogram_bounds() {
+        let mut field_type = FieldType::new(FieldTypeCode::Varchar);
+        field_type.set_charset_name("utf8mb4");
+        field_type.set_collation_name("utf8mb4_bin");
+        let table = KvTable::with_storage(
+            81,
+            vec![KvColumn {
+                name: "name".to_owned(),
+                id: 1,
+                field_type,
+                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                default_value: None,
+                origin_default: None,
+                generated: None,
+            }],
+            Box::new(MemTableStorage::new()),
+        );
+        let mut topn = tidb_stats::cmsketch::TopN::new(2);
+        for (value, count) in [("needle top", 20), ("other top", 10)] {
+            topn.append(
+                &tidb_codec::encode_key(&[Datum::new_bytes(value.as_bytes().to_vec())]).unwrap(),
+                count,
+            );
+        }
+        topn.sort();
+        let stats = TableStatistics::new(
+            100,
+            0,
+            BTreeMap::from([(
+                1,
+                ColumnStats {
+                    histogram: tidb_stats::Histogram {
+                        id: 1,
+                        ndv: 6,
+                        buckets: vec![
+                            tidb_stats::Bucket {
+                                count: 30,
+                                repeat: 5,
+                                ndv: 2,
+                                lower_bound: Datum::new_bytes(b"hist needle lower".to_vec()),
+                                upper_bound: Datum::new_bytes(b"hist needle upper".to_vec()),
+                            },
+                            tidb_stats::Bucket {
+                                count: 70,
+                                repeat: 10,
+                                ndv: 2,
+                                lower_bound: Datum::new_bytes(b"other lower".to_vec()),
+                                upper_bound: Datum::new_bytes(b"other upper".to_vec()),
+                            },
+                        ],
+                        ..tidb_stats::Histogram::default()
+                    },
+                    topn: Some(topn),
+                    cms: None,
+                    stats_ver: 2,
+                    unsigned: false,
+                },
+            )]),
+            BTreeMap::new(),
+        );
+        let predicate = tidb_ast::Expr::Like {
+            expr: Box::new(tidb_ast::Expr::Column(vec!["name".to_owned()])),
+            pattern: Box::new(tidb_ast::Expr::String("%needle%".to_owned())),
+            not: false,
+            ilike: false,
+            escape: None,
+        };
+
+        let actual = selectivity(
+            &predicate,
+            &table,
+            &NamedColumnResolver { table: &table },
+            Some(&stats),
+        );
+        assert!((actual - 0.525).abs() < 1e-12, "{actual} != 0.525");
     }
 
     #[test]
@@ -3239,6 +3880,7 @@ mod tests {
             modify_count,
             columns: BTreeMap::new(),
             indexes: BTreeMap::new(),
+            load_state: Arc::default(),
         };
         // `analyze_row_count` of a table with no histogram is Go's `-1`, which
         // is itself `hasUnreliableStats`; a table that reaches the no-penalty

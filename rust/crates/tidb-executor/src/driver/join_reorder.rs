@@ -17,22 +17,19 @@
 //!
 //! # Which solver runs
 //!
-//! `JoinReOrderSolver.optimizeRecursive` picks between two solvers
-//! (`rule_join_reorder.go:374`):
+//! The advanced join-reorder framework is enabled by default. It uses DP when
+//! the group fits `tidb_opt_join_reorder_threshold`; otherwise its greedy
+//! solver compares the two cheapest leaves as alternative starts. Disabling
+//! `tidb_opt_enable_advanced_join_reorder` selects the legacy framework, whose
+//! greedy solver uses only the cheapest start.
 //!
-//! ```go
-//! useGreedy := !allInnerJoin || joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
-//! ```
-//!
-//! [`collect`] only ever yields an ALL-INNER group -- an outer join is one of
-//! its stop conditions -- so `allInnerJoin` is true here and the choice is the
-//! group size alone:
+//! For an all-inner group, both frameworks choose by group size:
 //!
 //! | `joinGroupNum` | `tidb_opt_join_reorder_threshold` | solver |
 //! | --- | --- | --- |
 //! | `< 2` | any | neither; there is no group to reorder |
-//! | `n >= 2` | `n <= threshold` | [`solve`], Go's `joinReorderDPSolver` |
-//! | `n >= 2` | `n > threshold` | [`greedy_solve`], Go's `joinReorderGreedySolver` |
+//! | `n >= 2` | `n <= threshold` | [`solve`], the DP solver |
+//! | `n >= 2` | `n > threshold` | [`greedy_solve`], advanced or legacy greedy according to the session switch |
 //!
 //! `vardef.DefTiDBOptJoinReorderThreshold` is `0`, so a stock session always
 //! lands in the last row: the GREEDY solver is the default one, and it fires
@@ -65,9 +62,9 @@
 //! * a group whose equality graph is DISCONNECTED. Go finishes with
 //!   `makeBushyJoin` over the components; here the statement's own cartesian
 //!   product stays where it was written.
-//! * a leaf whose row count cannot be derived -- a derived table that
-//!   aggregates, sorts, limits or unions. Guessing one would silently choose a
-//!   different join order.
+//! * a leaf whose row count cannot be derived. Grouped and DISTINCT derived
+//!   tables with a modelled child remain atomic group members; unsupported
+//!   sorting, limits, windows, or set operations still decline the group.
 //!
 //! # An OUTER join is NOT one of Go's stop conditions, and is not one here
 //!
@@ -240,9 +237,11 @@ use std::{
 };
 
 use crate::driver::legacy_stats::{
-    derive_stats, DeriveStatsContext, JoinKind, LogicalNode, ProjectionExpr,
+    derive_stats, DeriveStatsContext, DerivedNode, JoinKind, LogicalNode, ProjectionExpr,
 };
-use tidb_ast::{BinaryOp, Expr, Join, JoinNode, JoinType, QueryStmt, SelectField};
+use tidb_ast::{
+    BinaryOp, Expr, Join, JoinNode, JoinType, QueryStmt, SelectField, FLAG_HAS_SUBQUERY,
+};
 use tidb_datatype::FieldType;
 use tidb_expr::Columns as _;
 use tidb_planner::cardinality::derive_stats::{ColumnId, DISTINCT_FACTOR};
@@ -298,9 +297,8 @@ enum Rel<'a> {
     /// A derived table over an all-inner join of further relations: Go's
     /// `LogicalProjection` over a `LogicalJoin` tree.
     Derived(DerivedRel<'a>),
-    /// A grouped derived table whose child contains an outer join. Row
-    /// estimation can recurse through that child even though join reordering
-    /// deliberately keeps this relation atomic.
+    /// A grouped or DISTINCT derived table modelled recursively and retained
+    /// as one atomic member of the surrounding join group.
     ModeledDerived {
         model: LogicalNode,
         ids: Vec<ColumnId>,
@@ -394,6 +392,7 @@ pub(crate) fn reorder(
         join,
         catalog,
         current_db,
+        ctx,
         &scope,
         &mut ids,
         &mut leaves,
@@ -416,15 +415,14 @@ pub(crate) fn reorder(
 
     // Every conjunct the group can see: the `ON`s it absorbed and the `WHERE`
     // above it, which is where the comma spelling puts its equalities.
+    let where_conjuncts = where_clause
+        .map(crate::driver::predicate_push_down::extracted_conjuncts)
+        .unwrap_or_default();
     let mut conjuncts: Vec<(&Expr, Option<Outer>)> = on_conds
         .iter()
         .map(|cond| (cond.expr, cond.outer))
         .collect();
-    if let Some(where_clause) = where_clause {
-        let mut flat = Vec::new();
-        crate::plan_trace::collect_and(where_clause, &mut flat);
-        conjuncts.extend(flat.into_iter().map(|expr| (expr, None)));
-    }
+    conjuncts.extend(where_conjuncts.iter().map(|expr| (expr, None)));
 
     let mut edges: Vec<Edge<'_>> = Vec::new();
     let mut filters: Vec<Vec<Expr>> = vec![Vec::new(); leaves.len()];
@@ -450,12 +448,25 @@ pub(crate) fn reorder(
                 filters[leaf].push((*conjunct).clone());
             }
             Classified::Other(touched) => {
+                // Go's inner-join PPD derives one necessary relaxed DNF per
+                // child before join reorder. Cost the same narrowed leaves;
+                // the original cross-leaf predicate remains an `otherCond`.
+                if extended.is_empty() && super::predicate_push_down::safe_to_duplicate(conjunct) {
+                    for leaf in 0..leaves.len() {
+                        if let Some(derived) = project_dnf_to_leaf(conjunct, leaf, &leaves) {
+                            if !filters[leaf].contains(&derived) {
+                                filters[leaf].push(derived);
+                            }
+                        }
+                    }
+                }
                 if touched.iter().any(|leaf| extended.contains(leaf)) {
                     null_extended_others = true;
                 } else {
                     others.push(touched);
                 }
             }
+            Classified::Subquery => {}
             Classified::Foreign if use_greedy => return None,
             Classified::Foreign => {}
         }
@@ -548,7 +559,7 @@ pub(crate) fn reorder(
     let models: Option<Vec<LogicalNode>> = leaves
         .iter()
         .zip(&demands)
-        .map(|(leaf, demand)| emit(&leaf.rel, demand))
+        .map(|(leaf, demand)| emit(&leaf.rel, demand, ctx.default_string_match_selectivity()))
         .collect();
     let models = models?;
 
@@ -557,7 +568,15 @@ pub(crate) fn reorder(
         // Go `CheckAndGenerateLeadingHint` plus `generateLeadingJoinGroup`:
         // the tables the statement PINNED to the front of the group.
         let leading = leading_prefix(select, &leaves, &edges, &models, &context, ctx);
-        greedy_solve(&leaves, &edges, &models, &context, &others, leading)?
+        greedy_solve(
+            &leaves,
+            &edges,
+            &models,
+            &context,
+            &others,
+            leading,
+            ctx.advanced_join_reorder(),
+        )?
     } else {
         // Go's DP arm reads `otherConds` through its own `totalNonEqEdges`,
         // which is not modelled here; the opt-in arm keeps declining to use
@@ -573,6 +592,26 @@ pub(crate) fn reorder(
         written_order[*written] = position;
     }
     let join = rebuild(&plan, &leaves, &edges, &residual_on)?;
+    if std::env::var_os("TIDB_DEBUG_JOIN_REORDER").is_some() {
+        let mut output_order = Vec::new();
+        plan.leaves(&mut output_order);
+        let input = leaves
+            .iter()
+            .map(|leaf| leaf.visible.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        let output = output_order
+            .iter()
+            .filter_map(|index| leaves.get(*index).map(|leaf| leaf.visible.as_str()))
+            .collect::<Vec<_>>()
+            .join(",");
+        eprintln!(
+            "JOIN_REORDER input=[{input}] output=[{output}] greedy={use_greedy} advanced={} threshold={threshold} edges={} others={}",
+            ctx.advanced_join_reorder(),
+            edges.len(),
+            others.len(),
+        );
+    }
     Some(Reordered {
         join,
         written_order,
@@ -599,6 +638,9 @@ enum Classified<'a> {
     /// read it -- [`has_other_join_condition`] and the `remaining` threading --
     /// ever ask.
     Other(BTreeSet<usize>),
+    /// A subquery predicate the expression rewriter moves into an Apply or a
+    /// semi join above this outer join group.
+    Subquery,
     /// A conjunct over columns this group does not own (an outer-query
     /// correlation), or over no column at all. See the module doc for why Go's
     /// answer for these is not measurable from a `FROM` clause.
@@ -615,6 +657,18 @@ fn classify<'a>(
     leaves: &[Leaf<'_>],
     outer: Option<Outer>,
 ) -> Option<Classified<'a>> {
+    // Go's expressionRewriter replaces subqueries with Apply/semi-join nodes
+    // above the outer join group before join reorder. This driver builds the
+    // outer FROM first, so keep the predicate for the later subquery pass but
+    // exclude it from this group's edges, filters, and foreign-condition gate.
+    // Looking through the nested query would incorrectly attach the whole
+    // subquery AST as a scalar `OtherCondition` to the outer join.
+    if exists_predicate(conjunct) {
+        return Some(Classified::Subquery);
+    }
+    if conjunct.flags() & FLAG_HAS_SUBQUERY != 0 {
+        return Some(Classified::Foreign);
+    }
     let mut touched = BTreeSet::new();
     for path in column_paths(conjunct) {
         match resolve(&path, leaves) {
@@ -661,6 +715,14 @@ fn classify<'a>(
     }
 }
 
+fn exists_predicate(expr: &Expr) -> bool {
+    match expr {
+        Expr::Paren(inner) => exists_predicate(inner),
+        Expr::Exists { .. } => true,
+        _ => false,
+    }
+}
+
 /// Go `baseSingleGroupJoinOrderSolver.hasOtherJoinCondition`
 /// (`rule_join_reorder.go:721`).
 ///
@@ -701,7 +763,14 @@ fn column_paths(expr: &Expr) -> Vec<Vec<String>> {
     impl tidb_ast::Visitor for Collect {
         fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
             if let Some(Expr::Column(path)) = node.downcast_ref::<Expr>() {
-                self.0.push(path.clone());
+                // Go's `ScalarSubQueryExpr` exposes an expression.Constant to
+                // `ExtractColumns`. Rust keeps a scoped pseudo-column so the
+                // later executor can resolve the value and retain its EXPLAIN
+                // identity, but it does not belong to any relation leaf.
+                if !matches!(path.as_slice(), [scope, _] if scope == super::from::SCALAR_QUERY_SCOPE)
+                {
+                    self.0.push(path.clone());
+                }
             }
             false
         }
@@ -837,6 +906,7 @@ fn collect<'a>(
     join: &'a Join,
     catalog: &'a Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
     scope: &Scope,
     ids: &mut Ids,
     leaves: &mut Vec<Leaf<'a>>,
@@ -845,7 +915,7 @@ fn collect<'a>(
     // The parser's single-relation wrapper is not a join at all.
     if join.right.is_none() && join.on.is_none() && join.using.is_empty() && !join.natural {
         return push_node(
-            &join.left, catalog, current_db, scope, ids, leaves, on_conds,
+            &join.left, catalog, current_db, ctx, scope, ids, leaves, on_conds,
         );
     }
     if join.straight || join.natural || !join.using.is_empty() {
@@ -872,12 +942,15 @@ fn collect<'a>(
         None => None,
         Some(JoinType::Left) => {
             if !push_node(
-                &join.left, catalog, current_db, scope, ids, leaves, on_conds,
+                &join.left, catalog, current_db, ctx, scope, ids, leaves, on_conds,
             ) {
                 return false;
             }
             let at = leaves.len();
-            match leaf_of(right, catalog, current_db, scope, ids) {
+            match leaf_of(right, catalog, current_db, ctx, scope, ids)
+                .or_else(|| modeled_view_leaf(right, catalog, current_db, ctx, ids))
+                .or_else(|| modeled_grouped_derived_leaf(right, catalog, current_db, ctx, ids))
+            {
                 Some(leaf) => leaves.push(leaf),
                 None => return false,
             }
@@ -885,11 +958,16 @@ fn collect<'a>(
         }
         Some(_) => {
             let at = leaves.len();
-            match leaf_of(&join.left, catalog, current_db, scope, ids) {
+            match leaf_of(&join.left, catalog, current_db, ctx, scope, ids)
+                .or_else(|| modeled_view_leaf(&join.left, catalog, current_db, ctx, ids))
+                .or_else(|| modeled_grouped_derived_leaf(&join.left, catalog, current_db, ctx, ids))
+            {
                 Some(leaf) => leaves.push(leaf),
                 None => return false,
             }
-            if !push_node(right, catalog, current_db, scope, ids, leaves, on_conds) {
+            if !push_node(
+                right, catalog, current_db, ctx, scope, ids, leaves, on_conds,
+            ) {
                 return false;
             }
             Some(at)
@@ -910,23 +988,31 @@ fn collect<'a>(
         return true;
     }
     push_node(
-        &join.left, catalog, current_db, scope, ids, leaves, on_conds,
-    ) && push_node(right, catalog, current_db, scope, ids, leaves, on_conds)
+        &join.left, catalog, current_db, ctx, scope, ids, leaves, on_conds,
+    ) && push_node(
+        right, catalog, current_db, ctx, scope, ids, leaves, on_conds,
+    )
 }
 
 fn push_node<'a>(
     node: &'a JoinNode,
     catalog: &'a Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
     scope: &Scope,
     ids: &mut Ids,
     leaves: &mut Vec<Leaf<'a>>,
     on_conds: &mut Vec<OnCond<'a>>,
 ) -> bool {
     if let JoinNode::Join(inner) = node {
-        return collect(inner, catalog, current_db, scope, ids, leaves, on_conds);
+        return collect(
+            inner, catalog, current_db, ctx, scope, ids, leaves, on_conds,
+        );
     }
-    match leaf_of(node, catalog, current_db, scope, ids) {
+    match leaf_of(node, catalog, current_db, ctx, scope, ids)
+        .or_else(|| modeled_view_leaf(node, catalog, current_db, ctx, ids))
+        .or_else(|| modeled_grouped_derived_leaf(node, catalog, current_db, ctx, ids))
+    {
         Some(leaf) => {
             leaves.push(leaf);
             true
@@ -940,6 +1026,7 @@ fn leaf_of<'a>(
     node: &'a JoinNode,
     catalog: &'a Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
     scope: &Scope,
     ids: &mut Ids,
 ) -> Option<Leaf<'a>> {
@@ -1036,6 +1123,7 @@ fn leaf_of<'a>(
                 from,
                 catalog,
                 current_db,
+                ctx,
                 &inner_scope,
                 ids,
                 &mut inner,
@@ -1043,10 +1131,13 @@ fn leaf_of<'a>(
             ) {
                 return None;
             }
+            let inner_where = select
+                .where_clause
+                .as_ref()
+                .map(super::predicate_push_down::extracted_conjuncts)
+                .unwrap_or_default();
             let mut conjuncts: Vec<&Expr> = inner_on.iter().map(|cond| cond.expr).collect();
-            if let Some(where_clause) = &select.where_clause {
-                crate::plan_trace::collect_and(where_clause, &mut conjuncts);
-            }
+            conjuncts.extend(inner_where.iter());
             let mut inner_edges = Vec::new();
             let mut inner_filters = vec![Vec::new(); inner.len()];
             for conjunct in &conjuncts {
@@ -1055,7 +1146,7 @@ fn leaf_of<'a>(
                     Classified::Single(leaf) => inner_filters[leaf].push((*conjunct).clone()),
                     // A derived table's own cost model carries equi keys and
                     // per-leaf filters only; its `otherConds` reach neither.
-                    Classified::Other(_) | Classified::Foreign => {}
+                    Classified::Other(_) | Classified::Subquery | Classified::Foreign => {}
                 }
             }
             let column_ids = ids.take(names.len());
@@ -1085,10 +1176,19 @@ fn leaf_of<'a>(
 
 /// Builds the [`LogicalNode`] of one relation with everything a parent pushed
 /// into it applied.
-fn emit(rel: &Rel<'_>, demand: &Demand) -> Option<LogicalNode> {
+fn emit(
+    rel: &Rel<'_>,
+    demand: &Demand,
+    default_string_match_selectivity: f64,
+) -> Option<LogicalNode> {
     match rel {
         Rel::Table(table) => {
-            let mut selectivity = table_selectivity(table, &demand.filters, &demand.not_null);
+            let mut selectivity = table_selectivity(
+                table,
+                &demand.filters,
+                &demand.not_null,
+                default_string_match_selectivity,
+            );
             for column in &demand.not_null {
                 if table.nullable.get(*column).copied().unwrap_or(true) {
                     selectivity *= NOT_NULL_RATE;
@@ -1175,7 +1275,7 @@ fn emit(rel: &Rel<'_>, demand: &Demand) -> Option<LogicalNode> {
             // every narrowed base relation contributes the right reorder
             // cost.
             propagate_demand_constants(&derived.inner, &derived.inner_edges, &mut inner);
-            let child = emit_tree(derived, &inner)?;
+            let child = emit_tree(derived, &inner, default_string_match_selectivity)?;
             let node = if let Some(group_by) = &derived.group_by {
                 let mut group_columns = Vec::new();
                 for expression in group_by {
@@ -1237,25 +1337,22 @@ fn emit(rel: &Rel<'_>, demand: &Demand) -> Option<LogicalNode> {
 /// Statistics payloads Go's `CollectPredicateColumnsPoint` makes fully loaded
 /// before deriving this data source's cardinality.
 ///
-/// Predicate columns are loaded directly, and every index containing one of
-/// them is loaded by `collectSyncIndices`. If a table has no predicate column,
-/// Go chooses its first analyzed public column so `EstimateColumnNDV` always
-/// has one same-version analyzed row count available.
+/// DataSource-local predicate columns are loaded directly. Join, grouping, and
+/// ordering columns need metadata but are not themselves full-loaded; indexes
+/// containing any needed column are full-loaded when still available after
+/// pruning. If neither this statement nor the shared stats cache has a full
+/// item, Go chooses the table's first analyzed public column. Loads remain on
+/// the domain stats cache across statements and connections.
 fn full_loaded_statistics(table: &TableRel<'_>, demand: &Demand) -> (BTreeSet<i64>, BTreeSet<i64>) {
     let Some(stats) = table.stats.filter(|stats| !stats.pseudo) else {
         return (BTreeSet::new(), BTreeSet::new());
     };
-    let mut offsets = demand
-        .not_null
-        .iter()
-        .copied()
-        .filter(|offset| table.nullable.get(*offset).copied().unwrap_or(true))
-        .collect::<BTreeSet<_>>();
-    offsets.extend(demand.expression.iter().copied());
+    let mut full_offsets = BTreeSet::new();
 
     let bare: Vec<Expr> = demand
         .filters
         .iter()
+        .filter(|filter| !is_derived_not_null_filter(filter, table, &demand.not_null))
         .filter_map(|filter| {
             rewrite_paths(filter, &|path| {
                 Some(vec![path.last().cloned().unwrap_or_default()])
@@ -1266,42 +1363,38 @@ fn full_loaded_statistics(table: &TableRel<'_>, demand: &Demand) -> (BTreeSet<i6
     let resolver = crate::driver::from::scope_resolver(&scope);
     for filter in &bare {
         if let Some(read) = crate::column_prune::expr_column_offsets(filter, &resolver) {
-            offsets.extend(read);
+            full_offsets.extend(read);
         }
     }
 
-    if offsets.is_empty() {
-        if let Some((offset, _)) = table
-            .table
-            .visible_columns()
-            .iter()
-            .enumerate()
-            .find(|(_, column)| stats.columns.contains_key(&column.id))
-        {
-            offsets.insert(offset);
-        }
-    }
-
-    let full_loaded_columns = offsets
+    let full_loaded_columns = full_offsets
         .iter()
         .filter_map(|offset| table.table.visible_columns().get(*offset))
         .map(|column| column.id)
         .filter(|id| stats.columns.contains_key(id))
         .collect::<BTreeSet<_>>();
+    let mut needed_offsets = full_offsets;
+    needed_offsets.extend(demand.not_null.iter().copied());
+    needed_offsets.extend(demand.expression.iter().copied());
     let full_loaded_indexes = table
         .table
-        .indexes()
-        .iter()
+        .plan_indexes()
         .filter(|index| {
             index
                 .column_offsets
                 .iter()
-                .any(|offset| offsets.contains(offset))
+                .any(|offset| needed_offsets.contains(offset))
         })
         .map(|index| index.id)
         .filter(|id| stats.indexes.contains_key(id))
-        .collect();
-    (full_loaded_columns, full_loaded_indexes)
+        .collect::<BTreeSet<_>>();
+    let fallback_column = table
+        .table
+        .visible_columns()
+        .iter()
+        .find(|column| stats.columns.contains_key(&column.id))
+        .map(|column| column.id);
+    stats.mark_loaded_statistics(full_loaded_columns, full_loaded_indexes, fallback_column)
 }
 
 /// `cardinality.Selectivity` over the conjuncts pushed into one base table.
@@ -1309,6 +1402,7 @@ fn table_selectivity(
     table: &TableRel<'_>,
     filters: &[Expr],
     derived_not_null: &BTreeSet<usize>,
+    default_string_match_selectivity: f64,
 ) -> f64 {
     if filters.is_empty() {
         return 1.0;
@@ -1332,7 +1426,13 @@ fn table_selectivity(
     let scope = crate::plan_trace::PlanTrace::single_table_scope("", None, table.columns.clone());
     let resolver = crate::driver::from::scope_resolver(&scope);
     let conjuncts: Vec<&Expr> = bare.iter().collect();
-    crate::access_cost::selectivity_of_conjuncts(&conjuncts, table.table, &resolver, table.stats)
+    crate::access_cost::selectivity_of_conjuncts_with_default_string_match_selectivity(
+        &conjuncts,
+        table.table,
+        &resolver,
+        table.stats,
+        default_string_match_selectivity,
+    )
 }
 
 fn is_derived_not_null_filter(
@@ -1453,8 +1553,16 @@ fn column_id(rel: &Rel<'_>, column: usize) -> Option<ColumnId> {
 /// before the outer DP costs it; for the two-relation groups this reaches, the
 /// row count is the same either way, and a group this module would itself
 /// reorder is one the caller reaches on its own recursion.
-fn emit_tree(derived: &DerivedRel<'_>, demands: &[Demand]) -> Option<LogicalNode> {
-    let mut node = emit(&derived.inner[0].rel, &demands[0])?;
+fn emit_tree(
+    derived: &DerivedRel<'_>,
+    demands: &[Demand],
+    default_string_match_selectivity: f64,
+) -> Option<LogicalNode> {
+    let mut node = emit(
+        &derived.inner[0].rel,
+        &demands[0],
+        default_string_match_selectivity,
+    )?;
     let mut joined: Vec<usize> = vec![0];
     for (right, (leaf, demand)) in derived.inner.iter().zip(demands).enumerate().skip(1) {
         let mut left_keys = Vec::new();
@@ -1474,7 +1582,7 @@ fn emit_tree(derived: &DerivedRel<'_>, demands: &[Demand]) -> Option<LogicalNode
         }
         node = LogicalNode::Join {
             left: Box::new(node),
-            right: Box::new(emit(&leaf.rel, demand)?),
+            right: Box::new(emit(&leaf.rel, demand, default_string_match_selectivity)?),
             left_keys,
             right_keys,
             kind: JoinKind::Inner,
@@ -1514,6 +1622,7 @@ impl Plan {
     }
 }
 
+#[derive(Clone)]
 struct Candidate {
     plan: Plan,
     model: LogicalNode,
@@ -1528,6 +1637,7 @@ fn solve(
     models: &[LogicalNode],
     context: &DeriveStatsContext,
 ) -> Option<Plan> {
+    let debug = std::env::var_os("TIDB_DEBUG_JOIN_DP").is_some();
     // `bfsGraph`: relabel the nodes breadth-first from node 0. This is what
     // fixes the subset enumeration order below, and therefore which of two
     // EQUAL-cost candidates survives the strict `>` update test.
@@ -1557,6 +1667,30 @@ fn solve(
     for (visit, node) in visit_to_node.iter().enumerate() {
         node_to_visit[*node] = visit;
     }
+    let mask_names = |mask: usize| {
+        (0..leaves.len())
+            .filter(|index| mask & (1usize << node_to_visit[*index]) != 0)
+            .map(|index| leaves[index].visible.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+
+    if debug {
+        eprintln!(
+            "JOIN_DP leaves=[{}] bfs=[{}] edges={}",
+            leaves
+                .iter()
+                .map(|leaf| leaf.visible.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+            visit_to_node
+                .iter()
+                .map(|node| leaves[*node].visible.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+            edges.len()
+        );
+    }
 
     let count = leaves.len();
     let mut best: Vec<Option<Candidate>> = (0..(1usize << count)).map(|_| None).collect();
@@ -1567,6 +1701,16 @@ fn solve(
             cum_cost: derive_stats(&model, context).cum_cost(),
             model,
         });
+        if debug {
+            let candidate = best[1 << visit].as_ref().expect("just inserted");
+            eprintln!(
+                "JOIN_DP leaf mask={:b} names=[{}] cost={:.6} rows={:.6}",
+                1usize << visit,
+                mask_names(1usize << visit),
+                candidate.cum_cost,
+                derive_stats(&candidate.model, context).stats.row_count(),
+            );
+        }
     }
     for bitmap in 1usize..(1 << count) {
         if bitmap.count_ones() == 1 {
@@ -1595,12 +1739,38 @@ fn solve(
                         Some(current) => current.cum_cost > candidate.cum_cost,
                         None => true,
                     };
+                    if debug {
+                        eprintln!(
+                            "JOIN_DP candidate bitmap={:b} names=[{}] sub={:b} [{}] remain={:b} [{}] edges={:?} left_cost={:.6} right_cost={:.6} candidate_cost={:.6} replace={}",
+                            bitmap,
+                            mask_names(bitmap),
+                            sub,
+                            mask_names(sub),
+                            remain,
+                            mask_names(remain),
+                            used,
+                            best[sub].as_ref().expect("checked").cum_cost,
+                            best[remain].as_ref().expect("checked").cum_cost,
+                            candidate.cum_cost,
+                            replace,
+                        );
+                    }
                     if replace {
                         best[bitmap] = Some(candidate);
                     }
                 }
             }
             sub = (sub - 1) & bitmap;
+        }
+    }
+    if debug {
+        if let Some(candidate) = &best[(1 << count) - 1] {
+            eprintln!(
+                "JOIN_DP final bitmap={:b} names=[{}] cost={:.6}",
+                (1usize << count) - 1,
+                mask_names((1usize << count) - 1),
+                candidate.cum_cost,
+            );
         }
     }
     best[(1 << count) - 1].take().map(|best| best.plan)
@@ -1610,15 +1780,13 @@ fn solve(
 // The greedy solver
 // ---------------------------------------------------------------------------
 
-/// Go `joinReorderGreedySolver.solve` (`rule_join_reorder_greedy.go:48`).
+/// Go `joinOrderGreedy.optimize` (`joinorder/join_order.go`).
 ///
-/// Go's shape is: sort the group by `baseNodeCumCost` ascending, then peel one
-/// CONNECTED tree at a time with `constructConnectedJoinTree`, and finally
-/// `makeBushyJoin` the peeled trees into a cartesian product. This module
-/// accepts only a group the FIRST peel consumes whole -- connected by equality
-/// edges, by `others` straddling it, or by both -- so the bushy step has
-/// nothing to do; a leftover is the disconnected case and is declined, leaving
-/// the statement's own cartesian product where it was written.
+/// Go sorts the group by `baseNodeCumCost`, connects equality edges in the
+/// first greedy round, then runs a second round that may admit non-equality
+/// edges. This module accepts groups those two rounds connect without an
+/// invented cartesian edge; a leftover is declined, leaving the statement's
+/// original tree in place.
 ///
 /// `leading` is Go's `s.leadingJoinGroup` after `generateLeadingJoinGroup`:
 /// the sub-tree the statement PINNED to the front. `solve` prepends it to the
@@ -1632,6 +1800,7 @@ fn greedy_solve(
     context: &DeriveStatsContext,
     others: &[BTreeSet<usize>],
     leading: Option<Candidate>,
+    advanced: bool,
 ) -> Option<Plan> {
     // `generateJoinOrderNode`: each leaf's own `RecursiveDeriveStats` and its
     // `baseNodeCumCost`, which for a leaf is the sum of its subtree's row
@@ -1647,13 +1816,14 @@ fn greedy_solve(
         .collect();
     // `slices.SortStableFunc(..., cmp.Compare(i.cumCost, j.cumCost))`: ascending,
     // and STABLE, so equal-cost leaves keep the order the statement wrote them
-    // in. That order is what the strict `<` in `construct_connected` then
+    // in. That order is what the strict `<` in `greedy_connect_nodes` then
     // resolves ties by, so the stability is load-bearing, not cosmetic.
     group.sort_by(|left, right| left.cum_cost.total_cmp(&right.cum_cost));
 
     // `leadingJoinNodes := append(leadingJoinNodes, s.curJoinGroup...)`: the
     // pinned tree goes FIRST, ahead of the sort, and the leaves it consumed
     // leave the group.
+    let has_leading = leading.is_some();
     if let Some(leading) = leading {
         let mut pinned = Vec::new();
         leading.plan.leaves(&mut pinned);
@@ -1665,71 +1835,119 @@ fn greedy_solve(
         group.insert(0, leading);
     }
 
-    let tree = construct_connected(&mut group, leaves, edges, context, others);
-    // Anything left over is a second connected component: Go's
-    // `makeBushyJoin` case, declined here.
-    group.is_empty().then_some(tree.plan)
+    // Go's advanced greedy framework calls `chooseBestGreedyStart(2)` when
+    // there is no LEADING hint. Each candidate starts from one of the two
+    // cheapest nodes, then uses the same greedy growth and strict per-step
+    // comparison. The legacy framework and hinted groups retain one start.
+    let start_count = if advanced && !has_leading {
+        group.len().min(2)
+    } else {
+        1
+    };
+    let mut best: Option<Candidate> = None;
+    for start in 0..start_count {
+        let mut candidate_group = group.clone();
+        if start > 0 {
+            let seed = candidate_group.remove(start);
+            candidate_group.insert(0, seed);
+        }
+        candidate_group =
+            greedy_connect_nodes(candidate_group, leaves, edges, context, others, false);
+        if candidate_group.len() > 1 {
+            candidate_group =
+                greedy_connect_nodes(candidate_group, leaves, edges, context, others, true);
+        }
+        // Anything left over needs Go's explicit-cartesian/bushy fallback,
+        // which this module deliberately declines instead of inventing.
+        if candidate_group.len() != 1 {
+            continue;
+        }
+        let candidate = candidate_group.remove(0);
+        if best
+            .as_ref()
+            .is_none_or(|best| cum_cost_significantly_less(candidate.cum_cost, best.cum_cost))
+        {
+            best = Some(candidate);
+        }
+    }
+    best.map(|candidate| candidate.plan)
 }
 
-/// Go `joinReorderGreedySolver.constructConnectedJoinTree`.
+/// Go `cumCostSignificantlyLess`: suppress changes caused only by floating
+/// point noise when advanced greedy compares its complete start candidates.
+fn cum_cost_significantly_less(cost: f64, best_cost: f64) -> bool {
+    if cost >= best_cost {
+        return false;
+    }
+    let scale = 1.0_f64.max(cost.abs().max(best_cost.abs()));
+    best_cost - cost > scale * 1e-12
+}
+
+/// Go `greedyConnectJoinNodes`.
 ///
-/// Takes the cheapest remaining node as the tree, then repeatedly joins in the
-/// remaining node that yields the cheapest cumulative cost, stopping when no
-/// remaining node connects.
-fn construct_connected(
-    group: &mut Vec<Candidate>,
+/// Each node grows by the cheapest candidate to its right. The first round
+/// admits equality edges only. The second round additionally admits a
+/// straddling `OtherConditions` predicate, matching Go's `allowNoEQ` gate.
+fn greedy_connect_nodes(
+    mut nodes: Vec<Candidate>,
     leaves: &[Leaf<'_>],
     edges: &[Edge<'_>],
     context: &DeriveStatsContext,
     others: &[BTreeSet<usize>],
-) -> Candidate {
-    let mut current = group.remove(0);
-    loop {
-        let mut current_leaves = Vec::new();
-        current.plan.leaves(&mut current_leaves);
-        let mut best: Option<(usize, Candidate)> = None;
-        for (index, node) in group.iter().enumerate() {
-            // Go's `checkConnectionAndMakeJoin`: a pair with no equality edge
-            // is CARTESIAN only when no remaining `otherCond` straddles it, and
-            // a cartesian one is refused by
-            // `tidb_opt_cartesian_join_order_threshold` at its default of `0`.
-            // Both of Go's two refusal sites reduce to this one skip.
-            let used = connecting_plans(&current.plan, &node.plan, edges);
-            let mut node_leaves = Vec::new();
-            node.plan.leaves(&mut node_leaves);
-            if used.is_empty() && !has_other_join_condition(&current_leaves, &node_leaves, others) {
-                continue;
+    allow_non_eq: bool,
+) -> Vec<Candidate> {
+    while nodes.len() > 1 {
+        let mut made_progress = false;
+        let mut current_index = 0;
+        while current_index + 1 < nodes.len() {
+            let current = nodes[current_index].clone();
+            let mut current_leaves = Vec::new();
+            current.plan.leaves(&mut current_leaves);
+            let mut best: Option<(usize, Candidate)> = None;
+            for candidate_index in current_index + 1..nodes.len() {
+                let node = &nodes[candidate_index];
+                let used = connecting_plans(&current.plan, &node.plan, edges);
+                let mut node_leaves = Vec::new();
+                node.plan.leaves(&mut node_leaves);
+                let connected_by_other =
+                    has_other_join_condition(&current_leaves, &node_leaves, others);
+                if used.is_empty() && !(allow_non_eq && connected_by_other) {
+                    continue;
+                }
+                // A non-equality-only connection is necessarily an inner
+                // shape here; outer non-equality ON clauses are declined
+                // before enumeration.
+                let shape = if used.is_empty() {
+                    Shape::INNER
+                } else {
+                    let Some(shape) = shape_of(&current_leaves, &node_leaves, &used, edges) else {
+                        continue;
+                    };
+                    shape
+                };
+                let candidate = build(&current, node, &used, edges, leaves, context, shape);
+                // Go uses a strict comparison, so the first equal-cost node in
+                // stable cost order survives.
+                let better = best
+                    .as_ref()
+                    .is_none_or(|(_, best)| candidate.cum_cost < best.cum_cost);
+                if better {
+                    best = Some((candidate_index, candidate));
+                }
             }
-            // `checkConnection` reads ONE `joinTypes[idx]` per pair and, for
-            // an outer one, swaps the node positions so the side the statement
-            // wrote on the left stays on the left.
-            let Some(shape) = shape_of(&current_leaves, &node_leaves, &used, edges) else {
-                continue;
-            };
-            // `curJoinTree` is Go's LEFT argument and the candidate node its
-            // right; for an inner join `checkConnection` keeps those positions.
-            let candidate = build(&current, node, &used, edges, leaves, context, shape);
-            // `curCost < bestCost` is STRICT, so among equal costs the node
-            // enumerated first -- the cheapest by the sort above -- wins.
-            //
-            // Go's cartesian cost-ratio penalty never applies: a pair reaching
-            // here either used an equality edge or was made NON-cartesian by
-            // `hasOtherJoinCondition`, and `bestIsCartesian` stays false for
-            // both.
-            let better = best
-                .as_ref()
-                .is_none_or(|(_, best)| candidate.cum_cost < best.cum_cost);
-            if better {
-                best = Some((index, candidate));
+            if let Some((best_index, candidate)) = best {
+                nodes[current_index] = candidate;
+                nodes.remove(best_index);
+                made_progress = true;
+            } else {
+                current_index += 1;
             }
         }
-        // `if bestJoin == nil { break }`: the connected subgraph is exhausted.
-        let Some((index, candidate)) = best else {
-            return current;
-        };
-        group.remove(index);
-        current = candidate;
+        if !made_progress {
+            break;
+        }
     }
+    nodes
 }
 
 /// Go `checkConnection`'s equality half, between two already-built subtrees.
@@ -2112,7 +2330,15 @@ pub(crate) struct RowSource {
     /// Residual predicates left by each committed physical leaf path. An
     /// empty value means every local predicate became an access condition or
     /// was accepted by the source; no entry means the path made no claim.
-    consumed_filter_leaves: RefCell<BTreeMap<usize, (Vec<Expr>, Vec<Expr>)>>,
+    state: RefCell<Box<RowRuntimeState>>,
+}
+
+#[derive(Default)]
+struct RowRuntimeState {
+    consumed_filter_leaves: BTreeMap<usize, (Vec<Expr>, Vec<Expr>)>,
+    /// Logical row counts keyed by the complete shape of each current join
+    /// subtree. Logical optimization fills this before physical search.
+    join_subtree_rows: BTreeMap<Vec<usize>, f64>,
 }
 
 struct WherePart {
@@ -2224,6 +2450,44 @@ fn row_plan_node(node: &JoinNode, leaves: &[Leaf<'_>]) -> Option<RowPlan> {
         .map(RowPlan::Leaf)
 }
 
+fn row_plan_for_source(join: &Join, leaves: &[RowLeaf]) -> Option<RowPlan> {
+    if join.right.is_none() && join.on.is_none() && join.using.is_empty() && !join.natural {
+        return row_plan_node_for_source(&join.left, leaves);
+    }
+    let left = row_plan_node_for_source(&join.left, leaves)?;
+    let right = row_plan_node_for_source(join.right.as_ref()?, leaves)?;
+    let kind = match join.tp {
+        JoinType::Cross => JoinKind::Inner,
+        JoinType::Left => JoinKind::LeftOuter,
+        JoinType::Right => JoinKind::RightOuter,
+    };
+    Some(RowPlan::Join {
+        left: Box::new(left),
+        right: Box::new(right),
+        kind,
+    })
+}
+
+fn row_plan_node_for_source(node: &JoinNode, leaves: &[RowLeaf]) -> Option<RowPlan> {
+    if let JoinNode::Join(join) = node {
+        return row_plan_for_source(join, leaves);
+    }
+    let visible = match node {
+        JoinNode::Table(table) => table
+            .alias
+            .as_deref()
+            .or_else(|| table.name.last().map(String::as_str))?,
+        JoinNode::Derived {
+            alias: Some(alias), ..
+        } => alias,
+        JoinNode::Derived { alias: None, .. } | JoinNode::Join(_) => return None,
+    };
+    leaves
+        .iter()
+        .position(|leaf| leaf.visible.eq_ignore_ascii_case(visible))
+        .map(RowPlan::Leaf)
+}
+
 /// Collects the written relation tree for [`row_source`] without reordering
 /// it. Unlike [`collect`], this accepts a multi-relation null-producing side:
 /// that extra freedom is valid here because this walk only routes safe leaf
@@ -2295,7 +2559,8 @@ fn push_row_node<'a>(
         outer_join_reorder: false,
         allow_ordered_derived: true,
     };
-    match leaf_of(node, catalog, current_db, &scope, ids)
+    match leaf_of(node, catalog, current_db, ctx, &scope, ids)
+        .or_else(|| modeled_view_leaf(node, catalog, current_db, ctx, ids))
         .or_else(|| modeled_grouped_derived_leaf(node, catalog, current_db, ctx, ids))
     {
         Some(leaf) => {
@@ -2328,19 +2593,77 @@ fn modeled_grouped_derived_leaf<'a>(
     let QueryStmt::Select(select) = &**subquery else {
         return None;
     };
-    if select.distinct
-        || select.limit.is_some()
-        || select.with.is_some()
-        || !select.windows.is_empty()
-    {
+    let names = crate::driver::from::derived_field_names(select)?;
+    modeled_grouped_select_leaf(
+        node,
+        alias.clone(),
+        names,
+        select,
+        catalog,
+        current_db,
+        ctx,
+        ids,
+    )
+}
+
+/// A persisted view is the same atomic logical relation as its derived SELECT
+/// body. Go expands the stored plan before predicate pushdown and join reorder;
+/// the table reference itself remains the relation rebuilt by this adapter.
+fn modeled_view_leaf<'a>(
+    node: &'a JoinNode,
+    catalog: &'a Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    ids: &mut Ids,
+) -> Option<Leaf<'a>> {
+    let JoinNode::Table(table_ref) = node else {
+        return None;
+    };
+    if table_ref.as_of.is_some() || table_ref.sample.is_some() || !table_ref.partitions.is_empty() {
         return None;
     }
-    let names = crate::driver::from::derived_field_names(select)?;
+    let (database, name) = crate::driver::split_table_path(&table_ref.name, current_db).ok()?;
+    let TableEntry::View(view) = catalog.get_in(database, name)? else {
+        return None;
+    };
+    let _guard = super::from::ViewDepthGuard::enter(&format!("{database}.{name}")).ok()?;
+    let statement = tidb_parser::parse(&view.select_sql).ok()?;
+    let tidb_ast::Stmt::Query(query) = statement else {
+        return None;
+    };
+    let QueryStmt::Select(select) = &*query else {
+        return None;
+    };
+    let names = view
+        .columns
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
+    let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
+    modeled_grouped_select_leaf(node, visible, names, select, catalog, database, ctx, ids)
+}
+
+fn modeled_grouped_select_leaf<'a>(
+    node: &'a JoinNode,
+    visible: String,
+    names: Vec<String>,
+    select: &tidb_ast::SelectStmt,
+    catalog: &'a Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    ids: &mut Ids,
+) -> Option<Leaf<'a>> {
+    if select.limit.is_some() || select.with.is_some() || !select.windows.is_empty() {
+        return None;
+    }
     let has_aggregate = select.fields.fields().iter().any(|field| match field {
         SelectField::Expr { expr, .. } => expr.has_aggregate_flag(),
         SelectField::Wildcard { .. } => false,
     });
-    if select.group_by.is_empty() && !has_aggregate {
+    if select.distinct && (has_aggregate || !select.group_by.is_empty()) {
+        return None;
+    }
+    if select.group_by.is_empty() && !has_aggregate && !select.distinct {
         return None;
     }
     let source = row_source(
@@ -2352,17 +2675,53 @@ fn modeled_grouped_derived_leaf<'a>(
     )?;
     let child = source.plan.model(&source)?;
     let mut group_by = Vec::new();
-    for item in &select.group_by {
-        for path in column_paths(&item.expr) {
-            let (leaf, column) = source.resolve_output_path(&path)?;
+    if select.distinct {
+        for field in select.fields.fields() {
+            let SelectField::Expr {
+                expr: Expr::Column(path),
+                ..
+            } = field
+            else {
+                return None;
+            };
+            let (leaf, column) = source.resolve_output_path(path)?;
             group_by.push(*source.leaves.get(leaf)?.ids.get(column)?);
+        }
+    } else {
+        for item in &select.group_by {
+            for path in column_paths(&item.expr) {
+                let (leaf, column) = source.resolve_output_path(&path)?;
+                group_by.push(*source.leaves.get(leaf)?.ids.get(column)?);
+            }
         }
     }
     let output_ids = ids.take(names.len());
-    let mut model = LogicalNode::Aggregation {
-        child: Box::new(child),
-        group_by,
-        columns: output_ids.clone(),
+    let distinct_eliminated =
+        super::agg_select::distinct_can_be_eliminated(select, catalog, current_db);
+    let mut model = if distinct_eliminated {
+        let [input] = group_by.as_slice() else {
+            return None;
+        };
+        let [output] = output_ids.as_slice() else {
+            return None;
+        };
+        // Go's AggregationEliminator replaces DISTINCT over a non-null unique
+        // key with a Projection. Its row count therefore remains the filtered
+        // child's count instead of being re-estimated from the key NDV.
+        LogicalNode::Projection {
+            child: Box::new(child),
+            exprs: vec![ProjectionExpr {
+                output: *output,
+                inputs: vec![*input],
+                direct_input: Some(*input),
+            }],
+        }
+    } else {
+        LogicalNode::Aggregation {
+            child: Box::new(child),
+            group_by,
+            columns: output_ids.clone(),
+        }
     };
     if select.having.is_some() {
         model = LogicalNode::Selection {
@@ -2371,7 +2730,7 @@ fn modeled_grouped_derived_leaf<'a>(
     }
     Some(Leaf {
         node,
-        visible: alias.clone(),
+        visible,
         columns: names,
         rel: Rel::ModeledDerived {
             model,
@@ -2410,10 +2769,9 @@ pub(crate) fn row_source(
         return None;
     }
     let has_outer_join = on_conds.iter().any(|condition| condition.outer.is_some());
-    let mut where_conjuncts = Vec::new();
-    if let Some(where_clause) = where_clause {
-        crate::plan_trace::collect_and(where_clause, &mut where_conjuncts);
-    }
+    let where_conjuncts = where_clause
+        .map(super::predicate_push_down::extracted_conjuncts)
+        .unwrap_or_default();
     let mut edges = Vec::new();
     let mut filters: Vec<Vec<Expr>> = vec![Vec::new(); leaves.len()];
     let mut trace_filters: Vec<Vec<Expr>> = vec![Vec::new(); leaves.len()];
@@ -2446,11 +2804,11 @@ pub(crate) fn row_source(
                 filters[leaf].push(condition.expr.clone());
             }
             Classified::Single(_) => {}
-            Classified::Other(_) | Classified::Foreign => {}
+            Classified::Other(_) | Classified::Subquery | Classified::Foreign => {}
         }
     }
     let mut where_parts = Vec::with_capacity(where_conjuncts.len());
-    for conjunct in where_conjuncts {
+    for conjunct in &where_conjuncts {
         let class = match classify(conjunct, &leaves, None)? {
             Classified::Edge(edge) if !has_outer_join => {
                 not_null[edge.left.0].insert(edge.left.1);
@@ -2478,9 +2836,10 @@ pub(crate) fn row_source(
                     WhereClass::Residual
                 }
             }
-            Classified::Edge(_) | Classified::Single(_) | Classified::Foreign => {
-                WhereClass::Residual
-            }
+            Classified::Edge(_)
+            | Classified::Single(_)
+            | Classified::Subquery
+            | Classified::Foreign => WhereClass::Residual,
         };
         where_parts.push(WherePart {
             expr: conjunct.clone(),
@@ -2492,11 +2851,23 @@ pub(crate) fn row_source(
     // outer equality. Make that derived condition part of the same leaf
     // predicate inventory the physical source must explicitly accept.
     for (leaf, columns) in not_null.iter().enumerate() {
-        let Rel::Table(table) = &leaves[leaf].rel else {
-            continue;
-        };
         for column in columns {
-            if !table.nullable.get(*column).copied().unwrap_or(true) {
+            let nullable = match &leaves[leaf].rel {
+                Rel::Table(table) => table.nullable.get(*column).copied().unwrap_or(true),
+                Rel::Derived(_) | Rel::ModeledDerived { .. } => {
+                    super::merge_decision::physical_column_is_nullable(
+                        leaves[leaf].node,
+                        &super::merge_decision::RelColumn {
+                            relation: leaves[leaf].visible.clone(),
+                            column: leaves[leaf].columns.get(*column)?.clone(),
+                        },
+                        catalog,
+                        current_db,
+                    )
+                    .unwrap_or(true)
+                }
+            };
+            if !nullable {
                 continue;
             }
             filters[leaf].push(Expr::Is {
@@ -2530,7 +2901,7 @@ pub(crate) fn row_source(
             Some(RowLeaf {
                 visible: leaf.visible.clone(),
                 columns: leaf.columns.clone(),
-                model: emit(&leaf.rel, demand)?,
+                model: emit(&leaf.rel, demand, ctx.default_string_match_selectivity())?,
                 ids: (0..leaf.columns.len())
                     .map(|column| column_id(&leaf.rel, column))
                     .collect::<Option<Vec<_>>>()?,
@@ -2546,7 +2917,7 @@ pub(crate) fn row_source(
         context: DeriveStatsContext::with_join_reorder_threshold(ctx.join_reorder_threshold()),
         where_is_leaf_or_join_equality,
         where_parts,
-        consumed_filter_leaves: RefCell::new(BTreeMap::new()),
+        state: RefCell::new(Box::default()),
     })
 }
 
@@ -2645,24 +3016,27 @@ fn project_dnf_to_leaf(expr: &Expr, target: usize, leaves: &[Leaf<'_>]) -> Optio
     if branches.len() < 2 {
         return None;
     }
-    branches
+    let projected = branches
         .into_iter()
         .map(|branch| {
             let mut conjuncts = Vec::new();
             crate::plan_trace::collect_and(branch, &mut conjuncts);
-            conjuncts
+            let conjuncts = conjuncts
                 .into_iter()
                 .filter(|conjunct| {
                     matches!(classify(conjunct, leaves, None), Some(Classified::Single(leaf)) if leaf == target)
                 })
                 .cloned()
-                .reduce(|left, right| {
-                    Expr::Binary(BinaryOp::LogicAnd, Box::new(left), Box::new(right))
-                })
+                .collect::<Vec<_>>();
+            (!conjuncts.is_empty()).then(|| {
+                super::predicate_push_down::compose(BinaryOp::LogicAnd, conjuncts)
+            })
         })
-        .collect::<Option<Vec<_>>>()?
-        .into_iter()
-        .reduce(|left, right| Expr::Binary(BinaryOp::LogicOr, Box::new(left), Box::new(right)))
+        .collect::<Option<Vec<_>>>()?;
+    Some(super::predicate_push_down::compose(
+        BinaryOp::LogicOr,
+        projected,
+    ))
 }
 
 /// Copies a constant equality through the inner-join equality graph. This is
@@ -2801,6 +3175,16 @@ fn relation_column_type<'a>(rel: &'a Rel<'a>, column: usize) -> Option<&'a Field
 }
 
 impl RowPlan {
+    fn leaves_in_order(&self, leaves: &mut Vec<usize>) {
+        match self {
+            RowPlan::Leaf(leaf) => leaves.push(*leaf),
+            RowPlan::Join { left, right, .. } => {
+                left.leaves_in_order(leaves);
+                right.leaves_in_order(leaves);
+            }
+        }
+    }
+
     /// Whether every edge in the written tree is an inner join.
     ///
     /// An all-inner join group may be split at any boundary after logical join
@@ -2875,7 +3259,7 @@ impl RowSource {
     /// one child's predicate pushdown; the driver mirrors that by restoring
     /// this set before it builds the winning alternative.
     pub(crate) fn filter_consumption_checkpoint(&self) -> BTreeMap<usize, (Vec<Expr>, Vec<Expr>)> {
-        self.consumed_filter_leaves.borrow().clone()
+        self.state.borrow().consumed_filter_leaves.clone()
     }
 
     /// Restores a checkpoint returned by
@@ -2884,7 +3268,7 @@ impl RowSource {
         &self,
         checkpoint: BTreeMap<usize, (Vec<Expr>, Vec<Expr>)>,
     ) {
-        *self.consumed_filter_leaves.borrow_mut() = checkpoint;
+        self.state.borrow_mut().consumed_filter_leaves = checkpoint;
     }
 
     /// Go's `LogicalPlan.StatsInfo().RowCount` for this complete `FROM`
@@ -2892,6 +3276,65 @@ impl RowSource {
     pub(crate) fn root_rows(&self) -> Option<f64> {
         let model = self.plan.model(self)?;
         Some(derive_stats(&model, &self.context).stats.row_count())
+    }
+
+    /// The root rows after Go's join reorder replaced the written topology.
+    pub(crate) fn root_rows_for_join(&self, join: &Join) -> Option<f64> {
+        let plan = row_plan_for_source(join, &self.leaves)?;
+        if matches!(&plan, RowPlan::Leaf(_)) {
+            let model = plan.model(self)?;
+            return Some(derive_stats(&model, &self.context).stats.row_count());
+        }
+        self.cache_plan_rows(&plan)
+    }
+
+    fn cache_plan_rows(&self, plan: &RowPlan) -> Option<f64> {
+        fn record(
+            source: &RowSource,
+            plan: &RowPlan,
+            derived: &DerivedNode,
+            rows: &mut BTreeMap<Vec<usize>, f64>,
+        ) -> Option<()> {
+            let mut leaves = Vec::new();
+            plan.leaves_in_order(&mut leaves);
+            let names = leaves
+                .iter()
+                .map(|leaf| source.leaves.get(*leaf).map(|leaf| leaf.visible.clone()))
+                .collect::<Option<Vec<_>>>()?;
+            let flattened_rows = source.model_of(&names)?.0;
+            let exact_rows = derived.stats.row_count();
+            if needs_topology_row_correction(exact_rows, flattened_rows) {
+                leaves.sort_unstable();
+                rows.insert(leaves, exact_rows);
+            }
+            match plan {
+                RowPlan::Leaf(_) => Some(()),
+                RowPlan::Join { left, right, .. } => {
+                    let [left_derived, right_derived] = derived.children.as_slice() else {
+                        return None;
+                    };
+                    record(source, left, left_derived, rows)?;
+                    record(source, right, right_derived, rows)
+                }
+            }
+        }
+
+        let model = plan.model(self)?;
+        let derived = derive_stats(&model, &self.context);
+        let exact_root = derived.stats.row_count();
+        let written_model = self.plan.model(self)?;
+        let written_root = derive_stats(&written_model, &self.context)
+            .stats
+            .row_count();
+        let root_rows = if needs_topology_row_correction(exact_root, written_root) {
+            exact_root
+        } else {
+            written_root
+        };
+        let mut rows = BTreeMap::new();
+        record(self, plan, &derived, &mut rows)?;
+        self.state.borrow_mut().join_subtree_rows = rows;
+        Some(root_rows)
     }
 
     /// Whether installing every leaf-local filter and every join equality
@@ -2909,8 +3352,9 @@ impl RowSource {
             .enumerate()
             .find(|(_, leaf)| leaf.visible.eq_ignore_ascii_case(visible))
         {
-            self.consumed_filter_leaves
+            self.state
                 .borrow_mut()
+                .consumed_filter_leaves
                 .insert(leaf, (Vec::new(), Vec::new()));
         }
     }
@@ -2929,8 +3373,9 @@ impl RowSource {
             .enumerate()
             .find(|(_, leaf)| leaf.visible.eq_ignore_ascii_case(visible))
         {
-            self.consumed_filter_leaves
+            self.state
                 .borrow_mut()
+                .consumed_filter_leaves
                 .insert(leaf, (residuals, traced_residuals));
         }
     }
@@ -2945,7 +3390,11 @@ impl RowSource {
             .enumerate()
             .find(|(_, leaf)| leaf.visible.eq_ignore_ascii_case(visible))?
             .0;
-        self.consumed_filter_leaves.borrow().get(&leaf).cloned()
+        self.state
+            .borrow()
+            .consumed_filter_leaves
+            .get(&leaf)
+            .cloned()
     }
 
     /// Multi-relation WHERE predicates for which this is the lowest join that
@@ -3036,7 +3485,8 @@ impl RowSource {
     /// The part of the written `WHERE` that the committed leaf paths and
     /// inner-join equalities did not consume.
     pub(crate) fn residual_where(&self) -> Option<Expr> {
-        let consumed = self.consumed_filter_leaves.borrow();
+        let state = self.state.borrow();
+        let consumed = &state.consumed_filter_leaves;
         self.where_parts
             .iter()
             .filter_map(|part| match &part.class {
@@ -3056,7 +3506,8 @@ impl RowSource {
     /// multi-relation `other cond` predicates remain here: no physical join
     /// has been built yet to execute them.
     pub(crate) fn residual_where_after_logical_leaf_pushdown(&self) -> Option<Expr> {
-        let consumed = self.consumed_filter_leaves.borrow();
+        let state = self.state.borrow();
+        let consumed = &state.consumed_filter_leaves;
         self.where_parts
             .iter()
             .filter_map(|part| match &part.class {
@@ -3080,7 +3531,8 @@ impl RowSource {
     /// outer-join predicates therefore always remain at the join.
     pub(crate) fn residual_on(&self, on: Option<&Expr>) -> Option<Expr> {
         let on = on?;
-        let consumed = self.consumed_filter_leaves.borrow();
+        let state = self.state.borrow();
+        let consumed = &state.consumed_filter_leaves;
         let mut conjuncts = Vec::new();
         crate::plan_trace::collect_and(on, &mut conjuncts);
         conjuncts
@@ -3163,11 +3615,22 @@ impl RowSource {
             right_keys,
             kind,
         };
+        let mut left_key = left_at.clone();
+        left_key.sort_unstable();
+        let mut right_key = right_at.clone();
+        right_key.sort_unstable();
+        let mut joined_at = left_key.clone();
+        joined_at.extend(&right_key);
+        joined_at.sort_unstable();
+        joined_at.dedup();
+        let state = self.state.borrow();
+        let exact = &state.join_subtree_rows;
         Some(JoinRows {
-            left: left_rows,
-            right: right_rows,
-            joined: outer_rows
-                .unwrap_or_else(|| derive_stats(&model, &self.context).stats.row_count()),
+            left: exact.get(&left_key).copied().unwrap_or(left_rows),
+            right: exact.get(&right_key).copied().unwrap_or(right_rows),
+            joined: exact.get(&joined_at).copied().unwrap_or_else(|| {
+                outer_rows.unwrap_or_else(|| derive_stats(&model, &self.context).stats.row_count())
+            }),
         })
     }
 
@@ -3184,6 +3647,33 @@ impl RowSource {
         self.grouped_expression_rows(&expressions)
     }
 
+    /// The group-key NDV after Go's join reorder replaced the written
+    /// topology. Intermediate joins may clamp inherited column NDVs even when
+    /// the final join row count is unchanged.
+    pub(crate) fn grouped_rows_for_join(
+        &self,
+        join: &Join,
+        group_by: &[tidb_ast::GroupByItem],
+    ) -> Option<f64> {
+        if group_by.is_empty() {
+            return None;
+        }
+        let expressions = group_by.iter().map(|item| &item.expr).collect::<Vec<_>>();
+        self.grouped_expression_rows_for_join(join, &expressions)
+    }
+
+    /// The projection-expression NDV after join reorder, including the
+    /// expression set used by `SELECT DISTINCT`.
+    pub(crate) fn grouped_expression_rows_for_join(
+        &self,
+        join: &Join,
+        expressions: &[&Expr],
+    ) -> Option<f64> {
+        let plan = row_plan_for_source(join, &self.leaves)?;
+        let child = plan.model(self)?;
+        self.grouped_expression_rows_from_child(expressions, child)
+    }
+
     /// Go's `LogicalAggregation.DeriveStats` row count for expressions that
     /// become group keys after projection, including `SELECT DISTINCT`.
     pub(crate) fn grouped_expression_rows(&self, expressions: &[&Expr]) -> Option<f64> {
@@ -3191,6 +3681,14 @@ impl RowSource {
             return None;
         }
         let child = self.plan.model(self)?;
+        self.grouped_expression_rows_from_child(expressions, child)
+    }
+
+    fn grouped_expression_rows_from_child(
+        &self,
+        expressions: &[&Expr],
+        child: LogicalNode,
+    ) -> Option<f64> {
         let mut group_columns = Vec::new();
         for expression in expressions {
             for path in column_paths(expression) {
@@ -3291,6 +3789,14 @@ impl RowSource {
     }
 }
 
+fn needs_topology_row_correction(exact_rows: f64, flattened_rows: f64) -> bool {
+    // Go's join reorder installs the selected logical subtree and every
+    // physical child derives its estimate from that topology. A flat walk of
+    // the written tree is therefore never an authoritative fallback: even a
+    // small difference changes the StatsInfo receipt used by an IndexJoin.
+    (exact_rows - flattened_rows).abs() > 1e-12
+}
+
 /// The three row counts one join site's comparison reads.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct JoinRows {
@@ -3300,4 +3806,29 @@ pub(crate) struct JoinRows {
     pub(crate) right: f64,
     /// The join's own.
     pub(crate) joined: f64,
+}
+
+#[cfg(test)]
+mod topology_row_correction_tests {
+    use super::needs_topology_row_correction;
+
+    #[test]
+    fn repairs_any_flattened_subtree_estimate() {
+        assert!(
+            needs_topology_row_correction(38_839.37, 38_838.85),
+            "the reordered logical subtree owns the physical receipt"
+        );
+        assert!(
+            needs_topology_row_correction(222_038.19, 222_035.23),
+            "an index join child still follows the reordered topology"
+        );
+        assert!(
+            needs_topology_row_correction(6_946.44, 6_946.35),
+            "same-magnitude hash-join estimates remain topology receipts"
+        );
+        assert!(
+            needs_topology_row_correction(617_619.31, 394_880_922_014.62),
+            "a flattened bushy join must not inflate q9 by orders of magnitude"
+        );
+    }
 }

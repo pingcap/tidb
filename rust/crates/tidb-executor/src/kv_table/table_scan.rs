@@ -144,26 +144,65 @@ impl KvTable {
         self.row_cursor_with_decoder(decoder, handle_ranges, descending, context.zone())
     }
 
-    /// One handle lookup decoded with the same physical-column projection as
-    /// a table cursor. This is the point-read half of an index lookup join.
-    pub(crate) fn get_row_by_handle_projected_with_context(
+    /// Looks up several record handles through one storage batch and decodes
+    /// them with one row decoder. The returned slots preserve input handle
+    /// order and use `None` for an index entry whose record disappeared.
+    pub(crate) fn get_rows_by_handles_projected_with_context(
         &mut self,
-        handle: &TableHandle,
+        handles: &[TableHandle],
         keep: Option<&[usize]>,
         context: &RowDecodeContext,
-    ) -> Result<Option<Vec<Datum>>, KvTableError> {
-        let Some((_, entry)) = self.stored_record(handle)? else {
-            return Ok(None);
-        };
-        let decoder = self.row_decoder_projected(keep, context)?;
-        let (mut values, _) = decoder.decode_and_eval(handle, &entry)?.into_parts();
-        if let Some(keep) = keep {
-            values = keep
-                .iter()
-                .map(|offset| std::mem::replace(&mut values[*offset], Datum::Null))
-                .collect();
+    ) -> Result<Vec<Option<Vec<Datum>>>, KvTableError> {
+        if handles.is_empty() {
+            return Ok(Vec::new());
         }
-        Ok(Some(values))
+        let physical_ids = self.record_physical_ids();
+        let mut probes = Vec::with_capacity(handles.len() * physical_ids.len());
+        for handle in handles {
+            for physical_id in &physical_ids {
+                probes.push((
+                    Key::from_bytes(encode_row_key_with_handle(
+                        *physical_id,
+                        &handle.record_handle(),
+                    )),
+                    handle.clone(),
+                ));
+            }
+        }
+        let keys: Vec<Key> = probes.iter().map(|(key, _)| key.clone()).collect();
+        let entries = self
+            .store
+            .batch_get(&keys)
+            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+        // Keep the batch lookup linear. Scanning `probes` for every handle
+        // makes a 20k-row index batch quadratic before row decoding starts;
+        // Go's batch table reader indexes each returned record once.
+        let mut probe_indices = BTreeMap::<TableHandle, Vec<usize>>::new();
+        for (index, (_, handle)) in probes.iter().enumerate() {
+            probe_indices.entry(handle.clone()).or_default().push(index);
+        }
+        let decoder = self.row_decoder_projected(keep, context)?;
+        let mut rows = Vec::with_capacity(handles.len());
+        for handle in handles {
+            let entry = probe_indices
+                .get(handle)
+                .into_iter()
+                .flatten()
+                .find_map(|index| entries.get(&probes[*index].0));
+            let Some(entry) = entry else {
+                rows.push(None);
+                continue;
+            };
+            let (mut values, _) = decoder.decode_and_eval(handle, entry)?.into_parts();
+            if let Some(keep) = keep {
+                values = keep
+                    .iter()
+                    .map(|offset| std::mem::replace(&mut values[*offset], Datum::Null))
+                    .collect();
+            }
+            rows.push(Some(values));
+        }
+        Ok(rows)
     }
 
     fn row_cursor_with_decoder(
@@ -281,7 +320,6 @@ impl KvTable {
     /// a scan whose handle ranges cover no record at all, which a coprocessor
     /// request cannot express.
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     pub fn pushdown_row_cursor_with_context(
         &mut self,
         keep: &[usize],
@@ -291,6 +329,8 @@ impl KvTable {
         limit: Option<u64>,
         handle_ranges: Option<&[IndexRange]>,
         descending: bool,
+        keep_order: bool,
+        read_ahead_batches: usize,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
@@ -395,6 +435,8 @@ impl KvTable {
             limit,
             aggregate: None,
             desc: descending,
+            keep_order,
+            read_ahead_batches,
             // The storage that owns the snapshot fills this in; the table has
             // no timestamp of its own.
             snapshot_ts: 0,
@@ -423,16 +465,22 @@ impl KvTable {
             };
             staged.push((key.into_bytes(), row));
         }
+        let merge_staged = !staged.is_empty();
+        let predicates_applied = scan.stream.predicates_applied();
         Ok(Some(RemoteRowCursor {
             stream: scan.stream,
             staged: staged.into_iter(),
             pending_staged: None,
             pending_remote: None,
+            pending_chunk: None,
+            pending_chunk_row: 0,
             width: output_offsets.map_or(keep.len(), <[usize]>::len),
             handle_index,
             table_id: self.table_id,
+            merge_staged,
             noted_rows: 0,
             descending,
+            predicates_applied,
         }))
     }
 
@@ -455,6 +503,8 @@ impl KvTable {
             limit,
             handle_ranges,
             false,
+            false,
+            crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
             &RowDecodeContext::legacy_default(zone),
             statement,
         )
@@ -529,6 +579,8 @@ impl KvTable {
             limit: None,
             aggregate: Some(aggregate.clone()),
             desc: false,
+            keep_order: false,
+            read_ahead_batches: crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
             snapshot_ts: 0,
             ranges,
             statement: statement.clone(),
@@ -629,6 +681,8 @@ impl KvTable {
             limit: None,
             aggregate: Some(remote_aggregate),
             desc: false,
+            keep_order: false,
+            read_ahead_batches: crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
             snapshot_ts: 0,
             ranges: key_ranges,
             statement: statement.clone(),
@@ -1117,6 +1171,9 @@ pub struct RemoteRowCursor {
     staged: std::vec::IntoIter<StagedRow>,
     pending_staged: Option<StagedRow>,
     pending_remote: Option<KeyedRow>,
+    /// Unconsumed rows from one clean, decoded columnar response batch.
+    pending_chunk: Option<Chunk>,
+    pending_chunk_row: usize,
     /// Number of projected columns, which the remote row may exceed by the
     /// appended handle column.
     width: usize,
@@ -1124,6 +1181,10 @@ pub struct RemoteRowCursor {
     /// clean common-handle stream consumed without a staged overlay.
     handle_index: Option<usize>,
     table_id: i64,
+    /// Whether the cursor must merge staged rows into the snapshot stream.
+    /// Clean reads can consume projected remote rows directly without
+    /// reconstructing an encoded record key for every row.
+    merge_staged: bool,
     /// How much of [`PushdownRowStream::rows_returned`] has already been
     /// reported to the storage probe, so each row is counted once. See
     /// [`note_wire_rows`].
@@ -1132,6 +1193,8 @@ pub struct RemoteRowCursor {
     /// remote stream, and the staged slice the storage reversed to match),
     /// so the winner of each step is the GREATER key.
     descending: bool,
+    /// Whether the remote backend lowered every requested predicate.
+    predicates_applied: bool,
 }
 
 impl RemoteRowCursor {
@@ -1139,6 +1202,74 @@ impl RemoteRowCursor {
     #[must_use]
     pub fn rows_returned(&self) -> u64 {
         self.stream.rows_returned()
+    }
+
+    /// Whether the remote backend evaluated every requested predicate.
+    #[must_use]
+    pub fn predicates_applied(&self) -> bool {
+        self.predicates_applied
+    }
+
+    /// Appends clean remote rows without materializing an owned datum vector
+    /// for every row. `None` means this cursor must use the row path;
+    /// `Some(0)` means the chunk-capable stream is exhausted.
+    fn append_clean_chunk(
+        &mut self,
+        output: &mut Chunk,
+        target_rows: usize,
+        allow_oversized: bool,
+    ) -> Result<Option<usize>, KvTableError> {
+        if self.merge_staged || !self.stream.supports_chunks() {
+            return Ok(None);
+        }
+        let before = output.num_rows();
+        while output.num_rows() < target_rows {
+            if self.pending_chunk.is_none() {
+                let next = self
+                    .stream
+                    .next_chunk()
+                    .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+                if output.num_rows() == 0 {
+                    if let Some(batch) = next.as_ref() {
+                        // TiKV commonly terminates a page a few rows below
+                        // the executor chunk cap. Returning that owned batch
+                        // still preserves the source boundary and avoids
+                        // copying a million-row ordered scan one cell at a
+                        // time; tiny pages are coalesced below.
+                        let direct_min_rows = target_rows.saturating_mul(3) / 4;
+                        if batch.num_cols() == self.width
+                            && batch.num_rows() >= direct_min_rows
+                            && (allow_oversized || batch.num_rows() <= target_rows)
+                        {
+                            let rows = batch.num_rows();
+                            *output = next.expect("the exact batch was just inspected");
+                            self.note_wire_rows();
+                            return Ok(Some(rows));
+                        }
+                    }
+                }
+                self.pending_chunk = next;
+                self.pending_chunk_row = 0;
+                self.note_wire_rows();
+                if self.pending_chunk.is_none() {
+                    break;
+                }
+            }
+            let batch = self.pending_chunk.as_ref().expect("just installed");
+            let available = batch.num_rows().saturating_sub(self.pending_chunk_row);
+            let take = available.min(target_rows.saturating_sub(output.num_rows()));
+            let projection =
+                (self.width != batch.num_cols()).then(|| (0..self.width).collect::<Vec<_>>());
+            for row in self.pending_chunk_row..self.pending_chunk_row + take {
+                output.append_row_by_col_idxs(batch.get_row(row), projection.as_deref());
+            }
+            self.pending_chunk_row += take;
+            if self.pending_chunk_row == batch.num_rows() {
+                self.pending_chunk = None;
+                self.pending_chunk_row = 0;
+            }
+        }
+        Ok(Some(output.num_rows().saturating_sub(before)))
     }
 
     /// Reports rows received since the last report to
@@ -1199,6 +1330,17 @@ impl RemoteRowCursor {
     /// The next projected row, either directly from a clean common-handle
     /// stream or from the integer-handle snapshot/staged merge.
     pub fn next_row(&mut self) -> Result<Option<Vec<Datum>>, KvTableError> {
+        if !self.merge_staged {
+            let next = self
+                .stream
+                .next_row()
+                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+            self.note_wire_rows();
+            return Ok(next.map(|mut row| {
+                row.truncate(self.width);
+                row
+            }));
+        }
         if self.handle_index.is_none() {
             debug_assert!(self.staged.len() == 0);
             let next = self
@@ -1345,6 +1487,11 @@ pub struct TableScanExec {
     partial_done: bool,
     /// The partial aggregation this source accepted from the planner.
     partial_aggregate: Option<PushdownPartialAggregate>,
+    /// Input schema and statement context retained for an expression-valued
+    /// local partial-aggregation fallback after `meta` becomes the partial
+    /// output schema.
+    partial_input_types: Option<Vec<FieldType>>,
+    partial_context: Option<crate::StmtContext>,
     /// Access-path cardinality selected by the optimizer. Go chooses the
     /// partial/final split only above the one-row floor for these workloads.
     estimated_rows: Option<f64>,
@@ -1365,6 +1512,10 @@ pub struct TableScanExec {
     /// A TopN the remote backend may execute after its complete Selection.
     /// The driver retains a local partial TopN as the semantic fallback.
     remote_topn: Option<PushdownTopN>,
+    /// Whether the record scan must preserve ascending key order for a parent
+    /// MergeJoin or ordered aggregation. Go carries this from the required
+    /// physical property into `TableReaderExecutor.keepOrder`.
+    keep_order: bool,
     /// The table-column offsets this scan emits, in output order. Every
     /// column of the table until the driver prunes it.
     keep: Vec<usize>,
@@ -1484,12 +1635,15 @@ impl TableScanExec {
             partial_rows: None,
             partial_done: false,
             partial_aggregate: None,
+            partial_input_types: None,
+            partial_context: None,
             estimated_rows: None,
             descending: false,
             filter: None,
             pushed: Vec::new(),
             post_filter_projection: None,
             remote_topn: None,
+            keep_order: false,
             keep,
             scanned: std::rc::Rc::new(std::cell::Cell::new(0)),
             limit: None,
@@ -1658,6 +1812,129 @@ impl TableScanExec {
                 }
                 Ok(vec![vec![sum.into_datum()]])
             }
+            PushdownPartialAggregate::Global { functions } => {
+                enum PartialValue {
+                    Count(i64),
+                    SumDecimal(Option<Decimal>),
+                    SumReal(Option<f64>),
+                    Extreme { value: Option<Datum>, is_max: bool },
+                }
+
+                let input_types = self.partial_input_types.clone().ok_or_else(|| {
+                    ExecError::unsupported("global partial aggregation lost its input schema")
+                })?;
+                let context = self.partial_context.clone().ok_or_else(|| {
+                    ExecError::unsupported("global partial aggregation lost its statement context")
+                })?;
+                let mut values = functions
+                    .iter()
+                    .map(|function| match function.kind {
+                        PushdownAggregateKind::Count => PartialValue::Count(0),
+                        PushdownAggregateKind::Sum
+                            if function.output_type.eval_type()
+                                == tidb_datatype::EvalType::Real =>
+                        {
+                            PartialValue::SumReal(None)
+                        }
+                        PushdownAggregateKind::Sum => PartialValue::SumDecimal(None),
+                        PushdownAggregateKind::Min => PartialValue::Extreme {
+                            value: None,
+                            is_max: false,
+                        },
+                        PushdownAggregateKind::Max => PartialValue::Extreme {
+                            value: None,
+                            is_max: true,
+                        },
+                    })
+                    .collect::<Vec<_>>();
+                while let Some(row) = self.next_source_row()? {
+                    self.scanned.set(self.scanned.get() + 1);
+                    if let Some(filter) = self.filter.as_mut() {
+                        if !filter.admits(&row)? {
+                            continue;
+                        }
+                    }
+                    for (function, value) in functions.iter().zip(values.iter_mut()) {
+                        let input = function
+                            .input
+                            .as_ref()
+                            .map(|expression| {
+                                crate::generated_column::eval_over_row(
+                                    expression,
+                                    &input_types,
+                                    &row,
+                                    &context,
+                                )
+                                .map_err(ExecError::Eval)
+                            })
+                            .transpose()?;
+                        match (value, input) {
+                            (PartialValue::Count(count), None) => *count += 1,
+                            (PartialValue::Count(_), Some(Datum::Null)) => {}
+                            (PartialValue::Count(count), Some(_)) => *count += 1,
+                            (PartialValue::SumDecimal(_), None)
+                            | (PartialValue::SumReal(_), None)
+                            | (PartialValue::Extreme { .. }, None) => {
+                                return Err(ExecError::unsupported(
+                                    "only COUNT may omit a global partial aggregate input",
+                                ));
+                            }
+                            (PartialValue::SumDecimal(_), Some(Datum::Null))
+                            | (PartialValue::SumReal(_), Some(Datum::Null))
+                            | (PartialValue::Extreme { .. }, Some(Datum::Null)) => {}
+                            (PartialValue::SumDecimal(sum), Some(input)) => {
+                                let addend = match input {
+                                    Datum::Int(value) => Decimal::from_int(value),
+                                    Datum::UInt(value) => Decimal::from_uint(value),
+                                    Datum::Decimal(value) => value,
+                                    _ => {
+                                        return Err(ExecError::unsupported(
+                                            "global partial SUM requires numeric input",
+                                        ));
+                                    }
+                                };
+                                *sum = Some(match sum.take() {
+                                    Some(current) => current.add(&addend),
+                                    None => addend,
+                                });
+                            }
+                            (PartialValue::SumReal(sum), Some(input)) => {
+                                let addend = input.to_f64().map_err(|_| {
+                                    ExecError::unsupported(
+                                        "global partial SUM requires numeric input",
+                                    )
+                                })?;
+                                *sum = Some(sum.unwrap_or(0.0) + addend.value);
+                            }
+                            (PartialValue::Extreme { value, is_max }, Some(candidate)) => {
+                                let replace = value.as_ref().is_none_or(|current| {
+                                    tidb_expr::compare_datums(&candidate, current).is_ok_and(
+                                        |ordering| {
+                                            if *is_max {
+                                                ordering.is_gt()
+                                            } else {
+                                                ordering.is_lt()
+                                            }
+                                        },
+                                    )
+                                });
+                                if replace {
+                                    *value = Some(candidate);
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(vec![values
+                    .into_iter()
+                    .map(|value| match value {
+                        PartialValue::Count(count) => Datum::Int(count),
+                        PartialValue::SumDecimal(sum) => sum.map_or(Datum::Null, Datum::Decimal),
+                        PartialValue::SumReal(sum) => sum.map_or(Datum::Null, Datum::Real),
+                        PartialValue::Extreme { value, .. } => value.unwrap_or(Datum::Null),
+                    })
+                    .collect()])
+            }
             PushdownPartialAggregate::GroupBy {
                 input_offset,
                 output_type,
@@ -1728,6 +2005,13 @@ impl TableScanExec {
                     ));
                 }
 
+                let input_types = self.partial_input_types.clone().ok_or_else(|| {
+                    ExecError::unsupported("partial aggregation lost its input schema")
+                })?;
+                let context = self.partial_context.clone().ok_or_else(|| {
+                    ExecError::unsupported("partial aggregation lost its statement context")
+                })?;
+
                 enum PartialValue {
                     Count(i64),
                     Sum(PartialSum),
@@ -1788,13 +2072,16 @@ impl TableScanExec {
                  -> Result<(), ExecError> {
                     for (function, value) in functions.iter().zip(values.iter_mut()) {
                         let input = function
-                            .input_offset
-                            .map(|offset| {
-                                row.get(offset).cloned().ok_or_else(|| {
-                                    ExecError::unsupported(
-                                        "partial aggregate input is outside the scan row",
-                                    )
-                                })
+                            .input
+                            .as_ref()
+                            .map(|expression| {
+                                crate::generated_column::eval_over_row(
+                                    expression,
+                                    &input_types,
+                                    row,
+                                    &context,
+                                )
+                                .map_err(ExecError::Eval)
                             })
                             .transpose()?;
                         match (value, input) {
@@ -1923,6 +2210,8 @@ impl Executor for TableScanExec {
                 self.limit,
                 self.handle_ranges.as_deref(),
                 self.descending,
+                self.keep_order,
+                crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
                 &self.decode_context,
                 &self.statement,
             )
@@ -1930,6 +2219,17 @@ impl Executor for TableScanExec {
                 ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
             })?;
         if self.remote.is_some() {
+            // A clean remote stream whose backend lowered every predicate is
+            // already exact. Keep the local filter for residuals and staged
+            // rows, but avoid evaluating the same expression once per wire
+            // row on the common coprocessor path.
+            if self
+                .remote
+                .as_ref()
+                .is_some_and(|remote| remote.predicates_applied() && !remote.merge_staged)
+            {
+                self.filter = None;
+            }
             return Ok(());
         }
         self.open_local_cursor()
@@ -1975,6 +2275,34 @@ impl Executor for TableScanExec {
                 }
             }
             return Ok(());
+        }
+        // A clean remote scan whose predicates were fully lowered can hand
+        // off the decoded columnar batch directly. Keep the existing row
+        // path for residual filters, staged overlays, and local fallbacks.
+        if self.filter.is_none() {
+            if let Some(remote) = self.remote.as_mut() {
+                let target = self.limit.map_or(cap, |limit| {
+                    usize::try_from(limit.saturating_sub(self.emitted))
+                        .unwrap_or(usize::MAX)
+                        .min(cap)
+                });
+                if target == 0 {
+                    self.remote = None;
+                    return Ok(());
+                }
+                if let Some(appended) = remote
+                    .append_clean_chunk(req, target, self.limit.is_none())
+                    .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?
+                {
+                    self.scanned
+                        .set(self.scanned.get().saturating_add(appended as u64));
+                    self.emitted = self.emitted.saturating_add(appended as u64);
+                    if appended == 0 {
+                        self.remote = None;
+                    }
+                    return Ok(());
+                }
+            }
         }
         while req.num_rows() < cap {
             if self.limit.is_some_and(|limit| self.emitted >= limit) {
@@ -2061,15 +2389,11 @@ impl crate::table_access::TableAccess for TableScanExec {
         self.estimated_rows = Some(rows);
     }
 
-    /// Go's `keep order:true` on a table scan. ASC is the walk the scan
-    /// already does; DESC flips both cursors to the reverse walk, which is
-    /// what lets the driver discharge a descending `ORDER BY` here.
-    fn accept_keep_order(&mut self, descending: bool) -> bool {
-        self.descending = descending;
-        true
-    }
-
-    fn accept_partial_aggregate(&mut self, aggregate: &PushdownPartialAggregate) -> bool {
+    fn accept_partial_aggregate(
+        &mut self,
+        aggregate: &PushdownPartialAggregate,
+        ctx: &crate::StmtContext,
+    ) -> bool {
         if self.estimated_rows.is_none_or(|rows| rows <= 1.0)
             || aggregate
                 .input_offsets()
@@ -2080,6 +2404,7 @@ impl crate::table_access::TableAccess for TableScanExec {
         {
             return false;
         }
+        let input_types = self.meta.ret_field_types().to_vec();
         let columns = aggregate
             .output_types()
             .into_iter()
@@ -2097,6 +2422,8 @@ impl crate::table_access::TableAccess for TableScanExec {
             self.meta.max_chunk_size(),
         );
         self.partial_aggregate = Some(aggregate.clone());
+        self.partial_input_types = Some(input_types);
+        self.partial_context = Some(ctx.clone());
         true
     }
 
@@ -2183,6 +2510,14 @@ impl crate::table_access::TableAccess for TableScanExec {
         true
     }
 
+    /// Go's `keep order:true` on a table scan. ASC preserves the forward
+    /// record-key walk; DESC reverses both the local and remote cursors.
+    fn accept_keep_order(&mut self, descending: bool) -> bool {
+        self.keep_order = true;
+        self.descending = descending;
+        true
+    }
+
     fn scanned_rows_counter(&self) -> Option<std::rc::Rc<std::cell::Cell<u64>>> {
         Some(self.scanned_rows())
     }
@@ -2263,5 +2598,195 @@ impl crate::table_access::TableAccess for TableScanExec {
         // replace.
         self.keep = keep.iter().map(|offset| self.keep[*offset]).collect();
         true
+    }
+}
+
+#[cfg(test)]
+mod remote_cursor_tests {
+    use super::*;
+    use crate::storage::StorageError;
+
+    struct VecStream {
+        rows: std::collections::VecDeque<Vec<Datum>>,
+        returned: u64,
+    }
+
+    impl PushdownRowStream for VecStream {
+        fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
+            let row = self.rows.pop_front();
+            if row.is_some() {
+                self.returned += 1;
+            }
+            Ok(row)
+        }
+
+        fn rows_returned(&self) -> u64 {
+            self.returned
+        }
+
+        fn close(&mut self) {}
+    }
+
+    struct ChunkStream {
+        chunks: std::collections::VecDeque<Chunk>,
+        returned: u64,
+    }
+
+    impl PushdownRowStream for ChunkStream {
+        fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
+            panic!("the clean cursor must use the columnar handoff")
+        }
+
+        fn supports_chunks(&self) -> bool {
+            true
+        }
+
+        fn next_chunk(&mut self) -> Result<Option<Chunk>, StorageError> {
+            let chunk = self.chunks.pop_front();
+            self.returned += chunk.as_ref().map_or(0, |chunk| chunk.num_rows() as u64);
+            Ok(chunk)
+        }
+
+        fn rows_returned(&self) -> u64 {
+            self.returned
+        }
+
+        fn close(&mut self) {}
+    }
+
+    #[test]
+    fn clean_remote_cursor_skips_record_key_reconstruction() {
+        let mut cursor = RemoteRowCursor {
+            stream: Box::new(VecStream {
+                rows: std::collections::VecDeque::from([
+                    vec![Datum::Int(7), Datum::Int(70)],
+                    vec![Datum::Int(8), Datum::Int(80)],
+                ]),
+                returned: 0,
+            }),
+            staged: Vec::new().into_iter(),
+            pending_staged: None,
+            pending_remote: None,
+            pending_chunk: None,
+            pending_chunk_row: 0,
+            width: 1,
+            handle_index: Some(0),
+            table_id: 0,
+            merge_staged: false,
+            noted_rows: 0,
+            predicates_applied: false,
+        };
+
+        assert_eq!(cursor.next_row().unwrap(), Some(vec![Datum::Int(7)]));
+        assert_eq!(cursor.next_row().unwrap(), Some(vec![Datum::Int(8)]));
+        assert_eq!(cursor.next_row().unwrap(), None);
+    }
+
+    #[test]
+    fn clean_remote_cursor_appends_columnar_batches_without_row_materialization() {
+        let source_types = vec![
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        ];
+        let mut batch = Chunk::new_with_capacity(&source_types, 2);
+        batch.append_int64(0, 7);
+        batch.append_int64(1, 70);
+        batch.append_int64(0, 8);
+        batch.append_int64(1, 80);
+        let mut cursor = RemoteRowCursor {
+            stream: Box::new(ChunkStream {
+                chunks: std::collections::VecDeque::from([batch]),
+                returned: 0,
+            }),
+            staged: Vec::new().into_iter(),
+            pending_staged: None,
+            pending_remote: None,
+            pending_chunk: None,
+            pending_chunk_row: 0,
+            width: 1,
+            handle_index: Some(1),
+            table_id: 0,
+            merge_staged: false,
+            noted_rows: 0,
+            predicates_applied: true,
+        };
+        let mut output = Chunk::new_with_capacity(&source_types[..1], 2);
+
+        assert_eq!(
+            cursor.append_clean_chunk(&mut output, 2, false).unwrap(),
+            Some(2)
+        );
+        assert_eq!(output.num_rows(), 2);
+        assert_eq!(output.get_row(0).get_int64(0), 7);
+        assert_eq!(output.get_row(1).get_int64(0), 8);
+        assert_eq!(
+            cursor.append_clean_chunk(&mut output, 3, false).unwrap(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn clean_remote_cursor_moves_an_exact_width_batch_into_the_output() {
+        let source_types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
+        let mut batch = Chunk::new_with_capacity(&source_types, 2);
+        batch.append_int64(0, 7);
+        batch.append_int64(0, 8);
+        let mut cursor = RemoteRowCursor {
+            stream: Box::new(ChunkStream {
+                chunks: std::collections::VecDeque::from([batch]),
+                returned: 0,
+            }),
+            staged: Vec::new().into_iter(),
+            pending_staged: None,
+            pending_remote: None,
+            pending_chunk: None,
+            pending_chunk_row: 0,
+            width: 1,
+            handle_index: None,
+            table_id: 0,
+            merge_staged: false,
+            noted_rows: 0,
+            predicates_applied: true,
+        };
+        let mut output = Chunk::new_with_capacity(&source_types, 2);
+        assert_eq!(
+            cursor.append_clean_chunk(&mut output, 2, false).unwrap(),
+            Some(2)
+        );
+        assert_eq!(output.get_row(0).get_int64(0), 7);
+        assert_eq!(output.get_row(1).get_int64(0), 8);
+    }
+
+    #[test]
+    fn clean_remote_cursor_transfers_an_oversized_batch_without_a_limit() {
+        let source_types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
+        let mut batch = Chunk::new_with_capacity(&source_types, 4);
+        for value in 7..11 {
+            batch.append_int64(0, value);
+        }
+        let mut cursor = RemoteRowCursor {
+            stream: Box::new(ChunkStream {
+                chunks: std::collections::VecDeque::from([batch]),
+                returned: 0,
+            }),
+            staged: Vec::new().into_iter(),
+            pending_staged: None,
+            pending_remote: None,
+            pending_chunk: None,
+            pending_chunk_row: 0,
+            width: 1,
+            handle_index: None,
+            table_id: 0,
+            merge_staged: false,
+            noted_rows: 0,
+            predicates_applied: true,
+        };
+        let mut output = Chunk::new_with_capacity(&source_types, 2);
+        assert_eq!(
+            cursor.append_clean_chunk(&mut output, 2, true).unwrap(),
+            Some(4)
+        );
+        assert_eq!(output.num_rows(), 4);
+        assert_eq!(output.get_row(3).get_int64(0), 10);
     }
 }

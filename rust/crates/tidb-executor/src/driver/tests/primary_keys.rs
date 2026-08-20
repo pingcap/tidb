@@ -342,8 +342,8 @@ fn clustered_common_handle() {
 /// Go represents a common-handle table path with the PRIMARY index metadata:
 /// `fillContentForTablePath` sets `IsCommonHandlePath` and `Index`, then
 /// `deriveCommonHandleTablePathStats` derives the path over those key parts.
-/// The read is still the table's clustered row storage, but EXPLAIN names the
-/// physical key walk `IndexFullScan ... index:PRIMARY(...)`.
+/// It nevertheless lowers to `PhysicalTableScan`, whose `TP()` reports a
+/// `TableFullScan` for a full range.
 fn explain_plan(sql: &str, catalog: &Catalog) -> Vec<String> {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
@@ -377,7 +377,24 @@ fn explain_plan(sql: &str, catalog: &Catalog) -> Vec<String> {
 }
 
 #[test]
-fn a_common_handle_table_path_is_the_primary_index_scan() {
+fn explain_uses_the_lowercase_field_name_identity() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE lc (UPPER_COL BIGINT NOT NULL)", &mut catalog)
+        .unwrap();
+    let plan = explain_plan("SELECT SUM(UPPER_COL) FROM lc", &catalog);
+    assert!(
+        plan.iter()
+            .any(|line| line.contains("sum(test.lc.upper_col)")),
+        "Go's FieldName.String uses the lowercase CIStr identity: {plan:#?}"
+    );
+    assert!(
+        plan.iter().all(|line| !line.contains("UPPER_COL")),
+        "the original DDL spelling belongs to SHOW CREATE, not EXPLAIN: {plan:#?}"
+    );
+}
+
+#[test]
+fn a_common_handle_table_path_is_a_table_scan() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
         "CREATE TABLE ch (id VARCHAR(50) NOT NULL, part BIGINT NOT NULL, created DATE NOT NULL, \
@@ -390,10 +407,13 @@ fn a_common_handle_table_path_is_the_primary_index_scan() {
     .unwrap();
     let plan = explain_plan("SELECT * FROM ch WHERE part > 199999", &catalog);
     assert!(
-        plan.iter().any(|line| {
-            line.contains("IndexFullScan") && line.contains("index:PRIMARY(id, part, created)")
-        }),
-        "the common-handle table path must be displayed as its PRIMARY key scan, got {plan:?}"
+        plan.iter()
+            .any(|line| line.contains("TableFullScan") && line.contains("table:ch")),
+        "the common-handle table path must be displayed as a table scan, got {plan:?}"
+    );
+    assert!(
+        plan.iter().all(|line| !line.contains("IndexFullScan")),
+        "the clustered PRIMARY is not a secondary index path, got {plan:?}"
     );
 }
 

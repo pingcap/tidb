@@ -100,8 +100,12 @@ pub trait TableAccess {
     /// Offers the scan a real TiKV partial aggregation. Returning `true`
     /// changes the source schema to the one partial-result column and promises
     /// that a local fallback computes exactly the same partial rows.
-    fn accept_partial_aggregate(&mut self, aggregate: &PushdownPartialAggregate) -> bool {
-        let _ = aggregate;
+    fn accept_partial_aggregate(
+        &mut self,
+        aggregate: &PushdownPartialAggregate,
+        ctx: &StmtContext,
+    ) -> bool {
+        let _ = (aggregate, ctx);
         false
     }
 

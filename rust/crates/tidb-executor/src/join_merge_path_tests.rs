@@ -184,6 +184,28 @@ fn a_group_spanning_chunks_is_still_one_group() {
     assert_eq!(run(&mut merged).len(), 9000);
 }
 
+/// Go keeps a current inner chunk outside the spillable row container and
+/// only transfers completed chunks when an equal-key run crosses a chunk
+/// boundary. A unique-key inner stream must therefore not perform one
+/// RowContainer add/reset cycle per row.
+#[test]
+fn a_single_row_inner_group_stays_in_the_reusable_staging_chunk() {
+    let left: Vec<Vec<Datum>> = (0..3000)
+        .map(|i| vec![Datum::Int(i), Datum::Int(i)])
+        .collect();
+    let right = left.clone();
+    let mut merged = join_of(JoinKind::Inner, vec![eq_on(0, 0, 2)], left, right, 2);
+    merged.set_merge_plan(MergeJoinPlan {
+        keys: vec![MergeJoinKey { left: 0, right: 0 }],
+        desc: false,
+    });
+    merged.open().unwrap();
+    let mut req = merged.new_chunk();
+    merged.next(&mut req).unwrap();
+    assert_eq!(merged.merge_inner_container_chunks(), 0);
+    merged.close().unwrap();
+}
+
 /// The OUTER side is a stream, not a second materialized equal-key group.
 /// A duplicate run larger than the statement quota must reuse the small
 /// installed INNER group one row at a time instead of being cancelled or

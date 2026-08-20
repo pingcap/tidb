@@ -28,7 +28,9 @@
 //!   either operand order;
 //! * `column IS [NOT] NULL`;
 //! * `column [NOT] IN (constants)`;
-//! * `OR` and `NOT` over any of the above, to any depth;
+//! * `AND`, `OR`, and `NOT` over any of the above, to any depth;
+//! * a **comparison between two columns** of the scanned table, when the
+//!   coprocessor lowering can preserve both operands' declared types;
 //! * a **builtin function call** whose `tipb.ScalarFuncSig` the push-down
 //!   catalog resolves and whose signature that catalog says TiKV evaluates
 //!   ([`tidb_expr::pushdown_catalog`]) -- `sin(a)`, `mod(a, 7)`, `round(a)`
@@ -37,12 +39,12 @@
 //!   table rather than a branch here.
 //!
 //! Every other conjunct -- an expression over a column (`b + 1 < 10`), a
-//! column-to-column comparison, `IS TRUE`, NULL-safe equality, a subquery, a
+//! comparison whose operand types the wire cannot represent, `IS TRUE`,
+//! NULL-safe equality, a subquery, a
 //! call the catalog does not hold, anything referring to a second table -- is
-//! residual and is left for the `Selection` above the scan. A nested `AND`
-//! inside an `OR` branch is residual too: the top-level `AND` is what this
-//! split flattens, and describing an inner one would need a connective the
-//! description does not carry.
+//! residual and is left for the `Selection` above the scan. Nested conjunctions
+//! are retained inside a described `OR` branch, matching TiKV's Selection
+//! expression tree; only the top-level `AND` is flattened into conjuncts.
 //!
 //! Note that the split is deliberately **type-agnostic** for the predicate
 //! shapes: it describes the conjunct, and the coprocessor lowering
@@ -141,6 +143,13 @@ impl ScanComparisonOp {
 pub enum ScanPredicate {
     /// A column compared with a constant, in either operand order.
     Compare(ScanComparison),
+    /// A comparison between two columns of the scanned table.
+    ///
+    /// Go's `scalarFuncToPBExpr` sends both `ColumnRef` children when the
+    /// comparison is supported by TiKV. Keeping this separate from
+    /// [`ScanComparison`] preserves the latter's literal-oriented contract
+    /// for callers that build range predicates.
+    ColumnCompare(ScanColumnComparison),
     /// `column IS NULL`, or `column IS NOT NULL` when `negated`.
     IsNull {
         /// Zero-based offset of the column in the scan's output row.
@@ -165,6 +174,19 @@ pub enum ScanPredicate {
         /// `true` for the `NOT IN` spelling.
         negated: bool,
     },
+    /// A pushable string scalar tested against non-NULL string constants.
+    ///
+    /// Go chooses `IN`'s signature from the tested expression's evaluation
+    /// type, so this is not limited to a bare column: calls such as
+    /// `SUBSTRING(column, 1, 2)` retain their complete TiPB scalar tree.
+    ScalarIn {
+        /// The string expression being tested.
+        tested: tidb_expr::pushdown_catalog::PbScalar,
+        /// The non-empty constant list, in source order.
+        literals: Vec<Datum>,
+        /// `true` for the `NOT IN` spelling.
+        negated: bool,
+    },
     /// A builtin function call whose `tipb.ScalarFuncSig` the push-down
     /// catalog resolved and whose signature TiKV evaluates.
     ///
@@ -175,6 +197,10 @@ pub enum ScanPredicate {
     /// whether it can also be *encoded* is the lowering's own question
     /// (`pushdown_catalog::to_pb`), and refusing there costs network only.
     Builtin(tidb_expr::pushdown_catalog::PbScalar),
+    /// One source conjunct that Go expands into multiple Selection
+    /// conditions. The current producer is non-negated `BETWEEN`, whose
+    /// lower and upper comparisons remain one local filter.
+    And(Vec<ScanPredicate>),
     /// A disjunction of two or more descriptions, flattened out of the source
     /// `OR` chain in source order.
     Or(Vec<ScanPredicate>),
@@ -195,6 +221,11 @@ pub struct ScanComparison {
     /// The column's declared type, which decides whether a lowering may
     /// treat the comparison as the signed-BIGINT shape TiKV accepts.
     pub column_type: FieldType,
+    /// The constant's type after Go-equivalent constant folding and any
+    /// comparison-domain cast. TiPB carries this metadata on the literal
+    /// leaf, so retaining only the [`Datum`] is not sufficient for DECIMAL
+    /// precision/scale or temporal FSP.
+    pub literal_type: FieldType,
     /// The comparison operator, as written.
     pub op: ScanComparisonOp,
     /// The already-evaluated constant operand. Never [`Datum::Null`]: a NULL
@@ -205,6 +236,21 @@ pub struct ScanComparison {
     /// the flipped spelling (`5 < a`). The lowering preserves operand order
     /// rather than canonicalizing it, as the source protobuf does.
     pub column_on_left: bool,
+}
+
+/// A source-ordered column-to-column comparison.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScanColumnComparison {
+    /// Zero-based offset of the left operand in the scan output.
+    pub left_offset: u32,
+    /// Declared type of the left operand.
+    pub left_type: FieldType,
+    /// Zero-based offset of the right operand in the scan output.
+    pub right_offset: u32,
+    /// Declared type of the right operand.
+    pub right_type: FieldType,
+    /// The comparison operator, as written.
+    pub op: ScanComparisonOp,
 }
 
 /// The conjuncts a scan agreed to apply itself, with both the description a
@@ -241,9 +287,34 @@ impl PushedScanFilter {
     }
 
     /// The built expressions the accepting source evaluates.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn filters(&self) -> &[Expression] {
         &self.filters
+    }
+
+    /// Go's physical Selection conditions after expression rewriting.
+    ///
+    /// Execution keeps the source conjuncts above, but EXPLAIN needs the
+    /// expression rewriter's CNF shape: a top-level `BETWEEN` is two
+    /// conditions, and comparison constants carry the domain casts already
+    /// proven by the paired scan descriptions. Deriving this view from those
+    /// descriptions avoids evaluating constants a second time or raising a
+    /// second copy of their statement warnings.
+    pub(crate) fn selection_conditions(&self) -> Vec<Expression> {
+        self.predicates
+            .iter()
+            .zip(&self.filters)
+            .flat_map(|(predicate, filter)| match predicate {
+                ScanPredicate::And(branches) => normalized_and_conditions(branches, filter)
+                    .unwrap_or_else(|| vec![filter.clone()]),
+                ScanPredicate::Compare(comparison) => {
+                    vec![normalized_comparison(comparison, filter)]
+                }
+                ScanPredicate::ColumnCompare(_) => vec![filter.clone()],
+                _ => vec![filter.clone()],
+            })
+            .collect()
     }
 
     /// Whether anything was pushed at all.
@@ -286,6 +357,42 @@ impl PushedScanFilter {
     }
 }
 
+fn normalized_and_conditions(
+    branches: &[ScanPredicate],
+    filter: &Expression,
+) -> Option<Vec<Expression>> {
+    let Expression::ScalarFunction(function) = filter else {
+        return None;
+    };
+    if function.func_name.lowercase() != "and" || function.args.len() != branches.len() {
+        return None;
+    }
+    branches
+        .iter()
+        .zip(&function.args)
+        .map(|(branch, argument)| match branch {
+            ScanPredicate::Compare(comparison) => Some(normalized_comparison(comparison, argument)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn normalized_comparison(comparison: &ScanComparison, filter: &Expression) -> Expression {
+    let mut normalized = filter.clone();
+    let Expression::ScalarFunction(function) = &mut normalized else {
+        return normalized;
+    };
+    if function.args.len() != 2 {
+        return normalized;
+    }
+    let literal_offset = usize::from(comparison.column_on_left);
+    function.args[literal_offset] = Expression::Constant(tidb_expr::constant::Constant::new(
+        comparison.literal.clone(),
+        comparison.literal_type.clone(),
+    ));
+    normalized
+}
+
 fn remapped_offset(offset: u32, keep: &[usize]) -> Option<u32> {
     keep.iter()
         .position(|kept| *kept == offset as usize)
@@ -297,11 +404,16 @@ fn remap_scan_predicate(predicate: &mut ScanPredicate, keep: &[usize]) -> Option
         ScanPredicate::Compare(comparison) => {
             comparison.column_offset = remapped_offset(comparison.column_offset, keep)?;
         }
+        ScanPredicate::ColumnCompare(comparison) => {
+            comparison.left_offset = remapped_offset(comparison.left_offset, keep)?;
+            comparison.right_offset = remapped_offset(comparison.right_offset, keep)?;
+        }
         ScanPredicate::IsNull { column_offset, .. } | ScanPredicate::In { column_offset, .. } => {
             *column_offset = remapped_offset(*column_offset, keep)?;
         }
+        ScanPredicate::ScalarIn { tested, .. } => remap_pb_scalar(tested, keep)?,
         ScanPredicate::Builtin(scalar) => remap_pb_scalar(scalar, keep)?,
-        ScanPredicate::Or(branches) => {
+        ScanPredicate::And(branches) | ScanPredicate::Or(branches) => {
             for branch in branches {
                 remap_scan_predicate(branch, keep)?;
             }
@@ -324,12 +436,14 @@ fn remap_pb_scalar(
                 remap_pb_scalar(argument, keep)?;
             }
         }
-        tidb_expr::pushdown_catalog::PbScalar::IntLiteral(_) => {}
+        tidb_expr::pushdown_catalog::PbScalar::IntLiteral(_)
+        | tidb_expr::pushdown_catalog::PbScalar::DecimalLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::RealLiteral { .. } => {}
     }
     Some(())
 }
 
-fn remap_expression(expression: &mut Expression, keep: &[usize]) -> Option<()> {
+pub(crate) fn remap_expression(expression: &mut Expression, keep: &[usize]) -> Option<()> {
     match expression {
         Expression::Column(column) => {
             let old = usize::try_from(column.index).ok()?;

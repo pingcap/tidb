@@ -69,6 +69,10 @@ pub(crate) fn rewrite(
         rewritten = current;
         changed = true;
     }
+    if let Some(current) = rewrite_predicate_aggregate(&rewritten, catalog, current_db, ctx) {
+        rewritten = current;
+        changed = true;
+    }
     changed.then_some(rewritten)
 }
 
@@ -95,6 +99,35 @@ pub(crate) fn is_pulled_scalar_sum(select: &SelectStmt) -> bool {
             SelectField::Expr { expr, .. } => !super::subquery::expr_has_subquery(expr),
             SelectField::Wildcard(_) => false,
         })
+}
+
+/// Whether this SELECT is the Selection/Projection wrapper emitted around a
+/// pulled scalar SUM. Recursive derived-table planning sees the rewritten AST
+/// after the transient `rewrite` result flag is gone, so the wrapper must be
+/// recognized from the same proof-shaped structure as its grouped child.
+pub(crate) fn is_pulled_scalar_sum_wrapper(select: &SelectStmt) -> bool {
+    let Some(from) = select.from.as_ref() else {
+        return false;
+    };
+    if from.right.is_some() || from.tp != JoinType::Cross || from.on.is_some() {
+        return false;
+    }
+    let JoinNode::Derived {
+        subquery,
+        alias: Some(alias),
+        lateral: false,
+        column_names,
+    } = &from.left
+    else {
+        return false;
+    };
+    if alias != "__decorrelated_pullup_0" || !column_names.is_empty() {
+        return false;
+    }
+    let QueryStmt::Select(grouped) = &**subquery else {
+        return false;
+    };
+    is_pulled_scalar_sum(grouped)
 }
 
 fn rewrite_join(
@@ -149,13 +182,519 @@ struct Correlation {
     outer_offset: usize,
 }
 
+#[derive(Clone)]
+struct PredicateAggregate {
+    inner: SelectStmt,
+    aggregate: Expr,
+    scalar: Expr,
+    local_conditions: Vec<Expr>,
+    correlations: Vec<Correlation>,
+}
+
+/// Pulls one scalar aggregation used by a predicate into a grouped derived
+/// relation. This is the `LogicalApply -> LogicalAggregation -> Selection`
+/// arm of Go's `DecorrelateSolver`: correlation equalities become join keys,
+/// those inner keys are appended to GROUP BY, and the scalar expression is
+/// rewritten over the aggregate output column.
+fn rewrite_predicate_aggregate(
+    select: &SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Option<SelectStmt> {
+    let where_clause = select.where_clause.as_ref()?;
+    // Scope construction may recursively plan a derived relation. Keep the
+    // no-subquery path side-effect free, as the select-list decorrelator does.
+    if !super::subquery::expr_has_subquery(where_clause) {
+        return None;
+    }
+    let outer_scope = super::subquery::select_outer_scope(select, catalog, current_db, ctx);
+    let relation_alias = "__decorrelated_predicate_0";
+    let value_alias = "__decorrelated_value_0";
+    let value = Expr::Column(vec![relation_alias.to_owned(), value_alias.to_owned()]);
+    let mut predicate = None;
+    let mut aggregate = None;
+    let mut remaining = Vec::new();
+    for conjunct in conjuncts(where_clause) {
+        if aggregate.is_none() {
+            if let Some((rewritten, found)) = rewrite_one_predicate_subquery(
+                conjunct,
+                &outer_scope,
+                catalog,
+                current_db,
+                ctx,
+                &value,
+            ) {
+                predicate = Some(rewritten);
+                aggregate = Some(found);
+                continue;
+            }
+        }
+        remaining.push(conjunct.clone());
+    }
+    let predicate = predicate?;
+    let aggregate = aggregate?;
+
+    if let Some(group_key) = pull_up_group_key(select, &outer_scope, &aggregate.correlations) {
+        let mut inner_from = aggregate.inner.from.clone()?;
+        let residual_local = attach_to_inner_join(
+            &mut inner_from,
+            combine_and(aggregate.local_conditions.clone()),
+        );
+        let mut join_conditions = aggregate
+            .correlations
+            .iter()
+            .map(|correlation| {
+                Some(Expr::Binary(
+                    BinaryOp::Eq,
+                    Box::new(Expr::Column(
+                        outer_scope.qualified_path(correlation.outer_offset)?,
+                    )),
+                    Box::new(Expr::Column(correlation.inner.clone())),
+                ))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        if let Some(residual) = residual_local {
+            join_conditions.push(residual);
+        }
+        let mut grouped = select.clone();
+        grouped.from = Some(Join {
+            left: join_node(select.from.clone()?),
+            right: Some(join_node(inner_from)),
+            tp: JoinType::Left,
+            straight: false,
+            on: combine_and(join_conditions),
+            using: Vec::new(),
+            natural: false,
+            explicit_parens: false,
+        });
+        grouped.group_by = group_key
+            .into_iter()
+            .map(|path| GroupByItem {
+                expr: Expr::Column(path),
+                desc: None,
+            })
+            .collect();
+        grouped.where_clause = combine_and(remaining);
+        grouped.having = None;
+        grouped.order_by.clear();
+        grouped.limit = None;
+
+        let wrapper_alias = "__decorrelated_pullup_0";
+        let aggregate_alias = "__decorrelated_aggregate_0";
+        let mut outer_predicate = replace_column(
+            &predicate,
+            &[relation_alias, value_alias],
+            &Expr::Column(vec![wrapper_alias.to_owned(), aggregate_alias.to_owned()]),
+        );
+        let mut carriers = Vec::<(usize, String, Vec<String>)>::new();
+        let mut grouped_fields = grouped.fields.fields().to_vec();
+        for path in super::only_full_group_by::bare_columns(&outer_predicate) {
+            if matches!(path.as_slice(), [scope, _] if scope.eq_ignore_ascii_case(wrapper_alias)) {
+                continue;
+            }
+            let Some((offset, _, _)) = (ScopeResolver {
+                scope: &outer_scope,
+            })
+            .resolve(&path) else {
+                continue;
+            };
+            if carriers.iter().any(|(have, _, _)| *have == offset) {
+                continue;
+            }
+            carriers.push((offset, format!("__decorrelated_outer_{offset}"), path));
+        }
+        for (_, alias, path) in &carriers {
+            let source = Expr::Column(path.clone());
+            outer_predicate = replace_column(
+                &outer_predicate,
+                &path.iter().map(String::as_str).collect::<Vec<_>>(),
+                &Expr::Column(vec![wrapper_alias.to_owned(), alias.clone()]),
+            );
+            grouped_fields.push(SelectField::Expr {
+                expr: source,
+                alias: Some(alias.clone()),
+            });
+        }
+        grouped_fields.push(SelectField::Expr {
+            expr: aggregate.aggregate,
+            alias: Some(aggregate_alias.to_owned()),
+        });
+        grouped.fields = grouped_fields.into();
+
+        let output_names = super::from::derived_field_names(select)?;
+        let mut wrapper = select.clone();
+        wrapper.fields = select
+            .fields
+            .fields()
+            .iter()
+            .enumerate()
+            .map(|(index, field)| SelectField::Expr {
+                expr: Expr::Column(vec![wrapper_alias.to_owned(), output_names[index].clone()]),
+                alias: match field {
+                    SelectField::Expr { alias, .. } => alias.clone(),
+                    SelectField::Wildcard(_) => None,
+                },
+            })
+            .collect::<Vec<_>>()
+            .into();
+        wrapper.from = Some(Join {
+            left: derived_node(grouped, wrapper_alias),
+            right: None,
+            tp: JoinType::Cross,
+            straight: false,
+            on: None,
+            using: Vec::new(),
+            natural: false,
+            explicit_parens: false,
+        });
+        wrapper.where_clause = Some(outer_predicate);
+        wrapper.group_by.clear();
+        wrapper.having = None;
+        return Some(wrapper);
+    }
+
+    let mut inner = aggregate.inner;
+    inner.where_clause = combine_and(aggregate.local_conditions);
+    inner.group_by = aggregate
+        .correlations
+        .iter()
+        .map(|correlation| GroupByItem {
+            expr: Expr::Column(correlation.inner.clone()),
+            desc: None,
+        })
+        .collect();
+    let mut fields = vec![SelectField::Expr {
+        expr: aggregate.aggregate,
+        alias: Some(value_alias.to_owned()),
+    }];
+    fields.extend(
+        aggregate
+            .correlations
+            .iter()
+            .enumerate()
+            .map(|(index, correlation)| SelectField::Expr {
+                expr: Expr::Column(correlation.inner.clone()),
+                alias: Some(format!("__decorrelated_key_{index}")),
+            }),
+    );
+    inner.fields = fields.into();
+
+    let on = combine_and(
+        aggregate
+            .correlations
+            .iter()
+            .enumerate()
+            .map(|(index, correlation)| {
+                let outer = outer_scope.qualified_path(correlation.outer_offset)?;
+                Some(Expr::Binary(
+                    BinaryOp::Eq,
+                    Box::new(Expr::Column(outer)),
+                    Box::new(Expr::Column(vec![
+                        relation_alias.to_owned(),
+                        format!("__decorrelated_key_{index}"),
+                    ])),
+                ))
+            })
+            .collect::<Option<Vec<_>>>()?,
+    );
+
+    let mut rewritten = select.clone();
+    remaining.push(predicate);
+    rewritten.where_clause = combine_and(remaining);
+    rewritten.from = Some(Join {
+        left: join_node(select.from.clone()?),
+        right: Some(derived_node(inner, relation_alias)),
+        tp: JoinType::Left,
+        straight: false,
+        on,
+        using: Vec::new(),
+        natural: false,
+        explicit_parens: false,
+    });
+    Some(rewritten)
+}
+
+fn pull_up_group_key(
+    select: &SelectStmt,
+    outer_scope: &super::from::FromScope,
+    correlations: &[Correlation],
+) -> Option<Vec<Vec<String>>> {
+    if !select.group_by.is_empty()
+        || select.having.is_some()
+        || select.distinct
+        || !select.order_by.is_empty()
+        || select.limit.is_some()
+        || select.fields.fields().iter().any(|field| match field {
+            SelectField::Expr { expr, .. } => expr.has_aggregate_flag(),
+            SelectField::Wildcard(_) => true,
+        })
+    {
+        return None;
+    }
+    let fds = super::funcdep::scope_fd_set(outer_scope, select.from.as_ref(), None);
+    let primary_key = fds.primary_key()?;
+    let correlation_columns = super::funcdep::ColSet::of(
+        correlations
+            .iter()
+            .map(|correlation| correlation.outer_offset as i64),
+    );
+    if !primary_key.subset_of(&correlation_columns) {
+        return None;
+    }
+    primary_key
+        .iter()
+        .map(|offset| outer_scope.qualified_path(usize::try_from(offset).ok()?))
+        .collect()
+}
+
+fn replace_column(expression: &Expr, path: &[&str], replacement: &Expr) -> Expr {
+    struct Replace<'a> {
+        path: &'a [&'a str],
+        replacement: &'a Expr,
+    }
+
+    impl tidb_ast::Visitor for Replace<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(Expr::Column(candidate)) = node.downcast_mut::<Expr>() else {
+                return false;
+            };
+            if candidate.len() == self.path.len()
+                && candidate
+                    .iter()
+                    .zip(self.path)
+                    .all(|(candidate, expected)| candidate.eq_ignore_ascii_case(expected))
+            {
+                *node
+                    .downcast_mut::<Expr>()
+                    .expect("the expression was matched") = self.replacement.clone();
+            }
+            true
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut replaced = expression.clone();
+    tidb_ast::Visitable::accept(&mut replaced, &mut Replace { path, replacement });
+    replaced
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rewrite_one_predicate_subquery(
+    predicate: &Expr,
+    outer_scope: &super::from::FromScope,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    replacement: &Expr,
+) -> Option<(Expr, PredicateAggregate)> {
+    struct Rewrite<'a> {
+        outer_scope: &'a super::from::FromScope,
+        catalog: &'a Catalog,
+        current_db: &'a str,
+        ctx: &'a crate::StmtContext,
+        replacement: &'a Expr,
+        aggregate: Option<PredicateAggregate>,
+    }
+
+    impl tidb_ast::Visitor for Rewrite<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expr) = node.downcast_mut::<Expr>() else {
+                return false;
+            };
+            if self.aggregate.is_some() {
+                return true;
+            }
+            let Expr::Subquery(query) = expr else {
+                return false;
+            };
+            let Some(aggregate) = predicate_aggregate(
+                query,
+                self.outer_scope,
+                self.catalog,
+                self.current_db,
+                self.ctx,
+                self.replacement,
+            ) else {
+                return true;
+            };
+            *expr = aggregate.scalar.clone();
+            self.aggregate = Some(aggregate);
+            true
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut rewritten = predicate.clone();
+    let mut visitor = Rewrite {
+        outer_scope,
+        catalog,
+        current_db,
+        ctx,
+        replacement,
+        aggregate: None,
+    };
+    tidb_ast::Visitable::accept(&mut rewritten, &mut visitor);
+    Some((rewritten, visitor.aggregate?))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn predicate_aggregate(
+    query: &QueryStmt,
+    outer_scope: &super::from::FromScope,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    replacement: &Expr,
+) -> Option<PredicateAggregate> {
+    let QueryStmt::Select(inner) = query else {
+        return None;
+    };
+    if !plain_scalar_inner(inner) || !inner_joins_only(inner.from.as_ref()?) {
+        return None;
+    }
+    let [SelectField::Expr { expr, .. }] = inner.fields.fields() else {
+        return None;
+    };
+    let inner_scope = super::subquery::select_outer_scope(inner, catalog, current_db, ctx);
+    let inner_resolver = ScopeResolver {
+        scope: &inner_scope,
+    };
+    let outer_resolver = ScopeResolver { scope: outer_scope };
+    let (aggregate, scalar) = scalar_aggregate_expression(expr, &inner_resolver, replacement)?;
+
+    let mut correlations = Vec::new();
+    let mut local_conditions = Vec::new();
+    for conjunct in conjuncts(inner.where_clause.as_ref()?) {
+        if let Some((inner_path, outer_path)) =
+            predicate_correlation_equality(conjunct, &inner_resolver, &outer_resolver)
+        {
+            let (outer_offset, _, _) = outer_resolver.resolve(&outer_path)?;
+            let inner_path = normalize_inner_expression(
+                &Expr::Column(inner_path),
+                &inner_resolver,
+                &inner_scope,
+            )?;
+            let Expr::Column(inner_path) = inner_path else {
+                unreachable!()
+            };
+            correlations.push(Correlation {
+                inner: inner_path,
+                outer_offset,
+            });
+        } else {
+            local_conditions.push(normalize_inner_expression(
+                conjunct,
+                &inner_resolver,
+                &inner_scope,
+            )?);
+        }
+    }
+    if correlations.is_empty() {
+        return None;
+    }
+
+    let mut uncorrelated = (**inner).clone();
+    uncorrelated.fields = vec![SelectField::Expr {
+        expr: aggregate.clone(),
+        alias: None,
+    }]
+    .into();
+    uncorrelated.where_clause = combine_and(local_conditions.clone());
+    let mut remaining = Vec::new();
+    super::subquery::collect_correlated_columns_query(
+        &QueryStmt::Select(Box::new(uncorrelated)),
+        outer_scope,
+        catalog,
+        current_db,
+        &mut remaining,
+        ctx,
+    );
+    if !remaining.is_empty() {
+        return None;
+    }
+
+    Some(PredicateAggregate {
+        inner: (**inner).clone(),
+        aggregate,
+        scalar,
+        local_conditions,
+        correlations,
+    })
+}
+
+fn scalar_aggregate_expression(
+    expression: &Expr,
+    inner: &ScopeResolver<'_>,
+    replacement: &Expr,
+) -> Option<(Expr, Expr)> {
+    struct Replace<'a> {
+        inner: &'a ScopeResolver<'a>,
+        replacement: &'a Expr,
+        aggregate: Option<Expr>,
+        valid: bool,
+    }
+
+    impl tidb_ast::Visitor for Replace<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expr) = node.downcast_mut::<Expr>() else {
+                return false;
+            };
+            match expr {
+                Expr::Aggregate {
+                    name,
+                    distinct: false,
+                    args,
+                } if self.aggregate.is_none()
+                    && matches!(
+                        name.to_ascii_uppercase().as_str(),
+                        "AVG" | "MIN" | "MAX" | "SUM"
+                    )
+                    && matches!(args.as_slice(), [Expr::Column(path)] if self.inner.resolve(path).is_some()) =>
+                {
+                    self.aggregate = Some(expr.clone());
+                    *expr = self.replacement.clone();
+                    true
+                }
+                Expr::Aggregate { .. } | Expr::Column(_) | Expr::Subquery(_) => {
+                    self.valid = false;
+                    true
+                }
+                _ => false,
+            }
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            self.valid
+        }
+    }
+
+    let mut scalar = expression.clone();
+    let mut visitor = Replace {
+        inner,
+        replacement,
+        aggregate: None,
+        valid: true,
+    };
+    if !tidb_ast::Visitable::accept(&mut scalar, &mut visitor) || !visitor.valid {
+        return None;
+    }
+    Some((visitor.aggregate?, scalar))
+}
+
 fn rewrite_current(
     select: &SelectStmt,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Option<SelectStmt> {
-    if !plain_outer(select) {
+    if !plain_outer(select) || !has_scalar_sum_candidate(select) {
         return None;
     }
     let outer_ref = single_table_ref(select.from.as_ref()?)?;
@@ -383,6 +922,35 @@ fn rewrite_current(
     Some(current)
 }
 
+/// A side-effect-free gate for the only field shape this rule can rewrite.
+/// Scope construction may plan a view or derived relation, so it must happen
+/// only after the AST proves that a scalar SUM candidate exists.
+fn has_scalar_sum_candidate(select: &SelectStmt) -> bool {
+    select.fields.fields().iter().any(|field| {
+        let SelectField::Expr {
+            expr: Expr::Subquery(query),
+            ..
+        } = field
+        else {
+            return false;
+        };
+        let QueryStmt::Select(inner) = &**query else {
+            return false;
+        };
+        matches!(
+            inner.fields.fields(),
+            [SelectField::Expr {
+                expr: Expr::Aggregate {
+                    name,
+                    distinct: false,
+                    args,
+                },
+                ..
+            }] if name.eq_ignore_ascii_case("SUM") && matches!(args.as_slice(), [Expr::Column(_)])
+        )
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn scalar_sum(
     expr: &Expr,
@@ -537,6 +1105,34 @@ fn correlation_equality(
         return None;
     };
     let classify = |path: &[String]| (inner.resolve(path).is_some(), outer.resolve(path).is_some());
+    match (classify(left), classify(right)) {
+        ((true, false), (false, true)) => Some((left.clone(), right.clone())),
+        ((false, true), (true, false)) => Some((right.clone(), left.clone())),
+        _ => None,
+    }
+}
+
+fn predicate_correlation_equality(
+    expr: &Expr,
+    inner: &ScopeResolver<'_>,
+    outer: &ScopeResolver<'_>,
+) -> Option<(Vec<String>, Vec<String>)> {
+    let Expr::Binary(BinaryOp::Eq, left, right) = expr else {
+        return None;
+    };
+    let Expr::Column(left) = &**left else {
+        return None;
+    };
+    let Expr::Column(right) = &**right else {
+        return None;
+    };
+    // SQL name resolution searches the current query block before the outer
+    // block. An unqualified inner column may therefore also be a valid outer
+    // name without becoming correlated.
+    let classify = |path: &[String]| {
+        let local = inner.resolve(path).is_some();
+        (local, !local && outer.resolve(path).is_some())
+    };
     match (classify(left), classify(right)) {
         ((true, false), (false, true)) => Some((left.clone(), right.clone())),
         ((false, true), (true, false)) => Some((right.clone(), left.clone())),

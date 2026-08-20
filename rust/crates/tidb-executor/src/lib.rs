@@ -184,7 +184,9 @@ pub use kv_table::{
 pub use limit::LimitExec;
 pub use mem_quota::{OomAction, SessionMemory, StatementCancellation, StatementMemory};
 pub use mem_table::MemTableSourceExec;
-pub use predicate_pushdown::{PushedScanFilter, ScanComparison, ScanComparisonOp, ScanPredicate};
+pub use predicate_pushdown::{
+    PushedScanFilter, ScanColumnComparison, ScanComparison, ScanComparisonOp, ScanPredicate,
+};
 pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};

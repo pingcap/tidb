@@ -30,8 +30,8 @@
 //!
 //! When the `ON` clause carries at least one `col = col` conjunct this module
 //! can index (see [`crate::hash_join`] for the encoding and the classes it
-//! refuses), the join builds a hash table on the INNER side and streams the
-//! OUTER side through it: O(build + probe x fanout) instead of
+//! refuses), the join builds a hash table on the costed build side and streams
+//! the other side through it: O(build + probe x fanout) instead of
 //! O(build x probe). Everything else -- a cross join, a join whose only
 //! conditions are inequalities, a key whose two sides compare in different
 //! domains -- keeps the nested loop, which materializes both inputs and
@@ -53,22 +53,17 @@
 //!
 //! # Build side
 //!
-//! The build side is the INNER side: the right child for `INNER`/`LEFT`, the
-//! left child for `RIGHT`. That is what Go's stats-less enumeration reaches
-//! first (`getHashJoins`, `pkg/planner/core/exhaust_physical_plans.go`, which
-//! calls `getHashJoin(ge, p, prop, 1, false)` first for `InnerJoin` and
-//! `LeftOuterJoin` and uses `innerIdx = 0` for `RightOuterJoin`), and it is
-//! what a captured `EXPLAIN` over statistics-free tables actually prints:
-//! `hj2` is `(Build)` for `hj1 JOIN hj2` and for `hj1 LEFT JOIN hj2`, `hj1`
-//! is `(Build)` for `hj1 RIGHT JOIN hj2`. Go re-picks by row count once
-//! statistics exist; this tier has none, so it takes the stats-less choice
-//! rather than inventing an estimate.
+//! Go `getHashJoins` enumerates both build orientations for inner, left outer,
+//! and right outer joins. Its first stats-less candidate builds the right
+//! child for `INNER`/`LEFT` and the left child for `RIGHT`; physical-plan cost
+//! may pick the other orientation when statistics make that cheaper.
 //!
-//! Choosing the inner side is also what keeps the outer semantics
-//! single-pass: the side whose unmatched rows must still be emitted is the
-//! side being streamed, so a probe row that finds no bucket emits its
-//! NULL-padded row immediately. No second sweep over a matched-flag array,
-//! and no need to hold the preserved side in memory.
+//! Building the non-preserved side keeps outer semantics single-pass: an
+//! unmatched preserved probe row is padded immediately. Building the
+//! preserved side follows Go v2 `outerJoinProbe`: a candidate is marked only
+//! after every ON condition succeeds, then a post-probe scan emits each
+//! unmarked build row with NULL padding. The matched bitmap also covers NULL
+//! keys, which are stored but never inserted into a hash bucket.
 //!
 //! # Memory, and the build side's spill to disk
 //!
@@ -99,15 +94,16 @@
 //! serialized row-table format and replays whole partitions in restore
 //! rounds. v1 (`legacy`, and the only path for a cross join, a NullEQ key or
 //! a null-aware anti-join) is the container-plus-pointers design above. This
-//! executor is v1-SHAPED -- one build container, an in-memory key-to-pointer
-//! map, a single-threaded probe loop -- so v1's spill is the one ported here.
+//! executor is v1-SHAPED -- one build container and an in-memory
+//! key-to-pointer map -- so v1's spill is the one ported here.
 //! Building v2's partitioned machinery onto it would be a rewrite, not a
 //! port, and is NOT started.
 //!
-//! Still deferred relative to Go's `HashJoinExec`: the parallel build/probe
-//! worker pipeline, v2's partitioned spill, and the semi/anti/outer-apply
-//! variants. Hash-aggregate spill, TopN spill, parallel-sort spill and
-//! `SortedRowContainer` are other operators' surfaces and are untouched.
+//! Still deferred relative to Go's `HashJoinExec`: parallel build/probe,
+//! residual-condition and semi/anti preserved-build variants, v2's
+//! partitioned spill, and outer-apply. Hash-aggregate spill, TopN spill,
+//! parallel-sort spill and `SortedRowContainer` are other operators' surfaces
+//! and are untouched.
 //!
 //! # Memory accounting (`tidb_mem_quota_query`)
 //!
@@ -153,15 +149,21 @@
 //! nothing left to save.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use crate::hash_join::{row_key, BuildError, BuildTable, EquiKey, KeyError};
+use crate::hash_join::{
+    equi_keys_equal_chunk_rows, equi_keys_equal_row, exact_int_key_chunk, row_hash, row_hash_chunk,
+    row_key, row_key_by, BuildError, BuildTable, EquiKey, FastBytesMap, KeyClass, KeyError,
+};
 use crate::mem_quota::StatementMemory;
 use std::cell::Cell;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
+use tidb_chunk::list::List;
 use tidb_chunk::list::RowPtr;
+use tidb_chunk::row::Row;
 use tidb_chunk::row_container::RowContainer;
-use tidb_datatype::{Collation, Datum, Decimal, FieldType};
+use tidb_datatype::{Collation, Datum, Decimal, EvalType, FieldType, MyDecimal};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
@@ -185,7 +187,7 @@ pub enum JoinKind {
 /// The hash path's live state; absent until the first `next()`, and never
 /// created on the nested-loop fallback.
 struct HashState {
-    /// The materialized, indexed inner side.
+    /// The materialized, indexed build side.
     table: BuildTable,
     /// The build side's column types, needed to read a row back out of the
     /// container (which stores bytes, not `Datum`s).
@@ -194,17 +196,36 @@ struct HashState {
     /// read back into. Reused across probes so a disk-backed join does not
     /// allocate per matched row.
     build_buf: Chunk,
-    /// The chunk the outer child streams into, and how far it is consumed.
+    /// The chunk the probe child streams into, and how far it is consumed.
     probe_chunk: Chunk,
     probe_row: usize,
     probe_done: bool,
+    /// Products of a constant DECIMAL factor and a build-side DECIMAL column,
+    /// keyed by the stable build-row address. `Some(None)` caches SQL NULL.
+    /// This avoids repeating q17's `0.2 * AVG(...)` for every probe candidate.
+    decimal_mul_products: HashMap<RowPtr, Option<MyDecimal>>,
+    /// Cursor for Go hash join's post-probe scan when the preserved side was
+    /// built. `None` means the scan is complete (or was never needed).
+    unmatched_build_scan: Option<RowPtr>,
+}
+
+/// A residual DECIMAL comparison whose operands can be read directly from
+/// the two input rows. TPC-H q17's `l_quantity < 0.2 * avg(l_quantity)` is the
+/// hot instance. Keeping this as a narrowly proven shape avoids copying the
+/// complete joined row into `condition_chunk` for every hash candidate while
+/// leaving every other expression on the general evaluator path.
+#[derive(Clone, Debug)]
+struct DecimalMulLtFastPath {
+    left_column: usize,
+    right_column: usize,
+    factor: Decimal,
 }
 
 /// One side of the merge strategy: the chunk it streams into, how far that
 /// chunk is consumed, and the current equal-key group metadata.
 ///
-/// Only the OUTER side owns `group` datum rows. The INNER side sets
-/// `group_len` and writes its rows to [`MergeInnerGroup`], which is the
+/// The OUTER side retains a range in its current child chunk. The INNER side
+/// sets `group_len` and writes its rows to [`MergeInnerGroup`], which is the
 /// spillable authority accepted TiDB uses for a run crossing chunk bounds.
 struct MergeSide {
     chunk: Chunk,
@@ -213,19 +234,14 @@ struct MergeSide {
     row: usize,
     /// Whether the child has returned its final (empty) chunk.
     done: bool,
-    /// The current OUTER row. The INNER side stores no datum rows here.
-    ///
-    /// TiDB's merge join retains one equal-key INNER group, but streams the
-    /// OUTER side through it. Keeping this vector bounded to one row is what
-    /// prevents a duplicate-key run on the preserved side from becoming a
-    /// second, non-spillable build side.
-    group: Vec<Vec<Datum>>,
-    /// Accounted bytes retained by `group`; released before the next group.
-    group_bytes: i64,
+    /// The first row in the current OUTER equal-key range.
+    group_start: usize,
+    /// One-past-the-end row in the current OUTER equal-key range.
+    group_end: usize,
     /// Number of rows in the current group. The inner group is not stored in
     /// `group`, so emptiness cannot be derived from the vector.
     group_len: usize,
-    /// The key of `group`, empty when `group` is.
+    /// The key of the current group.
     key: Vec<Datum>,
 }
 
@@ -237,12 +253,19 @@ impl MergeSide {
             chunk_bytes,
             row: 0,
             done: false,
-            group: Vec::new(),
-            group_bytes: 0,
+            group_start: 0,
+            group_end: 0,
             group_len: 0,
             key: Vec::new(),
         }
     }
+}
+
+#[derive(Clone, Copy)]
+struct MergeOuterRange {
+    side_left: bool,
+    start: usize,
+    end: usize,
 }
 
 /// The merge INNER side's current equal-key group.
@@ -254,7 +277,14 @@ impl MergeSide {
 struct MergeInnerGroup {
     rows: RowContainer,
     staging: Chunk,
+    read_back: Chunk,
     types: Vec<FieldType>,
+}
+
+#[derive(Clone, Copy)]
+enum MergeInnerPtr {
+    Stored(RowPtr),
+    Staging(usize),
 }
 
 impl MergeInnerGroup {
@@ -269,15 +299,18 @@ impl MergeInnerGroup {
         rows.mem_tracker().attach_to(tracker);
         rows.disk_tracker().attach_to(disk_tracker);
         let staging = rows.alloc_chunk();
+        let read_back = Chunk::new_with_capacity(&types, 1);
         Self {
             rows,
             staging,
+            read_back,
             types,
         }
     }
 
     fn reset(&mut self) {
-        debug_assert_eq!(self.staging.num_rows(), 0);
+        self.staging.reset();
+        self.read_back.reset();
         self.rows.reset();
     }
 
@@ -296,13 +329,6 @@ impl MergeInnerGroup {
         memory.check()
     }
 
-    fn finish_group(&mut self, tracker: &Arc<Tracker>) -> Result<(), ExecError> {
-        if self.staging.num_rows() != 0 {
-            self.flush(tracker)?;
-        }
-        Ok(())
-    }
-
     fn flush(&mut self, tracker: &Arc<Tracker>) -> Result<(), ExecError> {
         let chunk = std::mem::take(&mut self.staging);
         let chunk_bytes = chunk.memory_usage();
@@ -318,36 +344,58 @@ impl MergeInnerGroup {
     }
 
     fn close(&mut self, tracker: &Arc<Tracker>) {
-        tracker.consume(-self.staging.memory_usage());
+        tracker.consume(-self.staging.memory_usage() - self.read_back.memory_usage());
         self.staging = Chunk::default();
+        self.read_back = Chunk::default();
         self.rows.close();
     }
 
-    fn first_ptr(&self) -> Option<RowPtr> {
-        (self.rows.num_chunks() != 0).then_some(RowPtr::new(0, 0))
-    }
-
-    fn next_ptr(&self, ptr: RowPtr) -> Option<RowPtr> {
-        let chunk_index = ptr.chk_idx as usize;
-        let next_row = ptr.row_idx as usize + 1;
-        if next_row < self.rows.num_rows_of_chunk(chunk_index) {
-            return Some(RowPtr::new(ptr.chk_idx, next_row as u32));
+    fn first_ptr(&self) -> Option<MergeInnerPtr> {
+        if self.rows.num_chunks() != 0 {
+            return Some(MergeInnerPtr::Stored(RowPtr::new(0, 0)));
         }
-        let next_chunk = chunk_index + 1;
-        (next_chunk < self.rows.num_chunks()).then_some(RowPtr::new(next_chunk as u32, 0))
+        (self.staging.num_rows() != 0).then_some(MergeInnerPtr::Staging(0))
     }
 
-    fn datum_row(&mut self, ptr: RowPtr) -> Result<Vec<Datum>, ExecError> {
-        self.staging.reset();
-        let row = {
-            let loaded = self
-                .rows
-                .get_row_and_append_to_chunk_if_in_disk(ptr, &mut self.staging)
-                .map_err(|error| ExecError::SpillFailed(error.to_string()))?;
-            loaded.row(&self.staging).get_datum_row(&self.types)
-        };
-        self.staging.reset();
-        Ok(row)
+    fn next_ptr(&self, ptr: MergeInnerPtr) -> Option<MergeInnerPtr> {
+        match ptr {
+            MergeInnerPtr::Staging(row) => {
+                (row + 1 < self.staging.num_rows()).then_some(MergeInnerPtr::Staging(row + 1))
+            }
+            MergeInnerPtr::Stored(ptr) => {
+                let chunk_index = ptr.chk_idx as usize;
+                let next_row = ptr.row_idx as usize + 1;
+                if next_row < self.rows.num_rows_of_chunk(chunk_index) {
+                    return Some(MergeInnerPtr::Stored(RowPtr::new(
+                        ptr.chk_idx,
+                        next_row as u32,
+                    )));
+                }
+                let next_chunk = chunk_index + 1;
+                if next_chunk < self.rows.num_chunks() {
+                    return Some(MergeInnerPtr::Stored(RowPtr::new(next_chunk as u32, 0)));
+                }
+                (self.staging.num_rows() != 0).then_some(MergeInnerPtr::Staging(0))
+            }
+        }
+    }
+
+    fn datum_row(&mut self, ptr: MergeInnerPtr) -> Result<Vec<Datum>, ExecError> {
+        match ptr {
+            MergeInnerPtr::Staging(row) => Ok(self.staging.get_row(row).get_datum_row(&self.types)),
+            MergeInnerPtr::Stored(ptr) => {
+                self.read_back.reset();
+                let row = {
+                    let loaded = self
+                        .rows
+                        .get_row_and_append_to_chunk_if_in_disk(ptr, &mut self.read_back)
+                        .map_err(|error| ExecError::SpillFailed(error.to_string()))?;
+                    loaded.row(&self.read_back).get_datum_row(&self.types)
+                };
+                self.read_back.reset();
+                Ok(row)
+            }
+        }
     }
 }
 
@@ -360,6 +408,10 @@ impl MergeInnerGroup {
 /// same order, which `index_join_batch_boundary_does_not_change_the_result`
 /// pins -- so reading the default is a smaller claim, not a wrong answer.
 pub(crate) const INDEX_JOIN_BATCH_SIZE: usize = 25000;
+
+/// Go resolves the unset `tidb_index_lookup_join_concurrency` through
+/// `tidb_executor_concurrency`, whose default is five inner workers.
+const INDEX_LOOKUP_JOIN_CONCURRENCY: usize = 5;
 
 /// One output of an aggregation rebuilt below an index join's lookup side.
 ///
@@ -577,6 +629,83 @@ impl IndexLookupAggregation {
 /// (`range: decided by [...]` in `EXPLAIN`), and the rows that come back are
 /// indexed by the join's OWN equality keys, so this strategy and the hash
 /// strategy answer "does this pair match?" with the same bytes.
+pub(crate) enum IndexLookupSource {
+    /// The lookup side is one base-table leaf.
+    Leaf(crate::access_path::IndexJoinLookupExec),
+    /// The lookup side is a full subtree whose target leaf consumes the
+    /// shared probe channel published by the enclosing join.
+    Composite {
+        exec: Box<dyn Executor>,
+        probes: std::rc::Rc<std::cell::RefCell<crate::access_path::SharedIndexJoinProbes>>,
+    },
+}
+
+impl IndexLookupSource {
+    fn fork_prefetched_common_handle(
+        &self,
+        probes: Vec<Vec<Datum>>,
+    ) -> Result<Option<Self>, ExecError> {
+        match self {
+            Self::Leaf(source) => source
+                .fork_prefetched_common_handle(probes)
+                .map(|source| source.map(Self::Leaf)),
+            Self::Composite { .. } => Ok(None),
+        }
+    }
+
+    fn set_probes(&mut self, probes: Vec<Vec<Datum>>) -> Result<(), ExecError> {
+        match self {
+            Self::Leaf(source) => {
+                source.set_probes(probes);
+                Ok(())
+            }
+            Self::Composite {
+                exec,
+                probes: shared,
+            } => {
+                exec.close()?;
+                shared.borrow_mut().publish(probes);
+                exec.open()
+            }
+        }
+    }
+
+    fn open(&mut self) -> Result<(), ExecError> {
+        match self {
+            Self::Leaf(source) => source.open(),
+            Self::Composite { exec, .. } => exec.open(),
+        }
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        match self {
+            Self::Leaf(source) => source.next(req),
+            Self::Composite { exec, .. } => exec.next(req),
+        }
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        match self {
+            Self::Leaf(source) => source.close(),
+            Self::Composite { exec, .. } => exec.close(),
+        }
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        match self {
+            Self::Leaf(source) => source.ret_field_types(),
+            Self::Composite { exec, .. } => exec.ret_field_types(),
+        }
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        match self {
+            Self::Leaf(source) => source.new_chunk(),
+            Self::Composite { exec, .. } => exec.new_chunk(),
+        }
+    }
+}
+
 pub(crate) struct IndexLookupPlan {
     /// Whether the LOOKED-UP side is this join's left child.
     ///
@@ -593,7 +722,7 @@ pub(crate) struct IndexLookupPlan {
     /// column and matches on both.
     pub(crate) probe_keys: Vec<usize>,
     /// The re-seedable inner source.
-    pub(crate) source: crate::access_path::IndexJoinLookupExec,
+    pub(crate) source: IndexLookupSource,
     /// An aggregation retained by a grouped derived lookup side.  A bare
     /// table lookup has no transformation.
     pub(crate) aggregation: Option<IndexLookupAggregation>,
@@ -615,9 +744,11 @@ struct IndexLookupState {
     /// How far `outer` is consumed.
     cursor: usize,
     /// The inner rows the batch's probes read, in read order.
-    inner: Vec<Vec<Datum>>,
+    inner: List,
+    /// Bytes charged for the current inner list, released at the next batch.
+    inner_bytes: i64,
     /// Every equality key's encoding to the `inner` positions carrying it.
-    matched: std::collections::HashMap<Vec<u8>, Vec<usize>>,
+    matched: FastBytesMap<Vec<RowPtr>>,
     /// The chunk the outer child streams into, and how far it is consumed.
     outer_chunk: Chunk,
     outer_row: usize,
@@ -626,6 +757,23 @@ struct IndexLookupState {
     /// The next batch's size, doubling to [`INDEX_JOIN_BATCH_SIZE`] as Go's
     /// `increaseBatchSize` does.
     batch_size: usize,
+    /// Inner tasks whose remote readers have already been opened. They remain
+    /// in outer-task order even when a later TiKV request finishes first.
+    pending: std::collections::VecDeque<PendingIndexLookupTask>,
+    /// Once a lookup shape refuses remote prefetch, retain the synchronous
+    /// path for the rest of this executor.
+    prefetch_disabled: bool,
+}
+
+struct PendingIndexLookupTask {
+    outer: Vec<Vec<Datum>>,
+    outer_bytes: i64,
+    source: PendingIndexLookupSource,
+}
+
+enum PendingIndexLookupSource {
+    Prefetched(IndexLookupSource),
+    Synchronous(Vec<Vec<Datum>>),
 }
 
 /// The merge strategy's live state: one [`MergeSide`] per child.
@@ -641,14 +789,14 @@ struct MergeState {
 /// several requested chunks.
 enum MergePendingOutput {
     Matched {
-        outer: Vec<Vec<Datum>>,
+        outer: MergeOuterRange,
         retained_bytes: i64,
         outer_index: usize,
-        inner_ptr: Option<RowPtr>,
+        inner_ptr: Option<MergeInnerPtr>,
         matched_current_outer: bool,
     },
     Unmatched {
-        outer: Vec<Vec<Datum>>,
+        outer: MergeOuterRange,
         retained_bytes: i64,
         outer_index: usize,
     },
@@ -669,10 +817,25 @@ impl MergePendingOutput {
 pub struct JoinExec<C: Columns> {
     meta: ExecutorMeta,
     kind: JoinKind,
+    /// The complete logical `ON` clause. The nested-loop reference path must
+    /// retain every condition, including equality keys.
     conditions: Vec<Expression>,
-    /// The joined left-then-right row types the conditions read. Semi joins
+    /// The non-equality `otherCond` expressions that still need evaluation
+    /// after the hash/merge/index key has matched. Go's hash join removes
+    /// equal conditions from this list before probing; retaining them here
+    /// would duplicate work and can rebuild a condition chunk with a schema
+    /// that no longer describes a projected join row.
+    residual_conditions: Vec<Expression>,
+    /// The joined left-then-right row types the residual conditions read. Semi joins
     /// return only their left child, so this cannot be derived from `meta`.
     condition_types: Vec<FieldType>,
+    /// Reused one-row input for residual predicates. Go evaluates join
+    /// conditions over chunk rows; retaining this chunk avoids rebuilding its
+    /// columns for every hash-table candidate.
+    condition_chunk: Chunk,
+    /// A structurally proven DECIMAL residual predicate that can bypass the
+    /// one-row condition chunk. `None` keeps the complete expression path.
+    residual_decimal_mul_lt: Option<DecimalMulLtFastPath>,
     left: Box<dyn Executor>,
     right: Box<dyn Executor>,
     ctx: C,
@@ -681,9 +844,8 @@ pub struct JoinExec<C: Columns> {
     /// Nested loop only: whether its single all-at-once batch was emitted.
     emitted: bool,
     hash: Option<HashState>,
-    /// The costed build side for an inner hash join. Outer joins keep their
-    /// preserved side as the probe because unmatched build rows require a
-    /// different executor contract.
+    /// The costed build side for a hash join. Go hash join v2 enumerates both
+    /// orientations for inner, left outer, and right outer joins.
     hash_build_is_left: Option<bool>,
     /// The merge strategy's key pairs and direction, set by the planner when
     /// BOTH children already produce rows in the join keys' order. `None` is
@@ -743,20 +905,35 @@ impl<C: Columns> JoinExec<C> {
         ctx: C,
         memory: StatementMemory,
     ) -> Self {
-        let keys = crate::hash_join::split_equi(&conditions, left.ret_field_types().len()).keys;
-        let condition_types = left
+        let split = crate::hash_join::split_equi(&conditions, left.ret_field_types().len());
+        let flattened = conditions
+            .iter()
+            .flat_map(crate::hash_join::split_conjuncts)
+            .collect::<Vec<_>>();
+        let residual_conditions: Vec<Expression> = flattened
+            .into_iter()
+            .zip(split.equal_mask)
+            .filter_map(|(condition, is_equal)| (!is_equal).then_some(condition.clone()))
+            .collect();
+        let keys = split.keys;
+        let condition_types: Vec<FieldType> = left
             .ret_field_types()
             .iter()
             .chain(right.ret_field_types())
             .cloned()
             .collect();
+        let condition_chunk = Chunk::new_with_capacity(&condition_types, 1);
+        let residual_decimal_mul_lt = residual_decimal_mul_lt(&residual_conditions);
         let tracker = memory.operator_tracker(meta.id());
         let disk_tracker = memory.operator_disk_tracker(meta.id());
         JoinExec {
             meta,
             kind,
             conditions,
+            residual_conditions,
             condition_types,
+            condition_chunk,
+            residual_decimal_mul_lt,
             left,
             right,
             ctx,
@@ -822,10 +999,18 @@ impl<C: Columns> JoinExec<C> {
     }
 
     /// Commits the build orientation chosen by the physical cost search.
-    /// Both orientations are semantically interchangeable only for an inner
-    /// join, which is also the only case accepted here.
+    /// Outer and semi joins accept both orientations because the hash path
+    /// tracks matched preserved build rows and emits the appropriate matched
+    /// or unmatched rows after probe.
     pub(crate) fn set_hash_build_is_left(&mut self, build_is_left: bool) {
-        if self.kind == JoinKind::Inner {
+        if matches!(
+            self.kind,
+            JoinKind::Inner
+                | JoinKind::Left
+                | JoinKind::Right
+                | JoinKind::Semi
+                | JoinKind::AntiSemi
+        ) {
             self.hash_build_is_left = Some(build_is_left);
         }
     }
@@ -847,10 +1032,17 @@ impl<C: Columns> JoinExec<C> {
         self.keys.clear();
     }
 
-    /// The outer side is the one whose unmatched rows survive; the inner
-    /// side is the other, and is the one the hash path builds its table on.
-    /// `true` means the LEFT child is the outer one.
+    /// The logical outer side: the side whose unmatched rows survive. For an
+    /// inner/semi join this is the streamed or index-driving side.
     fn outer_is_left(&self) -> bool {
+        match self.kind {
+            JoinKind::Left => return true,
+            JoinKind::Right => return false,
+            // Semi joins always preserve and return the logical left rows,
+            // including when HashJoin v2 builds that side and probes right.
+            JoinKind::Semi | JoinKind::AntiSemi => return true,
+            JoinKind::Inner => {}
+        }
         match &self.index_lookup {
             // The index strategy DRIVES from the side it does not look up,
             // whichever side that is -- an inner join whose left child is the
@@ -862,6 +1054,18 @@ impl<C: Columns> JoinExec<C> {
                 .hash_build_is_left
                 .map_or(self.kind != JoinKind::Right, |build_is_left| !build_is_left),
         }
+    }
+
+    fn hash_build_is_left(&self) -> bool {
+        self.hash_build_is_left
+            .unwrap_or(self.kind == JoinKind::Right)
+    }
+
+    fn hash_builds_preserved_side(&self) -> bool {
+        matches!(
+            (self.kind, self.hash_build_is_left()),
+            (JoinKind::Left | JoinKind::Semi | JoinKind::AntiSemi, true) | (JoinKind::Right, false)
+        )
     }
 
     /// Drains a child into rows of `Datum`s, accounting each chunk's worth
@@ -899,7 +1103,12 @@ impl<C: Columns> JoinExec<C> {
 
     /// Whether the `ON` conditions all hold for one joined row.
     fn matches(&self, joined: &[Datum]) -> Result<bool, ExecError> {
-        if self.conditions.is_empty() {
+        let conditions = if self.keys.is_empty() {
+            &self.conditions
+        } else {
+            &self.residual_conditions
+        };
+        if conditions.is_empty() {
             return Ok(true);
         }
         self.condition_evals.set(self.condition_evals.get() + 1);
@@ -908,13 +1117,141 @@ impl<C: Columns> JoinExec<C> {
             chunk.append_datum(i, value);
         }
         let row = chunk.get_row(0);
-        for condition in &self.conditions {
+        for condition in conditions {
             let value = condition.eval(&self.ctx, row)?;
             if !truthy(&value)? {
                 return Ok(false);
             }
         }
         Ok(true)
+    }
+
+    fn matches_chunk_rows(
+        ctx: &C,
+        conditions: &[Expression],
+        condition_evals: &Cell<u64>,
+        scratch: &mut Chunk,
+        left: Row<'_>,
+        right: Row<'_>,
+    ) -> Result<bool, ExecError> {
+        if conditions.is_empty() {
+            return Ok(true);
+        }
+        condition_evals.set(condition_evals.get() + 1);
+        scratch.reset();
+        scratch.append_partial_row(0, left);
+        scratch.append_partial_row(left.len(), right);
+        let row = scratch.get_row(0);
+        for condition in conditions {
+            if !truthy(&condition.eval(ctx, row)?)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Evaluates the one residual shape admitted by
+    /// [`residual_decimal_mul_lt`]. The column access remains typed and the
+    /// decimal arithmetic uses the same exact value layer as the expression
+    /// evaluator, so this is an allocation reduction rather than a numeric
+    /// approximation.
+    fn matches_decimal_mul_lt(
+        condition_evals: &Cell<u64>,
+        fast: &DecimalMulLtFastPath,
+        left: Row<'_>,
+        left_types: &[FieldType],
+        right: Row<'_>,
+        right_types: &[FieldType],
+        cached_product: Option<Option<&MyDecimal>>,
+    ) -> Result<bool, ExecError> {
+        condition_evals.set(condition_evals.get().saturating_add(1));
+        if let Some(product) = cached_product {
+            let Some(product) = product else {
+                return Ok(false);
+            };
+            let (row, types, column) = if fast.left_column < left_types.len() {
+                (left, left_types, fast.left_column)
+            } else {
+                (right, right_types, fast.left_column - left_types.len())
+            };
+            let Some(field_type) = types.get(column) else {
+                return Err(ExecError::unsupported(
+                    "fast residual predicate left column is outside the join row",
+                ));
+            };
+            if row.is_null(column) {
+                return Ok(false);
+            }
+            if field_type.eval_type() != EvalType::Decimal {
+                return Err(ExecError::unsupported(
+                    "fast residual predicate left column is not DECIMAL",
+                ));
+            }
+            return Ok(row.get_my_decimal(column).compare(product) == Ordering::Less);
+        }
+        let datum_at = |index: usize| {
+            if index < left_types.len() {
+                left_types
+                    .get(index)
+                    .map(|field_type| left.get_datum(index, field_type))
+            } else {
+                let right_index = index - left_types.len();
+                right_types
+                    .get(right_index)
+                    .map(|field_type| right.get_datum(right_index, field_type))
+            }
+        };
+        let Some(left_value) = datum_at(fast.left_column) else {
+            return Err(ExecError::unsupported(
+                "fast residual predicate left column is outside the join row",
+            ));
+        };
+        let Some(right_value) = datum_at(fast.right_column) else {
+            return Err(ExecError::unsupported(
+                "fast residual predicate right column is outside the join row",
+            ));
+        };
+        let (Datum::Decimal(left_value), Datum::Decimal(right_value)) = (left_value, right_value)
+        else {
+            // DECIMAL comparisons involving NULL are not TRUE. Any other
+            // runtime type would contradict the statically proven shape and
+            // must fail closed instead of changing SQL comparison rules.
+            return Ok(false);
+        };
+        let comparison = decimal_mul_lt_mysql(&left_value, &fast.factor, &right_value);
+        if comparison == Err(tidb_datatype::DecimalCodecWarning::Overflow) {
+            return Err(ExecError::Eval(tidb_expr::EvalError::DecimalOverflow));
+        }
+        Ok(comparison.expect("decimal multiplication only reports overflow"))
+    }
+
+    fn decimal_mul_product(
+        fast: &DecimalMulLtFastPath,
+        build_row: Row<'_>,
+        build_types: &[FieldType],
+        column: usize,
+    ) -> Result<Option<MyDecimal>, ExecError> {
+        let Some(field_type) = build_types.get(column) else {
+            return Err(ExecError::unsupported(
+                "fast residual predicate right column is outside the build row",
+            ));
+        };
+        if build_row.is_null(column) {
+            return Ok(None);
+        }
+        if field_type.eval_type() != EvalType::Decimal {
+            return Err(ExecError::unsupported(
+                "fast residual predicate right column is not DECIMAL",
+            ));
+        }
+        let right = Decimal::from_my_decimal(&build_row.get_my_decimal(column));
+        let (product, warning) = fast.factor.mul_mysql(&right);
+        if warning == Some(tidb_datatype::DecimalCodecWarning::Overflow) {
+            return Err(ExecError::Eval(tidb_expr::EvalError::DecimalOverflow));
+        }
+        product.to_my_decimal().map(Some).map_err(|_| {
+            ExecError::unsupported("fast residual DECIMAL product does not fit a chunk cell")
+        })
     }
 
     /// Concatenates an outer and an inner row back into left-then-right
@@ -943,34 +1280,143 @@ impl<C: Columns> JoinExec<C> {
         }
     }
 
-    fn append(req: &mut Chunk, joined: &[Datum]) {
+    fn append(&self, req: &mut Chunk, joined: &[Datum]) {
         for (c, value) in joined.iter().enumerate() {
             req.append_datum(c, value);
         }
     }
 
-    /// Emits every output row one outer row produces, given the inner rows
-    /// it may match. Shared by both paths so the outer-join padding rule and
-    /// the output column order have exactly one implementation.
-    fn emit_outer_row(
+    /// Appends a matched pair without allocating the concatenated row. The
+    /// index-lookup path already proved the equality keys while building its
+    /// lookup map, so allocating `outer ++ inner` for every result row would
+    /// only duplicate the datums before copying them into the output chunk.
+    fn append_joined_parts(&self, req: &mut Chunk, outer_row: &[Datum], inner_row: &[Datum]) {
+        if self.outer_is_left() {
+            for (column, value) in outer_row.iter().chain(inner_row).enumerate() {
+                req.append_datum(column, value);
+            }
+        } else {
+            for (column, value) in inner_row.iter().chain(outer_row).enumerate() {
+                req.append_datum(column, value);
+            }
+        }
+    }
+
+    /// Appends a matched pair while the lookup side is still in its source
+    /// chunk. This is the steady-state index-join path: `append_partial_row`
+    /// copies the column cells directly instead of decoding the inner row to
+    /// a temporary `Vec<Datum>` first.
+    fn append_joined_chunk_row(&self, req: &mut Chunk, outer_row: &[Datum], inner_row: Row<'_>) {
+        Self::append_joined_chunk_row_order(req, self.outer_is_left(), outer_row, inner_row);
+    }
+
+    fn append_joined_chunk_row_order(
+        req: &mut Chunk,
+        outer_is_left: bool,
+        outer_row: &[Datum],
+        inner_row: Row<'_>,
+    ) {
+        if outer_is_left {
+            for (column, value) in outer_row.iter().enumerate() {
+                req.append_datum(column, value);
+            }
+            req.append_partial_row(outer_row.len(), inner_row);
+        } else {
+            req.append_partial_row(0, inner_row);
+            for (column, value) in outer_row.iter().enumerate() {
+                req.append_datum(inner_row.len() + column, value);
+            }
+        }
+    }
+
+    /// Appends two chunk-backed hash-join rows in logical left-then-right
+    /// order. Unlike the index-join helper above, neither side needs a
+    /// temporary `Vec<Datum>`.
+    fn append_joined_chunk_rows_order(
+        req: &mut Chunk,
+        probe_is_left: bool,
+        probe_row: Row<'_>,
+        build_row: Row<'_>,
+    ) {
+        if probe_is_left {
+            req.append_partial_row(0, probe_row);
+            req.append_partial_row(probe_row.len(), build_row);
+        } else {
+            req.append_partial_row(0, build_row);
+            req.append_partial_row(build_row.len(), probe_row);
+        }
+    }
+
+    fn append_joined_outer_chunk_row(
+        req: &mut Chunk,
+        outer_is_left: bool,
+        outer_row: Row<'_>,
+        inner_row: &[Datum],
+    ) {
+        if outer_is_left {
+            req.append_partial_row(0, outer_row);
+            for (column, value) in inner_row.iter().enumerate() {
+                req.append_datum(outer_row.len() + column, value);
+            }
+        } else {
+            for (column, value) in inner_row.iter().enumerate() {
+                req.append_datum(column, value);
+            }
+            req.append_partial_row(inner_row.len(), outer_row);
+        }
+    }
+
+    /// Emits a preserved probe row that found no match, without decoding the
+    /// row out of its source chunk.
+    fn append_unmatched_probe_chunk_row(
+        req: &mut Chunk,
+        probe_is_left: bool,
+        probe_row: Row<'_>,
+        build_width: usize,
+    ) {
+        if probe_is_left {
+            req.append_partial_row(0, probe_row);
+            for column in probe_row.len()..probe_row.len() + build_width {
+                req.append_null(column);
+            }
+        } else {
+            for column in 0..build_width {
+                req.append_null(column);
+            }
+            req.append_partial_row(build_width, probe_row);
+        }
+    }
+
+    /// Chunk-backed counterpart of [`Self::emit_outer_row`]. Residual
+    /// predicates still materialize only the candidates that need evaluation;
+    /// a pure equality lookup stays zero-copy through output assembly.
+    fn emit_outer_chunk_rows<'a, I>(
         &self,
         req: &mut Chunk,
         outer_row: &[Datum],
-        candidates: impl Iterator<Item = Vec<Datum>>,
-    ) -> Result<(), ExecError> {
+        candidates: I,
+        inner_types: &[FieldType],
+    ) -> Result<(), ExecError>
+    where
+        I: Iterator<Item = Row<'a>>,
+    {
+        let evaluate_residual = self.keys.is_empty() || !self.residual_conditions.is_empty();
         let mut matched = false;
         for inner_row in candidates {
-            let joined = self.join_rows(outer_row, &inner_row);
-            if !self.matches(&joined)? {
-                continue;
+            if evaluate_residual {
+                let inner_values = inner_row.get_datum_row(inner_types);
+                let joined = self.join_rows(outer_row, &inner_values);
+                if !self.matches(&joined)? {
+                    continue;
+                }
             }
             matched = true;
             match self.kind {
                 JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
-                    Self::append(req, &joined);
+                    self.append_joined_chunk_row(req, outer_row, inner_row);
                 }
                 JoinKind::Semi => {
-                    Self::append(req, outer_row);
+                    self.append(req, outer_row);
                     break;
                 }
                 JoinKind::AntiSemi => break,
@@ -979,9 +1425,59 @@ impl<C: Columns> JoinExec<C> {
         if !matched {
             match self.kind {
                 JoinKind::Left | JoinKind::Right => {
-                    Self::append(req, &self.padded_row(outer_row));
+                    self.append(req, &self.padded_row(outer_row));
                 }
-                JoinKind::AntiSemi => Self::append(req, outer_row),
+                JoinKind::AntiSemi => self.append(req, outer_row),
+                JoinKind::Inner | JoinKind::Semi => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Emits every output row one outer row produces, given the inner rows
+    /// it may match. Shared by both paths so the outer-join padding rule and
+    /// the output column order have exactly one implementation.
+    fn emit_outer_row<'a, I>(
+        &self,
+        req: &mut Chunk,
+        outer_row: &[Datum],
+        candidates: I,
+    ) -> Result<(), ExecError>
+    where
+        I: Iterator<Item = &'a [Datum]>,
+    {
+        let mut matched = false;
+        for inner_row in candidates {
+            // Equal-key lookup/hash buckets have already established the key
+            // match. Only build a joined row when a residual condition still
+            // needs evaluation.
+            let matches = if self.keys.is_empty() || !self.residual_conditions.is_empty() {
+                let joined = self.join_rows(outer_row, inner_row);
+                self.matches(&joined)?
+            } else {
+                true
+            };
+            if !matches {
+                continue;
+            }
+            matched = true;
+            match self.kind {
+                JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
+                    self.append_joined_parts(req, outer_row, inner_row);
+                }
+                JoinKind::Semi => {
+                    self.append(req, outer_row);
+                    break;
+                }
+                JoinKind::AntiSemi => break,
+            }
+        }
+        if !matched {
+            match self.kind {
+                JoinKind::Left | JoinKind::Right => {
+                    self.append(req, &self.padded_row(outer_row));
+                }
+                JoinKind::AntiSemi => self.append(req, outer_row),
                 JoinKind::Inner | JoinKind::Semi => {}
             }
         }
@@ -996,7 +1492,11 @@ impl<C: Columns> JoinExec<C> {
     pub(crate) fn set_index_lookup_plan(&mut self, plan: IndexLookupPlan) {
         if matches!(
             self.kind,
-            JoinKind::Inner | JoinKind::Left | JoinKind::Right
+            JoinKind::Inner
+                | JoinKind::Left
+                | JoinKind::Right
+                | JoinKind::Semi
+                | JoinKind::AntiSemi
         ) {
             self.index_lookup = Some(plan);
         }
@@ -1041,17 +1541,31 @@ impl<C: Columns> JoinExec<C> {
             } else {
                 self.right.new_chunk()
             };
+            let inner_types = self
+                .index_lookup
+                .as_ref()
+                .expect("this path runs only with a plan")
+                .source
+                .ret_field_types()
+                .to_vec();
             self.index_state = Some(IndexLookupState {
                 outer: Vec::new(),
                 cursor: 0,
-                inner: Vec::new(),
-                matched: std::collections::HashMap::new(),
+                inner: List::new(
+                    &inner_types,
+                    self.meta.init_cap(),
+                    self.meta.max_chunk_size(),
+                ),
+                inner_bytes: 0,
+                matched: FastBytesMap::default(),
                 outer_chunk,
                 outer_row: 0,
                 outer_done: false,
                 // Go's `startWorkers(ctx, req.RequiredRows())`: the first
                 // batch is what the caller asked for, capped by the maximum.
                 batch_size: self.meta.max_chunk_size().min(INDEX_JOIN_BATCH_SIZE),
+                pending: std::collections::VecDeque::new(),
+                prefetch_disabled: false,
             });
         }
         loop {
@@ -1059,7 +1573,10 @@ impl<C: Columns> JoinExec<C> {
             if state.cursor < state.outer.len() {
                 return Ok(true);
             }
-            if state.outer_done && state.outer_row >= state.outer_chunk.num_rows() {
+            if state.pending.is_empty()
+                && state.outer_done
+                && state.outer_row >= state.outer_chunk.num_rows()
+            {
                 return Ok(false);
             }
             self.load_index_batch()?;
@@ -1070,17 +1587,12 @@ impl<C: Columns> JoinExec<C> {
         }
     }
 
-    /// Pulls the next batch of outer rows, probes the inner side with their
-    /// distinct keys, and indexes what comes back.
-    ///
-    /// Go's `outerWorker.buildTask` + `innerWorker.handleTask`, in that
-    /// order and with the same three steps: build the lookup contents, fetch
-    /// the inner results, build the lookup map.
+    /// Pulls the next ordered outer task after starting a bounded number of
+    /// later common-handle tasks. Go uses one outer worker and N inner workers;
+    /// here opening N DistSQL-backed cursors provides the same request overlap
+    /// while result materialization remains on the executor thread.
     fn load_index_batch(&mut self) -> Result<(), ExecError> {
         let outer_is_left = self.outer_is_left();
-        // Disjoint field borrows: the batch below reads the outer CHILD while
-        // it writes the state and re-seeds the source, and those are three
-        // different fields of this executor.
         let JoinExec {
             left,
             right,
@@ -1096,28 +1608,148 @@ impl<C: Columns> JoinExec<C> {
         } else {
             right.as_mut()
         };
-        let outer_types: Vec<FieldType> = outer_child.ret_field_types().to_vec();
-        let outer_offset = |key: &EquiKey| if outer_is_left { key.left } else { key.right };
-        let inner_offset = |key: &EquiKey| if outer_is_left { key.right } else { key.left };
         let plan = index_lookup
             .as_mut()
             .expect("this path runs only with a plan");
         let state = index_state.as_mut().expect("fill_index_batch installed it");
 
-        // 1. The outer batch, up to `batch_size` rows.
-        let retained = state
-            .outer
-            .iter()
-            .chain(&state.inner)
-            .map(|row| row_bytes(row))
-            .sum::<i64>();
+        // Release the task just drained. Pending outer rows were charged when
+        // their tasks were built, not when they became current.
+        let retained =
+            state.outer.iter().map(|row| row_bytes(row)).sum::<i64>() + state.inner_bytes;
         tracker.consume(-retained);
         state.outer.clear();
         state.inner.clear();
+        state.inner_bytes = 0;
         state.matched.clear();
         state.cursor = 0;
+
+        if state.pending.is_empty() {
+            Self::fill_index_task_queue(
+                outer_child,
+                keys,
+                plan,
+                state,
+                outer_is_left,
+                tracker,
+                memory,
+                INDEX_LOOKUP_JOIN_CONCURRENCY,
+            )?;
+        }
+        let Some(task) = state.pending.pop_front() else {
+            return Ok(());
+        };
+        debug_assert_eq!(
+            task.outer_bytes,
+            task.outer.iter().map(|row| row_bytes(row)).sum::<i64>()
+        );
+        state.outer = task.outer;
+
+        // Keep N-1 later requests live while this task is materialized and
+        // drained, matching Go's N bounded inner-worker slots.
+        Self::fill_index_task_queue(
+            outer_child,
+            keys,
+            plan,
+            state,
+            outer_is_left,
+            tracker,
+            memory,
+            INDEX_LOOKUP_JOIN_CONCURRENCY.saturating_sub(1),
+        )?;
+
+        let aggregation = plan.aggregation.clone();
+        let aggregation_stream_ordered = plan.aggregation_stream_ordered;
+        let inner_not_null = plan.inner_not_null.clone();
+        match task.source {
+            PendingIndexLookupSource::Prefetched(mut source) => Self::materialize_index_inner(
+                &mut source,
+                state,
+                keys,
+                outer_is_left,
+                aggregation.as_ref(),
+                aggregation_stream_ordered,
+                &inner_not_null,
+                tracker,
+                memory,
+            ),
+            PendingIndexLookupSource::Synchronous(probes) => {
+                plan.source.set_probes(probes)?;
+                Self::materialize_index_inner(
+                    &mut plan.source,
+                    state,
+                    keys,
+                    outer_is_left,
+                    aggregation.as_ref(),
+                    aggregation_stream_ordered,
+                    &inner_not_null,
+                    tracker,
+                    memory,
+                )
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn fill_index_task_queue(
+        outer_child: &mut dyn Executor,
+        keys: &[EquiKey],
+        plan: &IndexLookupPlan,
+        state: &mut IndexLookupState,
+        outer_is_left: bool,
+        tracker: &Arc<Tracker>,
+        memory: &StatementMemory,
+        target: usize,
+    ) -> Result<(), ExecError> {
+        let outer_types = outer_child.ret_field_types().to_vec();
+        while state.pending.len() < target {
+            let (outer, outer_bytes) = Self::read_index_outer_task(
+                outer_child,
+                &outer_types,
+                &plan.outer_not_null,
+                state,
+            )?;
+            if outer.is_empty() {
+                if state.outer_done {
+                    break;
+                }
+                continue;
+            }
+            let probes = Self::index_task_probes(keys, plan, &outer, outer_is_left)?;
+            let source = if state.prefetch_disabled {
+                PendingIndexLookupSource::Synchronous(probes)
+            } else if let Some(source) =
+                plan.source.fork_prefetched_common_handle(probes.clone())?
+            {
+                PendingIndexLookupSource::Prefetched(source)
+            } else {
+                state.prefetch_disabled = true;
+                PendingIndexLookupSource::Synchronous(probes)
+            };
+            let synchronous = matches!(source, PendingIndexLookupSource::Synchronous(_));
+            tracker.consume(outer_bytes);
+            state.pending.push_back(PendingIndexLookupTask {
+                outer,
+                outer_bytes,
+                source,
+            });
+            memory.check()?;
+            if synchronous {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    fn read_index_outer_task(
+        outer_child: &mut dyn Executor,
+        outer_types: &[FieldType],
+        outer_not_null: &[usize],
+        state: &mut IndexLookupState,
+    ) -> Result<(Vec<Vec<Datum>>, i64), ExecError> {
+        let mut outer = Vec::with_capacity(state.batch_size);
         let mut bytes = 0i64;
-        while state.outer.len() < state.batch_size {
+        while outer.len() < state.batch_size {
             if state.outer_row >= state.outer_chunk.num_rows() {
                 if state.outer_done {
                     break;
@@ -1129,34 +1761,28 @@ impl<C: Columns> JoinExec<C> {
                     break;
                 }
             }
-            let row = datum_row(&state.outer_chunk, state.outer_row, &outer_types);
+            let row = datum_row(&state.outer_chunk, state.outer_row, outer_types);
             state.outer_row += 1;
-            if !row_non_null_at(&row, &plan.outer_not_null)? {
+            if !row_non_null_at(&row, outer_not_null)? {
                 continue;
             }
             bytes += row_bytes(&row);
-            state.outer.push(row);
+            outer.push(row);
         }
-        tracker.consume(bytes);
-        memory.check()?;
-        // Go `increaseBatchSize`, applied to the NEXT batch.
         state.batch_size = state
             .batch_size
             .saturating_mul(2)
             .min(INDEX_JOIN_BATCH_SIZE);
+        Ok((outer, bytes))
+    }
 
-        // 2. The batch's distinct probe tuples. A NULL key part contributes
-        //    no probe: `key_part` refuses NULL too, so such an outer row
-        //    matches nothing either way -- Go's `constructDatumLookupKey`
-        //    returning nil.
-        //
-        //    Go DEDUPES by sorting (`sortAndDedupLookUpContents`); this
-        //    dedupes by the same encoding the match map is keyed on and
-        //    keeps first-seen order. Sorting is what makes Go's ranges walk
-        //    the index forwards, which is a cost, not an answer -- and
-        //    deduping by the key encoding cannot merge two probes the join
-        //    would have distinguished, which a comparison that swallowed its
-        //    own error could.
+    fn index_task_probes(
+        keys: &[EquiKey],
+        plan: &IndexLookupPlan,
+        outer: &[Vec<Datum>],
+        outer_is_left: bool,
+    ) -> Result<Vec<Vec<Datum>>, ExecError> {
+        let outer_offset = |key: &EquiKey| if outer_is_left { key.left } else { key.right };
         let probe_encoding: Vec<EquiKey> = plan
             .probe_keys
             .iter()
@@ -1168,9 +1794,8 @@ impl<C: Columns> JoinExec<C> {
                 null_safe: false,
             })
             .collect();
-        let mut seen = std::collections::HashSet::new();
-        let mut probes: Vec<Vec<Datum>> = Vec::new();
-        for row in &state.outer {
+        let mut probes_by_key = std::collections::BTreeMap::new();
+        for row in outer {
             let probe: Option<Vec<Datum>> = plan
                 .probe_keys
                 .iter()
@@ -1187,64 +1812,80 @@ impl<C: Columns> JoinExec<C> {
                     ExecError::unsupported("a join key column has no comparable encoding")
                 })?;
             if let Some(encoded) = encoded {
-                if seen.insert(encoded) {
-                    probes.push(probe);
-                }
+                probes_by_key.entry(encoded).or_insert(probe);
             }
         }
+        Ok(probes_by_key.into_values().collect())
+    }
 
-        // 3. The inner rows those probes reach.
-        plan.source.set_probes(probes);
-        let inner_types: Vec<FieldType> = plan.source.ret_field_types().to_vec();
-        let mut chunk = plan.source.new_chunk();
+    #[allow(clippy::too_many_arguments)]
+    fn materialize_index_inner(
+        source: &mut IndexLookupSource,
+        state: &mut IndexLookupState,
+        keys: &[EquiKey],
+        outer_is_left: bool,
+        aggregation: Option<&IndexLookupAggregation>,
+        aggregation_stream_ordered: bool,
+        inner_not_null: &[usize],
+        tracker: &Arc<Tracker>,
+        memory: &StatementMemory,
+    ) -> Result<(), ExecError> {
+        let inner_offset = |key: &EquiKey| if outer_is_left { key.right } else { key.left };
+        let inner_types = source.ret_field_types().to_vec();
+        let mut chunk = source.new_chunk();
         loop {
-            plan.source.next(&mut chunk)?;
-            let n = chunk.num_rows();
-            if n == 0 {
+            source.next(&mut chunk)?;
+            if chunk.num_rows() == 0 {
                 break;
             }
-            let mut bytes = 0i64;
-            for r in 0..n {
-                let row = datum_row(&chunk, r, &inner_types);
-                bytes += row_bytes(&row);
-                state.inner.push(row);
-            }
+            let bytes = chunk.memory_usage();
+            state.inner_bytes += bytes;
+            state
+                .inner
+                .add(std::mem::replace(&mut chunk, source.new_chunk()));
             tracker.consume(bytes);
             memory.check()?;
         }
-        if let Some(aggregation) = &plan.aggregation {
-            let raw_bytes = state.inner.iter().map(|row| row_bytes(row)).sum::<i64>();
-            let aggregated = aggregation.apply(
-                std::mem::take(&mut state.inner),
-                plan.aggregation_stream_ordered,
-            )?;
+        if let Some(aggregation) = aggregation {
+            let rows = list_datum_rows(&state.inner, &inner_types);
+            let raw_bytes = state.inner_bytes;
+            let aggregated = aggregation.apply(rows, aggregation_stream_ordered)?;
             let aggregated_bytes = aggregated.iter().map(|row| row_bytes(row)).sum::<i64>();
+            replace_list_with_rows(&mut state.inner, &inner_types, aggregated);
+            state.inner_bytes = aggregated_bytes;
             tracker.consume(aggregated_bytes - raw_bytes);
-            state.inner = aggregated;
             memory.check()?;
         }
-        if !plan.inner_not_null.is_empty() {
-            let before = state.inner.iter().map(|row| row_bytes(row)).sum::<i64>();
+        if !inner_not_null.is_empty() {
+            let before = state.inner_bytes;
             let mut retained = Vec::with_capacity(state.inner.len());
-            for row in std::mem::take(&mut state.inner) {
-                if row_non_null_at(&row, &plan.inner_not_null)? {
+            for row in list_datum_rows(&state.inner, &inner_types) {
+                if row_non_null_at(&row, inner_not_null)? {
                     retained.push(row);
                 }
             }
             let after = retained.iter().map(|row| row_bytes(row)).sum::<i64>();
             tracker.consume(after - before);
-            state.inner = retained;
+            replace_list_with_rows(&mut state.inner, &inner_types, retained);
+            state.inner_bytes = after;
             memory.check()?;
         }
 
-        // 4. Go `buildLookUpMap`, keyed by the join's OWN equalities so this
-        //    strategy and the hash strategy cannot disagree about a match.
-        for (at, row) in state.inner.iter().enumerate() {
-            let key = row_key(keys, row, inner_offset).map_err(|_: KeyError| {
-                ExecError::unsupported("a join key column has no comparable encoding")
-            })?;
-            if let Some(key) = key {
-                state.matched.entry(key).or_default().push(at);
+        for chk_idx in 0..state.inner.num_chunks() {
+            let num_rows = state.inner.num_rows_of_chunk(chk_idx);
+            for row_idx in 0..num_rows {
+                let ptr = RowPtr::new(chk_idx as u32, row_idx as u32);
+                let row = state.inner.get_row(ptr);
+                let key = row_key_by(keys, |key| {
+                    let offset = inner_offset(key);
+                    row.get_datum(offset, &inner_types[offset])
+                })
+                .map_err(|_: KeyError| {
+                    ExecError::unsupported("a join key column has no comparable encoding")
+                })?;
+                if let Some(key) = key {
+                    state.matched.entry(key).or_default().push(ptr);
+                }
             }
         }
         Ok(())
@@ -1265,20 +1906,27 @@ impl<C: Columns> JoinExec<C> {
             if state.cursor >= state.outer.len() || req.num_rows() >= cap {
                 return Ok(());
             }
-            let outer_row = state.outer[state.cursor].clone();
-            let key = row_key(&keys, &outer_row, outer_offset).map_err(|_: KeyError| {
+            let outer_row = &state.outer[state.cursor];
+            let key = row_key(&keys, outer_row, outer_offset).map_err(|_: KeyError| {
                 ExecError::unsupported("a join key column has no comparable encoding")
             })?;
-            let candidates: Vec<Vec<Datum>> = key
-                .and_then(|key| state.matched.get(&key))
-                .map(|positions| {
-                    positions
-                        .iter()
-                        .map(|at| state.inner[*at].clone())
-                        .collect()
-                })
-                .unwrap_or_default();
-            self.emit_outer_row(req, &outer_row, candidates.into_iter())?;
+            if let Some(positions) = key.and_then(|key| state.matched.get(&key)) {
+                let inner_types = self
+                    .index_lookup
+                    .as_ref()
+                    .expect("this path runs only with a plan")
+                    .source
+                    .ret_field_types()
+                    .to_vec();
+                self.emit_outer_chunk_rows(
+                    req,
+                    outer_row,
+                    positions.iter().map(|ptr| state.inner.get_row(*ptr)),
+                    &inner_types,
+                )?;
+            } else {
+                self.emit_outer_row(req, outer_row, std::iter::empty())?;
+            }
             let state = self.index_state.as_mut().expect("still installed");
             state.cursor += 1;
         }
@@ -1306,6 +1954,14 @@ impl<C: Columns> JoinExec<C> {
         self.merge.is_some()
     }
 
+    #[cfg(test)]
+    pub(super) fn merge_inner_container_chunks(&self) -> usize {
+        self.merge_state
+            .as_ref()
+            .and_then(|state| state.inner_group.as_ref())
+            .map_or(0, |group| group.rows.num_chunks())
+    }
+
     /// Pulls one OUTER row into owned datums.
     ///
     /// The equal-key INNER run remains installed across calls, so adjacent
@@ -1320,11 +1976,9 @@ impl<C: Columns> JoinExec<C> {
         tracker: &Arc<Tracker>,
         memory: &StatementMemory,
     ) -> Result<(), ExecError> {
-        tracker.consume(-side.group_bytes);
-        side.group.clear();
-        side.group_bytes = 0;
         side.group_len = 0;
-        side.key.clear();
+        side.group_start = 0;
+        side.group_end = 0;
         while side.row >= side.chunk.num_rows() {
             if side.done {
                 return Ok(());
@@ -1342,14 +1996,19 @@ impl<C: Columns> JoinExec<C> {
             }
         }
 
-        let row = datum_row(&side.chunk, side.row, types);
-        side.key = key_offsets.iter().map(|&at| row[at].clone()).collect();
-        let bytes = row_bytes(&row);
-        tracker.consume(bytes);
-        side.group_bytes = bytes;
-        side.group.push(row);
-        side.group_len = 1;
+        let first = side.row;
+        let first_row = side.chunk.get_row(first);
         side.row += 1;
+        while side.row < side.chunk.num_rows() {
+            let row = side.chunk.get_row(side.row);
+            if merge_rows_cmp(first_row, row, key_offsets, types, false)? != Ordering::Equal {
+                break;
+            }
+            side.row += 1;
+        }
+        side.group_start = first;
+        side.group_end = side.row;
+        side.group_len = side.row - first;
         memory.check()
     }
 
@@ -1365,8 +2024,6 @@ impl<C: Columns> JoinExec<C> {
         memory: &StatementMemory,
     ) -> Result<(), ExecError> {
         group.reset();
-        side.group.clear();
-        side.group_bytes = 0;
         side.group_len = 0;
         side.key.clear();
         loop {
@@ -1400,7 +2057,6 @@ impl<C: Columns> JoinExec<C> {
             side.group_len += 1;
             side.row += 1;
         }
-        group.finish_group(tracker)?;
         memory.check()
     }
 
@@ -1425,7 +2081,12 @@ impl<C: Columns> JoinExec<C> {
                 inner_ptr,
                 matched_current_outer,
             } => {
-                while *outer_index < outer.len() && !req.is_full() {
+                let outer_types = if outer.side_left {
+                    self.left.ret_field_types().to_vec()
+                } else {
+                    self.right.ret_field_types().to_vec()
+                };
+                while *outer_index < outer.end && !req.is_full() {
                     if let Some(ptr) = *inner_ptr {
                         let next = inner.next_ptr(ptr);
                         let inner_row = match inner.datum_row(ptr) {
@@ -1436,27 +2097,90 @@ impl<C: Columns> JoinExec<C> {
                             }
                         };
                         *inner_ptr = next;
-                        let joined = self.join_rows(&outer[*outer_index], &inner_row);
-                        match self.matches(&joined) {
-                            Ok(true) => {
-                                *matched_current_outer = true;
-                                Self::append(req, &joined);
+                        let outer_row = {
+                            let state = self.merge_state.as_ref().expect("merge state exists");
+                            if outer.side_left {
+                                state.left.chunk.get_row(*outer_index)
+                            } else {
+                                state.right.chunk.get_row(*outer_index)
                             }
-                            Ok(false) => {}
+                        };
+                        let keys_match = match equi_keys_equal_row(
+                            &self.keys,
+                            &inner_row,
+                            !outer.side_left,
+                            outer_row,
+                            &outer_types,
+                        ) {
+                            Ok(value) => value,
                             Err(current) => {
-                                error = Some(current);
+                                error = Some(key_error(current));
                                 break;
                             }
+                        };
+                        let accepted = if keys_match {
+                            if self.residual_conditions.is_empty() {
+                                true
+                            } else {
+                                let outer_values = outer_row.get_datum_row(&outer_types);
+                                let joined = if outer.side_left {
+                                    self.join_rows(&outer_values, &inner_row)
+                                } else {
+                                    self.join_rows(&outer_values, &inner_row)
+                                };
+                                match self.matches(&joined) {
+                                    Ok(value) => value,
+                                    Err(current) => {
+                                        error = Some(current);
+                                        break;
+                                    }
+                                }
+                            }
+                        } else {
+                            false
+                        };
+                        match accepted {
+                            true => {
+                                *matched_current_outer = true;
+                                if self.residual_conditions.is_empty() {
+                                    Self::append_joined_outer_chunk_row(
+                                        req,
+                                        outer.side_left,
+                                        outer_row,
+                                        &inner_row,
+                                    );
+                                } else {
+                                    let outer_values = outer_row.get_datum_row(&outer_types);
+                                    let joined = self.join_rows(&outer_values, &inner_row);
+                                    self.append(req, &joined);
+                                }
+                            }
+                            false => {}
                         }
                         continue;
                     }
 
                     if !*matched_current_outer && self.kind != JoinKind::Inner {
-                        Self::append(req, &self.padded_row(&outer[*outer_index]));
+                        let state = self.merge_state.as_ref().expect("merge state exists");
+                        let outer_row = if outer.side_left {
+                            state.left.chunk.get_row(*outer_index)
+                        } else {
+                            state.right.chunk.get_row(*outer_index)
+                        };
+                        Self::append_unmatched_probe_chunk_row(
+                            req,
+                            outer.side_left,
+                            outer_row,
+                            if outer.side_left {
+                                self.right.ret_field_types().len()
+                            } else {
+                                self.left.ret_field_types().len()
+                            },
+                        );
                     }
                     *outer_index += 1;
                     *matched_current_outer = false;
-                    if *outer_index < outer.len() {
+                    if *outer_index < outer.end {
                         *inner_ptr = inner.first_ptr();
                     }
                 }
@@ -1466,8 +2190,23 @@ impl<C: Columns> JoinExec<C> {
                 retained_bytes: _,
                 outer_index,
             } => {
-                while *outer_index < outer.len() && !req.is_full() {
-                    Self::append(req, &self.padded_row(&outer[*outer_index]));
+                while *outer_index < outer.end && !req.is_full() {
+                    let state = self.merge_state.as_ref().expect("merge state exists");
+                    let outer_row = if outer.side_left {
+                        state.left.chunk.get_row(*outer_index)
+                    } else {
+                        state.right.chunk.get_row(*outer_index)
+                    };
+                    Self::append_unmatched_probe_chunk_row(
+                        req,
+                        outer.side_left,
+                        outer_row,
+                        if outer.side_left {
+                            self.right.ret_field_types().len()
+                        } else {
+                            self.left.ret_field_types().len()
+                        },
+                    );
                     *outer_index += 1;
                 }
             }
@@ -1478,7 +2217,7 @@ impl<C: Columns> JoinExec<C> {
             }
             | MergePendingOutput::Unmatched {
                 outer, outer_index, ..
-            } => *outer_index == outer.len(),
+            } => *outer_index == outer.end,
         };
         if done {
             self.tracker.consume(-pending.retained_bytes());
@@ -1533,7 +2272,8 @@ impl<C: Columns> JoinExec<C> {
                     .fallback_old_and_set_new_action(Arc::clone(&action));
                 self.registered_action = Some(action);
             }
-            let staging_bytes = inner_group.staging.memory_usage();
+            let inner_scratch_bytes =
+                inner_group.staging.memory_usage() + inner_group.read_back.memory_usage();
             let left = MergeSide::new(self.left.new_chunk());
             let right = MergeSide::new(self.right.new_chunk());
             let input_bytes = left.chunk_bytes + right.chunk_bytes;
@@ -1544,7 +2284,7 @@ impl<C: Columns> JoinExec<C> {
                 inner_group: Some(inner_group),
                 pending: None,
             });
-            self.tracker.consume(staging_bytes + input_bytes);
+            self.tracker.consume(inner_scratch_bytes + input_bytes);
             self.memory.check()?;
         }
         let tracker = Arc::clone(&self.tracker);
@@ -1636,8 +2376,22 @@ impl<C: Columns> JoinExec<C> {
                 Ordering::Greater
             } else if right_empty {
                 Ordering::Less
+            } else if outer_is_left {
+                merge_row_key_cmp(
+                    state.left.chunk.get_row(state.left.group_start),
+                    &left_types,
+                    &left_keys,
+                    &state.right.key,
+                    desc,
+                )?
             } else {
-                merge_key_cmp(&state.left.key, &state.right.key, desc)?
+                merge_key_cmp_row(
+                    &state.left.key,
+                    state.right.chunk.get_row(state.right.group_start),
+                    &right_keys,
+                    &right_types,
+                    desc,
+                )?
             };
             // A NULL join key needs NO special arm here. Go's
             // `hasNullInJoinKey` drops a NULL inner group because Go MOVED the
@@ -1652,16 +2406,22 @@ impl<C: Columns> JoinExec<C> {
             // the normal path instead of by a special case.
             match order {
                 Ordering::Equal => {
-                    let outer_bytes = {
+                    {
                         let state = self.merge_state.as_mut().expect("state exists");
-                        let (outer, bytes) = if outer_is_left {
+                        let outer = if outer_is_left {
                             state.left.group_len = 0;
-                            let bytes = std::mem::take(&mut state.left.group_bytes);
-                            (std::mem::take(&mut state.left.group), bytes)
+                            MergeOuterRange {
+                                side_left: true,
+                                start: state.left.group_start,
+                                end: state.left.group_end,
+                            }
                         } else {
                             state.right.group_len = 0;
-                            let bytes = std::mem::take(&mut state.right.group_bytes);
-                            (std::mem::take(&mut state.right.group), bytes)
+                            MergeOuterRange {
+                                side_left: false,
+                                start: state.right.group_start,
+                                end: state.right.group_end,
+                            }
                         };
                         let first = state
                             .inner_group
@@ -1670,55 +2430,59 @@ impl<C: Columns> JoinExec<C> {
                             .first_ptr();
                         state.pending = Some(MergePendingOutput::Matched {
                             outer,
-                            retained_bytes: bytes,
-                            outer_index: 0,
+                            retained_bytes: 0,
+                            outer_index: outer.start,
                             inner_ptr: first,
                             matched_current_outer: false,
                         });
-                        bytes
-                    };
-                    debug_assert!(outer_bytes >= 0);
+                    }
                     self.drain_merge_pending(req)?;
                 }
                 // The left group is behind, or the right side is spent.
                 Ordering::Less => {
-                    let (group, bytes, is_outer) = {
+                    let (group, is_outer) = {
                         let state = self.merge_state.as_mut().expect("state exists");
                         state.left.group_len = 0;
-                        let group = std::mem::take(&mut state.left.group);
-                        let bytes = std::mem::take(&mut state.left.group_bytes);
-                        (group, bytes, outer_is_left)
+                        (
+                            MergeOuterRange {
+                                side_left: true,
+                                start: state.left.group_start,
+                                end: state.left.group_end,
+                            },
+                            outer_is_left,
+                        )
                     };
                     if is_outer && self.kind != JoinKind::Inner {
                         self.merge_state.as_mut().expect("state exists").pending =
                             Some(MergePendingOutput::Unmatched {
                                 outer: group,
-                                retained_bytes: bytes,
-                                outer_index: 0,
+                                retained_bytes: 0,
+                                outer_index: group.start,
                             });
                         self.drain_merge_pending(req)?;
-                    } else {
-                        tracker.consume(-bytes);
                     }
                 }
                 Ordering::Greater => {
-                    let (group, bytes, is_outer) = {
+                    let (group, is_outer) = {
                         let state = self.merge_state.as_mut().expect("state exists");
                         state.right.group_len = 0;
-                        let group = std::mem::take(&mut state.right.group);
-                        let bytes = std::mem::take(&mut state.right.group_bytes);
-                        (group, bytes, !outer_is_left)
+                        (
+                            MergeOuterRange {
+                                side_left: false,
+                                start: state.right.group_start,
+                                end: state.right.group_end,
+                            },
+                            !outer_is_left,
+                        )
                     };
                     if is_outer && self.kind != JoinKind::Inner {
                         self.merge_state.as_mut().expect("state exists").pending =
                             Some(MergePendingOutput::Unmatched {
                                 outer: group,
-                                retained_bytes: bytes,
-                                outer_index: 0,
+                                retained_bytes: 0,
+                                outer_index: group.start,
                             });
                         self.drain_merge_pending(req)?;
-                    } else {
-                        tracker.consume(-bytes);
                     }
                 }
             }
@@ -1758,7 +2522,7 @@ impl<C: Columns> JoinExec<C> {
         for outer_row in outer {
             let before_rows = req.num_rows();
             let before_bytes = req.memory_usage();
-            self.emit_outer_row(req, outer_row, inner.iter().cloned())?;
+            self.emit_outer_row(req, outer_row, inner.iter().map(Vec::as_slice))?;
             let produced = i64::try_from(req.num_rows() - before_rows).unwrap_or(i64::MAX);
             let grew = (req.memory_usage() - before_bytes).max(0);
             self.tracker
@@ -1769,7 +2533,7 @@ impl<C: Columns> JoinExec<C> {
         Ok(())
     }
 
-    /// The hash path: build once on the inner side, then stream the outer.
+    /// The hash path: build once on the costed side, then stream the other.
     ///
     /// One call consumes probe chunks until it has produced at least one
     /// output row, because an empty `req` is the caller's EOF signal and a
@@ -1778,6 +2542,9 @@ impl<C: Columns> JoinExec<C> {
         self.build_table()?;
         loop {
             if self.hash.as_ref().is_some_and(|hash| hash.probe_done) {
+                if self.hash_builds_preserved_side() {
+                    self.drain_preserved_build_rows(req)?;
+                }
                 return Ok(());
             }
             self.fill_probe_chunk()?;
@@ -1788,7 +2555,7 @@ impl<C: Columns> JoinExec<C> {
         }
     }
 
-    /// Materializes and indexes the inner side, once per `open()`.
+    /// Materializes and indexes the chosen build side, once per `open()`.
     ///
     /// Go `BuildWorkerV1.BuildHashTableForList`, in its order: hang the
     /// container's trackers off this operator's, register the spill action on
@@ -1798,7 +2565,8 @@ impl<C: Columns> JoinExec<C> {
         if self.hash.is_some() {
             return Ok(());
         }
-        let build_is_left = !self.outer_is_left();
+        let build_is_left = self.hash_build_is_left();
+        let track_matches = self.hash_builds_preserved_side();
         let build_types: Vec<FieldType> = if build_is_left {
             self.left.ret_field_types().to_vec()
         } else {
@@ -1808,6 +2576,8 @@ impl<C: Columns> JoinExec<C> {
             &build_types,
             self.meta.max_chunk_size(),
             self.memory.spill_storage(),
+            track_matches,
+            self.kind == JoinKind::Inner && self.residual_conditions.is_empty(),
         );
         table.mem_tracker().attach_to(&self.tracker);
         table.disk_tracker().attach_to(&self.disk_tracker);
@@ -1844,11 +2614,12 @@ impl<C: Columns> JoinExec<C> {
                 .map_err(build_error)?;
             self.memory.check()?;
         }
-        let probe_chunk = if build_is_left {
-            self.right.new_chunk()
+        let probe: &dyn Executor = if build_is_left {
+            self.right.as_ref()
         } else {
-            self.left.new_chunk()
+            self.left.as_ref()
         };
+        let probe_chunk = probe.new_chunk();
         // The container's live state is only readable while it is open --
         // `close` deletes the spill file and detaches the disk tracker -- so
         // what the build side DID is latched here, at the moment the build
@@ -1856,6 +2627,7 @@ impl<C: Columns> JoinExec<C> {
         self.build_spilled = table.already_spilled();
         self.spilled_bytes = self.disk_tracker.bytes_consumed();
         let build_buf = Chunk::new_with_capacity(&build_types, 1);
+        let unmatched_build_scan = track_matches.then(|| table.first_ptr()).flatten();
         self.hash = Some(HashState {
             table,
             build_types,
@@ -1863,6 +2635,8 @@ impl<C: Columns> JoinExec<C> {
             probe_chunk,
             probe_row: 0,
             probe_done: false,
+            decimal_mul_products: HashMap::new(),
+            unmatched_build_scan,
         });
         Ok(())
     }
@@ -1878,7 +2652,7 @@ impl<C: Columns> JoinExec<C> {
         // Move the chunk out so the probe child can be borrowed mutably
         // alongside it; it goes straight back below.
         let mut chunk = std::mem::replace(&mut hash.probe_chunk, Chunk::new_with_capacity(&[], 0));
-        let probe: &mut dyn Executor = if self.outer_is_left() {
+        let probe: &mut dyn Executor = if !self.hash_build_is_left() {
             self.left.as_mut()
         } else {
             self.right.as_mut()
@@ -1893,12 +2667,25 @@ impl<C: Columns> JoinExec<C> {
 
     /// Emits every output row the current probe chunk produces.
     fn drain_probe_chunk(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
-        let probe_is_left = self.outer_is_left();
+        let probe_is_left = !self.hash_build_is_left();
         let probe_types: Vec<FieldType> = if probe_is_left {
             self.left.ret_field_types().to_vec()
         } else {
             self.right.ret_field_types().to_vec()
         };
+        // Keep pure-equality inputs chunk-backed from hash calculation through
+        // output assembly. This is the common TPC-H path and avoids
+        // materializing every wide probe row as `Vec<Datum>`.
+        let builds_preserved_outer = self.hash_builds_preserved_side()
+            && matches!(self.kind, JoinKind::Left | JoinKind::Right);
+        if (self.kind == JoinKind::Inner || builds_preserved_outer)
+            && self.residual_conditions.is_empty()
+        {
+            return self.drain_chunk_backed_probe(req, probe_is_left, &probe_types);
+        }
+        if self.kind == JoinKind::Inner {
+            return self.drain_chunk_backed_residual_probe(req, probe_is_left, &probe_types);
+        }
         let offset = |key: &EquiKey| if probe_is_left { key.left } else { key.right };
         loop {
             let Some(hash) = self.hash.as_mut() else {
@@ -1908,40 +2695,442 @@ impl<C: Columns> JoinExec<C> {
                 return Ok(());
             }
             let probe_row = datum_row(&hash.probe_chunk, hash.probe_row, &probe_types);
-            let key = row_key(&self.keys, &probe_row, offset).map_err(key_error)?;
+            let key = row_hash(&self.keys, &probe_row, offset).map_err(key_error)?;
             // A probe row whose key holds a NULL matches nothing, so it never
             // touches the table -- and, on an outer join, pads immediately.
             //
             // Go `GetMatchedRowsAndPtrs`: walk the bucket's pointers in order
             // and dereference each one through the container, which is where
             // a spilled build side becomes a read from the spill file.
-            let candidates: Vec<Vec<Datum>> = match &key {
+            let candidates: Vec<RowPtr> = match key {
                 Some(key) => {
                     let ptrs = hash.table.probe(key).to_vec();
                     let mut rows = Vec::with_capacity(ptrs.len());
                     for ptr in ptrs {
-                        let HashState {
-                            table,
-                            build_buf,
-                            build_types,
-                            ..
-                        } = hash;
-                        rows.push(
+                        let key_matches = {
+                            let HashState {
+                                table,
+                                build_buf,
+                                build_types,
+                                ..
+                            } = hash;
                             table
-                                .row(ptr, build_buf, build_types)
-                                .map_err(|error| ExecError::SpillFailed(error.to_string()))?,
-                        );
+                                .with_row(ptr, build_buf, |build_row| {
+                                    equi_keys_equal_row(
+                                        &self.keys,
+                                        &probe_row,
+                                        probe_is_left,
+                                        build_row,
+                                        build_types,
+                                    )
+                                })
+                                .map_err(|error| ExecError::SpillFailed(error.to_string()))?
+                                .map_err(key_error)?
+                        };
+                        if !key_matches {
+                            continue;
+                        }
+                        rows.push(ptr);
                     }
                     rows
                 }
                 None => Vec::new(),
             };
-            self.emit_outer_row(req, &probe_row, candidates.into_iter())?;
+            if self.hash_builds_preserved_side() || !self.residual_conditions.is_empty() {
+                if self.hash_builds_preserved_side() {
+                    for ptr in candidates {
+                        let build_row = {
+                            let HashState {
+                                table,
+                                build_buf,
+                                build_types,
+                                ..
+                            } = self.hash.as_mut().expect("hash state exists");
+                            table
+                                .row(ptr, build_buf, build_types)
+                                .map_err(|error| ExecError::SpillFailed(error.to_string()))?
+                        };
+                        let joined = self.join_rows(&build_row, &probe_row);
+                        if self.matches(&joined)? {
+                            if matches!(self.kind, JoinKind::Left | JoinKind::Right) {
+                                self.append(req, &joined);
+                            }
+                            let hash = self.hash.as_mut().expect("hash state exists in this arm");
+                            hash.table.mark_matched(ptr);
+                        }
+                    }
+                } else {
+                    let mut matched = false;
+                    for ptr in candidates {
+                        let build_row = {
+                            let HashState {
+                                table,
+                                build_buf,
+                                build_types,
+                                ..
+                            } = self.hash.as_mut().expect("hash state exists");
+                            table
+                                .row(ptr, build_buf, build_types)
+                                .map_err(|error| ExecError::SpillFailed(error.to_string()))?
+                        };
+                        let joined = self.join_rows(&probe_row, &build_row);
+                        if !self.matches(&joined)? {
+                            continue;
+                        }
+                        matched = true;
+                        match self.kind {
+                            JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
+                                self.append(req, &joined);
+                            }
+                            JoinKind::Semi => {
+                                self.append(req, &probe_row);
+                                break;
+                            }
+                            JoinKind::AntiSemi => break,
+                        }
+                    }
+                    if !matched {
+                        match self.kind {
+                            JoinKind::Left | JoinKind::Right => {
+                                self.append(req, &self.padded_row(&probe_row));
+                            }
+                            JoinKind::AntiSemi => self.append(req, &probe_row),
+                            JoinKind::Inner | JoinKind::Semi => {}
+                        }
+                    }
+                }
+            } else {
+                let outer_is_left = self.outer_is_left();
+                let mut matched = false;
+                for ptr in candidates {
+                    let result = {
+                        let HashState {
+                            table,
+                            build_buf,
+                            build_types: _,
+                            ..
+                        } = self.hash.as_mut().expect("hash state exists");
+                        table
+                            .with_row(ptr, build_buf, |build_row| {
+                                matched = true;
+                                match self.kind {
+                                    JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
+                                        Self::append_joined_chunk_row_order(
+                                            req,
+                                            outer_is_left,
+                                            &probe_row,
+                                            build_row,
+                                        );
+                                    }
+                                    JoinKind::Semi => {
+                                        for (column, value) in probe_row.iter().enumerate() {
+                                            req.append_datum(column, value);
+                                        }
+                                    }
+                                    JoinKind::AntiSemi => {}
+                                }
+                            })
+                            .map_err(|error| ExecError::SpillFailed(error.to_string()))
+                    };
+                    result?;
+                    if matches!(self.kind, JoinKind::Semi) && matched {
+                        break;
+                    }
+                }
+                if !matched {
+                    match self.kind {
+                        JoinKind::Left | JoinKind::Right => {
+                            self.append(req, &self.padded_row(&probe_row));
+                        }
+                        JoinKind::AntiSemi => self.append(req, &probe_row),
+                        JoinKind::Inner | JoinKind::Semi => {}
+                    }
+                }
+            }
             self.hash
                 .as_mut()
                 .expect("hash state exists in this arm")
                 .probe_row += 1;
         }
+    }
+
+    /// Chunk-backed steady state for a pure equality hash join. When the
+    /// preserved side is built, matched bits are marked here and unmatched
+    /// preserved rows are emitted by the post-probe scan.
+    fn drain_chunk_backed_probe(
+        &mut self,
+        req: &mut Chunk,
+        probe_is_left: bool,
+        probe_types: &[FieldType],
+    ) -> Result<(), ExecError> {
+        let keys = self.keys.clone();
+        let kind = self.kind;
+        let builds_preserved = self.hash_builds_preserved_side();
+        let offset = |key: &EquiKey| if probe_is_left { key.left } else { key.right };
+        let use_exact_int = self
+            .hash
+            .as_ref()
+            .is_some_and(|hash| hash.table.has_exact_int());
+        let exact_int = keys.first().filter(|key| {
+            use_exact_int && keys.len() == 1 && key.class == KeyClass::Int && !key.null_safe
+        });
+        loop {
+            let Some(hash) = self.hash.as_mut() else {
+                return Ok(());
+            };
+            if hash.probe_row >= hash.probe_chunk.num_rows() || req.is_full() {
+                return Ok(());
+            }
+            let probe_index = hash.probe_row;
+            let probe_row = hash.probe_chunk.get_row(probe_index);
+            let exact_key = exact_int.and_then(|key| {
+                exact_int_key_chunk(probe_row, offset(key), &probe_types[offset(key)])
+            });
+            let key = row_hash_chunk(&keys, probe_row, probe_types, offset).map_err(key_error)?;
+            let mut matched = false;
+            {
+                let HashState {
+                    table,
+                    build_types,
+                    build_buf,
+                    probe_chunk,
+                    ..
+                } = hash;
+                let probe_row = probe_chunk.get_row(probe_index);
+                let candidates: Vec<RowPtr> = if exact_int.is_some() {
+                    exact_key.map_or_else(Vec::new, |key| table.probe_exact_int(key).to_vec())
+                } else {
+                    key.map_or_else(Vec::new, |key| table.probe(key).to_vec())
+                };
+                for ptr in candidates {
+                    let accepted = table
+                        .with_row(ptr, build_buf, |build_row| {
+                            let (left, left_types, right, right_types) = if probe_is_left {
+                                (probe_row, probe_types, build_row, build_types.as_slice())
+                            } else {
+                                (build_row, build_types.as_slice(), probe_row, probe_types)
+                            };
+                            if exact_int.is_none()
+                                && !equi_keys_equal_chunk_rows(
+                                    &keys,
+                                    left,
+                                    left_types,
+                                    right,
+                                    right_types,
+                                )?
+                            {
+                                return Ok(false);
+                            }
+                            match kind {
+                                JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
+                                    Self::append_joined_chunk_rows_order(
+                                        req,
+                                        probe_is_left,
+                                        probe_row,
+                                        build_row,
+                                    );
+                                }
+                                JoinKind::Semi => req.append_partial_row(0, probe_row),
+                                JoinKind::AntiSemi => {}
+                            }
+                            Ok(true)
+                        })
+                        .map_err(|error| ExecError::SpillFailed(error.to_string()))?
+                        .map_err(key_error)?;
+                    if builds_preserved && accepted {
+                        table.mark_matched(ptr);
+                    }
+                    matched |= accepted;
+                    if matches!(kind, JoinKind::Semi) && matched {
+                        break;
+                    }
+                }
+            }
+            if !matched && !builds_preserved {
+                let HashState {
+                    build_types,
+                    probe_chunk,
+                    ..
+                } = hash;
+                let probe_row = probe_chunk.get_row(probe_index);
+                match kind {
+                    JoinKind::Left | JoinKind::Right => Self::append_unmatched_probe_chunk_row(
+                        req,
+                        probe_is_left,
+                        probe_row,
+                        build_types.len(),
+                    ),
+                    JoinKind::AntiSemi => req.append_partial_row(0, probe_row),
+                    JoinKind::Inner | JoinKind::Semi => {}
+                }
+            }
+            hash.probe_row += 1;
+        }
+    }
+
+    /// Chunk-backed hash probe for an inner join with non-equality ON
+    /// predicates. The complete equality key is still checked after a bucket
+    /// hit; only the temporary `Vec<Datum>` rows and per-candidate condition
+    /// chunk allocation are removed.
+    fn drain_chunk_backed_residual_probe(
+        &mut self,
+        req: &mut Chunk,
+        probe_is_left: bool,
+        probe_types: &[FieldType],
+    ) -> Result<(), ExecError> {
+        let keys = self.keys.clone();
+        let offset = |key: &EquiKey| if probe_is_left { key.left } else { key.right };
+        let conditions = &self.residual_conditions;
+        let decimal_mul_lt = self.residual_decimal_mul_lt.as_ref();
+        let product_build_column = decimal_mul_lt.and_then(|fast| {
+            let left_width = if probe_is_left {
+                probe_types.len()
+            } else {
+                self.left.ret_field_types().len()
+            };
+            let product_is_left = fast.right_column < left_width;
+            let build_is_left = !probe_is_left;
+            (product_is_left == build_is_left).then_some(if product_is_left {
+                fast.right_column
+            } else {
+                fast.right_column - left_width
+            })
+        });
+        let ctx = &self.ctx;
+        let condition_evals = &self.condition_evals;
+        let condition_chunk = &mut self.condition_chunk;
+        loop {
+            let Some(hash) = self.hash.as_mut() else {
+                return Ok(());
+            };
+            if hash.probe_row >= hash.probe_chunk.num_rows() || req.is_full() {
+                return Ok(());
+            }
+            let probe_index = hash.probe_row;
+            let key = row_hash_chunk(
+                &keys,
+                hash.probe_chunk.get_row(probe_index),
+                probe_types,
+                offset,
+            )
+            .map_err(key_error)?;
+            let probe_row = hash.probe_chunk.get_row(probe_index);
+            let candidates = key.map_or_else(Vec::new, |key| hash.table.probe(key).to_vec());
+            for ptr in candidates {
+                let cached_product = match (decimal_mul_lt, product_build_column) {
+                    (Some(fast), Some(column)) => {
+                        if !hash.decimal_mul_products.contains_key(&ptr) {
+                            let product = {
+                                let table = &hash.table;
+                                let build_types = &hash.build_types;
+                                let build_buf = &mut hash.build_buf;
+                                table
+                                    .with_row(ptr, build_buf, |build_row| {
+                                        Self::decimal_mul_product(
+                                            fast,
+                                            build_row,
+                                            build_types,
+                                            column,
+                                        )
+                                    })
+                                    .map_err(|error| ExecError::SpillFailed(error.to_string()))??
+                            };
+                            hash.decimal_mul_products.insert(ptr, product);
+                        }
+                        Some(hash.decimal_mul_products.get(&ptr).copied().flatten())
+                    }
+                    _ => None,
+                };
+                let table = &hash.table;
+                let build_types = &hash.build_types;
+                let build_buf = &mut hash.build_buf;
+                table
+                    .with_row(ptr, build_buf, |build_row| {
+                        let (left, left_types, right, right_types) = if probe_is_left {
+                            (probe_row, probe_types, build_row, build_types.as_slice())
+                        } else {
+                            (build_row, build_types.as_slice(), probe_row, probe_types)
+                        };
+                        if !equi_keys_equal_chunk_rows(&keys, left, left_types, right, right_types)
+                            .map_err(key_error)?
+                            || !(match decimal_mul_lt {
+                                Some(fast) => Self::matches_decimal_mul_lt(
+                                    condition_evals,
+                                    fast,
+                                    left,
+                                    left_types,
+                                    right,
+                                    right_types,
+                                    cached_product.as_ref().map(Option::as_ref),
+                                )?,
+                                None => Self::matches_chunk_rows(
+                                    ctx,
+                                    conditions,
+                                    condition_evals,
+                                    condition_chunk,
+                                    left,
+                                    right,
+                                )?,
+                            })
+                        {
+                            return Ok::<(), ExecError>(());
+                        }
+                        Self::append_joined_chunk_rows_order(
+                            req,
+                            probe_is_left,
+                            probe_row,
+                            build_row,
+                        );
+                        Ok::<(), ExecError>(())
+                    })
+                    .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
+                if req.is_full() {
+                    break;
+                }
+            }
+            hash.probe_row += 1;
+        }
+    }
+
+    /// Emits preserved build rows after every probe row is done. Outer joins
+    /// emit unmatched rows with NULL padding; semi joins emit matched rows,
+    /// and anti-semi joins emit unmatched rows. This is Go v2 `ScanRowTable`,
+    /// including build rows with NULL keys that were never in a hash bucket.
+    fn drain_preserved_build_rows(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        while !req.is_full() {
+            let row = {
+                let Some(hash) = self.hash.as_mut() else {
+                    return Ok(());
+                };
+                let Some(ptr) = hash.unmatched_build_scan else {
+                    return Ok(());
+                };
+                hash.unmatched_build_scan = hash.table.next_ptr(ptr);
+                let matched = hash.table.is_matched(ptr);
+                let emit = match self.kind {
+                    JoinKind::Left | JoinKind::Right | JoinKind::AntiSemi => !matched,
+                    JoinKind::Semi => matched,
+                    JoinKind::Inner => false,
+                };
+                if !emit {
+                    None
+                } else {
+                    Some(
+                        hash.table
+                            .row(ptr, &mut hash.build_buf, &hash.build_types)
+                            .map_err(|error| ExecError::SpillFailed(error.to_string()))?,
+                    )
+                }
+            };
+            if let Some(row) = row {
+                if matches!(self.kind, JoinKind::Left | JoinKind::Right) {
+                    self.append(req, &self.padded_row(&row));
+                } else {
+                    self.append(req, &row);
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1967,9 +3156,98 @@ pub(crate) fn row_bytes(row: &[Datum]) -> i64 {
     bytes
 }
 
+/// Materializes a chunk list only for index-join paths that still need to
+/// apply a derived aggregation or a post-lookup non-NULL filter. The normal
+/// lookup path keeps source chunks and addresses rows by [`RowPtr`].
+fn list_datum_rows(list: &List, field_types: &[FieldType]) -> Vec<Vec<Datum>> {
+    let mut rows = Vec::with_capacity(list.len());
+    list.walk(|row| {
+        rows.push(row.get_datum_row(field_types));
+        Ok::<(), ()>(())
+    })
+    .expect("a List walk with an infallible callback cannot fail");
+    rows
+}
+
+/// Rebuilds a list after a transformation that changes its row set. These
+/// transformations are uncommon; using one wide chunk keeps the conversion
+/// bounded and leaves the steady-state lookup path chunk-backed.
+fn replace_list_with_rows(list: &mut List, field_types: &[FieldType], rows: Vec<Vec<Datum>>) {
+    list.clear();
+    if rows.is_empty() {
+        return;
+    }
+    let mut chunk = Chunk::new_with_capacity(field_types, rows.len());
+    for row in &rows {
+        for (column, datum) in row.iter().enumerate() {
+            chunk.append_datum(column, datum);
+        }
+    }
+    list.add(chunk);
+}
+
 /// One chunk row as owned `Datum`s.
 fn datum_row(chunk: &Chunk, index: usize, types: &[FieldType]) -> Vec<Datum> {
     chunk.get_row(index).get_datum_row(types)
+}
+
+/// Recognizes the exact DECIMAL residual shape used by TPC-H q17. The
+/// expression must be one `LT`, its left operand a DECIMAL column, and its
+/// right operand a multiplication of a strict DECIMAL constant and another
+/// DECIMAL column. Any broader recognition would risk changing MySQL's type
+/// promotion or NULL behavior, so all other shapes use the normal evaluator.
+fn residual_decimal_mul_lt(conditions: &[Expression]) -> Option<DecimalMulLtFastPath> {
+    let [Expression::ScalarFunction(lt)] = conditions else {
+        return None;
+    };
+    if lt.func_name.lowercase() != "lt" || lt.args.len() != 2 {
+        return None;
+    }
+    let (Expression::Column(left), Expression::ScalarFunction(mul)) = (&lt.args[0], &lt.args[1])
+    else {
+        return None;
+    };
+    if mul.func_name.lowercase() != "mul" || mul.args.len() != 2 {
+        return None;
+    }
+    let (Expression::Constant(factor), Expression::Column(right)) = (&mul.args[0], &mul.args[1])
+    else {
+        return None;
+    };
+    if factor.param_marker.is_some() || factor.deferred_expr.is_some() {
+        return None;
+    }
+    let Datum::Decimal(factor) = &factor.value else {
+        return None;
+    };
+    let decimal_column = |column: &tidb_expr::expression::Column| {
+        column
+            .ret_type
+            .as_ref()
+            .is_some_and(|field_type| field_type.eval_type() == EvalType::Decimal)
+    };
+    if !decimal_column(left) || !decimal_column(right) {
+        return None;
+    }
+    let left_column = usize::try_from(left.index).ok()?;
+    let right_column = usize::try_from(right.index).ok()?;
+    Some(DecimalMulLtFastPath {
+        left_column,
+        right_column,
+        factor: factor.clone(),
+    })
+}
+
+fn decimal_mul_lt_mysql(
+    left: &Decimal,
+    factor: &Decimal,
+    right: &Decimal,
+) -> Result<bool, tidb_datatype::DecimalCodecWarning> {
+    let (product, warning) = factor.mul_mysql(right);
+    match warning {
+        Some(tidb_datatype::DecimalCodecWarning::Overflow) => Err(warning.unwrap()),
+        Some(tidb_datatype::DecimalCodecWarning::Truncated) | None => Ok(left < &product),
+    }
 }
 
 /// A key datum outside its column's statically determined class. The class
@@ -2003,6 +3281,66 @@ fn build_error(error: BuildError) -> ExecError {
 fn merge_key_cmp(left: &[Datum], right: &[Datum], desc: bool) -> Result<Ordering, ExecError> {
     for (a, b) in left.iter().zip(right) {
         let mut cmp = tidb_expr::compare_datums(a, b)?;
+        if desc {
+            cmp = cmp.reverse();
+        }
+        if cmp != Ordering::Equal {
+            return Ok(cmp);
+        }
+    }
+    Ok(Ordering::Equal)
+}
+
+fn merge_key_cmp_row(
+    left: &[Datum],
+    right: Row<'_>,
+    key_offsets: &[usize],
+    types: &[FieldType],
+    desc: bool,
+) -> Result<Ordering, ExecError> {
+    for (left, &offset) in left.iter().zip(key_offsets) {
+        let mut cmp = tidb_expr::compare_datums(left, &right.get_datum(offset, &types[offset]))?;
+        if desc {
+            cmp = cmp.reverse();
+        }
+        if cmp != Ordering::Equal {
+            return Ok(cmp);
+        }
+    }
+    Ok(Ordering::Equal)
+}
+
+fn merge_rows_cmp(
+    left: Row<'_>,
+    right: Row<'_>,
+    key_offsets: &[usize],
+    types: &[FieldType],
+    desc: bool,
+) -> Result<Ordering, ExecError> {
+    for &offset in key_offsets {
+        let mut cmp = tidb_expr::compare_datums(
+            &left.get_datum(offset, &types[offset]),
+            &right.get_datum(offset, &types[offset]),
+        )?;
+        if desc {
+            cmp = cmp.reverse();
+        }
+        if cmp != Ordering::Equal {
+            return Ok(cmp);
+        }
+    }
+    Ok(Ordering::Equal)
+}
+
+fn merge_row_key_cmp(
+    row: Row<'_>,
+    types: &[FieldType],
+    key_offsets: &[usize],
+    key: &[Datum],
+    desc: bool,
+) -> Result<Ordering, ExecError> {
+    for (&offset, key) in key_offsets.iter().zip(key) {
+        let mut cmp = tidb_expr::compare_datums(&row.get_datum(offset, &types[offset]), key)?;
         if desc {
             cmp = cmp.reverse();
         }
@@ -2065,8 +3403,6 @@ impl<C: Columns> Executor for JoinExec<C> {
             hash.table.close();
         }
         if let Some(mut state) = self.merge_state.take() {
-            self.tracker.consume(-state.left.group_bytes);
-            self.tracker.consume(-state.right.group_bytes);
             self.tracker.consume(-state.left.chunk_bytes);
             self.tracker.consume(-state.right.chunk_bytes);
             if let Some(pending) = state.pending.take() {
@@ -2084,6 +3420,16 @@ impl<C: Columns> Executor for JoinExec<C> {
             self.memory
                 .session_tracker()
                 .unbind_action_from_hard_limit(&action);
+        }
+        if let Some(state) = self.index_state.take() {
+            let current =
+                state.outer.iter().map(|row| row_bytes(row)).sum::<i64>() + state.inner_bytes;
+            let pending = state
+                .pending
+                .iter()
+                .map(|task| task.outer_bytes)
+                .sum::<i64>();
+            self.tracker.consume(-(current + pending));
         }
         if let Some(plan) = self.index_lookup.as_mut() {
             plan.source.close()?;

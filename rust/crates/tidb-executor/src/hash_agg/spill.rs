@@ -111,6 +111,7 @@ impl<C: Columns> HashAggExec<C> {
         self.cursor = 0;
         self.groups.clear();
         self.ordered.clear();
+        self.group_count = 0;
         self.prepared = false;
         // No NEW rows were deferred while this round ran, so every row has now
         // been aggregated: the aggregation is done.
@@ -177,7 +178,6 @@ pub(super) fn new_group_bytes(key_len: usize, num_funcs: usize) -> i64 {
     let per_group = key_len
         // The map entry: the key is stored a second time, with its bucket slot.
         + size_of::<usize>()
-        + size_of::<Vec<AggState>>()
         + num_funcs * size_of::<AggState>();
     i64::try_from(per_group).unwrap_or(i64::MAX)
 }

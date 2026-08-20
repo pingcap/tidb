@@ -59,7 +59,7 @@
 //! * [`key_count`](TableStorage::key_count) reports the staged key count only.
 //!   TiKV has no exact count, and the seam's own doc already says so.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
@@ -90,6 +90,19 @@ pub trait ClusterSnapshot: fmt::Debug + Send {
     /// Reads one key at the snapshot's timestamp. `None` is TiKV's
     /// `not_found`, which the caller turns into [`StorageError::NotFound`].
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError>;
+
+    /// Reads several keys at one snapshot timestamp. The default preserves
+    /// correctness for lightweight test snapshots; the production transaction
+    /// snapshot overrides it with one region-grouped BatchCommands request.
+    fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
+        let mut pairs = Vec::new();
+        for key in keys {
+            if let Some(value) = self.get(key)? {
+                pairs.push((key.as_bytes().to_vec(), value));
+            }
+        }
+        Ok(pairs)
+    }
 
     /// Reads the pairs of `[start, end)` at the snapshot's timestamp, in key
     /// order, at most `limit` of them.
@@ -368,6 +381,10 @@ impl ClusterSnapshot for SwappableSnapshot {
         self.snapshot()?.get(key)
     }
 
+    fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
+        self.snapshot()?.batch_get(keys)
+    }
+
     fn scan(
         &mut self,
         start: &Key,
@@ -487,6 +504,39 @@ impl TableStorage for ClusterTableStorage {
         }
     }
 
+    fn batch_get(&mut self, keys: &[Key]) -> Result<HashMap<Key, Vec<u8>>, StorageError> {
+        self.check_usable()?;
+        if keys.is_empty() {
+            return Ok(HashMap::new());
+        }
+        crate::storage::note_storage_op(|ops| ops.gets += 1);
+        let mut values = HashMap::with_capacity(keys.len());
+        let mut missing = Vec::with_capacity(keys.len());
+        for key in keys {
+            match self.buffer.get(key) {
+                Some(Some(value)) => {
+                    values.insert(key.clone(), value);
+                }
+                Some(None) => {}
+                None => missing.push(key.clone()),
+            }
+        }
+        if !missing.is_empty() {
+            let snapshot_values = self
+                .snapshot
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .batch_get(&missing)?;
+            for (key, value) in snapshot_values {
+                values.insert(Key::from_bytes(key), value);
+            }
+        }
+        for key in keys {
+            self.read_keys.record(key);
+        }
+        Ok(values)
+    }
+
     fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), StorageError> {
         self.check_usable()?;
         self.buffer.set(key, value);
@@ -565,6 +615,13 @@ impl TableStorage for ClusterTableStorage {
         }
         let mut request = request.clone();
         request.snapshot_ts = snapshot_ts;
+        request.keep_order |= !staged.is_empty()
+            || request.aggregate.as_ref().is_some_and(|aggregate| {
+                matches!(
+                    aggregate,
+                    crate::remote_scan::PushdownPartialAggregate::Grouped { streamed: true, .. }
+                )
+            });
         if !staged.is_empty() {
             request.limit = None;
         }

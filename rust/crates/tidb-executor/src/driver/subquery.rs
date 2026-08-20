@@ -33,7 +33,335 @@ use std::any::Any;
 use std::borrow::Cow;
 
 use super::*;
-use tidb_ast::{Visitable, Visitor};
+use crate::plan_trace::{GoLogicalPlanColumns, GoLogicalQuerySourceColumns};
+use tidb_ast::{Join, JoinType, Visitable, Visitor};
+
+/// Go's default filter-context branch of `handleInSubquery`:
+///
+/// ```text
+/// outer_key IN (SELECT inner_key ...)
+///     => outer INNER JOIN (SELECT DISTINCT inner_key ...) ON outer_key = inner_key
+/// ```
+///
+/// The rewrite is deliberately bounded by the same semantic gates that make
+/// this an ordinary equality join: a top-level WHERE conjunct, one
+/// uncorrelated scalar output, and compatible collations. Positive `IN`
+/// becomes an inner join to a DISTINCT relation. `NOT IN` becomes correlated
+/// `NOT EXISTS` only when both scalar keys are statically `NOT NULL`, which is
+/// the branch where the two predicates have identical NULL semantics. Other
+/// correlated, nullable, row-valued, scalar-context, and LIMIT-bearing forms
+/// retain the existing Apply/fold path; moving DISTINCT below a subquery LIMIT
+/// would change which rows are deduplicated.
+pub(crate) fn rewrite_filter_in_subqueries(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<tidb_ast::SelectStmt>, DriverError> {
+    let (Some(from), Some(where_clause)) = (&select.from, &select.where_clause) else {
+        return Ok(None);
+    };
+    let mut conjuncts = Vec::new();
+    collect_filter_conjuncts(where_clause, &mut conjuncts);
+    let has_candidate = conjuncts.iter().any(|conjunct| {
+        matches!(
+            conjunct,
+            tidb_ast::Expr::InSubquery {
+                expr,
+                subquery,
+                ..
+            } if !matches!(expr.as_ref(), tidb_ast::Expr::Row(_))
+                && matches!(subquery.as_ref(), QueryStmt::Select(inner)
+                    if inner.limit.is_none()
+                        && matches!(inner.fields.fields(), [SelectField::Expr { .. }]))
+        )
+    });
+    if !has_candidate {
+        return Ok(None);
+    }
+    let outer = select_outer_scope(select, catalog, current_db, ctx);
+    let mut residual = Vec::with_capacity(conjuncts.len());
+    let mut rewritten_from = from.clone();
+    let mut rewritten = 0usize;
+
+    for conjunct in conjuncts {
+        if let tidb_ast::Expr::InSubquery {
+            expr: lhs,
+            subquery,
+            not: true,
+        } = &conjunct
+        {
+            if let Some(not_exists) =
+                rewrite_non_null_not_in(lhs, subquery, &outer, catalog, current_db, ctx)?
+            {
+                residual.push(not_exists);
+                rewritten += 1;
+                continue;
+            }
+        }
+        let tidb_ast::Expr::InSubquery {
+            expr: lhs,
+            subquery,
+            not: false,
+        } = &conjunct
+        else {
+            residual.push(conjunct);
+            continue;
+        };
+        if matches!(lhs.as_ref(), tidb_ast::Expr::Row(_)) {
+            residual.push(conjunct);
+            continue;
+        }
+        let QueryStmt::Select(inner) = subquery.as_ref() else {
+            residual.push(conjunct);
+            continue;
+        };
+        if inner.limit.is_some() {
+            residual.push(conjunct);
+            continue;
+        }
+        let [SelectField::Expr { .. }] = inner.fields.fields() else {
+            residual.push(conjunct);
+            continue;
+        };
+        let mut correlated = Vec::new();
+        collect_correlated_columns_query(
+            subquery,
+            &outer,
+            catalog,
+            current_db,
+            &mut correlated,
+            ctx,
+        );
+        if !correlated.is_empty() {
+            residual.push(conjunct);
+            continue;
+        }
+
+        // Optimize the subquery in its own query block before the outer IN
+        // adds DISTINCT. Go first rewrites nested filter-context IN predicates
+        // in that block, then decorrelates its scalar aggregations. Doing
+        // either step after the enclosing semi join adds duplicate elimination
+        // makes the synthetic DISTINCT incorrectly block aggregation pull-up.
+        let rewritten_inner_in = rewrite_filter_in_subqueries(inner, catalog, current_db, ctx)?;
+        let inner = rewritten_inner_in.as_ref().unwrap_or(inner);
+        let decorrelated_inner =
+            super::correlated_agg_decorrelate::rewrite(inner, catalog, current_db, ctx);
+        let inner = decorrelated_inner.as_ref().unwrap_or(inner);
+
+        let Ok(lhs_expression) = rewrite_expr_resolved(lhs, &ScopeResolver { scope: &outer })
+        else {
+            residual.push(conjunct);
+            continue;
+        };
+        let Some(lhs_type) = lhs_expression.static_type() else {
+            residual.push(conjunct);
+            continue;
+        };
+        let inner_columns = plan_select_meta_stmt(inner, catalog, current_db, ctx)?;
+        let [(_, inner_type)] = inner_columns.as_slice() else {
+            residual.push(conjunct);
+            continue;
+        };
+        if !tidb_datatype::compatible_collate(
+            lhs_type.collation_name(),
+            inner_type.collation_name(),
+        ) {
+            residual.push(conjunct);
+            continue;
+        }
+
+        let relation_alias = fresh_in_subquery_alias(&outer, rewritten, "relation");
+        let key_alias = format!("__in_subquery_key_{rewritten}");
+        let mut distinct = (*inner).clone();
+        // Go builds a second duplicate-elimination aggregation above the
+        // subquery, then AggregationEliminator removes it when the subquery's
+        // output already contains its complete GROUP BY tuple. Preserve that
+        // logical boundary in the AST adapter by omitting the redundant
+        // DISTINCT up front. A projected subset of the group tuple is not
+        // unique and still keeps duplicate elimination.
+        distinct.distinct = !grouped_output_is_unique(inner);
+        distinct.all = false;
+        let [SelectField::Expr { alias, .. }] = distinct.fields.fields_mut() else {
+            unreachable!("the one-field shape was checked above");
+        };
+        *alias = Some(key_alias.clone());
+
+        rewritten_from = Join {
+            left: JoinNode::Join(Box::new(rewritten_from)),
+            right: Some(JoinNode::Derived {
+                subquery: tidb_ast::NodeBox::new(QueryStmt::Select(Box::new(distinct))),
+                alias: Some(relation_alias.clone()),
+                lateral: false,
+                column_names: Vec::new(),
+            }),
+            tp: JoinType::Cross,
+            straight: false,
+            on: Some(tidb_ast::Expr::Binary(
+                tidb_ast::BinaryOp::Eq,
+                Box::new((**lhs).clone()),
+                Box::new(tidb_ast::Expr::Column(vec![relation_alias, key_alias])),
+            )),
+            using: Vec::new(),
+            natural: false,
+            explicit_parens: false,
+        };
+        rewritten += 1;
+    }
+
+    if rewritten == 0 {
+        return Ok(None);
+    }
+    let mut result = select.clone();
+    result.from = Some(rewritten_from);
+    result.where_clause = combine_filter_conjuncts(residual);
+    Ok(Some(result))
+}
+
+fn grouped_output_is_unique(select: &tidb_ast::SelectStmt) -> bool {
+    if select.group_by.is_empty() {
+        return false;
+    }
+    let outputs = select
+        .fields
+        .fields()
+        .iter()
+        .map(|field| match field {
+            SelectField::Expr { expr, .. } => Some(expr),
+            SelectField::Wildcard(_) => None,
+        })
+        .collect::<Option<Vec<_>>>();
+    let Some(outputs) = outputs else {
+        return false;
+    };
+    select
+        .group_by
+        .iter()
+        .all(|group| outputs.iter().any(|output| *output == &group.expr))
+}
+
+/// Go's `handleInSubquery` can use an anti-semi join for `NOT IN`. The null
+/// aware form carries extra semantics, so this direct `NOT EXISTS` lowering
+/// is restricted to two proven non-null scalar columns.
+fn rewrite_non_null_not_in(
+    lhs: &tidb_ast::Expr,
+    subquery: &QueryStmt,
+    outer: &FromScope,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<tidb_ast::Expr>, DriverError> {
+    if !matches!(lhs, tidb_ast::Expr::Column(_)) {
+        return Ok(None);
+    }
+    let Ok(lhs_expression) = rewrite_expr_resolved(lhs, &ScopeResolver { scope: outer }) else {
+        return Ok(None);
+    };
+    if lhs_expression
+        .static_type()
+        .is_none_or(|field_type| !field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL))
+    {
+        return Ok(None);
+    }
+
+    let QueryStmt::Select(inner) = subquery else {
+        return Ok(None);
+    };
+    if inner.kind != tidb_ast::SelectStatementKind::Select
+        || inner.with.is_some()
+        || !inner.hints.is_empty()
+        || inner.from.is_none()
+        || inner.distinct
+        || !inner.group_by.is_empty()
+        || inner.rollup
+        || inner.having.is_some()
+        || !inner.windows.is_empty()
+        || inner.limit.is_some()
+        || inner.lock.is_some()
+        || inner.into_outfile.is_some()
+    {
+        return Ok(None);
+    }
+    let [SelectField::Expr {
+        expr: inner_key @ tidb_ast::Expr::Column(_),
+        ..
+    }] = inner.fields.fields()
+    else {
+        return Ok(None);
+    };
+    if inner.where_clause.as_ref().is_some_and(expr_has_subquery) {
+        return Ok(None);
+    }
+    let output = plan_select_meta_stmt(inner, catalog, current_db, ctx)?;
+    let [(_, inner_type)] = output.as_slice() else {
+        return Ok(None);
+    };
+    if !inner_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
+        || !tidb_datatype::compatible_collate(
+            lhs_expression
+                .static_type()
+                .expect("the outer type was checked")
+                .collation_name(),
+            inner_type.collation_name(),
+        )
+    {
+        return Ok(None);
+    }
+
+    let equality = tidb_ast::Expr::Binary(
+        tidb_ast::BinaryOp::Eq,
+        Box::new(lhs.clone()),
+        Box::new(inner_key.clone()),
+    );
+    let mut rewritten = (**inner).clone();
+    let mut predicates = Vec::new();
+    if let Some(predicate) = rewritten.where_clause.take() {
+        collect_filter_conjuncts(&predicate, &mut predicates);
+    }
+    predicates.push(equality);
+    rewritten.where_clause = combine_filter_conjuncts(predicates);
+    Ok(Some(tidb_ast::Expr::Exists {
+        subquery: tidb_ast::NodeBox::new(QueryStmt::Select(Box::new(rewritten))),
+        not: true,
+    }))
+}
+
+fn collect_filter_conjuncts(expr: &tidb_ast::Expr, out: &mut Vec<tidb_ast::Expr>) {
+    match expr {
+        tidb_ast::Expr::Paren(inner) => collect_filter_conjuncts(inner, out),
+        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, left, right) => {
+            collect_filter_conjuncts(left, out);
+            collect_filter_conjuncts(right, out);
+        }
+        other => out.push(other.clone()),
+    }
+}
+
+fn combine_filter_conjuncts(mut conjuncts: Vec<tidb_ast::Expr>) -> Option<tidb_ast::Expr> {
+    let first = conjuncts.pop()?;
+    Some(conjuncts.into_iter().rev().fold(first, |right, left| {
+        tidb_ast::Expr::Binary(
+            tidb_ast::BinaryOp::LogicAnd,
+            Box::new(left),
+            Box::new(right),
+        )
+    }))
+}
+
+fn fresh_in_subquery_alias(outer: &FromScope, ordinal: usize, kind: &str) -> String {
+    let mut suffix = ordinal;
+    loop {
+        let candidate = format!("__in_subquery_{kind}_{suffix}");
+        if outer
+            .tables
+            .iter()
+            .all(|table| !table.name.eq_ignore_ascii_case(&candidate))
+        {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
 /// The type of the column an Apply appends for a correlated scalar subquery.
 ///
 /// Go infers it statically from the subquery's select field, where a
@@ -182,20 +510,23 @@ fn collect_correlated_columns(
 ) {
     let inner = match &select.from {
         None => FromScope::for_statement(ctx),
-        Some(join) => match build_join(
-            join,
-            catalog,
-            current_db,
-            ctx,
-            None,
-            None,
-            crate::driver::leaf_demand::FromDemand::none(),
-            &tidb_planner::physical_property::PhysicalProperty::default(),
-        ) {
-            Ok((_, scope, _)) => scope,
-            // An unresolvable inner FROM is reported by the inner run itself.
-            Err(_) => FromScope::for_statement(ctx),
-        },
+        Some(join) => {
+            let mut trace = PlanTrace::planning();
+            match build_join(
+                join,
+                catalog,
+                current_db,
+                ctx,
+                Some(&mut trace),
+                None,
+                crate::driver::leaf_demand::FromDemand::none(),
+                &tidb_planner::physical_property::PhysicalProperty::default(),
+            ) {
+                Ok((_, scope, _)) => scope,
+                // An unresolvable inner FROM is reported by the inner run itself.
+                Err(_) => FromScope::for_statement(ctx),
+            }
+        }
     };
     let mut visit = |expr: &tidb_ast::Expr| {
         collect_outer_columns(expr, &inner, outer, found);
@@ -787,55 +1118,29 @@ pub(crate) fn select_outer_scope(
     let empty = || FromScope::for_statement(ctx);
     match &select.from {
         None => empty(),
-        Some(join) => match build_join(
-            join,
-            catalog,
-            current_db,
-            ctx,
-            None,
-            None,
-            crate::driver::leaf_demand::FromDemand::none(),
-            &tidb_planner::physical_property::PhysicalProperty::default(),
-        ) {
-            Ok((_, scope, _)) => scope,
-            Err(_) => empty(),
-        },
-    }
-}
-
-/// Whether any clause of `select` contains a subquery the folding pass should
-/// run on. A correlated subquery in the `WHERE` is left for the Apply path.
-pub(crate) fn select_has_uncorrelated_subquery(
-    select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> bool {
-    if let Some(where_clause) = &select.where_clause {
-        if expr_has_subquery(where_clause) {
-            let outer = select_outer_scope(select, catalog, current_db, ctx);
-            let mut found = None;
-            // A correlated WHERE subquery is the Apply path's job.
-            let _ = extract_correlated_subquery(
-                where_clause,
-                &outer,
+        Some(join) => {
+            let mut trace = PlanTrace::planning();
+            match build_join(
+                join,
                 catalog,
                 current_db,
-                0,
-                &mut found,
                 ctx,
-            );
-            if found.is_some() {
-                return false;
+                Some(&mut trace),
+                None,
+                crate::driver::leaf_demand::FromDemand::none(),
+                &tidb_planner::physical_property::PhysicalProperty::default(),
+            ) {
+                Ok((_, scope, _)) => scope,
+                Err(_) => empty(),
             }
         }
     }
-    select_has_subquery(select)
 }
 
 /// Whether any clause of `select` contains a subquery, so the fold pass runs
-/// only when it has something to do.
-fn select_has_subquery(select: &tidb_ast::SelectStmt) -> bool {
+/// only when it has something to do. The pass folds each uncorrelated node
+/// and leaves each correlated node intact for the Apply path.
+pub(crate) fn select_has_subquery(select: &tidb_ast::SelectStmt) -> bool {
     let fields = select.fields.fields().iter().any(|field| match field {
         SelectField::Expr { expr, .. } => expr_has_subquery(expr),
         SelectField::Wildcard(_) => false,
@@ -923,6 +1228,849 @@ pub(crate) fn fold_select_subqueries(
         item.expr = fold_subqueries(&item.expr, outer, catalog, current_db, ctx)?;
     }
     Ok(folded)
+}
+
+pub(crate) struct PlannedSelectSubqueries {
+    pub(crate) select: tidb_ast::SelectStmt,
+    pub(crate) columns: Vec<crate::driver::from::PlanColumn>,
+}
+
+/// Plan-column IDs allocated while Go builds one logical SELECT block before
+/// it rewrites the block's scalar subqueries. Rust builds executors in a
+/// different order, so retaining this small receipt is necessary to preserve
+/// Go's statement-wide EXPLAIN identities.
+fn go_table_source_column_count(
+    table: &tidb_ast::TableRef,
+    catalog: &Catalog,
+    current_db: &str,
+) -> usize {
+    let Ok((database, name)) = super::split_table_path(&table.name, current_db) else {
+        return 0;
+    };
+    let Some(entry) = catalog.get_in(database, name) else {
+        return 0;
+    };
+    match entry {
+        TableEntry::Kv(table) => {
+            let needs_extra_handle =
+                table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty();
+            table.logical_data_source_column_count() + usize::from(needs_extra_handle) + 1
+        }
+        // Go's virtual/system sources do not append TiKV's hidden handle and
+        // commit-ts columns.
+        _ => entry.column_list().len(),
+    }
+}
+
+fn reserve_go_join_source_columns(
+    node: &tidb_ast::JoinNode,
+    catalog: &Catalog,
+    current_db: &str,
+    trace: &PlanTrace,
+    query_sources: &mut Vec<GoLogicalQuerySourceColumns>,
+) -> usize {
+    match node {
+        tidb_ast::JoinNode::Table(table) => {
+            let Ok((database, name)) = super::split_table_path(&table.name, current_db) else {
+                return 0;
+            };
+            let Some(entry) = catalog.get_in(database, name) else {
+                return 0;
+            };
+            let TableEntry::View(view) = entry else {
+                return go_table_source_column_count(table, catalog, current_db);
+            };
+            let Ok(tidb_ast::Stmt::Query(query)) = tidb_parser::parse(&view.select_sql) else {
+                return entry.column_list().len();
+            };
+            let QueryStmt::Select(select) = &*query else {
+                return entry.column_list().len();
+            };
+            let columns = build_go_logical_plan_columns(select, catalog, database, trace);
+            query_sources.push(GoLogicalQuerySourceColumns {
+                query: (*query).clone(),
+                columns,
+            });
+            0
+        }
+        tidb_ast::JoinNode::Derived { subquery, .. } => {
+            go_query_source_column_count(subquery, catalog, current_db)
+        }
+        tidb_ast::JoinNode::Join(join) => {
+            reserve_go_join_source_columns(&join.left, catalog, current_db, trace, query_sources)
+                + join.right.as_ref().map_or(0, |right| {
+                    reserve_go_join_source_columns(right, catalog, current_db, trace, query_sources)
+                })
+        }
+    }
+}
+
+fn go_join_source_column_count(
+    node: &tidb_ast::JoinNode,
+    catalog: &Catalog,
+    current_db: &str,
+) -> usize {
+    match node {
+        tidb_ast::JoinNode::Table(table) => {
+            go_table_source_column_count(table, catalog, current_db)
+        }
+        tidb_ast::JoinNode::Derived { subquery, .. } => {
+            go_query_source_column_count(subquery, catalog, current_db)
+        }
+        tidb_ast::JoinNode::Join(join) => {
+            go_join_source_column_count(&join.left, catalog, current_db)
+                + join.right.as_ref().map_or(0, |right| {
+                    go_join_source_column_count(right, catalog, current_db)
+                })
+        }
+    }
+}
+
+fn query_source_has_subquery(query: &tidb_ast::QueryStmt) -> bool {
+    match query {
+        QueryStmt::Select(select) => {
+            select_has_subquery(select)
+                || select.from.as_ref().is_some_and(|join| {
+                    join_source_has_subquery(&join.left)
+                        || join.right.as_ref().is_some_and(join_source_has_subquery)
+                })
+        }
+        QueryStmt::SetOpr(set_opr) => set_opr.terms.iter().any(|term| match &term.body {
+            tidb_ast::SetOprTermBody::Select(select) => {
+                select_has_subquery(select)
+                    || select.from.as_ref().is_some_and(|join| {
+                        join_source_has_subquery(&join.left)
+                            || join.right.as_ref().is_some_and(join_source_has_subquery)
+                    })
+            }
+            tidb_ast::SetOprTermBody::Nested(nested) => {
+                query_source_has_subquery(&QueryStmt::SetOpr(nested.clone()))
+            }
+        }),
+    }
+}
+
+fn join_source_has_subquery(node: &tidb_ast::JoinNode) -> bool {
+    match node {
+        tidb_ast::JoinNode::Table(_) => false,
+        tidb_ast::JoinNode::Derived { subquery, .. } => query_source_has_subquery(subquery),
+        tidb_ast::JoinNode::Join(join) => {
+            join_source_has_subquery(&join.left)
+                || join.right.as_ref().is_some_and(join_source_has_subquery)
+        }
+    }
+}
+
+fn go_query_source_column_count(
+    query: &tidb_ast::QueryStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> usize {
+    match query {
+        QueryStmt::Select(select) => select.from.as_ref().map_or(0, |join| {
+            go_join_source_column_count(&join.left, catalog, current_db)
+                + join.right.as_ref().map_or(0, |right| {
+                    go_join_source_column_count(right, catalog, current_db)
+                })
+        }),
+        QueryStmt::SetOpr(set_opr) => set_opr
+            .terms
+            .iter()
+            .map(|term| match &term.body {
+                tidb_ast::SetOprTermBody::Select(select) => {
+                    select.from.as_ref().map_or(0, |join| {
+                        go_join_source_column_count(&join.left, catalog, current_db)
+                            + join.right.as_ref().map_or(0, |right| {
+                                go_join_source_column_count(right, catalog, current_db)
+                            })
+                    })
+                }
+                tidb_ast::SetOprTermBody::Nested(nested) => nested
+                    .terms
+                    .iter()
+                    .map(|term| match &term.body {
+                        tidb_ast::SetOprTermBody::Select(select) => {
+                            select.from.as_ref().map_or(0, |join| {
+                                go_join_source_column_count(&join.left, catalog, current_db)
+                                    + join.right.as_ref().map_or(0, |right| {
+                                        go_join_source_column_count(right, catalog, current_db)
+                                    })
+                            })
+                        }
+                        tidb_ast::SetOprTermBody::Nested(_) => 0,
+                    })
+                    .sum(),
+            })
+            .sum(),
+    }
+}
+
+fn collect_pre_resolved_subquery_sources(
+    expr: &tidb_ast::Expr,
+    catalog: &Catalog,
+    current_db: &str,
+) -> usize {
+    use tidb_ast::Expr;
+    match expr {
+        Expr::Subquery(query)
+        | Expr::Exists {
+            subquery: query, ..
+        } => go_query_source_column_count(query, catalog, current_db),
+        Expr::InSubquery { expr, subquery, .. } => {
+            collect_pre_resolved_subquery_sources(expr, catalog, current_db)
+                + go_query_source_column_count(subquery, catalog, current_db)
+        }
+        Expr::CompareSubquery { left, subquery, .. } => {
+            collect_pre_resolved_subquery_sources(left, catalog, current_db)
+                + go_query_source_column_count(subquery, catalog, current_db)
+        }
+        Expr::Paren(inner) | Expr::Unary(_, inner) | Expr::Is { expr: inner, .. } => {
+            collect_pre_resolved_subquery_sources(inner, catalog, current_db)
+        }
+        Expr::Binary(_, left, right) => {
+            collect_pre_resolved_subquery_sources(left, catalog, current_db)
+                + collect_pre_resolved_subquery_sources(right, catalog, current_db)
+        }
+        Expr::In { expr, list, .. } => {
+            collect_pre_resolved_subquery_sources(expr, catalog, current_db)
+                + list
+                    .iter()
+                    .map(|item| collect_pre_resolved_subquery_sources(item, catalog, current_db))
+                    .sum::<usize>()
+        }
+        Expr::Case {
+            value,
+            when_clauses,
+            else_clause,
+        } => {
+            value.as_deref().map_or(0, |value| {
+                collect_pre_resolved_subquery_sources(value, catalog, current_db)
+            }) + when_clauses
+                .iter()
+                .map(|(condition, result)| {
+                    collect_pre_resolved_subquery_sources(condition, catalog, current_db)
+                        + collect_pre_resolved_subquery_sources(result, catalog, current_db)
+                })
+                .sum::<usize>()
+                + else_clause.as_deref().map_or(0, |value| {
+                    collect_pre_resolved_subquery_sources(value, catalog, current_db)
+                })
+        }
+        Expr::Func { args, .. } | Expr::Aggregate { args, .. } => args
+            .iter()
+            .map(|arg| collect_pre_resolved_subquery_sources(arg, catalog, current_db))
+            .sum(),
+        _ => 0,
+    }
+}
+
+fn collect_unique_aggregates(expr: &tidb_ast::Expr, aggregates: &mut Vec<tidb_ast::Expr>) {
+    use tidb_ast::Expr;
+    match expr {
+        Expr::Aggregate { .. } => {
+            if !aggregates.contains(expr) {
+                aggregates.push(expr.clone());
+            }
+        }
+        // An aggregate in another query block owns that block's allocator
+        // stage and is collected by its recursive `run_select_traced` call.
+        Expr::Subquery(_)
+        | Expr::Exists { .. }
+        | Expr::InSubquery { .. }
+        | Expr::CompareSubquery { .. } => {}
+        Expr::Paren(inner) | Expr::Unary(_, inner) | Expr::Is { expr: inner, .. } => {
+            collect_unique_aggregates(inner, aggregates);
+        }
+        Expr::Binary(_, left, right) => {
+            collect_unique_aggregates(left, aggregates);
+            collect_unique_aggregates(right, aggregates);
+        }
+        Expr::In { expr, list, .. } => {
+            collect_unique_aggregates(expr, aggregates);
+            for item in list {
+                collect_unique_aggregates(item, aggregates);
+            }
+        }
+        Expr::Case {
+            value,
+            when_clauses,
+            else_clause,
+        } => {
+            if let Some(value) = value {
+                collect_unique_aggregates(value, aggregates);
+            }
+            for (condition, result) in when_clauses {
+                collect_unique_aggregates(condition, aggregates);
+                collect_unique_aggregates(result, aggregates);
+            }
+            if let Some(value) = else_clause {
+                collect_unique_aggregates(value, aggregates);
+            }
+        }
+        Expr::Func { args, .. } => {
+            for arg in args {
+                collect_unique_aggregates(arg, aggregates);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn select_unique_aggregates(select: &tidb_ast::SelectStmt) -> Vec<tidb_ast::Expr> {
+    let mut aggregates = Vec::new();
+    for field in select.fields.fields() {
+        if let SelectField::Expr { expr, .. } = field {
+            collect_unique_aggregates(expr, &mut aggregates);
+        }
+    }
+    if let Some(having) = &select.having {
+        collect_unique_aggregates(having, &mut aggregates);
+    }
+    for item in &select.order_by {
+        collect_unique_aggregates(&item.expr, &mut aggregates);
+    }
+    aggregates
+}
+
+fn projection_allocates_column(expr: &tidb_ast::Expr) -> bool {
+    !matches!(
+        expr,
+        tidb_ast::Expr::Column(_) | tidb_ast::Expr::Aggregate { .. }
+    )
+}
+
+/// Mirrors the ID-producing part of Go `PlanBuilder.buildSelect` up through
+/// the logical Projection. `resolveHavingAndOrderBy` builds subquery source
+/// schemas once before the aggregation; the later expression rewrite builds
+/// them again, which is why both stages must consume the same allocator.
+fn build_go_logical_plan_columns(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    trace: &PlanTrace,
+) -> GoLogicalPlanColumns {
+    let mut query_sources = Vec::new();
+    let source_columns = select.from.as_ref().map_or(0, |join| {
+        reserve_go_join_source_columns(&join.left, catalog, current_db, trace, &mut query_sources)
+            + join.right.as_ref().map_or(0, |right| {
+                reserve_go_join_source_columns(
+                    right,
+                    catalog,
+                    current_db,
+                    trace,
+                    &mut query_sources,
+                )
+            })
+    });
+    trace.reserve_plan_column_ids(source_columns);
+
+    let pre_resolved_sources = select.having.as_ref().map_or(0, |expr| {
+        collect_pre_resolved_subquery_sources(expr, catalog, current_db)
+    }) + select
+        .order_by
+        .iter()
+        .map(|item| collect_pre_resolved_subquery_sources(&item.expr, catalog, current_db))
+        .sum::<usize>();
+    trace.reserve_plan_column_ids(pre_resolved_sources);
+
+    let finish_after_source = select.from.as_ref().is_some_and(|join| {
+        join_source_has_subquery(&join.left)
+            || join.right.as_ref().is_some_and(join_source_has_subquery)
+    });
+    let finish_after_subqueries = select.where_clause.as_ref().is_some_and(expr_has_subquery);
+    let mut pending_aggregates = select_unique_aggregates(select);
+    let aggregate_ids = if finish_after_source || finish_after_subqueries {
+        Vec::new()
+    } else {
+        pending_aggregates
+            .drain(..)
+            .map(|aggregate| (aggregate, trace.alloc_plan_column_id()))
+            .collect::<Vec<_>>()
+    };
+
+    let all_projection_ids_pending = finish_after_source || finish_after_subqueries;
+    if !all_projection_ids_pending {
+        for field in select.fields.fields() {
+            if let SelectField::Expr { expr, .. } = field {
+                if !expr_has_subquery(expr) && projection_allocates_column(expr) {
+                    trace.alloc_plan_column_id();
+                }
+            }
+        }
+    }
+    GoLogicalPlanColumns {
+        aggregate_ids,
+        pending_aggregates,
+        all_projection_ids_pending,
+        finish_after_source,
+        query_sources,
+    }
+}
+
+pub(crate) fn reserve_go_logical_plan_columns(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    trace: &PlanTrace,
+) -> GoLogicalPlanColumns {
+    let mut columns = trace
+        .take_pre_reserved_query_source()
+        .unwrap_or_else(|| build_go_logical_plan_columns(select, catalog, current_db, trace));
+    trace.push_query_source_frame(std::mem::take(&mut columns.query_sources));
+    columns
+}
+
+impl GoLogicalPlanColumns {
+    /// Completes the logical/physical IDs Go allocates after scalar-subquery
+    /// rewrite and records the retained Projection's exact column mapping.
+    pub(crate) fn finish_after_subqueries(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        trace: &mut PlanTrace,
+    ) {
+        if self.finish_after_source {
+            return;
+        }
+        self.finish(select, trace);
+    }
+
+    pub(crate) fn finish_after_source(
+        mut self,
+        select: &tidb_ast::SelectStmt,
+        trace: &mut PlanTrace,
+    ) {
+        if self.finish_after_source {
+            self.finish(select, trace);
+        }
+    }
+
+    fn finish(&mut self, select: &tidb_ast::SelectStmt, trace: &mut PlanTrace) {
+        self.aggregate_ids.extend(
+            self.pending_aggregates
+                .drain(..)
+                .map(|aggregate| (aggregate, trace.alloc_plan_column_id())),
+        );
+
+        for field in select.fields.fields() {
+            if let SelectField::Expr { expr, .. } = field {
+                let pending = self.all_projection_ids_pending || expr_has_subquery(expr);
+                if pending && projection_allocates_column(expr) {
+                    trace.alloc_plan_column_id();
+                }
+            }
+        }
+        self.all_projection_ids_pending = false;
+
+        let having_has_subquery = select.having.as_ref().is_some_and(expr_has_subquery);
+        if !having_has_subquery || self.aggregate_ids.is_empty() {
+            return;
+        }
+
+        // Go's physical HashAgg creates its restored output schema before
+        // `InjectProjBelowAgg`; the retained final Projection is allocated
+        // next, and only then are its child input columns allocated.
+        trace.reserve_plan_column_ids(self.aggregate_ids.len());
+        let mapping = select
+            .fields
+            .fields()
+            .iter()
+            .map(|field| match field {
+                SelectField::Expr {
+                    expr: aggregate @ tidb_ast::Expr::Aggregate { .. },
+                    ..
+                } => self
+                    .aggregate_ids
+                    .iter()
+                    .find(|(candidate, _)| candidate == aggregate)
+                    .map(|(_, input)| (*input, trace.alloc_plan_column_id())),
+                _ => None,
+            })
+            .collect();
+        trace.set_aggregation_projection_mapping(mapping);
+    }
+}
+
+fn nested_query_source_physical_column_count(
+    query: &tidb_ast::QueryStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> usize {
+    let QueryStmt::Select(select) = query else {
+        return 0;
+    };
+    let nested = select.from.as_ref().map_or(0, |join| {
+        nested_join_source_physical_column_count(&join.left, catalog, current_db)
+            + join.right.as_ref().map_or(0, |right| {
+                nested_join_source_physical_column_count(right, catalog, current_db)
+            })
+    });
+    let aggregates = select_unique_aggregates(select);
+    if aggregates.is_empty() {
+        return nested;
+    }
+    let max_min_only = aggregates.iter().all(|aggregate| {
+        matches!(
+            aggregate,
+            tidb_ast::Expr::Aggregate { name, .. }
+                if name.eq_ignore_ascii_case("max") || name.eq_ignore_ascii_case("min")
+        )
+    });
+    if max_min_only || select.group_by.is_empty() {
+        return nested;
+    }
+    let partial_outputs = aggregates
+        .iter()
+        .map(|aggregate| match aggregate {
+            tidb_ast::Expr::Aggregate { name, .. } if name.eq_ignore_ascii_case("avg") => 2,
+            _ => 1,
+        })
+        .sum::<usize>();
+    nested + partial_outputs
+}
+
+fn nested_join_source_physical_column_count(
+    node: &tidb_ast::JoinNode,
+    catalog: &Catalog,
+    current_db: &str,
+) -> usize {
+    match node {
+        tidb_ast::JoinNode::Table(table) => {
+            let Ok((database, name)) = super::split_table_path(&table.name, current_db) else {
+                return 0;
+            };
+            let Some(TableEntry::View(view)) = catalog.get_in(database, name) else {
+                return 0;
+            };
+            let Ok(tidb_ast::Stmt::Query(query)) = tidb_parser::parse(&view.select_sql) else {
+                return 0;
+            };
+            nested_query_source_physical_column_count(&query, catalog, database)
+        }
+        tidb_ast::JoinNode::Derived { .. } => 0,
+        tidb_ast::JoinNode::Join(join) => {
+            nested_join_source_physical_column_count(&join.left, catalog, current_db)
+                + join.right.as_ref().map_or(0, |right| {
+                    nested_join_source_physical_column_count(right, catalog, current_db)
+                })
+        }
+    }
+}
+
+fn scalar_subquery_physical_column_count(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> usize {
+    let nested = select.from.as_ref().map_or(0, |join| {
+        nested_join_source_physical_column_count(&join.left, catalog, current_db)
+            + join.right.as_ref().map_or(0, |right| {
+                nested_join_source_physical_column_count(right, catalog, current_db)
+            })
+    });
+    let aggregates = select_unique_aggregates(select);
+    if aggregates.is_empty() {
+        return nested;
+    }
+    let computed_arguments = aggregates
+        .iter()
+        .filter_map(|aggregate| match aggregate {
+            tidb_ast::Expr::Aggregate { args, .. } => Some(args),
+            _ => None,
+        })
+        .flatten()
+        .filter(|arg| {
+            !matches!(
+                arg,
+                tidb_ast::Expr::Column(_)
+                    | tidb_ast::Expr::Int(_)
+                    | tidb_ast::Expr::Decimal(_)
+                    | tidb_ast::Expr::Float(_)
+                    | tidb_ast::Expr::Hex(_)
+                    | tidb_ast::Expr::Bit(_)
+                    | tidb_ast::Expr::String(_)
+                    | tidb_ast::Expr::RawString(_)
+                    | tidb_ast::Expr::CharsetString { .. }
+                    | tidb_ast::Expr::CharsetBinary { .. }
+                    | tidb_ast::Expr::Null
+                    | tidb_ast::Expr::Bool(_)
+            )
+        })
+        .count();
+    let single_base_table = select.from.as_ref().is_some_and(|join| {
+        join.right.is_none() && matches!(join.left, tidb_ast::JoinNode::Table(_))
+    });
+    let max_min_only = aggregates.iter().all(|aggregate| {
+        matches!(
+            aggregate,
+            tidb_ast::Expr::Aggregate { name, .. }
+                if name.eq_ignore_ascii_case("max") || name.eq_ignore_ascii_case("min")
+        )
+    });
+    if single_base_table && !max_min_only {
+        let partial_outputs = aggregates
+            .iter()
+            .map(|aggregate| match aggregate {
+                tidb_ast::Expr::Aggregate { name, .. } if name.eq_ignore_ascii_case("avg") => 2,
+                _ => 1,
+            })
+            .sum::<usize>();
+        nested + computed_arguments + 2 * partial_outputs
+    } else if computed_arguments > 0 {
+        nested + computed_arguments + aggregates.len()
+    } else {
+        nested
+    }
+}
+
+/// Go's plain-EXPLAIN branch of `handleScalarSubquery` and
+/// `handleExistSubquery`. Each uncorrelated child is optimized with the same
+/// plan-only trace, retained as a separate `ScalarSubQuery` root, and replaced
+/// by a typed non-row column. Unlike [`fold_select_subqueries`], this path does
+/// not evaluate a child or turn its result into a literal.
+pub(crate) fn plan_select_subqueries(
+    select: &tidb_ast::SelectStmt,
+    outer: &FromScope,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    trace: &mut PlanTrace,
+) -> Result<PlannedSelectSubqueries, DriverError> {
+    let mut planner = PlanOnlySubqueries {
+        outer,
+        catalog,
+        current_db,
+        ctx,
+        trace,
+        columns: Vec::new(),
+    };
+    let mut planned = select.clone();
+    for field in planned.fields.fields_mut() {
+        if let SelectField::Expr { expr, .. } = field {
+            *expr = planner.plan_expr(expr)?;
+        }
+    }
+    if let Some(where_clause) = &planned.where_clause {
+        planned.where_clause = Some(planner.plan_expr(where_clause)?);
+    }
+    if let Some(having) = &planned.having {
+        planned.having = Some(planner.plan_expr(having)?);
+    }
+    for item in &mut planned.order_by {
+        item.expr = planner.plan_expr(&item.expr)?;
+    }
+    for item in &mut planned.group_by {
+        item.expr = planner.plan_expr(&item.expr)?;
+    }
+    Ok(PlannedSelectSubqueries {
+        select: planned,
+        columns: planner.columns,
+    })
+}
+
+struct PlanOnlySubqueries<'a> {
+    outer: &'a FromScope,
+    catalog: &'a Catalog,
+    current_db: &'a str,
+    ctx: &'a crate::StmtContext,
+    trace: &'a mut PlanTrace,
+    columns: Vec<crate::driver::from::PlanColumn>,
+}
+
+impl PlanOnlySubqueries<'_> {
+    fn is_correlated(&self, query: &tidb_ast::QueryStmt) -> bool {
+        let mut columns = Vec::new();
+        collect_correlated_columns_query(
+            query,
+            self.outer,
+            self.catalog,
+            self.current_db,
+            &mut columns,
+            self.ctx,
+        );
+        !columns.is_empty()
+    }
+
+    fn plan_query(
+        &mut self,
+        query: &tidb_ast::QueryStmt,
+    ) -> Result<Vec<(String, FieldType)>, DriverError> {
+        let (columns, _) = match query {
+            QueryStmt::Select(select) => run_select_traced(
+                select,
+                self.catalog,
+                self.current_db,
+                self.ctx,
+                Some(self.trace),
+                &tidb_planner::physical_property::PhysicalProperty::default(),
+                false,
+            )?,
+            QueryStmt::SetOpr(set_opr) => run_set_opr_traced(
+                set_opr,
+                self.catalog,
+                self.current_db,
+                self.ctx,
+                Some(self.trace),
+            )?,
+        };
+        if let QueryStmt::Select(select) = query {
+            self.trace
+                .reserve_plan_column_ids(scalar_subquery_physical_column_count(
+                    select,
+                    self.catalog,
+                    self.current_db,
+                ));
+        }
+        Ok(columns)
+    }
+
+    fn register_scalar(
+        &mut self,
+        output: Vec<(String, FieldType)>,
+        max_one_row: bool,
+        values: Option<Vec<Datum>>,
+    ) -> Result<tidb_ast::Expr, DriverError> {
+        if output.is_empty() {
+            return Err(DriverError::unsupported(
+                "a scalar subquery must expose at least one column",
+            ));
+        }
+        let ids = self.trace.scalar_subquery(output.len(), max_one_row);
+        let mut expressions = Vec::with_capacity(output.len());
+        for (index, (id, (_, field_type))) in ids.into_iter().zip(output).enumerate() {
+            let name = format!("ScalarQueryCol#{id}");
+            self.columns.push(crate::driver::from::PlanColumn {
+                name: name.clone(),
+                field_type,
+                unique_id: -id,
+                value: values.as_ref().and_then(|row| row.get(index)).cloned(),
+            });
+            expressions.push(tidb_ast::Expr::Column(vec![
+                crate::driver::from::SCALAR_QUERY_SCOPE.to_owned(),
+                name,
+            ]));
+        }
+        Ok(if expressions.len() == 1 {
+            expressions.pop().expect("one scalar expression")
+        } else {
+            tidb_ast::Expr::Row(expressions)
+        })
+    }
+
+    fn plan_expr(&mut self, expr: &tidb_ast::Expr) -> Result<tidb_ast::Expr, DriverError> {
+        use tidb_ast::Expr;
+        match expr {
+            Expr::Subquery(query) if !self.is_correlated(query) => {
+                let output = self.plan_query(query)?;
+                let values = match run_subquery(query, self.catalog, self.current_db, self.ctx)?
+                    .as_slice()
+                {
+                    [] => vec![Datum::Null; output.len()],
+                    [row] => row.clone(),
+                    _ => return Err(DriverError::SubqueryReturnsMoreThanOneRow),
+                };
+                self.register_scalar(output, true, Some(values))
+            }
+            Expr::Exists { subquery, not } if !self.is_correlated(subquery) => {
+                let mut output = self.plan_query(subquery)?;
+                output.truncate(1);
+                let scalar = self.register_scalar(output, false, None)?;
+                Ok(if *not {
+                    Expr::Unary(tidb_ast::UnaryOp::NotKeyword, Box::new(scalar))
+                } else {
+                    scalar
+                })
+            }
+            // Go lowers IN/ANY/ALL into joins or Apply nodes in the enclosing
+            // logical plan. They must remain visible to that path rather than
+            // becoming independent ScalarSubQuery roots.
+            Expr::InSubquery {
+                expr,
+                subquery,
+                not,
+            } => Ok(Expr::InSubquery {
+                expr: Box::new(self.plan_expr(expr)?),
+                subquery: subquery.clone(),
+                not: *not,
+            }),
+            Expr::CompareSubquery {
+                op,
+                left,
+                all,
+                subquery,
+            } => Ok(Expr::CompareSubquery {
+                op: *op,
+                left: Box::new(self.plan_expr(left)?),
+                all: *all,
+                subquery: subquery.clone(),
+            }),
+            Expr::Subquery(_) | Expr::Exists { .. } => Ok(expr.clone()),
+            Expr::Case {
+                value,
+                when_clauses,
+                else_clause,
+            } => Ok(Expr::Case {
+                value: value
+                    .as_deref()
+                    .map(|value| self.plan_expr(value).map(Box::new))
+                    .transpose()?,
+                when_clauses: when_clauses
+                    .iter()
+                    .map(|(condition, result)| {
+                        Ok((self.plan_expr(condition)?, self.plan_expr(result)?))
+                    })
+                    .collect::<Result<_, DriverError>>()?,
+                else_clause: else_clause
+                    .as_deref()
+                    .map(|value| self.plan_expr(value).map(Box::new))
+                    .transpose()?,
+            }),
+            Expr::Func {
+                name,
+                args,
+                origin_position,
+            } => Ok(Expr::Func {
+                name: name.clone(),
+                args: args
+                    .iter()
+                    .map(|arg| self.plan_expr(arg))
+                    .collect::<Result<_, _>>()?,
+                origin_position: *origin_position,
+            }),
+            Expr::Aggregate {
+                name,
+                distinct,
+                args,
+            } => Ok(Expr::Aggregate {
+                name: name.clone(),
+                distinct: *distinct,
+                args: args
+                    .iter()
+                    .map(|arg| self.plan_expr(arg))
+                    .collect::<Result<_, _>>()?,
+            }),
+            Expr::Paren(inner) => Ok(Expr::Paren(Box::new(self.plan_expr(inner)?))),
+            Expr::Unary(op, inner) => Ok(Expr::Unary(*op, Box::new(self.plan_expr(inner)?))),
+            Expr::Binary(op, lhs, rhs) => Ok(Expr::Binary(
+                *op,
+                Box::new(self.plan_expr(lhs)?),
+                Box::new(self.plan_expr(rhs)?),
+            )),
+            Expr::Is { expr, target, not } => Ok(Expr::Is {
+                expr: Box::new(self.plan_expr(expr)?),
+                target: *target,
+                not: *not,
+            }),
+            Expr::In { expr, list, not } => Ok(Expr::In {
+                expr: Box::new(self.plan_expr(expr)?),
+                list: list
+                    .iter()
+                    .map(|item| self.plan_expr(item))
+                    .collect::<Result<_, _>>()?,
+                not: *not,
+            }),
+            other => Ok(other.clone()),
+        }
+    }
 }
 
 /// Replaces every uncorrelated subquery in `expr` with the value it produces.

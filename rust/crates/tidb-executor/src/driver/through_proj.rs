@@ -127,11 +127,13 @@ use tidb_ast::{
     BinaryOp, Expr, GroupByItem, Join, JoinNode, JoinType, OrderItem, QueryStmt, SelectField,
     SelectStmt,
 };
+use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_planner::join_reorder_projection_inline::{
     can_inline_projection_basic, ProjectionInlineExpr, ProjectionInlineShape,
 };
 
 use crate::driver::catalog::{Catalog, TableEntry};
+use crate::driver::{FromScope, FromTable};
 
 /// One dissolved derived table: the alias it answered to, and what each of its
 /// output columns is now spelled as. Go's `colExprMap`, keyed by name.
@@ -372,6 +374,200 @@ pub(crate) fn inline(
     Some(InlinedSelect {
         select,
         computed_output_restored,
+    })
+}
+
+/// Builds the lower aggregation input produced by Go
+/// `AggregationPushDownSolver`'s `Aggregation -> Projection` arm.
+///
+/// Go substitutes only aggregate arguments, aggregate order items, and group
+/// items through the child Projection. Its visible Projection and ORDER BY
+/// stay above the Aggregation. This driver has no retained logical plan, so
+/// source expressions in the select fields are substituted as an execution
+/// adapter, while the caller retains the original statement for the visible
+/// Projection and trace. In particular, ORDER BY is deliberately left in the
+/// output namespace.
+pub(crate) struct AggregationInputPushdown {
+    pub(crate) select: SelectStmt,
+    /// The derived relation's output namespace before optimizer substitution.
+    /// ONLY_FULL_GROUP_BY and DISTINCT need only these bindings; physical
+    /// expression types continue to come from the flattened source scope.
+    pub(crate) semantic_scope: FromScope,
+}
+
+pub(crate) fn push_aggregation_inputs_through_projection(
+    select: &SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Option<AggregationInputPushdown> {
+    let has_aggregate = !select.group_by.is_empty()
+        || select.fields.fields().iter().any(|field| match field {
+            SelectField::Expr { expr, .. } => expr.has_aggregate_flag(),
+            SelectField::Wildcard(_) => false,
+        })
+        || select.having.as_ref().is_some_and(Expr::has_aggregate_flag)
+        || select
+            .order_by
+            .iter()
+            .any(|item| item.expr.has_aggregate_flag());
+    if !has_aggregate || !select.windows.is_empty() {
+        return None;
+    }
+
+    let from = select.from.as_ref()?;
+    if from.right.is_some()
+        || from.on.is_some()
+        || from.natural
+        || !from.using.is_empty()
+        || from.straight
+    {
+        return None;
+    }
+    let JoinNode::Derived {
+        subquery,
+        alias,
+        lateral: false,
+        column_names,
+    } = &from.left
+    else {
+        return None;
+    };
+    if !column_names.is_empty() {
+        return None;
+    }
+    let alias = alias.as_deref().filter(|alias| !alias.is_empty())?;
+    let QueryStmt::Select(child) = &**subquery else {
+        return None;
+    };
+    if child.distinct
+        || child.all
+        || child.with.is_some()
+        || !child.hints.is_empty()
+        || child.sql_small_result
+        || child.sql_big_result
+        || child.sql_buffer_result
+        || child.sql_no_cache
+        || child.straight_join
+        || child.calc_found_rows
+        || child.having.is_some()
+        || child.limit.is_some()
+        || child.lock.is_some()
+        || child.into_outfile.is_some()
+        || child.rollup
+        || !child.group_by.is_empty()
+        || !child.order_by.is_empty()
+        || !child.windows.is_empty()
+        || !child.values.is_empty()
+    {
+        return None;
+    }
+
+    let mut fields = Vec::new();
+    for (index, field) in child.fields.fields().iter().enumerate() {
+        let SelectField::Expr {
+            expr,
+            alias: field_alias,
+        } = field
+        else {
+            return None;
+        };
+        if expr.has_aggregate_flag() {
+            return None;
+        }
+        let shape = shape_of(expr);
+        if !shape.is_inlineable()
+            || shape.has_mutable_effects()
+            || shape.is_non_deterministic()
+            || shape.is_correlated()
+        {
+            return None;
+        }
+        let name = field_alias.clone().unwrap_or_else(|| {
+            crate::driver::default_field_display_name(&child.fields, index, expr)
+        });
+        if fields
+            .iter()
+            .any(|(other, _): &(String, Expr)| other.eq_ignore_ascii_case(&name))
+        {
+            return None;
+        }
+        fields.push((name, expr.clone()));
+    }
+
+    let mut hidden = Splice::default();
+    if let Some(child_from) = &child.from {
+        collect_visible(&child_from.left, catalog, current_db, &mut hidden)?;
+        if let Some(right) = &child_from.right {
+            collect_visible(right, catalog, current_db, &mut hidden)?;
+        }
+    }
+    let semantic_scope = FromScope {
+        tables: vec![FromTable {
+            name: alias.to_owned(),
+            database: None,
+            columns: fields
+                .iter()
+                .map(|(name, _)| (name.clone(), FieldType::new(FieldTypeCode::LongLong)))
+                .collect(),
+            offset: 0,
+            func_deps: Default::default(),
+        }],
+        ..FromScope::for_statement(ctx)
+    };
+    let splice = Splice {
+        dissolved: vec![Dissolved {
+            alias: alias.to_owned(),
+            fields,
+            hidden_qualifiers: hidden.visible,
+        }],
+        ..Splice::default()
+    };
+
+    let mut rewritten = select.clone();
+    rewritten.from = child.from.clone();
+    let mut output = Vec::with_capacity(select.fields.fields().len());
+    for (index, field) in select.fields.fields().iter().enumerate() {
+        let SelectField::Expr { expr, alias } = field else {
+            return None;
+        };
+        output.push(SelectField::Expr {
+            expr: substitute(expr, &splice)?,
+            alias: Some(alias.clone().unwrap_or_else(|| {
+                crate::driver::default_field_display_name(&select.fields, index, expr)
+            })),
+        });
+    }
+    rewritten.fields = output.into();
+
+    let mut predicates = Vec::new();
+    if let Some(predicate) = &select.where_clause {
+        predicates.push(substitute(predicate, &splice)?);
+    }
+    if let Some(predicate) = &child.where_clause {
+        predicates.push(predicate.clone());
+    }
+    rewritten.where_clause = predicates
+        .into_iter()
+        .reduce(|left, right| Expr::Binary(BinaryOp::LogicAnd, Box::new(left), Box::new(right)));
+    rewritten.having = match &select.having {
+        Some(having) => Some(substitute(having, &splice)?),
+        None => None,
+    };
+    rewritten.group_by = select
+        .group_by
+        .iter()
+        .map(|item| {
+            Some(GroupByItem {
+                expr: substitute(&item.expr, &splice)?,
+                desc: item.desc,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    rewritten.order_by = select.order_by.clone();
+    Some(AggregationInputPushdown {
+        select: rewritten,
+        semantic_scope,
     })
 }
 
@@ -1221,6 +1417,10 @@ fn shape_of(expr: &Expr) -> ProjectionInlineExpr {
             &name.to_ascii_lowercase(),
             args.iter().map(shape_of).collect(),
         ),
+        // Go's expression rewriter lowers the parser's dedicated EXTRACT
+        // syntax to an ordinary scalar function before either optimizer rule
+        // inspects it.
+        Expr::Extract { value, .. } => function("extract", vec![shape_of(value)]),
         Expr::Cast(cast) => function("cast", vec![shape_of(&cast.expr)]),
         // Anything not named above -- a subquery, a user or system variable, a
         // `VALUES()`, a parameter marker, a window call -- is Go's default arm.

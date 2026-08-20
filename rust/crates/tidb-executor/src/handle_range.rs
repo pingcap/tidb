@@ -281,7 +281,10 @@ pub(crate) fn record_key_ranges(
     ranges: &[IndexRange],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Option<Vec<(Key, Key)>>, tidb_codec::CodecError> {
-    if common_handle_primary(table).is_some() {
+    // DDL does not materialize the clustered PRIMARY as a secondary index.
+    // The table path still carries the common-handle column offsets, and Go's
+    // `CommonHandleRangesToKVRanges` uses those record keys directly.
+    if !table.common_handle_offsets().is_empty() {
         return common_handle_record_key_ranges(table, ranges, zone).map(Some);
     }
     let ids = table.record_physical_ids();
@@ -316,13 +319,15 @@ fn common_handle_record_key_ranges(
     let mut key_ranges = Vec::with_capacity(ranges.len() * ids.len());
     for id in ids {
         for range in ranges {
-            let low = tidb_codec::encode_key_in_timezone(zone, &range.low)?;
+            let low = tidb_codec::Encoder::new(table.use_new_collation())
+                .encode_key_in_timezone(zone, &range.low)?;
             let low = if range.low_exclusive {
                 Key::from_bytes(low).prefix_next().into_bytes()
             } else {
                 low
             };
-            let high = tidb_codec::encode_key_in_timezone(zone, &range.high)?;
+            let high = tidb_codec::Encoder::new(table.use_new_collation())
+                .encode_key_in_timezone(zone, &range.high)?;
             let high = if range.high_exclusive {
                 high
             } else {

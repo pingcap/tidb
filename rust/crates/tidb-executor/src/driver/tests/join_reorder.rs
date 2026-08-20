@@ -62,6 +62,14 @@ fn plan(sql: &str, catalog: &Catalog, threshold: i32) -> Vec<String> {
 /// no longer distinguishes a refusal from two solvers reaching the same tree.
 fn fired(sql: &str, catalog: &Catalog, threshold: i32) -> Option<Vec<usize>> {
     let ctx = crate::StmtContext::for_query().with_join_reorder_threshold(threshold);
+    fired_with_context(sql, catalog, &ctx)
+}
+
+fn fired_with_context(
+    sql: &str,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Option<Vec<usize>> {
     let stmt = tidb_parser::parse(sql).unwrap();
     let Stmt::Query(query) = &stmt else {
         panic!("not a query");
@@ -75,7 +83,7 @@ fn fired(sql: &str, catalog: &Catalog, threshold: i32) -> Option<Vec<usize>> {
         select.where_clause.as_ref(),
         catalog,
         "test",
-        &ctx,
+        ctx,
     )
     .map(|plan| plan.written_order)
 }
@@ -129,6 +137,116 @@ fn the_dp_builds_the_tree_tidb_records() {
             "    └─TableFullScan_9",
         ],
         "the reordered plan is not TiDB's",
+    );
+}
+
+/// Go disables TopN-assisted string-match estimation when
+/// `tidb_default_string_match_selectivity` is non-zero. TPC-H q9 sets it to
+/// `0.1`; using the analyzed `LIKE` estimate instead changes the DP's first
+/// filtered leaf and selects a different six-way tree.
+#[test]
+fn dp_uses_the_session_string_match_default_for_tpch_q9_shape() {
+    let mut catalog = Catalog::default();
+    for ddl in [
+        "CREATE TABLE part (p_partkey INT PRIMARY KEY, p_name VARCHAR(55) CHARSET utf8mb4 COLLATE utf8mb4_bin)",
+        "CREATE TABLE supplier (s_suppkey INT PRIMARY KEY, s_nationkey INT)",
+        "CREATE TABLE lineitem (l_orderkey INT, l_partkey INT, l_suppkey INT)",
+        "CREATE TABLE partsupp (ps_partkey INT, ps_suppkey INT)",
+        "CREATE TABLE orders (o_orderkey INT PRIMARY KEY)",
+        "CREATE TABLE nation (n_nationkey INT PRIMARY KEY)",
+    ] {
+        crate::run_create_table_on(ddl, &mut catalog).unwrap();
+    }
+    let ctx = crate::StmtContext::for_query();
+    for insert in [
+        "INSERT INTO part VALUES (1, 'dim one'), (2, 'other')",
+        "INSERT INTO supplier VALUES (1, 1)",
+        "INSERT INTO lineitem VALUES (1, 1, 1)",
+        "INSERT INTO partsupp VALUES (1, 1)",
+        "INSERT INTO orders VALUES (1)",
+        "INSERT INTO nation VALUES (1)",
+    ] {
+        run_insert_on(insert, &mut catalog, &ctx).unwrap();
+    }
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "part",
+        200_000,
+        &[("p_partkey", 200_000), ("p_name", 2)],
+        &ctx,
+    );
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "supplier",
+        10_000,
+        &[("s_suppkey", 10_000), ("s_nationkey", 25)],
+        &ctx,
+    );
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "lineitem",
+        6_001_215,
+        &[
+            ("l_orderkey", 1_487_616),
+            ("l_partkey", 200_000),
+            ("l_suppkey", 10_000),
+        ],
+        &ctx,
+    );
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "partsupp",
+        800_000,
+        &[("ps_partkey", 200_000), ("ps_suppkey", 10_000)],
+        &ctx,
+    );
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "orders",
+        1_500_000,
+        &[("o_orderkey", 1_487_616)],
+        &ctx,
+    );
+    scale_analyzed_tpcc_table(&mut catalog, "nation", 25, &[("n_nationkey", 25)], &ctx);
+    catalog.clear_dirty_content();
+
+    let sql = "SELECT * FROM part, supplier, lineitem, partsupp, orders, nation \
+        WHERE s_suppkey = l_suppkey AND ps_suppkey = l_suppkey \
+          AND ps_partkey = l_partkey AND p_partkey = l_partkey \
+          AND o_orderkey = l_orderkey AND s_nationkey = n_nationkey \
+          AND p_name LIKE '%dim%'";
+    let go_session = crate::StmtContext::for_query()
+        .with_join_reorder_threshold(60)
+        .with_default_string_match_selectivity(0.1);
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let tidb_ast::QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &go_session,
+        crate::explain::ExplainFormat::Brief,
+    )
+    .unwrap();
+    let selection = rows
+        .iter()
+        .find(|row| {
+            row.first()
+                .is_some_and(|value| datum_text_for_test(value).contains("Selection"))
+                && row
+                    .get(4)
+                    .is_some_and(|value| datum_text_for_test(value).contains("part.p_name"))
+        })
+        .unwrap_or_else(|| panic!("q9-shaped plan lost the part LIKE Selection: {rows:#?}"));
+    assert_eq!(
+        datum_text_for_test(&selection[1]),
+        "20000.00",
+        "a non-zero Go string-match default must disable TopN estimation",
     );
 }
 
@@ -307,6 +425,332 @@ fn the_seed_is_the_cheapest_node_not_the_first_written() {
         t1, t5 \
         WHERE t1.a = dt.key_a AND dt.key_a = t5.a";
     assert_eq!(fired(sql, &catalog, 0), Some(vec![1, 0, 2]));
+}
+
+/// Go's default advanced greedy framework compares the two cheapest leaves as
+/// possible starts. The smallest `region` leaf can only join the large
+/// `customer` leaf first, while the second-smallest `orders` leaf forms the
+/// cheaper `orders-customer` subtree. `chooseBestGreedyStart(2)` therefore
+/// chooses the second start even though the old greedy solver chose `region`.
+#[test]
+fn the_advanced_greedy_compares_the_two_cheapest_starts() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE region (r_key INT PRIMARY KEY)", &mut catalog)
+        .unwrap();
+    crate::run_create_table_on("CREATE TABLE orders (o_cust INT PRIMARY KEY)", &mut catalog)
+        .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE customer (c_key INT PRIMARY KEY, c_region INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on("INSERT INTO region VALUES (1),(2)", &mut catalog, &ctx).unwrap();
+    run_insert_on("INSERT INTO orders VALUES (1),(2)", &mut catalog, &ctx).unwrap();
+    run_insert_on(
+        "INSERT INTO customer VALUES (1,1),(2,1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    scale_analyzed_tpcc_table(&mut catalog, "region", 1, &[("r_key", 1)], &ctx);
+    scale_analyzed_tpcc_table(&mut catalog, "orders", 100, &[("o_cust", 100)], &ctx);
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "customer",
+        1_000,
+        &[("c_key", 1_000), ("c_region", 1)],
+        &ctx,
+    );
+    catalog.clear_dirty_content();
+
+    let sql = "SELECT * FROM region, orders, customer \
+        WHERE r_key = c_region AND o_cust = c_key";
+    assert_eq!(
+        fired(sql, &catalog, 0),
+        Some(vec![2, 0, 1]),
+        "the default advanced solver must choose orders, customer, region",
+    );
+    let legacy = crate::StmtContext::for_query()
+        .with_join_reorder_threshold(0)
+        .with_advanced_join_reorder(false);
+    assert_eq!(
+        fired_with_context(sql, &catalog, &legacy),
+        Some(vec![0, 2, 1]),
+        "disabling the advanced framework must retain the legacy single start",
+    );
+}
+
+/// Go's advanced greedy first exhausts equality-connected joins before it
+/// admits an edge that has only `OtherConditions`. This is the TPC-H q7
+/// topology: the cross-nation DNF touches `n1` and `n2`, but it must not make
+/// those two cheap leaves directly joinable while the equality chain remains.
+#[test]
+fn the_advanced_greedy_defers_non_equality_edges_until_the_second_round() {
+    let mut catalog = Catalog::default();
+    for ddl in [
+        "CREATE TABLE supplier (s_suppkey INT PRIMARY KEY, s_nationkey INT)",
+        "CREATE TABLE lineitem (l_suppkey INT, l_orderkey INT, l_shipdate DATE)",
+        "CREATE TABLE orders (o_orderkey INT PRIMARY KEY, o_custkey INT)",
+        "CREATE TABLE customer (c_custkey INT PRIMARY KEY, c_nationkey INT, c_mktsegment VARCHAR(10))",
+        "CREATE TABLE nation (n_nationkey INT PRIMARY KEY, n_name VARCHAR(25))",
+    ] {
+        crate::run_create_table_on(ddl, &mut catalog).unwrap();
+    }
+    let ctx = crate::StmtContext::for_query();
+    for insert in [
+        "INSERT INTO supplier VALUES (1,1),(2,2)",
+        "INSERT INTO lineitem VALUES (1,1,'1992-01-01'),(2,2,'1993-01-01'),\
+         (1,1,'1994-01-01'),(2,2,'1994-06-01'),(1,1,'1995-01-01'),\
+         (2,2,'1995-06-01'),(1,1,'1995-12-01'),(2,2,'1996-06-01'),\
+         (1,1,'1996-12-01'),(2,2,'1997-01-01'),(1,1,'1998-01-01'),\
+         (2,2,'1998-12-01')",
+        "INSERT INTO orders VALUES (1,1),(2,2)",
+        "INSERT INTO customer VALUES (1,1,'AUTOMOBILE'),(2,2,'BUILDING')",
+        "INSERT INTO nation VALUES (1,'JAPAN'),(2,'INDIA')",
+    ] {
+        run_insert_on(insert, &mut catalog, &ctx).unwrap();
+    }
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "supplier",
+        10_000,
+        &[("s_suppkey", 10_000), ("s_nationkey", 25)],
+        &ctx,
+    );
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "lineitem",
+        6_001_215,
+        &[
+            ("l_suppkey", 10_000),
+            ("l_orderkey", 1_487_616),
+            ("l_shipdate", 2_526),
+        ],
+        &ctx,
+    );
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "orders",
+        1_500_000,
+        &[("o_orderkey", 1_487_616), ("o_custkey", 99_248)],
+        &ctx,
+    );
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "customer",
+        150_000,
+        &[
+            ("c_custkey", 149_568),
+            ("c_nationkey", 25),
+            ("c_mktsegment", 5),
+        ],
+        &ctx,
+    );
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "nation",
+        25,
+        &[("n_nationkey", 25), ("n_name", 25)],
+        &ctx,
+    );
+    catalog.clear_dirty_content();
+
+    // q3 precedes q7 in the pinned TPC-H manifest and fully loads
+    // customer.c_mktsegment. Its sampled histogram describes 149,998 rows,
+    // while the table's realtime count and c_custkey histogram describe
+    // 150,000. Go keeps that load in the domain stats cache, including for a
+    // later statement planned through another connection.
+    let customer_id = match catalog.get_in("test", "customer").unwrap() {
+        TableEntry::Kv(table) => table.table_id,
+        _ => panic!("customer is not a KV table"),
+    };
+    let mut customer_stats = catalog
+        .table_statistics(customer_id)
+        .map(|stats| (**stats).clone())
+        .unwrap();
+    let c_mktsegment_id = match catalog.get_in("test", "customer").unwrap() {
+        TableEntry::Kv(table) => table
+            .visible_columns()
+            .iter()
+            .find(|column| column.name == "c_mktsegment")
+            .map(|column| column.id)
+            .unwrap(),
+        _ => unreachable!(),
+    };
+    customer_stats
+        .columns
+        .get_mut(&c_mktsegment_id)
+        .unwrap()
+        .histogram
+        .buckets
+        .last_mut()
+        .unwrap()
+        .count = 149_998;
+    catalog.set_table_statistics(customer_id, std::sync::Arc::new(customer_stats));
+    let q3_style = "SELECT * FROM customer, orders \
+        WHERE c_mktsegment = 'AUTOMOBILE' AND c_custkey = o_custkey";
+    assert!(fired(q3_style, &catalog, 0).is_some());
+    let (loaded_columns, loaded_indexes) = catalog
+        .table_statistics(customer_id)
+        .unwrap()
+        .loaded_statistics();
+    assert_eq!(loaded_columns, [c_mktsegment_id].into_iter().collect());
+    assert!(loaded_indexes.is_empty(), "{loaded_indexes:?}");
+    let q3_statement = tidb_parser::parse(q3_style).unwrap();
+    let Stmt::Query(q3_query) = &q3_statement else {
+        panic!("not a query");
+    };
+    let tidb_ast::QueryStmt::Select(q3_select) = &**q3_query else {
+        panic!("not a SELECT");
+    };
+    crate::explain::explain_select_stmt(
+        q3_select,
+        &catalog,
+        "test",
+        &ctx,
+        crate::explain::ExplainFormat::Brief,
+    )
+    .unwrap();
+    let c_custkey_id = match catalog.get_in("test", "customer").unwrap() {
+        TableEntry::Kv(table) => table
+            .visible_columns()
+            .iter()
+            .find(|column| column.name == "c_custkey")
+            .map(|column| column.id)
+            .unwrap(),
+        _ => unreachable!(),
+    };
+    let (loaded_columns, _) = catalog
+        .table_statistics(customer_id)
+        .unwrap()
+        .loaded_statistics();
+    assert_eq!(
+        loaded_columns,
+        [c_mktsegment_id].into_iter().collect(),
+        "physical access must not change the statement's resident snapshot"
+    );
+    let (pending_columns, _) = catalog
+        .table_statistics(customer_id)
+        .unwrap()
+        .pending_statistics();
+    assert_eq!(pending_columns, [c_custkey_id].into_iter().collect());
+    catalog.advance_statistics_loads();
+    let (loaded_columns, _) = catalog
+        .table_statistics(customer_id)
+        .unwrap()
+        .loaded_statistics();
+    assert_eq!(
+        loaded_columns,
+        [c_custkey_id, c_mktsegment_id].into_iter().collect(),
+        "the next statement must observe the physical handle request"
+    );
+    let (pending_columns, pending_indexes) = catalog
+        .table_statistics(customer_id)
+        .unwrap()
+        .pending_statistics();
+    assert!(pending_columns.is_empty(), "{pending_columns:?}");
+    assert!(pending_indexes.is_empty(), "{pending_indexes:?}");
+    catalog.advance_statistics_loads();
+    let (loaded_columns_after_second_advance, _) = catalog
+        .table_statistics(customer_id)
+        .unwrap()
+        .loaded_statistics();
+    assert_eq!(loaded_columns_after_second_advance, loaded_columns);
+    let catalog = catalog.clone();
+
+    let sql = "SELECT * FROM supplier, lineitem, orders, customer, nation n1, nation n2 \
+        WHERE s_suppkey = l_suppkey \
+          AND o_orderkey = l_orderkey \
+          AND c_custkey = o_custkey \
+          AND s_nationkey = n1.n_nationkey \
+          AND c_nationkey = n2.n_nationkey \
+          AND ((n1.n_name = 'JAPAN' AND n2.n_name = 'INDIA') \
+            OR (n1.n_name = 'INDIA' AND n2.n_name = 'JAPAN')) \
+          AND l_shipdate BETWEEN '1995-01-01' AND '1996-12-31'";
+    assert_eq!(
+        fired(sql, &catalog, 0),
+        Some(vec![1, 2, 3, 4, 0, 5]),
+        "the non-equality DNF joined the two nation leaves before the equality graph was exhausted",
+    );
+    let statement = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let tidb_ast::QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &ctx,
+        crate::explain::ExplainFormat::Brief,
+    )
+    .unwrap();
+    let info = rows
+        .iter()
+        .map(|row| datum_text_for_test(&row[4]))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(info.contains("test.nation.n_name"), "{rows:#?}");
+    assert!(!info.contains("test.n1."), "{rows:#?}");
+    assert!(!info.contains("test.n2."), "{rows:#?}");
+
+    let grouped_sql = format!(
+        "SELECT supp_nation, cust_nation, l_year, SUM(volume) AS revenue \
+         FROM (SELECT n1.n_name AS supp_nation, n2.n_name AS cust_nation, \
+                      EXTRACT(YEAR FROM l_shipdate) AS l_year, 1 AS volume {}) shipping \
+         GROUP BY supp_nation, cust_nation, l_year \
+         ORDER BY supp_nation, cust_nation, l_year",
+        sql.strip_prefix("SELECT * ")
+            .expect("q7 test SELECT prefix")
+    );
+    let statement = tidb_parser::parse(&grouped_sql).unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let tidb_ast::QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let grouped_select = (**select).clone();
+    let grouped_catalog = catalog.clone();
+    let (_, rows) = std::thread::Builder::new()
+        .name("q7-grouped-plan".to_owned())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            crate::explain::explain_select_stmt(
+                &grouped_select,
+                &grouped_catalog,
+                "test",
+                &crate::StmtContext::for_query(),
+                crate::explain::ExplainFormat::Brief,
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+    let info = rows
+        .iter()
+        .map(|row| datum_text_for_test(&row[4]))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(info.contains("test.nation.n_name"), "{rows:#?}");
+    assert!(!info.contains("test.n1."), "{rows:#?}");
+    assert!(!info.contains("test.n2."), "{rows:#?}");
+    let final_join = rows
+        .iter()
+        .find(|row| {
+            datum_text_for_test(&row[0]).contains("HashJoin")
+                && datum_text_for_test(&row[4]).contains("customer.c_nationkey")
+        })
+        .expect("q7 final nation join");
+    assert_eq!(
+        datum_text_for_test(&final_join[1]),
+        "38877.73",
+        "the first same-version resident column supplies the Go analyzed count: {rows:#?}"
+    );
 }
 
 /// THE SOLVER-CHOICE TABLE, as a plan-level assertion.

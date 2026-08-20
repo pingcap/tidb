@@ -58,12 +58,24 @@
 
 use std::fmt;
 
+use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_distsql::WarningCollector;
+use tidb_expr::expression::Expression;
 use tidb_txnkv::Key;
 
 use crate::predicate_pushdown::ScanPredicate;
 use crate::storage::StorageError;
+
+/// Ordinary scans keep a bounded decoded read-ahead window ahead of their
+/// consumer. Eight batches let cop decode overlap a hash-join consumer while
+/// keeping the channel strictly bounded.
+pub const DEFAULT_SCAN_READ_AHEAD_BATCHES: usize = 8;
+
+/// Go's default five index-join inner workers materialize their tasks while
+/// the current task is consumed. Sixteen 8K batches cover one default 25K
+/// outer task's typical fanout while retaining a fixed memory ceiling.
+pub const INDEX_JOIN_READ_AHEAD_BATCHES: usize = 16;
 
 /// One column a remote scan must return, in the order the caller wants it.
 #[derive(Clone, Debug, PartialEq)]
@@ -103,21 +115,36 @@ pub enum PushdownAggregateKind {
     Max,
 }
 
-/// A pushed aggregate function and the scan column it reads.
-#[derive(Clone, Debug, PartialEq)]
+/// A pushed aggregate function and the scan-row expression it reads.
+#[derive(Clone, Debug)]
 pub struct PushdownAggregateFunction {
     /// The aggregate function implemented by TiKV.
     pub kind: PushdownAggregateKind,
-    /// Offset in [`PushdownScanRequest::columns`], or `None` for `COUNT(1)`.
-    pub input_offset: Option<usize>,
+    /// Expression evaluated for each qualifying scan row, or `None` for
+    /// `COUNT(1)`/`COUNT(*)`.
+    pub input: Option<Expression>,
+    /// The partial result column returned by TiKV.
+    pub output_type: FieldType,
+}
+
+/// One function in a global partial aggregation. Unlike the older bounded
+/// column-offset variants, Go permits any TiKV-pushable scalar expression as
+/// an aggregate argument.
+#[derive(Clone, Debug)]
+pub struct PushdownGlobalAggregateFunction {
+    /// The aggregate function implemented by TiKV.
+    pub kind: PushdownAggregateKind,
+    /// The expression evaluated for each qualifying scan row. `None` is
+    /// `COUNT(1)`/`COUNT(*)`.
+    pub input: Option<Expression>,
     /// The partial result column returned by TiKV.
     pub output_type: FieldType,
 }
 
 /// One aggregation the base scan may execute inside TiKV before rows cross
-/// the network. This deliberately covers only the partial stages required by
-/// the pinned TPCC/Sysbench plan gate.
-#[derive(Clone, Debug, PartialEq)]
+/// the network. This deliberately covers only partial stages with a typed
+/// planner representation and a corresponding TiKV DAG lowering.
+#[derive(Clone, Debug)]
 pub enum PushdownPartialAggregate {
     /// A partial `COUNT(column)`; the root stage sums the per-region counts.
     Count {
@@ -166,6 +193,12 @@ pub enum PushdownPartialAggregate {
         /// `true` for StreamAgg over ordered input, `false` for HashAgg.
         streamed: bool,
     },
+    /// A global partial HashAgg. TiKV returns exactly one row containing the
+    /// function states, including for empty input.
+    Global {
+        /// Aggregate functions in physical output order.
+        functions: Vec<PushdownGlobalAggregateFunction>,
+    },
 }
 
 impl PushdownPartialAggregate {
@@ -184,7 +217,19 @@ impl PushdownPartialAggregate {
             } => group_offsets
                 .first()
                 .copied()
-                .or_else(|| functions.iter().find_map(|function| function.input_offset))
+                .or_else(|| {
+                    functions
+                        .iter()
+                        .flat_map(|function| {
+                            function.input.iter().flat_map(expression_column_offsets)
+                        })
+                        .next()
+                })
+                .unwrap_or(0),
+            Self::Global { functions } => functions
+                .iter()
+                .flat_map(|function| function.input.iter().flat_map(expression_column_offsets))
+                .next()
                 .unwrap_or(0),
         }
     }
@@ -211,6 +256,10 @@ impl PushdownPartialAggregate {
                 .map(|function| function.output_type.clone())
                 .chain(group_types.iter().cloned())
                 .collect(),
+            Self::Global { functions } => functions
+                .iter()
+                .map(|function| function.output_type.clone())
+                .collect(),
         }
     }
 
@@ -230,17 +279,51 @@ impl PushdownPartialAggregate {
                 group_offsets,
                 functions,
                 ..
-            } => group_offsets
-                .iter()
-                .copied()
-                .chain(
-                    functions
-                        .iter()
-                        .filter_map(|function| function.input_offset),
-                )
-                .collect(),
+            } => {
+                let mut offsets = group_offsets
+                    .iter()
+                    .copied()
+                    .chain(functions.iter().flat_map(|function| {
+                        function.input.iter().flat_map(expression_column_offsets)
+                    }))
+                    .collect::<Vec<_>>();
+                offsets.sort_unstable();
+                offsets.dedup();
+                offsets
+            }
+            Self::Global { functions } => {
+                let mut offsets = functions
+                    .iter()
+                    .flat_map(|function| function.input.iter().flat_map(expression_column_offsets))
+                    .collect::<Vec<_>>();
+                offsets.sort_unstable();
+                offsets.dedup();
+                offsets
+            }
         }
     }
+}
+
+fn expression_column_offsets(expression: &Expression) -> Vec<usize> {
+    fn collect(expression: &Expression, offsets: &mut Vec<usize>) {
+        match expression {
+            Expression::Column(column) => {
+                if let Ok(offset) = usize::try_from(column.index) {
+                    offsets.push(offset);
+                }
+            }
+            Expression::ScalarFunction(function) => {
+                for argument in &function.args {
+                    collect(argument, offsets);
+                }
+            }
+            Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
+        }
+    }
+
+    let mut offsets = Vec::new();
+    collect(expression, &mut offsets);
+    offsets
 }
 
 /// Index-scan identity for a partial aggregation request. `None` on
@@ -313,6 +396,16 @@ pub struct PushdownScanRequest {
     /// backend walks them last-to-first, each reversed, and the caller's
     /// staged-write merge runs in the same descending key order.
     pub desc: bool,
+    /// Whether the coprocessor must preserve record-key order.
+    ///
+    /// Go's `PhysicalTableScan.KeepOrder` is false for ordinary full scans
+    /// such as TPC-H hash-join inputs. Cluster storage raises this for a
+    /// staged overlay (whose merge is order-sensitive) and streamed partial
+    /// aggregation.
+    pub keep_order: bool,
+    /// Decoded response batches the backend may retain ahead of this scan's
+    /// consumer. The backend clamps this to its supported bounded maximum.
+    pub read_ahead_batches: usize,
     /// The timestamp the remote scan must read at: the statement's own
     /// snapshot, filled in by the storage that owns it.
     pub snapshot_ts: u64,
@@ -383,9 +476,29 @@ pub trait PushdownRowStream: Send {
     /// at the end of the answer.
     fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError>;
 
+    /// Whether this stream can transfer decoded columnar batches without
+    /// first materializing every row as `Vec<Datum>`.
+    fn supports_chunks(&self) -> bool {
+        false
+    }
+
+    /// The next decoded columnar batch. Callers use this only after
+    /// [`Self::supports_chunks`] returns true; row-only backends keep the
+    /// existing [`Self::next_row`] contract.
+    fn next_chunk(&mut self) -> Result<Option<Chunk>, StorageError> {
+        Ok(None)
+    }
+
     /// How many rows have crossed the network so far. This is the wire
     /// receipt: with a lowered predicate it is smaller than the table holds.
     fn rows_returned(&self) -> u64;
+
+    /// Whether the backend lowered every predicate in the request. A caller
+    /// may skip duplicate client-side evaluation only for a clean stream;
+    /// staged rows still require the normal local test.
+    fn predicates_applied(&self) -> bool {
+        false
+    }
 
     /// Releases the request, which an abandoned stream (an early-stopping
     /// `LIMIT`) must still do.
@@ -453,18 +566,26 @@ impl std::error::Error for PushdownScannerError {}
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
+    use tidb_ast::CiString;
     use tidb_datatype::FieldTypeCode;
+    use tidb_expr::column::Column;
+    use tidb_expr::expression::ScalarFunction;
+    use tidb_expr::schema::Schema;
     use tidb_txnkv::Key;
 
     use super::*;
+    use crate::access_path::{IndexJoinLookupExec, LookupObject, LookupProbePart};
     use crate::cluster_storage::{
         ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
     };
     use crate::driver::{run_select_on, Catalog};
+    use crate::executor::{Executor, ExecutorMeta};
+    use crate::join::{IndexLookupPlan, IndexLookupSource, JoinExec, JoinKind};
     use crate::kv_table::{KvColumn, KvIndex, KvTable, TableHandle};
+    use crate::mem_table::MemTableSourceExec;
     use crate::predicate_pushdown::{ScanComparisonOp, ScanPredicate};
     use crate::storage::{capture_storage_ops, MemTableStorage, TableStorage};
 
@@ -530,9 +651,16 @@ mod tests {
         /// order. A region acts on these bits; a fake that ignored them would
         /// let the literal `0` back in unnoticed.
         requested_flags: Arc<Mutex<Vec<u64>>>,
+        /// Every decoded-batch read-ahead bound this backend was told, in
+        /// request order.
+        requested_read_aheads: Arc<Mutex<Vec<usize>>>,
+        /// Whether each remote scan was required to preserve key order.
+        requested_keep_orders: Arc<Mutex<Vec<bool>>>,
         /// A warning the region reports on each request, standing in for
         /// TiKV's `SelectResponse.warnings`.
         region_warning: Mutex<Option<(i32, String)>>,
+        opened: Arc<AtomicUsize>,
+        minimum_opens_before_read: Arc<AtomicUsize>,
     }
 
     impl PushdownScanner for FakeCoprocessor {
@@ -549,6 +677,14 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(request.statement.push_down_flags);
+            self.requested_read_aheads
+                .lock()
+                .unwrap()
+                .push(request.read_ahead_batches);
+            self.requested_keep_orders
+                .lock()
+                .unwrap()
+                .push(request.keep_order);
             if let Some((code, message)) = self.region_warning.lock().unwrap().clone() {
                 // Exactly what `tidb_distsql`'s `response_channel` does with
                 // `SelectResponse.warnings`, into whatever collector it was
@@ -646,9 +782,13 @@ mod tests {
             }
             self.returned
                 .fetch_add(rows.len() as u64, Ordering::Relaxed);
+            self.opened.fetch_add(1, Ordering::SeqCst);
             Ok(Box::new(FakeStream {
                 rows: rows.into_iter(),
                 returned: 0,
+                opened: Arc::clone(&self.opened),
+                minimum_opens_before_read: Arc::clone(&self.minimum_opens_before_read),
+                first_read: true,
             }))
         }
     }
@@ -661,7 +801,7 @@ mod tests {
         match predicate {
             // A builtin call is outside this fake's integer domain, so it gives
             // the "did not filter" answer a backend is always allowed to give.
-            ScanPredicate::Builtin(_) => Some(true),
+            ScanPredicate::Builtin(_) | ScanPredicate::ScalarIn { .. } => Some(true),
             ScanPredicate::Compare(comparison) => {
                 let (Some(value), Datum::Int(literal)) = (
                     row.get(comparison.column_offset as usize),
@@ -688,6 +828,26 @@ mod tests {
                     ScanComparisonOp::Ge => left >= right,
                 })
             }
+            ScanPredicate::ColumnCompare(comparison) => {
+                let (Some(left), Some(right)) = (
+                    row.get(comparison.left_offset as usize),
+                    row.get(comparison.right_offset as usize),
+                ) else {
+                    return Some(true);
+                };
+                if *left == Datum::Null || *right == Datum::Null {
+                    return None;
+                }
+                let ordering = tidb_expr::compare_datums(left, right).ok()?;
+                Some(match comparison.op {
+                    ScanComparisonOp::Eq => ordering.is_eq(),
+                    ScanComparisonOp::Ne => !ordering.is_eq(),
+                    ScanComparisonOp::Lt => ordering.is_lt(),
+                    ScanComparisonOp::Le => ordering.is_le(),
+                    ScanComparisonOp::Gt => ordering.is_gt(),
+                    ScanComparisonOp::Ge => ordering.is_ge(),
+                })
+            }
             ScanPredicate::IsNull {
                 column_offset,
                 negated,
@@ -710,6 +870,18 @@ mod tests {
                 }
                 let found = literals.iter().any(|literal| literal == value);
                 Some(found != *negated)
+            }
+            // MySQL's `AND`: FALSE dominates UNKNOWN, which dominates TRUE.
+            ScanPredicate::And(branches) => {
+                let mut unknown = false;
+                for branch in branches {
+                    match admits(branch, row) {
+                        Some(false) => return Some(false),
+                        Some(true) => {}
+                        None => unknown = true,
+                    }
+                }
+                (!unknown).then_some(true)
             }
             // MySQL's `OR`: TRUE dominates UNKNOWN, which dominates FALSE.
             ScanPredicate::Or(branches) => {
@@ -750,10 +922,23 @@ mod tests {
     struct FakeStream {
         rows: std::vec::IntoIter<Vec<Datum>>,
         returned: u64,
+        opened: Arc<AtomicUsize>,
+        minimum_opens_before_read: Arc<AtomicUsize>,
+        first_read: bool,
     }
 
     impl PushdownRowStream for FakeStream {
         fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
+            if self.first_read {
+                self.first_read = false;
+                let opened = self.opened.load(Ordering::SeqCst);
+                let required = self.minimum_opens_before_read.load(Ordering::SeqCst);
+                if opened < required {
+                    return Err(StorageError::Backend(format!(
+                        "read began after {opened} inner task opens; required {required}"
+                    )));
+                }
+            }
             let row = self.rows.next();
             if row.is_some() {
                 self.returned += 1;
@@ -845,7 +1030,11 @@ mod tests {
             lower_predicates: std::sync::atomic::AtomicBool::new(true),
             refuse_on_read: std::sync::atomic::AtomicBool::new(false),
             requested_flags: Arc::default(),
+            requested_read_aheads: Arc::default(),
+            requested_keep_orders: Arc::default(),
             region_warning: Mutex::new(None),
+            opened: Arc::default(),
+            minimum_opens_before_read: Arc::default(),
         });
         let storage = ClusterTableStorage::new(buffer.clone(), handle)
             .with_remote_scanner(Arc::clone(&scanner) as Arc<dyn PushdownScanner>);
@@ -895,10 +1084,233 @@ mod tests {
         assert_eq!(ops.gets, 0);
     }
 
+    #[test]
+    fn an_index_join_sends_a_complete_common_handle_task_in_one_coprocessor_scan() {
+        let mut fixture = common_handle_fixture();
+        for row in [[1, 10], [1, 20], [2, 30], [3, 40]] {
+            fixture
+                .table
+                .insert_row(
+                    &[Datum::Int(row[0]), Datum::Int(row[1])],
+                    &tidb_expr::NoColumns,
+                )
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture.table.clear_dirty_content();
+
+        let field_types = vec![
+            FieldType::new(FieldTypeCode::LongLong),
+            FieldType::new(FieldTypeCode::LongLong),
+        ];
+        let schema = Schema::new(
+            field_types
+                .iter()
+                .enumerate()
+                .map(|(offset, field_type)| {
+                    let mut column = Column::new(offset as i64 + 1, field_type.clone());
+                    column.index = offset as i64;
+                    column
+                })
+                .collect(),
+        );
+        let ctx = crate::StmtContext::for_query();
+        let mut source = IndexJoinLookupExec::new_with_context(
+            ExecutorMeta::new(schema, 0, 32, 1024),
+            fixture.table,
+            LookupObject::CommonHandle,
+            crate::RowDecodeContext::for_query(&ctx),
+        );
+        source.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
+        // Go `buildKvRangesForIndexJoin` hands every lookup content in one
+        // inner task to one table reader. This exceeds the former 4,096-range
+        // Rust split, which opened multiple independent scan sessions and
+        // made TPC-H q21 associate an incomplete inner set with the task.
+        source.set_probes((1..=4097).map(|probe| vec![Datum::Int(probe)]).collect());
+
+        let (rows, ops) = capture_storage_ops(|| {
+            source.open().unwrap();
+            let mut rows = Vec::new();
+            let mut chunk = source.new_chunk();
+            loop {
+                source.next(&mut chunk).unwrap();
+                if chunk.num_rows() == 0 {
+                    break;
+                }
+                for row in 0..chunk.num_rows() {
+                    rows.push(
+                        field_types
+                            .iter()
+                            .enumerate()
+                            .map(|(column, field_type)| {
+                                chunk.get_row(row).get_datum(column, field_type)
+                            })
+                            .collect::<Vec<_>>(),
+                    );
+                }
+            }
+            source.close().unwrap();
+            rows
+        });
+        assert_eq!(
+            rows,
+            vec![
+                vec![Datum::Int(1), Datum::Int(10)],
+                vec![Datum::Int(1), Datum::Int(20)],
+                vec![Datum::Int(2), Datum::Int(30)],
+                vec![Datum::Int(3), Datum::Int(40)],
+            ]
+        );
+        assert_eq!(ops.cop_scans, 1);
+        assert_eq!(
+            ops.scans, 1,
+            "the fake coprocessor scans its combined in-memory range set once"
+        );
+    }
+
+    /// Go's IndexHashJoin opens later inner tasks before it consumes the first
+    /// one. The fake stream refuses its first read until two requests exist,
+    /// making the overlap a deterministic protocol assertion rather than a
+    /// timing benchmark.
+    #[test]
+    fn an_index_join_prefetches_later_inner_tasks_before_reading_the_first() {
+        let mut fixture = common_handle_fixture();
+        for row in [[1, 10], [2, 20]] {
+            fixture
+                .table
+                .insert_row(
+                    &[Datum::Int(row[0]), Datum::Int(row[1])],
+                    &tidb_expr::NoColumns,
+                )
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture.table.clear_dirty_content();
+        fixture
+            .scanner
+            .minimum_opens_before_read
+            .store(2, Ordering::SeqCst);
+
+        let field = FieldType::new(FieldTypeCode::LongLong);
+        let schema = |width: usize| {
+            Schema::new(
+                (0..width)
+                    .map(|offset| {
+                        let mut column = Column::new(offset as i64 + 1, field.clone());
+                        column.index = offset as i64;
+                        column
+                    })
+                    .collect(),
+            )
+        };
+        let outer_rows = (0..1025)
+            .map(|row| vec![Datum::Int(row % 2 + 1)])
+            .collect::<Vec<_>>();
+        let outer: Box<dyn Executor> = Box::new(MemTableSourceExec::new(
+            ExecutorMeta::new(schema(1), 0, 32, 1024),
+            outer_rows,
+        ));
+        let unused_inner: Box<dyn Executor> = Box::new(MemTableSourceExec::new(
+            ExecutorMeta::new(schema(2), 0, 32, 1024),
+            Vec::new(),
+        ));
+        let mut left = Column::new(1, field.clone());
+        left.index = 0;
+        let mut right = Column::new(2, field.clone());
+        right.index = 1;
+        let equality = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("eq"),
+            field.clone(),
+            vec![Expression::Column(left), Expression::Column(right)],
+        ));
+        let ctx = crate::StmtContext::for_query();
+        let mut lookup = IndexJoinLookupExec::new_with_context(
+            ExecutorMeta::new(schema(2), 0, 32, 1024),
+            fixture.table,
+            LookupObject::CommonHandle,
+            crate::RowDecodeContext::for_query(&ctx),
+        );
+        lookup.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
+        let mut join = JoinExec::new(
+            ExecutorMeta::new(schema(1), 0, 32, 1024),
+            JoinKind::Semi,
+            vec![equality],
+            outer,
+            unused_inner,
+            ctx.clone(),
+            ctx.statement_memory(),
+        );
+        join.set_index_lookup_plan(IndexLookupPlan {
+            lookup_is_left: false,
+            probe_keys: vec![0],
+            source: IndexLookupSource::Leaf(lookup),
+            aggregation: None,
+            aggregation_stream_ordered: false,
+            outer_not_null: Vec::new(),
+            inner_not_null: Vec::new(),
+        });
+
+        join.open().unwrap();
+        let mut rows = 0;
+        let mut chunk = join.new_chunk();
+        loop {
+            join.next(&mut chunk).unwrap();
+            if chunk.num_rows() == 0 {
+                break;
+            }
+            rows += chunk.num_rows();
+        }
+        join.close().unwrap();
+        assert_eq!(rows, 1025);
+        assert_eq!(fixture.scanner.opened.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            *fixture.scanner.requested_read_aheads.lock().unwrap(),
+            vec![INDEX_JOIN_READ_AHEAD_BATCHES; 2]
+        );
+    }
+
     fn catalog_of(table: KvTable) -> Catalog {
         let mut catalog = Catalog::default();
         catalog.register_kv("t", table);
         catalog
+    }
+
+    /// Go carries `PhysicalTableScan.KeepOrder` through
+    /// `TableReaderExecutor.keepOrder` into every DistSQL request. A merge
+    /// join depends on both child streams having that exact property; merely
+    /// printing `keep order:true` while issuing unordered requests can drop
+    /// matches when region responses arrive out of key order.
+    #[test]
+    fn a_merge_join_sends_keep_order_to_both_remote_table_scans() {
+        let mut fixture = clustered_fixture();
+        for row in [[1, 10], [2, 20], [3, 30]] {
+            fixture
+                .table
+                .insert_row(
+                    &[Datum::Int(row[0]), Datum::Int(row[1])],
+                    &tidb_expr::NoColumns,
+                )
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture.table.clear_dirty_content();
+        let scanner = Arc::clone(&fixture.scanner);
+        let catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+
+        let rows = run_select_on(
+            "SELECT /*+ TIDB_SMJ(t1, t2) */ t1.a FROM t t1 JOIN t t2 ON t1.a=t2.a",
+            &catalog,
+            &ctx,
+        )
+        .unwrap();
+
+        assert_eq!(rows.len(), 3);
+        assert_eq!(
+            *scanner.requested_keep_orders.lock().unwrap(),
+            vec![true, true],
+            "both MergeJoin children must ask DistSQL to preserve record-key order",
+        );
     }
 
     /// `DAGRequest.flags` reaches the region from the STATEMENT, through the

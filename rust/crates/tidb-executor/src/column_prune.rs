@@ -419,11 +419,92 @@ pub(crate) fn pruned_scope(scope: &FromScope, keep: &[usize]) -> FromScope {
             offset: 0,
             func_deps: remap_func_deps(&table.func_deps, keep, true),
         }],
+        plan_columns: scope.plan_columns.clone(),
+        constant_context: scope.constant_context.clone(),
         zone: scope.zone.clone(),
+        tidb_info_len: scope.tidb_info_len,
+        like_default_escape: scope.like_default_escape,
         no_unsigned_subtraction: scope.no_unsigned_subtraction,
         div_precision_increment: scope.div_precision_increment,
-        ..FromScope::default()
+        coalesced: Vec::new(),
+        star: Vec::new(),
+        qualified_star_is_output_only: false,
     }
+}
+
+/// Projects an already-built joined scope onto `keep`, preserving the exact
+/// output order, table ownership, and every surviving table's functional
+/// dependencies. Unlike [`pruned_scope`], offsets address the concatenated
+/// row. A table's columns must remain one contiguous output run because
+/// [`FromScope`] represents each table with one offset and width.
+pub(crate) fn projected_scope(scope: &FromScope, keep: &[usize]) -> Option<FromScope> {
+    let mut table_order = Vec::new();
+    let mut previous = None;
+    for offset in keep {
+        let table = scope.tables.iter().position(|table| {
+            *offset >= table.offset && *offset < table.offset + table.columns.len()
+        })?;
+        if previous != Some(table) {
+            if table_order.contains(&table) {
+                return None;
+            }
+            table_order.push(table);
+            previous = Some(table);
+        }
+    }
+    if keep
+        .iter()
+        .enumerate()
+        .any(|(index, offset)| keep[..index].contains(offset))
+    {
+        return None;
+    }
+
+    let mut next_offset = 0;
+    let tables = table_order
+        .iter()
+        .map(|table_index| {
+            let table = &scope.tables[*table_index];
+            let local = keep
+                .iter()
+                .filter_map(|offset| {
+                    (*offset >= table.offset && *offset < table.offset + table.columns.len())
+                        .then(|| *offset - table.offset)
+                })
+                .collect::<Vec<_>>();
+            let projected = FromTable {
+                name: table.name.clone(),
+                database: table.database.clone(),
+                columns: local
+                    .iter()
+                    .map(|offset| table.columns[*offset].clone())
+                    .collect(),
+                offset: next_offset,
+                func_deps: remap_func_deps(&table.func_deps, &local, true),
+            };
+            next_offset += projected.columns.len();
+            projected
+        })
+        .collect::<Vec<_>>();
+    let remap_offsets = |offsets: &[usize]| {
+        offsets
+            .iter()
+            .filter_map(|offset| keep.iter().position(|kept| kept == offset))
+            .collect()
+    };
+    Some(FromScope {
+        tables,
+        plan_columns: scope.plan_columns.clone(),
+        constant_context: scope.constant_context.clone(),
+        zone: scope.zone.clone(),
+        tidb_info_len: scope.tidb_info_len,
+        like_default_escape: scope.like_default_escape,
+        no_unsigned_subtraction: scope.no_unsigned_subtraction,
+        div_precision_increment: scope.div_precision_increment,
+        coalesced: remap_offsets(&scope.coalesced),
+        star: remap_offsets(&scope.star),
+        qualified_star_is_output_only: scope.qualified_star_is_output_only,
+    })
 }
 
 /// Adds every scope column `expr` reads to `wanted`, or returns `None` when

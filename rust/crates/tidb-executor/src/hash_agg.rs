@@ -50,8 +50,7 @@
 //! `APPROX_PERCENTILE` ranks the group's values -- see each [`AggKind`]
 //! variant for the exact Go rule and its captured edges.
 //!
-//! DEFERRED (documented): the parallel partial/final worker pipeline and Go's
-//! `Round(retTp.GetDecimal())` display step on the AVG result.
+//! DEFERRED (documented): the parallel partial/final worker pipeline.
 //!
 //! `APPROX_COUNT_DISTINCT` ports Go's `BJKST` sketch
 //! (`func_count_distinct.go`'s `partialResult4ApproxCountDistinct`, see
@@ -72,16 +71,20 @@ use crate::agg_spill::AggSpillDiskAction;
 mod spill;
 use crate::approx_count_distinct::ApproxCountDistinctSketch;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::hash_join::FastBytesMap;
 use crate::mem_quota::StatementMemory;
 use spill::new_group_bytes;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
 use tidb_codec::{encode_bytes, encode_compact_bytes};
-use tidb_datatype::{BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, FieldType, TimeType};
+use tidb_datatype::{
+    BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, FieldType, TimeType, MAX_DECIMAL_SCALE,
+    UNSPECIFIED_LENGTH,
+};
 use tidb_expr::compare_datums;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
@@ -276,6 +279,14 @@ enum Partial {
         sum: Decimal,
         count: i64,
     },
+    /// Fixed-scale AVG accumulator. The common DECIMAL(15,2) path keeps only
+    /// the signed coefficient until finalization, avoiding one Decimal value
+    /// allocation per input row.
+    AvgDecimalFast {
+        sum: i128,
+        scale: u32,
+        count: i64,
+    },
     /// `AVG` over real inputs: Go's `partialResult4AvgFloat64`.
     AvgReal {
         sum: f64,
@@ -398,6 +409,38 @@ impl AggState {
             .update(value, extra, sort_key, self.collation)?;
         Ok(delta)
     }
+
+    /// Folds a fixed-scale decimal AVG input without materializing a Decimal.
+    /// Returns `false` when the existing state or scale cannot use the fast
+    /// representation; the caller then falls back to the complete path.
+    fn update_avg_decimal_fast(&mut self, coefficient: i128, scale: u32, count: i64) -> bool {
+        if self.seen.is_some() || count < 0 {
+            return false;
+        }
+        match &mut self.partial {
+            Partial::AvgDecimal { count: current, .. } if *current == 0 => {
+                self.partial = Partial::AvgDecimalFast {
+                    sum: coefficient,
+                    scale,
+                    count,
+                };
+                true
+            }
+            Partial::AvgDecimalFast {
+                sum,
+                scale: current_scale,
+                count: current,
+            } if *current_scale == scale => {
+                let Some(total) = sum.checked_add(coefficient) else {
+                    return false;
+                };
+                *sum = total;
+                *current = current.wrapping_add(count);
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 /// The bytes one `GROUP_CONCAT` input contributes, which Go produces by
@@ -415,15 +458,23 @@ fn expr_collation(expr: &Expression) -> tidb_datatype::Collation {
 /// that is what makes `GROUP BY ci_col` over `a, A, b, B` produce two groups
 /// (and `utf8mb4_bin`'s PAD SPACE key group `'a'` with `'a  '`). Every
 /// non-string datum keeps its ordinary hash code.
-pub(crate) fn group_key_part(collation: &tidb_datatype::Collation, datum: &Datum) -> Vec<u8> {
+pub(crate) fn append_group_key_part(
+    collation: &tidb_datatype::Collation,
+    datum: &Datum,
+    output: &mut Vec<u8>,
+) {
     match datum.as_raw_bytes() {
         Some(bytes) => {
-            let mut encoded = Vec::new();
-            encode_compact_bytes(&mut encoded, &collation.key(bytes));
-            encoded
+            encode_compact_bytes(output, &collation.key(bytes));
         }
-        None => tidb_codec::hash_code(datum),
+        None => tidb_codec::Encoder::new(true).hash_code(output, datum),
     }
+}
+
+pub(crate) fn group_key_part(collation: &tidb_datatype::Collation, datum: &Datum) -> Vec<u8> {
+    let mut output = Vec::new();
+    append_group_key_part(collation, datum, &mut output);
+    output
 }
 
 /// Go `SessionVars.GroupConcatMaxLen` as this statement sees it.
@@ -637,6 +688,18 @@ impl Partial {
         }
     }
 
+    fn materialize_avg_fast(&mut self) {
+        let replacement = match self {
+            Partial::AvgDecimalFast { sum, scale, count } => {
+                Some((Decimal::from_scaled_i128(*sum, *scale), *count))
+            }
+            _ => None,
+        };
+        if let Some((sum, count)) = replacement {
+            *self = Partial::AvgDecimal { sum, count };
+        }
+    }
+
     fn update(
         &mut self,
         value: Option<Datum>,
@@ -644,6 +707,123 @@ impl Partial {
         sort_key: Vec<Datum>,
         collation: tidb_datatype::Collation,
     ) -> Result<(), ExecError> {
+        if matches!(
+            self,
+            Partial::AvgDecimal { .. } | Partial::AvgDecimalFast { .. } | Partial::AvgReal { .. }
+        ) && !extra.is_empty()
+        {
+            if extra.len() != 1 {
+                return Err(ExecError::unsupported(
+                    "final AVG requires one partial sum column",
+                ));
+            }
+            let sum = &extra[0];
+            if matches!(sum, Datum::Null) {
+                return Ok(());
+            }
+            let count = match value {
+                None => {
+                    return Err(ExecError::unsupported(
+                        "final AVG requires a partial count column",
+                    ));
+                }
+                Some(Datum::Null) => return Ok(()),
+                Some(Datum::Int(count)) if count >= 0 => count,
+                Some(Datum::UInt(count)) => i64::try_from(count)
+                    .map_err(|_| ExecError::unsupported("partial AVG count exceeds i64"))?,
+                Some(_) => {
+                    return Err(ExecError::unsupported(
+                        "final AVG requires integer partial counts",
+                    ));
+                }
+            };
+            match self {
+                Partial::AvgDecimal {
+                    sum: destination,
+                    count: destination_count,
+                } => {
+                    let addend = match sum {
+                        Datum::Int(value) => Some(Decimal::from_int(*value)),
+                        Datum::UInt(value) => Some(Decimal::from_uint(*value)),
+                        Datum::Decimal(value) => Some(value.clone()),
+                        _ => None,
+                    };
+                    if let Some(addend) = addend {
+                        *destination = destination.add(&addend);
+                        *destination_count = destination_count.wrapping_add(count);
+                    } else {
+                        let accumulated =
+                            real_aggregate_value(&Datum::Decimal(destination.clone()), "AVG")?;
+                        *self = Partial::AvgReal {
+                            sum: accumulated + real_aggregate_value(sum, "AVG")?,
+                            count: destination_count.wrapping_add(count),
+                        };
+                    }
+                }
+                Partial::AvgReal {
+                    sum: destination,
+                    count: destination_count,
+                } => {
+                    *destination += real_aggregate_value(sum, "AVG")?;
+                    *destination_count = destination_count.wrapping_add(count);
+                }
+                Partial::AvgDecimalFast {
+                    sum: destination,
+                    scale: destination_scale,
+                    count: destination_count,
+                } => {
+                    let addend = match sum {
+                        Datum::Decimal(value) => value.coefficient_i128(),
+                        Datum::Int(value) => Some((i128::from(*value), 0)),
+                        Datum::UInt(value) => i128::try_from(*value).ok().map(|v| (v, 0)),
+                        _ => None,
+                    };
+                    if let Some((coefficient, scale)) = addend {
+                        if scale == *destination_scale {
+                            if let Some(total) = destination.checked_add(coefficient) {
+                                *destination = total;
+                                *destination_count = destination_count.wrapping_add(count);
+                                return Ok(());
+                            }
+                        }
+                    }
+                    let current = Decimal::from_scaled_i128(*destination, *destination_scale);
+                    *self = Partial::AvgDecimal {
+                        sum: current,
+                        count: *destination_count,
+                    };
+                    if let Partial::AvgDecimal {
+                        sum: destination,
+                        count: destination_count,
+                    } = self
+                    {
+                        let addend = match sum {
+                            Datum::Int(value) => Decimal::from_int(*value),
+                            Datum::UInt(value) => Decimal::from_uint(*value),
+                            Datum::Decimal(value) => value.clone(),
+                            _ => {
+                                let accumulated = real_aggregate_value(
+                                    &Datum::Decimal(destination.clone()),
+                                    "AVG",
+                                )?;
+                                *self = Partial::AvgReal {
+                                    sum: accumulated + real_aggregate_value(sum, "AVG")?,
+                                    count: destination_count.wrapping_add(count),
+                                };
+                                return Ok(());
+                            }
+                        };
+                        *destination = destination.add(&addend);
+                        *destination_count = destination_count.wrapping_add(count);
+                    }
+                }
+                _ => unreachable!("final AVG was checked above"),
+            }
+            return Ok(());
+        }
+        // A caller that cannot keep using the fixed-scale fast path falls
+        // back to the ordinary Decimal state before entering this match.
+        self.materialize_avg_fast();
         match (self, value) {
             // Go appends the converted value for EVERY row, so a NULL input
             // lands in the array as JSON `null` rather than being skipped.
@@ -779,10 +959,18 @@ impl Partial {
                     }
                 }
             },
-            (Partial::AvgDecimal { .. } | Partial::AvgReal { .. }, None) => {
-                return Err(ExecError::unsupported("AVG requires an argument"))
-            }
-            (Partial::AvgDecimal { .. } | Partial::AvgReal { .. }, Some(Datum::Null)) => {}
+            (
+                Partial::AvgDecimal { .. }
+                | Partial::AvgDecimalFast { .. }
+                | Partial::AvgReal { .. },
+                None,
+            ) => return Err(ExecError::unsupported("AVG requires an argument")),
+            (
+                Partial::AvgDecimal { .. }
+                | Partial::AvgDecimalFast { .. }
+                | Partial::AvgReal { .. },
+                Some(Datum::Null),
+            ) => {}
             (this @ Partial::AvgDecimal { count: 0, .. }, Some(input))
                 if !matches!(input, Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_)) =>
             {
@@ -806,6 +994,10 @@ impl Partial {
                 };
                 *sum = sum.add(&addend);
                 *count += 1;
+            }
+            (this @ Partial::AvgDecimalFast { .. }, Some(input)) => {
+                let _ = (this, input, extra, sort_key, collation);
+                unreachable!("fast AVG is materialized before the update match");
             }
             // Go's bit functions cast the argument to `UNSIGNED BIGINT` and
             // skip NULL, so an all-NULL group keeps the identity.
@@ -991,6 +1183,19 @@ impl Partial {
                     None => Datum::Null,
                 }
             }
+            Partial::AvgDecimalFast { sum, scale, count } => {
+                if *count == 0 {
+                    Datum::Null
+                } else {
+                    let sum = Decimal::from_scaled_i128(*sum, *scale);
+                    let divisor = Decimal::from_int(*count);
+                    let target_scale = sum.scale() + div_precision_increment;
+                    match sum.true_div(&divisor, target_scale) {
+                        Some(quotient) => Datum::Decimal(quotient),
+                        None => Datum::Null,
+                    }
+                }
+            }
             Partial::AvgReal { sum, count } => Datum::Real(sum / *count as f64),
             // Go `typeInfer4BitFuncs` marks the column `UnsignedFlag`, and
             // `func_bitfuncs.go`'s `AppendFinalResult2Chunk` does
@@ -1081,12 +1286,33 @@ pub(crate) fn aggregate_rows(
     rows: impl IntoIterator<Item = (Option<Datum>, Vec<Datum>)>,
     div_precision_increment: u32,
     collation: tidb_datatype::Collation,
+    output_type: &FieldType,
 ) -> Result<Datum, ExecError> {
     let mut partial = Partial::new(kind);
     for (value, extra) in rows {
         partial.update(value, &extra, Vec::new(), collation)?;
     }
-    partial.finish(&[], div_precision_increment)
+    let value = partial.finish(&[], div_precision_increment)?;
+    Ok(round_avg_result(kind, output_type, value))
+}
+
+/// Go `baseAvgDecimal.AppendFinalResult2Chunk` rounds `DecimalDiv`'s hidden
+/// base-1e9 fraction words to the inferred AVG return scale before appending
+/// the value. Keeping that step here makes HashAgg, StreamAgg, and window AVG
+/// share the same result contract.
+fn round_avg_result(kind: &AggKind, output_type: &FieldType, value: Datum) -> Datum {
+    let Datum::Decimal(value) = value else {
+        return value;
+    };
+    if !matches!(kind, AggKind::Avg) {
+        return Datum::Decimal(value);
+    }
+    let scale = if output_type.decimal() == UNSPECIFIED_LENGTH {
+        MAX_DECIMAL_SCALE
+    } else {
+        output_type.decimal()
+    };
+    Datum::Decimal(value.round_to_scale(scale as i32))
 }
 
 /// Finishes one aggregate state, including GROUP_CONCAT's statement warning
@@ -1095,12 +1321,14 @@ pub(crate) fn aggregate_rows(
 fn finish_agg_value<C: Columns>(
     state: &mut AggState,
     func: &AggFunc,
+    output_type: &FieldType,
     ctx: &C,
     truncated: &mut bool,
 ) -> Result<Datum, ExecError> {
     let mut value = state
         .partial
         .finish(&func.order_by, ctx.div_precision_increment())?;
+    value = round_avg_result(&func.kind, output_type, value);
     if let Datum::Bytes(joined) = &mut value {
         if matches!(func.kind, AggKind::GroupConcat { .. }) {
             let max_len = group_concat_max_len(ctx);
@@ -1227,6 +1455,7 @@ impl<C: Columns> Executor for StreamAggExec<C> {
                 let value = finish_agg_value(
                     &mut self.states[index],
                     &self.agg_funcs[index],
+                    &self.meta.ret_field_types()[index],
                     &self.ctx,
                     &mut self.truncated[index],
                 )?;
@@ -1339,13 +1568,15 @@ impl<C: Columns> GroupedStreamAggExec<C> {
 
     fn emit_current(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         for index in 0..self.states.len() {
+            let output_position = self.output_positions[index];
             let value = finish_agg_value(
                 &mut self.states[index],
                 &self.agg_funcs[index],
+                &self.meta.ret_field_types()[output_position],
                 &self.ctx,
                 &mut self.truncated[index],
             )?;
-            req.append_datum(self.output_positions[index], &value);
+            req.append_datum(output_position, &value);
         }
         Ok(())
     }
@@ -1464,9 +1695,17 @@ pub struct HashAggExec<C: Columns> {
 
     // --- Go's `unparallelExec` state machine ---
     /// Group key -> index into `ordered`. Go's `groupSet` + `partialResultMap`.
-    groups: HashMap<Vec<u8>, usize>,
-    /// The open groups' states, in first-seen order (Go's `groupKeys`).
-    ordered: Vec<Vec<AggState>>,
+    groups: FastBytesMap<usize>,
+    /// Scratch storage for the current row's encoded group key. The key is
+    /// moved into `groups` only when a new group is opened; repeated rows
+    /// reuse this allocation instead of allocating one `Vec` per row.
+    group_key_buffer: Vec<u8>,
+    group_collations: Vec<tidb_datatype::Collation>,
+    /// The open groups' states, in first-seen order (Go's `groupKeys`). Group
+    /// `g` occupies `g * agg_funcs.len()..(g + 1) * agg_funcs.len()` so the
+    /// hot path does not allocate one inner `Vec` per group.
+    ordered: Vec<AggState>,
+    group_count: usize,
     /// Go `cursor4GroupKey`: how many of `ordered` this round has emitted.
     cursor: usize,
     /// Go `prepared`: the current round's groups are complete and emitting.
@@ -1525,6 +1764,7 @@ impl<C: Columns> HashAggExec<C> {
         let tracker = memory.operator_tracker(meta.id());
         let disk_tracker = memory.operator_disk_tracker(meta.id());
         let truncated = vec![false; agg_funcs.len()];
+        let group_collations = group_by.iter().map(expr_collation).collect();
         HashAggExec {
             meta,
             group_by,
@@ -1533,8 +1773,11 @@ impl<C: Columns> HashAggExec<C> {
             ctx,
             child_chunk,
             child_returned_empty: true,
-            groups: HashMap::new(),
+            groups: FastBytesMap::default(),
+            group_key_buffer: Vec::new(),
+            group_collations,
             ordered: Vec::new(),
+            group_count: 0,
             cursor: 0,
             prepared: false,
             executed: false,
@@ -1559,23 +1802,31 @@ impl<C: Columns> HashAggExec<C> {
         let mut sel: Vec<usize> = Vec::new();
         for r in 0..rows {
             let row = chunk.get_row(r);
-            let mut key = Vec::new();
-            for expr in &self.group_by {
+            self.group_key_buffer.clear();
+            for (expr, collation) in self.group_by.iter().zip(&self.group_collations) {
                 let datum = expr.eval(&self.ctx, row)?;
-                key.extend_from_slice(&group_key_part(&expr_collation(expr), &datum));
-                key.push(0xff); // separator, as key parts are length-coded
+                append_group_key_part(collation, &datum, &mut self.group_key_buffer);
+                self.group_key_buffer.push(0xff); // separator, as key parts are length-coded
             }
-            let idx = match self.groups.get(&key) {
+            let idx = match self.groups.get(&self.group_key_buffer) {
                 Some(&idx) => idx,
                 None => {
                     // Go: a round in spill mode opens no new group -- but it
                     // must open the FIRST one, or a round could make no
                     // progress at all and the aggregation would not terminate.
-                    if self.in_spill_mode.load(SeqCst) && !self.ordered.is_empty() {
+                    if self.in_spill_mode.load(SeqCst) && self.group_count != 0 {
                         sel.push(r);
                         continue;
                     }
-                    let idx = self.ordered.len();
+                    let idx = self.group_count;
+                    let capacity = self.group_key_buffer.capacity();
+                    let key =
+                        std::mem::replace(&mut self.group_key_buffer, Vec::with_capacity(capacity));
+                    let key_len = key.len();
+                    self.groups.insert(key, idx);
+                    self.ordered
+                        .extend(self.agg_funcs.iter().map(AggState::new));
+                    self.group_count += 1;
                     // Consumed HERE, not at the end of the chunk: Go consumes
                     // inside `getPartialResults`, per group, so the spill
                     // action fires PART WAY THROUGH a chunk and the rest of
@@ -1584,10 +1835,7 @@ impl<C: Columns> HashAggExec<C> {
                     // call jump clean over the quota between the soft limit
                     // that spills and the hard limit that cancels.
                     self.tracker
-                        .consume(new_group_bytes(key.len(), self.agg_funcs.len()));
-                    self.groups.insert(key, idx);
-                    self.ordered
-                        .push(self.agg_funcs.iter().map(AggState::new).collect());
+                        .consume(new_group_bytes(key_len, self.agg_funcs.len()));
                     idx
                 }
             };
@@ -1604,8 +1852,80 @@ impl<C: Columns> HashAggExec<C> {
         row: tidb_chunk::row::Row<'_>,
     ) -> Result<i64, ExecError> {
         let mut delta = 0;
+        let group_offset = idx * self.agg_funcs.len();
         for c in 0..self.agg_funcs.len() {
             let f = &self.agg_funcs[c];
+            // A fixed-scale DECIMAL AVG can accumulate the raw MyDecimal
+            // coefficient directly. The normal expression path remains the
+            // fallback for computed, mixed-scale, or non-decimal arguments.
+            if matches!(f.kind, AggKind::Avg) {
+                let column = f.arg.as_ref().and_then(Expression::as_column);
+                let decimal_column = column.filter(|column| {
+                    column
+                        .get_static_type()
+                        .is_some_and(|ty| ty.code() == tidb_datatype::FieldTypeCode::NewDecimal)
+                });
+                if let Some(column) = decimal_column {
+                    let count = if f.extra_args.is_empty() {
+                        Some(1)
+                    } else if f.extra_args.len() == 1 {
+                        match f.extra_args[0].eval(&self.ctx, row)? {
+                            Datum::Int(value) if value >= 0 => Some(value),
+                            Datum::UInt(value) => i64::try_from(value).ok(),
+                            Datum::Null => Some(0),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(count) = count {
+                        if count == 0 {
+                            continue;
+                        }
+                        if row.is_null(column.index as usize) {
+                            continue;
+                        }
+                        if let Some((coefficient, scale)) =
+                            row.get_my_decimal(column.index as usize).to_i128_scaled()
+                        {
+                            if self.ordered[group_offset + c].update_avg_decimal_fast(
+                                coefficient,
+                                scale,
+                                count,
+                            ) {
+                                continue;
+                            }
+                            self.ordered[group_offset + c]
+                                .partial
+                                .materialize_avg_fast();
+                        }
+                    }
+                }
+            }
+            // Final AVG rows carry the partial count in `arg` and the
+            // partial sum in one extra column. Keep that one extra datum on
+            // the stack: allocating a fresh Vec for every partial row is a
+            // measurable cost in TPC-H q17's 1.17M-row inner aggregation.
+            if matches!(f.kind, AggKind::Avg) && f.extra_args.len() == 1 {
+                let value = f
+                    .arg
+                    .as_ref()
+                    .map(|expr| expr.eval(&self.ctx, row))
+                    .transpose()?;
+                let extra = [f.extra_args[0].eval(&self.ctx, row)?];
+                let input = AggInput {
+                    value,
+                    distinct_key: None,
+                };
+                let sort_key = Vec::new();
+                delta += self.ordered[group_offset + c].update(
+                    input.value,
+                    &extra,
+                    sort_key,
+                    input.distinct_key,
+                )?;
+                continue;
+            }
             let mut extra_values: Vec<Datum> = Vec::new();
             let input = eval_agg_input(f, &self.ctx, row, &mut extra_values)?;
             // GROUP_CONCAT's own ORDER BY is evaluated over the same source
@@ -1614,7 +1934,7 @@ impl<C: Columns> HashAggExec<C> {
             for (expr, _) in &f.order_by {
                 sort_key.push(expr.eval(&self.ctx, row)?);
             }
-            delta += self.ordered[idx][c].update(
+            delta += self.ordered[group_offset + c].update(
                 input.value,
                 &extra_values,
                 sort_key,
@@ -1626,10 +1946,12 @@ impl<C: Columns> HashAggExec<C> {
 
     /// Appends group `idx`'s final values to `req`.
     fn emit_group(&mut self, idx: usize, req: &mut Chunk) -> Result<(), ExecError> {
-        for c in 0..self.ordered[idx].len() {
+        let group_offset = idx * self.agg_funcs.len();
+        for c in 0..self.agg_funcs.len() {
             let value = finish_agg_value(
-                &mut self.ordered[idx][c],
+                &mut self.ordered[group_offset + c],
                 &self.agg_funcs[c],
+                &self.meta.ret_field_types()[c],
                 &self.ctx,
                 &mut self.truncated[c],
             )?;
@@ -1652,7 +1974,9 @@ impl<C: Columns> Executor for HashAggExec<C> {
         self.tmp_chk_for_spill.reset();
         self.child_returned_empty = true;
         self.groups.clear();
+        self.group_key_buffer.clear();
         self.ordered.clear();
+        self.group_count = 0;
         self.cursor = 0;
         self.prepared = false;
         self.executed = false;
@@ -1695,7 +2019,7 @@ impl<C: Columns> Executor for HashAggExec<C> {
         req.reset();
         loop {
             if self.prepared {
-                while self.cursor < self.ordered.len() {
+                while self.cursor < self.group_count {
                     if self.agg_funcs.is_empty() {
                         // Go: `chk.SetNumVirtualRows(chk.NumRows() + 1)` -- a
                         // group with no aggregate columns is still a row.
@@ -1714,9 +2038,10 @@ impl<C: Columns> Executor for HashAggExec<C> {
             }
             self.execute()?;
             // No group-by and no data: one empty group, so a global COUNT is 0.
-            if self.ordered.is_empty() && self.group_by.is_empty() {
+            if self.group_count == 0 && self.group_by.is_empty() {
                 self.ordered
-                    .push(self.agg_funcs.iter().map(AggState::new).collect());
+                    .extend(self.agg_funcs.iter().map(AggState::new));
+                self.group_count = 1;
             }
             self.prepared = true;
         }
@@ -1725,6 +2050,7 @@ impl<C: Columns> Executor for HashAggExec<C> {
     fn close(&mut self) -> Result<(), ExecError> {
         self.groups.clear();
         self.ordered.clear();
+        self.group_count = 0;
         if let Some(in_disk) = &mut self.data_in_disk {
             in_disk.close();
         }
@@ -1779,13 +2105,9 @@ fn eval_agg_input<C: Columns>(
             },
             None,
         )
-    } else if matches!(f.kind, AggKind::JsonObjectAgg { .. }) {
-        // `JSON_OBJECTAGG(key, value)` is the one aggregate
-        // whose two arguments stay SEPARATE: the key is
-        // stringified into a member name and the value keeps
-        // its own type, so neither can be folded into the
-        // other the way COUNT's tuple or GROUP_CONCAT's
-        // concatenation is.
+    } else if matches!(f.kind, AggKind::JsonObjectAgg { .. } | AggKind::Avg) {
+        // JSON_OBJECTAGG keeps key/value separate. Final-mode AVG uses the
+        // same representation for Go's `(partial count, partial sum)` pair.
         for expr in &f.extra_args {
             extra_values.push(expr.eval(ctx, row)?);
         }
@@ -1935,6 +2257,12 @@ mod tests {
         Expression::Column(c)
     }
 
+    fn typed_col(index: i64, field_type: FieldType) -> Expression {
+        let mut c = Column::new(index + 1, field_type);
+        c.index = index;
+        Expression::Column(c)
+    }
+
     fn source(rows: &[(i64, Option<i64>)]) -> Box<dyn Executor> {
         // Two long columns: group key, value (None = NULL).
         let fields = vec![long(), long()];
@@ -1982,6 +2310,33 @@ mod tests {
 
     fn decimal() -> FieldType {
         FieldType::new(tidb_datatype::FieldTypeCode::NewDecimal)
+    }
+
+    fn decimal_with_shape(flen: i64, scale: i64) -> FieldType {
+        let mut field_type = decimal();
+        field_type.set_flen(flen);
+        field_type.set_decimal(scale);
+        field_type
+    }
+
+    fn decimal_source(rows: &[Option<&str>], field_type: &FieldType) -> Box<dyn Executor> {
+        let mut data =
+            Chunk::new_with_capacity(std::slice::from_ref(field_type), rows.len().max(1));
+        for value in rows {
+            match value {
+                Some(value) => data.append_datum(
+                    0,
+                    &Datum::Decimal(tidb_datatype::Decimal::from_literal(value)),
+                ),
+                None => data.append_null(0),
+            }
+        }
+        let mut column = Column::new(1, field_type.clone());
+        column.index = 0;
+        Box::new(OneChunkSource {
+            meta: ExecutorMeta::new(Schema::new(vec![column]), 0, rows.len().max(1), 1024),
+            data: Some(data),
+        })
     }
 
     fn run_typed(mut exec: HashAggExec<NoColumns>, types: &[FieldType]) -> Vec<Vec<Datum>> {
@@ -2065,7 +2420,9 @@ mod tests {
     /// implementation in this repository.
     #[test]
     fn avg_over_integers_is_decimal_scaled_by_the_precision_increment() {
-        let types = [decimal()];
+        // Go `typeInfer4Avg` gives AVG(BIGINT) a DECIMAL return scale equal to
+        // div_precision_increment, which is four in this test context.
+        let types = [decimal_with_shape(15, 4)];
         for (values, want) in [
             (vec![1i64, 2, 3], "2.0000"),
             (vec![1, 2, 4], "2.3333"),
@@ -2088,6 +2445,34 @@ mod tests {
                 "AVG of {values:?}"
             );
         }
+    }
+
+    #[test]
+    fn avg_over_fixed_scale_decimals_uses_the_go_return_scale_and_skips_nulls() {
+        let input_type = decimal_with_shape(15, 2);
+        let output_type = decimal_with_shape(19, 6);
+        let agg = HashAggExec::new(
+            out_meta_typed(std::slice::from_ref(&output_type)),
+            vec![],
+            vec![AggFunc::new(
+                AggKind::Avg,
+                Some(typed_col(0, input_type.clone())),
+            )],
+            decimal_source(
+                &[Some("1.00"), None, Some("2.00"), Some("4.00")],
+                &input_type,
+            ),
+            NoColumns,
+            StatementMemory::default(),
+        );
+
+        let result = run_typed(agg, std::slice::from_ref(&output_type));
+        let Datum::Decimal(result) = &result[0][0] else {
+            panic!("AVG(DECIMAL) must return DECIMAL");
+        };
+        assert_eq!(result.to_string(), "2.333333");
+        assert_eq!(result.storage_string(), "2.333333");
+        assert_eq!(result.declared_shape(), Some((19, 6)));
     }
 
     #[test]
