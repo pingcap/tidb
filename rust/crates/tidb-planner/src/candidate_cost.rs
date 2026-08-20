@@ -358,6 +358,19 @@ pub fn number_of_ranges(node: &Candidate) -> usize {
     }
 }
 
+/// Go `childCanProvideOrderForStreamAgg`: whether a root HashAgg child keeps
+/// an order through the unary operators that preserve it to a reader.
+#[must_use]
+pub fn child_can_provide_order_for_stream_agg(node: &Candidate) -> bool {
+    match node {
+        Candidate::Projection { child, .. } | Candidate::Selection { child, .. } => {
+            child_can_provide_order_for_stream_agg(child)
+        }
+        Candidate::Reader { .. } => true,
+        _ => false,
+    }
+}
+
 /// `GetPlanCostVer2` on the root of a candidate plan: children first, then the
 /// node's own operator cost over them.
 ///

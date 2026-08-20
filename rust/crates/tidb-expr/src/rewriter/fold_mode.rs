@@ -59,6 +59,14 @@ impl ColumnResolver for FoldModeResolver<'_> {
         self.base.resolve_column(path)
     }
 
+    fn orig_name(&self, path: &[String]) -> Option<String> {
+        self.base.orig_name(path)
+    }
+
+    fn resolve_constant(&self, path: &[String]) -> Option<Expression> {
+        self.base.resolve_constant(path)
+    }
+
     fn resolve_default(&self, path: &[String]) -> Option<Expression> {
         self.base.resolve_default(path)
     }

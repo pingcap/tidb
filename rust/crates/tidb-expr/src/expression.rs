@@ -543,15 +543,13 @@ impl Expression {
         }
     }
 
-    /// Context-free identity equality.
+    /// The context-free subset of Go `Expression.Equal(ctx, e)`.
     ///
-    /// This is only the part of Go's `Expression.Equal(ctx, e)` that needs no
-    /// `EvalContext`: columns are equal by `UniqueID`. `Constant.Equal` compares
-    /// evaluated values through a collator and `ScalarFunction.Equal` compares
-    /// through the function's `equal(ctx, ...)`, so neither can be answered
-    /// without a context; both conservatively report `false` here and gain a
-    /// faithful context-aware form when `Eval*` is ported. No wired consumer
-    /// relies on constant/function equality yet.
+    /// Columns compare by `UniqueID`. Constants compare their retained typed
+    /// value, and scalar functions compare their normalized name, return type,
+    /// and arguments recursively. The latter is the contract optimizer rules
+    /// such as `InjectProjBelowAgg` use to share one projected expression
+    /// between an aggregate argument and an identical group item.
     #[must_use]
     pub fn equal(&self, other: &Expression) -> bool {
         match self {
@@ -1308,5 +1306,24 @@ mod tests {
             vec![one()],
         ));
         assert!(unknown.eval(&NoColumns, row).is_err());
+    }
+
+    #[test]
+    fn scalar_expression_equality_is_recursive() {
+        let ft = FieldType::new(FieldTypeCode::LongLong);
+        let scalar = |name: &str, value: i64| {
+            Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new(name),
+                ft.clone(),
+                vec![Expression::Constant(Constant::new(
+                    Datum::Int(value),
+                    ft.clone(),
+                ))],
+            ))
+        };
+
+        assert!(scalar("YEAR", 1).equal(&scalar("year", 1)));
+        assert!(!scalar("year", 1).equal(&scalar("month", 1)));
+        assert!(!scalar("year", 1).equal(&scalar("year", 2)));
     }
 }

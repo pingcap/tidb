@@ -27,8 +27,10 @@
 //! `refineArgs`' constant refinement (`int non-constant <cmp> non-int
 //! constant`) IS ported, as [`refine_comparisons`] over the built tree --
 //! see that function for the Go it follows and for what within `refineArgs`
-//! is still deferred. JSON comparisons also clear `ParseToJSONFlag` on every
-//! non-column operand, matching `generateCmpSigs`.
+//! is still deferred. The same pass folds `generateCmpSigs`' implicit
+//! DATETIME cast for a string constant compared with a temporal expression.
+//! JSON comparisons also clear `ParseToJSONFlag` on every non-column operand,
+//! matching `generateCmpSigs`.
 
 use crate::builtin_arithmetic::new_return_field_type;
 use crate::constant::Constant;
@@ -447,21 +449,12 @@ fn wrap_year_operand_for_datetime_compare(left: &mut Expression, right: &mut Exp
 
 /// Wraps the integer side of a DECIMAL-vs-INT comparison the same way Go's
 /// `newBaseBuiltinFuncWithTp(..., ETDecimal, ETDecimal)` does.
-fn wrap_integer_operand_for_decimal_compare(left: &mut Expression, right: &mut Expression) {
-    let eval_type = |expression: &Expression| expression.static_type().map(FieldType::eval_type);
-    let integer = match (eval_type(left), eval_type(right)) {
-        (Some(EvalType::Decimal), Some(EvalType::Int))
-            if !matches!(right, Expression::Constant(_)) =>
-        {
-            right
-        }
-        (Some(EvalType::Int), Some(EvalType::Decimal))
-            if !matches!(left, Expression::Constant(_)) =>
-        {
-            left
-        }
-        _ => return,
-    };
+pub(crate) fn wrap_integer_operand_as_decimal(integer: &mut Expression) {
+    if matches!(integer, Expression::Constant(_))
+        || integer.static_type().map(FieldType::eval_type) != Some(EvalType::Int)
+    {
+        return;
+    }
     let Some(source_type) = integer.static_type().cloned() else {
         return;
     };
@@ -493,6 +486,24 @@ fn wrap_integer_operand_for_decimal_compare(left: &mut Expression, right: &mut E
         target,
         vec![argument],
     ));
+}
+
+fn wrap_integer_operand_for_decimal_compare(left: &mut Expression, right: &mut Expression) {
+    let eval_type = |expression: &Expression| expression.static_type().map(FieldType::eval_type);
+    let integer = match (eval_type(left), eval_type(right)) {
+        (Some(EvalType::Decimal), Some(EvalType::Int))
+            if !matches!(right, Expression::Constant(_)) =>
+        {
+            right
+        }
+        (Some(EvalType::Int), Some(EvalType::Decimal))
+            if !matches!(left, Expression::Constant(_)) =>
+        {
+            left
+        }
+        _ => return,
+    };
+    wrap_integer_operand_as_decimal(integer);
 }
 
 /// Go `compareFunctionClass.refineArgs` (`builtin_compare.go:1778`), applied
@@ -531,12 +542,63 @@ pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) -> Result<()
         return Ok(());
     }
     refine_args(left, right, name, mirrored, ctx);
+    fold_temporal_comparison_string_constant(left, right, ctx)?;
     // Go's own order: `getFunction` runs `refineArgs` first and only then
     // derives the comparison type -- and the argument casts that go with it --
     // from the arguments that survived it (`builtin_compare.go:1984-1989`).
     wrap_integer_operand_for_decimal_compare(left, right);
     wrap_year_operand_for_datetime_compare(left, right);
     prepare_json_comparison_args(&mut function.args);
+    Ok(())
+}
+
+/// Go `GetAccurateCmpType` chooses ETDatetime when a DATE/DATETIME/TIMESTAMP
+/// expression is compared with a string, then `generateCmpSigs` applies
+/// `WrapWithCastAsTime`. `BuildCastFunction` folds a constant argument at
+/// build time, including an invalid datetime becoming NULL after its warning.
+fn fold_temporal_comparison_string_constant(
+    left: &mut Expression,
+    right: &mut Expression,
+    ctx: &dyn Columns,
+) -> Result<(), EvalError> {
+    let is_temporal_expr = |expression: &Expression| {
+        expression.static_type().is_some_and(|field_type| {
+            matches!(
+                field_type.code(),
+                FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp
+            )
+        })
+    };
+    let string_constant = |expression: &Expression| {
+        matches!(
+            expression,
+            Expression::Constant(constant)
+                if constant.deferred_expr.is_none()
+                    && constant.param_marker.is_none()
+                    && matches!(constant.value, Datum::String(_) | Datum::Bytes(_))
+        )
+    };
+    let constant = if is_temporal_expr(left) && string_constant(right) {
+        right
+    } else if is_temporal_expr(right) && string_constant(left) {
+        left
+    } else {
+        return Ok(());
+    };
+    let Expression::Constant(source) = constant else {
+        return Ok(());
+    };
+    let converted = crate::cast::parse_computed_time(
+        &source.value,
+        ctx,
+        tidb_datatype::TimeType::DateTime,
+        Some(6),
+    )?;
+    let mut target = FieldType::new(FieldTypeCode::Datetime);
+    // WrapWithCastAsTime uses MaxFsp for an ETString source.
+    target.set_decimal(6);
+    target.set_flen(26);
+    *constant = Expression::Constant(Constant::new(converted, target));
     Ok(())
 }
 
@@ -793,6 +855,12 @@ mod tests {
         Expression::Column(column)
     }
 
+    fn date_column() -> Expression {
+        let mut column = crate::column::Column::new(3, FieldType::new(FieldTypeCode::Date));
+        column.index = 0;
+        Expression::Column(column)
+    }
+
     fn string_constant(text: &str) -> Expression {
         Expression::Constant(Constant::new(
             Datum::new_string(text),
@@ -842,6 +910,35 @@ mod tests {
         let (null_comparison, warnings) = refine("nulleq", duration_column(), null);
         assert_eq!(constant_of(&null_comparison, 1), Datum::Null);
         assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn temporal_comparison_folds_string_constants_as_datetime() {
+        for (left, right, constant_index) in [
+            (date_column(), string_constant("1995-03-13"), 1),
+            (string_constant("1995-03-13"), date_column(), 0),
+        ] {
+            let (expr, warnings) = refine("lt", left, right);
+            assert!(warnings.is_empty(), "{warnings:?}");
+            let Expression::ScalarFunction(comparison) = expr else {
+                panic!("comparison was not a scalar function");
+            };
+            let Expression::Constant(constant) = &comparison.args[constant_index] else {
+                panic!("string comparison operand was not folded");
+            };
+            assert_eq!(
+                constant.value.sql_string().unwrap(),
+                "1995-03-13 00:00:00.000000"
+            );
+            let target = constant.ret_type.as_ref().unwrap();
+            assert_eq!(target.code(), FieldTypeCode::Datetime);
+            assert_eq!(target.flen(), 26);
+            assert_eq!(target.decimal(), 6);
+        }
+
+        let (invalid, warnings) = refine("lt", date_column(), string_constant("not-a-datetime"));
+        assert_eq!(constant_of(&invalid, 1), Datum::Null);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
     }
 
     #[test]

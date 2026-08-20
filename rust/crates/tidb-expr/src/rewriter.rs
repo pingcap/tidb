@@ -69,6 +69,23 @@ pub trait ColumnResolver {
         Some(col)
     }
 
+    /// Resolves the Go `Column.OrigName` carried by a source column. The
+    /// planner uses this metadata for EXPLAIN and diagnostics after a column
+    /// crosses a Projection or aggregate boundary; execution still binds by
+    /// index and unique id. Resolvers without source-name metadata keep the
+    /// empty default.
+    fn orig_name(&self, _path: &[String]) -> Option<String> {
+        None
+    }
+
+    /// Resolves a planner-owned column-shaped value to the constant it
+    /// represents. Go uses this for an evaluated scalar subquery: its
+    /// `Constant` keeps `SubqueryRefID` for EXPLAIN, while estimation and
+    /// execution consume the ordinary datum.
+    fn resolve_constant(&self, _path: &[String]) -> Option<Expression> {
+        None
+    }
+
     /// Resolves a `DEFAULT(column)` leaf to the statement-scoped constant its
     /// DML planner prepared. A default implementation keeps ordinary query
     /// resolvers unaware of write-only metadata; write resolvers override it
@@ -376,6 +393,13 @@ fn binary_expression(
     match ret_type {
         Some(ret_type) => {
             let mut args = vec![left, right];
+            if matches!(name, "plus" | "minus" | "mul" | "div" | "mod")
+                && ret_type.eval_type() == tidb_datatype::EvalType::Decimal
+            {
+                for argument in &mut args {
+                    crate::builtin_compare::wrap_integer_operand_as_decimal(argument);
+                }
+            }
             if crate::builtin_compare::infer_compare_type(name).is_some() {
                 crate::builtin_compare::prepare_json_comparison_args(&mut args);
             }
@@ -494,9 +518,15 @@ pub fn rewrite_expr_resolved(
             .ok_or(EvalError::Unsupported("unresolved DEFAULT column"));
     }
     if let Expr::Column(path) = expr {
-        let col = resolver
+        if let Some(constant) = resolver.resolve_constant(path) {
+            return Ok(constant);
+        }
+        let mut col = resolver
             .resolve_column(path)
             .ok_or_else(|| EvalError::UnknownColumn(path.join(".")))?;
+        if let Some(orig_name) = resolver.orig_name(path) {
+            col.orig_name = orig_name;
+        }
         return Ok(Expression::Column(col));
     }
     let mut built = rewrite_leaf(expr, resolver)?;
@@ -1747,6 +1777,53 @@ mod tests {
     }
 
     #[test]
+    fn decimal_arithmetic_casts_an_integer_column_to_decimal() {
+        struct ArithmeticColumns;
+
+        impl ColumnResolver for ArithmeticColumns {
+            fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+                let (index, mut field_type) = match path {
+                    [name] if name == "price" => (0, FieldType::new(FieldTypeCode::NewDecimal)),
+                    [name] if name == "qty" => (1, FieldType::new(FieldTypeCode::Long)),
+                    _ => return None,
+                };
+                if index == 0 {
+                    field_type.set_flen(10);
+                    field_type.set_decimal(2);
+                } else {
+                    field_type.set_flen(10);
+                    field_type.set_decimal(0);
+                }
+                Some((index, field_type, (index + 1) as i64))
+            }
+
+            fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+                tidb_datatype::SessionTimeZone::utc()
+            }
+        }
+
+        let expression = Expr::Binary(
+            BinaryOp::Mul,
+            Box::new(Expr::Column(vec!["price".to_owned()])),
+            Box::new(Expr::Column(vec!["qty".to_owned()])),
+        );
+        let Expression::ScalarFunction(multiply) =
+            rewrite_expr_resolved(&expression, &ArithmeticColumns).unwrap()
+        else {
+            panic!("DECIMAL multiplication was not rewritten as a scalar function");
+        };
+        let Expression::ScalarFunction(cast) = &multiply.args[1] else {
+            panic!("integer multiplication operand was not cast to DECIMAL");
+        };
+        assert_eq!(cast.func_name.lowercase(), "cast_decimal");
+        let target = cast.ret_type.as_ref().unwrap();
+        assert_eq!(target.code(), FieldTypeCode::NewDecimal);
+        assert_eq!(target.flen(), 10);
+        assert_eq!(target.decimal(), 0);
+        assert_ne!(target.flags() & tidb_datatype::FieldTypeFlags::BINARY, 0);
+    }
+
+    #[test]
     fn power_wraps_integer_expressions_as_real() {
         let minus = Expr::Binary(
             BinaryOp::Minus,
@@ -1831,6 +1908,47 @@ mod tests {
             panic!("expected a scalar function");
         };
         assert!(f.ret_type.as_ref().unwrap().is_unsigned());
+    }
+
+    #[test]
+    fn nested_planner_column_keeps_its_scalar_subquery_constant() {
+        struct PlannerConstant;
+
+        impl ColumnResolver for PlannerConstant {
+            fn resolve(&self, _path: &[String]) -> Option<(usize, FieldType, i64)> {
+                None
+            }
+
+            fn resolve_constant(&self, path: &[String]) -> Option<Expression> {
+                if path != ["scalar"] {
+                    return None;
+                }
+                let mut constant =
+                    Constant::new(Datum::Int(2), FieldType::new(FieldTypeCode::LongLong));
+                constant.subquery_ref_id = 7;
+                Some(Expression::Constant(constant))
+            }
+
+            fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+                tidb_datatype::SessionTimeZone::utc()
+            }
+        }
+
+        let expression = Expr::Binary(
+            BinaryOp::Gt,
+            Box::new(Expr::Int("3".to_owned())),
+            Box::new(Expr::Column(vec!["scalar".to_owned()])),
+        );
+        let Expression::ScalarFunction(comparison) =
+            rewrite_expr_resolved(&expression, &PlannerConstant).unwrap()
+        else {
+            panic!("expected a comparison");
+        };
+        let Expression::Constant(constant) = &comparison.args[1] else {
+            panic!("planner-owned scalar was not rewritten to a constant");
+        };
+        assert_eq!(constant.value, Datum::Int(2));
+        assert_eq!(constant.subquery_ref_id, 7);
     }
 
     #[test]

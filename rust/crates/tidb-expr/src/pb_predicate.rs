@@ -43,7 +43,8 @@
 use std::{error::Error, fmt};
 
 use tidb_ast::BinaryOp;
-use tidb_codec::encode_int;
+use tidb_codec::{encode_decimal_fixed, encode_int, encode_uint};
+use tidb_datatype::{Decimal, Time};
 use tidb_proto::tipb::{Expr, ExprType, FieldType, ScalarFuncSig};
 
 const MYSQL_TYPE_LONGLONG: i32 = 8;
@@ -72,6 +73,44 @@ pub enum IntPbOperand {
     },
     /// A signed integer literal after parser normalization.
     Literal(i64),
+}
+
+/// One already-resolved operand of an exact DECIMAL comparison.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DecimalPbOperand {
+    /// A scan output column carrying its declared DECIMAL precision/scale.
+    Column {
+        /// Zero-based DAG-basic column offset.
+        offset: usize,
+        /// Go `ToPBFieldType(column.RetType)`.
+        field_type: FieldType,
+    },
+    /// A folded decimal literal carrying its expression result type.
+    Literal {
+        /// Exact fixed-point value.
+        value: Decimal,
+        /// Go `ToPBFieldType(constant.RetType)`.
+        field_type: FieldType,
+    },
+}
+
+/// One already-resolved operand of a DATE/DATETIME comparison.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TimePbOperand {
+    /// A scan output column carrying its declared temporal type and FSP.
+    Column {
+        /// Zero-based DAG-basic column offset.
+        offset: usize,
+        /// Go `ToPBFieldType(column.RetType)`.
+        field_type: FieldType,
+    },
+    /// A folded MySQL time literal carrying its comparison-domain type.
+    Literal {
+        /// Packed MySQL date/datetime value before wire encoding.
+        value: Time,
+        /// Go `ToPBFieldType(constant.RetType)`.
+        field_type: FieldType,
+    },
 }
 
 /// Whether an integer column's declared MySQL type is one this lowering
@@ -151,6 +190,8 @@ pub enum PbPredicateError {
     ColumnOffsetOutOfRange(usize),
     /// `IN` needs at least one list element, and `OR` at least one branch.
     EmptyOperandList,
+    /// A typed constant could not be encoded with Go's mem-comparable codec.
+    InvalidLiteralEncoding,
 }
 
 impl fmt::Display for PbPredicateError {
@@ -170,6 +211,9 @@ impl fmt::Display for PbPredicateError {
             }
             Self::UnderivableStringCollation => formatter
                 .write_str("a string comparison whose collation this lowering does not derive"),
+            Self::InvalidLiteralEncoding => {
+                formatter.write_str("a typed TiKV comparison literal could not be encoded")
+            }
         }
     }
 }
@@ -189,6 +233,32 @@ pub fn int_comparison_to_pb(
     Ok(boolean_scalar_func(
         signature,
         vec![operand_to_pb(left)?, operand_to_pb(right)?],
+    ))
+}
+
+/// Lowers one source-ordered exact DECIMAL comparison into Go's TiPB shape.
+pub fn decimal_comparison_to_pb(
+    operator: BinaryOp,
+    left: DecimalPbOperand,
+    right: DecimalPbOperand,
+) -> Result<Expr, PbPredicateError> {
+    let signature = decimal_comparison_signature(operator)?;
+    Ok(boolean_scalar_func(
+        signature,
+        vec![decimal_operand_to_pb(left)?, decimal_operand_to_pb(right)?],
+    ))
+}
+
+/// Lowers one source-ordered DATE/DATETIME comparison into Go's TiPB shape.
+pub fn time_comparison_to_pb(
+    operator: BinaryOp,
+    left: TimePbOperand,
+    right: TimePbOperand,
+) -> Result<Expr, PbPredicateError> {
+    let signature = time_comparison_signature(operator)?;
+    Ok(boolean_scalar_func(
+        signature,
+        vec![time_operand_to_pb(left)?, time_operand_to_pb(right)?],
     ))
 }
 
@@ -389,6 +459,56 @@ pub fn int_in_to_pb(
     Ok(boolean_scalar_func(ScalarFuncSig::InInt, children))
 }
 
+/// Lowers a string scalar tested by `IN` to Go's `InString` TiPB shape.
+///
+/// Go derives the function collation across the tested expression and its
+/// constant list. For the accepted shape, every list item is a coercible SQL
+/// string literal, so the tested expression's collation wins. Go then removes
+/// duplicate constants with that collator before protobuf conversion; the
+/// same collation keys and first-occurrence order are used here.
+pub fn string_in_to_pb(
+    tested: Expr,
+    list: impl IntoIterator<Item = Vec<u8>>,
+) -> Result<Expr, PbPredicateError> {
+    let tested_type = tested
+        .field_type
+        .as_ref()
+        .ok_or(PbPredicateError::UnderivableStringCollation)?;
+    let tested_mysql_type = tested_type
+        .tp
+        .ok_or(PbPredicateError::UnderivableStringCollation)?;
+    if !is_string_family_type(tested_mysql_type) {
+        return Err(PbPredicateError::UnderivableStringCollation);
+    }
+    let collation_name = tidb_datatype::proto_to_collation(
+        tested_type
+            .collate
+            .ok_or(PbPredicateError::UnderivableStringCollation)?,
+    );
+    let collation = tidb_datatype::Collation::from_name(&collation_name)
+        .filter(|collation| *collation != tidb_datatype::Collation::Utf8Mb4ZhPinyinTiDbAsCs)
+        .ok_or(PbPredicateError::UnderivableStringCollation)?;
+
+    let mut children = vec![tested];
+    let mut seen = Vec::<Vec<u8>>::new();
+    for literal in list {
+        let key = collation.key(&literal);
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        children.push(string_operand_to_pb(StringPbOperand::Literal(literal))?);
+    }
+    if children.len() < 2 {
+        return Err(PbPredicateError::EmptyOperandList);
+    }
+    Ok(boolean_scalar_func_with_collation(
+        ScalarFuncSig::InString,
+        children,
+        &collation_name,
+    ))
+}
+
 /// Composes branches with `OR` (Go `ScalarFuncSig_LogicalOr`).
 ///
 /// TiKV's `LogicalOr` is binary, so a longer chain folds left, which is the
@@ -428,6 +548,30 @@ fn comparison_signature(operator: BinaryOp) -> Result<ScalarFuncSig, PbPredicate
     Ok(signature)
 }
 
+fn decimal_comparison_signature(operator: BinaryOp) -> Result<ScalarFuncSig, PbPredicateError> {
+    Ok(match operator {
+        BinaryOp::Lt => ScalarFuncSig::LtDecimal,
+        BinaryOp::Le => ScalarFuncSig::LeDecimal,
+        BinaryOp::Gt => ScalarFuncSig::GtDecimal,
+        BinaryOp::Ge => ScalarFuncSig::GeDecimal,
+        BinaryOp::Eq => ScalarFuncSig::EqDecimal,
+        BinaryOp::Ne => ScalarFuncSig::NeDecimal,
+        _ => return Err(PbPredicateError::UnsupportedOperator(operator)),
+    })
+}
+
+fn time_comparison_signature(operator: BinaryOp) -> Result<ScalarFuncSig, PbPredicateError> {
+    Ok(match operator {
+        BinaryOp::Lt => ScalarFuncSig::LtTime,
+        BinaryOp::Le => ScalarFuncSig::LeTime,
+        BinaryOp::Gt => ScalarFuncSig::GtTime,
+        BinaryOp::Ge => ScalarFuncSig::GeTime,
+        BinaryOp::Eq => ScalarFuncSig::EqTime,
+        BinaryOp::Ne => ScalarFuncSig::NeTime,
+        _ => return Err(PbPredicateError::UnsupportedOperator(operator)),
+    })
+}
+
 /// A scalar-function node whose result is MySQL's boolean `BIGINT(1)`: the
 /// `ETInt` return type with `SetFlen(1)` that Go's `newBaseBuiltinFuncWithTp`
 /// gives every comparison, `IS NULL`, `IN`, `NOT` and logical connective.
@@ -446,6 +590,20 @@ fn boolean_scalar_func(signature: ScalarFuncSig, children: Vec<Expr>) -> Expr {
         // gogoproto nullable=false emits this field even at its default.
         has_distinct: Some(false),
     }
+}
+
+fn boolean_scalar_func_with_collation(
+    signature: ScalarFuncSig,
+    children: Vec<Expr>,
+    collation: &str,
+) -> Expr {
+    let mut expression = boolean_scalar_func(signature, children);
+    expression
+        .field_type
+        .as_mut()
+        .expect("a scalar predicate has a result type")
+        .collate = Some(tidb_datatype::collation_to_proto(collation));
+    expression
 }
 
 fn operand_to_pb(operand: IntPbOperand) -> Result<Expr, PbPredicateError> {
@@ -475,6 +633,53 @@ fn operand_to_pb(operand: IntPbOperand) -> Result<Expr, PbPredicateError> {
         field_type: Some(field_type),
         has_distinct: Some(false),
     })
+}
+
+fn decimal_operand_to_pb(operand: DecimalPbOperand) -> Result<Expr, PbPredicateError> {
+    let (tp, value, field_type) = match operand {
+        DecimalPbOperand::Column { offset, field_type } => {
+            let index = i64::try_from(offset)
+                .map_err(|_| PbPredicateError::ColumnOffsetOutOfRange(offset))?;
+            (ExprType::ColumnRef, encode_signed(index), field_type)
+        }
+        DecimalPbOperand::Literal { value, field_type } => {
+            let mut encoded = Vec::new();
+            encode_decimal_fixed(&mut encoded, &value, 0, 0)
+                .map_err(|_| PbPredicateError::InvalidLiteralEncoding)?;
+            (ExprType::MysqlDecimal, encoded, field_type)
+        }
+    };
+    Ok(leaf_expr(tp, value, field_type))
+}
+
+fn time_operand_to_pb(operand: TimePbOperand) -> Result<Expr, PbPredicateError> {
+    let (tp, value, field_type) = match operand {
+        TimePbOperand::Column { offset, field_type } => {
+            let index = i64::try_from(offset)
+                .map_err(|_| PbPredicateError::ColumnOffsetOutOfRange(offset))?;
+            (ExprType::ColumnRef, encode_signed(index), field_type)
+        }
+        TimePbOperand::Literal { value, field_type } => {
+            let packed = value
+                .to_packed_uint()
+                .map_err(|_| PbPredicateError::InvalidLiteralEncoding)?;
+            let mut encoded = Vec::new();
+            encode_uint(&mut encoded, packed);
+            (ExprType::MysqlTime, encoded, field_type)
+        }
+    };
+    Ok(leaf_expr(tp, value, field_type))
+}
+
+fn leaf_expr(tp: ExprType, value: Vec<u8>, field_type: FieldType) -> Expr {
+    Expr {
+        tp: Some(tp as i32),
+        val: Some(value),
+        children: Vec::new(),
+        sig: Some(ScalarFuncSig::Unspecified as i32),
+        field_type: Some(field_type),
+        has_distinct: Some(false),
+    }
 }
 
 fn encode_signed(value: i64) -> Vec<u8> {
