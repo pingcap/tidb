@@ -14,7 +14,65 @@
 
 package importsdk
 
-import "github.com/pingcap/errors"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/pingcap/errors"
+)
+
+// SourceScanErrorCode is a stable machine-readable automatic-mapping failure.
+type SourceScanErrorCode string
+
+const (
+	// SourceScanErrorMixedLayout indicates that only part of the importable
+	// source follows the detected layout.
+	SourceScanErrorMixedLayout SourceScanErrorCode = "mixed_layout"
+	// SourceScanErrorIncompleteScan indicates that source enumeration did not
+	// finish.
+	SourceScanErrorIncompleteScan SourceScanErrorCode = "incomplete_scan"
+	// SourceScanErrorAmbiguousLayout indicates that an object has more than one
+	// valid source-layout interpretation.
+	SourceScanErrorAmbiguousLayout SourceScanErrorCode = "ambiguous_layout"
+	// SourceScanErrorMultipleExportRoots indicates that one source URI contains
+	// objects from multiple snapshot export roots.
+	SourceScanErrorMultipleExportRoots SourceScanErrorCode = "multiple_export_roots"
+	// SourceScanErrorUnsupportedPath indicates that a snapshot-export object
+	// cannot be interpreted safely.
+	SourceScanErrorUnsupportedPath SourceScanErrorCode = "unsupported_path"
+	// SourceScanErrorNoImportableFiles indicates that no source data object was
+	// mapped.
+	SourceScanErrorNoImportableFiles SourceScanErrorCode = "no_importable_files"
+)
+
+// SourceScanError reports an automatic-mapping failure without requiring Cloud
+// Import callers to parse an error string.
+type SourceScanError struct {
+	Code    SourceScanErrorCode
+	Count   int64
+	Samples []string
+	Cause   error
+}
+
+// Error implements error.
+func (e *SourceScanError) Error() string {
+	message := fmt.Sprintf("source scan failed: %s", e.Code)
+	if e.Count > 0 {
+		message += fmt.Sprintf(" (count: %d)", e.Count)
+	}
+	if len(e.Samples) > 0 {
+		message += ": " + strings.Join(e.Samples, ", ")
+	}
+	if e.Cause != nil {
+		message += ": " + e.Cause.Error()
+	}
+	return message
+}
+
+// Unwrap returns the underlying parsing or storage error, if any.
+func (e *SourceScanError) Unwrap() error {
+	return e.Cause
+}
 
 var (
 	// ErrNoDatabasesFound indicates that the dump source contains no recognizable databases.

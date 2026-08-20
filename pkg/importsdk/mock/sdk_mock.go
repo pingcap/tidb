@@ -449,6 +449,21 @@ func (mr *MockSDKMockRecorder) GetTableMetaByName(ctx, db, table any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTableMetaByName", reflect.TypeOf((*MockSDK)(nil).GetTableMetaByName), ctx, db, table)
 }
 
+// ScanSource mocks base method.
+func (m *MockSDK) ScanSource(ctx context.Context) (*importsdk.SourceScanResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ScanSource", ctx)
+	ret0, _ := ret[0].(*importsdk.SourceScanResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ScanSource indicates an expected call of ScanSource.
+func (mr *MockSDKMockRecorder) ScanSource(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ScanSource", reflect.TypeOf((*MockSDK)(nil).ScanSource), ctx)
+}
+
 // GetTableMetas mocks base method.
 func (m *MockSDK) GetTableMetas(ctx context.Context) ([]*importsdk.TableMeta, error) {
 	m.ctrl.T.Helper()

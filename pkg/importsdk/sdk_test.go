@@ -138,22 +138,26 @@ func (s *mockGCSSuite) TestDumplingSource() {
 		Table:      "tb1",
 		SchemaFile: "db1.tb1-schema.sql",
 		DataFiles: []DataFileMeta{
-			{Path: "db1.tb1.001.sql", Size: 44, Format: mydump.SourceTypeSQL, Compression: mydump.CompressionNone},
-			{Path: "db1.tb1.002.sql", Size: 44, Format: mydump.SourceTypeSQL, Compression: mydump.CompressionNone},
+			{Path: "db1.tb1.001.sql", Size: 44, ObjectSize: 44, Format: mydump.SourceTypeSQL, Compression: mydump.CompressionNone},
+			{Path: "db1.tb1.002.sql", Size: 44, ObjectSize: 44, Format: mydump.SourceTypeSQL, Compression: mydump.CompressionNone},
 		},
-		TotalSize:    88,
-		WildcardPath: "gcs://dumpling/db1.tb1.*.sql",
+		TotalSize:       88,
+		ObjectCount:     2,
+		TotalObjectSize: 88,
+		WildcardPath:    "gcs://dumpling/db1.tb1.*.sql",
 	}
 	expected2 := &TableMeta{
 		Database:   "db2",
 		Table:      "tb2",
 		SchemaFile: "db2.tb2-schema.sql",
 		DataFiles: []DataFileMeta{
-			{Path: "db2.tb2.001.sql", Size: 44, Format: mydump.SourceTypeSQL, Compression: mydump.CompressionNone},
-			{Path: "db2.tb2.002.sql", Size: 44, Format: mydump.SourceTypeSQL, Compression: mydump.CompressionNone},
+			{Path: "db2.tb2.001.sql", Size: 44, ObjectSize: 44, Format: mydump.SourceTypeSQL, Compression: mydump.CompressionNone},
+			{Path: "db2.tb2.002.sql", Size: 44, ObjectSize: 44, Format: mydump.SourceTypeSQL, Compression: mydump.CompressionNone},
 		},
-		TotalSize:    88,
-		WildcardPath: "gcs://dumpling/db2.tb2.*.sql",
+		TotalSize:       88,
+		ObjectCount:     2,
+		TotalObjectSize: 88,
+		WildcardPath:    "gcs://dumpling/db2.tb2.*.sql",
 	}
 	s.Equal(expected1, tablesMeta[0])
 	s.Equal(expected2, tablesMeta[1])
@@ -246,22 +250,26 @@ func (s *mockGCSSuite) TestCSVSource() {
 		Table:      "tb1",
 		SchemaFile: "db1.tb1-schema.sql",
 		DataFiles: []DataFileMeta{
-			{Path: "db1.tb1.001.csv", Size: 8, Format: mydump.SourceTypeCSV, Compression: mydump.CompressionNone},
-			{Path: "db1.tb1.002.csv", Size: 8, Format: mydump.SourceTypeCSV, Compression: mydump.CompressionNone},
+			{Path: "db1.tb1.001.csv", Size: 8, ObjectSize: 8, Format: mydump.SourceTypeCSV, Compression: mydump.CompressionNone},
+			{Path: "db1.tb1.002.csv", Size: 8, ObjectSize: 8, Format: mydump.SourceTypeCSV, Compression: mydump.CompressionNone},
 		},
-		TotalSize:    16,
-		WildcardPath: "gcs://csv/db1.tb1.*.csv",
+		TotalSize:       16,
+		ObjectCount:     2,
+		TotalObjectSize: 16,
+		WildcardPath:    "gcs://csv/db1.tb1.*.csv",
 	}
 	expected2 := &TableMeta{
 		Database:   "db2",
 		Table:      "tb2",
 		SchemaFile: "db2.tb2-schema.sql",
 		DataFiles: []DataFileMeta{
-			{Path: "db2.tb2.001.csv", Size: 8, Format: mydump.SourceTypeCSV, Compression: mydump.CompressionNone},
-			{Path: "db2.tb2.002.csv", Size: 8, Format: mydump.SourceTypeCSV, Compression: mydump.CompressionNone},
+			{Path: "db2.tb2.001.csv", Size: 8, ObjectSize: 8, Format: mydump.SourceTypeCSV, Compression: mydump.CompressionNone},
+			{Path: "db2.tb2.002.csv", Size: 8, ObjectSize: 8, Format: mydump.SourceTypeCSV, Compression: mydump.CompressionNone},
 		},
-		TotalSize:    16,
-		WildcardPath: "gcs://csv/db2.tb2.*.csv",
+		TotalSize:       16,
+		ObjectCount:     2,
+		TotalObjectSize: 16,
+		WildcardPath:    "gcs://csv/db2.tb2.*.csv",
 	}
 	s.Equal(expected1, tablesMeta[0])
 	s.Equal(expected2, tablesMeta[1])
@@ -335,11 +343,13 @@ func (s *mockGCSSuite) TestOnlyDataFiles() {
 		Table:      "tb",
 		SchemaFile: "",
 		DataFiles: []DataFileMeta{
-			{Path: "part1.csv", Size: 12, Format: mydump.SourceTypeCSV, Compression: mydump.CompressionNone},
-			{Path: "part2.csv", Size: 12, Format: mydump.SourceTypeCSV, Compression: mydump.CompressionNone},
+			{Path: "part1.csv", Size: 12, ObjectSize: 12, Format: mydump.SourceTypeCSV, Compression: mydump.CompressionNone},
+			{Path: "part2.csv", Size: 12, ObjectSize: 12, Format: mydump.SourceTypeCSV, Compression: mydump.CompressionNone},
 		},
-		TotalSize:    24,
-		WildcardPath: "gcs://onlydata/part*.csv",
+		TotalSize:       24,
+		ObjectCount:     2,
+		TotalObjectSize: 24,
+		WildcardPath:    "gcs://onlydata/part*.csv",
 	}, tablesMeta[0])
 
 	tableMeta, err := importSDK.GetTableMetaByName(context.Background(), "db", "tb")

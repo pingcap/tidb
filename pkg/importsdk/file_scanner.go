@@ -95,6 +95,7 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 	if !cfg.estimateRealSize {
 		loaderOptions = append(loaderOptions, mydump.WithSkipRealSizeEstimation(true))
 	}
+	loaderOptions = append(loaderOptions, mydump.WithScanReport())
 
 	loader, err := mydump.NewLoaderWithStore(ctx, ldrCfg, store, loaderOptions...)
 	if err != nil {
@@ -176,7 +177,7 @@ func (s *fileScanner) CreateSchemaAndTableByName(ctx context.Context, schema, ta
 	return errors.Annotatef(ErrSchemaNotFound, "schema=%s", schema)
 }
 
-func (s *fileScanner) GetTableMetas(context.Context) ([]*TableMeta, error) {
+func (s *fileScanner) GetTableMetas(ctx context.Context) ([]*TableMeta, error) {
 	dbMetas := s.loader.GetDatabases()
 	allFiles := s.loader.GetAllFiles()
 	var results []*TableMeta
@@ -261,9 +262,11 @@ func (s *fileScanner) buildTableMeta(
 	}
 
 	// Process data files
-	dataFiles, totalSize := processDataFiles(tblMeta.DataFiles)
+	dataFiles, totalSize, totalObjectSize := processDataFiles(tblMeta.DataFiles)
 	tableMeta.DataFiles = dataFiles
 	tableMeta.TotalSize = totalSize
+	tableMeta.ObjectCount = int64(len(dataFiles))
+	tableMeta.TotalObjectSize = totalObjectSize
 
 	if len(tblMeta.DataFiles) == 0 {
 		s.logger.Warn("table has no data files", zap.String("database", dbMeta.Name), zap.String("table", tblMeta.Name))
@@ -283,17 +286,19 @@ func (s *fileScanner) buildTableMeta(
 }
 
 // processDataFiles converts mydump data files to DataFileMeta and calculates total size
-func processDataFiles(files []mydump.FileInfo) ([]DataFileMeta, int64) {
+func processDataFiles(files []mydump.FileInfo) ([]DataFileMeta, int64, int64) {
 	dataFiles := make([]DataFileMeta, 0, len(files))
 	var totalSize int64
+	var totalObjectSize int64
 
 	for _, dataFile := range files {
 		fileMeta := createDataFileMeta(dataFile)
 		dataFiles = append(dataFiles, fileMeta)
 		totalSize += dataFile.FileMeta.RealSize
+		totalObjectSize += dataFile.FileMeta.FileSize
 	}
 
-	return dataFiles, totalSize
+	return dataFiles, totalSize, totalObjectSize
 }
 
 // createDataFileMeta creates a DataFileMeta from a mydump.DataFile
@@ -301,6 +306,7 @@ func createDataFileMeta(file mydump.FileInfo) DataFileMeta {
 	return DataFileMeta{
 		Path:        file.FileMeta.Path,
 		Size:        file.FileMeta.RealSize,
+		ObjectSize:  file.FileMeta.FileSize,
 		Format:      file.FileMeta.Type,
 		Compression: file.FileMeta.Compression,
 	}

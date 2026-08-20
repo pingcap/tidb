@@ -71,6 +71,10 @@ func TestDefaultRouter(t *testing.T) {
 		"my_schema.my_table.0001.sql.snappy":     {"my_schema", "my_table", "0001", "snappy", "sql"},
 		"my_schema.my_table.0001.gz.parquet":     {"my_schema", "my_table", "0001", "", "parquet"},
 		"my_schema.my_table.0001.snappy.parquet": {"my_schema", "my_table", "0001", "", "parquet"},
+		"export-123/db/db.users/1/part-00000-uuid-c000.gz.parquet": {
+			"db", "users", "", "", "parquet",
+		},
+		"db/db.orders/part-00000-uuid.gz.parquet": {"db", "orders", "", "", "parquet"},
 	}
 	for path, fields := range inputOutputMap {
 		res, err := r.Route(path)
