@@ -116,7 +116,23 @@ func TestVerboseExplain(t *testing.T) {
 			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 		}
 
-		tk.MustExec("drop table if exists t1, t2, t3, t31240, partsupp, supplier, first_range")
+		tk.MustExec("drop table if exists t_bit")
+		tk.MustExec("create table t_bit(id bit(16), key idx(id))")
+		tk.MustExec("insert into t_bit values (65)")
+		tk.MustQuery("select hex(id) from t_bit where id in (-1, -2)").Check(testkit.Rows())
+		tk.MustQuery("select hex(id) from t_bit where id not in (-1, 2)").Check(testkit.Rows("41"))
+
+		tk.MustExec("drop table if exists t_datetime_in")
+		tk.MustExec("create table t_datetime_in(a datetime, key idx(a))")
+		planRows := testdata.ConvertRowsToStrings(tk.MustQuery(
+			"explain format='brief' select * from t_datetime_in where a in ('2020-01-01 00:00:00', '2020-01-02 00:00:00')",
+		).Rows())
+		planText := strings.Join(planRows, "\n")
+		require.Contains(t, planText, "IndexRangeScan")
+		require.Contains(t, planText, "range:[2020-01-01 00:00:00,2020-01-01 00:00:00], [2020-01-02 00:00:00,2020-01-02 00:00:00]")
+		require.NotContains(t, planText, "or(eq(")
+
+		tk.MustExec("drop table if exists t1, t2, t3, t31240, partsupp, supplier, first_range, t_bit, t_datetime_in")
 	})
 }
 
@@ -524,20 +540,20 @@ FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
 		tk.MustQuery(`select * from t_issue52023`).Check(testkit.Rows("\u0005"))
 		tk.MustQuery(`select * from t_issue52023 where a = 0x5`).Check(testkit.Rows("\u0005"))
 		tk.MustQuery(`select * from t_issue52023 where a = 5`).Check(testkit.Rows())
-		tk.MustQuery(`select * from t_issue52023 where a IN (5,55)`).Check(testkit.Rows())
-		tk.MustQuery(`select * from t_issue52023 where a IN (0x5,55)`).Check(testkit.Rows("\u0005"))
+		tk.MustQuery(`select * from t_issue52023 where a IN (5,55.0,65e0)`).Check(testkit.Rows())
+		tk.MustQuery(`select * from t_issue52023 where a IN (0x5,55,'5')`).Check(testkit.Rows("\u0005"))
 		tk.MustQuery(`explain format = 'plan_tree' select * from t_issue52023 where a = 0x5`).Check(testkit.Rows("Point_Get root table:t_issue52023, partition:P4, clustered index:PRIMARY(a) "))
 		tk.MustQuery(`explain format = 'plan_tree' select * from t_issue52023 where a = 5`).Check(testkit.Rows(""+
 			"TableReader root partition:all data:Selection",
 			"└─Selection cop[tikv]  eq(cast(test.t_issue52023.a, double BINARY), 5)",
 			"  └─TableFullScan cop[tikv] table:t_issue52023 keep order:false"))
-		tk.MustQuery(`explain format = 'plan_tree' select * from t_issue52023 where a IN (5,55)`).Check(testkit.Rows(""+
+		tk.MustQuery(`explain format = 'plan_tree' select * from t_issue52023 where a IN (5,55.0,65e0)`).Check(testkit.Rows(""+
 			"TableReader root partition:all data:Selection",
-			"└─Selection cop[tikv]  or(eq(cast(test.t_issue52023.a, double BINARY), 5), eq(cast(test.t_issue52023.a, double BINARY), 55))",
+			"└─Selection cop[tikv]  in(cast(test.t_issue52023.a, double BINARY), 5, 55, 65)",
 			"  └─TableFullScan cop[tikv] table:t_issue52023 keep order:false"))
-		tk.MustQuery(`explain format = 'plan_tree' select * from t_issue52023 where a IN (0x5,55)`).Check(testkit.Rows(""+
+		tk.MustQuery(`explain format = 'plan_tree' select * from t_issue52023 where a IN (0x5,55,'5')`).Check(testkit.Rows(""+
 			"TableReader root partition:all data:Selection",
-			"└─Selection cop[tikv]  or(eq(test.t_issue52023.a, \"0x05\"), eq(cast(test.t_issue52023.a, double BINARY), 55))",
+			"└─Selection cop[tikv]  or(eq(test.t_issue52023.a, \"0x05\"), or(eq(cast(test.t_issue52023.a, double BINARY), 55), eq(test.t_issue52023.a, \"5\")))",
 			"  └─TableFullScan cop[tikv] table:t_issue52023 keep order:false"))
 
 		// issue:56915

@@ -2219,16 +2219,73 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		}
 	}
 	allSameType := true
+	commonCmpType := leftEt
+	hasCommonCmpType := false
+	allSameCmpType := true
 	for _, arg := range args[1:] {
-		if arg.GetType(er.sctx.GetEvalCtx()).GetType() != mysql.TypeNull && expression.GetAccurateCmpType(er.sctx.GetEvalCtx(), args[0], arg) != leftEt {
+		if arg.GetType(er.sctx.GetEvalCtx()).GetType() == mysql.TypeNull {
+			continue
+		}
+		if c, ok := arg.(*expression.Constant); ok && c.Value.Kind() == types.KindNull {
+			continue
+		}
+		cmpType := expression.GetAccurateCmpType(er.sctx.GetEvalCtx(), args[0], arg)
+		if cmpType != leftEt {
 			allSameType = false
+		}
+		if !hasCommonCmpType {
+			commonCmpType = cmpType
+			hasCommonCmpType = true
+			continue
+		}
+		if cmpType != commonCmpType {
+			allSameCmpType = false
 			break
 		}
 	}
 	var function expression.Expression
 	if allSameType && l == 1 && lLen > 1 {
 		function = er.notToExpression(not, ast.In, tp, er.ctxStack[stkLen-lLen-1:]...)
-	} else {
+	} else if allSameCmpType && hasCommonCmpType && l == 1 && lLen > 1 {
+		preserveArgs := args
+		if leftEt == types.ETInt && (commonCmpType == types.ETReal || commonCmpType == types.ETDecimal) {
+			// For integer columns, preserving a single IN/NOT IN over a shared decimal/real comparison type can hide
+			// the old OR-of-EQ simplification path. Prune impossible RHS constants first so degenerate cases can still
+			// collapse to `false` / `true` / `eq(...)` / `ne(...)` / `not(isnull(...))` as appropriate.
+			var pruned bool
+			preserveArgs, pruned = er.pruneImpossibleIntInList(leftFt, args, not)
+			if pruned {
+				switch len(preserveArgs) {
+				case 1:
+					if not {
+						if mysql.HasNotNullFlag(leftFt.GetFlag()) {
+							function = expression.NewOne()
+						} else {
+							function = er.notToExpression(true, ast.IsNull, tp, preserveArgs[0])
+						}
+					} else {
+						function = expression.NewZero()
+					}
+				case 2:
+					op := ast.EQ
+					if not {
+						op = ast.NE
+					}
+					function, er.err = er.constructBinaryOpFunction(preserveArgs[0], preserveArgs[1], op)
+					if er.err != nil {
+						return
+					}
+				}
+			}
+		}
+		if function == nil {
+			function, er.err = er.buildPreservedInFunction(not, tp, preserveArgs, commonCmpType)
+			if er.err != nil {
+				return
+			}
+		}
+	}
+	if function == nil {
 		// If we rewrite IN to EQ, we need to decide what's the collation EQ uses.
 		coll := er.deriveCollationForIn(l, lLen, args)
 		if er.err != nil {
@@ -2256,6 +2313,120 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	}
 	er.ctxStackPop(lLen + 1)
 	er.ctxStackAppend(function, types.EmptyName)
+}
+
+func (er *expressionRewriter) buildPreservedInFunction(
+	not bool,
+	tp *types.FieldType,
+	args []expression.Expression,
+	cmpType types.EvalType,
+) (expression.Expression, error) {
+	if cmpType == types.ETDecimal {
+		if err := er.validateMutableDecimalInList(args[1:]); err != nil {
+			return nil, err
+		}
+	}
+	normalizedArgs := slices.Clone(args)
+	// Preserve a single IN when every element uses the same comparison type with the left operand.
+	// The IN builtin will cast the remaining arguments and fold constant casts for us.
+	switch cmpType {
+	case types.ETInt:
+		normalizedArgs[0] = expression.WrapWithCastAsInt(er.sctx, normalizedArgs[0], nil)
+	case types.ETReal:
+		normalizedArgs[0] = expression.WrapWithCastAsReal(er.sctx, normalizedArgs[0])
+	case types.ETDecimal:
+		normalizedArgs[0] = expression.WrapWithCastAsDecimal(er.sctx, normalizedArgs[0])
+	case types.ETString:
+		normalizedArgs[0] = expression.WrapWithCastAsString(er.sctx, normalizedArgs[0])
+	case types.ETDatetime:
+		normalizedArgs[0] = expression.WrapWithCastAsTime(er.sctx, normalizedArgs[0], types.NewFieldType(mysql.TypeDatetime))
+	case types.ETTimestamp:
+		normalizedArgs[0] = expression.WrapWithCastAsTime(er.sctx, normalizedArgs[0], types.NewFieldType(mysql.TypeTimestamp))
+	case types.ETDuration:
+		normalizedArgs[0] = expression.WrapWithCastAsDuration(er.sctx, normalizedArgs[0])
+	case types.ETJson:
+		normalizedArgs[0] = expression.WrapWithCastAsJSON(er.sctx, normalizedArgs[0])
+	case types.ETVectorFloat32:
+		normalizedArgs[0] = expression.WrapWithCastAsVectorFloat32(er.sctx, normalizedArgs[0])
+	default:
+		return nil, nil
+	}
+	return er.notToExpression(not, ast.In, tp, normalizedArgs...), nil
+}
+
+// pruneImpossibleIntInList removes constant RHS elements that can never match an integer left operand
+// under EQ semantics before we preserve a single IN/NOT IN.
+//
+// Example:
+//
+//	int_col IN (0.12, 3.47, 5)
+//
+// becomes
+//
+//	int_col IN (5)
+//
+// because 0.12 = int_col and 3.47 = int_col are impossible after integer comparison refinement.
+//
+// This matters for the preserved-IN path because:
+//
+//	int_col IN (0.12, 3.47)
+//
+// would otherwise become
+//
+//	in(cast(int_col as decimal), 0.12, 3.47)
+//
+// and lose the old OR-of-EQ simplification opportunity.
+func (er *expressionRewriter) pruneImpossibleIntInList(leftFt *types.FieldType, args []expression.Expression, not bool) ([]expression.Expression, bool) {
+	prunedArgs := make([]expression.Expression, 1, len(args))
+	prunedArgs[0] = args[0]
+	changed := false
+	for _, arg := range args[1:] {
+		c, ok := arg.(*expression.Constant)
+		if !ok {
+			prunedArgs = append(prunedArgs, arg)
+			continue
+		}
+		_, isExceptional := expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)
+		if isExceptional {
+			changed = true
+			continue
+		}
+		prunedArgs = append(prunedArgs, arg)
+	}
+	// `nullable_int_col IN (0.12, 3.47)` is not the constant `false`: when `nullable_int_col` is NULL,
+	// the expression still evaluates to NULL rather than FALSE. So if pruning would leave only the LHS,
+	// keep the original expression for nullable IN and let normal execution preserve NULL semantics.
+	//
+	// `nullable_int_col NOT IN (0.12, 3.47)` does simplify to `not(isnull(nullable_int_col))`, so the
+	// caller can still fold that degenerate NOT IN case after we return a single LHS expression here.
+	if len(prunedArgs) == 1 && !mysql.HasNotNullFlag(leftFt.GetFlag()) {
+		if !not {
+			return args, false
+		}
+	}
+	if !changed {
+		return args, false
+	}
+	return prunedArgs, true
+}
+
+func (er *expressionRewriter) validateMutableDecimalInList(args []expression.Expression) error {
+	for _, arg := range args {
+		if arg.ConstLevel() != expression.ConstOnlyInContext {
+			continue
+		}
+		if arg.GetType(er.sctx.GetEvalCtx()).GetType() == mysql.TypeNull {
+			continue
+		}
+		normalizedArg := arg.Clone()
+		if err := expression.RemoveMutableConst(er.sctx, normalizedArg); err != nil {
+			return err
+		}
+		if _, _, err := normalizedArg.EvalDecimal(er.sctx.GetEvalCtx(), chunk.Row{}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // deriveCollationForIn derives collation for in expression.
