@@ -28,6 +28,8 @@ pub const COM_INIT_DB: u8 = 0x02;
 pub const COM_QUERY: u8 = 0x03;
 /// MySQL command byte for a metadata request.
 pub const COM_FIELD_LIST: u8 = 0x04;
+/// MySQL command byte for the server statistics line (`mysqladmin status`).
+pub const COM_STATISTICS: u8 = 0x09;
 /// MySQL command byte for a server ping.
 pub const COM_PING: u8 = 0x0e;
 /// MySQL command byte for a prepared statement.
@@ -60,6 +62,9 @@ pub enum Command {
     FieldList(Vec<u8>),
     /// Ping the server.
     Ping,
+    /// `COM_STATISTICS`: the one-line server summary `mysqladmin status`
+    /// prints. Carries no payload.
+    Statistics,
     /// Prepare a statement from its raw SQL payload.
     StmtPrepare(Vec<u8>),
     /// Execute a prepared statement with its binary payload.
@@ -126,6 +131,7 @@ pub fn decode_command(payload: &[u8]) -> Result<Command, CommandError> {
         COM_QUERY => Command::Query(command_payload.to_vec()),
         COM_FIELD_LIST => Command::FieldList(command_payload.to_vec()),
         COM_PING => Command::Ping,
+        COM_STATISTICS => Command::Statistics,
         COM_STMT_PREPARE => Command::StmtPrepare(command_payload.to_vec()),
         COM_STMT_EXECUTE => Command::StmtExecute(command_payload.to_vec()),
         COM_STMT_SEND_LONG_DATA => Command::StmtSendLongData(command_payload.to_vec()),
@@ -170,6 +176,7 @@ mod tests {
             Ok(Command::InitDb(b"db\0".to_vec()))
         );
         assert_eq!(decode_command(&[0x0e]), Ok(Command::Ping));
+        assert_eq!(decode_command(&[0x09]), Ok(Command::Statistics));
         assert_eq!(decode_command(&[0x01]), Ok(Command::Quit));
         assert_eq!(
             decode_command(&[0xfa, 1, 2]),
@@ -178,6 +185,24 @@ mod tests {
                 payload: vec![1, 2],
             })
         );
+    }
+
+    /// `COM_STATISTICS` is what `mysqladmin status` sends, and it decodes to
+    /// its own command rather than falling into the unknown-command arm that
+    /// answered "command is not supported by the read-only Rust SQL node".
+    #[test]
+    fn com_statistics_decodes_as_its_own_command() {
+        assert_eq!(
+            decode_command(&[crate::command::COM_STATISTICS]),
+            Ok(Command::Statistics)
+        );
+        // It carries no payload; a stray one is ignored, as Go ignores it.
+        assert_eq!(
+            decode_command(&[crate::command::COM_STATISTICS, b'x']),
+            Ok(Command::Statistics)
+        );
+        // The neighbouring bytes keep their own meanings.
+        assert_eq!(decode_command(&[crate::command::COM_PING]), Ok(Command::Ping));
     }
 
     #[test]

@@ -1199,6 +1199,28 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     exit: ConnectionExit::Quit,
                 });
             }
+            // Go `clientConn.writeStats`: a RAW payload, not an OK packet --
+            // `mysqladmin status` prints the line verbatim. Every counter but
+            // uptime is the literal zero Go sends; it does not track them
+            // either, so inventing numbers here would report a fiction the
+            // server cannot back.
+            Command::Statistics => {
+                let uptime = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |since| since.as_secs() as i64)
+                    .saturating_sub(crate::real_tikv_node::server_start_unix_timestamp())
+                    .max(0);
+                let line = format!(
+                    "Uptime: {uptime}  Threads: 0  Questions: 0  Slow queries: 0  \
+                     Opens: 0  Flush tables: 0  Open tables: 0  \
+                     Queries per second avg: 0.000"
+                );
+                crate::connection_writers::write_payload(
+                    &mut output,
+                    1,
+                    line.as_bytes(),
+                )?;
+            }
             Command::Ping => write_ok(
                 &mut output,
                 1,
