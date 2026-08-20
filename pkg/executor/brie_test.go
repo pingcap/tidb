@@ -56,14 +56,14 @@ func TestBRIEKillMonitorHandlesWrappedQueryInterrupted(t *testing.T) {
 	sctx := mock.NewContext()
 	taskCtx, cancelTaskCtx := context.WithCancel(context.Background())
 	t.Cleanup(cancelTaskCtx)
-	checkCh := make(chan time.Time, 1)
+	tickCh := make(chan time.Time, 1)
 	cancelled := make(chan struct{})
 
-	go cancelBRIEOnKill(taskCtx, sctx, checkCh, func() {
+	go cancelBRIEOnKill(taskCtx, sctx, tickCh, func() {
 		close(cancelled)
 	})
 	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-	checkCh <- time.Now()
+	tickCh <- time.Now()
 
 	select {
 	case <-cancelled:
@@ -72,27 +72,59 @@ func TestBRIEKillMonitorHandlesWrappedQueryInterrupted(t *testing.T) {
 	}
 }
 
-func TestBRIEResultErrorPreservesCancelCause(t *testing.T) {
+func TestMapBRIEErrPreservesCancelCause(t *testing.T) {
 	sctx := mock.NewContext()
 	taskCtx := context.Background()
 
-	err := brieResultError(taskCtx, sctx, errors.New("disk full"), exeerrors.ErrBRIEBackupFailed)
+	err := mapBRIEErr(taskCtx, sctx, errors.New("disk full"), exeerrors.ErrBRIEBackupFailed)
 	require.True(t, exeerrors.ErrBRIEBackupFailed.Equal(err), err)
 
 	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-	err = brieResultError(taskCtx, sctx, context.Canceled, exeerrors.ErrBRIEBackupFailed)
+	err = mapBRIEErr(taskCtx, sctx, context.Canceled, exeerrors.ErrBRIEBackupFailed)
 	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
 	require.False(t, exeerrors.ErrBRIEBackupFailed.Equal(err))
 
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 	sctxNoKill := mock.NewContext()
-	err = brieResultError(canceledCtx, sctxNoKill, context.Canceled, exeerrors.ErrBRIEBackupFailed)
-	require.ErrorIs(t, err, context.Canceled)
-	require.False(t, exeerrors.ErrBRIEBackupFailed.Equal(err))
+	// CANCEL BR JOB cancels taskCtx without SQLKiller; keep 8124/8125.
+	err = mapBRIEErr(canceledCtx, sctxNoKill, context.Canceled, exeerrors.ErrBRIEBackupFailed)
+	require.True(t, exeerrors.ErrBRIEBackupFailed.Equal(err), err)
+	require.False(t, exeerrors.ErrQueryInterrupted.Equal(err))
 
-	err = brieResultError(canceledCtx, sctxNoKill, context.Canceled, nil)
+	err = mapBRIEErr(canceledCtx, sctxNoKill, context.Canceled, nil)
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestClearTaskKeepsUnfinishedBRIETasks(t *testing.T) {
+	ResetGlobalBRIEQueueForTest()
+	sctx := mock.NewContext()
+	ctx := context.Background()
+
+	running := &brieTaskInfo{
+		kind:    ast.BRIEKindBackup,
+		storage: "noop://running",
+	}
+	_, runningID := globalBRIEQueue.registerTask(ctx, running)
+	require.True(t, running.finishTime.IsZero())
+
+	globalBRIEQueue.lastClearTime = time.Now().Add(-clearInterval - time.Second)
+	globalBRIEQueue.clearTask(sctx.GetSessionVars().StmtCtx)
+
+	_, ok := globalBRIEQueue.queryTask(runningID)
+	require.True(t, ok, "still-running BRIE tasks must survive queue cleanup")
+	require.True(t, globalBRIEQueue.cancelTask(runningID))
+
+	finished := &brieTaskInfo{
+		kind:       ast.BRIEKindBackup,
+		storage:    "noop://finished",
+		finishTime: types.NewTime(types.FromGoTime(time.Now().Add(-outdatedDuration.Duration-time.Minute)), mysql.TypeDatetime, 0),
+	}
+	_, finishedID := globalBRIEQueue.registerTask(ctx, finished)
+	globalBRIEQueue.lastClearTime = time.Now().Add(-clearInterval - time.Second)
+	globalBRIEQueue.clearTask(sctx.GetSessionVars().StmtCtx)
+	_, ok = globalBRIEQueue.queryTask(finishedID)
+	require.False(t, ok, "outdated finished BRIE tasks should still be garbage-collected")
 }
 
 func brieTaskInfoToResult(info *brieTaskInfo) string {

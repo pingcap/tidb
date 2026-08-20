@@ -470,10 +470,10 @@ func isSessionDone(sctx sessionctx.Context) (bool, uint32) {
 	return done, 0
 }
 
-// errIfKilledBatchSetTiFlashReplica maps a batch ALTER DATABASE SET TIFLASH REPLICA
-// abort to the client-visible result. A real KILL must not return success after a
-// partial apply. killed == 0 is the failpoint-only abort and still returns nil.
-func errIfKilledBatchSetTiFlashReplica(killed uint32) error {
+// convertKillFlag maps killed!=0 to ErrQueryInterrupted for batch
+// ALTER DATABASE SET TIFLASH REPLICA. killed==0 is the failpoint-only abort
+// and still returns nil.
+func convertKillFlag(killed uint32) error {
 	if killed != 0 {
 		return exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
 	}
@@ -557,7 +557,7 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 		done, killed := isSessionDone(sctx)
 		if done {
 			logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
-			return errIfKilledBatchSetTiFlashReplica(killed)
+			return convertKillFlag(killed)
 		}
 
 		tbReplicaInfo := tbl.TiFlashReplica
@@ -593,7 +593,7 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 			finished, originVersion, pendingCount, forceCheck, killed = e.waitPendingTableThreshold(sctx, dbInfo.ID, tbl.ID, originVersion, pendingCount, threshold)
 			if finished {
 				logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
-				return errIfKilledBatchSetTiFlashReplica(killed)
+				return convertKillFlag(killed)
 			}
 		}
 
@@ -7227,10 +7227,10 @@ func (e *executor) doDDLJob2(ctx sessionctx.Context, job *model.Job, args model.
 	return e.DoDDLJobWrapper(ctx, NewJobWrapperWithArgs(job, args, false))
 }
 
-// shouldRetryCancelingDDLJob reports whether DoDDLJobWrapper should call
+// isRetryableDDLCancelErr reports whether DoDDLJobWrapper should call
 // CancelJobsBySystem again. Finished, cannot-cancel, and not-found results are
 // terminal for the cancel command.
-func shouldRetryCancelingDDLJob(err error) bool {
+func isRetryableDDLCancelErr(err error) bool {
 	return !dbterror.ErrCancelFinishedDDLJob.Equal(err) &&
 		!dbterror.ErrCannotCancelDDLJob.Equal(err) &&
 		!dbterror.ErrDDLJobNotFound.Equal(err)
@@ -7384,7 +7384,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 				// non-nil entries need error handling.
 				if len(errs) > 0 && errs[0] != nil {
 					logutil.DDLLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
-					if shouldRetryCancelingDDLJob(errs[0]) {
+					if isRetryableDDLCancelErr(errs[0]) {
 						continue
 					}
 				}
