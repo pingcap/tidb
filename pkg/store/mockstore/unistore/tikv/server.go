@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/kverrors"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pberror"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/util/lockwaiter"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -257,10 +258,14 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 	failpoint.Inject("pessimisticLockReturnDeadlock", func(val failpoint.Value) {
 		if val.(bool) && len(req.Mutations) > 0 {
 			key := req.Mutations[0].Key
+			// client-go determines whether a deadlock is retryable by hashing the
+			// original transaction keys, before API V2 adds the keyspace prefix. Keep
+			// LockKey encoded so the API V2 response decoder can decode it.
+			keyForDeadlockHash := rowcodec.RemoveKeyspacePrefix(key)
 			err := &kverrors.ErrDeadlock{
 				LockKey:         key,
 				LockTS:          req.StartVersion + 1,
-				DeadlockKeyHash: keysToHashVals(key)[0],
+				DeadlockKeyHash: keysToHashVals(keyForDeadlockHash)[0],
 			}
 			failpoint.Return(&kvrpcpb.PessimisticLockResponse{Errors: []*kvrpcpb.KeyError{convertToKeyError(err)}}, nil)
 		}

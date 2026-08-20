@@ -812,7 +812,12 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Execu
 		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
 		a.Ctx.StmtCommit(ctx)
 	}
-	err := a.handleForeignKeyTrigger(ctx, e, 1)
+	// ExplainExec owns result rendering, while its analyze DML owns the FK trigger state.
+	fkExecutor := e
+	if explain, ok := e.(*ExplainExec); ok && explain.getAnalyzeExecWithForeignKeyTrigger() != nil {
+		fkExecutor = explain.analyzeExec
+	}
+	err := a.handleForeignKeyTrigger(ctx, fkExecutor, 1)
 	if err != nil {
 		err1 := a.handleFKTriggerError(stmtCtx)
 		if err1 != nil {
@@ -820,8 +825,10 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Execu
 		}
 		return err
 	}
-	if stmtCtx.ForeignKeyTriggerCtx.SavepointName != "" {
-		a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(stmtCtx.ForeignKeyTriggerCtx.SavepointName)
+	// In pessimistic DML, FK check locks can be deferred until after FK
+	// triggers, so keep the savepoint alive until those locks succeed.
+	if !a.Ctx.GetSessionVars().TxnCtx.IsPessimistic {
+		a.releaseFKCascadeSavepoint(stmtCtx)
 	}
 	return nil
 }
@@ -945,25 +952,38 @@ func (a *ExecStmt) prepareFKCascadeContext(e exec.Executor) {
 }
 
 func (a *ExecStmt) handleFKTriggerError(sc *stmtctx.StatementContext) error {
-	if sc.ForeignKeyTriggerCtx.SavepointName == "" {
+	savepointName := sc.ForeignKeyTriggerCtx.SavepointName
+	if savepointName == "" {
 		return nil
 	}
+	defer func() {
+		sc.ForeignKeyTriggerCtx.SavepointName = ""
+	}()
 	txn, err := a.Ctx.Txn(false)
 	if err != nil || !txn.Valid() {
 		return err
 	}
-	savepointRecord := a.Ctx.GetSessionVars().TxnCtx.RollbackToSavepoint(sc.ForeignKeyTriggerCtx.SavepointName)
+	savepointRecord := a.Ctx.GetSessionVars().TxnCtx.RollbackToSavepoint(savepointName)
 	if savepointRecord == nil {
 		// Normally should never run into here, but just in case, rollback the transaction.
 		err = txn.Rollback()
 		if err != nil {
 			return err
 		}
-		return errors.Errorf("foreign key cascade savepoint '%s' not found, transaction is rollback, should never happen", sc.ForeignKeyTriggerCtx.SavepointName)
+		return errors.Errorf("foreign key cascade savepoint '%s' not found, transaction is rollback, should never happen", savepointName)
 	}
 	txn.RollbackMemDBToCheckpoint(savepointRecord.MemDBCheckpoint)
-	a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(sc.ForeignKeyTriggerCtx.SavepointName)
+	a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(savepointName)
 	return nil
+}
+
+func (a *ExecStmt) releaseFKCascadeSavepoint(sc *stmtctx.StatementContext) {
+	savepointName := sc.ForeignKeyTriggerCtx.SavepointName
+	if savepointName == "" {
+		return
+	}
+	a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(savepointName)
+	sc.ForeignKeyTriggerCtx.SavepointName = ""
 }
 
 func (a *ExecStmt) handleNoDelay(ctx context.Context, e exec.Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, err error) {
@@ -1215,6 +1235,13 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			err = err1
 		}
 	}()
+	// Registered after OnPessimisticStmtEnd so it runs first, matching the
+	// previous explicit release-before-return order.
+	defer func() {
+		if err == nil {
+			a.releaseFKCascadeSavepoint(sctx.GetSessionVars().StmtCtx)
+		}
+	}()
 
 	tryLockKeys := func(e exec.Executor, keys []kv.Key, shared bool) (exec.Executor, error) {
 		seVars := sctx.GetSessionVars()
@@ -1244,6 +1271,11 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 		}
 		if err == nil {
 			return nil, nil
+		}
+		// FK cascade writes may have been flushed by StmtCommit before this
+		// deferred lock phase, so rollback to the FK savepoint before retrying.
+		if err1 := a.handleFKTriggerError(seVars.StmtCtx); err1 != nil {
+			return nil, err1
 		}
 		e, err = a.handlePessimisticLockError(ctx, err)
 		if err != nil {
@@ -1480,6 +1512,8 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	if err = a.openExecutor(ctx, e); err != nil {
 		return nil, err
 	}
+	// Prepare a fresh FK cascade savepoint for the retried statement attempt.
+	a.prepareFKCascadeContext(e)
 	return e, nil
 }
 

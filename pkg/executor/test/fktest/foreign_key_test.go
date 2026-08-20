@@ -1602,6 +1602,249 @@ func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 	tk.MustQuery("select count(*) from t2 where id is null").Check(testkit.Rows("32768"))
 }
 
+func TestForeignKeyCascadePessimisticRetrySavepoint(t *testing.T) {
+	const (
+		writeConflictFailpoint = "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict"
+		deadlockFailpoint      = "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnDeadlock"
+		cascadeErrorFailpoint  = "github.com/pingcap/tidb/pkg/executor/handleForeignKeyCascadeError"
+	)
+
+	newTestKit := func(t *testing.T, isolation string) *testkit.TestKit {
+		t.Helper()
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+		tk.MustExec("set @@foreign_key_checks=1")
+		tk.MustExec("set @@tidb_pessimistic_txn_fair_locking=0")
+		tk.MustExec("use test")
+		if isolation != "" {
+			tk.MustExec("set session transaction isolation level " + isolation)
+		}
+		return tk
+	}
+
+	prepareGiftSchema := func(t *testing.T, tk *testkit.TestKit) {
+		t.Helper()
+		tk.MustExec("create table gift (id bigint primary key, expires_at bigint)")
+		tk.MustExec("create table user_gift (" +
+			"id bigint primary key, gift_id bigint, index gift_id_idx(gift_id), " +
+			"constraint user_gift_fk foreign key (gift_id) references gift(id) on update cascade)")
+		tk.MustExec("insert into gift values (1, 1)")
+		tk.MustExec("insert into user_gift values (1, 1)")
+	}
+
+	enableRetryFailure := func(t *testing.T, lockFailpoint, lockExpression, cascadeExpression string) {
+		t.Helper()
+		testfailpoint.Enable(t, lockFailpoint, lockExpression)
+		testfailpoint.Enable(t, cascadeErrorFailpoint, cascadeExpression)
+	}
+
+	assertGiftRollback := func(t *testing.T, tk *testkit.TestKit, err error) {
+		t.Helper()
+		require.EqualError(t, err, "handleForeignKeyCascadeError")
+		require.True(t, tk.Session().GetSessionVars().InTxn())
+		require.Empty(t, tk.Session().GetSessionVars().TxnCtx.Savepoints)
+		tk.MustQuery("select * from gift").Check(testkit.Rows("1 1"))
+		tk.MustQuery("select * from user_gift").Check(testkit.Rows("1 1"))
+		tk.MustExec("rollback")
+	}
+
+	// issue:70197. Each subtest owns its failpoints so their cleanup runs
+	// before the next retry sequence starts.
+	cases := []struct {
+		name              string
+		isolation         string
+		lockFailpoint     string
+		lockExpression    string
+		cascadeExpression string
+	}{
+		{
+			name:              "write-conflict-repeatable-read",
+			lockFailpoint:     writeConflictFailpoint,
+			lockExpression:    "1*return(false)->1*return(true)->return(false)",
+			cascadeExpression: "1*return(false)->return(true)",
+		},
+		{
+			name:              "write-conflict-read-committed",
+			isolation:         "read committed",
+			lockFailpoint:     writeConflictFailpoint,
+			lockExpression:    "1*return(false)->1*return(true)->return(false)",
+			cascadeExpression: "1*return(false)->return(true)",
+		},
+		{
+			name:              "two-write-conflict-retries",
+			lockFailpoint:     writeConflictFailpoint,
+			lockExpression:    "1*return(false)->2*return(true)->return(false)",
+			cascadeExpression: "2*return(false)->return(true)",
+		},
+		{
+			name:              "retryable-deadlock",
+			lockFailpoint:     deadlockFailpoint,
+			lockExpression:    "1*return(false)->1*return(true)->return(false)",
+			cascadeExpression: "1*return(false)->return(true)",
+		},
+	}
+	for _, ca := range cases {
+		t.Run(ca.name, func(t *testing.T) {
+			tk := newTestKit(t, ca.isolation)
+			prepareGiftSchema(t, tk)
+			tk.MustExec("begin pessimistic")
+			enableRetryFailure(t, ca.lockFailpoint, ca.lockExpression, ca.cascadeExpression)
+			assertGiftRollback(t, tk, tk.ExecToErr("update gift set id=1, expires_at=2 where id=1"))
+		})
+	}
+
+	t.Run("multi-level-cascade", func(t *testing.T) {
+		tk := newTestKit(t, "")
+		tk.MustExec("create table fk_parent (id bigint primary key, v bigint)")
+		tk.MustExec("create table fk_child (" +
+			"id bigint primary key, parent_id bigint, unique index parent_id_idx(parent_id), " +
+			"foreign key (parent_id) references fk_parent(id) on update cascade)")
+		tk.MustExec("create table fk_grandchild (" +
+			"id bigint primary key, child_parent_id bigint, index child_parent_id_idx(child_parent_id), " +
+			"foreign key (child_parent_id) references fk_child(parent_id) on update cascade)")
+		tk.MustExec("insert into fk_parent values (1, 1)")
+		tk.MustExec("insert into fk_child values (1, 1)")
+		tk.MustExec("insert into fk_grandchild values (1, 1)")
+		tk.MustExec("begin pessimistic")
+
+		enableRetryFailure(t,
+			writeConflictFailpoint,
+			"1*return(false)->1*return(true)->return(false)",
+			"2*return(false)->return(true)")
+		err := tk.ExecToErr("update fk_parent set id=2, v=2 where id=1")
+		require.EqualError(t, err, "handleForeignKeyCascadeError")
+		require.True(t, tk.Session().GetSessionVars().InTxn())
+		require.Empty(t, tk.Session().GetSessionVars().TxnCtx.Savepoints)
+		tk.MustQuery("select * from fk_parent").Check(testkit.Rows("1 1"))
+		tk.MustQuery("select * from fk_child").Check(testkit.Rows("1 1"))
+		tk.MustQuery("select * from fk_grandchild").Check(testkit.Rows("1 1"))
+		tk.MustExec("rollback")
+	})
+
+	t.Run("prepared-statement", func(t *testing.T) {
+		tk := newTestKit(t, "")
+		prepareGiftSchema(t, tk)
+		tk.MustExec("prepare fk_retry_stmt from " +
+			"'update gift set id=?, expires_at=? where id=?'")
+		tk.MustExec("set @new_id=1, @expires_at=2, @old_id=1")
+		tk.MustExec("begin pessimistic")
+		enableRetryFailure(t,
+			writeConflictFailpoint,
+			"1*return(false)->1*return(true)->return(false)",
+			"1*return(false)->return(true)")
+		assertGiftRollback(t, tk,
+			tk.ExecToErr("execute fk_retry_stmt using @new_id, @expires_at, @old_id"))
+	})
+
+	t.Run("explain-analyze-dml", func(t *testing.T) {
+		tk := newTestKit(t, "")
+		prepareGiftSchema(t, tk)
+		tk.MustExec("begin pessimistic")
+		enableRetryFailure(t,
+			writeConflictFailpoint,
+			"1*return(false)->1*return(true)->return(false)",
+			"1*return(false)->return(true)")
+		assertGiftRollback(t, tk,
+			tk.ExecToErr("explain analyze update gift set id=1, expires_at=2 where id=1"))
+	})
+
+	t.Run("explain-analyze-dml-successful-retry", func(t *testing.T) {
+		tk := newTestKit(t, "")
+		prepareGiftSchema(t, tk)
+		tk.MustExec("begin pessimistic")
+		testfailpoint.Enable(t,
+			writeConflictFailpoint,
+			"1*return(false)->1*return(true)->return(false)")
+
+		require.NotEmpty(t,
+			tk.MustQuery("explain analyze update gift set id=2, expires_at=2 where id=1").Rows())
+		require.True(t, tk.Session().GetSessionVars().InTxn())
+		require.Empty(t, tk.Session().GetSessionVars().TxnCtx.Savepoints)
+		tk.MustQuery("select * from gift").Check(testkit.Rows("2 2"))
+		tk.MustQuery("select * from user_gift").Check(testkit.Rows("1 2"))
+		tk.MustExec("rollback")
+	})
+
+	t.Run("successful-retry-keeps-transaction-usable", func(t *testing.T) {
+		tk := newTestKit(t, "")
+		prepareGiftSchema(t, tk)
+		tk.MustExec("begin pessimistic")
+		testfailpoint.Enable(t,
+			writeConflictFailpoint,
+			"1*return(false)->1*return(true)->return(false)")
+
+		tk.MustExec("update gift set id=2, expires_at=expires_at+1 where id=1")
+		require.True(t, tk.Session().GetSessionVars().InTxn())
+		require.Empty(t, tk.Session().GetSessionVars().TxnCtx.Savepoints)
+		tk.MustQuery("select * from gift").Check(testkit.Rows("2 2"))
+		tk.MustQuery("select * from user_gift").Check(testkit.Rows("1 2"))
+
+		tk.MustExec("savepoint after_retry")
+		tk.MustExec("insert into gift values (3, 3)")
+		tk.MustExec("rollback to savepoint after_retry")
+		tk.MustQuery("select * from gift").Check(testkit.Rows("2 2"))
+		tk.MustExec("insert into gift values (4, 4)")
+		tk.MustExec("commit")
+		require.False(t, tk.Session().GetSessionVars().InTxn())
+		tk.MustQuery("select * from gift order by id").Check(testkit.Rows("2 2", "4 4"))
+		tk.MustQuery("select * from user_gift").Check(testkit.Rows("1 2"))
+	})
+
+	t.Run("deferred-fk-lock-retry-rolls-back-cascade-writes", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk1 := testkit.NewTestKit(t, store)
+		tk2 := testkit.NewTestKit(t, store)
+
+		tk1.MustExec("set @@global.tidb_enable_foreign_key=1")
+		tk1.MustExec("set @@foreign_key_checks=1")
+		tk1.MustExec("use test")
+		tk2.MustExec("set @@foreign_key_checks=1")
+		tk2.MustExec("use test")
+
+		tk1.MustExec("create table fk_guard (id int primary key)")
+		tk1.MustExec("create table fk_parent (" +
+			"id int primary key, guard_id int, v int, " +
+			"foreign key (guard_id) references fk_guard(id))")
+		tk1.MustExec("create table fk_child (" +
+			"id int primary key, parent_id int, " +
+			"foreign key (parent_id) references fk_parent(id) on update cascade)")
+		tk1.MustExec("insert into fk_guard values (1), (2)")
+		tk1.MustExec("insert into fk_parent values (1, 1, 0)")
+		tk1.MustExec("insert into fk_child values (1, 1)")
+
+		tk2.MustExec("begin pessimistic")
+		tk2.MustQuery("select * from fk_guard where id = 2 for update").Check(testkit.Rows("2"))
+
+		tk1.MustExec("begin pessimistic")
+		done := make(chan error, 1)
+		go func() {
+			done <- tk1.ExecToErr("update fk_parent set id = 2, guard_id = 2, v = v + 1 where id = 1")
+		}()
+
+		time.Sleep(200 * time.Millisecond)
+		tk2.MustExec("delete from fk_guard where id = 2")
+		tk2.MustExec("commit")
+
+		var err error
+		select {
+		case err = <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("update did not return after the conflicting transaction committed")
+		}
+		require.True(t, plannererrors.ErrNoReferencedRow2.Equal(err), err.Error())
+		require.True(t, tk1.Session().GetSessionVars().InTxn())
+		require.Empty(t, tk1.Session().GetSessionVars().TxnCtx.Savepoints)
+		tk1.MustQuery("select * from fk_parent order by id").Check(testkit.Rows("1 1 0"))
+		tk1.MustQuery("select * from fk_child order by id").Check(testkit.Rows("1 1"))
+		tk1.MustExec("rollback")
+
+		tk2.MustQuery("select * from fk_guard order by id").Check(testkit.Rows("1"))
+		tk2.MustQuery("select * from fk_parent order by id").Check(testkit.Rows("1 1 0"))
+		tk2.MustQuery("select * from fk_child order by id").Check(testkit.Rows("1 1"))
+	})
+}
+
 func TestForeignKeyOnUpdateCascade(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
