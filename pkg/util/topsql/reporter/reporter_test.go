@@ -23,9 +23,11 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/util/topsql/collector"
+	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -339,26 +341,26 @@ func TestCollectCapacity(t *testing.T) {
 
 	topsqlstate.GlobalState.MaxCollect.Store(10000)
 	registerSQL(5000)
-	require.Equal(t, int64(5000), tsr.normalizedSQLMap.length.Load())
+	require.Equal(t, int64(5000), tsr.normalizedSQLMap.size())
 	registerPlan(1000)
-	require.Equal(t, int64(1000), tsr.normalizedPlanMap.length.Load())
+	require.Equal(t, int64(1000), tsr.normalizedPlanMap.size())
 
 	registerSQL(20000)
-	require.Equal(t, int64(10000), tsr.normalizedSQLMap.length.Load())
+	require.Equal(t, int64(10000), tsr.normalizedSQLMap.size())
 	registerPlan(20000)
-	require.Equal(t, int64(10000), tsr.normalizedPlanMap.length.Load())
+	require.Equal(t, int64(10000), tsr.normalizedPlanMap.size())
 
 	topsqlstate.GlobalState.MaxCollect.Store(20000)
 	registerSQL(50000)
-	require.Equal(t, int64(20000), tsr.normalizedSQLMap.length.Load())
+	require.Equal(t, int64(20000), tsr.normalizedSQLMap.size())
 	registerPlan(50000)
-	require.Equal(t, int64(20000), tsr.normalizedPlanMap.length.Load())
+	require.Equal(t, int64(20000), tsr.normalizedPlanMap.size())
 
 	topsqlstate.GlobalState.MaxStatementCount.Store(5000)
 	tsr.processCPUTimeData(1, genRecord(20000))
 	require.Equal(t, 5001, len(tsr.collecting.records))
-	require.Equal(t, int64(20000), tsr.normalizedSQLMap.length.Load())
-	require.Equal(t, int64(20000), tsr.normalizedPlanMap.length.Load())
+	require.Equal(t, int64(20000), tsr.normalizedSQLMap.size())
+	require.Equal(t, int64(20000), tsr.normalizedPlanMap.size())
 }
 
 func TestCollectInternal(t *testing.T) {
@@ -701,6 +703,82 @@ func TestProcessStmtStatsData(t *testing.T) {
 	assert.Equal(t, []byte("S1"), data.DataRecords[5].SqlDigest)
 	assert.Equal(t, uint32(0), data.DataRecords[5].Items[0].CpuTimeMs)
 	assert.Equal(t, uint64(10), data.DataRecords[5].Items[0].StmtNetworkInBytes+data.DataRecords[5].Items[0].StmtNetworkOutBytes)
+}
+
+func TestReporterBackpressureRetainsMetadata(t *testing.T) {
+	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+	t.Cleanup(tsr.Close)
+
+	queuedCount := cap(tsr.reportCollectedDataChan)
+	require.Positive(t, queuedCount)
+	for i := range queuedCount {
+		sqlDigest := []byte(fmt.Sprintf("queued-sql-%d", i))
+		planDigest := []byte(fmt.Sprintf("queued-plan-%d", i))
+		tsr.RegisterSQL(sqlDigest, fmt.Sprintf("select %d", i), false)
+		tsr.RegisterPlan(planDigest, fmt.Sprintf("point_get_%d", i), false)
+		tsr.processCPUTimeData(uint64(i+1), cpuRecords{{
+			SQLDigest:  sqlDigest,
+			PlanDigest: planDigest,
+			CPUTimeMs:  uint32(i + 1),
+		}})
+		tsr.takeDataAndSendToReportChan()
+	}
+	require.Equal(t, queuedCount, len(tsr.reportCollectedDataChan))
+
+	droppedSQLDigest := []byte("dropped-sql")
+	droppedPlanDigest := []byte("dropped-plan")
+	tsr.RegisterSQL(droppedSQLDigest, "select dropped", false)
+	tsr.RegisterPlan(droppedPlanDigest, "point_get_dropped", false)
+	tsr.processCPUTimeData(uint64(queuedCount+1), cpuRecords{{
+		SQLDigest:  droppedSQLDigest,
+		PlanDigest: droppedPlanDigest,
+		CPUTimeMs:  1,
+	}})
+	fullBefore := reporterCounterValue(t, reporter_metrics.IgnoreReportChannelFullCounter)
+	backpressureBefore := reporterCounterValue(t, reporter_metrics.IgnoreReportDataByBackpressureCounter)
+	done := make(chan struct{})
+	go func() {
+		tsr.takeDataAndSendToReportChan()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("takeDataAndSendToReportChan blocked on a full channel")
+	}
+
+	require.Empty(t, tsr.collecting.records)
+	require.Empty(t, tsr.collecting.evicted)
+	require.Len(t, tsr.normalizedSQLMap.toProto(), 1)
+	require.Len(t, tsr.normalizedPlanMap.toProto(tsr.decodePlan, tsr.compressPlan), 1)
+	require.InDelta(t, 1.0, reporterCounterValue(t, reporter_metrics.IgnoreReportChannelFullCounter)-fullBefore, 1e-9)
+	require.InDelta(t, 1.0, reporterCounterValue(t, reporter_metrics.IgnoreReportDataByBackpressureCounter)-backpressureBefore, 1e-9)
+
+	for range queuedCount {
+		queued := <-tsr.reportCollectedDataChan
+		require.Len(t, queued.collected.getReportRecords(), 1)
+		require.Len(t, queued.normalizedSQLMap.toProto(), 1)
+		require.Len(t, queued.normalizedPlanMap.toProto(tsr.decodePlan, tsr.compressPlan), 1)
+	}
+
+	tsr.processCPUTimeData(uint64(queuedCount+2), cpuRecords{{
+		SQLDigest:  droppedSQLDigest,
+		PlanDigest: droppedPlanDigest,
+		CPUTimeMs:  1,
+	}})
+	tsr.takeDataAndSendToReportChan()
+	recovered := <-tsr.reportCollectedDataChan
+	require.Len(t, recovered.collected.getReportRecords(), 1)
+	require.Len(t, recovered.normalizedSQLMap.toProto(), 1)
+	require.Len(t, recovered.normalizedPlanMap.toProto(tsr.decodePlan, tsr.compressPlan), 1)
+	require.Equal(t, 2, queuedCount)
+}
+
+func reporterCounterValue(t *testing.T, counter interface{ Write(*dto.Metric) error }) float64 {
+	t.Helper()
+	pb := &dto.Metric{}
+	require.NoError(t, counter.Write(pb))
+	return pb.GetCounter().GetValue()
 }
 
 func initializeCache(maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mockDataSink2) {
