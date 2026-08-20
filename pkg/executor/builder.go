@@ -5369,6 +5369,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		err = e.open(ctx, kvRanges)
 		return e, err
 	}
+	e.rangeMemTracker = memoryTracker
 
 	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	if is.Index.Global {
@@ -5429,6 +5430,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		err = e.open(ctx)
 		return e, err
 	}
+	e.rangeMemTracker = memTracker
 
 	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	if is.Index.Global {
