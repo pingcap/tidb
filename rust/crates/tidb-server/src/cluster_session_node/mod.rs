@@ -1377,6 +1377,16 @@ impl QuerySession for ClusterServerSession {
         self.session.wait_timeout()
     }
 
+    /// This session's own `@@max_allowed_packet`; see the trait's own doc for
+    /// why Go rebinds the packet reader from it on every packet.
+    fn max_allowed_packet(&self) -> Option<usize> {
+        self.session
+            .vars()
+            .get_system("max_allowed_packet")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+    }
+
     fn split_statements(
         &mut self,
         sql: &str,

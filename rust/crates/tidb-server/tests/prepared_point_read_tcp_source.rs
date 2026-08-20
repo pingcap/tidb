@@ -27,8 +27,13 @@ fn authenticated_connection_owns_the_registry_and_all_three_commands() {
     let registry = source
         .find("let mut prepared = PreparedStatementRegistry::default()")
         .expect("one connection-local prepared registry");
+    // Anchored on the read itself rather than on the line that happens to
+    // precede it: what this asserts is the ORDER of the three (session, then
+    // registry, then command loop), and pinning an adjacent line makes any
+    // insertion between them read as a missing command loop. One did --
+    // `reader.set_max_allowed_packet` from Go's per-packet rebind.
     let command_loop = source
-        .find("reader.set_sequence(0);\n        let payload = match reader.read_packet()")
+        .find("let payload = match reader.read_packet()")
         .expect("authenticated command loop");
     assert!(session < registry && registry < command_loop);
     assert!(source.contains("Command::StmtPrepare(bytes)"));

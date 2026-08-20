@@ -839,6 +839,28 @@ pub trait QuerySession {
         Duration::from_secs(28_800)
     }
 
+    /// This session's `@@max_allowed_packet`, or `None` for a session that
+    /// keeps no variable store.
+    ///
+    /// Go rebinds the reader from the SESSION VARIABLE on every packet:
+    ///
+    /// ```text
+    /// func (cc *clientConn) readPacket() ([]byte, error) {
+    ///     if cc.getCtx() != nil {
+    ///         cc.pkt.SetMaxAllowedPacket(
+    ///             cc.ctx.GetSessionVars().MaxAllowedPacket)
+    ///     }
+    /// ```
+    ///
+    /// so the limit a client READS and the limit the server ENFORCES are one
+    /// value, and `SET max_allowed_packet` takes effect on the next packet.
+    /// `None` is Go's `cc.getCtx() == nil`: the config seed
+    /// (`PacketIO.SetMaxAllowedPacket(config.GetMaxAllowedPacket())`) stands
+    /// until a session exists to ask.
+    fn max_allowed_packet(&self) -> Option<usize> {
+        None
+    }
+
     /// Prepares a statement of any shape, reporting the marker count and the
     /// result columns a PREPARE sends.
     ///

@@ -277,6 +277,16 @@ impl QuerySession for PipelineServerSession {
         self.session.wait_timeout()
     }
 
+    /// This session's own `@@max_allowed_packet`, which is what Go bounds the
+    /// packet reader by; see the trait's own doc.
+    fn max_allowed_packet(&self) -> Option<usize> {
+        self.session
+            .vars()
+            .get_system("max_allowed_packet")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+    }
+
     /// The live status word Go reads with `cc.ctx.Status()` before every
     /// OK/EOF packet: this session owns a real transaction and a real
     /// `autocommit` variable, so both bits come from it rather than from a
