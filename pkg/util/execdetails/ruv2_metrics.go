@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	tikvutil "github.com/tikv/client-go/v2/util"
-	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 type ruv2MetricsKeyType struct{}
@@ -937,25 +936,25 @@ func FormatRUCalculationDetail(ruDetails *tikvutil.RUDetails) string {
 	if ruDetails == nil {
 		return ""
 	}
-	calculations := ruDetails.RUCalculations()
-	tiflashRU := ruDetails.TiflashRU()
-	if len(calculations) == 0 && tiflashRU == 0 {
+	calculation, hasCalculation, consistent := ruDetails.RUCalculation()
+	if !consistent {
 		return ""
 	}
-	sort.Slice(calculations, func(i, j int) bool {
-		return ruV1FactorSortKey(calculations[i].Factors) < ruV1FactorSortKey(calculations[j].Factors)
-	})
+	tiflashRU := ruDetails.TiflashRU()
+	if !hasCalculation && tiflashRU == 0 {
+		return ""
+	}
 
 	var rruTerms, wruTerms []ruFormulaTerm
 	var rru, wru float64
-	for _, calculation := range calculations {
+	if hasCalculation {
 		factors, inputs := calculation.Factors, calculation.Inputs
 		addRUFormulaTerm(&rruTerms, "read_rpc_count", inputs.ReadRPCCount, "READ_BASE_COST", factors.ReadBaseCost)
 		addRUFormulaTermWithRatio(&rruTerms, "read_rpc_count", inputs.ReadRPCCount,
 			"READ_PER_BATCH_BASE_COST", factors.ReadPerBatchBaseCost, "BATCH_PROPORTION", factors.BatchProportion)
 		addRUFormulaTerm(&rruTerms, "charged_read_bytes", inputs.ReadBytes, "READ_BYTES_COST", factors.ReadBytesCost)
 		addRUFormulaTerm(&rruTerms, "kv_cpu_ms", inputs.KVCPUTimeMs, "CPU_MS_COST", factors.CPUMsCost)
-		rru += calculation.RRU()
+		rru = calculation.RRU()
 
 		addRUFormulaTerm(&wruTerms, "replica_weighted_write_rpc_count", inputs.ReplicaWeightedWriteRPCCount,
 			"WRITE_BASE_COST", factors.WriteBaseCost)
@@ -967,7 +966,7 @@ func FormatRUCalculationDetail(ruDetails *tikvutil.RUDetails) string {
 			"WRITE_BASE_COST", factors.WriteBaseCost)
 		addNegativeRUFormulaTerm(&wruTerms, "failed_write_bytes", inputs.FailedWriteBytes,
 			"WRITE_BYTES_COST", factors.WriteBytesCost)
-		wru += calculation.WRU()
+		wru = calculation.WRU()
 	}
 	if !sameRUValue(rru+wru, ruDetails.RRU()+ruDetails.WRU()-tiflashRU) {
 		return ""
@@ -1072,13 +1071,6 @@ func roundRUFormulaResult(value float64) float64 {
 func sameRUValue(left, right float64) bool {
 	tolerance := 1e-9 * math.Max(1, math.Max(math.Abs(left), math.Abs(right)))
 	return math.Abs(left-right) <= tolerance
-}
-
-func ruV1FactorSortKey(f rmclient.RUFactorSnapshot) string {
-	return fmt.Sprintf("%g/%g/%g/%g/%g/%g/%g/%g",
-		f.ReadBaseCost, f.ReadPerBatchBaseCost, f.ReadBytesCost,
-		f.WriteBaseCost, f.WritePerBatchBaseCost, f.WriteBytesCost,
-		f.CPUMsCost, f.BatchProportion)
 }
 
 // FormatRUV2Summary formats the RUv2 total and detailed metrics in one pass.

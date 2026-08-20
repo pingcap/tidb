@@ -174,7 +174,8 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		ctx.GetSessionVars().RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
 		require.NotNil(t, ctx.GetSessionVars().RUV2Metrics)
 		ruDetails := goCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
-		ruDetails.UpdateWithRUCalculation(&rmpb.Consumption{RRU: 1.5}, 0, rmclient.RUCalculation{
+		ruDetails.Update(&rmpb.Consumption{RRU: 1.5}, 0)
+		ruDetails.AddRUCalculation(rmclient.RUCalculation{
 			Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1.5},
 			Inputs:  rmclient.RUCalculationInputs{ReadRPCCount: 1},
 		})

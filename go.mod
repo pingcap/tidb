@@ -376,6 +376,6 @@ replace (
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-replace github.com/tikv/pd/client => github.com/JmPotato/pd/client v0.0.0-20260819070454-a0b720772fe5
+replace github.com/tikv/pd/client => github.com/JmPotato/pd/client v0.0.0-20260820105723-5d6648e4b040
 
-replace github.com/tikv/client-go/v2 => github.com/JmPotato/client-go/v2 v2.0.0-20260819075847-5691b80961e9
+replace github.com/tikv/client-go/v2 => github.com/JmPotato/client-go/v2 v2.0.0-20260820105841-9643ccb293f8

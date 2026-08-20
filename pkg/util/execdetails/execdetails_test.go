@@ -1126,7 +1126,8 @@ func TestCopRuntimeStats2(t *testing.T) {
 
 func TestRURuntimeStatsStringV1(t *testing.T) {
 	ruDetails := util.NewRUDetails()
-	ruDetails.UpdateWithRUCalculation(&rmpb.Consumption{RRU: 2.2522118248697915, WRU: 116.80625}, 0, rmclient.RUCalculation{
+	ruDetails.Update(&rmpb.Consumption{RRU: 2.2522118248697915, WRU: 116.80625}, 0)
+	ruDetails.AddRUCalculation(rmclient.RUCalculation{
 		Factors: rmclient.RUFactorSnapshot{
 			ReadBaseCost:          0.125,
 			ReadPerBatchBaseCost:  0.5,
@@ -1168,7 +1169,8 @@ func TestRURuntimeStatsStringV1(t *testing.T) {
 		"RU=RRU(2.252212)+WRU(116.806250)+tiflash_ru(3.000000)=122.058462")
 
 	failedWriteDetails := util.NewRUDetails()
-	failedWriteDetails.UpdateWithRUCalculation(&rmpb.Consumption{WRU: 14}, 0, rmclient.RUCalculation{
+	failedWriteDetails.Update(&rmpb.Consumption{WRU: 14}, 0)
+	failedWriteDetails.AddRUCalculation(rmclient.RUCalculation{
 		Factors: rmclient.RUFactorSnapshot{WriteBaseCost: 3, WriteBytesCost: 0.2},
 		Inputs: rmclient.RUCalculationInputs{
 			ReplicaWeightedWriteRPCCount: 3,
@@ -1188,8 +1190,21 @@ func TestRURuntimeStatsStringV1(t *testing.T) {
 	pureTiFlashDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 4, WRU: 5})
 	require.Equal(t, "RU=tiflash_ru(9.000000)=9.000000", FormatRUCalculationDetail(pureTiFlashDetails))
 
+	mixedFactorDetails := util.NewRUDetails()
+	mixedFactorDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 3})
+	mixedFactorDetails.AddRUCalculation(rmclient.RUCalculation{
+		Factors: rmclient.RUFactorSnapshot{ReadBytesCost: 0.1},
+		Inputs:  rmclient.RUCalculationInputs{ReadBytes: 10},
+	})
+	mixedFactorDetails.AddRUCalculation(rmclient.RUCalculation{
+		Factors: rmclient.RUFactorSnapshot{ReadBytesCost: 0.2},
+		Inputs:  rmclient.RUCalculationInputs{ReadBytes: -5},
+	})
+	require.Empty(t, FormatRUCalculationDetail(mixedFactorDetails))
+
 	tinyDetails := util.NewRUDetails()
-	tinyDetails.UpdateWithRUCalculation(&rmpb.Consumption{RRU: 0.0000006, WRU: 0.0000006}, 0, rmclient.RUCalculation{
+	tinyDetails.Update(&rmpb.Consumption{RRU: 0.0000006, WRU: 0.0000006}, 0)
+	tinyDetails.AddRUCalculation(rmclient.RUCalculation{
 		Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1, WriteBaseCost: 1},
 		Inputs: rmclient.RUCalculationInputs{
 			ReadRPCCount:                 0.0000006,
@@ -1200,7 +1215,8 @@ func TestRURuntimeStatsStringV1(t *testing.T) {
 		"RU=RRU(0.000001)+WRU(0.000001)=0.000002")
 
 	partialDetails := util.NewRUDetails()
-	partialDetails.UpdateWithRUCalculation(&rmpb.Consumption{RRU: 2}, 0, rmclient.RUCalculation{
+	partialDetails.Update(&rmpb.Consumption{RRU: 2}, 0)
+	partialDetails.AddRUCalculation(rmclient.RUCalculation{
 		Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1},
 		Inputs:  rmclient.RUCalculationInputs{ReadRPCCount: 1},
 	})

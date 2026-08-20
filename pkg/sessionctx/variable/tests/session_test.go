@@ -485,7 +485,8 @@ func TestSlowLogFormatIncludesTiFlashRUInRUV2Metrics(t *testing.T) {
 
 	t.Run("v1 calculation detail", func(t *testing.T) {
 		details := util.NewRUDetails()
-		details.UpdateWithRUCalculation(&rmpb.Consumption{RRU: 1.5}, 0, rmclient.RUCalculation{
+		details.Update(&rmpb.Consumption{RRU: 1.5}, 0)
+		details.AddRUCalculation(rmclient.RUCalculation{
 			Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1.5},
 			Inputs:  rmclient.RUCalculationInputs{ReadRPCCount: 1},
 		})
