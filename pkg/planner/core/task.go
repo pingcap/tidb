@@ -465,8 +465,10 @@ func attach2TaskForMpp4PhysicalHashJoin(pp base.PhysicalPlan, tasks ...base.Task
 	// for broadcast inner join, it should be the non-broadcast side, since broadcast side is always the build side, so
 	// just use the probe side is ok.
 	// for hash inner join, both side is ok, by default, we use the probe side
-	// for outer join, it should always be the outer side of the join
+	// for left/right outer join, it should always be the outer side of the join
 	// for semi join, it should be the left side(the same as left out join)
+	// for full outer join, both sides are preserved, so neither side's partition property
+	// can be passed to the join result. Use AnyType instead.
 	partTp := property.AnyType
 	var hashCols []*property.MPPPartitionColumn
 	if p.JoinType != base.FullOuterJoin {
