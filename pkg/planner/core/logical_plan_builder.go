@@ -880,6 +880,19 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		joinPlan.JoinType = base.InnerJoin
 	}
 
+	// A join whose inner side aggregates on the join key can be re-correlated into
+	// an Apply that computes the aggregate for one group per outer row, which turns
+	// a full pass over the aggregated table into one probe per outer row. Enable the
+	// correlate alternative round so CorrelateSolver gets a chance; that rule
+	// re-checks the shape precisely and the round is chosen on cost.
+	if (joinPlan.JoinType == base.InnerJoin || joinPlan.JoinType == base.LeftOuterJoin) &&
+		isGroupedAggregation(rightPlan) {
+		b.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
+		if b.ctx.GetSessionVars().EnableAlternativeLogicalPlans {
+			b.ctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanPreferCorrelate()
+		}
+	}
+
 	// Merge sub-plan's FullSchema into this join plan.
 	// Please read the comment of LogicalJoin.FullSchema for the details.
 	var (
@@ -973,6 +986,22 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		joinPlan.AttachOnConds(onCondition)
 	}
 	return joinPlan, nil
+}
+
+// isGroupedAggregation reports whether p is a GROUP BY aggregation, looking through
+// the projection a derived table is built with. Sort/Limit are deliberately not
+// looked through: an ordered or limited derived table depends on which groups exist
+// globally, so CorrelateSolver cannot correlate it and the extra round would be wasted.
+func isGroupedAggregation(p base.LogicalPlan) bool {
+	for {
+		proj, isProj := p.(*logicalop.LogicalProjection)
+		if !isProj {
+			break
+		}
+		p = proj.Children()[0]
+	}
+	agg, isAgg := p.(*logicalop.LogicalAggregation)
+	return isAgg && len(agg.GroupByItems) > 0
 }
 
 // buildLateralJoin builds a LogicalApply for LATERAL derived tables.

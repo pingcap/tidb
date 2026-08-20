@@ -244,10 +244,66 @@ func adjustCountAfterAccess(ds *logicalop.DataSource, path *util.AccessPath) {
 	}
 }
 
+// canPromoteCorColAccess reports whether correlated-column conditions may be
+// promoted into path.AccessConds.
+//
+// The plain case is an access-condition list made up entirely of eq/in conditions,
+// where the correlated conditions simply extend the prefix.
+//
+// It is also safe when the conditions beyond the eq/in prefix are comparison ranges
+// on IdxCols[EqOrInCondCount] — the shape DetachCondAndBuildRangeForIndex produces
+// for a trailing range condition such as `k > 0`. Blocking that case would give up on
+// correlated access whenever a range predicate lands on the next index column, which
+// predicate pushdown readily derives from an outer predicate on the join key, and
+// would leave the correlated side rescanning the whole range once per outer row.
+//
+// Promotion stays correct because SplitCorColAccessCondFromFilters only promotes a
+// contiguous run starting at IdxCols[EqOrInCondCount], so any promotion carries a
+// correlated condition on the very column the range condition constrains. That makes
+// the path correlated, and rebuildIndexRanges (or ResolveCorrelatedColumns) re-runs
+// the detacher over the whole access-condition set per outer row, which folds the
+// comparison range into the same column's point range rather than dropping it.
+//
+// Only full-length columns and comparison operators qualify. Anything the rebuild
+// cannot fold comes back from the detacher as a residual, and residuals on this path
+// have nothing left to apply them: promotion removed the condition from TableFilters,
+// so no post-scan filter remains. rebuildIndexRanges asserts on exactly that. The two
+// cases that bite are `IS NOT NULL`, redundant once a point range excludes NULL, and
+// a prefix column, whose range is a superset so the detacher reserves the predicate.
+func canPromoteCorColAccess(path *util.AccessPath) bool {
+	if path.EqOrInCondCount == len(path.AccessConds) {
+		return true
+	}
+	if path.EqOrInCondCount > len(path.AccessConds) || path.EqOrInCondCount >= len(path.IdxCols) {
+		return false
+	}
+	if path.EqOrInCondCount >= len(path.IdxColLens) ||
+		path.IdxColLens[path.EqOrInCondCount] != types.UnspecifiedLength {
+		return false
+	}
+	rangeCol := path.IdxCols[path.EqOrInCondCount]
+	for _, cond := range path.AccessConds[path.EqOrInCondCount:] {
+		sf, isScalarFunc := cond.(*expression.ScalarFunction)
+		if !isScalarFunc {
+			return false
+		}
+		switch sf.FuncName.L {
+		case ast.LT, ast.LE, ast.GT, ast.GE:
+		default:
+			return false
+		}
+		cols := expression.ExtractColumns(cond)
+		if len(cols) != 1 || !cols[0].EqualColumn(rangeCol) {
+			return false
+		}
+	}
+	return true
+}
+
 // deriveIndexPathStats will fulfill the information that the AccessPath need.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
 func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []expression.Expression, isIm bool) {
-	if path.EqOrInCondCount == len(path.AccessConds) {
+	if canPromoteCorColAccess(path) {
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
@@ -392,7 +448,7 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 	if err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl); err != nil {
 		return err
 	}
-	if path.EqOrInCondCount == len(path.AccessConds) {
+	if canPromoteCorColAccess(path) {
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
