@@ -236,7 +236,9 @@ pub use alter_table::{
     run_alter_table_in, settle_column_default, validate_column_default, PreparedColumnDefault,
     SettledColumnDefault,
 };
-pub use table_partition::linear_partitioning_warning;
+pub use table_partition::{
+    linear_partitioning_warning, partition_spec_from_metadata, StoredPartitionDefinition,
+};
 
 use column_types::{database_charset_of, field_type_of, table_charset_of, NOT_NULL_FLAG};
 pub use indexes::{run_create_index_in, run_drop_index_in};

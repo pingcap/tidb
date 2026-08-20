@@ -58,7 +58,10 @@
 //! It is accepted here the same way, and `SHOW CREATE TABLE` prints it back
 //! without the keyword, exactly as Go does.
 
-use tidb_ast::{CreateTableStmt, Expr, PartitionDefinitionClause, PartitionType};
+use tidb_ast::{
+    CreateTableStmt, Expr, PartitionDefinition, PartitionDefinitionClause, PartitionType,
+    PartitionValue,
+};
 use tidb_datatype::{FieldType, FieldTypeCode};
 
 use crate::generated_column::TableColumnResolver;
@@ -785,4 +788,297 @@ fn check_unique_keys_include_partition_columns(
         ));
     }
     Ok(())
+}
+
+/// Builds a [`PartitionSpec`] from the STORED metadata a Go cluster wrote,
+/// rather than from a `CREATE TABLE` statement.
+///
+/// The cluster catalog loader has only `model.PartitionInfo`: the expression
+/// as Go's restored TEXT, the columns, and the definitions with their
+/// physical ids. `build_table_partitioning` above cannot serve it, because
+/// that one starts from the statement's AST.
+///
+/// The expression is parsed with `tidb_model::generated_expr::parse_expression`,
+/// which is Go's own `pkg/util/generatedexpr.ParseExpression` -- the function
+/// Go uses for exactly this, reading an expression back out of metadata. It is
+/// then bound and type-checked through the same two helpers the AST path uses,
+/// so a loaded table routes rows by the identical `Expression` a created one
+/// does.
+///
+/// HASH only, for now, and the refusal is explicit rather than silent: RANGE
+/// and LIST keep their bounds in FOLDED form (`PartitionKind::Range`'s
+/// `less_than`, `PartitionKind::List`'s `values`), so loading those means
+/// parsing and folding every stored bound text per kind -- the work
+/// `table_partition_range`/`table_partition_list` do from the AST. HASH has no
+/// One stored partition definition, as Go's `model.PartitionDefinition`
+/// carries it across a restart: the physical id, the name, and the bounds as
+/// SQL TEXT rather than as folded values.
+///
+/// Go re-parses that text every time it loads the table (`newPartitionExpr`
+/// builds a fresh `parser.New()` for exactly this), because the stored form
+/// is the user's own `VALUES LESS THAN (...)` / `VALUES IN (...)` and the
+/// folding depends on the table's current column types.
+#[derive(Clone, Debug, Default)]
+pub struct StoredPartitionDefinition {
+    /// Go `PartitionDefinition.ID`: the physical table id.
+    pub id: i64,
+    /// Go `PartitionDefinition.Name`.
+    pub name: String,
+    /// Go `PartitionDefinition.LessThan`: one bound per partition column,
+    /// with the literal `MAXVALUE` kept as text.
+    pub less_than: Vec<String>,
+    /// Go `PartitionDefinition.InValues`: one tuple per `VALUES IN` entry,
+    /// with the literal `DEFAULT` kept as text in the first component.
+    pub in_values: Vec<Vec<String>>,
+}
+
+/// Rebuild the AST value clause a stored definition was written from, so the
+/// DDL-side bound builders can fold it exactly as they folded the original
+/// `CREATE TABLE`.
+///
+/// Go keeps `MAXVALUE` and `DEFAULT` as those literal words in the stored
+/// text and matches them case-insensitively (`strings.EqualFold`) before
+/// parsing, because neither is an expression.
+fn stored_clause(
+    definition: &StoredPartitionDefinition,
+) -> Result<PartitionDefinitionClause, DriverError> {
+    let parse = |text: &String| {
+        tidb_model::generated_expr::parse_expression(text)
+            .map_err(|error| DriverError::Parse(error.message))
+    };
+    if !definition.less_than.is_empty() {
+        let mut values = Vec::with_capacity(definition.less_than.len());
+        for bound in &definition.less_than {
+            values.push(if bound.eq_ignore_ascii_case("MAXVALUE") {
+                PartitionValue::MaxValue
+            } else {
+                PartitionValue::Expr(parse(bound)?)
+            });
+        }
+        return Ok(PartitionDefinitionClause::LessThan(values));
+    }
+    if !definition.in_values.is_empty() {
+        let mut values = Vec::with_capacity(definition.in_values.len());
+        for tuple in &definition.in_values {
+            // Go `buildListPartitionValueMap`: `DEFAULT` is recognised on the
+            // FIRST component only, and the rest of the tuple is not read.
+            if tuple.first().is_some_and(|first| first.eq_ignore_ascii_case("DEFAULT")) {
+                values.push(PartitionValue::Default);
+                continue;
+            }
+            values.push(match tuple.as_slice() {
+                [single] => PartitionValue::Expr(parse(single)?),
+                many => PartitionValue::Tuple(
+                    many.iter().map(parse).collect::<Result<Vec<_>, _>>()?,
+                ),
+            });
+        }
+        return Ok(PartitionDefinitionClause::In(values));
+    }
+    Ok(PartitionDefinitionClause::None)
+}
+
+/// The stored definitions as the AST nodes the bound builders read, which is
+/// the shape Go reconstructs when it re-parses `LessThan`/`InValues`.
+fn stored_definitions_as_ast(
+    definitions: &[StoredPartitionDefinition],
+) -> Result<Vec<PartitionDefinition>, DriverError> {
+    definitions
+        .iter()
+        .map(|definition| {
+            Ok(PartitionDefinition {
+                name: definition.name.clone(),
+                clause: stored_clause(definition)?,
+                options: Vec::new(),
+                sub_partitions: Vec::new(),
+            })
+        })
+        .collect()
+}
+
+/// Rebuild a table's routing from the partition metadata a Go cluster
+/// STORED, which is Go `newPartitionedTable` -> `newPartitionExpr`
+/// (`table/tables/partition.go`).
+///
+/// This is the LOAD side of partitioning, not the DDL side, and the two
+/// validate different things. DDL decides whether a `PARTITION BY` clause is
+/// legal -- the expression type-checks, the count is under the ceiling, every
+/// unique key covers the partition columns. By the time metadata exists those
+/// questions are settled, and Go asks none of them again here: it refuses
+/// only a definition list that is empty (`table.ErrUnknownPartition`) and
+/// otherwise rebuilds. Re-running the DDL checks at load would let this node
+/// refuse a table a Go cluster is serving, which is the one outcome a loader
+/// must not produce.
+///
+/// `columns` is Go's `PartitionInfo.Columns`, the explicit column list that
+/// KEY and the `COLUMNS` variants carry instead of an expression; Go
+/// dispatches on it the same way (`len(partCols) < 1` chooses RANGE over
+/// RANGE COLUMNS in `generateRangePartitionExpr`).
+///
+/// # Errors
+///
+/// [`DriverError::PartitionNoParts`] for an empty definition list, and a
+/// parse or fold error when the stored expression or a stored bound no longer
+/// resolves against the table's current columns.
+pub fn partition_spec_from_metadata(
+    kind: PartitionType,
+    expr_text: &str,
+    columns: &[String],
+    definitions: &[StoredPartitionDefinition],
+    names: &[String],
+    types: &[FieldType],
+    ctx: &crate::StmtContext,
+) -> Result<PartitionSpec, DriverError> {
+    // Go `newPartitionedTable`: an empty definition list is a table that
+    // cannot route at all, so it is refused before the expression is touched.
+    if definitions.is_empty() {
+        return Err(DriverError::PartitionNoParts("partitions"));
+    }
+    let physical = definitions
+        .iter()
+        .map(|definition| PartitionDef {
+            id: definition.id,
+            name: definition.name.clone(),
+        })
+        .collect::<Vec<_>>();
+    // The COLUMNS forms name their inputs directly. The builders take the
+    // parser's qualified paths, whose last component is the column name.
+    let column_paths = columns
+        .iter()
+        .map(|name| vec![name.clone()])
+        .collect::<Vec<_>>();
+    let column_expr_text = || {
+        columns
+            .iter()
+            .map(|name| format!("`{name}`"))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    // The COLUMNS forms route off the stored column list rather than a built
+    // expression, so the expression slot holds the same placeholder the DDL
+    // path puts there.
+    let placeholder = || {
+        tidb_expr::expression::Expression::Constant(tidb_expr::expression::Constant::new(
+            tidb_datatype::Datum::Null,
+            FieldType::new(FieldTypeCode::LongLong),
+        ))
+    };
+    let ast_definitions = || stored_definitions_as_ast(definitions);
+    match kind {
+        // Go `generateKeyPartitionExpr`: KEY builds no expression at all. The
+        // stored column list IS the routing input, hashed by the same
+        // `key_partition_index` the DDL-built spec routes through, so the
+        // rebuild only has to resolve those names back to the table.
+        PartitionType::KEY => {
+            for column in columns {
+                if !names
+                    .iter()
+                    .any(|candidate| candidate.eq_ignore_ascii_case(column))
+                {
+                    return Err(DriverError::UnknownColumnInClause {
+                        column: column.clone(),
+                        clause: "partition function".to_owned(),
+                    });
+                }
+            }
+            Ok(PartitionSpec {
+                kind: PartitionKind::Key,
+                expr_text: column_expr_text(),
+                expr: placeholder(),
+                dependencies: columns.to_vec(),
+                definitions: physical,
+            })
+        }
+        // Go `generateRangePartitionExpr` / `generateListPartitionExpr` with
+        // `partCols` non-empty: the bounds are folded through the named
+        // columns' own types.
+        PartitionType::RANGE if !columns.is_empty() => {
+            let (dependencies, field_types, less_than) =
+                super::table_partition_range::build_range_columns_bounds(
+                    &column_paths,
+                    &ast_definitions()?,
+                    names,
+                    types,
+                    ctx,
+                )?;
+            Ok(PartitionSpec {
+                kind: PartitionKind::RangeColumns {
+                    less_than,
+                    field_types,
+                },
+                expr_text: column_expr_text(),
+                expr: placeholder(),
+                dependencies,
+                definitions: physical,
+            })
+        }
+        PartitionType::LIST if !columns.is_empty() => {
+            let (dependencies, kind) = super::table_partition_list::build_list_columns_values(
+                &column_paths,
+                &ast_definitions()?,
+                names,
+                types,
+                ctx,
+            )?;
+            Ok(PartitionSpec {
+                kind,
+                expr_text: column_expr_text(),
+                expr: placeholder(),
+                dependencies,
+                definitions: physical,
+            })
+        }
+        // The expression forms: Go parses the stored `PartitionInfo.Expr` and
+        // builds it against the table's own columns
+        // (`generateHashPartitionExpr` and the `len(partCols) < 1` arms).
+        PartitionType::HASH | PartitionType::RANGE | PartitionType::LIST => {
+            let expr = tidb_model::generated_expr::parse_expression(expr_text)
+                .map_err(|error| DriverError::Parse(error.message))?;
+            let (expr_text, built, dependencies, dependency_offsets) = build_partition_expression(
+                &expr,
+                names,
+                types,
+                &ctx.session_zone(),
+                ctx.like_default_escape(),
+            )?;
+            let kind = match kind {
+                PartitionType::RANGE => {
+                    let (less_than, unsigned) = super::table_partition_range::build_range_bounds(
+                        &expr,
+                        &ast_definitions()?,
+                        names,
+                        types,
+                        &dependency_offsets,
+                        ctx,
+                    )?;
+                    PartitionKind::Range {
+                        less_than,
+                        unsigned,
+                    }
+                }
+                PartitionType::LIST => super::table_partition_list::build_list_values(
+                    &expr,
+                    &ast_definitions()?,
+                    names,
+                    types,
+                    &dependency_offsets,
+                    ctx,
+                )?,
+                _ => PartitionKind::Hash,
+            };
+            Ok(PartitionSpec {
+                kind,
+                expr_text,
+                expr: built,
+                dependencies,
+                definitions: physical,
+            })
+        }
+        other => {
+            let name = other.sql();
+            Err(DriverError::unsupported(format!(
+                "loading a PARTITION BY {name} table is not supported by this node"
+            )))
+        }
+    }
 }

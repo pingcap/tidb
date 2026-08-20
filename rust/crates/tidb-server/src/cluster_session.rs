@@ -405,9 +405,28 @@ pub(crate) fn cluster_table(
     if table.is_sequence() {
         return Err("it is a sequence".to_owned());
     }
-    if table.partition.is_some() {
-        return Err("it is partitioned".to_owned());
-    }
+    // A partitioned table is loadable when its partitioning is one this node
+    // can rebuild from METADATA. `partition_spec_from_metadata` reads Go's
+    // stored `PartitionInfo` -- the restored expression text, the columns,
+    // and the definitions with their physical ids -- and returns the same
+    // `PartitionSpec` a `CREATE TABLE` here would have built, so the read
+    // path routes by the identical expression either way.
+    //
+    // Anything it cannot rebuild still skips, and the reason it gives says
+    // WHICH kind and why, rather than the blanket "it is partitioned" this
+    // replaced: RANGE and LIST keep their bounds folded, so loading them
+    // means folding every stored bound text first.
+    // Go `TableInfo.GetPartitionInfo`: metadata that is present but not
+    // ENABLED is not partitioning. `ALTER TABLE ... REMOVE PARTITIONING`
+    // leaves the record behind with `Enable` false, and Go then builds an
+    // ordinary table -- routing rows by a spec Go ignores would send every
+    // write to the wrong physical table.
+    let partition_spec = match &table.partition {
+        Some(partition) if partition.read().enable => {
+            Some(partition_spec_for(table, &partition.read())?)
+        }
+        _ => None,
+    };
     if table.state != SchemaState::PUBLIC {
         return Err(format!(
             "its schema state is {} rather than public",
@@ -581,7 +600,66 @@ pub(crate) fn cluster_table(
         }
         kv_table.add_index(kv_index(&index, &columns)?);
     }
+    if let Some(spec) = partition_spec {
+        kv_table.set_partition(spec);
+    }
     Ok(kv_table)
+}
+
+/// Rebuilds one stored `PartitionInfo` into the routing spec the read path
+/// uses, or names why it cannot.
+///
+/// Go keeps the partition expression in `PartitionInfo.Expr` as restored TEXT
+/// and rebuilds the evaluable form when it loads the table
+/// (`PartitionExpr`); this is that rebuild. The column names and types come
+/// from the table being loaded, so the expression binds to the same offsets
+/// the scan decodes.
+fn partition_spec_for(
+    table: &TableInfo,
+    partition: &tidb_model::partition::PartitionInfo,
+) -> Result<tidb_executor::partition_routing::PartitionSpec, String> {
+    let names: Vec<String> = table
+        .cols()
+        .iter_deref()
+        .map(|column| column.read().name.original().to_owned())
+        .collect();
+    let types: Vec<tidb_datatype::FieldType> = table
+        .cols()
+        .iter_deref()
+        .map(|column| column.read().field_type.clone())
+        .collect();
+    let definitions: Vec<tidb_executor::ddl::StoredPartitionDefinition> = partition
+        .definitions
+        .snapshot()
+        .into_iter()
+        .map(|definition| tidb_executor::ddl::StoredPartitionDefinition {
+            id: definition.id,
+            name: definition.name.original().to_owned(),
+            less_than: definition.less_than.snapshot(),
+            in_values: definition
+                .in_values
+                .snapshot()
+                .into_iter()
+                .map(|tuple| tuple.snapshot())
+                .collect(),
+        })
+        .collect();
+    let columns: Vec<String> = partition
+        .columns
+        .snapshot()
+        .into_iter()
+        .map(|column| column.original().to_owned())
+        .collect();
+    tidb_executor::ddl::partition_spec_from_metadata(
+        partition.partition_type,
+        &partition.expr,
+        &columns,
+        &definitions,
+        &names,
+        &types,
+        &tidb_executor::StmtContext::for_query(),
+    )
+    .map_err(|error| format!("its partitioning cannot be rebuilt: {error}"))
 }
 
 /// Translates one stored `IndexInfo` into the executor's `KvIndex`, against
@@ -1852,6 +1930,252 @@ mod tests {
             assert_eq!(kv.indexes()[0].visible, expect_plan_index);
             assert_eq!(kv.plan_indexes().count(), usize::from(expect_plan_index));
         }
+    }
+
+    /// A HASH-partitioned table a Go cluster wrote LOADS, with the routing
+    /// spec rebuilt from its stored metadata.
+    ///
+    /// The loader used to skip every partitioned table with "it is
+    /// partitioned", so a Go cluster's partitioned tables were simply absent
+    /// from this node's catalog. Go rebuilds the evaluable partition
+    /// expression from `PartitionInfo.Expr` when it loads a table, and
+    /// `ddl::partition_spec_from_metadata` is that rebuild here.
+    #[test]
+    fn a_hash_partitioned_table_loads_with_its_routing_rebuilt() {
+        let mut partition = tidb_model::partition::PartitionInfo {
+            partition_type: tidb_ast::PartitionType::HASH,
+            expr: "`id`".to_owned(),
+            num: 2,
+            enable: true,
+            ..tidb_model::partition::PartitionInfo::default()
+        };
+        partition.definitions =
+            vec![partition_definition(401, "p0"), partition_definition(402, "p1")].into();
+        let table = TableInfo {
+            id: 400,
+            name: CiString::new("hashed"),
+            columns: vec![column(1, 0, "id", true)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            partition: Some(GoShared::new(partition)),
+            ..TableInfo::default()
+        };
+        let (storage, _, _) = cluster_storage();
+        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
+            .expect("a HASH-partitioned table loads");
+        let spec = loaded
+            .partition()
+            .expect("the routing spec came back with the table");
+        // The read path routes and prunes off these ids; before the rebuild
+        // the table never reached the catalog at all.
+        assert_eq!(
+            spec.physical_ids(),
+            vec![401, 402],
+            "the read reaches both partitions' physical tables"
+        );
+        assert_eq!(spec.num(), 2);
+    }
+
+    /// A KEY-partitioned table loads too: Go's `generateKeyPartitionExpr`
+    /// builds no expression at all, only the stored column list.
+    #[test]
+    fn a_key_partitioned_table_loads_from_its_stored_column_list() {
+        let mut partition = tidb_model::partition::PartitionInfo {
+            partition_type: tidb_ast::PartitionType::KEY,
+            columns: vec![CiString::new("id")].into(),
+            num: 2,
+            enable: true,
+            ..tidb_model::partition::PartitionInfo::default()
+        };
+        partition.definitions = vec![
+            partition_definition(501, "p0"),
+            partition_definition(502, "p1"),
+        ]
+        .into();
+        let table = TableInfo {
+            id: 500,
+            name: CiString::new("keyed"),
+            columns: vec![column(1, 0, "id", true)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            partition: Some(GoShared::new(partition)),
+            ..TableInfo::default()
+        };
+        let (storage, _, _) = cluster_storage();
+        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
+            .expect("a KEY-partitioned table loads");
+        let spec = loaded.partition().expect("the routing spec came back");
+        assert_eq!(spec.physical_ids(), vec![501, 502]);
+    }
+
+    /// Partition metadata that is present but NOT enabled is not
+    /// partitioning: Go's `GetPartitionInfo` returns nil for it and
+    /// `TableFromMeta` builds an ordinary table.
+    ///
+    /// `ALTER TABLE ... REMOVE PARTITIONING` leaves the record behind with
+    /// `Enable` false. Routing rows by a spec Go ignores would put every
+    /// write in the wrong physical table.
+    #[test]
+    fn partition_metadata_that_is_not_enabled_loads_as_an_ordinary_table() {
+        let mut partition = tidb_model::partition::PartitionInfo {
+            partition_type: tidb_ast::PartitionType::HASH,
+            expr: "`id`".to_owned(),
+            num: 2,
+            enable: false,
+            ..tidb_model::partition::PartitionInfo::default()
+        };
+        partition.definitions =
+            vec![partition_definition(601, "p0"), partition_definition(602, "p1")].into();
+        let table = TableInfo {
+            id: 600,
+            name: CiString::new("disabled"),
+            columns: vec![column(1, 0, "id", true)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            partition: Some(GoShared::new(partition)),
+            ..TableInfo::default()
+        };
+        let (storage, _, _) = cluster_storage();
+        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
+            .expect("the table loads");
+        assert!(
+            loaded.partition().is_none(),
+            "disabled partitioning must not route"
+        );
+    }
+
+    fn partition_definition(id: i64, name: &str) -> tidb_model::partition::PartitionDefinition {
+        let mut definition = tidb_model::partition::PartitionDefinition::default();
+        definition.id = id;
+        definition.name = CiString::new(name);
+        definition
+    }
+
+    /// A RANGE-partitioned table loads with its stored bounds FOLDED: Go
+    /// re-parses `PartitionDefinition.LessThan` on every load, so `10` and
+    /// the literal `MAXVALUE` become the same upper bounds the original
+    /// `CREATE TABLE` produced.
+    #[test]
+    fn a_range_partitioned_table_loads_with_its_stored_bounds_folded() {
+        let mut partition = tidb_model::partition::PartitionInfo {
+            partition_type: tidb_ast::PartitionType::RANGE,
+            expr: "`id`".to_owned(),
+            enable: true,
+            ..tidb_model::partition::PartitionInfo::default()
+        };
+        partition.definitions = vec![
+            bounded_definition(701, "p0", &["10"]),
+            bounded_definition(702, "p1", &["MAXVALUE"]),
+        ]
+        .into();
+        let table = TableInfo {
+            id: 700,
+            name: CiString::new("ranged"),
+            columns: vec![column(1, 0, "id", true)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            partition: Some(GoShared::new(partition)),
+            ..TableInfo::default()
+        };
+        let (storage, _, _) = cluster_storage();
+        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
+            .expect("a RANGE-partitioned table loads");
+        let spec = loaded.partition().expect("the routing spec came back");
+        assert_eq!(spec.physical_ids(), vec![701, 702]);
+        let tidb_executor::partition_routing::PartitionKind::Range { less_than, .. } = &spec.kind
+        else {
+            panic!("RANGE metadata must rebuild as a RANGE spec, got {:?}", spec.kind);
+        };
+        assert!(
+            matches!(
+                less_than.as_slice(),
+                [
+                    tidb_executor::partition_routing::RangeBound::Value(10),
+                    tidb_executor::partition_routing::RangeBound::MaxValue
+                ]
+            ),
+            "the stored text folded back to the written bounds, got {less_than:?}"
+        );
+    }
+
+    /// A LIST COLUMNS table loads with its `VALUES IN` tuples folded through
+    /// the named column's own type, and the stored `DEFAULT` marker
+    /// recognised as Go's `buildListPartitionValueMap` recognises it.
+    #[test]
+    fn a_list_columns_partitioned_table_loads_with_its_default_partition() {
+        let mut partition = tidb_model::partition::PartitionInfo {
+            partition_type: tidb_ast::PartitionType::LIST,
+            columns: vec![CiString::new("v")].into(),
+            enable: true,
+            ..tidb_model::partition::PartitionInfo::default()
+        };
+        partition.definitions = vec![
+            listed_definition(801, "p0", &[&["1"], &["2"]]),
+            listed_definition(802, "pd", &[&["DEFAULT"]]),
+        ]
+        .into();
+        let table = TableInfo {
+            id: 800,
+            name: CiString::new("listed"),
+            columns: vec![column(1, 0, "id", true), column(2, 1, "v", false)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            partition: Some(GoShared::new(partition)),
+            ..TableInfo::default()
+        };
+        let (storage, _, _) = cluster_storage();
+        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
+            .expect("a LIST COLUMNS table loads");
+        let spec = loaded.partition().expect("the routing spec came back");
+        assert_eq!(spec.physical_ids(), vec![801, 802]);
+        let tidb_executor::partition_routing::PartitionKind::ListColumns {
+            values,
+            default_partition,
+            ..
+        } = &spec.kind
+        else {
+            panic!("LIST COLUMNS metadata must rebuild as one, got {:?}", spec.kind);
+        };
+        assert_eq!(values.len(), 2, "both listed values kept their owner");
+        assert_eq!(
+            *default_partition,
+            Some(1),
+            "the stored DEFAULT marker names the catch-all partition"
+        );
+    }
+
+    fn bounded_definition(
+        id: i64,
+        name: &str,
+        less_than: &[&str],
+    ) -> tidb_model::partition::PartitionDefinition {
+        let mut definition = partition_definition(id, name);
+        definition.less_than = less_than
+            .iter()
+            .map(|bound| (*bound).to_owned())
+            .collect::<Vec<_>>()
+            .into();
+        definition
+    }
+
+    fn listed_definition(
+        id: i64,
+        name: &str,
+        in_values: &[&[&str]],
+    ) -> tidb_model::partition::PartitionDefinition {
+        let mut definition = partition_definition(id, name);
+        definition.in_values = in_values
+            .iter()
+            .map(|tuple| {
+                tuple
+                    .iter()
+                    .map(|value| (*value).to_owned())
+                    .collect::<Vec<_>>()
+                    .into()
+            })
+            .collect::<Vec<_>>()
+            .into();
+        definition
     }
 }
 
