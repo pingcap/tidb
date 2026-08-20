@@ -809,7 +809,10 @@ pub fn exhaust_physical_plans_4_logical_union_all(
     base.base.set_stats(stats);
     base.base.set_schema(p.base.base.schema().cloned());
     base.set_children_req_props(ch_req_props);
-    vec![PhysicalPlan::UnionAll(PhysicalUnionAll { base, mpp: false })]
+    vec![PhysicalPlan::UnionAll(PhysicalUnionAll {
+        base,
+        mpp: false,
+    })]
 }
 
 /// Go `ExhaustPhysicalPlans4LogicalPartitionUnionAll`
@@ -957,8 +960,7 @@ pub fn build_physical_join_schema(
         LogicalJoinType::Inner | LogicalJoinType::LeftOuter | LogicalJoinType::RightOuter => {
             let left_len = left_schema.len();
             let right_schema = join.children().get(1).and_then(PhysicalPlan::schema);
-            let mut new_schema =
-                tidb_expr::schema::merge_schema(Some(left_schema), right_schema)?;
+            let mut new_schema = tidb_expr::schema::merge_schema(Some(left_schema), right_schema)?;
             let total = new_schema.len();
             match join_type {
                 LogicalJoinType::LeftOuter => {
@@ -1089,10 +1091,7 @@ pub fn get_prop_by_order_by_items(
 /// PREFIX of the by-item list — same column (`EqualColumn` is unique-id
 /// equality), same direction, non-columns never match.
 #[must_use]
-pub fn match_items(
-    prop: &PhysicalProperty,
-    items: &[tidb_expr::aggregation::ByItems],
-) -> bool {
+pub fn match_items(prop: &PhysicalProperty, items: &[tidb_expr::aggregation::ByItems]) -> bool {
     if items.len() < prop.sort_items.len() {
         return false;
     }
@@ -1260,11 +1259,8 @@ pub fn get_hash_aggs(
             .base
             .stats_info()
             .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
-        let mut base = BasePhysicalPlan::new(
-            allocator,
-            "HashAgg",
-            agg.base.base.query_block_offset(),
-        );
+        let mut base =
+            BasePhysicalPlan::new(allocator, "HashAgg", agg.base.base.query_block_offset());
         base.base.set_stats(stats);
         base.base.set_schema(agg.base.base.schema().cloned());
         base.set_children_req_props(vec![Some(child_prop)]);
@@ -1343,8 +1339,7 @@ pub fn get_stream_aggs(
         if possible.len() < group_by_cols.len() {
             continue;
         }
-        let child_sort: Vec<crate::physical_property::SortItem> = possible
-            [..group_by_cols.len()]
+        let child_sort: Vec<crate::physical_property::SortItem> = possible[..group_by_cols.len()]
             .iter()
             .map(|col| crate::physical_property::SortItem::new(col.unique_id, desc))
             .collect();
@@ -1367,11 +1362,8 @@ pub fn get_stream_aggs(
                 .base
                 .stats_info()
                 .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
-            let mut base = BasePhysicalPlan::new(
-                allocator,
-                "StreamAgg",
-                agg.base.base.query_block_offset(),
-            );
+            let mut base =
+                BasePhysicalPlan::new(allocator, "StreamAgg", agg.base.base.query_block_offset());
             base.base.set_stats(stats);
             base.base.set_schema(agg.base.base.schema().cloned());
             base.set_children_req_props(vec![Some(child_prop)]);

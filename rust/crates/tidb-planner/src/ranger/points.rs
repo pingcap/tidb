@@ -221,11 +221,7 @@ pub const OP_NULL_EQ: &str = "nulleq";
 /// constant. GT/GE/NE clamp to `>= 0`; every other operator has no valid
 /// range.
 #[must_use]
-pub fn handle_unsigned_col(
-    ft: &FieldType,
-    mut val: Datum,
-    op: &str,
-) -> (Datum, String, bool) {
+pub fn handle_unsigned_col(ft: &FieldType, mut val: Datum, op: &str) -> (Datum, String, bool) {
     let is_unsigned = ft.flags() & tidb_datatype::FieldTypeFlags::UNSIGNED != 0;
     let is_negative = match &val {
         Datum::Int(v) => *v < 0,
@@ -306,7 +302,6 @@ pub fn handle_bound_col(ft: &FieldType, mut val: Datum, op: &str) -> (Datum, Str
     (val, op, true)
 }
 
-
 /// Go `CutDatumByPrefixLen` (`ranger.go:737`): cut a string/bytes datum to
 /// a prefix-index length — by BYTES for binary/ascii charsets, by RUNES
 /// otherwise. Answers whether a cut happened.
@@ -352,10 +347,7 @@ pub fn cut_datum_by_prefix_len(v: &mut Datum, length: i64, tp: &FieldType) -> bo
             let text = String::from_utf8_lossy(&bytes);
             if text.chars().count() > length {
                 let cut: String = text.chars().take(length).collect();
-                *v = Datum::String(tidb_datatype::StringDatum::new(
-                    cut.into_bytes(),
-                    collation,
-                ));
+                *v = Datum::String(tidb_datatype::StringDatum::new(cut.into_bytes(), collation));
                 return true;
             }
             false
@@ -399,7 +391,6 @@ pub fn cut_prefix_for_points(points: &mut [Point], length: i64, tp: &FieldType) 
         }
     }
 }
-
 
 /// Go `builder.mergeSorted`: one pass of merge-sort over two sorted point
 /// lists.
@@ -472,7 +463,6 @@ pub fn union(
 ) -> Result<Vec<Point>, tidb_datatype::DatumValueError> {
     merge_points(a, b, true, collator)
 }
-
 
 /// Why the builder failed (Go `builder.err`).
 #[derive(Debug)]
@@ -1435,8 +1425,7 @@ pub fn convert_point_in_place(
                 // EVENTS. The tolerated pairs are the same: year/int/
                 // decimal/float overflow trims to the boundary, enum
                 // truncation clamps, bit too-long is ignored.
-                *skip_plan_cache_reason =
-                    Some(format!("{event:?} when converting {:?}", p.value));
+                *skip_plan_cache_reason = Some(format!("{event:?} when converting {:?}", p.value));
             }
             converted.value
         }
@@ -1446,9 +1435,7 @@ pub fn convert_point_in_place(
             // the point untouched (invalid character strings); everything
             // else surfaces.
             return match new_tp.code() {
-                FieldTypeCode::String | FieldTypeCode::VarString | FieldTypeCode::Varchar => {
-                    Ok(())
-                }
+                FieldTypeCode::String | FieldTypeCode::VarString | FieldTypeCode::Varchar => Ok(()),
                 _ => Err(error.into()),
             };
         }
@@ -1557,7 +1544,8 @@ mod tests {
     #[test]
     fn equal_value_points_order_by_their_flags() {
         use std::cmp::Ordering::{Equal, Less};
-        let cmp = |a: &Point, b: &Point| range_point_cmp(a, b, Collation::Binary).expect("compares");
+        let cmp =
+            |a: &Point, b: &Point| range_point_cmp(a, b, Collation::Binary).expect("compares");
         let v = || Datum::Int(5);
         // Two starts: closed before open.
         assert_eq!(cmp(&start(v(), false), &start(v(), true)), Less);
@@ -1638,10 +1626,7 @@ mod tests {
     #[test]
     fn full_range_constructors_match_go() {
         assert_eq!(full_int_range(false)[0].to_display_string(), "[-inf,+inf]");
-        assert_eq!(
-            full_int_range(true)[0].to_display_string(),
-            "[0,+inf]"
-        );
+        assert_eq!(full_int_range(true)[0].to_display_string(), "[0,+inf]");
         assert_eq!(full_range()[0].to_display_string(), "[NULL,+inf]");
         assert_eq!(full_not_null_range()[0].to_display_string(), "[-inf,+inf]");
         assert_eq!(null_range()[0].to_display_string(), "[NULL,NULL]");
@@ -1704,9 +1689,7 @@ mod tests {
         // length 2 cuts to '你好'.
         let mut points = vec![string_point("你好世界", false, true)];
         cut_prefix_for_points(&mut points, 2, &ft);
-        assert!(
-            matches!(&points[0].value, Datum::String(s) if s.bytes() == "你好".as_bytes())
-        );
+        assert!(matches!(&points[0].value, Datum::String(s) if s.bytes() == "你好".as_bytes()));
 
         // A binary charset cuts by BYTES.
         let mut bin_ft = FieldType::new(FieldTypeCode::Varchar);
@@ -1862,10 +1845,7 @@ mod tests {
         );
         assert_eq!(show(&build_points(&in_expr)), "[1 1] [3 3]");
         let not_in = func_expr("not", vec![in_expr]);
-        assert_eq!(
-            show(&build_points(&not_in)),
-            "(<nil> 1) (1 3) (3 +inf]"
-        );
+        assert_eq!(show(&build_points(&not_in)), "(<nil> 1) (1 3) (3 +inf]");
     }
 
     /// The YEAR refinement: `y < 2156` clamps to `y <= 2155` (Go's
@@ -1938,10 +1918,7 @@ mod tests {
     fn constants_and_columns_build_like_go() {
         assert_eq!(show(&build_points(&int_const_expr(1))), "[<nil> +inf]");
         assert_eq!(show(&build_points(&int_const_expr(0))), "");
-        assert_eq!(
-            show(&build_points(&int_col_expr(1))),
-            "[-inf 0) (0 +inf]"
-        );
+        assert_eq!(show(&build_points(&int_col_expr(1))), "[-inf 0) (0 +inf]");
         let is_null = func_expr("isnull", vec![int_col_expr(1)]);
         assert_eq!(show(&build_points(&is_null)), "[<nil> <nil>]");
     }

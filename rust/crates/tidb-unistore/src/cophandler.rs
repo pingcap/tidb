@@ -162,9 +162,7 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
             return other_error("executor missing idx_scan body");
         };
         if !conditions.is_empty() || limit != usize::MAX {
-            return other_error(
-                "an index Selection/Limit is a later course of this port",
-            );
+            return other_error("an index Selection/Limit is a later course of this port");
         }
         let Some(aggregation) = aggregation else {
             return other_error("a bare index scan is a later course of this port");
@@ -314,7 +312,7 @@ fn exec_table_scan(
         },
         None => None,
     };
-    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+    use tidb_datatype::Datum;
     let mut column_types = std::collections::BTreeMap::new();
     for column in &tbl_scan.columns {
         column_types.insert(column.column_id(), field_type_from_pb_column(column));
@@ -551,9 +549,66 @@ enum RegionAggKind {
     Max,
 }
 
+/// A region-local `SUM` in progress.
+///
+/// Go picks one of two aggregate signatures from the argument's eval type
+/// (`pkg/executor/aggfuncs/func_sum.go`): `sum4Decimal` for integer and
+/// decimal inputs, `sum4Float64` for real ones. Only the decimal arm
+/// existed here, so a pushed-down `SUM` over a `FLOAT`/`DOUBLE` column
+/// failed the whole coprocessor request instead of answering it.
+#[derive(Debug, Clone)]
+enum RegionSum {
+    Empty,
+    Decimal(tidb_datatype::Decimal),
+    Real(f64),
+}
+
+impl RegionSum {
+    /// Folds one row's value in, skipping NULLs as both Go signatures do.
+    fn accumulate(&mut self, input: &tidb_datatype::Datum) -> Result<(), String> {
+        use tidb_datatype::{Datum, Decimal};
+        let addend = match input {
+            Datum::Null => return Ok(()),
+            Datum::Int(value) => RegionSum::Decimal(Decimal::from_int(*value)),
+            Datum::UInt(value) => RegionSum::Decimal(Decimal::from_uint(*value)),
+            Datum::Decimal(value) => RegionSum::Decimal(value.clone()),
+            Datum::Real(value) | Datum::Float32(value) => RegionSum::Real(*value),
+            _ => return Err("partial SUM requires a numeric input".to_owned()),
+        };
+        // A single argument carries a single type in Go, so the families can
+        // only ever mix here; real is the family MySQL merges them into.
+        *self = match (std::mem::replace(self, RegionSum::Empty), addend) {
+            (RegionSum::Empty, addend) => addend,
+            (RegionSum::Decimal(current), RegionSum::Decimal(addend)) => {
+                RegionSum::Decimal(current.add(&addend))
+            }
+            (RegionSum::Real(current), RegionSum::Real(addend)) => {
+                RegionSum::Real(current + addend)
+            }
+            (RegionSum::Decimal(current), RegionSum::Real(addend)) => {
+                RegionSum::Real(current.to_f64() + addend)
+            }
+            (RegionSum::Real(current), RegionSum::Decimal(addend)) => {
+                RegionSum::Real(current + addend.to_f64())
+            }
+            (current, RegionSum::Empty) => current,
+        };
+        Ok(())
+    }
+
+    /// NULL when no non-NULL value was folded in, matching Go's aggregate.
+    fn into_datum(self) -> tidb_datatype::Datum {
+        match self {
+            RegionSum::Empty => tidb_datatype::Datum::Null,
+            RegionSum::Decimal(value) => tidb_datatype::Datum::Decimal(value),
+            RegionSum::Real(value) => tidb_datatype::Datum::Real(value),
+        }
+    }
+}
+
 enum RegionAggValue {
     Count(i64),
-    Sum(Option<tidb_datatype::Decimal>),
+    Sum(RegionSum),
     Extreme(Option<tidb_datatype::Datum>),
 }
 
@@ -626,7 +681,7 @@ impl RegionAggregator {
             .iter()
             .map(|(kind, _, _)| match kind {
                 RegionAggKind::Count => RegionAggValue::Count(0),
-                RegionAggKind::Sum => RegionAggValue::Sum(None),
+                RegionAggKind::Sum => RegionAggValue::Sum(RegionSum::Empty),
                 RegionAggKind::Min | RegionAggKind::Max => RegionAggValue::Extreme(None),
             })
             .collect()
@@ -682,7 +737,7 @@ impl RegionAggregator {
         values: &mut [RegionAggValue],
         row: &[tidb_datatype::Datum],
     ) -> Result<(), String> {
-        use tidb_datatype::{Datum, Decimal};
+        use tidb_datatype::Datum;
         for ((kind, argument, collation), value) in functions.iter().zip(values.iter_mut()) {
             let input = eval_datum(argument, row)?;
             match (kind, value) {
@@ -691,23 +746,7 @@ impl RegionAggregator {
                         *count += 1;
                     }
                 }
-                (RegionAggKind::Sum, RegionAggValue::Sum(sum)) => {
-                    let addend = match input {
-                        Datum::Null => continue,
-                        Datum::Int(value) => Decimal::from_int(value),
-                        Datum::UInt(value) => Decimal::from_uint(value),
-                        Datum::Decimal(value) => value,
-                        _ => {
-                            return Err(
-                                "partial SUM requires an integer or decimal input".to_owned()
-                            )
-                        }
-                    };
-                    *sum = Some(match sum.take() {
-                        Some(current) => current.add(&addend),
-                        None => addend,
-                    });
-                }
+                (RegionAggKind::Sum, RegionAggValue::Sum(sum)) => sum.accumulate(&input)?,
                 (RegionAggKind::Min | RegionAggKind::Max, RegionAggValue::Extreme(value)) => {
                     if matches!(input, Datum::Null) {
                         continue;
@@ -743,7 +782,7 @@ impl RegionAggregator {
             .into_iter()
             .map(|value| match value {
                 RegionAggValue::Count(count) => Datum::Int(count),
-                RegionAggValue::Sum(sum) => sum.map_or(Datum::Null, Datum::Decimal),
+                RegionAggValue::Sum(sum) => sum.into_datum(),
                 RegionAggValue::Extreme(value) => value.unwrap_or(Datum::Null),
             })
             .chain(groups)
@@ -1882,8 +1921,8 @@ mod tests {
             let key = encode_row_key_with_handle(table_id, &RecordHandle::Int(handle));
             // The OLD row format: `EncodeInt(colID) ++ EncodeDatum(value)`
             // per column -- column 1 carries g, column 2 carries v.
-            let value = tidb_codec::encode_value(&[Datum::Int(1), g, Datum::Int(2), v])
-                .expect("row");
+            let value =
+                tidb_codec::encode_value(&[Datum::Int(1), g, Datum::Int(2), v]).expect("row");
             store
                 .prewrite(&crate::mvcc_store::PrewriteReq {
                     mutations: vec![KvrpcMutation {
@@ -2001,8 +2040,8 @@ mod tests {
             let key = encode_row_key_with_handle(table_id, &RecordHandle::Int(handle));
             // The OLD row format: `EncodeInt(colID) ++ EncodeDatum(value)`
             // per column -- column 1 carries g, column 2 carries v.
-            let value = tidb_codec::encode_value(&[Datum::Int(1), g, Datum::Int(2), v])
-                .expect("row");
+            let value =
+                tidb_codec::encode_value(&[Datum::Int(1), g, Datum::Int(2), v]).expect("row");
             store
                 .prewrite(&crate::mvcc_store::PrewriteReq {
                     mutations: vec![KvrpcMutation {

@@ -42,7 +42,10 @@ fn scan(id: i32, columns: &[i64]) -> PhysicalPlan {
 fn selection(id: i32, child: PhysicalPlan) -> PhysicalPlan {
     let mut base = BasePhysicalPlan::with_id(id, "Selection", 0);
     base.set_children(vec![child]);
-    PhysicalPlan::Selection(PhysicalSelection { base, ..PhysicalSelection::default() })
+    PhysicalPlan::Selection(PhysicalSelection {
+        base,
+        ..PhysicalSelection::default()
+    })
 }
 
 fn hash_join(id: i32, left: PhysicalPlan, right: PhysicalPlan) -> PhysicalPlan {
@@ -226,7 +229,9 @@ fn max_one_row_enumeration_needs_an_orderless_root_property() {
         sort_items: vec![SortItem::new(3, false)],
         ..PhysicalProperty::default()
     };
-    assert!(exhaust_physical_plans_4_logical_max_one_row(&logical, &ordered, &allocator).is_empty());
+    assert!(
+        exhaust_physical_plans_4_logical_max_one_row(&logical, &ordered, &allocator).is_empty()
+    );
 
     let mpp = PhysicalProperty {
         task_tp: TaskType::Mpp,
@@ -244,9 +249,7 @@ fn max_one_row_enumeration_needs_an_orderless_root_property() {
         panic!("a PhysicalMaxOneRow, got {:?}", plans[0]);
     };
     assert_eq!(mor.base.base.query_block_offset(), 7);
-    assert!(
-        (mor.base.base.stats_info().expect("stats").row_count() - 1.0).abs() < f64::EPSILON
-    );
+    assert!((mor.base.base.stats_info().expect("stats").row_count() - 1.0).abs() < f64::EPSILON);
     let child_prop = mor.base.child_req_prop(0).expect("the child property");
     assert!((child_prop.expected_cnt - 2.0).abs() < f64::EPSILON);
     assert_eq!(child_prop.task_tp, TaskType::Root);
@@ -286,8 +289,7 @@ fn a_table_dual_is_born_inside_its_own_root_task() {
 
     // The unordered build carries everything across.
     dual.row_count = 1;
-    let task =
-        find_best_task_4_logical_table_dual(&dual, &PhysicalProperty::default(), &allocator);
+    let task = find_best_task_4_logical_table_dual(&dual, &PhysicalProperty::default(), &allocator);
     let Some(PhysicalPlan::TableDual(built)) = task.plan() else {
         panic!("a PhysicalTableDual, got {:?}", task.plan());
     };
@@ -296,9 +298,7 @@ fn a_table_dual_is_born_inside_its_own_root_task() {
     assert_eq!(built.base.base.query_block_offset(), 3);
     assert!(built.base.base.schema().is_some());
     assert_eq!(built.base.base.output_names().len(), 1);
-    assert!(
-        (built.base.base.stats_info().expect("stats").row_count() - 1.0).abs() < f64::EPSILON
-    );
+    assert!((built.base.base.stats_info().expect("stats").row_count() - 1.0).abs() < f64::EPSILON);
 }
 
 #[test]
@@ -335,11 +335,13 @@ fn a_cte_table_promises_no_order_and_is_born_in_a_root_task() {
     };
     assert_eq!(built.id_for_storage, 7);
     assert_eq!(built.explain_info(), "Scan on CTE_7");
-    assert_eq!(built.base.base.query_block_offset(), 0, "Go inits at offset 0");
-    assert!(built.base.base.schema().is_some());
-    assert!(
-        (built.base.base.stats_info().expect("stats").row_count() - 4.0).abs() < f64::EPSILON
+    assert_eq!(
+        built.base.base.query_block_offset(),
+        0,
+        "Go inits at offset 0"
     );
+    assert!(built.base.base.schema().is_some());
+    assert!((built.base.base.stats_info().expect("stats").row_count() - 4.0).abs() < f64::EPSILON);
 }
 
 #[test]
@@ -440,14 +442,22 @@ fn a_projection_maps_the_order_or_refuses_and_drops_constant_items() {
     use tidb_expr::schema::Schema;
 
     let allocator = PlanIdAllocator::new();
-    let out = |id| Column::new(id, tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong));
+    let out = |id| {
+        Column::new(
+            id,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        )
+    };
     let mut schema = Schema::default();
     schema.columns = vec![out(101), out(102), out(103)];
     let mut base = BaseLogicalPlan::new(&allocator, LogicalProjection::TYPE, 0);
     base.base.set_schema(Some(schema));
     let exprs = vec![
         Expression::Column(out(1)),
-        Expression::Constant(Constant::new(Datum::Null, tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong))),
+        Expression::Constant(Constant::new(
+            Datum::Null,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        )),
         Expression::ScalarFunction(ScalarFunction::default()),
     ];
     let projection = LogicalProjection::new(base, exprs);
@@ -463,8 +473,7 @@ fn a_projection_maps_the_order_or_refuses_and_drops_constant_items() {
     // A scalar-function item refuses the enumeration entirely.
     let prop = PhysicalProperty::new(TaskType::Root, &[103], false, f64::MAX, false);
     assert!(
-        exhaust_physical_plans_4_logical_projection(&projection, &prop, &allocator, 1.0)
-            .is_empty()
+        exhaust_physical_plans_4_logical_projection(&projection, &prop, &allocator, 1.0).is_empty()
     );
 }
 
@@ -485,7 +494,11 @@ fn a_limit_enumerates_the_three_task_types_in_order() {
     let plans =
         exhaust_physical_plans_4_logical_limit(&limit, &PhysicalProperty::default(), &allocator);
     assert_eq!(plans.len(), 3);
-    let expected = [TaskType::CopSingleRead, TaskType::CopMultiRead, TaskType::Root];
+    let expected = [
+        TaskType::CopSingleRead,
+        TaskType::CopMultiRead,
+        TaskType::Root,
+    ];
     for (plan, tp) in plans.iter().zip(expected) {
         let PhysicalPlan::Limit(built) = plan else {
             panic!("a Limit, got {plan:?}");
@@ -494,7 +507,10 @@ fn a_limit_enumerates_the_three_task_types_in_order() {
         assert_eq!(built.count, 20);
         let child = built.base.child_req_prop(0).expect("child prop");
         assert_eq!(child.task_tp, tp);
-        assert!((child.expected_cnt - 25.0).abs() < f64::EPSILON, "Count + Offset");
+        assert!(
+            (child.expected_cnt - 25.0).abs() < f64::EPSILON,
+            "Count + Offset"
+        );
     }
 }
 
@@ -523,7 +539,11 @@ fn a_lock_enumerates_one_candidate_and_explains_go_style() {
         panic!("a Lock, got {:?}", plans[0]);
     };
     assert_eq!(built.explain_info(), "for update 3");
-    assert_eq!(built.base.base.query_block_offset(), 0, "Go inits at offset 0");
+    assert_eq!(
+        built.base.base.query_block_offset(),
+        0,
+        "Go inits at offset 0"
+    );
 }
 
 #[test]
@@ -532,8 +552,7 @@ fn a_union_all_fans_one_child_property_per_child() {
     // no order promised; one candidate with one per-child property carrying
     // the parent's expected count. The partition form re-stamps the type.
     use crate::logical::{
-        BaseLogicalPlan, LogicalPartitionUnionAll, LogicalPlan, LogicalTableDual,
-        LogicalUnionAll,
+        BaseLogicalPlan, LogicalPartitionUnionAll, LogicalPlan, LogicalTableDual, LogicalUnionAll,
     };
 
     let allocator = PlanIdAllocator::new();
@@ -563,17 +582,11 @@ fn a_union_all_fans_one_child_property_per_child() {
     };
     assert!(!built.mpp);
     assert!(built.base.child_req_prop(0).is_some() && built.base.child_req_prop(1).is_some());
-    assert!(
-        (built.base.child_req_prop(1).expect("prop").expected_cnt - 7.0).abs() < f64::EPSILON
-    );
+    assert!((built.base.child_req_prop(1).expect("prop").expected_cnt - 7.0).abs() < f64::EPSILON);
 
     let partition = LogicalPartitionUnionAll { union_all: union };
-    let plans = exhaust_physical_plans_4_logical_partition_union_all(
-        &partition,
-        &prop,
-        &allocator,
-        1.0,
-    );
+    let plans =
+        exhaust_physical_plans_4_logical_partition_union_all(&partition, &prop, &allocator, 1.0);
     assert_eq!(plans[0].base().base.tp(), "PartitionUnion", "re-stamped");
 }
 
@@ -615,9 +628,15 @@ fn a_sequence_plans_producers_at_root_and_stamps_some_cte_failed_mpp() {
         assert!(producer.sort_items.is_empty());
     }
     let main = built.base.child_req_prop(2).expect("prop");
-    assert_eq!(main.sort_items, prop.sort_items, "the main query keeps the order");
+    assert_eq!(
+        main.sort_items, prop.sort_items,
+        "the main query keeps the order"
+    );
     assert!((main.expected_cnt - 100.0).abs() < f64::EPSILON);
-    assert_eq!(main.cte_producer_status, CteProducerStatus::SomeCteFailedMpp);
+    assert_eq!(
+        main.cte_producer_status,
+        CteProducerStatus::SomeCteFailedMpp
+    );
     assert_eq!(PhysicalSequence::explain_info(), "Sequence Node");
 }
 

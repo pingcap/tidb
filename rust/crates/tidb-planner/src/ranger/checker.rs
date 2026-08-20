@@ -90,9 +90,10 @@ impl ConditionChecker<'_> {
                 (false, true)
             }
             "eq" | "ne" | "ge" | "gt" | "le" | "lt" | "nulleq" => {
-                for (constant_side, column_side) in
-                    [(&scalar.args[0], &scalar.args[1]), (&scalar.args[1], &scalar.args[0])]
-                {
+                for (constant_side, column_side) in [
+                    (&scalar.args[0], &scalar.args[1]),
+                    (&scalar.args[1], &scalar.args[0]),
+                ] {
                     if !matches!(constant_side, Expression::Constant(_)) {
                         continue;
                     }
@@ -102,8 +103,8 @@ impl ConditionChecker<'_> {
                     // The comparison must run under a collation compatible
                     // with the column's own.
                     let column_type = column_side.static_type();
-                    let is_string = column_type
-                        .is_some_and(|ft| ft.eval_type() == EvalType::String);
+                    let is_string =
+                        column_type.is_some_and(|ft| ft.eval_type() == EvalType::String);
                     if is_string
                         && !tidb_datatype::compatible_collate(
                             column_type.map_or("", |ft| ft.collation_name()),
@@ -158,8 +159,7 @@ impl ConditionChecker<'_> {
                     // "not column" or "not constant" can't lead to a range.
                     return (false, true);
                 };
-                if inner.func_name.lowercase() == "like"
-                    || inner.func_name.lowercase() == "nulleq"
+                if inner.func_name.lowercase() == "like" || inner.func_name.lowercase() == "nulleq"
                 {
                     return (false, true);
                 }
@@ -170,8 +170,7 @@ impl ConditionChecker<'_> {
                     return (false, true);
                 }
                 let column_type = scalar.args[0].static_type();
-                let is_string =
-                    column_type.is_some_and(|ft| ft.eval_type() == EvalType::String);
+                let is_string = column_type.is_some_and(|ft| ft.eval_type() == EvalType::String);
                 if is_string
                     && !tidb_datatype::compatible_collate(
                         column_type.map_or("", |ft| ft.collation_name()),
@@ -301,9 +300,9 @@ impl ConditionChecker<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tidb_ast::CiString;
     use tidb_datatype::{Collation, Datum, FieldType};
     use tidb_expr::constant::Constant;
-    use tidb_ast::CiString;
 
     fn int_column(unique_id: i64) -> Column {
         Column::new(unique_id, FieldType::new(FieldTypeCode::LongLong))
@@ -364,15 +363,27 @@ mod tests {
     fn comparisons_admit_by_length() {
         let col = int_column(1);
         let full = checker(&col, UNSPECIFIED_LENGTH);
-        let eq = func("eq", "binary", vec![Expression::Column(col.clone()), int_const(3)]);
+        let eq = func(
+            "eq",
+            "binary",
+            vec![Expression::Column(col.clone()), int_const(3)],
+        );
         assert_eq!(full.check(&eq), (true, false));
         // Constant on the left admits through Go's mirrored arm.
-        let eq_rev = func("eq", "binary", vec![int_const(3), Expression::Column(col.clone())]);
+        let eq_rev = func(
+            "eq",
+            "binary",
+            vec![int_const(3), Expression::Column(col.clone())],
+        );
         assert_eq!(full.check(&eq_rev), (true, false));
 
         let prefix = checker(&col, 5);
         assert_eq!(prefix.check(&eq), (true, true), "prefix reserves");
-        let ne = func("ne", "binary", vec![Expression::Column(col.clone()), int_const(3)]);
+        let ne = func(
+            "ne",
+            "binary",
+            vec![Expression::Column(col.clone()), int_const(3)],
+        );
         assert_eq!(full.check(&ne), (true, false));
         assert_eq!(prefix.check(&ne), (false, true), "prefix ne refuses");
 
@@ -414,13 +425,21 @@ mod tests {
             "binary",
             vec![Expression::Column(col.clone()), string_const("x")],
         );
-        assert_eq!(full.check(&eq_binary), (true, true), "binary EQ approximates");
+        assert_eq!(
+            full.check(&eq_binary),
+            (true, true),
+            "binary EQ approximates"
+        );
         let lt_binary = func(
             "lt",
             "utf8mb4_bin",
             vec![Expression::Column(col.clone()), string_const("x")],
         );
-        assert_eq!(full.check(&lt_binary), (false, true), "only EQ/NullEQ approximate");
+        assert_eq!(
+            full.check(&lt_binary),
+            (false, true),
+            "only EQ/NullEQ approximate"
+        );
 
         // A compatible collation admits cleanly.
         let compatible = string_column(2, "utf8mb4_bin");
@@ -439,9 +458,16 @@ mod tests {
     fn isnull_reserve_follows_the_single_scan_switch() {
         let col = int_column(1);
         let isnull = func("isnull", "binary", vec![Expression::Column(col.clone())]);
-        assert_eq!(checker(&col, UNSPECIFIED_LENGTH).check(&isnull), (true, false));
+        assert_eq!(
+            checker(&col, UNSPECIFIED_LENGTH).check(&isnull),
+            (true, false)
+        );
         let mut prefix = checker(&col, 5);
-        assert_eq!(prefix.check(&isnull), (true, false), "single-scan ON never reserves");
+        assert_eq!(
+            prefix.check(&isnull),
+            (true, false),
+            "single-scan ON never reserves"
+        );
         prefix.opt_prefix_index_single_scan = false;
         assert_eq!(prefix.check(&isnull), (true, true));
     }
@@ -518,7 +544,11 @@ mod tests {
     fn not_recurses_except_like() {
         let col = int_column(1);
         let full = checker(&col, UNSPECIFIED_LENGTH);
-        let lt = func("lt", "binary", vec![Expression::Column(col.clone()), int_const(3)]);
+        let lt = func(
+            "lt",
+            "binary",
+            vec![Expression::Column(col.clone()), int_const(3)],
+        );
         let not_lt = func("not", "binary", vec![lt]);
         assert_eq!(full.check(&not_lt), (true, false));
         let strcol = string_column(2, "utf8mb4_bin");

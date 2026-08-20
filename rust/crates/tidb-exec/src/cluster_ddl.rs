@@ -988,9 +988,10 @@ fn lower_alter_table_catalog(
                 // Go parses the option into `opt.UintValue`, so the written
                 // value is an unsigned literal that is then handed to
                 // `RebaseAutoID` as an `int64`.
-                let new_base = value.parse::<u64>().map_err(|_| {
-                    DdlAdmissionError::new("AUTO_INCREMENT needs an integer value")
-                })? as i64;
+                let new_base = value
+                    .parse::<u64>()
+                    .map_err(|_| DdlAdmissionError::new("AUTO_INCREMENT needs an integer value"))?
+                    as i64;
                 let (schema, table) = split_name(&alter.name, default_schema, "table")?;
                 return Ok(Some(DdlStatement::RebaseAutoIncrementId {
                     schema,
@@ -1394,14 +1395,13 @@ fn locate_offset_to_move(
                     break;
                 }
             }
-            let anchor = anchor
-                .ok_or_else(|| {
-                    // Go `infoschema.ErrColumnNotExists` (1054).
-                    DdlPlanError::UnknownColumn {
-                        column: name.clone(),
-                        table: info.name.original().to_owned(),
-                    }
-                })?;
+            let anchor = anchor.ok_or_else(|| {
+                // Go `infoschema.ErrColumnNotExists` (1054).
+                DdlPlanError::UnknownColumn {
+                    column: name.clone(),
+                    table: info.name.original().to_owned(),
+                }
+            })?;
             let anchor = usize::try_from(anchor).unwrap_or(0);
             if current_offset <= anchor {
                 Ok(anchor)
@@ -1890,7 +1890,10 @@ impl fmt::Display for DdlPlanError {
             // Go `ErrCantDropFieldOrKey`, the message DROP INDEX and
             // DROP PRIMARY KEY both answer with.
             Self::UnknownIndex(name) => {
-                write!(formatter, "Can't DROP '{name}'; check that column/key exists")
+                write!(
+                    formatter,
+                    "Can't DROP '{name}'; check that column/key exists"
+                )
             }
             Self::UnknownIndexColumn { column, index } => write!(
                 formatter,
@@ -2036,14 +2039,16 @@ pub fn build_view_table_info(name: &str, view: &tidb_executor::ViewDef) -> Table
         .columns
         .iter()
         .enumerate()
-        .map(|(offset, (column_name, field_type))| tidb_model::ColumnInfo {
-            id: i64::try_from(offset).expect("a column offset fits in i64") + 1,
-            name: CiString::new(column_name.clone()),
-            offset: i64::try_from(offset).expect("a column offset fits in i64"),
-            field_type: field_type.clone(),
-            state: SchemaState::PUBLIC,
-            ..tidb_model::ColumnInfo::default()
-        })
+        .map(
+            |(offset, (column_name, field_type))| tidb_model::ColumnInfo {
+                id: i64::try_from(offset).expect("a column offset fits in i64") + 1,
+                name: CiString::new(column_name.clone()),
+                offset: i64::try_from(offset).expect("a column offset fits in i64"),
+                field_type: field_type.clone(),
+                state: SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            },
+        )
         .collect::<Vec<_>>();
     // `ast/model.go`: UNDEFINED/MERGE/TEMPTABLE are 0/1/2, DEFINER/INVOKER
     // 0/1, LOCAL/CASCADED 0/1.
@@ -2861,12 +2866,12 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             else {
                 // Go 1054 ErrBadField through the modify path.
                 return Err(DdlPlanError::UnknownColumn {
-                        column: rename_from
-                            .as_deref()
-                            .unwrap_or(column.name.as_str())
-                            .to_owned(),
-                        table: table.clone(),
-                    });
+                    column: rename_from
+                        .as_deref()
+                        .unwrap_or(column.name.as_str())
+                        .to_owned(),
+                    table: table.clone(),
+                });
             };
             let new_name = column.name.to_lowercase();
             if new_name != wanted
@@ -3320,9 +3325,8 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
             // Go `validateAlterIndexVisibility`: the index must exist AND be
             // public, else `ErrKeyNotExists`.
-            let found = find_index(stored, index).filter(|candidate| {
-                candidate.read().state == tidb_model::SchemaState::PUBLIC
-            });
+            let found = find_index(stored, index)
+                .filter(|candidate| candidate.read().state == tidb_model::SchemaState::PUBLIC);
             let Some(found) = found else {
                 return Err(DdlPlanError::KeyNotExists {
                     index: index.clone(),
@@ -3510,11 +3514,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     let column = column.read();
                     let name = column.name.original().to_owned();
                     if column.field_type.code() == tidb_datatype::FieldTypeCode::Varchar {
-                        check_varchar_field_length(
-                            column.field_type.flen(),
-                            &name,
-                            &to_charset,
-                        )?;
+                        check_varchar_field_length(column.field_type.flen(), &name, &to_charset)?;
                     }
                     let column_charset = column.field_type.charset_name().to_owned();
                     if column_charset == "binary" || column_charset.is_empty() {
@@ -3543,7 +3543,9 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         column.field_type.set_collation(collation);
                     } else {
                         column.field_type.set_charset_name("binary");
-                        column.field_type.set_collation(tidb_datatype::Collation::Binary);
+                        column
+                            .field_type
+                            .set_collation(tidb_datatype::Collation::Binary);
                     }
                 }
             }
@@ -3979,11 +3981,7 @@ fn unsupported_charset_change(code: u16, reason: String) -> DdlPlanError {
 
 /// Go `types.IsVarcharTooBigFieldLength`: the declared length is in
 /// CHARACTERS, so a wider charset lowers the ceiling.
-fn check_varchar_field_length(
-    flen: i64,
-    name: &str,
-    to_charset: &str,
-) -> Result<(), DdlPlanError> {
+fn check_varchar_field_length(flen: i64, name: &str, to_charset: &str) -> Result<(), DdlPlanError> {
     const MAX_FIELD_VARCHAR_LENGTH: i64 = 65535;
     let Ok(info) = tidb_datatype::get_charset_info(to_charset) else {
         return Ok(());

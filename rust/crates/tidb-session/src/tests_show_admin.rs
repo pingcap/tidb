@@ -109,7 +109,10 @@ fn flush_targets_follow_gos_switch() {
     let error = session
         .run("FLUSH TIDB PLUGINS nosuch")
         .expect_err("an unknown plugin is refused");
-    assert!(error.to_string().contains("plugin 'nosuch' not found"), "{error}");
+    assert!(
+        error.to_string().contains("plugin 'nosuch' not found"),
+        "{error}"
+    );
 }
 
 /// Go `ColumnInfo.Comment` reaches all four readers, and `MODIFY COLUMN`
@@ -126,12 +129,17 @@ fn column_comments_round_trip_and_modify_overlays_them() {
     session.run("CREATE DATABASE d").unwrap();
     session.run("USE d").unwrap();
     session
-        .run("CREATE TABLE t (a int COMMENT 'kept', b int COMMENT 'replaced', \
-              c int COMMENT 'cleared', d int)")
+        .run(
+            "CREATE TABLE t (a int COMMENT 'kept', b int COMMENT 'replaced', \
+              c int COMMENT 'cleared', d int)",
+        )
         .unwrap();
 
     let created = row_text(session.run("SHOW CREATE TABLE t"))[0][1].clone();
-    assert!(created.contains("`a` int DEFAULT NULL COMMENT 'kept'"), "{created}");
+    assert!(
+        created.contains("`a` int DEFAULT NULL COMMENT 'kept'"),
+        "{created}"
+    );
     assert!(
         created.contains("`d` int DEFAULT NULL\n"),
         "an unset comment prints nothing: {created}"

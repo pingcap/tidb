@@ -1077,28 +1077,117 @@ impl SupportedCollation {
     /// switch, and it was wrong the first time it was read — probe 23
     /// caught `SHOW CHARACTER SET` and this memtable disagreeing.
     fn is_default(&self) -> bool {
-        tidb_datatype::Collation::from_name(self.name).is_some_and(|collation| {
-            collation.charset().default_collation() == collation
-        })
+        tidb_datatype::Collation::from_name(self.name)
+            .is_some_and(|collation| collation.charset().default_collation() == collation)
     }
 }
 
 const SUPPORTED_COLLATIONS: &[SupportedCollation] = &[
-    SupportedCollation { name: "ascii_bin", charset: "ascii", id: 65, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "binary", charset: "binary", id: 63, sortlen: 1, pad_space: false },
-    SupportedCollation { name: "gb18030_bin", charset: "gb18030", id: 249, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "gb18030_chinese_ci", charset: "gb18030", id: 248, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "gbk_bin", charset: "gbk", id: 87, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "gbk_chinese_ci", charset: "gbk", id: 28, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "latin1_bin", charset: "latin1", id: 47, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "utf8_bin", charset: "utf8", id: 83, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "utf8_general_ci", charset: "utf8", id: 33, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "utf8_unicode_ci", charset: "utf8", id: 192, sortlen: 8, pad_space: true },
-    SupportedCollation { name: "utf8mb4_0900_ai_ci", charset: "utf8mb4", id: 255, sortlen: 0, pad_space: false },
-    SupportedCollation { name: "utf8mb4_0900_bin", charset: "utf8mb4", id: 309, sortlen: 1, pad_space: false },
-    SupportedCollation { name: "utf8mb4_bin", charset: "utf8mb4", id: 46, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "utf8mb4_general_ci", charset: "utf8mb4", id: 45, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "utf8mb4_unicode_ci", charset: "utf8mb4", id: 224, sortlen: 8, pad_space: true },
+    SupportedCollation {
+        name: "ascii_bin",
+        charset: "ascii",
+        id: 65,
+        sortlen: 1,
+        pad_space: true,
+    },
+    SupportedCollation {
+        name: "binary",
+        charset: "binary",
+        id: 63,
+        sortlen: 1,
+        pad_space: false,
+    },
+    SupportedCollation {
+        name: "gb18030_bin",
+        charset: "gb18030",
+        id: 249,
+        sortlen: 1,
+        pad_space: true,
+    },
+    SupportedCollation {
+        name: "gb18030_chinese_ci",
+        charset: "gb18030",
+        id: 248,
+        sortlen: 1,
+        pad_space: true,
+    },
+    SupportedCollation {
+        name: "gbk_bin",
+        charset: "gbk",
+        id: 87,
+        sortlen: 1,
+        pad_space: true,
+    },
+    SupportedCollation {
+        name: "gbk_chinese_ci",
+        charset: "gbk",
+        id: 28,
+        sortlen: 1,
+        pad_space: true,
+    },
+    SupportedCollation {
+        name: "latin1_bin",
+        charset: "latin1",
+        id: 47,
+        sortlen: 1,
+        pad_space: true,
+    },
+    SupportedCollation {
+        name: "utf8_bin",
+        charset: "utf8",
+        id: 83,
+        sortlen: 1,
+        pad_space: true,
+    },
+    SupportedCollation {
+        name: "utf8_general_ci",
+        charset: "utf8",
+        id: 33,
+        sortlen: 1,
+        pad_space: true,
+    },
+    SupportedCollation {
+        name: "utf8_unicode_ci",
+        charset: "utf8",
+        id: 192,
+        sortlen: 8,
+        pad_space: true,
+    },
+    SupportedCollation {
+        name: "utf8mb4_0900_ai_ci",
+        charset: "utf8mb4",
+        id: 255,
+        sortlen: 0,
+        pad_space: false,
+    },
+    SupportedCollation {
+        name: "utf8mb4_0900_bin",
+        charset: "utf8mb4",
+        id: 309,
+        sortlen: 1,
+        pad_space: false,
+    },
+    SupportedCollation {
+        name: "utf8mb4_bin",
+        charset: "utf8mb4",
+        id: 46,
+        sortlen: 1,
+        pad_space: true,
+    },
+    SupportedCollation {
+        name: "utf8mb4_general_ci",
+        charset: "utf8mb4",
+        id: 45,
+        sortlen: 1,
+        pad_space: true,
+    },
+    SupportedCollation {
+        name: "utf8mb4_unicode_ci",
+        charset: "utf8mb4",
+        id: 224,
+        sortlen: 8,
+        pad_space: true,
+    },
 ];
 
 /// Go `setDataFromCharacterSets` (`infoschema_reader.go:1804`) over

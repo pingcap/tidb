@@ -315,9 +315,13 @@ fn schema_response(
         if let Some(id) = form("table_id") {
             return Some(match id.parse::<i64>() {
                 Ok(id) => match find_table_by_id(&catalog, id) {
-                    Some(found) => encode(tidb_exec::cluster_catalog::stored_table_info_json(found)),
+                    Some(found) => {
+                        encode(tidb_exec::cluster_catalog::stored_table_info_json(found))
+                    }
                     // Go `getTableByIDStr`'s own message.
-                    None => Err(format!("[schema:1146]Table which ID = {id} does not exist.")),
+                    None => Err(format!(
+                        "[schema:1146]Table which ID = {id} does not exist."
+                    )),
                 },
                 Err(error) => Err(error.to_string()),
             });
@@ -358,7 +362,9 @@ fn schema_response(
                 if index > 0 {
                     out.push(',');
                 }
-                match encode(tidb_exec::cluster_catalog::stored_db_info_json(&database.info)) {
+                match encode(tidb_exec::cluster_catalog::stored_db_info_json(
+                    &database.info,
+                )) {
                     Ok(body) => out.push_str(&body),
                     Err(error) => return Some(Err(error)),
                 }
@@ -369,11 +375,13 @@ fn schema_response(
         // One database's tables: Go `WriteDBTablesData`, a JSON array of
         // TableInfo, and an EMPTY array rather than null when it has none.
         [database] => {
-            let Some(found) = catalog
-                .databases
-                .iter()
-                .find(|candidate| candidate.info.name.original().eq_ignore_ascii_case(database))
-            else {
+            let Some(found) = catalog.databases.iter().find(|candidate| {
+                candidate
+                    .info
+                    .name
+                    .original()
+                    .eq_ignore_ascii_case(database)
+            }) else {
                 return Some(Err(format!("[schema:1049]Unknown database '{database}'")));
             };
             // Go `SchemaSimpleTableInfos`: `{id, name}` per table, for a
@@ -412,7 +420,13 @@ fn schema_response(
             let found = catalog
                 .databases
                 .iter()
-                .find(|candidate| candidate.info.name.original().eq_ignore_ascii_case(database))
+                .find(|candidate| {
+                    candidate
+                        .info
+                        .name
+                        .original()
+                        .eq_ignore_ascii_case(database)
+                })
                 .and_then(|database| {
                     database
                         .tables
@@ -420,7 +434,9 @@ fn schema_response(
                         .find(|candidate| candidate.name.original().eq_ignore_ascii_case(table))
                 });
             match found {
-                Some(found) => Some(encode(tidb_exec::cluster_catalog::stored_table_info_json(found))),
+                Some(found) => Some(encode(tidb_exec::cluster_catalog::stored_table_info_json(
+                    found,
+                ))),
                 None => Some(Err(format!(
                     "[schema:1146]Table '{database}.{table}' doesn't exist"
                 ))),
@@ -442,7 +458,10 @@ mod schema_route_tests {
         Arc::new(move || catalog.clone())
     }
 
-    fn database(name: &str, tables: Vec<tidb_model::TableInfo>) -> tidb_exec::cluster_catalog::LoadedDatabase {
+    fn database(
+        name: &str,
+        tables: Vec<tidb_model::TableInfo>,
+    ) -> tidb_exec::cluster_catalog::LoadedDatabase {
         tidb_exec::cluster_catalog::LoadedDatabase {
             info: tidb_model::DBInfo {
                 id: 2,
@@ -467,7 +486,6 @@ mod schema_route_tests {
         }
     }
 
-
     /// Go `SettingsHandler`: GET writes the configuration, and this node
     /// refuses the POST half by name rather than accepting a mutation it
     /// cannot perform.
@@ -481,9 +499,11 @@ mod schema_route_tests {
         assert_eq!(served, r#"{"host":"127.0.0.1","port":4000}"#);
 
         // Go reads form values off the query string; the route still matches.
-        assert!(settings_response("/settings?x=1", "GET /settings?x=1 HTTP/1.1", Some(body))
-            .expect("a settings route")
-            .is_ok());
+        assert!(
+            settings_response("/settings?x=1", "GET /settings?x=1 HTTP/1.1", Some(body))
+                .expect("a settings route")
+                .is_ok()
+        );
 
         // A mutation is refused, and says why rather than reporting success.
         let refused = settings_response("/settings", "POST /settings HTTP/1.1", Some(body))
@@ -516,7 +536,10 @@ mod schema_route_tests {
         let listing = schema_response("/schema/test?id_name_only=true", source.as_ref())
             .expect("a schema route")
             .expect("serialises");
-        assert!(listing.contains("\"id\":31") && listing.contains("\"t1\""), "{listing}");
+        assert!(
+            listing.contains("\"id\":31") && listing.contains("\"t1\""),
+            "{listing}"
+        );
         assert!(
             !listing.contains("\"cols\""),
             "id_name_only must not carry column definitions: {listing}"
@@ -550,7 +573,6 @@ mod schema_route_tests {
             "{missing}"
         );
     }
-
 
     /// Go `SchemaHandler.ServeHTTP`: three routes over the live catalog.
     ///
@@ -595,7 +617,10 @@ mod schema_route_tests {
         let missing_db = schema_response("/schema/nosuch", source.as_ref())
             .expect("a schema route")
             .expect_err("refused");
-        assert!(missing_db.contains("1049") && missing_db.contains("nosuch"), "{missing_db}");
+        assert!(
+            missing_db.contains("1049") && missing_db.contains("nosuch"),
+            "{missing_db}"
+        );
 
         let missing_table = schema_response("/schema/test/nosuch", source.as_ref())
             .expect("a schema route")
@@ -625,7 +650,12 @@ mod schema_route_tests {
     #[test]
     fn neighbouring_paths_are_not_schema_routes() {
         let source = catalog_with(vec![database("test", Vec::new())]);
-        for path in ["/schema_storage", "/schema_storage/test", "/status", "/metrics"] {
+        for path in [
+            "/schema_storage",
+            "/schema_storage/test",
+            "/status",
+            "/metrics",
+        ] {
             assert!(
                 schema_response(path, source.as_ref()).is_none(),
                 "{path} was answered as a schema route"

@@ -417,8 +417,7 @@ pub struct Session {
     /// The cluster schema version this node follows, which `ADMIN SHOW DDL`
     /// reports. Absent on the in-process tier, whose catalog is not a
     /// cluster's.
-    cluster_schema_version:
-        Option<std::sync::Arc<dyn Fn() -> i64 + Send + Sync>>,
+    cluster_schema_version: Option<std::sync::Arc<dyn Fn() -> i64 + Send + Sync>>,
     /// Go `StmtCtx.LastInsertID`/`LastInsertIDSet`: the id the RUNNING
     /// statement publishes. The session owns the cell and lends it to every
     /// [`tidb_executor::StmtContext`] the statement builds, so an allocating
@@ -1332,6 +1331,8 @@ mod tests_charset;
 #[cfg(test)]
 mod tests_charset_introducer;
 #[cfg(test)]
+mod tests_check_constraints;
+#[cfg(test)]
 mod tests_coalesced_joins;
 #[cfg(test)]
 mod tests_collation;
@@ -1399,8 +1400,6 @@ mod tests_recursive_cte;
 #[cfg(test)]
 mod tests_savepoint;
 mod tests_sequence;
-#[cfg(test)]
-mod tests_check_constraints;
 mod tests_show;
 mod tests_show_admin;
 #[cfg(test)]

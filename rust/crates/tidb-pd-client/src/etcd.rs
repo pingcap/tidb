@@ -42,7 +42,9 @@ use tidb_proto::etcdserverpb::kv_client::KvClient;
 use tidb_proto::etcdserverpb::lease_client::LeaseClient;
 use tidb_proto::etcdserverpb::watch_client::WatchClient;
 use tidb_proto::etcdserverpb::{
-    watch_request::RequestUnion, PutRequest, RangeRequest, WatchCreateRequest, WatchRequest, LeaseGrantRequest, LeaseKeepAliveRequest, LeaseRevokeRequest, DeleteRangeRequest};
+    watch_request::RequestUnion, DeleteRangeRequest, LeaseGrantRequest, LeaseKeepAliveRequest,
+    LeaseRevokeRequest, PutRequest, RangeRequest, WatchCreateRequest, WatchRequest,
+};
 use tidb_proto::mvccpb::event::EventType;
 use tokio::sync::watch;
 use tonic::transport::Channel;
@@ -330,12 +332,7 @@ impl EtcdClient {
 
     /// Puts one key under a lease: the key expires with the lease -- the
     /// spelling `pkg/domain/serverinfo` stores `/tidb/server/info/<id>` with.
-    pub fn put_with_lease(
-        &self,
-        key: &[u8],
-        value: &[u8],
-        lease: i64,
-    ) -> Result<(), EtcdError> {
+    pub fn put_with_lease(&self, key: &[u8], value: &[u8], lease: i64) -> Result<(), EtcdError> {
         let (reply, response) = mpsc::channel();
         self.shared
             .commands
@@ -534,8 +531,7 @@ fn run_kv_worker(
                 EtcdCommand::GetPrefix { reply, .. } => {
                     let _ = reply.send(Err(EtcdError::Closed));
                 }
-                EtcdCommand::Delete { reply, .. }
-                | EtcdCommand::DeletePrefix { reply, .. } => {
+                EtcdCommand::Delete { reply, .. } | EtcdCommand::DeletePrefix { reply, .. } => {
                     let _ = reply.send(Err(EtcdError::Closed));
                 }
                 EtcdCommand::LeaseGrant { reply, .. } => {
@@ -621,24 +617,23 @@ fn run_kv_worker(
                 let _ = reply.send(result);
             }
             EtcdCommand::LeaseRevoke { id, reply } => {
-                let result = across_endpoints(
-                    runtime,
-                    endpoints,
-                    &mut clients,
-                    timeout,
-                    security,
-                    |runtime, channel| {
-                        let mut client = LeaseClient::new(channel);
-                        runtime
-                            .block_on(
-                                client.lease_revoke(with_deadline(
+                let result =
+                    across_endpoints(
+                        runtime,
+                        endpoints,
+                        &mut clients,
+                        timeout,
+                        security,
+                        |runtime, channel| {
+                            let mut client = LeaseClient::new(channel);
+                            runtime
+                                .block_on(client.lease_revoke(with_deadline(
                                     LeaseRevokeRequest { id },
                                     timeout,
-                                )),
-                            )
-                            .map(|_| ())
-                    },
-                );
+                                )))
+                                .map(|_| ())
+                        },
+                    );
                 let _ = reply.send(result);
             }
             EtcdCommand::LeaseKeepAliveOnce { id, reply } => {
@@ -653,12 +648,10 @@ fn run_kv_worker(
                         // Go `KeepAliveOnce`: one request on the stream, one
                         // response read back.
                         runtime.block_on(async {
-                            let outbound =
-                                tokio_stream::once(LeaseKeepAliveRequest { id });
+                            let outbound = tokio_stream::once(LeaseKeepAliveRequest { id });
                             let mut request = tonic::Request::new(outbound);
                             request.set_timeout(timeout);
-                            let mut inbound =
-                                client.lease_keep_alive(request).await?.into_inner();
+                            let mut inbound = client.lease_keep_alive(request).await?.into_inner();
                             match inbound.message().await? {
                                 Some(response) => Ok(response.ttl),
                                 None => Err(tonic::Status::aborted(

@@ -37,8 +37,8 @@ use tidb_expr::aggregation::{
 };
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
-use tidb_expr::Columns;
 use tidb_expr::schema::Schema;
+use tidb_expr::Columns;
 
 use crate::expression_rewriter::ColumnIdAllocator;
 
@@ -135,8 +135,7 @@ pub fn remove_unnecessary_first_row(
                 if gby_expr.equal(&agg_func.base.args[0]) {
                     can_optimize = true;
                     if let Some(final_index) = first_row_func_map.get(&partial_index) {
-                        final_agg_funcs[*final_index].base.args[0] =
-                            final_gby_items[j].clone();
+                        final_agg_funcs[*final_index].base.args[0] = final_gby_items[j].clone();
                     }
                     break;
                 }
@@ -228,16 +227,12 @@ fn get_distinct_expr(
         //    values through its schema, so the firstrow is redundant there;
         //    group_concat order-by items always take one.
         if !partial_is_cop || only_add_first_row {
-            let first_row = AggFuncDesc::new(
-                ctx,
-                names::FIRST_ROW,
-                vec![distinct_arg.clone()],
-                false,
-            )
-            .unwrap_or_else(|error| {
-                // Go: `panic("NewAggFuncDesc FirstRow meets error: " + ...)`.
-                panic!("NewAggFuncDesc FirstRow meets error: {error:?}")
-            });
+            let first_row =
+                AggFuncDesc::new(ctx, names::FIRST_ROW, vec![distinct_arg.clone()], false)
+                    .unwrap_or_else(|error| {
+                        // Go: `panic("NewAggFuncDesc FirstRow meets error: " + ...)`.
+                        panic!("NewAggFuncDesc FirstRow meets error: {error:?}")
+                    });
             let mut new_col = gby_col;
             new_col.ret_type = Some(first_row.base.ret_type.clone());
             state.partial.agg_funcs.push(first_row);
@@ -339,14 +334,7 @@ pub fn build_final_mode_aggregation(
             let mut by_items = Vec::with_capacity(agg_func.order_by_items.len());
             for by_item in &agg_func.order_by_items {
                 by_items.push(ByItems::new(
-                    get_distinct_expr(
-                        ctx,
-                        alloc,
-                        &mut state,
-                        &by_item.expr,
-                        true,
-                        partial_is_cop,
-                    ),
+                    get_distinct_expr(ctx, alloc, &mut state, &by_item.expr, true, partial_is_cop),
                     by_item.desc,
                 ));
             }
@@ -446,9 +434,7 @@ pub fn build_final_mode_aggregation(
                 partial.agg_funcs.push(new_agg_func);
                 if agg_func.name() == names::GROUP_CONCAT {
                     // Append the trailing separator arg.
-                    args.push(
-                        agg_func.base.args[agg_func.base.args.len() - 1].clone(),
-                    );
+                    args.push(agg_func.base.args[agg_func.base.args.len() - 1].clone());
                 }
             } else {
                 // Other descriptors just split into two identical halves.
@@ -584,7 +570,10 @@ pub fn new_partial_aggregate(
     alloc: &ColumnIdAllocator,
     plan: crate::physical::PhysicalPlan,
 ) -> Result<
-    (Option<crate::physical::PhysicalPlan>, crate::physical::PhysicalPlan),
+    (
+        Option<crate::physical::PhysicalPlan>,
+        crate::physical::PhysicalPlan,
+    ),
     crate::plan_base::PlanError,
 > {
     use crate::physical::PhysicalPlan;
@@ -603,19 +592,14 @@ pub fn new_partial_aggregate(
     let original = AggInfo {
         agg_funcs: agg_funcs.clone(),
         group_by_items: group_by_items.clone(),
-        schema: plan
-            .schema()
-            .cloned()
-            .unwrap_or_default(),
+        schema: plan.schema().cloned().unwrap_or_default(),
     };
-    let Some(mut split) = build_final_mode_aggregation(ctx, alloc, &original, true, false)
-    else {
+    let Some(mut split) = build_final_mode_aggregation(ctx, alloc, &original, true, false) else {
         return Ok((None, plan));
     };
     // A stream aggregate whose split grew the group-by (a pushed distinct
     // argument) cannot keep its order contract: stay whole.
-    if is_stream && split.partial.group_by_items.len() != split.final_agg.group_by_items.len()
-    {
+    if is_stream && split.partial.group_by_items.len() != split.final_agg.group_by_items.len() {
         return Ok((None, plan));
     }
     // Remove unnecessary FirstRow.
@@ -692,10 +676,7 @@ mod tests {
         alloc.alloc();
         let count = agg(names::COUNT, &b, false);
         let original = AggInfo {
-            schema: Schema::new(vec![Column::new(
-                10,
-                count.base.ret_type.clone(),
-            )]),
+            schema: Schema::new(vec![Column::new(10, count.base.ret_type.clone())]),
             agg_funcs: vec![count],
             group_by_items: vec![Expression::Column(a.clone())],
         };
@@ -845,8 +826,6 @@ mod tests {
             agg_funcs: vec![concat],
             group_by_items: Vec::new(),
         };
-        assert!(
-            build_final_mode_aggregation(&ctx(), &alloc, &original, true, false).is_none()
-        );
+        assert!(build_final_mode_aggregation(&ctx(), &alloc, &original, true, false).is_none());
     }
 }

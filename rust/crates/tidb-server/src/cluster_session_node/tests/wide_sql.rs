@@ -227,8 +227,14 @@ fn a_derived_aggregate_answers_its_output_over_cluster_storage() {
     assert_eq!(
         derived,
         vec![
-            vec![Datum::Int(100), Datum::Decimal(tidb_datatype::Decimal::from_int(3))],
-            vec![Datum::Int(200), Datum::Decimal(tidb_datatype::Decimal::from_int(3))],
+            vec![
+                Datum::Int(100),
+                Datum::Decimal(tidb_datatype::Decimal::from_int(3))
+            ],
+            vec![
+                Datum::Int(200),
+                Datum::Decimal(tidb_datatype::Decimal::from_int(3))
+            ],
         ],
         "the derived aggregate's own output"
     );
@@ -255,14 +261,10 @@ fn a_derived_aggregate_answers_its_output_over_cluster_storage() {
     // primary key away — the pruned cop scan must not shift the aggregate's
     // input columns.
     session
-        .execute_write(
-            "CREATE TABLE p33 (id BIGINT PRIMARY KEY, gg BIGINT, vv BIGINT)",
-        )
+        .execute_write("CREATE TABLE p33 (id BIGINT PRIMARY KEY, gg BIGINT, vv BIGINT)")
         .expect("create");
     session
-        .execute_write(
-            "INSERT INTO p33 VALUES (1,1,10),(2,1,20),(3,2,30),(4,2,40),(5,2,50)",
-        )
+        .execute_write("INSERT INTO p33 VALUES (1,1,10),(2,1,20),(3,2,30),(4,2,40),(5,2,50)")
         .expect("seed");
     let pruned = rows(
         &mut session,
@@ -271,8 +273,14 @@ fn a_derived_aggregate_answers_its_output_over_cluster_storage() {
     assert_eq!(
         pruned,
         vec![
-            vec![Datum::Int(1), Datum::Decimal(tidb_datatype::Decimal::from_int(30))],
-            vec![Datum::Int(2), Datum::Decimal(tidb_datatype::Decimal::from_int(120))],
+            vec![
+                Datum::Int(1),
+                Datum::Decimal(tidb_datatype::Decimal::from_int(30))
+            ],
+            vec![
+                Datum::Int(2),
+                Datum::Decimal(tidb_datatype::Decimal::from_int(120))
+            ],
         ],
         "the pruned-pk derived aggregate"
     );

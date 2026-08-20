@@ -113,12 +113,8 @@ fn build_ranges_for(expr_text: &str) -> Result<String, String> {
         .map(|cond| push_down_not(cond, &builder))
         .collect();
     let (access, _filters) = detach_conds_for_column(&conds, &table.a, true);
-    let result = build_table_range(
-        &access,
-        table.a.ret_type.as_ref().expect("typed"),
-        0,
-    )
-    .map_err(|error| format!("build: {error:?}"))?;
+    let result = build_table_range(&access, table.a.ret_type.as_ref().expect("typed"), 0)
+        .map_err(|error| format!("build: {error:?}"))?;
     Ok(ranges_to_go_string(&result.ranges))
 }
 
@@ -168,10 +164,7 @@ fn table_ranges_match_gos_case_table() {
         ("a not in (1, 2, 3)", "[[-inf,1) (3,+inf]]"),
         ("a > 9223372036854775807", "[]"),
         ("a >= 9223372036854775807", "[[9223372036854775807,+inf]]"),
-        (
-            "a < -9223372036854775807",
-            "[[-inf,-9223372036854775807)]",
-        ),
+        ("a < -9223372036854775807", "[[-inf,-9223372036854775807)]"),
         ("isnull(a) or a in (1, 2, 3)", "[[1,1] [2,2] [3,3]]"),
         ("isnull(a) and a in (1, 2, 3)", "[]"),
     ];
@@ -260,11 +253,7 @@ impl ColumnResolver for ColumnRangeTable {
 
 /// Go `TestColumnRange`'s pipeline: `ExtractAccessConditionsForColumn` +
 /// `BuildColumnRange` with the case's prefix length.
-fn build_column_ranges_for(
-    expr_text: &str,
-    col_pos: usize,
-    length: i64,
-) -> Result<String, String> {
+fn build_column_ranges_for(expr_text: &str, col_pos: usize, length: i64) -> Result<String, String> {
     let table = ColumnRangeTable::new();
     let sql = format!("select * from t where {expr_text}");
     let stmt = tidb_parser::parse(&sql).map_err(|error| format!("parse: {error:?}"))?;
@@ -284,8 +273,7 @@ fn build_column_ranges_for(
         .map(|cond| push_down_not(cond, &builder))
         .collect();
     let col = &table.columns[col_pos];
-    let access =
-        super::detacher::extract_access_conditions_for_column(&conds, col, true);
+    let access = super::detacher::extract_access_conditions_for_column(&conds, col, true);
     let result = super::ranger::build_column_range(
         &access,
         col.ret_type.as_ref().expect("typed"),
@@ -301,8 +289,18 @@ fn build_column_ranges_for(
 fn column_ranges_match_gos_case_table() {
     const UNSPECIFIED: i64 = super::checker::UNSPECIFIED_LENGTH;
     let cases: &[(usize, &str, &str, i64)] = &[
-        (0, "(a = 2 or a = 2) and (a = 2 or a = 2)", "[[2,2]]", UNSPECIFIED),
-        (0, "(a = 2 or a = 1) and (a = 3 or a = 4)", "[]", UNSPECIFIED),
+        (
+            0,
+            "(a = 2 or a = 2) and (a = 2 or a = 2)",
+            "[[2,2]]",
+            UNSPECIFIED,
+        ),
+        (
+            0,
+            "(a = 2 or a = 1) and (a = 3 or a = 4)",
+            "[]",
+            UNSPECIFIED,
+        ),
         (0, "a = 1 and b > 1", "[[1,1]]", UNSPECIFIED),
         (1, "b > 1", "[(1,+inf]]", UNSPECIFIED),
         (0, "1 = a", "[[1,1]]", UNSPECIFIED),
@@ -317,10 +315,25 @@ fn column_ranges_match_gos_case_table() {
         (0, "a <= 1", "[[-inf,1]]", UNSPECIFIED),
         (0, "1 >= a", "[[-inf,1]]", UNSPECIFIED),
         (0, "(a)", "[[-inf,0) (0,+inf]]", UNSPECIFIED),
-        (0, "a in (1, 3, NULL, 2)", "[[1,1] [2,2] [3,3]]", UNSPECIFIED),
-        (0, "a IN (8,8,81,45)", "[[8,8] [45,45] [81,81]]", UNSPECIFIED),
+        (
+            0,
+            "a in (1, 3, NULL, 2)",
+            "[[1,1] [2,2] [3,3]]",
+            UNSPECIFIED,
+        ),
+        (
+            0,
+            "a IN (8,8,81,45)",
+            "[[8,8] [45,45] [81,81]]",
+            UNSPECIFIED,
+        ),
         (0, "a between 1 and 2", "[[1,2]]", UNSPECIFIED),
-        (0, "a not between 1 and 2", "[[-inf,1) (2,+inf]]", UNSPECIFIED),
+        (
+            0,
+            "a not between 1 and 2",
+            "[[-inf,1) (2,+inf]]",
+            UNSPECIFIED,
+        ),
         (0, "a between 2 and 1", "[]", UNSPECIFIED),
         (0, "a not between 2 and 1", "[[-inf,+inf]]", UNSPECIFIED),
         (0, "a IS NULL", "[[NULL,NULL]]", UNSPECIFIED),
@@ -330,10 +343,25 @@ fn column_ranges_match_gos_case_table() {
         (0, "a IS FALSE", "[[0,0]]", UNSPECIFIED),
         (0, "a IS NOT FALSE", "[[NULL,0) (0,+inf]]", UNSPECIFIED),
         (1, "b in (1, '2.1')", "[[1,1] [2.1,2.1]]", UNSPECIFIED),
-        (0, "a > 9223372036854775807", "[(9223372036854775807,+inf]]", UNSPECIFIED),
+        (
+            0,
+            "a > 9223372036854775807",
+            "[(9223372036854775807,+inf]]",
+            UNSPECIFIED,
+        ),
         (2, "c > 111.11111111", "[[111.111115,+inf]]", UNSPECIFIED),
-        (3, "d > 'aaaaaaaaaaaaaa'", "[(\"aaaaaaaaaaaaaa\",+inf]]", UNSPECIFIED),
-        (4, "e > 18446744073709500000", "[(18446744073709500000,+inf]]", UNSPECIFIED),
+        (
+            3,
+            "d > 'aaaaaaaaaaaaaa'",
+            "[(\"aaaaaaaaaaaaaa\",+inf]]",
+            UNSPECIFIED,
+        ),
+        (
+            4,
+            "e > 18446744073709500000",
+            "[(18446744073709500000,+inf]]",
+            UNSPECIFIED,
+        ),
         (4, "e > -2147483648", "[[0,+inf]]", UNSPECIFIED),
         (3, "d = 'aab' or d = 'aac'", "[[\"a\",\"a\"]]", 1),
         (0, "a in (1, 2, 3)", "[[1,1] [2,2] [3,3]]", UNSPECIFIED),
@@ -363,12 +391,12 @@ impl UnsignedTable {
         };
         Self {
             columns: vec![
-                unsigned(FieldTypeCode::Short, 1),        // a smallint(5) unsigned
-                unsigned(FieldTypeCode::NewDecimal, 2),   // decimal unsigned
-                unsigned(FieldTypeCode::Float, 3),        // float unsigned
-                unsigned(FieldTypeCode::Double, 4),       // double unsigned
+                unsigned(FieldTypeCode::Short, 1),      // a smallint(5) unsigned
+                unsigned(FieldTypeCode::NewDecimal, 2), // decimal unsigned
+                unsigned(FieldTypeCode::Float, 3),      // float unsigned
+                unsigned(FieldTypeCode::Double, 4),     // double unsigned
                 Column::new(5, FieldType::new(FieldTypeCode::LongLong)), // col_int
-                Column::new(6, FieldType::new(FieldTypeCode::Float)),    // col_float
+                Column::new(6, FieldType::new(FieldTypeCode::Float)), // col_float
             ],
         }
     }
@@ -454,10 +482,10 @@ fn planner_rewriter_stage(expr: &Expression) -> Expression {
                         })
                 ) && rewritten.args[1..].iter().any(|member| {
                     matches!(member, Expression::Constant(constant)
-                        if matches!(
-                            constant.value,
-                            Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_)
-                        ))
+                    if matches!(
+                        constant.value,
+                        Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_)
+                    ))
                 });
                 if string_column_numeric_members {
                     let column = rewritten.args[0].clone();
@@ -482,10 +510,7 @@ fn planner_rewriter_stage(expr: &Expression) -> Expression {
                     for member in &rewritten.args[1..] {
                         let mut member = member.clone();
                         if let Expression::Constant(constant) = &mut member {
-                            constant.value = convert_in_member(
-                                &constant.value,
-                                eval_type,
-                            );
+                            constant.value = convert_in_member(&constant.value, eval_type);
                         }
                         let key = match &member {
                             Expression::Constant(constant) => format!("{:?}", constant.value),
@@ -503,9 +528,9 @@ fn planner_rewriter_stage(expr: &Expression) -> Expression {
             if matches!(name, "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "nulleq") {
                 let real_column = rewritten.args.iter().any(|arg| {
                     matches!(arg, Expression::Column(col)
-                        if col.ret_type.as_ref().is_some_and(|ft| {
-                            ft.eval_type() == tidb_datatype::EvalType::Real
-                        }))
+                    if col.ret_type.as_ref().is_some_and(|ft| {
+                        ft.eval_type() == tidb_datatype::EvalType::Real
+                    }))
                 });
                 if real_column {
                     for arg in &mut rewritten.args {
@@ -526,10 +551,7 @@ fn planner_rewriter_stage(expr: &Expression) -> Expression {
 /// One IN-list member as Go's rewriter would deliver it: converted to the
 /// column's evaluation type (string digits to INT/REAL, decimal to the
 /// column family), or kept as written when no conversion applies.
-fn convert_in_member(
-    value: &Datum,
-    eval_type: Option<tidb_datatype::EvalType>,
-) -> Datum {
+fn convert_in_member(value: &Datum, eval_type: Option<tidb_datatype::EvalType>) -> Datum {
     use tidb_datatype::EvalType;
     match (eval_type, value) {
         (Some(EvalType::Int), Datum::String(text)) => {
@@ -581,13 +603,9 @@ fn build_index_ranges_for(expr_text: &str, index_pos: usize) -> Result<String, S
         .collect();
     let index_cols = table.index_columns(index_pos);
     let lengths = vec![super::checker::UNSPECIFIED_LENGTH; index_cols.len()];
-    let result = super::detacher::detach_cond_and_build_range_for_index(
-        &conds,
-        &index_cols,
-        &lengths,
-        0,
-    )
-    .map_err(|error| format!("detach: {error:?}"))?;
+    let result =
+        super::detacher::detach_cond_and_build_range_for_index(&conds, &index_cols, &lengths, 0)
+            .map_err(|error| format!("detach: {error:?}"))?;
     Ok(ranges_to_go_string(&result.ranges))
 }
 
@@ -687,7 +705,10 @@ fn year_index_ranges_match_go() {
     let cases: &[(&str, &str)] = &[
         ("a not in (0, 1, 2)", "[(NULL,0) (0,2001) (2002,+inf]]"),
         ("a not in (-1, 1, 2)", "[(NULL,2001) (2002,+inf]]"),
-        ("a not in (1, 2, 70)", "[(NULL,1970) (1970,2001) (2002,+inf]]"),
+        (
+            "a not in (1, 2, 70)",
+            "[(NULL,1970) (1970,2001) (2002,+inf]]",
+        ),
         ("a = 1 or a = 2 or a = 70", "[[1970,1970] [2001,2002]]"),
         ("a not in (99)", "[[-inf,1999) (1999,+inf]]"),
         ("a not in (1, 2, 15698)", "[(NULL,2001) (2002,+inf]]"),
@@ -702,8 +723,7 @@ fn year_index_ranges_match_go() {
     for (expr, expected) in cases {
         let got = (|| -> Result<String, String> {
             let sql = format!("select * from t where {expr}");
-            let stmt =
-                tidb_parser::parse(&sql).map_err(|error| format!("parse: {error:?}"))?;
+            let stmt = tidb_parser::parse(&sql).map_err(|error| format!("parse: {error:?}"))?;
             let tidb_ast::Stmt::Query(query) = stmt else {
                 return Err("not a query".to_owned());
             };
@@ -722,10 +742,9 @@ fn year_index_ranges_match_go() {
                 .collect();
             let cols = [table.a.clone()];
             let lengths = [super::checker::UNSPECIFIED_LENGTH];
-            let result = super::detacher::detach_cond_and_build_range_for_index(
-                &conds, &cols, &lengths, 0,
-            )
-            .map_err(|error| format!("detach: {error:?}"))?;
+            let result =
+                super::detacher::detach_cond_and_build_range_for_index(&conds, &cols, &lengths, 0)
+                    .map_err(|error| format!("detach: {error:?}"))?;
             Ok(ranges_to_go_string(&result.ranges))
         })();
         match got {
@@ -808,7 +827,11 @@ fn stringify_conds(conds: &[Expression], column_name: &dyn Fn(i64) -> String) ->
                     .iter()
                     .map(|argument| one(argument, column_name))
                     .collect();
-                format!("{}({})", function.func_name.lowercase(), arguments.join(", "))
+                format!(
+                    "{}({})",
+                    function.func_name.lowercase(),
+                    arguments.join(", ")
+                )
             }
             other => format!("{other:?}"),
         }
@@ -868,8 +891,7 @@ fn prefix_index_range_scan_matches_go() {
     for (index_pos, expr, want_access, want_filter, want_ranges) in cases {
         let got = (|| -> Result<(String, String, String), String> {
             let sql = format!("select * from t where {expr}");
-            let stmt =
-                tidb_parser::parse(&sql).map_err(|error| format!("parse: {error:?}"))?;
+            let stmt = tidb_parser::parse(&sql).map_err(|error| format!("parse: {error:?}"))?;
             let tidb_ast::Stmt::Query(query) = stmt else {
                 return Err("not a query".to_owned());
             };
@@ -890,10 +912,9 @@ fn prefix_index_range_scan_matches_go() {
                 0 => (vec![table.a.clone()], vec![2]),
                 _ => (vec![table.a.clone(), table.b.clone()], vec![2, 2]),
             };
-            let result = super::detacher::detach_cond_and_build_range_for_index(
-                &conds, &cols, &lengths, 0,
-            )
-            .map_err(|error| format!("detach: {error:?}"))?;
+            let result =
+                super::detacher::detach_cond_and_build_range_for_index(&conds, &cols, &lengths, 0)
+                    .map_err(|error| format!("detach: {error:?}"))?;
             Ok((
                 stringify_conds(&result.access_conds, &column_name),
                 stringify_conds(&result.remained_conds, &column_name),
@@ -929,8 +950,10 @@ struct IndexRangeTable {
 
 impl IndexRangeTable {
     fn new() -> Self {
-        let varchar = |unique_id: i64, flen: i64, collation_name: &str,
-                        collation: tidb_datatype::Collation| {
+        let varchar = |unique_id: i64,
+                       flen: i64,
+                       collation_name: &str,
+                       collation: tidb_datatype::Collation| {
             let mut ft = FieldType::new(FieldTypeCode::Varchar);
             ft.set_flen(flen);
             ft.set_charset_name(if collation_name.starts_with("utf8_") {
@@ -999,12 +1022,12 @@ impl IndexRangeTable {
             // Go normalizes to a FULL column (no prefix cut, no union pass).
             0 => (vec![col(0), col(1)], vec![unspec, unspec]),
             1 => (vec![col(2), col(0)], vec![unspec, unspec]), // idx_cb(c, a)
-            2 => (vec![col(3)], vec![2]),                  // idx_d(d(2))
-            3 => (vec![col(4)], vec![2]),                  // idx_e(e(2))
-            4 => (vec![col(5)], vec![unspec]),             // idx_f(f)
-            5 => (vec![col(3), col(4)], vec![2, unspec]),  // idx_de(d(2), e)
-            6 => (vec![col(6)], vec![unspec]),             // idx_g(g)
-            _ => (vec![col(7)], vec![3]),                  // idx_h(h(3))
+            2 => (vec![col(3)], vec![2]),                      // idx_d(d(2))
+            3 => (vec![col(4)], vec![2]),                      // idx_e(e(2))
+            4 => (vec![col(5)], vec![unspec]),                 // idx_f(f)
+            5 => (vec![col(3), col(4)], vec![2, unspec]),      // idx_de(d(2), e)
+            6 => (vec![col(6)], vec![unspec]),                 // idx_g(g)
+            _ => (vec![col(7)], vec![3]),                      // idx_h(h(3))
         }
     }
 }
@@ -1051,55 +1074,282 @@ fn index_ranges_match_go() {
         format!("test.t.{name}")
     };
     let cases: &[(usize, &str, &str, &str, &str)] = &[
-        (0, r"a LIKE 'abc%'", r"[like(test.t.a, abc%, 92)]", r"[like(test.t.a, abc%, 92)]", r#"[["abc","abd")]"#),
-        (0, r"a LIKE 'abc_'", r"[like(test.t.a, abc_, 92)]", r"[like(test.t.a, abc_, 92)]", r#"[["abc","abd")]"#),
-        (0, r"a LIKE 'abc'", r"[like(test.t.a, abc, 92)]", r"[like(test.t.a, abc, 92)]", r#"[["abc","abc"]]"#),
-        (0, r#"a LIKE "ab\_c""#, r"[like(test.t.a, ab\_c, 92)]", r"[like(test.t.a, ab\_c, 92)]", r#"[["ab_c","ab_c"]]"#),
-        (0, r"a LIKE '%'", r"[]", r"[like(test.t.a, %, 92)]", r"[[NULL,+inf]]"),
-        (0, r"a LIKE '\%a'", r"[like(test.t.a, \%a, 92)]", r"[like(test.t.a, \%a, 92)]", r#"[["%a","%a"]]"#),
-        (0, r#"a LIKE "\\""#, r"[like(test.t.a, \, 92)]", r"[like(test.t.a, \, 92)]", r#"[["\\","\\"]]"#),
-        (0, r#"a LIKE "\\\\a%""#, r"[like(test.t.a, \\a%, 92)]", r"[like(test.t.a, \\a%, 92)]", r#"[["\\a","\\b")]"#),
+        (
+            0,
+            r"a LIKE 'abc%'",
+            r"[like(test.t.a, abc%, 92)]",
+            r"[like(test.t.a, abc%, 92)]",
+            r#"[["abc","abd")]"#,
+        ),
+        (
+            0,
+            r"a LIKE 'abc_'",
+            r"[like(test.t.a, abc_, 92)]",
+            r"[like(test.t.a, abc_, 92)]",
+            r#"[["abc","abd")]"#,
+        ),
+        (
+            0,
+            r"a LIKE 'abc'",
+            r"[like(test.t.a, abc, 92)]",
+            r"[like(test.t.a, abc, 92)]",
+            r#"[["abc","abc"]]"#,
+        ),
+        (
+            0,
+            r#"a LIKE "ab\_c""#,
+            r"[like(test.t.a, ab\_c, 92)]",
+            r"[like(test.t.a, ab\_c, 92)]",
+            r#"[["ab_c","ab_c"]]"#,
+        ),
+        (
+            0,
+            r"a LIKE '%'",
+            r"[]",
+            r"[like(test.t.a, %, 92)]",
+            r"[[NULL,+inf]]",
+        ),
+        (
+            0,
+            r"a LIKE '\%a'",
+            r"[like(test.t.a, \%a, 92)]",
+            r"[like(test.t.a, \%a, 92)]",
+            r#"[["%a","%a"]]"#,
+        ),
+        (
+            0,
+            r#"a LIKE "\\""#,
+            r"[like(test.t.a, \, 92)]",
+            r"[like(test.t.a, \, 92)]",
+            r#"[["\\","\\"]]"#,
+        ),
+        (
+            0,
+            r#"a LIKE "\\\\a%""#,
+            r"[like(test.t.a, \\a%, 92)]",
+            r"[like(test.t.a, \\a%, 92)]",
+            r#"[["\\a","\\b")]"#,
+        ),
         (0, r"a > NULL", r"[gt(test.t.a, <nil>)]", r"[]", r"[]"),
-        (0, r"a = 'a' and b in (1, 2, 3)", r"[eq(test.t.a, a) in(test.t.b, 1, 2, 3)]", r"[]", r#"[["a" 1,"a" 1] ["a" 2,"a" 2] ["a" 3,"a" 3]]"#),
-        (0, r"a = 'a' and b not in (1, 2, 3)", r"[eq(test.t.a, a) not(in(test.t.b, 1, 2, 3))]", r"[]", r#"[("a" NULL,"a" 1) ("a" 3,"a" +inf]]"#),
-        (0, r"a in ('a') and b in ('1', 2.0, NULL)", r"[eq(test.t.a, a) in(test.t.b, 1, 2, <nil>)]", r"[]", r#"[["a" 1,"a" 1] ["a" 2,"a" 2]]"#),
-        (1, r"c in ('1.1', 1, 1.1) and a in ('1', 'a', NULL)", r"[in(test.t.c, 1.1, 1) in(test.t.a, 1, a, <nil>)]", r"[]", r#"[[1 "1",1 "1"] [1 "a",1 "a"] [1.1 "1",1.1 "1"] [1.1 "a",1.1 "a"]]"#),
-        (1, r"c in (1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)", r"[in(test.t.c, 1, 2, 3, 4)]", r"[]", r"[[1,1] [2,2] [3,3] [4,4]]"),
-        (1, r"c not in (1, 2, 3)", r"[not(in(test.t.c, 1, 2, 3))]", r"[]", r"[(NULL,1) (1,2) (2,3) (3,+inf]]"),
-        (1, r"c in (1, 2) and c in (1, 3)", r"[eq(test.t.c, 1)]", r"[]", r"[[1,1]]"),
+        (
+            0,
+            r"a = 'a' and b in (1, 2, 3)",
+            r"[eq(test.t.a, a) in(test.t.b, 1, 2, 3)]",
+            r"[]",
+            r#"[["a" 1,"a" 1] ["a" 2,"a" 2] ["a" 3,"a" 3]]"#,
+        ),
+        (
+            0,
+            r"a = 'a' and b not in (1, 2, 3)",
+            r"[eq(test.t.a, a) not(in(test.t.b, 1, 2, 3))]",
+            r"[]",
+            r#"[("a" NULL,"a" 1) ("a" 3,"a" +inf]]"#,
+        ),
+        (
+            0,
+            r"a in ('a') and b in ('1', 2.0, NULL)",
+            r"[eq(test.t.a, a) in(test.t.b, 1, 2, <nil>)]",
+            r"[]",
+            r#"[["a" 1,"a" 1] ["a" 2,"a" 2]]"#,
+        ),
+        (
+            1,
+            r"c in ('1.1', 1, 1.1) and a in ('1', 'a', NULL)",
+            r"[in(test.t.c, 1.1, 1) in(test.t.a, 1, a, <nil>)]",
+            r"[]",
+            r#"[[1 "1",1 "1"] [1 "a",1 "a"] [1.1 "1",1.1 "1"] [1.1 "a",1.1 "a"]]"#,
+        ),
+        (
+            1,
+            r"c in (1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)",
+            r"[in(test.t.c, 1, 2, 3, 4)]",
+            r"[]",
+            r"[[1,1] [2,2] [3,3] [4,4]]",
+        ),
+        (
+            1,
+            r"c not in (1, 2, 3)",
+            r"[not(in(test.t.c, 1, 2, 3))]",
+            r"[]",
+            r"[(NULL,1) (1,2) (2,3) (3,+inf]]",
+        ),
+        (
+            1,
+            r"c in (1, 2) and c in (1, 3)",
+            r"[eq(test.t.c, 1)]",
+            r"[]",
+            r"[[1,1]]",
+        ),
         (1, r"c = 1 and c = 2", r"[]", r"[]", r"[]"),
         (0, r"a in (NULL)", r"[eq(test.t.a, <nil>)]", r"[]", r"[]"),
-        (0, r"a not in (NULL, '1', '2', '3')", r"[not(in(test.t.a, <nil>, 1, 2, 3))]", r"[]", r"[]"),
-        (0, r"not (a not in (NULL, '1', '2', '3') and a > '2')", r"[or(in(test.t.a, <nil>, 1, 2, 3), le(test.t.a, 2))]", r"[]", r#"[[-inf,"2"] ["3","3"]]"#),
-        (0, r"not (a not in (NULL) and a > '2')", r"[or(eq(test.t.a, <nil>), le(test.t.a, 2))]", r"[]", r#"[[-inf,"2"]]"#),
-        (0, r"not (a not in (NULL) or a > '2')", r"[and(eq(test.t.a, <nil>), le(test.t.a, 2))]", r"[]", r"[]"),
-        (0, r"(a > 'b' and a < 'bbb') or (a < 'cb' and a > 'a')", r"[or(and(gt(test.t.a, b), lt(test.t.a, bbb)), and(lt(test.t.a, cb), gt(test.t.a, a)))]", r"[]", r#"[("a","cb")]"#),
-        (0, r"(a > 'a' and a < 'b') or (a >= 'b' and a < 'c')", r"[or(and(gt(test.t.a, a), lt(test.t.a, b)), and(ge(test.t.a, b), lt(test.t.a, c)))]", r"[]", r#"[("a","c")]"#),
-        (0, r"(a > 'a' and a < 'b' and b < 1) or (a >= 'b' and a < 'c')", r"[or(and(gt(test.t.a, a), lt(test.t.a, b)), and(ge(test.t.a, b), lt(test.t.a, c)))]", r"[or(and(and(gt(test.t.a, a), lt(test.t.a, b)), lt(test.t.b, 1)), and(ge(test.t.a, b), lt(test.t.a, c)))]", r#"[("a","c")]"#),
-        (0, r"(a in ('a', 'b') and b < 1) or (a >= 'b' and a < 'c')", r"[or(and(in(test.t.a, a, b), lt(test.t.b, 1)), and(ge(test.t.a, b), lt(test.t.a, c)))]", r"[]", r#"[["a" -inf,"a" 1) ["b","c")]"#),
-        (0, r"(a > 'a') or (c > 1)", r"[]", r"[or(gt(test.t.a, a), gt(test.t.c, 1))]", r"[[NULL,+inf]]"),
-        (2, r#"d = "你好啊""#, r"[eq(test.t.d, 你好啊)]", r"[eq(test.t.d, 你好啊)]", r#"[["你好","你好"]]"#),
-        (3, r#"e = "你好啊""#, r"[eq(test.t.e, 你好啊)]", r"[eq(test.t.e, 你好啊)]", r#"[["\xe4\xbd","\xe4\xbd"]]"#),
-        (2, r#"d in ("你好啊", "再见")"#, r"[in(test.t.d, 你好啊, 再见)]", r"[in(test.t.d, 你好啊, 再见)]", r#"[["你好","你好"] ["再见","再见"]]"#),
-        (2, r#"d not in ("你好啊")"#, r"[]", r"[ne(test.t.d, 你好啊)]", r"[[NULL,+inf]]"),
-        (2, r#"d < "你好" || d > "你好""#, r"[or(lt(test.t.d, 你好), gt(test.t.d, 你好))]", r"[or(lt(test.t.d, 你好), gt(test.t.d, 你好))]", r"[[-inf,+inf]]"),
-        (2, r#"not(d < "你好" || d > "你好")"#, r"[and(ge(test.t.d, 你好), le(test.t.d, 你好))]", r"[and(ge(test.t.d, 你好), le(test.t.d, 你好))]", r#"[["你好","你好"]]"#),
-        (4, r"f >= 'a' and f <= 'B'", r"[ge(test.t.f, a) le(test.t.f, B)]", r"[]", r#"[["\x00A","\x00B"]]"#),
-        (4, r"f in ('a', 'B')", r"[in(test.t.f, a, B)]", r"[]", r#"[["\x00A","\x00A"] ["\x00B","\x00B"]]"#),
-        (4, r"f = 'a' and f = 'B' collate utf8mb4_bin", r"[eq(test.t.f, a)]", r"[eq(test.t.f, B)]", r#"[["\x00A","\x00A"]]"#),
-        (4, r"f like '@%' collate utf8mb4_bin", r"[]", r"[like(test.t.f, @%, 92)]", r"[[NULL,+inf]]"),
-        (5, r"d in ('aab', 'aac') and e = 'a'", r"[in(test.t.d, aab, aac) eq(test.t.e, a)]", r"[in(test.t.d, aab, aac)]", r#"[["aa" "a","aa" "a"]]"#),
+        (
+            0,
+            r"a not in (NULL, '1', '2', '3')",
+            r"[not(in(test.t.a, <nil>, 1, 2, 3))]",
+            r"[]",
+            r"[]",
+        ),
+        (
+            0,
+            r"not (a not in (NULL, '1', '2', '3') and a > '2')",
+            r"[or(in(test.t.a, <nil>, 1, 2, 3), le(test.t.a, 2))]",
+            r"[]",
+            r#"[[-inf,"2"] ["3","3"]]"#,
+        ),
+        (
+            0,
+            r"not (a not in (NULL) and a > '2')",
+            r"[or(eq(test.t.a, <nil>), le(test.t.a, 2))]",
+            r"[]",
+            r#"[[-inf,"2"]]"#,
+        ),
+        (
+            0,
+            r"not (a not in (NULL) or a > '2')",
+            r"[and(eq(test.t.a, <nil>), le(test.t.a, 2))]",
+            r"[]",
+            r"[]",
+        ),
+        (
+            0,
+            r"(a > 'b' and a < 'bbb') or (a < 'cb' and a > 'a')",
+            r"[or(and(gt(test.t.a, b), lt(test.t.a, bbb)), and(lt(test.t.a, cb), gt(test.t.a, a)))]",
+            r"[]",
+            r#"[("a","cb")]"#,
+        ),
+        (
+            0,
+            r"(a > 'a' and a < 'b') or (a >= 'b' and a < 'c')",
+            r"[or(and(gt(test.t.a, a), lt(test.t.a, b)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
+            r"[]",
+            r#"[("a","c")]"#,
+        ),
+        (
+            0,
+            r"(a > 'a' and a < 'b' and b < 1) or (a >= 'b' and a < 'c')",
+            r"[or(and(gt(test.t.a, a), lt(test.t.a, b)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
+            r"[or(and(and(gt(test.t.a, a), lt(test.t.a, b)), lt(test.t.b, 1)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
+            r#"[("a","c")]"#,
+        ),
+        (
+            0,
+            r"(a in ('a', 'b') and b < 1) or (a >= 'b' and a < 'c')",
+            r"[or(and(in(test.t.a, a, b), lt(test.t.b, 1)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
+            r"[]",
+            r#"[["a" -inf,"a" 1) ["b","c")]"#,
+        ),
+        (
+            0,
+            r"(a > 'a') or (c > 1)",
+            r"[]",
+            r"[or(gt(test.t.a, a), gt(test.t.c, 1))]",
+            r"[[NULL,+inf]]",
+        ),
+        (
+            2,
+            r#"d = "你好啊""#,
+            r"[eq(test.t.d, 你好啊)]",
+            r"[eq(test.t.d, 你好啊)]",
+            r#"[["你好","你好"]]"#,
+        ),
+        (
+            3,
+            r#"e = "你好啊""#,
+            r"[eq(test.t.e, 你好啊)]",
+            r"[eq(test.t.e, 你好啊)]",
+            r#"[["\xe4\xbd","\xe4\xbd"]]"#,
+        ),
+        (
+            2,
+            r#"d in ("你好啊", "再见")"#,
+            r"[in(test.t.d, 你好啊, 再见)]",
+            r"[in(test.t.d, 你好啊, 再见)]",
+            r#"[["你好","你好"] ["再见","再见"]]"#,
+        ),
+        (
+            2,
+            r#"d not in ("你好啊")"#,
+            r"[]",
+            r"[ne(test.t.d, 你好啊)]",
+            r"[[NULL,+inf]]",
+        ),
+        (
+            2,
+            r#"d < "你好" || d > "你好""#,
+            r"[or(lt(test.t.d, 你好), gt(test.t.d, 你好))]",
+            r"[or(lt(test.t.d, 你好), gt(test.t.d, 你好))]",
+            r"[[-inf,+inf]]",
+        ),
+        (
+            2,
+            r#"not(d < "你好" || d > "你好")"#,
+            r"[and(ge(test.t.d, 你好), le(test.t.d, 你好))]",
+            r"[and(ge(test.t.d, 你好), le(test.t.d, 你好))]",
+            r#"[["你好","你好"]]"#,
+        ),
+        (
+            4,
+            r"f >= 'a' and f <= 'B'",
+            r"[ge(test.t.f, a) le(test.t.f, B)]",
+            r"[]",
+            r#"[["\x00A","\x00B"]]"#,
+        ),
+        (
+            4,
+            r"f in ('a', 'B')",
+            r"[in(test.t.f, a, B)]",
+            r"[]",
+            r#"[["\x00A","\x00A"] ["\x00B","\x00B"]]"#,
+        ),
+        (
+            4,
+            r"f = 'a' and f = 'B' collate utf8mb4_bin",
+            r"[eq(test.t.f, a)]",
+            r"[eq(test.t.f, B)]",
+            r#"[["\x00A","\x00A"]]"#,
+        ),
+        (
+            4,
+            r"f like '@%' collate utf8mb4_bin",
+            r"[]",
+            r"[like(test.t.f, @%, 92)]",
+            r"[[NULL,+inf]]",
+        ),
+        (
+            5,
+            r"d in ('aab', 'aac') and e = 'a'",
+            r"[in(test.t.d, aab, aac) eq(test.t.e, a)]",
+            r"[in(test.t.d, aab, aac)]",
+            r#"[["aa" "a","aa" "a"]]"#,
+        ),
         (6, r"g = 'a'", r"[eq(test.t.g, a)]", r"[]", r#"[["A","A"]]"#),
-        (7, r"h LIKE 'ÿÿ%'", r"[like(test.t.h, ÿÿ%, 92)]", r"[like(test.t.h, ÿÿ%, 92)]", r#"[["ÿÿ","ÿ\xc3\xc0")]"#),
-        (4, r"f = cast('a' as binary)", r"[eq(test.t.f, a)]", r"[eq(test.t.f, a)]", r#"[["\x00A","\x00A"]]"#),
-        (4, r"f in (cast('a' as binary), cast('B' as binary))", r"[in(test.t.f, a, B)]", r"[in(test.t.f, a, B)]", r#"[["\x00A","\x00A"] ["\x00B","\x00B"]]"#),
+        (
+            7,
+            r"h LIKE 'ÿÿ%'",
+            r"[like(test.t.h, ÿÿ%, 92)]",
+            r"[like(test.t.h, ÿÿ%, 92)]",
+            r#"[["ÿÿ","ÿ\xc3\xc0")]"#,
+        ),
+        (
+            4,
+            r"f = cast('a' as binary)",
+            r"[eq(test.t.f, a)]",
+            r"[eq(test.t.f, a)]",
+            r#"[["\x00A","\x00A"]]"#,
+        ),
+        (
+            4,
+            r"f in (cast('a' as binary), cast('B' as binary))",
+            r"[in(test.t.f, a, B)]",
+            r"[in(test.t.f, a, B)]",
+            r#"[["\x00A","\x00A"] ["\x00B","\x00B"]]"#,
+        ),
     ];
     let mut failures = Vec::new();
     for (index_pos, expr, want_access, want_filter, want_ranges) in cases {
         let got = (|| -> Result<(String, String, String), String> {
             let sql = format!("select * from t where {expr}");
-            let stmt =
-                tidb_parser::parse(&sql).map_err(|error| format!("parse: {error:?}"))?;
+            let stmt = tidb_parser::parse(&sql).map_err(|error| format!("parse: {error:?}"))?;
             let tidb_ast::Stmt::Query(query) = stmt else {
                 return Err("not a query".to_owned());
             };
@@ -1125,10 +1375,9 @@ fn index_ranges_match_go() {
                 })
                 .collect::<Result<Vec<_>, String>>()?;
             let (cols, lengths) = table.index(*index_pos);
-            let result = super::detacher::detach_cond_and_build_range_for_index(
-                &conds, &cols, &lengths, 0,
-            )
-            .map_err(|error| format!("detach: {error:?}"))?;
+            let result =
+                super::detacher::detach_cond_and_build_range_for_index(&conds, &cols, &lengths, 0)
+                    .map_err(|error| format!("detach: {error:?}"))?;
             Ok((
                 stringify_conds(&result.access_conds, &column_name),
                 stringify_conds(&result.remained_conds, &column_name),
@@ -1150,7 +1399,12 @@ fn index_ranges_match_go() {
             Err(error) => failures.push(format!("{expr}: {error}")),
         }
     }
-    assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "{} failures:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
 
 /// Go `TestBinCollationRangeForIndex` (`ranger_test.go:2636`): the
@@ -1176,8 +1430,8 @@ fn bin_collation_simple_detach_matches_go() {
     let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
         panic!("not a select");
     };
-    let rewritten = rewrite_expr_resolved(&select.where_clause.expect("where"), &table)
-        .expect("rewrites");
+    let rewritten =
+        rewrite_expr_resolved(&select.where_clause.expect("where"), &table).expect("rewrites");
     let conds = split_cnf_items(&rewritten);
     let cols = vec![table.columns[5].clone()];
     let lengths = vec![super::checker::UNSPECIFIED_LENGTH];
@@ -1271,7 +1525,8 @@ impl ColumnResolver for Issue40997Table {
 #[test]
 fn issue_40997_dnf_ranges_match_go() {
     let table = Issue40997Table::new();
-    let sql = "select * from t where (dt = '20210112' and db_id = '62812' and tbl_id > '228892694') \
+    let sql =
+        "select * from t where (dt = '20210112' and db_id = '62812' and tbl_id > '228892694') \
                or (dt = '20210112' and db_id = '62813' and tbl_id <= '226785696') \
                or (dt = '20210112' and db_id > '62812' and db_id < '62813')";
     let stmt = tidb_parser::parse(sql).expect("parses");
@@ -1281,17 +1536,13 @@ fn issue_40997_dnf_ranges_match_go() {
     let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
         panic!("not a select");
     };
-    let rewritten = rewrite_expr_resolved(&select.where_clause.expect("where"), &table)
-        .expect("rewrites");
+    let rewritten =
+        rewrite_expr_resolved(&select.where_clause.expect("where"), &table).expect("rewrites");
     let conds = split_cnf_items(&rewritten);
     let lengths = vec![super::checker::UNSPECIFIED_LENGTH; 3];
-    let result = super::detacher::detach_cond_and_build_range_for_index(
-        &conds,
-        &table.columns,
-        &lengths,
-        0,
-    )
-    .expect("detaches");
+    let result =
+        super::detacher::detach_cond_and_build_range_for_index(&conds, &table.columns, &lengths, 0)
+            .expect("detaches");
     assert_eq!(
         ranges_to_go_string(&result.ranges),
         "[(\"20210112\" 62812 228892694,\"20210112\" 62812 +inf] [\"20210112\" 62813 -inf,\"20210112\" 62813 226785696]]"
@@ -1427,8 +1678,7 @@ fn min_access_conds_for_dnf_match_go() {
     for (index_pos, expr, want_access, want_min) in cases {
         let got = (|| -> Result<(String, i64), String> {
             let sql = format!("select * from t where {expr}");
-            let stmt =
-                tidb_parser::parse(&sql).map_err(|error| format!("parse: {error:?}"))?;
+            let stmt = tidb_parser::parse(&sql).map_err(|error| format!("parse: {error:?}"))?;
             let tidb_ast::Stmt::Query(query) = stmt else {
                 return Err("not a query".to_owned());
             };
@@ -1441,10 +1691,9 @@ fn min_access_conds_for_dnf_match_go() {
             let conds = split_cnf_items(&rewritten);
             let cols = table.index(*index_pos);
             let lengths = vec![super::checker::UNSPECIFIED_LENGTH; cols.len()];
-            let result = super::detacher::detach_cond_and_build_range_for_index(
-                &conds, &cols, &lengths, 0,
-            )
-            .map_err(|error| format!("detach: {error:?}"))?;
+            let result =
+                super::detacher::detach_cond_and_build_range_for_index(&conds, &cols, &lengths, 0)
+                    .map_err(|error| format!("detach: {error:?}"))?;
             Ok((
                 stringify_conds(&result.access_conds, &column_name),
                 result.min_access_conds_for_dnf_cond,
@@ -1453,7 +1702,9 @@ fn min_access_conds_for_dnf_match_go() {
         match got {
             Ok((access, min)) => {
                 if access != *want_access {
-                    failures.push(format!("{expr}@{index_pos}: access {access}, want {want_access}"));
+                    failures.push(format!(
+                        "{expr}@{index_pos}: access {access}, want {want_access}"
+                    ));
                 }
                 if min != *want_min {
                     failures.push(format!("{expr}@{index_pos}: min {min}, want {want_min}"));
@@ -1462,7 +1713,12 @@ fn min_access_conds_for_dnf_match_go() {
             Err(error) => failures.push(format!("{expr}@{index_pos}: {error}")),
         }
     }
-    assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "{} failures:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
 
 /// Go `TestShardIndexFuncSuites` (`ranger_test.go:1752`): the shard-index
@@ -1494,7 +1750,10 @@ fn shard_index_func_suites_match_go() {
     )));
     // col3's virtual expression is abs(col0) -- NOT a shard prefix.
     let mut col3 = column(3);
-    col3.virtual_expr = Some(Box::new(build("abs", vec![Expression::Column(col0.clone())])));
+    col3.virtual_expr = Some(Box::new(build(
+        "abs",
+        vec![Expression::Column(col0.clone())],
+    )));
     let col4 = column(4);
 
     // ---- IsValidShardIndex ----
@@ -1542,9 +1801,17 @@ fn shard_index_func_suites_match_go() {
     };
     let shard_cols = vec![col2.clone(), col0.clone()];
     let access: Vec<Option<Expression>> = vec![None, Some(expr_in.clone())];
-    assert!(need_add_column4_in_cond(&shard_cols, &access, Some(in_function)));
+    assert!(need_add_column4_in_cond(
+        &shard_cols,
+        &access,
+        Some(in_function)
+    ));
     assert!(!need_add_column4_in_cond(&[], &access, Some(in_function)));
-    assert!(!need_add_column4_in_cond(&shard_cols, &[], Some(in_function)));
+    assert!(!need_add_column4_in_cond(
+        &shard_cols,
+        &[],
+        Some(in_function)
+    ));
     assert!(!need_add_column4_in_cond(&shard_cols, &access, None));
     // col1 in (1, 5): not the shard function's column.
     let expr_in2 = build(
@@ -1555,7 +1822,11 @@ fn shard_index_func_suites_match_go() {
         panic!("in is a scalar function");
     };
     let access2: Vec<Option<Expression>> = vec![None, Some(expr_in2.clone())];
-    assert!(!need_add_column4_in_cond(&shard_cols, &access2, Some(in2_function)));
+    assert!(!need_add_column4_in_cond(
+        &shard_cols,
+        &access2,
+        Some(in2_function)
+    ));
     // col1 in (1, col1): a non-constant member.
     let expr_in3 = build(
         "in",
@@ -1571,7 +1842,11 @@ fn shard_index_func_suites_match_go() {
     };
     let access3: Vec<Option<Expression>> = vec![None, Some(expr_in3)];
     let in3_function = &in3_function;
-    assert!(!need_add_column4_in_cond(&shard_cols, &access3, Some(in3_function)));
+    assert!(!need_add_column4_in_cond(
+        &shard_cols,
+        &access3,
+        Some(in3_function)
+    ));
 
     // ---- NeedAddColumn4EqCond / NeedAddGcColumn4ShardIndex ----
     let eq_access: Vec<Option<Expression>> = vec![None, Some(expr_eq.clone())];
@@ -1590,9 +1865,8 @@ fn shard_index_func_suites_match_go() {
         ),
     ];
     for (input, want) in cases {
-        let rewritten =
-            add_expr4_eq_and_in_condition(std::slice::from_ref(*input), &shard_cols)
-                .expect("rewrites");
+        let rewritten = add_expr4_eq_and_in_condition(std::slice::from_ref(*input), &shard_cols)
+            .expect("rewrites");
         assert_eq!(&stringify_conds(&rewritten, &column_name), want);
     }
 }
@@ -1622,11 +1896,14 @@ fn range_fallback_ladder_matches_go() {
     let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
         panic!("not a select");
     };
-    let rewritten = rewrite_expr_resolved(&select.where_clause.expect("where"), &table)
-        .expect("rewrites");
+    let rewritten =
+        rewrite_expr_resolved(&select.where_clause.expect("where"), &table).expect("rewrites");
     let conds = split_cnf_items(&rewritten);
     assert_eq!(conds.len(), 4);
-    let cols: Vec<Column> = [0, 1, 2].iter().map(|o| table.columns[*o].clone()).collect();
+    let cols: Vec<Column> = [0, 1, 2]
+        .iter()
+        .map(|o| table.columns[*o].clone())
+        .collect();
     let lengths = vec![super::checker::UNSPECIFIED_LENGTH; 3];
 
     let detach = |quota: i64| {
@@ -1637,7 +1914,10 @@ fn range_fallback_ladder_matches_go() {
                  want_access: &str,
                  want_remained: &str,
                  want_ranges: &str| {
-        assert_eq!(stringify_conds(&result.access_conds, &column_name), want_access);
+        assert_eq!(
+            stringify_conds(&result.access_conds, &column_name),
+            want_access
+        );
         assert_eq!(
             stringify_conds(&result.remained_conds, &column_name),
             want_remained
@@ -1705,8 +1985,8 @@ fn build_range_fallbacks_match_go() {
         let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
             panic!("not a select");
         };
-        let rewritten = rewrite_expr_resolved(&select.where_clause.expect("where"), &table)
-            .expect("rewrites");
+        let rewritten =
+            rewrite_expr_resolved(&select.where_clause.expect("where"), &table).expect("rewrites");
         split_cnf_items(&rewritten)
     };
     let conds = parse_conds("select * from t where a in (10,20,30,40,50)");
@@ -1751,36 +2031,26 @@ fn build_range_fallbacks_match_go() {
         let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
             panic!("not a select");
         };
-        let rewritten =
-            rewrite_expr_resolved(&select.where_clause.expect("where"), &string_table)
-                .expect("rewrites");
+        let rewritten = rewrite_expr_resolved(&select.where_clause.expect("where"), &string_table)
+            .expect("rewrites");
         split_cnf_items(&rewritten)
     };
     let conds = parse_string_conds("select * from t where a in ('aaa','bbb','ccc','ddd','eee')");
-    let (conds, filters) =
-        super::detacher::detach_conds_for_column(&conds, &string_table.a, false);
+    let (conds, filters) = super::detacher::detach_conds_for_column(&conds, &string_table.a, false);
     assert_eq!(conds.len(), 1);
     assert_eq!(filters.len(), 0);
     let tp = string_table.a.ret_type.clone().expect("typed");
-    let result = super::ranger::build_column_range(
-        &conds,
-        &tp,
-        super::checker::UNSPECIFIED_LENGTH,
-        0,
-    )
-    .expect("builds");
+    let result =
+        super::ranger::build_column_range(&conds, &tp, super::checker::UNSPECIFIED_LENGTH, 0)
+            .expect("builds");
     assert_eq!(
         ranges_to_go_string(&result.ranges),
         "[[\"aaa\",\"aaa\"] [\"bbb\",\"bbb\"] [\"ccc\",\"ccc\"] [\"ddd\",\"ddd\"] [\"eee\",\"eee\"]]"
     );
     let quota = super::types::ranges_mem_usage(&result.ranges) - 1;
-    let fallback = super::ranger::build_column_range(
-        &conds,
-        &tp,
-        super::checker::UNSPECIFIED_LENGTH,
-        quota,
-    )
-    .expect("builds");
+    let fallback =
+        super::ranger::build_column_range(&conds, &tp, super::checker::UNSPECIFIED_LENGTH, quota)
+            .expect("builds");
     assert_eq!(ranges_to_go_string(&fallback.ranges), "[[NULL,+inf]]");
     assert_eq!(stringify_conds(&fallback.access_conds, &string_name), "[]");
     assert_eq!(
@@ -1926,7 +2196,13 @@ fn prefix_index_null_ranges_match_go() {
     // (indexPos, expr, accessConds, filterConds, resultStr); a None filter
     // means "assert count 1, spelling owned by the rewriter track".
     let cases: &[(usize, &str, &str, Option<&str>, &str)] = &[
-        (0, "a is null", "[isnull(test.t.a)]", Some("[]"), "[[NULL,NULL]]"),
+        (
+            0,
+            "a is null",
+            "[isnull(test.t.a)]",
+            Some("[]"),
+            "[[NULL,NULL]]",
+        ),
         (
             0,
             "isnull(a) or a in (1,2,3,4)",
@@ -1962,7 +2238,13 @@ fn prefix_index_null_ranges_match_go() {
             Some("[eq(test.t.a, a)]"),
             "[[\"a\" -inf,\"a\" +inf]]",
         ),
-        (2, "c is null", "[isnull(test.t.c)]", Some("[]"), "[[NULL,NULL]]"),
+        (
+            2,
+            "c is null",
+            "[isnull(test.t.c)]",
+            Some("[]"),
+            "[[NULL,NULL]]",
+        ),
         (
             2,
             "c is not null",
@@ -1970,7 +2252,13 @@ fn prefix_index_null_ranges_match_go() {
             Some("[]"),
             "[[-inf,+inf]]",
         ),
-        (3, "d is null", "[isnull(test.t.d)]", Some("[]"), "[[NULL,NULL]]"),
+        (
+            3,
+            "d is null",
+            "[isnull(test.t.d)]",
+            Some("[]"),
+            "[[NULL,NULL]]",
+        ),
         (
             3,
             "d is not null",
@@ -1983,8 +2271,7 @@ fn prefix_index_null_ranges_match_go() {
     for (index_pos, expr, want_access, want_filter, want_ranges) in cases {
         let got = (|| -> Result<(String, Vec<Expression>, String), String> {
             let sql = format!("select * from t where {expr}");
-            let stmt =
-                tidb_parser::parse(&sql).map_err(|error| format!("parse: {error:?}"))?;
+            let stmt = tidb_parser::parse(&sql).map_err(|error| format!("parse: {error:?}"))?;
             let tidb_ast::Stmt::Query(query) = stmt else {
                 return Err("not a query".to_owned());
             };
@@ -2007,10 +2294,9 @@ fn prefix_index_null_ranges_match_go() {
                 })
                 .collect::<Result<Vec<_>, String>>()?;
             let (cols, lengths) = table.index(*index_pos);
-            let result = super::detacher::detach_cond_and_build_range_for_index(
-                &conds, &cols, &lengths, 0,
-            )
-            .map_err(|error| format!("detach: {error:?}"))?;
+            let result =
+                super::detacher::detach_cond_and_build_range_for_index(&conds, &cols, &lengths, 0)
+                    .map_err(|error| format!("detach: {error:?}"))?;
             Ok((
                 stringify_conds(&result.access_conds, &column_name),
                 result.remained_conds,
@@ -2020,13 +2306,16 @@ fn prefix_index_null_ranges_match_go() {
         match got {
             Ok((access, remained, ranges)) => {
                 if access != *want_access {
-                    failures.push(format!("{expr}@{index_pos}: access {access}, want {want_access}"));
+                    failures.push(format!(
+                        "{expr}@{index_pos}: access {access}, want {want_access}"
+                    ));
                 }
                 match want_filter {
                     Some(want) => {
                         let filter = stringify_conds(&remained, &column_name);
                         if filter != *want {
-                            failures.push(format!("{expr}@{index_pos}: filter {filter}, want {want}"));
+                            failures
+                                .push(format!("{expr}@{index_pos}: filter {filter}, want {want}"));
                         }
                     }
                     None => {
@@ -2039,13 +2328,20 @@ fn prefix_index_null_ranges_match_go() {
                     }
                 }
                 if ranges != *want_ranges {
-                    failures.push(format!("{expr}@{index_pos}: ranges {ranges}, want {want_ranges}"));
+                    failures.push(format!(
+                        "{expr}@{index_pos}: ranges {ranges}, want {want_ranges}"
+                    ));
                 }
             }
             Err(error) => failures.push(format!("{expr}@{index_pos}: {error}")),
         }
     }
-    assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "{} failures:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
 
 /// Go `TestRangeMemUsage` (`types_test.go:238`): the struct-size model --
@@ -2053,7 +2349,9 @@ fn prefix_index_null_ranges_match_go() {
 /// adds its byte payloads and collation-name lengths.
 #[test]
 fn range_mem_usage_matches_go() {
-    use super::types::{datum_mem_usage, ranges_mem_usage, Range, EMPTY_DATUM_SIZE, EMPTY_RANGE_SIZE};
+    use super::types::{
+        datum_mem_usage, ranges_mem_usage, Range, EMPTY_DATUM_SIZE, EMPTY_RANGE_SIZE,
+    };
     let r1 = Range {
         low_val: vec![Datum::Int(0)],
         high_val: vec![Datum::Int(1)],
@@ -2076,9 +2374,7 @@ fn range_mem_usage_matches_go() {
         low_exclude: false,
         high_exclude: false,
     };
-    let mem2 = mem1
-        + 5 + "utf8mb4_bin".len() as i64
-        + 5 + "utf8mb4_bin".len() as i64;
+    let mem2 = mem1 + 5 + "utf8mb4_bin".len() as i64 + 5 + "utf8mb4_bin".len() as i64;
     assert_eq!(r2.mem_usage(), mem2);
     assert_eq!(datum_mem_usage(&Datum::Int(7)), EMPTY_DATUM_SIZE);
     let ranges = vec![r1, r2];

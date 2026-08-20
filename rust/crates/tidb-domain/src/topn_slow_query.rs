@@ -139,10 +139,8 @@ impl SlowQueryHeap {
     /// in the future, then rebuild the heap.
     fn remove_expired(&mut self, now: SystemTime, period: Duration) {
         let before = self.data.len();
-        self.data.retain(|info| {
-            info.start
-                .map_or(false, |start| start + period > now)
-        });
+        self.data
+            .retain(|info| info.start.map_or(false, |start| start + period > now));
         if self.data.len() == before {
             return;
         }

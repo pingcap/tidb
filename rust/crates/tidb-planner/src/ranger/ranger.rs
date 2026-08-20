@@ -280,10 +280,7 @@ pub fn has_prefix(lengths: &[i64]) -> bool {
 
 /// Go `UnionRanges`: sort by encoded start key and merge overlapping (or,
 /// with `merge_consecutive`, touching) ranges.
-pub fn union_ranges(
-    ranges: Ranges,
-    merge_consecutive: bool,
-) -> Result<Ranges, PointBuilderError> {
+pub fn union_ranges(ranges: Ranges, merge_consecutive: bool) -> Result<Ranges, PointBuilderError> {
     if ranges.is_empty() {
         return Ok(Ranges::new());
     }
@@ -328,14 +325,9 @@ pub fn union_ranges(
     Ok(result)
 }
 
-
 /// Go `appendPoints2IndexRange`: widen one POINT range by one more
 /// column's points.
-fn append_points_to_index_range(
-    origin: &Range,
-    range_points: &[Point],
-    ft: &FieldType,
-) -> Ranges {
+fn append_points_to_index_range(origin: &Range, range_points: &[Point], ft: &FieldType) -> Ranges {
     let mut new_ranges = Ranges::with_capacity(range_points.len() / 2);
     let extra_collator = ft.collation();
     let mut i = 0;
@@ -474,11 +466,8 @@ fn build_column_range_impl(
     let mut range_points = get_full_range();
     for cond in access_conditions {
         let built = builder.build(cond, &new_tp, col_len, true);
-        range_points = super::points::intersection(
-            &range_points,
-            &built,
-            tidb_datatype::Collation::Binary,
-        )?;
+        range_points =
+            super::points::intersection(&range_points, &built, tidb_datatype::Collation::Binary)?;
         if let Some(error) = builder.err.take() {
             return Err(error);
         }
@@ -571,11 +560,7 @@ mod tests {
     }
 
     fn shown(result: &ColumnRangeResult) -> Vec<String> {
-        result
-            .ranges
-            .iter()
-            .map(Range::to_display_string)
-            .collect()
+        result.ranges.iter().map(Range::to_display_string).collect()
     }
 
     /// `BuildTableRange` end to end: `a > 1 AND a < 5` over the int-handle
@@ -612,8 +597,7 @@ mod tests {
         let is_null = vec![func("isnull", vec![int_col(1)])];
         let table = build_table_range(&is_null, &tp, 0).expect("builds");
         assert!(table.ranges.is_empty(), "{:?}", shown(&table));
-        let column =
-            build_column_range(&is_null, &tp, UNSPECIFIED_LENGTH, 0).expect("builds");
+        let column = build_column_range(&is_null, &tp, UNSPECIFIED_LENGTH, 0).expect("builds");
         assert_eq!(shown(&column), ["[NULL,NULL]"]);
     }
 

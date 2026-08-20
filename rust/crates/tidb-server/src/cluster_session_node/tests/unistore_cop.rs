@@ -131,7 +131,10 @@ fn a_derived_aggregate_over_the_coprocessor_answers_its_output() {
     // The desc keep-order Limit rides the REVERSED region walk -- the
     // shape whose first live draft returned NOTHING because the reverse
     // scan's caller-swaps-the-bounds contract was missed.
-    rows(&mut session, "CREATE TABLE test.walk (id bigint primary key, v int)");
+    rows(
+        &mut session,
+        "CREATE TABLE test.walk (id bigint primary key, v int)",
+    );
     rows(
         &mut session,
         "INSERT INTO test.walk VALUES (1, 10), (2, 20), (3, 30), (5, 50), (100, 1)",
@@ -237,7 +240,10 @@ fn a_rebased_auto_increment_reaches_the_next_insert() {
 
     // FORCE sets the base exactly, even below the counter the first
     // reservation already wrote.
-    rows(&mut session, "ALTER TABLE test.seq FORCE AUTO_INCREMENT = 500");
+    rows(
+        &mut session,
+        "ALTER TABLE test.seq FORCE AUTO_INCREMENT = 500",
+    );
     rows(&mut session, "INSERT INTO test.seq (v) VALUES (2)");
     assert_eq!(
         displayed(rows(&mut session, "SELECT id FROM test.seq ORDER BY v")),
@@ -286,12 +292,19 @@ fn admin_show_ddl_reports_this_node_and_the_followed_version() {
     // Go's DDL_ID is a uuid, and the owner and self are the same node here.
     assert_eq!(row[1].len(), 36, "OWNER_ID is a uuid: {}", row[1]);
     assert_eq!(row[1], row[4], "this node is its own owner");
-    assert!(row[2].contains(':'), "OWNER_ADDRESS is host:port: {}", row[2]);
+    assert!(
+        row[2].contains(':'),
+        "OWNER_ADDRESS is host:port: {}",
+        row[2]
+    );
     assert_eq!(row[3], "", "no job is ever observably in flight");
     assert_eq!(row[5], "", "and so no query is either");
 
     // The reported version follows the catalog, so a change moves it.
-    rows(&mut session, "CREATE TABLE test.ddl_probe (id int primary key)");
+    rows(
+        &mut session,
+        "CREATE TABLE test.ddl_probe (id int primary key)",
+    );
     let after = displayed(rows(&mut session, "ADMIN SHOW DDL"));
     let moved: i64 = after[0][0].parse().expect("SCHEMA_VER is an integer");
     assert!(
@@ -333,7 +346,11 @@ fn cluster_info_reports_this_node() {
     assert_eq!(row[0], "tidb");
     // Both addresses are host:port, and they are the node's own two ports.
     assert!(row[1].contains(':'), "INSTANCE is host:port: {}", row[1]);
-    assert!(row[2].contains(':'), "STATUS_ADDRESS is host:port: {}", row[2]);
+    assert!(
+        row[2].contains(':'),
+        "STATUS_ADDRESS is host:port: {}",
+        row[2]
+    );
     assert_ne!(row[1], row[2], "the SQL and status ports differ");
     assert!(!row[3].is_empty(), "VERSION is reported");
     assert!(!row[4].is_empty(), "GIT_HASH is reported");
@@ -397,10 +414,7 @@ fn a_fractional_clock_default_survives_the_catalog_loader() {
     // And the marker still evaluates per row rather than storing the word.
     rows(&mut session, "INSERT INTO test.dt (v) VALUES (1)");
     assert_eq!(
-        displayed(rows(
-            &mut session,
-            "SELECT v, o IS NOT NULL FROM test.dt"
-        )),
+        displayed(rows(&mut session, "SELECT v, o IS NOT NULL FROM test.dt")),
         [["1", "1"]]
     );
 }
@@ -511,7 +525,10 @@ fn unsigned_columns_survive_the_coprocessor_scan() {
     // The scan path returns the stored values, not their signed
     // reinterpretation.
     assert_eq!(
-        displayed(rows(&mut session, "SELECT a, b, d, e FROM test.un WHERE id > 0")),
+        displayed(rows(
+            &mut session,
+            "SELECT a, b, d, e FROM test.un WHERE id > 0"
+        )),
         [
             ["255", "65535", "4294967295", "18446744073709551615"],
             ["1", "1", "1", "1"],
@@ -519,7 +536,10 @@ fn unsigned_columns_survive_the_coprocessor_scan() {
     );
     // And it agrees with the point-get path, which never lost the flag.
     assert_eq!(
-        displayed(rows(&mut session, "SELECT a, d, e FROM test.un WHERE id = 1")),
+        displayed(rows(
+            &mut session,
+            "SELECT a, d, e FROM test.un WHERE id = 1"
+        )),
         [["255", "4294967295", "18446744073709551615"]]
     );
 
@@ -886,7 +906,10 @@ fn a_write_reaches_the_index_path_like_a_select() {
     }
 
     // A WHERE that pins a whole UNIQUE index still takes the point plan.
-    let plan = plan_of(&mut session, "EXPLAIN UPDATE test.wi SET a = 1 WHERE b = 100");
+    let plan = plan_of(
+        &mut session,
+        "EXPLAIN UPDATE test.wi SET a = 1 WHERE b = 100",
+    );
     assert!(plan.contains("Point_Get"), "{plan}");
 
     // And the rows a write touches are the rows the predicate names,
@@ -923,7 +946,10 @@ fn a_negative_bound_on_an_unsigned_column_follows_gos_rewrite() {
         &mut session,
         "CREATE TABLE test.ud (id int primary key, a int unsigned, KEY ka(a))",
     );
-    rows(&mut session, "INSERT INTO test.ud VALUES (1,0),(2,5),(3,4294967295)");
+    rows(
+        &mut session,
+        "INSERT INTO test.ud VALUES (1,0),(2,5),(3,4294967295)",
+    );
 
     let plan_of = |session: &mut _, sql: &str| {
         displayed(rows(session, sql))
@@ -981,7 +1007,10 @@ fn a_negative_bound_on_an_unsigned_column_follows_gos_rewrite() {
     assert!(plan.contains("IndexRangeScan"), "{plan}");
     assert!(!plan.contains("TableDual"), "{plan}");
     assert_eq!(
-        displayed(rows(&mut session, "SELECT count(*) FROM test.ud WHERE a < 0")),
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM test.ud WHERE a < 0"
+        )),
         [["0"]],
     );
 }

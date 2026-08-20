@@ -29,7 +29,9 @@ pub(crate) fn flush_stmt(flush: &tidb_ast::FlushStmt) -> Result<StmtOutput, Driv
         // to, and no plugin framework runs here, so every name fails.
         tidb_ast::FlushTarget::TiDbPlugins(plugins) => {
             if let Some(name) = plugins.first() {
-                return Err(DriverError::unsupported(format!("plugin '{name}' not found")));
+                return Err(DriverError::unsupported(format!(
+                    "plugin '{name}' not found"
+                )));
             }
         }
         // Go dumps this node's buffered statistics deltas to the store.

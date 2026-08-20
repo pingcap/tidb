@@ -194,10 +194,7 @@ impl ServerInfo {
     pub fn to_topology_info(&self) -> TopologyInfo {
         let deploy_path = std::env::current_exe()
             .ok()
-            .and_then(|exe| {
-                exe.parent()
-                    .map(|dir| dir.to_string_lossy().into_owned())
-            })
+            .and_then(|exe| exe.parent().map(|dir| dir.to_string_lossy().into_owned()))
             .unwrap_or_default();
         TopologyInfo {
             version_info: VersionInfo {

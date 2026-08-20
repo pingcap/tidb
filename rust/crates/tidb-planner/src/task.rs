@@ -457,15 +457,14 @@ impl CopTask {
         );
         base.base.set_stats(table_plan.stats_info().cloned());
         base.base.set_schema(table_plan.schema().cloned());
-        let reader =
-            PhysicalPlan::IndexLookUpReader(crate::physical::PhysicalIndexLookUpReader {
-                base,
-                index_plan: Some(index_plan),
-                table_plan: Some(table_plan),
-                keep_order: self.keep_order,
-                expect_cnt: self.expect_cnt,
-                pushed_limit: None,
-            });
+        let reader = PhysicalPlan::IndexLookUpReader(crate::physical::PhysicalIndexLookUpReader {
+            base,
+            index_plan: Some(index_plan),
+            table_plan: Some(table_plan),
+            keep_order: self.keep_order,
+            expect_cnt: self.expect_cnt,
+            pushed_limit: None,
+        });
         let mut root = RootTask::default();
         root.set_plan(reader);
         if self.warnings.warning_count() > 0 {
@@ -745,12 +744,22 @@ mod tests {
             crate::physical_table_reader::StoreType::TiKv
         );
         assert!(
-            matches!(reader.table_plan.as_deref(), Some(PhysicalPlan::TableScan(_))),
+            matches!(
+                reader.table_plan.as_deref(),
+                Some(PhysicalPlan::TableScan(_))
+            ),
             "the pushed-down side hangs off TablePlan, not the child list"
         );
         assert!(reader.base.children().is_empty());
         assert!(
-            (task.plan().expect("plan").stats_info().expect("stats").row_count() - 42.0).abs()
+            (task
+                .plan()
+                .expect("plan")
+                .stats_info()
+                .expect("stats")
+                .row_count()
+                - 42.0)
+                .abs()
                 < f64::EPSILON,
             "the reader carries the table plan's stats"
         );
@@ -770,7 +779,8 @@ mod tests {
             ..CopTask::default()
         });
         let mut base = crate::physical::BasePhysicalPlan::with_id(9, "Limit", 0);
-        base.base.set_stats(Some(crate::stats_info::StatsInfo::new(5.0, [])));
+        base.base
+            .set_stats(Some(crate::stats_info::StatsInfo::new(5.0, [])));
         let limit = PhysicalPlan::Limit(crate::physical::PhysicalLimit {
             base,
             partition_by: Vec::new(),
@@ -781,20 +791,21 @@ mod tests {
         });
         let task = attach2_task(limit, vec![double], None).expect("attaches");
         let Some(PhysicalPlan::IndexLookUpReader(reader)) = task.plan() else {
-            panic!("the limit sinks, leaving the reader on top: {:?}", task.plan());
+            panic!(
+                "the limit sinks, leaving the reader on top: {:?}",
+                task.plan()
+            );
         };
         let pushed = reader.pushed_limit.expect("the sunk limit");
         assert_eq!((pushed.offset, pushed.count), (2, 3));
         assert!(
-            (reader.base.base.stats_info().expect("stats").row_count() - 5.0).abs()
-                < f64::EPSILON
+            (reader.base.base.stats_info().expect("stats").row_count() - 5.0).abs() < f64::EPSILON
         );
         let Some(PhysicalPlan::TableScan(scan)) = reader.table_plan.as_deref() else {
             panic!("the bare table side");
         };
         assert!(
-            (scan.base.base.stats_info().expect("stats").row_count() - 5.0).abs()
-                < f64::EPSILON,
+            (scan.base.base.stats_info().expect("stats").row_count() - 5.0).abs() < f64::EPSILON,
             "the table side adopts the smaller stats"
         );
     }
@@ -851,7 +862,13 @@ mod tests {
         };
         assert!(reader.index_plan.is_some());
         assert!(
-            (converted.plan().expect("plan").stats_info().expect("stats").row_count() - 4.0)
+            (converted
+                .plan()
+                .expect("plan")
+                .stats_info()
+                .expect("stats")
+                .row_count()
+                - 4.0)
                 .abs()
                 < f64::EPSILON
         );
@@ -869,7 +886,13 @@ mod tests {
         assert!(lookup.keep_order);
         // The reader's stats are the TABLE side's.
         assert!(
-            (converted.plan().expect("plan").stats_info().expect("stats").row_count() - 3.0)
+            (converted
+                .plan()
+                .expect("plan")
+                .stats_info()
+                .expect("stats")
+                .row_count()
+                - 3.0)
                 .abs()
                 < f64::EPSILON
         );
@@ -1044,23 +1067,19 @@ fn sink_into_index_look_up(limit: &crate::physical::PhysicalLimit, task: &mut Ta
                 // Only a bare table scan admits the sink: a Selection on the
                 // table side must see every row.
                 let ts_stats = match reader.table_plan.as_deref() {
-                    Some(PhysicalPlan::TableScan(scan)) => {
-                        scan.base.base.stats_info().cloned()
-                    }
+                    Some(PhysicalPlan::TableScan(scan)) => scan.base.base.stats_info().cloned(),
                     _ => {
                         root.set_plan(plan);
                         return false;
                     }
                 };
-                let reader_schema_len =
-                    reader.base.base.schema().map_or(0, |schema| schema.len());
+                let reader_schema_len = reader.base.base.schema().map_or(0, |schema| schema.len());
                 reader.pushed_limit = Some(crate::physical::PushedDownLimit {
                     offset: limit.offset,
                     count: limit.count,
                 });
                 let limit_rows = limit_stats.as_ref().map_or(0.0, |stats| stats.row_count());
-                if let Some(PhysicalPlan::TableScan(scan)) = reader.table_plan.as_deref_mut()
-                {
+                if let Some(PhysicalPlan::TableScan(scan)) = reader.table_plan.as_deref_mut() {
                     if ts_stats
                         .as_ref()
                         .is_some_and(|stats| stats.row_count() >= limit_rows)
@@ -1231,10 +1250,9 @@ pub fn attach2_task(
                     let Task::Cop(mut cop) = first.copy() else {
                         unreachable!("the arm matched Cop");
                     };
-                    let pushable = (!cop.keep_order
-                        || !cop.index_plan_finished
-                        || cop.index_plan.is_none())
-                        && cop.root_task_conds.is_empty();
+                    let pushable =
+                        (!cop.keep_order || !cop.index_plan_finished || cop.index_plan.is_none())
+                            && cop.root_task_conds.is_empty();
                     if pushable {
                         let new_count = limit.offset + limit.count;
                         let stats = cop
@@ -1250,9 +1268,8 @@ pub fn attach2_task(
                         // "Don't use clone() so that Limit and its children
                         // share the same schema": the pushed limit reports
                         // the open half's schema.
-                        base.base.set_schema(
-                            cop.plan().and_then(PhysicalPlan::schema).cloned(),
-                        );
+                        base.base
+                            .set_schema(cop.plan().and_then(PhysicalPlan::schema).cloned());
                         let pushed = PhysicalPlan::Limit(crate::physical::PhysicalLimit {
                             base,
                             partition_by: limit.partition_by.clone(),
@@ -1261,8 +1278,7 @@ pub fn attach2_task(
                             prefix_col: None,
                             prefix_len: 0,
                         });
-                        let Task::Cop(pushed_cop) =
-                            attach_plan_to_task(pushed, Task::Cop(cop))
+                        let Task::Cop(pushed_cop) = attach_plan_to_task(pushed, Task::Cop(cop))
                         else {
                             unreachable!("attaching onto a cop task answers a cop task");
                         };
@@ -1401,9 +1417,7 @@ pub fn attach2_task(
             let mut all = vec![first];
             all.append(&mut tasks);
             if all.iter().any(|task| !matches!(task, Task::Mpp(_))) {
-                return Ok(all
-                    .pop()
-                    .expect("the vec was built with at least one task"));
+                return Ok(all.pop().expect("the vec was built with at least one task"));
             }
             Err(PlanError::internal(
                 "attach2Task4PhysicalSequence's all-MPP arm (task.go:2269, \
@@ -1428,11 +1442,8 @@ pub fn attach2_task(
                     let Task::Cop(mut cop) = first.copy() else {
                         unreachable!("the arm matched Cop");
                     };
-                    let by_exprs: Vec<tidb_expr::expression::Expression> = topn
-                        .by_items
-                        .iter()
-                        .map(|item| item.expr.clone())
-                        .collect();
+                    let by_exprs: Vec<tidb_expr::expression::Expression> =
+                        topn.by_items.iter().map(|item| item.expr.clone()).collect();
                     let need_push_down = by_exprs.iter().any(|expr| {
                         !matches!(expr, tidb_expr::expression::Expression::Constant(_))
                     });
@@ -1460,8 +1471,7 @@ pub fn attach2_task(
                             offset: 0,
                             count: new_count,
                         });
-                        let Task::Cop(pushed_cop) =
-                            attach_plan_to_task(pushed, Task::Cop(cop))
+                        let Task::Cop(pushed_cop) = attach_plan_to_task(pushed, Task::Cop(cop))
                         else {
                             unreachable!("attaching onto a cop task answers a cop task");
                         };
@@ -1500,9 +1510,7 @@ pub fn attach2_task(
             Task::Mpp(_) => Err(PlanError::internal(
                 "attach2Task4PhysicalStreamAgg's MPP arm is not ported",
             )),
-            root @ Task::Root(_) => {
-                Ok(attach_plan_to_task(plan, root.convert_to_root_task()?))
-            }
+            root @ Task::Root(_) => Ok(attach_plan_to_task(plan, root.convert_to_root_task()?)),
         },
         // `attach2Task4PhysicalHashAgg` (`task.go:2162`): same split, gated
         // only on root-side filters and index merge.
@@ -1518,9 +1526,7 @@ pub fn attach2_task(
             Task::Mpp(_) => Err(PlanError::internal(
                 "attach2Task4PhysicalHashAgg's MPP arm is not ported",
             )),
-            root @ Task::Root(_) => {
-                Ok(attach_plan_to_task(plan, root.convert_to_root_task()?))
-            }
+            root @ Task::Root(_) => Ok(attach_plan_to_task(plan, root.convert_to_root_task()?)),
         },
         // `attach2Task4PhysicalHashJoin` (`task.go:211`): convert BOTH
         // children — Go converts the RIGHT one first — wire them in, and
@@ -1552,8 +1558,7 @@ pub fn attach2_task(
             plan.base_mut().set_children(vec![left_plan, right_plan]);
             let mut root = RootTask::default();
             root.set_plan(plan);
-            root.warnings
-                .copy_from([&right.warnings, &left.warnings]);
+            root.warnings.copy_from([&right.warnings, &left.warnings]);
             Ok(Task::Root(root))
         }
         PhysicalPlan::TableScan(_) => Err(PlanError::internal(
@@ -1633,7 +1638,8 @@ mod attach_tests {
             base: op_with_stats("Selection", 8.0),
             ..PhysicalSelection::default()
         });
-        let task = attach2_task(selection, vec![root_task_over(10.0)], None).expect("root attaches");
+        let task =
+            attach2_task(selection, vec![root_task_over(10.0)], None).expect("root attaches");
         assert!((task.count() - 8.0).abs() < f64::EPSILON);
         let plan = task.plan().expect("a plan");
         assert!(matches!(plan, PhysicalPlan::Selection(_)));
@@ -1690,8 +1696,12 @@ mod attach_tests {
             base: op_with_stats("Union", 20.0),
             mpp: false,
         });
-        let task = attach2_task(union, vec![root_task_over(10.0), root_task_over(10.0)], None)
-            .expect("attaches");
+        let task = attach2_task(
+            union,
+            vec![root_task_over(10.0), root_task_over(10.0)],
+            None,
+        )
+        .expect("attaches");
         let plan = task.plan().expect("a plan");
         assert!(matches!(plan, PhysicalPlan::UnionAll(_)));
         assert_eq!(plan.children().len(), 2, "both children wired in");
@@ -1703,10 +1713,7 @@ mod attach_tests {
         // base.InvalidTask immediately".
         let mut base = op_with_stats("Union", 20.0);
         base.base.set_tp("PartitionUnion");
-        let union = PhysicalPlan::UnionAll(crate::physical::PhysicalUnionAll {
-            base,
-            mpp: false,
-        });
+        let union = PhysicalPlan::UnionAll(crate::physical::PhysicalUnionAll { base, mpp: false });
         let mpp_child = Task::Mpp(MppTask::new(
             PhysicalPlan::TableDual(crate::physical::PhysicalTableDual {
                 base: op_with_stats("Dual", 1.0),
@@ -1715,8 +1722,8 @@ mod attach_tests {
             crate::physical_property::MppPartitionType::Any,
             [],
         ));
-        let task =
-            attach2_task(union, vec![root_task_over(10.0), mpp_child], None).expect("invalid, not error");
+        let task = attach2_task(union, vec![root_task_over(10.0), mpp_child], None)
+            .expect("invalid, not error");
         assert!(task.invalid());
     }
 
@@ -1740,10 +1747,12 @@ mod attach_tests {
             base.base.set_schema(Some(schema));
             let mut root = RootTask::default();
             root.warnings.append_warning(format!("w{col_id}"));
-            root.set_plan(PhysicalPlan::TableDual(crate::physical::PhysicalTableDual {
-                base,
-                ..crate::physical::PhysicalTableDual::default()
-            }));
+            root.set_plan(PhysicalPlan::TableDual(
+                crate::physical::PhysicalTableDual {
+                    base,
+                    ..crate::physical::PhysicalTableDual::default()
+                },
+            ));
             Task::Root(root)
         };
 
@@ -1755,8 +1764,8 @@ mod attach_tests {
             },
             ..crate::physical::PhysicalApply::default()
         });
-        let task =
-            attach2_task(apply, vec![child(10.0, 1, true), child(3.0, 2, true)], None).expect("attaches");
+        let task = attach2_task(apply, vec![child(10.0, 1, true), child(3.0, 2, true)], None)
+            .expect("attaches");
         let Task::Root(root) = &task else {
             panic!("a root task");
         };
@@ -1792,7 +1801,11 @@ mod attach_tests {
         });
         let task = attach2_task(
             sequence,
-            vec![root_task_over(1.0), root_task_over(2.0), root_task_over(3.0)],
+            vec![
+                root_task_over(1.0),
+                root_task_over(2.0),
+                root_task_over(3.0),
+            ],
             None,
         )
         .expect("passes through");
@@ -1815,10 +1828,12 @@ mod attach_tests {
         let child = |rows: f64, warning: &str| {
             let mut root = RootTask::default();
             root.warnings.append_warning(warning);
-            root.set_plan(PhysicalPlan::TableDual(crate::physical::PhysicalTableDual {
-                base: op_with_stats("Dual", rows),
-                ..crate::physical::PhysicalTableDual::default()
-            }));
+            root.set_plan(PhysicalPlan::TableDual(
+                crate::physical::PhysicalTableDual {
+                    base: op_with_stats("Dual", rows),
+                    ..crate::physical::PhysicalTableDual::default()
+                },
+            ));
             Task::Root(root)
         };
         let join = PhysicalPlan::HashJoin(crate::physical::PhysicalHashJoin {
@@ -1832,7 +1847,10 @@ mod attach_tests {
         };
         let warnings = root.warnings.get_warnings();
         assert_eq!(
-            warnings.iter().map(|w| w.message.as_str()).collect::<Vec<_>>(),
+            warnings
+                .iter()
+                .map(|w| w.message.as_str())
+                .collect::<Vec<_>>(),
             vec!["right", "left"],
             "Go copies the right child's warnings first"
         );

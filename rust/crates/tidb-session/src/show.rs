@@ -1310,7 +1310,12 @@ impl Session {
                         let row = if entry.is_some_and(tidb_executor::TableEntry::is_view) {
                             crate::show_admin::show_table_status_view_row(&name)
                         } else {
-                            crate::show_admin::show_table_status_row(&name, auto_increment, table_charset, comment)
+                            crate::show_admin::show_table_status_row(
+                                &name,
+                                auto_increment,
+                                table_charset,
+                                comment,
+                            )
                         };
                         rows.push(row);
                     }
@@ -1492,9 +1497,7 @@ impl Session {
                 let dynamic = uptime
                     .as_ref()
                     .map(|value| ("Uptime", value.as_str(), false));
-                for &(name, value, session_only) in
-                    SHOW_STATUS_VARS.iter().chain(dynamic.iter())
-                {
+                for &(name, value, session_only) in SHOW_STATUS_VARS.iter().chain(dynamic.iter()) {
                     // Go fills these two per connection from the negotiated
                     // TLS state (`server.go:1329`); a plaintext connection
                     // keeps the table's empty strings.

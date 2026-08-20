@@ -91,8 +91,7 @@ pub fn detach_column_dnf_conditions(
         if let Expression::ScalarFunction(sf) = cond {
             if sf.func_name.lowercase() == "and" {
                 let cnf_items = flatten_cnf_conditions(sf);
-                let (column_cnf_items, others) =
-                    detach_column_cnf_conditions(&cnf_items, checker);
+                let (column_cnf_items, others) = detach_column_cnf_conditions(&cnf_items, checker);
                 if !others.is_empty() {
                     has_residual_conditions = true;
                 }
@@ -182,7 +181,6 @@ pub fn detach_conds_for_column(
     detach_column_cnf_conditions(conds, &checker)
 }
 
-
 use tidb_datatype::Datum;
 
 use super::points::{
@@ -239,8 +237,7 @@ pub fn get_potential_eq_or_in_col_offset(
                 return -1;
             };
             let column_type = column.ret_type.as_ref();
-            if column_type
-                .is_some_and(|ft| ft.eval_type() == tidb_datatype::EvalType::String)
+            if column_type.is_some_and(|ft| ft.eval_type() == tidb_datatype::EvalType::String)
                 && !tidb_datatype::compatible_collate(
                     column_type.map_or("", |ft| ft.collation_name()),
                     collation,
@@ -251,8 +248,7 @@ pub fn get_potential_eq_or_in_col_offset(
             // LT/GT pin an equality only for INT columns (`x >= 2 AND
             // x <= 2` folding).
             if (name == "lt" || name == "gt")
-                && !column_type
-                    .is_some_and(|ft| ft.eval_type() == tidb_datatype::EvalType::Int)
+                && !column_type.is_some_and(|ft| ft.eval_type() == tidb_datatype::EvalType::Int)
             {
                 return -1;
             }
@@ -279,8 +275,7 @@ pub fn get_potential_eq_or_in_col_offset(
                 return -1;
             };
             let column_type = c.ret_type.as_ref();
-            if column_type
-                .is_some_and(|ft| ft.eval_type() == tidb_datatype::EvalType::String)
+            if column_type.is_some_and(|ft| ft.eval_type() == tidb_datatype::EvalType::String)
                 && !tidb_datatype::compatible_collate(
                     column_type.map_or("", |ft| ft.collation_name()),
                     collation,
@@ -365,7 +360,10 @@ fn exclude_to_include_for_int_point(mut p: Point) -> Option<Point> {
 
 /// Go `allSinglePoints`: `None` when any interval is longer than a point;
 /// otherwise the satisfiable single points.
-fn all_single_points(points: Vec<Point>, collation: tidb_datatype::Collation) -> Option<Vec<Point>> {
+fn all_single_points(
+    points: Vec<Point>,
+    collation: tidb_datatype::Collation,
+) -> Option<Vec<Point>> {
     let mut result = Vec::with_capacity(points.len());
     let mut iter = points.into_iter();
     while let (Some(left_raw), Some(right_raw)) = (iter.next(), iter.next()) {
@@ -443,14 +441,12 @@ fn points_to_eq_or_in_cond(
     let mut i = 0;
     while i < points.len() {
         if matches!(points[i].value, Datum::Null) {
-            or_args.push(
-                tidb_expr::new_function::new_function_internal(
-                    &ctx,
-                    "isnull",
-                    ret_type.clone(),
-                    vec![Expression::Column(col.clone())],
-                )?,
-            );
+            or_args.push(tidb_expr::new_function::new_function_internal(
+                &ctx,
+                "isnull",
+                ret_type.clone(),
+                vec![Expression::Column(col.clone())],
+            )?);
         } else {
             args.push(Expression::Constant(tidb_expr::constant::Constant::new(
                 points[i].value.clone(),
@@ -523,12 +519,9 @@ pub fn extract_eq_and_in_condition(
             continue;
         }
         // Multiple eq/in for one column: intersect their points.
-        let col_type = cols[offset]
-            .ret_type
-            .clone()
-            .unwrap_or_else(|| {
-                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
-            });
+        let col_type = cols[offset].ret_type.clone().unwrap_or_else(|| {
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+        });
         let new_tp = super::ranger::new_field_type(&col_type);
         let collator = col_type.collation();
         if !merged[offset] {
@@ -644,7 +637,6 @@ pub fn extract_eq_and_in_condition(
         empty_range: false,
     }
 }
-
 
 /// Go `DetachRangeResult`.
 #[derive(Debug, Default)]
@@ -852,7 +844,9 @@ impl RangeDetacher<'_> {
         }
         let mut eq_count = 0;
         for cond in &access_conds {
-            let Expression::ScalarFunction(f) = cond else { break };
+            let Expression::ScalarFunction(f) = cond else {
+                break;
+            };
             if f.func_name.lowercase() != "eq" {
                 break;
             }
@@ -953,7 +947,6 @@ pub fn detach_simple_cond_and_build_range_for_index(
     let res = detacher.detach_cnf(conditions, false)?;
     Ok((res.ranges, res.access_conds, res.remained_conds))
 }
-
 
 /// Go `cnfItemRangeResult`.
 struct CnfItemRangeResult {
@@ -1181,10 +1174,8 @@ impl RangeDetacher<'_> {
         if res.ranges.is_empty() {
             return;
         }
-        let r1_minus_r2 =
-            remove_conditions(&res.access_conds, &best.range_result.access_conds);
-        let r2_minus_r1 =
-            remove_conditions(&best.range_result.access_conds, &res.access_conds);
+        let r1_minus_r2 = remove_conditions(&res.access_conds, &best.range_result.access_conds);
+        let r2_minus_r1 = remove_conditions(&best.range_result.access_conds, &res.access_conds);
         if r1_minus_r2.is_empty() && !r2_minus_r1.is_empty() {
             res.remained_conds =
                 remove_conditions(&res.remained_conds, &best.range_result.access_conds);
@@ -1332,19 +1323,13 @@ impl RangeDetacher<'_> {
         // the column walk's.
         if let Some(best) = &best {
             if !res.ranges.is_empty() {
-                let best_is_subset = super::types::ranges_subset(
-                    &best.range_result.ranges,
-                    &res.ranges,
-                );
-                let point_is_subset = super::types::ranges_subset(
-                    &res.ranges,
-                    &best.range_result.ranges,
-                );
+                let best_is_subset =
+                    super::types::ranges_subset(&best.range_result.ranges, &res.ranges);
+                let point_is_subset =
+                    super::types::ranges_subset(&res.ranges, &best.range_result.ranges);
                 if best_is_subset && !point_is_subset {
-                    res.remained_conds = remove_conditions(
-                        &res.remained_conds,
-                        &best.range_result.access_conds,
-                    );
+                    res.remained_conds =
+                        remove_conditions(&res.remained_conds, &best.range_result.access_conds);
                     res.ranges = best.range_result.ranges.clone();
                     res.access_conds = best.range_result.access_conds.clone();
                 }
@@ -1394,7 +1379,13 @@ impl RangeDetacher<'_> {
                     continue;
                 }
                 if res.access_conds.is_empty() {
-                    return Ok((super::points::full_range(), Vec::new(), Vec::new(), true, -1));
+                    return Ok((
+                        super::points::full_range(),
+                        Vec::new(),
+                        Vec::new(),
+                        true,
+                        -1,
+                    ));
                 }
                 if !res.remained_conds.is_empty() {
                     has_residual = true;
@@ -1402,7 +1393,13 @@ impl RangeDetacher<'_> {
                 total_mem += ranges_mem_estimate(&res.ranges);
                 total_ranges.extend(res.ranges);
                 if self.range_max_size > 0 && total_mem > self.range_max_size {
-                    return Ok((super::points::full_range(), Vec::new(), Vec::new(), true, -1));
+                    return Ok((
+                        super::points::full_range(),
+                        Vec::new(),
+                        Vec::new(),
+                        true,
+                        -1,
+                    ));
                 }
                 if let Some(composed) =
                     tidb_expr::simple_expr::compose_cnf_condition(res.access_conds.clone())
@@ -1429,7 +1426,13 @@ impl RangeDetacher<'_> {
             } else {
                 let (is_access_cond, should_reserve) = first_column_checker.check(item);
                 if !is_access_cond {
-                    return Ok((super::points::full_range(), Vec::new(), Vec::new(), true, -1));
+                    return Ok((
+                        super::points::full_range(),
+                        Vec::new(),
+                        Vec::new(),
+                        true,
+                        -1,
+                    ));
                 }
                 if should_reserve {
                     has_residual = true;
@@ -1452,12 +1455,24 @@ impl RangeDetacher<'_> {
                     &mut self.skip_plan_cache_reason,
                 )?;
                 if fallback {
-                    return Ok((super::points::full_range(), Vec::new(), Vec::new(), true, -1));
+                    return Ok((
+                        super::points::full_range(),
+                        Vec::new(),
+                        Vec::new(),
+                        true,
+                        -1,
+                    ));
                 }
                 total_mem += ranges_mem_estimate(&ranges);
                 total_ranges.extend(ranges);
                 if self.range_max_size > 0 && total_mem > self.range_max_size {
-                    return Ok((super::points::full_range(), Vec::new(), Vec::new(), true, -1));
+                    return Ok((
+                        super::points::full_range(),
+                        Vec::new(),
+                        Vec::new(),
+                        true,
+                        -1,
+                    ));
                 }
                 new_access_items.push(item.clone());
                 if i == 0 {
@@ -1473,11 +1488,16 @@ impl RangeDetacher<'_> {
                 }
             }
         }
-        let total_ranges =
-            super::ranger::union_ranges(total_ranges, self.merge_consecutive)?;
+        let total_ranges = super::ranger::union_ranges(total_ranges, self.merge_consecutive)?;
         let access = tidb_expr::simple_expr::compose_dnf_condition(new_access_items)
             .map_or_else(Vec::new, |composed| vec![composed]);
-        Ok((total_ranges, access, column_values, has_residual, min_access_conds))
+        Ok((
+            total_ranges,
+            access,
+            column_values,
+            has_residual,
+            min_access_conds,
+        ))
     }
 
     /// Go `detachCondAndBuildRangeForCols` (`detacher.go:1084`).
@@ -1567,7 +1587,6 @@ fn detach_cond_and_build_range(
     detacher.detach_cond_and_build_range_for_cols(conditions)
 }
 
-
 /// Go `MergeDNFItems4Col` (`detacher.go:1191`): group single-column DNF
 /// items whose column can build ranges, composing one DNF per column —
 /// `[a > 5, b > 6, c > 7, a = 1, b > 3]` becomes
@@ -1604,7 +1623,10 @@ pub fn merge_dnf_items_4_col(
         if !col_to_items.contains_key(&unique_id) {
             col_order.push(unique_id);
         }
-        col_to_items.entry(unique_id).or_default().push(dnf_item.clone());
+        col_to_items
+            .entry(unique_id)
+            .or_default()
+            .push(dnf_item.clone());
     }
     // Go iterates the map (unordered); first-seen order keeps this port
     // deterministic without changing membership.
@@ -1764,12 +1786,19 @@ mod tests {
         let result = extract_eq_and_in_condition(&conds, &cols, &lengths, true);
         assert!(!result.empty_range);
         assert_eq!(result.accesses.len(), 2);
-        assert!(result.new_conditions.is_empty(), "{:?}", result.new_conditions);
+        assert!(
+            result.new_conditions.is_empty(),
+            "{:?}",
+            result.new_conditions
+        );
         assert!(result.column_values[0].is_some());
 
         // b = 2 alone: the chain needs its PREFIX, so it is empty and the
         // condition stays.
-        let conds = vec![func("eq", vec![Expression::Column(b.clone()), int_const(2)])];
+        let conds = vec![func(
+            "eq",
+            vec![Expression::Column(b.clone()), int_const(2)],
+        )];
         let result = extract_eq_and_in_condition(&conds, &cols, &lengths, true);
         assert!(result.accesses.is_empty());
         assert_eq!(result.new_conditions.len(), 1);
@@ -1809,8 +1838,7 @@ mod tests {
                 ],
             ),
         ];
-        let result =
-            extract_eq_and_in_condition(&conds, &cols, &[UNSPECIFIED_LENGTH], true);
+        let result = extract_eq_and_in_condition(&conds, &cols, &[UNSPECIFIED_LENGTH], true);
         assert!(!result.empty_range);
         assert_eq!(result.accesses.len(), 1);
         let Expression::ScalarFunction(rebuilt) = &result.accesses[0] else {
@@ -1833,8 +1861,7 @@ mod tests {
             func("ge", vec![Expression::Column(a.clone()), int_const(2)]),
             func("le", vec![Expression::Column(a.clone()), int_const(2)]),
         ];
-        let result =
-            extract_eq_and_in_condition(&conds, &cols, &[UNSPECIFIED_LENGTH], true);
+        let result = extract_eq_and_in_condition(&conds, &cols, &[UNSPECIFIED_LENGTH], true);
         assert!(!result.empty_range);
         assert_eq!(result.accesses.len(), 1, "{:?}", result.new_conditions);
         let Expression::ScalarFunction(rebuilt) = &result.accesses[0] else {
@@ -1847,8 +1874,7 @@ mod tests {
             func("gt", vec![Expression::Column(a.clone()), int_const(1)]),
             func("lt", vec![Expression::Column(a.clone()), int_const(3)]),
         ];
-        let result =
-            extract_eq_and_in_condition(&conds, &cols, &[UNSPECIFIED_LENGTH], true);
+        let result = extract_eq_and_in_condition(&conds, &cols, &[UNSPECIFIED_LENGTH], true);
         assert_eq!(result.accesses.len(), 1);
     }
 
@@ -1924,8 +1950,8 @@ mod tests {
             )
         };
         let dnf = func("or", vec![arm(1, 2), arm(3, 4)]);
-        let res = detach_cond_and_build_range_for_index(&[dnf], &cols, &lengths, 0)
-            .expect("detaches");
+        let res =
+            detach_cond_and_build_range_for_index(&[dnf], &cols, &lengths, 0).expect("detaches");
         assert!(res.is_dnf_cond);
         assert!(res.remained_conds.is_empty(), "{:?}", res.remained_conds);
         let shown: Vec<String> = res
@@ -1946,9 +1972,8 @@ mod tests {
                 func("eq", vec![Expression::Column(c), int_const(0)]),
             ],
         );
-        let res =
-            detach_cond_and_build_range_for_index(&[poisoned.clone()], &cols, &lengths, 0)
-                .expect("detaches");
+        let res = detach_cond_and_build_range_for_index(&[poisoned.clone()], &cols, &lengths, 0)
+            .expect("detaches");
         assert!(res.is_dnf_cond);
         assert_eq!(res.remained_conds.len(), 1);
         assert_eq!(res.ranges.len(), 1);
@@ -1974,8 +1999,8 @@ mod tests {
             ),
             func("eq", vec![Expression::Column(b.clone()), int_const(5)]),
         ];
-        let res = detach_cond_and_build_range_for_index(&conds, &cols, &lengths, 0)
-            .expect("detaches");
+        let res =
+            detach_cond_and_build_range_for_index(&conds, &cols, &lengths, 0).expect("detaches");
         let shown: Vec<String> = res
             .ranges
             .iter()
@@ -2040,7 +2065,10 @@ pub fn extract_columns_from_expr(
             match arg {
                 Expression::ScalarFunction(inner) => walk(inner, fields),
                 Expression::Column(column) => {
-                    if !fields.iter().any(|field| field.unique_id == column.unique_id) {
+                    if !fields
+                        .iter()
+                        .any(|field| field.unique_id == column.unique_id)
+                    {
                         fields.push(column.clone());
                     }
                 }
@@ -2179,14 +2207,12 @@ fn eval_virtual_expr_at(
 ) -> Result<Datum, super::points::PointBuilderError> {
     fn substitute(expression: &Expression, value: &Datum) -> Expression {
         match expression {
-            Expression::Column(column) => {
-                Expression::Constant(tidb_expr::constant::Constant::new(
-                    value.clone(),
-                    column.ret_type.clone().unwrap_or_else(|| {
-                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
-                    }),
-                ))
-            }
+            Expression::Column(column) => Expression::Constant(tidb_expr::constant::Constant::new(
+                value.clone(),
+                column.ret_type.clone().unwrap_or_else(|| {
+                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+                }),
+            )),
             Expression::ScalarFunction(function) => {
                 let mut rewritten = function.clone();
                 rewritten.args = function
@@ -2302,8 +2328,10 @@ pub fn add_gc_column4_in_cond(
             ));
         };
         let shard_value = eval_virtual_expr_at(virtual_expr, &constant.value)?;
-        let shard_constant =
-            Expression::Constant(tidb_expr::constant::Constant::new(shard_value, shard_type.clone()));
+        let shard_constant = Expression::Constant(tidb_expr::constant::Constant::new(
+            shard_value,
+            shard_type.clone(),
+        ));
         let shard_eq = eq_function(
             Expression::Column(cols[0].clone()),
             &shard_type,

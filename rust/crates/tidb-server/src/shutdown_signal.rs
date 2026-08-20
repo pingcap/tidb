@@ -35,12 +35,9 @@ pub type LastSignal = Arc<AtomicI32>;
 /// Registers the four Go-handled signals; the first one recorded starts
 /// `on_signal` (the node's shutdown) and later ones are ignored, as Go's
 /// one-shot handler behaves.
-pub fn install(
-    on_signal: impl Fn() + Send + 'static,
-) -> std::io::Result<LastSignal> {
+pub fn install(on_signal: impl Fn() + Send + 'static) -> std::io::Result<LastSignal> {
     let last = Arc::new(AtomicI32::new(0));
-    let mut signals =
-        signal_hook::iterator::Signals::new([SIGINT, SIGTERM, SIGHUP, SIGQUIT])?;
+    let mut signals = signal_hook::iterator::Signals::new([SIGINT, SIGTERM, SIGHUP, SIGQUIT])?;
     let recorded = Arc::clone(&last);
     std::thread::Builder::new()
         .name("tidb-shutdown-signal".to_owned())

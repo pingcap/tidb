@@ -104,7 +104,9 @@ impl EtcdOps for EtcdClientOps {
 /// the ADVERTISE address is what a peer would dial, the DDL lease travels
 /// as the text Go stores, and the labels are empty until the config file's
 /// `labels` section is threaded (named, not silently dropped).
-pub(crate) fn node_server_info(config: &crate::node_config::NodeConfig) -> tidb_domain::serverinfo::ServerInfo {
+pub(crate) fn node_server_info(
+    config: &crate::node_config::NodeConfig,
+) -> tidb_domain::serverinfo::ServerInfo {
     let mut info = tidb_domain::serverinfo::ServerInfo::default();
     info.static_info.id = tidb_domain::serverinfo_syncer::new_node_id();
     info.static_info.ip = config.advertise_address.clone();

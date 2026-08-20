@@ -239,7 +239,10 @@ where
         let index_scan = tidb_proto::tipb::IndexScan {
             table_id: Some(request.table_id),
             index_id: Some(index.index_id),
-            columns: columns.iter().map(crate::dag_request::column_to_pb).collect(),
+            columns: columns
+                .iter()
+                .map(crate::dag_request::column_to_pb)
+                .collect(),
             desc: Some(false),
             unique: Some(index.declared_unique),
             primary_column_ids: Vec::new(),
@@ -514,10 +517,10 @@ fn dag_summary(dag: &tidb_proto::tipb::DagRequest) -> String {
                 format!("TableScan(table {table}, {columns} columns)")
             }
             Some(tp) if tp == ExecType::TypeIndexScan as i32 => {
-                let (table, index, columns) = executor.idx_scan.as_ref().map_or(
-                    (0, 0, 0),
-                    |scan| (scan.table_id(), scan.index_id(), scan.columns.len()),
-                );
+                let (table, index, columns) =
+                    executor.idx_scan.as_ref().map_or((0, 0, 0), |scan| {
+                        (scan.table_id(), scan.index_id(), scan.columns.len())
+                    });
                 format!("IndexScan(table {table}, index {index}, {columns} columns)")
             }
             Some(tp) if tp == ExecType::TypeSelection as i32 => format!(
@@ -539,9 +542,10 @@ fn dag_summary(dag: &tidb_proto::tipb::DagRequest) -> String {
                 if tp == ExecType::TypeAggregation as i32
                     || tp == ExecType::TypeStreamAgg as i32 =>
             {
-                let (functions, groups) = executor.aggregation.as_ref().map_or((0, 0), |agg| {
-                    (agg.agg_func.len(), agg.group_by.len())
-                });
+                let (functions, groups) = executor
+                    .aggregation
+                    .as_ref()
+                    .map_or((0, 0), |agg| (agg.agg_func.len(), agg.group_by.len()));
                 let name = if tp == ExecType::TypeStreamAgg as i32 {
                     "StreamAgg"
                 } else {
@@ -748,7 +752,9 @@ fn aggregation_to_pb(
     let column_ref = |offset: usize| -> Option<Expr> {
         (offset < columns.len()).then(|| Expr {
             tp: Some(ExprType::ColumnRef as i32),
-            val: Some(encode_signed(i64::try_from(offset).expect("scan width fits i64"))),
+            val: Some(encode_signed(
+                i64::try_from(offset).expect("scan width fits i64"),
+            )),
             children: Vec::new(),
             sig: Some(ScalarFuncSig::Unspecified as i32),
             field_type: None,

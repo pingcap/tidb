@@ -41,14 +41,13 @@
 
 use crate::cost_usage::CostVer2;
 use crate::physical::PhysicalPlan;
-use crate::plan_cost_ver2::{
-    filter_cost, hash_agg_cost, net_cost, projection_cost, scan_cost, sort_cost,
-    stream_agg_cost, top_n_cost, CostFactorVars, CostSessionOpts, HashAggInput,
-    Ver2Factors,
-};
-use crate::task_type::TaskType;
 use crate::plan_base::PlanError;
+use crate::plan_cost_ver2::{
+    filter_cost, hash_agg_cost, net_cost, projection_cost, scan_cost, sort_cost, stream_agg_cost,
+    top_n_cost, CostFactorVars, CostSessionOpts, HashAggInput, Ver2Factors,
+};
 use crate::task::Task;
+use crate::task_type::TaskType;
 
 use super::dispatch::TaskCoster;
 
@@ -143,7 +142,12 @@ impl Ver2Coster {
                 crate::cost_usage::div_cost_ver2(
                     &crate::cost_usage::sum_cost_ver2(&[
                         inner,
-                        net_cost(None, child_rows, ROW_SIZE_FLOOR, &self.factors.tidb_to_kv_net),
+                        net_cost(
+                            None,
+                            child_rows,
+                            ROW_SIZE_FLOOR,
+                            &self.factors.tidb_to_kv_net,
+                        ),
                     ]),
                     self.session.distsql_scan_concurrency,
                 )
@@ -177,7 +181,12 @@ impl Ver2Coster {
                     .map_or_else(crate::cost_usage::zero_cost_ver2, |plan| self.price(plan));
                 let index_side = crate::cost_usage::div_cost_ver2(
                     &crate::cost_usage::sum_cost_ver2(&[
-                        net_cost(None, index_rows, ROW_SIZE_FLOOR, &self.factors.tidb_to_kv_net),
+                        net_cost(
+                            None,
+                            index_rows,
+                            ROW_SIZE_FLOOR,
+                            &self.factors.tidb_to_kv_net,
+                        ),
                         index_child,
                     ]),
                     dist_concurrency,
@@ -189,7 +198,12 @@ impl Ver2Coster {
                     .map_or_else(crate::cost_usage::zero_cost_ver2, |plan| self.price(plan));
                 let table_side = crate::cost_usage::div_cost_ver2(
                     &crate::cost_usage::sum_cost_ver2(&[
-                        net_cost(None, table_rows, ROW_SIZE_FLOOR, &self.factors.tidb_to_kv_net),
+                        net_cost(
+                            None,
+                            table_rows,
+                            ROW_SIZE_FLOOR,
+                            &self.factors.tidb_to_kv_net,
+                        ),
                         table_child,
                     ]),
                     dist_concurrency,
@@ -243,7 +257,12 @@ impl Ver2Coster {
                 crate::cost_usage::div_cost_ver2(
                     &crate::cost_usage::sum_cost_ver2(&[
                         inner,
-                        net_cost(None, child_rows, ROW_SIZE_FLOOR, &self.factors.tidb_to_kv_net),
+                        net_cost(
+                            None,
+                            child_rows,
+                            ROW_SIZE_FLOOR,
+                            &self.factors.tidb_to_kv_net,
+                        ),
                     ]),
                     self.session.distsql_scan_concurrency,
                 )
@@ -376,10 +395,8 @@ impl Ver2Coster {
                     })
                     .collect();
                 let child_can_provide_order = plan.children().first().is_some_and(|child| {
-                    matches!(
-                        child,
-                        PhysicalPlan::Sort(_) | PhysicalPlan::StreamAgg(_)
-                    ) || matches!(child, PhysicalPlan::TableReader(reader)
+                    matches!(child, PhysicalPlan::Sort(_) | PhysicalPlan::StreamAgg(_))
+                        || matches!(child, PhysicalPlan::TableReader(reader)
                         if matches!(reader.table_plan.as_deref(),
                             Some(PhysicalPlan::TableScan(scan)) if scan.keep_order))
                 });

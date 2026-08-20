@@ -94,9 +94,9 @@ mod tests {
                 "--auth-file",
                 "/dev/null",
             ]
-                .into_iter()
-                .map(str::to_owned)
-                .collect::<Vec<_>>(),
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>(),
         )
         .expect("parses");
         assert_eq!(config.socket, "/tmp/tidb-4157.sock");
@@ -107,7 +107,9 @@ mod tests {
         set_global_vars(&config, &globals);
 
         assert_eq!(
-            globals.get("tidb_isolation_read_engines").expect("readable"),
+            globals
+                .get("tidb_isolation_read_engines")
+                .expect("readable"),
             "tikv,tidb"
         );
         assert_eq!(globals.get("port").expect("readable"), "4157");
@@ -117,9 +119,15 @@ mod tests {
         // `@@socket` reported the configured path).
         let mut vars = tidb_session::SessionVars::default();
         let _ = vars.swap_globals(globals.clone());
-        assert_eq!(vars.get_global("socket").expect("readable"), "/tmp/tidb-4157.sock");
+        assert_eq!(
+            vars.get_global("socket").expect("readable"),
+            "/tmp/tidb-4157.sock"
+        );
         assert_eq!(vars.get_global("port").expect("readable"), "4157");
-        assert_eq!(globals.get("socket").expect("readable"), "/tmp/tidb-4157.sock");
+        assert_eq!(
+            globals.get("socket").expect("readable"),
+            "/tmp/tidb-4157.sock"
+        );
 
         // Go's hostname leg: `os.Hostname()` when it resolves. The sem tier
         // owns that default here; `disable()` is the restore path startup

@@ -535,9 +535,21 @@ fn an_unknown_column_names_its_clause() {
         // The aggregate path's GROUP BY rewrite — Go raises these during the
         // gby rewrite once ONLY_FULL_GROUP_BY has passed (a covered select
         // list), with `logical_plans_test.go:1699`'s qualified spelling.
-        ("SELECT count(*) FROM uc GROUP BY no_col", "no_col", "group statement"),
-        ("SELECT a FROM uc GROUP BY a, no_col", "no_col", "group statement"),
-        ("SELECT a FROM uc GROUP BY t11.c1, a", "t11.c1", "group statement"),
+        (
+            "SELECT count(*) FROM uc GROUP BY no_col",
+            "no_col",
+            "group statement",
+        ),
+        (
+            "SELECT a FROM uc GROUP BY a, no_col",
+            "no_col",
+            "group statement",
+        ),
+        (
+            "SELECT a FROM uc GROUP BY t11.c1, a",
+            "t11.c1",
+            "group statement",
+        ),
         ("SELECT count(*) FROM uc WHERE nc = 1", "nc", "where clause"),
     ] {
         let wire = run(sql).unwrap_err().to_mysql_error();
@@ -570,18 +582,24 @@ fn a_derived_aggregate_answers_its_output() {
     .unwrap();
     let run = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query());
 
-    let rows = run("SELECT * FROM (SELECT g, sum(v) AS t FROM dt GROUP BY g) s ORDER BY g")
-        .unwrap();
+    let rows =
+        run("SELECT * FROM (SELECT g, sum(v) AS t FROM dt GROUP BY g) s ORDER BY g").unwrap();
     assert_eq!(
         rows,
         vec![
-            vec![Datum::Int(1), Datum::Decimal(tidb_datatype::Decimal::from_int(30))],
-            vec![Datum::Int(2), Datum::Decimal(tidb_datatype::Decimal::from_int(120))],
+            vec![
+                Datum::Int(1),
+                Datum::Decimal(tidb_datatype::Decimal::from_int(30))
+            ],
+            vec![
+                Datum::Int(2),
+                Datum::Decimal(tidb_datatype::Decimal::from_int(120))
+            ],
         ]
     );
 
-    let rows = run("SELECT * FROM (SELECT g, count(*) AS t FROM dt GROUP BY g) s ORDER BY g")
-        .unwrap();
+    let rows =
+        run("SELECT * FROM (SELECT g, count(*) AS t FROM dt GROUP BY g) s ORDER BY g").unwrap();
     assert_eq!(
         rows,
         vec![

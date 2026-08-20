@@ -1176,9 +1176,9 @@ pub fn run_create_table_in(
     // round-trip through its own output.
     for option in &create.table_options {
         if let tidb_ast::TableOption::AutoIdCache(value) = option {
-            let cache = value.parse::<u64>().map_err(|_| {
-                DriverError::unsupported("AUTO_ID_CACHE needs an integer value")
-            })?;
+            let cache = value
+                .parse::<u64>()
+                .map_err(|_| DriverError::unsupported("AUTO_ID_CACHE needs an integer value"))?;
             if cache > i64::MAX as u64 {
                 return Err(DriverError::unsupported(
                     "table option auto_id_cache overflows int64",

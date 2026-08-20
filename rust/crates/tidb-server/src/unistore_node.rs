@@ -242,9 +242,7 @@ pub(crate) fn run_unistore_node(
                 Some(server)
             }
             Err(error) => {
-                eprintln!(
-                    "{{\"event\":\"status_listener_error\",\"error\":\"{error}\"}}"
-                );
+                eprintln!("{{\"event\":\"status_listener_error\",\"error\":\"{error}\"}}");
                 None
             }
         }
@@ -254,8 +252,10 @@ pub(crate) fn run_unistore_node(
     let address = node.local_addr().map_err(RunConfiguredNodeError::Node)?;
     let shutdown_grace_ms = node.shutdown_grace_ms();
     let shutdown = node.shutdown_handle();
-    let last_signal = crate::shutdown_signal::install(move || shutdown.shutdown())
-        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
+    let last_signal =
+        crate::shutdown_signal::install(move || shutdown.shutdown()).map_err(|error| {
+            RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
+        })?;
     let table_descriptors = served_table_descriptor(&served_table);
     eprintln!(
         "{{\"event\":\"sql_node_ready\",\"address\":\"{address}\",\"store\":\"unistore\",\"cluster_id\":{IN_PROCESS_CLUSTER_ID},\"tables\":[{table_descriptors}],\"max_connections\":{},\"account_count\":{},\"shutdown_grace_ms\":{shutdown_grace_ms}}}",
@@ -335,9 +335,7 @@ pub(crate) fn run_unistore_cluster_session(
                 Some(server)
             }
             Err(error) => {
-                eprintln!(
-                    "{{\"event\":\"status_listener_error\",\"error\":\"{error}\"}}"
-                );
+                eprintln!("{{\"event\":\"status_listener_error\",\"error\":\"{error}\"}}");
                 None
             }
         }
@@ -346,8 +344,10 @@ pub(crate) fn run_unistore_cluster_session(
     };
     let address = node.local_addr().map_err(RunConfiguredNodeError::Node)?;
     let shutdown = node.shutdown_handle();
-    let last_signal = crate::shutdown_signal::install(move || shutdown.shutdown())
-        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
+    let last_signal =
+        crate::shutdown_signal::install(move || shutdown.shutdown()).map_err(|error| {
+            RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
+        })?;
     eprintln!(
         "{{\"event\":\"cluster_session_node_ready\",\"address\":\"{address}\",\"store\":\"unistore\",\"schema_version\":{schema_version},\"max_connections\":{},\"account_count\":{},\"stats_loaded\":{},\"stats_pseudo\":{}}}",
         config.max_connections,

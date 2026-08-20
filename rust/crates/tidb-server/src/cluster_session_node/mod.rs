@@ -460,10 +460,7 @@ impl ClusterSessionFactory {
     /// Binds the node's server-info syncer for
     /// `information_schema.TIDB_SERVERS_INFO`.
     #[must_use]
-    pub fn with_server_info(
-        mut self,
-        syncer: Arc<tidb_domain::serverinfo_syncer::Syncer>,
-    ) -> Self {
+    pub fn with_server_info(mut self, syncer: Arc<tidb_domain::serverinfo_syncer::Syncer>) -> Self {
         self.server_info = Some(syncer);
         self
     }
@@ -531,9 +528,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
         session.set_cluster_schema_version_source(Arc::new(move || {
             catalog_versions.load().schema_version
         }));
-        session.set_server_start_timestamp(
-            crate::real_tikv_node::server_start_unix_timestamp(),
-        );
+        session.set_server_start_timestamp(crate::real_tikv_node::server_start_unix_timestamp());
         if let Some(spill_storage) = self.spill_storage.as_ref() {
             session.set_spill_storage(Arc::clone(spill_storage));
         }

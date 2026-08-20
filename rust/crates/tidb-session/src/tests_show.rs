@@ -1215,7 +1215,10 @@ fn show_status() {
     // The server provider's Uptime (`stat.go:87`, pinned by `TestUptime`'s
     // shape): absent until the hosting server pushes its start timestamp,
     // then a non-negative seconds count in both scope views.
-    assert_eq!(row_text(session.run("SHOW STATUS LIKE 'Uptime'")), [[""; 2]; 0]);
+    assert_eq!(
+        row_text(session.run("SHOW STATUS LIKE 'Uptime'")),
+        [[""; 2]; 0]
+    );
     session.set_server_start_timestamp(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1226,7 +1229,10 @@ fn show_status() {
     let uptime = row_text(session.run("SHOW GLOBAL STATUS LIKE 'Uptime'"));
     assert_eq!(uptime.len(), 1, "{uptime:?}");
     assert_eq!(uptime[0][0], "Uptime");
-    assert!(uptime[0][1].parse::<i64>().expect("seconds") >= 7, "{uptime:?}");
+    assert!(
+        uptime[0][1].parse::<i64>().expect("seconds") >= 7,
+        "{uptime:?}"
+    );
     // Captured: the WHERE form filters the same virtual rows.
     assert_eq!(
         row_text(session.run("SHOW STATUS WHERE Variable_name = 'Compression'")),

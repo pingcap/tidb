@@ -202,7 +202,10 @@ mod tests {
             Ok(Command::Statistics)
         );
         // The neighbouring bytes keep their own meanings.
-        assert_eq!(decode_command(&[crate::command::COM_PING]), Ok(Command::Ping));
+        assert_eq!(
+            decode_command(&[crate::command::COM_PING]),
+            Ok(Command::Ping)
+        );
     }
 
     #[test]

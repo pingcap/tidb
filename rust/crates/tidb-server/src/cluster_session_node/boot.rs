@@ -155,9 +155,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         Err(error) => {
             // Go logs and carries on: a node that cannot publish itself
             // still serves SQL, it is just invisible to its peers.
-            eprintln!(
-                "{{\"event\":\"server_info_syncer_unavailable\",\"error\":{error:?}}}"
-            );
+            eprintln!("{{\"event\":\"server_info_syncer_unavailable\",\"error\":{error:?}}}");
             None
         }
     };

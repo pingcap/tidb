@@ -332,9 +332,9 @@ pub fn build_table_info_with_context(
             // Go `handleTableOptions`: the parsed value is unsigned, and
             // anything past int64 is refused with its own message.
             TableOption::AutoIdCache(value) => {
-                let parsed = value.parse::<u64>().map_err(|_| {
-                    DdlAdmissionError::new("AUTO_ID_CACHE needs an integer value")
-                })?;
+                let parsed = value
+                    .parse::<u64>()
+                    .map_err(|_| DdlAdmissionError::new("AUTO_ID_CACHE needs an integer value"))?;
                 if parsed > i64::MAX as u64 {
                     return Err(DdlAdmissionError::new(
                         "table option auto_id_cache overflows int64",
@@ -1354,9 +1354,7 @@ pub(crate) fn resolve_charset_collation(
                     // switches on this code.
                     return Err(DdlAdmissionError::with_code(
                         1253,
-                        format!(
-                            "COLLATION '{collate}' is not valid for CHARACTER SET '{charset}'"
-                        ),
+                        format!("COLLATION '{collate}' is not valid for CHARACTER SET '{charset}'"),
                     ));
                 }
             }

@@ -805,11 +805,8 @@ fn issue_50051_unsigned_boundaries_range_correctly() {
         &mut catalog,
     )
     .unwrap();
-    crate::run_create_table_on(
-        "CREATE TABLE t6 (d BIGINT UNSIGNED NOT NULL)",
-        &mut catalog,
-    )
-    .unwrap();
+    crate::run_create_table_on("CREATE TABLE t6 (d BIGINT UNSIGNED NOT NULL)", &mut catalog)
+        .unwrap();
     run_insert_on("INSERT INTO t5 VALUES (-3, 6)", &mut catalog, &ctx).unwrap();
     run_insert_on(
         "INSERT INTO t6 VALUES (0), (1), (2), (3)",

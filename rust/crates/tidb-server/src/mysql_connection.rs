@@ -90,10 +90,11 @@ fn decode_client_sql(bytes: &[u8], charset: &str) -> Result<String, ()> {
             }
             String::from_utf8(result.bytes().to_vec()).map_err(|_| ())
         }
-        _ => std::str::from_utf8(bytes).map(str::to_owned).map_err(|_| ()),
+        _ => std::str::from_utf8(bytes)
+            .map(str::to_owned)
+            .map_err(|_| ()),
     }
 }
-
 
 /// Extracts the signed-integer parameters a point read requires, rejecting a
 /// string parameter (a point read binds only a clustered integer handle).
@@ -1215,11 +1216,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                      Opens: 0  Flush tables: 0  Open tables: 0  \
                      Queries per second avg: 0.000"
                 );
-                crate::connection_writers::write_payload(
-                    &mut output,
-                    1,
-                    line.as_bytes(),
-                )?;
+                crate::connection_writers::write_payload(&mut output, 1, line.as_bytes())?;
             }
             Command::Ping => write_ok(
                 &mut output,

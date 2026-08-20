@@ -286,7 +286,8 @@ pub fn cluster_session_catalog(
                 for i in 0..table.columns.len() {
                     if let Some(column) = table.columns.get(i) {
                         let column = column.read();
-                        columns.push((column.name.original().to_owned(), column.field_type.clone()));
+                        columns
+                            .push((column.name.original().to_owned(), column.field_type.clone()));
                     }
                 }
                 let (definer_user, definer_host) = view.definer.as_ref().map_or_else(
@@ -307,9 +308,18 @@ pub fn cluster_session_catalog(
                         _ => "UNDEFINED",
                     }
                     .to_owned(),
-                    security: if view.security.0 == 1 { "INVOKER" } else { "DEFINER" }.to_owned(),
-                    check_option: if view.check_option.0 == 0 { "LOCAL" } else { "CASCADED" }
-                        .to_owned(),
+                    security: if view.security.0 == 1 {
+                        "INVOKER"
+                    } else {
+                        "DEFINER"
+                    }
+                    .to_owned(),
+                    check_option: if view.check_option.0 == 0 {
+                        "LOCAL"
+                    } else {
+                        "CASCADED"
+                    }
+                    .to_owned(),
                 };
                 if let Err(reason) = catalog.register_view_in(
                     database.info.name.original(),

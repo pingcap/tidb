@@ -1366,6 +1366,73 @@ pub struct TableScanExec {
     statement: PushdownStatementContext,
 }
 
+/// A partial `SUM` in progress.
+///
+/// Go compiles `SUM` into one of two signatures chosen by the argument's
+/// eval type (`pkg/executor/aggfuncs/func_sum.go`): `sum4Decimal` for
+/// integer and decimal inputs, `sum4Float64` for real ones. Only the first
+/// existed here, so `SUM` over a `FLOAT`/`DOUBLE` column refused the scan
+/// instead of answering. Which arm this becomes is decided by the first
+/// non-NULL value, exactly as the argument's type decides it in Go; an
+/// all-NULL group stays `Empty` and answers NULL.
+#[derive(Debug, Default, Clone)]
+enum PartialSum {
+    #[default]
+    Empty,
+    Decimal(Decimal),
+    Real(f64),
+}
+
+impl PartialSum {
+    /// Folds one scanned value in, skipping NULLs the way both Go signatures
+    /// do. A value from the other eval family than the arm already chosen
+    /// promotes the running total to real: Go cannot reach that case because
+    /// the argument carries a single type, and real is the family MySQL
+    /// would have merged such a column into.
+    fn accumulate(&mut self, value: &Datum) -> Result<(), ExecError> {
+        let addend = match value {
+            Datum::Null => return Ok(()),
+            Datum::Int(value) => PartialSum::Decimal(Decimal::from_int(*value)),
+            Datum::UInt(value) => PartialSum::Decimal(Decimal::from_uint(*value)),
+            Datum::Decimal(value) => PartialSum::Decimal(value.clone()),
+            Datum::Real(value) | Datum::Float32(value) => PartialSum::Real(*value),
+            _ => {
+                return Err(ExecError::unsupported(
+                    "partial SUM requires a numeric input",
+                ));
+            }
+        };
+        *self = match (std::mem::take(self), addend) {
+            (PartialSum::Empty, addend) => addend,
+            (PartialSum::Decimal(current), PartialSum::Decimal(addend)) => {
+                PartialSum::Decimal(current.add(&addend))
+            }
+            (PartialSum::Real(current), PartialSum::Real(addend)) => {
+                PartialSum::Real(current + addend)
+            }
+            (PartialSum::Decimal(current), PartialSum::Real(addend)) => {
+                PartialSum::Real(current.to_f64() + addend)
+            }
+            (PartialSum::Real(current), PartialSum::Decimal(addend)) => {
+                PartialSum::Real(current + addend.to_f64())
+            }
+            // `addend` is built from a non-NULL value, so it is never `Empty`.
+            (current, PartialSum::Empty) => current,
+        };
+        Ok(())
+    }
+
+    /// The partial row's value: NULL when nothing non-NULL was folded in,
+    /// which is what Go's aggregate answers for an empty or all-NULL group.
+    fn into_datum(self) -> Datum {
+        match self {
+            PartialSum::Empty => Datum::Null,
+            PartialSum::Decimal(value) => Datum::Decimal(value),
+            PartialSum::Real(value) => Datum::Real(value),
+        }
+    }
+}
+
 impl TableScanExec {
     /// Builds a scan over `table` with an explicit row-decode context.
     #[must_use]
@@ -1548,7 +1615,7 @@ impl TableScanExec {
                 Ok(vec![vec![Datum::Int(count)]])
             }
             PushdownPartialAggregate::Sum { input_offset, .. } => {
-                let mut sum: Option<Decimal> = None;
+                let mut sum = PartialSum::default();
                 while let Some(row) = self.next_source_row()? {
                     self.scanned.set(self.scanned.get() + 1);
                     if let Some(filter) = self.filter.as_mut() {
@@ -1561,23 +1628,9 @@ impl TableScanExec {
                             "partial SUM input is outside the scan row",
                         ));
                     };
-                    let addend = match value {
-                        Datum::Null => continue,
-                        Datum::Int(value) => Decimal::from_int(*value),
-                        Datum::UInt(value) => Decimal::from_uint(*value),
-                        Datum::Decimal(value) => value.clone(),
-                        _ => {
-                            return Err(ExecError::unsupported(
-                                "partial SUM requires an integer or decimal input",
-                            ));
-                        }
-                    };
-                    sum = Some(match sum.take() {
-                        Some(current) => current.add(&addend),
-                        None => addend,
-                    });
+                    sum.accumulate(value)?;
                 }
-                Ok(vec![vec![sum.map_or(Datum::Null, Datum::Decimal)]])
+                Ok(vec![vec![sum.into_datum()]])
             }
             PushdownPartialAggregate::GroupBy {
                 input_offset,
@@ -1610,7 +1663,7 @@ impl TableScanExec {
                 sum_type: _,
                 group_type,
             } => {
-                let mut groups: BTreeMap<Vec<u8>, (Datum, Option<Decimal>)> = BTreeMap::new();
+                let mut groups: BTreeMap<Vec<u8>, (Datum, PartialSum)> = BTreeMap::new();
                 while let Some(row) = self.next_source_row()? {
                     self.scanned.set(self.scanned.get() + 1);
                     if let Some(filter) = self.filter.as_mut() {
@@ -1628,29 +1681,13 @@ impl TableScanExec {
                             "partial SUM input is outside the scan row",
                         ));
                     };
-                    let addend = match value {
-                        Datum::Null => None,
-                        Datum::Int(value) => Some(Decimal::from_int(*value)),
-                        Datum::UInt(value) => Some(Decimal::from_uint(*value)),
-                        Datum::Decimal(value) => Some(value.clone()),
-                        _ => {
-                            return Err(ExecError::unsupported(
-                                "partial SUM requires an integer or decimal input",
-                            ));
-                        }
-                    };
                     let key = crate::hash_agg::group_key_part(&group_type.collation(), &group);
-                    let (_, sum) = groups.entry(key).or_insert((group, None));
-                    if let Some(addend) = addend {
-                        *sum = Some(match sum.take() {
-                            Some(current) => current.add(&addend),
-                            None => addend,
-                        });
-                    }
+                    let (_, sum) = groups.entry(key).or_insert((group, PartialSum::default()));
+                    sum.accumulate(value)?;
                 }
                 Ok(groups
                     .into_values()
-                    .map(|(group, sum)| vec![sum.map_or(Datum::Null, Datum::Decimal), group])
+                    .map(|(group, sum)| vec![sum.into_datum(), group])
                     .collect())
             }
             PushdownPartialAggregate::Grouped {
@@ -1667,7 +1704,7 @@ impl TableScanExec {
 
                 enum PartialValue {
                     Count(i64),
-                    Sum(Option<Decimal>),
+                    Sum(PartialSum),
                     Extreme { value: Option<Datum>, is_max: bool },
                 }
 
@@ -1676,7 +1713,7 @@ impl TableScanExec {
                         .iter()
                         .map(|function| match function.kind {
                             PushdownAggregateKind::Count => PartialValue::Count(0),
-                            PushdownAggregateKind::Sum => PartialValue::Sum(None),
+                            PushdownAggregateKind::Sum => PartialValue::Sum(PartialSum::default()),
                             PushdownAggregateKind::Min => PartialValue::Extreme {
                                 value: None,
                                 is_max: false,
@@ -1693,7 +1730,7 @@ impl TableScanExec {
                         .into_iter()
                         .map(|value| match value {
                             PartialValue::Count(count) => Datum::Int(count),
-                            PartialValue::Sum(sum) => sum.map_or(Datum::Null, Datum::Decimal),
+                            PartialValue::Sum(sum) => sum.into_datum(),
                             PartialValue::Extreme { value, .. } => value.unwrap_or(Datum::Null),
                         })
                         .chain(groups)
@@ -1745,22 +1782,7 @@ impl TableScanExec {
                             }
                             (PartialValue::Sum(_), Some(Datum::Null))
                             | (PartialValue::Extreme { .. }, Some(Datum::Null)) => {}
-                            (PartialValue::Sum(sum), Some(input)) => {
-                                let addend = match input {
-                                    Datum::Int(value) => Decimal::from_int(value),
-                                    Datum::UInt(value) => Decimal::from_uint(value),
-                                    Datum::Decimal(value) => value,
-                                    _ => {
-                                        return Err(ExecError::unsupported(
-                                            "partial SUM requires an integer or decimal input",
-                                        ));
-                                    }
-                                };
-                                *sum = Some(match sum.take() {
-                                    Some(current) => current.add(&addend),
-                                    None => addend,
-                                });
-                            }
+                            (PartialValue::Sum(sum), Some(input)) => sum.accumulate(&input)?,
                             (PartialValue::Extreme { value, is_max }, Some(candidate)) => {
                                 let replace = value.as_ref().is_none_or(|current| {
                                     tidb_expr::compare_datums(&candidate, current).is_ok_and(

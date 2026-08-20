@@ -161,7 +161,9 @@ pub(crate) fn datum_text(value: &Datum) -> Option<String> {
         // not the bit value: an ENUM default read back as `''` instead of
         // `'x'` is what a metadata reader would otherwise report for a
         // column whose stored default is correct.
-        Datum::Enum(value, _) => Some(String::from_utf8_lossy(value.name().as_bytes()).into_owned()),
+        Datum::Enum(value, _) => {
+            Some(String::from_utf8_lossy(value.name().as_bytes()).into_owned())
+        }
         Datum::Set(value, _) => Some(String::from_utf8_lossy(value.name().as_bytes()).into_owned()),
         Datum::Duration(value) => Some(value.to_string()),
         _ => None,

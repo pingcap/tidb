@@ -3727,7 +3727,10 @@ fn full_table_handle_order(table: &KvTable) -> Option<IndexAccessOrder> {
     {
         return None;
     }
-    Some(IndexAccessOrder::from_ranges(&[offset], &[IndexRange::full()]))
+    Some(IndexAccessOrder::from_ranges(
+        &[offset],
+        &[IndexRange::full()],
+    ))
 }
 
 fn handle_range_order(table: &KvTable, ranges: &[IndexRange]) -> Option<IndexAccessOrder> {

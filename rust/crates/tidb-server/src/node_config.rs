@@ -922,7 +922,10 @@ impl NodeConfig {
         // kept because that refusal is the thing that will lift.
         let advertise_address = match main_flags.advertise_address.as_deref() {
             Some(advertise) if advertise.split(' ').count() > 1 => {
-                return Err(invalid("--advertise-address", "Only support one advertise-address"));
+                return Err(invalid(
+                    "--advertise-address",
+                    "Only support one advertise-address",
+                ));
             }
             Some(advertise) => advertise.to_owned(),
             None if host.to_string() != "0.0.0.0" => host.to_string(),

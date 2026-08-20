@@ -155,11 +155,7 @@ impl Range {
     /// error-redaction surface its callers live in).
     #[must_use]
     pub fn to_display_string(&self) -> String {
-        let low: Vec<String> = self
-            .low_val
-            .iter()
-            .map(|d| format_datum(d, true))
-            .collect();
+        let low: Vec<String> = self.low_val.iter().map(|d| format_datum(d, true)).collect();
         let high: Vec<String> = self
             .high_val
             .iter()
@@ -191,8 +187,7 @@ impl Range {
         if self.low_exclude != other.low_exclude || self.high_exclude != other.high_exclude {
             return false;
         }
-        if self.low_val.len() != other.low_val.len()
-            || self.high_val.len() != other.high_val.len()
+        if self.low_val.len() != other.low_val.len() || self.high_val.len() != other.high_val.len()
         {
             return false;
         }
@@ -404,12 +399,9 @@ fn is_boundary_value(d: &Datum, unsigned_int_handle: bool, is_left_side: bool) -
     match d {
         Datum::MinNotNull => is_left_side,
         Datum::MaxValue => is_right_side,
-        Datum::Int(v) => {
-            (*v == i64::MIN && is_left_side) || (*v == i64::MAX && is_right_side)
-        }
+        Datum::Int(v) => (*v == i64::MIN && is_left_side) || (*v == i64::MAX && is_right_side),
         Datum::UInt(v) => {
-            (*v == 0 && unsigned_int_handle && is_left_side)
-                || (*v == u64::MAX && is_right_side)
+            (*v == 0 && unsigned_int_handle && is_left_side) || (*v == u64::MAX && is_right_side)
         }
         _ => false,
     }
@@ -473,7 +465,10 @@ fn go_quote(bytes: &[u8]) -> String {
             }
             Err(error) => {
                 let (valid, after) = rest.split_at(error.valid_up_to());
-                push_go_quoted(&mut out, std::str::from_utf8(valid).expect("just validated"));
+                push_go_quoted(
+                    &mut out,
+                    std::str::from_utf8(valid).expect("just validated"),
+                );
                 let bad = error.error_len().unwrap_or(after.len());
                 for byte in &after[..bad] {
                     out.push_str(&format!("\\x{byte:02x}"));
@@ -533,11 +528,12 @@ fn format_datum(d: &Datum, is_left_side: bool) -> String {
         Datum::Decimal(d) => d.to_string(),
         Datum::Float32(v) => {
             let narrowed = *v as f32;
-            if (-4..21).contains(&(format!("{narrowed:e}")
-                .split_once('e')
-                .and_then(|(_, exp)| exp.parse::<i32>().ok())
-                .unwrap_or(0)))
-            {
+            if (-4..21).contains(
+                &(format!("{narrowed:e}")
+                    .split_once('e')
+                    .and_then(|(_, exp)| exp.parse::<i32>().ok())
+                    .unwrap_or(0)),
+            ) {
                 format!("{narrowed}")
             } else {
                 go_g_float(f64::from(narrowed))
@@ -554,7 +550,13 @@ fn format_datum(d: &Datum, is_left_side: bool) -> String {
 /// Go `extendBound`: pad a partial bound with the correct infinity for its
 /// side and openness (the multi-column prefix rule spelled out in Go's
 /// comment).
-fn extend_bound(bound: &mut Vec<Datum>, low_index: usize, high_index: usize, low: bool, open: bool) {
+fn extend_bound(
+    bound: &mut Vec<Datum>,
+    low_index: usize,
+    high_index: usize,
+    low: bool,
+    open: bool,
+) {
     for _ in low_index..high_index {
         let sentinel = if low {
             if open {
@@ -635,7 +637,12 @@ fn compare_lexicographically(
 
 /// Go `prefix`: whether `sup_value` prefix-equals `super_value` over
 /// `length` columns.
-fn prefix(super_value: &[Datum], sup_value: &[Datum], length: usize, collators: &[Collation]) -> bool {
+fn prefix(
+    super_value: &[Datum],
+    sup_value: &[Datum],
+    length: usize,
+    collators: &[Collation],
+) -> bool {
     for i in 0..length {
         match super_value[i].compare(&sup_value[i], collators[i]) {
             Ok(std::cmp::Ordering::Equal) => {}
@@ -659,7 +666,6 @@ fn datum_equals(a: &Datum, b: &Datum) -> bool {
         .unwrap_or(false)
         && std::mem::discriminant(a) == std::mem::discriminant(b)
 }
-
 
 /// Go `strconv.FormatFloat(v, 'g', -1, 64)` — `fmt`'s `%v` for floats:
 /// shortest round-trip digits, switching to `e` notation when the decimal
@@ -807,7 +813,12 @@ mod tests {
         ];
         for (range, expected) in is_point_tests {
             // Go's MockContext ranger context has RegardNULLAsPoint = true.
-            assert_eq!(range.is_point(true), expected, "{}", range.to_display_string());
+            assert_eq!(
+                range.is_point(true),
+                expected,
+                "{}",
+                range.to_display_string()
+            );
         }
     }
 
@@ -900,10 +911,7 @@ mod tests {
         let list2: Ranges = vec![r3, r4];
 
         let intersected = intersect_ranges(&list1, &list2).expect("intersects");
-        let actual: Vec<String> = intersected
-            .iter()
-            .map(Range::to_display_string)
-            .collect();
+        let actual: Vec<String> = intersected.iter().map(Range::to_display_string).collect();
         assert_eq!(
             actual.join(","),
             "(100 0,100 +inf],(100,101),[101 -inf,101 10)"
@@ -920,19 +928,116 @@ mod tests {
             (&[1], &[2], true, false, &[3], &[4], true, false, "<nil>"),
             (&[1], &[2], false, true, &[3], &[4], false, true, "<nil>"),
             (&[1], &[2], true, true, &[3], &[4], true, true, "<nil>"),
-            (&[1, 2], &[1, 3], false, false, &[1, 3], &[1, 4], true, false, "<nil>"),
-            (&[i64::MIN], &[1], false, false, &[2], &[i64::MAX], false, false, "<nil>"),
-            (&[1, 2], &[1, 3], false, false, &[1, 3], &[1, 4], false, false, "[1 3,1 3]"),
-            (&[1, 1, 2], &[1, 1, 5], false, false, &[1, 2], &[1, 3], true, true, "<nil>"),
             (
-                &[100, 0], &[100, i64::MAX], true, false,
-                &[i64::MIN, i64::MIN], &[100, i64::MIN], false, false, "<nil>",
+                &[1, 2],
+                &[1, 3],
+                false,
+                false,
+                &[1, 3],
+                &[1, 4],
+                true,
+                false,
+                "<nil>",
             ),
-            (&[100, 0], &[100, i64::MAX], true, false, &[i64::MIN], &[100], false, true, "<nil>"),
-            (&[5], &[5], false, false, &[5], &[i64::MAX], true, false, "<nil>"),
-            (&[1], &[1], false, false, &[5], &[i64::MAX], true, false, "<nil>"),
-            (&[5], &[5], false, false, &[5, 1], &[5, i64::MAX], true, false, "(5 1,5 +inf]"),
-            (&[1], &[1], false, false, &[5, 1], &[5, i64::MAX], true, false, "<nil>"),
+            (
+                &[i64::MIN],
+                &[1],
+                false,
+                false,
+                &[2],
+                &[i64::MAX],
+                false,
+                false,
+                "<nil>",
+            ),
+            (
+                &[1, 2],
+                &[1, 3],
+                false,
+                false,
+                &[1, 3],
+                &[1, 4],
+                false,
+                false,
+                "[1 3,1 3]",
+            ),
+            (
+                &[1, 1, 2],
+                &[1, 1, 5],
+                false,
+                false,
+                &[1, 2],
+                &[1, 3],
+                true,
+                true,
+                "<nil>",
+            ),
+            (
+                &[100, 0],
+                &[100, i64::MAX],
+                true,
+                false,
+                &[i64::MIN, i64::MIN],
+                &[100, i64::MIN],
+                false,
+                false,
+                "<nil>",
+            ),
+            (
+                &[100, 0],
+                &[100, i64::MAX],
+                true,
+                false,
+                &[i64::MIN],
+                &[100],
+                false,
+                true,
+                "<nil>",
+            ),
+            (
+                &[5],
+                &[5],
+                false,
+                false,
+                &[5],
+                &[i64::MAX],
+                true,
+                false,
+                "<nil>",
+            ),
+            (
+                &[1],
+                &[1],
+                false,
+                false,
+                &[5],
+                &[i64::MAX],
+                true,
+                false,
+                "<nil>",
+            ),
+            (
+                &[5],
+                &[5],
+                false,
+                false,
+                &[5, 1],
+                &[5, i64::MAX],
+                true,
+                false,
+                "(5 1,5 +inf]",
+            ),
+            (
+                &[1],
+                &[1],
+                false,
+                false,
+                &[5, 1],
+                &[5, i64::MAX],
+                true,
+                false,
+                "<nil>",
+            ),
         ];
         for (low1, high1, ex_low1, ex_high1, low2, high2, ex_low2, ex_high2, expected) in cases {
             let range1 = build_range(low1, high1, *ex_low1, *ex_high1);
@@ -961,11 +1066,38 @@ mod tests {
             (&[1], &[5], true, false, &[2], &[4], true, false, "(2,4]"),
             (&[1], &[5], false, true, &[2], &[4], false, true, "[2,4)"),
             (&[1], &[5], true, true, &[2], &[4], true, true, "(2,4)"),
-            (&[i64::MIN], &[5], false, false, &[2], &[4], false, false, "[2,4]"),
-            (&[1, 2], &[1, 5], false, false, &[1, 3], &[1, 4], true, false, "(1 3,1 4]"),
             (
-                &[1, 1, i64::MIN], &[1, 1, 15], false, false,
-                &[1, 1], &[1, 1], false, false, "[1 1 -inf,1 1 15]",
+                &[i64::MIN],
+                &[5],
+                false,
+                false,
+                &[2],
+                &[4],
+                false,
+                false,
+                "[2,4]",
+            ),
+            (
+                &[1, 2],
+                &[1, 5],
+                false,
+                false,
+                &[1, 3],
+                &[1, 4],
+                true,
+                false,
+                "(1 3,1 4]",
+            ),
+            (
+                &[1, 1, i64::MIN],
+                &[1, 1, 15],
+                false,
+                false,
+                &[1, 1],
+                &[1, 1],
+                false,
+                false,
+                "[1 1 -inf,1 1 15]",
             ),
         ];
         for (low1, high1, ex_low1, ex_high1, low2, high2, ex_low2, ex_high2, expected) in cases {
@@ -996,11 +1128,38 @@ mod tests {
             (&[1], &[5], true, false, &[2], &[7], true, false, "(2,5]"),
             (&[1], &[5], false, true, &[2], &[7], false, true, "[2,5)"),
             (&[1], &[5], true, true, &[2], &[7], true, true, "(2,5)"),
-            (&[i64::MIN], &[5], false, false, &[2], &[14], false, false, "[2,5]"),
-            (&[1, 2], &[1, 5], false, false, &[1, 3], &[1, 4], true, false, "(1 3,1 4]"),
             (
-                &[1, 1, i64::MIN], &[1, 1, 15], false, false,
-                &[1, 1, 4], &[1, 1, 25], false, false, "[1 1 4,1 1 15]",
+                &[i64::MIN],
+                &[5],
+                false,
+                false,
+                &[2],
+                &[14],
+                false,
+                false,
+                "[2,5]",
+            ),
+            (
+                &[1, 2],
+                &[1, 5],
+                false,
+                false,
+                &[1, 3],
+                &[1, 4],
+                true,
+                false,
+                "(1 3,1 4]",
+            ),
+            (
+                &[1, 1, i64::MIN],
+                &[1, 1, 15],
+                false,
+                false,
+                &[1, 1, 4],
+                &[1, 1, 25],
+                false,
+                false,
+                "[1 1 4,1 1 15]",
             ),
         ];
         for (low1, high1, ex_low1, ex_high1, low2, high2, ex_low2, ex_high2, expected) in cases {

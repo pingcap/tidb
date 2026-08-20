@@ -227,10 +227,11 @@ impl Syncer {
             return Err("[info-syncer] no session to store server info under".to_owned());
         };
         let bytes = candidate.marshal().map_err(|error| error.to_string())?;
-        self.etcd
-            .as_ref()
-            .expect("checked above")
-            .put_with_lease(&self.server_info_path, &bytes, lease)?;
+        self.etcd.as_ref().expect("checked above").put_with_lease(
+            &self.server_info_path,
+            &bytes,
+            lease,
+        )?;
         self.info
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -422,9 +423,6 @@ impl Syncer {
     }
 }
 
-
-
-
 /// Go `uuid.New().String()`: the random (version 4) UUID a TiDB node mints
 /// for its DDL owner and then publishes as its server-info id.
 ///
@@ -447,9 +445,7 @@ pub fn new_node_id() -> String {
     // the top bits of byte 8.
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex = |slice: &[u8]| -> String {
-        slice.iter().map(|byte| format!("{byte:02x}")).collect()
-    };
+    let hex = |slice: &[u8]| -> String { slice.iter().map(|byte| format!("{byte:02x}")).collect() };
     format!(
         "{}-{}-{}-{}-{}",
         hex(&bytes[0..4]),
@@ -921,7 +917,6 @@ mod tests {
         assert_eq!(etcd.value("/tidb/server/info/uuid-1").unwrap().1, second);
     }
 
-
     /// The topology pair: `/info` carries the topology JSON with NO
     /// lease, `/ttl` carries a nanosecond timestamp UNDER the topology
     /// session's lease, and that session is distinct from the
@@ -940,15 +935,24 @@ mod tests {
         );
 
         let (info_value, stored_lease) = etcd.value("/topology/tidb/10.0.0.1:4000/info").unwrap();
-        assert_eq!(stored_lease, 0, "Go stores the topology info WITHOUT a lease");
+        assert_eq!(
+            stored_lease, 0,
+            "Go stores the topology info WITHOUT a lease"
+        );
         let decoded: TopologyInfo = serde_json::from_slice(&info_value).unwrap();
         // Go's TopologyInfo reports the STATUS port, not the SQL port
         // the key is addressed by.
         assert_eq!(decoded.ip, "10.0.0.1");
-        assert_eq!(decoded.status_port, 10080, "the topology record carries the STATUS port");
+        assert_eq!(
+            decoded.status_port, 10080,
+            "the topology record carries the STATUS port"
+        );
 
         let (ttl_value, ttl_lease) = etcd.value("/topology/tidb/10.0.0.1:4000/ttl").unwrap();
-        assert_eq!(ttl_lease, topology_lease, "the ttl rides the topology lease");
+        assert_eq!(
+            ttl_lease, topology_lease,
+            "the ttl rides the topology lease"
+        );
         let nanos: u128 = String::from_utf8(ttl_value).unwrap().parse().unwrap();
         assert!(nanos > 0, "the ttl value is a nanosecond timestamp");
     }
@@ -1021,7 +1025,6 @@ mod tests {
         assert!(etcd.value("/topology/tidb/[::1]:4000/info").is_some());
     }
 
-
     /// The runner publishes both halves at start, keeps the server-info
     /// lease alive on its own cadence, rewrites the topology stamp on
     /// its own, and removes BOTH entries when dropped.
@@ -1089,7 +1092,6 @@ mod tests {
         drop(runner);
     }
 
-
     /// Go `getServerInfo` maps the config field for field: the record
     /// carries the ADVERTISE address (what a peer dials), not the bind
     /// host, and the DDL lease travels as its configured TEXT.
@@ -1139,7 +1141,6 @@ mod tests {
         assert_eq!(topology.ip, "10.0.0.7");
     }
 
-
     /// Go's uuid v4 layout is observable through `TIDB_SERVERS_INFO.DDL_ID`
     /// and through the stale-entry match, so the shape is pinned: 36
     /// characters, dashes in the RFC 4122 positions, version nibble `4`,
@@ -1154,7 +1155,10 @@ mod tests {
             [8, 4, 4, 4, 12],
             "{id}"
         );
-        assert!(id.chars().all(|c| c == '-' || c.is_ascii_hexdigit()), "{id}");
+        assert!(
+            id.chars().all(|c| c == '-' || c.is_ascii_hexdigit()),
+            "{id}"
+        );
         assert_eq!(parts[2].as_bytes()[0], b'4', "version nibble: {id}");
         assert!(
             matches!(parts[3].as_bytes()[0], b'8' | b'9' | b'a' | b'b'),
@@ -1192,9 +1196,7 @@ mod tests {
         syncer.store_server_info().unwrap();
         syncer.keep_alive_once().unwrap();
         syncer.remove_server_info();
-        syncer
-            .new_topology_session_and_store_server_info()
-            .unwrap();
+        syncer.new_topology_session_and_store_server_info().unwrap();
         syncer.update_topology_aliveness().unwrap();
         syncer.remove_topology_info();
         assert!(syncer.all_tidb_topology().unwrap().is_empty());
