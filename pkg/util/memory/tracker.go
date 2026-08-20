@@ -964,9 +964,10 @@ const (
 
 type memArbitrator struct {
 	*MemArbitrator
-	ctx    *ArbitrationContext
-	killer *sqlkiller.SQLKiller
-	budget struct {
+	ctx     *ArbitrationContext
+	killer  *sqlkiller.SQLKiller
+	maxUsed *atomicutil.Int64
+	budget  struct {
 		smallB *TrackedConcurrentBudget
 		mu     struct {
 			bigB      ConcurrentBudget // bigB.Used (aks growThreshold): threshold to pull from upstream (95% * bigB.Capacity)
@@ -1146,8 +1147,12 @@ func (m *memArbitrator) intoBigBudget() bool {
 
 	m.state.Store(memArbitratorStateIntoBigBudget)
 
-	if maxMemHint := max(m.prevMaxMem, smallUsed, m.buffer.top3.get(m.digestID)); maxMemHint > 0 {
-		m.tryToUpdateBuffer(maxMemHint, m.approxUnixTimeSec())
+	if maxMemHint := max(m.prevMaxMem, smallUsed); maxMemHint > 0 {
+		for buffer := m.buffer.size.Load(); maxMemHint > buffer; buffer = m.buffer.size.Load() {
+			if m.buffer.size.CompareAndSwap(buffer, maxMemHint) {
+				break
+			}
+		}
 	}
 
 	{
@@ -1263,7 +1268,7 @@ func (m *memArbitrator) reset(exception bool, maxConsumed int64) bool {
 		globalArbitrator.metrics.pools.internal.Add(-1)
 	}
 
-	if !exception && m.digestID != InvalidDigestID {
+	if m.digestID != InvalidDigestID {
 		m.UpdateDigestProfileCache(m.digestID, maxConsumed, m.approxUnixTimeSec())
 	}
 
@@ -1309,6 +1314,7 @@ func (t *Tracker) InitMemArbitrator(
 		MemArbitrator: g,
 		uid:           uid,
 		killer:        killer,
+		maxUsed:       &t.maxConsumed,
 		digestID:      digestID,
 		reserveSize:   explicitReserveSize,
 		isInternal:    isInternal,
@@ -1363,15 +1369,17 @@ func (m *memArbitrator) Stop(reason ArbitratorStopReason) bool {
 	return true
 }
 
-func (m *memArbitrator) HeapInuse() (res HeapUsage) {
+func (m *memArbitrator) MemUsage() (res MemUsage) {
 	if m.useBigBudget() {
 		used := m.bigBudgetUsed()
-		return HeapUsage{
-			RootPool: used,
-			Used:     used,
+		return MemUsage{
+			RootPoolUsed: used,
+			HeapInuse:    used,
+			MaxHeapUsed:  max(m.maxUsed.Load(), m.prevMaxMem),
 		}
 	}
-	return HeapUsage{
-		Used: max(m.smallBudgetUsed(), m.bigBudgetUsed()),
+	return MemUsage{
+		HeapInuse:   max(m.smallBudgetUsed(), m.bigBudgetUsed()),
+		MaxHeapUsed: max(m.maxUsed.Load(), m.prevMaxMem),
 	}
 }
