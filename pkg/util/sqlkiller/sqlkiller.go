@@ -48,6 +48,7 @@ type SQLKiller struct {
 	killEvent struct {
 		ch   chan struct{}
 		desc string
+		// Mutex serializes Signal writers with ch, desc, and triggered.
 		sync.Mutex
 		triggered bool
 	}
@@ -82,10 +83,7 @@ func (killer *SQLKiller) GetKillEventChan() <-chan struct{} {
 	return killer.killEvent.ch
 }
 
-func (killer *SQLKiller) triggerKillEvent() {
-	killer.killEvent.Lock()
-	defer killer.killEvent.Unlock()
-
+func (killer *SQLKiller) triggerKillEventLocked() {
 	if killer.killEvent.triggered {
 		return
 	}
@@ -96,10 +94,7 @@ func (killer *SQLKiller) triggerKillEvent() {
 	killer.killEvent.triggered = true
 }
 
-func (killer *SQLKiller) resetKillEvent() {
-	killer.killEvent.Lock()
-	defer killer.killEvent.Unlock()
-
+func (killer *SQLKiller) resetKillEventLocked() {
 	if !killer.killEvent.triggered && killer.killEvent.ch != nil {
 		close(killer.killEvent.ch)
 	}
@@ -110,27 +105,50 @@ func (killer *SQLKiller) resetKillEvent() {
 
 // SendKillSignalWithKillEventReason sets the reason for the kill event and sends a kill signal.
 func (killer *SQLKiller) SendKillSignalWithKillEventReason(killSignal killSignal, desc string) {
-	{
-		killer.killEvent.Lock()
-		killer.killEvent.desc = desc
-		killer.killEvent.Unlock()
+	killer.killEvent.Lock()
+	killer.killEvent.desc = desc
+	signalSent, eventDesc := killer.sendKillSignalLocked(killSignal)
+	killer.triggerKillEventLocked()
+	killer.killEvent.Unlock()
+
+	if signalSent {
+		killer.logKillSignal(killSignal, eventDesc)
 	}
-	killer.sendKillSignal(killSignal)
-	killer.triggerKillEvent()
 }
 
 func (killer *SQLKiller) sendKillSignal(reason killSignal) {
-	if atomic.CompareAndSwapUint32(&killer.Signal, 0, reason) {
-		status := atomic.LoadUint32(&killer.Signal)
-		err := killer.getKillError(status)
-		logutil.BgLogger().Warn("kill initiated", zap.Uint64("connection ID", killer.ConnID.Load()), zap.String("reason", err.Error()))
+	killer.killEvent.Lock()
+	signalSent, eventDesc := killer.sendKillSignalLocked(reason)
+	killer.killEvent.Unlock()
+
+	if signalSent {
+		killer.logKillSignal(reason, eventDesc)
 	}
+}
+
+func (killer *SQLKiller) sendKillSignalLocked(reason killSignal) (bool, string) {
+	if atomic.CompareAndSwapUint32(&killer.Signal, 0, reason) {
+		return true, killer.killEvent.desc
+	}
+	return false, ""
+}
+
+func (killer *SQLKiller) logKillSignal(reason killSignal, desc string) {
+	err := killer.getKillError(reason, desc)
+	logutil.BgLogger().Warn("kill initiated", zap.Uint64("connection ID", killer.ConnID.Load()), zap.String("reason", err.Error()))
 }
 
 // SendKillSignal sends a kill signal to the query.
 func (killer *SQLKiller) SendKillSignal(reason killSignal) {
-	killer.sendKillSignal(reason)
-	killer.triggerKillEvent()
+	killer.killEvent.Lock()
+	signalSent, eventDesc := killer.sendKillSignalLocked(reason)
+	killer.triggerKillEventLocked()
+	killer.killEvent.Unlock()
+
+	if signalSent {
+		failpoint.InjectCall("beforeLogKillSignal")
+		killer.logKillSignal(reason, eventDesc)
+	}
 }
 
 // GetKillSignal gets the kill signal.
@@ -138,17 +156,8 @@ func (killer *SQLKiller) GetKillSignal() killSignal {
 	return atomic.LoadUint32(&killer.Signal)
 }
 
-func (killer *SQLKiller) getKillEventReason() (res string) {
-	killer.killEvent.Lock()
-	//
-	res = killer.killEvent.desc
-	//
-	killer.killEvent.Unlock()
-	return res
-}
-
 // getKillError gets the error according to the kill signal.
-func (killer *SQLKiller) getKillError(status killSignal) error {
+func (killer *SQLKiller) getKillError(status killSignal, desc string) error {
 	switch status {
 	case QueryInterrupted:
 		return exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
@@ -161,7 +170,7 @@ func (killer *SQLKiller) getKillError(status killSignal) error {
 	case RunawayQueryExceeded:
 		return exeerrors.ErrResourceGroupQueryRunawayInterrupted.FastGenByArgs("runaway exceed tidb side")
 	case KilledByMemArbitrator:
-		return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(killer.getKillEventReason(), killer.ConnID.Load())
+		return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(desc, killer.ConnID.Load())
 	default:
 	}
 	return nil
@@ -199,7 +208,9 @@ func (killer *SQLKiller) HandleSignal() error {
 			if rand.Float64() > (float64)(p)/1000 {
 				if killer.ConnID.Load() != 0 {
 					targetStatus := rand.Int31n(5)
+					killer.killEvent.Lock()
 					atomic.StoreUint32(&killer.Signal, uint32(targetStatus))
+					killer.killEvent.Unlock()
 				}
 			}
 		}
@@ -226,7 +237,14 @@ func (killer *SQLKiller) HandleSignal() error {
 	}
 
 	status := atomic.LoadUint32(&killer.Signal)
-	err := killer.getKillError(status)
+	var desc string
+	if status == KilledByMemArbitrator {
+		killer.killEvent.Lock()
+		status = atomic.LoadUint32(&killer.Signal)
+		desc = killer.killEvent.desc
+		killer.killEvent.Unlock()
+	}
+	err := killer.getKillError(status, desc)
 	if status == ServerMemoryExceeded {
 		logutil.BgLogger().Warn("global memory controller, NeedKill signal is received successfully",
 			zap.Uint64("conn", killer.ConnID.Load()))
@@ -236,11 +254,16 @@ func (killer *SQLKiller) HandleSignal() error {
 
 // Reset resets the SqlKiller.
 func (killer *SQLKiller) Reset() {
-	if atomic.LoadUint32(&killer.Signal) != 0 {
+	killer.killEvent.Lock()
+	status := atomic.SwapUint32(&killer.Signal, UnspecifiedKillSignal)
+	// Keep this hook immediately after the atomic clear. If Reset is ever split
+	// into separate observation and clear operations, place it between them.
+	failpoint.InjectCall("afterResetKillSignalSwap")
+	killer.resetKillEventLocked()
+	killer.killEvent.Unlock()
+
+	if status != UnspecifiedKillSignal {
 		logutil.BgLogger().Warn("kill finished", zap.Uint64("conn", killer.ConnID.Load()))
 	}
-
-	atomic.StoreUint32(&killer.Signal, 0)
-	killer.resetKillEvent()
 	killer.lastCheckTime.Store(nil)
 }
