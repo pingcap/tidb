@@ -34,6 +34,7 @@ var (
 	ErrTruncatedWrongValue         = dbterror.ClassVariable.NewStd(mysql.ErrTruncatedWrongValue)
 	ErrMaxPreparedStmtCountReached = dbterror.ClassVariable.NewStd(mysql.ErrMaxPreparedStmtCountReached)
 	ErrUnsupportedIsolationLevel   = dbterror.ClassVariable.NewStd(mysql.ErrUnsupportedIsolationLevel)
+	ErrClientDoesNotSupport        = dbterror.ClassVariable.NewStd(mysql.ErrClientDoesNotSupport)
 	errUnknownSystemVariable       = dbterror.ClassVariable.NewStd(mysql.ErrUnknownSystemVariable)
 	errGlobalVariable              = dbterror.ClassVariable.NewStd(mysql.ErrGlobalVariable)
 	errLocalVariable               = dbterror.ClassVariable.NewStd(mysql.ErrLocalVariable)

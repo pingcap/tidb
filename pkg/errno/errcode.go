@@ -899,6 +899,7 @@ const (
 	ErrCTEMaxRecursionDepth                                  = 3636
 	ErrNotHintUpdatable                                      = 3637
 	ErrExistsInHistoryPassword                               = 3638
+	ErrClientDoesNotSupport                                  = 3640
 	ErrInvalidDefaultUTF8MB4Collation                        = 3721
 	ErrForeignKeyCannotDropParent                            = 3730
 	ErrForeignKeyCannotUseVirtualColumn                      = 3733
