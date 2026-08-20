@@ -192,12 +192,12 @@ fn unanalyzed_string_matches_take_the_default_selectivities() {
     // where it takes `GetStrMatchDefaultSelectivity()` = 0.1. If that default
     // were the general 0.8 factor this would print 8000.00.
     assert_eq!(
-        est_rows(&[], &[ConditionKind::StringMatch]),
+        est_rows(&[], &[ConditionKind::StringMatch(None)]),
         "1000.00",
         "c like '%a%'"
     );
     assert_eq!(
-        est_rows(&[], &[ConditionKind::NegatedStringMatch]),
+        est_rows(&[], &[ConditionKind::NegatedStringMatch(None)]),
         "9000.00",
         "c not like '%a%'"
     );
@@ -208,7 +208,10 @@ fn unanalyzed_string_matches_take_the_default_selectivities() {
     assert_eq!(
         est_rows(
             &[],
-            &[ConditionKind::StringMatch, ConditionKind::StringMatch]
+            &[
+                ConditionKind::StringMatch(None),
+                ConditionKind::StringMatch(None)
+            ]
         ),
         "1000.00",
         "c like '%a%' and c like '%b%'"
@@ -216,7 +219,7 @@ fn unanalyzed_string_matches_take_the_default_selectivities() {
 
     // An equality node plus one leftover string match: 0.001 * 0.1.
     assert_eq!(
-        est_rows(&[eq], &[ConditionKind::StringMatch]),
+        est_rows(&[eq], &[ConditionKind::StringMatch(None)]),
         "1.00",
         "a = 1 and c like '%a%'"
     );

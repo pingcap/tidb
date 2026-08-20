@@ -81,10 +81,14 @@
 //! tree, which this tier has no equivalent of; a `StmtContext` field set once
 //! at the statement boundary is what would close it.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 use tidb_ast::{Expr, Join, JoinNode, QueryStmt, SelectField, SelectStmt};
 use tidb_datatype::FieldType;
+
+use super::from::PlanColumn;
 
 /// What an enclosing `SELECT` hands down to every relation of its `FROM`:
 /// Go's two pre-physical rules, `rule_predicate_push_down` and
@@ -124,6 +128,25 @@ pub(crate) struct FromDemand<'a> {
     /// Render optimizer-created joins with the base-column identities Go
     /// preserves after projection elimination, rather than with AST aliases.
     pub(crate) physical_source_names: bool,
+    /// Typed `ScalarSubQueryExpr` outputs registered by plain EXPLAIN. They are
+    /// logical expression inputs, not columns produced by a FROM executor, but
+    /// leaf and join predicate rewrites must be able to resolve them.
+    pub(crate) plan_columns: &'a [PlanColumn],
+    /// A composite index-join rebuild asks one base-table leaf below this
+    /// `FROM` to consume probes published by its enclosing join.
+    pub(crate) runtime_lookup: Option<&'a RuntimeLookupDemand>,
+}
+
+/// Runtime lookup metadata propagated through a composite inner subtree.
+pub(crate) struct RuntimeLookupDemand {
+    pub(crate) table_id: i64,
+    pub(crate) object: crate::access_path::LookupObject,
+    pub(crate) probe_parts: Vec<crate::access_path::LookupProbePart>,
+    pub(crate) probes: Rc<RefCell<crate::access_path::SharedIndexJoinProbes>>,
+    pub(crate) filter_exprs: Vec<tidb_expr::expression::Expression>,
+    /// The leaf receipt from Go's re-planned inner task. Runtime lookup
+    /// construction needs the same candidate for cost-only child rebuilds.
+    pub(crate) probe_candidate: tidb_planner::candidate_cost::Candidate,
 }
 
 impl FromDemand<'_> {
@@ -137,6 +160,8 @@ impl FromDemand<'_> {
             rows: None,
             join_hints: None,
             physical_source_names: false,
+            plan_columns: &[],
+            runtime_lookup: None,
         }
     }
 }
@@ -246,6 +271,22 @@ impl LeafDemand {
             .collect()
     }
 
+    /// The row offsets this demand keeps from an already-built multi-table
+    /// scope. Go can prune the preserved child of a semi join before physical
+    /// search; Rust reaches that join with the child executor already built,
+    /// so the same name-level demand is applied to its concatenated schema.
+    pub(crate) fn needed_scope(&self, scope: &crate::driver::FromScope) -> Vec<usize> {
+        scope
+            .tables
+            .iter()
+            .flat_map(|table| {
+                self.needed(&table.name, &table.columns)
+                    .into_iter()
+                    .map(|offset| table.offset + offset)
+            })
+            .collect()
+    }
+
     /// Go `StmtCtx.GetIndexForce()`: see [`LeafDemand::forces_index`].
     pub(crate) const fn statement_forces_an_index(&self) -> bool {
         self.forces_index
@@ -335,10 +376,45 @@ impl LeafDemand {
 
     /// Adds every column reference of one `SELECT`, its `FROM` included.
     fn add_select(&mut self, select: &SelectStmt) {
+        self.add_select_with_scope(select, false);
+    }
+
+    /// Adds one SELECT while keeping wildcards in a nested query local to its
+    /// own FROM scope. A bare `*` in an EXISTS subquery names that subquery's
+    /// leaves, not every leaf of the outer statement; treating it as the
+    /// statement-wide fallback prevents Go-shaped pruning of the outer scan.
+    fn add_select_with_scope(&mut self, select: &SelectStmt, nested: bool) {
         if self.unsupported_select_shape(select) {
             return;
         }
-        self.add_select_output(select);
+        if nested {
+            for field in select.fields.fields() {
+                match field {
+                    SelectField::Wildcard(path) if path.is_empty() => {
+                        self.add_local_wildcards(select)
+                    }
+                    SelectField::Wildcard(path) => self.add_wildcard(path),
+                    SelectField::Expr { expr, alias: _ } => self.add_expr(expr),
+                }
+            }
+            if let Some(having) = &select.having {
+                self.add_expr(having);
+            }
+            for item in &select.group_by {
+                self.add_expr(&item.expr);
+            }
+            for item in &select.order_by {
+                self.add_expr(&item.expr);
+            }
+            if let Some(limit) = &select.limit {
+                self.add_expr(&limit.count);
+                if let Some(offset) = &limit.offset {
+                    self.add_expr(offset);
+                }
+            }
+        } else {
+            self.add_select_output(select);
+        }
         if let Some(join) = &select.from {
             self.add_join(join);
         }
@@ -381,10 +457,39 @@ impl LeafDemand {
     /// column of THIS statement's leaves.
     fn add_query(&mut self, query: &QueryStmt) {
         match query {
-            QueryStmt::Select(select) => self.add_select(select),
+            QueryStmt::Select(select) => self.add_select_with_scope(select, true),
             // A set operation's terms are `SelectStmt`s reached through a
             // shape this walk does not model; the fallback names everything.
             QueryStmt::SetOpr(_) => self.all = true,
+        }
+    }
+
+    /// Records the visible table names of a nested query for its unqualified
+    /// wildcard. Derived relations are handled by their own query walk; the
+    /// alias itself is not a base-table leaf this demand can narrow.
+    fn add_local_wildcards(&mut self, select: &SelectStmt) {
+        fn visit(demand: &mut LeafDemand, join: &Join) {
+            let add_node = |demand: &mut LeafDemand, node: &JoinNode| match node {
+                JoinNode::Table(table) => {
+                    let visible = table
+                        .alias
+                        .as_deref()
+                        .or_else(|| table.name.last().map(String::as_str))
+                        .unwrap_or_default();
+                    if !visible.is_empty() {
+                        demand.star_tables.insert(visible.to_ascii_lowercase());
+                    }
+                }
+                JoinNode::Join(join) => visit(demand, join),
+                JoinNode::Derived { subquery, .. } => demand.add_query(subquery),
+            };
+            add_node(demand, &join.left);
+            if let Some(right) = &join.right {
+                add_node(demand, right);
+            }
+        }
+        if let Some(join) = &select.from {
+            visit(self, join);
         }
     }
 
@@ -709,6 +814,28 @@ mod tests {
             ),
             vec![2],
             "the other side of `t1.*` is still charged only its ON column"
+        );
+    }
+
+    /// A wildcard in an EXISTS subquery belongs to that subquery's leaf. It
+    /// must not widen the correlated outer scan to every column.
+    #[test]
+    fn nested_wildcards_do_not_widen_the_outer_leaf() {
+        assert_eq!(
+            needed_of(
+                "select l1.a from lineitem l1 where exists (select * from lineitem l2 where l2.a = l1.a)",
+                "l1",
+                &["a", "b", "c"],
+            ),
+            vec![0],
+        );
+        assert_eq!(
+            needed_of(
+                "select l1.a from lineitem l1 where exists (select * from lineitem l2 where l2.a = l1.a)",
+                "l2",
+                &["a", "b", "c"],
+            ),
+            vec![0, 1, 2],
         );
     }
 

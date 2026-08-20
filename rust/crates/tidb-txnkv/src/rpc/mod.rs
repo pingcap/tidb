@@ -17,9 +17,9 @@ mod unary;
 
 pub use async_completion::{
     completion_pair, AsyncRequestDispatcher, AsyncRequestPublication, CompletionCallback,
-    CompletionCancellation, CompletionCancellationReason, CompletionError, CompletionPull,
-    CompletionRequest, CompletionRunLoop, CompletionRunLoopState, CompletionRunOutcome,
-    CompletionSpawner, PendingRequest,
+    CompletionCancellation, CompletionCancellationReason, CompletionError, CompletionNotifier,
+    CompletionPull, CompletionRequest, CompletionRunLoop, CompletionRunLoopState,
+    CompletionRunOutcome, CompletionSpawner, PendingRequest,
 };
 pub use batch::BatchCommandTag;
 pub use error::{

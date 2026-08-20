@@ -131,6 +131,19 @@ fn common_handle_table(rows: &[(i64, i64)]) -> KvTable {
     table
 }
 
+/// The DDL representation of a clustered common handle: the PRIMARY is the
+/// table path itself and is therefore absent from the secondary-index list.
+fn ddl_common_handle_table(rows: &[(i64, i64)]) -> KvTable {
+    let mut table = KvTable::new(95, vec![column("a", 1), column("b", 2)]);
+    table.set_common_handle_offsets(vec![0, 1]);
+    for (a, b) in rows {
+        table
+            .insert_row(&[Datum::Int(*a), Datum::Int(*b)], &tidb_expr::NoColumns)
+            .unwrap();
+    }
+    table
+}
+
 fn outer_source(rows: &[Vec<Datum>]) -> Box<dyn Executor> {
     Box::new(MemTableSourceExec::new(
         ExecutorMeta::new(
@@ -240,7 +253,7 @@ fn both_ways(
     looked_up.set_index_lookup_plan(IndexLookupPlan {
         lookup_is_left: false,
         probe_keys,
-        source: lookup_source(table, object, inner_width),
+        source: crate::join::IndexLookupSource::Leaf(lookup_source(table, object, inner_width)),
         aggregation: None,
         aggregation_stream_ordered: false,
         outer_not_null: Vec::new(),
@@ -404,6 +417,25 @@ fn a_common_handle_prefix_probe_reads_every_matching_record() {
     );
 }
 
+/// Go's DDL does not expose a clustered PRIMARY as a secondary index, but its
+/// table path still builds common-handle record ranges from leading probes.
+#[test]
+fn a_ddl_common_handle_prefix_probe_reads_every_matching_record() {
+    let table = ddl_common_handle_table(&[(1, 1), (1, 2), (1, 3), (2, 1)]);
+    let mut source = lookup_source(&table, LookupObject::CommonHandle, 2);
+    source.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
+    source.set_probes(vec![vec![Datum::Int(1)]]);
+
+    assert_eq!(
+        drain(&mut source, &[long(), long()]),
+        vec![
+            vec![Datum::Int(1), Datum::Int(1)],
+            vec![Datum::Int(1), Datum::Int(2)],
+            vec![Datum::Int(1), Datum::Int(3)],
+        ]
+    );
+}
+
 /// The batch boundary is a PERFORMANCE decision, not an answer: the same
 /// join over 1 outer row, over exactly one batch's worth, and over several
 /// batches produces the same rows in the same order.
@@ -474,7 +506,7 @@ fn one_key_repeated_across_a_batch_is_probed_once() {
     exec.set_index_lookup_plan(IndexLookupPlan {
         lookup_is_left: false,
         probe_keys: vec![0],
-        source,
+        source: crate::join::IndexLookupSource::Leaf(source),
         aggregation: None,
         aggregation_stream_ordered: false,
         outer_not_null: Vec::new(),
@@ -532,6 +564,7 @@ mod decision {
             aggregation_info: None,
             aggregation_final_info: None,
             aggregation_partial_info: None,
+            composite: false,
         }
     }
 
@@ -562,6 +595,7 @@ mod decision {
             aggregation_info: None,
             aggregation_final_info: None,
             aggregation_partial_info: None,
+            composite: false,
         }
     }
 

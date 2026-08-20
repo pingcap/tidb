@@ -555,6 +555,7 @@ fn shared_proxy_store_not_match_refreshes_only_affected_logical_target() {
                 Ok(StoreLiveness::Unreachable),
             ])),
             batch_errors: RefCell::new(VecDeque::new()),
+            batch_ready_immediately: RefCell::new(VecDeque::new()),
             batch_completion_gate: None,
         },
         RegionCache::new(ScriptedLoader {

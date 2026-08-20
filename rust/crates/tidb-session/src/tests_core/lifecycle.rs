@@ -177,6 +177,24 @@ fn optimizer_cost_variables_reach_the_statement_snapshot() {
     assert_eq!(env.cost_factors.sort, 3.25);
 }
 
+#[test]
+fn advanced_join_reorder_switch_reaches_every_statement_context() {
+    let mut session = Session::new();
+    assert!(session.statement_context(false).advanced_join_reorder());
+    assert!(session.statement_context(true).advanced_join_reorder());
+
+    session
+        .run("SET @@tidb_opt_enable_advanced_join_reorder = OFF")
+        .unwrap();
+    assert!(!session.statement_context(false).advanced_join_reorder());
+    assert!(!session.statement_context(true).advanced_join_reorder());
+
+    session
+        .run("SET @@tidb_opt_enable_advanced_join_reorder = ON")
+        .unwrap();
+    assert!(session.statement_context(false).advanced_join_reorder());
+}
+
 /// A whole session lifecycle from SQL strings alone: DDL, writes, reads.
 #[test]
 fn session_runs_a_sql_lifecycle() {

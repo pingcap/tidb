@@ -29,7 +29,7 @@ fn owner(name: &str, next: &str) -> &'static str {
 fn batch_success_settles_through_the_existing_response_owner() {
     let dispatch = owner("fn dispatch_attempt(", "fn complete_batch_attempt(");
     assert_eq!(dispatch.matches("begin(").count(), 1);
-    assert!(dispatch.contains("self.pending_batch = Some(PendingBatchAttempt"));
+    assert!(dispatch.contains("self.pending_batches.insert("));
     assert!(!dispatch.contains("send_retry_sync"));
 
     let poll = owner("fn complete_batch_attempt(", "fn settle_dispatch(");

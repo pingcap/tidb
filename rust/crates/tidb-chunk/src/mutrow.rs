@@ -382,21 +382,16 @@ fn make_mut_row_bytes_column(bytes: &[u8]) -> Column {
 
 /// The 40-byte `MyDecimal` behind a `Datum::Decimal`.
 ///
-/// The datum carries the digit-string `Decimal`, so it reaches the raw cell
-/// through its canonical text -- the same route [`crate::chunk::Chunk::append_datum`]
-/// takes, and the same text `Row::get_datum` reads back out.
+/// The datum carries the value-layer `Decimal`, so it is converted directly to
+/// the raw layout -- the same route [`crate::chunk::Chunk::append_datum`] takes.
 ///
 /// # Panics
 /// Panics on a value too large for a `MyDecimal` buffer, rather than
 /// truncating it silently into the cell.
 fn my_decimal_of(decimal: &tidb_datatype::Decimal) -> MyDecimal {
-    let text = decimal.to_string();
-    let (value, error) = MyDecimal::from_string(text.as_bytes());
-    assert!(
-        error.is_none(),
-        "MutRow: decimal {text} does not fit a MyDecimal cell ({error:?})"
-    );
-    value
+    decimal.to_chunk_my_decimal().unwrap_or_else(|error| {
+        panic!("MutRow: decimal {decimal} does not fit a MyDecimal cell ({error:?})")
+    })
 }
 
 /// Go `makeMutRowColumn`: a one-row column holding `value`.

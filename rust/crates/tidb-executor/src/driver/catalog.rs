@@ -711,6 +711,38 @@ impl Catalog {
         self.statistics.get(&table_id)
     }
 
+    /// Makes physical-access statistics queued by the preceding statement
+    /// resident before the next statement takes its logical stats snapshot.
+    pub fn advance_statistics_loads(&self) {
+        for statistics in self.statistics.values() {
+            statistics.advance_statistics_loads();
+        }
+    }
+
+    /// Captures the shared statistics residency before a speculative planning
+    /// branch. The metadata and histogram payloads remain shared; only the
+    /// mutable Go `StatsHandle`-like load state is restored between branches.
+    pub(crate) fn statistics_load_checkpoint(
+        &self,
+    ) -> Vec<(i64, crate::access_cost::StatsLoadCheckpoint)> {
+        self.statistics
+            .iter()
+            .map(|(table_id, statistics)| (*table_id, statistics.load_checkpoint()))
+            .collect()
+    }
+
+    /// Restores a checkpoint captured by [`Self::statistics_load_checkpoint`].
+    pub(crate) fn restore_statistics_load_checkpoint(
+        &self,
+        checkpoint: &[(i64, crate::access_cost::StatsLoadCheckpoint)],
+    ) {
+        for (table_id, state) in checkpoint {
+            if let Some(statistics) = self.statistics.get(table_id) {
+                statistics.restore_load_checkpoint(state);
+            }
+        }
+    }
+
     /// A mutable table of `database`, for the schema-changing statements.
     pub fn table_mut_in(&mut self, database: &str, name: &str) -> Option<&mut TableEntry> {
         self.get_mut_in(database, name)

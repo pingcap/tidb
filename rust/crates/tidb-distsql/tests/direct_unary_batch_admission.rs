@@ -34,6 +34,7 @@ fn publication_observer_runs_before_pending_completion_and_resets_per_query() {
             events: Rc::new(RefCell::new(Vec::new())),
             liveness: RefCell::new(VecDeque::new()),
             batch_errors: RefCell::new(VecDeque::new()),
+            batch_ready_immediately: RefCell::new(VecDeque::new()),
             batch_completion_gate: Some(Rc::clone(&completion_gate)),
         },
         RegionCache::new(ScriptedLoader {
@@ -102,6 +103,7 @@ fn local_batch_admission_busy_falls_back_without_route_failure_feedback() {
             batch_errors: RefCell::new(VecDeque::from([DirectUnaryClientError::AdmissionBusy {
                 address: "tikv-1:20160".to_owned(),
             }])),
+            batch_ready_immediately: RefCell::new(VecDeque::new()),
             batch_completion_gate: None,
         },
         RegionCache::new(ScriptedLoader {

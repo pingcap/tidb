@@ -37,6 +37,8 @@
 //! `ToBin`/`FromBin` encoding, and hashing. (`digitsToWords` uses Go's plain formula; Go's `div9`
 //! lookup table is a performance twin with identical results.)
 
+use smallvec::SmallVec;
+
 /// Go `maxWordBufLen`: a `MyDecimal` holds 9 words.
 pub const MAX_WORD_BUF_LEN: usize = 9;
 /// Go `digitsPerWord`: one word holds 9 decimal digits.
@@ -355,6 +357,83 @@ fn trim_ascii_space(str: &[u8]) -> &[u8] {
 }
 
 impl MyDecimal {
+    /// Builds the Go `MyDecimal` layout from an already normalized decimal
+    /// coefficient. This is the allocation-free counterpart of parsing the
+    /// canonical text form: `coefficient` is an unsigned digit string whose
+    /// last `storage_scale` digits are fractional, and the word buffer stores
+    /// the integer and fraction groups in Go's base-1e9 order.
+    pub(crate) fn from_decimal_parts(
+        negative: bool,
+        coefficient: &str,
+        storage_scale: u32,
+        result_frac: u32,
+        minimum_integer_digit: bool,
+    ) -> Result<MyDecimal, DecimalError> {
+        let bytes = coefficient.as_bytes();
+        if bytes.is_empty() || bytes.iter().any(|byte| !byte.is_ascii_digit()) {
+            return Err(DecimalError::BadNumber);
+        }
+        let storage_scale = usize::try_from(storage_scale).map_err(|_| DecimalError::Overflow)?;
+        let result_frac = usize::try_from(result_frac).map_err(|_| DecimalError::Overflow)?;
+        if storage_scale > bytes.len() || result_frac > storage_scale {
+            return Err(DecimalError::BadNumber);
+        }
+
+        let integer_len = bytes.len() - storage_scale;
+        let stored_integer_len = if minimum_integer_digit {
+            integer_len.max(1)
+        } else {
+            integer_len
+        };
+        let words_int = digits_to_words(stored_integer_len as i32) as usize;
+        let words_frac = digits_to_words(storage_scale as i32) as usize;
+        if words_int + words_frac > MAX_WORD_BUF_LEN {
+            return Err(DecimalError::Overflow);
+        }
+
+        let mut value = MyDecimal {
+            digits_int: stored_integer_len as i8,
+            digits_frac: storage_scale as i8,
+            result_frac: result_frac as i8,
+            negative: negative && bytes.iter().any(|byte| *byte != b'0'),
+            word_buf: [0; MAX_WORD_BUF_LEN],
+        };
+
+        // Integer words are big-endian and the leading word may contain fewer
+        // than nine digits. This is the same grouping used by FromString.
+        let mut word_idx = usize::from(minimum_integer_digit && integer_len == 0);
+        let first_digits = integer_len % DIGITS_PER_WORD as usize;
+        let mut integer_offset = 0usize;
+        if first_digits > 0 {
+            value.word_buf[word_idx] = parse_decimal_group(&bytes[..first_digits]);
+            word_idx += 1;
+            integer_offset = first_digits;
+        }
+        while integer_offset < integer_len {
+            value.word_buf[word_idx] = parse_decimal_group(
+                &bytes[integer_offset..integer_offset + DIGITS_PER_WORD as usize],
+            );
+            word_idx += 1;
+            integer_offset += DIGITS_PER_WORD as usize;
+        }
+
+        // Fraction words are left-aligned within each base-1e9 group; the
+        // final partial group is padded with zeroes on the right.
+        let mut fraction_offset = integer_len;
+        while fraction_offset < bytes.len() {
+            let remaining = bytes.len() - fraction_offset;
+            let take = remaining.min(DIGITS_PER_WORD as usize);
+            let mut word = parse_decimal_group(&bytes[fraction_offset..fraction_offset + take]);
+            if take < DIGITS_PER_WORD as usize {
+                word *= POWERS10[DIGITS_PER_WORD as usize - take];
+            }
+            value.word_buf[word_idx] = word;
+            word_idx += 1;
+            fraction_offset += take;
+        }
+        Ok(value)
+    }
+
     /// Go `digitBounds`: `(start, end)` indexes of the first non-zero decimal
     /// digit and of the position just after the last one.
     fn digit_bounds(&self) -> (i32, i32) {
@@ -1233,6 +1312,7 @@ impl MyDecimal {
         self.result_frac
     }
 
+    #[cfg(test)]
     pub(crate) fn set_result_frac(&mut self, result_frac: i8) {
         debug_assert!(result_frac >= 0 && result_frac <= self.digits_frac);
         self.result_frac = result_frac;
@@ -1342,6 +1422,80 @@ impl MyDecimal {
         str
     }
 
+    /// Returns the value-layer pieces without first rendering a temporary
+    /// decimal string. This is the hot `chunk.Row::datum_with_buffer` path:
+    /// Go already has the base-1e9 words, so rebuilding a string only to parse
+    /// it back loses the representation's main advantage.
+    pub(crate) fn to_decimal_parts(&self) -> (bool, SmallVec<[u8; 24]>, u32, u32) {
+        let (word_start_idx, digits_int) = self.remove_leading_zeros();
+        let integer_len = digits_int.max(1) as usize;
+        let fraction_len = i32::from(self.digits_frac).max(0) as usize;
+        let mut coefficient = SmallVec::<[u8; 24]>::new();
+        coefficient.resize(integer_len + fraction_len, b'0');
+
+        if digits_int > 0 {
+            let mut pos = integer_len;
+            let mut word_idx = word_start_idx + digits_to_words(digits_int) as usize;
+            let mut remaining = digits_int;
+            while remaining > 0 {
+                word_idx -= 1;
+                let mut word = self.word_buf[word_idx];
+                let take = remaining.min(DIGITS_PER_WORD);
+                for _ in 0..take {
+                    let next = word / 10;
+                    pos -= 1;
+                    coefficient[pos] = b'0' + (word - next * 10) as u8;
+                    word = next;
+                }
+                remaining -= DIGITS_PER_WORD;
+            }
+        }
+
+        if fraction_len > 0 {
+            let mut offset = integer_len;
+            let mut word_idx = word_start_idx + digits_to_words(digits_int) as usize;
+            let mut remaining = fraction_len as i32;
+            while remaining > 0 {
+                let mut word = self.word_buf[word_idx];
+                word_idx += 1;
+                let take = remaining.min(DIGITS_PER_WORD);
+                for _ in 0..take {
+                    let next = word / DIG_MASK;
+                    coefficient[offset] = b'0' + next as u8;
+                    offset += 1;
+                    word = (word - next * DIG_MASK) * 10;
+                }
+                remaining -= DIGITS_PER_WORD;
+            }
+        }
+
+        (
+            self.negative,
+            coefficient,
+            fraction_len as u32,
+            i32::from(self.result_frac).max(0) as u32,
+        )
+    }
+
+    /// Returns the signed base-10 coefficient and fractional scale when the
+    /// value fits in an i128. This is used by fixed-scale aggregate folds to
+    /// avoid constructing a value-layer Decimal for every input row.
+    pub fn to_i128_scaled(&self) -> Option<(i128, u32)> {
+        let (negative, digits, storage_scale, _) = self.to_decimal_parts();
+        let mut magnitude = 0_i128;
+        for digit in digits {
+            magnitude = magnitude
+                .checked_mul(10)?
+                .checked_add(i128::from(digit - b'0'))?;
+        }
+        let signed = if negative {
+            magnitude.checked_neg()?
+        } else {
+            magnitude
+        };
+        Some((signed, storage_scale))
+    }
+
     /// The exact 40 bytes a Go chunk `NewDecimal` cell stores (Go copies the
     /// struct through `unsafe.Pointer`; this assembles the identical bytes
     /// field by field -- same layout, no `unsafe`).
@@ -1396,6 +1550,13 @@ impl MyDecimal {
         }
         Ok(d)
     }
+}
+
+/// Parses one non-empty decimal group with at most nine digits.
+fn parse_decimal_group(group: &[u8]) -> i32 {
+    group
+        .iter()
+        .fold(0i32, |value, byte| value * 10 + i32::from(byte - b'0'))
 }
 
 #[cfg(test)]

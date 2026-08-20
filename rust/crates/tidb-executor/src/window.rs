@@ -1803,7 +1803,7 @@ fn evaluate_partition(
                     ),
                     _ => (Some(arg_at(0, at)), extras(at)),
                 });
-                aggregate_rows(kind, rows, div_precision_increment, collation)
+                aggregate_rows(kind, rows, div_precision_increment, collation, result_type)
                     .map_err(DriverError::Exec)?
             }
             WindowKind::Value { pick, .. } => {

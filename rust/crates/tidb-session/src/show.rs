@@ -360,6 +360,14 @@ fn show_create_table_text(
     }
 
     for index in table.indexes() {
+        // A cluster-loaded common-handle table retains Go's PRIMARY
+        // `IndexInfo` for range building and statistics. It is still the
+        // clustered key emitted above, not a second non-clustered index.
+        if index.name.eq_ignore_ascii_case("PRIMARY")
+            && index.column_offsets == table.common_handle_offsets()
+        {
+            continue;
+        }
         let columns = index
             .column_offsets
             .iter()

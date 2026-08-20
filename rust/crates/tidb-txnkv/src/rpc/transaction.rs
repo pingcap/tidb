@@ -21,15 +21,16 @@ use std::marker::PhantomData;
 
 use prost::Message;
 use tidb_proto::{
-    KvrpcBatchRollbackRequest, KvrpcBatchRollbackResponse, KvrpcCommitRequest, KvrpcCommitResponse,
-    KvrpcContext, KvrpcGetRequest, KvrpcGetResponse, KvrpcPessimisticLockRequest,
-    KvrpcPessimisticLockResponse, KvrpcPessimisticRollbackRequest,
-    KvrpcPessimisticRollbackResponse, KvrpcPrewriteRequest, KvrpcPrewriteResponse,
-    KvrpcScanRequest, KvrpcScanResponse, KvrpcTxnHeartBeatRequest, KvrpcTxnHeartBeatResponse,
+    KvrpcBatchGetRequest, KvrpcBatchGetResponse, KvrpcBatchRollbackRequest,
+    KvrpcBatchRollbackResponse, KvrpcCommitRequest, KvrpcCommitResponse, KvrpcContext,
+    KvrpcGetRequest, KvrpcGetResponse, KvrpcPessimisticLockRequest, KvrpcPessimisticLockResponse,
+    KvrpcPessimisticRollbackRequest, KvrpcPessimisticRollbackResponse, KvrpcPrewriteRequest,
+    KvrpcPrewriteResponse, KvrpcScanRequest, KvrpcScanResponse, KvrpcTxnHeartBeatRequest,
+    KvrpcTxnHeartBeatResponse,
 };
 
 use super::batch::{
-    batch_rollback_entry, commit_entry, get_entry, pessimistic_lock_entry,
+    batch_get_entry, batch_rollback_entry, commit_entry, get_entry, pessimistic_lock_entry,
     pessimistic_rollback_entry, prewrite_entry, scan_entry, txn_heart_beat_entry,
     BatchCommandEntry, BatchCommandTag, BatchInflightError, BatchPublicationReceipt, BatchRoute,
     OpaqueBatchCommand,
@@ -303,6 +304,19 @@ impl TonicCoprocessorClient {
         call: &UnaryCallContext,
     ) -> Result<TransactionBatchPending<KvrpcGetResponse>, DirectUnaryClientError> {
         let (entry, pending) = get_entry(request, context, forwarded_host);
+        self.publish_transaction_command(physical_address, entry, pending, call)
+    }
+
+    /// Begins one transactional BatchGet for keys in one selected region.
+    pub fn begin_transaction_batch_get(
+        &mut self,
+        physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &KvrpcBatchGetRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> Result<TransactionBatchPending<KvrpcBatchGetResponse>, DirectUnaryClientError> {
+        let (entry, pending) = batch_get_entry(request, context, forwarded_host);
         self.publish_transaction_command(physical_address, entry, pending, call)
     }
 

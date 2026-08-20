@@ -239,7 +239,6 @@ pub(crate) fn leaf_index_path(
     }
     let best = crate::access_cost::choose_access_path(paths, stats, false)?;
     let Some((index_id, ranges)) = best.index else {
-        let num_ranges = best.table_ranges.as_ref().map_or(1, Vec::len);
         let residual_filters = where_clause.map_or_else(Vec::new, |predicate| {
             crate::handle_range::build_handle_ranges(table, predicate, &ctx.session_zone())
                 .map(|built| built.residual.into_iter().cloned().collect())
@@ -253,12 +252,10 @@ pub(crate) fn leaf_index_path(
             ranges: best.table_ranges,
             estimate: best.estimate,
             residual_filters,
-            candidate: tidb_planner::candidate_cost::Candidate::Fixed {
-                rows: best.estimate.rows,
-                row_size,
-                cost: best.cost,
-                num_ranges,
-            },
+            // Keep the scan -> reader boundary intact. A parent aggregation
+            // inserts its cop stage below that reader before comparing Go's
+            // HashAgg and StreamAgg alternatives.
+            candidate: best.planner_candidate,
         });
     };
     // The order the BUILT source will deliver, which is the index walk's own

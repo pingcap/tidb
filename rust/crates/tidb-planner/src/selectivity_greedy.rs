@@ -207,10 +207,11 @@ pub enum ConditionKind {
     /// `None` -- and `Some(0.0)`, which is the source's own refusal to believe
     /// a zero -- leaves the condition uncovered for that tail.
     Disjunction(Option<f64>),
-    /// `LIKE`/`ILIKE`/`REGEXP`, which carry their own default selectivity.
-    StringMatch,
-    /// A negated string match, with its own default selectivity again.
-    NegatedStringMatch,
+    /// `LIKE`/`ILIKE`/`REGEXP`, with the caller's StatsVer2 evaluation when
+    /// available. `None` falls back to the session string-match default.
+    StringMatch(Option<f64>),
+    /// A negated string match, with the same optional StatsVer2 evaluation.
+    NegatedStringMatch(Option<f64>),
     /// Anything else, which falls back to the general selectivity factor.
     Other,
 }
@@ -224,6 +225,9 @@ pub struct SelectivityDefaults {
     pub str_match_default: f64,
     /// `GetNegateStrMatchDefaultSelectivity`.
     pub negate_str_match_default: f64,
+    /// Go enables TopN-assisted string-match estimation only when the raw
+    /// `tidb_default_string_match_selectivity` variable is zero.
+    pub eval_topn_string_match: bool,
 }
 
 impl SelectivityDefaults {
@@ -267,6 +271,7 @@ impl SelectivityDefaults {
             selectivity_factor,
             str_match_default,
             negate_str_match_default,
+            eval_topn_string_match: default_str_match_selectivity == 0.0,
         }
     }
 }
@@ -294,9 +299,10 @@ impl Default for SelectivityDefaults {
 /// caller's own recursive estimate, because the recursion needs the caller's
 /// statistics collection. One source behavior is *not* reproduced here,
 /// because it needs an expression evaluator this crate does not have: no
-/// TopN-assisted string-match estimation is attempted, so a string match falls
-/// through to its default selectivity, which is what the source itself does
-/// when that attempt declines.
+/// TopN-assisted string-match evaluation belongs to the caller because it
+/// needs both expressions and statistics. The resulting optional selectivity
+/// is consumed here only if the ordinary statistics nodes left that condition
+/// uncovered.
 #[must_use]
 pub fn combine_selectivity(
     nodes: &mut [StatsNode],
@@ -338,8 +344,13 @@ pub fn combine_selectivity(
             ConditionKind::ConstantTrue => {
                 mask &= !(1_i64 << index);
             }
-            ConditionKind::StringMatch => has_str_match = true,
-            ConditionKind::NegatedStringMatch => has_negate_str_match = true,
+            ConditionKind::StringMatch(Some(selectivity))
+            | ConditionKind::NegatedStringMatch(Some(selectivity)) => {
+                ret *= selectivity;
+                mask &= !(1_i64 << index);
+            }
+            ConditionKind::StringMatch(None) => has_str_match = true,
+            ConditionKind::NegatedStringMatch(None) => has_negate_str_match = true,
             // `selectivity.go:369-373`: a DNF the caller could estimate covers
             // itself, unless the estimate came out exactly zero.
             ConditionKind::Disjunction(Some(selectivity)) if *selectivity != 0.0 => {

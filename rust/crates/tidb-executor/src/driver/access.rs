@@ -49,6 +49,7 @@
 use super::point_get_key::point_get_value;
 use super::*;
 use crate::access_path::{IndexMergeKind, IndexMergeSourceExec};
+use crate::predicate_pushdown::ScanColumnComparison;
 use std::sync::Arc;
 
 /// What the single-table access-path decision committed.
@@ -574,8 +575,14 @@ pub(crate) fn commit_fast_path_source(
     let statistics = catalog.table_statistics(table.stats_physical_id());
     let logical_rows = Some(
         crate::access_cost::realtime_row_count(statistics.map(AsRef::as_ref))
-            * stats_selectivity(catalog, &table, scope, select.where_clause.as_ref())
-                .unwrap_or(1.0),
+            * stats_selectivity_with_default_string_match_selectivity(
+                catalog,
+                &table,
+                scope,
+                select.where_clause.as_ref(),
+                ctx.default_string_match_selectivity(),
+            )
+            .unwrap_or(1.0),
     );
     let columns = scope.column_list();
     // Go's `getPossibleAccessPaths`: the statement's own `USE`/`FORCE`/
@@ -807,6 +814,7 @@ pub(crate) fn commit_fast_path_source(
                     hints: &hints,
                     current_db,
                     ordering_index_selectivity_ratio: ctx.ordering_index_selectivity_ratio(),
+                    default_string_match_selectivity: ctx.default_string_match_selectivity(),
                 };
                 if let Some(plan) = choose_automatic_index_merge_union(select, &automatic) {
                     commit_index_merge_source(
@@ -1137,6 +1145,7 @@ struct AutomaticIndexMergeContext<'a> {
     hints: &'a crate::index_hints::AvailablePaths,
     current_db: &'a str,
     ordering_index_selectivity_ratio: f64,
+    default_string_match_selectivity: f64,
 }
 
 fn choose_automatic_index_merge_union(
@@ -1233,7 +1242,13 @@ fn choose_automatic_index_merge_union(
         input.ordering_index_selectivity_ratio,
     )?;
     let rows = crate::access_cost::realtime_row_count(stats)
-        * crate::access_cost::selectivity(where_clause, input.table, &resolver, stats);
+        * crate::access_cost::selectivity_with_default_string_match_selectivity(
+            where_clause,
+            input.table,
+            &resolver,
+            stats,
+            input.default_string_match_selectivity,
+        );
     if crate::access_cost::index_merge_cost(input.table, &needed, stats, rows, &paths)
         >= regular.cost
     {
@@ -1939,9 +1954,10 @@ pub(crate) fn prune_scan_columns(
 
 /// Offers the source the conjuncts it can apply itself, and reports both the
 /// `WHERE` that must still run above it (`None`: the source took all of it)
-/// and the built expressions the source accepted. The latter are the same
-/// values execution and EXPLAIN consume; rebuilding them would repeat
-/// build-time conversions and their warnings.
+/// and the physical Selection conditions the source accepted. Execution keeps
+/// the original built filters inside [`PushedScanFilter`]; the returned view
+/// uses the paired scan descriptions to expose Go's folded comparison
+/// constants and top-level CNF without repeating conversions or warnings.
 ///
 /// Over a single base table every source below is a real streaming scan, so
 /// each answers for itself whether it can keep the promise
@@ -1982,7 +1998,7 @@ pub(crate) fn negotiate_scan_filter(
                 ) {
                     trace.set_scan_act_rows(scanned);
                 }
-                (residual, pushed.filters().to_vec())
+                (residual, pushed.selection_conditions())
             } else {
                 (Some(predicate.clone()), Vec::new())
             }
@@ -2374,14 +2390,33 @@ pub(crate) fn stats_selectivity(
     scope: &FromScope,
     where_clause: Option<&tidb_ast::Expr>,
 ) -> Option<f64> {
+    stats_selectivity_with_default_string_match_selectivity(
+        catalog,
+        table,
+        scope,
+        where_clause,
+        0.0,
+    )
+}
+
+pub(crate) fn stats_selectivity_with_default_string_match_selectivity(
+    catalog: &Catalog,
+    table: &KvTable,
+    scope: &FromScope,
+    where_clause: Option<&tidb_ast::Expr>,
+    default_string_match_selectivity: f64,
+) -> Option<f64> {
     let predicate = where_clause?;
     let stats = catalog.table_statistics(table.stats_physical_id());
-    Some(crate::access_cost::selectivity(
-        predicate,
-        table,
-        &scope_resolver(scope),
-        stats.as_ref().map(AsRef::as_ref),
-    ))
+    Some(
+        crate::access_cost::selectivity_with_default_string_match_selectivity(
+            predicate,
+            table,
+            &scope_resolver(scope),
+            stats.as_ref().map(AsRef::as_ref),
+            default_string_match_selectivity,
+        ),
+    )
 }
 
 /// `cardinality.Selectivity` for a `SELECT`'s `WHERE` over a single base
@@ -2417,6 +2452,30 @@ pub(crate) fn select_predicate_stats_selectivity(
 ) -> Option<f64> {
     let table = single_kv_table(&select.from, catalog, current_db)?;
     stats_selectivity(catalog, &table, scope, Some(predicate))
+}
+
+/// The loaded-statistics row count for a single-table predicate.
+///
+/// A decorrelated `EXISTS`/`NOT EXISTS` is a separate logical semi join in Go;
+/// its preserved `DataSource` therefore owns only the ordinary local
+/// predicates.  Callers that still hold the original SELECT (which also
+/// contains the subquery) use this helper with the local conjuncts so the
+/// semi join does not charge its `0.8` factor twice.  `None` means the source
+/// is not one base table or statistics are unavailable.
+pub(crate) fn select_predicate_stats_rows(
+    select: &tidb_ast::SelectStmt,
+    predicate: Option<&tidb_ast::Expr>,
+    catalog: &Catalog,
+    current_db: &str,
+    scope: &FromScope,
+) -> Option<f64> {
+    let table = single_kv_table(&select.from, catalog, current_db)?;
+    let stats = catalog.table_statistics(table.table_id);
+    let realtime = crate::access_cost::realtime_row_count(stats.map(AsRef::as_ref));
+    let selectivity = predicate
+        .map(|predicate| stats_selectivity(catalog, &table, scope, Some(predicate)).unwrap_or(1.0))
+        .unwrap_or(1.0);
+    Some(realtime * selectivity)
 }
 
 /// The full-scan estimate and stats-backed selectivity a single-table write's
@@ -2720,6 +2779,16 @@ fn scan_predicate(
                     .collect::<Option<Vec<_>>>()?,
             ))
         }
+        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, ..) => {
+            let mut branches = Vec::new();
+            collect_conjuncts(conjunct, &mut branches);
+            Some(ScanPredicate::And(
+                branches
+                    .into_iter()
+                    .map(|branch| scan_predicate(branch, resolver))
+                    .collect::<Option<Vec<_>>>()?,
+            ))
+        }
         // Only `IS [NOT] NULL`. `IS TRUE`/`IS FALSE`/`IS UNKNOWN` are separate
         // Go functions with their own signatures and their own NULL handling.
         tidb_ast::Expr::Is {
@@ -2735,34 +2804,88 @@ fn scan_predicate(
             })
         }
         tidb_ast::Expr::In { expr, list, not } => {
-            let (offset, column_type) = resolve_column(expr, resolver)?;
             if list.is_empty() {
                 return None;
             }
             let mut literals = Vec::with_capacity(list.len());
             for element in list {
-                let literal = constant_value(element, &resolver.time_zone())?;
+                let (literal, literal_type) =
+                    constant_value_and_type(element, &resolver.time_zone())?;
                 // A NULL member makes `IN` UNKNOWN rather than false for a
                 // non-matching row, and `NOT IN` UNKNOWN for every row; that
                 // is not the membership test this description promises.
                 if literal == Datum::Null {
                     return None;
                 }
-                literals.push(literal);
+                literals.push((literal, literal_type));
             }
-            Some(ScanPredicate::In {
-                column_offset: offset,
-                column_type,
-                literals,
+            // Keep the existing integer-column description unchanged. Other
+            // column families continue to fail closed in the TiPB lowering.
+            if let Some((offset, column_type)) = resolve_column(expr, resolver) {
+                if column_type.eval_type() != tidb_datatype::EvalType::String {
+                    return Some(ScanPredicate::In {
+                        column_offset: offset,
+                        column_type,
+                        literals: literals.into_iter().map(|(value, _)| value).collect(),
+                        negated: *not,
+                    });
+                }
+            }
+
+            // Go `inFunctionClass.getFunction` selects `InString` from the
+            // tested expression, not from whether that expression is a bare
+            // column. Every list item is coerced to that same evaluation type.
+            let tested = scan_operand(expr, resolver)?;
+            if tested.eval_type() != tidb_datatype::EvalType::String
+                || literals.iter().any(|(value, field_type)| {
+                    field_type.eval_type() != tidb_datatype::EvalType::String
+                        || !matches!(value, Datum::String(_) | Datum::Bytes(_))
+                })
+            {
+                return None;
+            }
+            Some(ScanPredicate::ScalarIn {
+                tested,
+                literals: literals.into_iter().map(|(value, _)| value).collect(),
                 negated: *not,
             })
+        }
+        tidb_ast::Expr::Between {
+            expr,
+            low,
+            high,
+            not: false,
+        } => {
+            let (column_offset, column_type) = resolve_column(expr, resolver)?;
+            let zone = resolver.time_zone();
+            let (low, low_type) = comparison_constant(low, &column_type, &zone)?;
+            let (high, high_type) = comparison_constant(high, &column_type, &zone)?;
+            Some(ScanPredicate::And(vec![
+                ScanPredicate::Compare(ScanComparison {
+                    column_offset,
+                    column_type: column_type.clone(),
+                    literal_type: low_type,
+                    op: ScanComparisonOp::Ge,
+                    literal: low,
+                    column_on_left: true,
+                }),
+                ScanPredicate::Compare(ScanComparison {
+                    column_offset,
+                    column_type,
+                    literal_type: high_type,
+                    op: ScanComparisonOp::Le,
+                    literal: high,
+                    column_on_left: true,
+                }),
+            ]))
         }
         // A builtin call, when the push-down catalog resolves a signature TiKV
         // evaluates for it. The whole `WHERE sin(a)` conjunct is then the
         // Selection condition, evaluated for truth exactly as a `Selection`
         // above the scan would evaluate it.
-        _ => scan_comparison(conjunct, resolver)
-            .map(ScanPredicate::Compare)
+        _ => scan_column_comparison(conjunct, resolver)
+            .map(ScanPredicate::ColumnCompare)
+            .or_else(|| scan_comparison(conjunct, resolver).map(ScanPredicate::Compare))
             .or_else(|| scan_operand_call(conjunct, resolver).map(ScanPredicate::Builtin)),
     }
 }
@@ -2856,30 +2979,23 @@ fn resolve_column(
 /// coprocessor is therefore sent the negative constant, not a `UnaryMinus`
 /// node. Without this, `WHERE a > -1` describes nothing at all.
 fn constant_value(expr: &tidb_ast::Expr, zone: &tidb_datatype::SessionTimeZone) -> Option<Datum> {
-    match expr {
-        tidb_ast::Expr::Paren(inner) => constant_value(inner, zone),
-        tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Minus, inner) => {
-            match constant_value(inner, zone)? {
-                Datum::Int(value) => value.checked_neg().map(Datum::Int),
-                // Any other negated constant keeps whatever type MySQL's unary
-                // minus gives it, which is not this narrow fold's business.
-                _ => None,
-            }
-        }
-        _ => {
-            // The zone is the STATEMENT's: a fold here must agree byte for
-            // byte with the residual predicate's own fold, or a conjunct
-            // consumed into a scan key would probe a different instant than
-            // the filter it replaced would have accepted.
-            let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(
-                expr,
-                &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
-            ) else {
-                return None;
-            };
-            constant.eval().ok()
-        }
-    }
+    constant_value_and_type(expr, zone).map(|(value, _)| value)
+}
+
+/// A constant expression's value and the exact type Go's expression builder
+/// assigns it. Evaluating the rewritten tree also admits folded arithmetic and
+/// `DATE_ADD`, rather than restricting this boundary to bare literal nodes.
+fn constant_value_and_type(
+    expr: &tidb_ast::Expr,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<(Datum, FieldType)> {
+    let resolver = tidb_expr::rewriter::ZonedNoResolver::new(zone.clone());
+    let rewritten = rewrite_expr_resolved(expr, &resolver).ok()?;
+    let field_type = rewritten.static_type()?.clone();
+    let value =
+        tidb_expr::eval_expression_once(&rewritten, &tidb_expr::ZonedNoColumns(zone.clone()))
+            .ok()?;
+    Some((value, field_type))
 }
 
 /// One conjunct as a column-versus-constant comparison, when it is one.
@@ -2901,7 +3017,8 @@ fn scan_comparison(
     };
     // A second column reference on the "constant" side leaves the shape.
     let (offset, column_type, _) = resolver.resolve(column)?;
-    let literal = constant_value(value, &resolver.time_zone())?;
+    let zone = resolver.time_zone();
+    let (literal, literal_type) = comparison_constant(value, &column_type, &zone)?;
     // A NULL constant makes the comparison unknown for every row; that is a
     // whole-predicate property Go handles in the ranger, not a filter shape.
     if literal == Datum::Null {
@@ -2910,10 +3027,87 @@ fn scan_comparison(
     Some(ScanComparison {
         column_offset: u32::try_from(offset).ok()?,
         column_type,
+        literal_type,
         op,
         literal,
         column_on_left,
     })
+}
+
+/// One conjunct as a source-ordered comparison between two scan columns.
+///
+/// Go's `columnToPBExpr` sends both `ColumnRef` children when the comparison
+/// is supported by TiKV. The TiPB lowering applies the type-family gate;
+/// refusing there keeps a comparison local when the two declared types need a
+/// coercion this tier does not yet model.
+fn scan_column_comparison(
+    conjunct: &tidb_ast::Expr,
+    resolver: &impl ColumnResolver,
+) -> Option<ScanColumnComparison> {
+    let tidb_ast::Expr::Binary(op, lhs, rhs) = conjunct else {
+        return None;
+    };
+    let op = ScanComparisonOp::from_ast(*op)?;
+    let (tidb_ast::Expr::Column(left), tidb_ast::Expr::Column(right)) = (&**lhs, &**rhs) else {
+        return None;
+    };
+    let (left_offset, left_type, _) = resolver.resolve(left)?;
+    let (right_offset, right_type, _) = resolver.resolve(right)?;
+    Some(ScanColumnComparison {
+        left_offset: u32::try_from(left_offset).ok()?,
+        left_type,
+        right_offset: u32::try_from(right_offset).ok()?,
+        right_type,
+        op,
+    })
+}
+
+fn comparison_constant(
+    value: &tidb_ast::Expr,
+    column_type: &FieldType,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<(Datum, FieldType)> {
+    let (mut literal, mut literal_type) = constant_value_and_type(value, zone)?;
+    if column_type.code() == FieldTypeCode::NewDecimal
+        && literal_type.eval_type() == tidb_datatype::EvalType::Int
+    {
+        // `GetAccurateCmpType` selects ETDecimal for DECIMAL versus INT, and
+        // `WrapWithCastAsDecimal` folds a constant cast. Its final type is
+        // refined from the resulting MyDecimal's own precision and scale.
+        let decimal = match literal {
+            Datum::Int(value) => tidb_datatype::Decimal::from_int(value),
+            Datum::UInt(value) => tidb_datatype::Decimal::from_uint(value),
+            _ => return None,
+        };
+        let (precision, scale) = decimal.precision_and_frac();
+        literal_type = FieldType::new(FieldTypeCode::NewDecimal)
+            .with_flags(literal_type.flags())
+            .with_flen(i64::from(precision))
+            .with_decimal(i64::from(scale));
+        literal = Datum::Decimal(decimal);
+    }
+    if matches!(
+        column_type.code(),
+        FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp
+    ) && literal_type.eval_type() == tidb_datatype::EvalType::String
+    {
+        // `GetAccurateCmpType` selects ETDatetime for a temporal column
+        // compared with a string constant. `WrapWithCastAsTime` then builds
+        // DATETIME(26,6), and constant folding leaves a MysqlTime literal.
+        let target = FieldType::new(FieldTypeCode::Datetime)
+            .with_flen(26)
+            .with_decimal(tidb_datatype::MAX_FSP)
+            .with_added_flags(tidb_datatype::FieldTypeFlags::BINARY);
+        let converted = literal
+            .convert_to_in(&target, tidb_datatype::DEFAULT_STATEMENT_FLAGS, &zone)
+            .ok()?;
+        if converted.event.is_some() {
+            return None;
+        }
+        literal = converted.value;
+        literal_type = target;
+    }
+    Some((literal, literal_type))
 }
 
 /// Flattens an `AND` chain into its conjuncts.

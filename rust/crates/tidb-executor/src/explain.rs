@@ -248,6 +248,17 @@ fn recorded(trace: PlanTrace) -> Result<PlanNode, DriverError> {
         .ok_or(DriverError::unsupported("EXPLAIN recorded no plan"))
 }
 
+fn recorded_roots(trace: PlanTrace) -> Result<Vec<PlanNode>, DriverError> {
+    if let Some(reason) = trace.refusal() {
+        return Err(DriverError::unsupported(reason));
+    }
+    let roots = trace.into_roots();
+    if roots.is_empty() {
+        return Err(DriverError::unsupported("EXPLAIN recorded no plan"));
+    }
+    Ok(roots)
+}
+
 /// A `WITH` clause's CTEs are materialized before the query that reads them is
 /// built, so there is no one trace to print for the pair. EXPLAIN has always
 /// refused this shape, and refuses it before the driver runs anything.
@@ -281,7 +292,7 @@ pub fn explain_select_stmt(
         &tidb_planner::physical_property::PhysicalProperty::default(),
         false,
     )?;
-    Ok(render(recorded(trace)?, format))
+    Ok(render_roots(recorded_roots(trace)?, format))
 }
 
 /// Plain `EXPLAIN` over a supported set operation.
@@ -445,10 +456,16 @@ pub fn explain_analyze_delete_stmt(
 
 /// Assigns ids bottom-up and flattens the tree into the five text columns.
 fn render(plan: PlanNode, format: ExplainFormat) -> SelectMeta {
+    render_roots(vec![plan], format)
+}
+
+fn render_roots(plans: Vec<PlanNode>, format: ExplainFormat) -> SelectMeta {
     let mut counter = 0;
-    let plan = assign_ids(plan, &mut counter);
     let mut rows = Vec::new();
-    flatten(&plan, String::new(), true, true, format, &mut rows);
+    for plan in plans {
+        let plan = assign_ids(plan, &mut counter);
+        flatten(&plan, String::new(), true, true, format, &mut rows);
+    }
     let field_type = FieldType::new(FieldTypeCode::VarString);
     let columns = EXPLAIN_COLUMNS
         .iter()

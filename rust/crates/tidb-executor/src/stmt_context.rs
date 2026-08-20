@@ -385,9 +385,14 @@ pub struct StmtContext {
     /// Go `SessionVars.TiDBOptJoinReorderThreshold`
     /// (`@@tidb_opt_join_reorder_threshold`, default `0`): the largest join
     /// group the DP join-reorder solver is allowed to enumerate. At the
-    /// default NO group qualifies, so a stock session never reorders --
-    /// see [`crate::driver::join_reorder`].
+    /// default no group qualifies for DP, so a stock session uses greedy
+    /// reorder -- see [`crate::driver::join_reorder`].
     join_reorder_threshold: i32,
+    /// Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`
+    /// (`@@tidb_opt_enable_advanced_join_reorder`, default `ON`): whether
+    /// join reorder uses the advanced framework. Its greedy solver compares
+    /// the two cheapest starting leaves; the legacy framework uses only one.
+    advanced_join_reorder: bool,
     /// Go `SessionVars.OptOrderingIdxSelRatio`
     /// (`@@tidb_opt_ordering_index_selectivity_ratio`, default `0.01`): the
     /// fraction of an order-preserving access range expected to be scanned
@@ -462,6 +467,10 @@ pub struct StmtContext {
     /// `ESCAPE` clause. Go derives this from both `sql_mode` and
     /// `tidb_enable_no_backslash_escapes_in_like` while building expressions.
     like_default_escape: u8,
+    /// Raw `tidb_default_string_match_selectivity`. Zero enables Go's
+    /// TopN-assisted string-match estimation; any non-zero value disables it
+    /// and becomes the fallback estimate.
+    default_string_match_selectivity: f64,
     /// The validated statement snapshot of `@@block_encryption_mode`.
     block_encryption_mode: tidb_expr::BlockEncryptionMode,
     /// `@@max_allowed_packet`, which the result-sizing string builtins read.
@@ -629,6 +638,7 @@ impl StmtContext {
             cte_max_recursion_depth: 1000,
             join_reorder_threshold: tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD
                 as i32,
+            advanced_join_reorder: tidb_vardef::defaults::DEF_TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER,
             ordering_index_selectivity_ratio: 0.01,
             optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl::default(),
             optimizer_cost_env: tidb_planner::candidate_cost::CostEnv::default(),
@@ -648,6 +658,7 @@ impl StmtContext {
             sql_mode: tidb_parser::SqlMode::default(),
             no_unsigned_subtraction: false,
             like_default_escape: b'\\',
+            default_string_match_selectivity: 0.0,
             block_encryption_mode: tidb_expr::BlockEncryptionMode::default(),
             // Go `vardef.DefMaxAllowedPacket`, the value a default server runs
             // with and the one the `Columns` trait default already used.
@@ -865,6 +876,13 @@ impl StmtContext {
         self
     }
 
+    /// Attaches the session's raw string-match selectivity setting.
+    #[must_use]
+    pub fn with_default_string_match_selectivity(mut self, value: f64) -> Self {
+        self.default_string_match_selectivity = value;
+        self
+    }
+
     /// Attaches the AES mode selected by this session for the statement.
     #[must_use]
     pub fn with_block_encryption_mode(mut self, mode: tidb_expr::BlockEncryptionMode) -> Self {
@@ -894,6 +912,12 @@ impl StmtContext {
     #[must_use]
     pub fn like_default_escape(&self) -> u8 {
         self.like_default_escape
+    }
+
+    /// The raw `tidb_default_string_match_selectivity` statement snapshot.
+    #[must_use]
+    pub fn default_string_match_selectivity(&self) -> f64 {
+        self.default_string_match_selectivity
     }
 
     /// The connection charset/collation used while building expressions.
@@ -1080,6 +1104,20 @@ impl StmtContext {
     #[must_use]
     pub fn join_reorder_threshold(&self) -> i32 {
         self.join_reorder_threshold
+    }
+
+    /// Sets `@@tidb_opt_enable_advanced_join_reorder` for this statement.
+    #[must_use]
+    pub fn with_advanced_join_reorder(mut self, enabled: bool) -> Self {
+        self.advanced_join_reorder = enabled;
+        self
+    }
+
+    /// Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`. The advanced
+    /// framework is enabled by default.
+    #[must_use]
+    pub fn advanced_join_reorder(&self) -> bool {
+        self.advanced_join_reorder
     }
 
     /// Sets `@@tidb_opt_join_reorder_through_proj` for this statement.

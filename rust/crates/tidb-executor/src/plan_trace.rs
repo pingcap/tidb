@@ -43,11 +43,12 @@
 //! When the driver runs with no trace (`None`), none of this costs anything:
 //! every call site is an `if let Some(trace)`.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
+use tidb_expr::exprctx::{PlanColumnIdAllocator, SimplePlanColumnIdAllocator};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
@@ -109,6 +110,11 @@ pub(crate) struct PlanNode {
     pub(crate) label: &'static str,
     /// Children, in the order Go prints them (build side first for a join).
     pub(crate) children: Vec<PlanNode>,
+    /// Whether this subtree's top operator already priced the predicate that
+    /// a directly wrapping `Selection` will re-check. The receipt belongs to
+    /// one completed subtree so access conditions cannot leak across sibling
+    /// tables or query blocks.
+    access_consumed: bool,
     /// The real row count this operator produced, live while the pipeline
     /// runs. `None` outside `EXPLAIN ANALYZE`, and for an operator this tier
     /// builds but does not meter.
@@ -152,6 +158,7 @@ impl PlanNode {
             info_tail: String::new(),
             label: "",
             children: Vec::new(),
+            access_consumed: false,
             act_rows: None,
             key_ndv_ratio: None,
             named_key_ndvs: Vec::new(),
@@ -192,6 +199,7 @@ fn index_join_reader(
         let estimate = child.est_rows;
         let act_rows = child.act_rows.clone();
         let key_ndv_ratio = child.key_ndv_ratio;
+        let access_consumed = child.access_consumed;
         let pseudo = child.info.contains("stats:pseudo")
             || child
                 .children
@@ -216,6 +224,7 @@ fn index_join_reader(
         let mut lookup = PlanNode::new("IndexLookUp", estimate, String::new(), String::new());
         lookup.act_rows = act_rows;
         lookup.key_ndv_ratio = key_ndv_ratio;
+        lookup.access_consumed = access_consumed;
         lookup.children.push(child);
         lookup.children.push(table_scan);
         return lookup;
@@ -233,6 +242,7 @@ fn index_join_reader(
     let estimate = child.est_rows;
     let act_rows = child.act_rows.clone();
     let key_ndv_ratio = child.key_ndv_ratio;
+    let access_consumed = child.access_consumed;
     let info = if reader == "IndexReader" {
         format!("index:{}", child.name)
     } else {
@@ -241,6 +251,7 @@ fn index_join_reader(
     let mut reader_node = PlanNode::new(reader, estimate, String::new(), info);
     reader_node.act_rows = act_rows;
     reader_node.key_ndv_ratio = key_ndv_ratio;
+    reader_node.access_consumed = access_consumed;
     reader_node.children.push(child);
     reader_node
 }
@@ -290,6 +301,19 @@ impl Est {
 /// Nodes arrive bottom-up: a source is [`PlanTrace::push`]ed, and each
 /// operator built over it [`PlanTrace::wrap`]s whatever is on top. The stack
 /// holds one entry per completed subtree, so a join simply wraps two.
+pub(crate) struct GoLogicalQuerySourceColumns {
+    pub(crate) query: tidb_ast::QueryStmt,
+    pub(crate) columns: GoLogicalPlanColumns,
+}
+
+pub(crate) struct GoLogicalPlanColumns {
+    pub(crate) aggregate_ids: Vec<(tidb_ast::Expr, i64)>,
+    pub(crate) pending_aggregates: Vec<tidb_ast::Expr>,
+    pub(crate) all_projection_ids_pending: bool,
+    pub(crate) finish_after_source: bool,
+    pub(crate) query_sources: Vec<GoLogicalQuerySourceColumns>,
+}
+
 pub(crate) struct PlanTrace {
     /// Completed subtrees, innermost-last.
     stack: Vec<PlanNode>,
@@ -299,13 +323,25 @@ pub(crate) struct PlanTrace {
     /// draining it -- no row of the result is ever produced, and no write
     /// executes.
     plan_only: bool,
-    /// Set by the access-path site when the read itself consumed the
-    /// conditions that selected it, so a `Selection` above re-checks rather
-    /// than filters further (and must not price them twice).
-    consumed: bool,
     /// A shape the recorder cannot describe; the EXPLAIN entry point turns
     /// this into the refusal it has always answered with.
     refused: Option<&'static str>,
+    /// Go's statement-wide plan-column allocator. Scalar-subquery
+    /// placeholders share this sequence with DataSource, Aggregation and
+    /// Projection columns; a private scalar-only counter cannot reproduce
+    /// their EXPLAIN identities.
+    plan_column_ids: SimplePlanColumnIdAllocator,
+    /// Input/output identities for the next retained aggregate Projection.
+    /// Go allocates these before physical aggregation injection, while this
+    /// trace records operators bottom-up, so the logical build stage records
+    /// the mapping here for the later rendering stage.
+    next_aggregation_projection: Vec<Option<(i64, i64)>>,
+    /// Go builds derived tables and view bodies while resolving `FROM`, before
+    /// rewriting scalar subqueries in the containing SELECT. Rust builds the
+    /// same source later, so the logical IDs allocated early are retained in
+    /// one frame per SELECT and reused when that source is actually built.
+    pre_reserved_query_source_frames: RefCell<Vec<Vec<GoLogicalQuerySourceColumns>>>,
+    next_pre_reserved_query_source: RefCell<Option<GoLogicalPlanColumns>>,
 }
 
 impl PlanTrace {
@@ -315,8 +351,11 @@ impl PlanTrace {
             stack: Vec::new(),
             counting: false,
             plan_only: true,
-            consumed: false,
             refused: None,
+            plan_column_ids: SimplePlanColumnIdAllocator::new(0),
+            next_aggregation_projection: Vec::new(),
+            pre_reserved_query_source_frames: RefCell::new(Vec::new()),
+            next_pre_reserved_query_source: RefCell::new(None),
         }
     }
 
@@ -327,8 +366,11 @@ impl PlanTrace {
             stack: Vec::new(),
             counting: true,
             plan_only: false,
-            consumed: false,
             refused: None,
+            plan_column_ids: SimplePlanColumnIdAllocator::new(0),
+            next_aggregation_projection: Vec::new(),
+            pre_reserved_query_source_frames: RefCell::new(Vec::new()),
+            next_pre_reserved_query_source: RefCell::new(None),
         }
     }
 
@@ -352,10 +394,111 @@ impl PlanTrace {
         self.refused
     }
 
+    /// Consumes the next Go plan-column ID.
+    pub(crate) fn alloc_plan_column_id(&self) -> i64 {
+        self.plan_column_ids.alloc_plan_column_id()
+    }
+
+    /// Reserves IDs allocated by a Go logical/physical build stage whose
+    /// columns are not otherwise materialized by this executor-first planner.
+    pub(crate) fn reserve_plan_column_ids(&self, count: usize) {
+        for _ in 0..count {
+            self.alloc_plan_column_id();
+        }
+    }
+
+    pub(crate) fn query_source_frame_depth(&self) -> usize {
+        self.pre_reserved_query_source_frames.borrow().len()
+    }
+
+    pub(crate) fn truncate_query_source_frames(&self, depth: usize) {
+        self.pre_reserved_query_source_frames
+            .borrow_mut()
+            .truncate(depth);
+        self.next_pre_reserved_query_source.borrow_mut().take();
+    }
+
+    pub(crate) fn push_query_source_frame(&self, sources: Vec<GoLogicalQuerySourceColumns>) {
+        self.pre_reserved_query_source_frames
+            .borrow_mut()
+            .push(sources);
+    }
+
+    /// Selects the earliest matching source in the innermost SELECT frame.
+    /// Sibling sources are built left-to-right, while a scalar child's frame
+    /// sits above its containing SELECT until that child finishes.
+    pub(crate) fn activate_pre_reserved_query_source(&self, query: &tidb_ast::QueryStmt) -> bool {
+        if self.next_pre_reserved_query_source.borrow().is_some() {
+            return false;
+        }
+        let columns = {
+            let mut frames = self.pre_reserved_query_source_frames.borrow_mut();
+            frames.iter_mut().rev().find_map(|frame| {
+                frame
+                    .iter()
+                    .position(|source| source.query == *query)
+                    .map(|index| frame.remove(index).columns)
+            })
+        };
+        let Some(columns) = columns else {
+            return false;
+        };
+        *self.next_pre_reserved_query_source.borrow_mut() = Some(columns);
+        true
+    }
+
+    pub(crate) fn take_pre_reserved_query_source(&self) -> Option<GoLogicalPlanColumns> {
+        self.next_pre_reserved_query_source.borrow_mut().take()
+    }
+
+    /// Records the column identities of a retained Projection above HAVING.
+    pub(crate) fn set_aggregation_projection_mapping(&mut self, mapping: Vec<Option<(i64, i64)>>) {
+        self.next_aggregation_projection = mapping;
+    }
+
     /// The recorded plan. `None` when the driver committed to no operator at
     /// all (an empty trace).
     pub(crate) fn into_root(mut self) -> Option<PlanNode> {
         self.stack.pop()
+    }
+
+    /// The main SELECT root followed by separately optimized uncorrelated
+    /// subquery roots, in Go's EXPLAIN output order. Subqueries are planned
+    /// before the outer source, so the main root is the stack's last item.
+    pub(crate) fn into_roots(mut self) -> Vec<PlanNode> {
+        let Some(main) = self.stack.pop() else {
+            return Vec::new();
+        };
+        let mut roots = Vec::with_capacity(self.stack.len() + 1);
+        roots.push(main);
+        roots.extend(self.stack);
+        roots
+    }
+
+    /// Go's separately optimized, non-evaluated scalar subquery plan under
+    /// plain EXPLAIN. A scalar value has a `MaxOneRow` guard; EXISTS does not.
+    pub(crate) fn scalar_subquery(&mut self, output_columns: usize, max_one_row: bool) -> Vec<i64> {
+        if max_one_row {
+            self.wrap("MaxOneRow", Est::Fixed(1.0), String::new());
+        }
+        let child = self.stack.pop();
+        let output_ids = (0..output_columns)
+            .map(|_| self.alloc_plan_column_id())
+            .collect::<Vec<_>>();
+        let outputs = output_ids
+            .iter()
+            .map(|id| format!("ScalarQueryCol#{id}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut node = PlanNode::new(
+            "ScalarSubQuery",
+            None,
+            String::new(),
+            format!("Output: {outputs}"),
+        );
+        node.children.extend(child);
+        self.stack.push(node);
+        output_ids
     }
 
     fn top_est(&self) -> Option<f64> {
@@ -364,6 +507,12 @@ impl PlanTrace {
 
     fn push(&mut self, node: PlanNode) {
         self.stack.push(node);
+    }
+
+    fn mark_top_access_consumed(&mut self) {
+        if let Some(node) = self.stack.last_mut() {
+            node.access_consumed = true;
+        }
     }
 
     /// Replaces the top subtree, for the fast paths that REPLACE the source
@@ -455,6 +604,7 @@ impl PlanTrace {
             String::new(),
         );
         union.key_ndv_ratio = leaf.key_ndv_ratio;
+        union.access_consumed = leaf.access_consumed;
         // The row counter belongs to the ONE executor underneath, which no
         // fan-out split: attributing it to any single branch would report the
         // whole scan's rows as one partition's. It moves to the union, whose
@@ -468,6 +618,7 @@ impl PlanTrace {
                 leaf.info.clone(),
             );
             branch.key_ndv_ratio = leaf.key_ndv_ratio;
+            branch.access_consumed = leaf.access_consumed;
             union.children.push(branch);
         }
         self.stack.push(union);
@@ -578,10 +729,13 @@ impl PlanTrace {
         predicate: &tidb_ast::Expr,
         built: &[Expression],
         qualify: &Qualifier<'_>,
+        column_names: &[Option<String>],
         rate: Option<f64>,
     ) {
-        let info = qualify
-            .expressions(built)
+        let info = (!column_names.is_empty())
+            .then(|| physical_conditions_text_with_columns(built, column_names))
+            .flatten()
+            .or_else(|| qualify.conditions(built))
             .unwrap_or_else(|| qualify.expr(predicate));
         self.wrap_child(
             from_top,
@@ -589,6 +743,8 @@ impl PlanTrace {
             Est::Scale(rate.unwrap_or_else(|| pseudo_selectivity(predicate))),
             info,
         );
+        let index = self.stack.len() - 1 - from_top;
+        self.stack[index].access.clear();
     }
 
     /// Meters an executor corresponding to one completed join child.
@@ -698,7 +854,7 @@ impl PlanTrace {
         // The narrowed scan executor still runs and counts zero rows; only
         // its physical-plan identity changes to Go's empty `TableDual`.
         self.rename_top(Self::dual_node(0));
-        self.consumed = true;
+        self.mark_top_access_consumed();
     }
 
     fn dual_node(rows: u32) -> PlanNode {
@@ -766,32 +922,6 @@ impl PlanTrace {
         );
     }
 
-    /// A whole-table read whose row key is a clustered common handle.
-    ///
-    /// Go's table path carries `IsCommonHandlePath` plus the PRIMARY index
-    /// metadata. It executes the clustered row-store read directly, but its
-    /// physical scan and access object are printed as the PRIMARY index walk.
-    pub(crate) fn common_handle_full_scan(
-        &mut self,
-        visible: &str,
-        index_columns: &[&str],
-        estimate: ScanEstimate,
-        keep_order: bool,
-    ) {
-        self.push(
-            PlanNode::new(
-                "IndexFullScan",
-                Some(estimate.rows),
-                format!(
-                    "table:{visible}, index:PRIMARY({})",
-                    index_columns.join(", ")
-                ),
-                format!("keep order:{keep_order}{}", pseudo_suffix(estimate)),
-            )
-            .with_pseudo_ndv(estimate),
-        );
-    }
-
     /// A read of a bounded stretch of the CLUSTERED HANDLE, which REPLACES
     /// the whole-table read above.
     ///
@@ -833,7 +963,7 @@ impl PlanTrace {
             )
             .with_pseudo_ndv(estimate),
         );
-        self.consumed = true;
+        self.mark_top_access_consumed();
     }
 
     /// Go's `Batch_Point_Get` fast path, which REPLACES the source scan.
@@ -869,7 +999,7 @@ impl PlanTrace {
             access,
             info,
         ));
-        self.consumed = true;
+        self.mark_top_access_consumed();
     }
 
     /// Records a statement-level fast BatchPointGet before any source subtree
@@ -934,7 +1064,7 @@ impl PlanTrace {
         if static_partition_prune {
             self.partition_union(partitions);
         }
-        self.consumed = true;
+        self.mark_top_access_consumed();
     }
 
     pub(crate) fn index_point_get(&mut self, visible: &str, partitions: &[String], index: &str) {
@@ -944,7 +1074,7 @@ impl PlanTrace {
             format!("table:{visible}{}, {index}", partition_object(partitions)),
             String::new(),
         ));
-        self.consumed = true;
+        self.mark_top_access_consumed();
     }
 
     /// Go's `Point_Get` fast path. `None` is a handle no row can carry --
@@ -970,7 +1100,7 @@ impl PlanTrace {
         // an equi-join of two point gets has Go's exact one-row estimate.
         point.key_ndv_ratio = Some(1.0);
         self.replace_top(point);
-        self.consumed = true;
+        self.mark_top_access_consumed();
     }
 
     /// Records a statement-level fast PointGet before any source subtree
@@ -1022,9 +1152,9 @@ impl PlanTrace {
             )
             .with_pseudo_ndv(estimate),
         );
-        // `consumed` stays false, unlike every narrowed path above: this one
-        // consumed no condition, so a `Selection` on top of it still scales
-        // the estimate the way Go's does over an `IndexFullScan`.
+        // `access_consumed` stays false, unlike every narrowed path above:
+        // this one consumed no condition, so a `Selection` on top of it still
+        // scales the estimate the way Go's does over an `IndexFullScan`.
     }
 
     /// An index range read, which also REPLACES the source scan.
@@ -1057,7 +1187,7 @@ impl PlanTrace {
             )
             .with_pseudo_ndv(estimate),
         );
-        self.consumed = true;
+        self.mark_top_access_consumed();
     }
 
     pub(crate) fn index_merge(&mut self, visible: &str, indexes: &[String], intersection: bool) {
@@ -1075,7 +1205,7 @@ impl PlanTrace {
                 indexes.join(", ")
             ),
         ));
-        self.consumed = true;
+        self.mark_top_access_consumed();
     }
 
     /// Exposes the two stages already performed by a non-covering
@@ -1096,6 +1226,7 @@ impl PlanTrace {
         let rows = index_scan.est_rows;
         let act_rows = index_scan.act_rows.clone();
         let key_ndv_ratio = index_scan.key_ndv_ratio;
+        let access_consumed = index_scan.access_consumed;
 
         let mut table_scan = PlanNode::new(
             "TableRowIDScan",
@@ -1111,6 +1242,7 @@ impl PlanTrace {
         let mut lookup = PlanNode::new("IndexLookUp", rows, String::new(), String::new());
         lookup.act_rows = act_rows;
         lookup.key_ndv_ratio = key_ndv_ratio;
+        lookup.access_consumed = access_consumed;
         lookup.children.push(index_scan);
         lookup.children.push(table_scan);
         self.stack.push(lookup);
@@ -1139,6 +1271,7 @@ impl PlanTrace {
         scan.task = "cop[tikv]";
         let estimate = scan.est_rows;
         let key_ndv_ratio = scan.key_ndv_ratio;
+        let access_consumed = scan.access_consumed;
         let act_rows = scan.act_rows.clone();
         let info = if reader == "TableReader" {
             format!("data:{scan_name}")
@@ -1148,6 +1281,7 @@ impl PlanTrace {
         let mut reader_node = PlanNode::new(reader, estimate, String::new(), info);
         reader_node.key_ndv_ratio = key_ndv_ratio;
         reader_node.act_rows = act_rows;
+        reader_node.access_consumed = access_consumed;
         reader_node.children.push(scan);
         self.stack.push(reader_node);
         true
@@ -1494,6 +1628,7 @@ impl PlanTrace {
         &mut self,
         select: &tidb_ast::SelectStmt,
         qualify: &Qualifier<'_>,
+        grouped_rows: Option<f64>,
     ) -> bool {
         let Some(mut source) = self.stack.pop() else {
             return false;
@@ -1530,7 +1665,8 @@ impl PlanTrace {
             self.stack.push(source);
             return false;
         };
-        let estimate = Est::Scale(DISTINCT_FACTOR).apply(scan.est_rows);
+        let estimate =
+            grouped_rows.or_else(|| Est::ScaleFloorOne(DISTINCT_FACTOR).apply(scan.est_rows));
         fn mark_cop(node: &mut PlanNode) {
             node.task = "cop[tikv]";
             for child in &mut node.children {
@@ -1754,6 +1890,15 @@ impl PlanTrace {
         filters: &[String],
         filter_selectivity: f64,
     ) -> Result<(), ()> {
+        // An empty physical expression list renders as one empty string at
+        // the join call site. Go's table-filter slice is empty in that case;
+        // normalize the textual adapter before any branch decides whether an
+        // inner Selection survives `EmptySelectionEliminator`.
+        let filters = filters
+            .iter()
+            .filter(|filter| !filter.trim().is_empty())
+            .cloned()
+            .collect::<Vec<_>>();
         let IndexJoinInnerPathText {
             access,
             range_info,
@@ -1766,6 +1911,7 @@ impl PlanTrace {
             unique,
             keep_outer_order,
             grouped_derived,
+            composite,
             stream_aggregation,
             aggregation_info,
             aggregation_final_info,
@@ -1827,6 +1973,165 @@ impl PlanTrace {
                 node.name,
                 "TableFullScan" | "IndexFullScan" | "TableRangeScan" | "IndexRangeScan"
             ) && node.children.is_empty()
+        }
+
+        if composite {
+            // Go's IndexJoinProp is threaded through the complete inner plan.
+            // Every physical node in that rebuilt subtree is scaled by the
+            // outer expected count, except the lookup reader itself: its
+            // dynamic range is already the per-key estimate. This is visible
+            // in q2 where the supplier/nation subtree and its joins are
+            // multiplied by 957.73 while partsupp stays at 957.73.
+            fn contains_lookup(node: &PlanNode, visible: &str) -> bool {
+                let target = format!("table:{visible}");
+                node.access.starts_with(&target)
+                    || node
+                        .children
+                        .iter()
+                        .any(|child| contains_lookup(child, visible))
+            }
+
+            fn scale_rebuilt_inner(node: &mut PlanNode, visible: &str, factor: f64) {
+                if factor <= 0.0 {
+                    return;
+                }
+                if matches!(node.name, "TableReader" | "IndexReader")
+                    && contains_lookup(node, visible)
+                {
+                    return;
+                }
+                if let Some(rows) = node.est_rows.as_mut() {
+                    *rows *= factor;
+                }
+                for child in &mut node.children {
+                    scale_rebuilt_inner(child, visible, factor);
+                }
+            }
+
+            if let Some(factor) = estimated_outer_rows {
+                scale_rebuilt_inner(&mut self.stack[at], visible, factor);
+            }
+
+            fn rewrite_target(
+                node: &mut PlanNode,
+                visible: &str,
+                access: &str,
+                range_info: &str,
+                index: bool,
+                estimated_rows: Option<f64>,
+                estimated_access_rows: Option<f64>,
+            ) -> bool {
+                let target = format!("table:{visible}");
+                if matches!(node.name, "TableReader" | "IndexReader") && node.children.len() == 1 {
+                    let child = &mut node.children[0];
+                    let scan = if is_scan(child) {
+                        Some(&mut *child)
+                    } else if child.name == "Selection"
+                        && child.children.len() == 1
+                        && is_scan(&child.children[0])
+                    {
+                        Some(&mut child.children[0])
+                    } else {
+                        None
+                    };
+                    if let Some(scan) = scan.filter(|scan| scan.access.starts_with(&target)) {
+                        let pseudo = if scan.info.contains("stats:pseudo") {
+                            ", stats:pseudo"
+                        } else {
+                            ""
+                        };
+                        scan.name = if index {
+                            "IndexRangeScan"
+                        } else {
+                            "TableRangeScan"
+                        };
+                        scan.access = access.to_owned();
+                        scan.info =
+                            format!("range: decided by {range_info}, keep order:false{pseudo}");
+                        scan.est_rows = estimated_access_rows.or(estimated_rows).or(scan.est_rows);
+                        node.name = if index { "IndexReader" } else { "TableReader" };
+                        node.est_rows = estimated_rows.or(node.est_rows);
+                        node.info = match child.name {
+                            "Selection" if index => "index:Selection".to_owned(),
+                            "Selection" => "data:Selection".to_owned(),
+                            _ if index => "index:IndexRangeScan".to_owned(),
+                            _ => "data:TableRangeScan".to_owned(),
+                        };
+                        return true;
+                    }
+                }
+                for child in &mut node.children {
+                    if rewrite_target(
+                        child,
+                        visible,
+                        access,
+                        range_info,
+                        index,
+                        estimated_rows,
+                        estimated_access_rows,
+                    ) {
+                        return true;
+                    }
+                }
+                false
+            }
+
+            // The Go IndexJoinProp rebuild chooses the dynamic lookup leaf as
+            // the build side of the first hash join that consumes it. The
+            // initial executor-first trace may have priced the same subtree
+            // with the opposite orientation; repair that physical receipt
+            // after rewriting the target scan, keeping the logical row order
+            // unchanged while matching Go's Build/Probe display.
+            fn contains_lookup_target(node: &PlanNode, target: &str) -> bool {
+                node.access.starts_with(target)
+                    || node
+                        .children
+                        .iter()
+                        .any(|child| contains_lookup_target(child, target))
+            }
+
+            fn prefer_lookup_build(node: &mut PlanNode, visible: &str) -> bool {
+                let target = format!("table:{visible}");
+                for child in &mut node.children {
+                    if prefer_lookup_build(child, visible) {
+                        return true;
+                    }
+                }
+                if node.name == "HashJoin" && node.children.len() == 2 {
+                    let left_has = contains_lookup_target(&node.children[0], &target);
+                    let right_has = contains_lookup_target(&node.children[1], &target);
+                    if left_has || right_has {
+                        if right_has {
+                            node.children.swap(0, 1);
+                        }
+                        node.children[0].label = "(Build)";
+                        node.children[1].label = "(Probe)";
+                        return true;
+                    }
+                }
+                false
+            }
+
+            if rewrite_target(
+                &mut self.stack[at],
+                visible,
+                &access,
+                range_info,
+                index,
+                estimated_rows,
+                estimated_access_rows.or(outer_rows),
+            ) {
+                prefer_lookup_build(&mut self.stack[at], visible);
+                if scan_is_index_join_outer(&self.stack[outer_at]).is_some() {
+                    let outer = std::mem::replace(
+                        &mut self.stack[outer_at],
+                        PlanNode::new("TableDual", Some(0.0), String::new(), String::new()),
+                    );
+                    self.stack[outer_at] = index_join_reader(outer, None, false, visible);
+                }
+                return Ok(());
+            }
+            return Err(());
         }
 
         // An index join asks its outer child for no ordering when its own
@@ -2243,12 +2548,19 @@ impl PlanTrace {
         // the older trace-owned outer-row fallback.
         scan.est_rows = estimated_access_rows.or(outer_rows).or(scan.est_rows);
         if had_selection {
-            source.est_rows = estimated_rows.or_else(|| {
-                outer_rows
-                    .or(source.est_rows)
-                    .map(|rows| rows * filter_selectivity.clamp(0.0, 1.0))
-            });
-            if !filters.is_empty() {
+            if filters.is_empty() && source.info.trim().is_empty() {
+                let mut scan = source.children.pop().ok_or(())?;
+                scan.label = source.label;
+                if scan.act_rows.is_none() {
+                    scan.act_rows = source.act_rows.clone();
+                }
+                *source = scan;
+            } else {
+                source.est_rows = estimated_rows.or_else(|| {
+                    outer_rows
+                        .or(source.est_rows)
+                        .map(|rows| rows * filter_selectivity.clamp(0.0, 1.0))
+                });
                 source.info = filters.join(", ");
             }
         }
@@ -2370,14 +2682,14 @@ impl PlanTrace {
         qualify: &Qualifier<'_>,
         stats_selectivity: Option<f64>,
     ) {
-        let est = if self.consumed {
+        let est = if self.stack.last().is_some_and(|child| child.access_consumed) {
             Est::Inherit
         } else {
             Est::Scale(stats_selectivity.unwrap_or_else(|| pseudo_selectivity(predicate)))
         };
         let info = built
             .filter(|expressions| !expressions.is_empty())
-            .and_then(|expressions| qualify.expressions(expressions))
+            .and_then(|expressions| qualify.conditions(expressions))
             .unwrap_or_else(|| qualify.expr(predicate));
         self.wrap("Selection", est, info);
     }
@@ -2404,15 +2716,26 @@ impl PlanTrace {
         stats_selectivity: Option<f64>,
         column_names: &[Option<String>],
     ) -> bool {
-        let Some(info) = physical_expression_text_with_columns(predicate, column_names) else {
+        let Some(info) = physical_condition_text_with_columns(predicate, column_names) else {
             return false;
         };
-        let est = if self.consumed {
+        let est = if self.stack.last().is_some_and(|child| child.access_consumed) {
             Est::Inherit
         } else {
             Est::Scale(stats_selectivity.unwrap_or_else(|| pseudo_selectivity(written)))
         };
         self.wrap("Selection", est, info);
+        true
+    }
+
+    /// A HAVING Selection over aggregate output columns. Go cannot estimate
+    /// aggregate result columns from table histograms, so LogicalSelection
+    /// uses the fixed SelectionFactor rather than predicate pseudo rates.
+    pub(crate) fn having_selection(&mut self, predicate: &Expression) -> bool {
+        let Some(info) = physical_condition_text_with_columns(predicate, &[]) else {
+            return false;
+        };
+        self.wrap("Selection", Est::Scale(SELECTIVITY_FACTOR), info);
         true
     }
 
@@ -2423,9 +2746,31 @@ impl PlanTrace {
     pub(crate) fn residual_selection(
         &mut self,
         predicate: &tidb_ast::Expr,
+        built: Option<&[Expression]>,
         qualify: &Qualifier<'_>,
         logical_rows: Option<f64>,
         stats_selectivity: Option<f64>,
+    ) {
+        self.residual_selection_with_columns(
+            predicate,
+            built,
+            qualify,
+            logical_rows,
+            stats_selectivity,
+            &[],
+        );
+    }
+
+    /// [`Self::residual_selection`] with base-table names for physical columns
+    /// whose SQL aliases no longer describe the optimized expression.
+    pub(crate) fn residual_selection_with_columns(
+        &mut self,
+        predicate: &tidb_ast::Expr,
+        built: Option<&[Expression]>,
+        qualify: &Qualifier<'_>,
+        logical_rows: Option<f64>,
+        stats_selectivity: Option<f64>,
+        column_names: &[Option<String>],
     ) {
         let estimate = logical_rows.map_or_else(
             || {
@@ -2435,7 +2780,20 @@ impl PlanTrace {
             },
             Est::Fixed,
         );
-        self.wrap("Selection", estimate, qualify.expr(predicate));
+        let info = (!column_names.is_empty())
+            .then(|| {
+                built.and_then(|expressions| {
+                    physical_conditions_text_with_columns(expressions, column_names)
+                })
+            })
+            .flatten()
+            .or_else(|| {
+                built
+                    .filter(|expressions| !expressions.is_empty())
+                    .and_then(|expressions| qualify.conditions(expressions))
+            })
+            .unwrap_or_else(|| qualify.expr(predicate));
+        self.wrap("Selection", estimate, info);
     }
 
     /// The one-phase aggregate this tier builds for `GROUP BY` / an
@@ -2490,6 +2848,21 @@ impl PlanTrace {
         self.wrap("HashAgg", est, info);
     }
 
+    /// A grouped HashAgg whose physical state order differs from the written
+    /// select list: aggregate functions first, then FIRST_ROW group carriers.
+    pub(crate) fn grouped_hash_agg(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+        logical_rows: Option<f64>,
+    ) {
+        self.wrap(
+            "HashAgg",
+            logical_rows.map_or(Est::Scale(DISTINCT_FACTOR), Est::Fixed),
+            grouped_aggregate_info(select, qualify, false, true),
+        );
+    }
+
     /// A StreamAgg selected by an explicit hint after enforcing its child
     /// order. Its schema and estimates are otherwise the same as the ordinary
     /// one-phase aggregate recorded above.
@@ -2542,6 +2915,44 @@ impl PlanTrace {
         column_names: &[Option<String>],
         logical_rows: Option<f64>,
     ) {
+        if select.group_by.is_empty() {
+            let rendered = functions
+                .iter()
+                .enumerate()
+                .map(|(index, function)| {
+                    let argument = if let Some(argument) = function.arg.as_ref() {
+                        Some(physical_expression_text_with_columns(
+                            argument,
+                            column_names,
+                        )?)
+                    } else {
+                        None
+                    };
+                    match &function.kind {
+                        crate::hash_agg::AggKind::FirstRow => {
+                            let argument = argument?;
+                            Some(format!("funcs:firstrow({argument})->{argument}"))
+                        }
+                        crate::hash_agg::AggKind::Sum => {
+                            let argument = argument?;
+                            Some(format!("funcs:sum({argument})->Column#{index}"))
+                        }
+                        crate::hash_agg::AggKind::Count => Some(format!(
+                            "funcs:count({}{})->Column#{index}",
+                            if function.distinct { "distinct " } else { "" },
+                            argument.as_deref().unwrap_or("1")
+                        )),
+                        _ => None,
+                    }
+                })
+                .collect::<Option<Vec<_>>>();
+            if let Some(rendered) = rendered {
+                self.wrap("HashAgg", Est::Fixed(1.0), rendered.join(", "));
+            } else {
+                self.hash_agg(select, qualify, logical_rows);
+            }
+            return;
+        }
         let groups = group_by
             .iter()
             .map(|expression| physical_expression_text_with_columns(expression, column_names))
@@ -2550,15 +2961,28 @@ impl PlanTrace {
             .iter()
             .enumerate()
             .map(|(index, function)| {
-                let argument =
-                    physical_expression_text_with_columns(function.arg.as_ref()?, column_names)?;
+                let argument = if let Some(argument) = function.arg.as_ref() {
+                    Some(physical_expression_text_with_columns(
+                        argument,
+                        column_names,
+                    )?)
+                } else {
+                    None
+                };
                 match &function.kind {
                     crate::hash_agg::AggKind::FirstRow => {
+                        let argument = argument?;
                         Some(format!("funcs:firstrow({argument})->{argument}"))
                     }
                     crate::hash_agg::AggKind::Sum => {
+                        let argument = argument?;
                         Some(format!("funcs:sum({argument})->Column#{index}"))
                     }
+                    crate::hash_agg::AggKind::Count => Some(format!(
+                        "funcs:count({}{})->Column#{index}",
+                        if function.distinct { "distinct " } else { "" },
+                        argument.as_deref().unwrap_or("1")
+                    )),
                     _ => None,
                 }
             })
@@ -2633,23 +3057,37 @@ impl PlanTrace {
         &mut self,
         select: &tidb_ast::SelectStmt,
         qualify: &Qualifier<'_>,
+        internal_columns: bool,
+        column_names: &[Option<String>],
     ) {
+        let projection_mapping = std::mem::take(&mut self.next_aggregation_projection);
         let mut next_aggregate = 0;
         let fields = select
             .fields
             .fields()
             .iter()
-            .filter_map(|field| match field {
-                tidb_ast::SelectField::Expr {
-                    expr: tidb_ast::Expr::Aggregate { .. },
-                    ..
-                } => {
-                    let column = format!("Column#{next_aggregate}");
-                    next_aggregate += 1;
-                    Some(column)
+            .enumerate()
+            .filter_map(|(field_index, field)| {
+                match projection_mapping.get(field_index).copied().flatten() {
+                    Some((input, output)) => Some(format!("Column#{input}->Column#{output}")),
+                    None => match field {
+                        tidb_ast::SelectField::Expr { .. } if internal_columns => {
+                            Some(format!("Column#{field_index}"))
+                        }
+                        tidb_ast::SelectField::Expr {
+                            expr: tidb_ast::Expr::Aggregate { .. },
+                            ..
+                        } => {
+                            let column = format!("Column#{next_aggregate}");
+                            next_aggregate += 1;
+                            Some(column)
+                        }
+                        tidb_ast::SelectField::Expr { expr, .. } => {
+                            Some(qualify.expr_with_physical_columns(expr, column_names))
+                        }
+                        tidb_ast::SelectField::Wildcard(_) => None,
+                    },
                 }
-                tidb_ast::SelectField::Expr { expr, .. } => Some(qualify.expr(expr)),
-                tidb_ast::SelectField::Wildcard(_) => None,
             })
             .collect::<Vec<_>>();
         self.wrap("Projection", Est::Inherit, fields.join(", "));
@@ -2695,6 +3133,58 @@ impl PlanTrace {
                     Some(post_aggregate_expr(expr, qualify, &mut next_aggregate))
                 }
                 _ => None,
+            })
+            .collect::<Vec<_>>();
+        if !fields.is_empty() {
+            self.wrap("Projection", Est::Inherit, fields.join(", "));
+        }
+    }
+
+    /// The visible Projection retained above an Aggregation after Go's
+    /// `Aggregation -> Projection` pushdown arm removed the child Projection.
+    /// Plain fields now read aggregation result columns; scalar expressions
+    /// continue to read the hoisted aggregate columns.
+    pub(crate) fn aggregation_pushdown_projection(
+        &mut self,
+        visible_select: &tidb_ast::SelectStmt,
+        physical_select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+        column_names: &[Option<String>],
+    ) {
+        let projection_mapping = std::mem::take(&mut self.next_aggregation_projection);
+        let mut next_aggregate = 0;
+        let fields = visible_select
+            .fields
+            .fields()
+            .iter()
+            .enumerate()
+            .filter_map(|(field_index, field)| {
+                let tidb_ast::SelectField::Expr { .. } = field else {
+                    return None;
+                };
+                let physical = match physical_select.fields.fields().get(field_index) {
+                    Some(tidb_ast::SelectField::Expr { expr, .. }) => expr,
+                    _ => return None,
+                };
+                Some(
+                    match projection_mapping.get(field_index).copied().flatten() {
+                        Some((input, output)) => format!("Column#{input}->Column#{output}"),
+                        None => match physical {
+                            tidb_ast::Expr::Column(_) => {
+                                qualify.expr_with_physical_columns(physical, column_names)
+                            }
+                            tidb_ast::Expr::Aggregate { .. } => {
+                                let column = format!("Column#{}", 10_000 + field_index);
+                                next_aggregate += 1;
+                                column
+                            }
+                            _ if aggregate_exprs(physical).is_empty() => {
+                                format!("Column#{}", 10_000 + field_index)
+                            }
+                            _ => post_aggregate_expr(physical, qualify, &mut next_aggregate),
+                        },
+                    },
+                )
             })
             .collect::<Vec<_>>();
         if !fields.is_empty() {
@@ -2781,6 +3271,40 @@ impl PlanTrace {
         );
     }
 
+    /// Go `MaxMinEliminator.eliminateSingleMaxMin`: a nullable aggregate
+    /// input is filtered, one ordered row is retained, and the scalar
+    /// aggregate remains to turn an empty input into one NULL row.
+    pub(crate) fn max_min_elimination(&mut self, max: bool, nullable: bool, reads_column: bool) {
+        let input = "Column#0";
+        if nullable {
+            self.wrap(
+                "Selection",
+                Est::Scale(SELECTIVITY_FACTOR),
+                format!("not(isnull({input}))"),
+            );
+        }
+        if reads_column {
+            self.wrap(
+                "TopN",
+                Est::CapAt(1.0),
+                format!(
+                    "{input}{}, offset:0, count:1",
+                    if max { ":desc" } else { "" }
+                ),
+            );
+        } else {
+            self.wrap("Limit", Est::CapAt(1.0), "offset:0, count:1".to_owned());
+        }
+        self.wrap(
+            "StreamAgg",
+            Est::Fixed(1.0),
+            format!(
+                "funcs:{}({input})->Column#1",
+                if max { "max" } else { "min" }
+            ),
+        );
+    }
+
     /// Go `util.ExplainByItems`: the by-item list a `Sort` or a `TopN` prints.
     fn by_items_text(order_by: &[tidb_ast::OrderItem], qualify: &Qualifier<'_>) -> String {
         let items: Vec<String> = order_by
@@ -2800,6 +3324,140 @@ impl PlanTrace {
     /// `ORDER BY` with no `LIMIT` above it to fuse with.
     pub(crate) fn sort(&mut self, order_by: &[tidb_ast::OrderItem], qualify: &Qualifier<'_>) {
         self.wrap("Sort", Est::Inherit, Self::by_items_text(order_by, qualify));
+    }
+
+    /// An unbounded Sort above the visible projection of a grouped aggregate.
+    /// Aggregate aliases now name generated projection columns, while direct
+    /// pass-through fields retain their source identities.
+    pub(crate) fn grouped_aggregate_sort(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+        internal_columns: bool,
+        column_names: &[Option<String>],
+    ) {
+        let mut aliases = Vec::new();
+        let mut visible = Vec::new();
+        for (field_index, field) in select.fields.fields().iter().enumerate() {
+            let tidb_ast::SelectField::Expr { expr, alias } = field else {
+                continue;
+            };
+            visible.push((
+                alias.clone().unwrap_or_else(|| {
+                    crate::driver::default_field_display_name(&select.fields, field_index, expr)
+                }),
+                field_index,
+            ));
+            if alias.is_some() && matches!(aggregate_exprs(expr).as_slice(), [_]) {
+                aliases.push((
+                    alias.as_ref().expect("guarded alias").to_ascii_lowercase(),
+                    field_index,
+                ));
+            }
+        }
+        let items = select
+            .order_by
+            .iter()
+            .map(|item| {
+                let expression = match &item.expr {
+                    tidb_ast::Expr::Column(path) if path.len() == 1 => {
+                        let candidates = if internal_columns { &visible } else { &aliases };
+                        candidates
+                            .iter()
+                            .find(|(name, _)| name.eq_ignore_ascii_case(&path[0]))
+                            .map_or_else(
+                                || qualify.expr_with_physical_columns(&item.expr, column_names),
+                                |(_, index)| format!("Column#{index}"),
+                            )
+                    }
+                    _ => qualify.expr_with_physical_columns(&item.expr, column_names),
+                };
+                if item.desc {
+                    format!("{expression}:desc")
+                } else {
+                    expression
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.wrap("Sort", Est::Inherit, items);
+    }
+
+    fn aggregation_pushdown_by_items(
+        visible_select: &tidb_ast::SelectStmt,
+        physical_select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+        column_names: &[Option<String>],
+    ) -> String {
+        let visible = visible_select
+            .fields
+            .fields()
+            .iter()
+            .enumerate()
+            .filter_map(|(field_index, field)| match field {
+                tidb_ast::SelectField::Expr { expr, alias } => Some((
+                    alias.clone().unwrap_or_else(|| {
+                        crate::driver::default_field_display_name(
+                            &visible_select.fields,
+                            field_index,
+                            expr,
+                        )
+                    }),
+                    field_index,
+                )),
+                tidb_ast::SelectField::Wildcard(_) => None,
+            })
+            .collect::<Vec<_>>();
+        visible_select
+            .order_by
+            .iter()
+            .map(|item| {
+                let expression = match &item.expr {
+                    tidb_ast::Expr::Column(path) if path.len() == 1 => visible
+                        .iter()
+                        .find(|(name, _)| name.eq_ignore_ascii_case(&path[0]))
+                        .map_or_else(
+                            || qualify.expr(&item.expr),
+                            |(_, index)| match physical_select.fields.fields().get(*index) {
+                                Some(tidb_ast::SelectField::Expr {
+                                    expr: tidb_ast::Expr::Column(path),
+                                    ..
+                                }) => qualify.expr_with_physical_columns(
+                                    &tidb_ast::Expr::Column(path.clone()),
+                                    column_names,
+                                ),
+                                _ => format!("Column#{index}"),
+                            },
+                        ),
+                    _ => qualify.expr(&item.expr),
+                };
+                if item.desc {
+                    format!("{expression}:desc")
+                } else {
+                    expression
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    pub(crate) fn aggregation_pushdown_sort(
+        &mut self,
+        visible_select: &tidb_ast::SelectStmt,
+        physical_select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+        column_names: &[Option<String>],
+    ) {
+        self.wrap(
+            "Sort",
+            Est::Inherit,
+            Self::aggregation_pushdown_by_items(
+                visible_select,
+                physical_select,
+                qualify,
+                column_names,
+            ),
+        );
     }
 
     /// The root Sort inserted by Go `getEnforcedMergeJoin` for a child whose
@@ -2835,6 +3493,93 @@ impl PlanTrace {
         count: u64,
     ) {
         let items = Self::by_items_text(order_by, qualify);
+        self.wrap(
+            "TopN",
+            Est::CapAt(count as f64),
+            format!("{items}, offset:{offset}, count:{count}"),
+        );
+    }
+
+    /// A TopN pushed below the final projection of a grouped aggregate.
+    /// Aggregate aliases resolve to the aggregation's result columns, while
+    /// ordinary order items retain their qualified source names.
+    pub(crate) fn grouped_aggregate_topn(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+        internal_columns: bool,
+        column_names: &[Option<String>],
+        offset: u64,
+        count: u64,
+    ) {
+        let mut aggregate_index = 0;
+        let mut aliases = Vec::new();
+        let mut visible = Vec::new();
+        for (field_index, field) in select.fields.fields().iter().enumerate() {
+            let tidb_ast::SelectField::Expr { expr, alias } = field else {
+                continue;
+            };
+            visible.push((
+                alias.clone().unwrap_or_else(|| {
+                    crate::driver::default_field_display_name(&select.fields, field_index, expr)
+                }),
+                field_index,
+            ));
+            let aggregates = aggregate_exprs(expr);
+            if let (Some(alias), [tidb_ast::Expr::Aggregate { .. }]) =
+                (alias.as_ref(), aggregates.as_slice())
+            {
+                aliases.push((alias.to_ascii_lowercase(), aggregate_index));
+            }
+            aggregate_index += aggregates.len();
+        }
+        let items = select
+            .order_by
+            .iter()
+            .map(|item| {
+                let expression = match &item.expr {
+                    tidb_ast::Expr::Column(path) if path.len() == 1 => {
+                        let candidates = if internal_columns { &visible } else { &aliases };
+                        candidates
+                            .iter()
+                            .find(|(name, _)| name.eq_ignore_ascii_case(&path[0]))
+                            .map_or_else(
+                                || qualify.expr_with_physical_columns(&item.expr, column_names),
+                                |(_, index)| format!("Column#{index}"),
+                            )
+                    }
+                    _ => qualify.expr_with_physical_columns(&item.expr, column_names),
+                };
+                if item.desc {
+                    format!("{expression}:desc")
+                } else {
+                    expression
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.wrap(
+            "TopN",
+            Est::CapAt(count as f64),
+            format!("{items}, offset:{offset}, count:{count}"),
+        );
+    }
+
+    pub(crate) fn aggregation_pushdown_topn(
+        &mut self,
+        visible_select: &tidb_ast::SelectStmt,
+        physical_select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+        column_names: &[Option<String>],
+        offset: u64,
+        count: u64,
+    ) {
+        let items = Self::aggregation_pushdown_by_items(
+            visible_select,
+            physical_select,
+            qualify,
+            column_names,
+        );
         self.wrap(
             "TopN",
             Est::CapAt(count as f64),
@@ -3223,6 +3968,40 @@ impl PlanTrace {
         );
     }
 
+    /// [`Self::distinct`] after projection elimination has replaced the
+    /// visible field paths with physical columns. Go's `buildDistinct` groups
+    /// by those resolved Columns, so projection-only inputs retain their base
+    /// identity while computed inputs remain `Column#N`.
+    pub(crate) fn physical_distinct(
+        &mut self,
+        fields: &[Expression],
+        column_names: &[Option<String>],
+        logical_rows: Option<f64>,
+    ) -> bool {
+        let Some(mut projected) = fields
+            .iter()
+            .map(|field| physical_expression_text_with_columns(field, column_names))
+            .collect::<Option<Vec<_>>>()
+        else {
+            return false;
+        };
+        if projected.is_empty() {
+            return false;
+        }
+        projected.sort();
+        let funcs = projected
+            .iter()
+            .map(|field| format!("firstrow({field})->{field}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.wrap(
+            "HashAgg",
+            logical_rows.map_or(Est::ScaleFloorOne(DISTINCT_FACTOR), Est::Fixed),
+            format!("group by:{}, funcs:{funcs}", projected.join(", ")),
+        );
+        true
+    }
+
     /// The final distinct stage over already-grouped partial keys. Its row
     /// estimate is the partial NDV, not that NDV multiplied a second time.
     pub(crate) fn final_distinct(
@@ -3269,6 +4048,7 @@ impl PlanTrace {
     pub(crate) fn join(
         &mut self,
         join: &tidb_ast::Join,
+        join_kind: crate::join::JoinKind,
         scope: &FromScope,
         current_db: &str,
         pushed: &[&tidb_ast::Expr],
@@ -3277,6 +4057,7 @@ impl PlanTrace {
         let JoinStrategy {
             equal_mask,
             build_is_left,
+            left_width,
             merge_keys,
             index_lookup,
             physical_conditions,
@@ -3288,10 +4069,12 @@ impl PlanTrace {
             scope,
             catalog: None,
         };
-        let kind = match join.tp {
-            tidb_ast::JoinType::Cross => "inner join",
-            tidb_ast::JoinType::Left => "left outer join",
-            tidb_ast::JoinType::Right => "right outer join",
+        let kind = match join_kind {
+            crate::join::JoinKind::Inner => "inner join",
+            crate::join::JoinKind::Left => "left outer join",
+            crate::join::JoinKind::Right => "right outer join",
+            crate::join::JoinKind::Semi => "semi join",
+            crate::join::JoinKind::AntiSemi => "anti semi join",
         };
         // `equal_mask` comes from the executor's own condition split, so the
         // conjuncts printed under `equal:[...]` are exactly the ones the hash
@@ -3315,7 +4098,15 @@ impl PlanTrace {
             let rendered = physical_conditions
                 .as_ref()
                 .and_then(|(conditions, columns)| {
-                    physical_expression_text_with_columns(conditions.get(index)?, columns)
+                    let condition = conditions.get(index)?;
+                    let aligned;
+                    let condition = if *is_equal {
+                        aligned = align_physical_join_equality(condition, *left_width);
+                        aligned.as_ref().unwrap_or(condition)
+                    } else {
+                        condition
+                    };
+                    physical_expression_text_with_columns(condition, columns)
                 })
                 .unwrap_or_else(|| qualify.expr(conjunct));
             if *is_equal {
@@ -3364,8 +4155,11 @@ impl PlanTrace {
             // Go `PhysicalIndexJoin.explainInfo`: the reader, then the two
             // key lists, then the equal conditions spelled in full. A
             // non-equality condition remains visible below as `other cond:`.
-            tail.push_str(", inner:");
-            tail.push_str(text.reader);
+            // `inner:` is written before `explainJoinLeftSide`, so keep it in
+            // `info`; the renderer inserts `left side:` between `info` and
+            // `tail` once the left child's ExplainID is known.
+            info.push_str(", inner:");
+            info.push_str(text.reader);
             tail.push_str(", outer key:");
             tail.push_str(
                 &text
@@ -3491,11 +4285,12 @@ impl PlanTrace {
             // `explainJoinLeftSide` names the LEFT child's operator, and only
             // for an OUTER join. The name carries its own id in `format='row'`,
             // which is not assigned yet, so the renderer splices it in.
-            left_side_child: (join.tp != tidb_ast::JoinType::Cross)
+            left_side_child: (join_kind != crate::join::JoinKind::Inner)
                 .then_some(usize::from(!build_is_left)),
             info_tail: tail,
             label: "",
             children,
+            access_consumed: !pushed.is_empty(),
             act_rows: None,
             // Go `LogicalJoin.DeriveStats` builds a fresh `ColNDVs` from both
             // children's maps rather than scaling either one, so the single
@@ -3522,7 +4317,6 @@ impl PlanTrace {
         // A join is a new predicate boundary. Access conditions consumed by
         // either child must not suppress selectivity of a different residual
         // predicate above the joined rows.
-        self.consumed = !pushed.is_empty();
         Ok(())
     }
 
@@ -3587,6 +4381,7 @@ impl PlanTrace {
             info_tail: String::new(),
             label: "",
             children: vec![right, left],
+            access_consumed: false,
             act_rows: None,
             key_ndv_ratio: None,
             named_key_ndvs: Vec::new(),
@@ -3664,6 +4459,44 @@ fn sorted_field_list(fields: &[tidb_ast::SelectField], qualify: &Qualifier<'_>) 
     rendered.join(", ")
 }
 
+/// Go stores a PhysicalSelection's predicates as CNF items rather than one
+/// nested AND expression. Preserve every non-AND subtree as one condition.
+fn collect_physical_and<'a>(expression: &'a Expression, out: &mut Vec<&'a Expression>) {
+    if let Expression::ScalarFunction(function) = expression {
+        if function.func_name.lowercase() == "and" && function.args.len() == 2 {
+            collect_physical_and(&function.args[0], out);
+            collect_physical_and(&function.args[1], out);
+            return;
+        }
+    }
+    out.push(expression);
+}
+
+fn align_physical_join_equality(expression: &Expression, left_width: usize) -> Option<Expression> {
+    let Expression::ScalarFunction(function) = expression else {
+        return None;
+    };
+    let name = function.func_name.lowercase();
+    if (name != "eq" && name != "nulleq") || function.args.len() != 2 {
+        return None;
+    }
+    let (Expression::Column(first), Expression::Column(second)) =
+        (&function.args[0], &function.args[1])
+    else {
+        return None;
+    };
+    let (first, second) = (
+        usize::try_from(first.index).ok()?,
+        usize::try_from(second.index).ok()?,
+    );
+    if first < left_width || second >= left_width {
+        return None;
+    }
+    let mut aligned = function.clone();
+    aligned.args.swap(0, 1);
+    Some(Expression::ScalarFunction(aligned))
+}
+
 /// The physical-expression subset currently needed after derived aggregate
 /// projection elimination. Unsupported nodes are refused by the caller; a
 /// fallback to AST text would describe a different expression than the one
@@ -3673,11 +4506,28 @@ fn physical_expression_text_with_columns(
     column_names: &[Option<String>],
 ) -> Option<String> {
     match expression {
-        Expression::Column(column) => usize::try_from(column.index)
-            .ok()
-            .and_then(|index| column_names.get(index))
-            .and_then(|name| name.clone())
-            .or_else(|| Some(format!("Column#{}", column.index))),
+        Expression::Column(column) if column.unique_id < 0 => {
+            Some(format!("ScalarQueryCol#{}", -column.unique_id))
+        }
+        Expression::Column(column) => {
+            let index = usize::try_from(column.index).ok()?;
+            if let Some(physical_name) = column_names.get(index) {
+                // An explicit `None` means projection elimination traced this
+                // output and proved it has no base-column origin (for example
+                // a computed aggregate column of a view). Go leaves
+                // `Column.OrigName` empty in that case and prints `Column#N`;
+                // do not resurrect the SQL-visible view name carried by the
+                // executable expression.
+                return Some(
+                    physical_name
+                        .clone()
+                        .unwrap_or_else(|| format!("Column#{}", column.index)),
+                );
+            }
+            (!column.orig_name.is_empty())
+                .then(|| column.orig_name.clone())
+                .or_else(|| Some(format!("Column#{}", column.index)))
+        }
         Expression::ScalarFunction(function) => {
             let arguments = function
                 .args
@@ -3709,10 +4559,40 @@ fn physical_expression_text_with_columns(
             }
         }
         Expression::Constant(constant) if constant.param_marker.is_none() => {
-            Some(datum_go_text(&constant.value, false))
+            explain_constant(constant)
         }
         Expression::Constant(_) | Expression::CorrelatedColumn(_) => None,
     }
+}
+
+fn physical_condition_text_with_columns(
+    expression: &Expression,
+    column_names: &[Option<String>],
+) -> Option<String> {
+    let mut conditions = Vec::new();
+    collect_physical_and(expression, &mut conditions);
+    let mut rendered = conditions
+        .into_iter()
+        .map(|condition| physical_expression_text_with_columns(condition, column_names))
+        .collect::<Option<Vec<_>>>()?;
+    rendered.sort_unstable();
+    Some(rendered.join(", "))
+}
+
+fn physical_conditions_text_with_columns(
+    expressions: &[Expression],
+    column_names: &[Option<String>],
+) -> Option<String> {
+    let mut conditions = Vec::new();
+    for expression in expressions {
+        collect_physical_and(expression, &mut conditions);
+    }
+    let mut rendered = conditions
+        .into_iter()
+        .map(|condition| physical_expression_text_with_columns(condition, column_names))
+        .collect::<Option<Vec<_>>>()?;
+    rendered.sort_unstable();
+    Some(rendered.join(", "))
 }
 
 fn expression_has_function(expression: &Expression, name: &str) -> bool {
@@ -3763,32 +4643,69 @@ fn grouped_aggregate_info(
     groups.sort();
     let mut aggregate_functions = Vec::new();
     let mut aggregate_index = 0;
+    let mut partial_index = 0;
+    // Go's resolveHavingAndOrderBy appends auxiliary aggregate fields in
+    // HAVING-then-ORDER-BY order before buildAggregation extracts them. Rust
+    // hoists those states without mutating the parsed field list, so rebuild
+    // the same logical inventory for EXPLAIN here.
+    let mut aggregates = Vec::new();
+    let mut collect = |expr: &tidb_ast::Expr| {
+        for aggregate in aggregate_exprs(expr) {
+            if !aggregates.contains(&aggregate) {
+                aggregates.push(aggregate);
+            }
+        }
+    };
     for field in select.fields.fields() {
         let tidb_ast::SelectField::Expr { expr, .. } = field else {
             continue;
         };
-        for aggregate in aggregate_exprs(expr) {
-            let tidb_ast::Expr::Aggregate {
-                name,
-                distinct,
-                args,
-            } = aggregate
-            else {
-                unreachable!("aggregate_exprs returns only aggregates");
-            };
-            let input = if partial_inputs {
-                format!("Column#{aggregate_index}")
-            } else {
-                args.first()
-                    .map_or_else(|| "1".to_owned(), |arg| qualify.expr(arg))
-            };
-            let name = name.to_ascii_lowercase();
-            aggregate_functions.push(format!(
-                "funcs:{name}({}{input})->Column#{aggregate_index}",
-                if distinct { "distinct " } else { "" },
-            ));
+        collect(expr);
+    }
+    if let Some(having) = &select.having {
+        collect(having);
+    }
+    for item in &select.order_by {
+        collect(&item.expr);
+    }
+    for aggregate in aggregates {
+        let tidb_ast::Expr::Aggregate {
+            name,
+            distinct,
+            args,
+        } = aggregate
+        else {
+            unreachable!("aggregate_exprs returns only aggregates");
+        };
+        let name = name.to_ascii_lowercase();
+        let input = if partial_inputs && name == "avg" {
+            let input = format!("Column#{partial_index}, Column#{}", partial_index + 1);
+            partial_index += 2;
+            input
+        } else if partial_inputs {
+            let input = format!("Column#{partial_index}");
+            partial_index += 1;
+            input
+        } else {
+            args.first()
+                .map_or_else(|| "1".to_owned(), |arg| qualify.expr(arg))
+        };
+        if !partial_inputs && name == "avg" {
+            aggregate_functions.push(format!("funcs:count({input})->Column#{partial_index}"));
+            partial_index += 1;
+            aggregate_functions.push(format!("funcs:sum({input})->Column#{partial_index}"));
+            partial_index += 1;
             aggregate_index += 1;
+            continue;
         }
+        aggregate_functions.push(format!(
+            "funcs:{name}({}{input})->Column#{aggregate_index}",
+            if distinct { "distinct " } else { "" },
+        ));
+        if !partial_inputs {
+            partial_index += 1;
+        }
+        aggregate_index += 1;
     }
     let mut first_row_functions = Vec::new();
     if include_first_row {
@@ -3885,7 +4802,11 @@ fn grouped_aggregate_info(
         aggregate_functions.extend(first_row_functions);
         aggregate_functions
     };
-    format!("group by:{}, {}", groups.join(", "), functions.join(", "))
+    if groups.is_empty() {
+        functions.join(", ")
+    } else {
+        format!("group by:{}, {}", groups.join(", "), functions.join(", "))
+    }
 }
 
 fn post_aggregate_expr(
@@ -4296,6 +5217,10 @@ pub(crate) struct JoinStrategy {
     pub(crate) equal_mask: Vec<bool>,
     /// Whether the LEFT child is the build side.
     pub(crate) build_is_left: bool,
+    /// Columns contributed by the logical left child. Go rewrites equality
+    /// arguments to `(left key, right key)` independently of the physical
+    /// build/probe choice.
+    pub(crate) left_width: usize,
     /// A merge join's `(left key, right key)` column names, already
     /// qualified; `None` for every other strategy.
     pub(crate) merge_keys: Option<Vec<(String, String)>>,
@@ -4304,9 +5229,9 @@ pub(crate) struct JoinStrategy {
     /// strategy.
     pub(crate) index_lookup: Option<IndexJoinText>,
     /// The executor's flattened conditions and the physical origin of each
-    /// joined-row column. Present only when a derived aggregate output has
-    /// no source-column name, so non-equality conditions print the internal
-    /// `Column#N` the executor evaluates instead of inventing an alias name.
+    /// joined-row column. EXPLAIN renders this same typed expression so
+    /// constant folding and comparison refinement cannot drift from the
+    /// condition the join evaluates; a missing source name prints `Column#N`.
     pub(crate) physical_conditions: Option<(Vec<Expression>, Vec<Option<String>>)>,
     /// The statement-owned `LogicalJoin.DeriveStats` result. Outer joins use
     /// it to retain the preserved-side floor that a flat trace cannot infer.
@@ -4384,6 +5309,9 @@ pub(crate) struct IndexJoinInnerPathText<'a> {
     pub(crate) keep_outer_order: bool,
     /// Whether the lookup reader remains below a grouped derived table.
     pub(crate) grouped_derived: bool,
+    /// The dynamic range target is a table leaf below a composite inner
+    /// subtree rather than the inner root itself.
+    pub(crate) composite: bool,
     /// Whether the retained aggregation consumes lookup-key-ordered rows.
     pub(crate) stream_aggregation: bool,
     /// Go's physical HashAgg payload for a retained grouped derived table.
@@ -4533,11 +5461,42 @@ pub(crate) struct Qualifier<'a> {
 }
 
 impl Qualifier<'_> {
-    fn expressions(&self, expressions: &[Expression]) -> Option<String> {
+    fn expr_with_physical_columns(
+        &self,
+        expression: &tidb_ast::Expr,
+        column_names: &[Option<String>],
+    ) -> String {
+        if let tidb_ast::Expr::Column(path) = expression {
+            let resolver = crate::driver::ScopeResolver { scope: self.scope };
+            if let Some((index, _, _)) =
+                tidb_expr::rewriter::ColumnResolver::resolve(&resolver, path)
+            {
+                if let Some(Some(name)) = column_names.get(index) {
+                    return name.clone();
+                }
+            }
+        }
+        self.expr(expression)
+    }
+
+    pub(crate) fn expressions(&self, expressions: &[Expression]) -> Option<String> {
         let mut rendered: Vec<String> = expressions
             .iter()
             .map(|expression| self.built_expr(expression))
             .collect::<Option<_>>()?;
+        rendered.sort_unstable();
+        Some(rendered.join(", "))
+    }
+
+    pub(crate) fn conditions(&self, expressions: &[Expression]) -> Option<String> {
+        let mut conditions = Vec::new();
+        for expression in expressions {
+            collect_physical_and(expression, &mut conditions);
+        }
+        let mut rendered = conditions
+            .into_iter()
+            .map(|condition| self.built_expr(condition))
+            .collect::<Option<Vec<_>>>()?;
         rendered.sort_unstable();
         Some(rendered.join(", "))
     }
@@ -4580,7 +5539,12 @@ impl Qualifier<'_> {
             .and_then(|table| {
                 let (name, _) = table.columns.get(index - table.offset)?;
                 let database = table.database.as_deref().unwrap_or(self.db);
-                Some(format!("{database}.{}.{}", table.name, name))
+                Some(format!(
+                    "{}.{}.{}",
+                    database.to_lowercase(),
+                    table.name.to_lowercase(),
+                    name.to_lowercase()
+                ))
             })
             .or_else(|| (!column.orig_name.is_empty()).then(|| column.orig_name.clone()))
     }
@@ -4647,6 +5611,7 @@ impl Qualifier<'_> {
                 .map(|(column, _)| column.as_str())
         }
         match path {
+            [scope, name] if scope == crate::driver::SCALAR_QUERY_SCOPE => name.clone(),
             [name] => {
                 let owner = self
                     .scope
@@ -4656,11 +5621,13 @@ impl Qualifier<'_> {
                 match owner {
                     Some(table) => format!(
                         "{}.{}.{}",
-                        self.db,
-                        table.name,
-                        physical_column(table, name).expect("owner has the column")
+                        self.db.to_lowercase(),
+                        table.name.to_lowercase(),
+                        physical_column(table, name)
+                            .expect("owner has the column")
+                            .to_lowercase()
                     ),
-                    None => name.clone(),
+                    None => name.to_lowercase(),
                 }
             }
             [table_name, name] => self
@@ -4669,10 +5636,23 @@ impl Qualifier<'_> {
                 .iter()
                 .find(|table| table.name.eq_ignore_ascii_case(table_name))
                 .and_then(|table| {
-                    physical_column(table, name)
-                        .map(|column| format!("{}.{}.{column}", self.db, table.name))
+                    physical_column(table, name).map(|column| {
+                        format!(
+                            "{}.{}.{}",
+                            self.db.to_lowercase(),
+                            table.name.to_lowercase(),
+                            column.to_lowercase()
+                        )
+                    })
                 })
-                .unwrap_or_else(|| format!("{}.{table_name}.{name}", self.db)),
+                .unwrap_or_else(|| {
+                    format!(
+                        "{}.{}.{}",
+                        self.db.to_lowercase(),
+                        table_name.to_lowercase(),
+                        name.to_lowercase()
+                    )
+                }),
             [database, table_name, name] => self
                 .scope
                 .tables
@@ -4687,19 +5667,33 @@ impl Qualifier<'_> {
                 .and_then(|table| {
                     physical_column(table, name).map(|column| {
                         format!(
-                            "{}.{}.{column}",
-                            table.database.as_deref().expect("matched database"),
-                            table.name
+                            "{}.{}.{}",
+                            table
+                                .database
+                                .as_deref()
+                                .expect("matched database")
+                                .to_lowercase(),
+                            table.name.to_lowercase(),
+                            column.to_lowercase()
                         )
                     })
                 })
-                .unwrap_or_else(|| path.join(".")),
-            _ => path.join("."),
+                .unwrap_or_else(|| {
+                    path.iter()
+                        .map(|part| part.to_lowercase())
+                        .collect::<Vec<_>>()
+                        .join(".")
+                }),
+            _ => path
+                .iter()
+                .map(|part| part.to_lowercase())
+                .collect::<Vec<_>>()
+                .join("."),
         }
     }
 }
 
-fn explain_constant(constant: &tidb_expr::constant::Constant) -> Option<String> {
+pub(crate) fn explain_constant(constant: &tidb_expr::constant::Constant) -> Option<String> {
     if constant.deferred_expr.is_some() || constant.param_marker.is_some() {
         return None;
     }
@@ -4918,6 +5912,7 @@ mod tests {
                 unique: false,
                 keep_outer_order: false,
                 grouped_derived: true,
+                composite: false,
                 stream_aggregation: false,
                 aggregation_info: Some("group by:h.h_w_id, funcs:sum(h.amount)->Column#0"),
                 aggregation_final_info: Some("group by:h.h_w_id, funcs:sum(Column#0)->Column#0"),
@@ -4939,6 +5934,62 @@ mod tests {
             inner.children[0].children[0].children[0].name,
             "IndexRangeScan"
         );
+    }
+
+    /// Go's dynamic-range builder retains a Selection only for predicates left
+    /// in the inner path's table filters. When the join key consumed the last
+    /// condition, `EmptySelectionEliminator` leaves the reader directly above
+    /// the dynamic range scan.
+    #[test]
+    fn index_join_drops_an_empty_inner_selection() {
+        let mut inner = PlanNode::new("Selection", Some(10.0), String::new(), String::new());
+        inner.children.push(PlanNode::new(
+            "TableFullScan",
+            Some(100.0),
+            "table:lineitem".to_owned(),
+            "keep order:false".to_owned(),
+        ));
+
+        let mut trace = PlanTrace::planning();
+        trace.stack.push(PlanNode::new(
+            "TableFullScan",
+            Some(8.0),
+            "table:orders".to_owned(),
+            "keep order:false".to_owned(),
+        ));
+        trace.stack.push(inner);
+
+        let result = trace.index_join_inner_scan(
+            false,
+            IndexJoinInnerPathText {
+                access: "table:lineitem".to_owned(),
+                range_info: "[eq(lineitem.l_orderkey, orders.o_orderkey)]",
+                index: false,
+                index_lookup: false,
+                visible: "lineitem",
+                estimated_rows: Some(10.0),
+                estimated_access_rows: Some(10.0),
+                estimated_outer_rows: Some(8.0),
+                unique: false,
+                keep_outer_order: false,
+                grouped_derived: false,
+                composite: false,
+                stream_aggregation: false,
+                aggregation_info: None,
+                aggregation_final_info: None,
+                aggregation_partial_info: None,
+                outer_not_null: &[],
+                inner_not_null: &[],
+            },
+            &[String::new()],
+            1.0,
+        );
+
+        assert!(result.is_ok());
+        let reader = &trace.stack[1];
+        assert_eq!(reader.name, "TableReader");
+        assert_eq!(reader.children.len(), 1);
+        assert_eq!(reader.children[0].name, "TableRangeScan");
     }
 
     /// MUTATION PROBE for the RETRACTION's descent: it passes through the

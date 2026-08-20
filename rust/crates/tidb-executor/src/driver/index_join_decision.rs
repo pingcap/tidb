@@ -445,6 +445,9 @@ pub(crate) struct IndexJoinDecision {
     /// The looked-up table's visible columns, which are this side's whole
     /// physical row layout.
     pub(crate) columns: Vec<(String, FieldType)>,
+    /// The physical database owning `table`. Inner filters use a table-local
+    /// column layout and must not be qualified through the surrounding join.
+    pub(crate) database: String,
     /// Physical table offsets emitted by a bare lookup, in the narrowed
     /// child's logical output order. A retained aggregation consumes its
     /// physical-width input instead and does not use this projection.
@@ -477,6 +480,10 @@ pub(crate) struct IndexJoinDecision {
     /// Go's partial aggregation payload pushed onto the table side of a
     /// double-read lookup.
     pub(crate) aggregation_partial_info: Option<String>,
+    /// The lookup target is nested below another join on this side. The
+    /// executor rebuilds that subtree with a shared probe channel instead of
+    /// replacing the whole side with a bare table reader.
+    pub(crate) composite: bool,
     /// Whether a local equality constrains a dynamically probed object-key
     /// column. For a grouped lookup this means at most one distinct outer key
     /// can produce base rows; every other probe is empty.
@@ -487,6 +494,42 @@ pub(crate) struct IndexJoinDecision {
 }
 
 impl IndexJoinDecision {
+    /// Records the evicted statistics Go touches while costing this physical
+    /// lookup candidate. `ColumnStatsIsInvalid` owns clustered handles;
+    /// `IndexStatsIsInvalid` owns common handles and secondary indexes.
+    pub(crate) fn record_stats_access(&self, stats: Option<&crate::access_cost::TableStatistics>) {
+        let Some(stats) = stats.filter(|stats| !stats.pseudo) else {
+            return;
+        };
+        let mut columns = std::collections::BTreeSet::new();
+        let mut indexes = std::collections::BTreeSet::new();
+        match self.object {
+            crate::access_path::LookupObject::Handle => {
+                if let Some(column) = self
+                    .table
+                    .pk_handle_offset()
+                    .and_then(|offset| self.table.columns.get(offset))
+                {
+                    columns.insert(column.id);
+                }
+            }
+            crate::access_path::LookupObject::CommonHandle => {
+                if let Some(index) = self
+                    .table
+                    .indexes()
+                    .iter()
+                    .find(|index| index.name.eq_ignore_ascii_case("PRIMARY"))
+                {
+                    indexes.insert(index.id);
+                }
+            }
+            crate::access_path::LookupObject::Index(id) => {
+                indexes.insert(id);
+            }
+        }
+        stats.mark_accessed_statistics(columns, indexes);
+    }
+
     /// Go's `maxOneRow`: only an integer handle or every column of a unique
     /// object key guarantees at most one row. A partial common-handle prefix is
     /// a table range and can return every suffix below it.
@@ -709,6 +752,8 @@ pub(crate) struct JoinSide<'a> {
     pub(crate) aggregation_info: Option<String>,
     pub(crate) aggregation_final_info: Option<String>,
     pub(crate) aggregation_partial_info: Option<String>,
+    /// Whether `table` is a target leaf discovered below a composite side.
+    pub(crate) composite: bool,
 }
 
 /// The looked-up side of `join`, or `None` when neither side qualifies.
@@ -778,7 +823,7 @@ pub(crate) fn index_join_decisions_with_context(
         crate::join::JoinKind::Inner => &[false, true],
         crate::join::JoinKind::Left => &[false],
         crate::join::JoinKind::Right => &[true],
-        crate::join::JoinKind::Semi | crate::join::JoinKind::AntiSemi => &[],
+        crate::join::JoinKind::Semi | crate::join::JoinKind::AntiSemi => &[false],
     };
     let mut decisions = Vec::with_capacity(sides.len() * 2);
     for lookup_is_left in sides.iter().copied() {
@@ -822,6 +867,14 @@ fn decide_over(
     if table.partition().is_some() {
         return Vec::new();
     }
+    let Some(database) = inner
+        .origin
+        .as_deref()
+        .and_then(|origin| origin.rsplit_once('.'))
+        .map(|(database, _)| database.to_owned())
+    else {
+        return Vec::new();
+    };
     let columns: Vec<(String, FieldType)> = table
         .visible_columns()
         .iter()
@@ -838,7 +891,7 @@ fn decide_over(
         .iter()
         .copied()
         .collect::<Option<Vec<_>>>();
-    if inner.aggregation.is_none() && output_offsets.is_none() {
+    if inner.aggregation.is_none() && output_offsets.is_none() && !inner.composite {
         return Vec::new();
     }
     let output_offsets = output_offsets.unwrap_or_default();
@@ -915,7 +968,11 @@ fn decide_over(
                 dynamic_info.push(format!(
                     "eq({}, {})",
                     inner_column_name(inner, *offset),
-                    physical_outer_column_name(outer, outer_at(&keys[key]))
+                    if inner.composite {
+                        outer.names[outer_at(&keys[key])].clone()
+                    } else {
+                        physical_outer_column_name(outer, outer_at(&keys[key]))
+                    }
                 ));
             } else if let Some(value) = constants.get(*offset).and_then(Clone::clone) {
                 probe_parts.push(crate::access_path::LookupProbePart::Constant(value.clone()));
@@ -967,14 +1024,20 @@ fn decide_over(
                 aggregation_info: inner.aggregation_info.clone(),
                 aggregation_final_info: inner.aggregation_final_info.clone(),
                 aggregation_partial_info: inner.aggregation_partial_info.clone(),
+                composite: inner.composite,
                 constant_constrained_probe: constants[pk].is_some(),
                 columns: columns.clone(),
+                database: database.clone(),
                 output_offsets: output_offsets.clone(),
                 visible: inner.source_visible.clone(),
                 // Go `indexJoinIntPKRangeInfo`: the OUTER keys, bare.
                 range_info: format!(
                     "[{}]",
-                    physical_outer_column_name(outer, outer_at(&keys[key]))
+                    if inner.composite {
+                        outer.names[outer_at(&keys[key])].clone()
+                    } else {
+                        physical_outer_column_name(outer, outer_at(&keys[key]))
+                    }
                 ),
                 filters: filters.clone(),
                 filter_exprs: filter_exprs.clone(),
@@ -1027,8 +1090,10 @@ fn decide_over(
                 aggregation_info: inner.aggregation_info.clone(),
                 aggregation_final_info: inner.aggregation_final_info.clone(),
                 aggregation_partial_info: inner.aggregation_partial_info.clone(),
+                composite: inner.composite,
                 constant_constrained_probe,
                 columns: columns.clone(),
+                database: database.clone(),
                 output_offsets: output_offsets.clone(),
                 visible: inner.source_visible.clone(),
                 range_info,
@@ -1127,8 +1192,10 @@ fn decide_over(
         aggregation_info: inner.aggregation_info.clone(),
         aggregation_final_info: inner.aggregation_final_info.clone(),
         aggregation_partial_info: inner.aggregation_partial_info.clone(),
+        composite: inner.composite,
         constant_constrained_probe,
         columns,
+        database,
         output_offsets,
         visible: inner.source_visible.clone(),
         range_info,
@@ -1273,7 +1340,11 @@ fn rewrite_inner_filters(
     let resolver = crate::driver::from::ScopeResolver { scope: &scope };
     filters
         .iter()
-        .map(|filter| rewrite_expr_resolved(filter, &resolver).ok())
+        .map(|filter| {
+            let mut expression = rewrite_expr_resolved(filter, &resolver).ok()?;
+            tidb_expr::builtin_compare::refine_comparisons(&mut expression, ctx).ok()?;
+            Some(expression)
+        })
         .collect()
 }
 
@@ -1307,7 +1378,7 @@ fn static_equalities(
 /// Pseudo selectivity of the inner filters not already represented by static
 /// key parts. Go leaves the static equality visible in the cop Selection but
 /// prices it in the range only once.
-fn residual_filter_selectivity(
+pub(crate) fn residual_filter_selectivity(
     filters: &[tidb_ast::Expr],
     static_columns: &[usize],
     columns: &[(String, FieldType)],
@@ -1339,7 +1410,17 @@ fn residual_filter_selectivity(
             crate::plan_trace::PlanTrace::single_table_scope(visible, None, columns.to_vec());
         scope.zone = zone.clone();
         let resolver = crate::driver::from::ScopeResolver { scope: &scope };
-        crate::access_cost::selectivity_of_conjuncts(&residual, table, &resolver, statistics)
+        let selectivity =
+            crate::access_cost::selectivity_of_conjuncts(&residual, table, &resolver, statistics);
+        // Go's cardinality.Selectivity applies the session SelectionFactor to a
+        // residual predicate that has no usable statistics (for example the
+        // q4 column-to-column date comparison). Keep the access-before-filter
+        // estimate distinct from the logical rows that survive the Selection.
+        if selectivity >= 1.0 {
+            crate::plan_trace::SELECTIVITY_FACTOR
+        } else {
+            selectivity
+        }
     }
 }
 
@@ -1361,7 +1442,11 @@ fn datum_text(value: &Datum) -> String {
 /// fallback is unreachable in practice rather than a second spelling.
 fn inner_column_name(inner: &JoinSide<'_>, column: usize) -> String {
     match (&inner.origin, inner.table) {
-        (Some(origin), Some(table)) => format!("{origin}.{}", table.columns[column].name),
+        (Some(origin), Some(table)) => format!(
+            "{}.{}",
+            origin.to_lowercase(),
+            table.columns[column].name.to_lowercase()
+        ),
         _ => inner.names[column].clone(),
     }
 }
@@ -1378,7 +1463,7 @@ fn physical_outer_column_name(outer: &JoinSide<'_>, output: usize) -> String {
             table
                 .visible_columns()
                 .get(source)
-                .map(|column| format!("{origin}.{}", column.name))
+                .map(|column| format!("{}.{}", origin.to_lowercase(), column.name.to_lowercase()))
         })
         .unwrap_or_else(|| outer.names[output].clone())
 }
@@ -1417,6 +1502,7 @@ fn probe_compatible(inner: &FieldType, outer: &FieldType) -> bool {
 /// the join produced and the executors its children became.
 pub(crate) fn join_sides<'a>(
     join: &tidb_ast::Join,
+    keys: &[EquiKey],
     scope: &FromScope,
     current_db: &str,
     left_width: usize,
@@ -1450,9 +1536,113 @@ pub(crate) fn join_sides<'a>(
             aggregation_info: None,
             aggregation_final_info: None,
             aggregation_partial_info: None,
+            composite: false,
         },
     };
-    (left, right)
+    (
+        discover_composite_target(
+            left,
+            &join.left,
+            &keys.iter().map(|key| key.left).collect::<Vec<_>>(),
+            catalog,
+            current_db,
+        ),
+        discover_composite_target(
+            right,
+            join.right.as_ref().expect("right side exists"),
+            &keys.iter().map(|key| key.right).collect::<Vec<_>>(),
+            catalog,
+            current_db,
+        ),
+    )
+}
+
+/// Finds the physical table leaf that carries a join key through a composite
+/// side. The side keeps its full output names, while `output_to_source` marks
+/// only columns that can be mapped back to this target table.
+fn discover_composite_target<'a>(
+    mut side: JoinSide<'a>,
+    node: &tidb_ast::JoinNode,
+    key_outputs: &[usize],
+    catalog: &'a Catalog,
+    current_db: &str,
+) -> JoinSide<'a> {
+    if side.table.is_some() {
+        return side;
+    }
+    let mut tables = Vec::new();
+    collect_table_refs(node, &mut tables);
+    for table_ref in tables {
+        if !table_ref.partitions.is_empty()
+            || table_ref.as_of.is_some()
+            || !table_ref.hints.is_empty()
+            || table_ref.sample.is_some()
+        {
+            continue;
+        }
+        let Ok((database, name)) =
+            crate::driver::catalog::split_table_path(&table_ref.name, current_db)
+        else {
+            continue;
+        };
+        let Some(TableEntry::Kv(table)) = catalog.get_in(database, name) else {
+            continue;
+        };
+        let origin = format!("{database}.{name}");
+        let matches = side
+            .names
+            .iter()
+            .enumerate()
+            .filter_map(|(output, rendered)| {
+                let suffix = rendered
+                    .strip_prefix(&format!("{origin}."))
+                    .or_else(|| rendered.strip_prefix(&format!("{}.", origin.to_lowercase())))?;
+                let source = table
+                    .visible_columns()
+                    .iter()
+                    .position(|column| column.name.eq_ignore_ascii_case(suffix))?;
+                Some((output, source))
+            })
+            .collect::<Vec<_>>();
+        if !matches
+            .iter()
+            .any(|(output, _)| key_outputs.contains(output))
+        {
+            continue;
+        }
+        side.table = Some(table);
+        side.source_visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
+        side.origin = Some(origin);
+        side.output_to_source = vec![None; side.names.len()];
+        for (output, source) in matches {
+            side.output_to_source[output] = Some(source);
+        }
+        side.composite = true;
+        return side;
+    }
+    side
+}
+
+fn collect_table_refs<'a>(node: &'a tidb_ast::JoinNode, out: &mut Vec<&'a tidb_ast::TableRef>) {
+    match node {
+        tidb_ast::JoinNode::Table(table) => out.push(table),
+        tidb_ast::JoinNode::Join(join) => {
+            collect_table_refs(&join.left, out);
+            if let Some(right) = &join.right {
+                collect_table_refs(right, out);
+            }
+        }
+        tidb_ast::JoinNode::Derived { subquery, .. } => {
+            if let tidb_ast::QueryStmt::Select(select) = &**subquery {
+                if let Some(from) = &select.from {
+                    collect_table_refs(&from.left, out);
+                    if let Some(right) = &from.right {
+                        collect_table_refs(right, out);
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn side_of<'a>(
@@ -1564,6 +1754,7 @@ fn side_of<'a>(
         aggregation_partial_info: derived
             .as_ref()
             .map(|derived| derived.aggregation_partial_info.clone()),
+        composite: false,
     }
 }
 

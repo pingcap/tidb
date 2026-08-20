@@ -56,6 +56,7 @@
 //!   so the blob is parsed back as one.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use tidb_datatype::{
     BinaryLiteral, BinaryLiteralWidth, ConversionFlags, Datum, EvalType, FieldType, FieldTypeCode,
@@ -116,6 +117,8 @@ pub struct ClusterTableStats {
     pub columns: Vec<ClusterStatsItem>,
     /// Index histograms, in `hist_id` order.
     pub indexes: Vec<ClusterStatsItem>,
+    /// Full-load residency shared by every planner built from this snapshot.
+    pub load_state: Arc<tidb_executor::access_cost::StatsLoadState>,
 }
 
 impl ClusterTableStats {
@@ -238,6 +241,7 @@ impl ClusterStatsLoader {
             row_count,
             columns: Vec::new(),
             indexes: Vec::new(),
+            load_state: Arc::default(),
         };
         let key_prefix = [Datum::Int(table_id)];
         for (key, value) in scan_system_table_prefixed(snapshot, &self.histograms, &key_prefix)? {

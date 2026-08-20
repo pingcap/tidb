@@ -182,16 +182,19 @@ impl KvHandler {
         }
     }
 
-    /// Go `Server.KvBatchGet`. The trimmed proto crate carries no
-    /// `BatchGetResponse` (a `tidb-proto` curation boundary, named); the
-    /// response's whole payload IS its pair list, returned directly.
-    pub fn kv_batch_get(&mut self, req: &kvrpcpb::BatchGetRequest) -> Vec<kvrpcpb::KvPair> {
+    /// Go `Server.KvBatchGet`.
+    pub fn kv_batch_get(&mut self, req: &kvrpcpb::BatchGetRequest) -> kvrpcpb::BatchGetResponse {
         let ctx = read_context(req.context.as_ref());
-        self.store
+        let pairs = self
+            .store
             .batch_get_with(&ctx, &req.keys, req.version)
             .into_iter()
             .map(pair_to_proto)
-            .collect()
+            .collect();
+        kvrpcpb::BatchGetResponse {
+            pairs,
+            ..kvrpcpb::BatchGetResponse::default()
+        }
     }
 
     /// Go `Server.KvPrewrite`.

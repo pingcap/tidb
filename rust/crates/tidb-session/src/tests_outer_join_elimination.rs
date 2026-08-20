@@ -35,11 +35,9 @@
 //! `1|1` twice in TiDB, and `u2`'s `uk(a, b)` really does not when both key
 //! parts are matched but really does when only one is.
 //!
-//! It also carries the two `explain_easy` verdicts this batch MEASURED and
-//! deliberately did not change ([`an_uncorrelated_in_subquery_answers_tidbs_rows_through_a_different_plan`]
-//! and [`a_correlated_scalar_aggregate_answers_tidbs_rows_through_an_apply`]),
-//! because a plan that is merely different needs its rows pinned even more
-//! than one that is the same.
+//! It also carries the correlated-scalar `explain_easy` verdict this batch
+//! measured and deliberately did not change
+//! ([`a_correlated_scalar_aggregate_answers_tidbs_rows_through_an_apply`]).
 //!
 //! # The two gaps this measures
 //!
@@ -217,24 +215,19 @@ fn distinct_over_a_non_unique_key_eliminates_the_inner_table() {
     assert_eq!(tables_read(&mut session, sql), ["d1"]);
 }
 
-/// The IN-subquery verdict this batch measured but did NOT change, kept as a
-/// running assertion so the shape cannot drift unnoticed.
+/// Go's default positive, uncorrelated IN rewrite and its row semantics.
 ///
 /// `explain_easy` records `select c1 from t1 where c1 in (select c2 from t2)`
-/// as a semi join over `IndexFullScan table:t1, index:c2(c2)`; this tier
-/// answers it with `Batch_Point_Get table:t1`, because the subquery is
-/// UNCORRELATED and `run_select_traced` folds it to a literal list before the
-/// access path is chosen (Go instead rewrites IN to a join under
-/// `tidb_opt_insubq_to_join_and_agg`, so it never runs the subquery). That is
-/// a DIFFERENT plan, not a wrong one -- these three cases are the ones where
-/// the difference could show, and all three match gorun's capture of real
-/// TiDB exactly:
+/// as a join over both tables. `tidb_opt_insubq_to_join_and_agg` makes the
+/// right side distinct before the equality join, so duplicate inner values do
+/// not multiply outer rows. These three cases pin the NULL/empty-set edges
+/// against gorun's real-TiDB capture:
 ///
 /// * a NULL among the subquery's values (`s2.c2` is NULL for `c1 = 2`);
 /// * a subquery that returns ONLY NULL;
 /// * a subquery that returns NO row.
 #[test]
-fn an_uncorrelated_in_subquery_answers_tidbs_rows_through_a_different_plan() {
+fn an_uncorrelated_in_subquery_uses_tidbs_join_and_preserves_null_semantics() {
     let mut session = Session::new();
     for sql in [
         "create table s1 (c1 int primary key, c2 int, c3 int, index c2 (c2))",
@@ -252,6 +245,13 @@ fn an_uncorrelated_in_subquery_answers_tidbs_rows_through_a_different_plan() {
             "select c1 from s1 where c1 in (select c2 from s2)"
         ),
         ["1", "3"]
+    );
+    assert_eq!(
+        tables_read(
+            &mut session,
+            "select c1 from s1 where c1 in (select c2 from s2)"
+        ),
+        ["s1", "s2"]
     );
     // gorun: RS: (no rows).
     assert_eq!(

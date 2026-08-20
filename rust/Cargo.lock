@@ -2337,6 +2337,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "smallvec",
  "tidb-error",
  "tidb-kvcache",
 ]

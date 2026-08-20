@@ -249,10 +249,6 @@ fn unsupported_request_shapes_fail_before_task_or_cache_mutation() {
     cases.push((request, "store_batching"));
 
     let mut request = metadata(vec![range("a", "z")]);
-    request.keep_order = false;
-    cases.push((request, "unordered_response"));
-
-    let mut request = metadata(vec![range("a", "z")]);
     request.key_ranges = Some(RequestKeyRanges::new_partitioned(vec![vec![range(
         "a", "z",
     )]]));

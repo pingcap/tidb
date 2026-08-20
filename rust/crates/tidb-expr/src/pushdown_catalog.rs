@@ -54,10 +54,8 @@
 //! [`to_pb`] builds the TiPB tree, inserting the same implicit casts
 //! `newBaseBuiltinFuncWithTp` inserts. It refuses any leaf whose TiPB
 //! `FieldType` this tier cannot build faithfully -- today a non-binary
-//! collation (every string, `ENUM`, `SET` and JSON column) and any constant
-//! that is not an integer in an integer-typed slot, because Go folds
-//! `CAST(<int const> AS REAL)` at plan time and therefore sends a `Float64`
-//! literal this tier does not encode.
+//! collation (every string, `ENUM`, `SET` and JSON column) and constant
+//! families other than the numeric literals encoded below.
 //!
 //! A refusal costs network only. The scan source applies every pushed
 //! conjunct to every row it emits regardless
@@ -67,8 +65,10 @@
 //! the wire -- which is why every row of the table below cites the Go
 //! `getFunction` it was read from.
 
-use tidb_datatype::{collation_to_proto, EvalType, FieldType, FieldTypeCode};
+use tidb_datatype::{collation_to_proto, Datum, Decimal, EvalType, FieldType, FieldTypeCode};
 use tidb_proto::tipb::{Expr, ExprType};
+
+use crate::expression::Expression;
 
 /// The TiPB signature enum, re-exported so a caller that reads a resolved
 /// signature off the catalog does not need its own TiPB dependency: the
@@ -339,6 +339,56 @@ impl BuiltinSignature {
 /// MySQL's special rounding behaviour), is absent rather than flagged, so
 /// "not in the catalog" and "TiKV refuses it" are one answer.
 pub const CATALOG: &[BuiltinSignature] = &[
+    // `arithmeticPlusFunctionClass.getFunction` and
+    // `arithmeticMinusFunctionClass.getFunction`: a Decimal operand selects
+    // the Decimal family and the other argument is wrapped as Decimal.
+    signature(
+        "plus",
+        &[ArgPattern::eval(EvalType::Decimal), ArgPattern::ANY],
+        &[EvalType::Decimal, EvalType::Decimal],
+        EvalType::Decimal,
+        ScalarFuncSig::PlusDecimal,
+        false,
+    ),
+    signature(
+        "plus",
+        &[ArgPattern::ANY, ArgPattern::eval(EvalType::Decimal)],
+        &[EvalType::Decimal, EvalType::Decimal],
+        EvalType::Decimal,
+        ScalarFuncSig::PlusDecimal,
+        false,
+    ),
+    signature(
+        "minus",
+        &[ArgPattern::eval(EvalType::Decimal), ArgPattern::ANY],
+        &[EvalType::Decimal, EvalType::Decimal],
+        EvalType::Decimal,
+        ScalarFuncSig::MinusDecimal,
+        false,
+    ),
+    signature(
+        "minus",
+        &[ArgPattern::ANY, ArgPattern::eval(EvalType::Decimal)],
+        &[EvalType::Decimal, EvalType::Decimal],
+        EvalType::Decimal,
+        ScalarFuncSig::MinusDecimal,
+        false,
+    ),
+    // `builtin_arithmetic.go` `arithmeticMultiplyFunctionClass.getFunction`:
+    // two decimal operands stay decimal and use MultiplyDecimal. This is the
+    // exact argument family used by TPC-H q6; other multiplication families
+    // remain fail-closed until their signedness and cast matrices are ported.
+    signature(
+        "mul",
+        &[
+            ArgPattern::eval(EvalType::Decimal),
+            ArgPattern::eval(EvalType::Decimal),
+        ],
+        &[EvalType::Decimal, EvalType::Decimal],
+        EvalType::Decimal,
+        ScalarFuncSig::MultiplyDecimal,
+        false,
+    ),
     // `builtin_arithmetic.go` `arithmeticModFunctionClass.getFunction`: Real
     // wins over Decimal, Decimal over Int, and the integer case then splits
     // four ways on the two arguments' UNSIGNED flags.
@@ -710,6 +760,7 @@ const fn cast_signature(from: EvalType, to: EvalType) -> Option<Option<ScalarFun
         (from, to),
         (EvalType::Int, EvalType::Int)
             | (EvalType::Real, EvalType::Real)
+            | (EvalType::Decimal, EvalType::Decimal)
             | (EvalType::String, EvalType::String)
     ) {
         // Go returns the argument untouched, so no node is added at all.
@@ -739,6 +790,20 @@ pub enum PbScalar {
     },
     /// A signed integer constant, already folded.
     IntLiteral(i64),
+    /// An exact decimal constant, already folded.
+    DecimalLiteral {
+        /// Constant value encoded with Go's natural precision and scale.
+        value: Decimal,
+        /// The planner-inferred literal type carried on the TiPB leaf.
+        field_type: FieldType,
+    },
+    /// A double-precision constant, already folded.
+    RealLiteral {
+        /// Constant value encoded with TiDB's mem-comparable float codec.
+        value: f64,
+        /// The planner-inferred literal type carried on the TiPB leaf.
+        field_type: FieldType,
+    },
     /// A resolved builtin call.
     Call {
         /// The catalog row [`resolve`] chose.
@@ -755,6 +820,8 @@ impl PbScalar {
         match self {
             Self::Column { field_type, .. } => field_type.eval_type(),
             Self::IntLiteral(_) => EvalType::Int,
+            Self::DecimalLiteral { .. } => EvalType::Decimal,
+            Self::RealLiteral { .. } => EvalType::Real,
             Self::Call { signature, .. } => signature.ret,
         }
     }
@@ -770,6 +837,9 @@ impl PbScalar {
         match self {
             Self::Column { field_type, .. } => field_type.is_unsigned(),
             Self::IntLiteral(_) => false,
+            Self::DecimalLiteral { field_type, .. } | Self::RealLiteral { field_type, .. } => {
+                field_type.is_unsigned()
+            }
             Self::Call { signature, args } => {
                 signature.ret_unsigned_from_first_arg
                     && args.first().is_some_and(PbScalar::is_unsigned)
@@ -790,6 +860,7 @@ impl PbScalar {
         match self {
             Self::Column { field_type, .. } => field_type.is_binary_string(),
             Self::IntLiteral(_) => false,
+            Self::DecimalLiteral { .. } | Self::RealLiteral { .. } => false,
             Self::Call { signature, args } => match signature.ret_collation {
                 RetCollation::Numeric | RetCollation::ConnectionString => false,
                 RetCollation::FirstArgString => {
@@ -826,6 +897,76 @@ pub fn resolve(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignatur
 pub fn build_call(name: &str, args: Vec<PbScalar>) -> Option<PbScalar> {
     let signature = resolve(name, &args)?;
     Some(PbScalar::Call { signature, args })
+}
+
+/// Describes one already-resolved executor expression in the same catalog
+/// used by scan predicates. Returning `None` is the Rust equivalent of Go's
+/// `CanExprsPushDownWithExtraInfo` / `AggFuncToPBExpr` refusal: the aggregate
+/// stays wholly in the root task.
+#[must_use]
+pub fn from_expression(expression: &Expression) -> Option<PbScalar> {
+    match expression {
+        Expression::Column(column) => Some(PbScalar::Column {
+            offset: u32::try_from(column.index).ok()?,
+            field_type: column.get_static_type()?.clone(),
+        }),
+        Expression::Constant(constant) => match &constant.value {
+            Datum::Int(value) => Some(PbScalar::IntLiteral(*value)),
+            Datum::Decimal(value) => Some(PbScalar::DecimalLiteral {
+                value: value.clone(),
+                field_type: constant.ret_type.clone()?,
+            }),
+            Datum::Real(value) | Datum::Float32(value)
+                if !(*value == 0.0 && value.is_sign_negative()) =>
+            {
+                Some(PbScalar::RealLiteral {
+                    value: *value,
+                    field_type: constant.ret_type.clone()?,
+                })
+            }
+            _ => None,
+        },
+        Expression::ScalarFunction(function) => {
+            let args = function
+                .args
+                .iter()
+                .map(from_expression)
+                .collect::<Option<Vec<_>>>()?;
+            build_call(function.func_name.lowercase(), args)
+        }
+        Expression::CorrelatedColumn(_) => None,
+    }
+}
+
+/// Lowers one executor expression and preserves its already-inferred result
+/// field type. The catalog still owns signature choice and implicit casts;
+/// the exact type matters for decimal aggregate arguments because TiKV reads
+/// their precision and scale from the scalar node.
+#[must_use]
+pub fn expression_to_pb(
+    expression: &Expression,
+    columns: &impl Fn(u32) -> Option<ColumnDescriptor>,
+) -> Option<Expr> {
+    let described = from_expression(expression)?;
+    let mut encoded = to_pb(&described, columns)?;
+    encoded.field_type = Some(field_type_to_pb(expression.static_type()?)?);
+    Some(encoded)
+}
+
+/// Go `ToPBFieldType` for a type used by this bounded expression closure.
+#[must_use]
+pub fn field_type_to_pb(field_type: &FieldType) -> Option<tidb_proto::tipb::FieldType> {
+    if !leaf_column_family(field_type.code()) {
+        return None;
+    }
+    Some(pb_field_type(
+        i32::from(field_type.code().mysql_type()),
+        field_type.flags(),
+        i32::try_from(field_type.flen()).ok()?,
+        i32::try_from(field_type.decimal()).ok()?,
+        field_type.charset_name(),
+        field_type.collation_name(),
+    ))
 }
 
 /// The scan descriptor's own declaration of one output column: the four fields
@@ -921,6 +1062,24 @@ pub fn to_pb(
                 0,
             ),
         )),
+        PbScalar::DecimalLiteral { value, field_type } => {
+            let mut encoded = Vec::new();
+            tidb_codec::encode_decimal_fixed(&mut encoded, value, 0, 0).ok()?;
+            Some(leaf(
+                ExprType::MysqlDecimal,
+                encoded,
+                field_type_to_pb(field_type)?,
+            ))
+        }
+        PbScalar::RealLiteral { value, field_type } => {
+            let mut encoded = Vec::new();
+            tidb_codec::encode_float(&mut encoded, *value);
+            Some(leaf(
+                ExprType::Float64,
+                encoded,
+                field_type_to_pb(field_type)?,
+            ))
+        }
         PbScalar::Call { signature, args } => {
             let mut children = Vec::with_capacity(args.len());
             for (argument, required) in args.iter().zip(signature.arg_types) {
@@ -945,18 +1104,50 @@ fn coerced_to_pb(
     required: EvalType,
     columns: &impl Fn(u32) -> Option<ColumnDescriptor>,
 ) -> Option<Expr> {
+    // Go folds a deterministic cast over a constant and sends the target
+    // literal family, not a ScalarFunc cast node.
+    if let PbScalar::IntLiteral(value) = argument {
+        if required == EvalType::Int {
+            return to_pb(argument, columns);
+        }
+        return match required {
+            EvalType::Real => {
+                let mut encoded = Vec::new();
+                tidb_codec::encode_float(&mut encoded, *value as f64);
+                Some(leaf(
+                    ExprType::Float64,
+                    encoded,
+                    int_field_type(
+                        FieldTypeCode::Double.mysql_type().into(),
+                        BINARY_FLAG | NOT_NULL_FLAG,
+                        MAX_REAL_WIDTH,
+                        UNSPECIFIED_LENGTH,
+                    ),
+                ))
+            }
+            EvalType::Decimal => {
+                let decimal = Decimal::from_int(*value);
+                let mut encoded = Vec::new();
+                tidb_codec::encode_decimal_fixed(&mut encoded, &decimal, 0, 0).ok()?;
+                Some(leaf(
+                    ExprType::MysqlDecimal,
+                    encoded,
+                    int_field_type(
+                        FieldTypeCode::NewDecimal.mysql_type().into(),
+                        BINARY_FLAG | NOT_NULL_FLAG,
+                        DECIMAL_RETURN_FLEN,
+                        0,
+                    ),
+                ))
+            }
+            _ => None,
+        };
+    }
     let cast = cast_signature(argument.eval_type(), required)?;
     let lowered = to_pb(argument, columns)?;
     let Some(cast) = cast else {
         return Some(lowered);
     };
-    // A constant in a slot that needs a cast is refused rather than cast: Go
-    // folds `CAST(<const>)` at plan time (`foldConstant` over a deterministic
-    // function of constants) and sends the *folded* literal, whose TiPB
-    // encoding is the target family's and not the source's.
-    if matches!(argument, PbScalar::IntLiteral(_)) {
-        return None;
-    }
     let field_type = match required {
         EvalType::Int => int_field_type(
             FieldTypeCode::LongLong.mysql_type().into(),
@@ -1070,6 +1261,9 @@ const fn leaf_column_family(code: FieldTypeCode) -> bool {
             | FieldTypeCode::Float
             | FieldTypeCode::Double
             | FieldTypeCode::NewDecimal
+            | FieldTypeCode::Date
+            | FieldTypeCode::Datetime
+            | FieldTypeCode::Timestamp
             | FieldTypeCode::Varchar
             | FieldTypeCode::VarString
             | FieldTypeCode::String
@@ -1129,7 +1323,9 @@ mod tests {
                     collation: field_type.collation_name().to_owned(),
                 },
             )),
-            PbScalar::IntLiteral(_) => {}
+            PbScalar::IntLiteral(_)
+            | PbScalar::DecimalLiteral { .. }
+            | PbScalar::RealLiteral { .. } => {}
             PbScalar::Call { args, .. } => args.iter().for_each(|arg| collect(arg, out)),
         }
     }
@@ -1294,19 +1490,18 @@ mod tests {
         assert!(flags & UNSIGNED_FLAG != 0);
     }
 
-    /// A constant is refused in a slot that would need a cast, because Go
-    /// folds the cast away and sends a literal of the target family.
+    /// A constant in a typed slot is folded to the target literal family, as
+    /// Go's `foldConstant` does before PB conversion.
     #[test]
-    fn a_constant_that_would_need_a_cast_is_refused() {
+    fn a_constant_that_needs_a_cast_is_folded_before_lowering() {
         let call = build_call(
             "atan2",
             vec![column(FieldTypeCode::Double), PbScalar::IntLiteral(1)],
         )
         .unwrap();
-        assert!(
-            lower(&call).is_none(),
-            "Go sends the folded Float64 constant, not CastIntAsReal(1)"
-        );
+        let pb = lower(&call).expect("the folded Float64 literal lowers");
+        assert_eq!(pb.children[1].tp, Some(ExprType::Float64 as i32));
+        assert_eq!(pb.children[1].sig, Some(ScalarFuncSig::Unspecified as i32));
         // The same constant in an Int slot needs no cast and lowers.
         let call = build_call(
             "mod",
@@ -1314,6 +1509,15 @@ mod tests {
         )
         .unwrap();
         assert!(lower(&call).is_some());
+
+        let call = build_call(
+            "minus",
+            vec![PbScalar::IntLiteral(1), column(FieldTypeCode::NewDecimal)],
+        )
+        .unwrap();
+        let pb = lower(&call).expect("the folded MysqlDecimal literal lowers");
+        assert_eq!(pb.sig, Some(ScalarFuncSig::MinusDecimal as i32));
+        assert_eq!(pb.children[0].tp, Some(ExprType::MysqlDecimal as i32));
     }
 
     /// A string column's leaf carries the column's OWN collation, put through

@@ -665,27 +665,36 @@ fn a_statement_that_reads_no_cluster_row_prepares_but_never_opens_a_snapshot() {
     assert_eq!(node.live.load(Ordering::Acquire), 0);
 }
 
-/// Preparing a future is not activating a transaction. Go reports an oracle
-/// future's error only when a read asks `Txn()` to wait for it.
+/// Preparing a future is not activating a transaction. When a read asks
+/// `Txn()` to wait and that future fails, Go logs the failure and calls
+/// `store.Begin` without `WithStartTS`, synchronously taking one replacement
+/// timestamp for the statement.
 #[test]
-fn a_prepared_snapshot_error_is_reported_only_if_the_statement_reads() {
+fn a_failed_prepared_snapshot_falls_back_only_if_the_statement_reads() {
     let (mut session, node) = open_session();
     seed(&mut session);
 
+    let opened = node.opened.load(Ordering::Acquire);
     node.fail_next_prepared_snapshot
         .store(true, Ordering::Release);
     assert_eq!(rows(&mut session, "SELECT 1"), vec![vec![Datum::Int(1)]]);
+    assert_eq!(
+        node.opened.load(Ordering::Acquire),
+        opened,
+        "an unread failed future must not open its synchronous fallback"
+    );
 
     node.fail_next_prepared_snapshot
         .store(true, Ordering::Release);
-    let error = session
-        .execute("SELECT COUNT(*) FROM t WHERE id = 1")
-        .err()
-        .expect("a read must wait for and report the failed future");
-    assert!(
-        error.message.contains("table bytes failed to decode"),
-        "{}",
-        error.message
+    assert_eq!(
+        rows(&mut session, "SELECT COUNT(*) FROM t WHERE id = 1"),
+        vec![vec![Datum::Int(1)]],
+        "the replacement snapshot must serve the statement"
+    );
+    assert_eq!(
+        node.opened.load(Ordering::Acquire),
+        opened + 1,
+        "the reading statement must open exactly one replacement snapshot"
     );
     assert_eq!(node.live.load(Ordering::Acquire), 0);
 }

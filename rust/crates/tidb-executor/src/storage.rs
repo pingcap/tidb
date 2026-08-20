@@ -99,6 +99,7 @@
 //!   for that; the in-process store never produces it.
 //! * Backoff/deadline plumbing, which has no counterpart here.
 
+use std::collections::HashMap;
 use std::fmt;
 
 use tidb_txnkv::{
@@ -198,6 +199,24 @@ pub trait TableStorage: fmt::Debug + Send {
     /// [`StorageError::NotFound`] when the key has no value, as Go returns
     /// `kv.ErrNotExist`.
     fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError>;
+
+    /// Reads several keys at one backend request boundary. Backends that do
+    /// not have a native batch operation retain correctness through the
+    /// point-read fallback; cluster storage overrides this with TiKV's
+    /// transaction batch-get path.
+    fn batch_get(&mut self, keys: &[Key]) -> Result<HashMap<Key, Vec<u8>>, StorageError> {
+        let mut values = HashMap::with_capacity(keys.len());
+        for key in keys {
+            match self.get(key) {
+                Ok(value) => {
+                    values.insert(key.clone(), value);
+                }
+                Err(StorageError::NotFound) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(values)
+    }
 
     /// Writes one key, Go `kv.Mutator.Set`.
     fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), StorageError>;

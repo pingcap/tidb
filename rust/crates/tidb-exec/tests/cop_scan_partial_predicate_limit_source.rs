@@ -37,10 +37,13 @@ use tidb_executor::cluster_storage::{
 };
 use tidb_executor::driver::{run_select_on, Catalog};
 use tidb_executor::kv_table::{KvColumn, KvTable};
-use tidb_executor::remote_scan::PushdownScanner;
+use tidb_executor::remote_scan::{
+    PushdownAggregateKind, PushdownGlobalAggregateFunction, PushdownPartialAggregate,
+    PushdownScanColumn, PushdownScanRequest, PushdownScanner, PushdownStatementContext,
+};
 use tidb_executor::storage::StorageError;
 use tidb_executor::StmtContext;
-use tidb_proto::tipb::{Chunk, DagRequest, ExecType, SelectResponse};
+use tidb_proto::tipb::{Chunk, DagRequest, ExecType, Expr, ExprType, SelectResponse};
 use tidb_txnkv::Key;
 
 /// Rows the region holds, as `(id, tag)`. Every id is positive, so the one
@@ -92,12 +95,19 @@ fn encode_signed_varint(output: &mut Vec<u8>, value: i64) {
 /// half of the seam produced the answer.
 #[derive(Clone, Debug, Default)]
 struct Observation {
+    /// Common-handle column ids carried by the table scan.
+    primary_column_ids: Vec<i64>,
+    /// Common-handle prefix column ids carried by the table scan.
+    primary_prefix_column_ids: Vec<i64>,
     /// The cap the DAG carried, if any.
     remote_limit: Option<u64>,
     /// Conditions in the DAG's Selection, if any.
     conditions: usize,
     /// Rows the fake sent back.
     rows_sent: usize,
+    /// The children of the COUNT function sent to TiKV, if this is an
+    /// aggregate request.
+    count_children: Vec<Expr>,
 }
 
 #[derive(Debug, Default)]
@@ -152,6 +162,8 @@ impl QueryTransport for FakeTransport {
             .map(|column| column.column_id.unwrap_or(-1))
             .collect();
         let mut observation = Observation::default();
+        observation.primary_column_ids = scan.primary_column_ids.clone();
+        observation.primary_prefix_column_ids = scan.primary_prefix_column_ids.clone();
         for executor in &dag.executors {
             if executor.tp == Some(ExecType::TypeLimit as i32) {
                 observation.remote_limit = executor.limit.as_ref().and_then(|limit| limit.limit);
@@ -162,29 +174,56 @@ impl QueryTransport for FakeTransport {
                     .as_ref()
                     .map_or(0, |selection| selection.conditions.len());
             }
+            if executor.tp == Some(ExecType::TypeAggregation as i32) {
+                let aggregation = executor
+                    .aggregation
+                    .as_ref()
+                    .expect("an aggregation executor carries its descriptor");
+                let count = aggregation
+                    .agg_func
+                    .iter()
+                    .find(|function| function.tp == Some(ExprType::Count as i32))
+                    .expect("the aggregate request carries COUNT");
+                observation.count_children = count.children.clone();
+            }
         }
 
         let mut rows_data = Vec::new();
         let mut sent = 0usize;
-        for (id, tag) in region_rows() {
-            assert!(id > 0, "the fixture's lowered conjunct admits every row");
-            if observation
-                .remote_limit
-                .is_some_and(|limit| sent as u64 >= limit)
-            {
-                break;
+        if observation.count_children.is_empty() && dag.executors.iter().any(|executor| {
+            executor.tp == Some(ExecType::TypeAggregation as i32)
+        }) {
+            // Still return a valid partial count when the malformed request
+            // has no child, so the regression fails on the encoded DAG rather
+            // than on response decoding.
+            rows_data.push(8);
+            encode_signed_varint(&mut rows_data, region_rows().len() as i64);
+            sent = 1;
+        } else if !observation.count_children.is_empty() {
+            rows_data.push(8);
+            encode_signed_varint(&mut rows_data, region_rows().len() as i64);
+            sent = 1;
+        } else {
+            for (id, tag) in region_rows() {
+                assert!(id > 0, "the fixture's lowered conjunct admits every row");
+                if observation
+                    .remote_limit
+                    .is_some_and(|limit| sent as u64 >= limit)
+                {
+                    break;
+                }
+                for column_id in &column_ids {
+                    // The handle column (`_tidb_rowid`, id -1) carries the row's
+                    // handle, which is the row's `id` here.
+                    let value = match column_id {
+                        2 => tag,
+                        _ => id,
+                    };
+                    rows_data.push(8);
+                    encode_signed_varint(&mut rows_data, value);
+                }
+                sent += 1;
             }
-            for column_id in &column_ids {
-                // The handle column (`_tidb_rowid`, id -1) carries the row's
-                // handle, which is the row's `id` here.
-                let value = match column_id {
-                    2 => tag,
-                    _ => id,
-                };
-                rows_data.push(8);
-                encode_signed_varint(&mut rows_data, value);
-            }
-            sent += 1;
         }
         observation.rows_sent = sent;
         self.region
@@ -385,5 +424,76 @@ fn a_limit_over_a_fully_lowered_builtin_predicate_travels_with_it() {
     assert_eq!(
         observation.rows_sent, 5,
         "and only the capped rows crossed the wire"
+    );
+}
+
+/// Go rewrites `COUNT(*)` to `COUNT(1)` before `AggFuncToPBExpr` serializes
+/// every aggregate argument. TiKV's COUNT parser therefore always reads one
+/// child; a zero-child COUNT is malformed and panics the region worker. The
+/// surrounding `PhysicalTableScan.ToPB` also carries common-handle metadata;
+/// omitting it makes TiKV look for primary-key columns in the row value.
+#[test]
+fn count_star_lowers_to_count_with_one_constant_child() {
+    let region = Arc::new(FakeRegion::default());
+    let scanner = CopScanSource::new(Arc::new(FakeFactory {
+        region: Arc::clone(&region),
+    }));
+    let mut count_type = FieldType::new(FieldTypeCode::LongLong);
+    count_type.set_flen(21);
+    count_type.set_decimal(0);
+    let request = PushdownScanRequest {
+        table_id: 91,
+        index: None,
+        columns: vec![PushdownScanColumn {
+            id: 1,
+            field_type: FieldType::new(FieldTypeCode::LongLong),
+            is_handle: false,
+        }],
+        handle_index: None,
+        primary_column_ids: vec![1],
+        primary_prefix_column_ids: vec![1],
+        predicates: Vec::new(),
+        output_offsets: None,
+        topn: None,
+        limit: None,
+        aggregate: Some(PushdownPartialAggregate::Global {
+            functions: vec![PushdownGlobalAggregateFunction {
+                kind: PushdownAggregateKind::Count,
+                input: None,
+                output_type: count_type,
+            }],
+        }),
+        keep_order: false,
+        read_ahead_batches: tidb_executor::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
+        snapshot_ts: 4_242,
+        ranges: vec![(Key::from_bytes(b"a"), Key::from_bytes(b"z"))],
+        statement: PushdownStatementContext::default(),
+    };
+    let mut stream = scanner
+        .open(&request)
+        .expect("the partial count is served by the coprocessor");
+    assert_eq!(
+        stream.next_row().expect("the partial count row"),
+        Some(vec![Datum::Int(region_rows().len() as i64)])
+    );
+    stream.close();
+
+    let observations = region.observations.lock().unwrap();
+    let [observation] = observations.as_slice() else {
+        panic!("exactly one coprocessor request: {observations:?}");
+    };
+    assert_eq!(observation.primary_column_ids, [1]);
+    assert_eq!(observation.primary_prefix_column_ids, [1]);
+    let [argument] = observation.count_children.as_slice() else {
+        panic!(
+            "Go sends COUNT(1) with one child, got {:?}",
+            observation.count_children
+        );
+    };
+    assert_eq!(argument.tp, Some(ExprType::Int64 as i32));
+    assert_eq!(
+        tidb_codec::decode_int(argument.val.as_deref().expect("the literal value"))
+            .expect("the signed literal encoding"),
+        (&[][..], 1)
     );
 }

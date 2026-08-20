@@ -52,6 +52,38 @@ fn only_successful_paging_creates_a_continuation_attempt() {
 }
 
 #[test]
+fn unordered_paging_delivers_each_page_once() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let first = CoprocessorResponse {
+        data: b"page-one".to_vec(),
+        range: Some(CoprocessorKeyRange {
+            start: b"a".to_vec(),
+            end: b"m".to_vec(),
+        }),
+        ..CoprocessorResponse::default()
+    }
+    .encode_to_vec();
+    let mut metadata = metadata("a", "z");
+    metadata.keep_order = false;
+    metadata.concurrency = 1;
+    metadata.paging.enabled = true;
+    metadata.paging.min_size = 2;
+    metadata.paging.max_size = 8;
+    let mut runtime = InjectedQueryRuntime::new(batch_first_transport(
+        Rc::clone(&calls),
+        [Ok(first), Ok(response(b"page-two"))],
+        [location(1, "a", "z", "tikv-1:20160")],
+        [true, true],
+    ));
+    let mut result = select_result(&mut runtime, &transport_request(metadata));
+
+    assert_eq!(result.next_raw().unwrap(), Some(b"page-one".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), Some(b"page-two".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), None);
+    assert_eq!(calls.borrow().len(), 2);
+}
+
+#[test]
 fn close_before_pull_stops_every_unsent_attempt() {
     let cancel = std::sync::Arc::new(tidb_distsql::CancelHandle::default());
     let calls = Rc::new(RefCell::new(Vec::new()));

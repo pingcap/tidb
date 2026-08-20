@@ -558,6 +558,8 @@ fn constant_eval_int(value: &Datum) -> Option<i64> {
 pub(crate) struct AggOutputResolver {
     pub(crate) names: Vec<String>,
     pub(crate) types: Vec<FieldType>,
+    pub(crate) orig_names: Vec<Option<String>>,
+    pub(crate) plan_columns: Vec<super::from::PlanColumn>,
     pub(crate) constant_context: crate::StmtContext,
     /// The statement's session `time_zone` (see [`ColumnResolver::time_zone`]),
     /// carried over from the source scope the aggregation reads.
@@ -604,12 +606,54 @@ impl ColumnResolver for AggOutputResolver {
     }
 
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+        if let [scope, name] = path {
+            if scope == super::from::SCALAR_QUERY_SCOPE {
+                return self
+                    .plan_columns
+                    .iter()
+                    .enumerate()
+                    .find(|(_, column)| column.name == *name)
+                    .map(|(index, column)| {
+                        (
+                            self.names.len() + index,
+                            column.field_type.clone(),
+                            column.unique_id,
+                        )
+                    });
+            }
+        }
         let name = path.last()?;
         let index = self
             .names
             .iter()
             .position(|candidate| candidate.eq_ignore_ascii_case(name))?;
         Some((index, self.types[index].clone(), (index + 1) as i64))
+    }
+
+    fn orig_name(&self, path: &[String]) -> Option<String> {
+        let name = path.last()?;
+        let index = self
+            .names
+            .iter()
+            .position(|candidate| candidate.eq_ignore_ascii_case(name))?;
+        self.orig_names.get(index).cloned().flatten()
+    }
+
+    fn resolve_constant(&self, path: &[String]) -> Option<Expression> {
+        let [scope, name] = path else {
+            return None;
+        };
+        if scope != super::from::SCALAR_QUERY_SCOPE {
+            return None;
+        }
+        let column = self
+            .plan_columns
+            .iter()
+            .find(|column| column.name == *name)?;
+        let mut constant =
+            tidb_expr::constant::Constant::new(column.value.clone()?, column.field_type.clone());
+        constant.subquery_ref_id = -column.unique_id;
+        Some(Expression::Constant(constant))
     }
 }
 
@@ -686,6 +730,16 @@ impl AggregateSubstitutor<'_, '_> {
                 if path
                     .last()
                     .is_some_and(|name| crate::window::is_window_column(name)) =>
+            {
+                Ok(false)
+            }
+            // A scalar-subquery placeholder is a planner-owned value, not a
+            // source column that aggregation must carry with FIRST_ROW. Keep
+            // it intact until AggOutputResolver can choose the evaluated
+            // Constant or the opt-in non-evaluated planner column.
+            Expr::Column(path)
+                if matches!(path.as_slice(), [scope, _]
+                    if scope == super::from::SCALAR_QUERY_SCOPE) =>
             {
                 Ok(false)
             }

@@ -872,7 +872,9 @@ pub(crate) fn physical_column_trace_name(
     let origin = physical_column_origin(node, column, catalog, current_db, true)?;
     Some(format!(
         "{}.{}.{}",
-        origin.database, origin.table, origin.column
+        origin.database.to_lowercase(),
+        origin.table.to_lowercase(),
+        origin.column.to_lowercase()
     ))
 }
 
@@ -922,6 +924,21 @@ fn physical_column_origin(
             return None;
         }
         let entry = catalog.get_in(database, name)?;
+        if let TableEntry::View(view) = entry {
+            let _guard = super::from::ViewDepthGuard::enter(&format!("{database}.{name}")).ok()?;
+            let statement = tidb_parser::parse(&view.select_sql).ok()?;
+            let tidb_ast::Stmt::Query(query) = statement else {
+                return None;
+            };
+            let QueryStmt::Select(select) = &*query else {
+                return None;
+            };
+            let output = view
+                .columns
+                .iter()
+                .position(|(candidate, _)| candidate.eq_ignore_ascii_case(&column.column))?;
+            return select_output_origin(select, output, catalog, database, cross_aggregation);
+        }
         let (physical_name, field_type) = entry
             .column_list()
             .into_iter()
@@ -935,12 +952,24 @@ fn physical_column_origin(
         });
     }
     if let JoinNode::Join(join) = node {
-        return physical_column_origin(&join.left, column, catalog, current_db, cross_aggregation)
-            .or_else(|| {
-                join.right.as_ref().and_then(|right| {
-                    physical_column_origin(right, column, catalog, current_db, cross_aggregation)
-                })
-            });
+        if let Some(mut origin) =
+            physical_column_origin(&join.left, column, catalog, current_db, cross_aggregation)
+        {
+            if join.tp == JoinType::Right {
+                origin.nullable = true;
+            }
+            return Some(origin);
+        }
+        return join.right.as_ref().and_then(|right| {
+            physical_column_origin(right, column, catalog, current_db, cross_aggregation).map(
+                |mut origin| {
+                    if join.tp == JoinType::Left {
+                        origin.nullable = true;
+                    }
+                    origin
+                },
+            )
+        });
     }
     let JoinNode::Derived {
         subquery,
@@ -957,9 +986,6 @@ fn physical_column_origin(
     let QueryStmt::Select(select) = &**subquery else {
         return None;
     };
-    if !cross_aggregation && !select.group_by.is_empty() {
-        return None;
-    }
     let mut output_names = super::from::derived_field_names(select)?;
     if !column_names.is_empty() {
         if column_names.len() != output_names.len() {
@@ -970,31 +996,227 @@ fn physical_column_origin(
     let output = output_names
         .iter()
         .position(|name| name.eq_ignore_ascii_case(&column.column))?;
+    select_output_origin(select, output, catalog, current_db, cross_aggregation)
+}
+
+fn select_output_origin(
+    select: &SelectStmt,
+    output: usize,
+    catalog: &Catalog,
+    current_db: &str,
+    cross_aggregation: bool,
+) -> Option<PhysicalColumnOrigin> {
     let SelectField::Expr {
-        expr: Expr::Column(path),
+        expr: field_expr @ Expr::Column(path),
         ..
     } = select.fields.fields().get(output)?
     else {
         return None;
     };
+    if !cross_aggregation
+        && !select.group_by.is_empty()
+        && !select.group_by.iter().any(|item| &item.expr == field_expr)
+    {
+        return None;
+    }
     let from = select.from.as_ref()?;
-    let source = join_properties(
-        from,
-        catalog,
-        current_db,
-        &offered_conjuncts(select.where_clause.as_ref()),
-        Phase::Promise,
-    )?;
-    let origin = source.column_at(source.offset_of(path)?)?;
-    let mut physical =
-        physical_column_origin(&from.left, &origin, catalog, current_db, cross_aggregation)
-            .or_else(|| {
-                from.right.as_ref().and_then(|right| {
-                    physical_column_origin(right, &origin, catalog, current_db, cross_aggregation)
+    let promised_origin = || {
+        let source = join_properties(
+            from,
+            catalog,
+            current_db,
+            &offered_conjuncts(select.where_clause.as_ref()),
+            Phase::Promise,
+        )?;
+        source.column_at(source.offset_of(path)?)
+    };
+    // A projection can retain a directly qualified child column even when
+    // the child's complete possible-property model is unavailable (for
+    // example, a grouped decorrelation wrapper over a left join). Go's
+    // projection elimination still carries that Column's UniqueID through.
+    // Resolve that direct path before giving up on the richer property model.
+    let direct_origin = || match path.as_slice() {
+        [name] => physical_unqualified_column_origin(
+            &from.left,
+            from.right.as_ref(),
+            name,
+            catalog,
+            current_db,
+            cross_aggregation,
+        ),
+        [.., relation, name] => physical_column_origin(
+            &from.left,
+            &RelColumn {
+                relation: relation.clone(),
+                column: name.clone(),
+            },
+            catalog,
+            current_db,
+            cross_aggregation,
+        )
+        .or_else(|| {
+            from.right.as_ref().and_then(|right| {
+                physical_column_origin(
+                    right,
+                    &RelColumn {
+                        relation: relation.clone(),
+                        column: name.clone(),
+                    },
+                    catalog,
+                    current_db,
+                    cross_aggregation,
+                )
+            })
+        }),
+        _ => None,
+    };
+    let mut physical = promised_origin()
+        .and_then(|origin| {
+            physical_column_origin(&from.left, &origin, catalog, current_db, cross_aggregation)
+                .or_else(|| {
+                    from.right.as_ref().and_then(|right| {
+                        physical_column_origin(
+                            right,
+                            &origin,
+                            catalog,
+                            current_db,
+                            cross_aggregation,
+                        )
+                    })
                 })
-            })?;
+        })
+        .or_else(direct_origin)?;
     physical.crossed_grouping |= !select.group_by.is_empty();
     Some(physical)
+}
+
+/// Resolves one bare projected column against the relations visible in a
+/// SELECT's FROM. Every relation that exposes the name counts, including a
+/// computed output with no physical origin, so an ambiguous SQL name can
+/// never be turned into an arbitrary base-table identity.
+fn physical_unqualified_column_origin(
+    left: &JoinNode,
+    right: Option<&JoinNode>,
+    name: &str,
+    catalog: &Catalog,
+    current_db: &str,
+    cross_aggregation: bool,
+) -> Option<PhysicalColumnOrigin> {
+    let mut matches = Vec::new();
+    collect_unqualified_column_origins(
+        left,
+        name,
+        catalog,
+        current_db,
+        cross_aggregation,
+        &mut matches,
+    );
+    if let Some(right) = right {
+        collect_unqualified_column_origins(
+            right,
+            name,
+            catalog,
+            current_db,
+            cross_aggregation,
+            &mut matches,
+        );
+    }
+    if matches.len() != 1 {
+        return None;
+    }
+    matches.pop().flatten()
+}
+
+fn collect_unqualified_column_origins(
+    node: &JoinNode,
+    name: &str,
+    catalog: &Catalog,
+    current_db: &str,
+    cross_aggregation: bool,
+    matches: &mut Vec<Option<PhysicalColumnOrigin>>,
+) {
+    match node {
+        JoinNode::Table(table_ref) => {
+            let Ok((database, table)) = split_table_path(&table_ref.name, current_db) else {
+                return;
+            };
+            let Some(entry) = catalog.get_in(database, table) else {
+                return;
+            };
+            if entry
+                .column_list()
+                .iter()
+                .any(|(column, _)| column.eq_ignore_ascii_case(name))
+            {
+                let visible = table_ref.alias.as_deref().unwrap_or(table);
+                matches.push(physical_column_origin(
+                    node,
+                    &RelColumn {
+                        relation: visible.to_owned(),
+                        column: name.to_owned(),
+                    },
+                    catalog,
+                    current_db,
+                    cross_aggregation,
+                ));
+            }
+        }
+        JoinNode::Join(join) => {
+            collect_unqualified_column_origins(
+                &join.left,
+                name,
+                catalog,
+                current_db,
+                cross_aggregation,
+                matches,
+            );
+            if let Some(right) = &join.right {
+                collect_unqualified_column_origins(
+                    right,
+                    name,
+                    catalog,
+                    current_db,
+                    cross_aggregation,
+                    matches,
+                );
+            }
+        }
+        JoinNode::Derived {
+            subquery,
+            alias: Some(alias),
+            lateral: false,
+            column_names,
+        } => {
+            let QueryStmt::Select(select) = &**subquery else {
+                return;
+            };
+            let Some(mut output_names) = super::from::derived_field_names(select) else {
+                return;
+            };
+            if !column_names.is_empty() {
+                if column_names.len() != output_names.len() {
+                    return;
+                }
+                output_names = column_names.clone();
+            }
+            for output_name in output_names
+                .into_iter()
+                .filter(|output_name| output_name.eq_ignore_ascii_case(name))
+            {
+                matches.push(physical_column_origin(
+                    node,
+                    &RelColumn {
+                        relation: alias.clone(),
+                        column: output_name,
+                    },
+                    catalog,
+                    current_db,
+                    cross_aggregation,
+                ));
+            }
+        }
+        JoinNode::Derived { .. } => {}
+    }
 }
 
 /// Each of `orders` rewritten through a projection, where `sources[i]` is the
@@ -1120,7 +1342,6 @@ pub(crate) fn decide(
         // order can do.
         let repeated: Vec<&Expr> = offered
             .iter()
-            .copied()
             .filter(|conjunct| !conjuncts.contains(conjunct))
             .collect();
         conjuncts.extend(repeated);
@@ -1385,7 +1606,6 @@ pub(crate) fn enforced_merge_join_decision(
     if join.tp == JoinType::Cross {
         let repeated = offered
             .iter()
-            .copied()
             .filter(|conjunct| !conjuncts.contains(conjunct))
             .collect::<Vec<_>>();
         conjuncts.extend(repeated);

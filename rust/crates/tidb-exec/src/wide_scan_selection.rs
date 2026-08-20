@@ -42,8 +42,9 @@
 //! [`tidb_expr::pb_predicate::string_comparison_to_pb`], which performs the
 //! one derivation with a single answer -- a column against a literal, where
 //! the column's collation wins -- and refuses every other shape. `IS NULL`,
-//! `IN` and the composed forms over a string column are still refused: the
-//! widening here is the comparison only.
+//! `IN` additionally accepts a pushable string scalar (including nested calls)
+//! against non-NULL string constants, deriving its collator from that tested
+//! scalar exactly as Go does.
 //!
 //! Two refusals are deliberate and are not "not implemented yet":
 //!
@@ -82,12 +83,15 @@
 use std::error::Error;
 use std::fmt;
 
-use tidb_datatype::Datum;
-use tidb_executor::predicate_pushdown::{ScanComparison, ScanComparisonOp, ScanPredicate};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_executor::predicate_pushdown::{
+    ScanColumnComparison, ScanComparison, ScanComparisonOp, ScanPredicate,
+};
 use tidb_expr::pb_predicate::{
-    int_comparison_to_pb, int_field_type, int_in_to_pb, int_is_null_to_pb, is_int_family_type,
-    is_string_family_type, is_unsigned, logical_not_to_pb, logical_or_to_pb,
-    string_comparison_to_pb, IntPbOperand, PbPredicateError, StringPbOperand,
+    decimal_comparison_to_pb, int_comparison_to_pb, int_field_type, int_in_to_pb,
+    int_is_null_to_pb, is_int_family_type, is_string_family_type, is_unsigned, logical_not_to_pb,
+    logical_or_to_pb, string_comparison_to_pb, string_in_to_pb, time_comparison_to_pb,
+    DecimalPbOperand, IntPbOperand, PbPredicateError, StringPbOperand, TimePbOperand,
 };
 use tidb_planner::tikv_scan_spec::ScanColumnInfo;
 use tidb_proto::tipb::Expr;
@@ -169,17 +173,34 @@ pub fn wide_scan_selection_conditions(
     if predicates.is_empty() {
         return Err(WideScanSelectionError::NoConditions);
     }
-    predicates
-        .iter()
-        .map(|predicate| predicate_to_pb(predicate, columns))
-        .collect()
+    let mut conditions = Vec::new();
+    for predicate in predicates {
+        conditions.extend(predicate_to_conditions(predicate, columns)?);
+    }
+    Ok(conditions)
 }
 
 /// Whether this lowering accepts `predicate` on its own -- the per-conjunct
 /// admission test the request filter applies before anything is sent.
 #[must_use]
 pub fn accepts(predicate: &ScanPredicate, columns: &[ScanColumnInfo]) -> bool {
-    predicate_to_pb(predicate, columns).is_ok()
+    predicate_to_conditions(predicate, columns).is_ok()
+}
+
+fn predicate_to_conditions(
+    predicate: &ScanPredicate,
+    columns: &[ScanColumnInfo],
+) -> Result<Vec<Expr>, WideScanSelectionError> {
+    match predicate {
+        ScanPredicate::And(branches) => {
+            let mut conditions = Vec::new();
+            for branch in branches {
+                conditions.extend(predicate_to_conditions(branch, columns)?);
+            }
+            Ok(conditions)
+        }
+        other => Ok(vec![predicate_to_pb(other, columns)?]),
+    }
 }
 
 fn predicate_to_pb(
@@ -188,6 +209,7 @@ fn predicate_to_pb(
 ) -> Result<Expr, WideScanSelectionError> {
     match predicate {
         ScanPredicate::Compare(comparison) => comparison_to_pb(comparison, columns),
+        ScanPredicate::ColumnCompare(comparison) => column_comparison_to_pb(comparison, columns),
         ScanPredicate::IsNull {
             column_offset,
             negated,
@@ -211,33 +233,39 @@ fn predicate_to_pb(
             let membership = int_in_to_pb(int_column_operand(offset, columns)?, list)?;
             Ok(negate_if(membership, *negated))
         }
+        ScanPredicate::ScalarIn {
+            tested,
+            literals,
+            negated,
+        } => {
+            let tested = tidb_expr::pushdown_catalog::to_pb(tested, &|offset| {
+                scan_column_descriptor(offset, columns)
+            })
+            .ok_or(WideScanSelectionError::UnsupportedBuiltinOperand)?;
+            let literals = literals
+                .iter()
+                .map(|literal| match literal {
+                    Datum::String(value) => Ok(value.bytes().to_vec()),
+                    Datum::Bytes(value) => Ok(value.clone()),
+                    _ => Err(WideScanSelectionError::UnsupportedBuiltinOperand),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let membership = string_in_to_pb(tested, literals)?;
+            Ok(negate_if(membership, *negated))
+        }
         // A resolved builtin call: the catalog that admitted it is also what
         // encodes it, including the implicit argument casts Go's
         // `newBaseBuiltinFuncWithTp` inserts. It refuses a leaf whose TiPB
         // field type this tier cannot build faithfully, which is a refusal to
         // send and never a wrong condition.
         ScanPredicate::Builtin(call) => tidb_expr::pushdown_catalog::to_pb(call, &|offset| {
-            columns.get(offset as usize).map(|column| {
-                // The scan descriptor states a column's collation as the
-                // PROTOCOL id -- already negated by
-                // `RewriteNewCollationIDIfNeeded` -- and states no charset at
-                // all. Both are recovered here from that one id, so the leaf
-                // the coprocessor is handed and the column the coprocessor was
-                // told to read cannot disagree about which collator applies.
-                let collation = tidb_datatype::proto_to_collation(column.collation);
-                let charset = tidb_datatype::get_collation_by_name(&collation)
-                    .map_or_else(|_| "binary".to_owned(), |row| row.charset_name);
-                tidb_expr::pushdown_catalog::ColumnDescriptor {
-                    tp: column.tp,
-                    flag: u32::try_from(column.flag).unwrap_or(0),
-                    flen: column.column_len,
-                    decimal: column.decimal,
-                    charset,
-                    collation,
-                }
-            })
+            scan_column_descriptor(offset, columns)
         })
         .ok_or(WideScanSelectionError::UnsupportedBuiltinOperand),
+        // Top-level ANDs are expanded into Selection.conditions by
+        // `predicate_to_conditions`; an AND nested under OR/NOT is not a
+        // description the driver produces.
+        ScanPredicate::And(_) => Err(WideScanSelectionError::UnsupportedBuiltinOperand),
         ScanPredicate::Or(branches) => {
             let branches = branches
                 .iter()
@@ -247,6 +275,28 @@ fn predicate_to_pb(
         }
         ScanPredicate::Not(inner) => Ok(logical_not_to_pb(predicate_to_pb(inner, columns)?)),
     }
+}
+
+fn scan_column_descriptor(
+    offset: u32,
+    columns: &[ScanColumnInfo],
+) -> Option<tidb_expr::pushdown_catalog::ColumnDescriptor> {
+    let column = columns.get(offset as usize)?;
+    // The scan descriptor states a column's collation as the PROTOCOL id --
+    // already negated by `RewriteNewCollationIDIfNeeded` -- and states no
+    // charset at all. Recover both from that one id so the scalar leaf and the
+    // scanned column cannot disagree about their collator.
+    let collation = tidb_datatype::proto_to_collation(column.collation);
+    let charset = tidb_datatype::get_collation_by_name(&collation)
+        .map_or_else(|_| "binary".to_owned(), |row| row.charset_name);
+    Some(tidb_expr::pushdown_catalog::ColumnDescriptor {
+        tp: column.tp,
+        flag: u32::try_from(column.flag).ok()?,
+        flen: column.column_len,
+        decimal: column.decimal,
+        charset,
+        collation,
+    })
 }
 
 fn negate_if(expression: Expr, negated: bool) -> Expr {
@@ -272,6 +322,16 @@ fn comparison_to_pb(
     if is_string_family_type(column.tp) {
         return string_comparison(comparison, column);
     }
+    if column.tp == i32::from(FieldTypeCode::NewDecimal.mysql_type()) {
+        return decimal_comparison(comparison, column);
+    }
+    if u8::try_from(column.tp)
+        .ok()
+        .map(FieldTypeCode::from_mysql_type)
+        .is_some_and(|code| matches!(code, FieldTypeCode::Date | FieldTypeCode::Datetime))
+    {
+        return time_comparison(comparison, column);
+    }
     let flags = column_flags(offset, columns)?;
     let column = int_column_operand(offset, columns)?;
     let constant = int_literal_operand(offset, flags, &comparison.literal)?;
@@ -287,6 +347,177 @@ fn comparison_to_pb(
         lhs,
         rhs,
     )?)
+}
+
+fn column_comparison_to_pb(
+    comparison: &ScanColumnComparison,
+    columns: &[ScanColumnInfo],
+) -> Result<Expr, WideScanSelectionError> {
+    let left = columns.get(comparison.left_offset as usize).ok_or(
+        WideScanSelectionError::ColumnOffsetOutOfRange {
+            offset: comparison.left_offset,
+            width: columns.len(),
+        },
+    )?;
+    let right = columns.get(comparison.right_offset as usize).ok_or(
+        WideScanSelectionError::ColumnOffsetOutOfRange {
+            offset: comparison.right_offset,
+            width: columns.len(),
+        },
+    )?;
+    if comparison.left_type.code() != comparison.right_type.code() {
+        return Err(WideScanSelectionError::UnsupportedColumnType {
+            offset: comparison.left_offset,
+        });
+    }
+    let op = comparison_op(comparison.op);
+    let code = comparison.left_type.code();
+    if is_int_family_type(left.tp) && is_int_family_type(right.tp) {
+        return Ok(int_comparison_to_pb(
+            op,
+            int_column_operand(comparison.left_offset, columns)?,
+            int_column_operand(comparison.right_offset, columns)?,
+        )?);
+    }
+    if code == FieldTypeCode::NewDecimal {
+        return Ok(decimal_comparison_to_pb(
+            op,
+            DecimalPbOperand::Column {
+                offset: comparison.left_offset as usize,
+                field_type: scan_field_type(left, &comparison.left_type, comparison.left_offset)?,
+            },
+            DecimalPbOperand::Column {
+                offset: comparison.right_offset as usize,
+                field_type: scan_field_type(
+                    right,
+                    &comparison.right_type,
+                    comparison.right_offset,
+                )?,
+            },
+        )?);
+    }
+    if matches!(code, FieldTypeCode::Date | FieldTypeCode::Datetime) {
+        return Ok(time_comparison_to_pb(
+            op,
+            TimePbOperand::Column {
+                offset: comparison.left_offset as usize,
+                field_type: scan_field_type(left, &comparison.left_type, comparison.left_offset)?,
+            },
+            TimePbOperand::Column {
+                offset: comparison.right_offset as usize,
+                field_type: scan_field_type(
+                    right,
+                    &comparison.right_type,
+                    comparison.right_offset,
+                )?,
+            },
+        )?);
+    }
+    // String column-to-column comparisons require Go's full collation
+    // derivation (coercibility and repertoire). Keep this path fail-closed
+    // until that package contract is ported; the in-process Selection still
+    // evaluates the description exactly.
+    Err(WideScanSelectionError::UnsupportedColumnType {
+        offset: comparison.left_offset,
+    })
+}
+
+fn decimal_comparison(
+    comparison: &ScanComparison,
+    column: &ScanColumnInfo,
+) -> Result<Expr, WideScanSelectionError> {
+    let offset = comparison.column_offset;
+    if comparison.column_type.code() != FieldTypeCode::NewDecimal
+        || comparison.literal_type.code() != FieldTypeCode::NewDecimal
+    {
+        return Err(WideScanSelectionError::UnsupportedColumnType { offset });
+    }
+    let Datum::Decimal(value) = &comparison.literal else {
+        return Err(WideScanSelectionError::UnsupportedLiteral { offset });
+    };
+    let column_operand = DecimalPbOperand::Column {
+        offset: offset as usize,
+        field_type: scan_field_type(column, &comparison.column_type, offset)?,
+    };
+    let literal_operand = DecimalPbOperand::Literal {
+        value: value.clone(),
+        field_type: tidb_expr::pushdown_catalog::field_type_to_pb(&comparison.literal_type)
+            .ok_or(WideScanSelectionError::UnsupportedLiteral { offset })?,
+    };
+    let (lhs, rhs) = if comparison.column_on_left {
+        (column_operand, literal_operand)
+    } else {
+        (literal_operand, column_operand)
+    };
+    Ok(decimal_comparison_to_pb(
+        comparison_op(comparison.op),
+        lhs,
+        rhs,
+    )?)
+}
+
+fn time_comparison(
+    comparison: &ScanComparison,
+    column: &ScanColumnInfo,
+) -> Result<Expr, WideScanSelectionError> {
+    let offset = comparison.column_offset;
+    if !matches!(
+        comparison.column_type.code(),
+        FieldTypeCode::Date | FieldTypeCode::Datetime
+    ) || !matches!(
+        comparison.literal_type.code(),
+        FieldTypeCode::Date | FieldTypeCode::Datetime
+    ) {
+        return Err(WideScanSelectionError::UnsupportedColumnType { offset });
+    }
+    let Datum::Time(value) = &comparison.literal else {
+        return Err(WideScanSelectionError::UnsupportedLiteral { offset });
+    };
+    let column_operand = TimePbOperand::Column {
+        offset: offset as usize,
+        field_type: scan_field_type(column, &comparison.column_type, offset)?,
+    };
+    let literal_operand = TimePbOperand::Literal {
+        value: *value,
+        field_type: tidb_expr::pushdown_catalog::field_type_to_pb(&comparison.literal_type)
+            .ok_or(WideScanSelectionError::UnsupportedLiteral { offset })?,
+    };
+    let (lhs, rhs) = if comparison.column_on_left {
+        (column_operand, literal_operand)
+    } else {
+        (literal_operand, column_operand)
+    };
+    Ok(time_comparison_to_pb(
+        comparison_op(comparison.op),
+        lhs,
+        rhs,
+    )?)
+}
+
+fn scan_field_type(
+    column: &ScanColumnInfo,
+    described: &FieldType,
+    offset: u32,
+) -> Result<tidb_proto::tipb::FieldType, WideScanSelectionError> {
+    let mysql_type = u8::try_from(column.tp)
+        .map_err(|_| WideScanSelectionError::UnsupportedColumnType { offset })?;
+    let code = FieldTypeCode::from_mysql_type(mysql_type);
+    if code != described.code() {
+        return Err(WideScanSelectionError::UnsupportedColumnType { offset });
+    }
+    let flags = u32::try_from(column.flag)
+        .map_err(|_| WideScanSelectionError::UnsupportedColumnType { offset })?;
+    let collation = tidb_datatype::proto_to_collation(column.collation);
+    let charset = tidb_datatype::get_collation_by_name(&collation)
+        .map_or_else(|_| "binary".to_owned(), |row| row.charset_name);
+    let field_type = FieldType::new(code)
+        .with_flags(flags)
+        .with_flen(i64::from(column.column_len))
+        .with_decimal(i64::from(column.decimal))
+        .with_charset_name(charset)
+        .with_collation_name(collation);
+    tidb_expr::pushdown_catalog::field_type_to_pb(&field_type)
+        .ok_or(WideScanSelectionError::UnsupportedColumnType { offset })
 }
 
 /// A character-string column compared with a string constant.

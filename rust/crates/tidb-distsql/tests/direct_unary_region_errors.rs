@@ -22,6 +22,34 @@
 use crate::direct_unary_client_fixture::*;
 
 #[test]
+fn unordered_region_retry_delivers_the_replacement_once() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut request_metadata = metadata("a", "z");
+    request_metadata.keep_order = false;
+    request_metadata.concurrency = 1;
+    let mut runtime = InjectedQueryRuntime::new(batch_first_transport(
+        Rc::clone(&calls),
+        [
+            Ok(not_leader(1, Some((102, 202)))),
+            Ok(response(b"fresh")),
+        ],
+        [location_with_second_peer(
+            1,
+            "a",
+            "z",
+            "tikv-1:20160",
+            "tikv-2:20160",
+        )],
+        [true, true],
+    ));
+    let mut result = select_result(&mut runtime, &transport_request(request_metadata));
+
+    assert_eq!(result.next_raw().unwrap(), Some(b"fresh".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), None);
+    assert_eq!(calls.borrow().len(), 2);
+}
+
+#[test]
 fn cached_leader_data_is_not_ready_falls_through_without_reload_or_backoff() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
@@ -173,6 +201,7 @@ fn batch_known_leader_region_error_republishes_the_recovered_route() {
             events: Rc::new(RefCell::new(Vec::new())),
             liveness: RefCell::new(VecDeque::new()),
             batch_errors: RefCell::new(VecDeque::new()),
+            batch_ready_immediately: RefCell::new(VecDeque::new()),
             batch_completion_gate: None,
         },
         RegionCache::new(ScriptedLoader {
@@ -243,6 +272,7 @@ fn batch_connection_failure_republishes_the_cache_recovered_route() {
             events: Rc::clone(&events),
             liveness: RefCell::new(VecDeque::from([Ok(StoreLiveness::Unreachable)])),
             batch_errors: RefCell::new(VecDeque::new()),
+            batch_ready_immediately: RefCell::new(VecDeque::new()),
             batch_completion_gate: None,
         },
         RegionCache::new(ScriptedLoader {

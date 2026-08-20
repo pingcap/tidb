@@ -1155,6 +1155,33 @@ impl RowContainer {
         }
     }
 
+    /// Visits a row without manufacturing an alias snapshot when the
+    /// container is still in memory. Hash joins call this for every bucket
+    /// candidate; the read guard keeps the source chunk stable for the
+    /// duration of the callback and lets the common path read its columns
+    /// directly. A spilled row follows the existing reusable decode path.
+    pub fn with_row<T>(
+        &self,
+        ptr: RowPtr,
+        chk: &mut Chunk,
+        f: impl FnOnce(Row<'_>) -> T,
+    ) -> Result<T, DiskError> {
+        let records = read_unpoisoned(&self.shared.records);
+        if let Some(in_disk) = &records.in_disk {
+            if let Some(error) = &records.spill_error {
+                return Err(DiskError::Owned(error.clone()));
+            }
+            // Go gives each probe worker its own `chkBuf` and reuses it for
+            // one candidate set. This callback consumes the row before it
+            // returns, so retaining older decoded rows only fills the scratch
+            // chunk and eventually forces a replacement allocation.
+            chk.reset();
+            let row_index = in_disk.get_row_and_append_to_existing_chunk(ptr, chk)?;
+            return Ok(f(chk.get_row(row_index)));
+        }
+        Ok(f(records.in_memory.get_row(ptr)))
+    }
+
     /// Go `GetRowAndAlwaysAppendToChunk`.
     pub fn get_row_and_always_append_to_chunk(
         &self,

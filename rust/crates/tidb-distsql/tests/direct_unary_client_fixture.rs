@@ -61,7 +61,7 @@ pub use tidb_txnkv::region::{
 };
 pub use tidb_txnkv::rpc::{
     completion_pair, AsyncRequestDispatcher, AsyncRequestPublication, CompletionError,
-    CompletionPull, CompletionRequest, CompletionRunLoop, PendingRequest,
+    CompletionNotifier, CompletionPull, CompletionRequest, CompletionRunLoop, PendingRequest,
 };
 pub use tidb_txnkv::UnaryCallContext;
 pub use tidb_txnkv::{
@@ -150,6 +150,7 @@ pub struct ScriptedClient {
     pub events: Rc<RefCell<Vec<ClientEvent>>>,
     pub liveness: RefCell<VecDeque<Result<StoreLiveness, DirectUnaryClientError>>>,
     pub batch_errors: RefCell<VecDeque<DirectUnaryClientError>>,
+    pub batch_ready_immediately: RefCell<VecDeque<bool>>,
     pub batch_completion_gate: Option<Rc<Cell<bool>>>,
 }
 
@@ -164,6 +165,10 @@ pub struct ScriptedPending {
 }
 
 impl PendingRequest for ScriptedPending {
+    fn set_notifier(&mut self, notifier: CompletionNotifier, token: u64) {
+        self.completion.set_notifier(notifier, token);
+    }
+
     fn publication(&self) -> Option<AsyncRequestPublication> {
         self.publication.clone()
     }
@@ -352,9 +357,20 @@ impl AsyncRequestDispatcher for ScriptedClient {
             });
         }
         let result = self.send_request_with_context(physical_address, request, call);
+        let ready_immediately = self
+            .batch_ready_immediately
+            .borrow_mut()
+            .pop_front()
+            .unwrap_or(false);
+        let deferred = if ready_immediately {
+            completion.schedule(result);
+            None
+        } else {
+            Some((completion, result))
+        };
         Ok(ScriptedPending {
             completion: pull,
-            deferred: Some((completion, result)),
+            deferred,
             publication: Some(AsyncRequestPublication::new(
                 physical_address,
                 7,
@@ -681,6 +697,54 @@ pub fn transport_with_cluster_id(
     )
 }
 
+pub fn batch_first_transport(
+    calls: Rc<RefCell<Vec<ObservedCall>>>,
+    responses: impl IntoIterator<Item = Result<Vec<u8>, String>>,
+    regions: impl IntoIterator<Item = RegionLocation>,
+    ready_immediately: impl IntoIterator<Item = bool>,
+) -> DirectUnaryQueryTransport<ScriptedClient, ScriptedLoader> {
+    batch_first_transport_with_config(
+        calls,
+        responses,
+        regions,
+        ready_immediately,
+        Rc::new(RefCell::new(Vec::new())),
+        DirectUnaryRuntimeConfig::default(),
+    )
+}
+
+pub fn batch_first_transport_with_config(
+    calls: Rc<RefCell<Vec<ObservedCall>>>,
+    responses: impl IntoIterator<Item = Result<Vec<u8>, String>>,
+    regions: impl IntoIterator<Item = RegionLocation>,
+    ready_immediately: impl IntoIterator<Item = bool>,
+    loader_calls: Rc<RefCell<Vec<Vec<u8>>>>,
+    config: DirectUnaryRuntimeConfig,
+) -> DirectUnaryQueryTransport<ScriptedClient, ScriptedLoader> {
+    DirectUnaryQueryTransport::new_injected_batch_first(
+        ScriptedClient {
+            calls,
+            responses: responses
+                .into_iter()
+                .map(|response| response.map_err(DirectUnaryClientError::InvalidRequest))
+                .collect(),
+            events: Rc::new(RefCell::new(Vec::new())),
+            liveness: RefCell::new(VecDeque::new()),
+            batch_errors: RefCell::new(VecDeque::new()),
+            batch_ready_immediately: RefCell::new(ready_immediately.into_iter().collect()),
+            batch_completion_gate: None,
+        },
+        RegionCache::new(ScriptedLoader {
+            cluster_id: 9001,
+            calls: loader_calls,
+            regions: regions.into_iter().collect(),
+        }),
+        config,
+        tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
+    )
+    .unwrap()
+}
+
 pub fn transport_with_loader_calls(
     calls: Rc<RefCell<Vec<ObservedCall>>>,
     responses: impl IntoIterator<Item = Result<Vec<u8>, String>>,
@@ -721,6 +785,7 @@ pub fn transport_with_loader_calls_and_config(
             events: Rc::new(RefCell::new(Vec::new())),
             liveness: RefCell::new(VecDeque::new()),
             batch_errors: RefCell::new(VecDeque::new()),
+            batch_ready_immediately: RefCell::new(VecDeque::new()),
             batch_completion_gate: None,
         },
         RegionCache::new(ScriptedLoader {
@@ -749,6 +814,7 @@ pub fn transport_with_transport_failures(
             events,
             liveness: RefCell::new(liveness.into_iter().collect()),
             batch_errors: RefCell::new(VecDeque::new()),
+            batch_ready_immediately: RefCell::new(VecDeque::new()),
             batch_completion_gate: None,
         },
         RegionCache::new(ScriptedLoader {

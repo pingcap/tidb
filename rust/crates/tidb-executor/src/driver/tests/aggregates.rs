@@ -6,6 +6,713 @@
 
 use super::*;
 
+/// TPC-H q1 is Go's complete grouped partial-aggregation contract: AVG is a
+/// count/sum pair in TiKV, the root AVG merges both partial columns, and the
+/// restoring projection stays below the final group-key sort.
+#[test]
+fn tpch_q1_splits_avg_and_sorts_the_restored_output() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE lineitem (\
+            l_returnflag CHAR(1), l_linestatus CHAR(1), \
+            l_quantity DECIMAL(15,2), l_extendedprice DECIMAL(15,2), \
+            l_discount DECIMAL(15,2), l_tax DECIMAL(15,2), l_shipdate DATE)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO lineitem VALUES \
+            ('A','F',10.00,100.00,0.10,0.05,'1998-01-01'), \
+            ('A','F',20.00,200.00,0.20,0.10,'1998-02-01'), \
+            ('B','O',30.00,300.00,0.05,0.02,'1998-03-01'), \
+            ('Z','Z',99.00,999.00,0.90,0.90,'1999-01-01')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT l_returnflag, l_linestatus, \
+        SUM(l_quantity) AS sum_qty, SUM(l_extendedprice) AS sum_base_price, \
+        SUM(l_extendedprice * (1 - l_discount)) AS sum_disc_price, \
+        SUM(l_extendedprice * (1 - l_discount) * (1 + l_tax)) AS sum_charge, \
+        AVG(l_quantity) AS avg_qty, AVG(l_extendedprice) AS avg_price, \
+        AVG(l_discount) AS avg_disc, COUNT(*) AS count_order \
+        FROM lineitem \
+        WHERE l_shipdate <= DATE_SUB('1998-12-01', INTERVAL 108 DAY) \
+        GROUP BY l_returnflag, l_linestatus \
+        ORDER BY l_returnflag, l_linestatus";
+    let result = run_select_on(sql, &catalog, &ctx).unwrap();
+    assert_eq!(result.len(), 2);
+    assert_eq!(result[0][0].sql_string().unwrap(), "A");
+    assert_eq!(result[0][1].sql_string().unwrap(), "F");
+    assert_eq!(result[0][6].sql_string().unwrap(), "15.000000");
+    assert_eq!(result[0][7].sql_string().unwrap(), "150.000000");
+    assert_eq!(result[0][8].sql_string().unwrap(), "0.150000");
+    assert_eq!(result[0][9], Datum::Int(2));
+
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec![
+            "Sort",
+            "└─Projection",
+            "  └─HashAgg",
+            "    └─TableReader",
+            "      └─HashAgg",
+            "        └─Selection",
+            "          └─TableFullScan",
+        ],
+        "{rows:#?}",
+    );
+    assert_eq!(
+        cell(0, 4),
+        "test.lineitem.l_returnflag, test.lineitem.l_linestatus"
+    );
+    assert!(
+        cell(1, 4).starts_with("test.lineitem.l_returnflag, test.lineitem.l_linestatus, Column#")
+    );
+    assert!(cell(2, 4).contains("funcs:avg(Column#"));
+    assert!(cell(2, 4).contains(", Column#"));
+    assert!(cell(4, 4).contains("funcs:count(test.lineitem.l_quantity)->Column#"));
+    assert!(cell(4, 4).contains("funcs:sum(test.lineitem.l_quantity)->Column#"));
+    assert!(cell(4, 4).contains("funcs:count(test.lineitem.l_extendedprice)->Column#"));
+    assert!(cell(4, 4).contains("funcs:sum(test.lineitem.l_extendedprice)->Column#"));
+    assert!(cell(4, 4).contains("funcs:count(test.lineitem.l_discount)->Column#"));
+    assert!(cell(4, 4).contains("funcs:sum(test.lineitem.l_discount)->Column#"));
+}
+
+/// TPC-H q3 exercises both physical projection rules around an aggregate:
+/// the final SELECT projection stays above TopN, while the complex SUM input
+/// is evaluated once by `InjectProjBelowAgg` immediately below HashAgg.
+#[test]
+fn tpch_q3_keeps_go_projections_around_grouped_topn() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE customer (c_custkey INT PRIMARY KEY, c_mktsegment VARCHAR(10))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE orders (o_orderkey INT PRIMARY KEY, o_custkey INT, \
+            o_orderdate DATE, o_shippriority INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE lineitem (l_orderkey INT NOT NULL, l_linenumber INT NOT NULL, \
+            l_extendedprice DECIMAL(15,2), l_discount DECIMAL(15,2), l_shipdate DATE, \
+            PRIMARY KEY (l_orderkey, l_linenumber) CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+
+    let sql = "SELECT l_orderkey, SUM(l_extendedprice * (1 - l_discount)) AS revenue, \
+        o_orderdate, o_shippriority FROM customer, orders, lineitem \
+        WHERE c_mktsegment = 'AUTOMOBILE' AND c_custkey = o_custkey \
+        AND l_orderkey = o_orderkey AND o_orderdate < '1995-03-13' \
+        AND l_shipdate > '1995-03-13' GROUP BY l_orderkey, o_orderdate, o_shippriority \
+        ORDER BY revenue DESC, o_orderdate LIMIT 10";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let ctx = crate::StmtContext::for_query();
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let operators = rows
+        .iter()
+        .map(|row| match &row[0] {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes)
+                .trim_start_matches(&[' ', '│', '├', '└', '─'][..])
+                .to_owned(),
+            other => panic!("operator is not text: {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => panic!("EXPLAIN cell is not text: {other:?}"),
+    };
+
+    assert_eq!(
+        &operators[..3],
+        ["Projection", "TopN", "HashAgg"],
+        "Go keeps the final SELECT projection above q3's TopN: {rows:#?}",
+    );
+    let aggregate = operators
+        .iter()
+        .position(|operator| operator == "HashAgg")
+        .expect("q3 has a grouped HashAgg");
+    assert_eq!(
+        operators.get(aggregate + 1).map(String::as_str),
+        Some("Projection"),
+        "Go InjectProjBelowAgg evaluates q3's complex SUM argument: {rows:#?}",
+    );
+    assert_eq!(
+        cell(0, 4),
+        "test.lineitem.l_orderkey, Column#0, test.orders.o_orderdate, \
+         test.orders.o_shippriority"
+    );
+    assert_eq!(
+        cell(1, 4),
+        "Column#0:desc, test.orders.o_orderdate, offset:0, count:10"
+    );
+    assert_eq!(
+        cell(2, 4),
+        "group by:Column#1, Column#2, Column#3, funcs:sum(Column#0)->Column#0, \
+         funcs:firstrow(Column#1)->test.orders.o_orderdate, \
+         funcs:firstrow(Column#2)->test.orders.o_shippriority, \
+         funcs:firstrow(Column#3)->test.lineitem.l_orderkey"
+    );
+    assert_eq!(
+        cell(3, 4),
+        "mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount))->Column#0, \
+         test.orders.o_orderdate->Column#1, test.orders.o_shippriority->Column#2, \
+         test.lineitem.l_orderkey->Column#3"
+    );
+    assert!(
+        rows.iter().any(|row| match &row[4] {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes)
+                .contains("lt(test.orders.o_orderdate, 1995-03-13 00:00:00.000000)",),
+            _ => false,
+        }),
+        "q3's pushed orders predicate must use Go's typed DATE constant: {rows:#?}",
+    );
+    assert!(
+        rows.iter().any(|row| match &row[4] {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes)
+                .contains("gt(test.lineitem.l_shipdate, 1995-03-13 00:00:00.000000)",),
+            _ => false,
+        }),
+        "q3's pushed lineitem predicate must use Go's typed DATE constant: {rows:#?}",
+    );
+}
+
+/// TPC-H q13's outer aggregation groups by a column produced by a grouped
+/// derived table. Go still lays out physical HashAgg states with COUNT before
+/// the selected group-key FIRST_ROW carrier, then restores select-list order
+/// with a Projection below Sort.
+#[test]
+fn tpch_q13_restores_grouped_derived_hash_agg_output() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE customer (c_custkey INT PRIMARY KEY)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE orders (o_orderkey INT PRIMARY KEY, o_custkey INT, o_comment VARCHAR(79))",
+        &mut catalog,
+    )
+    .unwrap();
+    let sql = "SELECT c_count, COUNT(*) AS custdist FROM (\
+        SELECT c_custkey, COUNT(o_orderkey) AS c_count FROM customer \
+        LEFT JOIN orders ON c_custkey = o_custkey \
+        AND o_comment NOT LIKE '%pending%deposits%' GROUP BY c_custkey\
+        ) AS c_orders GROUP BY c_count ORDER BY custdist DESC, c_count DESC";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let ctx = crate::StmtContext::for_query();
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let operator = |row: usize| match &rows[row][0] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes)
+            .trim_start_matches(&[' ', '│', '├', '└', '─'][..])
+            .to_owned(),
+        other => panic!("operator is not text: {other:?}"),
+    };
+    let info = |row: usize| match &rows[row][4] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => panic!("EXPLAIN cell is not text: {other:?}"),
+    };
+
+    assert_eq!(
+        (0..3).map(operator).collect::<Vec<_>>(),
+        ["Sort", "Projection", "HashAgg"],
+        "q13 must restore the physical aggregate output before sorting: {rows:#?}",
+    );
+    assert_eq!(info(0), "Column#1:desc, Column#0:desc");
+    assert_eq!(info(1), "Column#0, Column#1");
+    let aggregate = info(2);
+    assert!(
+        !aggregate.contains("c_orders.c_count"),
+        "a computed derived output has no base-column identity: {aggregate}",
+    );
+    let count = aggregate
+        .find("funcs:count(1)->Column#")
+        .expect("q13 outer COUNT");
+    let carrier = aggregate
+        .find("funcs:firstrow(Column#0)->Column#0")
+        .expect("q13 group-key carrier");
+    assert!(
+        count < carrier,
+        "Go places aggregate states before FIRST_ROW carriers: {aggregate}",
+    );
+}
+
+/// Go `InjectProjBelowAgg` extracts every scalar aggregate argument, including
+/// TPC-H q14's `SUM(CASE ...)`, into a physical Projection below HashAgg.
+#[test]
+fn scalar_case_aggregate_argument_is_projected_below_hash_agg() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE part (p_partkey INT PRIMARY KEY, p_type VARCHAR(25))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE lineitem (l_partkey INT, l_extendedprice DECIMAL(15,2), \
+            l_discount DECIMAL(15,2), l_shipdate DATE)",
+        &mut catalog,
+    )
+    .unwrap();
+
+    let sql = "SELECT 100.00 * \
+        SUM(CASE WHEN p_type LIKE 'PROMO%' \
+            THEN l_extendedprice * (1 - l_discount) ELSE 0 END) / \
+        SUM(l_extendedprice * (1 - l_discount)) AS promo_revenue \
+        FROM lineitem, part WHERE l_partkey = p_partkey \
+        AND l_shipdate >= '1996-12-01' \
+        AND l_shipdate < DATE_ADD('1996-12-01', INTERVAL 1 MONTH)";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let ctx = crate::StmtContext::for_query();
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let operators = rows
+        .iter()
+        .map(|row| match &row[0] {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes)
+                .trim_start_matches(&[' ', '│', '├', '└', '─'][..])
+                .to_owned(),
+            other => panic!("operator is not text: {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => panic!("EXPLAIN cell is not text: {other:?}"),
+    };
+
+    assert_eq!(
+        &operators[..3],
+        ["Projection", "HashAgg", "Projection"],
+        "Go InjectProjBelowAgg must extract q14's scalar CASE argument: {rows:#?}",
+    );
+    assert!(
+        cell(1, 4).contains("funcs:sum(Column#"),
+        "HashAgg must consume the projected scalar columns: {rows:#?}",
+    );
+    assert!(
+        cell(2, 4).contains("case("),
+        "the injected Projection must evaluate the CASE expression: {rows:#?}",
+    );
+    let selection = rows
+        .iter()
+        .position(|row| match &row[4] {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).contains("l_shipdate"),
+            _ => false,
+        })
+        .expect("q14 has a lineitem date Selection");
+    assert!(
+        !cell(selection, 4).contains("and("),
+        "Go PhysicalSelection prints split CNF conditions: {rows:#?}",
+    );
+    let hash_join = operators
+        .iter()
+        .position(|operator| operator == "HashJoin")
+        .expect("q14 has a HashJoin");
+    assert!(
+        operators[hash_join + 1] == "Selection(Build)"
+            || cell(hash_join + 1, 4) == "data:Selection",
+        "Go builds q14's hash table from the smaller filtered lineitem side: {rows:#?}",
+    );
+}
+
+/// Go `AggregationPushDownSolver` substitutes every aggregate argument and
+/// group item through a child Projection before `InjectProjBelowAgg` runs.
+/// The injected physical Projection must therefore evaluate the derived
+/// expressions directly over base-table columns instead of reading another
+/// materialized Projection.
+#[test]
+fn aggregate_push_down_substitutes_child_projection_before_injection() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE orders (o_orderkey INT PRIMARY KEY, o_orderdate DATE)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE lineitem (l_orderkey INT, l_extendedprice DECIMAL(15,2), \
+            l_discount DECIMAL(15,2), nation VARCHAR(25), cust_nation VARCHAR(25))",
+        &mut catalog,
+    )
+    .unwrap();
+
+    let sql = "SELECT o_year, \
+        SUM(CASE WHEN nation = 'INDIA' THEN volume ELSE 0 END) / SUM(volume) AS share \
+        FROM (SELECT EXTRACT(YEAR FROM o_orderdate) AS o_year, \
+                     l_extendedprice * (1 - l_discount) AS volume, nation \
+              FROM orders, lineitem WHERE o_orderkey = l_orderkey) all_nations \
+        GROUP BY o_year ORDER BY o_year";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let ctx = crate::StmtContext::for_query().with_only_full_group_by(true);
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let operator = |row: usize| match &rows[row][0] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes)
+            .trim_start_matches(&[' ', '│', '├', '└', '─'][..])
+            .to_owned(),
+        other => panic!("operator is not text: {other:?}"),
+    };
+    let info = |row: usize| match &rows[row][4] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => panic!("operator info is not text: {other:?}"),
+    };
+    let operators = (0..rows.len()).map(operator).collect::<Vec<_>>();
+    assert_eq!(
+        &operators[..6],
+        &[
+            "Sort",
+            "Projection",
+            "HashAgg",
+            "Projection",
+            "Projection",
+            "HashJoin",
+        ],
+        "the visible Projection remains above HashAgg and the derived \
+         Projection is eliminated below it: {rows:#?}",
+    );
+    assert!(info(0).starts_with("Column#"), "{rows:#?}");
+    assert!(
+        info(1).starts_with("Column#") && info(1).contains("div(Column#"),
+        "{rows:#?}",
+    );
+    assert_eq!(
+        info(2).matches("funcs:firstrow(").count(),
+        1,
+        "the grouped year needs one carrier, not an extra ORDER BY carrier: {rows:#?}",
+    );
+    assert!(
+        info(3).contains("test.lineitem.nation")
+            && info(3).contains("test.lineitem.l_extendedprice")
+            && info(3).contains("extract(YEAR, test.orders.o_orderdate)")
+            && info(3).matches("test.orders.o_orderdate").count() == 1,
+        "AggregationPushDownSolver must substitute the child Projection before \
+         InjectProjBelowAgg: {rows:#?}",
+    );
+    assert!(
+        info(4).contains("test.lineitem.l_extendedprice")
+            && info(4).contains("test.lineitem.l_discount")
+            && info(4).contains("test.orders.o_orderdate")
+            && info(4).contains("test.lineitem.nation"),
+        "join reorder restores the base columns below InjectProjBelowAgg: {rows:#?}",
+    );
+
+    // The semantic checks still bind the outer clauses against the derived
+    // table's output scope. Q7 and q9 have more grouped derived columns than
+    // q8, so pairing those clauses with the flattened base-table scope used
+    // for physical aggregation used to fail with an unresolved reference.
+    for (sql, direct_groups) in [
+        (
+            "SELECT supp_nation, cust_nation, l_year, SUM(volume) AS revenue \
+         FROM (SELECT nation AS supp_nation, cust_nation, \
+                      EXTRACT(YEAR FROM o_orderdate) AS l_year, \
+                      l_extendedprice * (1 - l_discount) AS volume \
+               FROM orders, lineitem WHERE o_orderkey = l_orderkey) shipping \
+         GROUP BY supp_nation, cust_nation, l_year \
+         ORDER BY supp_nation, cust_nation, l_year",
+            &["test.lineitem.nation", "test.lineitem.cust_nation"][..],
+        ),
+        (
+            "SELECT nation, o_year, SUM(amount) AS sum_profit \
+         FROM (SELECT nation, EXTRACT(YEAR FROM o_orderdate) AS o_year, \
+                      l_extendedprice * (1 - l_discount) AS amount \
+               FROM orders, lineitem WHERE o_orderkey = l_orderkey) profit \
+         GROUP BY nation, o_year ORDER BY nation, o_year DESC",
+            &["test.lineitem.nation"][..],
+        ),
+    ] {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &stmt else {
+            panic!("not a query");
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("not a SELECT");
+        };
+        assert!(run_select_on(sql, &catalog, &ctx)
+            .unwrap_or_else(|error| panic!("derived aggregation execution failed: {error}"))
+            .is_empty());
+        let (_, rows) = explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief)
+            .unwrap_or_else(|error| {
+                panic!("derived aggregation must keep its semantic scope: {error}")
+            });
+        let operators = rows
+            .iter()
+            .map(|row| match &row[0] {
+                Datum::Bytes(bytes) => String::from_utf8_lossy(bytes)
+                    .trim_start_matches(&[' ', '│', '├', '└', '─'][..])
+                    .to_owned(),
+                other => panic!("operator is not text: {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        let info = |row: usize| match &rows[row][4] {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+            other => panic!("operator info is not text: {other:?}"),
+        };
+        assert_eq!(
+            &operators[..4],
+            ["Sort", "Projection", "HashAgg", "Projection"],
+            "derived group outputs must be restored below the unbounded sort: {rows:#?}",
+        );
+        assert_eq!(
+            info(2).matches("funcs:firstrow(").count(),
+            direct_groups.len() + 1,
+            "ORDER BY must reuse each direct/computed group carrier: {rows:#?}",
+        );
+        for direct_group in direct_groups {
+            assert!(
+                info(0).contains(direct_group) && info(1).contains(direct_group),
+                "a direct group must keep its physical identity above aggregation: {rows:#?}",
+            );
+            assert!(
+                info(2).contains(&format!(")->{direct_group}")),
+                "FIRST_ROW must return a direct group's physical identity: {rows:#?}",
+            );
+        }
+        assert!(
+            info(0).contains("Column#")
+                && info(1).contains("Column#")
+                && info(2).contains(")->Column#"),
+            "a computed group must keep its generated physical identity: {rows:#?}",
+        );
+    }
+}
+
+/// Go builds the visible SELECT projection before an unbounded ORDER BY.
+/// TPC-H q12 depends on this boundary because its CASE expressions are
+/// projected below HashAgg while the visible group/count columns are restored
+/// between HashAgg and Sort.
+#[test]
+fn grouped_order_by_projects_visible_fields_below_sort() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE orders (o_orderkey INT PRIMARY KEY, o_orderpriority VARCHAR(15))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE lineitem (l_orderkey INT, l_shipmode VARCHAR(10), \
+            l_commitdate DATE, l_receiptdate DATE, l_shipdate DATE)",
+        &mut catalog,
+    )
+    .unwrap();
+    let sql = "SELECT l_shipmode, \
+        SUM(CASE WHEN o_orderpriority = '1-URGENT' OR o_orderpriority = '2-HIGH' \
+            THEN 1 ELSE 0 END) AS high_line_count, \
+        SUM(CASE WHEN o_orderpriority <> '1-URGENT' AND o_orderpriority <> '2-HIGH' \
+            THEN 1 ELSE 0 END) AS low_line_count \
+        FROM orders, lineitem WHERE o_orderkey = l_orderkey \
+        AND l_shipmode IN ('RAIL', 'FOB') \
+        AND l_commitdate < l_receiptdate AND l_shipdate < l_commitdate \
+        AND l_receiptdate >= '1997-01-01' \
+        AND l_receiptdate < DATE_ADD('1997-01-01', INTERVAL 1 YEAR) \
+        GROUP BY l_shipmode ORDER BY l_shipmode";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let ctx = crate::StmtContext::for_query();
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let operators = rows
+        .iter()
+        .map(|row| match &row[0] {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes)
+                .trim_start_matches(&[' ', '│', '├', '└', '─'][..])
+                .to_owned(),
+            other => panic!("operator is not text: {other:?}"),
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        &operators[..5],
+        ["Sort", "Projection", "HashAgg", "Projection", "Projection"],
+        "Go keeps the visible SELECT projection below Sort and restores the reordered join \
+         schema below InjectProjBelowAgg: {rows:#?}",
+    );
+    let info = |row: usize| match &rows[row][4] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => panic!("operator info is not text: {other:?}"),
+    };
+    assert_eq!(
+        info(4),
+        "test.orders.o_orderpriority, test.lineitem.l_shipmode",
+        "restoreSchemaIfChanged must retain the original column identities: {rows:#?}",
+    );
+    assert!(
+        info(3).contains("test.orders.o_orderpriority")
+            && info(3).contains("test.lineitem.l_shipmode"),
+        "InjectProjBelowAgg must resolve compact offsets against the restored schema: {rows:#?}",
+    );
+    assert!(
+        info(2).contains("funcs:firstrow(Column#2)->test.lineitem.l_shipmode"),
+        "HashAgg must carry the restored group-column identity: {rows:#?}",
+    );
+}
+
+/// Go re-derives the group-key NDV from the join tree produced by join
+/// reorder. Joining a one-row filtered region to its dimension first clamps
+/// the dimension name NDV before the fact table raises the row count again.
+#[test]
+fn grouped_rows_follow_the_reordered_join_tree() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE fact (f_id INT PRIMARY KEY, f_dim_id INT, f_value INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE dim (d_id INT PRIMARY KEY, d_region_id INT, d_name VARCHAR(20))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE region (r_id INT PRIMARY KEY, r_name VARCHAR(20))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO fact VALUES (1,1,10),(2,2,20)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO dim VALUES (1,1,'a'),(2,2,'b')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO region VALUES (1,'MIDDLE'),(2,'OTHER')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "fact",
+        1_000,
+        &[("f_id", 1_000), ("f_dim_id", 25), ("f_value", 1_000)],
+        &ctx,
+    );
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "dim",
+        25,
+        &[("d_id", 25), ("d_region_id", 5), ("d_name", 25)],
+        &ctx,
+    );
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "region",
+        5,
+        &[("r_id", 5), ("r_name", 5)],
+        &ctx,
+    );
+    catalog.clear_dirty_content();
+
+    let sql = "SELECT d_name, SUM(f_value) AS revenue FROM fact, dim, region \
+        WHERE f_dim_id = d_id AND d_region_id = r_id AND r_name = 'MIDDLE' \
+        GROUP BY d_name ORDER BY revenue DESC";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let hash_agg = rows
+        .iter()
+        .find(|row| match &row[0] {
+            Datum::Bytes(bytes) => {
+                String::from_utf8_lossy(bytes).trim_start_matches(&[' ', '│', '├', '└', '─'][..])
+                    == "HashAgg"
+            }
+            _ => false,
+        })
+        .expect("grouped query has a HashAgg");
+    assert_eq!(
+        hash_agg[1],
+        Datum::Bytes(b"5.00".to_vec()),
+        "the reordered region-dimension join must clamp d_name NDV before the fact join: {rows:#?}",
+    );
+    assert_eq!(
+        rows[0][4],
+        Datum::Bytes(b"Column#1:desc".to_vec()),
+        "the Sort above the visible aggregate projection must read its generated column: {rows:#?}",
+    );
+    assert!(
+        rows.iter().any(|row| match &row[4] {
+            Datum::Bytes(bytes) =>
+                String::from_utf8_lossy(bytes).contains("eq(test.dim.d_id, test.fact.f_dim_id)"),
+            _ => false,
+        }),
+        "HashJoin EXPLAIN must align equality arguments with the logical children: {rows:#?}",
+    );
+}
+
 /// TPCC condition 01: join pruning renumbers the merge-key column, but the
 /// committed MergeJoin still delivers that named order to the grouped
 /// StreamAgg. Go projects the three aggregate inputs between the join and the
@@ -1810,6 +2517,120 @@ fn tpcc_condition_two_orders_group_uses_the_covering_index_range() {
         }),
         "the covering secondary index must not displace Go's common-handle probe: {analyzed:#?}"
     );
+}
+
+/// Go accepts a pushdown-safe expression as the input of a global SUM. The
+/// cop HashAgg evaluates that expression after its Selection, and the root
+/// HashAgg merges one partial result per region.
+#[test]
+fn global_sum_expression_uses_partial_and_final_hash_agg() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE revenue (\
+            id INT PRIMARY KEY, price DECIMAL(10,2), discount DECIMAL(4,2), k INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO revenue VALUES \
+            (1,100.00,0.05,1),(2,200.00,0.10,2),(3,300.00,0.20,4)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT SUM(price * discount) FROM revenue WHERE k >= 1 AND k <= 3";
+    let result = run_select_on(sql, &catalog, &ctx).unwrap();
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].len(), 1);
+    assert_eq!(result[0][0].sql_string().unwrap(), "25.0000");
+
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec![
+            "HashAgg",
+            "└─TableReader",
+            "  └─HashAgg",
+            "    └─Selection",
+            "      └─TableFullScan"
+        ]
+    );
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 2)).collect::<Vec<_>>(),
+        vec!["root", "root", "cop[tikv]", "cop[tikv]", "cop[tikv]"]
+    );
+    assert!(cell(0, 4).starts_with("funcs:sum(Column#"));
+    assert!(cell(2, 4).contains("sum(mul(test.revenue.price, test.revenue.discount))"));
+}
+
+/// Go's `BasePhysicalAgg.NewPartialAggregate` expands a global AVG into a
+/// cop COUNT/SUM pair and a root final AVG over those two partial columns.
+#[test]
+fn global_avg_uses_count_sum_partial_and_final_hash_agg() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE avg_revenue (id INT PRIMARY KEY, price DECIMAL(10,2), k INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO avg_revenue VALUES (1,100.00,1),(2,200.00,2),(3,300.00,3)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT AVG(price) FROM avg_revenue WHERE k >= 1 AND k <= 3";
+    let result = run_select_on(sql, &catalog, &ctx).unwrap();
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0][0].sql_string().unwrap(), "200.000000");
+
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec![
+            "HashAgg",
+            "└─TableReader",
+            "  └─HashAgg",
+            "    └─Selection",
+            "      └─TableFullScan"
+        ]
+    );
+    assert!(cell(0, 4).contains("funcs:avg(Column#"));
+    assert!(cell(0, 4).matches("Column#").count() >= 3);
+    assert!(cell(2, 4).contains("funcs:count(test.avg_revenue.price)"));
+    assert!(cell(2, 4).contains("funcs:sum(test.avg_revenue.price)"));
 }
 
 /// Go splits a pseudo-statistics Sysbench SUM range into partial/final

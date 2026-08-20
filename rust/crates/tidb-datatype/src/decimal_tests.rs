@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{Decimal, DecimalIntegerWarning, DecimalParseError};
+use crate::MyDecimal;
 
 #[test]
 fn test_from_int() {
@@ -420,6 +421,86 @@ fn storage_codec_accessors_preserve_hidden_division_precision() {
     assert_eq!(value.storage_scale(), 9);
     assert_eq!(value.coefficient_digits(), "1142857142");
     assert!(!value.is_negative());
+}
+
+/// `pkg/util/chunk.AppendDatum` copies the datum's `*types.MyDecimal` into a
+/// chunk cell. The value-layer bridge must therefore produce exactly the same
+/// 40-byte layout as Go's `MyDecimal.FromString`, including hidden fraction
+/// words retained beyond `resultFrac`.
+#[test]
+fn decimal_to_my_decimal_matches_go_layout() {
+    for text in [
+        "42",
+        "0.000001",
+        "-273.15",
+        "123456789012345.67",
+        "123456789012345678901234567890.123456789012345678",
+    ] {
+        let decimal = Decimal::from_signed_literal(text);
+        let direct = decimal.to_my_decimal().expect("decimal fits MyDecimal");
+        // This is the exact text decomposition used by the former bridge:
+        // unlike `storage_string`, it preserves a zero-length integer part
+        // when the value-layer coefficient starts with the fractional word.
+        let split = decimal.coefficient_digits().len() - decimal.storage_scale() as usize;
+        let magnitude = if decimal.storage_scale() == 0 {
+            decimal.coefficient_digits().to_owned()
+        } else {
+            format!(
+                "{}.{}",
+                &decimal.coefficient_digits()[..split],
+                &decimal.coefficient_digits()[split..]
+            )
+        };
+        let literal = if decimal.is_negative() {
+            format!("-{magnitude}")
+        } else {
+            magnitude
+        };
+        let (parsed, error) = MyDecimal::from_string(literal.as_bytes());
+        assert_eq!(error, None, "{text}");
+        assert_eq!(direct.to_raw_bytes(), parsed.to_raw_bytes(), "{text}");
+    }
+
+    let decimal = Decimal::from_literal("8")
+        .true_div(&Decimal::from_literal("7"), 7)
+        .unwrap();
+    let direct = decimal.to_my_decimal().expect("decimal fits MyDecimal");
+    let (mut parsed, error) = MyDecimal::from_string(decimal.storage_string().as_bytes());
+    assert_eq!(error, None);
+    parsed.set_result_frac(decimal.scale() as i8);
+    assert_eq!(direct.to_raw_bytes(), parsed.to_raw_bytes());
+    assert_eq!(direct.result_frac(), 7);
+    assert_eq!(direct.digits_frac(), 9);
+}
+
+/// The chunk bridge must keep ordinary TPC-H DECIMAL values allocation-free
+/// without narrowing the complete MyDecimal domain. The long vector exceeds
+/// the inline capacity and proves the heap fallback follows the same layout.
+#[test]
+fn my_decimal_bridge_inlines_common_coefficients_and_preserves_wide_values() {
+    for text in ["0", "589.58", "104949.50"] {
+        let (source, error) = MyDecimal::from_string(text.as_bytes());
+        assert_eq!(error, None, "{text}");
+        let value = Decimal::from_my_decimal(&source);
+        assert!(value.coefficient_is_inline(), "{text}");
+        assert_eq!(value.to_string(), text, "{text}");
+        assert_eq!(
+            value.to_chunk_my_decimal().unwrap().to_raw_bytes(),
+            source.to_raw_bytes(),
+            "{text}"
+        );
+    }
+
+    let text = "123456789012345678901234567890.123456789012345678";
+    let (source, error) = MyDecimal::from_string(text.as_bytes());
+    assert_eq!(error, None);
+    let value = Decimal::from_my_decimal(&source);
+    assert!(!value.coefficient_is_inline());
+    assert_eq!(value.to_string(), text);
+    assert_eq!(
+        value.to_chunk_my_decimal().unwrap().to_raw_bytes(),
+        source.to_raw_bytes()
+    );
 }
 
 use crate::decimal::{decimal_bin_size, DecimalCodecError, DecimalCodecWarning};
@@ -1168,6 +1249,55 @@ fn test_div_mod_my_decimal() {
     ] {
         let actual = parse_signed(left).rem_mysql(&parse_signed(right)).unwrap();
         assert_eq!(actual.to_string(), output, "{left} % {right}");
+    }
+}
+
+#[test]
+fn integer_division_fast_path_matches_decimal_long_division() {
+    for (left, right, increment, expected) in [
+        ("7", "3", 4, "2.3333"),
+        ("-7", "3", 4, "-2.3333"),
+        ("7", "-3", 4, "-2.3333"),
+        ("123.45", "3", 4, "41.150000"),
+        ("123456789", "37", 9, "3336669.972972972"),
+        ("18446744073709551615", "7", 4, "2635249153387078802.1429"),
+    ] {
+        let lhs = parse_signed(left);
+        let rhs = parse_signed(right);
+        let fast = lhs.div_mysql(&rhs, increment).unwrap();
+        assert_eq!(fast.to_string(), expected, "{left} / {right}");
+    }
+}
+
+#[test]
+fn fixed_scale_add_fast_path_preserves_sign_and_scale() {
+    for (left, right, expected) in [
+        ("12.34", "5.66", "18.00"),
+        ("12.34", "-5.66", "6.68"),
+        ("-12.34", "5.66", "-6.68"),
+        ("-12.34", "-5.66", "-18.00"),
+    ] {
+        assert_eq!(
+            Decimal::from_literal(left)
+                .add(&Decimal::from_literal(right))
+                .to_string(),
+            expected,
+            "{left} + {right}"
+        );
+    }
+}
+
+#[test]
+fn fixed_scale_mul_fast_path_preserves_sign_and_scale() {
+    for (left, right, expected) in [
+        ("12.34", "5.66", "69.8444"),
+        ("12.34", "-5.66", "-69.8444"),
+        ("-12.34", "5.66", "-69.8444"),
+        ("-12.34", "-5.66", "69.8444"),
+    ] {
+        let (value, warning) = Decimal::from_literal(left).mul_mysql(&Decimal::from_literal(right));
+        assert_eq!(warning, None, "{left} * {right}");
+        assert_eq!(value.to_string(), expected, "{left} * {right}");
     }
 }
 

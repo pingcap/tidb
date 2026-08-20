@@ -338,7 +338,16 @@ impl DeferredSnapshot {
             let opened = if guard.max_ts {
                 self.transactions.open_max_ts_snapshot()
             } else if let Some(prepared) = guard.prepared.take() {
-                prepared.wait()
+                // Go `txnFuture.wait` logs a failed oracle future and calls
+                // `store.Begin` without `WithStartTS`, which synchronously
+                // takes one replacement timestamp for the statement.
+                prepared.wait().or_else(|prepared_error| {
+                    self.transactions.open_snapshot().map_err(|fallback_error| {
+                        format!(
+                            "prepared snapshot failed ({prepared_error}); replacement snapshot failed ({fallback_error})"
+                        )
+                    })
+                })
             } else {
                 self.transactions.open_snapshot()
             };
@@ -360,6 +369,10 @@ impl ClusterSnapshot for DeferredSnapshot {
 
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
         self.with_open(|snapshot| snapshot.get(key))
+    }
+
+    fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
+        self.with_open(|snapshot| snapshot.batch_get(keys))
     }
 
     fn scan(
@@ -662,5 +675,106 @@ impl OpenClusterTransaction for SessionTransaction {
 
     fn rollback(self: Box<Self>) -> Result<(), String> {
         SessionTransaction::rollback(*self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    #[derive(Debug)]
+    struct BatchCountingSnapshot {
+        get_calls: Arc<AtomicUsize>,
+        batch_get_calls: Arc<AtomicUsize>,
+    }
+
+    impl ClusterSnapshot for BatchCountingSnapshot {
+        fn get(&mut self, _key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+            self.get_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(None)
+        }
+
+        fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
+            self.batch_get_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(keys
+                .iter()
+                .map(|key| (key.as_bytes().to_vec(), b"value".to_vec()))
+                .collect())
+        }
+
+        fn scan(
+            &mut self,
+            _start: &Key,
+            _end: &Key,
+            _limit: Option<usize>,
+        ) -> Result<SnapshotPairs, StorageError> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct BatchCountingTransactions {
+        get_calls: Arc<AtomicUsize>,
+        batch_get_calls: Arc<AtomicUsize>,
+    }
+
+    impl ClusterTransactions for BatchCountingTransactions {
+        fn prepare_snapshot(&self) -> Result<Box<dyn PendingClusterSnapshot>, String> {
+            panic!("the test opens its snapshot directly")
+        }
+
+        fn open_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
+            Ok(Box::new(BatchCountingSnapshot {
+                get_calls: Arc::clone(&self.get_calls),
+                batch_get_calls: Arc::clone(&self.batch_get_calls),
+            }))
+        }
+
+        fn open_max_ts_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
+            self.open_snapshot()
+        }
+
+        fn commit(
+            &self,
+            _buffer: &MutationBuffer,
+            _read_ts: Option<u64>,
+        ) -> Result<(), SqlQueryError> {
+            panic!("unused in batch-get forwarding test")
+        }
+
+        fn begin(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
+            panic!("unused in batch-get forwarding test")
+        }
+
+        fn acquire_advisory_lock(
+            &self,
+            _name: &str,
+            _timeout: Duration,
+        ) -> Result<Box<dyn AdvisoryLockLease>, AdvisoryLockError> {
+            panic!("unused in batch-get forwarding test")
+        }
+
+        fn is_advisory_lock_used(&self, _name: &str) -> bool {
+            panic!("unused in batch-get forwarding test")
+        }
+    }
+
+    #[test]
+    fn deferred_snapshot_forwards_batch_get_without_point_read_fallback() {
+        let get_calls = Arc::new(AtomicUsize::new(0));
+        let batch_get_calls = Arc::new(AtomicUsize::new(0));
+        let transactions = Arc::new(BatchCountingTransactions {
+            get_calls: Arc::clone(&get_calls),
+            batch_get_calls: Arc::clone(&batch_get_calls),
+        });
+        let mut snapshot = DeferredSnapshot::new(transactions, StatementReadTs::default());
+        let keys = vec![Key::from_bytes(b"k1"), Key::from_bytes(b"k2")];
+
+        let pairs = snapshot.batch_get(&keys).expect("batch get succeeds");
+
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(batch_get_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(get_calls.load(Ordering::Relaxed), 0);
     }
 }

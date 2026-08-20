@@ -19,8 +19,8 @@ use std::cmp::Ordering;
 
 use tidb_datatype::Collation;
 use tidb_util::stringutil::{
-    compile_pattern_binary, compile_pattern_with_escape, do_match_binary, do_match_customized,
-    lower_one_string, lower_one_string_excluding_escape_char,
+    compile_pattern_with_escape, do_match_customized, lower_one_string,
+    lower_one_string_excluding_escape_char,
 };
 
 /// Matches `text` against a `LIKE` pattern (`%` any run, `_` one character),
@@ -54,14 +54,79 @@ pub fn like_match_with_collation(
     let text = text.as_ref();
     let pattern = pattern.as_ref();
     let escape = escape.unwrap_or(b'\\');
-    if collation == Collation::Binary {
-        let (weights, types) = compile_pattern_binary(pattern, escape);
-        return do_match_binary(text, &weights, &types);
+    if collation == Collation::Binary
+        || (text.is_ascii()
+            && pattern.is_ascii()
+            && matches!(
+                collation,
+                Collation::AsciiBin
+                    | Collation::Latin1Bin
+                    | Collation::Utf8Bin
+                    | Collation::Utf8Mb4Bin
+            ))
+    {
+        return do_match_binary_pattern(text, pattern, escape);
     }
     let (weights, types) = compile_pattern_with_escape(pattern, Some(char::from(escape)));
     do_match_customized(text, &weights, &types, |left, right| {
         collation_char_equal(left, right, collation)
     })
+}
+
+/// Matches a binary LIKE pattern without allocating compiled token vectors.
+///
+/// The evaluator invokes LIKE once per input row. Go compiles a constant
+/// pattern once, while this value-only seam receives the pattern as bytes on
+/// every call. Keeping the standard greedy `%` backtracking state on the
+/// stack reproduces `compile_pattern_binary`/`do_match_binary` for byte
+/// collations and removes that per-row allocation from large scans.
+fn do_match_binary_pattern(input: &[u8], pattern: &[u8], escape: u8) -> bool {
+    let (mut input_index, mut pattern_index) = (0usize, 0usize);
+    let (mut star, mut star_input) = (None, 0usize);
+    while input_index < input.len() {
+        if pattern_index < pattern.len() {
+            let current = pattern[pattern_index];
+            if current == escape {
+                let literal = pattern.get(pattern_index + 1).copied().unwrap_or(escape);
+                let width = if pattern_index + 1 < pattern.len() {
+                    2
+                } else {
+                    1
+                };
+                if input[input_index] == literal {
+                    input_index += 1;
+                    pattern_index += width;
+                    continue;
+                }
+            } else if current == b'_' {
+                input_index += 1;
+                pattern_index += 1;
+                continue;
+            } else if current == b'%' {
+                star = Some(pattern_index);
+                star_input = input_index;
+                pattern_index += 1;
+                continue;
+            } else if input[input_index] == current {
+                input_index += 1;
+                pattern_index += 1;
+                continue;
+            }
+        }
+        let Some(star_index) = star else {
+            return false;
+        };
+        if star_input == input.len() {
+            return false;
+        }
+        star_input += 1;
+        input_index = star_input;
+        pattern_index = star_index + 1;
+    }
+    while pattern_index < pattern.len() && pattern[pattern_index] == b'%' {
+        pattern_index += 1;
+    }
+    pattern_index == pattern.len()
 }
 
 /// Compares one source rune under a TiDB collation.
@@ -152,6 +217,20 @@ mod tests {
     use tidb_datatype::Collation;
 
     use super::{ilike_match, like_match, like_match_with_collation};
+
+    #[test]
+    fn binary_like_fast_path_matches_wildcards_and_escapes() {
+        assert!(like_match("pending deposits", "%pending%deposits%", None));
+        assert!(!like_match(
+            "pending withdrawal",
+            "%pending%deposits%",
+            None
+        ));
+        assert!(like_match("a%b", "a\\%b", None));
+        assert!(like_match("a_b", "a\\_b", None));
+        assert!(like_match("abc", "%_c", None));
+        assert!(!like_match("", "%_", None));
+    }
 
     #[test]
     fn zero_escape_byte_preserves_go_nul_escape_behavior() {

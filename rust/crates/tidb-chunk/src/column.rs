@@ -1059,13 +1059,14 @@ impl Column {
         if src.is_fixed() {
             let elem_len = src.elem_buffer_len();
             let offset = row_idx * elem_len;
-            let cell = src.data.read()[offset..offset + elem_len].to_vec();
-            self.data.extend_from_slice(&cell);
+            let data = src.data.read();
+            self.data
+                .extend_from_slice(&data[offset..offset + elem_len]);
         } else {
             let start = src.offsets[row_idx] as usize;
             let end = src.offsets[row_idx + 1] as usize;
-            let cell = src.data.read()[start..end].to_vec();
-            self.data.extend_from_slice(&cell);
+            let data = src.data.read();
+            self.data.extend_from_slice(&data[start..end]);
             self.offsets.push(self.data.len() as i64);
         }
         self.length += 1;

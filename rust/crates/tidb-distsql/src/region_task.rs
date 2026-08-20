@@ -302,14 +302,15 @@ pub(crate) fn build_region_tasks(
 
     let sorted_ranges = ranges.to_ranges();
     let mut tasks = Vec::new();
+    // Both the request ranges and the region/bucket boundaries are monotonic.
+    // Go's `SplitKeyRangesByLocations` walks them with one cursor; restarting
+    // at the first request range for every bucket turns a large index-join
+    // lookup into O(regions * buckets * ranges) work.
+    let mut range_cursor = 0;
+    let mut hint_cursor = 0;
     for region in topology {
         for bucket in normalized_bucket_ranges(region)? {
-            let mut fragments = Vec::new();
-            for range in &sorted_ranges {
-                if let Some(fragment) = intersect_range(range, &bucket) {
-                    fragments.push(fragment);
-                }
-            }
+            let fragments = intersect_sorted_ranges(&sorted_ranges, &bucket, &mut range_cursor);
             if fragments.is_empty() {
                 continue;
             }
@@ -340,7 +341,7 @@ pub(crate) fn build_region_tasks(
                 paging,
                 paging_size,
                 row_count_hint: hints.map_or(-1, |hints| {
-                    row_count_hint(&fragments, &original_ranges, hints)
+                    row_count_hint_for_bucket(&bucket, &original_ranges, hints, &mut hint_cursor)
                 }),
                 response_channel_capacity,
                 store_busy_threshold_ms: u64::try_from(metadata.store_busy_threshold_ns)
@@ -474,6 +475,43 @@ fn intersect_range(range: &KeyRange, bucket: &RequestKeyRange) -> Option<KeyRang
     ))
 }
 
+/// Intersects two already-sorted streams while retaining the request-range
+/// order Go gives to one region task. A point range (`start == end`) is kept
+/// only in the bucket that contains that point.
+fn intersect_sorted_ranges(
+    ranges: &[KeyRange],
+    bucket: &RequestKeyRange,
+    cursor: &mut usize,
+) -> Vec<KeyRange> {
+    while *cursor < ranges.len() && ends_before_bucket(&ranges[*cursor], bucket) {
+        *cursor += 1;
+    }
+    let start = *cursor;
+    let mut fragments = Vec::new();
+    for range in ranges.iter().skip(start) {
+        if starts_at_or_after_bucket_end(range, bucket) {
+            break;
+        }
+        if let Some(fragment) = intersect_range(range, bucket) {
+            fragments.push(fragment);
+        }
+    }
+    fragments
+}
+
+fn ends_before_bucket(range: &KeyRange, bucket: &RequestKeyRange) -> bool {
+    let start = range.start_key.as_bytes();
+    let end = range.end_key.as_bytes();
+    if start == end {
+        return start < bucket.start_key.as_slice();
+    }
+    !end.is_empty() && end <= bucket.start_key.as_slice()
+}
+
+fn starts_at_or_after_bucket_end(range: &KeyRange, bucket: &RequestKeyRange) -> bool {
+    !bucket.end_key.is_empty() && range.start_key.as_bytes() >= bucket.end_key.as_slice()
+}
+
 fn min_end<'a>(left: &'a [u8], right: &'a [u8]) -> &'a [u8] {
     match (left.is_empty(), right.is_empty()) {
         (true, true) => left,
@@ -489,46 +527,106 @@ fn contains_key(range: &RequestKeyRange, key: &[u8]) -> bool {
         && (range.end_key.is_empty() || key < range.end_key.as_slice())
 }
 
-fn ranges_overlap(left: &KeyRange, right: &KeyRange) -> bool {
-    (left.end_key.as_bytes().is_empty() || left.end_key > right.start_key)
-        && (right.end_key.as_bytes().is_empty() || right.end_key > left.start_key)
-}
-
-fn row_count_hint(fragments: &[KeyRange], originals: &[KeyRange], hints: &[usize]) -> i64 {
+fn row_count_hint_for_bucket(
+    bucket: &RequestKeyRange,
+    originals: &[KeyRange],
+    hints: &[usize],
+    cursor: &mut usize,
+) -> i64 {
+    while *cursor < originals.len() && ends_before_bucket(&originals[*cursor], bucket) {
+        *cursor += 1;
+    }
+    let start = *cursor;
     originals
         .iter()
-        .zip(hints)
-        .filter(|(original, _)| fragments.iter().any(|part| ranges_overlap(original, part)))
+        .skip(start)
+        .zip(hints.iter().skip(start))
+        .take_while(|(original, _)| !starts_at_or_after_bucket_end(original, bucket))
         .map(|(_, hint)| i64::try_from(*hint).unwrap_or(i64::MAX))
         .sum()
 }
 
 fn all_ranges_covered(ranges: &[KeyRange], tasks: &[RegionTaskEnvelope]) -> bool {
-    ranges.iter().all(|range| {
+    coverage_scan(ranges, tasks).0
+}
+
+fn coverage_scan(ranges: &[KeyRange], tasks: &[RegionTaskEnvelope]) -> (bool, usize) {
+    let mut fragments = tasks.iter().flat_map(|task| &task.ranges);
+    let mut examined_fragments = 0;
+    for range in ranges {
         if range.start_key == range.end_key {
-            return tasks
-                .iter()
-                .flat_map(|task| &task.ranges)
-                .any(|part| part.start_key == range.start_key && part.end_key == range.end_key);
+            let Some(fragment) = fragments.next() else {
+                return (false, examined_fragments);
+            };
+            examined_fragments += 1;
+            if fragment.start_key != range.start_key || fragment.end_key != range.end_key {
+                return (false, examined_fragments);
+            }
+            continue;
         }
-        let mut cursor = range.start_key.as_bytes().to_vec();
-        for part in tasks.iter().flat_map(|task| &task.ranges) {
-            if part.end_key.as_slice() <= cursor.as_slice() && !part.end_key.is_empty() {
-                continue;
+
+        let mut expected_start = range.start_key.as_bytes();
+        loop {
+            let Some(fragment) = fragments.next() else {
+                return (false, examined_fragments);
+            };
+            examined_fragments += 1;
+            if fragment.start_key.as_slice() != expected_start {
+                return (false, examined_fragments);
             }
-            if part.start_key.as_slice() != cursor {
-                continue;
+
+            let fragment_end = fragment.end_key.as_slice();
+            let range_end = range.end_key.as_bytes();
+            if range_end.is_empty() {
+                if fragment_end.is_empty() {
+                    break;
+                }
+            } else {
+                if fragment_end.is_empty() || fragment_end > range_end {
+                    return (false, examined_fragments);
+                }
+                if fragment_end == range_end {
+                    break;
+                }
             }
-            cursor.clone_from(&part.end_key.to_vec());
-            if cursor == range.end_key.as_bytes() {
-                return true;
-            }
-            if cursor.is_empty() {
-                return range.end_key.as_bytes().is_empty();
-            }
+            expected_start = fragment_end;
         }
-        false
-    })
+    }
+
+    let covered = fragments.next().is_none();
+    (covered, examined_fragments)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coverage_validation_is_linear_for_many_point_ranges() {
+        let mut ranges = Vec::new();
+        let mut fragments = Vec::new();
+        for value in 0_u32..4_097 {
+            let key = value.to_be_bytes().to_vec();
+            let range = RequestKeyRange {
+                start_key: key.clone().into(),
+                end_key: key.into(),
+            };
+            ranges.push(to_txn_range(&range));
+            fragments.push(range);
+        }
+        let tasks = [RegionTaskEnvelope {
+            ranges: fragments,
+            ..RegionTaskEnvelope::default()
+        }];
+
+        let (covered, examined_fragments) = coverage_scan(&ranges, &tasks);
+        assert!(covered);
+        assert!(
+            examined_fragments <= 2 * ranges.len(),
+            "coverage validation examined {examined_fragments} fragments for {} ranges",
+            ranges.len()
+        );
+    }
 }
 
 fn batch_tasks(tasks: Vec<RegionTaskEnvelope>, batch_size: u64) -> Vec<RegionTaskEnvelope> {
