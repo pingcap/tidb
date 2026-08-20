@@ -520,7 +520,14 @@ func TestSelectLockSkipLocked(t *testing.T) {
 		Check(testkit.Rows("111 u1 c1"))
 	tk.MustQuery("select id, uid, c from t use index(primary) where id = '111' for share skip locked").
 		Check(testkit.Rows("111 u1 c1"))
+	// The pruning condition is not specific to joins or nonclustered PKs: any locked
+	// table whose handle column is not otherwise needed by the parent hits it, e.g. a
+	// clustered-PK table whose PK is not in the projection.
+	tk.MustExec("create table tc (id int primary key, a_id int)")
+	tk.MustExec("insert into tc values (1, 100)")
+	tk.MustQuery("select a_id from tc for share skip locked").Check(testkit.Rows("100"))
 	tk.MustExec("set session tidb_enable_noop_functions = default")
+	tk.MustContainErrMsg("select a_id from tc for update skip locked", notSupportedErr)
 
 	// With shared lock promotion, FOR SHARE executes as FOR UPDATE, which would need real
 	// skip-locked support.
