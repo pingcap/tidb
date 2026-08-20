@@ -306,19 +306,21 @@ pub(crate) fn run_unistore_cluster_session(
     let factory = Arc::new(factory);
     let stats_receipt = stats.receipt();
 
-    let node = ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users))
+    let node = ConcurrentSqlNode::bind(&config, Arc::clone(&factory), Arc::clone(&users))
         .map_err(RunConfiguredNodeError::Node)?;
     // Go starts the status HTTP server beside the SQL listener
     // (`cfg.Status.ReportStatus`, default true); `/status` is the first
     // thing `main_test.go` and every health probe reads. A failed bind
     // logs and continues, as Go's does.
     let _status_server = if config.report_status {
-        match crate::http_status::start_status_listener(
+        let schema_factory = Arc::clone(&factory);
+        match crate::http_status::start_status_listener_with_schema(
             &config.status_host,
             config.status_port,
             node.tracker(),
             config.version_info.server_version.clone(),
             config.version_info.git_hash.clone(),
+            Some(Arc::new(move || schema_factory.catalog_snapshot())),
         ) {
             Ok(server) => {
                 eprintln!(

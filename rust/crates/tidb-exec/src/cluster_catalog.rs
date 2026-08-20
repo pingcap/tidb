@@ -72,6 +72,20 @@ pub trait MetaSnapshot {
     fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError>;
 }
 
+/// The stored JSON of one `DBInfo`, as the catalog itself writes it.
+///
+/// Re-exported here so a reader outside this crate -- the status server's
+/// `/schema` route -- serves the SAME bytes the catalog stores, rather than
+/// a second rendering that could drift from it.
+pub fn stored_db_info_json(info: &DBInfo) -> Result<Vec<u8>, String> {
+    tidb_meta::value::serialize_db_info(info).map_err(|error| error.to_string())
+}
+
+/// The stored JSON of one `TableInfo`. See [`stored_db_info_json`].
+pub fn stored_table_info_json(info: &TableInfo) -> Result<Vec<u8>, String> {
+    tidb_meta::value::serialize_table_info(info).map_err(|error| error.to_string())
+}
+
 /// One database and the tables stored under it.
 #[derive(Clone, Debug)]
 pub struct LoadedDatabase {

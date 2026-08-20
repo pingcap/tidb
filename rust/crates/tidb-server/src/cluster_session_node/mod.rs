@@ -485,6 +485,14 @@ impl ClusterSessionFactory {
         self.catalog.load().schema_version
     }
 
+    /// The catalog this node currently serves, for the status server's
+    /// `/schema` routes. Go answers those from `GetLatest()` per request, so
+    /// this reads the live pointer rather than a captured snapshot.
+    #[must_use]
+    pub fn catalog_snapshot(&self) -> tidb_exec::cluster_catalog::ClusterCatalog {
+        (*self.catalog.load()).clone()
+    }
+
     /// The process list of every connection this factory has open.
     #[must_use]
     pub fn processes(&self) -> ProcessRegistry {
