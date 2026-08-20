@@ -493,6 +493,9 @@ func TestMainBackupLoop(t *testing.T) {
 		res = append(res, ranges[len(ranges)-1].EndKey)
 		return res
 	}
+	storeIDForSplit := func(i int) uint64 {
+		return stores[i%len(stores)].GetId()
+	}
 
 	// Case #1: normal case
 	ranges := []rtree.KeyRange{
@@ -507,9 +510,9 @@ func TestMainBackupLoop(t *testing.T) {
 	mockBackupResponses := make(map[uint64][]*backup.ResponseAndStore)
 	splitKeys := splitRangesFn(ranges, 10)
 	for i := range len(splitKeys) - 1 {
-		randStoreID := uint64(rand.Int()%len(stores) + 1)
-		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
-			StoreID: randStoreID,
+		storeID := storeIDForSplit(i)
+		mockBackupResponses[storeID] = append(mockBackupResponses[storeID], &backup.ResponseAndStore{
+			StoreID: storeID,
 			Resp: &backuppb.BackupResponse{
 				StartKey: splitKeys[i],
 				EndKey:   splitKeys[i+1],
@@ -549,9 +552,9 @@ func TestMainBackupLoop(t *testing.T) {
 	splitKeys = splitRangesFn(ranges, 10)
 	// range is not complete
 	for i := range len(splitKeys) - 2 {
-		randStoreID := uint64(rand.Int()%len(stores) + 1)
-		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
-			StoreID: randStoreID,
+		storeID := storeIDForSplit(i)
+		mockBackupResponses[storeID] = append(mockBackupResponses[storeID], &backup.ResponseAndStore{
+			StoreID: storeID,
 			Resp: &backuppb.BackupResponse{
 				StartKey: splitKeys[i],
 				EndKey:   splitKeys[i+1],
@@ -593,9 +596,9 @@ func TestMainBackupLoop(t *testing.T) {
 	clear(mockBackupResponses)
 	splitKeys = splitRangesFn(ranges, 10)
 	for i := range len(splitKeys) - 1 {
-		randStoreID := uint64(rand.Int()%len(stores) + 1)
-		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
-			StoreID: randStoreID,
+		storeID := storeIDForSplit(i)
+		mockBackupResponses[storeID] = append(mockBackupResponses[storeID], &backup.ResponseAndStore{
+			StoreID: storeID,
 			Resp: &backuppb.BackupResponse{
 				StartKey: splitKeys[i],
 				EndKey:   splitKeys[i+1],
@@ -652,9 +655,9 @@ func TestMainBackupLoop(t *testing.T) {
 	clear(mockBackupResponses)
 	splitKeys = splitRangesFn(ranges, 10)
 	for i := range len(splitKeys) - 1 {
-		randStoreID := uint64(rand.Int()%len(stores) + 1)
-		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
-			StoreID: randStoreID,
+		storeID := storeIDForSplit(i)
+		mockBackupResponses[storeID] = append(mockBackupResponses[storeID], &backup.ResponseAndStore{
+			StoreID: storeID,
 			Resp: &backuppb.BackupResponse{
 				StartKey: splitKeys[i],
 				EndKey:   splitKeys[i+1],
@@ -705,9 +708,9 @@ func TestMainBackupLoop(t *testing.T) {
 	clear(mockBackupResponses)
 	splitKeys = splitRangesFn(ranges, 10)
 	for i := range len(splitKeys) - 1 {
-		randStoreID := uint64(rand.Int()%len(stores) + 1)
-		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
-			StoreID: randStoreID,
+		storeID := storeIDForSplit(i)
+		mockBackupResponses[storeID] = append(mockBackupResponses[storeID], &backup.ResponseAndStore{
+			StoreID: storeID,
 			Resp: &backuppb.BackupResponse{
 				StartKey: splitKeys[i],
 				EndKey:   splitKeys[i+1],

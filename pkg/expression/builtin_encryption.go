@@ -958,6 +958,11 @@ func (b *builtinUncompressSig) Clone() builtinFunc {
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
 func (b *builtinUncompressSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return 0
+}
+
+// AllowedOptionalEvalProps returns optional props that UNCOMPRESS may use when present.
+func (b *builtinUncompressSig) AllowedOptionalEvalProps() OptionalEvalPropKeySet {
 	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
 }
 

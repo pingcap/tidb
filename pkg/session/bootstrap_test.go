@@ -1512,7 +1512,7 @@ func TestKeyspaceEtcdNamespace(t *testing.T) {
 		t.Skip("keyspace is not supported in classic kernel")
 	}
 	keyspaceMeta := keyspacepb.KeyspaceMeta{}
-	keyspaceMeta.Id = 2
+	keyspaceMeta.Keyspace = &keyspacepb.KeyspaceMeta_Id{Id: 2}
 	keyspaceMeta.Name = keyspace.System
 	makeStore(t, &keyspaceMeta, true)
 }

@@ -3,13 +3,11 @@
 package export
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -17,115 +15,16 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
+	"github.com/pingcap/tidb/pkg/dumpformat"
 	"github.com/pingcap/tidb/pkg/dumpformat/csvfile"
 	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
+	"github.com/pingcap/tidb/pkg/dumpformat/sqlfile"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
-
-const lengthLimit = 1048576
-
-var pool = sync.Pool{New: func() any {
-	return &bytes.Buffer{}
-}}
-
-type writerPipe struct {
-	input   chan *bytes.Buffer
-	closed  chan struct{}
-	errCh   chan error
-	metrics *metrics
-	labels  prometheus.Labels
-
-	finishedFileSize     uint64
-	currentFileSize      uint64
-	currentStatementSize uint64
-
-	fileSizeLimit      uint64
-	statementSizeLimit uint64
-
-	w objectio.Writer
-}
-
-func newWriterPipe(
-	w objectio.Writer,
-	fileSizeLimit,
-	statementSizeLimit uint64,
-	metrics *metrics,
-	labels prometheus.Labels,
-) *writerPipe {
-	return &writerPipe{
-		input:   make(chan *bytes.Buffer, 8),
-		closed:  make(chan struct{}),
-		errCh:   make(chan error, 1),
-		w:       w,
-		metrics: metrics,
-		labels:  labels,
-
-		currentFileSize:      0,
-		currentStatementSize: 0,
-		fileSizeLimit:        fileSizeLimit,
-		statementSizeLimit:   statementSizeLimit,
-	}
-}
-
-func (b *writerPipe) Run(tctx *tcontext.Context) {
-	defer close(b.closed)
-	var errOccurs bool
-	receiveChunkTime := time.Now()
-	for {
-		select {
-		case s, ok := <-b.input:
-			if !ok {
-				return
-			}
-			if errOccurs {
-				continue
-			}
-			ObserveHistogram(b.metrics.receiveWriteChunkTimeHistogram, time.Since(receiveChunkTime).Seconds())
-			receiveChunkTime = time.Now()
-			err := writeBytes(tctx, b.w, s.Bytes())
-			ObserveHistogram(b.metrics.writeTimeHistogram, time.Since(receiveChunkTime).Seconds())
-			AddGauge(b.metrics.finishedSizeGauge, float64(s.Len()))
-			b.finishedFileSize += uint64(s.Len())
-			s.Reset()
-			pool.Put(s)
-			if err != nil {
-				errOccurs = true
-				b.errCh <- err
-			}
-			receiveChunkTime = time.Now()
-		case <-tctx.Done():
-			return
-		}
-	}
-}
-
-func (b *writerPipe) AddFileSize(fileSize uint64) {
-	b.currentFileSize += fileSize
-	b.currentStatementSize += fileSize
-}
-
-func (b *writerPipe) Error() error {
-	select {
-	case err := <-b.errCh:
-		return err
-	default:
-		return nil
-	}
-}
-
-func (b *writerPipe) ShouldSwitchFile() bool {
-	return b.fileSizeLimit != UnspecifiedSize && b.currentFileSize >= b.fileSizeLimit
-}
-
-func (b *writerPipe) ShouldSwitchStatement() bool {
-	return (b.fileSizeLimit != UnspecifiedSize && b.currentFileSize >= b.fileSizeLimit) ||
-		(b.statementSizeLimit != UnspecifiedSize && b.currentStatementSize >= b.statementSizeLimit)
-}
 
 // WriteMeta writes MetaIR to an objectio.Writer
 func WriteMeta(tctx *tcontext.Context, meta MetaIR, w objectio.Writer) error {
@@ -160,42 +59,33 @@ func WriteInsert(
 		return 0, fileRowIter.Error()
 	}
 
-	bf := pool.Get().(*bytes.Buffer)
-	if bfCap := bf.Cap(); bfCap < lengthLimit {
-		bf.Grow(lengthLimit - bfCap)
+	sink := newSink(pCtx.Context, w)
+
+	selectedField := meta.SelectedField()
+	var insertStatementPrefix string
+	if selectedField != "" && selectedField != "*" {
+		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s (%s) VALUES\n",
+			wrapBackTicks(escapeString(meta.TableName())), selectedField)
+	} else {
+		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s VALUES\n",
+			wrapBackTicks(escapeString(meta.TableName())))
 	}
-
-	// TODO(joechenrh): remove writerPipe for SQL too (write directly with
-	// concurrent multipart upload); deferred because the SQL path also tracks
-	// per-statement size for INSERT framing.
-	wp := newWriterPipe(w, cfg.FileSize, cfg.StatementSize, metrics, cfg.Labels)
-
-	// use context.Background here to make sure writerPipe can deplete all the chunks in pipeline
-	ctx, cancel := tcontext.Background().WithLogger(pCtx.L()).WithCancel()
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		wp.Run(ctx)
-		wg.Done()
-	}()
-	defer func() {
-		cancel()
-		wg.Wait()
-	}()
-
-	specCmtIter := meta.SpecialComments()
-	for specCmtIter.HasNext() {
-		bf.WriteString(specCmtIter.Next())
-		bf.WriteByte('\n')
+	var kinds []dumpformat.FieldKind
+	if selectedField != "" {
+		kinds = columnKinds(meta.ColumnTypes())
 	}
-	wp.currentFileSize += uint64(bf.Len())
+	// StatementSize is UnspecifiedSize (0) when unset, which the writer treats as
+	// no per-statement split.
+	sw := sqlfile.NewWriter(sink, []byte(insertStatementPrefix), kinds, &sqlfile.Config{
+		StatementSize:   cfg.StatementSize,
+		EscapeBackslash: cfg.EscapeBackslash,
+	})
 
 	var (
-		insertStatementPrefix string
-		row                   = MakeRowReceiver(meta.ColumnTypes())
-		counter               uint64
-		lastCounter           uint64
-		escapeBackslash       = cfg.EscapeBackslash
+		row          = MakeRowReceiver(meta.ColumnTypes())
+		counter      uint64
+		lastCounter  uint64
+		finishedSize uint64
 	)
 
 	defer func() {
@@ -204,110 +94,98 @@ func WriteInsert(
 				zap.String("database", meta.DatabaseName()),
 				zap.String("table", meta.TableName()),
 				zap.Uint64("finished rows", lastCounter),
-				zap.Uint64("finished size", wp.finishedFileSize),
+				zap.Uint64("finished size", finishedSize),
 				log.ShortError(err))
 			SubGauge(metrics.finishedRowsGauge, float64(lastCounter))
-			SubGauge(metrics.finishedSizeGauge, float64(wp.finishedFileSize))
+			SubGauge(metrics.finishedSizeGauge, float64(finishedSize))
 		} else {
 			pCtx.L().Debug("finish dumping table(chunk)",
 				zap.String("database", meta.DatabaseName()),
 				zap.String("table", meta.TableName()),
 				zap.Uint64("finished rows", counter),
-				zap.Uint64("finished size", wp.finishedFileSize))
-			summary.CollectSuccessUnit(summary.TotalBytes, 1, wp.finishedFileSize)
+				zap.Uint64("finished size", finishedSize))
+			summary.CollectSuccessUnit(summary.TotalBytes, 1, finishedSize)
 			summary.CollectSuccessUnit("total rows", 1, counter)
 		}
 	}()
 
-	selectedField := meta.SelectedField()
-
-	// if has generated column
-	if selectedField != "" && selectedField != "*" {
-		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s (%s) VALUES\n",
-			wrapBackTicks(escapeString(meta.TableName())), selectedField)
-	} else {
-		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s VALUES\n",
-			wrapBackTicks(escapeString(meta.TableName())))
+	// The special comments go straight to the sink, so the SQL writer's
+	// EstimateFileSize excludes them; preambleSize covers that gap.
+	var preambleSize int
+	specCmtIter := meta.SpecialComments()
+	for specCmtIter.HasNext() {
+		cmt := []byte(specCmtIter.Next())
+		if _, err = sink.Write(cmt); err != nil {
+			return 0, errors.Trace(err)
+		}
+		if _, err = sink.Write([]byte{'\n'}); err != nil {
+			return 0, errors.Trace(err)
+		}
+		preambleSize += len(cmt) + 1
 	}
-	insertStatementPrefixLen := uint64(len(insertStatementPrefix))
 
+	// rawRow is reused across rows to avoid a per-row slice allocation.
+	rawRow := row.GetRawBytes()[:0]
 	for fileRowIter.HasNext() {
-		wp.currentStatementSize = 0
-		bf.WriteString(insertStatementPrefix)
-		wp.AddFileSize(insertStatementPrefixLen)
-
-		for fileRowIter.HasNext() {
-			lastBfSize := bf.Len()
-			if selectedField != "" {
-				if err = fileRowIter.Decode(row); err != nil {
-					return counter, errors.Trace(err)
-				}
-				row.WriteToBuffer(bf, escapeBackslash)
-			} else {
-				bf.WriteString("()")
+		if selectedField != "" {
+			if err = fileRowIter.Decode(row); err != nil {
+				return counter, errors.Trace(err)
 			}
-			counter++
-			wp.AddFileSize(uint64(bf.Len()-lastBfSize) + 2) // 2 is for ",\n" and ";\n"
-			failpoint.Inject("ChaosBrokenWriterConn", func(_ failpoint.Value) {
-				failpoint.Return(0, errors.New("connection is closed"))
-			})
-			failpoint.Inject("AtEveryRow", nil)
-
-			fileRowIter.Next()
-			shouldSwitch := wp.ShouldSwitchStatement()
-			if fileRowIter.HasNext() && !shouldSwitch {
-				bf.WriteString(",\n")
-			} else {
-				bf.WriteString(";\n")
+			rawRow = row.appendRawBytes(rawRow[:0])
+			if err = sw.Write(rawRow); err != nil {
+				return counter, errors.Trace(err)
 			}
-			if bf.Len() >= lengthLimit {
-				select {
-				case <-pCtx.Done():
-					return counter, pCtx.Err()
-				case err = <-wp.errCh:
-					return counter, err
-				case wp.input <- bf:
-					bf = pool.Get().(*bytes.Buffer)
-					if bfCap := bf.Cap(); bfCap < lengthLimit {
-						bf.Grow(lengthLimit - bfCap)
-					}
-					AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
-					lastCounter = counter
-				}
-			}
-
-			if shouldSwitch {
-				break
+		} else {
+			// All columns are generated; emit an empty tuple "()".
+			if err = sw.Write(nil); err != nil {
+				return counter, errors.Trace(err)
 			}
 		}
-		if wp.ShouldSwitchFile() {
+		counter++
+		if counter%1000 == 0 {
+			AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
+			lastCounter = counter
+			curSize := uint64(preambleSize) + sw.EstimateFileSize()
+			AddGauge(metrics.finishedSizeGauge, float64(curSize-finishedSize))
+			finishedSize = curSize
+		}
+		failpoint.Inject("ChaosBrokenWriterConn", func(_ failpoint.Value) {
+			failpoint.Return(0, errors.New("connection is closed"))
+		})
+		failpoint.Inject("AtEveryRow", nil)
+
+		fileRowIter.Next()
+		if cfg.FileSize != UnspecifiedSize && uint64(preambleSize)+sw.EstimateFileSize() >= cfg.FileSize {
 			break
 		}
 	}
-	if bf.Len() > 0 {
-		wp.input <- bf
-	}
-	close(wp.input)
-	<-wp.closed
 	AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
 	lastCounter = counter
+
+	if err = sw.Close(); err != nil {
+		return counter, errors.Trace(err)
+	}
+	curSize := uint64(preambleSize) + sw.EstimateFileSize()
+	AddGauge(metrics.finishedSizeGauge, float64(curSize-finishedSize))
+	finishedSize = curSize
 	if err = fileRowIter.Error(); err != nil {
 		return counter, errors.Trace(err)
 	}
-	return counter, wp.Error()
+	return counter, nil
 }
 
-// columnKinds maps Dumpling column type names to csvfile FieldKinds: binary and
-// numeric types keep their kind, everything else defaults to string.
-func columnKinds(colTypes []string) []csvfile.FieldKind {
-	kinds := make([]csvfile.FieldKind, len(colTypes))
+// columnKinds classifies Dumpling column type names: binary and numeric types
+// keep their kind, everything else defaults to string. The csvfile and sqlfile
+// writers share dumpformat.FieldKind, so one classifier feeds both.
+func columnKinds(colTypes []string) []dumpformat.FieldKind {
+	kinds := make([]dumpformat.FieldKind, len(colTypes))
 	for i, ct := range colTypes {
 		if _, ok := dataTypeBin[ct]; ok {
-			kinds[i] = csvfile.KindBytes
+			kinds[i] = dumpformat.KindBytes
 		} else if _, ok := dataTypeNum[ct]; ok {
-			kinds[i] = csvfile.KindNumber
+			kinds[i] = dumpformat.KindNumber
 		} else {
-			kinds[i] = csvfile.KindString
+			kinds[i] = dumpformat.KindString
 		}
 	}
 	return kinds
@@ -353,14 +231,12 @@ func WriteInsertInCsv(
 		NullValue:          []byte(cfg.CsvNullValue),
 		BinaryFormat:       toCSVBinaryFormat(DialectBinaryFormatMap[cfg.CsvOutputDialect]),
 	}
-	// Writer writes directly into the object store writer, whose concurrent
-	// multipart upload replaces the writerPipe.
 	selectedFields := meta.SelectedField()
-	var kinds []csvfile.FieldKind
+	var kinds []dumpformat.FieldKind
 	if selectedFields != "" {
 		kinds = columnKinds(meta.ColumnTypes())
 	}
-	cw := csvfile.NewWriter(&wrappedWriter{ctx: pCtx.Context, w: w}, kinds, csvCfg)
+	cw := csvfile.NewWriter(newSink(pCtx.Context, w), kinds, csvCfg)
 
 	var (
 		row          = MakeRowReceiver(meta.ColumnTypes())
@@ -459,25 +335,27 @@ func write(tctx *tcontext.Context, writer objectio.Writer, str string) error {
 	return errors.Trace(err)
 }
 
-func writeBytes(tctx *tcontext.Context, writer objectio.Writer, p []byte) error {
-	_, err := writer.Write(tctx, p)
-	if err != nil {
-		// str might be very long, only output the first 200 chars
-		outputLength := min(len(p), 200)
-		tctx.L().Warn("fail to write",
-			zap.ByteString("heading 200 characters", p[:outputLength]),
-			zap.Error(err))
-		err = annotatePartLimit(err)
-	}
-	return errors.Trace(err)
-}
-
+// annotatePartLimit turns the object store's "too many upload parts" error into a
+// message that points users at --filesize to split the output across files.
 func annotatePartLimit(err error) error {
 	if err != nil && errors.ErrorEqual(err, storeapi.ErrExceedMaxUploadParts) {
 		limit := units.BytesSize(float64(uploadPartSize) * float64(storeapi.MaxUploadParts))
 		return errors.Annotatef(err, "a single output file exceeds the object store's per-object limit of ~%s; specify --filesize (-F) to split the output into multiple files", limit)
 	}
 	return err
+}
+
+// newSink adapts the object store writer to io.Writer and annotates its
+// part-limit error.
+func newSink(ctx context.Context, w objectio.Writer) io.Writer {
+	return partLimitSink{objectio.NewIOWriter(ctx, w)}
+}
+
+type partLimitSink struct{ io.Writer }
+
+func (p partLimitSink) Write(b []byte) (int, error) {
+	n, err := p.Writer.Write(b)
+	return n, annotatePartLimit(err)
 }
 
 func buildFileWriter(tctx *tcontext.Context, s storeapi.Storage, fileName string, compressType compressedio.CompressType) (objectio.Writer, func(ctx context.Context) error, error) {
@@ -622,16 +500,6 @@ func wrapStringWith(str string, wrapper string) string {
 	return fmt.Sprintf("%s%s%s", wrapper, str, wrapper)
 }
 
-type wrappedWriter struct {
-	ctx context.Context
-	w   objectio.Writer
-}
-
-func (w *wrappedWriter) Write(p []byte) (n int, err error) {
-	n, err = w.w.Write(w.ctx, p)
-	return n, annotatePartLimit(err)
-}
-
 // WriteInsertInParquet writes table rows to parquet format.
 func WriteInsertInParquet(
 	pCtx *tcontext.Context,
@@ -652,7 +520,7 @@ func WriteInsertInParquet(
 		parquetfile.WithDataPageSize(cfg.ParquetPageSize),
 		parquetfile.WithRowGroupMemoryLimit(cfg.ParquetRowGroupSize),
 	}
-	writer, err := parquetfile.NewWriter(&wrappedWriter{ctx: pCtx.Context, w: w}, meta.ColumnInfos(), opts...)
+	writer, err := parquetfile.NewWriter(newSink(pCtx.Context, w), meta.ColumnInfos(), opts...)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

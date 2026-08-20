@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/dumpling/cli"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
+	"github.com/pingcap/tidb/pkg/dumpformat/sqlfile"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -148,7 +149,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 // Dump dumps table from database
 // nolint: gocyclo
 func (d *Dumper) Dump() (dumpErr error) {
-	initColTypeRowReceiverMap()
+	initColumnTypeSets()
 	var (
 		conn    *sql.Conn
 		err     error
@@ -1152,7 +1153,11 @@ func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMet
 	pkValNum := len(pkFields)
 	var iter SQLRowIter
 	rowRec := MakeRowReceiver(pkColTypes)
-	buf := new(bytes.Buffer)
+	pkKinds := columnKinds(pkColTypes)
+	var (
+		rawRow []sql.RawBytes
+		valBuf []byte
+	)
 
 	err = conn.QuerySQL(tctx, func(rows *sql.Rows) error {
 		if iter == nil {
@@ -1165,11 +1170,11 @@ func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMet
 		if err != nil {
 			return errors.Trace(err)
 		}
+		rawRow = rowRec.appendRawBytes(rawRow[:0])
 		pkValRow := make([]string, 0, pkValNum)
-		for _, rec := range rowRec.receivers {
-			rec.WriteToBuffer(buf, true)
-			pkValRow = append(pkValRow, buf.String())
-			buf.Reset()
+		for i, raw := range rawRow {
+			valBuf = sqlfile.AppendValue(valBuf[:0], raw, raw == nil, pkKinds[i], true)
+			pkValRow = append(pkValRow, string(valBuf))
 		}
 		pkVals = append(pkVals, pkValRow)
 		return nil
@@ -1180,7 +1185,6 @@ func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMet
 		}
 		rowRec = MakeRowReceiver(pkColTypes)
 		pkVals = pkVals[:0]
-		buf.Reset()
 	}, query)
 	if err == nil && iter != nil && iter.Error() != nil {
 		err = iter.Error()
@@ -1194,7 +1198,11 @@ func selectTiDBTableSampleForPartition(tctx *tcontext.Context, conn *BaseConn, m
 	pkValNum := len(pkFields)
 	var iter SQLRowIter
 	rowRec := MakeRowReceiver(pkColTypes)
-	buf := new(bytes.Buffer)
+	pkKinds := columnKinds(pkColTypes)
+	var (
+		rawRow []sql.RawBytes
+		valBuf []byte
+	)
 
 	var pkVals [][]string
 	err := conn.QuerySQL(tctx, func(rows *sql.Rows) error {
@@ -1207,11 +1215,11 @@ func selectTiDBTableSampleForPartition(tctx *tcontext.Context, conn *BaseConn, m
 		if err := iter.Decode(rowRec); err != nil {
 			return errors.Trace(err)
 		}
+		rawRow = rowRec.appendRawBytes(rawRow[:0])
 		pkValRow := make([]string, 0, pkValNum)
-		for _, rec := range rowRec.receivers {
-			rec.WriteToBuffer(buf, true)
-			pkValRow = append(pkValRow, buf.String())
-			buf.Reset()
+		for i, raw := range rawRow {
+			valBuf = sqlfile.AppendValue(valBuf[:0], raw, raw == nil, pkKinds[i], true)
+			pkValRow = append(pkValRow, string(valBuf))
 		}
 		pkVals = append(pkVals, pkValRow)
 		return nil
@@ -1222,7 +1230,6 @@ func selectTiDBTableSampleForPartition(tctx *tcontext.Context, conn *BaseConn, m
 		}
 		rowRec = MakeRowReceiver(pkColTypes)
 		pkVals = pkVals[:0]
-		buf.Reset()
 	}, query)
 	if err == nil && iter != nil && iter.Error() != nil {
 		err = iter.Error()

@@ -101,19 +101,24 @@ func TestFullOuterJoinSyntaxUnsupported(t *testing.T) {
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("create table t2(a int)")
 
-	sqls := []string{
-		"select * from t1 full outer join t2 on t1.a = t2.a",
+	fullOuterJoinSQL := "select * from t1 full outer join t2 on t1.a = t2.a"
+	unsupportedSQLs := []string{
 		"select * from t1 full outer join lateral (select 1 as a) as t2 on false",
 		"select * from t1 full outer join lateral (select t1.a) as t2 on true",
 		"select * from t1 full outer join (t2 join lateral (select t2.a) as t3 on true) on false",
 	}
 	expectedErr := plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
-	for _, enableFullOuterJoin := range []string{"off", "on"} {
-		tk.MustExec("set @@tidb_enable_full_outer_join=" + enableFullOuterJoin)
-		for _, sql := range sqls {
-			err := tk.ExecToErr(sql)
-			require.Truef(t, terror.ErrorEqual(expectedErr, err), "sql: %s, err: %v", sql, err)
-		}
+	tk.MustExec("set @@tidb_enable_full_outer_join=off")
+	for _, sql := range append([]string{fullOuterJoinSQL}, unsupportedSQLs...) {
+		err := tk.ExecToErr(sql)
+		require.Truef(t, terror.ErrorEqual(expectedErr, err), "sql: %s, err: %v", sql, err)
+	}
+
+	tk.MustExec("set @@tidb_enable_full_outer_join=on")
+	require.NoError(t, tk.ExecToErr(fullOuterJoinSQL))
+	for _, sql := range unsupportedSQLs {
+		err := tk.ExecToErr(sql)
+		require.Truef(t, terror.ErrorEqual(expectedErr, err), "sql: %s, err: %v", sql, err)
 	}
 }
 
