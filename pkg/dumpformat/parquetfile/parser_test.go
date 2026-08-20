@@ -372,6 +372,33 @@ func TestParquetVariousTypes(t *testing.T) {
 		require.Equal(t, string(rawUUID), reader.lastRow.Row[0].GetString())
 	})
 
+	t.Run("rejects_unsupported_logical_type_compatibility_bridge", func(t *testing.T) {
+		convertedTypes := []schema.ConvertedType{
+			schema.ConvertedTypes.Map,
+			schema.ConvertedTypes.MapKeyValue,
+			schema.ConvertedTypes.List,
+			schema.ConvertedTypes.Interval,
+			schema.ConvertedTypes.NA,
+		}
+		for _, convertedType := range convertedTypes {
+			t.Run(convertedType.String(), func(t *testing.T) {
+				logicalType := convertedType.ToLogicalType(schema.DecimalMetadata{})
+				err := validateParquetLogicalType(logicalType, parquet.Types.ByteArray, -1)
+				require.ErrorContains(t, err, "unsupported parquet logical type")
+			})
+		}
+
+		for _, logicalType := range []schema.LogicalType{
+			schema.Float16LogicalType{},
+			schema.VariantLogicalType{},
+		} {
+			t.Run(logicalType.String(), func(t *testing.T) {
+				err := validateParquetLogicalType(logicalType, parquet.Types.FixedLenByteArray, 2)
+				require.ErrorContains(t, err, "unsupported parquet logical type")
+			})
+		}
+	})
+
 	t.Run("rejects_inapplicable_logical_type", func(t *testing.T) {
 		err := validateParquetLogicalType(
 			schema.NewTimeLogicalType(false, schema.TimeUnitNanos),
@@ -379,6 +406,35 @@ func TestParquetVariousTypes(t *testing.T) {
 			-1,
 		)
 		require.ErrorContains(t, err, "not applicable")
+	})
+
+	t.Run("rejects_spark_rebase_for_logical_timestamp_nanos", func(t *testing.T) {
+		meta := metadata.NewKeyValueMetadata()
+		require.NoError(t, meta.Append("org.apache.spark.version", "2.4.8"))
+		require.NoError(t, meta.Append("org.apache.spark.timeZone", "UTC"))
+		pc := []testutils.ParquetColumn{{
+			Name:    "timestamp_nanos",
+			Type:    parquet.Types.Int64,
+			Logical: schema.NewTimestampLogicalType(false, schema.TimeUnitNanos),
+			Gen: func(_ int) (any, []int16) {
+				return []int64{1}, []int16{1}
+			},
+		}}
+		dir := t.TempDir()
+		name := "logical-timestamp-nanos-spark-rebase.parquet"
+		require.NoError(t, testutils.WriteParquetFile(
+			dir, name, pc, 1,
+			parquet.WithCreatedBy("parquet-mr version 1.10.1"),
+			file.WithWriteMetadata(meta),
+		))
+
+		store, err := objstore.NewLocalStorage(dir)
+		require.NoError(t, err)
+		defer store.Close()
+		_, err = NewParser(context.Background(), store, func(ctx context.Context) (io.ReadSeekCloser, error) {
+			return store.Open(ctx, name, nil)
+		}, name, 0, FileMeta{Loc: time.UTC})
+		require.ErrorContains(t, err, "Spark legacy rebase is unsupported for TIMESTAMP(NANOS)")
 	})
 
 	t.Run("logical_uint32_preserves_high_bits", func(t *testing.T) {

@@ -60,8 +60,8 @@ func validateParquetLogicalType(logicalType schema.LogicalType, physicalType par
 	switch logicalType.(type) {
 	case schema.ListLogicalType, schema.MapLogicalType, schema.IntervalLogicalType,
 		schema.UnknownLogicalType, schema.Float16LogicalType, schema.VariantLogicalType:
-		// Nested types and logical types without a scalar setter are not supported
-		// by the row-oriented import parser yet.
+		// These types are not used by Aurora or Snowflake exports, so they remain
+		// outside the row-oriented import parser's supported scalar scope.
 		return errors.Errorf("unsupported parquet logical type %s", logicalType.String())
 	}
 	if !logicalType.IsApplicable(physicalType, int32(typeLength)) {
@@ -194,24 +194,24 @@ func (it *columnIterator[T, R]) Next(d *types.Datum) error {
 	return it.setter(value, d)
 }
 
-func createColumnIterator(tp parquet.Type, parquetColumnType *parquetColumnType, loc *time.Location, batchSize int) iterator {
+func createColumnIterator(tp parquet.Type, colType *parquetColumnType, loc *time.Location, batchSize int) iterator {
 	switch tp {
 	case parquet.Types.Boolean:
 		return newColumnIterator[bool, *file.BooleanColumnChunkReader](batchSize, getBoolDataSetter)
 	case parquet.Types.Int32:
-		return newColumnIterator[int32, *file.Int32ColumnChunkReader](batchSize, getInt32Setter(parquetColumnType, loc))
+		return newColumnIterator[int32, *file.Int32ColumnChunkReader](batchSize, getInt32Setter(colType, loc))
 	case parquet.Types.Int64:
-		return newColumnIterator[int64, *file.Int64ColumnChunkReader](batchSize, getInt64Setter(parquetColumnType, loc))
+		return newColumnIterator[int64, *file.Int64ColumnChunkReader](batchSize, getInt64Setter(colType, loc))
 	case parquet.Types.Float:
 		return newColumnIterator[float32, *file.Float32ColumnChunkReader](batchSize, setFloat32Data)
 	case parquet.Types.Double:
 		return newColumnIterator[float64, *file.Float64ColumnChunkReader](batchSize, setFloat64Data)
 	case parquet.Types.Int96:
-		return newColumnIterator[parquet.Int96, *file.Int96ColumnChunkReader](batchSize, getInt96Setter(parquetColumnType, loc))
+		return newColumnIterator[parquet.Int96, *file.Int96ColumnChunkReader](batchSize, getInt96Setter(colType, loc))
 	case parquet.Types.ByteArray:
-		return newColumnIterator[parquet.ByteArray, *file.ByteArrayColumnChunkReader](batchSize, getByteArraySetter(parquetColumnType))
+		return newColumnIterator[parquet.ByteArray, *file.ByteArrayColumnChunkReader](batchSize, getByteArraySetter(colType))
 	case parquet.Types.FixedLenByteArray:
-		return newColumnIterator[parquet.FixedLenByteArray, *file.FixedLenByteArrayColumnChunkReader](batchSize, getFixedLenByteArraySetter(parquetColumnType))
+		return newColumnIterator[parquet.FixedLenByteArray, *file.FixedLenByteArrayColumnChunkReader](batchSize, getFixedLenByteArraySetter(colType))
 	default:
 		return nil
 	}
@@ -690,7 +690,7 @@ func NewParser(
 		}
 		colTypes[i].logicalType = logicalType
 		if err := validateParquetLogicalType(logicalType, desc.PhysicalType(), desc.TypeLength()); err != nil {
-			return nil, err
+			return nil, errors.Annotatef(err, "column %q", desc.Name())
 		}
 		switch desc.PhysicalType() {
 		case parquet.Types.Int32:

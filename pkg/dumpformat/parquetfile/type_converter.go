@@ -189,11 +189,11 @@ func getBoolDataSetter(val bool, d *types.Datum) error {
 	return nil
 }
 
-func getInt32Setter(parquetColumnType *parquetColumnType, loc *time.Location) setter[int32] {
+func getInt32Setter(colType *parquetColumnType, loc *time.Location) setter[int32] {
 	// For parquet TIME/TIMESTAMP epoch values:
 	// - IsAdjustedToUTC=true: interpret as UTC instant, then render in parser location.
 	// - IsAdjustedToUTC=false: keep as local-semantics wall clock ("as-if UTC"), no loc conversion.
-	switch logicalType := parquetColumnType.logicalType.(type) {
+	switch logicalType := colType.logicalType.(type) {
 	case schema.DecimalLogicalType:
 		return func(val int32, d *types.Datum) error {
 			dec := initializeMyDecimal(d)
@@ -201,7 +201,7 @@ func getInt32Setter(parquetColumnType *parquetColumnType, loc *time.Location) se
 		}
 	case schema.DateLogicalType:
 		return func(val int32, d *types.Datum) error {
-			if parquetColumnType.sparkRebaseMicros.timeZoneID != "" {
+			if colType.sparkRebaseMicros.timeZoneID != "" {
 				val = int32(rebaseJulianToGregorianDays(int(val)))
 			}
 			t := arrow.Date32(val).ToTime()
@@ -232,11 +232,11 @@ func getInt32Setter(parquetColumnType *parquetColumnType, loc *time.Location) se
 		}
 	}
 
-	return unsupportedParquetValueSetter[int32](parquetColumnType.logicalType)
+	return unsupportedParquetValueSetter[int32](colType.logicalType)
 }
 
-func getInt64Setter(parquetColumnType *parquetColumnType, loc *time.Location) setter[int64] {
-	switch logicalType := parquetColumnType.logicalType.(type) {
+func getInt64Setter(colType *parquetColumnType, loc *time.Location) setter[int64] {
+	switch logicalType := colType.logicalType.(type) {
 	case schema.IntLogicalType:
 		return func(val int64, d *types.Datum) error {
 			if logicalType.IsSigned() {
@@ -280,9 +280,9 @@ func getInt64Setter(parquetColumnType *parquetColumnType, loc *time.Location) se
 			return unsupportedParquetValueSetter[int64](logicalType)
 		}
 		return func(val int64, d *types.Datum) error {
-			if parquetColumnType.sparkRebaseMicros.timeZoneID != "" {
+			if colType.sparkRebaseMicros.timeZoneID != "" {
 				var err error
-				val, err = rebaseTimestampValue(val, timeUnit, parquetColumnType.sparkRebaseMicros)
+				val, err = rebaseTimestampValue(val, timeUnit, colType.sparkRebaseMicros)
 				if err != nil {
 					return err
 				}
@@ -297,7 +297,7 @@ func getInt64Setter(parquetColumnType *parquetColumnType, loc *time.Location) se
 		}
 	}
 
-	return unsupportedParquetValueSetter[int64](parquetColumnType.logicalType)
+	return unsupportedParquetValueSetter[int64](colType.logicalType)
 }
 
 // newInt96 is a utility function to create a parquet.Int96 for test,
@@ -392,9 +392,9 @@ func int96ToUnixMicros(val parquet.Int96) int64 {
 	return (julianDay-julianDayOfUnixEpoch)*microsPerDay + nanosOfDay/int64(time.Microsecond)
 }
 
-func getInt96Setter(parquetColumnType *parquetColumnType, loc *time.Location) setter[parquet.Int96] {
+func getInt96Setter(colType *parquetColumnType, loc *time.Location) setter[parquet.Int96] {
 	return func(val parquet.Int96, d *types.Datum) error {
-		return setInt96Data(val, d, loc, parquetColumnType.sparkRebaseMicros)
+		return setInt96Data(val, d, loc, colType.sparkRebaseMicros)
 	}
 }
 
@@ -419,8 +419,8 @@ func getDecimalByteSetter[T parquet.ByteArray | parquet.FixedLenByteArray](scale
 	}
 }
 
-func getByteArraySetter(parquetColumnType *parquetColumnType) setter[parquet.ByteArray] {
-	switch logicalType := parquetColumnType.logicalType.(type) {
+func getByteArraySetter(colType *parquetColumnType) setter[parquet.ByteArray] {
+	switch logicalType := colType.logicalType.(type) {
 	case schema.NoLogicalType, schema.UnknownLogicalType, schema.BSONLogicalType, schema.JSONLogicalType, schema.StringLogicalType, schema.EnumLogicalType:
 		return func(val parquet.ByteArray, d *types.Datum) error {
 			// length is unused here
@@ -431,11 +431,11 @@ func getByteArraySetter(parquetColumnType *parquetColumnType) setter[parquet.Byt
 		return getDecimalByteSetter[parquet.ByteArray](int(logicalType.Scale()))
 	}
 
-	return unsupportedParquetValueSetter[parquet.ByteArray](parquetColumnType.logicalType)
+	return unsupportedParquetValueSetter[parquet.ByteArray](colType.logicalType)
 }
 
-func getFixedLenByteArraySetter(parquetColumnType *parquetColumnType) setter[parquet.FixedLenByteArray] {
-	switch logicalType := parquetColumnType.logicalType.(type) {
+func getFixedLenByteArraySetter(colType *parquetColumnType) setter[parquet.FixedLenByteArray] {
+	switch logicalType := colType.logicalType.(type) {
 	case schema.NoLogicalType, schema.UnknownLogicalType, schema.BSONLogicalType, schema.JSONLogicalType, schema.StringLogicalType, schema.EnumLogicalType, schema.UUIDLogicalType:
 		return func(val parquet.FixedLenByteArray, d *types.Datum) error {
 			// length is unused here
@@ -446,5 +446,5 @@ func getFixedLenByteArraySetter(parquetColumnType *parquetColumnType) setter[par
 		return getDecimalByteSetter[parquet.FixedLenByteArray](int(logicalType.Scale()))
 	}
 
-	return unsupportedParquetValueSetter[parquet.FixedLenByteArray](parquetColumnType.logicalType)
+	return unsupportedParquetValueSetter[parquet.FixedLenByteArray](colType.logicalType)
 }
