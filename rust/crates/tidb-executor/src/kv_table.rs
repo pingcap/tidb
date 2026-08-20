@@ -989,6 +989,30 @@ impl KvTable {
             .map_or_else(|| vec![self.table_id], |p| p.physical_ids())
     }
 
+    /// The id a READ of this table looks its STATISTICS up under: Go's
+    /// `DataSource.PhysicalTableID`, which
+    /// `ds.StatisticTable = stats.GetStatsTable(ds.SCtx(), ds.TableInfo,
+    /// ds.PhysicalTableID)` (`planner/core/stats.go`) passes straight
+    /// through.
+    ///
+    /// A read narrowed to ONE physical table is that table -- an ordinary
+    /// table, or a single partition under static pruning, where Go builds a
+    /// DataSource per partition and `ANALYZE` stores a histogram per physical
+    /// id without merging a logical one. A read spanning several is the
+    /// logical table, which is the id dynamic pruning analyzes and stores its
+    /// merged histogram under.
+    ///
+    /// Reading a partition's rows while asking the LOGICAL id for their
+    /// distribution is why `analyze table tstring all columns` left
+    /// `select * from tstring where a<='b'` printing `stats:pseudo` over a
+    /// partition TiDB has real statistics for.
+    pub(crate) fn stats_physical_id(&self) -> i64 {
+        match self.record_physical_ids().as_slice() {
+            [only] => *only,
+            _ => self.table_id,
+        }
+    }
+
     /// Restricts every READ of this handle to `ids`, which must be physical
     /// partition ids of this table in ascending order.
     ///

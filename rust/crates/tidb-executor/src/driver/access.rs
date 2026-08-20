@@ -554,8 +554,24 @@ pub(crate) fn commit_fast_path_source(
         .last()
         .map(String::as_str)
         .unwrap_or(table.name.as_str());
-    let table = super::from::restricted_to_partitions(&table, &table_ref.partitions, table_name)?;
-    let statistics = catalog.table_statistics(table.table_id);
+    let mut table =
+        super::from::restricted_to_partitions(&table, &table_ref.partitions, table_name)?;
+    // Go's `PartitionProcessor` runs in LOGICAL optimization, so by the time
+    // `DeriveStats` asks for a histogram the `DataSource` is already the
+    // surviving partition and `ds.PhysicalTableID` names it -- that id is
+    // what `stats.GetStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID)`
+    // is handed. Narrowing the handle here is that ordering: the pruning was
+    // applied further down, to the SOURCE only, so the statistics lookup
+    // above it still asked under the LOGICAL id. Static pruning stores a
+    // histogram per physical partition and no merged one, so the lookup
+    // missed and every pruned read was costed as `stats:pseudo` -- after
+    // `analyze table tint all columns` had computed the very histogram it
+    // wanted.
+    if let Some(ids) = pruned_partition_ids(select, &table, zone) {
+        table.restrict_read_to_partitions(&ids);
+    }
+    let table = table;
+    let statistics = catalog.table_statistics(table.stats_physical_id());
     let logical_rows = Some(
         crate::access_cost::realtime_row_count(statistics.map(AsRef::as_ref))
             * stats_selectivity(catalog, &table, scope, select.where_clause.as_ref())
@@ -1020,7 +1036,7 @@ fn choose_index_merge_union(
     let demand = crate::driver::leaf_demand::LeafDemand::of_select(select);
     let needed = demand.needed(&scope.tables[0].name, columns);
     let resolver = ScopeResolver { scope };
-    let stats = catalog.table_statistics(table.table_id);
+    let stats = catalog.table_statistics(table.stats_physical_id());
     let stats = stats.as_ref().map(AsRef::as_ref);
     let hints = crate::index_hints::AvailablePaths::index_merge_only(index_ids);
     let mut partials = Vec::with_capacity(branches.len());
@@ -1076,7 +1092,7 @@ fn choose_index_merge_intersection(
     let demand = crate::driver::leaf_demand::LeafDemand::of_select(select);
     let needed = demand.needed(&scope.tables[0].name, columns);
     let resolver = ScopeResolver { scope };
-    let stats = catalog.table_statistics(table.table_id);
+    let stats = catalog.table_statistics(table.stats_physical_id());
     let stats = stats.as_ref().map(AsRef::as_ref);
     let mut partials = Vec::new();
     for index_id in index_ids {
@@ -1166,7 +1182,9 @@ fn choose_automatic_index_merge_union(
         .filter_map(|(index, condition)| (index != dnf.0).then_some(*condition))
         .collect::<Vec<_>>();
     let resolver = ScopeResolver { scope: input.scope };
-    let stats = input.catalog.table_statistics(input.table.table_id);
+    let stats = input
+        .catalog
+        .table_statistics(input.table.stats_physical_id());
     let stats = stats.as_ref().map(AsRef::as_ref);
     let mut paths = Vec::with_capacity(dnf.1.len());
     for branch in dnf.1 {
@@ -2190,7 +2208,7 @@ fn best_single_table_access_path(
         ordering_selectivity_ratio: ordering_index_selectivity_ratio,
         satisfied_by: &satisfied_by,
     });
-    let stats = catalog.table_statistics(table.table_id);
+    let stats = catalog.table_statistics(table.stats_physical_id());
     let stats = stats.as_ref().map(AsRef::as_ref);
     let paths = crate::access_cost::enumerate_paths(
         table,
@@ -2319,7 +2337,7 @@ pub(crate) fn full_scan_estimate(
     entry: &TableEntry,
 ) -> crate::access_cost::ScanEstimate {
     let stats = match entry {
-        TableEntry::Kv(table) => catalog.table_statistics(table.table_id),
+        TableEntry::Kv(table) => catalog.table_statistics(table.stats_physical_id()),
         // A memory table's rows are computed at query time and an
         // INFORMATION_SCHEMA view has no `mysql.stats_*` row, so there is
         // nothing to have analyzed; Go prints the pseudo constant for these
@@ -2357,7 +2375,7 @@ pub(crate) fn stats_selectivity(
     where_clause: Option<&tidb_ast::Expr>,
 ) -> Option<f64> {
     let predicate = where_clause?;
-    let stats = catalog.table_statistics(table.table_id);
+    let stats = catalog.table_statistics(table.stats_physical_id());
     Some(crate::access_cost::selectivity(
         predicate,
         table,
@@ -2599,7 +2617,9 @@ fn write_handle_ranges(
         return None;
     };
     let ranges = crate::handle_range::build_handle_ranges(table, where_clause, zone)?.ranges;
-    let stats = catalog.table_statistics(table.table_id).map(AsRef::as_ref);
+    let stats = catalog
+        .table_statistics(table.stats_physical_id())
+        .map(AsRef::as_ref);
     let realtime = crate::access_cost::realtime_row_count(stats);
     let columns = table
         .columns
