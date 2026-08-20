@@ -422,9 +422,51 @@ impl LeafDemand {
             | Expr::UserVar(_)
             | Expr::SysVar { .. } => {}
 
-            // A window function's frame and partition live in a `WindowOver`
-            // this walk does not model, so the whole statement falls back.
-            Expr::Window { .. } => self.all = true,
+            // A window function names its columns in its OWN tree: the call
+            // arguments, and the inline spec's `PARTITION BY`, `ORDER BY` and
+            // frame bounds. Walking them is exact, and `all` is
+            // statement-WIDE -- falling back here made `select sum(a) over()
+            // from t` demand every column of `t`, so the covering index TiDB
+            // reads (`IndexFullScan table:t, index:idx(a)`) was never a
+            // candidate.
+            //
+            // A spec that is NOT fully inline -- `OVER w`, or `OVER (w ...)`
+            // extending a named base -- still falls back, because the body it
+            // refers to lives in the statement's `WINDOW` clause. That is the
+            // same clause `unsupported_select_shape` already refuses, so such
+            // a statement never reaches this arm; the guard is kept so the
+            // two cannot drift apart.
+            Expr::Window { args, over, .. } => {
+                for arg in args {
+                    self.add_expr(arg);
+                }
+                match over {
+                    tidb_ast::WindowOver::Def(def) if def.base.is_none() => {
+                        for expr in &def.spec.partition_by {
+                            self.add_expr(expr);
+                        }
+                        for item in &def.spec.order_by {
+                            self.add_expr(&item.expr);
+                        }
+                        if let Some(frame) = &def.spec.frame {
+                            for bound in [&frame.start, &frame.end] {
+                                match bound {
+                                    tidb_ast::FrameBound::Preceding(expr)
+                                    | tidb_ast::FrameBound::Following(expr) => {
+                                        self.add_expr(expr);
+                                    }
+                                    tidb_ast::FrameBound::UnboundedPreceding
+                                    | tidb_ast::FrameBound::CurrentRow
+                                    | tidb_ast::FrameBound::UnboundedFollowing => {}
+                                }
+                            }
+                        }
+                    }
+                    tidb_ast::WindowOver::Name(_) | tidb_ast::WindowOver::Def(_) => {
+                        self.all = true;
+                    }
+                }
+            }
 
             // Nested queries: a correlated reference inside one names a
             // column of the leaves this demand is computed for.
@@ -702,16 +744,48 @@ mod tests {
 
     /// An unwalkable construct falls back to the demand that names
     /// everything, never to a narrower one.
+    ///
+    /// A named window is the construct now: its body lives in the statement's
+    /// `WINDOW` clause rather than in the expression, so the reference alone
+    /// names no columns. An INLINE `OVER (...)` is walked instead -- see
+    /// [`a_window_functions_own_tree_is_walked`].
     #[test]
     fn an_unwalkable_construct_falls_back_to_everything() {
+        assert_eq!(
+            needed_of(
+                "select row_number() over w from t1 join t2 on t1.c = t2.c \
+                 window w as (partition by t1.b)",
+                "t1",
+                &["a", "b", "c"]
+            ),
+            vec![0, 1, 2],
+            "the window body is in the WINDOW clause, so nothing is pruned"
+        );
+    }
+
+    /// A window function names its columns in its own tree: the arguments and
+    /// the inline spec's `PARTITION BY`/`ORDER BY`/frame. Walking them is what
+    /// lets `select sum(a) over() from t` keep the covering index TiDB reads.
+    #[test]
+    fn a_window_functions_own_tree_is_walked() {
         assert_eq!(
             needed_of(
                 "select row_number() over (partition by t1.b) from t1 join t2 on t1.c = t2.c",
                 "t1",
                 &["a", "b", "c"]
             ),
-            vec![0, 1, 2],
-            "a window function's OVER clause is not walked, so nothing is pruned"
+            vec![1, 2],
+            "`b` from PARTITION BY and `c` from the join condition, not `a`"
+        );
+        assert_eq!(
+            needed_of(
+                "select sum(t1.a) over (order by t1.b rows between 1 preceding and current row) \
+                 from t1",
+                "t1",
+                &["a", "b", "c"]
+            ),
+            vec![0, 1],
+            "the argument and the ORDER BY, with the frame naming no column"
         );
     }
 
