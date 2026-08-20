@@ -59,7 +59,7 @@ var (
 func validateParquetLogicalType(logicalType schema.LogicalType, physicalType parquet.Type, typeLength int) error {
 	switch logicalType.(type) {
 	case schema.ListLogicalType, schema.MapLogicalType, schema.IntervalLogicalType,
-		schema.UnknownLogicalType, schema.UUIDLogicalType, schema.Float16LogicalType, schema.VariantLogicalType:
+		schema.UnknownLogicalType, schema.Float16LogicalType, schema.VariantLogicalType:
 		// Nested types and logical types without a scalar setter are not supported
 		// by the row-oriented import parser yet.
 		return errors.Errorf("unsupported parquet logical type %s", logicalType.String())

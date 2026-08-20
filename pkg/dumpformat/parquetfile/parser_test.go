@@ -351,6 +351,27 @@ func TestParquetScannedPosByReadRows(t *testing.T) {
 }
 
 func TestParquetVariousTypes(t *testing.T) {
+	t.Run("logical_uuid_keeps_legacy_byte_conversion", func(t *testing.T) {
+		const uuidLen = 16
+		rawUUID := parquet.FixedLenByteArray("0123456789abcdef")
+		pc := []testutils.ParquetColumn{{
+			Name:    "uuid",
+			Type:    parquet.Types.FixedLenByteArray,
+			TypeLen: uuidLen,
+			Logical: schema.UUIDLogicalType{},
+			Gen: func(_ int) (any, []int16) {
+				return []parquet.FixedLenByteArray{rawUUID}, []int16{1}
+			},
+		}}
+		dir := t.TempDir()
+		name := "logical-uuid.parquet"
+		require.NoError(t, testutils.WriteParquetFile(dir, name, pc, 1))
+
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{})
+		require.NoError(t, reader.ReadRow())
+		require.Equal(t, string(rawUUID), reader.lastRow.Row[0].GetString())
+	})
+
 	t.Run("rejects_inapplicable_logical_type", func(t *testing.T) {
 		err := validateParquetLogicalType(
 			schema.NewTimeLogicalType(false, schema.TimeUnitNanos),

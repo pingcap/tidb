@@ -436,7 +436,7 @@ func getByteArraySetter(parquetColumnType *parquetColumnType) setter[parquet.Byt
 
 func getFixedLenByteArraySetter(parquetColumnType *parquetColumnType) setter[parquet.FixedLenByteArray] {
 	switch logicalType := parquetColumnType.logicalType.(type) {
-	case schema.NoLogicalType, schema.UnknownLogicalType, schema.BSONLogicalType, schema.JSONLogicalType, schema.StringLogicalType, schema.EnumLogicalType:
+	case schema.NoLogicalType, schema.UnknownLogicalType, schema.BSONLogicalType, schema.JSONLogicalType, schema.StringLogicalType, schema.EnumLogicalType, schema.UUIDLogicalType:
 		return func(val parquet.FixedLenByteArray, d *types.Datum) error {
 			// length is unused here
 			d.SetBytesAsString(val, "utf8mb4_bin", 0)
