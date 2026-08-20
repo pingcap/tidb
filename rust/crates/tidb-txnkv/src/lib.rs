@@ -30,9 +30,27 @@
 //! the session records (`tidb-planner`'s `txn_mode`), and a lock failure maps
 //! to the SQL error TiDB reports for it (`tidb-exec`'s
 //! `pessimistic_lock_error`), but no SQL statement drives
-//! [`transaction::RealPessimisticTransaction`] yet: the real-TiKV node still
-//! refuses writes inside an explicit transaction, so there is no statement to
-//! take a lock for. That binding waits on multi-statement transactions there.
+//! [`transaction::RealPessimisticTransaction`] yet.
+//!
+//! The reason recorded here used to be that "the real-TiKV node still refuses
+//! writes inside an explicit transaction, so there is no statement to take a
+//! lock for". That is no longer the whole picture, and the difference is
+//! observable: the CLUSTER-SESSION node runs multi-statement transactions
+//! today, so it has the statements -- it just runs them OPTIMISTICALLY while
+//! `@@tidb_txn_mode` answers `pessimistic`. Measured on a live server, two
+//! connections updating one row:
+//!
+//! ```text
+//! A: begin; update wc set b = 100 where a = 1;
+//! B: begin; update wc set b = 200 where a = 1;   -- returns at once
+//! A: commit;
+//! B: commit;  -- ERROR 9007 ... reason: Optimistic; final b = 100
+//! ```
+//!
+//! TiDB blocks B's UPDATE on A's lock, lets it through after A commits, and
+//! ends at `b = 200`. Binding this transaction type to DML inside an explicit
+//! transaction on that path is what closes the gap; the type is already here
+//! waiting for a driver.
 
 mod assertion;
 mod batch_getter;
