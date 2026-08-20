@@ -28,7 +28,11 @@ go_test(
     ],
     embed = [":stmtstats"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 12,
+=======
+    shard_count = 38,
+>>>>>>> 17b78078392 (topsql: reduce reporter loss, fix panic accounting, and enforce statement stats cap (#70173))
     deps = [
         "//pkg/testkit/testsetup",
         "//pkg/util/topsql/state",
