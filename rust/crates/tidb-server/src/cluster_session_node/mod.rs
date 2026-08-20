@@ -1536,6 +1536,13 @@ impl QuerySession for ClusterServerSession {
 
     /// The catalog is refreshed first so a schema another node created since
     /// this connection opened is selectable, exactly as it is for a statement.
+
+    /// Go leaves `CurrentDB` empty when the handshake carried no schema; see
+    /// the trait's own doc.
+    fn deselect_database(&mut self) {
+        self.session.deselect_database();
+    }
+
     fn select_database(&mut self, name: &str) -> Result<(), SqlQueryError> {
         self.rebuild_catalog_if_stale();
         self.session.select_database(name).map_err(map_error)

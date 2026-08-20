@@ -133,6 +133,22 @@ fn authenticate(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>) {
     write_packet(client, 1, &response);
     reader.set_sequence(2);
     assert_eq!(reader.read_packet().unwrap()[0], 0, "auth OK");
+    // This handshake carries NO initial database, which is what a client
+    // started without `-D` sends. Go leaves `CurrentDB` empty in that state
+    // (`preprocess.go handleTableName` raises `ErrNoDB` for every unqualified
+    // name), so a schema has to be chosen before the unqualified statements
+    // below can run -- exactly as a real client must. This used to be
+    // unnecessary only because the node defaulted the session into `test`
+    // itself.
+    let mut use_test = vec![COM_QUERY];
+    use_test.extend_from_slice(b"USE test");
+    write_packet(client, 0, &use_test);
+    reader.set_sequence(1);
+    assert_eq!(
+        reader.read_packet().unwrap()[0],
+        0,
+        "USE test answers with an OK packet"
+    );
 }
 
 /// Reads a protocol length-encoded string, including the multi-byte length
@@ -1558,7 +1574,10 @@ fn system_variable_scope_errors_reach_text_and_prepare_wire() {
     write_packet(&mut client, 0, &[0x01]);
     drop(client);
     let report = worker.join().unwrap();
-    assert_eq!(report.commands.text_query_commands, 2);
+    // Three: the `USE test` every connection now sends to choose a schema (a
+    // handshake carrying none leaves `CurrentDB` empty, as in Go), plus the
+    // two this test issues.
+    assert_eq!(report.commands.text_query_commands, 3);
     assert_eq!(report.commands.stmt_prepare_commands, 2);
     assert_eq!(report.commands.stmt_prepare_successes, 0);
     assert_eq!(report.exit, ConnectionExit::Quit);

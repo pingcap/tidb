@@ -314,6 +314,13 @@ impl QuerySession for PipelineServerSession {
 
     /// The handshake's initial database and `COM_INIT_DB`, which Go serves
     /// with one `useDB` each.
+
+    /// Go leaves `CurrentDB` empty when the handshake carried no schema; see
+    /// the trait's own doc.
+    fn deselect_database(&mut self) {
+        self.session.deselect_database();
+    }
+
     fn select_database(&mut self, name: &str) -> Result<(), SqlQueryError> {
         self.session.select_database(name).map_err(map_error)
     }

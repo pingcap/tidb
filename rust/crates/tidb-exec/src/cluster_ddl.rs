@@ -1564,6 +1564,25 @@ fn split_name(
     what: &str,
 ) -> Result<(String, String), DdlAdmissionError> {
     match path {
+        // Go `preprocess.go handleTableName`, the ONE pass every statement's
+        // table names go through:
+        //
+        //     if tn.Schema.L == "" {
+        //         currentDB := p.sctx.GetSessionVars().CurrentDB
+        //         if currentDB == "" { p.err = ErrNoDB; return }
+        //         tn.Schema = ast.NewCIStr(currentDB)
+        //     }
+        //
+        // The refusal comes BEFORE the `inCreateOrDropTable` handling there,
+        // so `CREATE` is not exempt. Filling an EMPTY schema in instead left
+        // this tier looking a table up in the database called `""`, which
+        // answered `1049 Unknown database ''` where TiDB answers 1046 -- and
+        // on a node that defaulted its sessions into `test`, the same
+        // statement had silently created the table in the wrong schema.
+        [object] if default_schema.is_empty() => Err(DdlAdmissionError::with_code(
+            tidb_error::mysql::errcode::ErrNoDB,
+            "No database selected",
+        )),
         [object] => Ok((default_schema.to_owned(), object.clone())),
         [schema, object] => Ok((schema.clone(), object.clone())),
         _ => Err(DdlAdmissionError::new(format!(

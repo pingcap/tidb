@@ -1071,6 +1071,16 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // Go's `openSessionAndDoAuth`: the handshake's initial database is applied
     // before the connection is reported ready, and a schema that does not
     // exist ends the connection with its own errno rather than the OK packet.
+    // ... and a handshake that carried NO database leaves the connection with
+    // none selected, which is Go's state rather than a default schema: a
+    // session that silently landed in `test` answered `DATABASE()` with
+    // `test` instead of NULL, resolved unqualified names there instead of
+    // raising 1046, and -- the part that loses data to the wrong schema --
+    // let `create table cq(a int)` succeed in `test` for a client that had
+    // simply forgotten its `USE`.
+    if response_db_name.is_empty() {
+        engine.deselect_database();
+    }
     if !response_db_name.is_empty() {
         if let Err(error) = engine.select_database(&response_db_name) {
             write_query_error_at(&mut output, response_sequence, &error, protocol_41)?;

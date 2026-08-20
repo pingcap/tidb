@@ -1015,6 +1015,16 @@ pub trait QuerySession {
             format!("Unknown database '{name}'"),
         ))
     }
+
+    /// Selects NO schema, the state Go leaves a connection in whose handshake
+    /// carried no initial database: `SessionVars.CurrentDB` stays empty, so
+    /// `DATABASE()` is NULL (`builtinDatabaseSig` returns
+    /// `currentDB, currentDB == "", nil`) and every unqualified name is
+    /// `ErrNoDB` (1046) until a `USE` runs.
+    ///
+    /// Sessions that keep no schema of their own do nothing, which leaves
+    /// them exactly as they were.
+    fn deselect_database(&mut self) {}
 }
 
 /// Go `mysql.ErrBadDB` (1049): the errno a schema that does not exist gets.
