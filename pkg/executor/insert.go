@@ -525,7 +525,7 @@ func (e *InsertExec) doDupRowUpdate(
 	}
 
 	newData := e.row4Update[:len(oldRow)]
-	_, ignored, err := updateRecord(
+	changed, ignored, err := updateRecord(
 		ctx, e.Ctx(),
 		handle, oldRow, newData,
 		0, generated, e.evalBuffer4Dup, errorHandler,
@@ -538,6 +538,9 @@ func (e *InsertExec) doDupRowUpdate(
 
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if changed {
+		e.addWrittenRowsColMultiply(1)
 	}
 
 	if autoColIdx >= 0 {

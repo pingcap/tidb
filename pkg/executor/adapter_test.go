@@ -909,6 +909,15 @@ func TestInsertRowsColMultiplyRUV2SQLPath(t *testing.T) {
 	require.Equal(t, int64(4), runInsert("insert into t(a, c) values (3, 5), (4, 6)"))
 	require.Equal(t, int64(4), runInsert("insert into t(a, b) select a, b from src"))
 
+	tk.MustExec("create table ignore_t(a int primary key, b int)")
+	tk.MustExec("insert into ignore_t values (1, 1)")
+	require.Equal(t, int64(2), runInsert("insert ignore into ignore_t values (1, 10), (2, 20)"))
+
+	tk.MustExec("create table dup_update_t(a int primary key, b int)")
+	tk.MustExec("insert into dup_update_t values (1, 1)")
+	require.Equal(t, int64(0), runInsert("insert into dup_update_t values (1, 1) on duplicate key update b = values(b)"))
+	require.Equal(t, int64(2), runInsert("insert into dup_update_t values (1, 2) on duplicate key update b = values(b)"))
+
 	oldEnableBatchDML := vardef.EnableBatchDML.Load()
 	vardef.EnableBatchDML.Store(true)
 	defer vardef.EnableBatchDML.Store(oldEnableBatchDML)
@@ -948,6 +957,17 @@ func TestDMLRowsColMultiplyRUV2SQLPath(t *testing.T) {
 	require.Equal(t, int64(6), runDML("replace into t values (1, 2, 3), (2, 3, 4)"))
 	require.Equal(t, int64(6), runDML("update t set b = b + 10 where a in (1, 2)"))
 	require.Equal(t, int64(3), runDML("delete from t where a = 1"))
+
+	tk.MustExec("create table update_actual_t(a int primary key, b int unique)")
+	tk.MustExec("insert into update_actual_t values (1, 1), (2, 2)")
+	require.Equal(t, int64(0), runDML("update update_actual_t set b = b where a = 1"))
+	require.Equal(t, int64(0), runDML("update ignore update_actual_t set b = 1 where a = 2"))
+	require.Equal(t, int64(2), runDML("update update_actual_t set b = 3 where a = 2"))
+
+	tk.MustExec("create table replace_actual_t(a int primary key, b int)")
+	tk.MustExec("insert into replace_actual_t values (1, 1)")
+	require.Equal(t, int64(0), runDML("replace into replace_actual_t values (1, 1)"))
+	require.Equal(t, int64(2), runDML("replace into replace_actual_t values (1, 2)"))
 
 	tk.MustExec("create table multi_del_l(a int primary key)")
 	tk.MustExec("create table multi_del_r(a int primary key)")
