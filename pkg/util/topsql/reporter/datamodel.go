@@ -702,16 +702,10 @@ func (m *normalizedSQLMap) take() *normalizedSQLMap {
 }
 
 // toProto converts the normalizedSQLMap to the corresponding protobuf representation.
-<<<<<<< HEAD
 func (m *normalizedSQLMap) toProto() []tipb.SQLMeta {
-	metas := make([]tipb.SQLMeta, 0, m.length.Load())
-	m.data.Load().Range(func(k, v any) bool {
-=======
-func (m *normalizedSQLMap) toProto(keyspaceName []byte) []tipb.SQLMeta {
 	data := m.data.Load()
 	metas := make([]tipb.SQLMeta, 0, data.length.Load())
 	data.Range(func(k, v any) bool {
->>>>>>> 17b78078392 (topsql: reduce reporter loss, fix panic accounting, and enforce statement stats cap (#70173))
 		meta := v.(sqlMeta)
 		metas = append(metas, tipb.SQLMeta{
 			SqlDigest:     []byte(k.(string)),
@@ -787,16 +781,10 @@ func (m *normalizedPlanMap) take() *normalizedPlanMap {
 }
 
 // toProto converts the normalizedPlanMap to the corresponding protobuf representation.
-<<<<<<< HEAD
 func (m *normalizedPlanMap) toProto(decodePlan planBinaryDecodeFunc, compressPlan planBinaryCompressFunc) []tipb.PlanMeta {
-	metas := make([]tipb.PlanMeta, 0, m.length.Load())
-	m.data.Load().Range(func(k, v any) bool {
-=======
-func (m *normalizedPlanMap) toProto(keyspaceName []byte, decodePlan planBinaryDecodeFunc, compressPlan planBinaryCompressFunc) []tipb.PlanMeta {
 	data := m.data.Load()
 	metas := make([]tipb.PlanMeta, 0, data.length.Load())
 	data.Range(func(k, v any) bool {
->>>>>>> 17b78078392 (topsql: reduce reporter loss, fix panic accounting, and enforce statement stats cap (#70173))
 		originalMeta := v.(planMeta)
 		protoMeta := tipb.PlanMeta{
 			PlanDigest: hack.Slice(k.(string)),

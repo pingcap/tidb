@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type mockSingleTargetDataSinkRegisterer struct{}
@@ -40,6 +41,42 @@ func TestSingleTargetDataSink(t *testing.T) {
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = server.Address()
+	})
+
+	t.Run("recovers send panics", func(t *testing.T) {
+		panicDS := NewSingleTargetDataSink(&mockSingleTargetDataSinkRegisterer{})
+		t.Cleanup(func() {
+			panicDS.Close()
+			if panicDS.conn != nil {
+				require.NoError(t, panicDS.conn.Close())
+			}
+		})
+		task := sendTask{data: &ReportData{}, deadline: time.Now().Add(5 * time.Second)}
+		runDoSend := func() {
+			done := make(chan struct{})
+			go func() {
+				panicDS.doSend(server.Address(), task)
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("single-target send did not finish")
+			}
+		}
+
+		panicPath := "github.com/pingcap/tidb/pkg/util/topsql/reporter/mockSingleTargetSendPanic"
+		t.Cleanup(func() { _ = failpoint.Disable(panicPath) })
+		failedBefore := histogramSampleCount(t, reporter_metrics.ReportAllDurationFailedHistogram)
+		succeededBefore := histogramSampleCount(t, reporter_metrics.ReportAllDurationSuccHistogram)
+		require.NoError(t, failpoint.Enable(panicPath, "panic"))
+		runDoSend()
+		require.Equal(t, failedBefore+1, histogramSampleCount(t, reporter_metrics.ReportAllDurationFailedHistogram))
+		require.Equal(t, succeededBefore, histogramSampleCount(t, reporter_metrics.ReportAllDurationSuccHistogram))
+		require.NoError(t, failpoint.Disable(panicPath))
+		runDoSend()
+		require.Equal(t, failedBefore+1, histogramSampleCount(t, reporter_metrics.ReportAllDurationFailedHistogram))
+		require.Equal(t, succeededBefore+1, histogramSampleCount(t, reporter_metrics.ReportAllDurationSuccHistogram))
 	})
 
 	ds := NewSingleTargetDataSink(&mockSingleTargetDataSinkRegisterer{})
@@ -83,43 +120,6 @@ func TestSingleTargetDataSink(t *testing.T) {
 	normalizedPlan, exist := server.GetPlanMetaByDigestBlocking([]byte("P1"), 5*time.Second)
 	assert.True(t, exist)
 	assert.Equal(t, normalizedPlan, "PLAN-1")
-
-	ds.Close()
-	t.Run("recovers send panics", func(t *testing.T) {
-		ds := NewSingleTargetDataSink(&mockSingleTargetDataSinkRegisterer{})
-		t.Cleanup(func() {
-			ds.Close()
-			if ds.conn != nil {
-				require.NoError(t, ds.conn.Close())
-			}
-		})
-		task := sendTask{data: &ReportData{}, deadline: time.Now().Add(5 * time.Second)}
-		runDoSend := func() {
-			done := make(chan struct{})
-			go func() {
-				ds.doSend(server.Address(), task)
-				close(done)
-			}()
-			select {
-			case <-done:
-			case <-time.After(5 * time.Second):
-				t.Fatal("single-target send did not finish")
-			}
-		}
-
-		panicPath := "github.com/pingcap/tidb/pkg/util/topsql/reporter/mockSingleTargetSendPanic"
-		t.Cleanup(func() { _ = failpoint.Disable(panicPath) })
-		failedBefore := histogramSampleCount(t, reporter_metrics.ReportAllDurationFailedHistogram)
-		succeededBefore := histogramSampleCount(t, reporter_metrics.ReportAllDurationSuccHistogram)
-		require.NoError(t, failpoint.Enable(panicPath, "panic"))
-		runDoSend()
-		require.Equal(t, failedBefore+1, histogramSampleCount(t, reporter_metrics.ReportAllDurationFailedHistogram))
-		require.Equal(t, succeededBefore, histogramSampleCount(t, reporter_metrics.ReportAllDurationSuccHistogram))
-		require.NoError(t, failpoint.Disable(panicPath))
-		runDoSend()
-		require.Equal(t, failedBefore+1, histogramSampleCount(t, reporter_metrics.ReportAllDurationFailedHistogram))
-		require.Equal(t, succeededBefore+1, histogramSampleCount(t, reporter_metrics.ReportAllDurationSuccHistogram))
-	})
 }
 
 func histogramSampleCount(t *testing.T, observer any) uint64 {

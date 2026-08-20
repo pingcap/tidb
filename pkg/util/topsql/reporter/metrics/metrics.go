@@ -21,33 +21,10 @@ import (
 
 // reporter metrics vars
 var (
-<<<<<<< HEAD
-	IgnoreExceedSQLCounter              prometheus.Counter
-	IgnoreExceedPlanCounter             prometheus.Counter
-	IgnoreCollectChannelFullCounter     prometheus.Counter
-	IgnoreCollectStmtChannelFullCounter prometheus.Counter
-	IgnoreReportChannelFullCounter      prometheus.Counter
-	ReportAllDurationSuccHistogram      prometheus.Observer
-	ReportAllDurationFailedHistogram    prometheus.Observer
-	ReportRecordDurationSuccHistogram   prometheus.Observer
-	ReportRecordDurationFailedHistogram prometheus.Observer
-	ReportSQLDurationSuccHistogram      prometheus.Observer
-	ReportSQLDurationFailedHistogram    prometheus.Observer
-	ReportPlanDurationSuccHistogram     prometheus.Observer
-	ReportPlanDurationFailedHistogram   prometheus.Observer
-	TopSQLReportRecordCounterHistogram  prometheus.Observer
-	TopSQLReportSQLCountHistogram       prometheus.Observer
-	TopSQLReportPlanCountHistogram      prometheus.Observer
-=======
 	IgnoreExceedSQLCounter                prometheus.Counter
 	IgnoreExceedPlanCounter               prometheus.Counter
-	IgnoreExceedRUKeysCounter             prometheus.Counter
-	IgnoreExceedRUTotalCounter            prometheus.Counter
-	IgnoreLateCompactedRUKeysCounter      prometheus.Counter
-	IgnoreLateCompactedRUTotalCounter     prometheus.Counter
 	IgnoreCollectChannelFullCounter       prometheus.Counter
 	IgnoreCollectStmtChannelFullCounter   prometheus.Counter
-	IgnoreCollectRUChannelFullCounter     prometheus.Counter
 	IgnoreReportChannelFullCounter        prometheus.Counter
 	IgnoreReportDataByBackpressureCounter prometheus.Counter
 	ReportAllDurationSuccHistogram        prometheus.Observer
@@ -59,12 +36,8 @@ var (
 	ReportPlanDurationSuccHistogram       prometheus.Observer
 	ReportPlanDurationFailedHistogram     prometheus.Observer
 	TopSQLReportRecordCounterHistogram    prometheus.Observer
-	TopSQLReportRURecordCounterHistogram  prometheus.Observer
 	TopSQLReportSQLCountHistogram         prometheus.Observer
 	TopSQLReportPlanCountHistogram        prometheus.Observer
-	ReportRURecordDurationSuccHistogram   prometheus.Observer
-	ReportRURecordDurationFailedHistogram prometheus.Observer
->>>>>>> 17b78078392 (topsql: reduce reporter loss, fix panic accounting, and enforce statement stats cap (#70173))
 )
 
 func init() {

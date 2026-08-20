@@ -17,6 +17,7 @@ package reporter
 import (
 	"bytes"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,18 +30,17 @@ import (
 
 func runConcurrently(count int, fn func(int)) {
 	start := make(chan struct{})
-	done := make(chan struct{}, count)
+	var wg sync.WaitGroup
+	wg.Add(count)
 	for i := range count {
 		go func() {
+			defer wg.Done()
 			<-start
 			fn(i)
-			done <- struct{}{}
 		}()
 	}
 	close(start)
-	for range count {
-		<-done
-	}
+	wg.Wait()
 }
 
 func testRegisterRetriesAfterTake(
@@ -50,6 +50,7 @@ func testRegisterRetriesAfterTake(
 	takeAndSerialize func(),
 	currentMetadataCount func() int,
 ) {
+	t.Helper()
 	reachedGeneration := make(chan struct{})
 	resumeRegister := make(chan struct{}, 1)
 	blockOnce := make(chan struct{}, 1)
@@ -390,6 +391,8 @@ func Test_cpuRecords_topN(t *testing.T) {
 }
 
 func Test_normalizedSQLMap_register(t *testing.T) {
+	originalMaxCollect := topsqlstate.GlobalState.MaxCollect.Load()
+	t.Cleanup(func() { topsqlstate.GlobalState.MaxCollect.Store(originalMaxCollect) })
 	topsqlstate.GlobalState.MaxCollect.Store(2)
 	m := newNormalizedSQLMap()
 	m.register([]byte("SQL-1"), "SQL-1", true)
@@ -410,18 +413,14 @@ func Test_normalizedSQLMap_register(t *testing.T) {
 	require.False(t, ok)
 
 	topsqlstate.GlobalState.MaxCollect.Store(1)
-	concurrentMap := newNormalizedSQLMap()
-	runConcurrently(256, func(i int) {
-		digest := []byte{byte(i), byte(i >> 8)}
-		concurrentMap.register(digest, string(digest), false)
-	})
-	require.Equal(t, int64(1), concurrentMap.size())
-	count := 0
-	concurrentMap.data.Load().Range(func(_, _ any) bool {
-		count++
-		return true
-	})
-	require.Equal(t, 1, count)
+	for range 20 {
+		concurrentMap := newNormalizedSQLMap()
+		runConcurrently(256, func(i int) {
+			digest := []byte{byte(i), byte(i >> 8)}
+			concurrentMap.register(digest, string(digest), false)
+		})
+		require.Len(t, concurrentMap.toProto(), 1)
+	}
 }
 
 func Test_normalizedSQLMap_take(t *testing.T) {
@@ -454,8 +453,8 @@ func Test_normalizedSQLMap_take(t *testing.T) {
 			t,
 			"github.com/pingcap/tidb/pkg/util/topsql/reporter/afterLoadNormalizedSQLMap",
 			func() { m.register([]byte("SQL-4"), "SQL-4", false) },
-			func() { require.Empty(t, m.take().toProto(nil)) },
-			func() int { return len(m.toProto(nil)) },
+			func() { require.Empty(t, m.take().toProto()) },
+			func() int { return len(m.toProto()) },
 		)
 	})
 }
@@ -490,6 +489,8 @@ func Test_normalizedSQLMap_toProto(t *testing.T) {
 }
 
 func Test_normalizedPlanMap_register(t *testing.T) {
+	originalMaxCollect := topsqlstate.GlobalState.MaxCollect.Load()
+	t.Cleanup(func() { topsqlstate.GlobalState.MaxCollect.Store(originalMaxCollect) })
 	topsqlstate.GlobalState.MaxCollect.Store(2)
 	m := newNormalizedPlanMap()
 	m.register([]byte("PLAN-1"), "PLAN-1", false)
@@ -512,18 +513,17 @@ func Test_normalizedPlanMap_register(t *testing.T) {
 	require.False(t, ok)
 
 	topsqlstate.GlobalState.MaxCollect.Store(1)
-	concurrentMap := newNormalizedPlanMap()
-	runConcurrently(256, func(i int) {
-		digest := []byte{byte(i), byte(i >> 8)}
-		concurrentMap.register(digest, string(digest), false)
-	})
-	require.Equal(t, int64(1), concurrentMap.size())
-	count := 0
-	concurrentMap.data.Load().Range(func(_, _ any) bool {
-		count++
-		return true
-	})
-	require.Equal(t, 1, count)
+	for range 20 {
+		concurrentMap := newNormalizedPlanMap()
+		runConcurrently(256, func(i int) {
+			digest := []byte{byte(i), byte(i >> 8)}
+			concurrentMap.register(digest, string(digest), false)
+		})
+		require.Len(t, concurrentMap.toProto(
+			func(plan string) (string, error) { return plan, nil },
+			func(plan []byte) string { return string(plan) },
+		), 1)
+	}
 }
 
 func Test_normalizedPlanMap_take(t *testing.T) {
@@ -558,8 +558,8 @@ func Test_normalizedPlanMap_take(t *testing.T) {
 			t,
 			"github.com/pingcap/tidb/pkg/util/topsql/reporter/afterLoadNormalizedPlanMap",
 			func() { m.register([]byte("PLAN-4"), "PLAN-4", false) },
-			func() { require.Empty(t, m.take().toProto(nil, decodePlan, compressPlan)) },
-			func() int { return len(m.toProto(nil, decodePlan, compressPlan)) },
+			func() { require.Empty(t, m.take().toProto(decodePlan, compressPlan)) },
+			func() int { return len(m.toProto(decodePlan, compressPlan)) },
 		)
 	})
 }

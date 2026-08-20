@@ -98,12 +98,7 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc, compressPlan planB
 		cancel:                    cancel,
 		collectCPUTimeChan:        make(chan []collector.SQLCPUTimeRecord, collectChanBufferSize),
 		collectStmtStatsChan:      make(chan stmtstats.StatementStatsMap, collectChanBufferSize),
-<<<<<<< HEAD
-		reportCollectedDataChan:   make(chan collectedData, 1),
-=======
-		collectRUIncrementsChan:   make(chan ruBatch, collectChanBufferSize),
 		reportCollectedDataChan:   make(chan collectedData, reportCollectedDataChanSize),
->>>>>>> 17b78078392 (topsql: reduce reporter loss, fix panic accounting, and enforce statement stats cap (#70173))
 		collecting:                newCollecting(),
 		normalizedSQLMap:          newNormalizedSQLMap(),
 		normalizedPlanMap:         newNormalizedPlanMap(),
@@ -297,15 +292,7 @@ func findKthNetworkBytes(data stmtstats.StatementStatsMap, k int, u64Slice []uin
 }
 
 // takeDataAndSendToReportChan takes records data and then send to the report channel for reporting.
-<<<<<<< HEAD
 func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan() {
-	// Send to report channel. When channel is full, data will be dropped.
-	select {
-	case tsr.reportCollectedDataChan <- collectedData{
-=======
-// TopRU extraction runs on the same report tick path.
-// Each call emits at most one aligned closed 60s RU window.
-func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(timestamp uint64) {
 	// collectWorker is the only sender, so the channel cannot become full
 	// between this check and the send below.
 	if len(tsr.reportCollectedDataChan) == cap(tsr.reportCollectedDataChan) {
@@ -313,18 +300,11 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(timestamp uint64) {
 		// SQL/plan metadata remains on the reporter side because it is bounded by
 		// MaxCollect and can decode records collected after backpressure recovers.
 		tsr.collecting = newCollecting()
-		tsr.ruAggregator.dropReportData(timestamp)
 		reporter_metrics.IgnoreReportDataByBackpressureCounter.Inc()
 		return
 	}
 
-	ruRecords := tsr.ruAggregator.takeReportRecords(
-		timestamp,
-		uint64(topsqlstate.GetTopRUItemInterval()),
-		tsr.keyspaceName,
-	)
 	tsr.reportCollectedDataChan <- collectedData{
->>>>>>> 17b78078392 (topsql: reduce reporter loss, fix panic accounting, and enforce statement stats cap (#70173))
 		collected:         tsr.collecting.take(),
 		normalizedSQLMap:  tsr.normalizedSQLMap.take(),
 		normalizedPlanMap: tsr.normalizedPlanMap.take(),

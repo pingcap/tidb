@@ -71,10 +71,7 @@ func Test_aggregator_register_collect(t *testing.T) {
 	assert.Equal(t, uint64(time.Millisecond.Nanoseconds()), total[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
 }
 
-<<<<<<< HEAD
-func Test_aggregator_run_close(t *testing.T) {
-=======
-func TestAuditTopSQLStatementStatsRegistrationHonorsHardCap(t *testing.T) {
+func TestStatementStatsRegistrationHonorsHardCap(t *testing.T) {
 	a := newAggregator()
 	a.statsLen.Store(maxStmtStatsSize)
 	stats := &StatementStats{}
@@ -115,9 +112,7 @@ func TestAuditTopSQLStatementStatsRegistrationHonorsHardCap(t *testing.T) {
 	}
 }
 
-// TestAggregatorRunClose verifies start/close idempotence on a standalone aggregator.
-func TestAggregatorRunClose(t *testing.T) {
->>>>>>> 17b78078392 (topsql: reduce reporter loss, fix panic accounting, and enforce statement stats cap (#70173))
+func Test_aggregator_run_close(t *testing.T) {
 	a := newAggregator()
 	assert.True(t, a.closed())
 	a.start()

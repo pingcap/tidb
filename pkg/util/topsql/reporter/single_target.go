@@ -206,18 +206,13 @@ func (ds *SingleTargetDataSink) doSend(addr string, task sendTask) {
 	}
 
 	var wg sync.WaitGroup
-<<<<<<< HEAD
 	errCh := make(chan error, 3)
-	wg.Add(3)
-=======
-	errCh := make(chan error, 4)
 	recoverSendPanic := func(r any) {
 		if r != nil {
 			errCh <- util.GetRecoverError(r)
 		}
 	}
-	wg.Add(4)
->>>>>>> 17b78078392 (topsql: reduce reporter loss, fix panic accounting, and enforce statement stats cap (#70173))
+	wg.Add(3)
 
 	go func() {
 		defer wg.Done()
@@ -240,16 +235,6 @@ func (ds *SingleTargetDataSink) doSend(addr string, task sendTask) {
 			errCh <- ds.sendBatchTopSQLRecord(ctx, task.data.DataRecords)
 		}, recoverSendPanic)
 	}()
-<<<<<<< HEAD
-=======
-	go func() {
-		defer wg.Done()
-		util.WithRecovery(func() {
-			failpoint.Inject("mockSingleTargetSendPanic", nil)
-			errCh <- ds.sendBatchTopRURecord(ctx, task.data.RURecords)
-		}, recoverSendPanic)
-	}()
->>>>>>> 17b78078392 (topsql: reduce reporter loss, fix panic accounting, and enforce statement stats cap (#70173))
 	wg.Wait()
 	close(errCh)
 	for err = range errCh {
