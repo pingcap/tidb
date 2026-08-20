@@ -87,7 +87,7 @@ func TestLoadStats(t *testing.T) {
 	t.Run("TopN error aborts the whole load", func(t *testing.T) {
 		loadCtx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		const topNFailpointName = "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeTopNFromStorageWithPriority"
+		const topNFailpointName = "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeTopNFromStorageWithParams"
 		require.NoError(t, failpoint.EnableCall(topNFailpointName,
 			func(tableID int64, _ int, _ int64, _ int) {
 				if tableID == tableInfo.ID {
@@ -208,7 +208,7 @@ func TestLoadColumnDistributionStatsUsesOneSnapshot(t *testing.T) {
 		default:
 		}
 	})
-	const failpointName = "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeTopNFromStorageWithPriority"
+	const failpointName = "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeTopNFromStorageWithParams"
 	require.NoError(t, failpoint.EnableCall(failpointName,
 		func(tableID int64, _ int, _ int64, _ int) {
 			if tableID != tblInfo.ID {
