@@ -4509,12 +4509,25 @@ fn physical_expression_text_with_columns(
         Expression::Column(column) if column.unique_id < 0 => {
             Some(format!("ScalarQueryCol#{}", -column.unique_id))
         }
-        Expression::Column(column) => usize::try_from(column.index)
-            .ok()
-            .and_then(|index| column_names.get(index))
-            .and_then(|name| name.clone())
-            .or_else(|| (!column.orig_name.is_empty()).then(|| column.orig_name.clone()))
-            .or_else(|| Some(format!("Column#{}", column.index))),
+        Expression::Column(column) => {
+            let index = usize::try_from(column.index).ok()?;
+            if let Some(physical_name) = column_names.get(index) {
+                // An explicit `None` means projection elimination traced this
+                // output and proved it has no base-column origin (for example
+                // a computed aggregate column of a view). Go leaves
+                // `Column.OrigName` empty in that case and prints `Column#N`;
+                // do not resurrect the SQL-visible view name carried by the
+                // executable expression.
+                return Some(
+                    physical_name
+                        .clone()
+                        .unwrap_or_else(|| format!("Column#{}", column.index)),
+                );
+            }
+            (!column.orig_name.is_empty())
+                .then(|| column.orig_name.clone())
+                .or_else(|| Some(format!("Column#{}", column.index)))
+        }
         Expression::ScalarFunction(function) => {
             let arguments = function
                 .args

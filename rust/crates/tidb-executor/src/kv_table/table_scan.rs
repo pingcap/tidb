@@ -2673,6 +2673,7 @@ mod remote_cursor_tests {
             handle_index: Some(0),
             table_id: 0,
             merge_staged: false,
+            descending: false,
             noted_rows: 0,
             predicates_applied: false,
         };
@@ -2707,6 +2708,7 @@ mod remote_cursor_tests {
             handle_index: Some(1),
             table_id: 0,
             merge_staged: false,
+            descending: false,
             noted_rows: 0,
             predicates_applied: true,
         };
@@ -2745,6 +2747,7 @@ mod remote_cursor_tests {
             handle_index: None,
             table_id: 0,
             merge_staged: false,
+            descending: false,
             noted_rows: 0,
             predicates_applied: true,
         };
@@ -2778,6 +2781,7 @@ mod remote_cursor_tests {
             handle_index: None,
             table_id: 0,
             merge_staged: false,
+            descending: false,
             noted_rows: 0,
             predicates_applied: true,
         };
