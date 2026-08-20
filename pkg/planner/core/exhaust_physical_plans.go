@@ -1984,11 +1984,11 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 		}
 	}
 	if len(p.LeftConditions) != 0 && p.JoinType != base.LeftOuterJoin && p.JoinType != base.FullOuterJoin {
-		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information.")
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because left conditions are only supported for `left outer join` and `full outer join` now.")
 		return nil
 	}
 	if len(p.RightConditions) != 0 && p.JoinType != base.RightOuterJoin && p.JoinType != base.FullOuterJoin {
-		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there is a join that is not `right join` but has right conditions, which is not supported by mpp now.")
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because right conditions are only supported for `right outer join` and `full outer join` now.")
 		return nil
 	}
 
