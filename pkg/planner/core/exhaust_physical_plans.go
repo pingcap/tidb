@@ -2263,6 +2263,9 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		// Non-MPP full outer join keeps the phase-1 restriction: root HashJoin v1 only.
 		hashJoins, forced := getHashJoins(super, prop)
 		joins = append(joins, hashJoins...)
+		if forced && len(hashJoins) > 0 {
+			return joins, true, nil
+		}
 		if p.PreferJoinType > 0 {
 			// recordWarnings only reports index-join-family hint failures for LogicalJoin.
 			// Since full outer join does not support merge join, report the merge-join
