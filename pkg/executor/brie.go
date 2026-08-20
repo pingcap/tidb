@@ -226,6 +226,10 @@ func (bq *brieQueue) clearTask(sc *stmtctx.StatementContext) {
 
 	bq.tasks.Range(func(key, value any) bool {
 		item := value.(*brieQueueItem)
+		// Unfinished tasks keep finishTime zero; do not GC them.
+		if item.info.finishTime.IsZero() {
+			return true
+		}
 		if d := currTime.Sub(sc.TypeCtx(), &item.info.finishTime); d.Compare(outdatedDuration) > 0 {
 			bq.tasks.Delete(key)
 		}
@@ -576,10 +580,10 @@ func (e *showMetaExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 // cancelBRIEOnKill cancels the BRIE task when HandleSignal is QueryInterrupted.
-func cancelBRIEOnKill(taskCtx context.Context, sctx sessionctx.Context, checkCh <-chan time.Time, cancelTask func()) {
+func cancelBRIEOnKill(taskCtx context.Context, sctx sessionctx.Context, tickCh <-chan time.Time, cancelTask func()) {
 	for {
 		select {
-		case _, ok := <-checkCh:
+		case _, ok := <-tickCh:
 			if !ok {
 				return
 			}
@@ -624,7 +628,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	progress, err := bq.acquireTask(taskCtx, taskID)
 	if err != nil {
-		return brieResultError(taskCtx, e.Ctx(), err, nil)
+		return mapBRIEErr(taskCtx, e.Ctx(), err, nil)
 	}
 	defer bq.releaseTask()
 
@@ -633,9 +637,9 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	switch e.info.kind {
 	case ast.BRIEKindBackup:
-		err = brieResultError(taskCtx, e.Ctx(), task.RunBackup(taskCtx, glue, "Backup", e.backupCfg), exeerrors.ErrBRIEBackupFailed)
+		err = mapBRIEErr(taskCtx, e.Ctx(), task.RunBackup(taskCtx, glue, "Backup", e.backupCfg), exeerrors.ErrBRIEBackupFailed)
 	case ast.BRIEKindRestore:
-		err = brieResultError(taskCtx, e.Ctx(), task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), exeerrors.ErrBRIERestoreFailed)
+		err = mapBRIEErr(taskCtx, e.Ctx(), task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), exeerrors.ErrBRIERestoreFailed)
 	default:
 		err = errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}
@@ -670,24 +674,21 @@ func handleBRIEError(err error, terror *terror.Error) error {
 	return terror.GenWithStackByArgs(err)
 }
 
-// brieResultError keeps KILL / context cancel visible instead of rewriting them
-// as backup/restore failure. QueryInterrupted maps to 1317; other task
-// cancellations return taskCtx.Err(). Real BRIE failures still go through
-// handleBRIEError when failed is non-nil.
-func brieResultError(taskCtx context.Context, sctx sessionctx.Context, err error, failed *terror.Error) error {
+// mapBRIEErr maps a BRIE task error to the client-visible result.
+// KILL (QueryInterrupted) becomes 1317. Non-KILL failures still go through
+// handleBRIEError when brieErr is non-nil, including CANCEL BR JOB which
+// cancels taskCtx without setting SQLKiller (8124/8125).
+func mapBRIEErr(taskCtx context.Context, sctx sessionctx.Context, err error, brieErr *terror.Error) error {
 	if err == nil {
 		return nil
 	}
 	if exeerrors.ErrQueryInterrupted.Equal(sctx.GetSessionVars().SQLKiller.HandleSignal()) {
 		return exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
 	}
-	if taskCtx.Err() != nil {
-		return taskCtx.Err()
-	}
-	if failed == nil {
+	if brieErr == nil {
 		return err
 	}
-	return handleBRIEError(err, failed)
+	return handleBRIEError(err, brieErr)
 }
 
 func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {

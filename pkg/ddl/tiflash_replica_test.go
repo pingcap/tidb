@@ -651,5 +651,6 @@ func TestKillCancelsBatchSetDatabaseTiFlashReplica(t *testing.T) {
 		}
 	}, 10*time.Second, 10*time.Millisecond)
 	require.True(t, dbterror.ErrCancelledDDLJob.Equal(execErr), execErr)
-	tk.MustQuery("select TABLE_NAME from information_schema.tiflash_replica where table_schema='shop'").Check(testkit.Rows())
+	require.Nil(t, external.GetTableByName(t, tk, "shop", "t1").Meta().TiFlashReplica)
+	require.Nil(t, external.GetTableByName(t, tk, "shop", "t2").Meta().TiFlashReplica)
 }

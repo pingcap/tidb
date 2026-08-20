@@ -42,9 +42,9 @@ func TestIsSessionDoneHandlesWrappedQueryInterrupted(t *testing.T) {
 	require.Equal(t, uint32(1), killed)
 }
 
-func TestErrIfKilledBatchSetTiFlashReplica(t *testing.T) {
-	require.NoError(t, errIfKilledBatchSetTiFlashReplica(0))
-	err := errIfKilledBatchSetTiFlashReplica(1)
+func TestConvertKillFlag(t *testing.T) {
+	require.NoError(t, convertKillFlag(0))
+	err := convertKillFlag(1)
 	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
 }
 
@@ -56,10 +56,10 @@ func TestWaitPendingTableThresholdAbortsOnKill(t *testing.T) {
 	require.True(t, finished)
 	require.False(t, forceCheck)
 	require.Equal(t, uint32(1), killed)
-	require.True(t, exeerrors.ErrQueryInterrupted.Equal(errIfKilledBatchSetTiFlashReplica(killed)))
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(convertKillFlag(killed)))
 }
 
-func TestShouldRetryCancelingDDLJob(t *testing.T) {
+func TestIsRetryableDDLCancelErr(t *testing.T) {
 	tests := []struct {
 		name  string
 		err   error
@@ -75,7 +75,7 @@ func TestShouldRetryCancelingDDLJob(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.retry, shouldRetryCancelingDDLJob(tt.err))
+			require.Equal(t, tt.retry, isRetryableDDLCancelErr(tt.err))
 		})
 	}
 }
