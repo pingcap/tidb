@@ -223,8 +223,8 @@ func setBackendCredentials(
 	provider credentials.CredentialsProvider,
 	sendCredentials bool,
 ) error {
-	backend.AccessKey, backend.SecretAccessKey, backend.SessionToken = "", "", ""
 	if !sendCredentials {
+		backend.AccessKey, backend.SecretAccessKey, backend.SessionToken = "", "", ""
 		return nil
 	}
 	cred, err := provider.GetCredentials(ctx)

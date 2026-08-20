@@ -396,4 +396,15 @@ func TestSetBackendCredentials(t *testing.T) {
 	require.Empty(t, backend.SecretAccessKey)
 	require.Empty(t, backend.SessionToken)
 	require.Equal(t, 1, providerCalls)
+
+	backend.AccessKey = "existing-access-key"
+	backend.SecretAccessKey = "existing-secret-key"
+	backend.SessionToken = "existing-session-token"
+	errorProvider := credentials.CredentialsProviderFunc(func(stdctx.Context) (credentials.Credentials, error) {
+		return credentials.Credentials{}, fmt.Errorf("credentials unavailable")
+	})
+	require.ErrorContains(t, setBackendCredentials(context.Background(), backend, errorProvider, true), "credentials unavailable")
+	require.Equal(t, "existing-access-key", backend.AccessKey)
+	require.Equal(t, "existing-secret-key", backend.SecretAccessKey)
+	require.Equal(t, "existing-session-token", backend.SessionToken)
 }

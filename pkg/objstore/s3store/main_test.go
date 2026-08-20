@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -47,15 +48,14 @@ func TestAliyunEndpointPrefersAWSCredentialChain(t *testing.T) {
 	t.Setenv("AWS_SESSION_TOKEN", "aws-session-token")
 
 	metadataCalls := 0
-	originalTransport := http.DefaultClient.Transport
-	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		metadataCalls++
 		var body string
 		switch req.URL.Path {
 		case "/latest/meta-data/ram/security-credentials/":
 			body = "test-role"
 		case "/latest/meta-data/ram/security-credentials/test-role":
-			body = `{"AccessKeyId":"ram-access-key","AccessKeySecret":"ram-secret-key","SecurityToken":"ram-session-token"}`
+			body = `{"AccessKeyId":"ram-access-key","AccessKeySecret":"ram-secret-key","SecurityToken":"ram-session-token","Expiration":"2099-01-02T03:04:05Z","Code":"Success"}`
 		default:
 			return nil, fmt.Errorf("unexpected metadata request: %s", req.URL)
 		}
@@ -67,8 +67,13 @@ func TestAliyunEndpointPrefersAWSCredentialChain(t *testing.T) {
 			Request:    req,
 		}, nil
 	})
+	originalClientTransport := http.DefaultClient.Transport
+	originalDefaultTransport := http.DefaultTransport
+	http.DefaultClient.Transport = transport
+	http.DefaultTransport = transport
 	t.Cleanup(func() {
-		http.DefaultClient.Transport = originalTransport
+		http.DefaultClient.Transport = originalClientTransport
+		http.DefaultTransport = originalDefaultTransport
 	})
 
 	backend := &backup.S3{
@@ -83,6 +88,11 @@ func TestAliyunEndpointPrefersAWSCredentialChain(t *testing.T) {
 	require.Equal(t, "aws-secret-key", backend.SecretAccessKey)
 	require.Equal(t, "aws-session-token", backend.SessionToken)
 	require.Zero(t, metadataCalls)
+
+	ramCred, err := newOssRAMCredentialsProvider().Retrieve(context.Background())
+	require.NoError(t, err)
+	require.True(t, ramCred.CanExpire)
+	require.Equal(t, time.Date(2099, time.January, 2, 3, 4, 5, 0, time.UTC), ramCred.Expires)
 }
 
 func TestFallbackCredentialsProvider(t *testing.T) {

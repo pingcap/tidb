@@ -20,8 +20,7 @@ import (
 	"net/url"
 	"strings"
 
-	alicred "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
-	aliproviders "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials/providers"
+	osscredentials "github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -423,30 +422,30 @@ func (p *fallbackCredentialsProvider) Retrieve(ctx context.Context) (aws.Credent
 // instance metadata service. It is kept behind fallbackCredentialsProvider so
 // metadata is queried only after the complete AWS credential chain fails.
 type ossRAMCredentialsProvider struct {
-	provider aliproviders.Provider
+	provider osscredentials.CredentialsProvider
 }
 
 func newOssRAMCredentialsProvider() aws.CredentialsProvider {
-	return &ossRAMCredentialsProvider{provider: aliproviders.NewInstanceMetadataProvider()}
+	// The outer AWS CredentialsCache refreshes this provider based on Expires,
+	// so avoid adding a second credential cache here.
+	return &ossRAMCredentialsProvider{provider: osscredentials.NewEcsRoleCredentialsProviderWithoutRefresh()}
 }
 
 func (p *ossRAMCredentialsProvider) Retrieve(ctx context.Context) (aws.Credentials, error) {
-	if err := ctx.Err(); err != nil {
-		return aws.Credentials{}, errors.Trace(err)
-	}
-	cred, err := p.provider.Retrieve()
+	cred, err := p.provider.GetCredentials(ctx)
 	if err != nil {
 		log.Warn("failed to get aliyun ram credential", zap.Error(err))
 		return aws.Credentials{}, errors.Trace(err)
 	}
-	aliCred, ok := cred.(*alicred.StsTokenCredential)
-	if !ok {
-		return aws.Credentials{}, errors.Errorf("invalid credential type %T", cred)
-	}
-	return aws.Credentials{
-		AccessKeyID:     aliCred.AccessKeyId,
-		SecretAccessKey: aliCred.AccessKeySecret,
-		SessionToken:    aliCred.AccessKeyStsToken,
+	awsCred := aws.Credentials{
+		AccessKeyID:     cred.AccessKeyID,
+		SecretAccessKey: cred.AccessKeySecret,
+		SessionToken:    cred.SecurityToken,
 		Source:          "AlibabaCloudECSRAMRole",
-	}, nil
+	}
+	if cred.Expires != nil {
+		awsCred.CanExpire = true
+		awsCred.Expires = *cred.Expires
+	}
+	return awsCred, nil
 }
