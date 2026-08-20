@@ -59,7 +59,7 @@ var (
 func validateParquetLogicalType(logicalType schema.LogicalType, physicalType parquet.Type, typeLength int) error {
 	switch logicalType.(type) {
 	case schema.ListLogicalType, schema.MapLogicalType, schema.IntervalLogicalType,
-		schema.UnknownLogicalType, schema.NullLogicalType, schema.Float16LogicalType, schema.VariantLogicalType:
+		schema.UnknownLogicalType, schema.Float16LogicalType, schema.VariantLogicalType:
 		// These types are not used by Aurora or Snowflake exports, so they remain
 		// outside the row-oriented import parser's supported scalar scope.
 		return errors.Errorf("unsupported parquet logical type %s", logicalType.String())

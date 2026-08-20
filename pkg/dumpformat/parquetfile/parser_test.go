@@ -389,7 +389,6 @@ func TestParquetVariousTypes(t *testing.T) {
 		}
 
 		for _, logicalType := range []schema.LogicalType{
-			schema.NullLogicalType{},
 			schema.Float16LogicalType{},
 			schema.VariantLogicalType{},
 		} {
@@ -398,6 +397,43 @@ func TestParquetVariousTypes(t *testing.T) {
 				require.ErrorContains(t, err, "unsupported parquet logical type")
 			})
 		}
+	})
+
+	t.Run("logical_null_all_values_are_null", func(t *testing.T) {
+		pc := []testutils.ParquetColumn{{
+			Name:    "always_null",
+			Type:    parquet.Types.Int32,
+			Logical: schema.NullLogicalType{},
+			Gen: func(_ int) (any, []int16) {
+				return []int32{0, 0}, []int16{0, 0}
+			},
+		}}
+		dir := t.TempDir()
+		name := "logical-null.parquet"
+		require.NoError(t, testutils.WriteParquetFile(dir, name, pc, 2))
+
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{})
+		for range 2 {
+			require.NoError(t, reader.ReadRow())
+			require.True(t, reader.lastRow.Row[0].IsNull())
+		}
+	})
+
+	t.Run("logical_null_non_null_value_is_rejected", func(t *testing.T) {
+		pc := []testutils.ParquetColumn{{
+			Name:    "malformed_null",
+			Type:    parquet.Types.Int32,
+			Logical: schema.NullLogicalType{},
+			Gen: func(_ int) (any, []int16) {
+				return []int32{1}, []int16{1}
+			},
+		}}
+		dir := t.TempDir()
+		name := "logical-null-malformed.parquet"
+		require.NoError(t, testutils.WriteParquetFile(dir, name, pc, 1))
+
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{})
+		require.ErrorContains(t, reader.ReadRow(), "unsupported parquet logical type Null")
 	})
 
 	t.Run("rejects_inapplicable_logical_type", func(t *testing.T) {
