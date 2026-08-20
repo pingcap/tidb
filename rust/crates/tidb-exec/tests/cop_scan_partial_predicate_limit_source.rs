@@ -448,6 +448,8 @@ fn count_star_lowers_to_count_with_one_constant_child() {
             id: 1,
             field_type: FieldType::new(FieldTypeCode::LongLong),
             is_handle: false,
+            // No stored `DEFAULT` for this synthetic column.
+            origin_default: None,
         }],
         handle_index: None,
         primary_column_ids: vec![1],
@@ -464,6 +466,9 @@ fn count_star_lowers_to_count_with_one_constant_child() {
             }],
         }),
         keep_order: false,
+        // Go's `desc` on the TableScan executor: this request walks its one
+        // range forwards.
+        desc: false,
         read_ahead_batches: tidb_executor::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
         snapshot_ts: 4_242,
         ranges: vec![(Key::from_bytes(b"a"), Key::from_bytes(b"z"))],
