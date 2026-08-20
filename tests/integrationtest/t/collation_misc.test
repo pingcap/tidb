@@ -49,18 +49,15 @@ select * from t;
 
 # TestCharsetDatabase
 create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;
---error 0,1273
 create database if not exists cd_test_latin1 CHARACTER SET latin1 COLLATE latin1_swedish_ci;
 use cd_test_utf8;
 select @@character_set_database;
 select @@collation_database;
---error 0,1049
 use cd_test_latin1;
 select @@character_set_database;
 select @@collation_database;
 
 # DefaultDBAfterDropCurDB
---error 0,1273
 create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;
 
 # CollationUnion
@@ -71,6 +68,14 @@ set names utf8mb4 collate utf8mb4_general_ci;
 select position('a' in 'AA');
 select locate('a', 'AA');
 select locate('a', 'a');
+
+# Issue36057
+set names latin1;
+select @@collation_connection;
+select collation('a'), 'a' = 'A';
+set names latin1 collate latin1_swedish_ci;
+select @@collation_connection;
+select collation('a'), 'a' = 'A';
 set names utf8mb4;
 
 # CharacterSetCollations
@@ -129,3 +134,55 @@ drop table t;
 create table t (uuid varchar(36) charset utf8mb4 collate utf8mb4_bin, index idx_uuid(uuid));
 insert into t values ('7dce58ba-ba84-4297-94cf-c23cf3a39ed3');
 explain format='plan_tree' select * from t where uuid = cast('7dce58ba-ba84-4297-94cf-c23cf3a39ed3' as binary);
+
+# Latin1SwedishCIBehaviorAndIndex
+drop database if exists cd_test_latin1_swedish_ci;
+create database cd_test_latin1_swedish_ci character set latin1 collate latin1_swedish_ci;
+use cd_test_latin1_swedish_ci;
+select @@character_set_database;
+select @@collation_database;
+
+drop table if exists t;
+create table t(id int primary key, val varchar(256) charset latin1 collate latin1_swedish_ci, key idx_a(val));
+insert into t values
+    (33, '!'),
+    (3290422, '256'),
+    (13106, '32'),
+    (1, 'ÀÁÂÃàáâãÇçÐðÈÉÊËèéêëÌÍÎÏìíîïÑñÒÓÔÕòóôõÙÚÛùúûÜÝüý'),
+    (2, 'aaaaaaaaccddeeeeeeeeiiiiiiiinnoooooooouuuuuuyyyy'),
+    (6385252, 'and'),
+    (4289652, 'Att'),
+    (90, 'Z'),
+    (91, '['),
+    (197, 'Å'),
+    (15035233, 'åka'),
+    (23387, '[['),
+    (92, '\\'),
+    (14972001, 'äta'),
+    (15103073, 'æta'),
+    (23644, '\\\\'),
+    (93, ']'),
+    (63084, 'öl'),
+    (23901, ']]'),
+    (95, '_'),
+    (216, 'Ø'),
+    (248, 'ø'),
+    (222, 'Þ'),
+    (254, 'þ'),
+    (255, 'ÿ'),
+    (140, 'Œ'),
+    (156, 'œ'),
+    (3, '中文／＃１８９５５');
+select id, val = lag(val) over (order by val, id) eq_prev, hex(weight_string(val)) w from t order by val, id;
+
+explain format='plan_tree' select /*+ USE_INDEX(t, idx_a) */ id, val from t where val = 'z' order by id;
+select /*+ USE_INDEX(t, idx_a) */ id, val from t where val = 'z' order by id;
+explain format='plan_tree' select /*+ USE_INDEX(t, idx_a) */ id, val from t where val like 'Ä__' order by id;
+select /*+ USE_INDEX(t, idx_a) */ id, val from t where val like 'Ä__' order by id;
+explain format='plan_tree' select /*+ USE_INDEX(t, idx_a) */ id, val from t where val > '_' order by id;
+select /*+ USE_INDEX(t, idx_a) */ id, val from t where val > '_' order by id;
+explain format='plan_tree' select id, val from t where concat(val, val) between 'ä' and 'ö' order by id;
+select id, val from t where concat(val, val) between 'ä' and 'ö' order by id;
+
+use test;
+drop database cd_test_latin1_swedish_ci;
