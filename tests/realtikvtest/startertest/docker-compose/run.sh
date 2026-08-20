@@ -214,7 +214,16 @@ wait_healthy tikv-1
 wait_healthy tikv-2
 wait_healthy tikv-3
 
-compose build tidb
+source_commit=$(git rev-parse HEAD)
+source_branch=$(git rev-parse --abbrev-ref HEAD)
+source_release_version=$(NEXT_GEN=1 ./build/compute-tidb-release-version.sh)
+source_status=$(git status --porcelain=v1)
+compose build \
+    --build-arg "SOURCE_COMMIT=${source_commit}" \
+    --build-arg "SOURCE_BRANCH=${source_branch}" \
+    --build-arg "SOURCE_RELEASE_VERSION=${source_release_version}" \
+    --build-arg "SOURCE_STATUS=${source_status}" \
+    tidb
 
 compose up -d --no-deps --no-build bootstrap-tidb
 wait_completed bootstrap-tidb

@@ -8,14 +8,25 @@ RUN go mod download
 
 COPY . .
 
-RUN NEXT_GEN=1 make server && \
+ARG SOURCE_COMMIT
+ARG SOURCE_BRANCH
+ARG SOURCE_RELEASE_VERSION
+RUN test -n "${SOURCE_COMMIT}" && \
+    test -n "${SOURCE_BRANCH}" && \
+    test -n "${SOURCE_RELEASE_VERSION}" && \
+    NEXT_GEN=1 make server \
+        GITHASH="${SOURCE_COMMIT}" \
+        GITBRANCH="${SOURCE_BRANCH}" \
+        TIDB_RELEASE_VERSION="${SOURCE_RELEASE_VERSION}" && \
     go test -c -tags=intest,nextgen -o /tmp/startertest.test ./tests/realtikvtest/startertest && \
     mkdir -p /opt/tidb/bin && \
     mv bin/tidb-server /opt/tidb/bin/tidb-server && \
     mv /tmp/startertest.test /opt/tidb/bin/startertest.test && \
-    git rev-parse HEAD > /opt/tidb/source-commit && \
-    git status --porcelain=v1 > /opt/tidb/source-status && \
     sha256sum /opt/tidb/bin/tidb-server /opt/tidb/bin/startertest.test > /opt/tidb/binary-sha256
+
+ARG SOURCE_STATUS
+RUN printf '%s\n' "${SOURCE_COMMIT}" > /opt/tidb/source-commit && \
+    { if [ -n "${SOURCE_STATUS}" ]; then printf '%s\n' "${SOURCE_STATUS}"; fi; } > /opt/tidb/source-status
 
 LABEL org.opencontainers.image.source="current-checkout" \
       org.opencontainers.image.title="tidb-startertest-local"

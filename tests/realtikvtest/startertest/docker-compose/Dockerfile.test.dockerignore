@@ -13,8 +13,10 @@
 # limitations under the License.
 
 **/.codegraph
+**/.git
 **/.omo
 **/.trees
+**/.wt
 **/bazel-bin
 **/bazel-out
 **/bazel-testlogs
