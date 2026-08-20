@@ -281,13 +281,23 @@ impl LeafDemand {
 
     fn unsupported_select_shape(&mut self, select: &SelectStmt) -> bool {
         // A CTE introduces relation names this walk cannot tell apart from
-        // the leaves below it, and `VALUES`/`WITH ROLLUP`/a `WINDOW` clause
-        // each name columns through machinery outside the expression tree.
-        if select.with.is_some()
-            || !select.values.is_empty()
-            || !select.windows.is_empty()
-            || select.rollup
-        {
+        // the leaves below it, and `VALUES`/a `WINDOW` clause each name
+        // columns through machinery outside the expression tree.
+        //
+        // `WITH ROLLUP` used to be listed here and is NOT one of them. Its
+        // grouping sets are built from the `GROUP BY` items themselves, which
+        // `add_select_output` already walks along with the fields, `HAVING`
+        // and the aggregate arguments; the `Expand` operator adds `gid` and
+        // null-extended COPIES of those same expressions, never a new base
+        // -table column. Go prunes a rollup query's `DataSource`s like any
+        // other, and this flag is statement-WIDE: a rollup buried in one
+        // derived table made every leaf of the statement demand every column,
+        // including leaves in an unrelated subtree. That is what cost
+        // `select t1.a, dt.key_a, dt.sum_b from t1 join (... group by t2.a
+        // with rollup) dt on t1.a = dt.key_a` its covering index -- TiDB
+        // records `IndexFullScan table:t1, index:b(b)`, since `t1` needs only
+        // its handle `a`, and this tier read the whole table.
+        if select.with.is_some() || !select.values.is_empty() || !select.windows.is_empty() {
             self.all = true;
             return true;
         }
