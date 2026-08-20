@@ -519,6 +519,10 @@ const (
 
 	// version283 backfills analyze default bucket and TopN global variables.
 	version283 = 283
+
+	// version284
+	// Add split_by column to mysql.tidb_ttl_task for TTL secondary index optimization.
+	version284 = 284
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -532,7 +536,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version283
+var currentBootstrapVersion int64 = version284
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -720,6 +724,7 @@ var (
 		{version: version281, fn: upgradeToVer281},
 		{version: version282, fn: upgradeToVer282},
 		{version: version283, fn: upgradeToVer283},
+		{version: version284, fn: upgradeToVer284},
 	}
 )
 
@@ -2273,4 +2278,8 @@ func upgradeToVer283(s sessionapi.Session, _ int64) {
 	// Backfill only absent rows so @@global reads use defaults while preserving user-set values.
 	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDefaultNumBuckets, vardef.DefTiDBAnalyzeDefaultNumBuckets)
 	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDefaultNumTopN, vardef.DefTiDBAnalyzeDefaultNumTopN)
+}
+
+func upgradeToVer284(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_task ADD COLUMN IF NOT EXISTS split_by bigint DEFAULT NULL")
 }

@@ -405,47 +405,19 @@ func (t *PhysicalTable) splitCommonHandleRanges(
 		return []ScanRange{newFullRange()}, nil
 	}
 
-	scanRanges := make([]ScanRange, 0, len(keyRanges))
-	curScanStart := nullDatum()
-	for i, keyRange := range keyRanges {
-		curScanEnd := nullDatum()
-		if i != len(keyRanges)-1 {
-			if isInt {
-				curScanEnd = GetNextIntDatumFromCommonHandle(keyRange.EndKey, recordPrefix, unsigned)
-			} else {
-				curScanEnd = GetNextBytesHandleDatum(keyRange.EndKey, recordPrefix)
-				if decode != nil {
-					curScanEnd = decode(curScanEnd.GetBytes())
-				}
-
-				// "" is the smallest value for string/[]byte, skip to add it to ranges.
-				if len(curScanEnd.GetBytes()) == 0 {
-					continue
-				}
-			}
+	return scanRangesFromRawKeyRanges(keyRanges, func(endKey kv.Key) (types.Datum, bool, error) {
+		if isInt {
+			return GetNextIntDatumFromCommonHandle(endKey, recordPrefix, unsigned), false, nil
 		}
 
-		if !curScanStart.IsNull() && !curScanEnd.IsNull() {
-			// Sometimes curScanStart >= curScanEnd because the edge datum is an approximate value.
-			// At this time, we should skip this range to ensure the incremental of ranges.
-			cmp, err := curScanStart.Compare(types.StrictContext, &curScanEnd, collate.GetBinaryCollator())
-			intest.AssertNoError(err)
-			if err != nil {
-				return nil, err
-			}
-
-			if cmp >= 0 {
-				continue
-			}
+		d := GetNextBytesHandleDatum(endKey, recordPrefix)
+		if decode != nil {
+			d = decode(d.GetBytes())
 		}
 
-		scanRanges = append(scanRanges, newDatumRange(curScanStart, curScanEnd))
-		if curScanEnd.IsNull() {
-			break
-		}
-		curScanStart = curScanEnd
-	}
-	return scanRanges, nil
+		// "" is the smallest value for string/[]byte, skip to add it to ranges.
+		return d, len(d.GetBytes()) == 0, nil
+	})
 }
 
 func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storage,
@@ -690,6 +662,308 @@ func GetNextBytesHandleDatum(key kv.Key, recordPrefix []byte) (d types.Datum) {
 	}
 	d.SetBytes(val)
 	return d
+}
+
+// TTLIndexScanPlan describes the SQL result and pagination order for a TTL index scan.
+type TTLIndexScanPlan struct {
+	Index            *model.IndexInfo
+	IndexColumns     []*model.ColumnInfo
+	ScanColumns      []*model.ColumnInfo
+	ScanColumnTypes  []*types.FieldType
+	OrderColumns     []*model.ColumnInfo
+	KeyColumnOffsets []int
+}
+
+// OrderKey extracts the pagination values from a scan result row.
+func (p *TTLIndexScanPlan) OrderKey(row []types.Datum) []types.Datum {
+	return row[:len(p.OrderColumns)]
+}
+
+// TableKey extracts the table key from a scan result row.
+func (p *TTLIndexScanPlan) TableKey(row []types.Datum) []types.Datum {
+	key := make([]types.Datum, len(p.KeyColumnOffsets))
+	for i, offset := range p.KeyColumnOffsets {
+		key[i] = row[offset]
+	}
+	return key
+}
+
+func (p *TTLIndexScanPlan) containsFullTableKey() bool {
+	for _, offset := range p.KeyColumnOffsets {
+		if offset >= len(p.IndexColumns) {
+			return false
+		}
+	}
+	return true
+}
+
+// FindTTLIndex finds a secondary index that can scan in its physical index order.
+// Returns nil if no suitable index exists.
+func (t *PhysicalTable) FindTTLIndex() *model.IndexInfo {
+	if t.TimeColumn == nil {
+		return nil
+	}
+	var best *TTLIndexScanPlan
+	for _, idx := range t.Indices {
+		plan, err := t.BuildTTLIndexScanPlan(idx)
+		if err == nil && (best == nil || ttlIndexScanPlanLess(plan, best)) {
+			best = plan
+		}
+	}
+	if best == nil {
+		return nil
+	}
+	return best.Index
+}
+
+func ttlIndexScanPlanLess(lhs, rhs *TTLIndexScanPlan) bool {
+	priority := func(plan *TTLIndexScanPlan) int {
+		if len(plan.IndexColumns) == 1 {
+			return 0
+		}
+		if plan.containsFullTableKey() {
+			return 1
+		}
+		return 2
+	}
+	if lhsPriority, rhsPriority := priority(lhs), priority(rhs); lhsPriority != rhsPriority {
+		return lhsPriority < rhsPriority
+	}
+	if len(lhs.OrderColumns) != len(rhs.OrderColumns) {
+		return len(lhs.OrderColumns) < len(rhs.OrderColumns)
+	}
+	return len(lhs.ScanColumns) < len(rhs.ScanColumns)
+}
+
+// BuildTTLIndexScanPlan validates an index and derives its scan and pagination columns.
+func (t *PhysicalTable) BuildTTLIndexScanPlan(idx *model.IndexInfo) (*TTLIndexScanPlan, error) {
+	if t.TimeColumn == nil || idx == nil {
+		return nil, errors.New("TTL time column and index are required")
+	}
+	if idx.Primary || idx.State != model.StatePublic || idx.Invisible || idx.Global || idx.MVIndex ||
+		idx.IsColumnarIndex() || idx.ConditionExprString != "" || len(idx.Columns) == 0 {
+		return nil, errors.Errorf("index %s is not a supported TTL secondary index", idx.Name)
+	}
+	if idx.Columns[0].Name.L != t.TimeColumn.Name.L {
+		return nil, errors.Errorf("TTL column %s is not the first index column", t.TimeColumn.Name)
+	}
+
+	indexColumns := make([]*model.ColumnInfo, len(idx.Columns))
+	for i, idxCol := range idx.Columns {
+		if idxCol.Offset < 0 || idxCol.Offset >= len(t.Columns) || idxCol.Length != types.UnspecifiedLength {
+			return nil, errors.Errorf("index column %s cannot be used as a full TTL pagination column", idxCol.Name)
+		}
+		col := t.Columns[idxCol.Offset]
+		if col == nil || col.Hidden {
+			return nil, errors.Errorf("index column %s is not a visible table column", idxCol.Name)
+		}
+		indexColumns[i] = col
+	}
+	if idx.Unique {
+		for _, col := range indexColumns[1:] {
+			if !mysql.HasNotNullFlag(col.GetFlag()) {
+				return nil, errors.Errorf("unique index %s has nullable non-TTL column %s", idx.Name, col.Name)
+			}
+		}
+	}
+
+	keyColumnOffsets := make([]int, len(t.KeyColumns))
+	keyColumnsInIndex := 0
+	for i, keyCol := range t.KeyColumns {
+		keyColumnOffsets[i] = -1
+		for j, idxCol := range indexColumns {
+			if idxCol.ID == keyCol.ID {
+				keyColumnOffsets[i] = j
+				keyColumnsInIndex++
+				break
+			}
+		}
+	}
+	containsFullKey := keyColumnsInIndex == len(t.KeyColumns)
+	containsPartialKey := keyColumnsInIndex > 0 && !containsFullKey
+
+	orderColumns := append([]*model.ColumnInfo(nil), indexColumns...)
+	if !idx.Unique && !containsFullKey {
+		if containsPartialKey || !t.canUseHandleInTTLIndexOrder() {
+			return nil, errors.Errorf("index %s cannot seek by its physical table-key suffix", idx.Name)
+		}
+		orderColumns = append(orderColumns, t.KeyColumns...)
+	}
+
+	// Keep both the declared index key and the pagination key as prefixes of
+	// every result row. Append only table-key columns missing from the index.
+	scanColumns := append([]*model.ColumnInfo(nil), indexColumns...)
+	for i, col := range t.KeyColumns {
+		if keyColumnOffsets[i] < 0 {
+			keyColumnOffsets[i] = len(scanColumns)
+			scanColumns = append(scanColumns, col)
+		}
+	}
+
+	scanColumnTypes := make([]*types.FieldType, len(scanColumns))
+	for i, col := range scanColumns {
+		scanColumnTypes[i] = &col.FieldType
+	}
+	return &TTLIndexScanPlan{
+		Index:            idx,
+		IndexColumns:     indexColumns,
+		ScanColumns:      scanColumns,
+		ScanColumnTypes:  scanColumnTypes,
+		OrderColumns:     orderColumns,
+		KeyColumnOffsets: keyColumnOffsets,
+	}, nil
+}
+
+func (t *PhysicalTable) canUseHandleInTTLIndexOrder() bool {
+	if t.PKIsHandle {
+		return len(t.KeyColumns) == 1 && !mysql.HasUnsignedFlag(t.KeyColumns[0].GetFlag())
+	}
+	if !t.IsCommonHandle {
+		return true
+	}
+	if t.commonHandleHasPrefixColumn() {
+		return false
+	}
+	if t.CommonHandleVersion != 0 || !collate.NewCollationEnabled() {
+		return true
+	}
+	for _, col := range t.KeyColumns {
+		if col.FieldType.EvalType() == types.ETString && !mysql.HasBinaryFlag(col.GetFlag()) {
+			return false
+		}
+	}
+	return true
+}
+
+func (t *PhysicalTable) commonHandleHasPrefixColumn() bool {
+	if !t.IsCommonHandle {
+		return false
+	}
+	primaryIdx := tables.FindPrimaryIndex(t.TableInfo)
+	if primaryIdx == nil {
+		return true
+	}
+	for _, idxCol := range primaryIdx.Columns {
+		if idxCol.Length == types.UnspecifiedLength {
+			continue
+		}
+		if idxCol.Offset < 0 || idxCol.Offset >= len(t.Columns) {
+			return true
+		}
+		col := t.Columns[idxCol.Offset]
+		if col == nil {
+			return true
+		}
+		if flen := col.GetFlen(); flen == types.UnspecifiedLength || idxCol.Length < flen {
+			return true
+		}
+	}
+	return false
+}
+
+// SplitIndexScanRanges splits index-scan ranges by the selected index's region distribution.
+// Each returned range is a [start, end) interval over the TTL column.
+func (t *PhysicalTable) SplitIndexScanRanges(ctx context.Context, store kv.Storage, idx *model.IndexInfo,
+	expireTime time.Time, loc *time.Location, splitCnt int) ([]ScanRange, error) {
+	if t.TimeColumn == nil || idx == nil || splitCnt <= 1 {
+		return []ScanRange{newFullRange()}, nil
+	}
+
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok {
+		return []ScanRange{newFullRange()}, nil
+	}
+
+	indexPrefix := tablecodec.EncodeIndexSeekKey(t.ID, idx.ID, nil)
+	encodedMinNotNull, err := codec.EncodeKey(loc, nil, types.MinNotNullDatum())
+	if err != nil {
+		return nil, err
+	}
+	startKey := tablecodec.EncodeIndexSeekKey(t.ID, idx.ID, encodedMinNotNull)
+
+	ft := t.TimeColumn.FieldType
+	expireDatum := types.NewTimeDatum(types.NewTime(types.FromGoTime(expireTime), ft.GetType(), ft.GetDecimal()))
+	encodedExpire, err := codec.EncodeKey(loc, nil, expireDatum)
+	if err != nil {
+		return nil, err
+	}
+	endKey := tablecodec.EncodeIndexSeekKey(t.ID, idx.ID, encodedExpire)
+	if endKey.Cmp(startKey) <= 0 {
+		return []ScanRange{newFullRange()}, nil
+	}
+	keyRanges, err := t.splitRawKeyRanges(ctx, tikvStore, startKey, endKey, splitCnt)
+	if err != nil {
+		return nil, err
+	}
+	if len(keyRanges) <= 1 {
+		return []ScanRange{newFullRange()}, nil
+	}
+
+	scanRanges, err := scanRangesFromRawKeyRanges(keyRanges, func(endKey kv.Key) (types.Datum, bool, error) {
+		if endKey.Cmp(indexPrefix) <= 0 || !endKey.HasPrefix(indexPrefix) {
+			return nullDatum(), false, nil
+		}
+
+		data, _, err := codec.CutOne(endKey[len(indexPrefix):])
+		if err != nil {
+			return nullDatum(), false, nil
+		}
+		_, d, err := codec.DecodeAsDateTime(data, t.TimeColumn.FieldType.GetType(), loc)
+		if err != nil {
+			return nullDatum(), false, nil
+		}
+		return d, false, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(scanRanges) == 0 {
+		return []ScanRange{newFullRange()}, nil
+	}
+	return scanRanges, nil
+}
+
+func scanRangesFromRawKeyRanges(
+	keyRanges []kv.KeyRange,
+	decodeEnd func(kv.Key) (types.Datum, bool, error),
+) ([]ScanRange, error) {
+	scanRanges := make([]ScanRange, 0, len(keyRanges))
+	curScanStart := nullDatum()
+	for i, keyRange := range keyRanges {
+		curScanEnd := nullDatum()
+		if i != len(keyRanges)-1 {
+			var skip bool
+			var err error
+			curScanEnd, skip, err = decodeEnd(keyRange.EndKey)
+			if err != nil {
+				return nil, err
+			}
+			if skip {
+				continue
+			}
+		}
+
+		if !curScanStart.IsNull() && !curScanEnd.IsNull() {
+			// Region boundaries can map to approximate datum boundaries. Skip
+			// non-incremental ranges rather than producing empty scan tasks.
+			cmp, err := curScanStart.Compare(types.StrictContext, &curScanEnd, collate.GetBinaryCollator())
+			intest.AssertNoError(err)
+			if err != nil {
+				return nil, err
+			}
+
+			if cmp >= 0 {
+				continue
+			}
+		}
+
+		scanRanges = append(scanRanges, newDatumRange(curScanStart, curScanEnd))
+		if curScanEnd.IsNull() {
+			break
+		}
+		curScanStart = curScanEnd
+	}
+	return scanRanges, nil
 }
 
 // GetASCIIPrefixDatumFromBytes is used to convert bytes to string datum which only contains ASCII prefix string.

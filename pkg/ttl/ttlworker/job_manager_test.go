@@ -17,6 +17,7 @@ package ttlworker
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,10 +25,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/syssession"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
@@ -202,6 +205,7 @@ func newTTLTaskRows(t *testing.T, tasks ...*cache.TTLTask) []chunk.Row {
 		types.NewFieldType(mysql.TypeDatetime), // status_update_time
 		types.NewFieldType(mysql.TypeString),   // state
 		types.NewFieldType(mysql.TypeDatetime), // created_time
+		types.NewFieldType(mysql.TypeLonglong), // split_by
 	}, len(tasks))
 	var rows []chunk.Row
 
@@ -262,6 +266,12 @@ func newTTLTaskRows(t *testing.T, tasks ...*cache.TTLTask) []chunk.Row {
 
 		createdTime := types.NewDatum(types.NewTime(types.FromGoTime(task.CreatedTime), mysql.TypeDatetime, types.MaxFsp))
 		c.AppendDatum(12, &createdTime)
+		if task.SplitBy == nil {
+			c.AppendNull(13)
+		} else {
+			splitBy := types.NewDatum(*task.SplitBy)
+			c.AppendDatum(13, &splitBy)
+		}
 	}
 
 	iter := chunk.NewIterator4Chunk(c)
@@ -492,6 +502,127 @@ func TestCheckFinishedJobDoesNotRecycleExternalTTLTaskFromMaster(t *testing.T) {
 	m.CheckFinishedJob(se)
 	require.Empty(t, m.runningJobs)
 	require.Zero(t, externalMgr.recycledCreateTS)
+}
+
+func TestTiDBServerVersionsConsistent(t *testing.T) {
+	serverInfo := func(id, version string) *serverinfo.ServerInfo {
+		return &serverinfo.ServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
+				ID:          id,
+				VersionInfo: serverinfo.VersionInfo{Version: version},
+			},
+		}
+	}
+	serverInfos := func(versions ...string) map[string]*serverinfo.ServerInfo {
+		infos := make(map[string]*serverinfo.ServerInfo, len(versions))
+		for i, version := range versions {
+			id := strconv.Itoa(i)
+			infos[id] = serverInfo(id, version)
+		}
+		return infos
+	}
+
+	tests := []struct {
+		name           string
+		currentVersion string
+		serverVersions []string
+		consistent     bool
+		err            bool
+	}{
+		{
+			"same release with different prerelease",
+			"8.0.11-TiDB-v9.0.0-alpha-123-g1111111",
+			[]string{
+				"8.0.11-TiDB-v9.0.0-alpha-456-g2222222-dirty",
+				"8.0.11-TiDB-v9.0.0-beta",
+			}, true, false,
+		},
+		{"different release", "8.0.11-TiDB-v9.0.0", []string{"8.0.11-TiDB-v8.5.0"}, false, false},
+		{"current server omitted from server info", "8.0.11-TiDB-v9.0.0", []string{"8.0.11-TiDB-v8.5.0", "8.0.11-TiDB-v8.5.0"}, false, false},
+		{"empty server info", "8.0.11-TiDB-v9.0.0", nil, false, true},
+		{"invalid current version", "invalid", []string{"8.0.11-TiDB-v9.0.0"}, false, true},
+		{"invalid remote version", "8.0.11-TiDB-v9.0.0", []string{"invalid"}, false, true},
+		{"different release with invalid remote version", "8.0.11-TiDB-v9.0.0", []string{"8.0.11-TiDB-v8.5.0", "invalid"}, false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			consistent, err := tiDBServerVersionsConsistent(tt.currentVersion, serverInfos(tt.serverVersions...))
+			if tt.err {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.consistent, consistent)
+		})
+	}
+
+	t.Run("cache version check", func(t *testing.T) {
+		localVersion := "8.0.11" + mysql.VersionSeparator + "v9.0.0"
+		differentVersion := "8.0.11" + mysql.VersionSeparator + "v10.0.0"
+
+		calls := 0
+		version := localVersion
+		manager := &JobManager{}
+		manager.ctx = context.Background()
+		manager.getServerInfo = func() (*serverinfo.ServerInfo, error) {
+			return serverInfo("local", localVersion), nil
+		}
+		manager.getAllServerInfo = func(context.Context) (map[string]*serverinfo.ServerInfo, error) {
+			calls++
+			return serverInfos(version), nil
+		}
+
+		require.True(t, manager.canCreateTTLJobForCurrentVersion())
+		require.True(t, manager.canCreateTTLJobForCurrentVersion())
+		require.Equal(t, 1, calls)
+
+		manager.lastServerVersionCheckTime = time.Now().Add(-serverVersionAllowCacheInterval)
+		require.True(t, manager.canCreateTTLJobForCurrentVersion())
+		require.Equal(t, 2, calls)
+
+		version = differentVersion
+		manager.lastServerVersionCheckTime = time.Now().Add(-serverVersionAllowCacheInterval)
+		require.False(t, manager.canCreateTTLJobForCurrentVersion())
+		require.False(t, manager.canCreateTTLJobForCurrentVersion())
+		require.Equal(t, 3, calls)
+
+		manager.lastServerVersionCheckTime = time.Now().Add(-serverVersionMismatchCacheInterval)
+		require.False(t, manager.canCreateTTLJobForCurrentVersion())
+		require.Equal(t, 4, calls)
+	})
+
+	t.Run("allow when current server info lookup fails", func(t *testing.T) {
+		calls := 0
+		manager := &JobManager{}
+		manager.ctx = context.Background()
+		manager.getServerInfo = func() (*serverinfo.ServerInfo, error) {
+			return nil, errors.New("mock current server info error")
+		}
+		manager.getAllServerInfo = func(context.Context) (map[string]*serverinfo.ServerInfo, error) {
+			calls++
+			return serverInfos("8.0.11" + mysql.VersionSeparator + "v10.0.0"), nil
+		}
+		require.True(t, manager.canCreateTTLJobForCurrentVersion())
+		require.True(t, manager.canCreateTTLJobForCurrentVersion())
+		require.Equal(t, 0, calls)
+	})
+
+	t.Run("allow when server info lookup fails", func(t *testing.T) {
+		calls := 0
+		manager := &JobManager{}
+		manager.ctx = context.Background()
+		manager.getServerInfo = func() (*serverinfo.ServerInfo, error) {
+			return serverInfo("local", "8.0.11"+mysql.VersionSeparator+"v9.0.0"), nil
+		}
+		manager.getAllServerInfo = func(context.Context) (map[string]*serverinfo.ServerInfo, error) {
+			calls++
+			return nil, errors.New("mock server info error")
+		}
+		require.True(t, manager.canCreateTTLJobForCurrentVersion())
+		require.True(t, manager.canCreateTTLJobForCurrentVersion())
+		require.Equal(t, 1, calls)
+	})
 }
 
 func TestReadyForLockHBTimeoutJobTables(t *testing.T) {
@@ -921,6 +1052,59 @@ func TestLockTable(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLockNewJobFallsBackWithoutTiKVStoreForIndexSplitRanges(t *testing.T) {
+	oldEnableIndexScan := vardef.TTLEnableIndexScan.Load()
+	vardef.TTLEnableIndexScan.Store(true)
+	defer vardef.TTLEnableIndexScan.Store(oldEnableIndexScan)
+
+	ttlTbl := newMockTTLTbl(t, "t1")
+	ttlTbl.ID = 1
+	ttlTbl.TableInfo.ID = 1
+	ttlTbl.Indices = []*model.IndexInfo{
+		{
+			ID:      10,
+			Name:    ast.NewCIStr("idx_time"),
+			Columns: []*model.IndexColumn{{Name: ttlTbl.TimeColumn.Name, Offset: ttlTbl.TimeColumn.Offset, Length: types.UnspecifiedLength}},
+			State:   model.StatePublic,
+		},
+	}
+
+	now := time.Date(2022, 12, 6, 1, 13, 5, 0, time.UTC)
+	expireTime := time.Date(2022, 12, 5, 16, 13, 5, 0, time.UTC)
+	m := NewJobManager("test-id", newMockSessionPool(t), nil, nil, nil)
+	m.infoSchemaCache.Tables[ttlTbl.ID] = ttlTbl
+	m.ctx = cache.SetMockExpireTime(context.Background(), expireTime)
+
+	se := newMockSession(t)
+	statusSQL, _ := cache.SelectFromTTLTableStatusWithID(1)
+	insertTaskSQL, _, err := cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, expireTime, now)
+	require.NoError(t, err)
+	var taskArgs [][]any
+	se.executeSQL = func(_ context.Context, sql string, args ...any) ([]chunk.Row, error) {
+		switch sql {
+		case statusSQL + " FOR UPDATE NOWAIT":
+			return newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil
+		case setTableStatusOwnerTemplate:
+			return nil, nil
+		case createJobHistoryRowTemplate:
+			return nil, nil
+		case updateStatusSQL:
+			return newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil
+		}
+		require.Equal(t, insertTaskSQL, sql)
+		taskArgs = append(taskArgs, append([]any(nil), args...))
+		return nil, nil
+	}
+
+	job, err := m.lockNewJob(context.Background(), se, ttlTbl, now, "new-job-id", false)
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	require.Len(t, taskArgs, 1)
+	require.Empty(t, taskArgs[0][3])
+	require.Empty(t, taskArgs[0][4])
+	require.Equal(t, int64(10), taskArgs[0][7])
 }
 
 func TestLocalJobs(t *testing.T) {

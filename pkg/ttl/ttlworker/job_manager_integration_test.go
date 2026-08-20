@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/client"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/skip"
@@ -408,6 +409,58 @@ func TestTriggerTTLJob(t *testing.T) {
 	tk.MustQuery("select id from t order by id asc").Check(testkit.Rows("2", "4"))
 }
 
+func TestTriggerTTLJobWithIndexScan(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/scan-split-cnt", "return(4)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/scan-split-cnt"))
+	}()
+
+	defer boostJobScheduleForTest(t)()
+
+	ctx, cancel := context.WithTimeout(context.TODO(), 5*time.Minute)
+	defer cancel()
+
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(id int primary key, t timestamp, index idx_t(t)) TTL=`t` + INTERVAL 1 DAY")
+	tbl, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblID := tbl.Meta().ID
+
+	timerStore := timertable.NewTableTimerStore(0, do.AdvancedSysSessionPool(), "mysql", "tidb_timers", nil)
+	defer timerStore.Close()
+	timerCli := timerapi.NewDefaultTimerClient(timerStore)
+
+	// make sure the table had run a job one time to make the test stable
+	waitTTLJobFinished(t, tk, tblID, timerCli)
+
+	now := time.Now()
+	nowDateStr := now.Format("2006-01-02 15:04:05.999999")
+	expire := now.Add(-time.Hour * 48)
+	expireDateStr := expire.Format("2006-01-02 15:04:05.999999")
+	tk.MustExec("insert into t values(1, ?)", expireDateStr)
+	tk.MustExec("insert into t values(2, ?)", nowDateStr)
+	tk.MustExec("insert into t values(3, ?)", expireDateStr)
+	tk.MustExec("insert into t values(4, ?)", nowDateStr)
+
+	cli := do.TTLJobManager().GetCommandCli()
+	res, err := client.TriggerNewTTLJob(ctx, cli, "test", "t")
+	require.NoError(t, err)
+	require.Equal(t, 1, len(res.TableResult))
+	tableResult := res.TableResult[0]
+	require.Equal(t, tblID, tableResult.TableID)
+	require.NotEmpty(t, tableResult.JobID)
+	require.Equal(t, "test", tableResult.DBName)
+	require.Equal(t, "t", tableResult.TableName)
+	require.Equal(t, "", tableResult.ErrorMessage)
+	require.Equal(t, "", tableResult.PartitionName)
+
+	waitTTLJobFinished(t, tk, tblID, timerCli)
+	tk.MustQuery("select id from t order by id asc").Check(testkit.Rows("2", "4"))
+}
+
 func TestTTLDeleteWithTimeZoneChange(t *testing.T) {
 	defer boostJobScheduleForTest(t)()
 
@@ -597,6 +650,78 @@ func TestSubmitJob(t *testing.T) {
 		"%d %d test ttlp1 p0 %d %d running",
 		tableID, physicalID, tableStatus.CurrentJobStartTime.Unix(), tableStatus.CurrentJobTTLExpire.Unix(),
 	)))
+}
+
+func TestIndexScanForAnonymizedLargeTableShape(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	waitAndStopTTLManager(t, dom)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table ttl_events(
+		tenant_id bigint not null,
+		event_id bigint not null,
+		expired_at datetime not null,
+		status tinyint,
+		payload varchar(128),
+		primary key (tenant_id, event_id),
+		unique index idx_ttl_expired_at(expired_at)
+	) TTL=expired_at + interval 1 hour`)
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ttl_events"))
+	require.NoError(t, err)
+	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""))
+	require.NoError(t, err)
+	idx := ttlTbl.FindTTLIndex()
+	require.NotNil(t, idx)
+
+	expireTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	pkGenerator, err := sqlbuilder.NewScanQueryGenerator(ttlTbl, expireTime, nil, nil)
+	require.NoError(t, err)
+	pkScanSQL, err := pkGenerator.NextSQL(nil, 32)
+	require.NoError(t, err)
+	require.Contains(t, pkScanSQL, "USE INDEX ()")
+	pkPlan := tk.MustQuery("explain format='brief' " + pkScanSQL)
+	pkPlan.CheckContain("TableReader")
+	pkPlan.CheckNotContain("IndexReader")
+	pkPlan.CheckNotContain("IndexRangeScan")
+	pkPlan.CheckNotContain("IndexFullScan")
+	pkPlan.CheckNotContain("IndexLookUp")
+
+	generator, err := sqlbuilder.NewIndexScanQueryGenerator(ttlTbl, expireTime, nil, nil, idx)
+	require.NoError(t, err)
+	scanSQL, err := generator.NextSQL(nil, 32)
+	require.NoError(t, err)
+	require.Contains(t, scanSQL, "FORCE INDEX(`idx_ttl_expired_at`)")
+	require.Contains(t, scanSQL, "ORDER BY `expired_at` ASC")
+	plan := tk.MustQuery("explain format='brief' " + scanSQL)
+	plan.MultiCheckContain([]string{"IndexRangeScan", "idx_ttl_expired_at"})
+	plan.CheckNotContain("TopN")
+	plan.CheckNotContain("Sort")
+
+	tk.MustExec(`create table ttl_composite_index(
+		tenant_id bigint not null,
+		event_id bigint not null,
+		expired_at datetime not null,
+		status tinyint,
+		primary key (tenant_id, event_id),
+		index idx_expired_status(expired_at, status)
+	) TTL=expired_at + interval 1 hour`)
+	compositeTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ttl_composite_index"))
+	require.NoError(t, err)
+	compositeTTLTable, err := cache.NewPhysicalTable(ast.NewCIStr("test"), compositeTable.Meta(), ast.NewCIStr(""))
+	require.NoError(t, err)
+	compositeIndex := compositeTTLTable.FindTTLIndex()
+	require.NotNil(t, compositeIndex)
+	compositeGenerator, err := sqlbuilder.NewIndexScanQueryGenerator(compositeTTLTable, expireTime, nil, nil, compositeIndex)
+	require.NoError(t, err)
+	compositeSQL, err := compositeGenerator.NextSQL(nil, 32)
+	require.NoError(t, err)
+	require.Contains(t, compositeSQL, "ORDER BY `expired_at`, `status`, `tenant_id`, `event_id` ASC")
+	compositePlan := tk.MustQuery("explain format='brief' " + compositeSQL)
+	compositePlan.MultiCheckContain([]string{"IndexRangeScan", "idx_expired_status"})
+	compositePlan.CheckNotContain("TopN")
+	compositePlan.CheckNotContain("Sort")
 }
 
 func TestRescheduleJobs(t *testing.T) {

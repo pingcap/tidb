@@ -109,13 +109,20 @@ func (b *SQLBuilder) Build() (string, error) {
 	return b.sb.String(), nil
 }
 
-// WriteSelect writes a select statement to select key columns without any condition
+// WriteSelect writes a select statement to select the table key columns without any condition.
 func (b *SQLBuilder) WriteSelect() error {
+	return b.writeSelectColumns(b.tbl.KeyColumns)
+}
+
+func (b *SQLBuilder) writeSelectColumns(cols []*model.ColumnInfo) error {
 	if b.state != writeBegin {
 		return errors.Errorf("invalid state: %v", b.state)
 	}
+	if len(cols) == 0 {
+		return errors.New("select columns cannot be empty")
+	}
 	b.restoreCtx.WritePlain("SELECT LOW_PRIORITY SQL_NO_CACHE ")
-	b.writeColNames(b.tbl.KeyColumns, false)
+	b.writeColNames(cols, false)
 	b.restoreCtx.WritePlain(" FROM ")
 	if err := b.writeTblName(); err != nil {
 		return err
@@ -127,6 +134,24 @@ func (b *SQLBuilder) WriteSelect() error {
 	}
 	b.state = writeSelOrDel
 	b.isReadOnly = true
+	return nil
+}
+
+func (b *SQLBuilder) writeForceIndex(indexName string) error {
+	if b.state != writeSelOrDel || !b.isReadOnly {
+		return errors.Errorf("invalid state for FORCE INDEX: %v", b.state)
+	}
+	b.restoreCtx.WritePlain(" FORCE INDEX(")
+	b.restoreCtx.WriteName(indexName)
+	b.restoreCtx.WritePlain(")")
+	return nil
+}
+
+func (b *SQLBuilder) writeUseNoIndex() error {
+	if b.state != writeSelOrDel || !b.isReadOnly {
+		return errors.Errorf("invalid state for USE INDEX: %v", b.state)
+	}
+	b.restoreCtx.WritePlain(" USE INDEX ()")
 	return nil
 }
 
@@ -165,6 +190,77 @@ func (b *SQLBuilder) WriteCommonCondition(cols []*model.ColumnInfo, op string, d
 	b.restoreCtx.WritePlain(op)
 	b.restoreCtx.WritePlain(" ")
 	return b.writeDataPoint(cols, dp)
+}
+
+// writeLexicographicGreaterThan writes a strict ASC continuation condition.
+// It expands the comparison when a cursor value is NULL because SQL row
+// comparisons containing NULL evaluate to UNKNOWN.
+func (b *SQLBuilder) writeLexicographicGreaterThan(cols []*model.ColumnInfo, dp []types.Datum) error {
+	if len(cols) == 0 || len(cols) != len(dp) {
+		return errors.Errorf("col count not match %d != %d", len(cols), len(dp))
+	}
+	hasNull := false
+	for _, d := range dp {
+		if d.IsNull() {
+			hasNull = true
+			break
+		}
+	}
+	if !hasNull {
+		return b.WriteCommonCondition(cols, ">", dp)
+	}
+	if err := b.beginCondition(); err != nil {
+		return err
+	}
+	b.restoreCtx.WritePlain("(")
+	for i, col := range cols {
+		if i > 0 {
+			b.restoreCtx.WritePlain(" OR ")
+		}
+		b.restoreCtx.WritePlain("(")
+		for j := range i {
+			if j > 0 {
+				b.restoreCtx.WritePlain(" AND ")
+			}
+			b.writeColName(cols[j])
+			if dp[j].IsNull() {
+				b.restoreCtx.WritePlain(" IS NULL")
+			} else {
+				b.restoreCtx.WritePlain(" = ")
+				if err := writeDatum(b.restoreCtx, dp[j], &cols[j].FieldType); err != nil {
+					return err
+				}
+			}
+		}
+		if i > 0 {
+			b.restoreCtx.WritePlain(" AND ")
+		}
+		b.writeColName(col)
+		if dp[i].IsNull() {
+			b.restoreCtx.WritePlain(" IS NOT NULL")
+		} else {
+			b.restoreCtx.WritePlain(" > ")
+			if err := writeDatum(b.restoreCtx, dp[i], &col.FieldType); err != nil {
+				return err
+			}
+		}
+		b.restoreCtx.WritePlain(")")
+	}
+	b.restoreCtx.WritePlain(")")
+	return nil
+}
+
+func (b *SQLBuilder) beginCondition() error {
+	switch b.state {
+	case writeSelOrDel:
+		b.restoreCtx.WritePlain(" WHERE ")
+		b.state = writeWhere
+	case writeWhere:
+		b.restoreCtx.WritePlain(" AND ")
+	default:
+		return errors.Errorf("invalid state: %v", b.state)
+	}
+	return nil
 }
 
 // WriteExpireCondition writes a condition with the time column
@@ -313,11 +409,29 @@ type ScanQueryGenerator struct {
 	limit         int
 	firstBuild    bool
 	exhausted     bool
+
+	// Index scan mode
+	indexPlan *cache.TTLIndexScanPlan
+	lastKey   []types.Datum
 }
 
-// NewScanQueryGenerator creates a new ScanQueryGenerator
+// NewScanQueryGenerator creates a primary-key scan query generator.
 func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
 	rangeStart, rangeEnd []types.Datum) (*ScanQueryGenerator, error) {
+	return newScanQueryGenerator(tbl, expire, rangeStart, rangeEnd, nil)
+}
+
+// NewIndexScanQueryGenerator creates an index scan query generator.
+func NewIndexScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
+	rangeStart, rangeEnd []types.Datum, index *model.IndexInfo) (*ScanQueryGenerator, error) {
+	if index == nil {
+		return nil, errors.New("TTL index is required")
+	}
+	return newScanQueryGenerator(tbl, expire, rangeStart, rangeEnd, index)
+}
+
+func newScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
+	rangeStart, rangeEnd []types.Datum, index *model.IndexInfo) (*ScanQueryGenerator, error) {
 	if err := tbl.ValidateKeyPrefix(rangeStart); err != nil {
 		return nil, err
 	}
@@ -326,16 +440,32 @@ func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
 		return nil, err
 	}
 
+	var indexPlan *cache.TTLIndexScanPlan
+	if index != nil {
+		if len(rangeStart) > 1 {
+			return nil, errors.Errorf("invalid index scan range start length: %d, expected 1", len(rangeStart))
+		}
+		if len(rangeEnd) > 1 {
+			return nil, errors.Errorf("invalid index scan range end length: %d, expected 1", len(rangeEnd))
+		}
+		var err error
+		indexPlan, err = tbl.BuildTTLIndexScanPlan(index)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &ScanQueryGenerator{
 		tbl:           tbl,
 		expire:        expire,
 		keyRangeStart: rangeStart,
 		keyRangeEnd:   rangeEnd,
 		firstBuild:    true,
+		indexPlan:     indexPlan,
 	}, nil
 }
 
-// NextSQL creates next sql of the scan task
+// NextSQL creates next sql of the scan task.
 func (g *ScanQueryGenerator) NextSQL(continueFromResult [][]types.Datum, nextLimit int) (string, error) {
 	if g.exhausted {
 		return "", errors.New("generator is exhausted")
@@ -349,6 +479,13 @@ func (g *ScanQueryGenerator) NextSQL(continueFromResult [][]types.Datum, nextLim
 		g.firstBuild = false
 	}()
 
+	if g.indexPlan != nil {
+		return g.nextSQLForIndex(continueFromResult, nextLimit)
+	}
+	return g.nextSQLForPK(continueFromResult, nextLimit)
+}
+
+func (g *ScanQueryGenerator) nextSQLForPK(continueFromResult [][]types.Datum, nextLimit int) (string, error) {
 	if g.stack == nil {
 		g.stack = make([][]types.Datum, 0, len(g.tbl.KeyColumns))
 	}
@@ -368,6 +505,18 @@ func (g *ScanQueryGenerator) NextSQL(continueFromResult [][]types.Datum, nextLim
 		if len(g.stack) == 0 {
 			g.exhausted = true
 		}
+	}
+	g.limit = nextLimit
+	return g.buildSQL()
+}
+
+func (g *ScanQueryGenerator) nextSQLForIndex(continueFromResult [][]types.Datum, nextLimit int) (string, error) {
+	if len(continueFromResult) >= g.limit {
+		if cnt := len(continueFromResult); cnt > 0 {
+			g.lastKey = g.indexPlan.OrderKey(continueFromResult[cnt-1])
+		}
+	} else if !g.firstBuild {
+		g.exhausted = true
 	}
 	g.limit = nextLimit
 	return g.buildSQL()
@@ -409,7 +558,17 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 	}
 
 	b := NewSQLBuilder(g.tbl)
+	if g.indexPlan != nil {
+		return g.buildSQLForIndex(b)
+	}
+	return g.buildSQLForPK(b)
+}
+
+func (g *ScanQueryGenerator) buildSQLForPK(b *SQLBuilder) (string, error) {
 	if err := b.WriteSelect(); err != nil {
+		return "", err
+	}
+	if err := b.writeUseNoIndex(); err != nil {
 		return "", err
 	}
 	if len(g.stack) > 0 {
@@ -453,6 +612,62 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 	}
 
 	return b.Build()
+}
+
+func (g *ScanQueryGenerator) buildSQLForIndex(b *SQLBuilder) (string, error) {
+	if err := b.writeSelectColumns(g.indexPlan.ScanColumns); err != nil {
+		return "", err
+	}
+	if err := b.writeForceIndex(g.indexPlan.Index.Name.O); err != nil {
+		return "", err
+	}
+
+	if g.lastKey != nil {
+		if err := b.writeLexicographicGreaterThan(g.indexPlan.OrderColumns, g.lastKey); err != nil {
+			return "", err
+		}
+	} else if g.firstBuild && len(g.keyRangeStart) > 0 {
+		// First build: time_col >= range_start
+		if err := b.WriteCommonCondition([]*model.ColumnInfo{g.tbl.TimeColumn}, ">=", g.keyRangeStart); err != nil {
+			return "", err
+		}
+	}
+
+	if len(g.keyRangeEnd) > 0 {
+		if err := b.WriteCommonCondition([]*model.ColumnInfo{g.tbl.TimeColumn}, "<", g.keyRangeEnd); err != nil {
+			return "", err
+		}
+	}
+
+	if err := b.WriteExpireCondition(g.expire); err != nil {
+		return "", err
+	}
+
+	if err := b.WriteOrderBy(g.indexPlan.OrderColumns, false); err != nil {
+		return "", err
+	}
+
+	if err := b.WriteLimit(g.limit); err != nil {
+		return "", err
+	}
+
+	return b.Build()
+}
+
+// ScanColumnTypes returns the SQL result types for this generator.
+func (g *ScanQueryGenerator) ScanColumnTypes() []*types.FieldType {
+	if g.indexPlan != nil {
+		return g.indexPlan.ScanColumnTypes
+	}
+	return g.tbl.KeyColumnTypes
+}
+
+// TableKey extracts the table key from a scan result row.
+func (g *ScanQueryGenerator) TableKey(row []types.Datum) []types.Datum {
+	if g.indexPlan != nil {
+		return g.indexPlan.TableKey(row)
+	}
+	return row[:len(g.tbl.KeyColumns)]
 }
 
 // BuildDeleteSQL builds a delete SQL

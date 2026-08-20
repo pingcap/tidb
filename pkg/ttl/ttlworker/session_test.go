@@ -252,7 +252,7 @@ func (s *mockSession) ResetWithGlobalTimeZone(_ context.Context) (err error) {
 
 // GlobalTimeZone returns the global timezone
 func (s *mockSession) GlobalTimeZone(_ context.Context) (*time.Location, error) {
-	return time.Local, nil
+	return s.sessionVars.Location(), nil
 }
 
 // KillStmt kills the current statement execution
