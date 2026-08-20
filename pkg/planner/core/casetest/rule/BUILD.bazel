@@ -17,7 +17,11 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     shard_count = 21,
+=======
+    shard_count = 26,
+>>>>>>> 70cff7d9f66 (planner: give every appended handle column a length in selectivity (#70541))
     deps = [
         "//pkg/config",
         "//pkg/domain",
