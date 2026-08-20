@@ -21,6 +21,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -75,6 +76,21 @@ func TestDivideSubtasks(t *testing.T) {
 	require.Nil(t, divideSubtasks(nil, 2))
 }
 
+func TestNewSubtaskMeta(t *testing.T) {
+	chunks := []Chunk{
+		{Ordinal: 0, Size: 100},
+		{Ordinal: 1, Size: 250},
+	}
+	sm := newSubtaskMeta(chunks)
+	require.Equal(t, chunks, sm.Chunks)
+	require.Equal(t, 2, sm.ChunkCount)
+	require.Equal(t, int64(350), sm.TotalSize)
+
+	empty := newSubtaskMeta(nil)
+	require.Equal(t, 0, empty.ChunkCount)
+	require.Equal(t, int64(0), empty.TotalSize)
+}
+
 func TestSubtaskMetaExternal(t *testing.T) {
 	store := objstore.NewMemStorage()
 	extstore.SetGlobalExtStorageForTest(store)
@@ -109,6 +125,40 @@ func TestSubtaskMetaExternal(t *testing.T) {
 	require.Empty(t, got.Chunks)
 	require.NoError(t, got.ReadJSONFromExternalStorage(ctx, store, got))
 	require.Equal(t, chunks, got.Chunks)
+}
+
+func TestMarshalSubtasks(t *testing.T) {
+	store := objstore.NewMemStorage()
+	extstore.SetGlobalExtStorageForTest(store)
+	t.Cleanup(func() { extstore.SetGlobalExtStorageForTest(nil) })
+	ctx := context.Background()
+
+	groups := [][]Chunk{
+		{{Ordinal: 0, Size: 100}, {Ordinal: 1, Size: 200}},
+		{{Ordinal: 2, Size: 50}},
+	}
+	metas, err := marshalSubtasks(ctx, 7, proto.ExportStepDump, groups)
+	require.NoError(t, err)
+	require.Len(t, metas, 2)
+
+	// The row keeps the chunk-batch summary but not the chunk payload, so
+	// stats stay queryable after the external file is cleaned up.
+	var sm0 SubtaskMeta
+	require.NoError(t, json.Unmarshal(metas[0], &sm0))
+	require.Equal(t, "7/plan/dump/1/meta.json", sm0.ExternalPath)
+	require.Equal(t, 2, sm0.ChunkCount)
+	require.Equal(t, int64(300), sm0.TotalSize)
+	require.Empty(t, sm0.Chunks)
+
+	var sm1 SubtaskMeta
+	require.NoError(t, json.Unmarshal(metas[1], &sm1))
+	require.Equal(t, "7/plan/dump/2/meta.json", sm1.ExternalPath)
+	require.Equal(t, 1, sm1.ChunkCount)
+	require.Equal(t, int64(50), sm1.TotalSize)
+
+	empty, err := marshalSubtasks(ctx, 7, proto.ExportStepDump, nil)
+	require.NoError(t, err)
+	require.Nil(t, empty)
 }
 
 func TestChunksBySize(t *testing.T) {

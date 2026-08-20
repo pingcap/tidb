@@ -29,7 +29,7 @@ type TaskMeta struct {
 	SnapshotTS uint64   `json:"snapshot_ts"`
 	// PreparedPlanPath is the external-storage path of the chunks built during prepare.
 	PreparedPlanPath string `json:"prepared_plan_path"`
-	Dest             string `json:"dest"`
+	DestURI          string `json:"dest_uri"`
 	Format           string `json:"format"`
 	// FileSize is the size in bytes at which the executor cuts output files.
 	FileSize int64 `json:"file_size"`
@@ -51,8 +51,9 @@ type Chunk struct {
 	PhysicalID int64  `json:"physical_id"`
 	Start      []byte `json:"start"`
 	End        []byte `json:"end"`
-	Size       int64  `json:"size"`
-	Ordinal    int    `json:"ordinal"`
+	// Size is PD's estimated byte size of [Start, End), not an exact count.
+	Size    int64 `json:"size"`
+	Ordinal int   `json:"ordinal"`
 }
 
 // SubtaskMeta is the external representation of a chunk batch. The prepared
@@ -60,4 +61,17 @@ type Chunk struct {
 type SubtaskMeta struct {
 	dxfutil.BaseExternalMeta
 	Chunks []Chunk `json:"chunks" external:"true"`
+	// ChunkCount and TotalSize summarize Chunks and, unlike Chunks, are not
+	// external, so they remain readable after the external file is cleaned up.
+	ChunkCount int   `json:"chunk_count"`
+	TotalSize  int64 `json:"total_size"`
+}
+
+// newSubtaskMeta builds a SubtaskMeta from chunks, filling in the summary fields.
+func newSubtaskMeta(chunks []Chunk) *SubtaskMeta {
+	var total int64
+	for _, c := range chunks {
+		total += c.Size
+	}
+	return &SubtaskMeta{Chunks: chunks, ChunkCount: len(chunks), TotalSize: total}
 }

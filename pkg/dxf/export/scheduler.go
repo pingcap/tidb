@@ -229,7 +229,7 @@ func marshalSubtasks(ctx context.Context, taskID int64, step proto.Step, groups 
 	stepStr := proto.Step2Str(proto.Export, step)
 	metas := make([][]byte, 0, len(groups))
 	for i, g := range groups {
-		sm := &SubtaskMeta{Chunks: g}
+		sm := newSubtaskMeta(g)
 		sm.ExternalPath = dxfutil.PlanMetaPath(taskID, stepStr, i+1)
 		if err := sm.WriteJSONToExternalStorage(ctx, store, sm); err != nil {
 			return nil, errors.Trace(err)
