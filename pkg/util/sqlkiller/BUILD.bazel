@@ -20,4 +20,14 @@ go_test(
     srcs = ["sqlkiller_test.go"],
     embed = [":sqlkiller"],
     flaky = True,
+<<<<<<< HEAD
+=======
+    deps = [
+        "//pkg/testkit/testfailpoint",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
+    ],
+>>>>>>> 5af03a2e108 (util: prevent SQLKiller state races during concurrent reset (#70557))
 )
