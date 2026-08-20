@@ -351,6 +351,15 @@ func TestParquetScannedPosByReadRows(t *testing.T) {
 }
 
 func TestParquetVariousTypes(t *testing.T) {
+	t.Run("rejects_inapplicable_logical_type", func(t *testing.T) {
+		err := validateParquetLogicalType(
+			schema.NewTimeLogicalType(false, schema.TimeUnitNanos),
+			parquet.Types.Int32,
+			-1,
+		)
+		require.ErrorContains(t, err, "not applicable")
+	})
+
 	t.Run("logical_uint32_preserves_high_bits", func(t *testing.T) {
 		physicalValues := []int32{0, int32(1<<31 - 1), int32(-1 << 31), -1}
 		pc := []testutils.ParquetColumn{{

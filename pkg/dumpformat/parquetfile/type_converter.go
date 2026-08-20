@@ -193,8 +193,6 @@ func getInt32Setter(parquetColumnType *parquetColumnType, loc *time.Location) se
 	// For parquet TIME/TIMESTAMP epoch values:
 	// - IsAdjustedToUTC=true: interpret as UTC instant, then render in parser location.
 	// - IsAdjustedToUTC=false: keep as local-semantics wall clock ("as-if UTC"), no loc conversion.
-	// The LogicalType's IsAdjustedToUTC flag controls whether the decoded instant
-	// is rendered in the parser location or kept as a wall-clock value.
 	switch logicalType := parquetColumnType.logicalType.(type) {
 	case schema.DecimalLogicalType:
 		return func(val int32, d *types.Datum) error {
@@ -222,6 +220,7 @@ func getInt32Setter(parquetColumnType *parquetColumnType, loc *time.Location) se
 			if logicalType.IsSigned() {
 				d.SetInt64(int64(val))
 			} else {
+				// Reinterpret the physical INT32 bits before widening to avoid sign extension.
 				d.SetUint64(uint64(uint32(val)))
 			}
 			return nil
@@ -253,47 +252,42 @@ func getInt64Setter(parquetColumnType *parquetColumnType, loc *time.Location) se
 			return nil
 		}
 	case schema.TimeLogicalType:
+		timeUnit := logicalType.TimeUnit()
+		var toTime func(int64) time.Time
+		switch timeUnit {
+		case schema.TimeUnitNanos:
+			toTime = func(val int64) time.Time { return time.Unix(0, val).In(time.UTC) }
+		case schema.TimeUnitMicros:
+			toTime = func(val int64) time.Time { return time.UnixMicro(val).In(time.UTC) }
+		default:
+			return unsupportedParquetValueSetter[int64](logicalType)
+		}
 		return func(val int64, d *types.Datum) error {
-			var t time.Time
-			switch logicalType.TimeUnit() {
-			case schema.TimeUnitNanos:
-				t = time.Unix(0, val).In(time.UTC)
-			case schema.TimeUnitMicros:
-				t = time.UnixMicro(val).In(time.UTC)
-			default:
-				return errors.Errorf("unsupported parquet time unit %d", logicalType.TimeUnit())
-			}
+			t := toTime(val)
 			return setTimestampDatum(t, d, loc, logicalType.IsAdjustedToUTC())
 		}
 	case schema.TimestampLogicalType:
+		timeUnit := logicalType.TimeUnit()
+		var arrowUnit arrow.TimeUnit
+		switch timeUnit {
+		case schema.TimeUnitMillis:
+			arrowUnit = arrow.Millisecond
+		case schema.TimeUnitMicros:
+			arrowUnit = arrow.Microsecond
+		case schema.TimeUnitNanos:
+			arrowUnit = arrow.Nanosecond
+		default:
+			return unsupportedParquetValueSetter[int64](logicalType)
+		}
 		return func(val int64, d *types.Datum) error {
-			if parquetColumnType.sparkRebaseMicros.timeZoneID != "" && logicalType.TimeUnit() != schema.TimeUnitNanos {
-				rebaseMicros := val
-				if logicalType.TimeUnit() == schema.TimeUnitMillis {
-					rebaseMicros *= 1000
-				}
-				rebased, err := parquetColumnType.sparkRebaseMicros.rebase(rebaseMicros)
+			if parquetColumnType.sparkRebaseMicros.timeZoneID != "" {
+				var err error
+				val, err = rebaseTimestampValue(val, timeUnit, parquetColumnType.sparkRebaseMicros)
 				if err != nil {
 					return err
 				}
-				if logicalType.TimeUnit() == schema.TimeUnitMillis {
-					val = rebased / 1000
-				} else {
-					val = rebased
-				}
 			}
-			var unit arrow.TimeUnit
-			switch logicalType.TimeUnit() {
-			case schema.TimeUnitMillis:
-				unit = arrow.Millisecond
-			case schema.TimeUnitMicros:
-				unit = arrow.Microsecond
-			case schema.TimeUnitNanos:
-				unit = arrow.Nanosecond
-			default:
-				return errors.Errorf("unsupported parquet timestamp time unit %d", logicalType.TimeUnit())
-			}
-			t := arrow.Timestamp(val).ToTime(unit)
+			t := arrow.Timestamp(val).ToTime(arrowUnit)
 			return setTimestampDatum(t, d, loc, logicalType.IsAdjustedToUTC())
 		}
 	case schema.DecimalLogicalType:
@@ -321,6 +315,8 @@ func newInt96(microseconds int64) parquet.Int96 {
 	return parquet.Int96(b)
 }
 
+// setTimestampDatum converts a decoded timestamp to a MySQL TIMESTAMP datum,
+// applying the parser location only for UTC-adjusted values.
 func setTimestampDatum(t time.Time, d *types.Datum, loc *time.Location, adjustedToUTC bool) error {
 	if adjustedToUTC {
 		t = t.In(loc)
@@ -328,6 +324,20 @@ func setTimestampDatum(t time.Time, d *types.Datum, loc *time.Location, adjusted
 	mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
 	d.SetMysqlTime(mysqlTime)
 	return nil
+}
+
+func rebaseTimestampValue(val int64, unit schema.TimeUnitType, lookup sparkRebaseMicrosLookup) (int64, error) {
+	switch unit {
+	case schema.TimeUnitMillis:
+		rebased, err := lookup.rebase(val * 1000)
+		return rebased / 1000, err
+	case schema.TimeUnitMicros:
+		return lookup.rebase(val)
+	case schema.TimeUnitNanos:
+		return 0, errors.New("Spark legacy rebase is unsupported for TIMESTAMP(NANOS)")
+	default:
+		return 0, errors.Errorf("unsupported parquet timestamp time unit %d", unit)
+	}
 }
 
 func decodeInt96ToTime(val parquet.Int96, rebaseMicros sparkRebaseMicrosLookup) (time.Time, error) {

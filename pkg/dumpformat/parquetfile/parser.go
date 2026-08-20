@@ -56,13 +56,18 @@ var (
 	readBatchSize = 128
 )
 
-func isUnsupportedLogicalType(logicalType schema.LogicalType) bool {
+func validateParquetLogicalType(logicalType schema.LogicalType, physicalType parquet.Type, typeLength int) error {
 	switch logicalType.(type) {
-	case schema.ListLogicalType, schema.MapLogicalType, schema.IntervalLogicalType, schema.UnknownLogicalType:
-		return true
-	default:
-		return false
+	case schema.ListLogicalType, schema.MapLogicalType, schema.IntervalLogicalType,
+		schema.UnknownLogicalType, schema.UUIDLogicalType, schema.Float16LogicalType, schema.VariantLogicalType:
+		// Nested types and logical types without a scalar setter are not supported
+		// by the row-oriented import parser yet.
+		return errors.Errorf("unsupported parquet logical type %s", logicalType.String())
 	}
+	if !logicalType.IsApplicable(physicalType, int32(typeLength)) {
+		return errors.Errorf("logical type %s is not applicable to physical type %s", logicalType.String(), physicalType)
+	}
+	return nil
 }
 
 // FileMeta contains some analyzed metadata for a parquet file.
@@ -684,12 +689,8 @@ func NewParser(
 			logicalType = desc.ConvertedType().ToLogicalType(decimalMeta)
 		}
 		colTypes[i].logicalType = logicalType
-		if isUnsupportedLogicalType(logicalType) {
-			return nil, errors.Errorf("unsupported parquet logical type %s", logicalType.String())
-		}
-		if !logicalType.IsApplicable(desc.PhysicalType(), int32(desc.TypeLength())) {
-			return nil, errors.Errorf("logical type %s is not applicable to physical type %s",
-				logicalType.String(), desc.PhysicalType())
+		if err := validateParquetLogicalType(logicalType, desc.PhysicalType(), desc.TypeLength()); err != nil {
+			return nil, err
 		}
 		switch desc.PhysicalType() {
 		case parquet.Types.Int32:
@@ -714,6 +715,11 @@ func NewParser(
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+		}
+		if timestamp, ok := logicalType.(schema.TimestampLogicalType); ok &&
+			timestamp.TimeUnit() == schema.TimeUnitNanos &&
+			colTypes[i].sparkRebaseMicros.timeZoneID != "" {
+			return nil, errors.New("Spark legacy rebase is unsupported for TIMESTAMP(NANOS)")
 		}
 	}
 
