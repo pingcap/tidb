@@ -98,6 +98,7 @@ func TestMapBRIEErrPreservesCancelCause(t *testing.T) {
 
 func TestClearTaskKeepsUnfinishedBRIETasks(t *testing.T) {
 	ResetGlobalBRIEQueueForTest()
+	t.Cleanup(ResetGlobalBRIEQueueForTest)
 	sctx := mock.NewContext()
 	ctx := context.Background()
 
@@ -125,6 +126,55 @@ func TestClearTaskKeepsUnfinishedBRIETasks(t *testing.T) {
 	globalBRIEQueue.clearTask(sctx.GetSessionVars().StmtCtx)
 	_, ok = globalBRIEQueue.queryTask(finishedID)
 	require.False(t, ok, "outdated finished BRIE tasks should still be garbage-collected")
+}
+
+func TestBRIEAcquireTaskCancellationRecordsTerminalState(t *testing.T) {
+	ResetGlobalBRIEQueueForTest()
+	t.Cleanup(ResetGlobalBRIEQueueForTest)
+	bq := globalBRIEQueue
+	bq.workerCh <- struct{}{}
+	t.Cleanup(func() {
+		select {
+		case <-bq.workerCh:
+		default:
+		}
+	})
+
+	sctx := mock.NewContext()
+	e := &BRIEExec{
+		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0),
+		info: &brieTaskInfo{
+			kind:    ast.BRIEKindBackup,
+			storage: "noop://queued",
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- e.Next(ctx, exec.NewFirstChunk(e))
+	}()
+
+	require.Eventually(t, func() bool {
+		_, ok := bq.queryTask(1)
+		return ok
+	}, time.Second, 10*time.Millisecond)
+	cancel()
+	var err error
+	select {
+	case err = <-errCh:
+	case <-time.After(time.Second):
+		t.Fatal("queued BRIE task did not return after cancellation")
+	}
+	require.ErrorIs(t, err, context.Canceled)
+	require.False(t, e.info.finishTime.IsZero())
+	require.Equal(t, err.Error(), e.info.message)
+
+	e.info.finishTime = types.NewTime(types.FromGoTime(time.Now().Add(-outdatedDuration.Duration-time.Minute)), mysql.TypeDatetime, 0)
+	bq.lastClearTime = time.Now().Add(-clearInterval - time.Second)
+	bq.clearTask(sctx.GetSessionVars().StmtCtx)
+	_, ok := bq.queryTask(1)
+	require.False(t, ok, "cancelled queued BRIE tasks should be garbage-collected after expiry")
 }
 
 func brieTaskInfoToResult(info *brieTaskInfo) string {
