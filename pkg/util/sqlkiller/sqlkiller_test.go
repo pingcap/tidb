@@ -17,8 +17,11 @@ package sqlkiller
 import (
 	"testing"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestSQLKillerConcurrentReset(t *testing.T) {
@@ -53,17 +56,26 @@ func TestSQLKillerConcurrentReset(t *testing.T) {
 
 	t.Run("reset after successful kill signal CAS", func(t *testing.T) {
 		killer := &SQLKiller{}
-		resetDone := make(chan struct{})
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/util/sqlkiller/afterSendKillSignalCAS", func() {
-			assertStateLockHeld(t, killer)
-			go func() {
-				defer close(resetDone)
-				killer.Reset()
-			}()
+		core, logs := observer.New(zap.WarnLevel)
+		restoreLogger := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{
+			Core:  core,
+			Level: zap.NewAtomicLevelAt(zap.WarnLevel),
+		})
+		defer restoreLogger()
+
+		const beforeLogFailpoint = "github.com/pingcap/tidb/pkg/util/sqlkiller/" +
+			"beforeLogKillSignal"
+		testfailpoint.EnableCall(t, beforeLogFailpoint, func() {
+			killer.Reset()
 		})
 
-		killer.SendKillSignal(QueryInterrupted)
-		<-resetDone
+		require.NotPanics(t, func() {
+			killer.SendKillSignal(QueryInterrupted)
+		})
+		initiatedLogs := logs.FilterMessage("kill initiated").All()
+		require.Len(t, initiatedLogs, 1)
+		require.Equal(t, killer.getKillError(QueryInterrupted, "").Error(),
+			initiatedLogs[0].ContextMap()["reason"])
 
 		require.Equal(t, UnspecifiedKillSignal, killer.GetKillSignal())
 		require.NoError(t, killer.HandleSignal())

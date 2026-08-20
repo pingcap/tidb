@@ -22,6 +22,9 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/testkit/testfailpoint",
+        "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )
