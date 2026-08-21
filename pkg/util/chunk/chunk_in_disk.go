@@ -144,7 +144,8 @@ func (d *DataInDiskByChunks) readFromFisk(chkIdx int) error {
 		return err
 	}
 
-	reader := d.dataFile.getSectionReader(d.offsetOfEachChunk[chkIdx])
+	reader, release := d.dataFile.getSectionReader(d.offsetOfEachChunk[chkIdx])
+	defer release()
 	chkSize := d.getChunkSize(chkIdx)
 
 	if cap(d.buf) < int(chkSize) {
