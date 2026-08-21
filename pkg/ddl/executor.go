@@ -2272,13 +2272,64 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
+	constraintInfos, err := buildInlineCheckConstraints(tbInfo, specNewColumn)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	args := &model.TableColumnArgs{
 		Col:                col.ColumnInfo,
 		Pos:                spec.Position,
 		IgnoreExistenceErr: spec.IfNotExists,
+		Constraints:        constraintInfos,
 	}
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
+}
+
+// buildInlineCheckConstraints extracts CHECK constraint info from ADD COLUMN column definition.
+func buildInlineCheckConstraints(tblInfo *model.TableInfo, colDef *ast.ColumnDef) ([]*model.ConstraintInfo, error) {
+	if !vardef.EnableCheckConstraint.Load() {
+		return nil, nil
+	}
+	var constrs []*ast.Constraint
+	for _, opt := range colDef.Options {
+		if opt.Tp != ast.ColumnOptionCheck {
+			continue
+		}
+		constrs = append(constrs, &ast.Constraint{
+			Tp:           ast.ConstraintCheck,
+			Expr:         opt.Expr,
+			Enforced:     opt.Enforced,
+			Name:         opt.ConstraintName,
+			InColumn:     true,
+			InColumnName: colDef.Name.Name.O,
+		})
+	}
+	if len(constrs) == 0 {
+		return nil, nil
+	}
+	// Generate auto names for unnamed constraints.
+	namesMap := map[string]bool{}
+	for _, c := range tblInfo.Constraints {
+		namesMap[c.Name.L] = true
+	}
+	setEmptyCheckConstraintName(tblInfo.Name.L, namesMap, constrs)
+
+	infos := make([]*model.ConstraintInfo, 0, len(constrs))
+	for _, constr := range constrs {
+		dependedColsMap := findDependentColsInExpr(constr.Expr)
+		dependedCols := make([]ast.CIStr, 0, len(dependedColsMap))
+		for k := range dependedColsMap {
+			dependedCols = append(dependedCols, ast.NewCIStr(k))
+		}
+		info, err := buildConstraintInfo(tblInfo, dependedCols, constr, model.StatePublic)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		infos = append(infos, info)
+	}
+	setNameForConstraintInfo(tblInfo.Name.L, namesMap, infos)
+	return infos, nil
 }
 
 // AddTablePartitions will add a new partition to the table.
