@@ -15,7 +15,9 @@
 package ddl
 
 import (
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -33,6 +35,13 @@ func NewMetaBuildContextWithSctx(sctx sessionctx.Context, otherOpts ...metabuild
 		metabuild.WithShardRowIDBits(sessVars.ShardRowIDBits),
 		metabuild.WithPreSplitRegions(sessVars.PreSplitRegions),
 		metabuild.WithInfoSchema(sctx.GetLatestInfoSchema()),
+	}
+
+	// Resolve the fulltext analyzer settings here rather than during meta
+	// building: a FULLTEXT index freezes them into the schema, so they must be
+	// read once from the session issuing the statement.
+	if ftsConfig, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, model.FullTextParserTypeStandardV1); err == nil {
+		opts = append(opts, metabuild.WithFullTextAnalyzer(ftsConfig))
 	}
 
 	if len(otherOpts) > 0 {

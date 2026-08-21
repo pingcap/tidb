@@ -2203,6 +2203,13 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.WaitTimeout, Value: strconv.FormatInt(vardef.DefWaitTimeout, 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: secondsPerYear},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.InteractiveTimeout, Value: "28800", Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: secondsPerYear},
+	// The fulltext analyzer sysvars below drive local MATCH ... AGAINST tokenization
+	// (see pkg/expression/fulltext). Bounds match MySQL's InnoDB/ngram parsers so a
+	// token stream analyzed here matches what MySQL would produce for the same text.
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.InnodbFtEnableStopword, Value: vardef.On, Type: vardef.TypeBool, AutoConvertNegativeBool: true},
+	{Scope: vardef.ScopeGlobal, Name: vardef.InnodbFtMaxTokenSize, Value: "84", Type: vardef.TypeUnsigned, MinValue: 10, MaxValue: 84},
+	{Scope: vardef.ScopeGlobal, Name: vardef.InnodbFtMinTokenSize, Value: "3", Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: 16},
+	{Scope: vardef.ScopeGlobal, Name: vardef.NgramTokenSize, Value: "2", Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: 10},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.InnodbLockWaitTimeout, Value: strconv.FormatInt(vardef.DefInnodbLockWaitTimeout, 10), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: 1073741824, SetSession: func(s *SessionVars, val string) error {
 		lockWaitSec := TidbOptInt64(val, vardef.DefInnodbLockWaitTimeout)
 		s.LockWaitTimeout = lockWaitSec * 1000
@@ -2685,6 +2692,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableAlternativeLogicalPlans, Value: BoolToOnOff(vardef.DefOptEnableAlternativeLogicalPlans), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableAlternativeLogicalPlans = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableLocalMatchAgainst, Value: BoolToOnOff(vardef.DefTiDBEnableLocalMatchAgainst), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableLocalMatchAgainst = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableStrictDoubleTypeCheck, Value: BoolToOnOff(vardef.DefEnableStrictDoubleTypeCheck), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {

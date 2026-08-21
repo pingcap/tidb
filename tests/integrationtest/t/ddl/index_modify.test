@@ -49,3 +49,49 @@ admin check table test_add_index_restore_data;
 
 drop table if exists test_add_index_restore_data;
 set global tidb_ddl_enable_fast_reorg=default;
+
+# FULLTEXT index on the classic kernel, materialised as a multi-valued index
+# over a hidden tokenized column.
+drop table if exists fts_articles;
+create table fts_articles (id int primary key, body varchar(255));
+insert into fts_articles values (1, 'distributed sql database'), (2, 'relational storage engine');
+alter table fts_articles add fulltext index idx_body (body);
+insert into fts_articles values (3, 'distributed storage layer');
+admin check table fts_articles;
+
+# The tokenized column is hidden, so it must not appear in the row or the
+# column list.
+select * from fts_articles order by id;
+show columns from fts_articles;
+
+# The index is reported as the expression index it is stored as: the shape of
+# the expression alone cannot prove FULLTEXT origin, so rendering it back as
+# FULLTEXT KEY would also claim hand-written FTS_TOKENIZE indexes and drop
+# their literals.
+show create table fts_articles;
+
+# The index carries real entries for rows added by backfill and by later writes.
+select id from fts_articles use index (idx_body) order by id;
+
+# An inline FULLTEXT KEY is rewritten too.
+drop table if exists fts_inline;
+create table fts_inline (id int primary key, body varchar(255), fulltext key idx_body (body));
+show create table fts_inline;
+insert into fts_inline values (1, 'distributed sql');
+admin check table fts_inline;
+
+# A non-default parser is recorded and reported.
+drop table if exists fts_ngram;
+create table fts_ngram (id int primary key, body varchar(255));
+alter table fts_ngram add fulltext index idx_body (body) with parser ngram;
+show create table fts_ngram;
+
+# An ordinary multi-valued index is unaffected by the FULLTEXT rendering.
+drop table if exists mv_plain;
+create table mv_plain (id int primary key, j json, key idx((cast(j->'$.tags' as char(20) array))));
+show create table mv_plain;
+
+-- error 8200
+alter table fts_articles add fulltext index idx_bad (id);
+
+drop table if exists fts_articles, fts_inline, fts_ngram, mv_plain;

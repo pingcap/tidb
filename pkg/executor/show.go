@@ -1225,6 +1225,37 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	}
 
 	for i, idxInfo := range publicIndices {
+		// A FULLTEXT index on the classic kernel is stored as a multi-valued
+		// index over a hidden tokenized column. Report it the way it was
+		// declared, so the output stays MySQL-compatible and restorable.
+		//
+		// Gated on idxInfo.Tp, the marker recorded when the FULLTEXT rewrite
+		// ran, rather than on the shape of the generated expression: anyone can
+		// write an expression index over FTS_TOKENIZE, and describing theirs as
+		// FULLTEXT KEY would discard the analyzer literals they chose.
+		//
+		// Note the analyzer settings are not shown, matching MySQL, where the
+		// innodb_ft_* variables are read at build time and likewise absent
+		// here. Restoring onto a differently configured server therefore
+		// tokenizes differently, again as in MySQL.
+		if ftsOrigin, isFTS := fullTextMVIndexOrigin(tableInfo, idxInfo); isFTS {
+			fmt.Fprintf(buf, "  FULLTEXT KEY %s (%s)",
+				stringutil.Escape(idxInfo.Name.O, sqlMode),
+				stringutil.Escape(ftsOrigin.ColumnName.O, sqlMode))
+			if ftsOrigin.ParserType != model.FullTextParserTypeStandardV1 {
+				fmt.Fprintf(buf, " WITH PARSER %s", ftsOrigin.ParserType.SQLName())
+			}
+			if idxInfo.Invisible {
+				fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
+			}
+			if idxInfo.Comment != "" {
+				fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
+			}
+			if i != len(publicIndices)-1 {
+				buf.WriteString(",\n")
+			}
+			continue
+		}
 		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
 		} else if idxInfo.Unique {
@@ -2923,4 +2954,27 @@ func formatSplitValue(parser *parser.Parser, buf *bytes.Buffer, val string) erro
 		expr.Format(buf)
 	}
 	return err
+}
+
+// fullTextMVIndexOrigin reports whether idxInfo was declared as a FULLTEXT
+// index and materialised as a multi-valued index over a hidden tokenized
+// column, and if so recovers the column and parser it was declared with.
+//
+// The Tp check is what distinguishes it from an expression index a user wrote
+// over FTS_TOKENIZE themselves: only the FULLTEXT rewrite records that type.
+// The expression is still parsed, both to recover the column name and as a
+// consistency check on the marker.
+func fullTextMVIndexOrigin(tableInfo *model.TableInfo, idxInfo *model.IndexInfo) (expression.FTSTokenizeIndexOrigin, bool) {
+	if idxInfo.Tp != ast.IndexTypeFulltext || !idxInfo.MVIndex || len(idxInfo.Columns) != 1 {
+		return expression.FTSTokenizeIndexOrigin{}, false
+	}
+	offset := idxInfo.Columns[0].Offset
+	if offset < 0 || offset >= len(tableInfo.Columns) {
+		return expression.FTSTokenizeIndexOrigin{}, false
+	}
+	col := tableInfo.Columns[offset]
+	if !col.Hidden {
+		return expression.FTSTokenizeIndexOrigin{}, false
+	}
+	return expression.ParseFTSTokenizeIndexExpr(col.GeneratedExprString)
 }

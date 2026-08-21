@@ -460,6 +460,11 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.Reverse:    {},
 	ast.VitessHash: {},
 	ast.TiDBShard:  {},
+	// FTS_TOKENIZE backs the multi-valued index a FULLTEXT index is built as,
+	// so it has to be usable in an expression index without the experimental
+	// config. Users do not write it themselves; DDL generates the call, and it
+	// is deterministic in its arguments by construction.
+	ast.FTSTokenize: {},
 	// JSON functions.
 	ast.JSONType:          {},
 	ast.JSONExtract:       {},

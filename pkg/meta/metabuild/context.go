@@ -17,6 +17,7 @@ package metabuild
 import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -77,6 +78,16 @@ func WithShardRowIDBits(bits uint64) Option {
 	})
 }
 
+// WithFullTextAnalyzer sets the analyzer configuration used when a FULLTEXT
+// index is built as a multi-valued index over tokenized text. It is read from
+// session variables at statement time and frozen into the resulting schema, so
+// meta building must not consult those variables itself.
+func WithFullTextAnalyzer(config fulltext.AnalyzerConfig) Option {
+	return funcOpt(func(ctx *Context) {
+		ctx.fullTextAnalyzer = config
+	})
+}
+
 // WithPreSplitRegions sets the pre-split regions.
 func WithPreSplitRegions(regions uint64) Option {
 	return funcOpt(func(ctx *Context) {
@@ -108,6 +119,7 @@ type Context struct {
 	preSplitRegions                uint64
 	suppressTooLongIndexErr        bool
 	is                             infoschemactx.MetaOnlyInfoSchema
+	fullTextAnalyzer               fulltext.AnalyzerConfig
 }
 
 // NewContext creates a new context for meta-building.
@@ -141,6 +153,12 @@ func NewNonStrictContext() *Context {
 	return NewContext(WithExprCtx(exprstatic.NewExprContext(
 		exprstatic.WithEvalCtx(evalCtx),
 	)))
+}
+
+// GetFullTextAnalyzer returns the analyzer configuration to freeze into a
+// FULLTEXT index definition.
+func (ctx *Context) GetFullTextAnalyzer() fulltext.AnalyzerConfig {
+	return ctx.fullTextAnalyzer
 }
 
 // GetExprCtx returns the expression context of the session.
