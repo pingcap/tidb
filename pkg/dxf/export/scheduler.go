@@ -165,7 +165,7 @@ func (s *exportScheduler) OnNextSubtasksBatch(
 	ctx context.Context,
 	_ storage.TaskHandle,
 	task *proto.Task,
-	_ []string,
+	execIDs []string,
 	nextStep proto.Step,
 ) ([][]byte, error) {
 	switch nextStep {
@@ -174,7 +174,11 @@ func (s *exportScheduler) OnNextSubtasksBatch(
 		if err != nil {
 			return nil, err
 		}
-		groups := divideSubtasks(chunks, max(task.MaxNodeCount, 1))
+		nodeCnt := len(execIDs)
+		if kerneltype.IsNextGen() {
+			nodeCnt = task.MaxNodeCount
+		}
+		groups := divideSubtasks(chunks, nodeCnt)
 		metas, err := marshalSubtasks(ctx, task.ID, nextStep, groups)
 		if err != nil {
 			return nil, err
