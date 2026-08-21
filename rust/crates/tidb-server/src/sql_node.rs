@@ -825,11 +825,6 @@ pub trait QuerySession {
     /// An aborted chain is never flushed, as Go's error return drops them.
     fn flush_multi_statement_warning(&mut self) {}
 
-    /// Drops parser warnings retained for a multi-statement chain that
-    /// aborted before its last statement. Sessions without deferred parser
-    /// warnings keep the default no-op.
-    fn discard_multi_statement_warning(&mut self) {}
-
     /// The command-scoped cancellation authority installed before parsing.
     fn query_cancellation(&self) -> Option<Arc<dyn ActiveQueryCancellation>> {
         None

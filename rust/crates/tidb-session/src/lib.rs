@@ -1159,15 +1159,6 @@ impl Session {
         }
     }
 
-    /// Drops the parser warning retained for an admitted multi-statement
-    /// command that aborted. Go keeps that warning in
-    /// `pkg/server/conn.go`'s `clientConn.handleQuery` local `parserWarns` and
-    /// appends it only from `handleStmt(..., lastStmt=true)`, so returning on
-    /// an earlier statement error drops it.
-    pub fn discard_multi_statement_warning(&mut self) {
-        self.deferred_multi_statement_warning = false;
-    }
-
     /// Parses and executes one SQL statement, reducing the output to rows
     /// or an affected count.
     pub fn run(&mut self, sql: &str) -> Result<StmtResult, DriverError> {

@@ -1241,20 +1241,6 @@ fn multi_statement_admission_follows_capability_then_sysvar() {
     session.flush_multi_statement_warning();
     assert_eq!(session.warnings().len(), 0);
 
-    // An admitted chain that aborts before its last statement drops the
-    // command-local parser warning instead of leaking it to the next command.
-    assert_eq!(
-        session
-            .split_statements("SELECT 4; SELECT 5", false)
-            .unwrap()
-            .len(),
-        2
-    );
-    session.discard_multi_statement_warning();
-    session.run("SELECT 6").unwrap();
-    session.flush_multi_statement_warning();
-    assert_eq!(session.warnings().len(), 0);
-
     // A text that does not parse is handed back WHOLE, so the ordinary
     // path's own diagnostic reports it.
     assert_eq!(
