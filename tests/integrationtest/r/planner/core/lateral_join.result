@@ -21,10 +21,168 @@ a	cnt
 drop table if exists t1, t2;
 create table t1 (a int);
 create table t2 (a int, b varchar(10));
-select * from t1 left join lateral (select b from t2 where t2.a = t1.a limit 1) as lat on true order by t1.a;
-Error 3809 (HY000): Invalid use of LATERAL: LEFT JOIN is not supported with LATERAL
+select * from t1 right join lateral (select b from t2 where t2.a = t1.a limit 1) as lat on true order by t1.a;
+Error 3809 (HY000): Invalid use of LATERAL: RIGHT JOIN is not supported with LATERAL
+select * from t1 natural join lateral (select b from t2 where t2.a = t1.a) as lat;
+Error 3809 (HY000): Invalid use of LATERAL: NATURAL JOIN is not supported with LATERAL
 select * from t1 cross join lateral (select b from t2 where t2.a = t1.a) as lat;
 a	b
+drop table if exists t1, t2, t3;
+create table t1 (a int, x int);
+create table t2 (a int not null, b varchar(10) not null);
+create table t3 (a int primary key, b varchar(10));
+insert into t1 values (1, 10), (2, 20), (3, 30), (4, 40);
+insert into t2 values (1, 'a'), (2, 'c'), (3, 'd'), (3, 'e');
+insert into t3 values (1, 'p'), (2, 'q'), (3, 'r');
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true order by t1.a, lat.b;
+a	x	b
+1	10	a
+2	20	c
+3	30	d
+3	30	e
+4	40	NULL
+select t1.a, lat.b is null from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true order by t1.a, lat.b;
+a	lat.b is null
+1	0
+2	0
+3	0
+3	0
+4	1
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a order by b desc limit 1) as lat on true order by t1.a;
+a	x	b
+1	10	a
+2	20	c
+3	30	e
+4	40	NULL
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on lat.b > 'd' order by t1.a, lat.b;
+a	x	b
+1	10	NULL
+2	20	NULL
+3	30	e
+4	40	NULL
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on t1.a > 2 order by t1.a, lat.b;
+a	x	b
+1	10	NULL
+2	20	NULL
+3	30	d
+3	30	e
+4	40	NULL
+select * from t1 left join lateral (select count(*) as c from t2 where t2.a = t1.a) as lat on true order by t1.a;
+a	x	c
+1	10	1
+2	20	1
+3	30	2
+4	40	0
+select * from t1 left join lateral (select count(*) as c from t2 where t2.a = t1.a having count(*) > 1) as lat on true order by t1.a;
+a	x	c
+1	10	NULL
+2	20	NULL
+3	30	2
+4	40	NULL
+select * from t1 left join lateral (select a as ga, count(*) as c from t2 where t2.a = t1.a group by a) as lat on true order by t1.a;
+a	x	ga	c
+1	10	1	1
+2	20	2	1
+3	30	3	2
+4	40	NULL	NULL
+select * from t1 left join lateral (select a as ga, count(*) as c from t2 where t2.a = t1.a group by a having count(*) > 1) as lat on true order by t1.a;
+a	x	ga	c
+1	10	NULL	NULL
+2	20	NULL	NULL
+3	30	3	2
+4	40	NULL	NULL
+select * from t1 left join lateral (select b as gb, count(*) as c from t2 where t2.a = t1.a group by b) as lat on true order by t1.a, gb;
+a	x	gb	c
+1	10	a	1
+2	20	c	1
+3	30	d	1
+3	30	e	1
+4	40	NULL	NULL
+select t1.a from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true order by t1.a;
+a
+1
+2
+3
+3
+4
+select t1.a from t1 left join lateral (select b from t3 where t3.a = t1.a) as lat on true order by t1.a;
+a
+1
+2
+3
+4
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true where lat.b is not null order by t1.a, lat.b;
+a	x	b
+1	10	a
+2	20	c
+3	30	d
+3	30	e
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true where lat.b is null order by t1.a;
+a	x	b
+4	40	NULL
+select count(lat.b), count(*) from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true;
+count(lat.b)	count(*)
+4	5
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a union all select b from t3 where t3.a = t1.a) as lat on true order by t1.a, lat.b;
+a	x	b
+1	10	a
+1	10	p
+2	20	c
+2	20	q
+3	30	d
+3	30	e
+3	30	r
+4	40	NULL
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a) as l1 on true left join lateral (select concat(l1.b, '!') as bb) as l2 on true order by t1.a, l1.b;
+a	x	b	bb
+1	10	a	a!
+2	20	c	c!
+3	30	d	d!
+3	30	e	e!
+4	40	NULL	NULL
+select * from t1 join t3 using (a) left join lateral (select b as lb from t2 where t2.a = t1.a) as lat on true order by a, lb;
+a	x	b	lb
+1	10	p	a
+2	20	q	c
+3	30	r	d
+3	30	r	e
+select * from t1 join lateral (select b from t2 where t2.a = t1.a) as i on true left join lateral (select b as b2 from t2 where t2.a = t1.a + 1) as o on true order by t1.a, i.b, o.b2;
+a	x	b	b2
+1	10	a	c
+2	20	c	d
+2	20	c	e
+3	30	d	NULL
+3	30	e	NULL
+select * from t1 left join lateral (select t1.x as xx) as lat on true order by t1.a;
+a	x	xx
+1	10	10
+2	20	20
+3	30	30
+4	40	40
+select * from t1 left join lateral (select 1 as one from t2 where t2.a = t1.a) as lat on true order by t1.a, one;
+a	x	one
+1	10	1
+2	20	1
+3	30	1
+3	30	1
+4	40	NULL
+explain format='plan_tree' select * from t1 left join lateral (select b from t2 where t2.a = t1.a limit 1) as lat on true;
+id	task	access object	operator info
+Apply	root		CARTESIAN left outer join, left side:TableReader
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Limit(Probe)	root		offset:0, count:1
+  └─TableReader	root		data:Limit
+    └─Limit	cop[tikv]		offset:0, count:1
+      └─Selection	cop[tikv]		eq(planner__core__lateral_join.t2.a, planner__core__lateral_join.t1.a)
+        └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true;
+id	task	access object	operator info
+HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__lateral_join.t1.a, planner__core__lateral_join.t2.a)]
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 drop table if exists t1, t2;
 create table t1 (a int);
 create table t2 (a int, b varchar(10));
