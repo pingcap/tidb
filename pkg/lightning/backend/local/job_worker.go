@@ -83,7 +83,8 @@ type regionJobBaseWorker struct {
 // Besides, the worker must call jobWg.done() if it does not put the job into jobOutCh.
 func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) (err error) {
 	// As we need to call job.done() after panic, we recover here rather than in worker pool.
-	defer putil.Recover("fast_check_table", "handleTableScanTaskWithRecover", func() {
+	metricsLabel, funcInfo, _ := job.RecoverArgs()
+	defer putil.Recover(metricsLabel, funcInfo, func() {
 		err = errors.Errorf("region job worker panic")
 		job.done(w.jobWg)
 	}, false)
