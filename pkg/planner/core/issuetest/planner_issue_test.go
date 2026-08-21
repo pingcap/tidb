@@ -66,6 +66,28 @@ WHERE B.CONSTRAINT_TYPE = 'FOREIGN KEY'
 	tk.MustQuery(query).Check(testkit.Rows("parent"))
 }
 
+func TestNestedInnerJoinPredicatePropagation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("create table t3 (a int)")
+	tk.MustExec("insert into t1 values (1), (2)")
+	tk.MustExec("insert into t2 values (1), (2)")
+	tk.MustExec("insert into t3 values (1), (2)")
+
+	query := `SELECT STRAIGHT_JOIN t3.a
+FROM t1
+JOIN t2 ON t1.a = t2.a
+JOIN t3 ON t2.a = t3.a
+WHERE t1.a = 1`
+
+	plan := fmt.Sprint(tk.MustQuery("explain format = 'brief' " + query).Rows())
+	require.Contains(t, plan, "eq(test.t3.a, 1)")
+	tk.MustQuery(query).Check(testkit.Rows("1"))
+}
+
 func TestPlannerIssueRegressions(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	resetTestDB := func(t *testing.T, tk *testkit.TestKit) {
