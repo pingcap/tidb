@@ -327,6 +327,14 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	// They are two different sources of ranges, and should not appear together.
 	intest.Assert(!(len(e.partRangeMap) > 0 && len(e.groupedRanges) > 0), "partRangeMap and groupedRanges should not appear together")
 
+	// Ready the memory tracker before the ranges are built, not after: without a dedicated
+	// range tracker, buildKVRangesForIndexReader charges the ranges to this one, and
+	// preparing it afterwards would reset that away. A dummy executor sends no request and
+	// keeps no tracker.
+	if !e.dummy {
+		e.prepareMemTracker()
+	}
+
 	// Build kvRanges considering both partitions and groupedRanges
 	kvRanges, err := e.buildKVRangesForIndexReader()
 	if err != nil {
@@ -388,6 +396,17 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 	return kvReq, err
 }
 
+// prepareMemTracker readies the executor's memory tracker for one Open cycle, detaching
+// and zeroing a tracker left over from a previous cycle.
+func (e *IndexReaderExecutor) prepareMemTracker() {
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.ID(), -1)
+	}
+	e.memTracker.AttachTo(e.stmtMemTracker)
+}
+
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	var err error
 	if e.corColInFilter {
@@ -409,12 +428,11 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		return nil
 	}
 
-	if e.memTracker != nil {
-		e.memTracker.Reset()
-	} else {
-		e.memTracker = memory.NewTracker(e.ID(), -1)
+	if e.memTracker == nil {
+		// An index join inner task builds its ranges before the executor and enters here
+		// directly, so Open has not readied the tracker.
+		e.prepareMemTracker()
 	}
-	e.memTracker.AttachTo(e.stmtMemTracker)
 	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
 		return bytes.Compare(i.StartKey, j.StartKey)
 	})
