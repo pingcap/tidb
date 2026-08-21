@@ -18,8 +18,8 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -27,9 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func TestFailStatementCommitInRetry(t *testing.T) {
@@ -106,28 +108,45 @@ func TestGetTSFailDirtyStateInretry(t *testing.T) {
 }
 
 func TestKillFlagInBackoff(t *testing.T) {
-	// This test checks the `killed` flag is passed down to the backoffer through
-	// session.KVVars.
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec("create table kill_backoff (id int)")
-	// Inject 1 time timeout. If `Killed` is not successfully passed, it will retry and complete query.
-	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `sleep(1000)->return("timeout")->return("")`))
-	defer failpoint.Disable("tikvclient/tikvStoreSendReqResult")
-	// Set kill flag and check its passed to backoffer.
-	go func() {
-		time.Sleep(300 * time.Millisecond)
-		tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-	}()
-	rs, err := tk.Exec("select * from kill_backoff")
+
+	// Keep SQLKiller.Signal clear so selectResult's later SQLKiller check cannot satisfy this test.
+	var killed uint32
+	sessVars := tk.Session().GetSessionVars()
+	originalKilled := sessVars.KVVars.Killed
+	sessVars.KVVars.Killed = &killed
+	t.Cleanup(func() {
+		sessVars.KVVars.Killed = originalKilled
+	})
+
+	var killInjected atomic.Bool
+	ctx := context.WithValue(context.Background(), "sendReqToRegionHook", func(_ *tikvrpc.Request) {
+		if killInjected.CompareAndSwap(false, true) {
+			atomic.StoreUint32(&killed, uint32(sqlkiller.QueryInterrupted))
+		}
+	})
+	// Force one retry so the coprocessor backoffer must observe KVVars.Killed.
+	testfailpoint.Enable(t, "tikvclient/beforeSendReqToRegion", "return(true)")
+	testfailpoint.Enable(t, "tikvclient/mockRetrySendReqToRegion", "1*return(true)->return(false)")
+
+	rss, err := tk.Session().Execute(ctx, "select * from kill_backoff")
 	require.NoError(t, err)
-	_, err = session.ResultSetToStringSlice(context.TODO(), tk.Session(), rs)
-	// `interrupted` is returned when `Killed` is set.
+	require.Len(t, rss, 1)
+	rs := rss[0]
+
+	_, err = session.ResultSetToStringSlice(ctx, tk.Session(), rs)
+	if err != nil {
+		require.NoError(t, rs.Close())
+	}
+	require.True(t, killInjected.Load(), "coprocessor request was not sent")
+	require.Zero(t, tk.Session().GetSessionVars().SQLKiller.GetKillSignal())
+	require.Error(t, err)
 	require.Regexp(t, ".*Query execution was interrupted.*", err.Error())
-	rs.Close()
 }
 
 func TestClusterTableSendError(t *testing.T) {
