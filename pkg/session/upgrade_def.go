@@ -2280,9 +2280,7 @@ func upgradeToVer283(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer284(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, metadef.CreateTiDBMViewRefreshInfoTable)
-	doReentrantDDL(s, metadef.CreateTiDBMLogPurgeInfoTable)
-	doReentrantDDL(s, metadef.CreateTiDBMViewRefreshHistTable)
-	doReentrantDDL(s, metadef.CreateTiDBMViewRefreshAlertTable)
-	doReentrantDDL(s, metadef.CreateTiDBMLogPurgeHistTable)
+	for _, tbl := range systemTablesOfMaterializedViewNextGenVersion {
+		doReentrantDDL(s, tbl.SQL)
+	}
 }
