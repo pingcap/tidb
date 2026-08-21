@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -81,20 +82,50 @@ type dumpStepExecutor struct {
 	store    kv.Storage
 	logger   *zap.Logger
 
-	objStore storeapi.Storage
-	summary  execute.SubtaskSummary
+	objStore  storeapi.Storage
+	tableRefs []tableRef
+	summary   execute.SubtaskSummary
 }
 
 var _ execute.StepExecutor = (*dumpStepExecutor)(nil)
 
 // Init implements execute.StepExecutor.
 func (e *dumpStepExecutor) Init(ctx context.Context) error {
-	objStore, err := objstore.NewFromURL(ctx, e.taskMeta.Dest)
+	objStore, err := objstore.NewFromURL(ctx, e.taskMeta.DestURI)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	e.objStore = objStore
+
+	tableInfos, err := snapshotTableInfos(e.store, e.taskMeta)
+	if err != nil {
+		return err
+	}
+	refs, err := e.taskMeta.tableRefs(tableInfos)
+	if err != nil {
+		return err
+	}
+	e.tableRefs = refs
 	return nil
+}
+
+// decodeSubtaskMeta unmarshals the subtask row and, since marshalSubtasks
+// offloads Chunks to external storage, hydrates it from there when needed.
+func decodeSubtaskMeta(ctx context.Context, subtask *proto.Subtask) (*SubtaskMeta, error) {
+	stMeta := &SubtaskMeta{}
+	if err := json.Unmarshal(subtask.Meta, stMeta); err != nil {
+		return nil, errors.Annotate(err, "unmarshal export subtask meta failed")
+	}
+	if stMeta.ExternalPath != "" {
+		metaStore, err := extstore.GetGlobalExtStorage(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if err := stMeta.ReadJSONFromExternalStorage(ctx, metaStore, stMeta); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return stMeta, nil
 }
 
 // RunSubtask implements execute.StepExecutor. A worker pool (sized to the
@@ -102,9 +133,9 @@ func (e *dumpStepExecutor) Init(ctx context.Context) error {
 // queue and exports each.
 func (e *dumpStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
-	stMeta := &SubtaskMeta{}
-	if err := json.Unmarshal(subtask.Meta, stMeta); err != nil {
-		return errors.Annotate(err, "unmarshal export subtask meta failed")
+	stMeta, err := decodeSubtaskMeta(ctx, subtask)
+	if err != nil {
+		return err
 	}
 	concurrency := max(1, int(e.GetResource().CPU.Capacity()))
 	e.logger.Info("run export dump subtask",

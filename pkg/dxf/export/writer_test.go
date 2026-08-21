@@ -19,7 +19,7 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/dumpformat/csvfile"
+	"github.com/pingcap/tidb/pkg/dumpformat"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -51,8 +51,8 @@ func TestFieldKinds(t *testing.T) {
 		col(mysql.TypeBlob, true),
 		col(mysql.TypeBlob, false),
 	})
-	require.Equal(t, []csvfile.FieldKind{
-		csvfile.KindNumber, csvfile.KindString, csvfile.KindBytes, csvfile.KindString,
+	require.Equal(t, []dumpformat.FieldKind{
+		dumpformat.KindNumber, dumpformat.KindString, dumpformat.KindBytes, dumpformat.KindString,
 	}, kinds)
 }
 
@@ -93,7 +93,7 @@ func TestChunkWriterRotation(t *testing.T) {
 	w := &chunkWriter{
 		ctx: ctx, objStore: store, fileSize: 20,
 		db: "db", table: "t", ordinal: 5,
-		kinds: []csvfile.FieldKind{csvfile.KindNumber},
+		kinds: []dumpformat.FieldKind{dumpformat.KindNumber},
 	}
 	// Each row is "1234567\n" (8 bytes); FileSize 20 cuts a new file after every
 	// third row.
@@ -121,7 +121,7 @@ func TestChunkWriterEmpty(t *testing.T) {
 	w := &chunkWriter{
 		ctx: ctx, objStore: store, fileSize: 20,
 		db: "db", table: "t", ordinal: 0,
-		kinds: []csvfile.FieldKind{csvfile.KindNumber},
+		kinds: []dumpformat.FieldKind{dumpformat.KindNumber},
 	}
 	require.NoError(t, w.close()) // no rows written
 

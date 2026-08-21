@@ -21,6 +21,7 @@ import (
 	"io"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/dumpformat"
 	"github.com/pingcap/tidb/pkg/dumpformat/csvfile"
 	"github.com/pingcap/tidb/pkg/format/textrow"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -52,21 +53,21 @@ func csvConfig() *csvfile.Config {
 }
 
 // fieldKinds classifies each column for CSV framing.
-func fieldKinds(colInfos []*model.ColumnInfo) []csvfile.FieldKind {
-	kinds := make([]csvfile.FieldKind, len(colInfos))
+func fieldKinds(colInfos []*model.ColumnInfo) []dumpformat.FieldKind {
+	kinds := make([]dumpformat.FieldKind, len(colInfos))
 	for i, col := range colInfos {
 		switch col.GetType() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
 			mysql.TypeYear, mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
-			kinds[i] = csvfile.KindNumber
+			kinds[i] = dumpformat.KindNumber
 		case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
 			if mysql.HasBinaryFlag(col.GetFlag()) {
-				kinds[i] = csvfile.KindBytes
+				kinds[i] = dumpformat.KindBytes
 			} else {
-				kinds[i] = csvfile.KindString
+				kinds[i] = dumpformat.KindString
 			}
 		default:
-			kinds[i] = csvfile.KindString
+			kinds[i] = dumpformat.KindString
 		}
 	}
 	return kinds
@@ -147,7 +148,7 @@ type chunkWriter struct {
 	db       string
 	table    string
 	ordinal  int
-	kinds    []csvfile.FieldKind
+	kinds    []dumpformat.FieldKind
 
 	fileIdx int
 	obj     objectio.Writer
