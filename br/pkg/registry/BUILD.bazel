@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "registry",
@@ -12,6 +12,7 @@ go_library(
         "//br/pkg/errors",
         "//br/pkg/glue",
         "//br/pkg/metautil",
+        "//br/pkg/restore/nameroute",
         "//br/pkg/utils",
         "//pkg/domain",
         "//pkg/infoschema",
@@ -24,5 +25,16 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "registry_test",
+    srcs = ["registration_test.go"],
+    embed = [":registry"],
+    deps = [
+        "//br/pkg/restore/nameroute",
+        "//pkg/util/table-filter",
+        "@com_github_stretchr_testify//require",
     ],
 )

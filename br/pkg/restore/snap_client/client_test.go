@@ -39,6 +39,7 @@ import (
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -110,6 +111,69 @@ func TestCreateTables(t *testing.T) {
 	for i := range tables {
 		require.True(t, oldTableIDExist[int64(i)], "table rule does not exist")
 	}
+}
+
+func TestCreateTablesWithPlanPreservesSourceMetadata(t *testing.T) {
+	m := mc
+	client := snapclient.NewRestoreClient(m.PDClient, m.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	require.NoError(t, client.InitConnections(gluetidb.New(), m.Storage))
+	ctx := context.Background()
+
+	sourceDB := &metautil.Database{Info: &model.DBInfo{
+		ID:   100,
+		Name: ast.NewCIStr("route_source"),
+	}}
+	targetDB := sourceDB.Info.Clone()
+	targetDB.Name = ast.NewCIStr("route_target")
+	require.NoError(t, client.CreateDatabasesWithPlan(ctx, []*restoreutils.DatabaseRestorePlan{{
+		Source: sourceDB,
+		Target: targetDB,
+	}}))
+
+	timestampField := types.NewFieldType(mysql.TypeTimestamp)
+	source := &metautil.Table{
+		DB: sourceDB.Info,
+		Info: &model.TableInfo{
+			ID:   101,
+			Name: ast.NewCIStr("source_table"),
+			Columns: []*model.ColumnInfo{{
+				ID:        1,
+				Name:      ast.NewCIStr("id"),
+				FieldType: *timestampField,
+				State:     model.StatePublic,
+			}},
+			Charset: "utf8mb4",
+			Collate: "utf8mb4_bin",
+			TTLInfo: &model.TTLInfo{
+				ColumnName:       ast.NewCIStr("id"),
+				IntervalExprStr:  "1",
+				IntervalTimeUnit: int(ast.TimeUnitDay),
+				Enable:           true,
+			},
+		},
+	}
+	targetInfo := source.Info.Clone()
+	targetInfo.Name = ast.NewCIStr("target_table")
+
+	_, err := client.AllocTableIDs(ctx, []*metautil.Table{source}, false, false, nil)
+	require.NoError(t, err)
+	created, err := client.CreateTablesWithPlan(ctx, []*restoreutils.TableRestorePlan{{
+		Source:     source,
+		TargetDB:   targetDB,
+		TargetInfo: targetInfo,
+	}}, 0)
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+	require.Same(t, source, created[0].OldTable)
+	require.Equal(t, "route_target", created[0].TargetDBName().O)
+	require.Equal(t, "target_table", created[0].Table.Name.O)
+
+	_, err = m.Domain.InfoSchema().TableByName(ctx, ast.NewCIStr("route_target"), ast.NewCIStr("target_table"))
+	require.NoError(t, err)
+	require.Equal(t, "route_source", source.DB.Name.O)
+	require.Equal(t, "source_table", source.Info.Name.O)
+	require.True(t, source.Info.TTLInfo.Enable)
+	require.True(t, targetInfo.TTLInfo.Enable)
 }
 
 func getStartedMockedCluster(t *testing.T) *mock.Cluster {

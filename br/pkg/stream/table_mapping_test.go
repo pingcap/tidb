@@ -18,10 +18,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/metautil"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -90,6 +94,10 @@ func TestToProto(t *testing.T) {
 
 	// create table Replace
 	tr := NewTableReplace(tblName, newTblID)
+	tr.TargetDBName = "db2"
+	tr.TargetDBID = 300
+	tr.HasForeignKeys = true
+	tr.IsView = true
 	tr.PartitionMap[oldPID1] = newPID1
 	tr.PartitionMap[oldPID2] = newPID2
 	tr.FilteredOut = true
@@ -118,6 +126,10 @@ func TestToProto(t *testing.T) {
 	require.Equal(t, tableMap[0].Name, tblName)
 	require.Equal(t, tableMap[0].IdMap.UpstreamId, oldTblID)
 	require.Equal(t, tableMap[0].IdMap.DownstreamId, newTblID)
+	require.Equal(t, tableMap[0].DownstreamDbName, tr.TargetDBName)
+	require.Equal(t, tableMap[0].DownstreamDbId, tr.TargetDBID)
+	require.Equal(t, tableMap[0].HasForeignKeys, tr.HasForeignKeys)
+	require.Equal(t, tableMap[0].IsView, tr.IsView)
 	require.Equal(t, tableMap[0].FilteredOut, true)
 
 	partitionMap := tableMap[0].Partitions
@@ -136,6 +148,14 @@ func TestToProto(t *testing.T) {
 	// test FromDBMapProto()
 	drs2 := FromDBMapProto(dbMap)
 	require.Equal(t, drs2, drs)
+
+	// Old ID maps don't have table-level database fields and fall back to the
+	// containing database mapping.
+	tableMap[0].DownstreamDbName = ""
+	tableMap[0].DownstreamDbId = 0
+	drs2 = FromDBMapProto(dbMap)
+	require.Equal(t, dbName, drs2[oldDBID].TableMap[oldTblID].EffectiveDBName(drs2[oldDBID]))
+	require.Equal(t, newDBID, drs2[oldDBID].TableMap[oldTblID].EffectiveDBID(drs2[oldDBID]))
 }
 
 func TestMergeBaseDBReplace(t *testing.T) {
@@ -145,6 +165,99 @@ func TestMergeBaseDBReplace(t *testing.T) {
 		base     map[UpstreamID]*DBReplace
 		expected map[UpstreamID]*DBReplace
 	}{
+		{
+			name: "identity route preserves latest log names",
+			existing: map[UpstreamID]*DBReplace{
+				2: {
+					Name: "latest_db",
+					DbID: -2,
+					TableMap: map[UpstreamID]*TableReplace{
+						10: {TableID: -10, Name: "latest_table"},
+					},
+				},
+			},
+			base: map[UpstreamID]*DBReplace{
+				1: {
+					Name: "snapshot_db",
+					DbID: 1000,
+					TableMap: map[UpstreamID]*TableReplace{
+						10: {TableID: 1010, Name: "snapshot_table"},
+					},
+				},
+			},
+			expected: map[UpstreamID]*DBReplace{
+				1: {
+					Name: "snapshot_db",
+					DbID: 1000,
+					TableMap: map[UpstreamID]*TableReplace{
+						10: {TableID: 1010, Name: "snapshot_table"},
+					},
+				},
+				2: {
+					Name: "latest_db",
+					DbID: -2,
+					TableMap: map[UpstreamID]*TableReplace{
+						10: {TableID: 1010, Name: "latest_table"},
+					},
+				},
+			},
+		},
+		{
+			name: "propagate table route across upstream database rename",
+			existing: map[UpstreamID]*DBReplace{
+				2: {
+					Name: "db2",
+					DbID: -2,
+					TableMap: map[UpstreamID]*TableReplace{
+						10: {
+							TableID:      -10,
+							Name:         "target_table",
+							TargetDBName: "target_db",
+						},
+					},
+				},
+			},
+			base: map[UpstreamID]*DBReplace{
+				1: {
+					Name: "db1",
+					DbID: 1000,
+					TableMap: map[UpstreamID]*TableReplace{
+						10: {
+							TableID:      1010,
+							Name:         "target_table",
+							TargetDBName: "target_db",
+							TargetDBID:   3000,
+						},
+					},
+				},
+			},
+			expected: map[UpstreamID]*DBReplace{
+				1: {
+					Name: "db1",
+					DbID: 1000,
+					TableMap: map[UpstreamID]*TableReplace{
+						10: {
+							TableID:      1010,
+							Name:         "target_table",
+							TargetDBName: "target_db",
+							TargetDBID:   3000,
+						},
+					},
+				},
+				2: {
+					Name: "db2",
+					DbID: -2,
+					TableMap: map[UpstreamID]*TableReplace{
+						10: {
+							TableID:      1010,
+							Name:         "target_table",
+							TargetDBName: "target_db",
+							TargetDBID:   3000,
+						},
+					},
+				},
+			},
+		},
 		{
 			name:     "merge into empty existing map",
 			existing: map[UpstreamID]*DBReplace{},
@@ -472,6 +585,374 @@ func TestMergeBaseDBReplace(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("share one ID for a log-only target database", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name: "source_1",
+				DbID: 101,
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {Name: "target_1", TableID: 111, TargetDBName: "target_db"},
+				},
+			},
+			2: {
+				Name: "source_2",
+				DbID: 102,
+				TableMap: map[UpstreamID]*TableReplace{
+					12: {Name: "target_2", TableID: 112, TargetDBName: "TARGET_DB"},
+				},
+			},
+		}
+		var requested int
+		err := tm.ReplaceTemporaryIDs(context.Background(), func(_ context.Context, n int) ([]int64, error) {
+			requested = n
+			return []int64{900}, nil
+		})
+		require.NoError(t, err)
+		require.Equal(t, 1, requested)
+		require.Equal(t, int64(900), tm.DBReplaceMap[1].TableMap[11].TargetDBID)
+		require.Equal(t, int64(900), tm.DBReplaceMap[2].TableMap[12].TargetDBID)
+
+		targets, err := tm.TableRouteTargetDatabases()
+		require.NoError(t, err)
+		require.Len(t, targets, 1)
+		require.Equal(t, int64(900), targets[0].ID)
+
+		require.NoError(t, tm.RebindTableRouteTargetDatabaseID("TARGET_DB", 900, 901))
+		require.Equal(t, int64(901), tm.DBReplaceMap[1].TableMap[11].TargetDBID)
+		require.Equal(t, int64(901), tm.DBReplaceMap[2].TableMap[12].TargetDBID)
+	})
+
+	t.Run("share and rebind a filtered database alias", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name: "source",
+				DbID: 101,
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {Name: "copy", TableID: 111, TargetDBName: "target_db", TargetDBID: -2},
+				},
+			},
+			2: {
+				Name:        "TARGET_DB",
+				DbID:        -2,
+				TableMap:    map[UpstreamID]*TableReplace{},
+				FilteredOut: true,
+			},
+		}
+		var requested int
+		err := tm.ReplaceTemporaryIDs(context.Background(), func(_ context.Context, n int) ([]int64, error) {
+			requested = n
+			return []int64{900}, nil
+		})
+		require.NoError(t, err)
+		require.Equal(t, 1, requested)
+		require.Equal(t, int64(900), tm.DBReplaceMap[1].TableMap[11].TargetDBID)
+		require.Equal(t, int64(900), tm.DBReplaceMap[2].DbID)
+
+		require.NoError(t, tm.RebindTableRouteTargetDatabaseID("target_db", 900, 901))
+		require.Equal(t, int64(901), tm.DBReplaceMap[1].TableMap[11].TargetDBID)
+		require.Equal(t, int64(901), tm.DBReplaceMap[2].DbID)
+		require.Equal(t, int64(901), tm.globalIdMap[2])
+
+		tm.DBReplaceMap[2].DbID = 902
+		err = tm.RebindTableRouteTargetDatabaseID("target_db", 901, 903)
+		require.ErrorContains(t, err, "expected provisional ID 901 or actual ID 903")
+		require.Equal(t, int64(901), tm.DBReplaceMap[1].TableMap[11].TargetDBID)
+	})
+
+	t.Run("choose temporary database alias deterministically", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name: "source",
+				DbID: 101,
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {Name: "copy", TableID: 111, TargetDBName: "target_db"},
+				},
+			},
+			2: {Name: "target_db", DbID: -3, TableMap: map[UpstreamID]*TableReplace{}, FilteredOut: true},
+			3: {Name: "TARGET_DB", DbID: -2, TableMap: map[UpstreamID]*TableReplace{}, FilteredOut: true},
+		}
+		require.NoError(t, tm.assignSharedTargetDatabaseIDs())
+		require.Equal(t, int64(-2), tm.DBReplaceMap[1].TableMap[11].TargetDBID)
+		require.Equal(t, int64(-2), tm.DBReplaceMap[2].DbID)
+		require.Equal(t, int64(-2), tm.DBReplaceMap[3].DbID)
+	})
+
+	t.Run("reject conflicting IDs for one target database", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name: "source",
+				DbID: 101,
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {Name: "target_1", TableID: 111, TargetDBName: "target_db", TargetDBID: 900},
+				},
+			},
+			2: {Name: "TARGET_DB", DbID: 901, TableMap: map[UpstreamID]*TableReplace{}, FilteredOut: true},
+		}
+		err := tm.ReplaceTemporaryIDs(context.Background(), func(_ context.Context, _ int) ([]int64, error) {
+			return nil, nil
+		})
+		require.ErrorContains(t, err, "conflicting downstream IDs")
+	})
+
+	t.Run("lookup stable route across source database history", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name: "old_source_db",
+				DbID: 101,
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {
+						Name:         "target_table",
+						TableID:      111,
+						TargetDBName: "target_db",
+						TargetDBID:   201,
+					},
+				},
+			},
+			2: {
+				Name: "latest_source_db",
+				DbID: 102,
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {
+						Name:         "TARGET_TABLE",
+						TableID:      111,
+						TargetDBName: "TARGET_DB",
+						TargetDBID:   201,
+					},
+				},
+			},
+		}
+
+		route, exists, err := tm.LookupTableRoute(11)
+		require.NoError(t, err)
+		require.True(t, exists)
+		require.Equal(t, int64(201), route.TargetDBID)
+		require.Equal(t, int64(111), route.TargetTableID)
+		require.True(t, strings.EqualFold("target_db", route.TargetDBName))
+		require.True(t, strings.EqualFold("target_table", route.TargetTableName))
+	})
+
+	t.Run("reject routed dependency objects", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name: "source",
+				DbID: 101,
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {
+						Name:         "target_table",
+						TableID:      111,
+						TargetDBName: "target",
+						TargetDBID:   201,
+					},
+					12: {Name: "identity_view", TableID: 112, IsView: true, HasForeignKeys: true},
+				},
+			},
+		}
+		require.ErrorContains(t, tm.ValidateRoutedDependencies(), "routed view")
+
+		tm.DBReplaceMap[1].TableMap[12].IsView = false
+		require.ErrorContains(t, tm.ValidateRoutedDependencies(), "foreign keys")
+
+		tm.DBReplaceMap[1].TableMap[12].HasForeignKeys = false
+		require.NoError(t, tm.ValidateRoutedDependencies())
+
+		tm.DBReplaceMap[1].TableMap[12].IsView = true
+		tm.DBReplaceMap[1].TableMap[11].TargetDBName = ""
+		require.NoError(t, tm.ValidateRoutedDependencies())
+	})
+
+	t.Run("update one exact table route without remapping its source database", func(t *testing.T) {
+		dom := domain.NewMockDomain()
+		dom.MockInfoCacheAndLoadInfoSchema(createMockInfoSchemaWithDBs(map[string]int64{"target": 900}))
+
+		sourceDB := &model.DBInfo{ID: 1, Name: ast.NewCIStr("source")}
+		oldTable := &metautil.Table{
+			DB:   sourceDB,
+			Info: &model.TableInfo{ID: 11, Name: ast.NewCIStr("old_table")},
+		}
+		tm := NewTableMappingManager()
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name: "source",
+				DbID: 101,
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {Name: "new_table", TableID: -11, TargetDBName: "target", TargetDBID: -1},
+				},
+			},
+		}
+
+		err := tm.UpdateDownstreamIds(
+			[]*restoreutils.DatabaseRestorePlan{{
+				Source: &metautil.Database{Info: sourceDB},
+				Target: &model.DBInfo{Name: ast.NewCIStr("target")},
+			}},
+			[]*restoreutils.CreatedTable{{
+				OldTable: oldTable,
+				Table:    &model.TableInfo{ID: 911, Name: ast.NewCIStr("new_table")},
+				TargetDB: ast.NewCIStr("target"),
+			}},
+			dom,
+		)
+		require.NoError(t, err)
+		require.Equal(t, "source", tm.DBReplaceMap[1].Name)
+		require.Equal(t, int64(101), tm.DBReplaceMap[1].DbID)
+		require.Equal(t, int64(911), tm.DBReplaceMap[1].TableMap[11].TableID)
+		require.Equal(t, int64(900), tm.DBReplaceMap[1].TableMap[11].TargetDBID)
+	})
+
+	t.Run("update identity route parent database ID", func(t *testing.T) {
+		dom := domain.NewMockDomain()
+		dom.MockInfoCacheAndLoadInfoSchema(createMockInfoSchemaWithDBs(map[string]int64{"source": 900}))
+
+		sourceDB := &model.DBInfo{ID: 1, Name: ast.NewCIStr("source")}
+		tm := NewTableMappingManager()
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name: "source",
+				DbID: -1,
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {Name: "table", TableID: -11},
+				},
+			},
+		}
+
+		err := tm.UpdateDownstreamIds(
+			[]*restoreutils.DatabaseRestorePlan{{
+				Source: &metautil.Database{Info: sourceDB},
+				Target: sourceDB.Clone(),
+			}},
+			[]*restoreutils.CreatedTable{{
+				OldTable: &metautil.Table{DB: sourceDB, Info: &model.TableInfo{ID: 11, Name: ast.NewCIStr("table")}},
+				Table:    &model.TableInfo{ID: 911, Name: ast.NewCIStr("table")},
+			}},
+			dom,
+		)
+		require.NoError(t, err)
+		require.Equal(t, "source", tm.DBReplaceMap[1].Name)
+		require.Equal(t, int64(900), tm.DBReplaceMap[1].DbID)
+		require.Equal(t, int64(911), tm.DBReplaceMap[1].TableMap[11].TableID)
+		require.Empty(t, tm.DBReplaceMap[1].TableMap[11].TargetDBName)
+	})
+
+	t.Run("update tables from multiple source databases routed to one target", func(t *testing.T) {
+		dom := domain.NewMockDomain()
+		dom.MockInfoCacheAndLoadInfoSchema(createMockInfoSchemaWithDBs(map[string]int64{"target": 900}))
+
+		sourceDB1 := &model.DBInfo{ID: 1, Name: ast.NewCIStr("source_1")}
+		sourceDB2 := &model.DBInfo{ID: 2, Name: ast.NewCIStr("source_2")}
+		tm := NewTableMappingManager()
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name: "source_1",
+				DbID: 101,
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {Name: "target_1", TableID: -11, TargetDBName: "target", TargetDBID: -1},
+				},
+			},
+			2: {
+				Name:   "source_2",
+				DbID:   102,
+				Reused: true,
+				TableMap: map[UpstreamID]*TableReplace{
+					12: {Name: "target_2", TableID: -12, TargetDBName: "target", TargetDBID: -1},
+				},
+			},
+		}
+
+		err := tm.UpdateDownstreamIds(
+			[]*restoreutils.DatabaseRestorePlan{{
+				Source: &metautil.Database{Info: sourceDB1},
+				Target: &model.DBInfo{Name: ast.NewCIStr("target")},
+			}},
+			[]*restoreutils.CreatedTable{
+				{
+					OldTable: &metautil.Table{DB: sourceDB1, Info: &model.TableInfo{ID: 11, Name: ast.NewCIStr("old_1")}},
+					Table:    &model.TableInfo{ID: 911, Name: ast.NewCIStr("target_1")},
+					TargetDB: ast.NewCIStr("target"),
+				},
+				{
+					OldTable: &metautil.Table{DB: sourceDB2, Info: &model.TableInfo{ID: 12, Name: ast.NewCIStr("old_2")}},
+					Table:    &model.TableInfo{ID: 912, Name: ast.NewCIStr("target_2")},
+					TargetDB: ast.NewCIStr("target"),
+				},
+			},
+			dom,
+		)
+		require.NoError(t, err)
+		require.Equal(t, "source_1", tm.DBReplaceMap[1].Name)
+		require.Equal(t, int64(101), tm.DBReplaceMap[1].DbID)
+		require.Equal(t, "source_2", tm.DBReplaceMap[2].Name)
+		require.Equal(t, int64(102), tm.DBReplaceMap[2].DbID)
+		require.True(t, tm.DBReplaceMap[2].Reused)
+		require.Equal(t, int64(900), tm.DBReplaceMap[1].TableMap[11].TargetDBID)
+		require.Equal(t, int64(900), tm.DBReplaceMap[2].TableMap[12].TargetDBID)
+	})
+
+	t.Run("update parent IDs for multiple schema routes merged into one target", func(t *testing.T) {
+		dom := domain.NewMockDomain()
+		dom.MockInfoCacheAndLoadInfoSchema(createMockInfoSchemaWithDBs(map[string]int64{"target": 900}))
+
+		sourceDB1 := &model.DBInfo{ID: 1, Name: ast.NewCIStr("source_1")}
+		tm := NewTableMappingManager()
+		// Schema routing has already bound both source parents to the target
+		// name before the snapshot create plan is merged.
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name: "target",
+				DbID: -1,
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {Name: "log_only_1", TableID: -11, TargetDBName: "target", TargetDBID: -1},
+				},
+			},
+			2: {
+				Name: "TARGET",
+				DbID: -2,
+				TableMap: map[UpstreamID]*TableReplace{
+					22: {Name: "log_only_2", TableID: -22, TargetDBName: "TARGET", TargetDBID: -2},
+				},
+			},
+		}
+
+		err := tm.UpdateDownstreamIds(
+			[]*restoreutils.DatabaseRestorePlan{{
+				Source: &metautil.Database{Info: sourceDB1},
+				Target: &model.DBInfo{Name: ast.NewCIStr("target")},
+			}},
+			nil,
+			dom,
+		)
+		require.NoError(t, err)
+		require.Equal(t, "target", tm.DBReplaceMap[1].Name)
+		require.Equal(t, int64(900), tm.DBReplaceMap[1].DbID)
+		require.Equal(t, "target", tm.DBReplaceMap[2].Name)
+		require.Equal(t, int64(900), tm.DBReplaceMap[2].DbID)
+		require.Equal(t, int64(900), tm.DBReplaceMap[1].TableMap[11].TargetDBID)
+		require.Equal(t, int64(900), tm.DBReplaceMap[2].TableMap[22].TargetDBID)
+	})
+}
+
+func TestExtractTableSimpleInfoTracksUnsupportedDependencies(t *testing.T) {
+	tableInfo := &model.TableInfo{
+		ID:          10,
+		Name:        ast.NewCIStr("v"),
+		View:        &model.ViewInfo{},
+		ForeignKeys: []*model.FKInfo{{Name: ast.NewCIStr("fk")}},
+	}
+	value, err := json.Marshal(tableInfo)
+	require.NoError(t, err)
+
+	tableID, simpleInfo, err := extractTableSimpleInfo(value)
+	require.NoError(t, err)
+	require.Equal(t, int64(10), tableID)
+	require.Equal(t, "v", simpleInfo.Name)
+	require.True(t, simpleInfo.IsView)
+	require.True(t, simpleInfo.HasForeignKeys)
 }
 
 func TestFilterDBReplaceMap(t *testing.T) {
@@ -974,8 +1455,9 @@ func TestReplaceTemporaryIDs(t *testing.T) {
 					DbID: -5,
 					TableMap: map[UpstreamID]*TableReplace{
 						10: {
-							TableID: -2,
-							Name:    "table1",
+							TableID:    -2,
+							Name:       "table1",
+							TargetDBID: -5,
 							PartitionMap: map[UpstreamID]DownstreamID{
 								100: -8,
 								101: -1,
@@ -1005,8 +1487,9 @@ func TestReplaceTemporaryIDs(t *testing.T) {
 					DbID: 2030,
 					TableMap: map[UpstreamID]*TableReplace{
 						10: {
-							TableID: 2010,
-							Name:    "table1",
+							TableID:    2010,
+							Name:       "table1",
+							TargetDBID: 2030,
 							PartitionMap: map[UpstreamID]DownstreamID{
 								100: 2040,
 								101: 2000,
@@ -1462,6 +1945,23 @@ func (m *mockInfoSchemaWrapper) SchemaByName(schema ast.CIStr) (val *model.DBInf
 }
 
 func TestReuseExistingDatabaseIDs(t *testing.T) {
+	t.Run("reuse table-level target database independently", func(t *testing.T) {
+		dbReplace := NewDBReplace("db1", 100)
+		tableReplace := NewTableReplace("t1", -2)
+		tableReplace.TargetDBName = "db2"
+		tableReplace.TargetDBID = -3
+		dbReplace.TableMap[10] = tableReplace
+		tm := NewTableMappingManager()
+		tm.DBReplaceMap[1] = dbReplace
+
+		tm.ReuseExistingDatabaseIDs(createMockInfoSchemaWithDBs(map[string]int64{
+			"db1": 100,
+			"db2": 200,
+		}))
+
+		require.Equal(t, int64(200), tableReplace.TargetDBID)
+	})
+
 	tests := []struct {
 		name           string
 		initialMap     map[UpstreamID]*DBReplace
