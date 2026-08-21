@@ -2641,3 +2641,70 @@ fn a_global_unique_index_is_refused_rather_than_built_local() {
         rendered.message
     );
 }
+
+/// Go runs partition checks in TWO phases, and which error a doubly-wrong
+/// statement reports depends on that split.
+///
+/// Phase one is `buildTablePartitionInfo` (`ddl/partition.go:600`), whose
+/// definition loop validates each definition's values, then its comment,
+/// then its name, before reading the next one -- and whose
+/// `buildHashPartitionDefinitions` opens with the partition-count cap
+/// (`:1455`). Phase two is `checkTableInfoValidWithStmt`
+/// (`ddl/create_table.go:511`) calling `checkPartitionDefinitionConstraints`
+/// -- 1517, then 1499, then 1652, then the type-specific 1493/1495/1504 --
+/// and only LAST `checkPartitioningKeysConstraints`, where the 1105 for
+/// "the table has keys but none can serve KEY()" lives.
+///
+/// Each statement below is wrong in TWO ways. The errno asserted is the one
+/// Go's phase order reports, read out of the Go source rather than out of
+/// this implementation. These are the cases the restructure was made for, so
+/// they are pinned against it drifting back.
+#[test]
+fn a_doubly_wrong_partition_clause_reports_gos_first_error() {
+    let cases: &[(&str, u16, &str)] = &[
+        // The KEY()-with-no-usable-key refusal is LAST in Go, so the
+        // partition-count cap from phase one wins.
+        (
+            "CREATE TABLE d1 (a INT, b INT, KEY k(b)) PARTITION BY KEY () PARTITIONS 10000",
+            1499,
+            "phase-one partition cap beats the phase-two 1105",
+        ),
+        // ... and so does the duplicate partition NAME, which is the first
+        // check of phase two.
+        (
+            "CREATE TABLE d2 (a INT, b INT, KEY k(b)) PARTITION BY KEY () \
+             (PARTITION p0, PARTITION p0)",
+            1517,
+            "1517 is the first phase-two check, ahead of 1105",
+        ),
+        // The duplicate partition COLUMN (1652) comes after the cap (1499).
+        (
+            "CREATE TABLE d3 (a INT, b INT) PARTITION BY KEY (a, a) PARTITIONS 10000",
+            1499,
+            "the cap fires in phase one, 1652 only in phase two",
+        ),
+        // A duplicate NAME beside a non-increasing bound: 1517 precedes the
+        // type-specific 1493.
+        (
+            "CREATE TABLE d4 (a INT) PARTITION BY RANGE (a) \
+             (PARTITION p0 VALUES LESS THAN (10), PARTITION p0 VALUES LESS THAN (5))",
+            1517,
+            "1517 precedes checkPartitionByRange's 1493",
+        ),
+        // Same, for LIST's duplicate-constant 1495.
+        (
+            "CREATE TABLE d5 (a INT) PARTITION BY LIST (a) \
+             (PARTITION p0 VALUES IN (1), PARTITION p0 VALUES IN (1))",
+            1517,
+            "1517 precedes checkPartitionByList's 1495",
+        ),
+    ];
+    for (sql, errno, why) in cases {
+        let mut session = Session::new();
+        let rendered = session
+            .run(sql)
+            .expect_err(sql)
+            .to_mysql_error();
+        assert_eq!(rendered.code, *errno, "{why}\n  {sql}\n  got: {}", rendered.message);
+    }
+}
