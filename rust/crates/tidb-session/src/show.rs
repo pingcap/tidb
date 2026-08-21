@@ -501,6 +501,33 @@ fn show_create_table_text(
 ///  PARTITION `p1` VALUES LESS THAN (20),
 ///  PARTITION `pm` VALUES LESS THAN (MAXVALUE))
 /// ```
+/// Go `AppendPartitionInfo`'s `defaultPartitionDefinitions`
+/// (`ddl/partition.go:5147-5159`): whether a HASH/KEY table's partitions are
+/// still exactly the ones `PARTITIONS n` would generate.
+fn hash_definitions_are_default(definitions: &[tidb_executor::PartitionDef]) -> bool {
+    definitions.iter().enumerate().all(|(ordinal, definition)| {
+        definition.name == format!("p{ordinal}") && definition.comment.is_empty()
+    })
+}
+
+/// The explicit definition list a HASH/KEY table prints when it is not the
+/// default shape. Neither method has a `VALUES` clause
+/// (`ddl/partition.go:5202`), so a definition is its name and its comment.
+fn hash_definitions_text(definitions: &[tidb_executor::PartitionDef]) -> String {
+    let mut out = String::from("\n(");
+    for (ordinal, definition) in definitions.iter().enumerate() {
+        if ordinal > 0 {
+            out.push_str(",\n ");
+        }
+        out.push_str(&format!("PARTITION `{}`", definition.name));
+        out.push_str(&tidb_executor::ddl::table_partition::partition_comment_text(
+            &definition.comment,
+        ));
+    }
+    out.push(')');
+    out
+}
+
 fn partition_clause_text(table: &tidb_executor::KvTable) -> String {
     let Some(partition) = table.partition() else {
         return String::new();
@@ -511,8 +538,37 @@ fn partition_clause_text(table: &tidb_executor::KvTable) -> String {
         partition.expr_text
     );
     match &partition.kind {
-        tidb_executor::PartitionKind::Hash => format!("{head} PARTITIONS {}", partition.num()),
-        tidb_executor::PartitionKind::Key => format!("{head} PARTITIONS {}", partition.num()),
+        // Go `AppendPartitionInfo` (`ddl/partition.go:5147-5171`): HASH and
+        // KEY print the COMPACT `PARTITIONS n` form only when every partition
+        // is still the one Go would have generated -- named `p<i>`, with no
+        // comment and no placement ref. As soon as one partition was named or
+        // commented, the whole definition list is printed instead, because the
+        // compact form cannot express it.
+        //
+        // Printing `PARTITIONS n` unconditionally lost the written names and
+        // any comments from `SHOW CREATE TABLE`, so the DDL it produced built
+        // a DIFFERENT table from the one it described.
+        tidb_executor::PartitionKind::Hash | tidb_executor::PartitionKind::Key => {
+            let head = if matches!(partition.kind, tidb_executor::PartitionKind::Key) {
+                // Go `writeColumnListToBuffer` (`ddl/partition.go:5125`)
+                // emits NOTHING when the column list was filled in from the
+                // primary key, so `PARTITION BY KEY ()` reads back as
+                // written and re-creating it resolves the key again.
+                let columns = if partition.is_empty_columns {
+                    String::new()
+                } else {
+                    partition.expr_text.clone()
+                };
+                format!("\nPARTITION BY KEY ({columns})")
+            } else {
+                head.clone()
+            };
+            if hash_definitions_are_default(&partition.definitions) {
+                format!("{head} PARTITIONS {}", partition.num())
+            } else {
+                format!("{head}{}", hash_definitions_text(&partition.definitions))
+            }
+        }
         tidb_executor::PartitionKind::Range {
             less_than,
             unsigned,

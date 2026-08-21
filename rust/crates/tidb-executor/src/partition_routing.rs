@@ -145,15 +145,35 @@ impl PartitionKind {
     }
 }
 
-/// One partition: Go `model.PartitionDefinition`, reduced to the two facts a
+/// One partition: Go `model.PartitionDefinition`, reduced to the facts a
 /// row's key and `SHOW CREATE TABLE` need.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PartitionDef {
     /// Go `PartitionDefinition.ID`: the PHYSICAL table id this partition's
     /// record keys are written under.
     pub id: i64,
     /// Go `PartitionDefinition.Name`, as written (`p0`, `p1`, ...).
     pub name: String,
+    /// Go `PartitionDefinition.LessThan`: the bound TEXT as stored, which is
+    /// what `SHOW CREATE TABLE` prints. Go renders from these strings rather
+    /// than from the folded values (`ddl/partition.go:5204`), which is how a
+    /// written `MAXVALUE`, a `_binary 0x..` literal and the exact spelling of
+    /// a bound all survive a round trip.
+    pub less_than: Vec<String>,
+    /// Go `PartitionDefinition.InValues`: the `VALUES IN` tuples as stored.
+    ///
+    /// Rendering from the FOLDED values instead lost two things Go keeps: the
+    /// written position of `NULL` in the list, and the values of a partition
+    /// that also carries `DEFAULT` -- `VALUES IN (1, 2, DEFAULT)` printed as
+    /// a bare `DEFAULT`.
+    pub in_values: Vec<Vec<String>>,
+    /// Go `PartitionDefinition.Comment`, the per-partition `COMMENT '...'`.
+    ///
+    /// It is not decoration: `AppendPartitionInfo` (`ddl/partition.go:5155`)
+    /// treats a partition that carries one as NOT default-named, which is
+    /// what makes a HASH table print its definition list rather than the
+    /// compact `PARTITIONS n`.
+    pub comment: String,
 }
 
 /// A table's partitioning: Go `model.PartitionInfo` plus the built expression
@@ -179,6 +199,15 @@ pub struct PartitionSpec {
     /// The partitions, in definition order. Never empty: Go's
     /// `checkNoHashPartitions` rejects `PARTITIONS 0` with 1504.
     pub definitions: Vec<PartitionDef>,
+    /// Go `PartitionInfo.IsEmptyColumns`: set when `PARTITION BY KEY ()` was
+    /// written with no column list and Go filled one in from the primary key.
+    ///
+    /// `SHOW CREATE TABLE` must print the clause AS WRITTEN -- Go's
+    /// `writeColumnListToBuffer` returns before emitting anything when this
+    /// is set (`ddl/partition.go:5126`), so the table reads back as
+    /// `PARTITION BY KEY ()` and re-creating it resolves the key again
+    /// rather than pinning today's columns.
+    pub is_empty_columns: bool,
 }
 
 /// A row that no partition accepts, or an expression that failed to evaluate.
@@ -540,7 +569,25 @@ fn list_partition_index(
                 .or(default_partition)
                 .ok_or_else(|| RoutingError::NoPartitionForValue("NULL".to_owned()))
         }
-        other => return Err(RoutingError::NoPartitionForValue(format!("{other:?}"))),
+        // Go `Column.EvalInt` has a HYBRID arm (`expression/column.go:583`):
+        // a `KindMysqlBit` datum is converted with `BinaryLiteral.ToInt` --
+        // big-endian, leading zero bytes trimmed -- and everything else with
+        // `ToInt64`. Scalar LIST reaches routing through `EvalInt`, so the
+        // conversion has already happened by the time Go compares.
+        //
+        // Refusing these outright was wrong three times over: a routable BIT
+        // value failed; it failed even when the table HAD a DEFAULT
+        // partition, which Go never does; and the 1526 it raised carried a
+        // Rust `Debug` rendering (`Bit(BinaryLiteral([10]))`) where Go's
+        // message holds the decimal `10`.
+        //
+        // RANGE does NOT share this: its bare-column fast path uses
+        // `GetInt64` and never converts, which `range_partition_index`
+        // reproduces separately.
+        Datum::Bit(literal) | Datum::BinaryLiteral(literal) => literal.to_int().value() as i64,
+        other => {
+            return Err(RoutingError::NoPartitionForValue(format!("{other:?}")));
+        }
     };
     if let Some((_, ordinal)) = values.iter().find(|(candidate, _)| *candidate == bits) {
         return Ok(*ordinal);
@@ -577,12 +624,24 @@ fn range_partition_index(
     unsigned: bool,
 ) -> Result<usize, RoutingError> {
     let bits = match value {
+        // Go `locateRangePartition` forces the lowest partition for NULL
+        // alone: `if isNull { pos = 0 }` (`tables/partition.go:1571`).
+        Datum::Null => return Ok(0),
         Datum::Int(value) => *value,
         Datum::UInt(value) => *value as i64,
-        // NULL -- and anything else the expression produced, which DDL's
-        // integer rule (1659/1697) leaves as NULL only -- takes the lowest
-        // partition.
-        _ => return Ok(0),
+        // Every other datum still SEARCHES the bounds, with the value Go's
+        // `GetInt64` yields for it. That method returns the datum's `i`
+        // field verbatim (`types/datum.go:148`), and `SetMysqlBit` writes
+        // only `k` and `b` (`datum.go:342`) -- so a BIT column, which this
+        // tier's DDL admits as an integer partition column, reads as 0 and
+        // is placed by the bounds rather than by short-circuit.
+        //
+        // Returning ordinal 0 here instead skipped the search: for bounds
+        // `(0, 10)` Go answers p1 (0 is not > 0, 10 is) where this answered
+        // p0. Only a bare column reaches this arm -- an expression whose
+        // result is not an integer is refused at CREATE by 1491 -- so the
+        // kinds that can arrive are the ones Go also reads as 0.
+        _ => 0,
     };
     let found = less_than
         .iter()
@@ -682,6 +741,82 @@ fn overflow_text(value: &Datum) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// Scalar LIST reaches routing through Go's `Column.EvalInt`, whose
+    /// HYBRID arm converts a `KindMysqlBit` datum with `BinaryLiteral.ToInt`
+    /// (`expression/column.go:583`). So a BIT row routes by its integer
+    /// value, and falls to the DEFAULT partition like any other value that
+    /// matches nothing.
+    ///
+    /// Refusing it outright failed even when the table HAD a default, which
+    /// Go never does -- and the 1526 it raised carried a Rust `Debug`
+    /// rendering where Go's message holds a decimal.
+    ///
+    /// RANGE does NOT convert here: its bare-column fast path uses
+    /// `GetInt64`. The two methods genuinely differ, so one rule cannot serve
+    /// both -- see `only_null_takes_the_lowest_partition_without_searching`.
+    #[test]
+    fn a_bit_value_routes_by_its_integer_in_a_scalar_list() {
+        let values = [(5_i64, 0_usize), (7, 1)];
+        let bit = |n: u64| Datum::Bit(tidb_datatype::BinaryLiteral::from_uint(n, None));
+        assert_eq!(
+            list_partition_index(&bit(5), &values, None, None, false).expect("5 is listed"),
+            0
+        );
+        assert_eq!(
+            list_partition_index(&bit(7), &values, None, None, false).expect("7 is listed"),
+            1
+        );
+        // Unlisted, with a DEFAULT partition: the row belongs there.
+        assert_eq!(
+            list_partition_index(&bit(9), &values, None, Some(1), false)
+                .expect("the default takes it"),
+            1
+        );
+        // Unlisted with no default is 1526, and the value in the message is
+        // the DECIMAL Go prints, not a debug rendering of the literal.
+        let error = list_partition_index(&bit(9), &values, None, None, false)
+            .expect_err("no partition accepts 9");
+        let RoutingError::NoPartitionForValue(shown) = error else {
+            panic!("expected 1526");
+        };
+        assert_eq!(shown, "9");
+    }
+
+    /// Go forces the lowest partition for NULL ALONE. Every other datum still
+    /// searches the bounds, with the value `GetInt64` yields for it
+    /// (`tables/partition.go:1548-1573`).
+    ///
+    /// A BIT column is the shape that reaches this: the DDL admits it as an
+    /// integer partition column, and Go's `SetMysqlBit` writes only the kind
+    /// and the bytes (`types/datum.go:342`), so `GetInt64` returns the
+    /// untouched `i` field -- zero. Returning ordinal 0 without searching
+    /// instead answered p0 for bounds `(0, 10)` where Go answers p1, because
+    /// 0 is not greater than 0 and 10 is.
+    #[test]
+    fn only_null_takes_the_lowest_partition_without_searching() {
+        let bounds = [RangeBound::Value(0), RangeBound::Value(10)];
+        assert_eq!(
+            range_partition_index(&Datum::Null, &bounds, false).expect("NULL routes"),
+            0,
+            "NULL is the one datum Go short-circuits"
+        );
+        assert_eq!(
+            range_partition_index(
+                &Datum::Bit(tidb_datatype::BinaryLiteral::from_uint(5, None)),
+                &bounds,
+                false
+            )
+            .expect("a BIT value routes"),
+            1,
+            "a BIT column reads as 0 and is PLACED by the bounds, not short-circuited"
+        );
+        // The ordinary integer path is unchanged.
+        assert_eq!(
+            range_partition_index(&Datum::Int(5), &bounds, false).expect("5 routes"),
+            1
+        );
+    }
     use super::*;
 
     /// Every hash routing this unit captured from real TiDB, as the rule

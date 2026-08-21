@@ -420,13 +420,36 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
 /// Exact upper bound for known definition mismatches.
 ///
 /// The matching floor below prevents a lower count caused by examining less.
-const KNOWN_CATALOG_DIVERGENCES: usize = 37;
+///
+/// 37 -> 35: reading `SHOW CREATE TABLE`'s partition clause against Go's
+/// `AppendPartitionInfo` fixed two recorded catalog reads -- the definition
+/// list a HASH/KEY table prints when its partitions are not the default ones,
+/// and the lowercase `0x7f` a non-printable `RANGE COLUMNS` bound is spelled
+/// with (Go's `hex.EncodeToString`).
+///
+/// The compare COUNT is unchanged at 294 and MATCHED_FLOOR rose with it, so
+/// this is two more reads agreeing with real TiDB rather than two fewer reads
+/// being examined.
+const KNOWN_CATALOG_DIVERGENCES: usize = 35;
 
 /// Exact lower bound for definitions already matching TiDB.
-const MATCHED_FLOOR: usize = 257;
+// 257 -> 259: the partition clause of `SHOW CREATE TABLE` now matches Go's
+// `AppendPartitionInfo`, so two more recorded catalog reads agree. Raising the
+// floor with the count is what keeps a future drop from hiding behind it.
+const MATCHED_FLOOR: usize = 259;
 
 /// Stable identity of the known mismatch set, independent of topic order.
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 14_478_333_539_530_598_175;
+// Moved with the count above: two recorded catalog reads that used to
+// diverge now match, both from reading `SHOW CREATE TABLE`'s partition clause
+// against Go's `AppendPartitionInfo` -- the definition list a HASH/KEY table
+// prints when its partitions are not the default ones, and the LOWERCASE
+// `0x7f` a non-printable RANGE COLUMNS bound is spelled with.
+//
+// The set was inspected with CATALOG_SHOW_DIVERGENCES=1 before this moved,
+// not merely re-recorded: the first attempt at the hex literal emitted `0x7F`
+// and appeared as a NEW divergence inside a net improvement, which the count
+// alone would have hidden.
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 5_002_280_384_901_804_681;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.

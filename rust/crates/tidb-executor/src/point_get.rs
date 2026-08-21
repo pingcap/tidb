@@ -106,10 +106,16 @@ mod tests {
             PartitionDef {
                 id: 101,
                 name: "P0".to_owned(),
+                less_than: Vec::new(),
+                in_values: Vec::new(),
+                comment: String::new(),
             },
             PartitionDef {
                 id: 202,
                 name: "PÜNICODE".to_owned(),
+                less_than: Vec::new(),
+                in_values: Vec::new(),
+                comment: String::new(),
             },
         ]
     }
@@ -150,6 +156,9 @@ mod tests {
         definitions.push(PartitionDef {
             id: 202,
             name: "later".to_owned(),
+            less_than: Vec::new(),
+            in_values: Vec::new(),
+            comment: String::new(),
         });
         assert!(partition_name_matches(
             202,

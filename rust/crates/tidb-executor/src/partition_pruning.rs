@@ -606,6 +606,7 @@ mod tests {
 
     fn range_table() -> PartitionSpec {
         PartitionSpec {
+            is_empty_columns: false,
             kind: PartitionKind::Range {
                 less_than: vec![
                     RangeBound::Value(10),
@@ -626,14 +627,23 @@ mod tests {
                 PartitionDef {
                     id: 101,
                     name: "p0".to_owned(),
+                    less_than: Vec::new(),
+                    in_values: Vec::new(),
+                    comment: String::new(),
                 },
                 PartitionDef {
                     id: 102,
                     name: "p1".to_owned(),
+                    less_than: Vec::new(),
+                    in_values: Vec::new(),
+                    comment: String::new(),
                 },
                 PartitionDef {
                     id: 103,
                     name: "pm".to_owned(),
+                    less_than: Vec::new(),
+                    in_values: Vec::new(),
+                    comment: String::new(),
                 },
             ],
         }
@@ -641,6 +651,7 @@ mod tests {
 
     fn list_table() -> PartitionSpec {
         PartitionSpec {
+            is_empty_columns: false,
             kind: PartitionKind::List {
                 values: vec![(1, 0), (3, 0), (5, 1)],
                 null_partition: Some(1),
@@ -659,14 +670,23 @@ mod tests {
                 PartitionDef {
                     id: 201,
                     name: "p0".to_owned(),
+                    less_than: Vec::new(),
+                    in_values: Vec::new(),
+                    comment: String::new(),
                 },
                 PartitionDef {
                     id: 202,
                     name: "pn".to_owned(),
+                    less_than: Vec::new(),
+                    in_values: Vec::new(),
+                    comment: String::new(),
                 },
                 PartitionDef {
                     id: 203,
                     name: "pd".to_owned(),
+                    less_than: Vec::new(),
+                    in_values: Vec::new(),
+                    comment: String::new(),
                 },
             ],
         }

@@ -292,44 +292,59 @@ fn fold_list_value(
 #[must_use]
 pub fn list_definitions_text(
     definitions: &[crate::partition_routing::PartitionDef],
-    values: &[(i64, usize)],
-    null_partition: Option<usize>,
-    default_partition: Option<usize>,
-    unsigned: bool,
+    _values: &[(i64, usize)],
+    _null_partition: Option<usize>,
+    _default_partition: Option<usize>,
+    _unsigned: bool,
 ) -> String {
+    // Go `AppendPartitionDefs` (`ddl/partition.go:5209`) prints a LIST
+    // partition from its STORED `InValues`, not from the folded values:
+    //
+    //   len(InValues) == 0                    -> " DEFAULT"
+    //   InValues == [["DEFAULT"]] (EqualFold) -> " DEFAULT"
+    //   otherwise                             -> " VALUES IN (...)"
+    //
+    // Rendering from the folded values lost the written position of `NULL`
+    // (it was appended last whatever the user wrote) and dropped the values
+    // of a partition that ALSO carried `DEFAULT`, printing a bare `DEFAULT`
+    // for `VALUES IN (1, 2, DEFAULT)`.
     let mut out = String::from("\n(");
     for (ordinal, definition) in definitions.iter().enumerate() {
         if ordinal > 0 {
             out.push_str(",\n ");
         }
         out.push_str(&format!("PARTITION `{}`", definition.name));
-        if default_partition == Some(ordinal) {
+        let bare_default = definition.in_values.is_empty()
+            || (definition.in_values.len() == 1
+                && definition.in_values[0].len() == 1
+                && definition.in_values[0][0].eq_ignore_ascii_case("DEFAULT"));
+        if bare_default {
             out.push_str(" DEFAULT");
-            continue;
+        } else {
+            out.push_str(" VALUES IN (");
+            for (index, tuple) in definition.in_values.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                match tuple.as_slice() {
+                    [single] => out.push_str(&super::table_partition::hex_if_non_print(single)),
+                    many => {
+                        out.push('(');
+                        for (position, value) in many.iter().enumerate() {
+                            if position > 0 {
+                                out.push(',');
+                            }
+                            out.push_str(&super::table_partition::hex_if_non_print(value));
+                        }
+                        out.push(')');
+                    }
+                }
+            }
+            out.push(')');
         }
-        out.push_str(" VALUES IN (");
-        let mut first = true;
-        for (value, owner) in values {
-            if *owner != ordinal {
-                continue;
-            }
-            if !first {
-                out.push(',');
-            }
-            first = false;
-            if unsigned {
-                out.push_str(&(*value as u64).to_string());
-            } else {
-                out.push_str(&value.to_string());
-            }
-        }
-        if null_partition == Some(ordinal) {
-            if !first {
-                out.push(',');
-            }
-            out.push_str("NULL");
-        }
-        out.push(')');
+        out.push_str(&super::table_partition::partition_comment_text(
+            &definition.comment,
+        ));
     }
     out.push(')');
     out
@@ -352,6 +367,9 @@ pub fn list_columns_definitions_text(
         out.push_str(&format!("PARTITION `{}`", definition.name));
         if default_partition == Some(ordinal) {
             out.push_str(" DEFAULT");
+            out.push_str(&super::table_partition::partition_comment_text(
+                &definition.comment,
+            ));
             continue;
         }
         out.push_str(" VALUES IN (");
@@ -374,13 +392,21 @@ pub fn list_columns_definitions_text(
                 let rendered = value
                     .restore_value_expr()
                     .expect("LIST COLUMNS metadata contains a restorable value expression");
-                out.push_str(&String::from_utf8_lossy(&rendered));
+                // Go `AppendPartitionDefs` (`ddl/partition.go:5226`) runs
+                // every printed `VALUES IN` component through
+                // `hexIfNonPrint`.
+                out.push_str(&super::table_partition::hex_if_non_print(
+                    &String::from_utf8_lossy(&rendered),
+                ));
             }
             if tuple.len() > 1 {
                 out.push(')');
             }
         }
         out.push(')');
+        out.push_str(&super::table_partition::partition_comment_text(
+            &definition.comment,
+        ));
     }
     out.push(')');
     out

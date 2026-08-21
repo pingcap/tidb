@@ -67,6 +67,7 @@ pub(super) fn build_range_bounds(
     types: &[FieldType],
     dependencies: &[usize],
     ctx: &crate::StmtContext,
+    mode: super::table_partition::PartitionBuildMode,
 ) -> Result<(Vec<RangeBound>, bool), DriverError> {
     // Go `buildPartitionDefinitionsInfo`: a RANGE table with no definitions
     // is 1492, checked before any bound is read.
@@ -74,7 +75,7 @@ pub(super) fn build_range_bounds(
         return Err(DriverError::PartitionsMustBeDefined("RANGE"));
     }
     let unsigned = range_expression_is_unsigned(partition_expr, names, types, dependencies)?;
-    let bounds = build_range_bounds_with_unsigned(definitions, unsigned, ctx)?;
+    let bounds = build_range_bounds_with_unsigned(definitions, unsigned, ctx, mode)?;
     Ok((bounds, unsigned))
 }
 
@@ -82,6 +83,7 @@ pub(super) fn build_range_bounds_with_unsigned(
     definitions: &[PartitionDefinition],
     unsigned: bool,
     ctx: &crate::StmtContext,
+    mode: super::table_partition::PartitionBuildMode,
 ) -> Result<Vec<RangeBound>, DriverError> {
     if definitions.is_empty() {
         return Err(DriverError::PartitionsMustBeDefined("RANGE"));
@@ -111,7 +113,7 @@ pub(super) fn build_range_bounds_with_unsigned(
             PartitionValue::MaxValue => {
                 // Go `checkRangePartitionValue` strips a TRAILING `MAXVALUE`
                 // and then reports 1481 for any other one it meets.
-                if index + 1 != definitions.len() {
+                if mode.validates() && index + 1 != definitions.len() {
                     return Err(DriverError::PartitionMaxValueNotLast);
                 }
                 RangeBound::MaxValue
@@ -125,7 +127,13 @@ pub(super) fn build_range_bounds_with_unsigned(
         };
         bounds.push(bound);
     }
-    check_strictly_increasing(&bounds, unsigned)?;
+    // Go's strictly-increasing rule is CREATE-only (`ddl/partition.go:1938`).
+    // The loader never re-judges bounds it did not write: a table the cluster
+    // is serving must not be refused because this node re-derived a verdict
+    // Go reached once, at DDL time.
+    if mode.validates() {
+        check_strictly_increasing(&bounds, unsigned)?;
+    }
     Ok(bounds)
 }
 
@@ -142,6 +150,7 @@ pub(super) fn build_range_columns_bounds(
     names: &[String],
     types: &[FieldType],
     ctx: &crate::StmtContext,
+    mode: super::table_partition::PartitionBuildMode,
 ) -> Result<RangeColumnsMetadata, DriverError> {
     if columns.is_empty() || definitions.is_empty() {
         return Err(DriverError::PartitionsMustBeDefined("RANGE"));
@@ -156,7 +165,11 @@ pub(super) fn build_range_columns_bounds(
             .iter()
             .any(|candidate: &String| candidate.eq_ignore_ascii_case(name))
         {
-            return Err(DriverError::PartitionDuplicateField(name.clone()));
+            // Go `checkPartitionColumnsUnique` is CREATE-only
+            // (`ddl/partition.go:4664`).
+            if mode.validates() {
+                return Err(DriverError::PartitionDuplicateField(name.clone()));
+            }
         }
         let offset = names
             .iter()
@@ -167,7 +180,11 @@ pub(super) fn build_range_columns_bounds(
             })?;
         let field_type = types[offset].clone();
         if !super::table_partition_list::list_columns_type_allowed(&field_type) {
-            return Err(DriverError::PartitionFieldTypeNotAllowed(name.clone()));
+            // Go `checkColumnsPartitionType` is CREATE-only
+            // (`ddl/partition.go:785`).
+            if mode.validates() {
+                return Err(DriverError::PartitionFieldTypeNotAllowed(name.clone()));
+            }
         }
         dependency_names.push(name.clone());
         field_types.push(field_type);
@@ -184,7 +201,9 @@ pub(super) fn build_range_columns_bounds(
                 _ => Err(DriverError::PartitionsMustBeDefined("RANGE")),
             };
         };
-        if values.len() != field_types.len() {
+        // Go `ErrPartitionColumnList` is CREATE-only (`ddl/partition.go:5326`);
+        // the loader does not re-check arity on metadata it did not write.
+        if mode.validates() && values.len() != field_types.len() {
             return Err(DriverError::PartitionColumnValueWrongType);
         }
         let bound = values
@@ -193,9 +212,24 @@ pub(super) fn build_range_columns_bounds(
             .map(|(value, field_type)| match value {
                 PartitionValue::MaxValue => Ok(RangeColumnBound::MaxValue),
                 PartitionValue::Expr(expr) => {
-                    let value =
-                        super::table_partition_list::fold_column_value(expr, field_type, ctx)?;
-                    if value.is_null() {
+                    // Go repeats exactly ONE semantic check when loading:
+                    // the bound must fold to a CONSTANT
+                    // (`tables/partition.go:423`), raising 1563 when it does
+                    // not. A bound that reads a column, or anything else the
+                    // fold cannot reduce, is not a bound.
+                    let value = super::table_partition_list::fold_column_value(
+                        expr, field_type, ctx,
+                    )
+                    .map_err(|error| {
+                        if mode.validates() {
+                            error
+                        } else {
+                            DriverError::PartitionConstDomain
+                        }
+                    })?;
+                    // Go `ErrNullInValuesLessThan` is CREATE-only
+                    // (`ddl/partition.go:1691`).
+                    if mode.validates() && value.is_null() {
                         return Err(DriverError::PartitionNullInValuesLessThan);
                     }
                     Ok(RangeColumnBound::Value(value))
@@ -394,8 +428,9 @@ pub fn range_definitions_text(
             Some(RangeBound::Value(value)) => format!("{value}"),
         };
         out.push_str(&format!(
-            "PARTITION `{}` VALUES LESS THAN ({bound})",
-            definition.name
+            "PARTITION `{}` VALUES LESS THAN ({bound}){}",
+            definition.name,
+            super::table_partition::partition_comment_text(&definition.comment)
         ));
     }
     out.push(')');
@@ -428,12 +463,21 @@ pub fn range_columns_definitions_text(
                         let rendered = value
                             .restore_value_expr()
                             .expect("RANGE COLUMNS metadata contains restorable values");
-                        out.push_str(&String::from_utf8_lossy(&rendered));
+                        // Go runs every printed bound through `hexIfNonPrint`
+                        // (`ddl/partition.go:5206`), so a value MySQL cannot
+                        // quote becomes a `0x...` literal rather than raw
+                        // bytes in the DDL.
+                        out.push_str(&super::table_partition::hex_if_non_print(
+                            &String::from_utf8_lossy(&rendered),
+                        ));
                     }
                 }
             }
         }
         out.push(')');
+        out.push_str(&super::table_partition::partition_comment_text(
+            &definition.comment,
+        ));
     }
     out.push(')');
     out
@@ -449,6 +493,9 @@ mod tests {
         let definitions = ["p0", "p1", "pm"].map(|name| crate::partition_routing::PartitionDef {
             id: 0,
             name: name.to_owned(),
+            less_than: Vec::new(),
+            in_values: Vec::new(),
+            comment: String::new(),
         });
         assert_eq!(
             range_definitions_text(

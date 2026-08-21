@@ -1316,6 +1316,31 @@ impl DriverError {
             *b"HY000",
             format!("A {kind} must include all columns in the table's partitioning function"),
         ),
+        // Go: "Comment for table partition '%-.64s' is too long (max = %d)"
+        // (`errno/errname.go:765`), raised only under STRICT mode.
+        DriverError::PartitionCommentTooLong { name, limit } => MysqlError::new(
+            1793,
+            *b"HY000",
+            format!("Comment for table partition '{name}' is too long (max = {limit})"),
+        ),
+        DriverError::PartitionConstDomain => MysqlError::new(
+            1563,
+            *b"HY000",
+            "Partition constant is out of partition function domain".to_owned(),
+        ),
+        DriverError::PartitionMetadataUnknown => MysqlError::new(
+            1735,
+            *b"HY000",
+            // Verbatim, placeholders and all: Go raises the bare error.
+            "Unknown partition '%-.64s' in table '%-.64s'".to_owned(),
+        ),
+        DriverError::PartitionMetadataIncomplete => MysqlError::new(
+            1105,
+            *b"HY000",
+            "Table partition metadata not correct, neither partition expression or list of \
+             partition columns"
+                .to_owned(),
+        ),
         DriverError::PartitionNoParts(what) => MysqlError::new(
             1504,
             *b"HY000",
@@ -1378,11 +1403,6 @@ impl DriverError {
             1526,
             *b"HY000",
             format!("Table has no partition for value {value}"),
-        ),
-        DriverError::PartitionConstDomain => MysqlError::new(
-            1563,
-            *b"HY000",
-            "Partition constant is out of partition function domain".to_owned(),
         ),
         DriverError::UnknownPartition { partition, table } => MysqlError::new(
             1735,

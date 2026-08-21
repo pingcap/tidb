@@ -2101,3 +2101,67 @@ fn range_columns_filter_uses_the_partition_columns_collation() {
     );
     assert_eq!(rows.as_slice(), [["f"], ["F"], ["h"], ["H"], ["l"], ["L"]]);
 }
+
+/// Go `AppendPartitionInfo` prints the compact `PARTITIONS n` form for HASH
+/// and KEY only when every partition is still the one it would have
+/// generated: named `p<i>`, with no comment and no placement ref
+/// (`ddl/partition.go:5147-5171`). Anything else prints the definition list,
+/// because the compact form cannot express it.
+///
+/// Printing `PARTITIONS n` unconditionally meant `SHOW CREATE TABLE` emitted
+/// DDL that would build a DIFFERENT table from the one it described: the
+/// written names and any comments were simply gone.
+#[test]
+fn hash_and_key_print_the_definition_list_when_it_is_not_the_default_one() {
+    let mut session = Session::new();
+    // Default names, no comments: the compact form still applies.
+    session
+        .run("CREATE TABLE h0 (a int) PARTITION BY HASH(a) PARTITIONS 2")
+        .expect("HASH is accepted");
+    assert!(
+        show_create(&mut session, "h0").contains("PARTITION BY HASH (`a`) PARTITIONS 2"),
+        "a default-shaped HASH table keeps the compact clause: {}",
+        show_create(&mut session, "h0")
+    );
+
+    // Explicitly NAMED partitions cannot be expressed by `PARTITIONS n`.
+    session
+        .run("CREATE TABLE h1 (a int) PARTITION BY HASH(a) (PARTITION west, PARTITION east)")
+        .expect("named HASH partitions are accepted");
+    let named = show_create(&mut session, "h1");
+    assert!(
+        named.contains("PARTITION `west`") && named.contains("PARTITION `east`"),
+        "the written names must survive SHOW CREATE: {named}"
+    );
+    assert!(
+        !named.contains("PARTITIONS 2"),
+        "the compact form cannot carry those names: {named}"
+    );
+
+    // A COMMENT likewise forces the definition list, and is printed on it.
+    session
+        .run("CREATE TABLE h2 (a int) PARTITION BY HASH(a) (PARTITION p0 COMMENT 'first', PARTITION p1)")
+        .expect("a commented HASH partition is accepted");
+    let commented = show_create(&mut session, "h2");
+    assert!(
+        commented.contains("PARTITION `p0` COMMENT 'first'"),
+        "the comment must survive SHOW CREATE: {commented}"
+    );
+}
+
+/// Go's `writeColumnListToBuffer` emits NOTHING when the KEY column list was
+/// filled in from the primary key (`ddl/partition.go:5125`), so the clause
+/// reads back as written and re-creating the table resolves the key again
+/// rather than pinning today's columns.
+#[test]
+fn an_empty_key_clause_prints_back_empty() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE k1 (id int NOT NULL PRIMARY KEY, v int) PARTITION BY KEY() PARTITIONS 2")
+        .expect("PARTITION BY KEY() is accepted");
+    let created = show_create(&mut session, "k1");
+    assert!(
+        created.contains("PARTITION BY KEY () PARTITIONS 2"),
+        "an empty KEY clause prints back empty: {created}"
+    );
+}

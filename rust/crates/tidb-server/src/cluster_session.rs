@@ -635,6 +635,7 @@ fn partition_spec_for(
         .map(|definition| tidb_executor::ddl::StoredPartitionDefinition {
             id: definition.id,
             name: definition.name.original().to_owned(),
+            comment: definition.comment.clone(),
             less_than: definition.less_than.snapshot(),
             in_values: definition
                 .in_values
@@ -654,10 +655,12 @@ fn partition_spec_for(
         partition.partition_type,
         &partition.expr,
         &columns,
+        // Go `PartitionInfo.IsEmptyColumns`: the clause was written as
+        // `PARTITION BY KEY ()` and Go filled the columns in from the key.
+        partition.is_empty_columns,
         &definitions,
         &names,
         &types,
-        &tidb_executor::StmtContext::for_query(),
     )
     .map_err(|error| format!("its partitioning cannot be rebuilt: {error}"))
 }

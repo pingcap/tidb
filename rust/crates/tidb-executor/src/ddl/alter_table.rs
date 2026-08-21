@@ -614,10 +614,13 @@ fn add_partition_action(
                 less_than,
                 unsigned,
             } => {
+                // `ALTER TABLE ... ADD PARTITION` is a WRITTEN clause, so it
+                // validates like a CREATE.
                 let added = super::table_partition_range::build_range_bounds_with_unsigned(
                     definitions,
                     *unsigned,
                     ctx,
+                    super::table_partition::PartitionBuildMode::Create,
                 )?;
                 match (less_than.last(), added.first()) {
                     (Some(RangeBound::MaxValue), _) => {
@@ -656,6 +659,7 @@ fn add_partition_action(
                         &names,
                         &types,
                         ctx,
+                        super::table_partition::PartitionBuildMode::Create,
                     )?;
                 if let (Some(old), Some(new)) = (less_than.last(), added_bounds.first()) {
                     if !super::table_partition_range::range_columns_bound_increases(
@@ -677,13 +681,31 @@ fn add_partition_action(
         }
     };
 
-    let added_definitions = definitions
-        .iter()
-        .map(|definition| PartitionDef {
+    // The added partitions carry the same STORED text a CREATE would give
+    // them, because `SHOW CREATE TABLE` prints from it: an empty `InValues`
+    // is Go's own marker for a bare `DEFAULT` partition
+    // (`ddl/partition.go:5210`), so leaving it empty here would print an
+    // added LIST partition as `DEFAULT` and lose the values it was given.
+    //
+    // Per-partition OPTIONS are refused above, so no comment can reach here.
+    let list_field_types = match &added_kind {
+        PartitionKind::ListColumns { field_types, .. } => field_types.clone(),
+        _ => Vec::new(),
+    };
+    let mut added_definitions = Vec::with_capacity(definitions.len());
+    for definition in definitions {
+        added_definitions.push(PartitionDef {
             id: catalog.allocate_table_id(),
             name: definition.name.clone(),
-        })
-        .collect::<Vec<_>>();
+            less_than: Vec::new(),
+            in_values: super::table_partition::stored_in_values(
+                Some(definition),
+                &list_field_types,
+                ctx,
+            )?,
+            comment: String::new(),
+        });
+    }
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was resolved above")
     };

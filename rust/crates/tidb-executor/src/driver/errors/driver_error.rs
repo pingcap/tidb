@@ -450,6 +450,26 @@ pub enum DriverError {
     /// Go `ast.ErrNoParts` (1504), carrying the noun Go counts
     /// (`partitions`): `PARTITIONS 0`.
     PartitionNoParts(&'static str),
+    /// Go's `getPartitionColSlices` fallthrough: `PARTITION BY KEY ()` on a
+    /// table that HAS keys but none that can serve as the partitioning
+    /// columns. Go raises it with a bare `errors.Errorf`, so it reaches the
+    /// client as 1105.
+    PartitionMetadataIncomplete,
+    /// Go `table.ErrUnknownPartition` (1735) as `newPartitionedTable` raises
+    /// it for metadata with no definitions (`tables/partition.go:115`).
+    ///
+    /// Go returns the BARE error there rather than
+    /// `GenWithStackByArgs(...)`, so its two `%-.64s` placeholders reach the
+    /// client unsubstituted. That is the message a real TiDB emits.
+    PartitionMetadataUnknown,
+    /// Go `ErrTooLongTablePartitionComment` (1629): a per-partition
+    /// `COMMENT` past `MaxCommentLength`, raised only under STRICT mode.
+    PartitionCommentTooLong {
+        /// The partition whose comment is too long.
+        name: String,
+        /// Go `MaxCommentLength`.
+        limit: usize,
+    },
     /// Go `dbterror.ErrSameNamePartition` (1517), carrying the repeated name.
     PartitionSameName(String),
     /// Go `dbterror.ErrPartitionFunctionIsNotAllowed` (1564): the partition
