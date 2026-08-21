@@ -26,9 +26,8 @@
 
 package parser
 
-import __yyfmt__ "fmt"
-
 import (
+	__yyfmt__ "fmt"
 	"strings"
 	"time"
 
@@ -16596,7 +16595,11 @@ yynewstate:
 		}
 	case 377:
 		{
-			parser.yyVAL.expr = yyS[yypt-1].expr
+			startOffset := parser.startOffset(&yyS[yypt-2])
+			endOffset := parser.endOffset(&yyS[yypt])
+			expr := yyS[yypt-1].expr
+			expr.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+			parser.yyVAL.expr = &ast.ParenthesesExpr{Expr: expr}
 		}
 	case 378:
 		{
