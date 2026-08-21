@@ -67,9 +67,9 @@ const (
 	defHeapReclaimCheckMaxDuration            = time.Second * 5
 	defOOMRiskRatio                           = 0.95
 	defMemRiskRatio                           = 0.9
-	defTickDurMilli                           = kilo * 1             // 1s
-	defStorePoolMediumCapDurMilli             = defTickDurMilli * 10 // 10s
-	defStoreTopNProfilesDurMilli              = defTickDurMilli * 10 // 10s
+	defTickDurMilli                           = kilo * 1            // 1s
+	defStorePoolMediumCapDurMilli             = defTickDurMilli * 5 // 5s
+	defStoreTopNProfilesDurMilli              = defTickDurMilli * 5 // 5s
 	defTrackMemStatsDurMilli                  = kilo * 1
 	defMax                             int64  = 9e15
 	defServerlimitSmallLimitNum               = 1000
@@ -77,7 +77,7 @@ const (
 	defServerlimitMaxUnitNum                  = 100
 	defUpdateMemConsumedTimeAlignSec          = 30
 	defUpdateMemMagnifUtimeAlign              = 30
-	defUpdateBufferTimeAlignSec               = 10
+	defUpdateDigestTimeAlignSec               = 60
 	defRedundancy                             = 2
 	defPoolReservedQuota                      = byteSizeMB
 	defAwaitFreePoolAllocAlignSize            = defPoolReservedQuota + byteSizeMB
@@ -583,7 +583,6 @@ type MemArbitrator struct {
 			sync.RWMutex
 			statisticsTimedMapElement
 		}
-		lastUpdateUtimeMilli atomic.Int64
 	}
 
 	buffer atomic.Int64 // reserved buffer quota which only works under priority mode
@@ -877,7 +876,7 @@ func (m *MemArbitrator) UpdateDigestProfileCache(digestID uint64, memConsumed in
 	const maxNum = int64(len(pf.timedMap))
 	const maxDur = maxNum - defRedundancy
 
-	tsAlign := utimeSec / defUpdateBufferTimeAlignSec
+	tsAlign := utimeSec / defUpdateDigestTimeAlignSec
 	tar := &pf.timedMap[tsAlign%maxNum]
 
 	if oriTs := tar.tsAlign.Load(); oriTs < tsAlign && oriTs != 0 {
@@ -1039,7 +1038,8 @@ type memProfile struct {
 type heapController struct {
 	memStateRecorder struct {
 		RecordMemState
-		lastMemState atomic.Pointer[RuntimeMemStateV1]
+		lastMemState         atomic.Pointer[RuntimeMemStateV1]
+		lastRecordUtimeMilli atomic.Int64
 		sync.Mutex
 	}
 	memRisk struct {
@@ -2318,15 +2318,14 @@ func (m *MemArbitrator) tryStorePoolMediumCapacity(utimeMilli int64) bool {
 	if capacity == 0 {
 		return false
 	}
-	if lastState := m.lastMemState(); lastState == nil ||
-		(m.poolAllocStats.lastUpdateUtimeMilli.Load()+defStorePoolMediumCapDurMilli <= utimeMilli &&
-			lastState.PoolMediumCap != capacity) {
-		if m.persistRuntimeMemState(utimeMilli, "new root pool medium cap", nil) == nil {
-			m.poolAllocStats.lastUpdateUtimeMilli.Store(utimeMilli)
-		}
-		return true
+	if lastMemState := m.lastMemState(); lastMemState != nil && lastMemState.PoolMediumCap == capacity {
+		return false
 	}
-	return false
+	if m.heapController.memStateRecorder.lastRecordUtimeMilli.Load()+defStorePoolMediumCapDurMilli > utimeMilli {
+		return false
+	}
+	m.persistRuntimeMemState("new root pool medium cap", nil)
+	return true
 }
 
 func (m *MemArbitrator) poolMediumQuota() int64 {
@@ -2397,7 +2396,7 @@ func (m *MemArbitrator) updateMemMagnification(utimeMilli int64) (updatedPreProf
 			)
 
 			if lastMemState := m.lastMemState(); lastMemState != nil && newRatio < lastMemState.Magnif {
-				_ = m.persistRuntimeMemState(utimeMilli, "new magnification ratio", nil)
+				_ = m.persistRuntimeMemState("new magnification ratio", nil)
 			}
 		}
 
@@ -2576,9 +2575,7 @@ type top3Digest struct {
 		sync.Mutex
 		top3DigestSnapshot
 	}
-	index              atomic.Int64
-	lastPersistVersion atomic.Uint64
-	lastPersistMilli   atomic.Int64
+	index atomic.Int64
 	sync.Mutex
 }
 
@@ -2589,8 +2586,6 @@ func (t *top3Digest) restore(data top3DigestDataGroup) {
 	t.index.Store(0)
 	t.snapshotState[0].Lock()
 	t.snapshotState[0].top3DigestSnapshot = top3DigestSnapshot{data: data}
-	t.lastPersistVersion.Store(0)
-	t.lastPersistMilli.Store(0)
 	t.snapshotState[0].Unlock()
 }
 
@@ -2627,17 +2622,6 @@ func (t *top3Digest) merge(other top3DigestDataGroup, utimeSec int64) bool {
 
 	t.index.Store(index)
 	return true
-}
-
-func (t *top3Digest) shouldPersist(utimeMilli int64) bool {
-	version := t.version()
-	return version > t.lastPersistVersion.Load() &&
-		t.lastPersistMilli.Load()+defStoreTopNProfilesDurMilli <= utimeMilli
-}
-
-func (t *top3Digest) markHandled(version uint64, utimeMilli int64) {
-	t.lastPersistMilli.Store(utimeMilli)
-	t.lastPersistVersion.Store(version)
 }
 
 func (t *top3DigestDataGroup) clean(utimeSec int64) top3DigestDataGroup {
@@ -3084,7 +3068,7 @@ func (m *MemArbitrator) buildRuntimeMemState() (memState RuntimeMemStateV1) {
 	return
 }
 
-func (m *MemArbitrator) persistRuntimeMemState(utimeMilli int64, reason string, mutate func(*RuntimeMemStateV1)) error {
+func (m *MemArbitrator) persistRuntimeMemState(reason string, mutate func(*RuntimeMemStateV1)) error {
 	m.heapController.memStateRecorder.Lock()
 	defer m.heapController.memStateRecorder.Unlock()
 
@@ -3094,12 +3078,11 @@ func (m *MemArbitrator) persistRuntimeMemState(utimeMilli int64, reason string, 
 	}
 
 	if err := m.heapController.memStateRecorder.Store(&memState); err != nil {
-		m.digestProfileCache.top3.markHandled(memState.top3Version, utimeMilli)
 		m.execMetrics.Action.RecordMemState.Fail++
 		return err
 	}
 	m.heapController.memStateRecorder.lastMemState.Store(&memState)
-	m.digestProfileCache.top3.markHandled(memState.top3Version, utimeMilli)
+	m.heapController.memStateRecorder.lastRecordUtimeMilli.Store(nowUnixMilli())
 	m.execMetrics.Action.RecordMemState.Succ++
 	m.actions.Info("Record mem state",
 		zap.String("reason", reason),
@@ -3109,13 +3092,13 @@ func (m *MemArbitrator) persistRuntimeMemState(utimeMilli int64, reason string, 
 }
 
 func (m *MemArbitrator) tryPersistTopNProfiles(utimeMilli int64) bool {
-	if !m.digestProfileCache.top3.shouldPersist(utimeMilli) {
+	if lastMemState := m.lastMemState(); lastMemState != nil && lastMemState.top3Version >= m.digestProfileCache.top3.version() {
 		return false
 	}
-	if err := m.persistRuntimeMemState(utimeMilli, "updated top digest profiles", nil); err != nil {
-		m.actions.Error("Failed to save top digest profiles", zap.Error(err))
+	if m.heapController.memStateRecorder.lastRecordUtimeMilli.Load()+defStoreTopNProfilesDurMilli > utimeMilli {
 		return false
 	}
+	m.persistRuntimeMemState("new top digest profiles", nil)
 	return true
 }
 
@@ -3379,7 +3362,7 @@ func (m *MemArbitrator) intoMemRisk() {
 			m.avoidance.memMagnif.Unlock()
 		}
 
-		if err := m.persistRuntimeMemState(m.innerTime().UnixMilli(), "oom risk", func(s *RuntimeMemStateV1) {
+		if err := m.persistRuntimeMemState("oom risk", func(s *RuntimeMemStateV1) {
 			s.LastRisk = lastRisk
 			s.Magnif = magnif
 		}); err != nil {

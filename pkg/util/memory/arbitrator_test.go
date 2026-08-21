@@ -659,7 +659,7 @@ func TestTopNProfilesPersistence(t *testing.T) {
 		require.Equal(t, 1, storeCount)
 	})
 
-	t.Run("failed top3 persistence waits for a new version", func(t *testing.T) {
+	t.Run("failed top3 persistence retries on the next tick", func(t *testing.T) {
 		storeCount := 0
 		m := NewMemArbitrator(-1, 1, 3, 0, &memStateRecorderForTest{
 			load: func() (*RuntimeMemStateV1, error) {
@@ -680,16 +680,21 @@ func TestTopNProfilesPersistence(t *testing.T) {
 		require.Nil(t, m.lastMemState())
 
 		require.True(t, m.executeTick(defTickDurMilli*60))
-		require.Equal(t, 1, storeCount)
+		require.Equal(t, 2, storeCount)
+		require.NotNil(t, m.lastMemState())
+
+		// executeTick uses a simulated time, while successful persistence records the
+		// wall clock. Keep the shared timestamp on the simulated timeline here.
+		m.heapController.memStateRecorder.lastRecordUtimeMilli.Store(defTickDurMilli * 60)
 
 		require.True(t, m.digestProfileCache.top3.merge(
 			top3DigestDataGroup{{DigestID: 4, Size: 400, UtimeSec: now + 1}}, now+1))
 		require.True(t, m.executeTick(defTickDurMilli*90))
-		require.Equal(t, 2, storeCount)
+		require.Equal(t, 3, storeCount)
 		require.Equal(t, uint64(4), m.lastMemState().TopNProfiles[0].DigestID)
 	})
 
-	t.Run("failed runtime persistence does not schedule a retry", func(t *testing.T) {
+	t.Run("failed runtime persistence retries top3 profiles", func(t *testing.T) {
 		storeCount := 0
 		m := NewMemArbitrator(-1, 1, 3, 0, &memStateRecorderForTest{
 			load: func() (*RuntimeMemStateV1, error) {
@@ -704,15 +709,15 @@ func TestTopNProfilesPersistence(t *testing.T) {
 			},
 		})
 		risk := LastRisk{HeapAlloc: 900, QuotaAlloc: 100}
-		require.Error(t, m.persistRuntimeMemState(defTickDurMilli, "oom risk", func(s *RuntimeMemStateV1) {
+		require.Error(t, m.persistRuntimeMemState("oom risk", func(s *RuntimeMemStateV1) {
 			s.LastRisk = risk
 		}))
 		require.Nil(t, m.lastMemState())
 
 		state := m.buildRuntimeMemState()
 		require.Zero(t, state.LastRisk)
-		require.False(t, m.tryPersistTopNProfiles(defTickDurMilli+defStoreTopNProfilesDurMilli))
-		require.Equal(t, 1, storeCount)
+		require.True(t, m.tryPersistTopNProfiles(defTickDurMilli+defStoreTopNProfilesDurMilli))
+		require.Equal(t, 2, storeCount)
 	})
 
 	t.Run("top3 version is not persisted", func(t *testing.T) {
@@ -1983,13 +1988,13 @@ func TestMemArbitrator(t *testing.T) {
 			require.True(t, f)
 			require.True(t, v.(*digestProfile).lastFetchUtimeSec.Load() == 3)
 		}
-		m.UpdateDigestProfileCache(digestID1, 107, defUpdateBufferTimeAlignSec)
+		m.UpdateDigestProfileCache(digestID1, 107, defUpdateDigestTimeAlignSec)
 		{
 			a, ok := m.GetDigestProfileCache(digestID1, 4)
 			require.True(t, ok)
 			require.True(t, a == 1009)
 		}
-		m.UpdateDigestProfileCache(digestID1, 107, defUpdateBufferTimeAlignSec*2)
+		m.UpdateDigestProfileCache(digestID1, 107, defUpdateDigestTimeAlignSec*2)
 		{
 			a, ok := m.GetDigestProfileCache(digestID1, 4)
 			require.True(t, ok)
@@ -2566,12 +2571,13 @@ func TestMemArbitrator(t *testing.T) {
 		{ // new suggest pool cap
 			// last mem state is nil
 			ori := m.lastMemState()
+			m.heapController.memStateRecorder.lastRecordUtimeMilli.Store(0)
 			require.Equal(t,
 				RuntimeMemStateV1{Version: 1, Magnif: 1111},
 				*m.lastMemState())
 			require.True(t, m.avoidance.memMagnif.ratio.Load() == 6100)
 			require.True(t, m.poolMediumQuota() == 0)
-			require.True(t, m.poolAllocStats.lastUpdateUtimeMilli.Load() == 0)
+			require.True(t, m.heapController.memStateRecorder.lastRecordUtimeMilli.Load() == 0)
 			require.True(t, m.execMetrics.Action.RecordMemState.Succ == 0)
 
 			m.heapController.memStateRecorder.lastMemState.Store(nil)
@@ -2579,23 +2585,24 @@ func TestMemArbitrator(t *testing.T) {
 			require.True(t, m.execMetrics.Action.RecordMemState.Succ == 1)
 			require.True(t, logs.info == 1)
 			require.True(t, m.poolMediumQuota() == 400)
-			require.True(t, m.poolAllocStats.lastUpdateUtimeMilli.Load() == mockTimeLine.now)
+			m.heapController.memStateRecorder.lastRecordUtimeMilli.Store(mockTimeLine.now)
 			m.heapController.memStateRecorder.lastMemState.Store(ori)
 			ori.PoolMediumCap = m.poolMediumQuota()
 
 			// same value
-			require.False(t, m.tryStorePoolMediumCapacity(mockTimeLine.now+defTickDurMilli*10+1))
+			require.False(t, m.tryStorePoolMediumCapacity(mockTimeLine.now+defStorePoolMediumCapDurMilli+1))
 			// time not satisfy
 			m.poolAllocStats.mediumQuota.Store(399)
-			require.False(t, m.tryStorePoolMediumCapacity(mockTimeLine.now+defTickDurMilli*10-1))
+			require.False(t, m.tryStorePoolMediumCapacity(mockTimeLine.now+defStorePoolMediumCapDurMilli-1))
 			require.True(t, m.execMetrics.Action.RecordMemState.Succ == 1)
 			require.True(t, logs.info == 1)
 			// new suggest pool cap: last mem state is not nil & SuggestPoolInitCap not same
 			m.poolAllocStats.mediumQuota.Store(401)
-			require.True(t, m.tryStorePoolMediumCapacity(mockTimeLine.now+defTickDurMilli*10))
+			require.True(t, m.tryStorePoolMediumCapacity(mockTimeLine.now+defStorePoolMediumCapDurMilli))
 			require.True(t, m.execMetrics.Action.RecordMemState.Succ == 2)
 			require.True(t, logs.info == 2)
 			require.True(t, m.lastMemState().PoolMediumCap == 401)
+			m.heapController.memStateRecorder.lastRecordUtimeMilli.Store(mockTimeLine.now + defStorePoolMediumCapDurMilli)
 			m.poolAllocStats.mediumQuota.Store(400)
 		}
 
