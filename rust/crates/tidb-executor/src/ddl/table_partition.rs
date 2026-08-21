@@ -1541,7 +1541,7 @@ fn check_partition_name_unique(definitions: &[PartitionDef]) -> Result<(), Drive
 ///
 /// `ß` stays `ß` under the simple map -- it does NOT expand to `ss` -- so `ß`
 /// and `SS` remain distinct partition names.
-fn go_to_lower(name: &str) -> String {
+pub(super) fn go_to_lower(name: &str) -> String {
     name.chars()
         .map(|source| {
             // The one rune where Rust's full mapping differs from Go's simple

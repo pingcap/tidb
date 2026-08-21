@@ -2476,3 +2476,44 @@ fn add_partition_on_range_columns_checks_the_combined_list() {
               PARTITION p3 VALUES LESS THAN (40, 40))")
         .expect("an increasing addition is accepted");
 }
+
+/// Go's 1735 for an unknown partition carries a DIFFERENT case depending on
+/// which statement raised it.
+///
+/// `TruncateTablePartition` passes `name.L` (`ddl/executor.go:2851`), so the
+/// written case is folded away, while the SELECT/DML partition-list errors
+/// pass `.O` and keep it (`executor/builder.go:6258`). Both spellings are
+/// deliberate on Go's side, so a single rule here would be wrong for one of
+/// them.
+#[test]
+fn an_unknown_partition_name_carries_gos_case_per_statement() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE up (a INT) PARTITION BY RANGE (a) \
+              (PARTITION p0 VALUES LESS THAN (10))")
+        .expect("base table");
+
+    // TRUNCATE folds the name.
+    let rendered = session
+        .run("ALTER TABLE up TRUNCATE PARTITION NoSuch")
+        .expect_err("no such partition")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 1735);
+    assert!(
+        rendered.message.contains("'nosuch'"),
+        "TRUNCATE folds the name as Go's `name.L` does, got: {}",
+        rendered.message
+    );
+
+    // The SELECT partition list keeps the written case.
+    let rendered = session
+        .run("SELECT * FROM up PARTITION (NoSuch)")
+        .expect_err("no such partition")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 1735);
+    assert!(
+        rendered.message.contains("'NoSuch'"),
+        "SELECT keeps the written case as Go's `.O` does, got: {}",
+        rendered.message
+    );
+}

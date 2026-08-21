@@ -384,8 +384,14 @@ fn truncate_partition_action(
                         super::table_partition::partition_names_equal(&definition.name, name)
                     })
                 else {
+                    // Go `TruncateTablePartition` (`ddl/executor.go:2851`)
+                    // passes `name.L` here -- the FOLDED name -- while the
+                    // SELECT/DML partition-list errors (`builder.go:6258`,
+                    // `show_placement.go:201`) pass `.O` and keep the written
+                    // case. The sites genuinely differ, so this one folds and
+                    // those stay as they are.
                     return Err(DriverError::UnknownPartition {
-                        partition: name.clone(),
+                        partition: super::table_partition::go_to_lower(name),
                         table: table_name.to_owned(),
                     });
                 };
