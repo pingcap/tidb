@@ -5223,12 +5223,24 @@ func initRefreshMaterializedViewSession(
 	}
 
 	origSQLMode := sessVars.SQLMode
+	origDivPrecisionIncrement := sessVars.DivPrecisionIncrement
 	origTimeZone := sessVars.TimeZone
 	origStmtCtxTimeZone := sessVars.StmtCtx.TimeZone()
 	origTypeFlags := sessVars.StmtCtx.TypeFlags()
 	origErrLevels := sessVars.StmtCtx.ErrLevels()
 
+	if mviewInfo.MViewMaintenanceVersion > model.MViewMaintenanceVersionAVG {
+		return nil, errors.New("refresh materialized view: unsupported materialized-view maintenance version")
+	}
+	if mviewInfo.MViewMaintenanceVersion > model.MViewMaintenanceVersionBase {
+		if mviewInfo.DefinitionDivPrecisionIncrement < 0 || mviewInfo.DefinitionDivPrecisionIncrement > variable.MaxDivPrecisionIncrement {
+			return nil, errors.New("refresh materialized view: invalid maintenance numeric metadata")
+		}
+	}
 	sessVars.SQLMode = mviewInfo.DefinitionSQLMode
+	if mviewInfo.MViewMaintenanceVersion > model.MViewMaintenanceVersionBase {
+		sessVars.DivPrecisionIncrement = mviewInfo.DefinitionDivPrecisionIncrement
+	}
 	sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sessVars.SQLMode.HasNoBackslashEscapesMode())
 	sessVars.TimeZone = loc
 	sessVars.StmtCtx.SetTimeZone(loc)
@@ -5237,6 +5249,7 @@ func initRefreshMaterializedViewSession(
 
 	return func() {
 		sessVars.SQLMode = origSQLMode
+		sessVars.DivPrecisionIncrement = origDivPrecisionIncrement
 		sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, origSQLMode.HasNoBackslashEscapesMode())
 		sessVars.TimeZone = origTimeZone
 		sessVars.StmtCtx.SetTimeZone(origStmtCtxTimeZone)

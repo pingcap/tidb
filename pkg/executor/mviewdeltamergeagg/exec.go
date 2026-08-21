@@ -52,6 +52,11 @@ type Mapping struct {
 	// A dependency is either a delta-agg column (< DeltaAggColCount) or a
 	// previously computed output column.
 	DependencyColID []int
+	// RequiredExactState requests lossless normalization of a SUM state before
+	// it is made visible to dependent AVG computations.
+	RequiredExactState bool
+	// DivPrecisionIncrement is the definition-time value used by AVG finalization.
+	DivPrecisionIncrement int
 	// MinMaxRecompute is per-mapping MIN/MAX recompute metadata.
 	// It must be nil for non-MIN/MAX mappings.
 	MinMaxRecompute *MinMaxRecomputeSpec
@@ -863,6 +868,8 @@ func (e *Exec) prepareMergers() error {
 			merger, err = e.buildCountMerger(mapping, colID2ComputedIdx, childTypes)
 		case ast.AggFuncSum:
 			merger, err = e.buildSumMerger(mapping, colID2ComputedIdx, childTypes)
+		case ast.AggFuncAvg:
+			merger, err = e.buildAvgMerger(mapping, colID2ComputedIdx, childTypes)
 		case ast.AggFuncMin, ast.AggFuncMax:
 			if e.MinMaxRecompute == nil {
 				err = errors.Errorf("%s merge requires MinMaxRecompute metadata", aggName)

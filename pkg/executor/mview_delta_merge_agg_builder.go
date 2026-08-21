@@ -122,6 +122,7 @@ func (b *executorBuilder) buildMViewDeltaMerge(v *plannercore.MViewDeltaMerge) e
 		v.AggInfos,
 		sourceFieldTypes,
 		deltaAggColCount,
+		v.DefinitionDivPrecisionIncrement,
 	)
 	if err != nil {
 		b.err = err
@@ -149,6 +150,7 @@ func buildMViewDeltaMergeAggMappings(
 	aggInfos []mview.AggInfo,
 	sourceFieldTypes []*types.FieldType,
 	deltaAggColCount int,
+	definitionDivPrecisionIncrement int,
 ) ([]MViewDeltaMergeAggMapping, error) {
 	if sctx == nil {
 		return nil, errors.New("MViewDeltaMerge session context is nil")
@@ -175,9 +177,18 @@ func buildMViewDeltaMergeAggMappings(
 		}
 
 		mapping := MViewDeltaMergeAggMapping{
-			AggFunc:         aggDesc,
-			ColID:           []int{outputColID},
-			DependencyColID: deps,
+			AggFunc:               aggDesc,
+			ColID:                 []int{outputColID},
+			DependencyColID:       deps,
+			RequiredExactState:    aggInfo.RequiredExactState,
+			DivPrecisionIncrement: definitionDivPrecisionIncrement,
+		}
+		if aggInfo.Kind == mview.AggAvg {
+			// The AVG merger must use the physical MV output type, not AVG(SUM(...))'s inferred type.
+			if outputColID < 0 || outputColID >= len(sourceFieldTypes) || sourceFieldTypes[outputColID] == nil {
+				return nil, errors.Errorf("AVG output column %d type is unavailable", outputColID)
+			}
+			aggDesc.RetTp = sourceFieldTypes[outputColID].Clone()
 		}
 		if countStarMappingIdx < 0 && aggInfo.Kind == mview.AggCountStar {
 			countStarMappingIdx = mappingIdx
@@ -297,6 +308,8 @@ func mviewDeltaMergeAggFuncName(kind mview.AggKind) (string, error) {
 		return ast.AggFuncCount, nil
 	case mview.AggSum:
 		return ast.AggFuncSum, nil
+	case mview.AggAvg:
+		return ast.AggFuncAvg, nil
 	case mview.AggMin:
 		return ast.AggFuncMin, nil
 	case mview.AggMax:

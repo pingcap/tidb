@@ -179,12 +179,18 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	// count(column) is supported (but CREATE MATERIALIZED VIEW still requires count(*|1) in the SELECT list).
 	tk.MustExec("create materialized view mv_count_col (a, cnt_b, cnt) as select a, count(b), count(1) from t group by a")
 	tk.MustQuery("select a, cnt_b, cnt from mv_count_col order by a").Check(testkit.Rows("1 2 2", "2 1 1"))
+	tk.MustExec("create materialized view mv_avg (a, avg_b, sum_b, cnt_b, cnt) as select a, avg(b), sum(b), count(b), count(1) from t group by a")
+	tk.MustQuery("select a, avg_b, sum_b, cnt_b, cnt from mv_avg order by a").Check(testkit.Rows("1 7.5000 15 2 2", "2 7.0000 7 1 1"))
 	is = dom.InfoSchema()
 	mvCountColTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_count_col"))
 	require.NoError(t, err)
 	require.Equal(t, "FAST", mvCountColTable.Meta().MaterializedView.RefreshMethod)
 	require.Equal(t, "", mvCountColTable.Meta().MaterializedView.RefreshStartWith)
 	require.Equal(t, "", mvCountColTable.Meta().MaterializedView.RefreshNext)
+	mvAvgTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_avg"))
+	require.NoError(t, err)
+	require.Equal(t, uint8(2), mvAvgTable.Meta().MaterializedView.MViewMaintenanceVersion)
+	require.Equal(t, tk.Session().GetSessionVars().GetDivPrecisionIncrement(), mvAvgTable.Meta().MaterializedView.DefinitionDivPrecisionIncrement)
 
 	// ATTRIBUTES configures overdue-alert thresholds for automatically scheduled MV refresh tasks.
 	tk.MustExec("create materialized view mv_alert (a, cnt) refresh fast attributes='mview_alert_warning=300,mview_alert_overdue=600' as select a, count(1) from t group by a")
@@ -342,6 +348,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 		"test\x00$mlog$t":         {},
 		"test\x00mv":              {},
 		"test\x00mv_count_col":    {},
+		"test\x00mv_avg":          {},
 		"test\x00mv_upper_agg":    {},
 		"test\x00mv_alias":        {},
 		"test\x00mv_out_alias":    {},
@@ -442,6 +449,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	// Drop MV and then drop MV LOG.
 	tk.MustExec("drop materialized view mv")
 	tk.MustExec("drop materialized view mv_count_col")
+	tk.MustExec("drop materialized view mv_avg")
 	tk.MustExec("drop materialized view mv_alert")
 	tk.MustExec("drop materialized view mv_alert_zero")
 	tk.MustExec("drop materialized view mv_alert_failed")

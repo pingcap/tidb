@@ -293,6 +293,83 @@ func TestCountAndNullableSum(t *testing.T) {
 	require.True(t, sumCol.IsNull(2))
 }
 
+func TestAvgFinalizesFromUpdatedSumAndCounts(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().ExecutorConcurrency = 2
+
+	// Schema: [0] delta_count(*), [1] delta_sum(b), [2] delta_count(b), [3] group_key,
+	// [4] mv_sum(b), [5] mv_count(b), [6] mv_count(*), [7] mv_avg(b).
+	ftInt := types.NewFieldType(mysql.TypeLonglong)
+	ftAvg := types.NewFieldType(mysql.TypeNewDecimal)
+	ftAvg.SetFlen(20)
+	ftAvg.SetDecimal(2)
+	fts := []*types.FieldType{ftInt, ftInt, ftInt, ftInt, ftInt, ftInt, ftInt, ftAvg}
+	chk := chunk.NewChunkWithCapacity(fts, 2)
+
+	chk.AppendInt64(0, 1)
+	chk.AppendInt64(1, 5)
+	chk.AppendInt64(2, 1)
+	chk.AppendInt64(3, 1)
+	chk.AppendInt64(4, 10)
+	chk.AppendInt64(5, 2)
+	chk.AppendInt64(6, 2)
+	// Deliberately make the stored AVG stale: the merger must not reconstruct state from it.
+	chk.AppendMyDecimal(7, types.NewDecFromInt(123))
+
+	chk.AppendInt64(0, -2)
+	chk.AppendInt64(1, -10)
+	chk.AppendInt64(2, -2)
+	chk.AppendInt64(3, 2)
+	chk.AppendInt64(4, 10)
+	chk.AppendInt64(5, 2)
+	chk.AppendInt64(6, 2)
+	chk.AppendMyDecimal(7, types.NewDecFromInt(5))
+
+	src := newMockSource(sctx, fts, []*chunk.Chunk{chk})
+	countStarDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
+	require.NoError(t, err)
+	countArg := &expression.Column{Index: 2, RetType: ftInt}
+	countDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncCount, []expression.Expression{countArg}, false)
+	require.NoError(t, err)
+	sumArg := &expression.Column{Index: 1, RetType: ftInt}
+	sumDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncSum, []expression.Expression{sumArg}, false)
+	require.NoError(t, err)
+	avgArg := &expression.Column{Index: 4, RetType: ftInt}
+	avgDesc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncAvg, []expression.Expression{avgArg}, false)
+	require.NoError(t, err)
+
+	mergeExec := &Exec{
+		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
+		AggMappings: []Mapping{
+			{AggFunc: countStarDesc, ColID: []int{6}, DependencyColID: []int{0}},
+			{AggFunc: countDesc, ColID: []int{5}, DependencyColID: []int{2}},
+			{AggFunc: sumDesc, ColID: []int{4}, DependencyColID: []int{1, 5}, RequiredExactState: true},
+			{AggFunc: avgDesc, ColID: []int{7}, DependencyColID: []int{4, 5, 6}, DivPrecisionIncrement: 4},
+		},
+		DeltaAggColCount: 3,
+		WorkerCnt:        2,
+	}
+	writer := &collectWriter{}
+	mergeExec.Writer = writer
+
+	require.NoError(t, mergeExec.Open(context.Background()))
+	outChk := exec.NewFirstChunk(mergeExec)
+	require.NoError(t, mergeExec.Next(context.Background(), outChk))
+	require.NoError(t, mergeExec.Close())
+
+	require.Len(t, writer.results, 1)
+	res := writer.results[0]
+	require.Len(t, res.RowOps, 2)
+	require.Equal(t, RowOpUpdate, res.RowOps[0].Tp)
+	require.Equal(t, RowOpDelete, res.RowOps[1].Tp)
+	require.Equal(t, int64(15), res.ComputedCols[4].GetInt64(0))
+	require.Equal(t, int64(3), res.ComputedCols[5].GetInt64(0))
+	require.Equal(t, int64(3), res.ComputedCols[6].GetInt64(0))
+	require.Equal(t, "5.00", res.ComputedCols[7].GetDecimal(0).String())
+	require.True(t, res.ComputedCols[4].IsNull(1))
+	require.True(t, res.ComputedCols[7].IsNull(1))
+}
+
 func TestCountAndNonNullSumReal(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().ExecutorConcurrency = 2
