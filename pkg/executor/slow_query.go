@@ -994,6 +994,9 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 				} else if strings.HasPrefix(line, variable.SlowLogRequestUnitV2Detail+variable.SlowLogSpaceMarkStr) {
 					line = line[len(variable.SlowLogRequestUnitV2Detail+variable.SlowLogSpaceMarkStr):]
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogRequestUnitV2Detail, line, e.checker, fileLine)
+				} else if strings.HasPrefix(line, variable.SlowLogRequestUnitDetail+variable.SlowLogSpaceMarkStr) {
+					line = line[len(variable.SlowLogRequestUnitDetail+variable.SlowLogSpaceMarkStr):]
+					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogRequestUnitDetail, line, e.checker, fileLine)
 				} else if strings.HasPrefix(line, variable.SlowLogDBStr+variable.SlowLogSpaceMarkStr) {
 					line = line[len(variable.SlowLogDBStr+variable.SlowLogSpaceMarkStr):]
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogDBStr, line, e.checker, fileLine)
@@ -1156,7 +1159,8 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 	case variable.SlowLogUserStr, variable.SlowLogHostStr, execdetails.BackoffTypesStr, variable.SlowLogDBStr, variable.SlowLogIndexNamesStr, variable.SlowLogDigestStr,
 		variable.SlowLogStatsInfoStr, variable.SlowLogCopProcAddr, variable.SlowLogCopWaitAddr, variable.SlowLogPlanDigest,
 		variable.SlowLogPrevStmt, variable.SlowLogQuerySQLStr, variable.SlowLogWarnings, variable.SlowLogSessAliasStr,
-		variable.SlowLogResourceGroup, variable.SlowLogRequestUnitV2Detail, execdetails.ReadPoolTaskDetailsStr:
+		variable.SlowLogResourceGroup, variable.SlowLogRequestUnitV2Detail, variable.SlowLogRequestUnitDetail,
+		execdetails.ReadPoolTaskDetailsStr:
 		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			row[columnIdx] = types.NewStringDatum(value)
 			return true, nil

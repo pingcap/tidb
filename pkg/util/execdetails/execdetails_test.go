@@ -15,6 +15,7 @@
 package execdetails
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +32,18 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
+
+func TestStatementRUVersionSnapshot(t *testing.T) {
+	ctx := ContextWithInitializedExecDetails(context.Background())
+	_, ok := StatementRUVersionFromContext(ctx)
+	require.False(t, ok)
+
+	SetStatementRUVersion(ctx, rmclient.RUVersionV1)
+	SetStatementRUVersion(ctx, rmclient.RUVersionV2)
+	version, ok := StatementRUVersionFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, rmclient.RUVersionV1, version)
+}
 
 func defaultRUV2WeightsForTest() RUV2Weights {
 	cfg := config.DefaultRUV2Config()
@@ -1125,14 +1138,131 @@ func TestCopRuntimeStats2(t *testing.T) {
 }
 
 func TestRURuntimeStatsStringV1(t *testing.T) {
+	ruDetails := util.NewRUDetails()
+	ruDetails.Update(&rmpb.Consumption{RRU: 2.2522118248697915, WRU: 116.80625}, 0)
+	ruDetails.AddRUCalculation(rmclient.RUCalculation{
+		Factors: rmclient.RUFactorSnapshot{
+			ReadBaseCost:          0.125,
+			ReadPerBatchBaseCost:  0.5,
+			ReadBytesCost:         0.0000152587890625,
+			WriteBaseCost:         1,
+			WritePerBatchBaseCost: 1,
+			WriteBytesCost:        0.0009765625,
+			CPUMsCost:             0.3333333333333333,
+			BatchProportion:       0.7,
+		},
+		Inputs: rmclient.RUCalculationInputs{
+			ReadRPCCount:                 2,
+			ReadBytes:                    67090,
+			KVCPUTimeMs:                  0.835499,
+			ReplicaWeightedWriteRPCCount: 7,
+			ReplicaWeightedWriteBytes:    107424,
+		},
+		RRU: 2.2522118248697915,
+		WRU: 116.80625,
+	})
 	stats := &RURuntimeStats{
-		RUDetails: util.NewRUDetailsWith(10.5, 20.3, 0),
+		RUDetails: ruDetails,
 		Metrics:   NewRUV2Metrics(),
 		Weights:   defaultRUV2WeightsForTest(),
 		RUVersion: rmclient.RUVersionV1,
 	}
-	// v1: shows RRU + WRU
-	require.Equal(t, "RU:30.80", stats.String())
+	require.Equal(t,
+		"RU:119.06, RU_detail:"+
+			"RRU=read_rpc_count(2)*READ_BASE_COST(0.125)"+
+			"+read_rpc_count(2)*READ_PER_BATCH_BASE_COST(0.5)*BATCH_PROPORTION(0.7)"+
+			"+charged_read_bytes(67090)*READ_BYTES_COST(0.0000152587890625)"+
+			"+kv_cpu_ms(0.835499)*CPU_MS_COST(0.3333333333333333)=2.252212; "+
+			"WRU=replica_weighted_write_rpc_count(7)*WRITE_BASE_COST(1)"+
+			"+replica_weighted_write_rpc_count(7)*WRITE_PER_BATCH_BASE_COST(1)*BATCH_PROPORTION(0.7)"+
+			"+replica_weighted_write_bytes(107424)*WRITE_BYTES_COST(0.0009765625)=116.806250; "+
+			"RU=RRU(2.252212)+WRU(116.806250)=119.058462",
+		stats.String())
+
+	ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 3})
+	require.Contains(t, stats.String(),
+		"RU=RRU(2.252212)+WRU(116.806250)+tiflash_ru(3.000000)=122.058462")
+
+	failedWriteDetails := util.NewRUDetails()
+	failedWriteDetails.Update(&rmpb.Consumption{WRU: 14}, 0)
+	failedWriteDetails.AddRUCalculation(rmclient.RUCalculation{
+		Factors: rmclient.RUFactorSnapshot{WriteBaseCost: 3, WriteBytesCost: 0.2},
+		Inputs: rmclient.RUCalculationInputs{
+			ReplicaWeightedWriteRPCCount: 3,
+			ReplicaWeightedWriteBytes:    50,
+			FailedWriteRPCCount:          1,
+			FailedWriteBytes:             10,
+		},
+		WRU: 14,
+	})
+	require.Equal(t,
+		"WRU=replica_weighted_write_rpc_count(3)*WRITE_BASE_COST(3)"+
+			"+replica_weighted_write_bytes(50)*WRITE_BYTES_COST(0.2)"+
+			"-failed_write_rpc_count(1)*WRITE_BASE_COST(3)"+
+			"-failed_write_bytes(10)*WRITE_BYTES_COST(0.2)=14.000000; RU=WRU(14.000000)=14.000000",
+		FormatRUCalculationDetail(failedWriteDetails))
+
+	pureTiFlashDetails := util.NewRUDetails()
+	pureTiFlashDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 4, WRU: 5})
+	require.Equal(t, "RU=tiflash_ru(9.000000)=9.000000", FormatRUCalculationDetail(pureTiFlashDetails))
+
+	mixedFactorDetails := util.NewRUDetails()
+	mixedFactorDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 3})
+	mixedFactorDetails.AddRUCalculation(rmclient.RUCalculation{
+		Factors: rmclient.RUFactorSnapshot{ReadBytesCost: 0.1},
+		Inputs:  rmclient.RUCalculationInputs{ReadBytes: 10},
+		RRU:     1,
+	})
+	mixedFactorDetails.AddRUCalculation(rmclient.RUCalculation{
+		Factors: rmclient.RUFactorSnapshot{ReadBytesCost: 0.2},
+		Inputs:  rmclient.RUCalculationInputs{ReadBytes: -5},
+		RRU:     -1,
+	})
+	require.Empty(t, FormatRUCalculationDetail(mixedFactorDetails))
+
+	tinyDetails := util.NewRUDetails()
+	tinyDetails.Update(&rmpb.Consumption{RRU: 0.0000006, WRU: 0.0000006}, 0)
+	tinyDetails.AddRUCalculation(rmclient.RUCalculation{
+		Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1, WriteBaseCost: 1},
+		Inputs: rmclient.RUCalculationInputs{
+			ReadRPCCount:                 0.0000006,
+			ReplicaWeightedWriteRPCCount: 0.0000006,
+		},
+		RRU: 0.0000006,
+		WRU: 0.0000006,
+	})
+	require.Contains(t, FormatRUCalculationDetail(tinyDetails),
+		"RU=RRU(0.000001)+WRU(0.000001)=0.000002")
+
+	partialDetails := util.NewRUDetails()
+	partialDetails.Update(&rmpb.Consumption{RRU: 2}, 0)
+	partialDetails.AddRUCalculation(rmclient.RUCalculation{
+		Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1},
+		Inputs:  rmclient.RUCalculationInputs{ReadRPCCount: 1},
+		RRU:     1,
+	})
+	require.Empty(t, FormatRUCalculationDetail(partialDetails))
+
+	componentMismatchDetails := util.NewRUDetails()
+	componentMismatchDetails.Update(&rmpb.Consumption{RRU: 2}, 0)
+	componentMismatchDetails.AddRUCalculation(rmclient.RUCalculation{
+		Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1, WriteBaseCost: 1},
+		Inputs: rmclient.RUCalculationInputs{
+			ReadRPCCount:                 1,
+			ReplicaWeightedWriteRPCCount: 1,
+		},
+		RRU: 2,
+	})
+	require.Empty(t, FormatRUCalculationDetail(componentMismatchDetails))
+
+	largeMismatchDetails := util.NewRUDetails()
+	largeMismatchDetails.Update(&rmpb.Consumption{RRU: 1_000_000_000_500}, 0)
+	largeMismatchDetails.AddRUCalculation(rmclient.RUCalculation{
+		Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1},
+		Inputs:  rmclient.RUCalculationInputs{ReadRPCCount: 1_000_000_000_000},
+		RRU:     1_000_000_000_500,
+	})
+	require.Empty(t, FormatRUCalculationDetail(largeMismatchDetails))
 }
 
 func TestRURuntimeStatsStringV1NilDetails(t *testing.T) {

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 const (
@@ -149,6 +150,8 @@ const (
 	SlowLogRequestUnitV2 = "Request_unit_v2"
 	// SlowLogRequestUnitV2Detail is the RU v2 detailed metrics for the statement.
 	SlowLogRequestUnitV2Detail = "Request_unit_v2_detail"
+	// SlowLogRequestUnitDetail is the RU v1 calculation formula for the statement.
+	SlowLogRequestUnitDetail = "Request_unit_detail"
 
 	// The following constants define the set of fields for SlowQueryLogItems
 	// that are relevant to evaluating and triggering SlowLogRules.
@@ -305,6 +308,7 @@ type SlowQueryLogItems struct {
 	ResourceGroupName string
 	RUDetails         *util.RUDetails
 	RUV2Metrics       *execdetails.RUV2Metrics
+	RUVersion         rmclient.RUVersion
 	MemMax            int64
 	DiskMax           int64
 	CPUUsages         ppcpuusage.CPUUsages
@@ -585,6 +589,11 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if len(formatted) > 0 {
 		writeSlowLogItem(&buf, SlowLogRequestUnitV2Detail, formatted)
+	}
+	if logItems.RUVersion == rmclient.RUVersionV1 {
+		if detail := execdetails.FormatRUCalculationDetail(logItems.RUDetails); detail != "" {
+			writeSlowLogItem(&buf, SlowLogRequestUnitDetail, detail)
+		}
 	}
 	if len(logItems.SessionConnectAttrs) > 0 {
 		// Encode into a temporary buffer first so that a (practically impossible)

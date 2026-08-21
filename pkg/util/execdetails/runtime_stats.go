@@ -1045,9 +1045,14 @@ func (e *RURuntimeStats) String() string {
 		return buf.String()
 	default: // v1 or unknown
 		if e.RUDetails != nil {
-			buf := bytes.NewBuffer(make([]byte, 0, 8))
+			detail := FormatRUCalculationDetail(e.RUDetails)
+			buf := bytes.NewBuffer(make([]byte, 0, 32+len(detail)))
 			buf.WriteString("RU:")
 			buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
+			if detail != "" {
+				buf.WriteString(", RU_detail:")
+				buf.WriteString(detail)
+			}
 			return buf.String()
 		}
 	}
