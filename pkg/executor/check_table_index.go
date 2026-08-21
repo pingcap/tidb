@@ -896,6 +896,9 @@ func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]grou
 
 func getGlobalCheckSum(ctx context.Context, se sessionctx.Context, sql string) (checksum uint64, count int64, err error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
+	// Create a new ExecDetails for the internal SQL to avoid data race with the parent statement.
+	// The parent context may carry an ExecDetails that is still being written to by concurrent goroutines.
+	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
 	if err != nil {
 		return 0, 0, err
