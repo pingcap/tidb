@@ -1068,6 +1068,35 @@ func TestTableNamesSkipEmptyTables(t *testing.T) {
 	value, ok := ssMap.summaryMap.Get(key)
 	require.True(t, ok)
 	require.Equal(t, "db1.table1", value.(*stmtSummaryByDigest).tableNames)
+
+	stmtExecInfo.StmtCtx.Tables = []stmtctx.TableEntry{
+		{DB: "db0"},
+		{DB: "db1", Table: "table1"},
+		{DB: "db2", Table: "table2"},
+		{DB: "db3"},
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		var summary stmtSummaryByDigest
+		summary.init(stmtExecInfo, 0, 0, 0)
+	})
+	require.LessOrEqual(t, allocs, float64(9))
+}
+
+func BenchmarkStmtSummaryByDigestInitTableNames(b *testing.B) {
+	stmtExecInfo := generateAnyExecInfo()
+	stmtExecInfo.StmtCtx.Tables = []stmtctx.TableEntry{
+		{DB: "db0"},
+		{DB: "db1", Table: "table1"},
+		{DB: "db2", Table: "table2"},
+		{DB: "db3"},
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		var summary stmtSummaryByDigest
+		summary.init(stmtExecInfo, 0, 0, 0)
+	}
 }
 
 // Test stmtSummaryByDigest.ToDatum.

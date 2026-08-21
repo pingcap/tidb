@@ -619,13 +619,18 @@ func (ssMap *stmtSummaryByDigestMap) maxSQLLength() int {
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
 func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int) {
 	// Use "," to separate table names to support FIND_IN_SET.
-	tableNames := make([]string, 0, len(sei.StmtCtx.Tables))
+	var tableNames strings.Builder
 	for _, value := range sei.StmtCtx.Tables {
 		// In `create database` statement, DB name is not empty but table name is empty.
 		if len(value.Table) == 0 {
 			continue
 		}
-		tableNames = append(tableNames, strings.ToLower(value.DB)+"."+strings.ToLower(value.Table))
+		if tableNames.Len() > 0 {
+			tableNames.WriteByte(',')
+		}
+		tableNames.WriteString(strings.ToLower(value.DB))
+		tableNames.WriteByte('.')
+		tableNames.WriteString(strings.ToLower(value.Table))
 	}
 
 	ssbd.cumulative = *newStmtSummaryStats(sei)
@@ -640,7 +645,7 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int
 	ssbd.planDigest = planDigest
 	ssbd.stmtType = sei.StmtCtx.StmtType
 	ssbd.normalizedSQL = formatSQL(sei.NormalizedSQL)
-	ssbd.tableNames = strings.Join(tableNames, ",")
+	ssbd.tableNames = tableNames.String()
 	ssbd.history = list.New()
 	ssbd.initialized = true
 	ssbd.bindingSQL, ssbd.bindingDigest = sei.LazyInfo.GetBindingSQLAndDigest()
