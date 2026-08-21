@@ -235,18 +235,30 @@ func TestRollbackTxnState(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t(a) values (1), (2);")
-	ch := make(chan struct{})
+
+	rollbackFailpoint := "github.com/pingcap/tidb/pkg/session/mockSlowRollback"
+	require.NoError(t, failpoint.Enable(rollbackFailpoint, "pause"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(rollbackFailpoint))
+	}()
+
+	ch := make(chan struct{}, 1)
 	go func() {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into t(a) values (3);")
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockSlowRollback", "pause"))
 		tk.MustExec("rollback;")
 		ch <- struct{}{}
 	}()
-	time.Sleep(100 * time.Millisecond)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockSlowRollback"))
-	require.Equal(t, txninfo.TxnRollingBack, tk.Session().TxnInfo().State)
-	<-ch
+	require.Eventually(t, func() bool {
+		info := tk.Session().TxnInfo()
+		return info != nil && info.State == txninfo.TxnRollingBack
+	}, 5*time.Second, 10*time.Millisecond)
+	require.NoError(t, failpoint.Disable(rollbackFailpoint))
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("rollback did not finish")
+	}
 }
 
 func TestTxnInfoWithPreparedStmt(t *testing.T) {
