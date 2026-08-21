@@ -17,6 +17,7 @@ package driver
 import (
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/config"
@@ -46,4 +47,21 @@ func TestSetDefaultAndOptions(t *testing.T) {
 		apply(pdOpt)
 	}
 	require.Equal(t, metricscommon.GetConstLabels(), pdOpt.MetricsLabels)
+}
+
+func TestCheckKeyspaceEnabled(t *testing.T) {
+	require.NoError(t, checkKeyspaceEnabled(&keyspacepb.KeyspaceMeta{
+		Name:  "ks1",
+		State: keyspacepb.KeyspaceState_ENABLED,
+	}))
+
+	require.ErrorContains(t, checkKeyspaceEnabled(nil), "keyspace meta is not available")
+
+	for _, state := range []keyspacepb.KeyspaceState{
+		keyspacepb.KeyspaceState_DISABLED,
+		keyspacepb.KeyspaceState_ARCHIVED,
+	} {
+		err := checkKeyspaceEnabled(&keyspacepb.KeyspaceMeta{Name: "ks1", State: state})
+		require.ErrorContains(t, err, "keyspace ks1 is not enabled", state.String())
+	}
 }
