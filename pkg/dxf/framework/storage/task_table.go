@@ -491,6 +491,32 @@ func (mgr *TaskManager) GetTaskByID(ctx context.Context, taskID int64) (task *pr
 	return Row2Task(rs[0]), nil
 }
 
+// GetTasksByIDs gets the tasks by their task IDs.
+// The result order is not guaranteed to match taskIDs. Missing IDs are omitted;
+// this method does not return ErrTaskNotFound.
+func (mgr *TaskManager) GetTasksByIDs(ctx context.Context, taskIDs []int64) (tasks []*proto.Task, err error) {
+	if len(taskIDs) == 0 {
+		return nil, nil
+	}
+
+	args := make([]any, 0, len(taskIDs))
+	for _, taskID := range taskIDs {
+		args = append(args, taskID)
+	}
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
+		"select "+TaskColumns+" from mysql.tidb_global_task t where id in ("+
+			strings.Repeat("%?,", len(taskIDs)-1)+"%?)", args...)
+	if err != nil {
+		return nil, err
+	}
+
+	tasks = make([]*proto.Task, 0, len(rs))
+	for _, r := range rs {
+		tasks = append(tasks, Row2Task(r))
+	}
+	return tasks, nil
+}
+
 // GetTaskBaseByID implements the TaskManager.GetTaskBaseByID interface.
 func (mgr *TaskManager) GetTaskBaseByID(ctx context.Context, taskID int64) (task *proto.TaskBase, err error) {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {

@@ -30,6 +30,9 @@ type TaskTable interface {
 	// no executable subtask on the execID for some task, it's not returned.
 	GetTaskExecInfoByExecID(ctx context.Context, execID string) ([]*storage.TaskExecInfo, error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
+	// GetTasksByIDs gets tasks by IDs. The result order is not guaranteed to match
+	// taskIDs. Missing IDs are omitted; this method does not return ErrTaskNotFound.
+	GetTasksByIDs(ctx context.Context, taskIDs []int64) (tasks []*proto.Task, err error)
 	GetTaskBaseByID(ctx context.Context, taskID int64) (task *proto.TaskBase, err error)
 	// GetSubtasksByExecIDAndStepAndStates gets all subtasks by given states and execID.
 	GetSubtasksByExecIDAndStepAndStates(ctx context.Context, execID string, taskID int64, step proto.Step, states ...proto.SubtaskState) ([]*proto.Subtask, error)

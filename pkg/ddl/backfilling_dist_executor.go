@@ -20,9 +20,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
@@ -168,7 +170,15 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.attachTopProfilingInfo(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(store, sessPool, ddlObj.etcdCli, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
+		executor, err := newReadIndexExecutor(
+			store, sessPool, ddlObj.etcdCli, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
+		if err != nil {
+			return nil, err
+		}
+		if len(cloudStorageURI) == 0 {
+			executor.localDiskPrecheck = s.checkLocalSortFreeDisk
+		}
+		return executor, nil
 	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(&s.task.TaskBase, store, jobMeta.ID, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
@@ -219,6 +229,99 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 
 	s.taskMeta = bgm
 	return nil
+}
+
+func (s *backfillDistExecutor) checkLocalSortFreeDisk(ctx context.Context) error {
+	// This point-in-time, best-effort precheck accounts for aggregate growth of concurrent
+	// local-sort DXF backfills to reduce the risk that all concurrent jobs frequently import
+	// small SST batches; it does not reserve disk or guarantee performance.
+	// It does not recheck disk after a concurrency increase with ADMIN ALTER DDL JOB.
+	// Local-sort IMPORT INTO FROM FILE is excluded because its quota-based import/reset mechanism
+	// manages temporary-disk growth. IMPORT INTO FROM SELECT is excluded because its final
+	// size cannot be reliably estimated. Their current disk usage is reflected in the
+	// filesystem's available space.
+	otherRunningJobCount, otherRunningJobRuntimeSlots, otherRunningJobUsedBytes, err :=
+		s.getOtherRunningLocalSortJobDiskUsage(ctx)
+	if err != nil {
+		return err
+	}
+	if err := ingest.CheckLocalSortFreeDisk(ingest.LocalSortFreeDiskCheck{
+		ExecID:                   s.GetExecutorID(),
+		OtherRunningJobCount:     otherRunningJobCount,
+		OtherRunningRuntimeSlots: otherRunningJobRuntimeSlots,
+		OtherRunningUsedBytes:    otherRunningJobUsedBytes,
+		CurrentJobRuntimeSlots:   s.GetTaskBase().GetRuntimeSlots(),
+	}); err != nil {
+		// The aggregate growth target is capped by tidb_ddl_disk_quota (100 GiB by
+		// default), and available space includes untracked log usage. Reject the task
+		// before local sorting starts to avoid adding disk pressure that can make all
+		// concurrent jobs frequently import small SST batches. Disk usage may still
+		// change after the check. Operators should inspect the TiDB node for large
+		// files that can be safely removed.
+		return err
+	}
+	return nil
+}
+
+func (s *backfillDistExecutor) getOtherRunningLocalSortJobDiskUsage(
+	ctx context.Context,
+) (jobCount int, runtimeSlots int, usedBytes uint64, err error) {
+	return getOtherRunningLocalSortJobDiskUsage(
+		ctx,
+		s.GetTaskTable(),
+		s.task.ID,
+		s.TaskRuntimeSlotsSnapshot(),
+	)
+}
+
+func getOtherRunningLocalSortJobDiskUsage(
+	ctx context.Context,
+	taskTable taskexecutor.TaskTable,
+	currentTaskID int64,
+	taskRuntimeSlotsByID map[int64]int,
+) (jobCount int, runtimeSlots int, usedBytes uint64, err error) {
+	taskIDs := make([]int64, 0, len(taskRuntimeSlotsByID))
+	for taskID := range taskRuntimeSlotsByID {
+		if taskID == currentTaskID {
+			// Exclude the current task: resume does not guarantee cleanup of its previous
+			// local files. Remaining files reduce available space, while its full growth
+			// budget is reserved again as CurrentJobRuntimeSlots.
+			continue
+		}
+		taskIDs = append(taskIDs, taskID)
+	}
+	if len(taskIDs) == 0 {
+		return 0, 0, 0, nil
+	}
+
+	tasks, err := taskTable.GetTasksByIDs(ctx, taskIDs)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	if len(tasks) != len(taskIDs) {
+		return 0, 0, 0, errors.Trace(storage.ErrTaskNotFound)
+	}
+
+	for _, task := range tasks {
+		if task.Type != proto.Backfill || task.Step != proto.BackfillStepReadIndex {
+			continue
+		}
+
+		taskMeta := &BackfillTaskMeta{}
+		if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
+			return 0, 0, 0, errors.Trace(err)
+		}
+		if len(taskMeta.CloudStorageURI) > 0 {
+			continue
+		}
+
+		jobCount++
+		runtimeSlots += taskRuntimeSlotsByID[task.ID]
+		if ingest.LitDiskRoot != nil {
+			usedBytes += ingest.LitDiskRoot.GetJobDiskUsage(taskMeta.Job.ID)
+		}
+	}
+	return jobCount, runtimeSlots, usedBytes, nil
 }
 
 func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
