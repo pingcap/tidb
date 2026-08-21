@@ -38,42 +38,93 @@ func keys(ss ...string) []kv.Key {
 	return ks
 }
 
+// assertCoversSet checks that groups together contain exactly the input
+// chunks' ordinals, once each, regardless of order or which group they
+// landed in — packSubtasks shuffles regular chunks, so output order is not
+// guaranteed to follow the input order.
+func assertCoversSet(t *testing.T, wantOrdinals []int, groups [][]Chunk) {
+	t.Helper()
+	var seen []int
+	for _, g := range groups {
+		for _, c := range g {
+			seen = append(seen, c.Ordinal)
+		}
+	}
+	require.ElementsMatch(t, wantOrdinals, seen)
+}
+
 func TestDivideSubtasks(t *testing.T) {
 	// 40 chunks of chunkSize → total = 4 * subtaskSize.
 	const n = 4 * subtaskSize / chunkSize
 	chunks := make([]Chunk, n)
+	ordinals := make([]int, n)
 	for i := range chunks {
 		chunks[i] = Chunk{Ordinal: i, Size: chunkSize}
-	}
-	assertCovers := func(groups [][]Chunk) {
-		var seen []int
-		for _, g := range groups {
-			for _, c := range g {
-				seen = append(seen, c.Ordinal)
-			}
-		}
-		want := make([]int, n)
-		for i := range want {
-			want[i] = i
-		}
-		require.Equal(t, want, seen)
+		ordinals[i] = i
 	}
 
 	// nodeCount=1: count = round(total/subtaskSize) = 4.
 	groups := divideSubtasks(chunks, 1)
 	require.Len(t, groups, 4)
-	assertCovers(groups)
+	assertCoversSet(t, ordinals, groups)
+	for _, g := range groups {
+		require.Len(t, g, n/4, "equal-weight chunks should split evenly across bins")
+	}
 
 	// nodeCount=3: 4 rounds up to the next multiple of 3 → 6 subtasks.
 	groups = divideSubtasks(chunks, 3)
 	require.Len(t, groups, 6)
-	assertCovers(groups)
+	assertCoversSet(t, ordinals, groups)
 
 	// Data below subtaskSize stays a single subtask (count floored at 1).
 	require.Len(t, divideSubtasks(chunks[:1], 1), 1)
 	zeroSizeChunks := []Chunk{{Ordinal: 0}, {Ordinal: 1}, {Ordinal: 2}}
-	require.Equal(t, [][]Chunk{zeroSizeChunks}, divideSubtasks(zeroSizeChunks, 3))
+	require.Len(t, divideSubtasks(zeroSizeChunks, 3), 3)
+	assertCoversSet(t, []int{0, 1, 2}, divideSubtasks(zeroSizeChunks, 3))
 	require.Nil(t, divideSubtasks(nil, 2))
+}
+
+// TestPackSubtasksBalance checks the two properties packSubtasks relies on:
+// oversized (>= chunkSize) chunks are equal weight so any split among bins is
+// balanced, and the remaining, size-varying chunks are packed largest-first
+// (LPT) so no bin ends up starved.
+func TestPackSubtasksBalance(t *testing.T) {
+	// All-regular chunks: greedy least-loaded packing must split them evenly.
+	chunks := make([]Chunk, 100)
+	for i := range chunks {
+		chunks[i] = Chunk{Ordinal: i, Size: chunkSize}
+	}
+	groups := packSubtasks(chunks, 5)
+	require.Len(t, groups, 5)
+	for _, g := range groups {
+		require.Len(t, g, 20)
+	}
+
+	// A skewed mix of a few large (irregular but sizable) chunks and many tiny
+	// ones must still balance close to the mean, not dump all the big ones on
+	// one bin, since LPT places the large items first while bins are empty.
+	mixed := make([]Chunk, 0, 505)
+	for i := range 5 {
+		mixed = append(mixed, Chunk{Ordinal: i, Size: chunkSize - 1}) // irregular, large
+	}
+	for i := range 500 {
+		mixed = append(mixed, Chunk{Ordinal: 100 + i, Size: 1}) // irregular, tiny
+	}
+	groups = packSubtasks(mixed, 5)
+	require.Len(t, groups, 5)
+	var total int64
+	for _, c := range mixed {
+		total += c.Size
+	}
+	mean := total / 5
+	for _, g := range groups {
+		var size int64
+		for _, c := range g {
+			size += c.Size
+		}
+		require.InDelta(t, mean, size, float64(chunkSize)/10,
+			"bin size should stay close to the mean, not concentrate the large chunks")
+	}
 }
 
 func TestNewSubtaskMeta(t *testing.T) {

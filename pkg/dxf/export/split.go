@@ -15,8 +15,11 @@
 package export
 
 import (
+	"container/heap"
 	"context"
 	"math"
+	"math/rand"
+	"sort"
 	"time"
 
 	"github.com/docker/go-units"
@@ -157,7 +160,7 @@ func chunksBySize(tableIdx int, pid int64, start, end kv.Key, endKeys []kv.Key, 
 
 // divideSubtasks packs chunks into subtasks. The subtask count is estimated from
 // subtaskSize and rounded up to a multiple of nodeCount so the framework can
-// spread them evenly across nodes; chunks are then packed to the uniform budget.
+// spread them evenly across nodes; see packSubtasks for how chunks are assigned.
 func divideSubtasks(chunks []Chunk, nodeCount int) [][]Chunk {
 	if len(chunks) == 0 {
 		return nil
@@ -174,23 +177,88 @@ func divideSubtasks(chunks []Chunk, nodeCount int) [][]Chunk {
 		n := int64(nodeCount)
 		count = (count + n - 1) / n * n
 	}
-	budget := max(int64(1), (total+count-1)/count)
+	return packSubtasks(chunks, int(count))
+}
 
-	subtasks := make([][]Chunk, 0, count)
-	batch := make([]Chunk, 0, budget/chunkSize+1)
-	var acc int64
+// packSubtasks assigns chunks to count subtasks by greedy least-loaded-bin
+// (LPT) scheduling instead of sequential order, so a subtask's writes aren't
+// all clustered on one db/table's S3 key prefix. Chunks at or above chunkSize
+// are roughly equal weight (produced whenever a table's accumulated region
+// size hits the cap), so shuffling them is free for balance and breaks up the
+// table adjacency from the original generation order; the remaining,
+// size-varying chunks (table tails and whole small tables) are packed
+// largest-first, since LPT's balance guarantee only depends on relative order
+// among differently-sized items.
+func packSubtasks(chunks []Chunk, count int) [][]Chunk {
+	regular := make([]Chunk, 0, len(chunks))
+	irregular := make([]Chunk, 0)
 	for _, c := range chunks {
-		batch = append(batch, c)
-		acc += c.Size
-		if acc >= budget {
-			subtasks = append(subtasks, batch)
-			batch, acc = make([]Chunk, 0, budget/chunkSize+1), 0
+		if c.Size >= chunkSize {
+			regular = append(regular, c)
+		} else {
+			irregular = append(irregular, c)
 		}
 	}
-	if len(batch) > 0 {
-		subtasks = append(subtasks, batch)
+	rand.Shuffle(len(regular), func(i, j int) { regular[i], regular[j] = regular[j], regular[i] })
+	sort.Slice(irregular, func(i, j int) bool { return irregular[i].Size > irregular[j].Size })
+
+	bins := make([]*subtaskBin, count)
+	h := make(binHeap, count)
+	for i := range bins {
+		bins[i] = &subtaskBin{}
+		h[i] = bins[i]
+	}
+	heap.Init(&h)
+	assign := func(c Chunk) {
+		b := heap.Pop(&h).(*subtaskBin)
+		b.chunks = append(b.chunks, c)
+		b.size += c.Size
+		heap.Push(&h, b)
+	}
+	for _, c := range regular {
+		assign(c)
+	}
+	for _, c := range irregular {
+		assign(c)
+	}
+
+	subtasks := make([][]Chunk, 0, count)
+	for _, b := range bins {
+		if len(b.chunks) > 0 {
+			subtasks = append(subtasks, b.chunks)
+		}
 	}
 	return subtasks
+}
+
+// subtaskBin accumulates the chunks assigned to one subtask by packSubtasks.
+type subtaskBin struct {
+	chunks []Chunk
+	size   int64
+}
+
+// binHeap is a min-heap of subtaskBins ordered by accumulated size, so
+// packSubtasks can always assign the next chunk to the least-loaded bin.
+type binHeap []*subtaskBin
+
+func (h binHeap) Len() int { return len(h) }
+func (h binHeap) Less(i, j int) bool {
+	if h[i].size != h[j].size {
+		return h[i].size < h[j].size
+	}
+	// Break size ties (notably when every remaining chunk is zero-sized) by
+	// chunk count, so assignment still rotates through bins instead of
+	// getting stuck on one.
+	return len(h[i].chunks) < len(h[j].chunks)
+}
+func (h binHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h *binHeap) Push(x any)   { *h = append(*h, x.(*subtaskBin)) }
+func (h *binHeap) Pop() any {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	*h = old[:n-1]
+	return item
 }
 
 func physicalIDs(tblInfo *model.TableInfo) []int64 {
