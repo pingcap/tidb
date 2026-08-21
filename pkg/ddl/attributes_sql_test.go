@@ -22,14 +22,17 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/stretchr/testify/require"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	pd "github.com/tikv/pd/client/http"
 )
 
 // MockGC is used to make GC work in the test environment.
@@ -117,6 +120,53 @@ PARTITION BY RANGE (c) (
 	require.NotEqual(t, rows[0][3], rows4[0][3])
 
 	tk.MustExec("drop table alter_p")
+}
+
+func TestTableRegionPolicyAttributes(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), dom.GetPDClient(), dom.GetPDHTTPClient(), keyspace.CodecV1, true, dom.InfoCache())
+	require.NoError(t, err)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table region_policy_t (c int)
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (6),
+	PARTITION p1 VALUES LESS THAN (11)
+);`)
+
+	tk.MustExec(`alter table region_policy_t attributes="region_policy=EXCLUSIVE";`)
+
+	tableRuleID := label.NewRuleID(store.GetCodec(), "test", "region_policy_t", "")
+	rules, err := infosync.GetLabelRules(context.TODO(), []string{tableRuleID})
+	require.NoError(t, err)
+	tableRule, ok := rules[tableRuleID]
+	require.True(t, ok)
+	require.Len(t, tableRule.Data.([]any), 3)
+	require.Contains(t, tableRule.Labels, pd.RegionLabel{Key: "region_policy", Value: "exclusive"})
+
+	tk.MustQuery(`select id, attributes from information_schema.attributes where id = 'schema/test/region_policy_t'`).
+		Check(testkit.Rows(`schema/test/region_policy_t "region_policy=exclusive"`))
+
+	tk.MustExec(`alter table region_policy_t partition p0 attributes="region_policy=exclusive";`)
+	partRuleID := label.NewRuleID(store.GetCodec(), "test", "region_policy_t", "p0")
+	rules, err = infosync.GetLabelRules(context.TODO(), []string{partRuleID})
+	require.NoError(t, err)
+	partRule, ok := rules[partRuleID]
+	require.True(t, ok)
+	require.Len(t, partRule.Data.([]any), 1)
+	require.Contains(t, partRule.Labels, pd.RegionLabel{Key: "region_policy", Value: "exclusive"})
+
+	tk.MustGetErrCode(`alter table region_policy_t attributes="region_policy=shared"`, mysql.ErrInvalidAttributesSpec)
+	tk.MustGetErrCode(`alter table region_policy_t attributes="region_policy=random"`, mysql.ErrInvalidAttributesSpec)
+	tk.MustGetErrCode(`alter table region_policy_t attributes="region_policy=exclusive,region_policy=exclusive"`, mysql.ErrInvalidAttributesSpec)
+	tk.MustGetErrCode(`alter table region_policy_t partition p0 attributes="region_policy=shared"`, mysql.ErrInvalidAttributesSpec)
+
+	tk.MustExec(`alter table region_policy_t partition p0 attributes=default;`)
+	tk.MustExec(`alter table region_policy_t attributes=default;`)
+	tk.MustQuery(`select count(*) from information_schema.attributes where id like 'schema/test/region_policy_t%'`).
+		Check(testkit.Rows("0"))
 }
 
 func TestTruncateTable(t *testing.T) {
