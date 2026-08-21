@@ -17,6 +17,7 @@ package stmtsummary
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -64,9 +65,32 @@ var (
 )
 
 // Setup initializes the GlobalStmtSummary.
+//
+// If NewStmtSummary fails the cluster config still advertises
+// `tidb_stmt_summary_enable_persistent = true`, while every v2 proxy (Add,
+// Enabled, ...) dereferences GlobalStmtSummary unconditionally on that flag.
+// A boot that "kept going" in that state would crash on the first SQL with a
+// nil pointer dereference: V2-11 traded silent data loss for a hard boot
+// loop. To avoid that half-initialized state Setup explicitly switches
+// persistent mode off on init failure, so the proxies fall back to the
+// always-available in-memory v1 aggregation (stmtsummary.StmtSummaryByDigestMap).
+// The error is returned with fallback context so the caller can emit one
+// actionable log entry rather than logging the same failure at every layer.
 func Setup(cfg *Config) (err error) {
 	GlobalStmtSummary, err = NewStmtSummary(cfg)
-	return
+	if err != nil {
+		// Flip persistent mode off atomically with the config mutex so that
+		// concurring Add/Enabled/... cannot observe the half-state where
+		// GlobalStmtSummary is nil but the flag is still true.
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Instance.StmtSummaryEnablePersistent = false
+		})
+		return fmt.Errorf(
+			"stmtsummary v2 persistent mode disabled; falling back to v1 in-memory aggregation: %w",
+			err,
+		)
+	}
+	return nil
 }
 
 // Close closes the GlobalStmtSummary.
@@ -123,6 +147,22 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 		return nil, errors.New("stmtsummary: empty filename")
 	}
 
+	// Fail closed: a broken persistent logger makes persistent mode look
+	// enabled while silently dropping every rotated window (V2-11). Construct
+	// the storage before starting any goroutines so there are no background
+	// contexts to clean up on this early error path.
+	storage, err := newStmtLogStorage(&log.Config{
+		File: log.FileLogConfig{
+			Filename:   cfg.Filename,
+			MaxSize:    cfg.FileMaxSize,
+			MaxDays:    cfg.FileMaxDays,
+			MaxBackups: cfg.FileMaxBackups,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &StmtSummary{
 		ctx:    ctx,
@@ -138,15 +178,8 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 		optRefreshInterval:     atomic2.NewUint32(defaultRefreshInterval),
 		optPersistEvicted:      atomic2.NewBool(false),
 		optGroupByUser:         atomic2.NewBool(false),
-		storage: newStmtLogStorage(&log.Config{
-			File: log.FileLogConfig{
-				Filename:   cfg.Filename,
-				MaxSize:    cfg.FileMaxSize,
-				MaxDays:    cfg.FileMaxDays,
-				MaxBackups: cfg.FileMaxBackups,
-			},
-		}),
-		evictedCh: make(chan *StmtRecord, evictedLogChanCap),
+		storage:                storage,
+		evictedCh:              make(chan *StmtRecord, evictedLogChanCap),
 	}
 	s.window = newStmtWindow(timeNow(), uint(defaultMaxStmtCount), s.onEvict)
 
