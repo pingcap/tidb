@@ -1028,6 +1028,77 @@ func TestColumnValueFactoryDoubleUintMetrics(t *testing.T) {
 	}
 }
 
+func TestExecutionAverageColumnsUseExecCount(t *testing.T) {
+	stats := &stmtSummaryStats{
+		execCount:            2,
+		commitCount:          0,
+		sumKVTotal:           10,
+		sumPDTotal:           20,
+		sumBackoffTotal:      30,
+		sumWriteSQLRespTotal: 40,
+	}
+	cases := []struct {
+		name     string
+		expected int64
+	}{
+		{name: AvgKvTimeStr, expected: 5},
+		{name: AvgPdTimeStr, expected: 10},
+		{name: AvgBackoffTotalTimeStr, expected: 15},
+		{name: AvgWriteSQLRespTimeStr, expected: 20},
+	}
+	for _, tc := range cases {
+		factory, ok := columnValueFactoryMap[tc.name]
+		require.Truef(t, ok, "missing column value factory: %s", tc.name)
+		require.Equal(t, tc.expected, factory(nil, nil, nil, stats), tc.name)
+	}
+}
+
+func TestTableNamesSkipEmptyTables(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	stmtExecInfo := generateAnyExecInfo()
+	stmtExecInfo.StmtCtx.Tables = []stmtctx.TableEntry{
+		{DB: "db0"},
+		{DB: "db1", Table: "table1"},
+		{DB: "db2"},
+	}
+	ssMap.AddStatement(stmtExecInfo)
+
+	key := &StmtDigestKey{}
+	key.Init(stmtExecInfo.SchemaName, stmtExecInfo.Digest, "", stmtExecInfo.PlanDigest, stmtExecInfo.ResourceGroupName, "")
+	value, ok := ssMap.summaryMap.Get(key)
+	require.True(t, ok)
+	require.Equal(t, "db1.table1", value.(*stmtSummaryByDigest).tableNames)
+
+	stmtExecInfo.StmtCtx.Tables = []stmtctx.TableEntry{
+		{DB: "db0"},
+		{DB: "db1", Table: "table1"},
+		{DB: "db2", Table: "table2"},
+		{DB: "db3"},
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		var summary stmtSummaryByDigest
+		summary.init(stmtExecInfo, 0, 0, 0)
+	})
+	require.LessOrEqual(t, allocs, float64(9))
+}
+
+func BenchmarkStmtSummaryByDigestInitTableNames(b *testing.B) {
+	stmtExecInfo := generateAnyExecInfo()
+	stmtExecInfo.StmtCtx.Tables = []stmtctx.TableEntry{
+		{DB: "db0"},
+		{DB: "db1", Table: "table1"},
+		{DB: "db2", Table: "table2"},
+		{DB: "db3"},
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		var summary stmtSummaryByDigest
+		summary.init(stmtExecInfo, 0, 0, 0)
+	}
+}
+
 // Test stmtSummaryByDigest.ToDatum.
 func TestToDatum(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()
@@ -1824,6 +1895,35 @@ func TestSummaryHistory(t *testing.T) {
 	datum = reader.GetStmtSummaryHistoryRows()
 	// length of STATEMENT_SUMMARY_HISTORY == (history in cache) + (history evicted)
 	require.Equal(t, 6, len(datum))
+}
+
+func TestHistoryClearAndResizeKeepsLatestIntervals(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	now := time.Now().Unix()
+	require.NoError(t, ssMap.SetRefreshInterval(10))
+	require.NoError(t, ssMap.SetHistorySize(10))
+
+	stmtExecInfo := generateAnyExecInfo()
+	key := &StmtDigestKey{}
+	key.Init(stmtExecInfo.SchemaName, stmtExecInfo.Digest, "", stmtExecInfo.PlanDigest, stmtExecInfo.ResourceGroupName, "")
+	for i := range 11 {
+		ssMap.beginTimeForCurInterval = now + int64(i+1)*10
+		ssMap.AddStatement(stmtExecInfo)
+	}
+
+	value, ok := ssMap.summaryMap.Get(key)
+	require.True(t, ok)
+	ssbd := value.(*stmtSummaryByDigest)
+	require.NoError(t, ssMap.SetHistorySize(5))
+	elements := ssbd.collectHistorySummaries(nil, 5)
+	require.Len(t, elements, 5)
+	require.Equal(t, now+70, elements[0].beginTime)
+	require.Equal(t, now+110, elements[4].beginTime)
+
+	require.NoError(t, ssMap.SetHistoryEnabled(false))
+	elements = ssbd.collectHistorySummaries(nil, 5)
+	require.Len(t, elements, 1)
+	require.Equal(t, now+110, elements[0].beginTime)
 }
 
 // Test summary when PrevSQL is not empty.
