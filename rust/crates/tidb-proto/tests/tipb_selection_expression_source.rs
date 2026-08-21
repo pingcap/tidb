@@ -52,6 +52,7 @@ fn selection_executor_and_nonnullable_defaults_keep_exact_wire_tags() {
             conditions: vec![literal],
         }),
         aggregation: None,
+        top_n: None,
         limit: None,
         executor_id: Some(String::new()),
         parent_idx: None,
