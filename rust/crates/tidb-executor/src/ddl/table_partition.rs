@@ -339,8 +339,9 @@ fn build_table_partitioning_inner(
         ctx.like_default_escape(),
     )?;
     // Go `checkPartitionFuncType`: the partition expression must evaluate to
-    // an integer.
-    check_partition_expression_type(expr, names, types)?;
+    // an integer -- asked of the BUILT expression, not re-derived from the
+    // AST (`ddl/partition.go:1895`).
+    check_partition_expression_type(expr, &built, names, types)?;
 
     let (kind, definitions) = match method.kind {
         PartitionType::RANGE => {
@@ -776,42 +777,26 @@ fn check_partition_expression_allowed(
 /// reject the single most common date-partitioning form there is.
 fn check_partition_expression_type(
     expr: &Expr,
+    built: &tidb_expr::expression::Expression,
     names: &[String],
     types: &[FieldType],
 ) -> Result<(), DriverError> {
     // A bare column reference reports the name AS WRITTEN, which a qualified
     // `t.a` shortens to `a` exactly as Go's `col2.Name.Name.L` does.
+    let integral = built
+        .static_type()
+        .is_some_and(|field_type| field_type.eval_type() == tidb_datatype::EvalType::Int);
     if let Expr::Column(path) = unwrap_parentheses(expr) {
-        if partition_expr_is_integral(expr, names, types) {
+        if integral {
             return Ok(());
         }
         let name = path.last().cloned().unwrap_or_else(|| "?".to_owned());
         return Err(DriverError::PartitionFieldTypeNotAllowed(name));
     }
-    if partition_expr_is_integral(expr, names, types) {
+    if integral {
         return Ok(());
     }
     Err(DriverError::PartitionFuncWrongType)
-}
-
-/// Whether a whitelisted partition expression evaluates to an INTEGER, which
-/// is Go's `e.GetType().EvalType() == types.ETInt`.
-///
-/// Only the forms [`check_partition_expression_allowed`] admits reach here.
-/// Every function on Go's `AllowedPartitionFuncMap` returns an integer, `DIV`
-/// is integer division whatever its operands are, and the remaining
-/// arithmetic is integral exactly when both operands are.
-fn partition_expr_is_integral(expr: &Expr, names: &[String], types: &[FieldType]) -> bool {
-    // ONE rule, not two: the inference below is Go's, and asking it is Go's
-    // `e.GetType(ctx).EvalType() == types.ETInt` (`ddl/partition.go:1895`).
-    //
-    // This used to carry its own arms for columns and arithmetic, and they
-    // disagreed with the inference: the binary arm required BOTH operands to
-    // be integer COLUMNS, so `MOD(dt, 2)` over an fsp-0 `datetime` was
-    // refused where Go reads both operands in numeric context and calls it
-    // integer arithmetic.
-    partition_expr_result_type(expr, names, types)
-        .is_some_and(|field_type| field_type.eval_type() == tidb_datatype::EvalType::Int)
 }
 
 
@@ -1001,246 +986,8 @@ pub fn partition_comment_text(comment: &str) -> String {
     format!(" COMMENT '{escaped}'")
 }
 
-/// Go `newReturnFieldTypeForBaseBuiltinFunc` (`expression/builtin.go:149`):
-/// the skeleton result type every builtin starts from, chosen by its declared
-/// return `EvalType` alone.
-fn base_return_field_type(eval: tidb_datatype::EvalType) -> FieldType {
-    use tidb_datatype::EvalType;
-    let (code, flen, decimal) = match eval {
-        EvalType::Int => (FieldTypeCode::LongLong, 20, 0),
-        EvalType::Real => (FieldTypeCode::Double, 23, UNSPECIFIED_DECIMAL),
-        EvalType::Decimal => (FieldTypeCode::NewDecimal, 11, 0),
-        EvalType::Datetime | EvalType::Timestamp => (FieldTypeCode::Datetime, 26, 6),
-        EvalType::Duration => (FieldTypeCode::Duration, 17, 6),
-        _ => (FieldTypeCode::VarString, UNSPECIFIED_DECIMAL, UNSPECIFIED_DECIMAL),
-    };
-    let mut field_type = FieldType::new(code);
-    field_type.set_flen(flen);
-    field_type.set_decimal(decimal);
-    field_type
-}
-
 /// Go `types.UnspecifiedLength`.
 const UNSPECIFIED_DECIMAL: i64 = -1;
-
-/// Go `numericContextResultType` (`expression/builtin_arithmetic.go:80`),
-/// which is how `MOD` and the arithmetic operators read an argument.
-///
-/// A TEMPORAL argument is an INTEGER in numeric context when it carries no
-/// fractional seconds -- `MOD(dt, 2)` over a `datetime` is integer arithmetic
-/// -- and a decimal when it does. That is why `MOD` cannot share a predicate
-/// with `ABS` and `FLOOR`, which reject the same column.
-fn numeric_context_result_type(field_type: &FieldType) -> tidb_datatype::EvalType {
-    use tidb_datatype::EvalType;
-    if matches!(
-        field_type.code(),
-        FieldTypeCode::Date
-            | FieldTypeCode::Datetime
-            | FieldTypeCode::Timestamp
-            | FieldTypeCode::Duration
-    ) {
-        return if field_type.decimal() > 0 {
-            EvalType::Decimal
-        } else {
-            EvalType::Int
-        };
-    }
-    // Go also folds a constant binary literal to Int here; a BIT column takes
-    // the same branch by type.
-    if field_type.code() == FieldTypeCode::Bit {
-        return EvalType::Int;
-    }
-    match field_type.eval_type() {
-        EvalType::Decimal => EvalType::Decimal,
-        EvalType::Int => EvalType::Int,
-        _ => EvalType::Real,
-    }
-}
-
-/// Go's per-builtin `getFunction` result-type inference, for the names on
-/// `AllowedPartitionFuncMap` (`expression/function_traits.go:174`) -- the only
-/// ones a partition expression can hold.
-///
-/// This is inference, not a table of verdicts: three of the four inferring
-/// arms read their argument's `flen`/`decimal`, and tabulating their answers
-/// got `FLOOR` over a DECIMAL wrong (Go accepts it whenever the integer part
-/// fits in 18 digits) and `MOD` over an fsp-0 temporal wrong (Go treats it as
-/// integer arithmetic).
-///
-/// It belongs in `tidb-expr` beside the builtins, so that
-/// `Expression::static_type` can answer for a scalar function and this check
-/// collapses to Go's one-liner. It is seeded here because that inference does
-/// not exist yet.
-fn partition_function_result_type(name: &str, args: &[FieldType]) -> FieldType {
-    use tidb_datatype::EvalType;
-    let arg = args.first();
-    match name.to_ascii_lowercase().as_str() {
-        // Go `fromDaysFunctionClass` (`builtin_time.go:894`) declares ETDatetime
-        // and then `setDecimalAndFlenForDate` makes it a DATE. Its ARGUMENT is
-        // cast to an integer, which is what makes it look integral; the RESULT
-        // never is.
-        "from_days" => {
-            let mut field_type = FieldType::new(FieldTypeCode::Date);
-            field_type.set_flen(10);
-            field_type.set_decimal(0);
-            field_type
-        }
-        // Go `unixTimestampFunctionClass` (`builtin_time.go:4363`): the scale
-        // comes from the ARGUMENT, `UnspecifiedLength` clamps to 6 (NOT to 0),
-        // and only an exact zero stays an integer.
-        "unix_timestamp" => {
-            let Some(arg) = arg else {
-                let mut field_type = base_return_field_type(EvalType::Int);
-                field_type.set_flen(11);
-                return field_type;
-            };
-            let mut decimal = if arg.eval_type() == EvalType::String {
-                UNSPECIFIED_DECIMAL
-            } else {
-                arg.decimal()
-            };
-            if decimal > 6 || decimal == UNSPECIFIED_DECIMAL {
-                decimal = 6;
-            }
-            if decimal == 0 {
-                let mut field_type = base_return_field_type(EvalType::Int);
-                field_type.set_flen(11);
-                field_type
-            } else {
-                let mut field_type = base_return_field_type(EvalType::Decimal);
-                field_type.set_flen(12 + decimal);
-                field_type.set_decimal(decimal);
-                field_type
-            }
-        }
-        // Go `absFunctionClass` (`builtin_math.go:119`): the result type IS
-        // the argument type, collapsed to Int/Decimal/Real.
-        "abs" => {
-            let eval = arg.map_or(EvalType::Real, |arg| match arg.eval_type() {
-                EvalType::Int => EvalType::Int,
-                EvalType::Decimal => EvalType::Decimal,
-                _ => EvalType::Real,
-            });
-            let mut field_type = base_return_field_type(eval);
-            if let (Some(arg), true) = (arg, eval != EvalType::Real) {
-                field_type.set_flen(arg.flen());
-                field_type.set_decimal(arg.decimal());
-            }
-            field_type
-        }
-        // Go `getEvalTp4FloorAndCeil` (`builtin_math.go:693`): an INTEGER
-        // argument stays an integer, and a DECIMAL one does too as long as its
-        // INTEGER PART fits in `MaxIntWidth - 2` digits.
-        "ceiling" | "floor" => {
-            let eval = match arg.map(|arg| (arg.eval_type(), arg.flen(), arg.decimal())) {
-                Some((EvalType::Int, _, _)) => EvalType::Int,
-                Some((EvalType::Decimal, flen, decimal)) => {
-                    if flen - decimal > 18 {
-                        EvalType::Decimal
-                    } else {
-                        EvalType::Int
-                    }
-                }
-                _ => EvalType::Real,
-            };
-            base_return_field_type(eval)
-        }
-        // Go `arithmeticModFunctionClass`: the numeric-context type of BOTH
-        // arguments decides, so a temporal with no fractional seconds is
-        // integer arithmetic.
-        "mod" => {
-            let left = args.first().map(numeric_context_result_type);
-            let right = args.get(1).map(numeric_context_result_type);
-            let eval = match (left, right) {
-                (Some(EvalType::Real), _) | (_, Some(EvalType::Real)) => EvalType::Real,
-                (Some(EvalType::Decimal), _) | (_, Some(EvalType::Decimal)) => EvalType::Decimal,
-                (Some(EvalType::Int), Some(EvalType::Int)) => EvalType::Int,
-                _ => EvalType::Real,
-            };
-            base_return_field_type(eval)
-        }
-        // The remaining nineteen declare `types.ETInt` outright and read
-        // nothing off their arguments.
-        _ => base_return_field_type(EvalType::Int),
-    }
-}
-
-/// The result `FieldType` of a partition expression, inferred bottom-up the
-/// way Go infers it while BUILDING the expression -- which is what
-/// `checkPartitionFuncType` then reads a single `EvalType()` off
-/// (`ddl/partition.go:1895`).
-///
-/// `None` for a shape this tier cannot type; the caller treats that as
-/// non-integral rather than guessing.
-fn partition_expr_result_type(
-    expr: &Expr,
-    names: &[String],
-    types: &[FieldType],
-) -> Option<FieldType> {
-    match expr {
-        Expr::Paren(inner) => partition_expr_result_type(inner, names, types),
-        Expr::Column(path) => path
-            .last()
-            .and_then(|name| {
-                names
-                    .iter()
-                    .position(|candidate| candidate.eq_ignore_ascii_case(name))
-            })
-            .and_then(|offset| types.get(offset).cloned()),
-        Expr::Int(_) | Expr::Bool(_) | Expr::Hex(_) | Expr::Bit(_) => {
-            Some(base_return_field_type(tidb_datatype::EvalType::Int))
-        }
-        Expr::Func { name, args, .. } => {
-            let arg_types = args
-                .iter()
-                .map(|arg| {
-                    partition_expr_result_type(arg, names, types)
-                        .unwrap_or_else(|| base_return_field_type(tidb_datatype::EvalType::Real))
-                })
-                .collect::<Vec<_>>();
-            Some(partition_function_result_type(name, &arg_types))
-        }
-        // Go `EXTRACT` declares `types.ETInt` like the other nineteen.
-        Expr::Extract { .. } => Some(base_return_field_type(tidb_datatype::EvalType::Int)),
-        // Go `AllowedPartition4BinaryOpMap` is `+ - * DIV %`. `DIV` is
-        // integer division whatever its operands are
-        // (`builtin_arithmetic.go:837`); the rest read BOTH operands in
-        // numeric context, which is the same rule `MOD` uses -- and is why a
-        // `datetime` with no fractional seconds is integer arithmetic here.
-        Expr::Binary(tidb_ast::BinaryOp::IntDiv, _, _) => {
-            Some(base_return_field_type(tidb_datatype::EvalType::Int))
-        }
-        Expr::Binary(
-            tidb_ast::BinaryOp::Plus
-            | tidb_ast::BinaryOp::Minus
-            | tidb_ast::BinaryOp::Mul
-            | tidb_ast::BinaryOp::Mod,
-            left,
-            right,
-        ) => {
-            use tidb_datatype::EvalType;
-            let of = |side| {
-                partition_expr_result_type(side, names, types)
-                    .as_ref()
-                    .map_or(EvalType::Real, numeric_context_result_type)
-            };
-            let eval = match (of(left), of(right)) {
-                (EvalType::Real, _) | (_, EvalType::Real) => EvalType::Real,
-                (EvalType::Decimal, _) | (_, EvalType::Decimal) => EvalType::Decimal,
-                _ => EvalType::Int,
-            };
-            Some(base_return_field_type(eval))
-        }
-        // Go `AllowedPartition4UnaryOpMap` is unary `+ -`, which keep their
-        // operand's numeric-context type.
-        Expr::Unary(tidb_ast::UnaryOp::Plus | tidb_ast::UnaryOp::Minus, inner) => {
-            partition_expr_result_type(inner, names, types)
-                .as_ref()
-                .map(|field_type| base_return_field_type(numeric_context_result_type(field_type)))
-        }
-        _ => None,
-    }
-}
 
 /// Go `checkPartitionExprArgs` (`ddl/partition.go:4981`): the ARGUMENT types
 /// a whitelisted partition function will accept.

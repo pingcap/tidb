@@ -678,6 +678,40 @@ fn from_unixtime_return_type(args: &[Expression]) -> Option<FieldType> {
     }
 }
 
+/// Go `pkg/expression/builtin_time.go`'s
+/// `unixTimestampFunctionClass.getFunction`: the argument's fractional
+/// precision selects `builtinUnixTimestampIntSig` or
+/// `builtinUnixTimestampDecSig`. A dynamic string is conservatively six
+/// digits; a string constant uses the digits written after its last decimal
+/// point.
+fn unix_timestamp_return_type(args: &[Expression]) -> Option<FieldType> {
+    let decimal = match args {
+        [] => 0,
+        [arg] if arg_eval_type(args, 0) == tidb_datatype::EvalType::String => match arg {
+            Expression::Constant(constant) => constant.value.sql_string().ok().map_or(0, |s| {
+                s.rsplit_once('.')
+                    .map_or(0, |(_, fraction)| fraction.len() as i64)
+            }),
+            _ => tidb_datatype::UNSPECIFIED_LENGTH,
+        },
+        [arg] => arg.static_type()?.decimal(),
+        _ => return None,
+    };
+    let decimal = if decimal == tidb_datatype::UNSPECIFIED_LENGTH || decimal > 6 {
+        6
+    } else {
+        decimal.max(0)
+    };
+    let mut result = FieldType::new(if decimal == 0 {
+        FieldTypeCode::LongLong
+    } else {
+        FieldTypeCode::NewDecimal
+    });
+    result.set_decimal_under_limit(decimal);
+    result.set_flen_under_limit(if decimal == 0 { 11 } else { 12 + decimal });
+    Some(result)
+}
+
 fn tidb_parse_tso_return_type(args: &[Expression]) -> Option<FieldType> {
     let [_] = args else {
         return None;
@@ -1141,7 +1175,7 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         "month" | "day" | "dayofmonth" | "dayofweek" | "dayofyear" | "weekday" | "quarter"
         | "week" | "weekofyear" | "yearweek" | "year" | "hour" | "minute" | "second"
         | "microsecond" | "time_to_sec" | "to_days" | "period_add" | "period_diff"
-        | "unix_timestamp" | "datediff"
+        | "datediff"
         // `EXTRACT`'s composite units (`HOUR_MINUTE`, `DAY_SECOND`, ...) are
         // sugared into these single-argument function names (see the
         // `Expr::Extract` arm below) and, like every other EXTRACT unit,
@@ -1150,6 +1184,7 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         | "year_month" | "day_hour" | "day_minute" | "day_second" | "day_microsecond"
         | "hour_minute" | "hour_second" | "hour_microsecond" | "minute_second"
         | "minute_microsecond" | "second_microsecond" => int(),
+        "unix_timestamp" => unix_timestamp_return_type(args)?,
         // `pkg/expression/builtin_vec.go`: vectors are accepted as either
         // stored vector cells or text casts, but the scalar return domain is
         // fixed by each function class.
