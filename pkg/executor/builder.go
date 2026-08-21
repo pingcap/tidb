@@ -522,7 +522,38 @@ func buildIndexLookUpChecker(b *executorBuilder, p *physicalop.PhysicalIndexLook
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 
-	e.checkIndexValue = &checkIndexValue{idxColTps: tps}
+	checkValue := &checkIndexValue{idxColTps: tps}
+	if e.index.MVIndex && e.index.HasCondition() {
+		for _, idx := range e.table.Indices() {
+			if idx.Meta().ID == e.index.ID {
+				checkValue.partialIndex = idx
+				break
+			}
+		}
+		if checkValue.partialIndex == nil {
+			b.err = errors.Errorf("index %s is not found in table %s", e.index.Name.O, e.table.Meta().Name.O)
+			return
+		}
+		for _, affectedCol := range e.index.AffectColumn {
+			colID := e.table.Meta().Columns[affectedCol.Offset].ID
+			found := false
+			for rowOffset, scanCol := range ts.Columns {
+				if scanCol.ID == colID {
+					checkValue.partialConditionColumns = append(checkValue.partialConditionColumns, checkIndexPartialColumn{
+						tableOffset: affectedCol.Offset,
+						rowOffset:   rowOffset,
+					})
+					found = true
+					break
+				}
+			}
+			if !found {
+				b.err = errors.Errorf("column %s for partial index %s is not found in table scan", affectedCol.Name.O, e.index.Name.O)
+				return
+			}
+		}
+	}
+	e.checkIndexValue = checkValue
 
 	colNames := make([]string, 0, len(is.IdxCols))
 	for i := range is.IdxCols {

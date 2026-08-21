@@ -577,8 +577,15 @@ const (
 
 // nolint:structcheck
 type checkIndexValue struct {
-	idxColTps  []*types.FieldType
-	idxTblCols []*table.Column
+	idxColTps               []*types.FieldType
+	idxTblCols              []*table.Column
+	partialIndex            table.Index
+	partialConditionColumns []checkIndexPartialColumn
+}
+
+type checkIndexPartialColumn struct {
+	tableOffset int
+	rowOffset   int
 }
 
 // Table implements the dataSourceExecutor interface.
@@ -2023,6 +2030,10 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 	chk := exec.TryNewCacheChunk(tableReader)
 	tblInfo := w.idxLookup.table.Meta()
 	vals := make([]types.Datum, 0, len(w.idxTblCols))
+	var partialConditionRow []types.Datum
+	if w.partialIndex != nil {
+		partialConditionRow = make([]types.Datum, len(tblInfo.Columns))
+	}
 
 	// Prepare collator for compare.
 	collators := make([]collate.Collator, 0, len(w.idxColTps))
@@ -2097,8 +2108,21 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				v, _ = task.duplicatedIndexOrder.Get(handle)
 			}
 			offset, _ := v.(int)
-			task.indexOrder.Delete(handle)
 			idxRow := task.idxRows.GetRow(offset)
+			if w.partialIndex != nil {
+				for _, col := range w.partialConditionColumns {
+					partialConditionRow[col.tableOffset] = row.GetDatum(col.rowOffset, &tblInfo.Columns[col.tableOffset].FieldType)
+				}
+				meet, err := w.partialIndex.MeetPartialCondition(partialConditionRow)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if !meet {
+					idxRecord := &consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)}
+					return ir().ReportAdminCheckInconsistent(ctx, handle, idxRecord, nil)
+				}
+			}
+			task.indexOrder.Delete(handle)
 			vals = vals[:0]
 			for i, col := range w.idxTblCols {
 				vals = append(vals, row.GetDatum(i, &col.FieldType))
