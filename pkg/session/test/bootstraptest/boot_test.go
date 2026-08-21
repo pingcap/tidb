@@ -107,6 +107,36 @@ func TestBootstrapMaskingPolicyTable(t *testing.T) {
 	checkTiDBMaskingPolicyTableSchema(t, tk)
 }
 
+func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	tk := testkit.NewTestKit(t, store)
+	checkMaterializedViewBootstrapSchema(t, tk)
+}
+
+func checkMaterializedViewBootstrapSchema(t *testing.T, tk *testkit.TestKit) {
+	tables := []string{
+		"tidb_mview_refresh_info",
+		"tidb_mlog_purge_info",
+		"tidb_mview_refresh_hist",
+		"tidb_mview_refresh_alert",
+		"tidb_mlog_purge_hist",
+	}
+	for _, tableName := range tables {
+		tk.MustQuery("SELECT table_name FROM information_schema.tables WHERE table_schema='mysql' AND table_name=?", tableName).
+			Check(testkit.Rows(tableName))
+	}
+
+	tk.MustQuery("SELECT column_name FROM information_schema.columns WHERE table_schema='mysql' AND table_name='tidb_mview_refresh_info' ORDER BY ordinal_position").
+		Check(testkit.Rows("MVIEW_ID", "LAST_SUCCESS_READ_TSO", "LAST_SUCCESS_ENDTIME", "NEXT_TIME"))
+	tk.MustQuery("SELECT column_name FROM information_schema.columns WHERE table_schema='mysql' AND table_name='tidb_mlog_purge_info' ORDER BY ordinal_position").
+		Check(testkit.Rows("MLOG_ID", "NEXT_TIME", "LAST_PURGED_TSO"))
+	tk.MustQuery("SELECT column_name FROM information_schema.columns WHERE table_schema='mysql' AND table_name='tidb_mview_refresh_alert' ORDER BY ordinal_position").
+		Check(testkit.Rows("MVIEW_ID", "MV_SCHEMA", "MV_NAME", "ALERT_LEVEL", "REFRESH_FAILED", "LAST_SUCCESS_TIME", "UPDATED_AT"))
+}
+
 func TestANSISQLMode(t *testing.T) {
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()

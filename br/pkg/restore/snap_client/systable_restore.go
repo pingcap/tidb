@@ -129,6 +129,14 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		// TiDB internal timers.
 		"tidb_timers": {},
 
+		// MV maintenance metadata uses cluster-local table IDs and TSOs, so it
+		// cannot be meaningfully restored into another cluster.
+		"tidb_mview_refresh_info":  {},
+		"tidb_mlog_purge_info":     {},
+		"tidb_mview_refresh_hist":  {},
+		"tidb_mview_refresh_alert": {},
+		"tidb_mlog_purge_hist":     {},
+
 		// gc info don't need to recover.
 		"gc_delete_range":       {},
 		"gc_delete_range_done":  {},
