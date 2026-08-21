@@ -1777,3 +1777,124 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 		conf.Labels = map[string]string{}
 	})
 }
+
+func fetchTiFlashReplicaSummary(t *testing.T, ts *basicHTTPHandlerTestSuite) tikvhandler.FlashReplicaSummary {
+	t.Helper()
+	resp, err := ts.FetchStatus("/tiflash/replica")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, resp.Body.Close())
+	}()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(body, &raw))
+	_, hasTables := raw["tables"]
+	require.False(t, hasTables)
+	var summary tikvhandler.FlashReplicaSummary
+	require.NoError(t, json.Unmarshal(body, &summary))
+	return summary
+}
+
+func TestTiFlashReplicaSummary(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t, mockstore.WithMockTiFlash(2))
+	defer ts.stopServer(t)
+
+	tk := testkit.NewTestKit(t, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_rep (a int)")
+	tk.MustExec(`create table t_part (a int primary key)
+partition by range (a)
+(partition p0 values less than (256),
+ partition p1 values less than (512))`)
+
+	summary := fetchTiFlashReplicaSummary(t, ts)
+	require.True(t, summary.CanDisable)
+	require.Equal(t, 0, summary.TableCount)
+	require.Equal(t, "ON", summary.TiDBColumnarStorageEnabled)
+	require.Equal(t, config.GetGlobalConfig().CSE.ColumnarStoreType, summary.ColumnarStoreType)
+	require.Equal(t, ts.store.GetKeyspace(), summary.Keyspace)
+	require.Equal(t, uint32(ts.store.GetCodec().GetKeyspaceID()), summary.KeyspaceID)
+
+	originStoreType := config.GetGlobalConfig().CSE.ColumnarStoreType
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = "columnar"
+	})
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = originStoreType
+	})
+	summary = fetchTiFlashReplicaSummary(t, ts)
+	require.Equal(t, "columnar", summary.ColumnarStoreType)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = originStoreType
+	})
+
+	tk.MustExec("alter table t_rep set tiflash replica 1")
+	summary = fetchTiFlashReplicaSummary(t, ts)
+	require.False(t, summary.CanDisable)
+	require.Equal(t, 1, summary.TableCount)
+
+	tk.MustExec("alter table t_part set tiflash replica 1")
+	summary = fetchTiFlashReplicaSummary(t, ts)
+	require.False(t, summary.CanDisable)
+	require.Equal(t, 2, summary.TableCount)
+
+	tk.MustExec("alter table t_rep set tiflash replica 0")
+	summary = fetchTiFlashReplicaSummary(t, ts)
+	require.False(t, summary.CanDisable)
+	require.Equal(t, 1, summary.TableCount)
+
+	tk.MustExec("alter table t_part set tiflash replica 0")
+	summary = fetchTiFlashReplicaSummary(t, ts)
+	require.True(t, summary.CanDisable)
+	require.Equal(t, 0, summary.TableCount)
+
+	defer func(originGC bool) {
+		if originGC {
+			ddlutil.EmulatorGCEnable()
+		} else {
+			ddlutil.EmulatorGCDisable()
+		}
+	}(ddlutil.IsEmulatorGCEnable())
+	ddlutil.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
+	tk.MustExec(fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', ''),('tikv_gc_enable','true','')
+			       ON DUPLICATE KEY UPDATE variable_value = '%[1]s'`, timeBeforeDrop))
+
+	tk.MustExec("alter table t_part set tiflash replica 1")
+	tk.MustExec("drop table t_part")
+	summary = fetchTiFlashReplicaSummary(t, ts)
+	require.True(t, summary.CanDisable)
+	require.Equal(t, 0, summary.TableCount)
+
+	resp, err := ts.FetchStatus("/tiflash/replica-deprecated")
+	require.NoError(t, err)
+	var leftover []tikvhandler.TableFlashReplicaInfo
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&leftover))
+	require.NoError(t, resp.Body.Close())
+	require.Greater(t, len(leftover), 0)
+
+	tk.MustExec("set global tidb_columnar_storage_enabled = 'OFF'")
+	summary = fetchTiFlashReplicaSummary(t, ts)
+	require.Equal(t, "OFF", summary.TiDBColumnarStorageEnabled)
+	tk.MustExec("set global tidb_columnar_storage_enabled = 'ON'")
+
+	resp, err = ts.PostStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(`{"id":1,"region_count":1,"flash_region_count":1}`)))
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed", `return(true)`))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed")
+	resp, err = ts.FetchStatus("/tiflash/replica")
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	var failed tikvhandler.FlashReplicaSummary
+	require.Error(t, json.Unmarshal(body, &failed))
+}

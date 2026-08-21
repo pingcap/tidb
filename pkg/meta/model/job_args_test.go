@@ -766,6 +766,29 @@ func TestGetSetTiFlashReplicaArgs(t *testing.T) {
 			require.Equal(t, inArgsWithReset.ResetAvailable, true)
 		}
 	}
+	// With the `Internal` field
+	inArgsWithInternal := &SetTiFlashReplicaArgs{
+		TiflashReplica: ast.TiFlashReplicaSpec{
+			Count:  3,
+			Labels: []string{"TiFlash1", "TiFlash2", "TiFlash3"},
+			Hypo:   true,
+		},
+		ResetAvailable: true,
+		Internal:       true,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j4 := &Job{}
+		require.NoError(t, j4.Decode(getJobBytes(t, inArgsWithInternal, v, ActionSetTiFlashReplica)))
+		args, err := GetSetTiFlashReplicaArgs(j4)
+		require.NoError(t, err)
+		require.Equal(t, inArgsWithInternal.TiflashReplica, args.TiflashReplica)
+		if v == JobVersion2 {
+			require.Equal(t, inArgsWithInternal.ResetAvailable, true)
+			require.Equal(t, inArgsWithInternal.Internal, true)
+		} else {
+			require.False(t, args.Internal)
+		}
+	}
 }
 
 func TestGetUpdateTiFlashReplicaStatusArgs(t *testing.T) {

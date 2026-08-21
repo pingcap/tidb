@@ -739,6 +739,31 @@ timezone.*
      curl http://{TiDBIP}:10080/txn-gc-states
      ```
 
+43. Get the live TiFlash replica summary for this TiDB.
+
+     Method: `GET` only. The handler reloads local InfoSchema first, then counts **logical** tables that currently have `TiFlashReplica` metadata. Dropped or truncated leftovers are not included.
+
+     Next-gen: the count is for the keyspace bound to this TiDB. Query a user-keyspace instance to inspect that logical cluster; a SYSTEM instance only reports SYSTEM.
+
+     ```shell
+     curl http://{TiDBIP}:10080/tiflash/replica
+     ```
+
+     Example response:
+
+     ```json
+     {
+      "keyspace": "ks1",
+      "keyspace_id": 123,
+      "tidb_columnar_storage_enabled": "ON",
+      "columnar_store_type": "columnar",
+      "can_disable": false,
+      "table_count": 2
+     }
+     ```
+
+     `can_disable` is true only when `table_count` is 0. `tidb_columnar_storage_enabled` is always present as `ON` or `OFF` on HTTP 200; if the sysvar cannot be read, the API returns HTTP 5xx instead of omitting the field. `columnar_store_type` is this TiDB's `cse.columnar-store-type` (`tiflash`, `columnar`, or `both`). If schema reload fails, the API also returns HTTP 5xx instead of an empty success body. Old kernels do not serve this endpoint.
+
 ## Test-only APIs (enableTestAPI failpoint)
 
 These APIs are only registered when the `enableTestAPI` failpoint is enabled.

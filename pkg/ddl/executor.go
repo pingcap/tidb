@@ -531,6 +531,10 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 	if total == 0 {
 		return infoschema.ErrEmptyDatabase.GenWithStack("Empty database '%v'", dbName.O)
 	}
+	// Store-count check is shared by every table in the batch.
+	// The Columnar Storage gate is deferred until shouldModifyTiFlashReplica
+	// finds a table that actually needs a job, matching AlterTableSetTiFlashReplica
+	// (batch no-ops must not fail when the gate is OFF).
 	err = checkTiFlashReplicaCount(sctx, tiflashReplica.Count)
 	if err != nil {
 		return errors.Trace(err)
@@ -539,6 +543,7 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 	var originVersion int64
 	var pendingCount uint32
 	forceCheck := false
+	columnarGateChecked := false
 
 	logutil.DDLLogger().Info("start batch add TiFlash replicas", zap.Int("total", total), zap.Int64("schemaID", dbInfo.ID))
 	threshold := uint32(sctx.GetSessionVars().BatchPendingTiFlashCount)
@@ -572,6 +577,15 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 			sctx.GetSessionVars().StmtCtx.AppendNote(err)
 			skip++
 			continue
+		}
+
+		// SET TIFLASH REPLICA 0 stays allowed when the flag is OFF.
+		if tiflashReplica.Count > 0 && !columnarGateChecked {
+			err = checkColumnarStorageEnabled(sctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			columnarGateChecked = true
 		}
 
 		// Alter `tiflashCheckPendingTablesLimit` tables are handled, we need to check if we have reached threshold.
@@ -1128,6 +1142,9 @@ func (e *executor) createTableWithInfoJob(
 	}
 
 	if err := checkTableInfoValidExtra(ctx.GetSessionVars().StmtCtx.ErrCtx(), ctx.GetStore(), dbName, tbInfo); err != nil {
+		return nil, err
+	}
+	if err := checkColumnarStorageEnabledForNewTable(ctx, tbInfo); err != nil {
 		return nil, err
 	}
 
@@ -3828,10 +3845,16 @@ func (e *executor) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast
 		return e.setHypoTiFlashReplica(ctx, schema.Name, tb.Meta().Name, replicaInfo)
 	}
 
-	checkTiFlash := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
-
-	if checkTiFlash {
-		err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
+	// Two independent pre-checks:
+	//  - replica count vs live TiFlash stores (when cse.columnar-store-type is not "columnar")
+	//  - cluster Columnar Storage gate, only when adding replicas
+	//    (SET TIFLASH REPLICA 0 stays allowed when the flag is OFF)
+	err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if replicaInfo.Count > 0 {
+		err = checkColumnarStorageEnabled(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4009,8 +4032,9 @@ func isTableTiFlashSupported(dbName ast.CIStr, tbl *model.TableInfo) error {
 }
 
 func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {
-	tiflashEnabled := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
-	if !tiflashEnabled {
+	// Callers can invoke this unconditionally. Classic TiFlash is absent when
+	// cse.columnar-store-type is "columnar", so there is no store count to check.
+	if !config.GetGlobalConfig().CSE.IsTiFlashEnabled() {
 		return nil
 	}
 	// Check the tiflash replica count should be less than the total tiflash stores.
@@ -4022,6 +4046,87 @@ func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error
 		return errors.Errorf("the tiflash replica count: %d should be less than the total tiflash server count: %d", replicaCount, tiflashStoreCnt)
 	}
 	return nil
+}
+
+// globalVarGetter is the subset of *domain.Domain used by the columnar-storage
+// DDL gate. pkg/ddl cannot import pkg/domain because domain already imports ddl.
+type globalVarGetter interface {
+	GetGlobalVar(name string) (string, error)
+}
+
+// checkColumnarStorageEnabled checks whether the cluster allows creating TiFlash replicas.
+// It reads tidb_columnar_storage_enabled from the domain sysvar cache (memory, no PD RPC).
+func checkColumnarStorageEnabled(ctx sessionctx.Context) error {
+	if !config.GetGlobalConfig().CSE.IsColumnarStoreEnabled() {
+		return nil
+	}
+	keyspace := ctx.GetStore().GetKeyspace()
+	failpoint.Inject("mockColumnarStorageEnabledCheckFail", func() {
+		failpoint.Return(dbterror.ErrTiFlashColumnarStorageCheckFailed.GenWithStackByArgs(keyspace))
+	})
+	do, ok := ctx.GetDomain().(globalVarGetter)
+	if !ok || do == nil {
+		logutil.DDLLogger().Warn("failed to read tidb_columnar_storage_enabled for columnar storage check: domain is unavailable")
+		return dbterror.ErrTiFlashColumnarStorageCheckFailed.GenWithStackByArgs(keyspace)
+	}
+	val, err := do.GetGlobalVar(vardef.TiDBColumnarStorageEnabled)
+	if err != nil {
+		logutil.DDLLogger().Warn("failed to read tidb_columnar_storage_enabled for columnar storage check",
+			zap.Error(err))
+		return dbterror.ErrTiFlashColumnarStorageCheckFailed.GenWithStackByArgs(keyspace)
+	}
+	failpoint.Inject("mockColumnarStorageEnabledValue", func(v failpoint.Value) {
+		if s, ok := v.(string); ok {
+			val = s
+		}
+	})
+	// Fail-closed: only explicit opt-in values (ON/1) are accepted.
+	// Cache entries such as "0", "OFF", empty, or any other unknown string
+	// are treated as not enabled (SET GLOBAL normalizes to ON/OFF).
+	if !variable.TiDBOptOn(val) {
+		logutil.DDLLogger().Warn("columnar storage gate rejected tidb_columnar_storage_enabled value",
+			zap.String("value", val),
+			zap.String("keyspace", keyspace))
+		return dbterror.ErrTiFlashColumnarStorageNotEnabled.GenWithStackByArgs(keyspace, val)
+	}
+	return nil
+}
+
+func tableHasColumnarIndex(tbInfo *model.TableInfo) bool {
+	for _, idx := range tbInfo.Indices {
+		if idx.IsColumnarIndex() {
+			return true
+		}
+	}
+	return false
+}
+
+func wrapColumnarStorageGateForColumnarIndex(err error) error {
+	if err == nil {
+		return nil
+	}
+	if dbterror.ErrTiFlashColumnarStorageNotEnabled.Equal(err) {
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("Columnar Storage is not enabled")
+	}
+	return err
+}
+
+// checkColumnarStorageEnabledForNewTable rejects persisting TiFlash replica
+// metadata on CREATE TABLE / CREATE TABLE LIKE when Columnar Storage is off.
+// CREATE TABLE with a columnar index is remapped to ErrUnsupportedAddColumnarIndex
+// because the user intent is adding the index, not SET TIFLASH REPLICA.
+func checkColumnarStorageEnabledForNewTable(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
+	if tbInfo.TiFlashReplica == nil || tbInfo.TiFlashReplica.Count == 0 {
+		return nil
+	}
+	err := checkColumnarStorageEnabled(ctx)
+	if err == nil {
+		return nil
+	}
+	if tableHasColumnarIndex(tbInfo) {
+		return wrapColumnarStorageGateForColumnarIndex(err)
+	}
+	return err
 }
 
 // AlterTableAddStatistics would register extended statistics for a table.
@@ -4971,6 +5076,9 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 
 	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
 		return errors.Trace(err)
+	}
+	if err := checkColumnarStorageEnabled(ctx); err != nil {
+		return wrapColumnarStorageGateForColumnarIndex(err)
 	}
 
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
