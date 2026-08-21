@@ -908,6 +908,16 @@ func TestRenameTableWithReload(t *testing.T) {
 	tk.MustQuery("select * from rename2.t").Check(testkit.Rows("1", "2"))
 	tk.MustExec("drop table rename2.t")
 
+	tk.MustExec("create table rename1.t(id int primary key auto_increment, v varchar(20)) AUTO_ID_CACHE=1")
+	tk.MustExec("insert into rename1.t(v) values ('row1'), ('row2')")
+	tk.MustExec("rename table rename1.t to rename2.t")
+	tk.MustExec("drop database rename1")
+	forceFullReload(t, store, dom)
+	tk.MustExec("replace into rename2.t(v) values ('replacement')")
+	tk.MustQuery("select * from rename2.t").Check(testkit.Rows("1 row1", "2 row2", "3 replacement"))
+	tk.MustExec("drop table rename2.t")
+	tk.MustExec("create database rename1")
+
 	tk.MustExec("create table rename1.t(id int primary key auto_increment) AUTO_ID_CACHE=1")
 	tk.MustExec("insert into rename1.t values (), ()")
 	tk.MustExec("rename table rename1.t to rename2.t")

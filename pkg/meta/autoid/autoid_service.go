@@ -400,7 +400,7 @@ retry:
 
 	du := time.Since(start)
 	metrics.AutoIDReqDuration.Observe(du.Seconds())
-	sp.lastAllocated = resp.Min
+	sp.lastAllocated = resp.Max
 	return resp.Min, resp.Max, err
 }
 
@@ -482,7 +482,7 @@ func (sp *singlePointAlloc) Transfer(databaseID, tableID int64) error {
 	}
 	sp.dbID = databaseID
 	sp.tblID = tableID
-	return sp.Rebase(context.Background(), sp.lastAllocated+1, false)
+	return sp.Rebase(context.Background(), sp.lastAllocated, false)
 }
 
 // AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering

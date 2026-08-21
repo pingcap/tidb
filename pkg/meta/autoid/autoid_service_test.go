@@ -42,18 +42,22 @@ type mockAutoIDClient struct {
 	autoid.AutoIDAllocClient // embed to satisfy interface without implementing all methods
 	allocCallCount           atomic.Int64
 	rebaseCallCount          atomic.Int64
+	allocResp                *autoid.AutoIDResponse
+	rebaseResp               *autoid.RebaseResponse
+	rebaseReq                *autoid.RebaseRequest
 	allocErr                 error
 	rebaseErr                error
 }
 
 func (m *mockAutoIDClient) AllocAutoID(_ context.Context, _ *autoid.AutoIDRequest, _ ...grpc.CallOption) (*autoid.AutoIDResponse, error) {
 	m.allocCallCount.Add(1)
-	return nil, m.allocErr
+	return m.allocResp, m.allocErr
 }
 
-func (m *mockAutoIDClient) Rebase(_ context.Context, _ *autoid.RebaseRequest, _ ...grpc.CallOption) (*autoid.RebaseResponse, error) {
+func (m *mockAutoIDClient) Rebase(_ context.Context, req *autoid.RebaseRequest, _ ...grpc.CallOption) (*autoid.RebaseResponse, error) {
 	m.rebaseCallCount.Add(1)
-	return nil, m.rebaseErr
+	m.rebaseReq = req
+	return m.rebaseResp, m.rebaseErr
 }
 
 type scriptedServer struct {
@@ -300,6 +304,25 @@ func TestAutoIDRPCRetryPolicy(t *testing.T) {
 		require.False(t, durationOnly.observe(start, policy))
 		require.False(t, durationOnly.observe(start.Add(3*time.Second), policy))
 	})
+}
+
+func TestSinglePointAllocTransfer(t *testing.T) {
+	mockCli := &mockAutoIDClient{
+		allocResp:  &autoid.AutoIDResponse{Min: 0, Max: 2},
+		rebaseResp: &autoid.RebaseResponse{},
+	}
+	allocator := newTestSinglePointAlloc(mockCli)
+
+	minID, maxID, err := allocator.Alloc(context.Background(), 2, 1, 1)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), minID)
+	require.Equal(t, int64(2), maxID)
+	require.Equal(t, maxID, allocator.Base())
+
+	require.NoError(t, allocator.Transfer(2, 1))
+	require.Equal(t, int64(2), allocator.dbID)
+	require.NotNil(t, mockCli.rebaseReq)
+	require.Equal(t, maxID, mockCli.rebaseReq.Base)
 }
 
 func TestAutoIDRPCRetry(t *testing.T) {
