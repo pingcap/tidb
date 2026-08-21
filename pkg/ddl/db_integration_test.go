@@ -2926,31 +2926,12 @@ func TestIssue29282(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("prepare stmt1 from 'select * from issue29828_t for update union select * from issue29828_tmp1';")
 	tk.MustQuery("execute stmt1").Check(testkit.Rows("1"))
-	ch := make(chan struct{}, 1)
 	tk1.MustExec("use test")
 	tk1.MustExec("begin pessimistic")
-	go func() {
-		// This query should block.
-		tk1.MustQuery("select * from issue29828_t where id = 1 for update;").Check(testkit.Rows("1"))
-		ch <- struct{}{}
-		tk1.MustExec("rollback")
-	}()
-
-	select {
-	case <-time.After(100 * time.Millisecond):
-		// Expected, query blocked, not finish within 100ms.
-		tk.MustExec("rollback")
-	case <-ch:
-		// Unexpected, test fail.
-		t.Fail()
-	}
-
-	// Wait the background query rollback
-	select {
-	case <-time.After(100 * time.Millisecond):
-		t.Fail()
-	case <-ch:
-	}
+	tk1.MustGetErrCode("select * from issue29828_t where id = 1 for update nowait", mysql.ErrLockAcquireFailAndNoWaitSet)
+	tk.MustExec("rollback")
+	tk1.MustQuery("select * from issue29828_t where id = 1 for update nowait").Check(testkit.Rows("1"))
+	tk1.MustExec("rollback")
 }
 
 // See https://github.com/pingcap/tidb/issues/29327
