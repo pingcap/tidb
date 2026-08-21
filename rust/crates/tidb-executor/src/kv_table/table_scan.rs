@@ -41,7 +41,8 @@ use crate::storage::StorageIterator;
 use std::collections::{BTreeMap, BinaryHeap, HashSet};
 use tidb_chunk::chunk::Chunk;
 use tidb_codec::table_key::{
-    cut_index_prefix, decode_table_id, encode_index_seek_key, encode_row_key_with_handle,
+    cut_index_prefix, cut_row_key_prefix, decode_table_id, encode_index_seek_key,
+    encode_row_key_with_handle,
     get_table_handle_key_range, RecordHandle,
 };
 use tidb_codec::Encoder;
@@ -127,7 +128,7 @@ impl KvTable {
         handle_ranges: Option<&[IndexRange]>,
         context: &RowDecodeContext,
     ) -> Result<RowCursor, KvTableError> {
-        self.row_cursor_projected_directed_with_context(keep, handle_ranges, false, context)
+        self.row_cursor_projected_directed_with_context(keep, handle_ranges, false, false, context)
     }
 
     /// [`Self::row_cursor_projected_with_context`] with a walk direction:
@@ -138,10 +139,11 @@ impl KvTable {
         keep: Option<&[usize]>,
         handle_ranges: Option<&[IndexRange]>,
         descending: bool,
+        ordered: bool,
         context: &RowDecodeContext,
     ) -> Result<RowCursor, KvTableError> {
         let decoder = self.row_decoder_projected(keep, context)?;
-        self.row_cursor_with_decoder(decoder, handle_ranges, descending, context.zone())
+        self.row_cursor_with_decoder(decoder, handle_ranges, descending, ordered, context.zone())
     }
 
     /// Looks up several record handles through one storage batch and decodes
@@ -210,8 +212,17 @@ impl KvTable {
         decoder: RowDecoder,
         handle_ranges: Option<&[IndexRange]>,
         descending: bool,
+        ordered: bool,
         zone: &SessionTimeZone,
     ) -> Result<RowCursor, KvTableError> {
+        // Go's `byItems` half of `needMergeSort` is set because the table is
+        // PARTITIONED (`find_best_task.go:2960`), so the count that decides
+        // the merge is the number of physical tables, not the number of key
+        // ranges: `WHERE id IN (1,5,9)` on an unpartitioned table opens three
+        // ranges that are already disjoint and ascending, and Go concatenates
+        // them. This is the same rule the index path states as
+        // `physical_ids.len() > 1`.
+        let physical_count = self.record_physical_ids().len();
         let mut iterators = Vec::new();
         for (low, upper) in self.record_key_ranges(handle_ranges, zone)? {
             iterators.push(
@@ -226,9 +237,40 @@ impl KvTable {
         if descending {
             iterators.reverse();
         }
+        // Go `needMergeSort` (`executor/distsql.go`):
+        //
+        //     len(byItems) > 0 && kvRangesCount > 1
+        //
+        // BOTH halves, for the reason the index path states: testing the
+        // range count alone merges every partitioned read, and Go drains one
+        // partition to exhaustion before the next when no order is required
+        // -- which is what a partitioned `LIMIT` depends on.
+        //
+        // `ordered` is this tier's `len(byItems) > 0`. Go sets those items on
+        // a partitioned table scan whose order matched
+        // (`find_best_task.go:2959`, "Add sort items for table scan for
+        // merge-sort operation between partitions") and its reader then hands
+        // the per-partition results to `NewSortedSelectResults`. Without the
+        // merge the ranges were CONCATENATED, so `ORDER BY id` over
+        // `PARTITION BY HASH (id) PARTITIONS 2` answered each partition in
+        // order and the partitions in id order: 2, 4, 1, 3.
+        let merge_by_record_key = ordered && physical_count > 1;
+        let mut merge_heap = IndexMergeHeap::new(descending);
+        if merge_by_record_key {
+            for (position, iterator) in iterators.iter().enumerate() {
+                if iterator.valid() {
+                    merge_heap.push(
+                        cut_row_key_prefix(iterator.key().as_bytes()).to_vec(),
+                        position,
+                    );
+                }
+            }
+        }
         Ok(RowCursor {
-            iterators: iterators.into_iter(),
-            current: None,
+            iterators,
+            next_iterator: 0,
+            merge_by_record_key,
+            merge_heap,
             decoder,
         })
     }
@@ -742,7 +784,7 @@ impl KvTable {
         context: &RowDecodeContext,
     ) -> Result<Vec<(i64, TableHandle, Vec<Datum>)>, KvTableError> {
         let decoder = self.row_decoder_projected(None, context)?;
-        let mut cursor = self.row_cursor_with_decoder(decoder, None, false, context.zone())?;
+        let mut cursor = self.row_cursor_with_decoder(decoder, None, false, false, context.zone())?;
         let mut rows = Vec::new();
         while let Some(entry) = cursor.next_physical_row()? {
             rows.push(entry);
@@ -786,7 +828,7 @@ impl KvTable {
         context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
         let decoder = self.row_decoder_recomputed(context)?;
-        let mut cursor = self.row_cursor_with_decoder(decoder, None, false, context.zone())?;
+        let mut cursor = self.row_cursor_with_decoder(decoder, None, false, false, context.zone())?;
         let mut rows = Vec::new();
         while let Some(entry) = cursor.next_row()? {
             rows.push(entry);
@@ -1080,11 +1122,15 @@ pub(crate) fn note_decoded_column_ids(ids: impl Iterator<Item = i64>) {
 /// iterator is the merged stream (snapshot plus the session's staged mutation
 /// buffer), so a cursor sees exactly the rows a materializing scan saw.
 pub struct RowCursor {
-    /// The ranges left to read, in ascending key order. A whole-table scan
+    /// The ranges to read, in ascending key order. A whole-table scan
     /// holds exactly one; a `TableRangeScan` holds one per handle range (per
     /// partition, for a partitioned table).
-    iterators: std::vec::IntoIter<Box<dyn StorageIterator>>,
-    current: Option<Box<dyn StorageIterator>>,
+    iterators: Vec<Box<dyn StorageIterator>>,
+    next_iterator: usize,
+    /// Go `needMergeSort` (`executor/distsql.go`): with more than one range
+    /// AND an order to keep, the ranges are merged rather than concatenated.
+    merge_by_record_key: bool,
+    merge_heap: IndexMergeHeap,
     decoder: RowDecoder,
 }
 
@@ -1100,18 +1146,38 @@ impl RowCursor {
     pub(crate) fn next_physical_row(
         &mut self,
     ) -> Result<Option<(i64, TableHandle, Vec<Datum>)>, KvTableError> {
-        loop {
-            let Some(iterator) = self.current.as_mut() else {
-                // Every range is opened when the cursor is, so advancing is
-                // only ever moving to the next already-open one.
-                self.current = self.iterators.next();
-                if self.current.is_none() {
-                    return Ok(None);
-                }
-                continue;
+        if self.merge_by_record_key {
+            let Some(position) = self.merge_heap.pop() else {
+                return Ok(None);
             };
+            let iterator = &mut self.iterators[position];
+            let physical_id = decode_table_id(iterator.key().as_bytes());
+            let (handle, row) = self
+                .decoder
+                .decode_record(iterator.key().as_bytes(), iterator.value())?;
+            iterator
+                .next()
+                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            if iterator.valid() {
+                // `cut_row_key_prefix`, NOT `cut_index_prefix`: a record key
+                // is `t{id}_r{handle}` and is exactly `PREFIX_LEN + ID_LEN`
+                // long, which is the whole of what the index cut removes. Cut
+                // that way every record key compares EMPTY, all keys tie, and
+                // the heap falls back to the position -- draining one
+                // partition before the next, which is the concatenation this
+                // merge exists to replace.
+                self.merge_heap.push(
+                    cut_row_key_prefix(iterator.key().as_bytes()).to_vec(),
+                    position,
+                );
+            }
+            return Ok(Some((physical_id, handle, row)));
+        }
+        while self.next_iterator < self.iterators.len() {
+            let iterator = &mut self.iterators[self.next_iterator];
             if !iterator.valid() {
-                self.current.take().expect("just borrowed").close();
+                iterator.close();
+                self.next_iterator += 1;
                 continue;
             }
             let physical_id = decode_table_id(iterator.key().as_bytes());
@@ -1123,6 +1189,7 @@ impl RowCursor {
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
             return Ok(Some((physical_id, handle, row)));
         }
+        Ok(None)
     }
 }
 
@@ -1131,10 +1198,15 @@ impl Drop for RowCursor {
     /// every iterator, which a drained loop's explicit `close` would have
     /// done -- including the ranges it never reached.
     fn drop(&mut self) {
-        if let Some(current) = self.current.as_mut() {
-            current.close();
-        }
-        for mut iterator in self.iterators.by_ref() {
+        // A MERGED cursor leaves every range open until it is exhausted, so
+        // the whole list is closed; a sequential one has already closed the
+        // ranges it finished with.
+        let from = if self.merge_by_record_key {
+            0
+        } else {
+            self.next_iterator
+        };
+        for iterator in &mut self.iterators[from..] {
             iterator.close();
         }
     }
@@ -1706,6 +1778,11 @@ impl TableScanExec {
                     projection,
                     handle_ranges.as_deref(),
                     self.descending,
+                    // Go carries the required physical property into
+                    // `TableReaderExecutor.keepOrder`, and a partitioned
+                    // reader with it set merge-sorts its per-partition
+                    // results rather than concatenating them.
+                    self.keep_order,
                     &self.decode_context,
                 )
                 .map_err(|error| {

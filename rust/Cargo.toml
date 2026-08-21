@@ -177,5 +177,13 @@ all = "warn"
 [profile.dev]
 debug = "line-tables-only"
 
+# Third-party dependencies are compiled once and stepped through essentially
+# never, so their debug info is pure cost: it inflates every rlib, every test
+# binary, and -- on macOS -- the number of code pages the kernel hashes when
+# it validates a freshly linked binary on first exec. Our own crates keep
+# line tables, so OUR frames still carry file and line in a backtrace.
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 lto = "thin"

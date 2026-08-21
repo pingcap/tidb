@@ -770,12 +770,44 @@ fn check_unique_keys_include_partition_columns(
         if !index.unique {
             continue;
         }
-        if !dependencies
+        if dependencies
             .iter()
             .all(|offset| index.column_offsets.contains(offset))
         {
-            return Err(DriverError::PartitionGlobalIndexNeeded(index.name.clone()));
+            continue;
         }
+        // Go `ddl/partition.go:700` reports the CLUSTERED primary key as
+        // `CLUSTERED INDEX` (1503) rather than by name, and does so BEFORE
+        // the global exemption below -- a clustered primary key is the row
+        // key itself and can never be a global index.
+        //
+        // Only a COMMON handle reaches here: a `pk_is_handle` table encodes
+        // its primary key as the handle and builds no index for it, so there
+        // is no PRIMARY entry in this list to test.
+        if !handle_offsets.is_empty() && index.name.eq_ignore_ascii_case("PRIMARY") {
+            return Err(DriverError::PartitionUniqueKeyNeedAllFields(
+                "CLUSTERED INDEX".to_owned(),
+            ));
+        }
+        // Go `ddl/partition.go:703` guards the 8264 refusal with
+        // `if !index.Global`: a GLOBAL index is EXEMPT from the covering
+        // rule, because its entries span every partition and so can enforce
+        // a constraint across them.
+        //
+        // This node writes only per-partition LOCAL entries. Accepting the
+        // exemption would enforce the unique constraint within each
+        // partition and let the same value repeat across them, so the index
+        // is refused -- but for the reason it is actually refused. Raising
+        // 8264 here told the user GLOBAL was not given when it was.
+        if index.global {
+            let name = &index.name;
+            return Err(DriverError::unsupported(format!(
+                "a GLOBAL index ({name}) is not supported by this node: it maintains only \
+                 per-partition index entries, so a unique constraint spanning the \
+                 partitions would not be enforced"
+            )));
+        }
+        return Err(DriverError::PartitionGlobalIndexNeeded(index.name.clone()));
     }
     // A clustered primary key is no entry in `indexes` -- its encoding IS the
     // row key -- so Go checks it separately, and reports it as
@@ -1487,6 +1519,65 @@ mod round_trip_tests {
             direct.physical_ids(),
             reloaded.physical_ids(),
             "{sql}: the reloaded spec routes to different physical tables"
+        );
+    }
+
+    /// Go EXEMPTS a GLOBAL unique index from the covering rule: at
+    /// `ddl/partition.go:703` the 8264 refusal is guarded by `if
+    /// !index.Global`, because a global index spans every partition and so
+    /// can enforce uniqueness across them.
+    ///
+    /// This node maintains only per-partition local index entries, so it must
+    /// not accept one -- accepting it would enforce the unique constraint
+    /// WITHIN each partition and let the same value repeat across them. But
+    /// the refusal has to name that, rather than telling the user GLOBAL was
+    /// not given when it was.
+    #[test]
+    fn a_global_unique_index_is_refused_for_the_reason_it_is_refused() {
+        let sql = "CREATE TABLE t (id BIGINT, v BIGINT, UNIQUE KEY uv (v) GLOBAL) \
+                   PARTITION BY HASH (id) PARTITIONS 2";
+        let statement = tidb_parser::parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        let tidb_ast::Stmt::Ddl(ddl) = statement else {
+            panic!("not DDL");
+        };
+        let tidb_ast::DdlStmt::CreateTable(create) = &*ddl else {
+            panic!("not CREATE TABLE");
+        };
+        let names = vec!["id".to_owned(), "v".to_owned()];
+        let types = vec![
+            FieldType::new(FieldTypeCode::LongLong),
+            FieldType::new(FieldTypeCode::LongLong),
+        ];
+        let indexes = vec![crate::kv_table::KvIndex {
+            id: 1,
+            name: "uv".to_owned(),
+            comment: String::new(),
+            unique: true,
+            // Only `v`: the partition column `id` is NOT covered, which is
+            // what brings the rule into play at all.
+            column_offsets: vec![1],
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+            visible: true,
+            global: true,
+        }];
+        let error = build_table_partitioning(
+            create,
+            &names,
+            &types,
+            &indexes,
+            &[],
+            &mut || 1,
+            &crate::StmtContext::for_query(),
+        )
+        .expect_err("this node cannot serve a GLOBAL index");
+        let message = error.to_mysql_error().message;
+        assert!(
+            !message.contains("GLOBAL is not given"),
+            "GLOBAL WAS given; the refusal must not claim otherwise: {message}"
+        );
+        assert!(
+            message.contains("GLOBAL"),
+            "the refusal must name the global index as the reason: {message}"
         );
     }
 

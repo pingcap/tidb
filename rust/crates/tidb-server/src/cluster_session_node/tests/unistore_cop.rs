@@ -1062,3 +1062,124 @@ fn a_view_over_the_coprocessor_is_created_and_reads_back() {
         "the view reads back its defining query"
     );
 }
+
+/// A HASH-partitioned table created HERE writes its rows to the right
+/// physical tables and reads every one of them back.
+///
+/// This is the end-to-end claim the metadata round trip does NOT make. The
+/// loader proves the stored bounds fold back; this proves a row written
+/// under one partition's physical table id is found again by a read that has
+/// to visit all of them. The four ids straddle both partitions under
+/// `HASH(id) PARTITIONS 2`, so a read that reached only one physical table
+/// would come back with half the rows rather than with an error.
+#[test]
+fn a_hash_partitioned_table_writes_and_reads_every_partition() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(63))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.hp (id int primary key, v int) PARTITION BY HASH (id) PARTITIONS 2",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.hp VALUES (1, 10), (2, 20), (3, 30), (4, 40)",
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT id, v FROM test.hp ORDER BY id")),
+        [["1", "10"], ["2", "20"], ["3", "30"], ["4", "40"]],
+        "every partition's rows come back IN ORDER: the per-partition scans \
+         are each ordered, and merging them is what makes the whole answer so"
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT id FROM test.hp ORDER BY id DESC"
+        )),
+        [["4"], ["3"], ["2"], ["1"]],
+        "the descending merge walks both partitions backwards together"
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT count(*) FROM test.hp")),
+        [["4"]],
+        "the aggregate reaches every physical table too"
+    );
+}
+
+/// A RANGE-partitioned table prunes on read without losing rows.
+///
+/// The unpruned read is the control: if pruning dropped a partition it
+/// should not have, only the narrowed query would be wrong, and only a
+/// comparison against the full scan shows it.
+///
+/// This does NOT test cross-partition ordering, and cannot: a clustered
+/// primary key must cover the partition columns, so a RANGE table keyed on
+/// its own primary key stores the partitions in handle order and
+/// concatenating them is already sorted. `HASH` is what separates the two,
+/// because hashing scatters the handle across partitions.
+#[test]
+fn a_range_partitioned_table_prunes_without_losing_rows() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(64))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.rp (id int primary key, v int) PARTITION BY RANGE (id) \
+         (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (MAXVALUE))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.rp VALUES (5, 50), (15, 150), (25, 250)",
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT id FROM test.rp ORDER BY id")),
+        [["5"], ["15"], ["25"]],
+        "the unpruned read sees both partitions"
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT id FROM test.rp WHERE id < 10")),
+        [["5"]],
+        "the pruned read keeps the row that is actually below the bound"
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT id FROM test.rp WHERE id >= 10 ORDER BY id"
+        )),
+        [["15"], ["25"]],
+        "and the other side keeps the rows above it"
+    );
+}
+
+/// A KEY-partitioned table answers an ordered read in order.
+///
+/// KEY hashes the partition columns exactly as HASH does, so the handles
+/// scatter across partitions and the merge is what puts them back together.
+/// This is the sibling of
+/// [`a_hash_partitioned_table_writes_and_reads_every_partition`] over the
+/// other method that stores rows out of handle order.
+#[test]
+fn a_key_partitioned_table_answers_an_ordered_read_in_order() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(65))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.kp (id int primary key, v int) PARTITION BY KEY (id) PARTITIONS 2",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.kp VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)",
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT id FROM test.kp ORDER BY id")),
+        [["1"], ["2"], ["3"], ["4"], ["5"]],
+        "the merge orders across every KEY partition"
+    );
+}
