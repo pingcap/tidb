@@ -23,20 +23,67 @@ import (
 
 // TableMeta contains metadata for a table to be imported
 type TableMeta struct {
-	Database     string
-	Table        string
-	DataFiles    []DataFileMeta
-	TotalSize    int64  // In bytes
-	WildcardPath string // Wildcard pattern that matches only this table's data files
-	SchemaFile   string // Path to the table schema file, if available
+	Database        string
+	Table           string
+	DataFiles       []DataFileMeta
+	TotalSize       int64  // Estimated uncompressed/row-oriented size in bytes
+	ObjectCount     int64  // Number of physical source data objects
+	TotalObjectSize int64  // Storage-reported source object size in bytes
+	WildcardPath    string // Wildcard pattern that matches only this table's data files
+	SchemaFile      string // Path to the table schema file, if available
 }
 
 // DataFileMeta contains metadata for a data file
 type DataFileMeta struct {
 	Path        string
-	Size        int64
+	Size        int64 // Estimated uncompressed/row-oriented size in bytes
+	ObjectSize  int64 // Storage-reported object size in bytes
 	Format      mydump.SourceType
 	Compression mydump.Compression
+}
+
+// SourceLayout identifies the source-file layout selected by automatic
+// mapping.
+type SourceLayout string
+
+const (
+	// SourceLayoutDefault is the existing Dumpling/generic file layout.
+	SourceLayoutDefault SourceLayout = "default"
+	// SourceLayoutAuroraRDSSnapshot is the native Aurora/RDS snapshot-export
+	// directory layout.
+	SourceLayoutAuroraRDSSnapshot SourceLayout = "aurora-rds-snapshot"
+)
+
+// SourceInventory summarizes the source objects considered by automatic
+// mapping.
+type SourceInventory struct {
+	Complete              bool
+	ScannedObjectCount    int64
+	ImportableObjectCount int64
+	MappedObjectCount     int64
+	TotalObjectBytes      int64
+	// Digest identifies the importable object paths and storage-reported sizes.
+	Digest string
+}
+
+// SourceLayoutEvidence describes the path evidence used to identify a source
+// layout.
+type SourceLayoutEvidence struct {
+	// ExportRoot is relative to the configured source path and is empty when
+	// that path already points at the export-task root.
+	ExportRoot string
+	// PathForm is "batched", "direct", or "mixed" for an Aurora/RDS snapshot
+	// export.
+	PathForm string
+}
+
+// SourceScanResult is the complete automatic-mapping result returned to Cloud
+// Import callers.
+type SourceScanResult struct {
+	Layout    SourceLayout
+	Tables    []*TableMeta
+	Inventory SourceInventory
+	Evidence  SourceLayoutEvidence
 }
 
 // TableDataSizeEstimate contains the size estimation for a table import.

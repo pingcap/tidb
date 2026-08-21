@@ -22,6 +22,7 @@ import (
 // SDK defines the interface for cloud import services
 type SDK interface {
 	FileScanner
+	SourceScanner
 	JobManager
 	SQLGenerator
 	Close() error
@@ -30,6 +31,7 @@ type SDK interface {
 // importSDK implements SDK interface
 type importSDK struct {
 	FileScanner
+	SourceScanner
 	JobManager
 	SQLGenerator
 }
@@ -50,9 +52,10 @@ func NewImportSDK(ctx context.Context, sourcePath string, db *sql.DB, options ..
 	sqlGenerator := NewSQLGenerator()
 
 	return &importSDK{
-		FileScanner:  scanner,
-		JobManager:   jobManager,
-		SQLGenerator: sqlGenerator,
+		FileScanner:   scanner,
+		SourceScanner: scanner.(SourceScanner),
+		JobManager:    jobManager,
+		SQLGenerator:  sqlGenerator,
 	}, nil
 }
 

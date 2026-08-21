@@ -195,6 +195,11 @@ var defaultFileRouteRules = []*config.FileRouteRule{
 	// view schema create file pattern, matches files like '{schema}.{table}-schema-view.sql[.{compress}]'
 	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema-view\.sql(?:\.(\w*?))?$`,
 		Schema: "$1", Table: "$2", Type: ViewSchema, Compression: "$3", Unescape: true},
+	// Amazon Aurora/RDS snapshot-export parquet files. This rule must precede
+	// the generic parquet rules, which otherwise interpret the physical part
+	// file name as the schema and table name.
+	{Pattern: AuroraSnapshotFilePattern,
+		Schema: "$3", Table: "$4", Type: TypeParquet, Unescape: true},
 	// parquet source file pattern with parquet internal compression suffix, matches files like
 	// '{schema}.{table}.0001.{snappy|gz|zst|...}.parquet'
 	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*)\.([0-9]+)\.(snappy|gzip|gz|zstd|zst)\.parquet$`,

@@ -165,6 +165,11 @@ type MDLoaderSetupConfig struct {
 	ReturnPartialResultOnError bool
 	// FileIter controls the file iteration policy when constructing a MDLoader.
 	FileIter FileIterator
+
+	// CollectScanReport specifies whether MDLoader retains the raw object
+	// inventory and scan completeness for callers that need source-layout
+	// detection after loading.
+	CollectScanReport bool
 }
 
 // DefaultMDLoaderSetupConfig generates a default MDLoaderSetupConfig.
@@ -221,6 +226,14 @@ func WithFileIterator(fileIter FileIterator) MDLoaderSetupOption {
 	}
 }
 
+// WithScanReport makes MDLoader retain the raw object inventory and whether the
+// source scan completed. It does not change file routing behavior.
+func WithScanReport() MDLoaderSetupOption {
+	return func(cfg *MDLoaderSetupConfig) {
+		cfg.CollectScanReport = true
+	}
+}
+
 // LoaderConfig is the configuration for constructing a MDLoader.
 type LoaderConfig struct {
 	// SourceID is the unique identifier for the data source, it's used in DM only.
@@ -268,12 +281,20 @@ type MDLoader struct {
 	router     *regexprrouter.RouteTable
 	fileRouter FileRouter
 	charSet    string
+	scanReport *ScanReport
 }
 
 // RawFile store the path and size of a file.
 type RawFile struct {
 	Path string
 	Size int64
+}
+
+// ScanReport records the raw objects observed by MDLoader's existing source
+// listing. Files contains only the objects observed before a listing error.
+type ScanReport struct {
+	Files    []RawFile
+	Complete bool
 }
 
 type parquetInfo struct {
@@ -464,19 +485,29 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 
 	// First collect all file paths
 	allFiles := make([]RawFile, 0, 128)
-	if err := fileIter.IterateFiles(ctx, func(_ context.Context, path string, size int64) error {
+	iterErr := fileIter.IterateFiles(ctx, func(_ context.Context, path string, size int64) error {
 		allFiles = append(allFiles, RawFile{path, size})
 		return nil
-	}); err != nil {
-		if !s.setupCfg.ReturnPartialResultOnError {
-			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
+	})
+	if s.setupCfg.CollectScanReport {
+		s.loader.scanReport = &ScanReport{
+			Files:    allFiles,
+			Complete: iterErr == nil,
 		}
-		gerr = err
+	}
+	if iterErr != nil {
+		if !s.setupCfg.ReturnPartialResultOnError {
+			return common.ErrStorageUnknown.Wrap(iterErr).GenWithStack("list file failed")
+		}
+		gerr = iterErr
 	}
 
 	// Parallel process all files
 	allInfos, err := ParallelProcess(ctx, allFiles, s.setupCfg.ScanFileConcurrency, s.constructFileInfo)
 	if err != nil {
+		if s.loader.scanReport != nil {
+			s.loader.scanReport.Complete = false
+		}
 		if !s.setupCfg.ReturnPartialResultOnError {
 			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
 		}
@@ -904,6 +935,12 @@ func (l *MDLoader) GetAllFiles() map[string]FileInfo {
 		}
 	}
 	return allFiles
+}
+
+// GetScanReport returns the raw object inventory retained during setup. It
+// returns nil unless WithScanReport was supplied.
+func (l *MDLoader) GetScanReport() *ScanReport {
+	return l.scanReport
 }
 
 func calculateFileBytes(ctx context.Context,

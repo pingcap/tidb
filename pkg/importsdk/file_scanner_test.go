@@ -52,18 +52,20 @@ func TestCreateDataFileMeta(t *testing.T) {
 	df := createDataFileMeta(fi)
 	require.Equal(t, "s3://bucket/path/to/f", df.Path)
 	require.Equal(t, int64(456), df.Size)
+	require.Equal(t, int64(123), df.ObjectSize)
 	require.Equal(t, mydump.SourceTypeCSV, df.Format)
 	require.Equal(t, mydump.CompressionGZ, df.Compression)
 }
 
 func TestProcessDataFiles(t *testing.T) {
 	files := []mydump.FileInfo{
-		{FileMeta: mydump.SourceFileMeta{Path: "s3://bucket/a", RealSize: 10}},
-		{FileMeta: mydump.SourceFileMeta{Path: "s3://bucket/b", RealSize: 20}},
+		{FileMeta: mydump.SourceFileMeta{Path: "s3://bucket/a", FileSize: 4, RealSize: 10}},
+		{FileMeta: mydump.SourceFileMeta{Path: "s3://bucket/b", FileSize: 6, RealSize: 20}},
 	}
-	dfm, total := processDataFiles(files)
+	dfm, total, objectTotal := processDataFiles(files)
 	require.Len(t, dfm, 2)
 	require.Equal(t, int64(30), total)
+	require.Equal(t, int64(10), objectTotal)
 	require.Equal(t, "s3://bucket/a", dfm[0].Path)
 	require.Equal(t, "s3://bucket/b", dfm[1].Path)
 }
