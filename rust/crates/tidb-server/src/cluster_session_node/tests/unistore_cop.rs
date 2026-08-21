@@ -159,6 +159,22 @@ fn a_derived_aggregate_over_the_coprocessor_answers_its_output() {
     ));
     assert_eq!(counted_over_index, [["4"]]);
 
+    // A full covering SUM uses the unordered Global aggregate contract. Its
+    // input is indexed in the pruned scan schema, so lowering must translate
+    // that offset back through the table schema before reading index keys.
+    let requests_before_sum = stack.cop_source.stats().requests.len();
+    let summed_over_index = displayed(rows(&mut session, "SELECT sum(v) FROM test.walk"));
+    assert_eq!(summed_over_index, [["111"]]);
+    let after_sum = stack.cop_source.stats();
+    assert!(
+        after_sum.requests.len() > requests_before_sum
+            && after_sum.requests[requests_before_sum..]
+                .iter()
+                .any(|request| request.contains("IndexScan") && request.contains("HashAgg")),
+        "the covering SUM did not reach an index HashAgg DAG: {:?}",
+        after_sum.requests
+    );
+
     // The receipt that the partial stage ran AT THE REGION: the scanner's
     // request log names an aggregation executor in a served DAG. A refusal
     // would fall back to the local partial cursor -- same answer, but the

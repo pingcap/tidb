@@ -146,10 +146,11 @@ pub struct PushdownGlobalAggregateFunction {
 /// planner representation and a corresponding TiKV DAG lowering.
 #[derive(Clone, Debug)]
 pub enum PushdownPartialAggregate {
-    /// A partial `COUNT(column)`; the root stage sums the per-region counts.
+    /// A partial `COUNT`; the root stage sums the per-region counts.
     Count {
-        /// Offset in [`PushdownScanRequest::columns`].
-        input_offset: usize,
+        /// Offset in [`PushdownScanRequest::columns`], or `None` for
+        /// `COUNT(*)`/`COUNT(1)` whose input is the constant one.
+        input_offset: Option<usize>,
         /// The partial count column returned by TiKV.
         output_type: FieldType,
     },
@@ -206,9 +207,8 @@ impl PushdownPartialAggregate {
     #[must_use]
     pub fn input_offset(&self) -> usize {
         match self {
-            Self::Count { input_offset, .. }
-            | Self::Sum { input_offset, .. }
-            | Self::GroupBy { input_offset, .. } => *input_offset,
+            Self::Count { input_offset, .. } => input_offset.unwrap_or(0),
+            Self::Sum { input_offset, .. } | Self::GroupBy { input_offset, .. } => *input_offset,
             Self::GroupBySum { group_offset, .. } => *group_offset,
             Self::Grouped {
                 group_offsets,
@@ -267,9 +267,10 @@ impl PushdownPartialAggregate {
     #[must_use]
     pub fn input_offsets(&self) -> Vec<usize> {
         match self {
-            Self::Count { input_offset, .. }
-            | Self::Sum { input_offset, .. }
-            | Self::GroupBy { input_offset, .. } => vec![*input_offset],
+            Self::Count { input_offset, .. } => input_offset.iter().copied().collect(),
+            Self::Sum { input_offset, .. } | Self::GroupBy { input_offset, .. } => {
+                vec![*input_offset]
+            }
             Self::GroupBySum {
                 group_offset,
                 sum_offset,

@@ -1054,11 +1054,16 @@ fn aggregation_to_pb(
         streamed: Some(streamed),
     };
     match aggregate {
-        PushdownPartialAggregate::Count { input_offset, .. } => Some(message(
-            Vec::new(),
-            vec![agg(ExprType::Count, column_ref(*input_offset)?)],
-            false,
-        )),
+        PushdownPartialAggregate::Count { input_offset, .. } => {
+            let input = match input_offset {
+                Some(offset) => column_ref(*offset)?,
+                None => tidb_expr::pushdown_catalog::to_pb(
+                    &tidb_expr::pushdown_catalog::PbScalar::IntLiteral(1),
+                    &|_| None,
+                )?,
+            };
+            Some(message(Vec::new(), vec![agg(ExprType::Count, input)], true))
+        }
         PushdownPartialAggregate::Sum { input_offset, .. } => Some(message(
             Vec::new(),
             vec![agg(ExprType::Sum, column_ref(*input_offset)?)],

@@ -1845,6 +1845,22 @@ fn prefer_stream_agg_for_global_count(input_rows: f64) -> bool {
     stream.value() < hash.value()
 }
 
+fn contains_logic_or(expression: &tidb_ast::Expr) -> bool {
+    match expression {
+        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, _, _) => true,
+        tidb_ast::Expr::Binary(_, left, right) => {
+            contains_logic_or(left) || contains_logic_or(right)
+        }
+        tidb_ast::Expr::Unary(_, child) | tidb_ast::Expr::Paren(child) => contains_logic_or(child),
+        tidb_ast::Expr::Row(items) => items.iter().any(contains_logic_or),
+        tidb_ast::Expr::Assign { value, .. } => contains_logic_or(value),
+        tidb_ast::Expr::Func { args, .. }
+        | tidb_ast::Expr::GenericFuncCall { args, .. }
+        | tidb_ast::Expr::Aggregate { args, .. } => args.iter().any(contains_logic_or),
+        _ => false,
+    }
+}
+
 #[derive(Clone, Copy)]
 enum GroupedPartialSource {
     Function(usize),
@@ -3321,11 +3337,23 @@ fn build_aggregation(
         && matches!(state.agg_funcs[0].kind, AggKind::Count);
     let complex_stream_agg =
         complex_global_count && joined_logical_rows.is_none_or(prefer_stream_agg_for_global_count);
+    let source_is_index_reader = matches!(
+        input_candidate.as_ref(),
+        Some(tidb_planner::candidate_cost::Candidate::Reader {
+            kind: tidb_planner::candidate_cost::ReaderKind::Index,
+            ..
+        })
+    );
     let stream_plan = if !force_stream
         && !select.rollup
+        && select.from.is_some()
         && group_by.is_empty()
         && !has_pre_agg_applies
-        && (complex_stream_agg || (!complex_global_count && scan_consumed_where))
+        && (complex_stream_agg
+            || (!complex_global_count
+                && scan_consumed_where
+                && (!source_is_index_reader
+                    || select.where_clause.as_ref().is_some_and(contains_logic_or))))
         && state.agg_funcs.len() == 1
         && select.fields.fields().len() == 1
     {
@@ -3356,25 +3384,39 @@ fn build_aggregation(
     // estimate and accepts only when that same decision applies; accepting
     // also changes its output schema to the one partial-result column.
     let partial_stream_agg = stream_plan.is_some_and(|plan| {
-        let Some(input_offset) = state.agg_funcs[0]
+        let argument = state.agg_funcs[0]
             .arg
             .as_ref()
-            .and_then(Expression::as_column)
-            .and_then(|column| usize::try_from(column.index).ok())
-        else {
-            return false;
-        };
+            .expect("a global stream aggregate has an argument");
+        let input_offset = argument
+            .as_column()
+            .and_then(|column| usize::try_from(column.index).ok());
         let output_type = state.types[0].clone();
         let aggregate = match plan {
-            GlobalStreamAggPlan::Count => PushdownPartialAggregate::Count {
-                input_offset,
-                output_type,
-            },
+            GlobalStreamAggPlan::Count
+                if input_offset.is_some()
+                    || matches!(
+                        argument,
+                        Expression::Constant(constant)
+                            if matches!(constant.value, Datum::Int(1) | Datum::UInt(1))
+                    ) =>
+            {
+                PushdownPartialAggregate::Count {
+                    input_offset,
+                    output_type,
+                }
+            }
+            GlobalStreamAggPlan::Count => return false,
             GlobalStreamAggPlan::CountComplex | GlobalStreamAggPlan::CountDistinct => return false,
-            GlobalStreamAggPlan::IntegerSum { .. } => PushdownPartialAggregate::Sum {
-                input_offset,
-                output_type,
-            },
+            GlobalStreamAggPlan::IntegerSum { .. } => {
+                let Some(input_offset) = input_offset else {
+                    return false;
+                };
+                PushdownPartialAggregate::Sum {
+                    input_offset,
+                    output_type,
+                }
+            }
         };
         source
             .table_access()
@@ -4032,6 +4074,15 @@ fn build_aggregation(
                 ctx.clone(),
             ))
         }
+    } else if partial_global_hash {
+        Box::new(HashAggExec::new(
+            ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
+            group_by,
+            std::mem::take(&mut state.agg_funcs),
+            source,
+            ctx.clone(),
+            ctx.statement_memory(),
+        ))
     } else if let Some(stream_plan) = stream_plan {
         let mut agg_funcs = std::mem::take(&mut state.agg_funcs);
         if partial_stream_agg {
@@ -4126,6 +4177,11 @@ fn build_aggregation(
                 );
             } else if force_stream {
                 trace.enforced_stream_agg(traced_select, &qualify, grouped_logical_rows);
+            } else if partial_global_hash {
+                if !trace.partial_grouped_hash_agg(traced_select, &qualify, Some(1.0)) {
+                    trace.refuse("partial global HashAgg child is not a supported scan");
+                }
+                trace.final_grouped_hash_agg(traced_select, &qualify);
             } else if let Some(stream_plan) = stream_plan {
                 if partial_stream_agg {
                     if !trace.partial_stream_agg(
@@ -4153,11 +4209,6 @@ fn build_aggregation(
                     partial_stream_agg
                         || matches!(stream_plan, GlobalStreamAggPlan::IntegerSum { .. }),
                 );
-            } else if partial_global_hash {
-                if !trace.partial_grouped_hash_agg(traced_select, &qualify, Some(1.0)) {
-                    trace.refuse("partial global HashAgg child is not a supported scan");
-                }
-                trace.final_grouped_hash_agg(traced_select, &qualify);
             } else if partial_grouped_sum {
                 if !trace.partial_grouped_sum(traced_select, &qualify, grouped_logical_rows) {
                     trace.refuse("partial grouped SUM child is not a bare table scan");

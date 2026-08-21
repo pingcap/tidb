@@ -761,6 +761,7 @@ impl KvTable {
         &mut self,
         index_id: i64,
         ranges: &[IndexRange],
+        scan_keep: &[usize],
         aggregate: &PushdownPartialAggregate,
         zone: &SessionTimeZone,
         statement: &PushdownStatementContext,
@@ -772,7 +773,10 @@ impl KvTable {
             return Ok(None);
         };
         if index.column_offsets.is_empty()
-            || !matches!(aggregate, PushdownPartialAggregate::Count { .. })
+            || !matches!(
+                aggregate,
+                PushdownPartialAggregate::Count { .. } | PushdownPartialAggregate::Global { .. }
+            )
         {
             return Ok(None);
         }
@@ -818,8 +822,37 @@ impl KvTable {
             return Ok(None);
         }
         let mut remote_aggregate = aggregate.clone();
-        if let PushdownPartialAggregate::Count { input_offset, .. } = &mut remote_aggregate {
-            *input_offset = 0;
+        match &mut remote_aggregate {
+            PushdownPartialAggregate::Count { input_offset, .. } => {
+                if input_offset.is_some() {
+                    *input_offset = Some(0);
+                }
+            }
+            PushdownPartialAggregate::Global { functions } => {
+                // The aggregate expression is indexed in the source schema
+                // after column pruning, while `index.column_offsets` names
+                // the original table schema. Translate through the source's
+                // current `keep` vector before lowering it over index keys.
+                let index_keep = index
+                    .column_offsets
+                    .iter()
+                    .filter_map(|offset| scan_keep.iter().position(|kept| kept == offset))
+                    .collect::<Vec<_>>();
+                if index_keep.len() != index.column_offsets.len() {
+                    return Ok(None);
+                }
+                for function in functions {
+                    if let Some(input) = function.input.as_mut() {
+                        crate::predicate_pushdown::remap_expression(input, &index_keep)
+                            .ok_or_else(|| {
+                                KvTableError::Storage(
+                                    "global aggregate input is not covered by index".to_owned(),
+                                )
+                            })?;
+                    }
+                }
+            }
+            _ => unreachable!("index partial aggregate shape checked above"),
         }
         let request = PushdownScanRequest {
             table_id: self.table_id,
@@ -2270,7 +2303,9 @@ impl TableScanExec {
                             continue;
                         }
                     }
-                    if !matches!(row.get(*input_offset), None | Some(Datum::Null)) {
+                    if input_offset
+                        .is_none_or(|offset| !matches!(row.get(offset), None | Some(Datum::Null)))
+                    {
                         count += 1;
                     }
                 }
