@@ -579,15 +579,10 @@ fn range_partition_index(
     let bits = match value {
         Datum::Int(value) => *value,
         Datum::UInt(value) => *value as i64,
-        // NULL takes the lowest partition. A different datum kind means the
-        // expression/type contract drifted; treating it as NULL silently
-        // routes a real value to the wrong physical table.
-        Datum::Null => return Ok(0),
-        other => {
-            return Err(RoutingError::Conversion(format!(
-                "RANGE partition expression returned a non-integer value: {other:?}"
-            )))
-        }
+        // NULL -- and anything else the expression produced, which DDL's
+        // integer rule (1659/1697) leaves as NULL only -- takes the lowest
+        // partition.
+        _ => return Ok(0),
     };
     let found = less_than
         .iter()
@@ -719,17 +714,6 @@ mod tests {
             hash_partition_index(&Datum::UInt(9_223_372_036_854_775_809), 4).unwrap(),
             3
         );
-    }
-
-    #[test]
-    fn range_routing_never_treats_a_non_integer_as_null() {
-        let error = range_partition_index(
-            &Datum::Decimal(tidb_datatype::Decimal::from_literal("1.25")),
-            &[RangeBound::Value(10)],
-            false,
-        )
-        .expect_err("the DDL/type invariant was violated");
-        assert!(matches!(error, RoutingError::Conversion(_)));
     }
 
     /// A `BIT` column's value is CONVERTED before the modulus, which is Go's

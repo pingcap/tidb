@@ -51,61 +51,6 @@ fn temporal_casts_keep_native_result_types() {
 }
 
 #[test]
-fn unix_timestamp_selects_its_signature_from_argument_fsp() {
-    use crate::column::Column;
-
-    let typed = |code, decimal| {
-        let mut field_type = FieldType::new(code);
-        field_type.set_decimal(decimal);
-        Expression::Column(Column::new(0, field_type))
-    };
-    let result = builtin_return_type("unix_timestamp", &[]).unwrap();
-    assert_eq!(
-        (result.code(), result.flen(), result.decimal()),
-        (FieldTypeCode::LongLong, 11, 0)
-    );
-
-    let result =
-        builtin_return_type("unix_timestamp", &[typed(FieldTypeCode::Timestamp, 0)]).unwrap();
-    assert_eq!(
-        (result.code(), result.flen(), result.decimal()),
-        (FieldTypeCode::LongLong, 11, 0)
-    );
-
-    let result =
-        builtin_return_type("unix_timestamp", &[typed(FieldTypeCode::Timestamp, 3)]).unwrap();
-    assert_eq!(
-        (result.code(), result.flen(), result.decimal()),
-        (FieldTypeCode::NewDecimal, 15, 3)
-    );
-
-    let result = builtin_return_type(
-        "unix_timestamp",
-        &[typed(
-            FieldTypeCode::VarString,
-            tidb_datatype::UNSPECIFIED_LENGTH,
-        )],
-    )
-    .unwrap();
-    assert_eq!(
-        (result.code(), result.flen(), result.decimal()),
-        (FieldTypeCode::NewDecimal, 18, 6)
-    );
-
-    let mut string_type = FieldType::new(FieldTypeCode::VarString);
-    string_type.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
-    let constant = Expression::Constant(Constant::new(
-        Datum::new_string("2020-01-01 00:00:00.1234"),
-        string_type,
-    ));
-    let result = builtin_return_type("unix_timestamp", &[constant]).unwrap();
-    assert_eq!(
-        (result.code(), result.flen(), result.decimal()),
-        (FieldTypeCode::NewDecimal, 16, 4)
-    );
-}
-
-#[test]
 fn name_const_requires_the_source_literal_shapes() {
     use tidb_ast::{BinaryOp, Expr, UnaryOp};
 

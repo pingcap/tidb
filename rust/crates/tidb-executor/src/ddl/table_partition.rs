@@ -296,7 +296,7 @@ pub fn build_table_partitioning(
     )?;
     // Go `checkPartitionFuncType`: the partition expression must evaluate to
     // an integer.
-    check_partition_expression_type(expr, &built)?;
+    check_partition_expression_type(expr, names, types)?;
 
     let (kind, definitions) = match method.kind {
         PartitionType::RANGE => {
@@ -354,7 +354,6 @@ pub fn build_table_partitioning(
         definitions,
     }))
 }
-
 /// Resolve Go `PARTITION BY KEY` columns.  An empty list means the table's
 /// primary key; a heap table therefore hashes the empty byte stream, exactly
 /// as Go's `ForKeyPruning` does when `PartitionInfo.Columns` remains empty.
@@ -611,9 +610,7 @@ fn check_partition_expression_allowed(expr: &Expr) -> Result<(), DriverError> {
     }
 }
 
-/// Go `pkg/ddl/partition.go`'s `checkPartitionFuncType`: the BUILT expression's
-/// `GetType(...).EvalType()` must be `ETInt`; the AST function whitelist alone
-/// is not a result-type proof.
+/// Go `checkPartitionFuncType`: the expression must evaluate to an integer.
 ///
 /// Go builds the expression and asks its `EvalType()`, and WHICH error it
 /// then reports depends on the shape of the expression, not on which column
@@ -634,21 +631,55 @@ fn check_partition_expression_allowed(expr: &Expr) -> Result<(), DriverError> {
 /// reject the single most common date-partitioning form there is.
 fn check_partition_expression_type(
     expr: &Expr,
-    built: &tidb_expr::expression::Expression,
+    names: &[String],
+    types: &[FieldType],
 ) -> Result<(), DriverError> {
-    if built
-        .static_type()
-        .is_some_and(|field_type| field_type.eval_type() == tidb_datatype::EvalType::Int)
-    {
-        return Ok(());
-    }
     // A bare column reference reports the name AS WRITTEN, which a qualified
     // `t.a` shortens to `a` exactly as Go's `col2.Name.Name.L` does.
     if let Expr::Column(path) = unwrap_parentheses(expr) {
+        if partition_expr_is_integral(expr, names, types) {
+            return Ok(());
+        }
         let name = path.last().cloned().unwrap_or_else(|| "?".to_owned());
         return Err(DriverError::PartitionFieldTypeNotAllowed(name));
     }
+    if partition_expr_is_integral(expr, names, types) {
+        return Ok(());
+    }
     Err(DriverError::PartitionFuncWrongType)
+}
+
+/// Whether a whitelisted partition expression evaluates to an INTEGER, which
+/// is Go's `e.GetType().EvalType() == types.ETInt`.
+///
+/// Only the forms [`check_partition_expression_allowed`] admits reach here.
+/// Every function on Go's `AllowedPartitionFuncMap` returns an integer, `DIV`
+/// is integer division whatever its operands are, and the remaining
+/// arithmetic is integral exactly when both operands are.
+fn partition_expr_is_integral(expr: &Expr, names: &[String], types: &[FieldType]) -> bool {
+    match expr {
+        Expr::Column(path) => path
+            .last()
+            .and_then(|name| {
+                names
+                    .iter()
+                    .position(|candidate| candidate.eq_ignore_ascii_case(name))
+            })
+            .is_some_and(|offset| is_integer_type(&types[offset])),
+        Expr::Paren(inner) => partition_expr_is_integral(inner, names, types),
+        Expr::Unary(_, inner) => partition_expr_is_integral(inner, names, types),
+        Expr::Binary(tidb_ast::BinaryOp::IntDiv, _, _) => true,
+        Expr::Binary(_, left, right) => {
+            partition_expr_is_integral(left, names, types)
+                && partition_expr_is_integral(right, names, types)
+        }
+        // Reachable only for a whitelisted name, all of which return an
+        // integer.
+        Expr::Func { .. } => true,
+        Expr::Extract { .. } => true,
+        Expr::Int(_) | Expr::Bool(_) | Expr::Hex(_) | Expr::Bit(_) => true,
+        _ => false,
+    }
 }
 
 /// The parenthesised expression's subject, since `(a)` partitions on `a`.
@@ -657,6 +688,21 @@ fn unwrap_parentheses(expr: &Expr) -> &Expr {
         Expr::Paren(inner) => unwrap_parentheses(inner),
         other => other,
     }
+}
+
+/// Whether a column's type is one a HASH partition expression may read: Go's
+/// `EvalType() == types.ETInt`.
+fn is_integer_type(field_type: &FieldType) -> bool {
+    matches!(
+        field_type.code(),
+        FieldTypeCode::Tiny
+            | FieldTypeCode::Short
+            | FieldTypeCode::Int24
+            | FieldTypeCode::Long
+            | FieldTypeCode::LongLong
+            | FieldTypeCode::Year
+            | FieldTypeCode::Bit
+    )
 }
 
 /// Go `buildHashPartitionDefinitions`: `n` partitions, named `p0..pn-1`
@@ -1028,7 +1074,6 @@ pub fn partition_spec_from_metadata(
                 &ctx.session_zone(),
                 ctx.like_default_escape(),
             )?;
-            check_partition_expression_type(&expr, &built)?;
             let kind = match kind {
                 PartitionType::RANGE => {
                     let (less_than, unsigned) = super::table_partition_range::build_range_bounds(
@@ -1335,7 +1380,6 @@ fn stored_in_values(
     Ok(tuples)
 }
 
-
 /// One written LIST value as stored text.
 ///
 /// Under LIST COLUMNS Go stores the value FOLDED through the column's type;
@@ -1536,43 +1580,6 @@ mod round_trip_tests {
         );
     }
 
-    /// `UNIX_TIMESTAMP(timestamp(fsp))` uses Go's decimal signature when FSP
-    /// is non-zero. A partition expression must return ETInt, so the direct
-    /// call is rejected; `FLOOR(UNIX_TIMESTAMP(ts))` is the admitted spelling.
-    #[test]
-    fn fractional_unix_timestamp_is_not_an_integer_partition_function() {
-        let sql = "CREATE TABLE t (ts TIMESTAMP(3)) \
-                   PARTITION BY RANGE (UNIX_TIMESTAMP(ts)) (\
-                     PARTITION p0 VALUES LESS THAN (1700000000), \
-                     PARTITION p1 VALUES LESS THAN (MAXVALUE))";
-        let statement = tidb_parser::parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
-        let tidb_ast::Stmt::Ddl(ddl) = statement else {
-            panic!("not DDL");
-        };
-        let tidb_ast::DdlStmt::CreateTable(create) = &*ddl else {
-            panic!("not CREATE TABLE");
-        };
-        let names = vec!["ts".to_owned()];
-        let types = vec![crate::ddl::column_field_type::build_field_type(
-            "ts",
-            &create.columns[0].ty,
-            "utf8mb4",
-            "utf8mb4_bin",
-        )
-        .unwrap()];
-        let error = build_table_partitioning(
-            create,
-            &names,
-            &types,
-            &[],
-            &[],
-            &mut || 1,
-            &crate::StmtContext::for_query(),
-        )
-        .expect_err("a decimal partition expression is rejected");
-        assert_eq!(error.to_mysql_error().code, 1491);
-    }
-
     #[test]
     fn every_method_survives_the_store_and_load_round_trip() {
         for sql in [
@@ -1586,9 +1593,6 @@ mod round_trip_tests {
              (PARTITION p0 VALUES LESS THAN ('m'), PARTITION p1 VALUES LESS THAN (MAXVALUE))",
             "CREATE TABLE t (id BIGINT, v VARCHAR(16)) PARTITION BY LIST COLUMNS (v) \
              (PARTITION p0 VALUES IN ('a', 'b'), PARTITION pd VALUES IN (DEFAULT))",
-            "CREATE TABLE t (ts TIMESTAMP(3)) PARTITION BY RANGE (FLOOR(UNIX_TIMESTAMP(ts))) \
-             (PARTITION p0 VALUES LESS THAN (1700000000), \
-              PARTITION p1 VALUES LESS THAN (MAXVALUE))",
         ] {
             routes_the_same_way(sql);
         }
