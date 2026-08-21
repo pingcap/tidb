@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -667,6 +669,13 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 			zap.Int64("columnID", col.ID),
 		)
 		return nil
+	}
+
+	if val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes); err == nil {
+		skipTypes := variable.ParseAnalyzeSkipColumnTypes(val)
+		if _, skip := skipTypes[types.TypeToStr(colInfo.FieldType.GetType(), colInfo.FieldType.GetCharset())]; skip {
+			return nil
+		}
 	}
 
 	_, loadNeeded, analyzed := statsTbl.ColumnIsLoadNeeded(col.ID, true)
