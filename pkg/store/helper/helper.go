@@ -30,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -847,6 +848,87 @@ func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexSta
 	startKey, endKey = h.Store.GetCodec().EncodeRegionRange(startKey, endKey)
 
 	return pdCli.GetRegionStatusByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), false)
+}
+
+// RegionApproximateSizes returns each region's raw end key and byte size over
+// [startKey, endKey) via PD, in key order. Size is max(ApproximateSize,
+// ApproximateKvSize): the KV size best tracks logical data but can be 0 when TiKV
+// does not report it. PD keys are decoded from the codec keyspace back to raw;
+// the empty end key of the terminal region is returned as endKey.
+func (h *Helper) RegionApproximateSizes(ctx context.Context, startKey, endKey kv.Key) (endKeys []kv.Key, sizes []int64, err error) {
+	pdCli, err := h.TryGetPDHTTPClient()
+	if err != nil {
+		return nil, nil, err
+	}
+	codec := h.Store.GetCodec()
+	cur, end := codec.EncodeRegionRange(startKey, endKey)
+	for {
+		regions, err := pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(cur, end), 128)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(regions.Regions) == 0 {
+			break
+		}
+		for _, r := range regions.Regions {
+			rawEndKey := endKey
+			if r.EndKey != "" {
+				encoded, err := hex.DecodeString(r.EndKey)
+				if err != nil {
+					return nil, nil, err
+				}
+				rawEndKey, err = codec.DecodeRegionKey(encoded)
+				if err != nil {
+					return nil, nil, err
+				}
+			}
+			endKeys = append(endKeys, rawEndKey)
+			sizes = append(sizes, max(r.ApproximateSize, r.ApproximateKvSize)*units.MiB)
+		}
+		lastEndKey := regions.Regions[len(regions.Regions)-1].EndKey
+		if lastEndKey == "" {
+			break
+		}
+		cur, err = hex.DecodeString(lastEndKey)
+		if err != nil {
+			return nil, nil, err
+		}
+		if bytes.Compare(cur, end) >= 0 {
+			break
+		}
+	}
+	return endKeys, sizes, nil
+}
+
+// EstimateKeyRangeSize sums each region's max(ApproximateSize, ApproximateKvSize)
+// over [startKey, endKey) via PD.
+func (h *Helper) EstimateKeyRangeSize(ctx context.Context, pdCli pd.Client, startKey, endKey kv.Key) (int64, error) {
+	start, end := h.Store.GetCodec().EncodeRegionRange(startKey, endKey)
+	var totalSize int64
+	for {
+		regions, err := pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(start, end), 128)
+		if err != nil {
+			return 0, err
+		}
+		if len(regions.Regions) == 0 {
+			break
+		}
+		for _, r := range regions.Regions {
+			totalSize += max(r.ApproximateSize, r.ApproximateKvSize) * units.MiB
+		}
+		lastEndKey := regions.Regions[len(regions.Regions)-1].EndKey
+		if lastEndKey == "" {
+			break
+		}
+		start, err = hex.DecodeString(lastEndKey)
+		if err != nil {
+			return 0, err
+		}
+		if bytes.Compare(start, end) >= 0 {
+			break
+		}
+	}
+	return totalSize, nil
 }
 
 // GetTiFlashTableIDFromEndKey computes tableID from pd rule's endKey.

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -150,9 +151,9 @@ func TestToPhysicalPlan(t *testing.T) {
 		preparedChunkMap := map[int32][]importer.Chunk{
 			1: {{Path: "gs://test-load/2.csv"}},
 		}
-		externalPath := globalsort.PreparedMetaPath(100)
+		externalPath := dxfutil.PreparedMetaPath(100)
 		preparedMeta := PreparedMeta{
-			BaseExternalMeta: globalsort.BaseExternalMeta{ExternalPath: externalPath},
+			BaseExternalMeta: dxfutil.BaseExternalMeta{ExternalPath: externalPath},
 			ChunkMap:         preparedChunkMap,
 		}
 		require.NoError(t, preparedMeta.WriteJSONToExternalStorage(context.Background(), store, preparedMeta))

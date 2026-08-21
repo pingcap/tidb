@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -51,6 +52,31 @@ type bucketSplitFallbackInfo struct {
 const (
 	locationSummaryMaxDisplay = 5
 )
+
+// ErrRegionsNotContinuous is the retryable error LoadSortedContinuousRegions
+// returns when the loaded regions have a gap.
+var ErrRegionsNotContinuous = errors.New("regions are not continuous")
+
+// LoadSortedContinuousRegions returns the regions covering [startKey, endKey)
+// sorted by start key, or ErrRegionsNotContinuous if they are empty or have a gap.
+func LoadSortedContinuousRegions(bo *tikv.Backoffer, regionCache *tikv.RegionCache, startKey, endKey []byte) ([]*tikv.Region, error) {
+	regions, err := regionCache.LoadRegionsInKeyRange(bo, startKey, endKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(regions) == 0 {
+		return nil, ErrRegionsNotContinuous
+	}
+	sort.Slice(regions, func(i, j int) bool {
+		return bytes.Compare(regions[i].StartKey(), regions[j].StartKey()) < 0
+	})
+	for i := 1; i < len(regions); i++ {
+		if !bytes.Equal(regions[i-1].EndKey(), regions[i].StartKey()) {
+			return nil, ErrRegionsNotContinuous
+		}
+	}
+	return regions, nil
+}
 
 // Helper functions for logging
 func formatKeyLocation(name string, loc *tikv.KeyLocation) zap.Field {

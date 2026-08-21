@@ -39,6 +39,9 @@ const (
 	// Each node should handle at least 2 subtasks, each 100GiB data.
 	// For every additional 200 GiB of data, add 1 node.
 	baseDataSize = 200 * units.GiB
+	// Export is faster per node than add-index/import-into, so a node clears more
+	// data; use a larger per-node budget.
+	baseDataSizeForExport = 400 * units.GiB
 	// To improve performance for small tasks, we assume that on a 8c machine,
 	// importing 200 GiB of data requires full utilization of a single node’s resources.
 	// Therefore, for every additional 25 GiB, add 1 slot as an estimate for task's
@@ -46,6 +49,8 @@ const (
 	baseSizePerConc = 25 * units.GiB
 	// The maximum number of nodes that can be used for add-index.
 	maxNodeCountLimitForAddIndex = 30
+	// The maximum number of nodes that can be used for export.
+	maxNodeCountLimitForExport = 30
 	// The maximum number of nodes that can be used for import-into.
 	// this value is based on previous performance test, for a quite common scenario,
 	// to import 100TiB data within 24 hours, we need about 32 8c nodes.
@@ -93,26 +98,36 @@ func NewRCCalc(dataSize int64, nodeCPU int, indexSizeRatio float64, factors *sch
 func (rc *ResourceCalc) CalcMaxNodeCountForAddIndex() int {
 	size := rc.getAmplifiedDataSize()
 	limit := rc.factors.AmplifyFactor * maxNodeCountLimitForAddIndex
-	return rc.calcMaxNodeCountBySize(size, limit)
+	return rc.calcMaxNodeCountBySize(size, limit, baseDataSize)
+}
+
+// CalcMaxNodeCountForExport calculates the maximum number of nodes to execute export.
+//
+// TODO: also size by file/table count, since S3 PUT rate can dominate the
+// wall-clock for many small tables.
+func (rc *ResourceCalc) CalcMaxNodeCountForExport() int {
+	size := rc.getAmplifiedDataSize()
+	limit := rc.factors.AmplifyFactor * maxNodeCountLimitForExport
+	return rc.calcMaxNodeCountBySize(size, limit, baseDataSizeForExport)
 }
 
 // CalcMaxNodeCountForImportInto calculates the maximum number of nodes to execute import-into.
 func (rc *ResourceCalc) CalcMaxNodeCountForImportInto() int {
 	size := rc.getAmplifiedDataSize()
 	limit := rc.factors.AmplifyFactor * maxNodeCountLimitForImportInto
-	return rc.calcMaxNodeCountBySize(size, limit)
+	return rc.calcMaxNodeCountBySize(size, limit, baseDataSize)
 }
 
 func (rc *ResourceCalc) getAmplifiedDataSize() int64 {
 	return int64(rc.factors.AmplifyFactor * (1 + rc.indexSizeRatio) * float64(rc.dataSize))
 }
 
-func (rc *ResourceCalc) calcMaxNodeCountBySize(size int64, limit float64) int {
+func (rc *ResourceCalc) calcMaxNodeCountBySize(size int64, limit, baseSize float64) int {
 	if rc.nodeCPU <= 0 {
 		return 0
 	}
 	r := baseCores / float64(rc.nodeCPU)
-	nodeCnt := float64(size) * r / baseDataSize
+	nodeCnt := float64(size) * r / baseSize
 	nodeCnt = min(nodeCnt, limit*r)
 	nodeCnt = max(nodeCnt, 1)
 	return int(math.Round(nodeCnt))

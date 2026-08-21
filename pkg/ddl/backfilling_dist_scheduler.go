@@ -22,7 +22,6 @@ import (
 	goerrors "errors"
 	"fmt"
 	"math"
-	"sort"
 	"time"
 
 	"github.com/docker/go-units"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -358,31 +359,18 @@ func generatePlanForPhysicalTable(
 	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
 	err = handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
 		regionCache := store.(helper.Storage).GetRegionCache()
-		recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
+		recordRegionMetas, err := copr.LoadSortedContinuousRegions(
+			tikv.NewBackofferWithVars(context.Background(), 20000, nil), regionCache, startKey, endKey)
+		failpoint.Inject("mockPhysicalTableRegionDiscontinuity", func() {
+			err = copr.ErrRegionsNotContinuous
+		})
+		// A concurrent region split or merge can make the scan discontinuous, so
+		// retry the full scan.
+		if errors.ErrorEqual(err, copr.ErrRegionsNotContinuous) {
+			return true, err
+		}
 		if err != nil {
 			return false, err
-		}
-		sort.Slice(recordRegionMetas, func(i, j int) bool {
-			return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
-		})
-
-		// LoadRegionsInKeyRange can combine multiple PD scans. A concurrent region
-		// split or merge can make those scans discontinuous, so retry the full scan.
-		shouldRetry := false
-		cur := recordRegionMetas[0]
-		for _, m := range recordRegionMetas[1:] {
-			if !bytes.Equal(cur.EndKey(), m.StartKey()) {
-				shouldRetry = true
-				break
-			}
-			cur = m
-		}
-		failpoint.Inject("mockPhysicalTableRegionDiscontinuity", func() {
-			shouldRetry = true
-		})
-
-		if shouldRetry {
-			return true, errors.New("regions are not continuous")
 		}
 
 		attemptMetas := make([][]byte, 0, 4)
@@ -525,7 +513,7 @@ func generateGlobalSortIngestPlan(
 	}
 	// write external meta to storage when using global sort
 	for i, m := range metaArr {
-		if err := writeExternalBackfillSubTaskMeta(ctx, objStore, m, globalsort.PlanMetaPath(
+		if err := writeExternalBackfillSubTaskMeta(ctx, objStore, m, dxfutil.PlanMetaPath(
 			task.ID,
 			proto.Step2Str(proto.Backfill, proto.BackfillStepWriteAndIngest),
 			i+1,
@@ -736,7 +724,7 @@ func generateMergeSortPlan(
 
 	// write external meta to storage when using global sort
 	for i, m := range metaArr {
-		if err := writeExternalBackfillSubTaskMeta(ctx, objStore, m, globalsort.PlanMetaPath(
+		if err := writeExternalBackfillSubTaskMeta(ctx, objStore, m, dxfutil.PlanMetaPath(
 			task.ID,
 			proto.Step2Str(proto.Backfill, proto.BackfillStepMergeSort),
 			i+1)); err != nil {
@@ -907,31 +895,18 @@ func genMergeTempPlanForOneIndex(
 	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
 	err := handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
 		regionCache := store.(helper.Storage).GetRegionCache()
-		regionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), start, end)
-		if err != nil {
-			return false, err
-		}
-		sort.Slice(regionMetas, func(i, j int) bool {
-			return bytes.Compare(regionMetas[i].StartKey(), regionMetas[j].StartKey()) < 0
+		regionMetas, err := copr.LoadSortedContinuousRegions(
+			tikv.NewBackofferWithVars(context.Background(), 20000, nil), regionCache, start, end)
+		failpoint.Inject("mockMergeTempIndexRegionDiscontinuity", func() {
+			err = copr.ErrRegionsNotContinuous
 		})
-
 		// LoadRegionsInKeyRange can combine multiple PD scans. A concurrent region
 		// split or merge can make those scans discontinuous, so retry the full scan.
-		shouldRetry := false
-		cur := regionMetas[0]
-		for _, m := range regionMetas[1:] {
-			if !bytes.Equal(cur.EndKey(), m.StartKey()) {
-				shouldRetry = true
-				break
-			}
-			cur = m
+		if errors.ErrorEqual(err, copr.ErrRegionsNotContinuous) {
+			return true, err
 		}
-		failpoint.Inject("mockMergeTempIndexRegionDiscontinuity", func() {
-			shouldRetry = true
-		})
-
-		if shouldRetry {
-			return true, errors.New("regions are not continuous")
+		if err != nil {
+			return false, err
 		}
 
 		attemptMetas := make([][]byte, 0, 4)

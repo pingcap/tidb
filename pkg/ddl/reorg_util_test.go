@@ -36,6 +36,10 @@ func (mockCodec) EncodeRegionRange(start, end []byte) ([]byte, []byte) {
 	return append([]byte("k:"), start...), append([]byte("k:"), end...)
 }
 
+func (mockCodec) DecodeRegionKey(encodedKey []byte) ([]byte, error) {
+	return encodedKey, nil
+}
+
 type mockHelperStorage struct {
 	helper.Storage
 	codec tikv.Codec
@@ -105,7 +109,7 @@ func TestEstimateTableSizeByIDUsesMaxApproximateSizes(t *testing.T) {
 	size, err := estimateTableSizeByID(context.Background(), pdCli, mockHelperStorage{codec: mockCodec{}}, 42)
 	require.NoError(t, err)
 	require.Equal(t, int64(89*units.MiB), size)
-	require.Equal(t, 2, pdCli.callCount)
+	require.Equal(t, 1, pdCli.callCount)
 	expectedStart, expectedEnd := expectedRegionRange(42)
 	require.NotNil(t, pdCli.firstRange)
 	require.Equal(t, 128, pdCli.firstLimit)

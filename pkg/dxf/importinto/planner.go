@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -115,7 +116,7 @@ func (p *LogicalPlan) writeExternalPlanMeta(planCtx planner.PlanCtx, specs []pla
 	defer store.Close()
 
 	for i, spec := range specs {
-		externalPath := globalsort.PlanMetaPath(planCtx.TaskID, proto.Step2Str(proto.ImportInto, planCtx.NextTaskStep), i+1)
+		externalPath := dxfutil.PlanMetaPath(planCtx.TaskID, proto.Step2Str(proto.ImportInto, planCtx.NextTaskStep), i+1)
 		switch sp := spec.(type) {
 		case *ImportSpec:
 			sp.ImportStepMeta.ExternalPath = externalPath
@@ -431,7 +432,7 @@ func readPreparedChunkMap(
 	}
 	defer store.Close()
 	preparedChunkMapMeta := PreparedMeta{
-		BaseExternalMeta: globalsort.BaseExternalMeta{ExternalPath: externalPath},
+		BaseExternalMeta: dxfutil.BaseExternalMeta{ExternalPath: externalPath},
 	}
 	if err := preparedChunkMapMeta.ReadJSONFromExternalStorage(ctx, store, &preparedChunkMapMeta); err != nil {
 		return nil, err
