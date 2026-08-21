@@ -4350,7 +4350,7 @@ func (b *builtinWeightStringSig) evalString(ctx EvalContext, row chunk.Row) (str
 			}
 			str += strings.Repeat("\x00", b.length-lenStr)
 		}
-		ctor = collate.GetBinaryCollator()
+		ctor = collate.GetCollator(charset.CollationBin)
 	case weightStringPaddingNone:
 		ctor = b.weightCollator
 	default:
