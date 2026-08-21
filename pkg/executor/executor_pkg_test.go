@@ -294,6 +294,29 @@ func TestIndexReaderPartitionRangesUseMemoryTracker(t *testing.T) {
 	require.Nil(t, e.memTracker)
 }
 
+// TestIndexReaderPartitionRangesFallBackToExecutorMemoryTracker covers an index reader with
+// no dedicated range tracker: the range construction then charges the executor's own
+// tracker, the same fallback IndexLookUpExecutor.buildTableKeyRanges uses.
+func TestIndexReaderPartitionRangesFallBackToExecutorMemoryTracker(t *testing.T) {
+	sctx := mock.NewContext()
+	partition0 := tables.MockTableFromMeta(&model.TableInfo{ID: 101})
+	partition1 := tables.MockTableFromMeta(&model.TableInfo{ID: 102})
+	executorMemTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+	e := &IndexReaderExecutor{
+		indexReaderExecutorContext: newIndexReaderExecutorContext(sctx),
+		BaseExecutorV2:             exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 0),
+		index:                      &model.IndexInfo{ID: 1},
+		partitions:                 []table.PhysicalTable{partition0.(table.PhysicalTable), partition1.(table.PhysicalTable)},
+		ranges:                     []*ranger.Range{generateIndexRange(1, 1)},
+		memTracker:                 executorMemTracker,
+		dummy:                      true,
+	}
+
+	require.NoError(t, e.Open(context.Background()))
+	require.Nil(t, e.rangeMemTracker)
+	require.Greater(t, executorMemTracker.BytesConsumed(), int64(0))
+}
+
 func TestIndexLookUpPartitionRangesUseMemoryTracker(t *testing.T) {
 	sctx := mock.NewContext()
 	partition0 := tables.MockTableFromMeta(&model.TableInfo{ID: 101})

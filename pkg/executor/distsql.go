@@ -352,8 +352,12 @@ func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, erro
 	}
 
 	results := make([]kv.KeyRange, 0, len(groupedRanges))
+	rangeMemTracker := e.memTracker
+	if e.rangeMemTracker != nil {
+		rangeMemTracker = e.rangeMemTracker
+	}
 	for _, ranges := range groupedRanges {
-		kvRanges, err := buildKeyRanges(e.dctx, ranges, e.partRangeMap, tableIDs, e.index.ID, e.rangeMemTracker,
+		kvRanges, err := buildKeyRanges(e.dctx, ranges, e.partRangeMap, tableIDs, e.index.ID, rangeMemTracker,
 			unsignedIntHandleSuffixDim(e.table, e.index))
 		if err != nil {
 			return nil, err
