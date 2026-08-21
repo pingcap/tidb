@@ -889,7 +889,7 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 		}
 	}
 	if allIndexPublic {
-		metrics.DDLResetTempIndexWrite(tblInfo.ID)
+		metrics.DDLClearTempIndexOps(tblInfo.ID)
 	}
 
 	allColumnPublic := !slices.ContainsFunc(tblInfo.Columns,
