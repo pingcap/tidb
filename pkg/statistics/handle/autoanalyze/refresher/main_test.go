@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/goleak"
 )
 
@@ -29,6 +30,9 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
+	intest.InTest = true
+	intest.EnableAssert = true
+	intest.EnableInternalCheck = true
 	testsetup.SetupForCommonTest()
 	goleak.VerifyTestMain(m, opts...)
 }
