@@ -122,7 +122,6 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, src *IndexLookUpE
 	for {
 		err = exec.Next(ctx, src, chk)
 		if err != nil {
-			e.retCh <- errors.Trace(err)
 			break
 		}
 		if chk.NumRows() == 0 {
@@ -207,6 +206,7 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 					if err1 != nil {
 						failure.Store(true)
 						logutil.Logger(ctx).Info("check index handle failed", zap.Error(err1))
+						e.retCh <- errors.Trace(err1)
 						return
 					}
 				case <-e.exitCh:
