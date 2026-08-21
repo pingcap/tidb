@@ -95,6 +95,13 @@ next-gen code paths.
 Because the script reuses `bootstrap-test-with-cluster.sh`, `bin/pd-server`,
 `bin/tikv-server`, and `bin/tikv-worker` must also be available.
 
+For a focused, one-command Docker Compose run of the two starter txn-file SQL
+cases, see the
+[`startertest/docker-compose` helper](../../startertest/docker-compose/README.md).
+It builds TiDB and the test binary from the current checkout and runs the full
+private NextGen starter lifecycle in containers. This is an additional local
+workflow and does not replace the binary-based commands documented here.
+
 Usage:
 
 ```bash
@@ -120,6 +127,14 @@ Useful environment variables:
   the external server (default: `65536`)
 - `STARTER_TIKV_WORKER_URL`: Starter `tikv-worker-url` config used by the
   external server (default: `localhost:19000`)
+- `STARTER_TXN_CHUNK_WRITER_ADDR`: Address of the transaction chunk writer for
+  file-based transactions (default: the `STARTER_TIKV_WORKER_URL` value)
+- `STARTER_TXN_CHUNK_WRITER_CONCURRENCY`: Concurrency used to request the
+  transaction chunk writer (default: `2`)
+- `STARTER_TXN_CHUNK_MAX_SIZE`: Maximum transaction chunk size in bytes for
+  file-based transactions (default: `262144`)
+- `STARTER_TXN_FILE_MIN_MUTATION_SIZE`: Minimum mutation size in bytes for
+  selecting file-based transactions (default: `1048576`)
 - `STARTER_KEYSPACE_NAME`: Starter keyspace activated by the script
   (default: `SYSTEM`)
 - `STARTER_PREPARE_KEYSPACE`: Whether to bootstrap the shared `SYSTEM` keyspace

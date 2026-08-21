@@ -1,0 +1,362 @@
+# Copyright 2026 PingCAP, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+x-no-proxy-env: &no-proxy-env
+  HTTP_PROXY: ""
+  HTTPS_PROXY: ""
+  ALL_PROXY: ""
+  http_proxy: ""
+  https_proxy: ""
+  all_proxy: ""
+  NO_PROXY: "localhost,127.0.0.1,::1,minio,minio-init,pd,bootstrap-tidb,create-keyspace,tikv-1,tikv-2,tikv-3,tikv-worker,tidb,activate-tidb,test"
+  no_proxy: "localhost,127.0.0.1,::1,minio,minio-init,pd,bootstrap-tidb,create-keyspace,tikv-1,tikv-2,tikv-3,tikv-worker,tidb,activate-tidb,test"
+
+x-common-env: &common-env
+  <<: *no-proxy-env
+  AWS_ACCESS_KEY_ID: minioadmin
+  AWS_SECRET_ACCESS_KEY: minioadmin
+  AWS_REGION: us-west-2
+  AWS_DEFAULT_REGION: us-west-2
+  AWS_ENDPOINT_URL: http://minio:9000
+  AWS_EC2_METADATA_DISABLED: "true"
+  DFS_BACKEND: s3
+  DFS_PREFIX: cse
+  DFS_S3_BUCKET: tidbcloud-local-dfs
+  DFS_S3_ENDPOINT: http://minio:9000
+  DFS_S3_KEY_ID: minioadmin
+  DFS_S3_SECRET_KEY: minioadmin
+  DFS_S3_REGION: us-west-2
+  DFS_REMOTE_COMPACTOR_ADDR: http://tikv-worker:19000/compact
+  DFS_ALLOW_FALLBACK_LOCAL: "false"
+
+x-service-limits: &service-limits
+  cpus: "4.0"
+  mem_limit: 8g
+  deploy:
+    resources:
+      limits:
+        cpus: "4.0"
+        memory: 8G
+
+x-minio-limits: &minio-limits
+  cpus: "2.0"
+  mem_limit: 2g
+  deploy:
+    resources:
+      limits:
+        cpus: "2.0"
+        memory: 2G
+
+x-bootstrap-limits: &bootstrap-limits
+  cpus: "1.0"
+  mem_limit: 512m
+  deploy:
+    resources:
+      limits:
+        cpus: "1.0"
+        memory: 512M
+
+services:
+  minio:
+    <<: *minio-limits
+    image: hub.pingcap.net/test-infra/minio:latest@sha256:d5c7b30d2e49f3886d7da679ffddd8fc327508b4ee564053da619c86b71ac0ba
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      <<: *no-proxy-env
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_REGION: us-west-2
+      MINIO_REGION_NAME: us-west-2
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null || wget -q -O - http://127.0.0.1:9000/minio/health/live >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
+  minio-init:
+    <<: *bootstrap-limits
+    image: quay.io/minio/mc:latest@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    entrypoint: ["/bin/sh"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment: *no-proxy-env
+    volumes:
+      - ./bootstrap/init-minio.sh:/bootstrap/init-minio.sh:ro
+    command: ["/bootstrap/init-minio.sh"]
+    restart: "no"
+
+  pd:
+    <<: *service-limits
+    image: hub-zot.pingcap.net/mirrors/tidbx/tikv/pd/image:master-nextgen
+    entrypoint: ["/bin/sh"]
+    command: ["-ec", "mkdir -p /var/log/pd && exec /pd-server --config /etc/pd/pd.toml"]
+    environment: *no-proxy-env
+    volumes:
+      - pd-data:/var/lib/pd
+      - pd-logs:/var/log/pd
+      - ./configs/pd.toml:/etc/pd/pd.toml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "/pd-ctl -u http://127.0.0.1:2379 member >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  create-keyspace:
+    <<: *bootstrap-limits
+    image: hub-zot.pingcap.net/mirrors/tidbx/tikv/pd/image:master-nextgen
+    entrypoint: ["/bin/sh"]
+    depends_on:
+      pd:
+        condition: service_healthy
+      bootstrap-tidb:
+        condition: service_completed_successfully
+    environment: *no-proxy-env
+    volumes:
+      - ./bootstrap/create-keyspace.sh:/bootstrap/create-keyspace.sh:ro
+    command: ["/bootstrap/create-keyspace.sh"]
+    restart: "no"
+
+  bootstrap-tidb:
+    <<: *service-limits
+    build:
+      context: ../../../..
+      dockerfile: tests/realtikvtest/startertest/docker-compose/Dockerfile.test
+    image: ${COMPOSE_PROJECT_NAME:-tidb-txn-file}-tidb-local
+    entrypoint: ["/bin/sh"]
+    command: ["/bootstrap/bootstrap-system.sh"]
+    environment: *no-proxy-env
+    depends_on:
+      pd:
+        condition: service_healthy
+      tikv-1:
+        condition: service_healthy
+      tikv-2:
+        condition: service_healthy
+      tikv-3:
+        condition: service_healthy
+    volumes:
+      - ./bootstrap/bootstrap-system.sh:/bootstrap/bootstrap-system.sh:ro
+      - ./configs/starter.toml:/etc/tidb/starter.toml:ro
+      - tidb-bootstrap-logs:/var/log/tidb
+    restart: "no"
+
+  tikv-1:
+    <<: *service-limits
+    image: ${TIKV_COMPOSE_IMAGE:-hub-zot.pingcap.net/mirrors/tidbx/tikv/tikv/image:cloud-engine-nextgen}
+    entrypoint: ["/bin/sh"]
+    command: ["-ec", "mkdir -p /var/lib/tikv /var/lib/raft/data /var/log/tikv && exec /tikv-server --config /etc/tikv/tikv.toml"]
+    environment: *common-env
+    depends_on:
+      pd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    volumes:
+      - tikv-1-data:/var/lib/tikv
+      - tikv-1-raft:/var/lib/raft
+      - tikv-1-logs:/var/log/tikv
+      - ./configs/tikv-1.toml:/etc/tikv/tikv.toml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:20180/status >/dev/null || wget -q -O - http://127.0.0.1:20180/status >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  tikv-2:
+    <<: *service-limits
+    image: ${TIKV_COMPOSE_IMAGE:-hub-zot.pingcap.net/mirrors/tidbx/tikv/tikv/image:cloud-engine-nextgen}
+    entrypoint: ["/bin/sh"]
+    command: ["-ec", "mkdir -p /var/lib/tikv /var/lib/raft/data /var/log/tikv && exec /tikv-server --config /etc/tikv/tikv.toml"]
+    environment: *common-env
+    depends_on:
+      pd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    volumes:
+      - tikv-2-data:/var/lib/tikv
+      - tikv-2-raft:/var/lib/raft
+      - tikv-2-logs:/var/log/tikv
+      - ./configs/tikv-2.toml:/etc/tikv/tikv.toml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:20180/status >/dev/null || wget -q -O - http://127.0.0.1:20180/status >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  tikv-3:
+    <<: *service-limits
+    image: ${TIKV_COMPOSE_IMAGE:-hub-zot.pingcap.net/mirrors/tidbx/tikv/tikv/image:cloud-engine-nextgen}
+    entrypoint: ["/bin/sh"]
+    command: ["-ec", "mkdir -p /var/lib/tikv /var/lib/raft/data /var/log/tikv && exec /tikv-server --config /etc/tikv/tikv.toml"]
+    environment: *common-env
+    depends_on:
+      pd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    volumes:
+      - tikv-3-data:/var/lib/tikv
+      - tikv-3-raft:/var/lib/raft
+      - tikv-3-logs:/var/log/tikv
+      - ./configs/tikv-3.toml:/etc/tikv/tikv.toml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:20180/status >/dev/null || wget -q -O - http://127.0.0.1:20180/status >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  tikv-worker:
+    <<: *service-limits
+    image: ${TIKV_COMPOSE_IMAGE:-hub-zot.pingcap.net/mirrors/tidbx/tikv/tikv/image:cloud-engine-nextgen}
+    entrypoint: ["/bin/sh"]
+    command: ["-ec", "mkdir -p /var/lib/tikv-worker /var/log/tikv-worker && exec /tikv-worker --config /etc/tikv-worker/config.toml --log-file /var/log/tikv-worker/tikv-worker.log"]
+    environment: *common-env
+    depends_on:
+      pd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      create-keyspace:
+        condition: service_completed_successfully
+    volumes:
+      - tikv-worker-data:/var/lib/tikv-worker
+      - tikv-worker-logs:/var/log/tikv-worker
+      - ./configs/tikv-worker.toml:/etc/tikv-worker/config.toml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:19000/healthz >/dev/null || wget -q -O - http://127.0.0.1:19000/healthz >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  tidb:
+    <<: *service-limits
+    build:
+      context: ../../../..
+      dockerfile: tests/realtikvtest/startertest/docker-compose/Dockerfile.test
+    image: ${COMPOSE_PROJECT_NAME:-tidb-txn-file}-tidb-local
+    entrypoint: ["/opt/tidb/bin/tidb-server"]
+    command:
+      - -P
+      - "4000"
+      - -status
+      - "10080"
+      - -host
+      - 0.0.0.0
+      - -advertise-address
+      - tidb
+      - -status-host
+      - 0.0.0.0
+      - -store
+      - tikv
+      - -path
+      - pd:2379
+      - -config
+      - /etc/tidb/starter.toml
+      - -config-strict
+      - -tidb-service-scope
+      - dxf_service
+      - -standby=true
+      - -activation-timeout
+      - "120"
+      - -log-file
+      - /var/log/tidb/tidb.log
+    environment: *no-proxy-env
+    depends_on:
+      pd:
+        condition: service_healthy
+      tikv-worker:
+        condition: service_healthy
+    volumes:
+      - ./configs/starter.toml:/etc/tidb/starter.toml:ro
+      - tidb-logs:/var/log/tidb
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS --max-time 2 http://127.0.0.1:10080/status >/dev/null"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  activate-tidb:
+    <<: *bootstrap-limits
+    image: ${COMPOSE_PROJECT_NAME:-tidb-txn-file}-tidb-local
+    entrypoint: ["/bin/sh"]
+    command:
+      - -ec
+      - >-
+        curl -fsS --max-time 120 -X POST http://tidb:10080/tidb-pool/activate
+        -H 'Content-Type: application/json'
+        -d '{"keyspace_name":"startertest","export_id":"starter-compose-export","max_idle_seconds":60,"tidb_enable_ddl":true,"run_auto_analyze":true}'
+    environment: *no-proxy-env
+    depends_on:
+      tidb:
+        condition: service_healthy
+    restart: "no"
+
+  test:
+    <<: *service-limits
+    image: ${COMPOSE_PROJECT_NAME:-tidb-txn-file}-tidb-local
+    entrypoint: ["/opt/tidb/bin/startertest.test"]
+    command: ["-test.v", "-test.run", "^TestExternalStarterTxnFile", "-test.count", "1", "-test.timeout", "15m"]
+    environment:
+      <<: *no-proxy-env
+      TIDB_STARTER_TEST_DSN: "root@tcp(tidb:4000)/?timeout=5s&readTimeout=30s&writeTimeout=30s&multiStatements=true"
+      TIDB_STARTER_DSN: "root@tcp(tidb:4000)/?timeout=5s&readTimeout=30s&writeTimeout=30s&multiStatements=true"
+      TIDB_STARTER_STATUS_URL: http://tidb:10080
+      TIDB_STARTER_PD_STATUS_URL: http://pd:2379
+      TIDB_STARTER_PD_ENDPOINT: pd:2379
+      TIDB_STARTER_MAX_ALLOWED_PACKET: "65536"
+      TIDB_STARTER_TIKV_WORKER_URL: tikv-worker:19000
+      TIDB_STARTER_KEYSPACE_NAME: startertest
+      TIDB_STARTER_ACTIVATED_FROM_STANDBY: "1"
+      TIDB_STARTER_ACTIVATE_EXPORT_ID: starter-compose-export
+    depends_on:
+      tidb:
+        condition: service_healthy
+      activate-tidb:
+        condition: service_completed_successfully
+    restart: "no"
+
+volumes:
+  minio-data:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=1g"
+  pd-data:
+  pd-logs:
+  tikv-1-data:
+  tikv-1-raft:
+  tikv-1-logs:
+  tikv-2-data:
+  tikv-2-raft:
+  tikv-2-logs:
+  tikv-3-data:
+  tikv-3-raft:
+  tikv-3-logs:
+  tikv-worker-data:
+  tikv-worker-logs:
+  tidb-bootstrap-logs:
+  tidb-logs:

@@ -4160,6 +4160,21 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableConnectionEventLog.Load()), nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBDisableTxnFile, Value: BoolToOnOff(vardef.DefTiDBDisableTxnFile), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.KVVars.DisableTxnFile = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBTxnFileMinMutationSize, Value: strconv.Itoa(vardef.DefTiDBTxnFileMinMutationSize),
+		Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+			s.KVVars.TxnFileMinMutationSize = TidbOptUint64(val, vardef.DefTiDBTxnFileMinMutationSize)
+			return nil
+		}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			val := TidbOptUint64(originalValue, vardef.DefTiDBTxnFileMinMutationSize)
+			if val > 0 && val < vardef.MinTiDBTxnFileMinMutationSize {
+				return originalValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBTxnFileMinMutationSize, originalValue)
+			}
+			return normalizedValue, nil
+		}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)
