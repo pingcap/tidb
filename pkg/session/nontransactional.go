@@ -464,8 +464,30 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se s
 	defer func() {
 		se.GetSessionVars().MaxExecutionTime = originalMaxExecutionTime
 	}()
+	// The shard-discovery SELECT below uses ORDER BY, which forces KeepOrder=true.
+	// In distsql.RequestBuilder.Build, requests with KeepOrder and the default
+	// tidb_distsql_scan_concurrency (DefDistSQLScanConcurrency) get capped to a
+	// concurrency of 2, on the assumption that the bottleneck is the MySQL
+	// protocol returning rows to a client. That assumption does not hold here:
+	// the rows feed the shard planner and are not returned to the client.
+	// Temporarily nudge the concurrency off the default so the cap predicate is
+	// false, then restore the user's value via defer. See issue #67329.
+	originalDistSQLScanConcurrency := se.GetSessionVars().DistSQLScanConcurrency()
+	if originalDistSQLScanConcurrency == vardef.DefDistSQLScanConcurrency {
+		se.GetSessionVars().SetDistSQLScanConcurrency(originalDistSQLScanConcurrency + 1)
+	}
+	defer func() {
+		se.GetSessionVars().SetDistSQLScanConcurrency(originalDistSQLScanConcurrency)
+	}()
 	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
 	rss, err := se.Execute(ctx, selectSQL)
+	failpoint.Inject("CheckShardSelectScanConcurrency", func(val failpoint.Value) {
+		if val.(bool) {
+			if se.GetSessionVars().DistSQLScanConcurrency() == vardef.DefDistSQLScanConcurrency {
+				err = errors.New("non-transactional DML shard-discovery SELECT is using default scan concurrency")
+			}
+		}
+	})
 	se.GetSessionVars().SelectLimit = originalSelectLimit
 
 	if err != nil {
