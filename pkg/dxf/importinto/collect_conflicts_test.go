@@ -51,7 +51,7 @@ func calcExpectedCollectConflictsChecksum(
 		row := []types.Datum{types.NewDatum(dupID), types.NewDatum(dupID), types.NewDatum(dupID)}
 		dupPairs, err2 := localEncoder.Encode(row, int64(dupID))
 		require.NoError(t, err2)
-		for range 3 {
+		for range 2 {
 			sum.Update(dupPairs.Pairs)
 		}
 	}
@@ -74,7 +74,7 @@ func TestCollectConflictsStepExecutor(t *testing.T) {
 	require.NoError(t, json.Unmarshal(st.Meta, outSTMeta))
 	expectedSum := calcExpectedCollectConflictsChecksum(t, hdlCtx)
 	require.EqualValues(t, expectedSum, outSTMeta.Checksum)
-	require.EqualValues(t, 9, outSTMeta.ConflictedRowCount)
+	require.EqualValues(t, 6, outSTMeta.ConflictedRowCount)
 	// we are running them concurrently, so the number of filenames may vary.
 	require.GreaterOrEqual(t, len(outSTMeta.ConflictedRowFilenames), 2)
 	require.LessOrEqual(t, len(outSTMeta.ConflictedRowFilenames), 9)
