@@ -41,6 +41,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -3023,4 +3025,135 @@ func TestParseHandshakeAttrsTruncation(t *testing.T) {
 
 		require.Equal(t, int64(0), vardef.ConnectAttrsLost.Load())
 	})
+}
+
+func TestShouldInstallConnectionAliveDuringExecute(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	sessVars := se.GetSessionVars()
+
+	p := parser.New()
+	mustParse := func(sql string) ast.StmtNode {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		return stmt
+	}
+
+	// Autocommit and not in a transaction: DML and SELECT install the probe.
+	sessVars.SetInTxn(false)
+	sessVars.SetStatusFlag(mysql.ServerStatusAutocommit, true)
+	for _, sql := range []string{
+		"select * from t",
+		"insert into t values (1)",
+		"update t set a = 1",
+		"delete from t",
+	} {
+		require.True(t, shouldInstallConnectionAliveDuringExecute(mustParse(sql), sessVars), sql)
+	}
+
+	// Statements outside the whitelist never install the probe.
+	for _, sql := range []string{
+		"begin",
+		"show tables",
+		"create table t2 (a int)",
+	} {
+		require.False(t, shouldInstallConnectionAliveDuringExecute(mustParse(sql), sessVars), sql)
+	}
+
+	// Inside a transaction the probe is never installed, even for SELECT.
+	sessVars.SetInTxn(true)
+	require.False(t, shouldInstallConnectionAliveDuringExecute(mustParse("select * from t"), sessVars))
+	sessVars.SetInTxn(false)
+
+	// Without autocommit the probe is never installed.
+	sessVars.SetStatusFlag(mysql.ServerStatusAutocommit, false)
+	require.False(t, shouldInstallConnectionAliveDuringExecute(mustParse("select * from t"), sessVars))
+}
+
+func TestSetSQLKillerConnectionAlive(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	tc := &TiDBContext{Session: se}
+
+	cc := &clientConn{}
+	cc.SetCtx(tc)
+
+	// A cancellable dispatch context, mimicking what dispatch() installs.
+	var cancelled atomic.Bool
+	cc.mu.cancelFunc = func() { cancelled.Store(true) }
+
+	killer := &se.GetSessionVars().SQLKiller
+
+	clear := cc.setSQLKillerConnectionAlive()
+	// Both hooks are published after installation.
+	require.NotNil(t, killer.IsConnectionAlive.Load())
+	require.NotNil(t, killer.ConnCancel.Load())
+
+	// Sending a kill signal invokes the registered cancel hook, which in turn
+	// cancels the dispatch context.
+	killer.SendKillSignal(sqlkiller.QueryInterrupted)
+	require.True(t, cancelled.Load())
+
+	// The cleanup closure clears both hooks and is idempotent.
+	clear()
+	require.Nil(t, killer.IsConnectionAlive.Load())
+	require.Nil(t, killer.ConnCancel.Load())
+	require.NotPanics(t, clear)
+}
+
+// TestSetSQLKillerConnectionAliveRaceWithKill races hook installation against
+// concurrent kill delivery. Regardless of interleaving, once a kill signal is
+// observed the dispatch context must have been cancelled, so an in-flight RPC is
+// aborted instead of blocking until CoprReqTimeout.
+func TestSetSQLKillerConnectionAliveRaceWithKill(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	tc := &TiDBContext{Session: se}
+
+	cc := &clientConn{}
+	cc.SetCtx(tc)
+	killer := &se.GetSessionVars().SQLKiller
+
+	for range 200 {
+		killer.Reset()
+		var cancelled atomic.Bool
+		cc.mu.cancelFunc = func() { cancelled.Store(true) }
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			cc.setSQLKillerConnectionAlive()
+		}()
+		go func() {
+			defer wg.Done()
+			killer.SendKillSignal(sqlkiller.QueryInterrupted)
+		}()
+		wg.Wait()
+
+		require.Equal(t, sqlkiller.QueryInterrupted, killer.GetKillSignal())
+		require.True(t, cancelled.Load(),
+			"dispatch context must be cancelled once a kill signal is delivered")
+	}
+}
+
+func TestCancelDispatch(t *testing.T) {
+	cc := &clientConn{}
+
+	// No cancelFunc installed: cancelDispatch must be a safe no-op.
+	require.NotPanics(t, cc.cancelDispatch)
+
+	var cancelled atomic.Bool
+	cc.mu.cancelFunc = func() { cancelled.Store(true) }
+	cc.cancelDispatch()
+	require.True(t, cancelled.Load())
+}
+
+func TestIsConnectionAlive(t *testing.T) {
+	// No bufReadConn: treated as alive so liveness probing never runs.
+	cc := &clientConn{}
+	require.True(t, cc.isConnectionAlive())
 }
