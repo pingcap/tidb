@@ -61,7 +61,7 @@ func TestZapLoggerWithKeys(t *testing.T) {
 		t.Skip("skip on windows")
 	}
 
-	fileCfg := FileLogConfig{log.FileLogConfig{Filename: fmt.Sprintf("zap_log_%s", uuid.NewString()), MaxSize: 4096}}
+	fileCfg := FileLogConfig{FileLogConfig: log.FileLogConfig{Filename: fmt.Sprintf("zap_log_%s", uuid.NewString()), MaxSize: 4096}}
 	conf := NewLogConfig("info", DefaultLogFormat, "", "", fileCfg, false)
 	err := InitLogger(conf)
 	require.NoError(t, err)
@@ -128,7 +128,7 @@ func TestZapLoggerWithCore(t *testing.T) {
 		t.Skip("skip on windows")
 	}
 
-	fileCfg := FileLogConfig{log.FileLogConfig{Filename: "zap_log", MaxSize: 4096}}
+	fileCfg := FileLogConfig{FileLogConfig: log.FileLogConfig{Filename: "zap_log", MaxSize: 4096}}
 	conf := NewLogConfig("info", DefaultLogFormat, "", "", fileCfg, false)
 
 	opt := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
@@ -208,7 +208,7 @@ func TestSlowQueryLoggerAndGeneralLoggerCreation(t *testing.T) {
 		level = "warn"
 		name := "test.log"
 		fileConf := FileLogConfig{
-			log.FileLogConfig{
+			FileLogConfig: log.FileLogConfig{
 				Filename:   name,
 				MaxSize:    10,
 				MaxDays:    10,
@@ -247,7 +247,7 @@ func getWriteSyncerViaReflection(core *log.TextIOCore) (*zapcore.WriteSyncer, er
 func TestSlowQueryLoggerAndGeneralUseSameLogFileName(t *testing.T) {
 	fileName := t.TempDir() + "a.log"
 	fileConf := FileLogConfig{
-		log.FileLogConfig{
+		FileLogConfig: log.FileLogConfig{
 			Filename:   fileName,
 			MaxSize:    10,
 			MaxDays:    10,
@@ -287,7 +287,7 @@ func TestSlowQueryLoggerAndGeneralUseSameLogFileName(t *testing.T) {
 func TestCompressedLog(t *testing.T) {
 	level := "warn"
 	fileConf := FileLogConfig{
-		log.FileLogConfig{
+		FileLogConfig: log.FileLogConfig{
 			Filename:    "test.log",
 			MaxSize:     10,
 			MaxDays:     10,
@@ -300,7 +300,7 @@ func TestCompressedLog(t *testing.T) {
 	require.Error(t, err)
 
 	fileConf = FileLogConfig{
-		log.FileLogConfig{
+		FileLogConfig: log.FileLogConfig{
 			Filename:    "test.log",
 			MaxSize:     10,
 			MaxDays:     10,
@@ -314,7 +314,7 @@ func TestCompressedLog(t *testing.T) {
 }
 
 func TestGlobalLoggerReplace(t *testing.T) {
-	fileCfg := FileLogConfig{log.FileLogConfig{Filename: "zap_log", MaxDays: 0, MaxSize: 4096}}
+	fileCfg := FileLogConfig{FileLogConfig: log.FileLogConfig{Filename: "zap_log", MaxDays: 0, MaxSize: 4096}}
 	conf := NewLogConfig("info", DefaultLogFormat, "", "", fileCfg, false)
 	err := InitLogger(conf)
 	require.NoError(t, err)
