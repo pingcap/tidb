@@ -190,6 +190,32 @@ func TestParquetParser(t *testing.T) {
 	})
 }
 
+func TestParquetParserLogicalTimeNanos(t *testing.T) {
+	const nanos = int64(123456)
+	pc := []testutils.ParquetColumn{{
+		Name:    "time_nanos",
+		Type:    parquet.Types.Int64,
+		Logical: schema.NewTimeLogicalType(false, schema.TimeUnitNanos),
+		Gen: func(_ int) (any, []int16) {
+			return []int64{nanos}, []int16{1}
+		},
+	}}
+
+	dir := t.TempDir()
+	name := "logical-time-nanos.parquet"
+	require.NoError(t, testutils.WriteParquetFile(dir, name, pc, 1))
+
+	reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{})
+	logicalType, ok := reader.colTypes[0].logicalType.(schema.TimeLogicalType)
+	require.True(t, ok)
+	require.Equal(t, schema.TimeUnitNanos, logicalType.TimeUnit())
+	require.NoError(t, reader.ReadRow())
+
+	got, err := reader.lastRow.Row[0].GetMysqlTime().GoTime(time.UTC)
+	require.NoError(t, err)
+	require.Equal(t, time.Date(1970, 1, 1, 0, 0, 0, int(nanos/1000)*1000, time.UTC), got)
+}
+
 func TestParquetParserMultipleRowGroup(t *testing.T) {
 	pc := []testutils.ParquetColumn{
 		{
@@ -325,6 +351,151 @@ func TestParquetScannedPosByReadRows(t *testing.T) {
 }
 
 func TestParquetVariousTypes(t *testing.T) {
+	t.Run("logical_uuid_keeps_legacy_byte_conversion", func(t *testing.T) {
+		const uuidLen = 16
+		rawUUID := parquet.FixedLenByteArray("0123456789abcdef")
+		pc := []testutils.ParquetColumn{{
+			Name:    "uuid",
+			Type:    parquet.Types.FixedLenByteArray,
+			TypeLen: uuidLen,
+			Logical: schema.UUIDLogicalType{},
+			Gen: func(_ int) (any, []int16) {
+				return []parquet.FixedLenByteArray{rawUUID}, []int16{1}
+			},
+		}}
+		dir := t.TempDir()
+		name := "logical-uuid.parquet"
+		require.NoError(t, testutils.WriteParquetFile(dir, name, pc, 1))
+
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{})
+		require.NoError(t, reader.ReadRow())
+		require.Equal(t, string(rawUUID), reader.lastRow.Row[0].GetString())
+	})
+
+	t.Run("rejects_unsupported_logical_type_compatibility_bridge", func(t *testing.T) {
+		convertedTypes := []schema.ConvertedType{
+			schema.ConvertedTypes.Map,
+			schema.ConvertedTypes.MapKeyValue,
+			schema.ConvertedTypes.List,
+			schema.ConvertedTypes.Interval,
+			schema.ConvertedTypes.NA,
+		}
+		for _, convertedType := range convertedTypes {
+			t.Run(convertedType.String(), func(t *testing.T) {
+				logicalType := convertedType.ToLogicalType(schema.DecimalMetadata{})
+				err := validateParquetLogicalType(logicalType, parquet.Types.ByteArray, -1)
+				require.ErrorContains(t, err, "unsupported parquet logical type")
+			})
+		}
+
+		for _, logicalType := range []schema.LogicalType{
+			schema.Float16LogicalType{},
+			schema.VariantLogicalType{},
+		} {
+			t.Run(logicalType.String(), func(t *testing.T) {
+				err := validateParquetLogicalType(logicalType, parquet.Types.FixedLenByteArray, 2)
+				require.ErrorContains(t, err, "unsupported parquet logical type")
+			})
+		}
+	})
+
+	t.Run("logical_null_all_values_are_null", func(t *testing.T) {
+		pc := []testutils.ParquetColumn{{
+			Name:    "always_null",
+			Type:    parquet.Types.Int32,
+			Logical: schema.NullLogicalType{},
+			Gen: func(_ int) (any, []int16) {
+				return []int32{0, 0}, []int16{0, 0}
+			},
+		}}
+		dir := t.TempDir()
+		name := "logical-null.parquet"
+		require.NoError(t, testutils.WriteParquetFile(dir, name, pc, 2))
+
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{})
+		for range 2 {
+			require.NoError(t, reader.ReadRow())
+			require.True(t, reader.lastRow.Row[0].IsNull())
+		}
+	})
+
+	t.Run("logical_null_non_null_value_is_rejected", func(t *testing.T) {
+		pc := []testutils.ParquetColumn{{
+			Name:    "malformed_null",
+			Type:    parquet.Types.Int32,
+			Logical: schema.NullLogicalType{},
+			Gen: func(_ int) (any, []int16) {
+				return []int32{1}, []int16{1}
+			},
+		}}
+		dir := t.TempDir()
+		name := "logical-null-malformed.parquet"
+		require.NoError(t, testutils.WriteParquetFile(dir, name, pc, 1))
+
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{})
+		require.ErrorContains(t, reader.ReadRow(), "unsupported parquet logical type Null")
+	})
+
+	t.Run("rejects_inapplicable_logical_type", func(t *testing.T) {
+		err := validateParquetLogicalType(
+			schema.NewTimeLogicalType(false, schema.TimeUnitNanos),
+			parquet.Types.Int32,
+			-1,
+		)
+		require.ErrorContains(t, err, "not applicable")
+	})
+
+	t.Run("rejects_spark_rebase_for_logical_timestamp_nanos", func(t *testing.T) {
+		meta := metadata.NewKeyValueMetadata()
+		require.NoError(t, meta.Append("org.apache.spark.version", "2.4.8"))
+		require.NoError(t, meta.Append("org.apache.spark.timeZone", "UTC"))
+		pc := []testutils.ParquetColumn{{
+			Name:    "timestamp_nanos",
+			Type:    parquet.Types.Int64,
+			Logical: schema.NewTimestampLogicalType(false, schema.TimeUnitNanos),
+			Gen: func(_ int) (any, []int16) {
+				return []int64{1}, []int16{1}
+			},
+		}}
+		dir := t.TempDir()
+		name := "logical-timestamp-nanos-spark-rebase.parquet"
+		require.NoError(t, testutils.WriteParquetFile(
+			dir, name, pc, 1,
+			parquet.WithCreatedBy("parquet-mr version 1.10.1"),
+			file.WithWriteMetadata(meta),
+		))
+
+		store, err := objstore.NewLocalStorage(dir)
+		require.NoError(t, err)
+		defer store.Close()
+		_, err = NewParser(context.Background(), store, func(ctx context.Context) (io.ReadSeekCloser, error) {
+			return store.Open(ctx, name, nil)
+		}, name, 0, FileMeta{Loc: time.UTC})
+		require.ErrorContains(t, err, "Spark legacy rebase is unsupported for TIMESTAMP(NANOS)")
+	})
+
+	t.Run("logical_uint32_preserves_high_bits", func(t *testing.T) {
+		physicalValues := []int32{0, int32(1<<31 - 1), int32(-1 << 31), -1}
+		pc := []testutils.ParquetColumn{{
+			Name:    "u32",
+			Type:    parquet.Types.Int32,
+			Logical: schema.NewIntLogicalType(32, false),
+			Gen: func(_ int) (any, []int16) {
+				return physicalValues, []int16{1, 1, 1, 1}
+			},
+		}}
+
+		dir := t.TempDir()
+		name := "logical-uint32.parquet"
+		require.NoError(t, testutils.WriteParquetFile(dir, name, pc, len(physicalValues)))
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{})
+
+		for _, expected := range []uint64{0, 2147483647, 2147483648, 4294967295} {
+			require.NoError(t, reader.ReadRow())
+			require.Equal(t, expected, reader.lastRow.Row[0].GetUint64())
+		}
+	})
+
 	t.Run("timestamp_and_decimal", func(t *testing.T) {
 		pc := []testutils.ParquetColumn{
 			{
@@ -509,14 +680,14 @@ func TestParquetVariousTypes(t *testing.T) {
 		require.NoError(t, testutils.WriteParquetFile(dir, name, pc, 1))
 
 		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{Loc: asiaShanghai})
-		require.Equal(t, schema.ConvertedTypes.TimestampMillis, reader.colTypes[0].converted)
-		require.Equal(t, schema.ConvertedTypes.TimestampMicros, reader.colTypes[1].converted)
-		require.Equal(t, schema.ConvertedTypes.TimestampMillis, reader.colTypes[2].converted)
-		require.Equal(t, schema.ConvertedTypes.TimestampMicros, reader.colTypes[3].converted)
-		require.True(t, reader.colTypes[0].IsAdjustedToUTC)
-		require.True(t, reader.colTypes[1].IsAdjustedToUTC)
-		require.False(t, reader.colTypes[2].IsAdjustedToUTC)
-		require.False(t, reader.colTypes[3].IsAdjustedToUTC)
+		require.Equal(t, schema.TimeUnitMillis, reader.colTypes[0].logicalType.(schema.TimestampLogicalType).TimeUnit())
+		require.Equal(t, schema.TimeUnitMicros, reader.colTypes[1].logicalType.(schema.TimestampLogicalType).TimeUnit())
+		require.Equal(t, schema.TimeUnitMillis, reader.colTypes[2].logicalType.(schema.TimestampLogicalType).TimeUnit())
+		require.Equal(t, schema.TimeUnitMicros, reader.colTypes[3].logicalType.(schema.TimestampLogicalType).TimeUnit())
+		require.True(t, reader.colTypes[0].logicalType.(schema.TimestampLogicalType).IsAdjustedToUTC())
+		require.True(t, reader.colTypes[1].logicalType.(schema.TimestampLogicalType).IsAdjustedToUTC())
+		require.False(t, reader.colTypes[2].logicalType.(schema.TimestampLogicalType).IsAdjustedToUTC())
+		require.False(t, reader.colTypes[3].logicalType.(schema.TimestampLogicalType).IsAdjustedToUTC())
 
 		require.NoError(t, reader.ReadRow())
 		row := reader.lastRow.Row
@@ -564,10 +735,10 @@ func TestParquetVariousTypes(t *testing.T) {
 		require.NoError(t, testutils.WriteParquetFile(dir, name, pc, 1))
 
 		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{Loc: asiaShanghai})
-		require.Equal(t, schema.ConvertedTypes.TimeMillis, reader.colTypes[0].converted)
-		require.Equal(t, schema.ConvertedTypes.TimeMicros, reader.colTypes[1].converted)
-		require.False(t, reader.colTypes[0].IsAdjustedToUTC)
-		require.False(t, reader.colTypes[1].IsAdjustedToUTC)
+		require.Equal(t, schema.TimeUnitMillis, reader.colTypes[0].logicalType.(schema.TimeLogicalType).TimeUnit())
+		require.Equal(t, schema.TimeUnitMicros, reader.colTypes[1].logicalType.(schema.TimeLogicalType).TimeUnit())
+		require.False(t, reader.colTypes[0].logicalType.(schema.TimeLogicalType).IsAdjustedToUTC())
+		require.False(t, reader.colTypes[1].logicalType.(schema.TimeLogicalType).IsAdjustedToUTC())
 
 		require.NoError(t, reader.ReadRow())
 		row := reader.lastRow.Row
@@ -583,7 +754,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		}
 	})
 
-	t.Run("unsupported_logical_timestamp_nanos", func(t *testing.T) {
+	t.Run("logical_timestamp_nanos", func(t *testing.T) {
 		pc := []testutils.ParquetColumn{
 			{
 				Name:    "timestamp_nanos",
@@ -599,13 +770,11 @@ func TestParquetVariousTypes(t *testing.T) {
 		name := "logical-timestamp-nanos.parquet"
 		require.NoError(t, testutils.WriteParquetFile(dir, name, pc, 1))
 
-		store, err := objstore.NewLocalStorage(dir)
+		parser := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{Loc: time.UTC})
+		require.NoError(t, parser.ReadRow())
+		got, err := parser.lastRow.Row[0].GetMysqlTime().GoTime(time.UTC)
 		require.NoError(t, err)
-		parser, err := NewParser(context.Background(), store, func(ctx context.Context) (io.ReadSeekCloser, error) {
-			return store.Open(ctx, name, nil)
-		}, name, 0, FileMeta{Loc: time.UTC})
-		require.ErrorContains(t, err, "unsupported timestamp time unit")
-		require.Nil(t, parser)
+		require.Equal(t, time.Unix(0, 1603963672356956000).UTC().Truncate(time.Microsecond), got)
 	})
 
 	t.Run("int96_rounds_sub_microsecond_precision", func(t *testing.T) {
@@ -1851,8 +2020,7 @@ func TestParquetDecimalFromInt64(t *testing.T) {
 	for _, tc := range tcs {
 		// No decimal meta or scale=0: stored as int64.
 		var dec types.MyDecimal
-		err := setParquetDecimalFromInt64(tc.value, &dec,
-			schema.DecimalMetadata{IsSet: true, Scale: tc.scale})
+		err := setParquetDecimalFromInt64(tc.value, &dec, tc.scale)
 		require.NoError(t, err)
 		require.Equal(t, tc.expected, dec.String())
 	}

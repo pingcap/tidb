@@ -51,21 +51,26 @@ const (
 )
 
 var (
-	unsupportedParquetTypes = map[schema.ConvertedType]struct{}{
-		// TODO(joechenrh): support read list type as vector
-		schema.ConvertedTypes.List: {},
-		// The below types are not used for data exported from aurora/snowflake,
-		// so we don't support them for now.
-		schema.ConvertedTypes.Map:         {},
-		schema.ConvertedTypes.MapKeyValue: {},
-		schema.ConvertedTypes.Interval:    {},
-		schema.ConvertedTypes.NA:          {},
-	}
-
 	// readBatchSize is the number of rows to read in a single batch
 	// from parquet column reader. Modified in test.
 	readBatchSize = 128
 )
+
+func validateParquetLogicalType(logicalType schema.LogicalType, physicalType parquet.Type, typeLength int) error {
+	switch logicalType.(type) {
+	case schema.ListLogicalType, schema.MapLogicalType, schema.IntervalLogicalType,
+		schema.UnknownLogicalType, schema.Float16LogicalType, schema.VariantLogicalType:
+		// These types are not used by Aurora or Snowflake exports, so they remain
+		// outside the row-oriented import parser's supported scalar scope.
+		return errors.Errorf("unsupported parquet logical type %s", logicalType.String())
+	}
+	// Keep the physical encoding limits enforced by Parquet logical types. For
+	// example, INT32 DECIMAL values cannot represent precision greater than 9.
+	if !logicalType.IsApplicable(physicalType, int32(typeLength)) {
+		return errors.Errorf("logical type %s is not applicable to physical type %s", logicalType.String(), physicalType)
+	}
+	return nil
+}
 
 // FileMeta contains some analyzed metadata for a parquet file.
 type FileMeta struct {
@@ -191,42 +196,33 @@ func (it *columnIterator[T, R]) Next(d *types.Datum) error {
 	return it.setter(value, d)
 }
 
-func createColumnIterator(tp parquet.Type, converted *convertedType, loc *time.Location, batchSize int) iterator {
+func createColumnIterator(tp parquet.Type, colType *parquetColumnType, loc *time.Location, batchSize int) iterator {
 	switch tp {
 	case parquet.Types.Boolean:
 		return newColumnIterator[bool, *file.BooleanColumnChunkReader](batchSize, getBoolDataSetter)
 	case parquet.Types.Int32:
-		return newColumnIterator[int32, *file.Int32ColumnChunkReader](batchSize, getInt32Setter(converted, loc))
+		return newColumnIterator[int32, *file.Int32ColumnChunkReader](batchSize, getInt32Setter(colType, loc))
 	case parquet.Types.Int64:
-		return newColumnIterator[int64, *file.Int64ColumnChunkReader](batchSize, getInt64Setter(converted, loc))
+		return newColumnIterator[int64, *file.Int64ColumnChunkReader](batchSize, getInt64Setter(colType, loc))
 	case parquet.Types.Float:
 		return newColumnIterator[float32, *file.Float32ColumnChunkReader](batchSize, setFloat32Data)
 	case parquet.Types.Double:
 		return newColumnIterator[float64, *file.Float64ColumnChunkReader](batchSize, setFloat64Data)
 	case parquet.Types.Int96:
-		return newColumnIterator[parquet.Int96, *file.Int96ColumnChunkReader](batchSize, getInt96Setter(converted, loc))
+		return newColumnIterator[parquet.Int96, *file.Int96ColumnChunkReader](batchSize, getInt96Setter(colType, loc))
 	case parquet.Types.ByteArray:
-		return newColumnIterator[parquet.ByteArray, *file.ByteArrayColumnChunkReader](batchSize, getByteArraySetter(converted))
+		return newColumnIterator[parquet.ByteArray, *file.ByteArrayColumnChunkReader](batchSize, getByteArraySetter(colType))
 	case parquet.Types.FixedLenByteArray:
-		return newColumnIterator[parquet.FixedLenByteArray, *file.FixedLenByteArrayColumnChunkReader](batchSize, getFixedLenByteArraySetter(converted))
+		return newColumnIterator[parquet.FixedLenByteArray, *file.FixedLenByteArrayColumnChunkReader](batchSize, getFixedLenByteArraySetter(colType))
 	default:
 		return nil
 	}
 }
 
-// convertedType is older representation of the logical type in parquet
+// parquetColumnType contains the normalized logical type and reader-only conversion context.
 // ref: https://github.com/apache/parquet-format/blob/master/LogicalTypes.md
-type convertedType struct {
-	converted   schema.ConvertedType
-	decimalMeta schema.DecimalMetadata
-
-	// See https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#temporal-types.
-	//
-	// true  => epoch value has instant semantics (normalized to UTC), so convert to parser location first.
-	// false => epoch value has local semantics, so keep the "as-if UTC" wall clock unchanged.
-	//
-	// NOTE: types.FromGoTime stores only wall-clock fields and drops location metadata.
-	IsAdjustedToUTC bool
+type parquetColumnType struct {
+	logicalType schema.LogicalType
 
 	// sparkRebaseMicros is non-empty when the file footer says the column was
 	// written by a Spark release that used the legacy hybrid Julian/Gregorian
@@ -246,7 +242,7 @@ type rowGroupParser struct {
 }
 
 // init creates column iterators for each column.
-func (rgp *rowGroupParser) init(colTypes []convertedType, loc *time.Location) (err error) {
+func (rgp *rowGroupParser) init(colTypes []parquetColumnType, loc *time.Location) (err error) {
 	meta := rgp.readers[0].MetaData()
 	numCols := meta.Schema.NumColumns()
 	rgp.iterators = make([]iterator, numCols)
@@ -314,7 +310,7 @@ func (rgp *rowGroupParser) Close() error {
 // Parser parses a parquet file for import
 type Parser struct {
 	fileMeta *metadata.FileMetaData
-	colTypes []convertedType
+	colTypes []parquetColumnType
 	colNames []string
 
 	ctx   context.Context
@@ -675,7 +671,7 @@ func NewParser(
 
 	fileMeta := reader.MetaData()
 	fileSchema := fileMeta.Schema
-	colTypes := make([]convertedType, fileSchema.NumColumns())
+	colTypes := make([]parquetColumnType, fileSchema.NumColumns())
 	colNames := make([]string, 0, fileSchema.NumColumns())
 	effectiveLoc := meta.Loc
 	if effectiveLoc == nil {
@@ -687,48 +683,20 @@ func NewParser(
 		colNames = append(colNames, strings.ToLower(desc.Name()))
 
 		logicalType := desc.LogicalType()
-		if logicalType.IsValid() {
-			colTypes[i].converted, colTypes[i].decimalMeta = logicalType.ToConvertedType()
-			if t, ok := logicalType.(schema.TimestampLogicalType); ok {
-				// TimestampLogicalType.ToConvertedType() might return none when
-				// IsAdjustedToUTC=false, and not from force convert, so we have
-				// to check again here.
-				switch t.TimeUnit() {
-				case schema.TimeUnitMillis:
-					colTypes[i].converted = schema.ConvertedTypes.TimestampMillis
-				case schema.TimeUnitMicros:
-					colTypes[i].converted = schema.ConvertedTypes.TimestampMicros
-				default:
-					return nil, errors.Errorf("unsupported timestamp time unit %d", t.TimeUnit())
-				}
-				colTypes[i].IsAdjustedToUTC = t.IsAdjustedToUTC()
-			} else if t, ok := logicalType.(schema.TimeLogicalType); ok {
-				// TimeLogicalType.ToConvertedType() returns none when
-				// IsAdjustedToUTC=false, so preserve the logical time unit here.
-				switch t.TimeUnit() {
-				case schema.TimeUnitMillis:
-					colTypes[i].converted = schema.ConvertedTypes.TimeMillis
-				case schema.TimeUnitMicros:
-					colTypes[i].converted = schema.ConvertedTypes.TimeMicros
-				}
-				colTypes[i].IsAdjustedToUTC = t.IsAdjustedToUTC()
-			} else {
-				colTypes[i].IsAdjustedToUTC = true
+		if logicalType == nil || !logicalType.IsValid() || logicalType.IsNone() {
+			var decimalMeta schema.DecimalMetadata
+			if pnode, _ := desc.SchemaNode().(*schema.PrimitiveNode); pnode != nil {
+				decimalMeta = pnode.DecimalMetadata()
 			}
-		} else {
-			colTypes[i].converted = desc.ConvertedType()
-			colTypes[i].IsAdjustedToUTC = true
-			pnode, _ := desc.SchemaNode().(*schema.PrimitiveNode)
-			colTypes[i].decimalMeta = pnode.DecimalMetadata()
+			logicalType = desc.ConvertedType().ToLogicalType(decimalMeta)
 		}
-
-		if _, ok := unsupportedParquetTypes[colTypes[i].converted]; ok {
-			return nil, errors.Errorf("unsupported parquet logical type %s", colTypes[i].converted.String())
+		colTypes[i].logicalType = logicalType
+		if err := validateParquetLogicalType(logicalType, desc.PhysicalType(), desc.TypeLength()); err != nil {
+			return nil, errors.Annotatef(err, "column %q", desc.Name())
 		}
-
 		switch desc.PhysicalType() {
 		case parquet.Types.Int32:
-			if colTypes[i].converted == schema.ConvertedTypes.Date {
+			if _, ok := logicalType.(schema.DateLogicalType); ok {
 				colTypes[i].sparkRebaseMicros, err = sparkRebaseMicrosFromMetadata(
 					fileMeta, sparkDatetimeRebaseCutoff, sparkLegacyDateTimeMetadataKey, effectiveLoc)
 				if err != nil {
@@ -736,8 +704,7 @@ func NewParser(
 				}
 			}
 		case parquet.Types.Int64:
-			if colTypes[i].converted == schema.ConvertedTypes.TimestampMillis ||
-				colTypes[i].converted == schema.ConvertedTypes.TimestampMicros {
+			if _, ok := logicalType.(schema.TimestampLogicalType); ok {
 				colTypes[i].sparkRebaseMicros, err = sparkRebaseMicrosFromMetadata(
 					fileMeta, sparkDatetimeRebaseCutoff, sparkLegacyDateTimeMetadataKey, effectiveLoc)
 				if err != nil {
@@ -750,6 +717,11 @@ func NewParser(
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+		}
+		if timestamp, ok := logicalType.(schema.TimestampLogicalType); ok &&
+			timestamp.TimeUnit() == schema.TimeUnitNanos &&
+			colTypes[i].sparkRebaseMicros.timeZoneID != "" {
+			return nil, errors.New("Spark legacy rebase is unsupported for TIMESTAMP(NANOS)")
 		}
 	}
 
