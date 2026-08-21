@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "servertest_test",
+    timeout = "short",
+    srcs = ["server_test.go"],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/domain",
+        "//pkg/kv",
+        "//pkg/server",
+        "//tests/realtikvtest",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -2115,6 +2115,10 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	if len(idxKeys) == 0 && len(rowKeys) == 0 {
 		return pointPlans, nil
 	}
+	// Multi-statement prefetch runs before handleStmt and can wait on pessimistic
+	// locks, so it needs its own connection-liveness probe.
+	clearConnectionAlive := cc.setSQLKillerConnectionAlive()
+	defer clearConnectionAlive()
 	snapshot := txn.GetSnapshot()
 	setResourceGroupTaggerForMultiStmtPrefetch(snapshot, sqls)
 	idxVals, err1 := snapshot.BatchGet(ctx, idxKeys)
@@ -2133,9 +2137,12 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		allKeys := append(rowKeys, idxKeys...)
 		err = executor.LockKeys(ctx, cc.getCtx(), vars.LockWaitTimeout, allKeys...)
 		if err != nil {
+			if exeerrors.ErrQueryInterrupted.Equal(err) {
+				return nil, err
+			}
 			// suppress the lock error, we are not going to handle it here for simplicity.
-			err = nil
 			logutil.BgLogger().Warn("lock keys error on prefetch", zap.Error(err))
+			err = nil
 		}
 	} else {
 		_, err = snapshot.BatchGet(ctx, rowKeys)
