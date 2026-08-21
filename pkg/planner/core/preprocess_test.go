@@ -369,6 +369,8 @@ func TestCreateViewRemovesNestedSelectLocks(t *testing.T) {
 		"create view v as select id from t outer_t where exists " +
 			"(select 1 from t inner_t where inner_t.id = outer_t.id for update)",
 		"create view v as select * from (select * from t lock in share mode) as nested",
+		"create view v as select * from (" +
+			"(select id from t for update) union all (select id from t)) as nested",
 	}
 	for _, sql := range tests {
 		stmt, err := parser.New().ParseOneStmt(sql, "", "")
