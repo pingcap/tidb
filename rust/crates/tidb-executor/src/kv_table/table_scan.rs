@@ -638,6 +638,7 @@ impl KvTable {
             None,
             Some(&ranges),
             false,
+            false,
             crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
             &context,
             statement,
@@ -946,6 +947,7 @@ impl KvTable {
                         id: column.id,
                         field_type: column.field_type.clone(),
                         is_handle: self.pk_handle_offset == Some(*offset),
+                        origin_default: column.origin_default.clone(),
                     })
                 } else {
                     Some(PushdownScanColumn {
@@ -956,6 +958,7 @@ impl KvTable {
                                     | tidb_datatype::FieldTypeFlags::PRI_KEY,
                             ),
                         is_handle: true,
+                        origin_default: None,
                     })
                 }
             })
@@ -1033,6 +1036,7 @@ impl KvTable {
             topn,
             limit: None,
             aggregate: None,
+            desc,
             keep_order,
             read_ahead_batches: crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
             snapshot_ts: 0,

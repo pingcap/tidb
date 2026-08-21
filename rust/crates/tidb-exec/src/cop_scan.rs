@@ -299,7 +299,6 @@ where
             ExecutorShape::new(ExecutorKind::Other),
         ];
         let plan = RemoteScanPlan {
-            table_id: request.table_id,
             dag,
             envelope: RequestEnvelope::new(shapes),
             key_ranges,
