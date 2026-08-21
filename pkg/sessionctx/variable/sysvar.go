@@ -2046,6 +2046,10 @@ var defaultSysVars = []*SysVar{
 		s.analyzeDistSQLScanConcurrency = tidbOptPositiveInt32(val, DefAnalyzeDistSQLScanConcurrency)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeStoreBatchSize, Value: strconv.Itoa(DefTiDBAnalyzeStoreBatchSize), Type: TypeUnsigned, MinValue: 0, MaxValue: MaxTiDBAnalyzeStoreBatchSize, SetSession: func(s *SessionVars, val string) error {
+		s.AnalyzeStoreBatchSize = TidbOptInt(val, DefTiDBAnalyzeStoreBatchSize)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptInSubqToJoinAndAgg, Value: BoolToOnOff(DefOptInSubqToJoinAndAgg), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.SetAllowInSubqToJoinAndAgg(TiDBOptOn(val))
 		return nil
