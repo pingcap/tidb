@@ -170,7 +170,8 @@ func divideSubtasks(chunks []Chunk, nodeCount int) [][]Chunk {
 	if total > subtaskSize {
 		count = (total + subtaskSize/2) / subtaskSize
 	}
-	if n := int64(max(nodeCount, 1)); n > 1 {
+	if nodeCount > 1 {
+		n := int64(nodeCount)
 		count = (count + n - 1) / n * n
 	}
 	budget := max(int64(1), (total+count-1)/count)

@@ -220,8 +220,6 @@ func readPreparedPlan(ctx context.Context, planPath string) ([]Chunk, error) {
 	return plan.Chunks, nil
 }
 
-// marshalSubtasks serializes each chunk group into a subtask meta, offloading the
-// chunk list to external storage so the row stored by the framework stays small.
 func marshalSubtasks(ctx context.Context, taskID int64, step proto.Step, groups [][]Chunk) ([][]byte, error) {
 	if len(groups) == 0 {
 		return nil, nil
