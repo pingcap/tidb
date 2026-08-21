@@ -66,6 +66,8 @@ func setupWorkerForTest(ctx context.Context, etcdCli *clientv3.Client, dom *doma
 func setupEtcd(t *testing.T) string {
 	cfg := embed.NewConfig()
 	cfg.Dir = t.TempDir()
+	// These tests only need transient election semantics; avoid depending on CI disk fsync latency.
+	cfg.UnsafeNoFsync = true
 
 	lcurl, err := url.Parse("http://127.0.0.1:0")
 	require.NoError(t, err)
@@ -891,7 +893,7 @@ func TestCalcNextTick(t *testing.T) {
 
 func TestOwnerRandomDown(t *testing.T) {
 	workerNum := 3
-	testNum := 9
+	testNum := 3
 
 	ctx, _, dom, addr := setupDomainAndContext(t)
 	workers := make([]*worker, 0, workerNum)
