@@ -2610,3 +2610,34 @@ fn interval_partitioning_is_refused_on_every_spelling() {
         );
     }
 }
+
+/// A GLOBAL unique index spans every partition, so its uniqueness is
+/// cluster-wide. A LOCAL unique index on a partitioned table enforces
+/// uniqueness only WITHIN each partition, so building a GLOBAL one as local
+/// would admit duplicates that live in different partitions -- no error, and
+/// a unique constraint that is not a constraint.
+///
+/// This tier maintains only per-partition index entries
+/// (`kv_table/index_entries.rs` fixes `global: false`), so it must REFUSE
+/// the clause. The assertion is on the refusal naming GLOBAL, not merely on
+/// a refusal happening: an incidental error from somewhere else would leave
+/// the door open for a later change to turn it into a silent acceptance.
+#[test]
+fn a_global_unique_index_is_refused_rather_than_built_local() {
+    let mut session = Session::new();
+    // `b` is not a partitioning column, so uniqueness on it cannot be
+    // enforced per-partition: this index has to be GLOBAL to mean anything.
+    let rendered = session
+        .run(
+            "CREATE TABLE g1 (a INT, b INT, UNIQUE KEY ub(b) GLOBAL) \
+             PARTITION BY HASH(a) PARTITIONS 2",
+        )
+        .expect_err("a GLOBAL index cannot be served by per-partition entries")
+        .to_mysql_error();
+    assert!(
+        rendered.message.contains("GLOBAL"),
+        "the refusal must name GLOBAL so it cannot decay into a silent \
+         downgrade, got: {}",
+        rendered.message
+    );
+}
