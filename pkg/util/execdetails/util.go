@@ -24,6 +24,7 @@ import (
 
 	"github.com/influxdata/tdigest"
 	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 // ContextWithInitializedExecDetails returns a context with initialized stmt execution, execution and resource usage details.
@@ -34,6 +35,23 @@ func ContextWithInitializedExecDetails(ctx context.Context) context.Context {
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 	ctx = context.WithValue(ctx, StmtExecDetailKey, stmtDetails)
 	return ctx
+}
+
+// SetStatementRUVersion records the RU version selected at statement execution
+// start. Child contexts share the same StmtExecDetails object.
+func SetStatementRUVersion(ctx context.Context, version rmclient.RUVersion) {
+	if details, _ := ctx.Value(StmtExecDetailKey).(*StmtExecDetails); details != nil {
+		details.ruVersion = version
+	}
+}
+
+// StatementRUVersionFromContext returns the statement-start RU version.
+func StatementRUVersionFromContext(ctx context.Context) (rmclient.RUVersion, bool) {
+	details, _ := ctx.Value(StmtExecDetailKey).(*StmtExecDetails)
+	if details == nil || details.ruVersion == 0 {
+		return 0, false
+	}
+	return details.ruVersion, true
 }
 
 // ContextWithMissingExecDetailsInitialized initializes any missing statement execution, execution,

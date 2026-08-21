@@ -1145,6 +1145,8 @@ func TestRURuntimeStatsStringV1(t *testing.T) {
 			ReplicaWeightedWriteRPCCount: 7,
 			ReplicaWeightedWriteBytes:    107424,
 		},
+		RRU: 2.2522118248697915,
+		WRU: 116.80625,
 	})
 	stats := &RURuntimeStats{
 		RUDetails: ruDetails,
@@ -1178,6 +1180,7 @@ func TestRURuntimeStatsStringV1(t *testing.T) {
 			FailedWriteRPCCount:          1,
 			FailedWriteBytes:             10,
 		},
+		WRU: 14,
 	})
 	require.Equal(t,
 		"WRU=replica_weighted_write_rpc_count(3)*WRITE_BASE_COST(3)"+
@@ -1195,10 +1198,12 @@ func TestRURuntimeStatsStringV1(t *testing.T) {
 	mixedFactorDetails.AddRUCalculation(rmclient.RUCalculation{
 		Factors: rmclient.RUFactorSnapshot{ReadBytesCost: 0.1},
 		Inputs:  rmclient.RUCalculationInputs{ReadBytes: 10},
+		RRU:     1,
 	})
 	mixedFactorDetails.AddRUCalculation(rmclient.RUCalculation{
 		Factors: rmclient.RUFactorSnapshot{ReadBytesCost: 0.2},
 		Inputs:  rmclient.RUCalculationInputs{ReadBytes: -5},
+		RRU:     -1,
 	})
 	require.Empty(t, FormatRUCalculationDetail(mixedFactorDetails))
 
@@ -1210,6 +1215,8 @@ func TestRURuntimeStatsStringV1(t *testing.T) {
 			ReadRPCCount:                 0.0000006,
 			ReplicaWeightedWriteRPCCount: 0.0000006,
 		},
+		RRU: 0.0000006,
+		WRU: 0.0000006,
 	})
 	require.Contains(t, FormatRUCalculationDetail(tinyDetails),
 		"RU=RRU(0.000001)+WRU(0.000001)=0.000002")
@@ -1219,8 +1226,30 @@ func TestRURuntimeStatsStringV1(t *testing.T) {
 	partialDetails.AddRUCalculation(rmclient.RUCalculation{
 		Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1},
 		Inputs:  rmclient.RUCalculationInputs{ReadRPCCount: 1},
+		RRU:     1,
 	})
 	require.Empty(t, FormatRUCalculationDetail(partialDetails))
+
+	componentMismatchDetails := util.NewRUDetails()
+	componentMismatchDetails.Update(&rmpb.Consumption{RRU: 2}, 0)
+	componentMismatchDetails.AddRUCalculation(rmclient.RUCalculation{
+		Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1, WriteBaseCost: 1},
+		Inputs: rmclient.RUCalculationInputs{
+			ReadRPCCount:                 1,
+			ReplicaWeightedWriteRPCCount: 1,
+		},
+		RRU: 2,
+	})
+	require.Empty(t, FormatRUCalculationDetail(componentMismatchDetails))
+
+	largeMismatchDetails := util.NewRUDetails()
+	largeMismatchDetails.Update(&rmpb.Consumption{RRU: 1_000_000_000_500}, 0)
+	largeMismatchDetails.AddRUCalculation(rmclient.RUCalculation{
+		Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1},
+		Inputs:  rmclient.RUCalculationInputs{ReadRPCCount: 1_000_000_000_000},
+		RRU:     1_000_000_000_500,
+	})
+	require.Empty(t, FormatRUCalculationDetail(largeMismatchDetails))
 }
 
 func TestRURuntimeStatsStringV1NilDetails(t *testing.T) {

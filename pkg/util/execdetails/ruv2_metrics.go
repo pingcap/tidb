@@ -954,7 +954,7 @@ func FormatRUCalculationDetail(ruDetails *tikvutil.RUDetails) string {
 			"READ_PER_BATCH_BASE_COST", factors.ReadPerBatchBaseCost, "BATCH_PROPORTION", factors.BatchProportion)
 		addRUFormulaTerm(&rruTerms, "charged_read_bytes", inputs.ReadBytes, "READ_BYTES_COST", factors.ReadBytesCost)
 		addRUFormulaTerm(&rruTerms, "kv_cpu_ms", inputs.KVCPUTimeMs, "CPU_MS_COST", factors.CPUMsCost)
-		rru = calculation.RRU()
+		formulaRRU := sumRUFormulaTerms(rruTerms)
 
 		addRUFormulaTerm(&wruTerms, "replica_weighted_write_rpc_count", inputs.ReplicaWeightedWriteRPCCount,
 			"WRITE_BASE_COST", factors.WriteBaseCost)
@@ -966,9 +966,13 @@ func FormatRUCalculationDetail(ruDetails *tikvutil.RUDetails) string {
 			"WRITE_BASE_COST", factors.WriteBaseCost)
 		addNegativeRUFormulaTerm(&wruTerms, "failed_write_bytes", inputs.FailedWriteBytes,
 			"WRITE_BYTES_COST", factors.WriteBytesCost)
-		wru = calculation.WRU()
+		formulaWRU := sumRUFormulaTerms(wruTerms)
+		if !sameDisplayedRUValue(formulaRRU, calculation.RRU) || !sameDisplayedRUValue(formulaWRU, calculation.WRU) {
+			return ""
+		}
+		rru, wru = calculation.RRU, calculation.WRU
 	}
-	if !sameRUValue(rru+wru, ruDetails.RRU()+ruDetails.WRU()-tiflashRU) {
+	if !sameDisplayedRUValue(rru+wru, ruDetails.RRU()+ruDetails.WRU()-tiflashRU) {
 		return ""
 	}
 
@@ -1000,16 +1004,19 @@ func FormatRUCalculationDetail(ruDetails *tikvutil.RUDetails) string {
 }
 
 type ruFormulaTerm struct {
-	text     string
-	negative bool
+	text         string
+	contribution float64
+	negative     bool
 }
 
 func addRUFormulaTerm(terms *[]ruFormulaTerm, inputName string, input float64, factorName string, factor float64) {
 	if input == 0 || factor == 0 {
 		return
 	}
-	*terms = append(*terms, ruFormulaTerm{text: fmt.Sprintf("%s(%s)*%s(%s)",
-		inputName, formatRUFormulaValue(input), factorName, formatRUFormulaValue(factor))})
+	*terms = append(*terms, ruFormulaTerm{
+		text:         fmt.Sprintf("%s(%s)*%s(%s)", inputName, formatRUFormulaValue(input), factorName, formatRUFormulaValue(factor)),
+		contribution: input * factor,
+	})
 }
 
 func addRUFormulaTermWithRatio(
@@ -1024,9 +1031,12 @@ func addRUFormulaTermWithRatio(
 	if input == 0 || factor == 0 || ratio == 0 {
 		return
 	}
-	*terms = append(*terms, ruFormulaTerm{text: fmt.Sprintf("%s(%s)*%s(%s)*%s(%s)",
-		inputName, formatRUFormulaValue(input), factorName, formatRUFormulaValue(factor),
-		ratioName, formatRUFormulaValue(ratio))})
+	*terms = append(*terms, ruFormulaTerm{
+		text: fmt.Sprintf("%s(%s)*%s(%s)*%s(%s)",
+			inputName, formatRUFormulaValue(input), factorName, formatRUFormulaValue(factor),
+			ratioName, formatRUFormulaValue(ratio)),
+		contribution: input * factor * ratio,
+	})
 }
 
 func addNegativeRUFormulaTerm(terms *[]ruFormulaTerm, inputName string, input float64, factorName string, factor float64) {
@@ -1034,9 +1044,18 @@ func addNegativeRUFormulaTerm(terms *[]ruFormulaTerm, inputName string, input fl
 		return
 	}
 	*terms = append(*terms, ruFormulaTerm{
-		text:     fmt.Sprintf("%s(%s)*%s(%s)", inputName, formatRUFormulaValue(input), factorName, formatRUFormulaValue(factor)),
-		negative: true,
+		text:         fmt.Sprintf("%s(%s)*%s(%s)", inputName, formatRUFormulaValue(input), factorName, formatRUFormulaValue(factor)),
+		contribution: -input * factor,
+		negative:     true,
 	})
+}
+
+func sumRUFormulaTerms(terms []ruFormulaTerm) float64 {
+	var total float64
+	for _, term := range terms {
+		total += term.contribution
+	}
+	return total
 }
 
 func formatRUFormulaTerms(terms []ruFormulaTerm) string {
@@ -1068,9 +1087,8 @@ func roundRUFormulaResult(value float64) float64 {
 	return rounded
 }
 
-func sameRUValue(left, right float64) bool {
-	tolerance := 1e-9 * math.Max(1, math.Max(math.Abs(left), math.Abs(right)))
-	return math.Abs(left-right) <= tolerance
+func sameDisplayedRUValue(left, right float64) bool {
+	return formatRUFormulaResult(left) == formatRUFormulaResult(right)
 }
 
 // FormatRUV2Summary formats the RUv2 total and detailed metrics in one pass.

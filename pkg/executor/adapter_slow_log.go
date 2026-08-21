@@ -21,7 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
@@ -29,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
-	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/zap"
 )
 
@@ -268,9 +266,10 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.ResourceGroupName = stmtCtx.ResourceGroupName
 	items.RUDetails = ruDetails
 	items.RUV2Metrics = ruv2Metrics
-	items.RUVersion = rmclient.DefaultRUVersion
-	if dom := domain.GetDomain(a.Ctx); dom != nil {
-		items.RUVersion = dom.GetRUVersion()
+	var ok bool
+	items.RUVersion, ok = execdetails.StatementRUVersionFromContext(a.GoCtx)
+	if !ok {
+		items.RUVersion = currentRUVersion(a.Ctx)
 	}
 	items.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	items.StorageKV = stmtCtx.IsTiKV.Load()

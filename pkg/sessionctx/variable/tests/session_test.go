@@ -457,7 +457,12 @@ func TestSlowLogFormat(t *testing.T) {
 	execStmt.GoCtx = childCtx
 	require.NoError(t, err)
 
+	// The statement snapshot must win over the current domain version. This
+	// keeps EXPLAIN ANALYZE and the slow log on the same RU model even if the
+	// cluster setting changes while the statement is running.
+	execdetails.SetStatementRUVersion(childCtx, rmclient.RUVersionV2)
 	executor.SetSlowLogItems(execStmt, txnTS, logItems.HasMoreResults, actual)
+	logItems.RUVersion = rmclient.RUVersionV2
 	logItems.RUV2Metrics = seVar.RUV2Metrics.Clone()
 	compareSlowLogItems(t, logItems, actual)
 }
@@ -489,6 +494,7 @@ func TestSlowLogFormatIncludesTiFlashRUInRUV2Metrics(t *testing.T) {
 		details.AddRUCalculation(rmclient.RUCalculation{
 			Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1.5},
 			Inputs:  rmclient.RUCalculationInputs{ReadRPCCount: 1},
+			RRU:     1.5,
 		})
 		v1Items := &variable.SlowQueryLogItems{
 			SQL:         "select 1",

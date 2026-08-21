@@ -178,6 +178,7 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		ruDetails.AddRUCalculation(rmclient.RUCalculation{
 			Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1.5},
 			Inputs:  rmclient.RUCalculationInputs{ReadRPCCount: 1},
+			RRU:     1.5,
 		})
 
 		analyzeExec := &mockEmptyOperator{
@@ -216,6 +217,7 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 
 		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		execdetails.SetStatementRUVersion(goCtx, rmclient.RUVersionV2)
 		ctx.GetSessionVars().RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
 		require.NotNil(t, ctx.GetSessionVars().RUV2Metrics)
 
@@ -250,6 +252,7 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 			}
 		}
 		require.NotNil(t, ruStats)
+		require.Equal(t, rmclient.RUVersionV2, ruStats.RUVersion)
 		require.Equal(t, int64(2), ruStats.Metrics.ResourceManagerReadCnt())
 		require.Equal(t, int64(3), ruStats.Metrics.ResourceManagerWriteCnt())
 	})
