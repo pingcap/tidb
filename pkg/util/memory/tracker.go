@@ -964,9 +964,10 @@ const (
 
 type memArbitrator struct {
 	*MemArbitrator
-	ctx    *ArbitrationContext
-	killer *sqlkiller.SQLKiller
-	budget struct {
+	ctx     *ArbitrationContext
+	killer  *sqlkiller.SQLKiller
+	maxUsed *atomicutil.Int64
+	budget  struct {
 		smallB *TrackedConcurrentBudget
 		mu     struct {
 			bigB      ConcurrentBudget // bigB.Used (aks growThreshold): threshold to pull from upstream (95% * bigB.Capacity)
@@ -1146,8 +1147,8 @@ func (m *memArbitrator) intoBigBudget() bool {
 
 	m.state.Store(memArbitratorStateIntoBigBudget)
 
-	if maxMemHint := max(m.prevMaxMem, smallUsed); maxMemHint > m.buffer.size.Load() {
-		m.tryToUpdateBuffer(maxMemHint, m.approxUnixTimeSec())
+	if maxMemHint := max(m.prevMaxMem, smallUsed); maxMemHint > 0 {
+		m.updateBuffer(maxMemHint)
 	}
 
 	{
@@ -1263,7 +1264,7 @@ func (m *memArbitrator) reset(exception bool, maxConsumed int64) bool {
 		globalArbitrator.metrics.pools.internal.Add(-1)
 	}
 
-	if !exception && m.digestID != InvalidDigestID {
+	if m.digestID != InvalidDigestID {
 		m.UpdateDigestProfileCache(m.digestID, maxConsumed, m.approxUnixTimeSec())
 	}
 
@@ -1309,12 +1310,14 @@ func (t *Tracker) InitMemArbitrator(
 		MemArbitrator: g,
 		uid:           uid,
 		killer:        killer,
+		maxUsed:       &t.maxConsumed,
 		digestID:      digestID,
 		reserveSize:   explicitReserveSize,
 		isInternal:    isInternal,
 	}
 	t.MemArbitrator = m
 	m.ctx = NewArbitrationContext(
+		m.digestID,
 		m,
 		memPriority,
 		waitAverse,
@@ -1362,9 +1365,17 @@ func (m *memArbitrator) Stop(reason ArbitratorStopReason) bool {
 	return true
 }
 
-func (m *memArbitrator) HeapInuse() int64 {
+func (m *memArbitrator) MemUsage() (res MemUsage) {
 	if m.useBigBudget() {
-		return m.bigBudgetUsed()
+		used := m.bigBudgetUsed()
+		return MemUsage{
+			RootPoolUsed: used,
+			HeapInuse:    used,
+			MaxHeapUsed:  max(m.maxUsed.Load(), m.prevMaxMem),
+		}
 	}
-	return 0
+	return MemUsage{
+		HeapInuse:   max(m.smallBudgetUsed(), m.bigBudgetUsed()),
+		MaxHeapUsed: max(m.maxUsed.Load(), m.prevMaxMem),
+	}
 }

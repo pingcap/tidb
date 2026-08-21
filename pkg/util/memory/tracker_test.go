@@ -626,6 +626,14 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			require.Equal(t, *m, src)
 		}
 		{
+			backupPath := r.filePath + ".backup"
+			require.NoError(t, os.Rename(r.filePath, backupPath))
+			m, err := r.Load()
+			require.NoError(t, err)
+			require.Nil(t, m)
+			require.NoError(t, os.Rename(backupPath, r.filePath))
+		}
+		{
 			f, err := os.OpenFile(r.filePath, os.O_WRONLY, 0666)
 			require.NoError(t, err)
 			_, err = f.Write([]byte("??????"))
@@ -636,6 +644,16 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			m, err := r.Load()
 			require.Error(t, err)
 			require.True(t, m == nil)
+		}
+		{
+			failureRecorder := newMemStateRecorder(t.TempDir())
+			require.NoError(t, os.Mkdir(failureRecorder.filePath, 0750))
+			require.Error(t, failureRecorder.Store(&src))
+			entries, err := os.ReadDir(failureRecorder.baseDir)
+			require.NoError(t, err)
+			for _, entry := range entries {
+				require.False(t, strings.HasPrefix(entry.Name(), ".mem-state.") && strings.HasSuffix(entry.Name(), ".tmp"))
+			}
 		}
 	}
 	{ // test implicitly start global mem arbitrator
@@ -754,12 +772,16 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		require.True(t, globalArbitrator.metrics.pools.big.Load() == 0)
 		require.True(t, globalArbitrator.metrics.pools.internalSession.Load() == 1)
 		require.True(t, globalArbitrator.metrics.pools.internal.Load() == 0)
+		digestID := buildDigestIDForTest("test sql 1")
+		profile, profileFound := m.GetDigestProfileCache(digestID, m.approxUnixTimeSec())
+		require.True(t, profileFound)
+		require.Equal(t, t1.MaxConsumed(), profile)
 		t2.Detach()
 
 		InitTracker(t1, 1, -1, &actionWithPriority{}) // reuse the stmt tracker
 		t1.AttachTo(t0)
 		require.True(t,
-			t1.InitMemArbitrator(m, t0.Killer, buildDigestIDForTest("test sql 1"), ArbitrationPriorityHigh, false, 0, false))
+			t1.InitMemArbitrator(m, t0.Killer, InvalidDigestID, ArbitrationPriorityHigh, false, 0, false))
 		require.True(t, globalArbitrator.metrics.pools.big.Load() == 0)
 		require.True(t, globalArbitrator.metrics.pools.small.Load() == 1)
 		require.True(t, globalArbitrator.metrics.pools.internalSession.Load() == 1)
@@ -822,7 +844,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			tx.InitMemArbitrator(m, tx.Killer, buildDigestIDForTest("test sql 1"), ArbitrationPriorityHigh, false, 0, false))
 		require.True(t, tx.MemArbitrator.useBigBudget())
 		require.True(t, tx.MemArbitrator.reserveSize == 0)
-		require.Equal(t, t1.MaxConsumed(), tx.MemArbitrator.prevMaxMem)
+		require.Equal(t, profile, tx.MemArbitrator.prevMaxMem)
 		tx.Detach()
 		require.True(t, RemovePoolFromGlobalMemArbitrator(tx.MemArbitrator.uid))
 		require.True(t, m.digestProfileCache.num.Load() == 2)

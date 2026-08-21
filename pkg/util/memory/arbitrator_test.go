@@ -213,21 +213,27 @@ func newMemArbitratorForTest(shardCount uint64, limit int64) (m *MemArbitrator) 
 }
 
 type arbitrateHelperForTest struct {
-	cancelCh   chan struct{}
-	killCB     func()
-	heapUsedCB func() int64
-	cancelCB   func()
+	cancelCh      chan struct{}
+	killCB        func()
+	heapUsedCB    func() int64
+	maxHeapUsedCB func() int64
+	cancelCB      func()
 }
 
 func (t *arbitrateHelperForTest) cancelSelf() {
 	close(t.cancelCh)
 }
 
-func (t *arbitrateHelperForTest) HeapInuse() int64 {
+func (t *arbitrateHelperForTest) MemUsage() MemUsage {
 	if t.heapUsedCB != nil {
-		return t.heapUsedCB()
+		used := t.heapUsedCB()
+		maxHeapUsed := used
+		if t.maxHeapUsedCB != nil {
+			maxHeapUsed = t.maxHeapUsedCB()
+		}
+		return MemUsage{RootPoolUsed: used, HeapInuse: used, MaxHeapUsed: maxHeapUsed}
 	}
-	return 0
+	return MemUsage{}
 }
 
 func (t *arbitrateHelperForTest) Finish() {
@@ -371,7 +377,7 @@ func (m *MemArbitrator) tasksCountForTest() (sz int64) {
 }
 
 func newCtxForTest(h ArbitrateHelper, memPriority ArbitrationPriority, waitAverse bool, preferPrivilege bool) *ArbitrationContext {
-	return NewArbitrationContext(h, memPriority, waitAverse, preferPrivilege)
+	return NewArbitrationContext(1, h, memPriority, waitAverse, preferPrivilege)
 }
 
 func newDefCtxForTest(memPriority ArbitrationPriority) *ArbitrationContext {
@@ -397,7 +403,8 @@ func (m *MemArbitrator) newCtxWithHelperForTest(memPriority ArbitrationPriority,
 func (m *MemArbitrator) resetExecMetricsForTest() {
 	m.execMetrics = execMetricsCounter{}
 	m.execMu.blockedState = blockedState{}
-	m.buffer = buffer{}
+	m.buffer.Store(0)
+	m.digestProfileCache.top3.restore(top3DigestDataGroup{})
 	m.resetDigestProfileCache(uint64(len(m.digestProfileCache.shards)))
 	m.resetStatistics()
 	m.mu.lastGC = m.mu.released
@@ -471,6 +478,265 @@ func (m *memStateRecorderForTest) Load() (*RuntimeMemStateV1, error) {
 
 func (m *memStateRecorderForTest) Store(state *RuntimeMemStateV1) error {
 	return m.store(state)
+}
+
+func TestTop3Digest(t *testing.T) {
+	const now = int64(200000)
+
+	t.Run("update keeps the largest three profiles ordered", func(t *testing.T) {
+		var group top3DigestDataGroup
+		group.update(1, 30, now)
+		group.update(2, 10, now+1)
+		group.update(3, 20, now+2)
+		require.Equal(t, top3DigestDataGroup{
+			{DigestID: 1, Size: 30, UtimeSec: now},
+			{DigestID: 3, Size: 20, UtimeSec: now + 2},
+			{DigestID: 2, Size: 10, UtimeSec: now + 1},
+		}, group)
+
+		group.update(4, 40, now+3)
+		require.Equal(t, top3DigestDataGroup{
+			{DigestID: 4, Size: 40, UtimeSec: now + 3},
+			{DigestID: 1, Size: 30, UtimeSec: now},
+			{DigestID: 3, Size: 20, UtimeSec: now + 2},
+		}, group)
+
+		group.update(3, 50, now+4)
+		group.update(1, 45, now+5)
+		require.Equal(t, top3DigestDataGroup{
+			{DigestID: 3, Size: 50, UtimeSec: now + 4},
+			{DigestID: 1, Size: 45, UtimeSec: now + 5},
+			{DigestID: 4, Size: 40, UtimeSec: now + 3},
+		}, group)
+
+		group.update(InvalidDigestID, 100, now+6)
+		require.Equal(t, top3DigestDataGroup{
+			{DigestID: 3, Size: 50, UtimeSec: now + 4},
+			{DigestID: 1, Size: 45, UtimeSec: now + 5},
+			{DigestID: 4, Size: 40, UtimeSec: now + 3},
+		}, group)
+	})
+
+	t.Run("clean removes profiles older than one day", func(t *testing.T) {
+		group := top3DigestDataGroup{
+			{DigestID: 1, Size: 30, UtimeSec: now - 24*60*60 - 1},
+			{DigestID: 2, Size: 20, UtimeSec: now - 24*60*60},
+			{DigestID: 3, Size: 10, UtimeSec: now},
+		}
+		require.Equal(t, top3DigestDataGroup{
+			{DigestID: 2, Size: 20, UtimeSec: now - 24*60*60},
+			{DigestID: 3, Size: 10, UtimeSec: now},
+		}, group.clean(now))
+	})
+
+	t.Run("merge publishes the combined top three", func(t *testing.T) {
+		var top3 top3Digest
+		top3.merge(top3DigestDataGroup{{DigestID: 1, Size: 100, UtimeSec: now}}, now)
+		top3.merge(top3DigestDataGroup{
+			{DigestID: 2, Size: 200, UtimeSec: now},
+			{DigestID: 3, Size: 150, UtimeSec: now},
+		}, now)
+		snapshot := top3.snapshot()
+		require.Equal(t, top3DigestDataGroup{
+			{DigestID: 2, Size: 200, UtimeSec: now},
+			{DigestID: 3, Size: 150, UtimeSec: now},
+			{DigestID: 1, Size: 100, UtimeSec: now},
+		}, snapshot.data)
+	})
+
+	t.Run("published snapshots stay immutable", func(t *testing.T) {
+		var top3 top3Digest
+		require.True(t, top3.merge(top3DigestDataGroup{{DigestID: 1, Size: 100, UtimeSec: now}}, now))
+		first := top3.snapshot()
+		require.True(t, top3.merge(top3DigestDataGroup{{DigestID: 2, Size: 200, UtimeSec: now}}, now))
+		second := top3.snapshot()
+
+		require.Equal(t, top3DigestDataGroup{{DigestID: 1, Size: 100, UtimeSec: now}}, first.data)
+		require.Equal(t, uint64(1), first.version)
+		require.Equal(t, top3DigestDataGroup{
+			{DigestID: 2, Size: 200, UtimeSec: now},
+			{DigestID: 1, Size: 100, UtimeSec: now},
+		}, second.data)
+		require.Equal(t, uint64(2), second.version)
+	})
+
+	t.Run("merge and snapshot can run concurrently", func(t *testing.T) {
+		var top3 top3Digest
+		var wg sync.WaitGroup
+		for i := range 4 {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				for j := range 128 {
+					top3.merge(top3DigestDataGroup{{
+						DigestID: uint64(i + 1),
+						Size:     int64((i + 1) * (j + 1)),
+						UtimeSec: now + int64(j),
+					}}, now+int64(j))
+				}
+			}(i)
+		}
+		for range 4 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for range 128 {
+					top3.snapshot()
+				}
+			}()
+		}
+		wg.Wait()
+
+		require.NotZero(t, top3.snapshot().version)
+	})
+}
+
+func TestTopNProfilesPersistence(t *testing.T) {
+	const now = int64(200000)
+	expected := [3]Top3DigestData{
+		{DigestID: 1, Size: 300, UtimeSec: now},
+		{DigestID: 2, Size: 200, UtimeSec: now},
+		{DigestID: 3, Size: 100, UtimeSec: now},
+	}
+
+	var stored *RuntimeMemStateV1
+	m := NewMemArbitrator(-1, 1, 3, 0, &memStateRecorderForTest{
+		load: func() (*RuntimeMemStateV1, error) {
+			return nil, nil
+		},
+		store: func(state *RuntimeMemStateV1) error {
+			copy := *state
+			stored = &copy
+			return nil
+		},
+	})
+	m.doSetMemMagnif(1200)
+	m.digestProfileCache.top3.merge(expected, now)
+	m.poolAllocStats.mediumQuota.Store(4096)
+	require.True(t, m.tryStorePoolMediumCapacity(now*1000))
+	require.NotNil(t, stored)
+	require.Equal(t, expected, stored.TopNProfiles)
+	require.Equal(t, int64(1200), stored.Magnif)
+
+	persisted := *stored
+	m = NewMemArbitrator(-1, 1, 3, 0, &memStateRecorderForTest{
+		load: func() (*RuntimeMemStateV1, error) {
+			return &persisted, nil
+		},
+		store: func(*RuntimeMemStateV1) error {
+			return nil
+		},
+	})
+	require.Equal(t, persisted, *m.lastMemState())
+	require.Equal(t, top3DigestDataGroup(expected), m.digestProfileCache.top3.snapshot().data)
+	for _, profile := range expected {
+		value, ok := m.GetDigestProfileCache(profile.DigestID, now)
+		require.True(t, ok)
+		require.Equal(t, profile.Size, value)
+	}
+
+	t.Run("periodic top3 updates persist without other memory events", func(t *testing.T) {
+		storeCount := 0
+		var stored *RuntimeMemStateV1
+		m := NewMemArbitrator(-1, 1, 3, 0, &memStateRecorderForTest{
+			load: func() (*RuntimeMemStateV1, error) {
+				return nil, nil
+			},
+			store: func(state *RuntimeMemStateV1) error {
+				storeCount++
+				copy := *state
+				stored = &copy
+				return nil
+			},
+		})
+		m.digestProfileCache.top3.merge(expected, now)
+
+		require.True(t, m.executeTick(defTickDurMilli*30))
+		require.Equal(t, 1, storeCount)
+		require.Equal(t, expected, stored.TopNProfiles)
+
+		require.True(t, m.executeTick(defTickDurMilli*31))
+		require.Equal(t, 1, storeCount)
+	})
+
+	t.Run("failed top3 persistence retries on the next tick", func(t *testing.T) {
+		storeCount := 0
+		m := NewMemArbitrator(-1, 1, 3, 0, &memStateRecorderForTest{
+			load: func() (*RuntimeMemStateV1, error) {
+				return nil, nil
+			},
+			store: func(*RuntimeMemStateV1) error {
+				storeCount++
+				if storeCount == 1 {
+					return errors.New("store failed")
+				}
+				return nil
+			},
+		})
+		m.digestProfileCache.top3.merge(expected, now)
+
+		require.True(t, m.executeTick(defTickDurMilli*30))
+		require.Equal(t, 1, storeCount)
+		require.Nil(t, m.lastMemState())
+
+		require.True(t, m.executeTick(defTickDurMilli*60))
+		require.Equal(t, 2, storeCount)
+		require.NotNil(t, m.lastMemState())
+
+		// executeTick uses a simulated time, while successful persistence records the
+		// wall clock. Keep the shared timestamp on the simulated timeline here.
+		m.heapController.memStateRecorder.lastRecordUtimeMilli.Store(defTickDurMilli * 60)
+
+		require.True(t, m.digestProfileCache.top3.merge(
+			top3DigestDataGroup{{DigestID: 4, Size: 400, UtimeSec: now + 1}}, now+1))
+		require.True(t, m.executeTick(defTickDurMilli*90))
+		require.Equal(t, 3, storeCount)
+		require.Equal(t, uint64(4), m.lastMemState().TopNProfiles[0].DigestID)
+	})
+
+	t.Run("failed runtime persistence retries top3 profiles", func(t *testing.T) {
+		storeCount := 0
+		m := NewMemArbitrator(-1, 1, 3, 0, &memStateRecorderForTest{
+			load: func() (*RuntimeMemStateV1, error) {
+				return nil, nil
+			},
+			store: func(*RuntimeMemStateV1) error {
+				storeCount++
+				if storeCount == 1 {
+					return errors.New("store failed")
+				}
+				return nil
+			},
+		})
+		risk := LastRisk{HeapAlloc: 900, QuotaAlloc: 100}
+		require.Error(t, m.persistRuntimeMemState("oom risk", func(s *RuntimeMemStateV1) {
+			s.LastRisk = risk
+		}))
+		require.Nil(t, m.lastMemState())
+
+		state := m.buildRuntimeMemState()
+		require.Zero(t, state.LastRisk)
+		require.True(t, m.tryPersistTopNProfiles(defTickDurMilli+defStoreTopNProfilesDurMilli))
+		require.Equal(t, 2, storeCount)
+	})
+
+	t.Run("top3 version is not persisted", func(t *testing.T) {
+		recorder := newMemStateRecorder(t.TempDir())
+		src := RuntimeMemStateV1{
+			Version:       1,
+			LastRisk:      LastRisk{HeapAlloc: 2, QuotaAlloc: 3},
+			Magnif:        4,
+			PoolMediumCap: 5,
+			top3Version:   6,
+		}
+		require.NoError(t, recorder.Store(&src))
+
+		actual, err := recorder.Load()
+		require.NoError(t, err)
+		expected := src
+		expected.top3Version = 0
+		require.Equal(t, expected, *actual)
+	})
 }
 
 func (m *MemArbitrator) cleanDigestProfileForTest() {
@@ -1115,6 +1381,23 @@ func TestMemArbitrator(t *testing.T) {
 
 	testState = t
 
+	{
+		digestID := buildDigestIDForTest("persisted profile")
+		m := NewMemArbitrator(-1, 1, 3, 0, &memStateRecorderForTest{
+			load: func() (*RuntimeMemStateV1, error) {
+				return &RuntimeMemStateV1{
+					TopNProfiles: [3]Top3DigestData{{DigestID: digestID, Size: 1024, UtimeSec: 100}},
+				}, nil
+			},
+			store: func(*RuntimeMemStateV1) error {
+				return nil
+			},
+		})
+		profile, ok := m.GetDigestProfileCache(digestID, 100)
+		require.True(t, ok)
+		require.Equal(t, int64(1024), profile)
+	}
+
 	type MockHeap [4]int64 // alloc, heapInuse, totalAlloc, others
 	type MockLogs struct {
 		info, warn, error int
@@ -1551,7 +1834,7 @@ func TestMemArbitrator(t *testing.T) {
 		}
 
 		require.Equal(t, m.avoidance.heapTracked.Load(), usedHeap)
-		require.True(t, m.buffer.size.Load() == 0)
+		require.True(t, m.bufferSize() == 0)
 		require.True(t, m.avoidance.size.Load() == 0)
 
 		e1Men := int64(13)
@@ -1566,7 +1849,7 @@ func TestMemArbitrator(t *testing.T) {
 		m.updateTrackedHeapStats()
 		usedHeap += e1Men
 		require.Equal(t, m.avoidance.heapTracked.Load(), usedHeap)
-		require.True(t, m.buffer.size.Load() == e1Men)
+		require.True(t, m.bufferSize() == e1Men)
 		require.True(t, m.avoidance.size.Load() == 0)
 
 		free := int64(1024)
@@ -1577,15 +1860,15 @@ func TestMemArbitrator(t *testing.T) {
 		require.True(t, m.heapController.heapTotalFree.Load() == free-1)
 		require.True(t, m.heapController.memInuse.Load() == usedHeap+100+67)
 		require.Equal(t, m.avoidance.heapTracked.Load(), usedHeap)
-		require.True(t, m.buffer.size.Load() == 13) // no update
+		require.True(t, m.bufferSize() == 13) // no update
 		require.True(t, m.avoidance.size.Load() == m.heapController.heapAlloc.Load()+m.heapController.memOffHeap.Load()-m.avoidance.heapTracked.Load())
 		require.True(t, m.avoidance.size.Load() > m.mu.limit-m.mu.softLimit.size)
 
 		m.updateTrackedHeapStats()
-		require.True(t, m.buffer.size.Load() == e1Men)
+		require.True(t, m.bufferSize() == e1Men)
 		e1Men = 3
 		m.updateTrackedHeapStats()
-		require.True(t, m.buffer.size.Load() == 17) // no update to smaller size
+		require.True(t, m.bufferSize() == e1Men)
 
 		now := time.Now()
 		for i := range m.awaitFree.budget.shards {
@@ -1638,28 +1921,19 @@ func TestMemArbitrator(t *testing.T) {
 		require.True(t, m.allocated() == 0)
 	}
 
-	{ // test calc buffer
+	{ // test buffer
 		m.resetExecMetricsForTest()
-		m.tryToUpdateBuffer(2, defUpdateBufferTimeAlignSec)
-		require.Equal(t, m.buffer.size.Load(), int64(2))
+		m.updateBuffer(2)
+		require.Equal(t, int64(2), m.bufferSize())
 
-		m.tryToUpdateBuffer(1, defUpdateBufferTimeAlignSec)
-		require.Equal(t, m.buffer.size.Load(), int64(2))
+		m.updateBuffer(1)
+		require.Equal(t, int64(2), m.bufferSize())
 
-		m.tryToUpdateBuffer(4, defUpdateBufferTimeAlignSec)
-		require.Equal(t, m.buffer.size.Load(), int64(4))
+		m.updateBuffer(4)
+		require.Equal(t, int64(4), m.bufferSize())
 
-		m.tryToUpdateBuffer(1, defUpdateBufferTimeAlignSec)
-		require.Equal(t, m.buffer.size.Load(), int64(4))
-
-		m.tryToUpdateBuffer(1, defUpdateBufferTimeAlignSec*(defRedundancy))
-		require.Equal(t, m.buffer.size.Load(), int64(4))
-
-		m.tryToUpdateBuffer(3, defUpdateBufferTimeAlignSec*(defRedundancy+1))
-		require.Equal(t, m.buffer.size.Load(), int64(3))
-
-		m.tryToUpdateBuffer(1, defUpdateBufferTimeAlignSec*(defRedundancy+1))
-		require.Equal(t, m.buffer.size.Load(), int64(3))
+		m.updateBuffer(1)
+		require.Equal(t, int64(4), m.bufferSize())
 
 		m.setBufferSize(0)
 
@@ -1714,13 +1988,13 @@ func TestMemArbitrator(t *testing.T) {
 			require.True(t, f)
 			require.True(t, v.(*digestProfile).lastFetchUtimeSec.Load() == 3)
 		}
-		m.UpdateDigestProfileCache(digestID1, 107, defUpdateBufferTimeAlignSec)
+		m.UpdateDigestProfileCache(digestID1, 107, defUpdateDigestTimeAlignSec)
 		{
 			a, ok := m.GetDigestProfileCache(digestID1, 4)
 			require.True(t, ok)
 			require.True(t, a == 1009)
 		}
-		m.UpdateDigestProfileCache(digestID1, 107, defUpdateBufferTimeAlignSec*2)
+		m.UpdateDigestProfileCache(digestID1, 107, defUpdateDigestTimeAlignSec*2)
 		{
 			a, ok := m.GetDigestProfileCache(digestID1, 4)
 			require.True(t, ok)
@@ -1781,7 +2055,7 @@ func TestMemArbitrator(t *testing.T) {
 		expectBufferSize := int64(-1)
 		gc := 0
 		m.actions.GC = func() {
-			require.True(t, m.buffer.size.Load() == expectBufferSize)
+			require.True(t, m.bufferSize() == expectBufferSize)
 			gc++
 		}
 		gcUT := now().UnixNano()
@@ -1799,8 +2073,11 @@ func TestMemArbitrator(t *testing.T) {
 		e1.ctx.Load().arbitrateHelper.(*arbitrateHelperForTest).heapUsedCB = func() int64 {
 			return e1MemUsed
 		}
+		e1.ctx.Load().arbitrateHelper.(*arbitrateHelperForTest).maxHeapUsedCB = func() int64 {
+			return max(buffer, e1MemUsed)
+		}
 		m.prepareAlloc(e1, alloc)
-		expectBufferSize = 100 // original buffer size
+		expectBufferSize = buffer
 		require.True(t, m.runOneRound() == 0)
 		require.True(t, m.execMetrics.Action.GC == 1)
 		require.True(t, gc == 1)
@@ -1849,12 +2126,12 @@ func TestMemArbitrator(t *testing.T) {
 		require.True(t, m.execMetrics.Action.GC == 3)
 		require.True(t, gc == 3)
 		require.True(t, m.avoidance.size.Load() == heap+3)
-		require.True(t, m.buffer.size.Load() == 100)
+		require.True(t, m.bufferSize() == buffer)
 
 		gcUT = now().UnixNano()
 		e1MemUsed = 150
 		m.mu.lastGC = m.mu.released - uint64(m.poolAllocStats.SmallPoolLimit)
-		require.True(t, e1MemUsed > m.buffer.size.Load())
+		require.True(t, e1MemUsed > m.bufferSize())
 		expectBufferSize = e1MemUsed
 		require.True(t, m.runOneRound() == 1)
 		require.True(t, m.waitAlloc(e1) == ArbitrateOk)
@@ -1986,14 +2263,9 @@ func TestMemArbitrator(t *testing.T) {
 			require.True(t, lastRiskMemState != nil)
 			require.Equal(t, RuntimeMemStateV1{
 				Version: 1,
-				LastRisk: LastRisk{
-					HeapAlloc:  multiRatio(newLimit, 900),
-					QuotaAlloc: 15000,
-				},
-				Magnif:        6100, // 90000 / 15000 + 0.1
-				PoolMediumCap: 0,
+				Magnif:  1111,
 			}, *lastRiskMemState)
-			require.True(t, m.avoidance.memMagnif.ratio.Load() == lastRiskMemState.Magnif)
+			require.Equal(t, int64(6100), m.memMagnif()) // 90000 / 15000 + 0.1
 			require.True(t, m.avoidance.heapTracked.Load() == 0)
 			require.True(t, m.avoidance.size.Load() == 95000) // heapinuse - 0
 			require.Equal(t, MockMetrcis{
@@ -2018,7 +2290,7 @@ func TestMemArbitrator(t *testing.T) {
 			require.True(t, m.heapController.memRisk.startTime.t.Equal(startTime))
 			require.True(t, m.heapController.memRisk.lastMemStats.startTime.Equal(startTime))
 			require.True(t, m.heapController.memRisk.lastMemStats.heapTotalFree == 500)
-			require.True(t, m.avoidance.memMagnif.ratio.Load() == lastRiskMemState.Magnif)
+			require.Equal(t, int64(6100), m.memMagnif())
 			require.True(t, *m.lastMemState() == lastRiskMemState)
 			require.Equal(t, expectMetrics, m.execMetrics)
 			require.Equal(t, MockMetrcis{
@@ -2051,7 +2323,7 @@ func TestMemArbitrator(t *testing.T) {
 			require.True(t, m.heapController.memRisk.startTime.t.Equal(startTime))
 			require.True(t, m.heapController.memRisk.lastMemStats.startTime.Equal(debugTime)) // update last mem stats
 			require.True(t, m.heapController.memRisk.lastMemStats.heapTotalFree == 500+2)
-			require.True(t, m.avoidance.memMagnif.ratio.Load() == lastRiskMemState.Magnif)
+			require.Equal(t, int64(6100), m.memMagnif())
 			require.True(t, *m.lastMemState() == lastRiskMemState)
 			require.Equal(t, MockMetrcis{
 				execMetricsCounter{Action: execMetricsAction{
@@ -2072,7 +2344,7 @@ func TestMemArbitrator(t *testing.T) {
 			require.True(t, m.runOneRound() == -2)
 			require.True(t, m.heapController.memRisk.lastMemStats.startTime.Equal(debugTime))
 			require.True(t, m.heapController.memRisk.lastMemStats.heapTotalFree == 500+4)
-			require.True(t, m.avoidance.memMagnif.ratio.Load() == lastRiskMemState.Magnif)
+			require.Equal(t, int64(6100), m.memMagnif())
 			require.True(t, *m.lastMemState() == lastRiskMemState)
 			require.Equal(t, MockMetrcis{
 				execMetricsCounter{Action: execMetricsAction{
@@ -2116,7 +2388,7 @@ func TestMemArbitrator(t *testing.T) {
 			require.True(t, memHangRisk(0, 0, time.Time{}.Add(defHeapReclaimCheckMaxDuration).Add(time.Nanosecond), time.Time{}))
 			require.True(t, m.heapController.memRisk.lastMemStats.startTime.Equal(debugTime))
 			require.True(t, m.heapController.memRisk.lastMemStats.heapTotalFree == 500+4+1)
-			require.True(t, m.avoidance.memMagnif.ratio.Load() == lastRiskMemState.Magnif)
+			require.Equal(t, int64(6100), m.memMagnif())
 			require.True(t, *m.lastMemState() == lastRiskMemState)
 			require.Equal(t, MockMetrcis{
 				execMetricsCounter{
@@ -2196,7 +2468,7 @@ func TestMemArbitrator(t *testing.T) {
 			require.True(t, m.avoidance.heapTracked.Load() == e1.arbitratorMu.quota+e3.arbitratorMu.quota)
 			require.Equal(t, execMetricsRisk{1, 4, NumByPriority{3, 0, 1}}, m.execMetrics.Risk)
 			require.Equal(t, map[uint64]int{e1.pool.uid: 1, e2.pool.uid: 1, e3.pool.uid: 1, e5.pool.uid: 1}, killEvent)
-			require.True(t, m.buffer.size.Load() == 9000)
+			require.True(t, m.bufferSize() == 9000)
 
 			m.removeEntryForTest(e1)
 			m.removeEntryForTest(e3)
@@ -2235,21 +2507,21 @@ func TestMemArbitrator(t *testing.T) {
 		debugTime = time.Unix(defUpdateMemMagnifUtimeAlign, 0)
 		m.setUnixTimeSec(debugTime.Unix())
 
-		m.tryToUpdateBuffer(23, m.approxUnixTimeSec())
-		require.True(t, m.buffer.size.Load() == 23)
+		m.setBufferSize(23)
+		require.True(t, m.bufferSize() == 23)
 		e1ctx := m.newCtxWithHelperForTest(ArbitrationPriorityMedium, NoWaitAverse, RequirePrivilege)
 		e1ctx.arbitrateHelper.(*arbitrateHelperForTest).heapUsedCB = func() int64 {
 			return 31
 		}
 		e1 := m.addEntryForTest(e1ctx)
 		m.updateTrackedHeapStats()
-		require.True(t, m.buffer.size.Load() == 31)
+		require.True(t, m.bufferSize() == 31)
 
 		m.ResetRootPoolByID(e1.pool.uid, 19, true) // tune
-		require.True(t, m.buffer.size.Load() == 31)
+		require.True(t, m.bufferSize() == 31)
 
 		m.ResetRootPoolByID(e1.pool.uid, 389, true) // tune
-		require.True(t, m.buffer.size.Load() == 389)
+		require.True(t, m.bufferSize() == 31)
 
 		logs := MockLogs{}
 
@@ -2299,12 +2571,13 @@ func TestMemArbitrator(t *testing.T) {
 		{ // new suggest pool cap
 			// last mem state is nil
 			ori := m.lastMemState()
+			m.heapController.memStateRecorder.lastRecordUtimeMilli.Store(0)
 			require.Equal(t,
-				RuntimeMemStateV1{Version: 1, LastRisk: LastRisk{HeapAlloc: 90000, QuotaAlloc: 15000}, Magnif: 6100, PoolMediumCap: 0},
+				RuntimeMemStateV1{Version: 1, Magnif: 1111},
 				*m.lastMemState())
 			require.True(t, m.avoidance.memMagnif.ratio.Load() == 6100)
 			require.True(t, m.poolMediumQuota() == 0)
-			require.True(t, m.poolAllocStats.lastUpdateUtimeMilli.Load() == 0)
+			require.True(t, m.heapController.memStateRecorder.lastRecordUtimeMilli.Load() == 0)
 			require.True(t, m.execMetrics.Action.RecordMemState.Succ == 0)
 
 			m.heapController.memStateRecorder.lastMemState.Store(nil)
@@ -2312,21 +2585,25 @@ func TestMemArbitrator(t *testing.T) {
 			require.True(t, m.execMetrics.Action.RecordMemState.Succ == 1)
 			require.True(t, logs.info == 1)
 			require.True(t, m.poolMediumQuota() == 400)
-			require.True(t, m.poolAllocStats.lastUpdateUtimeMilli.Load() == mockTimeLine.now)
+			m.heapController.memStateRecorder.lastRecordUtimeMilli.Store(mockTimeLine.now)
 			m.heapController.memStateRecorder.lastMemState.Store(ori)
 			ori.PoolMediumCap = m.poolMediumQuota()
 
 			// same value
-			require.False(t, m.tryStorePoolMediumCapacity(mockTimeLine.now+defTickDurMilli*10+1, 400))
+			require.False(t, m.tryStorePoolMediumCapacity(mockTimeLine.now+defStorePoolMediumCapDurMilli+1))
 			// time not satisfy
-			require.False(t, m.tryStorePoolMediumCapacity(mockTimeLine.now+defTickDurMilli*10-1, 399))
+			m.poolAllocStats.mediumQuota.Store(399)
+			require.False(t, m.tryStorePoolMediumCapacity(mockTimeLine.now+defStorePoolMediumCapDurMilli-1))
 			require.True(t, m.execMetrics.Action.RecordMemState.Succ == 1)
 			require.True(t, logs.info == 1)
 			// new suggest pool cap: last mem state is not nil & SuggestPoolInitCap not same
-			require.True(t, m.tryStorePoolMediumCapacity(mockTimeLine.now+defTickDurMilli*10, 401))
+			m.poolAllocStats.mediumQuota.Store(401)
+			require.True(t, m.tryStorePoolMediumCapacity(mockTimeLine.now+defStorePoolMediumCapDurMilli))
 			require.True(t, m.execMetrics.Action.RecordMemState.Succ == 2)
 			require.True(t, logs.info == 2)
 			require.True(t, m.lastMemState().PoolMediumCap == 401)
+			m.heapController.memStateRecorder.lastRecordUtimeMilli.Store(mockTimeLine.now + defStorePoolMediumCapDurMilli)
+			m.poolAllocStats.mediumQuota.Store(400)
 		}
 
 		{
@@ -2758,6 +3035,7 @@ func TestBench(t *testing.T) {
 				cancelEvent := 0
 				killed := false
 				ctx := NewArbitrationContext(
+					uint64(i+1),
 					&arbitrateHelperForTest{
 						cancelCh: cancelCh,
 						heapUsedCB: func() int64 {
@@ -2843,6 +3121,7 @@ func TestBench(t *testing.T) {
 				}
 
 				ctx := NewArbitrationContext(
+					uint64(i+1),
 					&arbitrateHelperForTest{
 						cancelCh: cancelCh,
 						heapUsedCB: func() int64 {
