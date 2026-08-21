@@ -1147,6 +1147,22 @@ impl PartitionBuildMode {
     }
 }
 
+/// The stored `LessThan` TEXT for one folded RANGE bound, which is what
+/// `SHOW CREATE TABLE` prints (Go `AppendPartitionDefs`,
+/// `ddl/partition.go:5204`).
+///
+/// Shared so that `ALTER TABLE ... ADD PARTITION` records the same text a
+/// `CREATE` would: the renderer reads these strings, and a definition that
+/// carries none has nothing to print.
+#[must_use]
+pub fn stored_range_bound_text(bound: RangeBound, unsigned: bool) -> String {
+    match bound {
+        RangeBound::MaxValue => PARTITION_MAX_VALUE.to_owned(),
+        RangeBound::Value(value) if unsigned => format!("{}", value as u64),
+        RangeBound::Value(value) => format!("{value}"),
+    }
+}
+
 /// Go `checkPartitionNameUnique` (1517), matched case-insensitively as
 /// partition names are.
 fn check_partition_name_unique(definitions: &[PartitionDef]) -> Result<(), DriverError> {
@@ -1733,13 +1749,10 @@ fn stored_definitions_for(
             // HASH and KEY definitions carry a name and nothing else.
             PartitionKind::Hash | PartitionKind::Key => {}
             PartitionKind::Range { less_than, unsigned } => {
-                entry.less_than = vec![match less_than.get(ordinal) {
-                    Some(RangeBound::MaxValue) | None => PARTITION_MAX_VALUE.to_owned(),
-                    Some(RangeBound::Value(value)) if *unsigned => {
-                        format!("{}", *value as u64)
-                    }
-                    Some(RangeBound::Value(value)) => format!("{value}"),
-                }];
+                entry.less_than = vec![stored_range_bound_text(
+                    less_than.get(ordinal).copied().unwrap_or(RangeBound::MaxValue),
+                    *unsigned,
+                )];
             }
             PartitionKind::RangeColumns {
                 less_than,

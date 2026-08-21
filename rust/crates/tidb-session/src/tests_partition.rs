@@ -2165,3 +2165,35 @@ fn an_empty_key_clause_prints_back_empty() {
         "an empty KEY clause prints back empty: {created}"
     );
 }
+
+/// `SHOW CREATE TABLE` prints a RANGE partition from the STORED bound text,
+/// as Go's `AppendPartitionDefs` does (`ddl/partition.go:5204`) -- including
+/// for a partition added by `ALTER`, which records the same text a `CREATE`
+/// would.
+///
+/// Both renderers now read stored text. Leaving RANGE on the folded bounds
+/// while LIST read stored text meant two sources for one question, which is
+/// how a partition added by `ALTER` came to print as a bare `DEFAULT` on the
+/// LIST side before it was populated.
+#[test]
+fn an_added_range_partition_prints_the_bound_it_was_given() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE ar (a int) PARTITION BY RANGE(a) \
+             (PARTITION p0 VALUES LESS THAN (10))",
+        )
+        .expect("a RANGE table is accepted");
+    session
+        .run("ALTER TABLE ar ADD PARTITION (PARTITION p1 VALUES LESS THAN (20))")
+        .expect("the partition is added");
+    let created = show_create(&mut session, "ar");
+    assert!(
+        created.contains("PARTITION `p1` VALUES LESS THAN (20)"),
+        "the added bound must survive SHOW CREATE: {created}"
+    );
+    assert!(
+        created.contains("PARTITION `p0` VALUES LESS THAN (10)"),
+        "and the original bound is unchanged: {created}"
+    );
+}

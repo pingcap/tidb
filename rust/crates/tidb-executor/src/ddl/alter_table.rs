@@ -671,7 +671,7 @@ fn add_partition_action(
                     }
                 }
                 PartitionKind::RangeColumns {
-                    less_than: added_bounds,
+                    less_than: added_bounds.clone(),
                     field_types: added_types,
                 }
             }
@@ -692,12 +692,25 @@ fn add_partition_action(
         PartitionKind::ListColumns { field_types, .. } => field_types.clone(),
         _ => Vec::new(),
     };
+    // The bound TEXT a RANGE addition prints, rendered from the folded bound
+    // by the SAME helper a CREATE uses, so the two cannot drift.
+    let range_bound_text = |ordinal: usize| match &added_kind {
+        PartitionKind::Range { less_than, unsigned } => less_than
+            .get(ordinal)
+            .map(|bound| {
+                vec![super::table_partition::stored_range_bound_text(
+                    *bound, *unsigned,
+                )]
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
     let mut added_definitions = Vec::with_capacity(definitions.len());
-    for definition in definitions {
+    for (ordinal, definition) in definitions.iter().enumerate() {
         added_definitions.push(PartitionDef {
             id: catalog.allocate_table_id(),
             name: definition.name.clone(),
-            less_than: Vec::new(),
+            less_than: range_bound_text(ordinal),
             in_values: super::table_partition::stored_in_values(
                 Some(definition),
                 &list_field_types,

@@ -422,11 +422,16 @@ pub fn range_definitions_text(
         if index > 0 {
             out.push_str(",\n ");
         }
-        let bound = match less_than.get(index) {
-            Some(RangeBound::MaxValue) | None => "MAXVALUE".to_owned(),
-            Some(RangeBound::Value(value)) if unsigned => format!("{}", *value as u64),
-            Some(RangeBound::Value(value)) => format!("{value}"),
-        };
+        // Go prints from the STORED `LessThan` text (`ddl/partition.go:5204`),
+        // which every path now records. The folded bound is the fallback for
+        // a definition that predates it rather than a second source of
+        // truth: the two are rendered by one helper.
+        let bound = definition.less_than.first().cloned().unwrap_or_else(|| {
+            super::table_partition::stored_range_bound_text(
+                less_than.get(index).copied().unwrap_or(RangeBound::MaxValue),
+                unsigned,
+            )
+        });
         out.push_str(&format!(
             "PARTITION `{}` VALUES LESS THAN ({bound}){}",
             definition.name,
