@@ -1598,19 +1598,23 @@ func FormatSQL(sql string) stringutil.StringerFunc {
 }
 
 func formatSQL(sql string) string {
+	return formatSQLWithReplacer(sql, QueryReplacer)
+}
+
+func formatSQLWithReplacer(sql string, replacer *strings.Replacer) string {
 	length := len(sql)
 	maxQueryLen := variable.QueryLogMaxLen.Load()
 	if maxQueryLen <= 0 {
-		return QueryReplacer.Replace(sql) // no limit
+		return replacer.Replace(sql) // no limit
 	}
 	if int32(length) > maxQueryLen {
 		var result strings.Builder
 		result.Grow(int(maxQueryLen))
 		result.WriteString(sql[:maxQueryLen])
 		fmt.Fprintf(&result, "(len:%d)", length)
-		return QueryReplacer.Replace(result.String())
+		return replacer.Replace(result.String())
 	}
-	return QueryReplacer.Replace(sql)
+	return replacer.Replace(sql)
 }
 
 func getPhaseDurationObserver(phase string, internal bool) prometheus.Observer {

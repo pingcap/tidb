@@ -244,7 +244,7 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.TxnTS = txnTS
 	items.KeyspaceName = keyspaceName
 	items.KeyspaceID = keyspaceID
-	items.SQL = FormatSQL(a.GetTextToLog(true)).String()
+	items.SQL = formatSlowLogSQL(a.GetTextToLog(true))
 	items.IndexNames = indexNames
 	items.Plan = getPlanTree(stmtCtx)
 	items.BinaryPlan = binaryPlan

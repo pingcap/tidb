@@ -3960,6 +3960,15 @@ var defaultSysVars = []*SysVar{
 			return strconv.Itoa(int(GlobalSlowLogRateLimiter.Limit())), nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBSlowLogEscapeNewline, Value: BoolToOnOff(DefTiDBSlowLogEscapeNewline), Type: TypeBool,
+		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+			SlowLogEscapeNewline.Store(TiDBOptOn(val))
+			return nil
+		},
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return BoolToOnOff(SlowLogEscapeNewline.Load()), nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableCachePrepareStmt, Value: BoolToOnOff(DefEnableCachePrepareStmt), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableCachePrepareStmt = TiDBOptOn(val)
 		return nil

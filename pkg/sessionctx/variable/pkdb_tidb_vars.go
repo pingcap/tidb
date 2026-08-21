@@ -29,6 +29,8 @@ const (
 	PKDBCommentByteLengthLimit = "pkdb_comment_byte_length_limit"
 	// TiDBEnableLBAC is used to enable or disable LBAC enforcement on TiDB.
 	TiDBEnableLBAC = "pkdb_lbac"
+	// TiDBSlowLogEscapeNewline controls whether slow logs escape SQL line breaks as literal `\n`.
+	TiDBSlowLogEscapeNewline = "tidb_slow_log_escape_newline"
 )
 
 // Default TiDB system variable values.
@@ -51,6 +53,7 @@ const (
 	DefPKDBCommentByteLengthLimit      = int64(0)
 
 	DefTiDBImportIntoPrecheckConcurrency = 8
+	DefTiDBSlowLogEscapeNewline          = false
 )
 
 // UnspecifiedServerID indicates the unspecified server id.
@@ -71,4 +74,5 @@ var (
 	EnableWhitelist            = atomic.NewBool(DefPKDBEnableWhitelist)
 	EnableEAL                  = atomic.NewBool(DefPKDBEnableEAL)
 	CommentByteLengthLimit     = atomic.NewInt64(DefPKDBCommentByteLengthLimit)
+	SlowLogEscapeNewline       = atomic.NewBool(DefTiDBSlowLogEscapeNewline)
 )
