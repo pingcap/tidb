@@ -15,8 +15,11 @@
 package rule
 
 import (
+	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -254,4 +257,122 @@ func TestUnsignedIntHandleIndexRangesDescScan(t *testing.T) {
 		Check(testkit.Rows("6", "5", "5", "5", "5", "5"))
 	tk.MustQuery("select b from t_uh use index(ia) where a = 5 and id > 25 order by a desc, b desc").
 		Check(testkit.Rows("8", "7", "6", "5", "4"))
+}
+
+// TestUnsignedIntHandleIndexRangesOnRangePartitionedTable covers a table partitioned on the
+// unsigned handle itself, so one predicate both prunes partitions and narrows the index
+// range. Partition p1 spans math.MaxInt64, which is where the stored handle order wraps, so
+// a range confined to that partition still has to be split. Both prune modes are exercised
+// because they reach the key ranges through different executor paths: dynamic pruning builds
+// them once per physical table id, static pruning builds a reader per partition.
+func TestUnsignedIntHandleIndexRangesOnRangePartitionedTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_uhr")
+	tk.MustExec(`CREATE TABLE t_uhr (
+		id BIGINT UNSIGNED PRIMARY KEY CLUSTERED,
+		a INT,
+		b INT,
+		KEY ia(a)
+	) PARTITION BY RANGE (id) (
+		PARTITION p0 VALUES LESS THAN (100),
+		PARTITION p1 VALUES LESS THAN (10000000000000000000),
+		PARTITION p2 VALUES LESS THAN (MAXVALUE)
+	)`)
+	tk.MustExec(`insert into t_uhr values
+		(7, 5, 1),
+		(11, 5, 2),
+		(22, 5, 3),
+		(30, 6, 9),
+		(9223372036854775800, 5, 4),
+		(9223372036854775807, 5, 5),
+		(9223372036854775808, 5, 6),
+		(9223372036854775810, 5, 7),
+		(18446744073709551615, 5, 8)`)
+
+	for _, pruneMode := range []string{"dynamic", "static"} {
+		t.Run(pruneMode, func(t *testing.T) {
+			tk.MustExec("set @@tidb_partition_prune_mode = '" + pruneMode + "'")
+
+			// A range that straddles the int64 boundary inside a single partition: the
+			// handle predicate prunes down to p1 and still narrows the index range there.
+			rows := tk.MustQuery(`explain format = 'plan_tree' select b from t_uhr use index(ia)
+				where a = 5 and id between 9223372036854775800 and 9223372036854775810`).Rows()
+			require.True(t, explainHas(rows, "range:[5 9223372036854775800,5 9223372036854775810]"),
+				"the handle predicate must reach the index range")
+			require.True(t, explainHas(rows, "partition:p1"), "the handle predicate must prune partitions")
+			tk.MustQuery(`select b from t_uhr use index(ia)
+				where a = 5 and id between 9223372036854775800 and 9223372036854775810 order by b`).
+				Check(testkit.Rows("4", "5", "6", "7"))
+
+			// Spanning every partition, and the boundary with it.
+			tk.MustQuery("select b from t_uhr use index(ia) where a = 5 and id > 10 order by b").
+				Check(testkit.Rows("2", "3", "4", "5", "6", "7", "8"))
+
+			// Entirely above the boundary, so every handle is stored as a negative int64.
+			tk.MustQuery("select b from t_uhr use index(ia) where a = 5 and id >= 9223372036854775808 order by b").
+				Check(testkit.Rows("6", "7", "8"))
+			tk.MustQuery("select b from t_uhr use index(ia) where a = 5 and id = 18446744073709551615").
+				Check(testkit.Rows("8"))
+
+			// Confined to the partition below the boundary, over two index prefixes.
+			tk.MustQuery("select b from t_uhr use index(ia) where a in (5, 6) and id < 100 order by a, b").
+				Check(testkit.Rows("1", "2", "3", "9"))
+		})
+	}
+	tk.MustExec("set @@tidb_partition_prune_mode = default")
+}
+
+// TestUnsignedIntHandleIndexRangesOnGlobalIndex covers a global index on a partitioned table
+// whose primary key is an unsigned integer handle. A global index on a clustered table is
+// created at version 0, whose key ends with the plain handle; from version 1 the key carries
+// a partition id between the index columns and the handle, which would put the handle at a
+// different dimension, and GenIndexKey rejects that combination rather than writing such a
+// key. The assertion on the version pins the layout this range building assumes.
+func TestUnsignedIntHandleIndexRangesOnGlobalIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_uhg")
+	tk.MustExec(`CREATE TABLE t_uhg (
+		id BIGINT UNSIGNED PRIMARY KEY CLUSTERED,
+		a INT,
+		b INT
+	) PARTITION BY RANGE (id) (
+		PARTITION p0 VALUES LESS THAN (100),
+		PARTITION p1 VALUES LESS THAN (MAXVALUE)
+	)`)
+	tk.MustExec("alter table t_uhg add index ia_g(a) global")
+	tk.MustExec(`insert into t_uhg values
+		(7, 5, 1),
+		(11, 5, 2),
+		(9223372036854775808, 5, 6),
+		(9223372036854775810, 5, 7),
+		(18446744073709551615, 5, 8),
+		(30, 6, 9)`)
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_uhg"))
+	require.NoError(t, err)
+	idx := tbl.Meta().FindIndexByName("ia_g")
+	require.NotNil(t, idx)
+	require.True(t, idx.Global)
+	require.Equal(t, model.GlobalIndexVersionLegacy, idx.GlobalIndexVersion,
+		"a global index on a clustered table must keep the legacy key layout, which ends with the plain handle")
+
+	rows := tk.MustQuery("explain format = 'plan_tree' select b from t_uhg use index(ia_g) where a = 5 and id = 7").Rows()
+	require.True(t, explainHas(rows, "range:[5 7,5 7]"), "the handle predicate must reach the index range")
+
+	// Cross-check every shape against the same query without the index.
+	for _, pred := range []string{
+		"a = 5 and id = 7",
+		"a = 5 and id > 10",
+		"a = 5 and id >= 9223372036854775808",
+		"a = 5 and id between 9223372036854775800 and 9223372036854775810",
+		"a = 5 and id in (11, 9223372036854775810, 18446744073709551615)",
+		"a = 5 and id = 18446744073709551615",
+	} {
+		expected := tk.MustQuery("select b from t_uhg ignore index(ia_g) where " + pred + " order by b").Rows()
+		tk.MustQuery("select b from t_uhg use index(ia_g) where " + pred + " order by b").Check(expected)
+	}
 }
