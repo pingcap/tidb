@@ -2161,15 +2161,24 @@ func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls strin
 // session SQLKiller for execution checkpoints such as HandleSignal and the
 // slow pre-commit backstop. It intentionally does not start a background
 // monitor, so short statements do not pay goroutine, ticker, or channel costs.
+//
+// It also registers a cancel hook so that when a kill signal is raised (by the
+// passive liveness check, a KILL statement, or memory control), the dispatch
+// context is cancelled and any in-flight coprocessor RPC is aborted via a gRPC
+// stream reset instead of blocking until CoprReqTimeout.
 func (cc *clientConn) setSQLKillerConnectionAlive() func() {
 	sessVars := cc.ctx.GetSessionVars()
 	isAlive := cc.isConnectionAlive
 	sessVars.SQLKiller.IsConnectionAlive.Store(&isAlive)
 
+	cancel := cc.cancelDispatch
+	sessVars.SQLKiller.ConnCancel.Store(&cancel)
+
 	var clearOnce sync.Once
 	return func() {
 		clearOnce.Do(func() {
 			sessVars.SQLKiller.IsConnectionAlive.CompareAndSwap(&isAlive, nil)
+			sessVars.SQLKiller.ConnCancel.CompareAndSwap(&cancel, nil)
 		})
 	}
 }
@@ -2205,7 +2214,7 @@ func shouldInstallConnectionAliveDuringExecute(stmt ast.StmtNode, sessVars *vari
 		stmt = prepared.PreparedAst.Stmt
 	}
 	switch stmt.(type) {
-	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt, *ast.SelectStmt:
 		return true
 	default:
 		return false
