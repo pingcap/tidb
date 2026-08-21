@@ -42,6 +42,7 @@ type TaskManager interface {
 	GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error)
 	// GetCleanupTasks gets finished tasks, limited by the configured cleanup batch size.
 	GetCleanupTasks(ctx context.Context) (task []*proto.Task, err error)
+	GetTaskCleanupInfoByIDs(context.Context, []int64) (map[int64]storage.TaskCleanupInfo, error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
 	GetTaskBaseByID(ctx context.Context, taskID int64) (task *proto.TaskBase, err error)
 	GCSubtasks(ctx context.Context) error
@@ -264,7 +265,20 @@ type BatchCleaner interface {
 	BatchClean(ctx context.Context, tasks []*proto.Task) error
 }
 
+// ExpiredFileCleaner optionally adds owner-side expired-file cleanup to
+// a Cleaner implementation. Implementations must honor ctx promptly;
+// Manager.Stop waits for an active callback to return after ownership is lost.
+type ExpiredFileCleaner interface {
+	Cleaner
+	CleanExpiredFiles(ctx context.Context, taskMgr TaskManager, cloudStorageURI string) error
+}
+
 type cleanerFactoryFn func() Cleaner
+
+type registeredCleanerFactory struct {
+	taskType proto.TaskType
+	ctor     cleanerFactoryFn
+}
 
 var cleanerFactoryMap = struct {
 	syncutil.RWMutex
@@ -285,6 +299,21 @@ func getCleanerFactory(taskType proto.TaskType) cleanerFactoryFn {
 	cleanerFactoryMap.RLock()
 	defer cleanerFactoryMap.RUnlock()
 	return cleanerFactoryMap.m[taskType]
+}
+
+// getCleanerFactories returns a snapshot of registered cleaner factories.
+func getCleanerFactories() []registeredCleanerFactory {
+	cleanerFactoryMap.RLock()
+	defer cleanerFactoryMap.RUnlock()
+
+	factories := make([]registeredCleanerFactory, 0, len(cleanerFactoryMap.m))
+	for taskType, ctor := range cleanerFactoryMap.m {
+		factories = append(factories, registeredCleanerFactory{
+			taskType: taskType,
+			ctor:     ctor,
+		})
+	}
+	return factories
 }
 
 // ClearCleanerFactory is only used in test.

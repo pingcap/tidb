@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
@@ -1101,6 +1102,83 @@ func TestTransferTasks2HistoryWithAdjacentLargeTaskIDs(t *testing.T) {
 		Check(testkit.Rows(fmt.Sprint(secondTaskID)))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_background_subtask_history where id = %d", secondSubtaskID)).
 		Check(testkit.Rows("0"))
+}
+
+func TestGetTaskCleanupInfoByIDs(t *testing.T) {
+	store, tm, ctx := testutil.InitTableTest(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
+
+	createTask := func(key string) int64 {
+		taskID, err := tm.CreateTask(ctx, key, proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, nil)
+		require.NoError(t, err)
+		return taskID
+	}
+
+	activeTaskID := createTask("cleanup-info-active")
+	succeedTaskID := createTask("cleanup-info-succeed")
+	succeedTask, err := tm.GetTaskByID(ctx, succeedTaskID)
+	require.NoError(t, err)
+	require.NoError(t, tm.SwitchTaskStep(ctx, succeedTask, proto.TaskStateRunning, proto.StepOne, nil))
+	require.NoError(t, tm.SucceedTask(ctx, succeedTaskID))
+
+	failedTaskID := createTask("cleanup-info-failed")
+	require.NoError(t, tm.FailTask(ctx, failedTaskID, proto.TaskStatePending, errors.New("cleanup info test")))
+
+	historyTaskID := createTask("cleanup-info-history")
+	require.NoError(t, tm.FailTask(ctx, historyTaskID, proto.TaskStatePending, errors.New("cleanup info history test")))
+	historyTask, err := tm.GetTaskByID(ctx, historyTaskID)
+	require.NoError(t, err)
+	require.NoError(t, tm.TransferTasks2History(ctx, []*proto.Task{historyTask}))
+
+	infos, err := tm.GetTaskCleanupInfoByIDs(ctx, []int64{
+		activeTaskID, succeedTaskID, failedTaskID, historyTaskID,
+	})
+	require.NoError(t, err)
+	require.Len(t, infos, 4)
+	require.Equal(t, storage.TaskCleanupInfo{
+		ID: activeTaskID, Type: proto.ImportInto, State: proto.TaskStatePending,
+	}, infos[activeTaskID])
+	for taskID, state := range map[int64]proto.TaskState{
+		succeedTaskID: proto.TaskStateSucceed,
+		failedTaskID:  proto.TaskStateFailed,
+		historyTaskID: proto.TaskStateFailed,
+	} {
+		info, ok := infos[taskID]
+		require.True(t, ok)
+		require.Equal(t, taskID, info.ID)
+		require.Equal(t, proto.ImportInto, info.Type)
+		require.Equal(t, state, info.State)
+		require.NotNil(t, info.EndTime)
+	}
+
+	tk.MustExec("set time_zone = '+00:00'")
+	timeZoneTaskID := createTask("cleanup-info-time-zone")
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_global_task set state = '%s', end_time = '2026-08-12 12:34:56' where id = %d",
+		proto.TaskStateSucceed, timeZoneTaskID))
+	zeroEndTimeTaskID := createTask("cleanup-info-zero-end-time")
+	tk.MustExec("set sql_mode = ''")
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_global_task set state = '%s', end_time = '0000-00-00 00:00:00' where id = %d",
+		proto.TaskStateSucceed, zeroEndTimeTaskID))
+
+	zonedPool := pools.NewResourcePool(func() (pools.Resource, error) {
+		zonedTK := testkit.NewTestKit(t, store)
+		zonedTK.MustExec("set time_zone = '-08:00'")
+		return zonedTK.Session(), nil
+	}, 1, 1, time.Second)
+	t.Cleanup(zonedPool.Close)
+	zonedTaskManager := storage.NewTaskManager(zonedPool)
+	zonedInfos, err := zonedTaskManager.GetTaskCleanupInfoByIDs(ctx, []int64{timeZoneTaskID, zeroEndTimeTaskID})
+	require.NoError(t, err)
+	require.NotNil(t, zonedInfos[timeZoneTaskID].EndTime)
+	require.Equal(t, time.Date(2026, time.August, 12, 12, 34, 56, 0, time.UTC),
+		zonedInfos[timeZoneTaskID].EndTime.UTC())
+	require.Nil(t, zonedInfos[zeroEndTimeTaskID].EndTime)
+
+	var nilTaskManager *storage.TaskManager
+	emptyInfos, err := nilTaskManager.GetTaskCleanupInfoByIDs(ctx, nil)
+	require.NoError(t, err)
+	require.Empty(t, emptyInfos)
 }
 
 func TestCleanupTasksAreBatchLimited(t *testing.T) {
