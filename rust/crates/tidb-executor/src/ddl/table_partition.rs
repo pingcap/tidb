@@ -180,6 +180,27 @@ fn build_table_partitioning_inner(
         )));
     }
 
+    // `INTERVAL (...)` GENERATES partition definitions from a step, which
+    // this tier does not expand. Accepting it would build a table with
+    // DIFFERENT partitions from the ones the statement asked for, which is
+    // worse than not serving the clause at all.
+    //
+    // Go's `generatePartitionDefinitionsFromInterval` runs before the method
+    // is dispatched and handles the COLUMNS spelling too, so this refusal
+    // belongs ahead of the arms rather than inside the scalar one. Sitting
+    // below them, it was reached only by `RANGE (expr)`; the COLUMNS
+    // spellings fell through to "For RANGE partitions each partition must be
+    // defined" -- an incidental refusal that happened to fire because
+    // INTERVAL leaves the definition list empty. That message names the
+    // wrong problem, and anything that later filled the list before this
+    // point would have turned it into a silent acceptance.
+    if method.interval.is_some() {
+        return Err(DriverError::unsupported(format!(
+            "CREATE TABLE ... PARTITION BY {} ... INTERVAL is not supported by this node",
+            method.kind.sql()
+        )));
+    }
+
     if method.kind == PartitionType::KEY {
         // Go's order, which four separate errors depend on:
         //   phase 1 `buildTablePartitionInfo` -- resolve the column list,
@@ -344,16 +365,6 @@ fn build_table_partitioning_inner(
             "CREATE TABLE ... PARTITION BY {name} COLUMNS is not supported by this node"
         )));
     };
-    // `RANGE ... INTERVAL (...)` GENERATES definitions from a step, which
-    // this tier does not expand; accepting it would build a table with the
-    // wrong partitions rather than none.
-    if method.interval.is_some() {
-        return Err(DriverError::unsupported(
-            "CREATE TABLE ... PARTITION BY RANGE ... INTERVAL is not supported by this node"
-                .to_owned(),
-        ));
-    }
-
     let (expr_text, built, dependencies, dependency_offsets) = build_partition_expression(
         expr,
         names,

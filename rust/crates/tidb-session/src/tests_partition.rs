@@ -2517,3 +2517,96 @@ fn an_unknown_partition_name_carries_gos_case_per_statement() {
         rendered.message
     );
 }
+
+/// The TEXT a partition expression is stored as, which `CREATE TABLE` writes,
+/// the loader parses back, and `SHOW CREATE TABLE` prints.
+///
+/// Go restores it under `DefaultRestoreFlags | RestoreBracketAroundBinaryOperation
+/// | RestoreWithoutSchemaName | RestoreWithoutTableName` (`ddl/partition.go:619`).
+///
+/// The spacing rule is `restoreBinaryOpWithSpacesAround`
+/// (`parser/ast/expressions.go`): a space goes around the operator when the
+/// `RestoreSpacesAroundBinaryOperation` flag is set -- it is NOT, here -- or
+/// when the operator is a KEYWORD. Of the operators partitioning admits
+/// (`AllowedPartition4BinaryOpMap`: `+ - * DIV %`), only `DIV` is a keyword
+/// (`parser/opcode/opcode.go`, `IntDiv.isKeyword: true`), so `DIV` is spaced
+/// and the arithmetic symbols are not.
+#[test]
+fn a_partition_expression_is_stored_the_way_go_spells_it() {
+    let cases: &[(&str, &str)] = &[
+        // A bare column is back-quoted.
+        ("CREATE TABLE e1 (a INT) PARTITION BY HASH (a) PARTITIONS 2", "HASH (`a`)"),
+        // A binary operation is BRACKETED by the partition flags, and a
+        // symbol operator carries no spaces.
+        (
+            "CREATE TABLE e2 (col1 INT, col3 BIGINT) PARTITION BY HASH (col1 * col3) PARTITIONS 2",
+            "HASH ((`col1`*`col3`))",
+        ),
+        (
+            "CREATE TABLE e6 (a INT, b INT) PARTITION BY HASH (a + b) PARTITIONS 2",
+            "HASH ((`a`+`b`))",
+        ),
+        // ... but `DIV` is a keyword operator, so it IS spaced.
+        (
+            "CREATE TABLE e7 (a INT, b INT) PARTITION BY HASH (a DIV b) PARTITIONS 2",
+            "HASH ((`a` DIV `b`))",
+        ),
+        // A function name is upper-cased, its column argument back-quoted.
+        (
+            "CREATE TABLE e3 (dob DATE) PARTITION BY RANGE (year(dob)) \
+             (PARTITION p0 VALUES LESS THAN (2000))",
+            "RANGE (YEAR(`dob`))",
+        ),
+        (
+            "CREATE TABLE e4 (a INT) PARTITION BY LIST (abs(a)) (PARTITION p0 VALUES IN (1))",
+            "LIST (ABS(`a`))",
+        ),
+        (
+            "CREATE TABLE e5 (end_time DATETIME) PARTITION BY RANGE (month(end_time)) \
+             (PARTITION p0 VALUES LESS THAN (6))",
+            "RANGE (MONTH(`end_time`))",
+        ),
+    ];
+    for (create, expected) in cases {
+        let mut session = Session::new();
+        session.run(create).unwrap_or_else(|error| panic!("{create}: {error:?}"));
+        let name = create.split_whitespace().nth(2).expect("CREATE TABLE <name>");
+        let shown = show_create(&mut session, name);
+        assert!(
+            shown.contains(expected),
+            "{create}\n  expected to contain: {expected}\n  got: {shown}"
+        );
+    }
+}
+
+/// `RANGE ... INTERVAL (...)` GENERATES partition definitions from a step.
+/// This node does not expand them, so it must refuse the clause: accepting it
+/// and ignoring the INTERVAL would build a table with DIFFERENT partitions
+/// from the ones the statement asked for, which is worse than not serving it.
+///
+/// The refusal has to cover the COLUMNS spelling too. Go's
+/// `generatePartitionDefinitionsFromInterval` handles both, and the check
+/// here sits after the COLUMNS arms have already returned.
+#[test]
+fn interval_partitioning_is_refused_on_every_spelling() {
+    let statements = [
+        "CREATE TABLE i1 (a INT) PARTITION BY RANGE (a) \
+         INTERVAL (10) FIRST PARTITION LESS THAN (0) LAST PARTITION LESS THAN (100)",
+        "CREATE TABLE i2 (a DATE) PARTITION BY RANGE COLUMNS (a) \
+         INTERVAL (1 MONTH) FIRST PARTITION LESS THAN ('2020-01-01') \
+         LAST PARTITION LESS THAN ('2020-06-01')",
+    ];
+    for sql in statements {
+        let mut session = Session::new();
+        let rendered = session
+            .run(sql)
+            .expect_err("INTERVAL must be refused, not silently ignored")
+            .to_mysql_error();
+        assert!(
+            rendered.message.contains("INTERVAL"),
+            "the refusal must name INTERVAL, so it cannot be turned into an \
+             acceptance by a change elsewhere: {sql}\n  got: {}",
+            rendered.message
+        );
+    }
+}
