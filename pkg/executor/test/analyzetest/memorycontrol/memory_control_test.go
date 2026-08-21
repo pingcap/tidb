@@ -212,8 +212,22 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	require.Len(t, childTrackers, 0)
 
 	h.HandleAutoAnalyze()
-	rs := tk.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed")
-	failReason := rs.Rows()[0][0].(string)
+	// Poll in the main test goroutine because require.Eventually runs the condition
+	// in a goroutine (go checkCond()), and TestKit.MustQuery calls t.FailNow() which
+	// panics when called from outside the test goroutine.
+	var rows [][]any
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		rows = tk.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed").Rows()
+		if len(rows) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			require.FailNow(t, "auto analyze job did not report the expected failed analyze row")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	failReason := rows[0][0].(string)
 	require.True(t, strings.Contains(failReason, "Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."))
 
 	childTrackers = executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
