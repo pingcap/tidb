@@ -119,6 +119,13 @@ func TestHintSuite(t *testing.T) {
 			testKit.MustQuery(`select @@tidb_default_string_match_selectivity`).Check(testkit.Rows("0.8"))
 		})
 
+		t.Run("TestSetVarJoinReorderThroughSelection", func(t *testing.T) {
+			testKit.MustExec(`set @@tidb_opt_join_reorder_through_sel = off`)
+			testKit.MustQuery(`select /*+ set_var(tidb_opt_join_reorder_through_sel=on) */ @@tidb_opt_join_reorder_through_sel`).Check(testkit.Rows("1"))
+			testKit.MustQuery(`show warnings`).Check(testkit.Rows())
+			testKit.MustQuery(`select @@tidb_opt_join_reorder_through_sel`).Check(testkit.Rows("0"))
+		})
+
 		t.Run("TestSetVarHintsWithExplain", func(t *testing.T) {
 			testKit.MustExec(`set @@max_execution_time=2000;`)
 			testKit.MustExec(`explain select /*+ set_var(max_execution_time=100) */ @@max_execution_time;`)
