@@ -2142,7 +2142,6 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			}
 			// suppress the lock error, we are not going to handle it here for simplicity.
 			logutil.BgLogger().Warn("lock keys error on prefetch", zap.Error(err))
-			err = nil
 		}
 	} else {
 		_, err = snapshot.BatchGet(ctx, rowKeys)
