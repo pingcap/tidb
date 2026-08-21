@@ -38,6 +38,7 @@ go_test(
         "//pkg/dxf/framework/testutil",
         "//pkg/dxf/importinto",
         "//pkg/executor/importer",
+        "//pkg/importinto/jobstats",
         "//pkg/importsdk",
         "//pkg/infoschema",
         "//pkg/ingestor/ingestctrl",

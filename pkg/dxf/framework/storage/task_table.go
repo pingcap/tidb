@@ -574,6 +574,38 @@ func (mgr *TaskManager) GetTaskByKeyWithHistory(ctx context.Context, key string)
 	return Row2Task(rs[0]), nil
 }
 
+// GetTasksByKeysWithHistory gets tasks from the global task table and history table by task keys.
+func (mgr *TaskManager) GetTasksByKeysWithHistory(ctx context.Context, keys []string) (map[string]*proto.Task, error) {
+	tasks := make(map[string]*proto.Task, len(keys))
+	if len(keys) == 0 {
+		return tasks, nil
+	}
+	var holders strings.Builder
+	for i := range keys {
+		if i > 0 {
+			holders.WriteString(",")
+		}
+		holders.WriteString("%?")
+	}
+	args := make([]any, len(keys)*2)
+	for i, key := range keys {
+		args[i] = key
+		args[i+len(keys)] = key
+	}
+	sql := fmt.Sprintf(`select %s from mysql.tidb_global_task t where task_key in (%s)
+		union select %s from mysql.tidb_global_task_history t where task_key in (%s)`,
+		TaskColumns, holders.String(), TaskColumns, holders.String())
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rs {
+		task := Row2Task(row)
+		tasks[task.Key] = task
+	}
+	return tasks, nil
+}
+
 // GetTaskBaseByKeyWithHistory gets the task base from history table by the task key.
 func (mgr *TaskManager) GetTaskBaseByKeyWithHistory(ctx context.Context, key string) (task *proto.TaskBase, err error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+basicTaskColumns+" from mysql.tidb_global_task t where task_key = %?"+
@@ -698,6 +730,43 @@ func (mgr *TaskManager) GetAllSubtaskSummaryByStep(
 			return nil, errors.Trace(err)
 		}
 		summaries = append(summaries, summary)
+	}
+	return summaries, nil
+}
+
+// GetSubtaskSummaries gets all subtask summaries by task IDs and steps.
+func (mgr *TaskManager) GetSubtaskSummaries(
+	ctx context.Context, taskSteps map[int64]proto.Step,
+) (map[int64][]*execute.SubtaskSummary, error) {
+	summaries := make(map[int64][]*execute.SubtaskSummary, len(taskSteps))
+	if len(taskSteps) == 0 {
+		return summaries, nil
+	}
+	var (
+		sb         strings.Builder
+		conditions = make([]string, 0, len(taskSteps))
+		args       = make([]any, 0, len(taskSteps)*2)
+	)
+	sb.WriteString("select task_key, summary from mysql.tidb_background_subtask where ")
+	for taskID, step := range taskSteps {
+		conditions = append(conditions, "(task_key = %? and step = %?)")
+		args = append(args, TaskIDToKey(taskID), step)
+	}
+	sb.WriteString(strings.Join(conditions, " or "))
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, sb.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rs {
+		taskID, err := strconv.ParseInt(row.GetString(0), 10, 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		summary := &execute.SubtaskSummary{}
+		if err := json.Unmarshal(hack.Slice(row.GetJSON(1).String()), summary); err != nil {
+			return nil, errors.Trace(err)
+		}
+		summaries[taskID] = append(summaries[taskID], summary)
 	}
 	return summaries, nil
 }

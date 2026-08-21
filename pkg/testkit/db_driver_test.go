@@ -57,6 +57,10 @@ func TestMockDB(t *testing.T) {
 	require.False(t, rows.Next())
 	require.NoError(t, rows.Err())
 
+	var jsonValue string
+	require.NoError(t, db.QueryRow("select json_object('id', 1)").Scan(&jsonValue))
+	require.JSONEq(t, `{"id": 1}`, jsonValue)
+
 	// Test Exec
 	res, err := db.Exec("insert into t values (3, 'c')")
 	require.NoError(t, err)

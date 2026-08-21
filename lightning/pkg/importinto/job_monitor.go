@@ -199,10 +199,13 @@ func (m *DefaultJobMonitor) processJobStatuses(
 
 			// Set error if not success
 			if !status.IsFinished() && firstErr == nil {
-				if status.IsFailed() {
+				switch {
+				case status.IsFailed():
 					firstErr = errors.Errorf("job %d failed: %s", status.JobID, status.ResultMessage)
-				} else if status.IsCancelled() {
+				case status.IsCancelled():
 					firstErr = errors.Errorf("job %d was cancelled", status.JobID)
+				default:
+					firstErr = errors.Errorf("job %d reached terminal state with unknown status %q", status.JobID, status.Status)
 				}
 			}
 
