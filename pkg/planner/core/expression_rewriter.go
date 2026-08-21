@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -2471,13 +2472,29 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 	// seen so the driver runs the LIKE round for cost competition even when
 	// round 1's native plan is executable.
 	useLikeFallback := false
+	useLocalMatch := false
 	if er.planCtx != nil && er.planCtx.builder != nil && er.planCtx.builder.ctx != nil {
 		sessVars := er.planCtx.builder.ctx.GetSessionVars()
 		if er.inDirectMatchBooleanContext() {
-			if sessVars.StmtCtx.AlternativeLogicalPlanFTSLikeFallback {
+			// Local no-score evaluation supersedes the ILIKE fallback for the
+			// modifiers it supports: it applies the same analyzer MySQL would,
+			// so it honours stop words, token-length limits and word
+			// boundaries that a substring ILIKE cannot express. Recorded as a
+			// relevant opt var regardless of its current value so EXPLAIN
+			// EXPLORE can enumerate the enabled state from its default OFF.
+			if expression.FTSModifierSupportedByLocalNoScore(v.Modifier) {
+				sessVars.RecordRelevantOptVar(vardef.TiDBEnableLocalMatchAgainst)
+				if sessVars.EnableLocalMatchAgainst {
+					useLocalMatch = true
+				}
+			}
+			// The alternative-round bookkeeping below is skipped when local
+			// evaluation is taking the MATCH: it is always executable, so there
+			// is no non-viable native plan for the driver to rescue.
+			if !useLocalMatch && sessVars.StmtCtx.AlternativeLogicalPlanFTSLikeFallback {
 				// fts-like-fallback round: boolean-context MATCH rewrites to ILIKE.
 				useLikeFallback = true
-			} else if sessVars.EnableAlternativeLogicalPlans {
+			} else if !useLocalMatch && sessVars.EnableAlternativeLogicalPlans {
 				// Round 1 (native). Mark the build so the driver runs the LIKE
 				// round and cost-compares its plan against round 1's. If this
 				// MATCH cannot run natively, also mark the build as non-viable
@@ -2491,11 +2508,112 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 		}
 	}
 
-	if useLikeFallback {
+	switch {
+	case useLocalMatch:
+		er.matchAgainstToLocalBuiltin(v, numCols, stackLen)
+	case useLikeFallback:
 		er.matchAgainstToLike(v, numCols, stackLen)
-	} else {
+	default:
 		er.matchAgainstToBuiltin(v, numCols, stackLen)
 	}
+}
+
+// matchAgainstToLocalBuiltin emits the native MATCH ... AGAINST builtin marked
+// for local no-score evaluation in TiDB. Unlike matchAgainstToBuiltin it does
+// not require the modifier to survive pushdown, because the expression is
+// evaluated here rather than sent to a storage node.
+//
+// The analyzer configuration is resolved from session variables and frozen into
+// the plan. TiDB has no FULLTEXT index on this path to carry a parser snapshot,
+// so the STANDARD parser is used; that matches MySQL's default for a FULLTEXT
+// index declared without WITH PARSER.
+func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, numCols, stackLen int) {
+	against := er.ctxStack[stackLen-1]
+	cols := er.ctxStack[stackLen-numCols-1 : stackLen-1]
+
+	args := make([]expression.Expression, 0, 1+numCols)
+	args = append(args, against)
+	args = append(args, cols...)
+
+	er.ctxStackPop(numCols + 1)
+	fn, err := er.newFunction(ast.FTSMysqlMatchAgainst, &v.Type, args...)
+	if err != nil {
+		er.err = err
+		return
+	}
+	sf, ok := fn.(*expression.ScalarFunction)
+	if !ok {
+		er.err = errors.Errorf("unexpected expression type for %s: %T", ast.FTSMysqlMatchAgainst, fn)
+		return
+	}
+	if err := expression.SetFTSMysqlMatchAgainstModifier(sf, v.Modifier); err != nil {
+		er.err = err
+		return
+	}
+
+	sessVars := er.planCtx.builder.ctx.GetSessionVars()
+	config, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, model.FullTextParserTypeStandardV1)
+	if err != nil {
+		er.err = err
+		return
+	}
+	info := &expression.FTSLocalEvalInfo{AnalyzerConfig: config}
+	var compiledQuery *fulltext.Query
+
+	// Compile eagerly only when the search string is a stable constant. That
+	// surfaces BOOLEAN-syntax errors at plan time — deferring them to the first
+	// row would let an empty input, or an earlier false predicate, hide the
+	// error — and yields the estimation proxy and the matches-nothing
+	// short-circuit. For a mutable search string (`?` marker, user variable)
+	// none of that is knowable yet, so the plan carries no baked-in search
+	// value and evaluation compiles per search string instead. This is why
+	// local matching, unlike the ILIKE fallback, stays plan-cache safe.
+	if constExpr, isConst := against.(*expression.Constant); isConst &&
+		!expression.MaybeOverOptimized4PlanCache(er.sctx, constExpr) {
+		query, err := expression.CompileFTSMysqlMatchAgainstLocalQuery(er.sctx.GetEvalCtx(), sf, config)
+		if err != nil {
+			er.err = err
+			return
+		}
+		if query != nil {
+			info.MatchNothing = query.MatchesNothing()
+			info.SelectivityTerm, _ = query.SelectivityTerm()
+			compiledQuery = query
+		}
+	}
+
+	if err := expression.SetFTSMysqlMatchAgainstLocalEvalInfo(sf, info); err != nil {
+		er.err = err
+		return
+	}
+
+	// Emit the substring predicates the MATCH entails alongside it. They are
+	// redundant for correctness, but unlike the MATCH they can be evaluated by
+	// the storage layer, so most non-matching rows are discarded before being
+	// shipped here for the exact check. Only possible when the search string is
+	// a stable constant, which is also when compiledQuery is non-nil.
+	result := fn
+	// Only for a single-column MATCH. The pre-filter tests one column, but a
+	// multi-column MATCH is satisfied by a token in any of them, so filtering
+	// on the first would discard rows the MATCH accepts. Narrowing must never
+	// change results, so decline rather than narrow wrongly. A disjunction over
+	// every matched column would be sound and is worth adding later.
+	if compiledQuery != nil && numCols == 1 {
+		preFilters, err := expression.BuildFTSLocalMatchPreFilters(
+			er.sctx, args[1], compiledQuery)
+		if err != nil {
+			er.err = err
+			return
+		}
+		for _, preFilter := range preFilters {
+			if result, err = er.newFunction(ast.LogicAnd,
+				types.NewFieldType(mysql.TypeTiny), result, preFilter); err != nil {
+				er.err = err
+				return
+			}
+		}
+	}
+	er.ctxStackAppend(result, types.EmptyName)
 }
 
 // ftsNativeViable reports whether the MATCH(...) currently being rewritten
