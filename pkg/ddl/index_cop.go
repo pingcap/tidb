@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -174,6 +175,7 @@ func getRestoreData(useNewCollate bool, tblInfo *model.TableInfo, targetIdx, pkI
 
 func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *distsqlctx.DistSQLContext, pushDownFlags uint64, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo, selectExpr expression.Expression) (*tipb.DAGRequest, bool, error) {
 	conditionPushed := false
+	useNewCollate := exprCtx.NewCollationEnabled()
 
 	dagReq := &tipb.DAGRequest{}
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(exprCtx.GetEvalCtx().Location())
@@ -187,7 +189,11 @@ func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *d
 	}
 
 	var selectionPB *tipb.Executor
-	if selectExpr != nil {
+	// TODO: Remove this fallback after expression-to-PB conversion can use the
+	// collation mode captured by the reorg task.
+	// Pushdown cannot preserve the reorg task's captured collation mode when it
+	// differs from the executor's global mode. Evaluate the condition in TiDB instead.
+	if selectExpr != nil && useNewCollate == collate.NewCollationEnabled() {
 		selectionPB, err = constructSelectionPB(exprCtx, selectExpr, distSQLCtx, tblScanPB)
 	}
 
@@ -199,10 +205,18 @@ func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *d
 	} else {
 		if selectExpr != nil {
 			selectExprStr := selectExpr.StringWithCtx(exprCtx.GetEvalCtx(), errors.RedactLogDisable)
-			logutil.Logger(ctx).Info("fail to push down the selection expression for index condition",
-				zap.String("table", tblInfo.Name.O),
-				zap.String("expr", selectExprStr),
-				zap.Error(err))
+			if useNewCollate != collate.NewCollationEnabled() {
+				logutil.Logger(ctx).Info("skip pushing down the selection expression for index condition due to collation mode mismatch",
+					zap.String("table", tblInfo.Name.O),
+					zap.String("expr", selectExprStr),
+					zap.Bool("useNewCollate", useNewCollate),
+					zap.Bool("globalUseNewCollate", collate.NewCollationEnabled()))
+			} else {
+				logutil.Logger(ctx).Info("fail to push down the selection expression for index condition",
+					zap.String("table", tblInfo.Name.O),
+					zap.String("expr", selectExprStr),
+					zap.Error(err))
+			}
 		}
 		dagReq.Executors = append(dagReq.Executors, tblScanPB)
 	}
