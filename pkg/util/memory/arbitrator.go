@@ -1681,6 +1681,7 @@ func NewMemArbitrator(limit int64, shardNum uint64, maxQuotaShardNum int, minQuo
 	m.tasks.fifoWaitAverse.init()
 	m.notifer = NewNotifer()
 	m.entryMap.init(shardNum, maxQuotaShardNum, minQuotaForReclaim)
+	m.resetDigestProfileCache(shardNum)
 	m.doSetLimit(limit)
 	m.resetStatistics()
 	m.setMinHeapFreeBPS(defMinHeapFreeBPS)
@@ -1701,7 +1702,6 @@ func NewMemArbitrator(limit int64, shardNum uint64, maxQuotaShardNum int, minQuo
 			m.heapController.memStateRecorder.lastMemState.Store(s)
 			m.doSetMemMagnif(s.Magnif)
 			m.poolAllocStats.mediumQuota.Store(s.PoolMediumCap)
-			// init the digest profile cache
 			m.digestProfileCache.top3.index.Store(0)
 			m.digestProfileCache.top3.g[0] = s.TopNProfiles
 			for i := range s.TopNProfiles {
@@ -1715,7 +1715,6 @@ func NewMemArbitrator(limit int64, shardNum uint64, maxQuotaShardNum int, minQuo
 
 		m.heapController.memStateRecorder.Unlock()
 	}
-	m.resetDigestProfileCache(shardNum)
 	return m
 }
 
@@ -3146,7 +3145,6 @@ type ArbitrateHelper interface {
 type ArbitrationContext struct {
 	id              uint64
 	arbitrateHelper ArbitrateHelper
-
 	memPriority     ArbitrationPriority
 	stopped         atomic.Bool
 	waitAverse      bool

@@ -392,4 +392,14 @@ func TestHandleGlobalMemArbitratorRuntime(t *testing.T) {
 
 	HandleGlobalMemArbitratorRuntime()
 	require.Equal(t, heapProfileTriggerState{lastLimit: m.limit()}, profiler.trigger)
+
+	t.Run("skip reentrant runtime handling", func(t *testing.T) {
+		globalArbitrator.runtimeHandler.Lock()
+		defer globalArbitrator.runtimeHandler.Unlock()
+		globalArbitrator.runtimeHandler.reset.Store(true)
+
+		HandleGlobalMemArbitratorRuntime()
+		require.True(t, globalArbitrator.runtimeHandler.reset.Load())
+		globalArbitrator.runtimeHandler.reset.Store(false)
+	})
 }
