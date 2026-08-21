@@ -199,6 +199,7 @@ type stmtSummaryStats struct {
 	maxRocksdbBlockReadCount       uint64
 	sumRocksdbBlockReadByte        uint64
 	maxRocksdbBlockReadByte        uint64
+	iaExecCount                    int64
 	sumIARemoteReadSegmentCount    uint64
 	maxIARemoteReadSegmentCount    uint64
 	sumIARemoteReadSegmentSize     uint64
@@ -877,6 +878,9 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 			ssStats.maxRocksdbBlockReadByte = sei.ExecDetail.ScanDetail.RocksdbBlockReadByte
 		}
 		iaStats := execdetails.GetIARemoteReadSegmentStats(sei.ExecDetail.ScanDetail)
+		if iaStats.Count > 0 {
+			ssStats.iaExecCount++
+		}
 		ssStats.sumIARemoteReadSegmentCount += iaStats.Count
 		if iaStats.Count > ssStats.maxIARemoteReadSegmentCount {
 			ssStats.maxIARemoteReadSegmentCount = iaStats.Count

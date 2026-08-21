@@ -70,6 +70,7 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.TotalRUV2, record1.SumRUV2)
 	require.Equal(t, info.CPUUsages.TidbCPUTime, record1.SumTidbCPU)
 	require.Equal(t, info.CPUUsages.TikvCPUTime, record1.SumTikvCPU)
+	require.Equal(t, int64(1), record1.IAExecCount)
 	require.Equal(t, uint64(3), record1.SumIARemoteReadSegmentCount)
 	require.Equal(t, uint64(3), record1.MaxIARemoteReadSegmentCount)
 
@@ -88,6 +89,7 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.TotalRUV2*2, record2.SumRUV2)
 	require.Equal(t, info.CPUUsages.TidbCPUTime*2, record2.SumTidbCPU)
 	require.Equal(t, info.CPUUsages.TikvCPUTime*2, record2.SumTikvCPU)
+	require.Equal(t, int64(2), record2.IAExecCount)
 	require.Equal(t, uint64(6), record2.SumIARemoteReadSegmentCount)
 	require.Equal(t, uint64(3), record2.MaxIARemoteReadSegmentCount)
 
@@ -108,6 +110,7 @@ func TestStmtRecord(t *testing.T) {
 	require.NoError(t, json.Unmarshal(b, &items))
 	require.Equal(t, map[string]any{"stmt_meta_a": "value_a"}, items["additional_fields"])
 	require.Equal(t, record2.Digest, items["digest"])
+	require.Equal(t, float64(2), items["ia_remote_exec_count"])
 	require.Contains(t, items, "sum_ia_remote_read_segment_count")
 	require.Contains(t, items, "max_ia_remote_read_segment_count")
 	require.NotContains(t, items, "sum_ia_read_segment_count")
@@ -120,4 +123,5 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, map[string]any{"stmt_meta_a": "value_a"}, items["additional_fields"])
 	require.Equal(t, true, items["evicted"])
 	require.Equal(t, record2.Digest, items["digest"])
+	require.Equal(t, float64(2), items["ia_remote_exec_count"])
 }
