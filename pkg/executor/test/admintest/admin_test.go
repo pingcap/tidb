@@ -874,6 +874,58 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	t.Run("partial index", func(t *testing.T) {
+		tk.MustExec("drop table if exists partial_t")
+		tk.MustExec("create table partial_t(pk int primary key, a json, flag int, index idx((cast(a as signed array))) where flag = 1, index idx_flag(flag))")
+		tk.MustExec("insert into partial_t values (0, '[0,1,2]', 0), (1, '[1,2,3]', 1), (2, '[]', 1), (3, '[4,5]', null)")
+		tk.MustExec("admin check table partial_t")
+		tk.MustExec("admin check index partial_t idx")
+		mustReportInconsistent := func(sql string) {
+			err := tk.ExecToErr(sql)
+			require.Error(t, err)
+			require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
+		}
+
+		partialTbl, err := domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("partial_t"))
+		require.NoError(t, err)
+		var idxInfo *model.IndexInfo
+		for _, info := range partialTbl.Meta().Indices {
+			if info.Name.L == "idx" {
+				idxInfo = info.Clone()
+				break
+			}
+		}
+		require.NotNil(t, idxInfo)
+		idxInfo.MVIndex = false
+		indexOpr, err := tables.NewIndex(partialTbl.Meta().ID, partialTbl.Meta(), idxInfo)
+		require.NoError(t, err)
+		sctx := mock.NewContext()
+		sctx.Store = store
+
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		require.NoError(t, indexOpr.Delete(sctx.GetTableCtx(), txn, types.MakeDatums(1), kv.IntHandle(1)))
+		require.NoError(t, txn.Commit(context.Background()))
+		mustReportInconsistent("admin check table partial_t")
+		mustReportInconsistent("admin check index partial_t idx")
+
+		txn, err = store.Begin()
+		require.NoError(t, err)
+		_, err = indexOpr.Create(sctx.GetTableCtx(), txn, types.MakeDatums(1), kv.IntHandle(1), nil)
+		require.NoError(t, err)
+		require.NoError(t, txn.Commit(context.Background()))
+		tk.MustExec("admin check table partial_t")
+		tk.MustExec("admin check index partial_t idx")
+
+		txn, err = store.Begin()
+		require.NoError(t, err)
+		_, err = indexOpr.Create(sctx.GetTableCtx(), txn, types.MakeDatums(0), kv.IntHandle(0), nil)
+		require.NoError(t, err)
+		require.NoError(t, txn.Commit(context.Background()))
+		mustReportInconsistent("admin check table partial_t")
+		mustReportInconsistent("admin check index partial_t idx")
+	})
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(pk int primary key, a json, index idx((cast(a as signed array))))")
 	tk.MustExec("insert into t values (0, '[0,1,2]')")
