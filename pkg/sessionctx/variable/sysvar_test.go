@@ -1910,6 +1910,7 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 	sv := GetSysVar(TiDBOptPartialOrderedIndexForTopN)
 	require.NotNil(t, sv)
@@ -1918,6 +1919,104 @@ func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 	require.True(t, sv.IsHintUpdatableVerified)
 	require.Equal(t, TypeEnum, sv.Type)
 	require.Equal(t, "DISABLE", sv.Value)
+=======
+func TestTiDBAnalyzeDefaultBucketAndTopNOptions(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	origBuckets := vardef.AnalyzeDefaultNumBuckets.Load()
+	origTopN := vardef.AnalyzeDefaultNumTopN.Load()
+	defer func() {
+		vardef.AnalyzeDefaultNumBuckets.Store(origBuckets)
+		vardef.AnalyzeDefaultNumTopN.Store(origTopN)
+	}()
+
+	bucketsVar := GetSysVar(vardef.TiDBAnalyzeDefaultNumBuckets)
+	require.NotNil(t, bucketsVar)
+	require.NoError(t, bucketsVar.SetGlobalFromHook(ctx, vars, "100", false))
+	require.Equal(t, uint64(100), vardef.AnalyzeDefaultNumBuckets.Load())
+
+	val, err := bucketsVar.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "100", val)
+
+	// Unsigned sysvar validation normalizes out-of-range values to the configured
+	// boundary instead of returning an error.
+	val, err = bucketsVar.Validate(vars, "0", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(vardef.MinTiDBAnalyzeDefaultNumBuckets, 10), val)
+
+	val, err = bucketsVar.Validate(vars, "100001", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(vardef.MaxTiDBAnalyzeDefaultNumBuckets, 10), val)
+
+	topNVar := GetSysVar(vardef.TiDBAnalyzeDefaultNumTopN)
+	require.NotNil(t, topNVar)
+	require.NoError(t, topNVar.SetGlobalFromHook(ctx, vars, "50", false))
+	require.Equal(t, uint64(50), vardef.AnalyzeDefaultNumTopN.Load())
+
+	val, err = topNVar.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "50", val)
+
+	val, err = topNVar.Validate(vars, "0", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(vardef.MinTiDBAnalyzeDefaultNumTopN, 10), val)
+
+	val, err = topNVar.Validate(vars, "100001", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(vardef.MaxTiDBAnalyzeDefaultNumTopN, 10), val)
+}
+
+func TestTiDBAnalyzeStoreBatchSize(t *testing.T) {
+	vars := NewSessionVars(nil)
+	require.Equal(t, vardef.DefTiDBAnalyzeStoreBatchSize, vars.AnalyzeStoreBatchSize)
+
+	sysVar := GetSysVar(vardef.TiDBAnalyzeStoreBatchSize)
+	require.NotNil(t, sysVar)
+	require.True(t, sysVar.HasGlobalScope())
+	require.True(t, sysVar.HasSessionScope())
+	require.Equal(t, strconv.Itoa(vardef.DefTiDBAnalyzeStoreBatchSize), sysVar.Value)
+
+	require.NoError(t, vars.SetSystemVar(vardef.TiDBAnalyzeStoreBatchSize, "0"))
+	require.Zero(t, vars.AnalyzeStoreBatchSize)
+
+	require.NoError(t, vars.SetSystemVar(vardef.TiDBAnalyzeStoreBatchSize, strconv.FormatUint(vardef.MaxTiDBAnalyzeStoreBatchSize+1, 10)))
+	require.Equal(t, int(vardef.MaxTiDBAnalyzeStoreBatchSize), vars.AnalyzeStoreBatchSize)
+}
+
+func TestTiDBOptSelectivityFactor(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBOptSelectivityFactor)
+	require.NoError(t, err)
+	require.NotEqual(t, 0.8, val)
+
+	// set valid value
+	require.NoError(t, vars.SetSystemVar(vardef.TiDBOptSelectivityFactor, "0.7"))
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBOptSelectivityFactor)
+	require.NoError(t, err)
+	require.NotEqual(t, 0.7, val)
+
+	// set invalid value
+	err = mock.SetGlobalSysVar(ctx, vardef.TiDBOptSelectivityFactor, "1.1")
+	require.NoError(t, err)
+	_, err = mock.GetGlobalSysVar(vardef.TiDBOptSelectivityFactor)
+	require.NoError(t, err)
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_opt_selectivity_factor value: '1.1'", warn.Error())
+}
+
+func TestSynonyms(t *testing.T) {
+	sysVar := GetSysVar(vardef.TxnIsolation)
+	require.NotNil(t, sysVar)
+>>>>>>> 679d666fd31 (sessionctx: add Analyze store batch size variable (#70587))
 
 	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
