@@ -18,6 +18,8 @@
 # - pd: 2379, 2380, 2381, 2383, 2384
 # - tikv: 20160, 20161, 20162, 20180, 20181, 20182
 # - tikv-worker: 19000
+source "$(dirname "${BASH_SOURCE[0]}")/../bootstrap-common.sh"
+
 function main() {
     local data_base_dir=$(mktemp -d)
     mkdir -pv ${data_base_dir}/pd-{0,1,2}/data
@@ -30,6 +32,8 @@ function main() {
         exit 1
     fi
 
+    clear_bootstrap_logs
+
     # init a bucket "next-gen-test", the bucket will be used for testing, do not change it.
     mkdir -pv ${data_base_dir}/minio/data/next-gen-test
     start_minio ${data_base_dir}/minio/data
@@ -38,12 +42,14 @@ function main() {
     bin/pd-server --name=pd-0 --config=${config_dir}/pd.toml --data-dir=${data_base_dir}/pd-0/data --peer-urls=http://127.0.0.1:2380 --advertise-peer-urls=http://127.0.0.1:2380 --client-urls=http://127.0.0.1:2379 --advertise-client-urls=http://127.0.0.1:2379 --initial-cluster=pd-0=http://127.0.0.1:2380,pd-1=http://127.0.0.1:2381,pd-2=http://127.0.0.1:2383 --force-new-cluster --log-file=pd0.log &
     bin/pd-server --name=pd-1 --config=${config_dir}/pd.toml --data-dir=${data_base_dir}/pd-1/data --peer-urls=http://127.0.0.1:2381 --advertise-peer-urls=http://127.0.0.1:2381 --client-urls=http://127.0.0.1:2382 --advertise-client-urls=http://127.0.0.1:2382 --initial-cluster=pd-0=http://127.0.0.1:2380,pd-1=http://127.0.0.1:2381,pd-2=http://127.0.0.1:2383 --force-new-cluster --log-file=pd1.log &
     bin/pd-server --name=pd-2 --config=${config_dir}/pd.toml --data-dir=${data_base_dir}/pd-2/data --peer-urls=http://127.0.0.1:2383 --advertise-peer-urls=http://127.0.0.1:2383 --client-urls=http://127.0.0.1:2384 --advertise-client-urls=http://127.0.0.1:2384 --initial-cluster=pd-0=http://127.0.0.1:2380,pd-1=http://127.0.0.1:2381,pd-2=http://127.0.0.1:2383 --force-new-cluster --log-file=pd2.log &
-    bin/tikv-server --config=${config_dir}/tikv.toml --data-dir=${data_base_dir}tikv-0/data --addr=127.0.0.1:20160 --advertise-addr=127.0.0.1:20160 --status-addr=127.0.0.1:20180 --pd=http://127.0.0.1:2379,http://127.0.0.1:2382,http://127.0.0.1:2384 --log-file=tikv0.log &
-    bin/tikv-server --config=${config_dir}/tikv.toml --data-dir=${data_base_dir}tikv-1/data --addr=127.0.0.1:20161 --advertise-addr=127.0.0.1:20161 --status-addr=127.0.0.1:20181 --pd=http://127.0.0.1:2379,http://127.0.0.1:2382,http://127.0.0.1:2384 --log-file=tikv1.log &
-    bin/tikv-server --config=${config_dir}/tikv.toml --data-dir=${data_base_dir}tikv-2/data --addr=127.0.0.1:20162 --advertise-addr=127.0.0.1:20162 --status-addr=127.0.0.1:20182 --pd=http://127.0.0.1:2379,http://127.0.0.1:2382,http://127.0.0.1:2384 --log-file=tikv2.log &
-    bin/tikv-worker --config=${config_dir}/tikv-worker.toml --data-dir=${data_base_dir}/tikv-worker/data --addr=127.0.0.1:19000 --pd-endpoints=http://127.0.0.1:2379,http://127.0.0.1:2382,http://127.0.0.1:2384 --log-file=tikv-worker.log &
+    if ! wait_for_pd_leader || ! start_tikv_cluster "$config_dir" "$data_base_dir"; then
+        return 1
+    fi
+    bin/tikv-worker --config=${config_dir}/tikv-worker.toml --data-dir=${data_base_dir}/tikv-worker/data --addr=127.0.0.1:19000 --pd-endpoints=${pd_client_urls} --log-file=tikv-worker.log &
 
-    sleep 10
+    if ! wait_for_tikv_worker; then
+        return 1
+    fi
     NEXT_GEN=1 "$@"
 }
 
