@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func buildTestCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request, eventCb trxevents.EventCallback) ([]*copTask, error) {
@@ -60,7 +61,102 @@ func TestEnsureMonotonicKeyRanges(t *testing.T) {
 	require.False(t, reordered)
 }
 
-func TestBuildTasksWithoutBuckets(t *testing.T) {
+func TestCoprRequestLimiter(t *testing.T) {
+	t.Run("SetAttemptLimiter", testSetRequestAttemptLimiter)
+	t.Run("Finished", testRequestAttemptLimiterFinished)
+	t.Run("WaitStats", testLimiterWaitStats)
+}
+
+func testSetRequestAttemptLimiter(t *testing.T) {
+	newAttemptLimiter := func(req *kv.Request, finishCh chan struct{}, storeType kv.StoreType) tikvrpc.RequestAttemptLimiterFunc {
+		worker := &copIteratorWorker{
+			req:      req,
+			finishCh: finishCh,
+			stats:    &copIteratorRuntimeStats{},
+		}
+		rpcReq := tikvrpc.NewRequest(tikvrpc.CmdCop, &coprocessor.Request{})
+		worker.setRequestAttemptLimiter(rpcReq, &copTask{storeType: storeType})
+		return rpcReq.RequestAttemptLimiter
+	}
+
+	t.Run("NoLimiter", func(t *testing.T) {
+		require.Nil(t, newAttemptLimiter(&kv.Request{}, make(chan struct{}), kv.TiKV))
+	})
+
+	t.Run("TiFlash", func(t *testing.T) {
+		req := &kv.Request{CoprRequestLimiter: kv.NewCoprRequestLimiter(1)}
+		require.Nil(t, newAttemptLimiter(req, make(chan struct{}), kv.TiFlash))
+	})
+
+	t.Run("RequestLimiterFallback", func(t *testing.T) {
+		requestLimiter := kv.NewCoprRequestLimiter(1)
+		attemptLimiter := newAttemptLimiter(
+			&kv.Request{CoprRequestLimiter: requestLimiter}, make(chan struct{}), kv.TiKV)
+		require.NotNil(t, attemptLimiter)
+
+		release, err := attemptLimiter(context.Background(), 42)
+		require.NoError(t, err)
+		require.NotNil(t, release)
+		require.False(t, requestLimiter.TryAcquire())
+		release()
+	})
+
+	t.Run("QueryLimiterPrecedence", func(t *testing.T) {
+		requestLimiter := kv.NewCoprRequestLimiter(1)
+		queryLimiter := kv.NewQueryCopStoreLimiter(1)
+		attemptLimiter := newAttemptLimiter(&kv.Request{
+			CoprRequestLimiter:   requestLimiter,
+			QueryCopStoreLimiter: queryLimiter,
+		}, make(chan struct{}), kv.TiKV)
+		require.NotNil(t, attemptLimiter)
+
+		release, err := attemptLimiter(context.Background(), 42)
+		require.NoError(t, err)
+		require.NotNil(t, release)
+		require.False(t, queryLimiter.GetStoreLimiter(42).TryAcquire())
+		require.True(t, requestLimiter.TryAcquire())
+		requestLimiter.Release()
+		release()
+	})
+}
+
+func testRequestAttemptLimiterFinished(t *testing.T) {
+	finishCh := make(chan struct{})
+	close(finishCh)
+	limiter := kv.NewCoprRequestLimiter(1)
+	worker := &copIteratorWorker{
+		req:      &kv.Request{CoprRequestLimiter: limiter},
+		finishCh: finishCh,
+		stats:    &copIteratorRuntimeStats{},
+	}
+	rpcReq := tikvrpc.NewRequest(tikvrpc.CmdCop, &coprocessor.Request{})
+	worker.setRequestAttemptLimiter(rpcReq, &copTask{storeType: kv.TiKV})
+
+	release, err := rpcReq.RequestAttemptLimiter(context.Background(), 42)
+	require.ErrorIs(t, err, errCoprRequestLimiterFinished)
+	require.Nil(t, release)
+	require.True(t, limiter.TryAcquire())
+	limiter.Release()
+}
+
+func testLimiterWaitStats(t *testing.T) {
+	stats := LimiterWaitStats{}
+	require.True(t, stats.IsZero())
+	stats.Record(time.Millisecond)
+	stats.Merge(LimiterWaitStats{TotalTime: 3 * time.Millisecond, MaxTime: 2 * time.Millisecond})
+	require.Equal(t, LimiterWaitStats{
+		TotalTime: 4 * time.Millisecond,
+		MaxTime:   2 * time.Millisecond,
+	}, stats)
+	require.False(t, stats.IsZero())
+}
+
+func TestBuildTasks(t *testing.T) {
+	t.Run("WithoutBuckets", testBuildTasksWithoutBuckets)
+	t.Run("ByBuckets", testBuildTasksByBuckets)
+}
+
+func testBuildTasksWithoutBuckets(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -186,7 +282,7 @@ func TestBuildTasksWithoutBuckets(t *testing.T) {
 	taskEqual(t, tasks[1], regionIDs[2], 0, "n", "p")
 }
 
-func TestBuildTasksByBuckets(t *testing.T) {
+func testBuildTasksByBuckets(t *testing.T) {
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
 	defer func() {

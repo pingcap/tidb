@@ -2293,6 +2293,8 @@ github.com/smartystreets/assertions v1.1.0/go.mod h1:tcbTF8ujkAEcZ8TElKY+i30BzYl
 github.com/smartystreets/goconvey v1.6.4/go.mod h1:syvi0/a8iFYH4r/RixwvyeAJjdLS9QV7WQ/tjFTllLA=
 github.com/soheilhy/cmux v0.1.5 h1:jjzc5WVemNEDTLwv9tlmemhC73tI08BNOIGwBOo10Js=
 github.com/soheilhy/cmux v0.1.5/go.mod h1:T7TcVDs9LWfQgPlPsdngu6I6QIoyIFZDDC6sNE1GqG0=
+github.com/solotzg/client-go/v2 v2.0.0-20260820012253-f2f673ac5f5d h1:j0a+mnPoC7sDuBxMVbItflzc+CjSTNvGzRaAizHvhd8=
+github.com/solotzg/client-go/v2 v2.0.0-20260820012253-f2f673ac5f5d/go.mod h1:Bid1lF4a8ESuhOH7CeVobOrWxUJvtg16ZLBxogNuZWk=
 github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0 h1:IJ3DuWHPTJrsqtIqjfdmPTELdTFGefvrOa2eTeRBleQ=
 github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0/go.mod h1:V952P4GGl1v/MMynLwxVdWEbSZJx+n0oOO3ljnez+WU=
 github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67 h1:8ZnTA26bBOoPkAbbitKPgNlpw0Bwt7ZlpYgZWHWJR/w=
