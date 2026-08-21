@@ -15,6 +15,7 @@
 package execdetails
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +32,18 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
+
+func TestStatementRUVersionSnapshot(t *testing.T) {
+	ctx := ContextWithInitializedExecDetails(context.Background())
+	_, ok := StatementRUVersionFromContext(ctx)
+	require.False(t, ok)
+
+	SetStatementRUVersion(ctx, rmclient.RUVersionV1)
+	SetStatementRUVersion(ctx, rmclient.RUVersionV2)
+	version, ok := StatementRUVersionFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, rmclient.RUVersionV1, version)
+}
 
 func defaultRUV2WeightsForTest() RUV2Weights {
 	cfg := config.DefaultRUV2Config()

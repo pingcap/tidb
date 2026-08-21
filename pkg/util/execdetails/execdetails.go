@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/tikv/client-go/v2/util"
-	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/zap"
 )
 
@@ -112,7 +111,7 @@ var StmtExecDetailKey = stmtExecDetailKeyType{}
 type StmtExecDetails struct {
 	WriteSQLRespDuration time.Duration
 
-	ruVersion          rmclient.RUVersion
+	ruVersion          atomic.Int32
 	ruv2Metrics        *RUV2Metrics
 	ruv2MetricsStorage RUV2Metrics
 }
