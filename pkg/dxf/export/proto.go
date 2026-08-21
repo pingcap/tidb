@@ -14,7 +14,11 @@
 
 package export
 
-import "github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
+import (
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
+	"github.com/pingcap/tidb/pkg/meta/model"
+)
 
 // DBSpec is a database and the ids of its tables to export.
 type DBSpec struct {
@@ -59,6 +63,29 @@ func (m *TaskMeta) dbFirstTableIdxs() map[int]struct{} {
 		idx += len(m.DBs[i].TableIDs)
 	}
 	return firstIdxs
+}
+
+// tableRef pairs a table's database name with its resolved schema.
+type tableRef struct {
+	dbName    string
+	tableInfo *model.TableInfo
+}
+
+// tableRefs orders tableInfos to match the (DBs, TableIDs) iteration that
+// assigns Chunk.TableIdx, so refs[c.TableIdx] is the table c belongs to.
+func (m *TaskMeta) tableRefs(tableInfos map[int64]*model.TableInfo) ([]tableRef, error) {
+	refs := make([]tableRef, 0, m.tableCount())
+	for i := range m.DBs {
+		db := &m.DBs[i]
+		for _, tid := range db.TableIDs {
+			tblInfo, ok := tableInfos[tid]
+			if !ok {
+				return nil, errors.Errorf("export: table %d not found in snapshot infoschema", tid)
+			}
+			refs = append(refs, tableRef{dbName: db.DBName, tableInfo: tblInfo})
+		}
+	}
+	return refs, nil
 }
 
 // Chunk is a ~chunkSize key range of one physical table. Its table-local Ordinal

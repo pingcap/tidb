@@ -50,31 +50,23 @@ func generateChunks(
 	tableInfos map[int64]*model.TableInfo,
 	meta *TaskMeta,
 ) ([]Chunk, int64, error) {
-	chunks := make([]Chunk, 0, meta.tableCount())
+	refs, err := meta.tableRefs(tableInfos)
+	if err != nil {
+		return nil, 0, err
+	}
+	chunks := make([]Chunk, 0, len(refs))
 	var total int64
-	tableIdx := 0
-	for i := range meta.DBs {
-		for _, tid := range meta.DBs[i].TableIDs {
-			tableChunks, err := splitTable(ctx, store, tableInfos, tid, tableIdx)
-			if err != nil {
-				return nil, 0, err
-			}
-			for _, chunk := range tableChunks {
-				total += chunk.Size
-			}
-			chunks = append(chunks, tableChunks...)
-			tableIdx++
+	for tableIdx, ref := range refs {
+		tableChunks, err := splitTable(ctx, store, ref.tableInfo, tableIdx)
+		if err != nil {
+			return nil, 0, err
 		}
+		for _, chunk := range tableChunks {
+			total += chunk.Size
+		}
+		chunks = append(chunks, tableChunks...)
 	}
 	return chunks, total, nil
-}
-
-func tableInfoByID(tableInfos map[int64]*model.TableInfo, id int64) (*model.TableInfo, error) {
-	tblInfo, ok := tableInfos[id]
-	if !ok {
-		return nil, errors.Errorf("export: table %d not found in snapshot infoschema", id)
-	}
-	return tblInfo, nil
 }
 
 // splitTable carves one table into ~chunkSize key-ordered chunks, with a
@@ -82,14 +74,9 @@ func tableInfoByID(tableInfos map[int64]*model.TableInfo, id int64) (*model.Tabl
 func splitTable(
 	ctx context.Context,
 	store kv.Storage,
-	tableInfos map[int64]*model.TableInfo,
-	tableID int64,
+	tblInfo *model.TableInfo,
 	tableIdx int,
 ) ([]Chunk, error) {
-	tblInfo, err := tableInfoByID(tableInfos, tableID)
-	if err != nil {
-		return nil, err
-	}
 	pids := physicalIDs(tblInfo)
 	chunks := make([]Chunk, 0, len(pids))
 	ordinal := 0

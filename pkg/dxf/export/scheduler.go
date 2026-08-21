@@ -120,7 +120,7 @@ func (*exportScheduler) OnTick(context.Context, *proto.Task) {}
 
 // OnPrepare implements scheduler.Extension.
 func (s *exportScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
-	tableInfos, err := s.snapshotTableInfos()
+	tableInfos, err := snapshotTableInfos(s.store, s.taskMeta)
 	if err != nil {
 		return err
 	}
@@ -162,11 +162,13 @@ func (s *exportScheduler) setResources(ctx context.Context, task *proto.Task, to
 	return nil
 }
 
-func (s *exportScheduler) snapshotTableInfos() (map[int64]*model.TableInfo, error) {
-	reader := meta.NewReader(s.store.GetSnapshot(kv.NewVersion(s.taskMeta.SnapshotTS)))
-	tableInfos := make(map[int64]*model.TableInfo, s.taskMeta.tableCount())
-	for i := range s.taskMeta.DBs {
-		db := &s.taskMeta.DBs[i]
+// snapshotTableInfos resolves every table in taskMeta.DBs against the snapshot
+// at taskMeta.SnapshotTS, filling in each DBSpec's DBName as a side effect.
+func snapshotTableInfos(store kv.Storage, taskMeta *TaskMeta) (map[int64]*model.TableInfo, error) {
+	reader := meta.NewReader(store.GetSnapshot(kv.NewVersion(taskMeta.SnapshotTS)))
+	tableInfos := make(map[int64]*model.TableInfo, taskMeta.tableCount())
+	for i := range taskMeta.DBs {
+		db := &taskMeta.DBs[i]
 		dbInfo, err := reader.GetDatabase(db.DBID)
 		if err != nil {
 			return nil, errors.Trace(err)

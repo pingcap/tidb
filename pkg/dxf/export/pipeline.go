@@ -45,8 +45,8 @@ func (e *dumpStepExecutor) newChunkExporter() *chunkExporter {
 // encodes the rows to CSV and uploads them as a group of files named by the
 // chunk's ordinal.
 func (e *dumpStepExecutor) exportChunk(ctx context.Context, ce *chunkExporter, c Chunk) error {
-	tbl := e.taskMeta.Tables[c.TableIdx]
-	tblInfo := tbl.TableInfo
+	ref := e.tableRefs[c.TableIdx]
+	tblInfo := ref.tableInfo
 	colInfos, fieldTps := exportColumns(tblInfo)
 
 	rs, err := buildScan(ctx, ce.exprCtx, ce.distCtx, tblInfo, c.PhysicalID, colInfos, fieldTps,
@@ -63,7 +63,7 @@ func (e *dumpStepExecutor) exportChunk(ctx context.Context, ce *chunkExporter, c
 		ctx:      ctx,
 		objStore: e.objStore,
 		fileSize: e.taskMeta.FileSize,
-		db:       tbl.DBName,
+		db:       ref.dbName,
 		table:    tblInfo.Name.O,
 		ordinal:  c.Ordinal,
 		kinds:    fieldKinds(colInfos),
