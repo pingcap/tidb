@@ -183,6 +183,20 @@ impl ClusterDdl for MockDdl {
                     .for_database(&database.charset, &database.collate)
                     .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
                 info.id = id;
+                // The real writer draws one further id per partition, right
+                // after the table's own. Leaving them zero here would build a
+                // fixture whose partitions all share physical table 0, which
+                // is a shape no cluster ever stores.
+                if let Some(partition) = &info.partition {
+                    let partition = partition.read();
+                    let count = partition.definitions.with_visible(<[_]>::len);
+                    for ordinal in 0..count {
+                        let physical = self.allocate();
+                        partition
+                            .definitions
+                            .update(ordinal, |definition| definition.id = physical);
+                    }
+                }
                 next.databases[at].tables.push(info);
             }
             DdlStatement::CreateView {

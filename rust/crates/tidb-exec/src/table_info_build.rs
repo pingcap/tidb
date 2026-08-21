@@ -85,8 +85,10 @@ use tidb_executor::ddl::column_field_type::{
 use tidb_model::column::{
     ColumnDefaultValue, ColumnInfo, GoAny, GoStringSet, CURR_LATEST_COLUMN_INFO_VERSION,
 };
+use tidb_executor::kv_table::KvIndex;
 use tidb_model::index::{IndexColumn, IndexInfo};
 use tidb_model::schema_state::SchemaState;
+use tidb_model::GoShared;
 use tidb_model::table_info::{TableInfo, TABLE_INFO_VERSION5};
 
 /// Go `types.UnspecifiedLength`.
@@ -301,9 +303,6 @@ pub fn build_table_info_with_context(
     if create.ctas.is_some() {
         return refuse("... AS <query>");
     }
-    if create.partitioning.is_some() {
-        return refuse("PARTITION BY");
-    }
     if !create.splits.is_empty() {
         return refuse("SPLIT REGION");
     }
@@ -474,7 +473,117 @@ pub fn build_table_info_with_context(
     table.auto_inc_id = auto_inc_id;
     table.auto_id_cache = auto_id_cache;
     table.auto_rand_id = auto_rand_id;
+    // Go `buildTablePartitionInfo`, called LAST because its unique-key rule
+    // (8264/1503) reads the table's finished index list.
+    //
+    // The physical ids stay zero here. Go allocates them when the DDL job is
+    // submitted -- one per definition, right after the table's own
+    // (`ddl/jobsubmit/submit.go` `assignIDsForTable`) -- so a builder that
+    // invented them would hand out ids the cluster's allocator never issued.
+    if create.partitioning.is_some() {
+        let names = table
+            .columns
+            .iter_deref()
+            .map(|column| column.read().name.original().to_owned())
+            .collect::<Vec<_>>();
+        let indexes = table
+            .indices
+            .iter_deref()
+            .map(|index| {
+                let index = index.read();
+                let mut column_offsets = Vec::with_capacity(index.columns.len());
+                let mut prefix_lengths = Vec::with_capacity(index.columns.len());
+                for column in index.columns.iter_deref() {
+                    let column = column.read();
+                    // Every index here was built from this table's own
+                    // columns a few lines above, so each name resolves.
+                    if let Some(offset) = names
+                        .iter()
+                        .position(|candidate| candidate.eq_ignore_ascii_case(column.name.original()))
+                    {
+                        column_offsets.push(offset);
+                        prefix_lengths.push(column.length);
+                    }
+                }
+                KvIndex {
+                    id: index.id,
+                    name: index.name.original().to_owned(),
+                    comment: index.comment.clone(),
+                    unique: index.unique,
+                    column_offsets,
+                    prefix_lengths,
+                    visible: !index.invisible,
+                    global: index.global,
+                }
+            })
+            .collect::<Vec<_>>();
+        // `handle_offsets` is the CLUSTERED primary key's, already resolved
+        // above: it is no entry in `indices` -- its encoding IS the row key
+        // -- which is why Go reports the unique-key rule against
+        // `CLUSTERED INDEX` rather than against an index name.
+        if let Some((metadata, _)) = tidb_executor::ddl::build_partition_metadata(
+            create,
+            &names,
+            &fields,
+            &indexes,
+            &handle_offsets,
+            &mut || 0,
+            context,
+        )
+        .map_err(partition_refusal)?
+        {
+            table.partition = Some(GoShared::new(partition_info(&metadata)));
+        }
+    }
     Ok(table)
+}
+
+/// Renders a partition refusal in the words the driver tier raised it with,
+/// preserving the MySQL error code a client would have seen.
+fn partition_refusal(error: tidb_executor::DriverError) -> DdlAdmissionError {
+    let error = error.to_mysql_error();
+    DdlAdmissionError::with_code(error.code, error.message)
+}
+
+/// The stored `model.PartitionInfo` for a built clause.
+fn partition_info(
+    metadata: &tidb_executor::ddl::StoredPartitionMetadata,
+) -> tidb_model::partition::PartitionInfo {
+    let mut partition = tidb_model::partition::PartitionInfo {
+        partition_type: metadata.kind,
+        expr: metadata.expr.clone(),
+        columns: metadata
+            .columns
+            .iter()
+            .map(|name| CiString::new(name.clone()))
+            .collect::<Vec<_>>()
+            .into(),
+        enable: metadata.enable,
+        is_empty_columns: metadata.is_empty_columns,
+        num: metadata.num,
+        ..tidb_model::partition::PartitionInfo::default()
+    };
+    partition.definitions = metadata
+        .definitions
+        .iter()
+        .map(|definition| {
+            let mut stored = tidb_model::partition::PartitionDefinition {
+                id: definition.id,
+                name: CiString::new(definition.name.clone()),
+                ..tidb_model::partition::PartitionDefinition::default()
+            };
+            stored.less_than = definition.less_than.clone().into();
+            stored.in_values = definition
+                .in_values
+                .iter()
+                .map(|tuple| tuple.clone().into())
+                .collect::<Vec<_>>()
+                .into();
+            stored
+        })
+        .collect::<Vec<_>>()
+        .into();
+    partition
 }
 
 /// One constraint, in the single normalized shape Go's `ast.Constraint` has by

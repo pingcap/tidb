@@ -111,10 +111,6 @@ fn a_ddl_shape_the_cluster_path_cannot_express_is_refused_precisely() {
              FOREIGN KEY (other) REFERENCES t (id))",
             "not supported by this node",
         ),
-        (
-            "CREATE TABLE parts (id BIGINT PRIMARY KEY) PARTITION BY HASH (id) PARTITIONS 2",
-            "not supported by this node",
-        ),
     ] {
         let error = session
             .execute_write(sql)

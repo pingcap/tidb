@@ -62,11 +62,13 @@ use tidb_ast::{
     CreateTableStmt, Expr, PartitionDefinition, PartitionDefinitionClause, PartitionType,
     PartitionValue,
 };
-use tidb_datatype::{FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 use crate::generated_column::TableColumnResolver;
 use crate::kv_table::KvIndex;
-use crate::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
+use crate::partition_routing::{
+    PartitionDef, PartitionKind, PartitionSpec, RangeBound, RangeColumnBound,
+};
 use crate::DriverError;
 
 /// Go `checkAddPartitionTooManyPartitions`: the hard cap on partitions.
@@ -1082,3 +1084,439 @@ pub fn partition_spec_from_metadata(
         }
     }
 }
+
+/// A `PARTITION BY` clause in the STORED form Go persists, which is Go
+/// `buildTablePartitionInfo` + `buildPartitionDefinitionsInfo`
+/// (`ddl/partition.go`) reduced to the fields `model.PartitionInfo` carries.
+///
+/// Physical ids are NOT here. Go allocates them when the DDL job is
+/// submitted, one per definition after the table's own
+/// (`ddl/jobsubmit/submit.go` `assignIDsForTable`), so the builder that
+/// persists this metadata supplies them.
+#[derive(Clone, Debug)]
+pub struct StoredPartitionMetadata {
+    /// Go `PartitionInfo.Type`.
+    pub kind: PartitionType,
+    /// Go `PartitionInfo.Enable`. Metadata written with this false is not
+    /// partitioning -- `GetPartitionInfo` returns nil for it -- so a method
+    /// Go treats as unsupported is stored disabled rather than refused.
+    pub enable: bool,
+    /// Go `PartitionInfo.Num`: the written `PARTITIONS n`.
+    pub num: u64,
+    /// Go `PartitionInfo.Expr`, restored under Go's own flags. Empty for the
+    /// COLUMNS and KEY forms, which name their inputs instead.
+    pub expr: String,
+    /// Go `PartitionInfo.Columns`.
+    pub columns: Vec<String>,
+    /// Go `PartitionInfo.IsEmptyColumns`: set when `PARTITION BY KEY` named
+    /// no columns and Go filled them in from the primary key.
+    pub is_empty_columns: bool,
+    /// One entry per partition, in written order, with `id` left at zero for
+    /// the id allocator to fill.
+    pub definitions: Vec<StoredPartitionDefinition>,
+}
+
+/// Builds the STORED partition metadata for a `CREATE TABLE`, alongside the
+/// routing spec the same clause produces.
+///
+/// Both come from one walk on purpose. Go derives them from one another --
+/// the stored `LessThan` text under RANGE COLUMNS is the FOLDED datum
+/// rendered back out (`generatePartValuesWithTp`), not the source text -- so
+/// splitting the walk would let the persisted bounds and the bounds this node
+/// routes by drift apart while both looked right in isolation.
+///
+/// `allocate_id` fills the routing spec's physical ids; the stored form
+/// leaves them zero, because the two are filled by different tiers.
+///
+/// # Errors
+///
+/// Whatever [`build_table_partitioning`] raises for the clause.
+pub fn build_partition_metadata(
+    create: &CreateTableStmt,
+    names: &[String],
+    types: &[FieldType],
+    indexes: &[KvIndex],
+    handle_offsets: &[usize],
+    allocate_id: &mut dyn FnMut() -> i64,
+    ctx: &crate::StmtContext,
+) -> Result<Option<(StoredPartitionMetadata, PartitionSpec)>, DriverError> {
+    let Some(spec) = build_table_partitioning(
+        create,
+        names,
+        types,
+        indexes,
+        handle_offsets,
+        allocate_id,
+        ctx,
+    )?
+    else {
+        return Ok(None);
+    };
+    let partitioning = create
+        .partitioning
+        .as_ref()
+        .expect("a spec was built, so the clause is there");
+    let method = &partitioning.method;
+    // Go dispatches the stored shape on whether an EXPRESSION was written:
+    // `pi.Expr` for one, `pi.Columns` for a written column list.
+    let (expr, columns, is_empty_columns) = if method.expr.is_some() {
+        (spec.expr_text.clone(), Vec::new(), false)
+    } else {
+        let written = method
+            .columns
+            .iter()
+            .filter_map(|path| path.last().cloned())
+            .collect::<Vec<_>>();
+        // Go `buildTablePartitionInfo`: `PARTITION BY KEY` with no column
+        // list stores the PRIMARY KEY's columns and records that it filled
+        // them in, so `SHOW CREATE TABLE` can print the clause as written.
+        // The routing spec resolved the same columns, which is why they are
+        // taken from it rather than resolved a second time.
+        if written.is_empty() {
+            (String::new(), spec.dependencies.clone(), true)
+        } else {
+            (String::new(), written, false)
+        }
+    };
+    let definitions = stored_definitions_for(partitioning, &spec, ctx)?;
+    Ok(Some((
+        StoredPartitionMetadata {
+            kind: method.kind,
+            // Every method this tier builds a spec for is one Go enables;
+            // the ones Go stores disabled it refuses outright, above.
+            enable: true,
+            num: method.count,
+            expr,
+            columns,
+            is_empty_columns,
+            definitions,
+        },
+        spec,
+    )))
+}
+
+/// The stored `LessThan`/`InValues` TEXT for each definition.
+///
+/// Go renders these from the FOLDED values under the COLUMNS forms
+/// (`generatePartValuesWithTp`) and from the written expression under the
+/// expression forms (`expr.Format`). Both are reproduced from the routing
+/// spec, which holds the folded values, and the clause, which holds the
+/// written ones.
+fn stored_definitions_for(
+    partitioning: &tidb_ast::TablePartitioning,
+    spec: &PartitionSpec,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<StoredPartitionDefinition>, DriverError> {
+    let mut stored = Vec::with_capacity(spec.definitions.len());
+    for (ordinal, definition) in spec.definitions.iter().enumerate() {
+        let written = partitioning.definitions.get(ordinal);
+        let mut entry = StoredPartitionDefinition {
+            // Filled by the tier that publishes this metadata; Go allocates
+            // it at job-submission time.
+            id: 0,
+            name: definition.name.clone(),
+            less_than: Vec::new(),
+            in_values: Vec::new(),
+        };
+        match &spec.kind {
+            // HASH and KEY definitions carry a name and nothing else.
+            PartitionKind::Hash | PartitionKind::Key => {}
+            PartitionKind::Range { less_than, unsigned } => {
+                entry.less_than = vec![match less_than.get(ordinal) {
+                    Some(RangeBound::MaxValue) | None => PARTITION_MAX_VALUE.to_owned(),
+                    Some(RangeBound::Value(value)) if *unsigned => {
+                        format!("{}", *value as u64)
+                    }
+                    Some(RangeBound::Value(value)) => format!("{value}"),
+                }];
+            }
+            PartitionKind::RangeColumns {
+                less_than,
+                field_types,
+            } => {
+                let bounds = less_than.get(ordinal).map_or(&[][..], Vec::as_slice);
+                for (position, bound) in bounds.iter().enumerate() {
+                    entry.less_than.push(match bound {
+                        RangeColumnBound::MaxValue => PARTITION_MAX_VALUE.to_owned(),
+                        RangeColumnBound::Value(datum) => {
+                            stored_value_text(datum, field_types.get(position))?
+                        }
+                    });
+                }
+            }
+            PartitionKind::List { .. } | PartitionKind::ListColumns { .. } => {
+                entry.in_values = stored_in_values(written, spec, ctx)?;
+            }
+        }
+        stored.push(entry);
+    }
+    Ok(stored)
+}
+
+/// Go's `partitionMaxValue`, stored as that literal word and matched back
+/// with `strings.EqualFold`.
+const PARTITION_MAX_VALUE: &str = "MAXVALUE";
+
+/// One folded value in the text form Go stores it as, which is Go
+/// `generatePartValuesWithTp`.
+///
+/// The dispatch is on the COLUMN's type, not the datum's, exactly as Go's
+/// is: a value has already been converted to its column's type when it was
+/// folded, and the one case that cannot be read off the datum -- a BINARY
+/// column, whose bytes need not be valid UTF-8 -- is a property of the
+/// column alone.
+fn stored_value_text(datum: &Datum, field_type: Option<&FieldType>) -> Result<String, DriverError> {
+    if matches!(datum, Datum::Null) {
+        return Ok("NULL".to_owned());
+    }
+    // Go stores a BINARY value as a hex literal rather than as quoted text,
+    // because the content would otherwise be lost when the metadata is
+    // marshalled: `fmt.Sprintf("_binary 0x%x", s)`, two digits per byte.
+    if field_type.is_some_and(|field_type| field_type.charset() == tidb_datatype::Charset::Binary) {
+        let bytes = match datum {
+            Datum::Bytes(value) => value.as_slice(),
+            Datum::String(value) => value.bytes(),
+            _ => return Err(DriverError::PartitionColumnValueWrongType),
+        };
+        if !bytes.is_empty() {
+            let mut hex = String::with_capacity(bytes.len() * 2 + 10);
+            hex.push_str("_binary 0x");
+            for byte in bytes {
+                hex.push_str(&format!("{byte:02x}"));
+            }
+            return Ok(hex);
+        }
+    }
+    // Every other arm of Go's switch -- bare digits for an integer, single
+    // quotes for a string or a temporal -- is what a restored value
+    // expression already is, including `WrapInSingleQuotes`' ordered
+    // backslash-then-quote escaping.
+    let rendered = datum
+        .restore_value_expr()
+        .map_err(|_| DriverError::PartitionColumnValueWrongType)?;
+    Ok(String::from_utf8_lossy(&rendered).into_owned())
+}
+
+/// The stored `InValues` tuples for one LIST definition.
+fn stored_in_values(
+    written: Option<&PartitionDefinition>,
+    spec: &PartitionSpec,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<Vec<String>>, DriverError> {
+    let Some(written) = written else {
+        return Ok(Vec::new());
+    };
+    let values = match &written.clause {
+        PartitionDefinitionClause::In(values) => values.as_slice(),
+        // This parser NORMALISES `VALUES IN (DEFAULT)` into the bare
+        // `Default` clause, where Go keeps it as a one-element `ClauseIn`
+        // holding a `DefaultExpr`. Go's stored form is what has to match, and
+        // that is `InValues = [["DEFAULT"]]` -- the word its own list entry,
+        // which `buildListPartitionValueMap` finds by `EqualFold` on the
+        // first component. Reading only the `In` spelling stored the
+        // catch-all partition with NO values at all, and a reload then saw a
+        // LIST partition that listed nothing.
+        PartitionDefinitionClause::Default => {
+            return Ok(vec![vec!["DEFAULT".to_owned()]]);
+        }
+        _ => return Ok(Vec::new()),
+    };
+    let field_types = match &spec.kind {
+        PartitionKind::ListColumns { field_types, .. } => field_types.as_slice(),
+        _ => &[],
+    };
+    let mut tuples = Vec::with_capacity(values.len());
+    for value in values {
+        match value {
+            // Go stores the catch-all as the literal word `DEFAULT`, which
+            // `buildListPartitionValueMap` matches with `strings.EqualFold`.
+            PartitionValue::Default => tuples.push(vec!["DEFAULT".to_owned()]),
+            PartitionValue::MaxValue => {
+                return Err(DriverError::PartitionColumnValueWrongType)
+            }
+            PartitionValue::Expr(expr) => {
+                tuples.push(vec![stored_list_component(expr, field_types.first(), ctx)?]);
+            }
+            PartitionValue::Tuple(components) => {
+                let mut tuple = Vec::with_capacity(components.len());
+                for (position, component) in components.iter().enumerate() {
+                    tuple.push(stored_list_component(component, field_types.get(position), ctx)?);
+                }
+                tuples.push(tuple);
+            }
+        }
+    }
+    Ok(tuples)
+}
+
+/// One written LIST value as stored text.
+///
+/// Under LIST COLUMNS Go stores the value FOLDED through the column's type;
+/// under plain LIST it stores the written expression. Both are re-parsed on
+/// load, so the difference is only in which normalization the text has
+/// already had.
+fn stored_list_component(
+    expr: &Expr,
+    field_type: Option<&FieldType>,
+    ctx: &crate::StmtContext,
+) -> Result<String, DriverError> {
+    match field_type {
+        Some(field_type) => {
+            let datum = super::table_partition_list::fold_column_value(expr, field_type, ctx)?;
+            stored_value_text(&datum, Some(field_type))
+        }
+        None => Ok(expr.restore_with_flags(partition_restore_flags())),
+    }
+}
+
+#[cfg(test)]
+mod round_trip_tests {
+    use super::*;
+
+    /// The two halves of partitioning must agree. `build_partition_metadata`
+    /// renders a clause into the TEXT Go stores; `partition_spec_from_metadata`
+    /// reads that text back. A rendering that loses or reshapes a bound would
+    /// leave both halves looking right on their own while the table routed
+    /// rows to one partition and read them from another.
+    ///
+    /// So every case here is run down BOTH paths and the results compared,
+    /// rather than each being checked against a written-out expectation.
+    /// A routing method rendered so that EQUAL specs render equally.
+    ///
+    /// `PartitionKind::ListColumns` carries a `HashMap` of encoded keys, and
+    /// a `HashMap`'s `Debug` order is not stable between two maps holding the
+    /// same entries. Comparing the derived `Debug` text directly made this
+    /// check pass or fail on hash order rather than on the bounds, which is
+    /// exactly the sort of test that reports green while the thing it guards
+    /// is broken.
+    fn comparable(kind: &PartitionKind) -> String {
+        match kind {
+            PartitionKind::ListColumns {
+                values,
+                keys,
+                default_partition,
+                field_types,
+            } => {
+                let mut keys = keys
+                    .iter()
+                    .map(|(key, ordinal)| format!("{key:?}=>{ordinal}"))
+                    .collect::<Vec<_>>();
+                keys.sort_unstable();
+                format!("ListColumns {values:?} {keys:?} {default_partition:?} {field_types:?}")
+            }
+            other => format!("{other:?}"),
+        }
+    }
+
+    fn routes_the_same_way(sql: &str) {
+        let statement = tidb_parser::parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        let tidb_ast::Stmt::Ddl(ddl) = statement else {
+            panic!("{sql} is not DDL");
+        };
+        let tidb_ast::DdlStmt::CreateTable(create) = &*ddl else {
+            panic!("{sql} is not CREATE TABLE");
+        };
+        let names = create
+            .columns
+            .iter()
+            .map(|column| column.name.clone())
+            .collect::<Vec<_>>();
+        let types = create
+            .columns
+            .iter()
+            .map(|column| {
+                crate::ddl::column_field_type::build_field_type(
+                    &column.name,
+                    &column.ty,
+                    "utf8mb4",
+                    "utf8mb4_bin",
+                )
+                .unwrap_or_else(|error| panic!("{}: {error}", column.name))
+            })
+            .collect::<Vec<_>>();
+        let ctx = crate::StmtContext::for_query();
+        let mut next = 100;
+        let built = build_partition_metadata(
+            create,
+            &names,
+            &types,
+            &[],
+            &[],
+            &mut || {
+                next += 1;
+                next
+            },
+            &ctx,
+        )
+        .unwrap_or_else(|error| panic!("{sql}: {error:?}"))
+        .unwrap_or_else(|| panic!("{sql} declares partitioning"));
+        let (stored, direct) = built;
+        let mut definitions = stored.definitions.clone();
+        for (ordinal, definition) in definitions.iter_mut().enumerate() {
+            definition.id = direct.definitions[ordinal].id;
+        }
+        let reloaded = partition_spec_from_metadata(
+            stored.kind,
+            &stored.expr,
+            &stored.columns,
+            &definitions,
+            &names,
+            &types,
+            &ctx,
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "{sql} reloads: {error:?}\n  kind={:?} expr={:?} columns={:?}\n  definitions={:?}",
+                stored.kind, stored.expr, stored.columns, definitions
+            )
+        });
+        assert_eq!(
+            comparable(&direct.kind),
+            comparable(&reloaded.kind),
+            "{sql}: the stored text did not fold back to the bounds it came from"
+        );
+        assert_eq!(
+            direct.expr_text, reloaded.expr_text,
+            "{sql}: the reloaded spec prints a different clause"
+        );
+        assert_eq!(
+            direct.dependencies, reloaded.dependencies,
+            "{sql}: the reloaded spec reads different columns"
+        );
+        assert_eq!(
+            direct.physical_ids(),
+            reloaded.physical_ids(),
+            "{sql}: the reloaded spec routes to different physical tables"
+        );
+    }
+
+    #[test]
+    fn every_method_survives_the_store_and_load_round_trip() {
+        for sql in [
+            "CREATE TABLE t (id BIGINT, v BIGINT) PARTITION BY HASH (id) PARTITIONS 4",
+            "CREATE TABLE t (id BIGINT, v BIGINT) PARTITION BY KEY (id) PARTITIONS 2",
+            "CREATE TABLE t (id BIGINT, v BIGINT) PARTITION BY RANGE (id) \
+             (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (MAXVALUE))",
+            "CREATE TABLE t (id BIGINT, v BIGINT) PARTITION BY LIST (id) \
+             (PARTITION p0 VALUES IN (1, 2), PARTITION p1 VALUES IN (3, 4))",
+            "CREATE TABLE t (id BIGINT, v VARCHAR(16)) PARTITION BY RANGE COLUMNS (v) \
+             (PARTITION p0 VALUES LESS THAN ('m'), PARTITION p1 VALUES LESS THAN (MAXVALUE))",
+            "CREATE TABLE t (id BIGINT, v VARCHAR(16)) PARTITION BY LIST COLUMNS (v) \
+             (PARTITION p0 VALUES IN ('a', 'b'), PARTITION pd VALUES IN (DEFAULT))",
+        ] {
+            routes_the_same_way(sql);
+        }
+    }
+
+    /// A value whose stored text needs ESCAPING is the case a naive renderer
+    /// gets wrong: Go doubles backslashes and then quotes
+    /// (`driver.WrapInSingleQuotes`), and the text is re-parsed on every load.
+    #[test]
+    fn a_bound_needing_escaping_survives_the_round_trip() {
+        routes_the_same_way(
+            "CREATE TABLE t (id BIGINT, v VARCHAR(16)) PARTITION BY LIST COLUMNS (v) \
+             (PARTITION p0 VALUES IN ('it''s'), PARTITION p1 VALUES IN ('a\\\\b'))",
+        );
+    }
+}
+

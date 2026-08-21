@@ -2343,8 +2343,6 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 });
             }
             let db_id = database.info.id;
-            let table_id = allocate(snapshot, &mut writes, 1)?[0];
-            created_id = Some(table_id);
             // Go's create-table path publishes the TableInfo the builder
             // produced; it does not call `TableInfo.Clone` on the way to
             // `Mutator.CreateTableOrView`. A plain struct/header copy is all
@@ -2355,7 +2353,26 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let mut info = build
                 .for_database(&database.info.charset, &database.info.collate)
                 .map_err(DdlPlanError::Admission)?;
+            // Go `assignIDsForTable` (`ddl/jobsubmit/submit.go`) draws
+            // `1 + len(Definitions)` ids in ONE call: the table's own first,
+            // then one physical table per partition in definition order.
+            // Taking them together is what makes a partitioned table's
+            // physical ids a contiguous ascending block after its own.
+            let partition_count = info.partition.as_ref().map_or(0, |partition| {
+                partition.read().definitions.with_visible(<[_]>::len)
+            }) as i64;
+            let ids = allocate(snapshot, &mut writes, 1 + partition_count)?;
+            let table_id = ids[0];
+            created_id = Some(table_id);
             info.id = table_id;
+            if let Some(partition) = &info.partition {
+                let partition = partition.read();
+                for (ordinal, id) in ids[1..].iter().enumerate() {
+                    partition
+                        .definitions
+                        .update(ordinal, |definition| definition.id = *id);
+                }
+            }
             // Go `createTable` stamps the job transaction's own start timestamp.
             info.update_ts = start_ts;
             let encoded = value::serialize_table_info(&info)

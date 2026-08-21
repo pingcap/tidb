@@ -516,9 +516,14 @@ fn every_unservable_shape_is_refused_before_a_single_mutation_exists() {
             "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BLOB NOT NULL DEFAULT 'x')",
             "can't have a default value",
         ),
+        // A `PARTITION BY` clause itself is now BUILT and persisted; what is
+        // still refused is a partitioned shape this node cannot serve. Go
+        // 8264: a unique key that does not cover the partitioning columns
+        // needs a GLOBAL index, which this node does not maintain.
         (
-            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL) PARTITION BY HASH (id) PARTITIONS 2",
-            "PARTITION BY is not supported",
+            "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL, UNIQUE KEY uv (v)) \
+             PARTITION BY HASH (id) PARTITIONS 2",
+            "Global Index is needed for index 'uv'",
         ),
         (
             "CREATE TEMPORARY TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL)",
@@ -2605,5 +2610,71 @@ fn alter_index_visibility_toggles_and_refuses_a_missing_index() {
     assert!(
         error.to_string().contains("Key 'nosuch' doesn't exist in table 't'"),
         "{error}"
+    );
+}
+
+/// `PARTITION BY` reaches the stored `TableInfo` rather than being refused,
+/// and it carries Go's own stored shape: the restored expression, the
+/// definitions in written order, and the `Enable` flag that makes
+/// `GetPartitionInfo` return it at all.
+#[test]
+fn cluster_create_persists_a_partition_clause() {
+    let DdlStatement::CreateTable { build, .. } = statement(
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY) PARTITION BY HASH (id) PARTITIONS 2",
+    ) else {
+        panic!("the fixture is CREATE TABLE");
+    };
+    let table = build.template();
+    let partition = table
+        .partition
+        .as_ref()
+        .expect("the clause reached the stored table")
+        .read();
+    assert_eq!(partition.partition_type, tidb_ast::PartitionType::HASH);
+    assert!(
+        partition.enable,
+        "Go's GetPartitionInfo returns nil for metadata that is not enabled, \
+         so a table stored with Enable false is not partitioned at all"
+    );
+    assert_eq!(partition.expr, "`id`");
+    assert_eq!(partition.num, 2);
+    let definitions = partition.definitions.snapshot();
+    assert_eq!(
+        definitions
+            .iter()
+            .map(|definition| definition.name.original().to_owned())
+            .collect::<Vec<_>>(),
+        vec!["p0".to_owned(), "p1".to_owned()]
+    );
+    // The builder leaves the physical ids for the writer: Go allocates them
+    // at job submission, one per definition after the table's own.
+    assert!(definitions.iter().all(|definition| definition.id == 0));
+}
+
+/// A RANGE clause stores its bounds as the TEXT Go stores, with `MAXVALUE`
+/// kept as that literal word rather than folded into a number.
+#[test]
+fn cluster_create_persists_range_bounds_as_go_spells_them() {
+    let DdlStatement::CreateTable { build, .. } = statement(
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY) PARTITION BY RANGE (id) \
+         (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (MAXVALUE))",
+    ) else {
+        panic!("the fixture is CREATE TABLE");
+    };
+    let table = build.template();
+    let partition = table
+        .partition
+        .as_ref()
+        .expect("the clause reached the stored table")
+        .read();
+    let bounds = partition
+        .definitions
+        .snapshot()
+        .iter()
+        .map(|definition| definition.less_than.snapshot())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bounds,
+        vec![vec!["10".to_owned()], vec!["MAXVALUE".to_owned()]]
     );
 }
