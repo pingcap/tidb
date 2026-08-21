@@ -1240,6 +1240,9 @@ type SessionVars struct {
 	// EnableVectorizedExpression  enables the vectorized expression evaluation.
 	EnableVectorizedExpression bool
 
+	// EnableTiKVShortCircuitExpression enables short-circuit expression evaluation in TiKV.
+	EnableTiKVShortCircuitExpression bool
+
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
@@ -2427,6 +2430,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		SelectivityFactor:                vardef.DefOptSelectivityFactor,
 		enableForceInlineCTE:             vardef.DefOptForceInlineCTE,
 		EnableVectorizedExpression:       vardef.DefEnableVectorizedExpression,
+		EnableTiKVShortCircuitExpression: vardef.DefTiDBEnableTiKVShortCircuitExpression,
 		CommandValue:                     uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:      vardef.DefTiDBOptJoinReorderThreshold,
 		TiDBOptEnableAdvancedJoinReorder: vardef.DefTiDBOptEnableAdvancedJoinReorder,
@@ -2510,6 +2514,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
+	vars.StmtCtx.EnableTiKVShortCircuitExpression = vars.EnableTiKVShortCircuitExpression
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            vardef.DefIndexLookupConcurrency,
