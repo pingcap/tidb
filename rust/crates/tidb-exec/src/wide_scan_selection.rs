@@ -90,8 +90,9 @@ use tidb_executor::predicate_pushdown::{
 use tidb_expr::pb_predicate::{
     decimal_comparison_to_pb, int_comparison_to_pb, int_field_type, int_in_to_pb,
     int_is_null_to_pb, is_int_family_type, is_string_family_type, is_unsigned, logical_not_to_pb,
-    logical_or_to_pb, string_comparison_to_pb, string_in_to_pb, time_comparison_to_pb,
-    DecimalPbOperand, IntPbOperand, PbPredicateError, StringPbOperand, TimePbOperand,
+    logical_or_to_pb, string_comparison_to_pb, string_in_to_pb, string_like_to_pb,
+    time_comparison_to_pb, DecimalPbOperand, IntPbOperand, PbPredicateError, StringPbOperand,
+    TimePbOperand,
 };
 use tidb_planner::tikv_scan_spec::ScanColumnInfo;
 use tidb_proto::tipb::Expr;
@@ -252,6 +253,24 @@ fn predicate_to_pb(
                 .collect::<Result<Vec<_>, _>>()?;
             let membership = string_in_to_pb(tested, literals)?;
             Ok(negate_if(membership, *negated))
+        }
+        ScanPredicate::Like {
+            column_offset,
+            pattern,
+            escape,
+            ..
+        } => {
+            let column = columns.get(*column_offset as usize).ok_or(
+                WideScanSelectionError::ColumnOffsetOutOfRange {
+                    offset: *column_offset,
+                    width: columns.len(),
+                },
+            )?;
+            Ok(string_like_to_pb(
+                string_column_operand(*column_offset, column)?,
+                pattern.clone(),
+                i64::from(*escape),
+            )?)
         }
         // A resolved builtin call: the catalog that admitted it is also what
         // encodes it, including the implicit argument casts Go's
@@ -546,19 +565,7 @@ fn string_comparison(
     // no charset at all; both are recovered from that one id, exactly as the
     // builtin path does, so the operand and the column the coprocessor was
     // told to read cannot disagree about which collator applies.
-    let collation = tidb_datatype::proto_to_collation(column.collation);
-    let charset = tidb_datatype::get_collation_by_name(&collation)
-        .map(|row| row.charset_name)
-        .map_err(|_| WideScanSelectionError::UnsupportedColumnType { offset })?;
-    let column_operand = StringPbOperand::Column {
-        offset: offset as usize,
-        mysql_type: column.tp,
-        flags: u32::try_from(column.flag)
-            .map_err(|_| WideScanSelectionError::UnsupportedColumnType { offset })?,
-        flen: column.column_len,
-        charset,
-        collation,
-    };
+    let column_operand = string_column_operand(offset, column)?;
     let constant = StringPbOperand::Literal(literal.to_vec());
     let (lhs, rhs) = if comparison.column_on_left {
         (column_operand, constant)
@@ -570,6 +577,28 @@ fn string_comparison(
         lhs,
         rhs,
     )?)
+}
+
+fn string_column_operand(
+    offset: u32,
+    column: &ScanColumnInfo,
+) -> Result<StringPbOperand, WideScanSelectionError> {
+    if !is_string_family_type(column.tp) {
+        return Err(WideScanSelectionError::UnsupportedColumnType { offset });
+    }
+    let collation = tidb_datatype::proto_to_collation(column.collation);
+    let charset = tidb_datatype::get_collation_by_name(&collation)
+        .map(|row| row.charset_name)
+        .map_err(|_| WideScanSelectionError::UnsupportedColumnType { offset })?;
+    Ok(StringPbOperand::Column {
+        offset: offset as usize,
+        mysql_type: column.tp,
+        flags: u32::try_from(column.flag)
+            .map_err(|_| WideScanSelectionError::UnsupportedColumnType { offset })?,
+        flen: column.column_len,
+        charset,
+        collation,
+    })
 }
 
 fn column_flags(offset: u32, columns: &[ScanColumnInfo]) -> Result<u32, WideScanSelectionError> {

@@ -75,12 +75,13 @@ pub mod encryptionpb {
 }
 
 pub use coprocessor::{
-    BatchRequest as CoprocessorBatchRequest, ExecDetailsV2 as CoprocessorExecDetailsV2,
-    KeyRange as CoprocessorKeyRange, Peer as CoprocessorPeer,
-    RegionEpoch as CoprocessorRegionEpoch, RegionInfo as CoprocessorRegionInfo,
-    Request as CoprocessorRequest, Response as CoprocessorResponse,
-    ScanDetailV2 as CoprocessorScanDetailV2, StoreBatchTask, StoreBatchTaskResponse,
-    VersionedKeyRange as CoprocessorVersionedKeyRange,
+    BatchRequest as CoprocessorBatchRequest, ExecDetails as CoprocessorExecDetails,
+    ExecDetailsV2 as CoprocessorExecDetailsV2, KeyRange as CoprocessorKeyRange,
+    Peer as CoprocessorPeer, RegionEpoch as CoprocessorRegionEpoch,
+    RegionInfo as CoprocessorRegionInfo, Request as CoprocessorRequest,
+    Response as CoprocessorResponse, ScanDetailV2 as CoprocessorScanDetailV2, StoreBatchTask,
+    StoreBatchTaskResponse, TimeDetail as CoprocessorTimeDetail,
+    TimeDetailV2 as CoprocessorTimeDetailV2, VersionedKeyRange as CoprocessorVersionedKeyRange,
 };
 
 pub use errorpb::Error as RegionError;

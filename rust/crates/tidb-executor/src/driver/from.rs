@@ -385,6 +385,13 @@ impl ColumnResolver for ScopeResolver<'_> {
         constant.subquery_ref_id = -column.unique_id;
         Some(Expression::Constant(constant))
     }
+
+    fn has_resolved_constants(&self) -> bool {
+        self.scope
+            .plan_columns
+            .iter()
+            .any(|column| column.value.is_some())
+    }
 }
 
 /// Go `DataSource.ExtractFD`'s per-table facts, for

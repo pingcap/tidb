@@ -400,7 +400,6 @@ fn build_table_partitioning_inner(
         definitions,
     }))
 }
-
 /// Resolve Go `PARTITION BY KEY` columns.  An empty list means the table's
 /// primary key; a heap table therefore hashes the empty byte stream, exactly
 /// as Go's `ForKeyPruning` does when `PartitionInfo.Columns` remains empty.
@@ -2571,4 +2570,3 @@ mod round_trip_tests {
         );
     }
 }
-

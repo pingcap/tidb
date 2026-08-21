@@ -82,6 +82,10 @@ pub(crate) struct AccessPathCommit {
     /// prefix, joined back in written order. This is the Selection Go places
     /// above the range rather than the complete WHERE it started from.
     pub(crate) handle_range_residual: Option<tidb_ast::Expr>,
+    /// The predicates left after the chosen secondary-index ranges. Go keeps
+    /// these as Build-side filters when the index covers them, or evaluates
+    /// them on Probe when table columns are required.
+    pub(crate) access_residual: Option<tidb_ast::Expr>,
     /// The logical data source's estimated output rows after its complete
     /// predicate, before physical access-path lower bounds are applied.
     pub(crate) logical_rows: Option<f64>,
@@ -543,6 +547,7 @@ pub(crate) fn commit_fast_path_source(
     let mut filtered_cop_projection_offsets = None;
     let mut consumed_where = false;
     let mut handle_range_residual = None;
+    let mut access_residual = None;
     let mut reader_ready = false;
     let mut candidate = None;
     let Some(table_ref) = sole_table_ref(&select.from) else {
@@ -574,7 +579,7 @@ pub(crate) fn commit_fast_path_source(
     }
     let table = table;
     let statistics = catalog.table_statistics(table.stats_physical_id());
-    let logical_rows = Some(
+    let mut logical_rows = Some(
         crate::access_cost::realtime_row_count(statistics.map(AsRef::as_ref))
             * stats_selectivity_with_default_string_match_selectivity(
                 catalog,
@@ -606,6 +611,17 @@ pub(crate) fn commit_fast_path_source(
     // path below, exactly as Go's whole-`DataSource`-to-dual replacement does.
     if let Some(where_clause) = select.where_clause.as_ref() {
         if crate::index_range::where_is_unsatisfiable(&columns, where_clause, zone) {
+            logical_rows = Some(
+                crate::access_cost::realtime_row_count(statistics.map(AsRef::as_ref))
+                    * stats_selectivity_with_default_string_match_selectivity(
+                        catalog,
+                        &table,
+                        scope,
+                        select.where_clause.as_ref(),
+                        ctx.default_string_match_selectivity(),
+                    )
+                    .unwrap_or(1.0),
+            );
             install_contradiction_dual(&columns, from_source, trace.as_deref_mut());
             return Ok(AccessPathCommit {
                 consumed_where: true,
@@ -843,6 +859,7 @@ pub(crate) fn commit_fast_path_source(
             &hints,
             partition_scan,
             ctx,
+            None,
         ) {
             // A table path the ranger narrowed. The source already installed
             // by `build_from` IS the right executor -- a `TableRangeScan` is
@@ -851,7 +868,8 @@ pub(crate) fn commit_fast_path_source(
             // traced node once the source has taken them. A source that
             // refuses keeps reading the whole table, which is still every row
             // the statement admits.
-            Some(ChosenPath::HandleRange(ranges, estimate, planner_candidate)) => {
+            Some(ChosenPath::HandleRange(ranges, estimate, planner_candidate, source_rows)) => {
+                logical_rows = Some(source_rows);
                 candidate = Some(planner_candidate);
                 let accepted = from_source
                     .as_mut()
@@ -922,7 +940,15 @@ pub(crate) fn commit_fast_path_source(
                     }
                 }
             }
-            Some(ChosenPath::Index(index_id, ranges, estimate, covering, planner_candidate)) => {
+            Some(ChosenPath::Index(
+                index_id,
+                ranges,
+                estimate,
+                covering,
+                planner_candidate,
+                source_rows,
+            )) => {
+                logical_rows = Some(source_rows);
                 candidate = Some(planner_candidate);
                 // Go's empty-range task is the whole DataSource result, so it
                 // consumes the WHERE even when the ordinary index-detach
@@ -943,8 +969,23 @@ pub(crate) fn commit_fast_path_source(
                     &mut index_order,
                     ctx,
                 );
+                access_residual = crate::access_cost::index_residual_filters_for_path(
+                    &table,
+                    index_id,
+                    select.where_clause.as_ref(),
+                    &ScopeResolver { scope },
+                )
+                .into_iter()
+                .reduce(|left, right| {
+                    tidb_ast::Expr::Binary(
+                        tidb_ast::BinaryOp::LogicAnd,
+                        Box::new(left),
+                        Box::new(right),
+                    )
+                });
             }
-            Some(ChosenPath::FullTable(planner_candidate)) => {
+            Some(ChosenPath::FullTable(planner_candidate, source_rows)) => {
+                logical_rows = Some(source_rows);
                 // The full scan source is already installed. Keep the task
                 // receipt so a physical parent can still cost this child.
                 candidate = Some(planner_candidate);
@@ -1004,6 +1045,7 @@ pub(crate) fn commit_fast_path_source(
         filtered_cop_projection_offsets,
         consumed_where,
         handle_range_residual,
+        access_residual,
         logical_rows,
         reader_ready,
         order_satisfied,
@@ -1062,6 +1104,7 @@ fn choose_index_merge_union(
             false,
             partition_scan,
             true,
+            None,
         )
         .into_iter()
         .filter(|candidate| !candidate.access_columns.is_empty())
@@ -1118,6 +1161,7 @@ fn choose_index_merge_intersection(
             false,
             partition_scan,
             true,
+            None,
         )
         .into_iter()
         .filter(|candidate| !candidate.access_columns.is_empty())
@@ -1211,6 +1255,7 @@ fn choose_automatic_index_merge_union(
             false,
             input.partition_scan,
             input.hints.has_forced_path(),
+            None,
         )
         .into_iter()
         .filter(|candidate| {
@@ -1241,6 +1286,7 @@ fn choose_automatic_index_merge_union(
         input.hints,
         input.partition_scan,
         input.ordering_index_selectivity_ratio,
+        None,
     )?;
     let rows = crate::access_cost::realtime_row_count(stats)
         * crate::access_cost::selectivity_with_default_string_match_selectivity(
@@ -2109,6 +2155,7 @@ pub(crate) enum ChosenPath {
         crate::access_cost::ScanEstimate,
         bool,
         tidb_planner::candidate_cost::Candidate,
+        f64,
     ),
     /// A table path the ranger narrowed, over the clustered integer handle.
     /// An EMPTY range list is the contradictory `WHERE` that reads nothing.
@@ -2116,11 +2163,12 @@ pub(crate) enum ChosenPath {
         Vec<IndexRange>,
         crate::access_cost::ScanEstimate,
         tidb_planner::candidate_cost::Candidate,
+        f64,
     ),
     /// The whole-table path already installed by `build_from`. The executor
     /// needs no replacement, but its complete scan/reader task must remain
     /// available to parent physical candidates.
-    FullTable(tidb_planner::candidate_cost::Candidate),
+    FullTable(tidb_planner::candidate_cost::Candidate, f64),
 }
 
 pub(crate) fn choose_index_range_path(
@@ -2134,6 +2182,7 @@ pub(crate) fn choose_index_range_path(
     // because it is the caller that ran the pruning.
     partition_scan: bool,
     ctx: &crate::StmtContext,
+    source_rows: Option<f64>,
 ) -> Option<ChosenPath> {
     let (best, needed) = best_single_table_access_path(
         select,
@@ -2144,9 +2193,11 @@ pub(crate) fn choose_index_range_path(
         hints,
         partition_scan,
         ctx.ordering_index_selectivity_ratio(),
+        source_rows,
     )?;
     let estimate = best.estimate;
     let planner_candidate = best.planner_candidate;
+    let source_rows = best.source_rows;
     match (best.index, best.table_ranges) {
         (Some((index_id, ranges)), _) => {
             let covering = crate::access_cost::index_is_covering(table, index_id, &needed);
@@ -2156,10 +2207,16 @@ pub(crate) fn choose_index_range_path(
                 estimate,
                 covering,
                 planner_candidate,
+                source_rows,
             ))
         }
-        (None, Some(ranges)) => Some(ChosenPath::HandleRange(ranges, estimate, planner_candidate)),
-        (None, None) => Some(ChosenPath::FullTable(planner_candidate)),
+        (None, Some(ranges)) => Some(ChosenPath::HandleRange(
+            ranges,
+            estimate,
+            planner_candidate,
+            source_rows,
+        )),
+        (None, None) => Some(ChosenPath::FullTable(planner_candidate, source_rows)),
     }
 }
 
@@ -2175,6 +2232,7 @@ fn best_single_table_access_path(
     hints: &crate::index_hints::AvailablePaths,
     partition_scan: bool,
     ordering_index_selectivity_ratio: f64,
+    source_rows: Option<f64>,
 ) -> Option<(crate::access_cost::AccessPath, Vec<usize>)> {
     // No `WHERE` at all is not a reason to stop: a covering index is still a
     // candidate, and reading the whole of a narrow index beats reading the
@@ -2239,6 +2297,7 @@ fn best_single_table_access_path(
         !select.order_by.is_empty(),
         partition_scan,
         demand.statement_forces_an_index(),
+        source_rows,
     );
     // Go's `prop.ExpectedCnt != math.MaxFloat64`: a row cap on the required
     // property is what disables Fix45132's row-ratio rule inside pruning.
@@ -2648,6 +2707,7 @@ fn write_index_range_path(
         // An `UPDATE`/`DELETE` carries no `FROM`-clause index hint in the
         // grammar this tier accepts, so no path of it is `path.Forced`.
         false,
+        None,
     );
     let best = crate::access_cost::choose_access_path(paths, None, false)?;
     match best.index {
@@ -2849,6 +2909,39 @@ fn scan_predicate(
                 tested,
                 literals: literals.into_iter().map(|(value, _)| value).collect(),
                 negated: *not,
+            })
+        }
+        tidb_ast::Expr::Like {
+            expr,
+            pattern,
+            not,
+            ilike: false,
+            escape,
+        } => {
+            let (column_offset, column_type) = resolve_column(expr, resolver)?;
+            if column_type.eval_type() != tidb_datatype::EvalType::String {
+                return None;
+            }
+            let mut pattern_expr = &**pattern;
+            while let tidb_ast::Expr::Paren(inner) = pattern_expr {
+                pattern_expr = inner;
+            }
+            let pattern = match pattern_expr {
+                tidb_ast::Expr::String(pattern) | tidb_ast::Expr::RawString(pattern) => {
+                    pattern.as_bytes().to_vec()
+                }
+                _ => return None,
+            };
+            let predicate = ScanPredicate::Like {
+                column_offset,
+                column_type,
+                pattern,
+                escape: escape.unwrap_or_else(|| resolver.like_default_escape()),
+            };
+            Some(if *not {
+                ScanPredicate::Not(Box::new(predicate))
+            } else {
+                predicate
             })
         }
         tidb_ast::Expr::Between {
@@ -3919,6 +4012,21 @@ impl IndexAccessOrder {
             })
             .collect();
         (self.column_offsets, self.constant_positions) = remapped.into_iter().unzip();
+    }
+
+    /// Whether a residual predicate can run against the index entry before
+    /// the handle stream is capped. Every referenced column must be present
+    /// in the chosen index, matching Go's Build-side Selection rule.
+    pub(crate) fn residual_uses_only_index(
+        &self,
+        predicate: &tidb_ast::Expr,
+        resolver: &ScopeResolver<'_>,
+    ) -> bool {
+        crate::column_prune::expr_column_offsets(predicate, resolver).is_some_and(|offsets| {
+            offsets
+                .iter()
+                .all(|offset| self.column_offsets.contains(offset))
+        })
     }
 }
 

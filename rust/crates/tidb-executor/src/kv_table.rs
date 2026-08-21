@@ -66,7 +66,8 @@ pub use table_meta::{
     TableHandle,
 };
 pub use table_scan::{
-    capture_decoded_column_ids, IndexRangeCursor, RemoteRowCursor, RowCursor, TableScanExec,
+    capture_decoded_column_ids, IndexRangeCursor, RemoteIndexHandleCursor, RemoteRowCursor,
+    RowCursor, TableScanExec,
 };
 
 use crate::storage::{MemTableStorage, StorageError, TableStorage};

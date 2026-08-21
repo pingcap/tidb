@@ -126,6 +126,7 @@
 //! reads it backwards for `ORDER BY ... DESC`, preserves that physical
 //! property (`keep order:true, desc`), and can stop at the pushed `LIMIT`.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
@@ -659,6 +660,10 @@ pub(crate) struct AccessPath {
     /// Parent physical alternatives use this receipt when they insert a
     /// pushed coprocessor operator between the scan and reader.
     pub(crate) planner_candidate: tidb_planner::candidate_cost::Candidate,
+    /// The logical DataSource row count shared by every candidate in this
+    /// enumeration. Keeping it on the chosen path lets the driver reuse the
+    /// value that was already computed while costing the path.
+    pub(crate) source_rows: f64,
     /// How far the estimator admits [`ScanEstimate::rows`] could be wrong, and
     /// the rows left after the index's own filters -- Go's `AccessPath`
     /// `MinCountAfterAccess` / `MaxCountAfterAccess` / `CountAfterIndex`. Only
@@ -1071,9 +1076,16 @@ pub(crate) fn enumerate_paths(
     // carries a `USE`/`FORCE INDEX`. STATEMENT-wide, not this table's -- see
     // [`crate::driver::leaf_demand::LeafDemand::forces_index`].
     index_force: bool,
+    // The already-derived logical DataSource row count, when the caller owns
+    // that derivation. Go stores this on `DataSource.StatsInfo()` and every
+    // physical path reads the same value; accepting it here avoids running
+    // the complete selectivity/ranger pass a second time in the single-table
+    // planner. Other callers that have no such owner pass `None`.
+    source_rows: Option<f64>,
 ) -> Vec<Candidate<AccessPath>> {
     let realtime = realtime_row_count(stats);
-    let source_rows = source_row_count(table, where_clause, resolver, stats, realtime);
+    let source_rows = source_rows
+        .unwrap_or_else(|| source_row_count(table, where_clause, resolver, stats, realtime));
     // Go's `deriveTablePathStats`: the table path's own ranges, over the
     // clustered integer handle. Nothing here narrows what is EVALUATED -- the
     // `WHERE` stays in the pipeline above the source -- so a range only ever
@@ -1629,6 +1641,7 @@ fn table_scan_path(
         count_after_access,
         cost: (scanned + transferred) / DIST_SQL_SCAN_CONCURRENCY,
         planner_candidate,
+        source_rows: after_filter,
         // Go's skyline comparison does not use the index-risk interval for a
         // table path; `CountAfterIndex` is meaningless there as well.
         risk: RowRisk::default(),
@@ -1655,6 +1668,27 @@ pub(crate) fn adjust_table_scan_row_count_by_limit(
         rows += (count_after_access - rows) * ordering_selectivity_ratio;
     }
     rows
+}
+
+/// Go `cardinality.AdjustRowCountForIndexScanByLimit`'s uniform branch.
+/// An ordered lookup with a residual table filter may need to read more index
+/// entries than the visible LIMIT, so scale the expected count by the logical
+/// selectivity and then apply the configured ordering-risk ratio.
+fn adjust_index_scan_rows_for_limit(
+    scan_rows: f64,
+    logical_rows: f64,
+    expected_rows: f64,
+    ordering_selectivity_ratio: f64,
+) -> f64 {
+    let mut adjusted = scan_rows;
+    if expected_rows < logical_rows && logical_rows > 0.0 && scan_rows > 0.0 {
+        let selectivity = logical_rows / scan_rows;
+        adjusted = (expected_rows / selectivity).min(scan_rows);
+    }
+    if ordering_selectivity_ratio > 0.0 && scan_rows > adjusted {
+        adjusted += (scan_rows - adjusted) * ordering_selectivity_ratio;
+    }
+    adjusted
 }
 
 /// The rows the whole data source is estimated to produce, Go's
@@ -1728,7 +1762,17 @@ fn index_path(
     // out of the plan that TiDB's own recording chooses.
     let estimate_ranges = prune_estimate_range(&ranges, index.column_offsets.len());
     let bounds = index_row_count(index, table, &estimate_ranges, stats, realtime);
-    let estimated = adjust_count_after_access(bounds.est, source_row_count, realtime);
+    let mut estimated = adjust_count_after_access(bounds.est, source_row_count, realtime);
+    if let Some(limit) =
+        limit.filter(|limit| (limit.satisfied_by)(index.ordered_column_offsets(), &ranges))
+    {
+        estimated = adjust_index_scan_rows_for_limit(
+            estimated,
+            source_row_count,
+            limit.cap,
+            limit.ordering_selectivity_ratio,
+        );
+    }
     // Go `deriveIndexPathStats`: with index filters the post-index count is
     // the access count narrowed by them, floored at the data source's own row
     // count; with none it is the access count itself.
@@ -1870,6 +1914,7 @@ fn index_path(
         count_after_access: estimated,
         cost,
         planner_candidate,
+        source_rows: source_row_count,
         risk: RowRisk {
             min: bounds.min_est,
             max: bounds.max_est,
@@ -2203,10 +2248,13 @@ pub(crate) fn selectivity_of_conjuncts_without_paths(
 /// typed value to expression consumers. The ranger still reads the AST, so it
 /// needs an estimation-only copy with those nodes replaced by equivalent
 /// literals; the statement AST remains unchanged for execution and display.
-fn materialize_resolved_constants(
-    expr: &tidb_ast::Expr,
+fn materialize_resolved_constants<'a>(
+    expr: &'a tidb_ast::Expr,
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
-) -> tidb_ast::Expr {
+) -> Cow<'a, tidb_ast::Expr> {
+    if !resolver.has_resolved_constants() {
+        return Cow::Borrowed(expr);
+    }
     struct Materializer<'a> {
         resolver: &'a dyn tidb_expr::rewriter::ColumnResolver,
     }
@@ -2238,7 +2286,7 @@ fn materialize_resolved_constants(
 
     let mut materialized = expr.clone();
     tidb_ast::Visitable::accept(&mut materialized, &mut Materializer { resolver });
-    materialized
+    Cow::Owned(materialized)
 }
 
 fn selectivity_of_conjuncts_with_path_context(
@@ -2261,7 +2309,10 @@ fn selectivity_of_conjuncts_with_path_context(
     // Go has no parenthesis node -- `ParenthesesExpr` is gone before
     // `Selectivity` runs -- so strip them once, here, and every structural
     // test downstream sees the shape the source sees.
-    let conjuncts: Vec<&tidb_ast::Expr> = materialized.iter().map(strip_parens).collect();
+    let conjuncts: Vec<&tidb_ast::Expr> = materialized
+        .iter()
+        .map(|conjunct| strip_parens(conjunct.as_ref()))
+        .collect();
 
     // `selectivity.go:69-73`: past 63 conditions the mask no longer fits an
     // int64, and the source gives up on nodes entirely -- for a loaded
@@ -3695,6 +3746,7 @@ mod tests {
                 sort_property,
                 false,
                 false,
+                None,
             )
             .into_iter()
             .filter_map(|candidate| candidate.path.index.map(|(id, _)| id))

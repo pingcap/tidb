@@ -1182,6 +1182,39 @@ impl RowContainer {
         Ok(f(records.in_memory.get_row(ptr)))
     }
 
+    /// Visits several rows while retaining one records read lock for the
+    /// whole batch. Hash-join workers start only after build completion, so a
+    /// batch callback can observe the in-memory list without reacquiring the
+    /// lock for every candidate. Spilled rows use the same reusable decode
+    /// chunk as [`Self::with_row`].
+    pub fn with_rows<E>(
+        &self,
+        ptrs: &[RowPtr],
+        chk: &mut Chunk,
+        mut f: impl FnMut(Row<'_>) -> Result<(), E>,
+    ) -> Result<Result<(), E>, DiskError> {
+        let records = read_unpoisoned(&self.shared.records);
+        if let Some(in_disk) = &records.in_disk {
+            if let Some(error) = &records.spill_error {
+                return Err(DiskError::Owned(error.clone()));
+            }
+            for &ptr in ptrs {
+                chk.reset();
+                let row_index = in_disk.get_row_and_append_to_existing_chunk(ptr, chk)?;
+                if let Err(error) = f(chk.get_row(row_index)) {
+                    return Ok(Err(error));
+                }
+            }
+            return Ok(Ok(()));
+        }
+        for &ptr in ptrs {
+            if let Err(error) = f(records.in_memory.get_row(ptr)) {
+                return Ok(Err(error));
+            }
+        }
+        Ok(Ok(()))
+    }
+
     /// Go `GetRowAndAlwaysAppendToChunk`.
     pub fn get_row_and_always_append_to_chunk(
         &self,

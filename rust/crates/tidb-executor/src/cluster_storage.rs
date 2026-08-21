@@ -629,7 +629,7 @@ impl TableStorage for ClusterTableStorage {
             Ok(stream) => Some(Ok(PushdownScan { stream, staged })),
             // A refusal is not a failure: the caller falls back to `iter`,
             // which answers the same question from the same snapshot.
-            Err(PushdownScannerError::Unsupported(_)) => None,
+            Err(PushdownScannerError::Unsupported(_reason)) => None,
             Err(PushdownScannerError::Backend(error)) => Some(Err(error)),
         }
     }

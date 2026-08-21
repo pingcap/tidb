@@ -25,7 +25,6 @@
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
-use std::time::Instant;
 
 use tidb_chunk::chunk::Chunk as DecodedChunk;
 use tidb_chunk::codec::Codec as ChunkCodec;
@@ -665,7 +664,6 @@ impl SelectResponseChannel {
             let Some(chunk) = self.chunks.get(self.next_chunk_index) else {
                 return Ok(None);
             };
-            let decode_started = Instant::now();
             let decoded = decode_channel(
                 self.channel_index,
                 self.raw_encode_type,
@@ -673,18 +671,6 @@ impl SelectResponseChannel {
                 &self.field_types,
                 &self.time_zone,
             )?;
-            if std::env::var_os("TIDB_DEBUG_COP_SCAN").is_some() {
-                eprintln!(
-                    "COP_RESPONSE_CHUNK thread={:?} channel={} encode_type={} fields={} bytes={} decode_ms={}",
-                    std::thread::current().id(),
-                    self.channel_index,
-                    self.raw_encode_type
-                        .unwrap_or(EncodeType::TypeDefault as i32),
-                    self.field_types.len(),
-                    chunk.rows_data.as_deref().map_or(0, <[u8]>::len),
-                    decode_started.elapsed().as_secs_f64() * 1000.0,
-                );
-            }
             self.next_chunk_index += 1;
             self.decoded = Some(decoded);
         }
@@ -783,7 +769,6 @@ impl SelectResponseIter {
                 }
             }
 
-            let source_started = Instant::now();
             let event = match self.source.next_event(required_rows) {
                 Ok(event) => event,
                 Err(ResponseChannelError::Pending) => return Err(ResponseChannelError::Pending),
@@ -792,14 +777,6 @@ impl SelectResponseIter {
                     return Err(error);
                 }
             };
-            if std::env::var_os("TIDB_DEBUG_COP_SCAN").is_some() {
-                eprintln!(
-                    "COP_RESPONSE_WAIT thread={:?} required_rows={} wait_ms={}",
-                    std::thread::current().id(),
-                    required_rows,
-                    source_started.elapsed().as_secs_f64() * 1000.0,
-                );
-            }
             match event {
                 Some(ResponseChannelEvent::Result(bytes)) => {
                     if let Err(error) = self.install_encoded_response(&bytes, None) {
@@ -1038,17 +1015,8 @@ impl SelectResponseIter {
         bytes: &[u8],
         runtime_stats: Option<&ResponseRuntimeStats>,
     ) -> Result<(), ResponseChannelError> {
-        let decode_started = Instant::now();
         let response = decode_select_response(bytes)
             .map_err(|error| ResponseChannelError::Decode(error.to_string()))?;
-        if std::env::var_os("TIDB_DEBUG_COP_SCAN").is_some() {
-            eprintln!(
-                "COP_RESPONSE_PROTO thread={:?} bytes={} decode_ms={}",
-                std::thread::current().id(),
-                bytes.len(),
-                decode_started.elapsed().as_secs_f64() * 1000.0,
-            );
-        }
         self.install_response(response, runtime_stats)
     }
 

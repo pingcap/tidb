@@ -99,8 +99,47 @@ message ScanDetailV2 {
   uint64 total_versions_size = 14;
 }
 
+message TimeDetail {
+  uint64 wait_wall_time_ms = 1;
+  uint64 process_wall_time_ms = 2;
+  uint64 kv_read_wall_time_ms = 3;
+  uint64 total_rpc_wall_time_ns = 4;
+}
+
+message TimeDetailV2 {
+  uint64 wait_wall_time_ns = 1;
+  uint64 process_wall_time_ns = 2;
+  uint64 process_suspend_wall_time_ns = 3;
+  uint64 kv_read_wall_time_ns = 4;
+  uint64 total_rpc_wall_time_ns = 5;
+  uint64 kv_grpc_process_time_ns = 6;
+  uint64 kv_grpc_wait_time_ns = 7;
+}
+
+// Legacy execution details retained by TiKV for wire compatibility. Go's
+// coprocessor worker falls back to this field when the V2 time details are not
+// present, so the projection must keep response field 6 dependency-closed.
+message ScanInfo {
+  int64 total = 1;
+  int64 processed = 2;
+  int64 read_bytes = 3;
+}
+
+message ScanDetail {
+  ScanInfo write = 1;
+  ScanInfo lock = 2;
+  ScanInfo data = 3;
+}
+
+message ExecDetails {
+  TimeDetail time_detail = 1;
+  ScanDetail scan_detail = 2;
+}
+
 message ExecDetailsV2 {
+  TimeDetail time_detail = 1;
   ScanDetailV2 scan_detail_v2 = 2;
+  TimeDetailV2 time_detail_v2 = 4;
 }
 
 message StoreBatchTaskResponse {
@@ -118,6 +157,7 @@ message Response {
   kvrpcpb.LockInfo locked = 3;
   string other_error = 4;
   KeyRange range = 5;
+  ExecDetails exec_details = 6;
   bool is_cache_hit = 7;
   uint64 cache_last_version = 8;
   bool can_be_cached = 9;

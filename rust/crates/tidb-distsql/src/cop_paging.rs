@@ -79,6 +79,29 @@ pub fn paging_response_read_bytes(
     }
 }
 
+/// Extracts the TiKV process duration used by coprocessor-cache admission.
+///
+/// Go prefers the V2 envelope (nanoseconds, then its deprecated millisecond
+/// projection) and reads the legacy response-level details only when that
+/// complete envelope is absent.
+#[must_use]
+pub fn coprocessor_response_process_time_nanos(response: &CoprocessorResponse) -> Option<i64> {
+    if let Some(details) = response.exec_details_v2.as_ref() {
+        if let Some(time) = details.time_detail_v2.as_ref() {
+            return Some(time.process_wall_time_ns as i64);
+        }
+        return details
+            .time_detail
+            .as_ref()
+            .map(|time| (time.process_wall_time_ms as i64).wrapping_mul(1_000_000));
+    }
+    response
+        .exec_details
+        .as_ref()
+        .and_then(|details| details.time_detail.as_ref())
+        .map(|time| (time.process_wall_time_ms as i64).wrapping_mul(1_000_000))
+}
+
 /// Calculates ranges that must be retried after a partial paging response.
 #[must_use]
 pub fn calculate_paging_retry(

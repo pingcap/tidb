@@ -336,6 +336,8 @@ pub struct PushdownIndexScan {
     pub declared_unique: bool,
     /// Number of indexed key columns.
     pub index_column_count: usize,
+    /// Whether the index keys are scanned from high to low.
+    pub desc: bool,
 }
 
 /// One column order in a coprocessor TopN.
@@ -802,6 +804,25 @@ mod tests {
             // A builtin call is outside this fake's integer domain, so it gives
             // the "did not filter" answer a backend is always allowed to give.
             ScanPredicate::Builtin(_) | ScanPredicate::ScalarIn { .. } => Some(true),
+            ScanPredicate::Like {
+                column_offset,
+                column_type,
+                pattern,
+                escape,
+            } => {
+                let value = row.get(*column_offset as usize)?;
+                if *value == Datum::Null {
+                    return None;
+                }
+                let bytes = value.as_raw_bytes()?;
+                let collation = tidb_datatype::Collation::from_name(column_type.collation_name())?;
+                Some(tidb_expr::like_match_with_collation(
+                    bytes,
+                    pattern,
+                    Some(*escape),
+                    collation,
+                ))
+            }
             ScanPredicate::Compare(comparison) => {
                 let (Some(value), Datum::Int(literal)) = (
                     row.get(comparison.column_offset as usize),

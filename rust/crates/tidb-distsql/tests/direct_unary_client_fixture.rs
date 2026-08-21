@@ -39,10 +39,11 @@ pub use prost::Message;
 pub use tidb_datatype::FieldType;
 pub use tidb_distsql::cop_paging::RegionRetryWaiter;
 pub use tidb_distsql::{
-    DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryTransport, DirectUnaryRequest,
-    DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError, InjectedQueryRuntime,
-    KvRequestMetadata, QueryResultContext, ReplicaReadType, RequestKeyRange, RequestKeyRanges,
-    RequestType, SelectInput, StoreType, TransportRequest, WarningCollector,
+    CoprCache, CoprCacheConfig, DirectUnaryClient, DirectUnaryClientError,
+    DirectUnaryQueryTransport, DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig,
+    DirectUnaryTransportError, InjectedQueryRuntime, KvRequestMetadata, QueryResultContext,
+    ReplicaReadType, RequestKeyRange, RequestKeyRanges, RequestType, SelectInput, StoreType,
+    TransportRequest, WarningCollector,
 };
 
 pub fn transport_request(metadata: KvRequestMetadata) -> TransportRequest {
@@ -53,7 +54,7 @@ pub fn transport_request(metadata: KvRequestMetadata) -> TransportRequest {
 }
 pub use tidb_proto::{
     errorpb, metapb, CoprocessorExecDetailsV2, CoprocessorKeyRange, CoprocessorRequest,
-    CoprocessorResponse, CoprocessorScanDetailV2, KvrpcLockInfo,
+    CoprocessorResponse, CoprocessorScanDetailV2, CoprocessorTimeDetailV2, KvrpcLockInfo,
 };
 pub use tidb_txnkv::region::{
     Peer, PeerRole, RegionCache, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
@@ -99,6 +100,8 @@ pub struct ObservedCall {
     pub region_id: u64,
     pub data: Vec<u8>,
     pub paging_size: u64,
+    pub is_cache_enabled: bool,
+    pub cache_if_match_version: u64,
     pub predicted_read_bytes: u64,
     pub cluster_id: u64,
     pub conf_ver: u64,
@@ -314,6 +317,8 @@ impl ScriptedClient {
             region_id: request.context.region_id,
             data: wire.data,
             paging_size: wire.paging_size,
+            is_cache_enabled: wire.is_cache_enabled,
+            cache_if_match_version: wire.cache_if_match_version,
             predicted_read_bytes: request.predicted_read_bytes,
             cluster_id: request.context.cluster_id,
             conf_ver: epoch.conf_ver,
@@ -441,6 +446,10 @@ pub fn metadata(start: &str, end: &str) -> KvRequestMetadata {
     metadata.data = Some(b"dag-read".to_vec());
     metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![range(start, end)]));
     metadata.keep_order = true;
+    // Keep the generic dispatch fixture focused on routing/order. Paging
+    // tests opt in explicitly; production defaults are covered by
+    // `paging_source`.
+    metadata.paging.enabled = false;
     metadata.store_type = StoreType::TiKv;
     metadata.start_ts = 42;
     metadata.read_replica_scope = "global".to_owned();

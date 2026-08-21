@@ -57,9 +57,9 @@ pub use tidb_txnkv::{
 };
 
 use super::{
-    build_tikv_unary_request_for_dispatch, classify_transport_failure, decode_tikv_unary_response,
-    CopPagingState, CopReadTaskError, CopReadTaskRuntime, ReadEngineGeneration,
-    TransportFailureAction,
+    build_tikv_unary_request_for_dispatch, classify_transport_failure,
+    coprocessor_response_process_time_nanos, decode_tikv_unary_response, CopPagingState,
+    CopReadTaskError, CopReadTaskRuntime, ReadEngineGeneration, TransportFailureAction,
 };
 use crate::{RegionTaskEpoch, RegionTaskTopology, ReplicaReadType};
 
@@ -78,6 +78,12 @@ pub struct DirectUnaryRuntimeConfig {
     /// Optional cache configuration. Each returned query response owns one
     /// cache instance for all of its logical tasks and paging attempts.
     pub cache: Option<CoprCacheConfig>,
+    /// Process-owned coprocessor cache shared by every query transport.
+    ///
+    /// Go owns this cache on the TiKV store, outside any one request. Tests
+    /// that only need request-local policy can keep using `cache`; production
+    /// supplies this handle so entries survive across statements and workers.
+    pub shared_cache: Option<CoprCache>,
     /// Optional source-statement trace data injected before dispatch.
     pub trace: Option<TraceInfo>,
     /// Absolute observation clock used by the shared read-byte EMA.
@@ -123,6 +129,7 @@ impl Default for DirectUnaryRuntimeConfig {
             read_engine_generation: ReadEngineGeneration::Classic,
             seed_read_bytes: 0,
             cache: None,
+            shared_cache: None,
             trace: None,
             observation_time: system_observation_time,
             region_retry_waiter: Rc::new(ExactRegionRetryWaiter),
@@ -733,8 +740,11 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             evidence.unary_attempts = 0;
             evidence.published_attempts.clear();
         }
-        let cache = CoprCache::from_optional_config(self.config.cache.as_ref())
-            .map_err(|error| DirectUnaryTransportError::Cache(error.to_string()).to_string())?;
+        let cache = match self.config.shared_cache.clone() {
+            Some(cache) => Some(cache),
+            None => CoprCache::from_optional_config(self.config.cache.as_ref())
+                .map_err(|error| DirectUnaryTransportError::Cache(error.to_string()).to_string())?,
+        };
         let runtime = CopPagingState::prepare_read_tasks(
             &coordinator_metadata,
             &topology,
@@ -1002,6 +1012,8 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         if !self.metadata.keep_order {
             return self.pull_unordered();
         }
+        self.prefetch_attempts()
+            .map_err(|error| QueryResponseError::Source(error.to_string()))?;
         loop {
             let Some(&logical_task_id) = self.logical_order.get(self.logical_index) else {
                 self.closed = true;
@@ -1055,10 +1067,17 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
 
     fn pull_unordered(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         loop {
-            self.prefetch_attempts()
-                .map_err(|error| QueryResponseError::Source(error.to_string()))?;
-
-            while let Some(logical_task_id) = self.unordered_ready.pop_front() {
+            // Inspect each ready task at most once before polling transport
+            // completions. A paging task is requeued after delivering one
+            // page; if its continuation has not completed yet, immediately
+            // popping the same task again spins forever and never reaches the
+            // completion notifier.
+            let ready_count = self.unordered_ready.len();
+            for _ in 0..ready_count {
+                let logical_task_id = self
+                    .unordered_ready
+                    .pop_front()
+                    .expect("ready count was captured before the loop");
                 match self.runtime.next_response(logical_task_id) {
                     Some(ResponseChannelEvent::Result(data)) => {
                         self.unordered_ready.push_back(logical_task_id);
@@ -1071,8 +1090,8 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                         self.active_attempts.remove(&logical_task_id);
                         self.request_selectors.remove(&logical_task_id);
                         self.unordered_inflight.remove(&logical_task_id);
-                        self.prefetch_attempts()
-                            .map_err(|error| QueryResponseError::Source(error.to_string()))?;
+                        self.unordered_ready
+                            .retain(|candidate| *candidate != logical_task_id);
                     }
                     Some(ResponseChannelEvent::Error(message)) => {
                         return self.fail(DirectUnaryTransportError::Coordinator(message));
@@ -1089,11 +1108,18 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                     }
                     // The response channel may not have a decoded chunk yet
                     // even though the region request has completed. Keep the
-                    // logical task in the ready queue; dropping it here loses
-                    // rows from unordered scans such as TPC-H q12.
+                    // logical task for the next pull, after every currently
+                    // ready task has had one chance to publish.
                     None => self.unordered_ready.push_back(logical_task_id),
                 }
             }
+
+            // Admit new work only after already-decoded rows had a chance to
+            // reach the caller. This keeps the worker window bounded from the
+            // consumer's perspective instead of dispatching a replacement
+            // region before returning the completed page.
+            self.prefetch_attempts()
+                .map_err(|error| QueryResponseError::Source(error.to_string()))?;
 
             let completion = self
                 .completion_notifier
@@ -1104,6 +1130,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                     && self
                         .try_complete_batch_attempt(logical_task_id)
                         .map_err(|error| QueryResponseError::Source(error.to_string()))?
+                    && !self.unordered_ready.contains(&logical_task_id)
                 {
                     self.unordered_ready.push_back(logical_task_id);
                 }
@@ -1129,6 +1156,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 && self
                     .try_complete_batch_attempt(logical_task_id)
                     .map_err(|error| QueryResponseError::Source(error.to_string()))?
+                && !self.unordered_ready.contains(&logical_task_id)
             {
                 self.unordered_ready.push_back(logical_task_id);
             }
@@ -1155,6 +1183,14 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
     /// result stream remains ordered when requested by the reader, while
     /// independent regions execute concurrently in TiKV.
     fn prefetch_attempts(&mut self) -> Result<(), DirectUnaryTransportError> {
+        // A zero/one request concurrency is the source's lazy single-worker
+        // shape. Keep the first RPC owned by the response pull loop; this is
+        // also important for callers that intentionally leave concurrency at
+        // the request zero value. Explicitly larger windows are the only
+        // cases where ordered reads can gain useful overlap.
+        if self.metadata.keep_order && self.metadata.concurrency <= 1 {
+            return Ok(());
+        }
         let concurrency = usize::try_from(self.metadata.concurrency)
             .ok()
             .filter(|concurrency| *concurrency > 0)
@@ -1587,10 +1623,11 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             selected.stale_read,
             traffic_location,
         );
-        let locked =
+        let decoded =
             tidb_proto::CoprocessorResponse::decode(raw_response.encoded_response.as_slice())
-                .map_err(|error| DirectUnaryTransportError::Decode(error.to_string()))?
-                .locked;
+                .map_err(|error| DirectUnaryTransportError::Decode(error.to_string()))?;
+        let locked = decoded.locked.clone();
+        let process_time_nanos = coprocessor_response_process_time_nanos(&decoded);
         let response = decode_tikv_unary_response(&raw_response.encoded_response)
             .map_err(|error| DirectUnaryTransportError::Decode(error.to_string()))?;
         if let Some(region_error) = response.region_error_ref().cloned() {
@@ -1661,11 +1698,15 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         let accepted = self.runtime.accept_response(
             attempt_id,
             response,
-            None,
+            process_time_nanos,
             (self.config.observation_time)(),
         )?;
         self.sync_only_chains.remove(&logical_task_id);
         self.request_selectors.remove(&logical_task_id);
+        // The completed page no longer occupies the unordered worker window.
+        // A paging continuation may now be admitted on the next pull; a
+        // terminal page will be removed again when its Closed event drains.
+        self.unordered_inflight.remove(&logical_task_id);
         match accepted.next_attempt_id {
             Some(next_attempt_id) => {
                 self.active_attempts

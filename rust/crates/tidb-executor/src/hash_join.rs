@@ -894,9 +894,10 @@ impl BuildTable {
         build_is_left: bool,
     ) -> Result<(), BuildError> {
         let offset = |key: &EquiKey| if build_is_left { key.left } else { key.right };
-        let exact_int = keys
-            .first()
-            .filter(|key| keys.len() == 1 && key.class == KeyClass::Int && !key.null_safe);
+        let exact_int = self.exact_int_buckets.as_ref().and_then(|_| {
+            keys.first()
+                .filter(|key| keys.len() == 1 && key.class == KeyClass::Int && !key.null_safe)
+        });
         let chk_idx = u32::try_from(self.rows.num_chunks()).map_err(|_| BuildError::Key)?;
         if let Some(matched) = &mut self.matched {
             let bitmap = vec![0; chunk.num_rows().div_ceil(8)];
@@ -911,23 +912,25 @@ impl BuildTable {
             // NULL-safe key is indexed under row_key's dedicated NULL
             // identity, matching Go's `ignoreNulls[keyIdx]` path. Every row
             // is still stored because the container owns the build data.
+            if let Some(exact_key) = exact_int {
+                if let Some(key) =
+                    exact_int_key_chunk(chunk_row, offset(exact_key), &types[offset(exact_key)])
+                {
+                    let row_idx = u32::try_from(row_idx).map_err(|_| BuildError::Key)?;
+                    let pointer = RowPtr { chk_idx, row_idx };
+                    let pointers = self
+                        .exact_int_buckets
+                        .as_mut()
+                        .expect("exact integer buckets initialized");
+                    pointers.entry(key).or_default().push(pointer);
+                }
+                continue;
+            }
             let key = row_hash_chunk(keys, chunk_row, types, |key| offset(key))
                 .map_err(|_| BuildError::Key)?;
             if let Some(key) = key {
                 let row_idx = u32::try_from(row_idx).map_err(|_| BuildError::Key)?;
                 let pointer = RowPtr { chk_idx, row_idx };
-                if let Some(exact_key) = self.exact_int_buckets.as_ref().and_then(|_| {
-                    exact_int.and_then(|key| {
-                        exact_int_key_chunk(chunk_row, offset(key), &types[offset(key)])
-                    })
-                }) {
-                    let pointers = self
-                        .exact_int_buckets
-                        .as_mut()
-                        .expect("exact integer buckets initialized");
-                    pointers.entry(exact_key).or_default().push(pointer);
-                    continue;
-                }
                 match self.buckets.entry(key) {
                     Entry::Occupied(mut entry) => {
                         let pointers = entry.get_mut();
@@ -969,6 +972,18 @@ impl BuildTable {
 
     pub(crate) fn has_exact_int(&self) -> bool {
         self.exact_int_buckets.is_some()
+    }
+
+    /// Whether every exact-integer bucket names at most one build row.
+    ///
+    /// The bounded parallel probe path retains one result chunk per Go-shaped
+    /// worker. Restricting that first parallel slice to a unique build key
+    /// keeps each worker's output bounded by its input chunk while covering
+    /// primary/unique-key dimension joins such as TPC-H q13.
+    pub(crate) fn exact_int_is_unique(&self) -> bool {
+        self.exact_int_buckets
+            .as_ref()
+            .is_some_and(|buckets| buckets.values().all(|rows| rows.len() <= 1))
     }
 
     /// Marks one preserved build row as matched after every ON conjunct has
@@ -1048,6 +1063,17 @@ impl BuildTable {
         f: impl FnOnce(Row<'_>) -> T,
     ) -> Result<T, DiskError> {
         self.rows.with_row(ptr, buf, f)
+    }
+
+    /// Visits build rows in one lock-held batch, retaining separate disk and
+    /// callback error channels for the join worker.
+    pub(crate) fn with_rows<E>(
+        &self,
+        ptrs: &[RowPtr],
+        buf: &mut Chunk,
+        f: impl FnMut(Row<'_>) -> Result<(), E>,
+    ) -> Result<Result<(), E>, DiskError> {
+        self.rows.with_rows(ptrs, buf, f)
     }
 
     /// Go `hashRowContainer.GetMemTracker`, which the build worker attaches

@@ -25,6 +25,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::mem;
+use std::sync::{Arc, Mutex};
 
 use tidb_proto::{CoprocessorKeyRange, CoprocessorResponse};
 
@@ -238,10 +239,15 @@ pub enum CoprCacheResponseOutcome {
 /// Exact byte keys are retained by the map and again inside each value, so a
 /// hash collision cannot return another request's response. FIFO eviction is a
 /// deterministic Rust backend, not a claim of Ristretto eviction equivalence.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CoprCache {
     admission: CoprCacheAdmission,
     capacity_bytes: usize,
+    state: Arc<Mutex<CoprCacheState>>,
+}
+
+#[derive(Debug, Default)]
+struct CoprCacheState {
     cost_bytes: usize,
     values: HashMap<Vec<u8>, CoprCacheValue>,
     insertion_order: VecDeque<Vec<u8>>,
@@ -330,22 +336,28 @@ impl CoprCache {
         Ok(Some(Self {
             admission,
             capacity_bytes: capacity_bytes as usize,
-            cost_bytes: 0,
-            values: HashMap::new(),
-            insertion_order: VecDeque::new(),
+            state: Arc::default(),
         }))
     }
 
     /// Number of values currently retained by the deterministic backend.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.values.len()
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values
+            .len()
     }
 
     /// Returns whether the cache currently holds no values.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values
+            .is_empty()
     }
 
     /// Applies the source request-admission policy through the cache owner.
@@ -373,34 +385,44 @@ impl CoprCache {
     /// Gets an exact-key value. `HashMap` equality plus the retained value key
     /// is the source's post-hash collision check at this boundary.
     #[must_use]
-    pub fn get(&self, key: &[u8]) -> Option<&CoprCacheValue> {
-        self.values.get(key).filter(|value| value.key == key)
+    pub fn get(&self, key: &[u8]) -> Option<CoprCacheValue> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values
+            .get(key)
+            .filter(|value| value.key == key)
+            .cloned()
     }
 
     /// Inserts a value after forcing its retained collision-check key to equal
     /// the caller's key. Values larger than the configured capacity are denied.
-    pub fn set(&mut self, key: Vec<u8>, mut value: CoprCacheValue) -> bool {
+    pub fn set(&self, key: Vec<u8>, mut value: CoprCacheValue) -> bool {
         value.key.clone_from(&key);
         let cost = value.len();
         if cost > self.capacity_bytes {
             return false;
         }
 
-        if let Some(replaced) = self.values.remove(key.as_slice()) {
-            self.cost_bytes -= replaced.len();
-            self.insertion_order.retain(|candidate| candidate != &key);
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(replaced) = state.values.remove(key.as_slice()) {
+            state.cost_bytes -= replaced.len();
+            state.insertion_order.retain(|candidate| candidate != &key);
         }
-        while self.cost_bytes + cost > self.capacity_bytes {
-            let Some(evicted_key) = self.insertion_order.pop_front() else {
+        while state.cost_bytes + cost > self.capacity_bytes {
+            let Some(evicted_key) = state.insertion_order.pop_front() else {
                 break;
             };
-            if let Some(evicted) = self.values.remove(evicted_key.as_slice()) {
-                self.cost_bytes -= evicted.len();
+            if let Some(evicted) = state.values.remove(evicted_key.as_slice()) {
+                state.cost_bytes -= evicted.len();
             }
         }
-        self.cost_bytes += cost;
-        self.insertion_order.push_back(key.clone());
-        self.values.insert(key, value);
+        state.cost_bytes += cost;
+        state.insertion_order.push_back(key.clone());
+        state.values.insert(key, value);
         true
     }
 
@@ -426,12 +448,9 @@ impl CoprCache {
         let Ok(key) = build_copr_cache_key(request) else {
             return None;
         };
-        let value = self
-            .get(&key)
-            .filter(|value| {
-                value.region_id == context.region_id && value.timestamp <= context.start_ts
-            })
-            .cloned();
+        let value = self.get(&key).filter(|value| {
+            value.region_id == context.region_id && value.timestamp <= context.start_ts
+        });
         request.is_cache_enabled = true;
         request.cache_if_match_version =
             value.as_ref().map_or(0, |value| value.region_data_version);
@@ -441,7 +460,7 @@ impl CoprCache {
     /// Restores a hit or admits and stores a computed response exactly at the
     /// source worker's post-response cache boundary.
     pub fn handle_response(
-        &mut self,
+        &self,
         response: &mut CoprocessorResponse,
         lookup: Option<&CoprCacheLookup>,
         context: CoprCacheResponseContext,

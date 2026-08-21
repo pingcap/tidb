@@ -207,6 +207,7 @@ pub fn limit_to_pb(limit: u64) -> Executor {
         idx_scan: None,
         selection: None,
         aggregation: None,
+        top_n: None,
         limit: Some(Limit { limit: Some(limit) }),
         executor_id: Some(String::new()),
         parent_idx: None,
@@ -401,6 +402,7 @@ pub fn construct_index_aggregated_dag_req(
             idx_scan: Some(index_scan),
             selection: None,
             aggregation: None,
+            top_n: None,
             limit: None,
             executor_id: None,
             parent_idx: None,
@@ -452,6 +454,7 @@ fn aggregation_to_executor(aggregation: Aggregation) -> Executor {
         idx_scan: None,
         selection: None,
         aggregation: Some(aggregation),
+        top_n: None,
         limit: None,
         executor_id: Some(String::new()),
         parent_idx: None,
@@ -628,6 +631,7 @@ fn selection_executor(conditions: Vec<Expr>) -> Result<Executor, DagRequestBuild
         idx_scan: None,
         selection: Some(Selection { conditions }),
         aggregation: None,
+        top_n: None,
         limit: None,
         // PhysicalSelection.ToPB always takes the address of executorID; it
         // remains empty for TiKV's list form.
@@ -654,6 +658,7 @@ fn aggregation_to_pb(
             agg_func: functions.to_vec(),
             streamed: Some(streamed),
         }),
+        top_n: None,
         limit: None,
         executor_id: Some(String::new()),
         parent_idx: None,
@@ -726,6 +731,7 @@ fn table_scan_to_pb(spec: &TiKvTableScanSpec) -> Result<Executor, DagRequestBuil
         idx_scan: None,
         selection: None,
         aggregation: None,
+        top_n: None,
         limit: None,
         // PhysicalTableScan.ToPB takes the address of its initially empty ID
         // even for TiKV, so field 10 is present with an empty string.
@@ -752,6 +758,7 @@ fn index_scan_to_pb(plan: &PhysicalIndexScanPlan) -> Result<Executor, DagRequest
         idx_scan: Some(index_payload_to_pb(spec, plan)),
         selection: None,
         aggregation: None,
+        top_n: None,
         limit: None,
         executor_id: None,
         parent_idx: None,

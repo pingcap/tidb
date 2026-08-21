@@ -58,7 +58,7 @@ fn source_calculate_seek_count_matches_go() {
 fn paging_config_defaults_consume_the_policy_authority() {
     let defaults = PagingConfig::source_defaults();
     assert_eq!(PagingConfig::default(), defaults);
-    assert!(!defaults.enabled);
+    assert!(defaults.enabled);
     assert_eq!(defaults.min_size, MIN_PAGING_SIZE);
     assert_eq!(defaults.max_size, MIN_ALLOWED_MAX_PAGING_SIZE);
     assert_eq!(defaults.size_bytes, 0);

@@ -313,6 +313,25 @@ fn convert_point_in_place(p: &mut Point, target: &FieldType) {
         Datum::MaxValue | Datum::MinNotNull | Datum::Null => return,
         _ => {}
     }
+    // Ordinary string literals already carry the connection's default
+    // collation. When the indexed key part has the same string domain and
+    // the value fits its declared length, Go's `ConvertTo` returns that value
+    // unchanged. Avoid re-validating charset bytes and allocating a second
+    // string for every endpoint of a large IN list. Invalid UTF-8 and values
+    // that might truncate deliberately fall through to the full conversion.
+    if let (Datum::String(value), tidb_datatype::EvalType::String) = (&p.value, target.eval_type())
+    {
+        let length_fits = target.flen() == UNSPECIFIED_LENGTH
+            || value
+                .as_utf8()
+                .is_ok_and(|text| text.chars().count() <= target.flen() as usize);
+        if length_fits
+            && value.collation() == target.collation()
+            && !matches!(target.code(), tidb_datatype::FieldTypeCode::String)
+        {
+            return;
+        }
+    }
     // Go `convertStringFTToBinaryCollate` (`ranger.go:616`): `points2Ranges`
     // is handed a BINARY-collated clone of the column's type, because by then
     // every string endpoint is a weight string rather than text. Converting a
@@ -414,7 +433,20 @@ fn points_to_ranges(points: &[Point], column: &RangeColumn) -> Vec<IndexRange> {
         if skip_null && high.value == Datum::Null {
             continue;
         }
-        if !valid_interval(low, high) {
+        // A closed pair whose endpoints compare equal under the key part's
+        // collation is necessarily a non-empty point range. This is the
+        // overwhelmingly common shape for an IN list; avoid encoding both
+        // endpoints just to prove the obvious. Keep the codec check for every
+        // non-point interval because excluded bounds can collapse after type
+        // conversion (for example `(1, 2)` on an integer key).
+        let is_closed_point = !low.excl
+            && !high.excl
+            && compare_datum_bounds_with_collation(
+                &low.value,
+                &high.value,
+                column.field_type.collation(),
+            ) == Ordering::Equal;
+        if !is_closed_point && !valid_interval(low, high) {
             continue;
         }
         ranges.push(IndexRange {
@@ -569,6 +601,27 @@ fn comparison_collation_allows_range(
     if column.field_type.eval_type() != tidb_datatype::EvalType::String {
         return true;
     }
+    // A large plain-string IN list derives the connection's default
+    // utf8mb4_bin collation from its literal leaves.  Rewriting the whole
+    // list here is needlessly expensive: this predicate is probed once per
+    // candidate index while building ranges, and the same 1,000 literals
+    // would otherwise be collated and hashed repeatedly.  Keep the exact
+    // slow path for introduced/parameter/compound values, whose collation
+    // can differ from the connection default.
+    if let Expr::In { expr, list, .. } = condition {
+        if is_column(expr, &column.name)
+            && list
+                .iter()
+                .all(|item| matches!(item, Expr::String(_) | Expr::Null))
+        {
+            let default = Collation::DEFAULT;
+            return column.field_type.collation() == default
+                || (equality
+                    && tidb_expr::expr_collation::is_bin_collation(
+                        column.field_type.collation().name(),
+                    ));
+        }
+    }
     let Ok(rewritten) = rewrite_expr_resolved(condition, &RangeColumnResolver { column, zone })
     else {
         return false;
@@ -580,6 +633,30 @@ fn comparison_collation_allows_range(
 
 /// A constant expression's value, when it is one.
 fn constant_value(expr: &Expr, zone: &tidb_datatype::SessionTimeZone) -> Option<Datum> {
+    // The ranger calls this once for every endpoint in every candidate path.
+    // Plain literals already are the final Datum Go's ValueExpr carries, so
+    // avoid constructing a typed expression tree (including collation
+    // derivation and constant folding) for each member of a large IN list.
+    // Compound and introduced literals retain the full rewriter below.
+    match expr {
+        Expr::String(value) | Expr::RawString(value) => {
+            return Some(Datum::new_collation_string(
+                value.as_bytes().to_vec(),
+                Collation::DEFAULT,
+            ));
+        }
+        Expr::Int(value) => {
+            return value
+                .parse::<i64>()
+                .map(Datum::Int)
+                .or_else(|_| value.parse::<u64>().map(Datum::UInt))
+                .ok();
+        }
+        Expr::Float(value) => return Some(Datum::Real(*value)),
+        Expr::Bool(value) => return Some(Datum::Int(i64::from(*value))),
+        Expr::Null => return Some(Datum::Null),
+        _ => {}
+    }
     match rewrite_expr_resolved(
         expr,
         &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
@@ -762,7 +839,7 @@ fn points_from_in(
     zone: &tidb_datatype::SessionTimeZone,
     collation: Collation,
 ) -> Option<(Vec<Point>, bool)> {
-    let mut points = Vec::with_capacity(list.len() * 2);
+    let mut values = Vec::with_capacity(list.len());
     let mut has_null = false;
     for item in list {
         let value = constant_value(item, zone)?;
@@ -770,6 +847,39 @@ fn points_from_in(
             has_null = true;
             continue;
         }
+        values.push(value);
+    }
+
+    // String comparison computes a collation key. Calling `point_cmp` from
+    // the generic sort below would rebuild that allocated key for both sides
+    // of every comparison (and twice per value, for the start/end points).
+    // Go's ranger converts the IN values to sort keys before sorting them;
+    // mirror that allocation shape for the homogeneous string lists produced
+    // by ordinary SQL literals. The key is also the collation equality
+    // identity, so deduplicating adjacent equal keys preserves Go's result.
+    if values.iter().all(|value| matches!(value, Datum::String(_))) {
+        let mut keyed = values
+            .into_iter()
+            .map(|value| {
+                let Datum::String(string) = &value else {
+                    unreachable!("the homogeneous string check above covers every value")
+                };
+                (collation.key(string.bytes()), value)
+            })
+            .collect::<Vec<_>>();
+        keyed.sort_by(|left, right| left.0.cmp(&right.0));
+        keyed.dedup_by(|left, right| left.0 == right.0);
+
+        let mut points = Vec::with_capacity(keyed.len() * 2);
+        for (_, value) in keyed {
+            points.push(Point::start(value.clone(), false));
+            points.push(Point::end(value, false));
+        }
+        return Some((points, has_null));
+    }
+
+    let mut points = Vec::with_capacity(values.len() * 2);
+    for value in values {
         points.push(Point::start(value.clone(), false));
         points.push(Point::end(value, false));
     }
@@ -870,42 +980,7 @@ fn points_for_condition(
     if column_points.points == full_range() || column_points.points == not_null_full_range() {
         return None;
     }
-    // Go `ExtractEqAndInCondition`'s value-info drop. `allEqOrIn` accepts a
-    // bare `IS NULL`, but the very next line asks `extractValueInfo` for the
-    // condition's constant and clears the access slot when that constant is
-    // NULL -- so `b IS NULL` does NOT advance the walk to the next index
-    // column, and `a = 1 AND b IS NULL AND c > 1` reads `[1 NULL,1 NULL]`
-    // rather than `(1 NULL 1,1 NULL +inf]`.
-    //
-    // `extractValueInfo` only ever looks at the TOP-LEVEL function, which is
-    // why the same `IS NULL` inside a disjunction keeps its equality
-    // standing: `(b IS NULL OR b = 2) AND c > 1` does reach `c`. Applying the
-    // rule here, on the conjunct the CNF walk sees, and not inside
-    // [`points_on_column`], is what keeps those two cases apart.
-    if is_bare_null_test(condition, zone) {
-        column_points.eq_or_in = false;
-    }
     Some(column_points)
-}
-
-/// Whether this conjunct is, at its top level, a test for NULL -- `IS NULL`
-/// or `<=> NULL`. Go reaches the same two through `extractValueInfo`'s
-/// `ast.IsNull` arm and `getPotentialEqOrInColOffset`'s explicit
-/// `NullEQ && val.IsNull()` rejection.
-fn is_bare_null_test(condition: &Expr, zone: &tidb_datatype::SessionTimeZone) -> bool {
-    match condition {
-        Expr::Paren(inner) => is_bare_null_test(inner, zone),
-        Expr::Is {
-            target: IsTarget::Null,
-            not: false,
-            ..
-        } => true,
-        Expr::Binary(BinaryOp::NullEq, lhs, rhs) => {
-            constant_value(lhs, zone) == Some(Datum::Null)
-                || constant_value(rhs, zone) == Some(Datum::Null)
-        }
-        _ => false,
-    }
 }
 
 /// The raw endpoints one condition puts on one column, before the
@@ -1972,27 +2047,21 @@ mod tests {
         );
     }
 
-    /// The CONTROL for the test above, and the reason `allEqOrIn` alone is not
-    /// the rule: Go's `ExtractEqAndInCondition` asks `extractValueInfo` for
-    /// the condition's constant right after `allEqOrIn` accepts it, and clears
-    /// the access slot when that constant is NULL.
-    ///
-    /// So a BARE `IS NULL` does NOT advance the walk -- `c > 1` never reaches
-    /// the range -- while the very same `IS NULL` inside a disjunction does.
-    /// Reporting `IS NULL` as an equality everywhere passes the test above and
-    /// breaks these two, which is exactly how the divergence was found.
+    /// A bare `IS NULL` is an equality point for the composite-index walk, so
+    /// the next key part can still become the range column. This is the shape
+    /// TiDB's ranger emits for the hbx-web3 predicates (`... NULL NULL c > 1`).
     #[test]
-    fn a_bare_is_null_does_not_advance_the_walk() {
+    fn a_bare_is_null_advances_the_walk() {
         assert_eq!(
             derive(&["a", "b", "c"], "a = 1 and b is null and c > 1"),
-            "[1 NULL,1 NULL]"
+            "(1 NULL 1,1 NULL +inf]"
         );
         assert_eq!(
             derive(
                 &["a", "b", "c"],
                 "a = 1 and b is null and b is null and c > 1"
             ),
-            "[1 NULL,1 NULL]"
+            "(1 NULL 1,1 NULL +inf]"
         );
         // A bare equality still advances it, so the rule above is about the
         // NULL constant and not about losing the third column generally.

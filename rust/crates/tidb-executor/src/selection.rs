@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use tidb_chunk::chunk::Chunk;
-use tidb_datatype::FieldType;
+use tidb_datatype::{Datum, FieldType};
 use tidb_expr::evaluator::vectorizable;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
@@ -42,6 +42,7 @@ use crate::StatementMemory;
 pub struct SelectionExec<C: Columns> {
     meta: ExecutorMeta,
     filters: Vec<Expression>,
+    fast_filters: Vec<Option<FastSelectionFilter>>,
     child: Box<dyn Executor>,
     ctx: C,
     child_chunk: Option<Chunk>,
@@ -50,6 +51,23 @@ pub struct SelectionExec<C: Columns> {
     input_row: usize,
     batched: bool,
     done: bool,
+}
+
+/// A row-local filter whose constant collation keys can be prepared once when
+/// the Selection is built. This is intentionally narrower than the expression
+/// evaluator: only a bare string-column `IN` with strict non-NULL literals is
+/// eligible, so casts, warnings, and three-valued cases keep the source path.
+#[derive(Clone, Debug)]
+enum FastSelectionFilter {
+    StringIn {
+        column_offset: usize,
+        collator: tidb_datatype::Collator,
+        keys: Vec<Vec<u8>>,
+    },
+    And {
+        filters: Vec<Self>,
+        complete: bool,
+    },
 }
 
 impl<C: Columns> SelectionExec<C> {
@@ -64,10 +82,15 @@ impl<C: Columns> SelectionExec<C> {
         memory: StatementMemory,
     ) -> Self {
         let batched = vectorizable(&filters);
+        let fast_filters = filters
+            .iter()
+            .map(FastSelectionFilter::from_expression)
+            .collect();
         let tracker = memory.operator_tracker(meta.id());
         SelectionExec {
             meta,
             filters,
+            fast_filters,
             child,
             ctx,
             child_chunk: None,
@@ -82,7 +105,15 @@ impl<C: Columns> SelectionExec<C> {
     /// Whether a row satisfies every filter (all truthy). A false or NULL filter
     /// rejects the row.
     fn row_passes(&self, row: tidb_chunk::row::Row<'_>) -> Result<bool, ExecError> {
-        for filter in &self.filters {
+        for (filter, fast_filter) in self.filters.iter().zip(&self.fast_filters) {
+            if let Some(fast_filter) = fast_filter {
+                if !fast_filter.matches(row) {
+                    return Ok(false);
+                }
+                if fast_filter.is_complete() {
+                    continue;
+                }
+            }
             let value = filter.eval(&self.ctx, row)?;
             if truthy_of(&value)? != Some(true) {
                 return Ok(false);
@@ -94,6 +125,84 @@ impl<C: Columns> SelectionExec<C> {
     fn release_child_chunk(&mut self) {
         self.child_chunk = None;
         self.tracker.replace_bytes_used(0);
+    }
+}
+
+impl FastSelectionFilter {
+    fn from_expression(expression: &Expression) -> Option<Self> {
+        let Expression::ScalarFunction(function) = expression else {
+            return None;
+        };
+        if function.func_name.lowercase() == "and" {
+            let mut filters = Vec::new();
+            let mut complete = true;
+            for argument in &function.args {
+                if let Some(filter) = Self::from_expression(argument) {
+                    complete &= filter.is_complete();
+                    filters.push(filter);
+                } else {
+                    complete = false;
+                }
+            }
+            return (!filters.is_empty()).then_some(Self::And { filters, complete });
+        }
+        if function.func_name.lowercase() != "in" || function.args.len() < 2 {
+            return None;
+        }
+        let column = function.args.first()?.as_column()?;
+        let field_type = column.get_static_type()?;
+        if !field_type.is_string() {
+            return None;
+        }
+        let column_offset = usize::try_from(column.index).ok()?;
+        let mut keys = function
+            .args
+            .iter()
+            .skip(1)
+            .map(|argument| match argument {
+                Expression::Constant(constant)
+                    if constant.deferred_expr.is_none()
+                        && matches!(constant.value, Datum::String(_) | Datum::Bytes(_)) =>
+                {
+                    Some(constant.value.as_raw_bytes()?.to_vec())
+                }
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?
+            .into_iter()
+            .map(|bytes| field_type.runtime_collator().key(&bytes))
+            .collect::<Vec<_>>();
+        keys.sort_unstable();
+        keys.dedup();
+        Some(Self::StringIn {
+            column_offset,
+            collator: field_type.runtime_collator(),
+            keys,
+        })
+    }
+
+    fn matches(&self, row: tidb_chunk::row::Row<'_>) -> bool {
+        match self {
+            Self::StringIn {
+                column_offset,
+                collator,
+                keys,
+            } => {
+                if row.is_null(*column_offset) {
+                    return false;
+                }
+                let key = collator.key(row.get_string(*column_offset).as_bytes());
+                keys.binary_search(&key).is_ok()
+            }
+            Self::And { filters, .. } => filters.iter().all(|filter| filter.matches(row)),
+        }
+    }
+
+    fn is_complete(&self) -> bool {
+        match self {
+            Self::StringIn { .. } => true,
+            Self::And { complete, .. } => *complete,
+        }
     }
 }
 
