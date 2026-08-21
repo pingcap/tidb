@@ -688,11 +688,12 @@ func unsignedHandleBounds(ran *ranger.Range, handleDim int) (low, high uint64, o
 		case types.KindUint64:
 			high = val.GetUint64()
 		case types.KindInt64:
-			if v := val.GetInt64(); v >= 0 {
-				high = uint64(v)
-			} else {
+			v := val.GetInt64()
+			if v < 0 {
+				// A negative upper bound is below the whole unsigned domain.
 				return 0, 0, false
 			}
+			high = uint64(v)
 		case types.KindMaxValue:
 			high = math.MaxUint64
 		default:
