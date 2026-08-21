@@ -59,14 +59,14 @@ pub use context::{
     DEFAULT_DIST_SQL_CONCURRENCY,
 };
 pub use cop_paging::{
-    calculate_paging_remain, calculate_paging_retry, paging_response_read_bytes,
-    BatchBucketVersionUpdate, CopPagingError, CopPagingOutcome, CopPagingState, DirectUnaryClient,
-    DirectUnaryClientError, DirectUnaryQueryResponse, DirectUnaryQueryTransport,
-    DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError,
-    DirectUnaryTransportEvidence, DirectUnaryTransportEvidenceHandle, LockedResponseAction,
-    LockedResponseDelegate, LockedResponseObservation, OptimisticLockRecovery,
-    PublicationObserverAlreadyInstalled, PublishedDispatchEvidence, ReadEngineGeneration,
-    RegionRetryWaiter,
+    calculate_paging_remain, calculate_paging_retry, coprocessor_response_process_time_nanos,
+    paging_response_read_bytes, BatchBucketVersionUpdate, CopPagingError, CopPagingOutcome,
+    CopPagingState, DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryResponse,
+    DirectUnaryQueryTransport, DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig,
+    DirectUnaryTransportError, DirectUnaryTransportEvidence, DirectUnaryTransportEvidenceHandle,
+    LockedResponseAction, LockedResponseDelegate, LockedResponseObservation,
+    OptimisticLockRecovery, PublicationObserverAlreadyInstalled, PublishedDispatchEvidence,
+    ReadEngineGeneration, RegionRetryWaiter,
 };
 pub use copr_cache::{
     build_copr_cache_key, CoprCache, CoprCacheAdmission, CoprCacheConfig, CoprCacheError,

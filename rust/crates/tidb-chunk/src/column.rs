@@ -1072,6 +1072,49 @@ impl Column {
         self.length += 1;
     }
 
+    /// Appends a contiguous physical row range without re-entering the cell
+    /// path for every value. Fixed-width data and null bits are copied in
+    /// their natural column layout; variable-width offsets are rebased once
+    /// after the payload copy.
+    pub(crate) fn append_range_from(&mut self, src: &Column, begin: usize, end: usize) {
+        assert!(begin <= end && end <= src.length);
+        let rows = end - begin;
+        if rows == 0 {
+            return;
+        }
+        let destination_start_row = self.length;
+        for (offset, row) in (begin..end).enumerate() {
+            let position = destination_start_row + offset;
+            let bitmap_index = position >> 3;
+            if bitmap_index >= self.null_bitmap.len() {
+                self.null_bitmap.push(0);
+            }
+            if !src.is_null(row) {
+                self.null_bitmap[bitmap_index] |= 1 << (position & 7);
+            }
+        }
+        if src.is_fixed() {
+            let elem_len = src.elem_buffer_len();
+            let start = begin * elem_len;
+            let finish = end * elem_len;
+            self.data.extend_from_slice(&src.data.read()[start..finish]);
+        } else {
+            let source_start = src.offsets[begin] as usize;
+            let source_end = src.offsets[end] as usize;
+            let destination_start = self.data.len();
+            self.data
+                .extend_from_slice(&src.data.read()[source_start..source_end]);
+            for &offset in &src.offsets[begin + 1..=end] {
+                self.offsets.push(
+                    (destination_start + (offset as usize - source_start))
+                        .try_into()
+                        .expect("column offset overflow"),
+                );
+            }
+        }
+        self.length += rows;
+    }
+
     /// Append one cell after its source owner has been unlocked. This is the
     /// same physical operation as [`Column::append_cell_from`], with nullity,
     /// shape, and bytes prepared while the source was borrowed.

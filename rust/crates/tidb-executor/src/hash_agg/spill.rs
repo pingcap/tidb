@@ -22,6 +22,12 @@
 
 use super::*;
 
+const PARALLEL_INT_AGG_WORKERS: usize = 5;
+// Keep the bounded input window large enough that the five short-lived worker
+// threads amortize their setup over a meaningful scan batch.  Each q13 chunk
+// is only 1K rows, so 40 chunks forced dozens of thread cohorts for 1.5M rows.
+const PARALLEL_INT_AGG_CHUNKS_PER_WINDOW: usize = 256;
+
 impl<C: Columns> HashAggExec<C> {
     /// Bytes this aggregation has written to spill files (Go's `diskTracker`).
     #[must_use]
@@ -134,6 +140,9 @@ impl<C: Columns> HashAggExec<C> {
     }
 
     fn execute_impl(&mut self) -> Result<(), ExecError> {
+        if let Some((group_column, group_unsigned, specs)) = self.parallel_int_agg_specs() {
+            return self.execute_parallel_int_agg(group_column, group_unsigned, &specs);
+        }
         loop {
             let before = self.child_chunk.memory_usage();
             self.get_next_chunk()?;
@@ -161,6 +170,197 @@ impl<C: Columns> HashAggExec<C> {
             // not save it, where the statement stops with 8175 (hard limit).
             self.memory.check()?;
         }
+    }
+
+    /// Runs the q13-shaped integer hash aggregate in bounded partial-worker
+    /// windows. The main thread remains the child fetcher and final merger;
+    /// workers only own chunks and typed integer state, so no non-`Send`
+    /// executor or session context crosses the thread boundary.
+    fn execute_parallel_int_agg(
+        &mut self,
+        group_column: usize,
+        group_unsigned: bool,
+        specs: &[ParallelIntAggSpec],
+    ) -> Result<(), ExecError> {
+        if let [spec @ (ParallelIntAggSpec::Count(_) | ParallelIntAggSpec::FinalCount { .. })] =
+            specs
+        {
+            return self.execute_parallel_int_count_agg(group_column, group_unsigned, spec);
+        }
+        let mut global: ParallelIntMap<ParallelIntGroup> = ParallelIntMap::default();
+        let mut next_sequence = 0usize;
+        let mut child_drained = false;
+
+        while !child_drained {
+            let mut batch = Vec::with_capacity(PARALLEL_INT_AGG_CHUNKS_PER_WINDOW);
+            for _ in 0..PARALLEL_INT_AGG_CHUNKS_PER_WINDOW {
+                let before = self.child_chunk.memory_usage();
+                self.child_chunk.reset();
+                self.child.next(&mut self.child_chunk)?;
+                self.tracker
+                    .consume(self.child_chunk.memory_usage() - before);
+                let rows = self.child_chunk.num_rows();
+                if rows == 0 {
+                    self.is_child_drained = true;
+                    child_drained = true;
+                    break;
+                }
+                self.child_returned_empty = false;
+                // Keep a schema-compatible request chunk installed while the
+                // fetched batch is owned by workers. Leaving the field as a
+                // zero-value `Chunk` would make the next child call (and the
+                // HashJoin output swap beneath it) lose all columns.
+                let replacement = self.child.new_chunk();
+                let chunk = std::mem::replace(&mut self.child_chunk, replacement);
+                batch.push((chunk, next_sequence));
+                next_sequence += rows;
+            }
+            if batch.is_empty() {
+                break;
+            }
+
+            let workers = batch.len().min(PARALLEL_INT_AGG_WORKERS);
+            let mut partitions: Vec<Vec<(Chunk, usize)>> =
+                (0..workers).map(|_| Vec::new()).collect();
+            for (index, chunk) in batch.into_iter().enumerate() {
+                partitions[index % workers].push(chunk);
+            }
+            let partial_maps = std::thread::scope(|scope| {
+                let handles = partitions.into_iter().map(|chunks| {
+                    scope.spawn(move || {
+                        Self::parallel_int_agg_chunk(chunks, group_column, group_unsigned, specs)
+                    })
+                });
+                handles
+                    .map(|handle| {
+                        handle
+                            .join()
+                            .expect("parallel hash aggregate worker panicked")
+                    })
+                    .collect::<Vec<_>>()
+            });
+            for partial in partial_maps {
+                let partial = partial?;
+                for (key, incoming) in partial {
+                    match global.entry(key) {
+                        std::collections::hash_map::Entry::Vacant(slot) => {
+                            slot.insert(incoming);
+                        }
+                        std::collections::hash_map::Entry::Occupied(mut slot) => {
+                            let current = slot.get_mut();
+                            let incoming_is_first = incoming.first_seq < current.first_seq;
+                            if incoming_is_first {
+                                current.first_seq = incoming.first_seq;
+                            }
+                            for (index, count) in incoming.counts.into_iter().enumerate() {
+                                current.counts[index] = current.counts[index].wrapping_add(count);
+                            }
+                            for (index, sum) in incoming.decimal_sums.into_iter().enumerate() {
+                                if let Some(sum) = sum {
+                                    current.decimal_sums[index] =
+                                        Some(match current.decimal_sums[index].take() {
+                                            Some(existing) => existing.add(sum),
+                                            None => sum,
+                                        });
+                                }
+                            }
+                            for (index, value) in incoming.first_rows.into_iter().enumerate() {
+                                if incoming_is_first || current.first_rows[index].is_none() {
+                                    if let Some(value) = value {
+                                        current.first_rows[index] = Some(value);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            self.parallel_agg_windows += 1;
+            self.memory.check()?;
+        }
+        self.finish_parallel_int_agg(global, specs);
+        self.executed = true;
+        Ok(())
+    }
+
+    /// COUNT-only specialization of the bounded integer aggregate. Keeping
+    /// the accumulator inline in the map value avoids one heap allocation per
+    /// local group; q13's inner aggregation opens 150k groups in several
+    /// worker maps before the final merge.
+    fn execute_parallel_int_count_agg(
+        &mut self,
+        group_column: usize,
+        group_unsigned: bool,
+        spec: &ParallelIntAggSpec,
+    ) -> Result<(), ExecError> {
+        let mut global: ParallelIntMap<ParallelIntCountGroup> = ParallelIntMap::default();
+        let mut next_sequence = 0usize;
+        let mut child_drained = false;
+
+        while !child_drained {
+            let mut batch = Vec::with_capacity(PARALLEL_INT_AGG_CHUNKS_PER_WINDOW);
+            for _ in 0..PARALLEL_INT_AGG_CHUNKS_PER_WINDOW {
+                let before = self.child_chunk.memory_usage();
+                self.child_chunk.reset();
+                self.child.next(&mut self.child_chunk)?;
+                self.tracker
+                    .consume(self.child_chunk.memory_usage() - before);
+                let rows = self.child_chunk.num_rows();
+                if rows == 0 {
+                    self.is_child_drained = true;
+                    child_drained = true;
+                    break;
+                }
+                self.child_returned_empty = false;
+                let replacement = self.child.new_chunk();
+                let chunk = std::mem::replace(&mut self.child_chunk, replacement);
+                batch.push((chunk, next_sequence));
+                next_sequence += rows;
+            }
+            if batch.is_empty() {
+                break;
+            }
+
+            let workers = batch.len().min(PARALLEL_INT_AGG_WORKERS);
+            let mut partitions: Vec<Vec<(Chunk, usize)>> =
+                (0..workers).map(|_| Vec::new()).collect();
+            for (index, chunk) in batch.into_iter().enumerate() {
+                partitions[index % workers].push(chunk);
+            }
+            let partial_maps = std::thread::scope(|scope| {
+                let handles = partitions.into_iter().map(|chunks| {
+                    scope.spawn(move || {
+                        Self::parallel_int_count_chunk(chunks, group_column, group_unsigned, spec)
+                    })
+                });
+                handles
+                    .map(|handle| {
+                        handle
+                            .join()
+                            .expect("parallel COUNT aggregate worker panicked")
+                    })
+                    .collect::<Vec<_>>()
+            });
+            for partial in partial_maps {
+                for (key, incoming) in partial {
+                    match global.entry(key) {
+                        std::collections::hash_map::Entry::Vacant(slot) => {
+                            slot.insert(incoming);
+                        }
+                        std::collections::hash_map::Entry::Occupied(mut slot) => {
+                            let current = slot.get_mut();
+                            current.first_seq = current.first_seq.min(incoming.first_seq);
+                            current.count = current.count.wrapping_add(incoming.count);
+                        }
+                    }
+                }
+            }
+            self.parallel_agg_windows += 1;
+            self.memory.check()?;
+        }
+        self.finish_parallel_int_count_agg(global);
+        self.executed = true;
+        Ok(())
     }
 }
 

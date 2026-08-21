@@ -135,6 +135,7 @@ fn first_real_unary_response_replaces_the_seed_before_continuation() {
                 processed_versions_size: 1_000_000,
                 total_versions_size: 1_000_000,
             }),
+            ..Default::default()
         }),
         ..CoprocessorResponse::default()
     }
@@ -156,4 +157,66 @@ fn first_real_unary_response_replaces_the_seed_before_continuation() {
     let calls = calls.borrow();
     assert_eq!(calls[0].predicted_read_bytes, 4096);
     assert_eq!(calls[1].predicted_read_bytes, 1_000_000);
+}
+
+#[test]
+fn process_time_admits_a_response_for_the_next_query_on_the_shared_cache() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let miss = CoprocessorResponse {
+        data: b"cached-result".to_vec(),
+        cache_last_version: 9,
+        can_be_cached: true,
+        exec_details_v2: Some(CoprocessorExecDetailsV2 {
+            time_detail_v2: Some(CoprocessorTimeDetailV2 {
+                process_wall_time_ns: 6_000_000,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+    .encode_to_vec();
+    let hit = CoprocessorResponse {
+        is_cache_hit: true,
+        ..Default::default()
+    }
+    .encode_to_vec();
+    let shared_cache = CoprCache::from_config(&CoprCacheConfig {
+        capacity_mb: 1.0,
+        admission_max_result_mb: 1.0,
+        admission_min_process_ms: 5,
+        ..Default::default()
+    })
+    .unwrap()
+    .unwrap();
+    let transport = transport_with_loader_calls_and_config(
+        Rc::clone(&calls),
+        [Ok(miss), Ok(hit)],
+        [location(1, "a", "z", "tikv-1:20160")],
+        9001,
+        Rc::new(RefCell::new(Vec::new())),
+        DirectUnaryRuntimeConfig {
+            seed_read_bytes: 4096,
+            shared_cache: Some(shared_cache),
+            observation_time,
+            ..Default::default()
+        },
+    );
+    let mut request_metadata = metadata("a", "z");
+    request_metadata.cacheable = true;
+    let request = transport_request(request_metadata);
+    let mut runtime = InjectedQueryRuntime::new(transport);
+
+    let mut first = select_result(&mut runtime, &request);
+    assert_eq!(first.next_raw().unwrap(), Some(b"cached-result".to_vec()));
+    assert_eq!(first.next_raw().unwrap(), None);
+    let mut second = select_result(&mut runtime, &request);
+    assert_eq!(second.next_raw().unwrap(), Some(b"cached-result".to_vec()));
+    assert_eq!(second.next_raw().unwrap(), None);
+
+    let calls = calls.borrow();
+    assert!(calls[0].is_cache_enabled);
+    assert_eq!(calls[0].cache_if_match_version, 0);
+    assert!(calls[1].is_cache_enabled);
+    assert_eq!(calls[1].cache_if_match_version, 9);
 }

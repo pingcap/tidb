@@ -531,7 +531,7 @@ impl CopReadTaskRuntime {
             });
         }
 
-        // Cache restoration/insertion is mutable. Prove that the task-local
+        // Cache restoration/insertion mutates the process-shared cache. Prove that the task-local
         // response queue can accept this page before touching the cache, EMA,
         // ranges, in-flight ownership, or continuation state.
         self.tasks[logical_task_index]
@@ -539,7 +539,7 @@ impl CopReadTaskRuntime {
             .preflight_accept_response()?;
 
         // Go restores a cache hit before paging consumes response data/range.
-        let cache_outcome = if let Some(cache) = self.cache.as_mut() {
+        let cache_outcome = if let Some(cache) = self.cache.as_ref() {
             Some(cache.handle_response(
                 &mut response,
                 lookup.as_ref(),

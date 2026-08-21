@@ -655,6 +655,12 @@ impl ColumnResolver for AggOutputResolver {
         constant.subquery_ref_id = -column.unique_id;
         Some(Expression::Constant(constant))
     }
+
+    fn has_resolved_constants(&self) -> bool {
+        self.plan_columns
+            .iter()
+            .any(|column| column.value.is_some())
+    }
 }
 
 /// Go `havingWindowAndOrderbyExprResolver`: rewrites a `HAVING`/`ORDER BY`

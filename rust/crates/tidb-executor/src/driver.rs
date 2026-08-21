@@ -1345,13 +1345,38 @@ fn run_select_traced_with_delivery_choice(
             // key condition and the statement degenerates to a full scan.
             // A grouped stream plan is the exception above: its non-empty
             // property has already committed leaf planning at this site.
-            let row_source = join_reorder::row_source(
-                logical_join,
-                select.where_clause.as_ref(),
-                catalog,
-                current_db,
-                ctx,
-            );
+            // A plain single-table SELECT has one statistics owner below:
+            // `commit_fast_path_source` derives the DataSource rows while it
+            // costs the access paths. Running `row_source` here as well used
+            // to repeat the full selectivity/ranger pass, which is especially
+            // visible for large IN predicates. Joins still need the complete
+            // relation map before they are built, while GROUP BY / DISTINCT
+            // need its per-expression NDV estimates; retain those cases.
+            let needs_row_source_estimate = plan_at_leaf
+                || !select.group_by.is_empty()
+                || select.distinct
+                || select.fields.fields().iter().any(|field| {
+                    matches!(field, SelectField::Expr { expr, .. } if expr.has_aggregate_flag())
+                })
+                || select
+                    .having
+                    .as_ref()
+                    .is_some_and(tidb_ast::Expr::has_aggregate_flag)
+                || select
+                    .order_by
+                    .iter()
+                    .any(|item| item.expr.has_aggregate_flag());
+            let row_source = needs_row_source_estimate
+                .then(|| {
+                    join_reorder::row_source(
+                        logical_join,
+                        select.where_clause.as_ref(),
+                        catalog,
+                        current_db,
+                        ctx,
+                    )
+                })
+                .flatten();
             grouped_logical_rows = row_source
                 .as_ref()
                 .and_then(|rows| rows.grouped_rows(&select.group_by));
@@ -1598,10 +1623,18 @@ fn run_select_traced_with_delivery_choice(
         filtered_cop_projection_offsets,
         consumed_where,
         handle_range_residual,
+        access_residual,
         logical_rows,
         reader_ready,
         order_satisfied,
     } = access_path;
+    // For the plain single-table case `row_source` deliberately deferred this
+    // number to the access-path owner above. Both values are Go's logical
+    // DataSource row count; sharing it here keeps downstream Selection/TopN
+    // estimates unchanged without a second ranger pass.
+    if joined_logical_rows.is_none() {
+        joined_logical_rows = logical_rows;
+    }
     let consumed_where = consumed_where || join_consumed_where;
     let grouped_stream_ordered = aggregation_order
         .as_ref()
@@ -1703,7 +1736,7 @@ fn run_select_traced_with_delivery_choice(
             cop_projection_ready = true;
         }
     }
-    let full_row_projection = projects_entire_single_table_in_order(select, &scope);
+    let mut full_row_projection = projects_entire_single_table_in_order(select, &scope);
 
     // Column pruning: over a single base-table scan the fast paths left
     // alone, narrow the scan -- and with it the scope -- to the columns the
@@ -1878,16 +1911,60 @@ fn run_select_traced_with_delivery_choice(
     // answered the two SMALLEST ids.
     let descending_order = select.order_by.first().is_some_and(|item| item.desc);
     let order_satisfied = order_satisfied && (!descending_order || order_from_access);
+    if order_satisfied && order_from_access {
+        if let Some(limit) = select.limit.as_ref() {
+            let count = eval_limit_bound(&limit.count)?;
+            let offset = match &limit.offset {
+                Some(offset) => eval_limit_bound(offset)?,
+                None => 0,
+            };
+            // A residual filter can reject rows inside the lookup task. Keep
+            // one bounded amount of read-ahead so a moderately selective
+            // predicate normally fills the root window without serializing
+            // several BatchGet round trips; the source still emits at most
+            // what the unchanged root Limit consumes.
+            let window = offset.saturating_add(count).saturating_mul(3);
+            if window > 0 {
+                let _ = source
+                    .table_access()
+                    .is_some_and(|access| access.accept_lookup_batch_size(window));
+            }
+        }
+    }
+    let residual_on_index = access_residual.as_ref().is_none_or(|residual| {
+        index_order
+            .as_ref()
+            .is_some_and(|order| order.residual_uses_only_index(residual, &resolver))
+    });
+    // When the lookup residual is covered by the index, let the source ask
+    // TiKV to evaluate it while producing handles. The row-level probe stays
+    // installed for correctness if the backend refuses the request.
+    let index_filter_ready = access_residual.is_some()
+        && residual_on_index
+        && source
+            .table_access()
+            .is_some_and(|access| access.accept_index_filter());
+    // A non-covering lookup still materializes the table row before the
+    // residual is evaluated. Go keeps the SELECT * Projection above that
+    // lookup even when it is an identity projection; retaining it here also
+    // keeps the row shape distinct from the covering/index-only paths.
+    if access_residual.is_some() && !residual_on_index {
+        full_row_projection = false;
+    }
     if order_satisfied {
         if let Some(trace) = trace.as_deref_mut() {
             trace.keep_order(select.order_by.first().is_some_and(|item| item.desc));
         }
     }
-    let embedded_lookup_limit = (order_satisfied && order_from_access)
+    let embedded_lookup_limit = (order_satisfied && order_from_access && residual_on_index)
         .then(|| {
             offer_embedded_lookup_limit(
                 select,
-                executed_where.as_ref(),
+                if residual_on_index {
+                    executed_where.as_ref()
+                } else {
+                    access_residual.as_ref().or(executed_where.as_ref())
+                },
                 index_order.as_ref(),
                 &resolver,
                 &mut source,
@@ -1900,7 +1977,11 @@ fn run_select_traced_with_delivery_choice(
         || ((select.order_by.is_empty() || order_satisfied)
             && offer_scan_limit(
                 select,
-                executed_where.as_ref(),
+                if residual_on_index {
+                    executed_where.as_ref()
+                } else {
+                    access_residual.as_ref().or(executed_where.as_ref())
+                },
                 index_order.as_ref(),
                 &resolver,
                 &mut source,
@@ -1912,8 +1993,11 @@ fn run_select_traced_with_delivery_choice(
     if !consumed_where && executed_where.is_none() && select.where_clause.is_some() {
         if let Some(trace) = trace.as_deref_mut() {
             if let Some(written) = &traced_select.where_clause {
-                let predicate = handle_range_residual.as_ref().unwrap_or(written);
-                if handle_range_residual.is_some() {
+                let predicate = access_residual
+                    .as_ref()
+                    .or(handle_range_residual.as_ref())
+                    .unwrap_or(written);
+                if access_residual.is_some() || handle_range_residual.is_some() {
                     let resolver = ScopeResolver {
                         scope: &filter_scope,
                     };
@@ -1964,6 +2048,17 @@ fn run_select_traced_with_delivery_choice(
                         .cop_selection_projection_reader(traced_select.fields.fields(), &qualify)
                 {
                     trace.refuse("cop Selection/Projection child is not a bare table scan");
+                }
+                if !residual_on_index {
+                    if !trace.lookup_probe_selection(logical_rows) {
+                        trace.refuse("probe residual child is not an IndexLookUp");
+                    } else if let Some(count) = select
+                        .limit
+                        .as_ref()
+                        .and_then(|limit| eval_limit_bound(&limit.count).ok())
+                    {
+                        trace.cap_lookup_output(count);
+                    }
                 }
                 source = trace.meter(source);
             }
@@ -2080,7 +2175,7 @@ fn run_select_traced_with_delivery_choice(
     let mut select_lock_traced = false;
     if let Some((offset, count)) = embedded_lookup_limit {
         if let Some(trace) = trace.as_deref_mut() {
-            if !trace.embedded_lookup_limit(offset, count) {
+            if !trace.embedded_lookup_limit(offset, count, logical_rows) {
                 trace.refuse("embedded ordered Limit child is not an IndexLookUp");
             }
         }
@@ -2548,7 +2643,33 @@ fn run_select_traced_with_delivery_choice(
                     })
                 })
             });
-            if remote_topn_ready {
+            // A non-covering index lookup has its own Go shape:
+            // `TopN(Build) -> Selection -> IndexRangeScan` under the lookup.
+            // The source retains the equivalent local root TopN when the
+            // backend cannot expose a cop request, but the physical contract
+            // and result bound are still the same.
+            let index_topn_ready =
+                if !order_satisfied && index_filter_ready && index_order.is_some() {
+                    let order_by = by_items
+                        .iter()
+                        .map(|item| {
+                            Some((
+                                usize::try_from(item.expr.as_column()?.index).ok()?,
+                                item.desc,
+                            ))
+                        })
+                        .collect::<Option<Vec<_>>>();
+                    order_by.is_some_and(|order_by| {
+                        offset.checked_add(count).is_some_and(|cap| {
+                            source
+                                .table_access()
+                                .is_some_and(|access| access.accept_index_top_n(&order_by, cap))
+                        })
+                    })
+                } else {
+                    false
+                };
+            if remote_topn_ready || index_topn_ready {
                 let cap = offset
                     .checked_add(count)
                     .expect("a ready remote TopN has a bounded cap");
@@ -2562,7 +2683,18 @@ fn run_select_traced_with_delivery_choice(
                     ctx.statement_memory(),
                 ));
                 if let Some(trace) = trace.as_deref_mut() {
-                    if trace.pushed_topn_reader(&traced_select.order_by, &qualify, cap) {
+                    let pushed = if index_topn_ready {
+                        trace.pushed_topn_lookup(
+                            &traced_select.order_by,
+                            &qualify,
+                            offset,
+                            count,
+                            logical_rows,
+                        )
+                    } else {
+                        trace.pushed_topn_reader(&traced_select.order_by, &qualify, cap)
+                    };
+                    if pushed {
                         source = trace.meter(source);
                     } else {
                         trace.refuse("cop TopN child is not a table scan or pushed Selection");
@@ -2580,7 +2712,9 @@ fn run_select_traced_with_delivery_choice(
             ));
             fused_topn = true;
             if let Some(trace) = trace.as_deref_mut() {
-                trace.topn(&traced_select.order_by, &qualify, offset, count);
+                if !index_topn_ready {
+                    trace.topn(&traced_select.order_by, &qualify, offset, count);
+                }
                 source = trace.meter(source);
             }
         } else {

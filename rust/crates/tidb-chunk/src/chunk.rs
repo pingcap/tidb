@@ -634,6 +634,15 @@ impl Chunk {
         }
     }
 
+    fn append_sel_range(&mut self, col_idx: usize, rows: usize) {
+        if col_idx == 0 {
+            if let Some(sel) = &mut self.sel {
+                let start = self.columns[0].read().rows();
+                sel.extend(start..start + rows);
+            }
+        }
+    }
+
     /// Go `AppendNull`.
     pub fn append_null(&mut self, col_idx: usize) {
         self.append_sel(col_idx);
@@ -869,11 +878,50 @@ impl Chunk {
     /// Go `Append(other, begin, end)` for distinct chunks.
     pub fn append_range_from(&mut self, other: &Chunk, begin: usize, end: usize) {
         assert!(begin <= end && end <= other.physical_num_rows());
-        for row in begin..end {
+        assert_eq!(self.num_cols(), other.num_cols());
+        self.append_sel_range(0, end - begin);
+        for (destination, source) in self.columns.iter_mut().zip(&other.columns) {
             // Go `Chunk.Append` indexes the physical column arrays directly;
             // it intentionally ignores the source selection vector.
-            self.append_row(Row::new(other, row));
+            destination.append_range_from(source, begin, end);
         }
+        self.num_virtual_rows += end - begin;
+    }
+
+    /// Appends a contiguous physical range into a column suffix. This is the
+    /// join-side counterpart to [`Self::append_range_from`] when probe and
+    /// build columns are assembled separately but share one row order.
+    pub fn append_partial_range_from(
+        &mut self,
+        col_off: usize,
+        other: &Chunk,
+        begin: usize,
+        end: usize,
+    ) {
+        assert!(begin <= end && end <= other.physical_num_rows());
+        assert!(col_off + other.num_cols() <= self.num_cols());
+        self.append_sel_range(col_off, end - begin);
+        for (destination, source) in self.columns[col_off..].iter_mut().zip(&other.columns) {
+            destination.append_range_from(source, begin, end);
+        }
+    }
+
+    /// Appends one source column into a destination column range. The helper
+    /// is used by equality joins whose unique build key is also present in the
+    /// probe chunk, allowing the build-side key output to reuse one contiguous
+    /// fixed-width copy instead of dereferencing every build row.
+    pub fn append_column_range_from(
+        &mut self,
+        destination_col: usize,
+        other: &Chunk,
+        source_col: usize,
+        begin: usize,
+        end: usize,
+    ) {
+        assert!(destination_col < self.num_cols());
+        assert!(source_col < other.num_cols());
+        assert!(begin <= end && end <= other.physical_num_rows());
+        self.columns[destination_col].append_range_from(&other.columns[source_col], begin, end);
     }
 
     /// The self-overlap case Go permits (`c.Append(c, begin, end)`). Snapshot

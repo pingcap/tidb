@@ -228,6 +228,13 @@ pub struct ScalarFunction {
 
     /// Go embedded collation state (via the `Function`'s `collationInfo`).
     pub collation: CollationInfo,
+    /// Go `builtinInStringSig.hashSet`, prepared after collation derivation.
+    /// Only strict string/byte literals enter it; every other argument keeps
+    /// the ordinary evaluation path so casts, warnings and errors are not
+    /// skipped.
+    in_string_hash_set: Option<std::collections::HashSet<Vec<u8>>>,
+    in_string_non_const_args: Vec<usize>,
+    in_string_has_null: bool,
     json_schema_cache: crate::builtin_ext::JsonSchemaCache,
 }
 
@@ -372,6 +379,50 @@ impl ScalarFunction {
             .as_ref()
             .and_then(|ft| tidb_datatype::Collation::from_name(ft.collation_name()))
             .unwrap_or(crate::ops::DERIVATION_FREE_COLLATION)
+    }
+
+    /// Builds Go `builtinInStringSig.buildHashMapForConstArgs` for the strict
+    /// string literals this expression model can evaluate without a statement
+    /// context. Other constant families remain in the row path because their
+    /// implicit casts can raise warnings or errors.
+    pub(crate) fn prepare_in_string_hash_set(&mut self) {
+        if self.func_name.lowercase() != "in"
+            || self.args.len() < 2
+            || self
+                .args
+                .first()
+                .and_then(Expression::static_type)
+                .is_none_or(|field_type| field_type.eval_type() != tidb_datatype::EvalType::String)
+        {
+            return;
+        }
+        let collator = tidb_datatype::get_collator(self.derived_collation().name());
+        let mut hash_set = std::collections::HashSet::new();
+        let mut non_const_args = Vec::new();
+        let mut has_null = false;
+        for (index, argument) in self.args.iter().enumerate().skip(1) {
+            let Expression::Constant(constant) = argument else {
+                non_const_args.push(index);
+                continue;
+            };
+            if constant.const_level() != crate::expression::ConstLevel::STRICT {
+                non_const_args.push(index);
+                continue;
+            }
+            match &constant.value {
+                Datum::String(value) => {
+                    hash_set.insert(collator.key(value.bytes()));
+                }
+                Datum::Bytes(value) => {
+                    hash_set.insert(collator.key(value));
+                }
+                Datum::Null => has_null = true,
+                _ => non_const_args.push(index),
+            }
+        }
+        self.in_string_hash_set = Some(hash_set);
+        self.in_string_non_const_args = non_const_args;
+        self.in_string_has_null = has_null;
     }
 
     /// The user-variable name a `getvar`/`setvar` call carries in its first
@@ -1120,9 +1171,18 @@ impl ScalarFunction {
                     }
                 };
             let value = cast_candidate(self.args[0].eval(ctx, row)?, &self.args[0])?;
-            let mut found_null = value.is_null();
+            let mut found_null = value.is_null() || self.in_string_has_null;
             let mut found_match = false;
-            for item_expr in &self.args[1..] {
+            if let Some(hash_set) = &self.in_string_hash_set {
+                if let Some(bytes) = crate::coerce::coerce_str_bytes(&value)? {
+                    let key = tidb_datatype::get_collator(collation.name()).key(&bytes);
+                    found_match = hash_set.contains(&key);
+                }
+                if found_match && self.in_string_non_const_args.is_empty() {
+                    return Ok(Datum::Int(1));
+                }
+            }
+            let mut visit = |item_expr: &Expression| -> Result<(), EvalError> {
                 let item = cast_candidate(item_expr.eval(ctx, row)?, item_expr)?;
                 match crate::ops::eval_binary_full(
                     tidb_ast::BinaryOp::Eq,
@@ -1143,6 +1203,16 @@ impl ScalarFunction {
                     Datum::Int(0) => {}
                     Datum::Null => found_null = true,
                     _ => found_match = true,
+                }
+                Ok(())
+            };
+            if self.in_string_hash_set.is_some() {
+                for index in &self.in_string_non_const_args {
+                    visit(&self.args[*index])?;
+                }
+            } else {
+                for item_expr in &self.args[1..] {
+                    visit(item_expr)?;
                 }
             }
             return Ok(if found_match {
@@ -2194,5 +2264,31 @@ mod tests {
             vec![Expression::Column(Column::new(1, ft()))],
         );
         assert_ne!(a.hash_code(), b.hash_code());
+    }
+
+    #[test]
+    fn string_in_prepares_collation_keys_for_strict_literals() {
+        use tidb_chunk::chunk::Chunk;
+
+        let mut result_type = ft();
+        result_type.set_collation_name("utf8mb4_general_ci");
+        let string_type = text_ft();
+        let string = |value: &str| {
+            Expression::Constant(Constant::new(Datum::new_string(value), string_type.clone()))
+        };
+        let mut function = ScalarFunction::new(
+            CiString::new("in"),
+            result_type,
+            vec![string("a"), string("A"), string("b")],
+        );
+        function.prepare_in_string_hash_set();
+
+        assert_eq!(function.in_string_hash_set.as_ref().unwrap().len(), 2);
+        assert!(function.in_string_non_const_args.is_empty());
+        let chunk = Chunk::new_with_capacity(&[], 1);
+        assert_eq!(
+            function.eval(&crate::NoColumns, chunk.get_row(0)).unwrap(),
+            Datum::Int(1)
+        );
     }
 }

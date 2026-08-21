@@ -171,6 +171,28 @@ pub trait TableAccess {
         false
     }
 
+    /// Offers an ordered double read the parent window as a lookup-task size
+    /// hint. This changes no rows and takes over no operator: the root Limit
+    /// remains in the plan and still owns stopping. A source may only use the
+    /// hint to split otherwise-equivalent keep-order handle batches.
+    fn accept_lookup_batch_size(&mut self, size: u64) -> bool {
+        let _ = size;
+        false
+    }
+
+    /// Offers an accepted lookup residual to the index-side Selection. The
+    /// source must retain its ordinary row check as a semantic fallback.
+    fn accept_index_filter(&mut self) -> bool {
+        false
+    }
+
+    /// Offers a bounded TopN over an ordered index handle stream, before the
+    /// non-covering table lookup is issued.
+    fn accept_index_top_n(&mut self, order_by: &[(usize, bool)], limit: u64) -> bool {
+        let _ = (order_by, limit);
+        false
+    }
+
     /// The live count of rows this source read from storage, before any
     /// filter it accepted -- `TableFullScan`'s `actRows`, which a pushed
     /// predicate must not change. `None` for anything that is not such a

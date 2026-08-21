@@ -552,6 +552,120 @@ impl KvTable {
         )
     }
 
+    /// Reads a batch of integer handles through one coprocessor table request,
+    /// applying the supplied residual predicates before rows cross back. The
+    /// caller still keeps its local probe for the staged/fallback path.
+    pub fn pushdown_rows_by_handles_filtered(
+        &mut self,
+        handles: &[TableHandle],
+        scan_keep: &[usize],
+        predicates: &[ScanPredicate],
+        zone: &SessionTimeZone,
+        statement: &PushdownStatementContext,
+    ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool)>, KvTableError> {
+        if handles.is_empty() {
+            return Ok(Some((Vec::new(), true)));
+        }
+        if self.has_dirty_content()
+            || self.partition.is_some()
+            || handles
+                .iter()
+                .any(|handle| !matches!(handle, TableHandle::Int(_)))
+        {
+            return Ok(None);
+        }
+        let mut keep = scan_keep.to_vec();
+        let (handle_position, appended_handle) = match self.pk_handle_offset {
+            Some(handle_offset) => {
+                let appended = !keep.contains(&handle_offset);
+                let position = keep
+                    .iter()
+                    .position(|offset| *offset == handle_offset)
+                    .unwrap_or_else(|| {
+                        keep.push(handle_offset);
+                        keep.len() - 1
+                    });
+                (position, appended)
+            }
+            // Tables without an integer primary key use Go's hidden
+            // `_tidb_rowid`. `pushdown_row_cursor_with_context` appends that
+            // synthetic handle column itself; keep it out of `scan_keep` so
+            // predicate offsets still describe the visible row.
+            None => (keep.len(), true),
+        };
+        let layout = keep
+            .iter()
+            .map(|offset| {
+                scan_keep
+                    .iter()
+                    .position(|kept| kept == offset)
+                    .unwrap_or(usize::MAX)
+            })
+            .collect::<Vec<_>>();
+        let Some(predicates) = predicates
+            .iter()
+            .map(|predicate| predicate.remapped_columns(&layout))
+            .collect::<Option<Vec<_>>>()
+        else {
+            return Ok(None);
+        };
+        // TiKV requires record ranges in ascending, disjoint order. The
+        // index worker may deliberately hand us a descending index-order
+        // batch, so sort only the request copy and restore index order below.
+        let mut request_handles = handles.to_vec();
+        request_handles.sort();
+        request_handles.dedup();
+        let ranges = request_handles
+            .iter()
+            .map(|handle| {
+                let TableHandle::Int(value) = handle else {
+                    unreachable!("handle kind checked above")
+                };
+                IndexRange {
+                    low: vec![Datum::Int(*value)],
+                    high: vec![Datum::Int(*value)],
+                    low_exclusive: false,
+                    high_exclusive: false,
+                }
+            })
+            .collect::<Vec<_>>();
+        let context = RowDecodeContext::legacy_default(zone);
+        let Some(mut cursor) = self.pushdown_row_cursor_with_context(
+            &keep,
+            &predicates,
+            None,
+            None,
+            None,
+            Some(&ranges),
+            false,
+            crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
+            &context,
+            statement,
+        )?
+        else {
+            return Ok(None);
+        };
+        let predicates_applied = cursor.predicates_applied();
+        let mut rows = Vec::new();
+        // This helper asks the remote cursor to retain the synthetic
+        // `_tidb_rowid` appended by `pushdown_row_cursor_with_context`.
+        // Ordinary consumers intentionally truncate that transport-only
+        // column before returning a projected row, but the lookup caller
+        // needs it to associate each fetched row with its index handle.
+        while let Some(mut row) = cursor.next_row_with_handle()? {
+            let Some(Datum::Int(handle)) = row.get(handle_position) else {
+                return Ok(None);
+            };
+            let handle = TableHandle::Int(*handle);
+            if appended_handle {
+                row.remove(handle_position);
+            }
+            rows.push((handle, row));
+        }
+        rows.sort_by_key(|(handle, _)| handles.iter().position(|candidate| candidate == handle));
+        Ok(Some((rows, predicates_applied)))
+    }
+
     /// Opens a coprocessor partial aggregation over this table, or returns
     /// `None` so the executor computes the same partial result locally.
     ///
@@ -712,6 +826,7 @@ impl KvTable {
                 index_id,
                 declared_unique: index.unique,
                 index_column_count: index.column_offsets.len(),
+                desc: false,
             }),
             columns,
             handle_index: None,
@@ -739,6 +854,208 @@ impl KvTable {
         }
         crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
         Ok(Some(scan.stream))
+    }
+
+    /// Opens a coprocessor index scan whose rows carry only the indexed
+    /// columns and the table handle. The access source consumes those rows as
+    /// an ordered handle stream before issuing its table lookup batch.
+    #[allow(clippy::too_many_arguments)]
+    pub fn pushdown_index_handle_cursor(
+        &mut self,
+        index_id: i64,
+        ranges: &[IndexRange],
+        scan_keep: &[usize],
+        predicates: &[ScanPredicate],
+        topn: Option<&PushdownTopN>,
+        zone: &SessionTimeZone,
+        statement: &PushdownStatementContext,
+        desc: bool,
+    ) -> Result<Option<RemoteIndexHandleCursor>, KvTableError> {
+        if self.has_dirty_content() || self.partition.is_some() || ranges.is_empty() {
+            return Ok(None);
+        }
+        let Some(index) = self.indexes.iter().find(|index| index.id == index_id) else {
+            return Ok(None);
+        };
+        // The compact layout is the source's current schema after column
+        // pruning. An absent value is represented by usize::MAX and causes a
+        // predicate/order key that needs it to fail closed below.
+        let mut table_offsets = index
+            .column_offsets
+            .iter()
+            .copied()
+            .map(Some)
+            .collect::<Vec<_>>();
+        for offset in &self.common_handle_offsets {
+            if !table_offsets.contains(&Some(*offset)) {
+                table_offsets.push(Some(*offset));
+            }
+        }
+        if let Some(offset) = self.pk_handle_offset {
+            if !table_offsets.contains(&Some(offset)) {
+                table_offsets.push(Some(offset));
+            }
+        }
+        if self.pk_handle_offset.is_none() && self.common_handle_offsets.is_empty() {
+            table_offsets.push(None);
+        }
+        let layout = table_offsets
+            .iter()
+            .map(|offset| {
+                offset
+                    .and_then(|offset| scan_keep.iter().position(|kept| *kept == offset))
+                    .unwrap_or(usize::MAX)
+            })
+            .collect::<Vec<_>>();
+        let Some(predicates) = predicates
+            .iter()
+            .map(|predicate| predicate.remapped_columns(&layout))
+            .collect::<Option<Vec<_>>>()
+        else {
+            return Ok(None);
+        };
+        let topn = if let Some(topn) = topn {
+            let order_by = topn
+                .order_by
+                .iter()
+                .map(|item| {
+                    let column_offset = layout.iter().position(|offset| *offset == item.offset)?;
+                    Some(crate::remote_scan::PushdownTopNOrder {
+                        offset: column_offset,
+                        desc: item.desc,
+                    })
+                })
+                .collect::<Option<Vec<_>>>();
+            let Some(order_by) = order_by else {
+                return Ok(None);
+            };
+            Some(PushdownTopN {
+                order_by,
+                limit: topn.limit,
+            })
+        } else {
+            None
+        };
+        let columns = table_offsets
+            .iter()
+            .enumerate()
+            .map(|(_position, offset)| {
+                if let Some(offset) = offset {
+                    let column = self.columns.get(*offset)?;
+                    Some(PushdownScanColumn {
+                        id: column.id,
+                        field_type: column.field_type.clone(),
+                        is_handle: self.pk_handle_offset == Some(*offset),
+                    })
+                } else {
+                    Some(PushdownScanColumn {
+                        id: EXTRA_HANDLE_COLUMN_ID,
+                        field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+                            .with_flags(
+                                tidb_datatype::FieldTypeFlags::NOT_NULL
+                                    | tidb_datatype::FieldTypeFlags::PRI_KEY,
+                            ),
+                        is_handle: true,
+                    })
+                }
+            })
+            .collect::<Option<Vec<_>>>();
+        let Some(columns) = columns else {
+            return Ok(None);
+        };
+        let handle_indices = if self.common_handle_offsets.is_empty() {
+            vec![table_offsets
+                .iter()
+                .position(|offset| *offset == self.pk_handle_offset || offset.is_none())
+                .unwrap_or(0)]
+        } else {
+            self.common_handle_offsets
+                .iter()
+                .filter_map(|offset| {
+                    table_offsets
+                        .iter()
+                        .position(|candidate| *candidate == Some(*offset))
+                })
+                .collect()
+        };
+        if handle_indices.is_empty() {
+            return Ok(None);
+        }
+        let keep_order = !desc || topn.is_none();
+        let encoder = Encoder::new(self.use_new_collation);
+        let encode = |values: &[Datum]| -> Result<Vec<u8>, KvTableError> {
+            encoder
+                .encode_key_in_timezone(zone, values)
+                .map_err(|error| KvTableError::Encode(format!("{error:?}")))
+        };
+        let mut key_ranges = Vec::with_capacity(ranges.len());
+        for range in ranges {
+            let mut low = Key::from_bytes(encode_index_seek_key(
+                self.table_id,
+                index_id,
+                &encode(&range.low)?,
+            ));
+            if range.low_exclusive {
+                low = low.prefix_next();
+            }
+            let mut high = Key::from_bytes(encode_index_seek_key(
+                self.table_id,
+                index_id,
+                &encode(&range.high)?,
+            ));
+            if !range.high_exclusive {
+                high = high.prefix_next();
+            }
+            key_ranges.push((low, high));
+        }
+        let request = PushdownScanRequest {
+            table_id: self.table_id,
+            index: Some(PushdownIndexScan {
+                index_id,
+                declared_unique: index.unique,
+                index_column_count: index.column_offsets.len(),
+                desc,
+            }),
+            columns,
+            handle_index: if self.common_handle_offsets.is_empty() {
+                handle_indices.first().copied()
+            } else {
+                None
+            },
+            primary_column_ids: self
+                .common_handle_offsets
+                .iter()
+                .filter_map(|offset| self.columns.get(*offset).map(|column| column.id))
+                .collect(),
+            primary_prefix_column_ids: Vec::new(),
+            predicates,
+            output_offsets: None,
+            topn,
+            limit: None,
+            aggregate: None,
+            keep_order,
+            read_ahead_batches: crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
+            snapshot_ts: 0,
+            ranges: key_ranges,
+            statement: statement.clone(),
+        };
+        let Some(scan) = self.store.open_remote_scan(&request) else {
+            return Ok(None);
+        };
+        let mut scan = scan.map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+        if !scan.staged.is_empty() {
+            scan.stream.close();
+            return Ok(None);
+        }
+        crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
+        Ok(Some(RemoteIndexHandleCursor {
+            inner: scan.stream,
+            handle_indices,
+            common_handle: !self.common_handle_offsets.is_empty(),
+            zone: zone.clone(),
+            use_new_collation: self.use_new_collation,
+            noted_rows: 0,
+        }))
     }
 
     /// Scans the table's record-key range in key order, decoding each value.
@@ -1462,6 +1779,20 @@ impl RemoteRowCursor {
             }
         }
     }
+
+    /// Returns the next clean remote row without truncating the synthetic
+    /// integer handle column.  Index-lookup table fetches use this to restore
+    /// handle-to-row association; normal scan consumers must use `next_row`
+    /// so transport-only columns never escape the projected schema.
+    pub fn next_row_with_handle(&mut self) -> Result<Option<Vec<Datum>>, KvTableError> {
+        debug_assert!(!self.merge_staged);
+        let next = self
+            .stream
+            .next_row()
+            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+        self.note_wire_rows();
+        Ok(next)
+    }
 }
 
 impl Drop for RemoteRowCursor {
@@ -1470,6 +1801,71 @@ impl Drop for RemoteRowCursor {
     fn drop(&mut self) {
         self.note_wire_rows();
         self.stream.close();
+    }
+}
+
+/// A handle-only view of a remote TiKV index scan.
+pub struct RemoteIndexHandleCursor {
+    inner: Box<dyn PushdownRowStream>,
+    handle_indices: Vec<usize>,
+    common_handle: bool,
+    zone: SessionTimeZone,
+    use_new_collation: bool,
+    noted_rows: u64,
+}
+
+impl RemoteIndexHandleCursor {
+    /// Returns the next row handle in the remote index order.
+    pub fn next_handle(&mut self) -> Result<Option<TableHandle>, KvTableError> {
+        let Some(row) = self
+            .inner
+            .next_row()
+            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
+        else {
+            return Ok(None);
+        };
+        let returned = self.inner.rows_returned();
+        let fresh = returned.saturating_sub(self.noted_rows);
+        self.noted_rows = returned;
+        if fresh > 0 {
+            crate::storage::note_storage_op(|ops| ops.cop_rows += fresh);
+        }
+        if self.common_handle {
+            let values = self
+                .handle_indices
+                .iter()
+                .map(|index| row.get(*index).cloned())
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| {
+                    KvTableError::Decode("an index row omitted a common handle column".to_owned())
+                })?;
+            let encoded = Encoder::new(self.use_new_collation)
+                .encode_key_in_timezone(&self.zone, &values)
+                .map_err(|error| KvTableError::Encode(format!("{error:?}")))?;
+            return Ok(Some(TableHandle::Common(encoded)));
+        }
+        match self
+            .handle_indices
+            .first()
+            .and_then(|index| row.get(*index))
+        {
+            Some(Datum::Int(value)) => Ok(Some(TableHandle::Int(*value))),
+            Some(Datum::UInt(value)) => Ok(Some(TableHandle::Int(*value as i64))),
+            other => Err(KvTableError::Decode(format!(
+                "an index row carried no integer handle, got {other:?}"
+            ))),
+        }
+    }
+
+    /// Releases the remote request before a caller stops consuming it.
+    pub fn close(&mut self) {
+        self.inner.close();
+    }
+}
+
+impl Drop for RemoteIndexHandleCursor {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 
@@ -1553,6 +1949,10 @@ pub struct TableScanExec {
     /// A TiKV partial-aggregation row stream. It is separate from `remote`
     /// because aggregate rows have no record handle and no staged merge.
     partial_remote: Option<Box<dyn PushdownRowStream>>,
+    /// A remainder when a chunk-capable partial aggregate batch does not fit
+    /// in the caller's output chunk. Keeping the decoded batch here avoids
+    /// falling back to row materialisation on the next `next` call.
+    partial_pending: Option<(Chunk, usize)>,
     /// Locally computed partial rows when the backend refuses aggregation.
     partial_rows: Option<std::vec::IntoIter<Vec<Datum>>>,
     /// Whether the local partial result has already been fully emitted.
@@ -1704,6 +2104,7 @@ impl TableScanExec {
             cursor: None,
             remote: None,
             partial_remote: None,
+            partial_pending: None,
             partial_rows: None,
             partial_done: false,
             partial_aggregate: None,
@@ -2250,6 +2651,7 @@ impl Executor for TableScanExec {
         self.emitted = 0;
         self.cursor = None;
         self.partial_remote = None;
+        self.partial_pending = None;
         self.partial_rows = None;
         self.partial_done = false;
         if let Some(aggregate) = self.partial_aggregate.clone() {
@@ -2318,6 +2720,20 @@ impl Executor for TableScanExec {
         req.reset();
         let cap = self.meta.max_chunk_size();
         if let Some(remote) = self.partial_remote.as_mut() {
+            if remote.supports_chunks() {
+                if let Some(rows) = append_partial_remote_chunk(
+                    remote.as_mut(),
+                    &mut self.partial_pending,
+                    req,
+                    cap,
+                )? {
+                    self.emitted = self.emitted.saturating_add(rows as u64);
+                    return Ok(());
+                }
+                self.partial_remote = None;
+                self.partial_done = true;
+                return Ok(());
+            }
             while req.num_rows() < cap {
                 let Some(row) = remote.next_row().map_err(|error| {
                     ExecError::unsupported(format!("partial aggregate response failed: {error:?}"))
@@ -2433,6 +2849,7 @@ impl Executor for TableScanExec {
         self.cursor = None;
         self.remote = None;
         self.partial_remote = None;
+        self.partial_pending = None;
         self.partial_rows = None;
         self.partial_done = false;
         Ok(())
@@ -2460,6 +2877,53 @@ impl Executor for TableScanExec {
 
     fn new_chunk(&self) -> Chunk {
         self.meta.new_chunk()
+    }
+}
+
+/// Transfers one chunk-capable partial-aggregate stream into `req` without
+/// converting every row to an owned `Vec<Datum>`. A decoded response batch may
+/// be larger than the executor chunk cap; in that case the unconsumed suffix
+/// stays in `pending` for the next call.
+fn append_partial_remote_chunk(
+    remote: &mut dyn PushdownRowStream,
+    pending: &mut Option<(Chunk, usize)>,
+    req: &mut Chunk,
+    cap: usize,
+) -> Result<Option<usize>, ExecError> {
+    let before = req.num_rows();
+    loop {
+        let (batch, start) = if let Some((batch, start)) = pending.take() {
+            (batch, start)
+        } else {
+            let batch = remote.next_chunk().map_err(|error| {
+                ExecError::unsupported(format!("partial aggregate response failed: {error:?}"))
+            })?;
+            let Some(batch) = batch else {
+                return Ok((req.num_rows() > before).then_some(req.num_rows() - before));
+            };
+            (batch, 0)
+        };
+        if start >= batch.num_rows() {
+            continue;
+        }
+        let remaining = cap.saturating_sub(req.num_rows());
+        if req.num_rows() == 0
+            && start == 0
+            && batch.num_cols() == req.num_cols()
+            && batch.num_rows() >= cap.saturating_mul(3) / 4
+        {
+            let rows = batch.num_rows();
+            *req = batch;
+            return Ok(Some(rows));
+        }
+        let take = (batch.num_rows() - start).min(remaining);
+        req.append_range_from(&batch, start, start + take);
+        if start + take < batch.num_rows() {
+            *pending = Some((batch, start + take));
+        }
+        if req.num_rows() >= cap {
+            return Ok(Some(req.num_rows() - before));
+        }
     }
 }
 
@@ -2871,5 +3335,44 @@ mod remote_cursor_tests {
         );
         assert_eq!(output.num_rows(), 4);
         assert_eq!(output.get_row(3).get_int64(0), 10);
+    }
+
+    #[test]
+    fn partial_remote_chunk_handoff_preserves_remainder_without_row_materialization() {
+        let source_types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
+        let mut small = Chunk::new_with_capacity(&source_types, 1);
+        small.append_int64(0, 7);
+        let mut large = Chunk::new_with_capacity(&source_types, 5);
+        for value in 8..13 {
+            large.append_int64(0, value);
+        }
+        let mut stream = ChunkStream {
+            chunks: std::collections::VecDeque::from([small, large]),
+            returned: 0,
+        };
+        let mut pending = None;
+        let mut output = Chunk::new_with_capacity(&source_types, 4);
+        assert_eq!(
+            append_partial_remote_chunk(&mut stream, &mut pending, &mut output, 4).unwrap(),
+            Some(4)
+        );
+        assert_eq!(
+            (0..output.num_rows())
+                .map(|row| output.get_row(row).get_int64(0))
+                .collect::<Vec<_>>(),
+            vec![7, 8, 9, 10]
+        );
+        output.reset();
+        assert_eq!(
+            append_partial_remote_chunk(&mut stream, &mut pending, &mut output, 4).unwrap(),
+            Some(2)
+        );
+        assert_eq!(output.get_row(0).get_int64(0), 11);
+        assert_eq!(output.get_row(1).get_int64(0), 12);
+        output.reset();
+        assert_eq!(
+            append_partial_remote_chunk(&mut stream, &mut pending, &mut output, 4).unwrap(),
+            None
+        );
     }
 }

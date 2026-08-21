@@ -496,6 +496,9 @@ fn small_limit_disables_row_paging_without_byte_prediction() {
 fn byte_paging_budget_enlarges_channel_and_survives_row_paging_downgrade() {
     let mut metadata = request(&["a", "c"], None).metadata().clone();
     metadata.keep_order = true;
+    // Exercise byte-budget plumbing with row paging explicitly disabled;
+    // source defaults are covered separately and now enable paging.
+    metadata.paging.enabled = false;
     metadata.paging.size_bytes = 4 * 1024 * 1024;
     let tasks = transport_request(metadata.clone())
         .build_region_tasks(&topology(&["", "g", "n", "t", ""]))

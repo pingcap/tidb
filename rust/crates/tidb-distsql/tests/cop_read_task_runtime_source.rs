@@ -69,6 +69,7 @@ fn response(data: &str, start: &str, end: &str, read_bytes: u64) -> CoprocessorR
                 processed_versions_size: read_bytes,
                 total_versions_size: read_bytes,
             }),
+            ..Default::default()
         }),
         ..CoprocessorResponse::default()
     }

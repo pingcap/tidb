@@ -99,8 +99,27 @@ message ScanDetailV2 {
   uint64 total_versions_size = 14;
 }
 
+message TimeDetail {
+  uint64 wait_wall_time_ms = 1;
+  uint64 process_wall_time_ms = 2;
+  uint64 kv_read_wall_time_ms = 3;
+  uint64 total_rpc_wall_time_ns = 4;
+}
+
+message TimeDetailV2 {
+  uint64 wait_wall_time_ns = 1;
+  uint64 process_wall_time_ns = 2;
+  uint64 process_suspend_wall_time_ns = 3;
+  uint64 kv_read_wall_time_ns = 4;
+  uint64 total_rpc_wall_time_ns = 5;
+  uint64 kv_grpc_process_time_ns = 6;
+  uint64 kv_grpc_wait_time_ns = 7;
+}
+
 message ExecDetailsV2 {
+  TimeDetail time_detail = 1;
   ScanDetailV2 scan_detail_v2 = 2;
+  TimeDetailV2 time_detail_v2 = 4;
 }
 
 message StoreBatchTaskResponse {

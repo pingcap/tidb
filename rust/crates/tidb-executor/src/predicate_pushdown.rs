@@ -187,6 +187,19 @@ pub enum ScanPredicate {
         /// `true` for the `NOT IN` spelling.
         negated: bool,
     },
+    /// `string_column LIKE constant_pattern` with a constant escape byte.
+    /// `NOT LIKE` is represented by the existing [`Self::Not`] wrapper, as
+    /// Go rewrites it to `UnaryNotInt(LikeSig(...))` before protobuf lowering.
+    Like {
+        /// Zero-based offset of the tested column in the scan output.
+        column_offset: u32,
+        /// The column's declared string type and collation.
+        column_type: FieldType,
+        /// Pattern bytes exactly as parsed from the SQL literal.
+        pattern: Vec<u8>,
+        /// Explicit escape byte, or the session default supplied by rewrite.
+        escape: u8,
+    },
     /// A builtin function call whose `tipb.ScalarFuncSig` the push-down
     /// catalog resolved and whose signature TiKV evaluates.
     ///
@@ -206,6 +219,16 @@ pub enum ScanPredicate {
     Or(Vec<ScanPredicate>),
     /// `NOT description`.
     Not(Box<ScanPredicate>),
+}
+
+impl ScanPredicate {
+    /// Remaps this predicate from an input schema into the projected schema
+    /// described by `keep`. The returned predicate is otherwise identical.
+    pub(crate) fn remapped_columns(&self, keep: &[usize]) -> Option<Self> {
+        let mut predicate = self.clone();
+        remap_scan_predicate(&mut predicate, keep)?;
+        Some(predicate)
+    }
 }
 
 /// A column-versus-constant comparison.
@@ -259,6 +282,27 @@ pub struct ScanColumnComparison {
 pub struct PushedScanFilter {
     predicates: Vec<ScanPredicate>,
     filters: Vec<Expression>,
+    fast_paths: Vec<Option<FastScanFilter>>,
+}
+
+/// A pushed predicate whose per-row work can be reduced without changing the
+/// expression evaluator's SQL semantics. The key is built once when the scan
+/// is accepted, rather than once for every row and every `IN` literal.
+#[derive(Clone, Debug)]
+enum FastScanFilter {
+    StringIn {
+        column_offset: usize,
+        collator: tidb_datatype::Collator,
+        keys: Vec<Vec<u8>>,
+        negated: bool,
+    },
+    Like {
+        column_offset: usize,
+        pattern: Vec<u8>,
+        escape: u8,
+        collation: tidb_datatype::Collation,
+        negated: bool,
+    },
 }
 
 impl PushedScanFilter {
@@ -274,9 +318,14 @@ impl PushedScanFilter {
             filters.len(),
             "every pushed conjunct has one description and one expression"
         );
+        let fast_paths = predicates
+            .iter()
+            .map(FastScanFilter::from_predicate)
+            .collect();
         Self {
             predicates,
             filters,
+            fast_paths,
         }
     }
 
@@ -333,7 +382,13 @@ impl PushedScanFilter {
         ctx: &C,
         row: tidb_chunk::row::Row<'_>,
     ) -> Result<bool, ExecError> {
-        for filter in &self.filters {
+        for (filter, fast_path) in self.filters.iter().zip(&self.fast_paths) {
+            if let Some(fast_path) = fast_path {
+                if !fast_path.matches(row) {
+                    return Ok(false);
+                }
+                continue;
+            }
             if truthy_of(&filter.eval(ctx, row)?)? != Some(true) {
                 return Ok(false);
             }
@@ -351,9 +406,118 @@ impl PushedScanFilter {
             remap_expression(filter, keep)?;
         }
         Some(Self {
+            fast_paths: predicates
+                .iter()
+                .map(FastScanFilter::from_predicate)
+                .collect(),
             predicates,
             filters,
         })
+    }
+}
+
+impl FastScanFilter {
+    fn from_predicate(predicate: &ScanPredicate) -> Option<Self> {
+        let (like, negated) = match predicate {
+            ScanPredicate::Like { .. } => (predicate, false),
+            ScanPredicate::Not(inner) if matches!(&**inner, ScanPredicate::Like { .. }) => {
+                (&**inner, true)
+            }
+            _ => (predicate, false),
+        };
+        if let ScanPredicate::Like {
+            column_offset,
+            column_type,
+            pattern,
+            escape,
+        } = like
+        {
+            return Some(Self::Like {
+                column_offset: usize::try_from(*column_offset).ok()?,
+                pattern: pattern.clone(),
+                escape: *escape,
+                collation: tidb_datatype::Collation::from_name(column_type.collation_name())?,
+                negated,
+            });
+        }
+        let (column_offset, column_type, literals, negated) = match predicate {
+            ScanPredicate::In {
+                column_offset,
+                column_type,
+                literals,
+                negated,
+            } => (*column_offset, column_type, literals, *negated),
+            ScanPredicate::ScalarIn {
+                tested: tidb_expr::pushdown_catalog::PbScalar::Column { offset, field_type },
+                literals,
+                negated,
+            } => (*offset, field_type, literals, *negated),
+            _ => return None,
+        };
+        if !column_type.is_string() || literals.is_empty() {
+            return None;
+        }
+        let mut keys = literals
+            .iter()
+            .map(|literal| literal.as_raw_bytes().map(|bytes| (literal, bytes)))
+            .collect::<Option<Vec<_>>>()?
+            .into_iter()
+            .map(|(_, bytes)| tidb_datatype::get_collator(column_type.collation_name()).key(bytes))
+            .collect::<Vec<_>>();
+        keys.sort_unstable();
+        keys.dedup();
+        Some(Self::StringIn {
+            column_offset: usize::try_from(column_offset).ok()?,
+            collator: column_type.runtime_collator(),
+            keys,
+            negated,
+        })
+    }
+
+    fn matches(&self, row: tidb_chunk::row::Row<'_>) -> bool {
+        match self {
+            Self::StringIn {
+                column_offset,
+                collator,
+                keys,
+                negated,
+            } => {
+                if row.is_null(*column_offset) {
+                    // `NULL IN (...)` and `NULL NOT IN (...)` are both NULL,
+                    // which a scan filter must reject just like `truthy_of`.
+                    return false;
+                }
+                let key = collator.key(row.get_string(*column_offset).as_bytes());
+                let found = keys.binary_search(&key).is_ok();
+                if *negated {
+                    !found
+                } else {
+                    found
+                }
+            }
+            Self::Like {
+                column_offset,
+                pattern,
+                escape,
+                collation,
+                negated,
+            } => {
+                if row.is_null(*column_offset) {
+                    return false;
+                }
+                let matched = tidb_expr::like_match_with_collation(
+                    row.get_string(*column_offset).as_bytes(),
+                    pattern,
+                    Some(*escape),
+                    *collation,
+                );
+                if *negated {
+                    !matched
+                } else {
+                    matched
+                }
+            }
+        }
     }
 }
 
@@ -412,6 +576,9 @@ fn remap_scan_predicate(predicate: &mut ScanPredicate, keep: &[usize]) -> Option
             *column_offset = remapped_offset(*column_offset, keep)?;
         }
         ScanPredicate::ScalarIn { tested, .. } => remap_pb_scalar(tested, keep)?,
+        ScanPredicate::Like { column_offset, .. } => {
+            *column_offset = remapped_offset(*column_offset, keep)?;
+        }
         ScanPredicate::Builtin(scalar) => remap_pb_scalar(scalar, keep)?,
         ScanPredicate::And(branches) | ScanPredicate::Or(branches) => {
             for branch in branches {
@@ -1246,6 +1413,27 @@ mod tests_push_down_verdict {
         for expr in ["i = r", "i IS TRUE", "i <=> 1", "i + 1 = 2"] {
             assert_eq!(pushes(expr), Some(false), "{expr} stays above the scan");
         }
+    }
+
+    #[test]
+    fn constant_pattern_like_uses_gos_tikv_signature_boundary() {
+        for expr in [
+            "s LIKE '%pending%deposits%'",
+            "s NOT LIKE '%pending%deposits%'",
+            "s LIKE 'a#_%' ESCAPE '#'",
+        ] {
+            assert_eq!(pushes(expr), Some(true), "{expr} is pushed to TiKV");
+        }
+        assert_eq!(
+            pushes("s LIKE upper(s)"),
+            Some(false),
+            "a row-dependent pattern stays above the scan"
+        );
+        assert_eq!(
+            pushes("s ILIKE 'prefix%'"),
+            Some(false),
+            "TiKV has LikeSig but no ILIKE signature"
+        );
     }
 
     /// PERFORMANCE, the part already reached: every row of Go's pushed table

@@ -1434,7 +1434,11 @@ impl PlanTrace {
         }
         scan.info = scan.info.replacen("keep order:false", "keep order:true", 1);
         if descending {
-            scan.info.push_str(", desc");
+            if let Some(pos) = scan.info.find(", stats:pseudo") {
+                scan.info.insert_str(pos, ", desc");
+            } else {
+                scan.info.push_str(", desc");
+            }
         }
         true
     }
@@ -3590,12 +3594,30 @@ impl PlanTrace {
     /// Records `PhysicalIndexLookUpReader.PushedLimit`: the index-side handle
     /// stream is capped before any probe tasks are built, and no root Limit
     /// remains.
-    pub(crate) fn embedded_lookup_limit(&mut self, offset: u64, count: u64) -> bool {
-        let Some(mut lookup) = self.stack.pop() else {
+    pub(crate) fn embedded_lookup_limit(
+        &mut self,
+        offset: u64,
+        count: u64,
+        logical_rows: Option<f64>,
+    ) -> bool {
+        let Some(top) = self.stack.pop() else {
             return false;
         };
+        let (residual_selection, mut lookup) = if top.name == "Selection" && top.children.len() == 1
+        {
+            let mut selection = top;
+            let lookup = selection.children.pop().expect("selection child");
+            (Some(selection), lookup)
+        } else {
+            (None, top)
+        };
         if lookup.name != "IndexLookUp" || lookup.children.len() != 2 {
-            self.stack.push(lookup);
+            if let Some(mut selection) = residual_selection {
+                selection.children.push(lookup);
+                self.stack.push(selection);
+            } else {
+                self.stack.push(lookup);
+            }
             return false;
         }
         let mut index_scan = lookup.children.remove(0);
@@ -3604,32 +3626,179 @@ impl PlanTrace {
             || lookup.children[0].name != "TableRowIDScan"
         {
             lookup.children.insert(0, index_scan);
-            self.stack.push(lookup);
+            if let Some(mut selection) = residual_selection {
+                selection.children.push(lookup);
+                self.stack.push(selection);
+            } else {
+                self.stack.push(lookup);
+            }
             return false;
         }
         index_scan.task = "cop[tikv]";
-        let estimate = Est::CapAt(count as f64).apply(lookup.est_rows);
+        let estimate = Est::CapAt(count as f64).apply(index_scan.est_rows);
+        let output_estimate = logical_rows.or(estimate);
         let act_rows = index_scan.act_rows.clone();
         let key_ndv_ratio = index_scan.key_ndv_ratio;
-        let build_label = index_scan.label;
         index_scan.est_rows = estimate;
         index_scan.label = "";
         let mut partial = PlanNode::new(
             "Limit",
-            estimate,
+            output_estimate,
             String::new(),
             format!("offset:0, count:{}", offset.saturating_add(count)),
         );
         partial.task = "cop[tikv]";
-        partial.label = build_label;
+        partial.label = "(Build)";
         partial.act_rows = act_rows;
         partial.key_ndv_ratio = key_ndv_ratio;
-        partial.children.push(index_scan);
+        if let Some(mut selection) = residual_selection {
+            selection.task = "cop[tikv]";
+            selection.est_rows = output_estimate;
+            selection.children.push(index_scan);
+            partial.children.push(selection);
+        } else {
+            partial.children.push(index_scan);
+        }
         lookup.children.insert(0, partial);
-        lookup.est_rows = estimate;
+        lookup.est_rows = output_estimate;
         lookup.info = format!("limit embedded(offset:{offset}, count:{count})");
-        lookup.children[1].est_rows = estimate;
+        lookup.children[1].est_rows = output_estimate;
         self.stack.push(lookup);
+        true
+    }
+
+    /// Moves a residual filter below a non-covering lookup, onto its Probe.
+    pub(crate) fn lookup_probe_selection(&mut self, logical_rows: Option<f64>) -> bool {
+        let Some(mut selection) = self.stack.pop() else {
+            return false;
+        };
+        if selection.name != "Selection" || selection.children.len() != 1 {
+            self.stack.push(selection);
+            return false;
+        }
+        let lookup = selection.children.pop().expect("selection child");
+        if lookup.name != "IndexLookUp" || lookup.children.len() != 2 {
+            selection.children.push(lookup);
+            self.stack.push(selection);
+            return false;
+        }
+        let mut lookup = lookup;
+        let mut probe = lookup.children.remove(1);
+        probe.label = "";
+        // Go reports the probe selection using the lookup's physical output
+        // estimate (the index-side estimate), not the logical input-row
+        // estimate used to shape the parent plan. Keep the logical estimate
+        // only as a fallback for traces that do not carry one.
+        let output_estimate = lookup.est_rows.or(logical_rows);
+        selection.task = "cop[tikv]";
+        selection.label = "(Probe)";
+        selection.est_rows = output_estimate;
+        selection.children.push(probe);
+        lookup.children.insert(1, selection);
+        lookup.est_rows = output_estimate;
+        self.stack.push(lookup);
+        true
+    }
+
+    /// Caps the visible output estimate of an ordered lookup whose residual
+    /// predicate is evaluated on Probe.
+    pub(crate) fn cap_lookup_output(&mut self, count: u64) -> bool {
+        let Some(top) = self.stack.last_mut() else {
+            return false;
+        };
+        let mut lookup = top;
+        if lookup.name == "Projection" {
+            lookup.est_rows = lookup
+                .est_rows
+                .map_or(Some(count as f64), |rows| Some(rows.min(count as f64)));
+            let Some(child) = lookup.children.get_mut(0) else {
+                return false;
+            };
+            lookup = child;
+        }
+        if lookup.name != "IndexLookUp" || lookup.children.len() != 2 {
+            return false;
+        }
+        lookup.est_rows = lookup
+            .est_rows
+            .map_or(Some(count as f64), |rows| Some(rows.min(count as f64)));
+        if let Some(selection) = lookup.children.get_mut(1) {
+            if selection.name == "Selection" {
+                selection.est_rows = selection
+                    .est_rows
+                    .map_or(Some(count as f64), |rows| Some(rows.min(count as f64)));
+            }
+        }
+        true
+    }
+
+    /// Records Go's pushed `TopN(Build)` in an index lookup while leaving the
+    /// root TopN in the executor pipeline.
+    pub(crate) fn pushed_topn_lookup(
+        &mut self,
+        order_by: &[tidb_ast::OrderItem],
+        qualify: &Qualifier<'_>,
+        offset: u64,
+        count: u64,
+        logical_rows: Option<f64>,
+    ) -> bool {
+        let Some(top) = self.stack.pop() else {
+            return false;
+        };
+        let (residual_selection, mut lookup) = if top.name == "Selection" && top.children.len() == 1
+        {
+            let mut selection = top;
+            let lookup = selection.children.pop().expect("selection child");
+            (Some(selection), lookup)
+        } else {
+            (None, top)
+        };
+        if lookup.name != "IndexLookUp" || lookup.children.len() != 2 {
+            if let Some(mut selection) = residual_selection {
+                selection.children.push(lookup);
+                self.stack.push(selection);
+            } else {
+                self.stack.push(lookup);
+            }
+            return false;
+        }
+        let mut index_scan = lookup.children.remove(0);
+        if !matches!(index_scan.name, "IndexFullScan" | "IndexRangeScan") {
+            lookup.children.insert(0, index_scan);
+            if let Some(mut selection) = residual_selection {
+                selection.children.push(lookup);
+                self.stack.push(selection);
+            } else {
+                self.stack.push(lookup);
+            }
+            return false;
+        }
+        index_scan.label = "";
+        let output_estimate = logical_rows.or(lookup.est_rows);
+        let mut pushed = PlanNode::new(
+            "TopN",
+            output_estimate,
+            String::new(),
+            format!(
+                "{}, offset:{offset}, count:{count}",
+                Self::by_items_text(order_by, qualify)
+            ),
+        );
+        pushed.task = "cop[tikv]";
+        pushed.label = "(Build)";
+        if let Some(mut selection) = residual_selection {
+            selection.task = "cop[tikv]";
+            selection.est_rows = output_estimate;
+            selection.children.push(index_scan);
+            pushed.children.push(selection);
+        } else {
+            pushed.children.push(index_scan);
+        }
+        lookup.children.insert(0, pushed);
+        lookup.est_rows = output_estimate;
+        lookup.children[1].est_rows = output_estimate;
+        self.stack.push(lookup);
+        self.topn(order_by, qualify, offset, count);
         true
     }
 
@@ -3771,7 +3940,7 @@ impl PlanTrace {
         self.wrap(
             "Projection",
             rows.map_or(Est::Inherit, Est::Fixed),
-            field_list(fields, qualify),
+            expanded_field_list(fields, qualify),
         );
     }
 
@@ -4438,6 +4607,32 @@ fn field_list(fields: &[tidb_ast::SelectField], qualify: &Qualifier<'_>) -> Stri
             },
         })
         .collect();
+    rendered.join(", ")
+}
+
+/// A physical Projection owns concrete columns even when the logical select
+/// list was written as `*`. Go's explain output prints those expanded column
+/// expressions, unlike logical aggregation helpers which keep `*` as written.
+fn expanded_field_list(fields: &[tidb_ast::SelectField], qualify: &Qualifier<'_>) -> String {
+    let mut rendered = Vec::new();
+    for field in fields {
+        match field {
+            tidb_ast::SelectField::Expr { expr, .. } => rendered.push(qualify.expr(expr)),
+            tidb_ast::SelectField::Wildcard(path) => {
+                let table_name = path.last();
+                for table in &qualify.scope.tables {
+                    if table_name.is_some_and(|name| !table.name.eq_ignore_ascii_case(name)) {
+                        continue;
+                    }
+                    rendered.extend(
+                        table.columns.iter().map(|(column, _)| {
+                            qualify.column(&[table.name.clone(), column.clone()])
+                        }),
+                    );
+                }
+            }
+        }
+    }
     rendered.join(", ")
 }
 

@@ -44,11 +44,11 @@ use tidb_ast::{QueryStmt, Stmt};
 use tidb_datatype::SessionTimeZone;
 use tidb_distsql::region::RegionCache;
 use tidb_distsql::{
-    signed_handle_ranges_to_kv_ranges, CancelHandle, DirectUnaryQueryTransport,
-    DirectUnaryRuntimeConfig, DirectUnaryTransportEvidence, DirectUnaryTransportEvidenceHandle,
-    EncodeType, ExecutorKind, ExecutorShape, InjectedQueryRuntime, QueryResultContext,
-    QueryTransport, RequestBuilder, RequestEnvelope, ResponseChannel, SelectInput,
-    SignedHandleRange, TimestampSource, WarningCollector,
+    signed_handle_ranges_to_kv_ranges, CancelHandle, CoprCache, CoprCacheConfig,
+    DirectUnaryQueryTransport, DirectUnaryRuntimeConfig, DirectUnaryTransportEvidence,
+    DirectUnaryTransportEvidenceHandle, EncodeType, ExecutorKind, ExecutorShape,
+    InjectedQueryRuntime, QueryResultContext, QueryTransport, RequestBuilder, RequestEnvelope,
+    ResponseChannel, SelectInput, SignedHandleRange, TimestampSource, WarningCollector,
 };
 use tidb_pd_client::{PdClient, PdClientError};
 use tidb_planner::read_only_scan::{
@@ -120,6 +120,7 @@ pub struct ProductionReadSessionFactory {
     read_opener: SharedReadOpener<TonicCoprocessorClient, PdRegionLoader>,
     default_timeout: Duration,
     lock_timestamp_source: PdTimestampSource,
+    copr_cache: CoprCache,
 }
 
 impl RealTiKvSessionTransportFactory for ProductionReadSessionFactory {
@@ -130,6 +131,7 @@ impl RealTiKvSessionTransportFactory for ProductionReadSessionFactory {
             &self.read_opener,
             DirectUnaryRuntimeConfig {
                 default_timeout: self.default_timeout,
+                shared_cache: Some(self.copr_cache.clone()),
                 ..DirectUnaryRuntimeConfig::default()
             },
             self.lock_timestamp_source.clone(),
@@ -699,6 +701,16 @@ impl ProductionReadProcessAuthority {
             read_opener: read_authority.opener(),
             default_timeout: timeout,
             lock_timestamp_source: timestamp_source.clone(),
+            // client-go's `DefaultTiKVClient`: this cache belongs to the
+            // process store and is shared by every query and connection.
+            copr_cache: CoprCache::from_config(&CoprCacheConfig {
+                capacity_mb: 1000.0,
+                admission_max_ranges: 500,
+                admission_max_result_mb: 10.0,
+                admission_min_process_ms: 5,
+            })
+            .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?
+            .expect("the positive default capacity enables the coprocessor cache"),
         };
         // Derived from the authority that is already running: the same shared
         // read opener and the same PD worker. This is a capability, not a
@@ -1475,10 +1487,12 @@ where
         let mut builder = RequestBuilder::new();
         builder
             .set_start_ts(snapshot_ts)
-            // The retained response runtime publishes one logical region at
-            // a time and deliberately has no unordered merge authority.
-            // SQL without ORDER BY permits this stronger deterministic order.
-            .set_keep_order(true)
+            // This direct table-reader path has already rejected ORDER BY and
+            // does not own a SQL ordering contract. Go leaves these scans
+            // unordered, allowing independent regions to run concurrently;
+            // the response runtime merges their chunks without changing SQL
+            // semantics.
+            .set_keep_order(false)
             .set_non_partitioned_key_ranges(key_ranges)
             .set_dag_request(plan_evidence.request_envelope(), dag_data);
         let request = builder

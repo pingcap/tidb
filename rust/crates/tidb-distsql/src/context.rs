@@ -60,7 +60,9 @@ impl PagingConfig {
     #[must_use]
     pub const fn source_defaults() -> Self {
         Self {
-            enabled: false,
+            // Go's `DefTiDBEnablePaging` is true for normal sessions; this
+            // controls the coprocessor response protocol, not SQL ordering.
+            enabled: true,
             min_size: MIN_PAGING_SIZE,
             max_size: MIN_ALLOWED_MAX_PAGING_SIZE,
             size_bytes: 0,

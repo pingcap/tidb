@@ -43,6 +43,23 @@ fn cache() -> CoprCache {
     .expect("enabled source config")
 }
 
+#[test]
+fn cloned_cache_handles_share_process_owned_entries() {
+    let writer = cache();
+    let reader = writer.clone();
+    assert!(writer.set(
+        b"shared".to_vec(),
+        CoprCacheValue {
+            data: b"across-statements".to_vec(),
+            ..CoprCacheValue::default()
+        },
+    ));
+    assert_eq!(
+        reader.get(b"shared").map(|value| value.data),
+        Some(b"across-statements".to_vec())
+    );
+}
+
 fn request_context(region_id: u64, start_ts: u64) -> CoprCacheRequestContext {
     CoprCacheRequestContext {
         is_unary_cop: true,
@@ -258,7 +275,7 @@ fn test_cache_value_len() {
 
 #[test]
 fn test_get_set_and_live_request_response_lifecycle() {
-    let mut cache = cache();
+    let cache = cache();
     assert!(cache.get(b"foo").is_none());
     assert!(cache.set(
         b"foo".to_vec(),
@@ -360,7 +377,7 @@ fn test_get_set_and_live_request_response_lifecycle() {
 
 #[test]
 fn request_eligibility_and_bounded_storage_stay_inside_the_owner() {
-    let mut cache = CoprCache::from_config(&CoprCacheConfig {
+    let cache = CoprCache::from_config(&CoprCacheConfig {
         capacity_mb: 0.0003,
         admission_max_ranges: 1,
         admission_max_result_mb: 1.0,
@@ -425,7 +442,7 @@ fn response_cache_fields_keep_exact_wire_numbers() {
 
 #[test]
 fn hit_without_a_valid_local_value_is_rejected() {
-    let mut cache = cache();
+    let cache = cache();
     let mut response = CoprocessorResponse {
         data: b"tikv must remain untouched".to_vec(),
         range: Some(CoprocessorKeyRange {
@@ -445,7 +462,7 @@ fn hit_without_a_valid_local_value_is_rejected() {
 
 #[test]
 fn paging_hit_preserves_absent_present_empty_and_nonpaging_range_states() {
-    let mut cache = cache();
+    let cache = cache();
     let mut request = CoprocessorRequestEnvelope {
         tp: 1,
         data: b"range-presence".to_vec(),

@@ -486,14 +486,15 @@ fn index_ranges_are_built_the_way_go_builds_them() {
             &crate::index_hints::AvailablePaths::unrestricted(),
             false,
             &crate::StmtContext::for_query(),
+            None,
         ) {
-            Some(crate::driver::access::ChosenPath::Index(id, ranges, _, _, _)) => {
+            Some(crate::driver::access::ChosenPath::Index(id, ranges, _, _, _, _)) => {
                 Some((id, ranges))
             }
-            Some(crate::driver::access::ChosenPath::HandleRange(ranges, _, _)) => {
+            Some(crate::driver::access::ChosenPath::HandleRange(ranges, _, _, _)) => {
                 panic!("expected an index path, got a handle range {ranges:?}")
             }
-            Some(crate::driver::access::ChosenPath::FullTable(_)) => None,
+            Some(crate::driver::access::ChosenPath::FullTable(_, _)) => None,
             None => None,
         }
     };
@@ -726,12 +727,13 @@ fn a_non_unique_index_ranges_on_the_clustered_handle_too() {
             &crate::index_hints::AvailablePaths::unrestricted(),
             false,
             &crate::StmtContext::for_query(),
+            None,
         ) {
-            Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _, _)) => Some(ranges),
-            Some(crate::driver::access::ChosenPath::HandleRange(ranges, _, _)) => {
+            Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _, _, _)) => Some(ranges),
+            Some(crate::driver::access::ChosenPath::HandleRange(ranges, _, _, _)) => {
                 panic!("expected an index path, got a handle range {ranges:?}")
             }
-            Some(crate::driver::access::ChosenPath::FullTable(_)) => {
+            Some(crate::driver::access::ChosenPath::FullTable(_, _)) => {
                 panic!("expected an index path, got the whole-table scan")
             }
             None => panic!("expected an index path, got the whole-table scan"),
@@ -882,7 +884,7 @@ fn a_unique_index_gets_no_handle_dimension() {
         panic!("not a select")
     };
     let scope = crate::plan_trace::PlanTrace::single_table_scope("u", None, columns.clone());
-    if let Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _, _)) =
+    if let Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _, _, _)) =
         choose_index_range_path(
             select,
             &catalog,
@@ -892,6 +894,7 @@ fn a_unique_index_gets_no_handle_dimension() {
             &crate::index_hints::AvailablePaths::unrestricted(),
             false,
             &crate::StmtContext::for_query(),
+            None,
         )
     {
         assert!(
@@ -997,7 +1000,7 @@ fn a_handle_that_is_already_a_key_part_is_not_appended_again() {
         panic!("not a select")
     };
     let scope = crate::plan_trace::PlanTrace::single_table_scope("hd", None, columns.clone());
-    let Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _, _)) =
+    let Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _, _, _)) =
         choose_index_range_path(
             select,
             &catalog,
@@ -1007,6 +1010,7 @@ fn a_handle_that_is_already_a_key_part_is_not_appended_again() {
             &crate::index_hints::AvailablePaths::unrestricted(),
             false,
             &crate::StmtContext::for_query(),
+            None,
         )
     else {
         panic!("expected an index path");

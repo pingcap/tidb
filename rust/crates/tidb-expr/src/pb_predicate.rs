@@ -509,6 +509,28 @@ pub fn string_in_to_pb(
     ))
 }
 
+/// Lowers `string_column LIKE constant_pattern ESCAPE constant` to Go's
+/// `LikeSig` shape. The accepted column/literal pair has the same single
+/// unambiguous collation derivation as [`string_comparison_to_pb`].
+pub fn string_like_to_pb(
+    tested: StringPbOperand,
+    pattern: Vec<u8>,
+    escape: i64,
+) -> Result<Expr, PbPredicateError> {
+    let pattern = StringPbOperand::Literal(pattern);
+    let collation = derived_string_collation(&tested, &pattern)?;
+    let children = vec![
+        string_operand_to_pb(tested)?,
+        string_operand_to_pb(pattern)?,
+        operand_to_pb(IntPbOperand::Literal(escape))?,
+    ];
+    Ok(boolean_scalar_func_with_collation(
+        ScalarFuncSig::LikeSig,
+        children,
+        &collation,
+    ))
+}
+
 /// Composes branches with `OR` (Go `ScalarFuncSig_LogicalOr`).
 ///
 /// TiKV's `LogicalOr` is binary, so a longer chain folds left, which is the

@@ -1298,7 +1298,6 @@ impl MyDecimal {
             -1
         }
     }
-
     /// Go `digitsFrac`: the decimal digits after the point.
     #[must_use]
     pub fn digits_frac(&self) -> i8 {
@@ -1481,19 +1480,26 @@ impl MyDecimal {
     /// value fits in an i128. This is used by fixed-scale aggregate folds to
     /// avoid constructing a value-layer Decimal for every input row.
     pub fn to_i128_scaled(&self) -> Option<(i128, u32)> {
-        let (negative, digits, storage_scale, _) = self.to_decimal_parts();
+        let integer_words = digits_to_words(i32::from(self.digits_int)) as usize;
+        let fraction_words = digits_to_words(i32::from(self.digits_frac)) as usize;
         let mut magnitude = 0_i128;
-        for digit in digits {
+        for word in &self.word_buf[..integer_words + fraction_words] {
             magnitude = magnitude
-                .checked_mul(10)?
-                .checked_add(i128::from(digit - b'0'))?;
+                .checked_mul(i128::from(WORD_BASE))?
+                .checked_add(i128::from(*word))?;
         }
-        let signed = if negative {
+        // The last fractional word is right-padded with zeroes to a complete
+        // base-1e9 word. Remove only that storage padding; the remaining
+        // coefficient is exactly the value at `digits_frac` scale.
+        let fraction_padding =
+            fraction_words * DIGITS_PER_WORD as usize - usize::try_from(self.digits_frac).ok()?;
+        magnitude /= i128::from(POWERS10[fraction_padding]);
+        let signed = if self.negative {
             magnitude.checked_neg()?
         } else {
             magnitude
         };
-        Some((signed, storage_scale))
+        Some((signed, self.digits_frac as u32))
     }
 
     /// The exact 40 bytes a Go chunk `NewDecimal` cell stores (Go copies the
@@ -1698,6 +1704,35 @@ mod tests {
             let restored = MyDecimal::from_raw_bytes(parsed.to_raw_bytes()).expect("valid bytes");
             assert_eq!(restored, parsed, "{value} survives the raw round-trip");
         }
+    }
+
+    #[test]
+    fn scaled_i128_reads_packed_words_without_decimal_text() {
+        for (input, coefficient, scale) in [
+            ("0", 0_i128, 0_u32),
+            ("0.01", 1, 2),
+            ("-12.3400", -123_400, 4),
+            ("123456789.987654321", 123_456_789_987_654_321, 9),
+            (
+                "12345678901234567890.123456789012345678",
+                12_345_678_901_234_567_890_123_456_789_012_345_678,
+                18,
+            ),
+        ] {
+            let (value, error) = MyDecimal::from_string(input.as_bytes());
+            assert_eq!(error, None, "{input}");
+            assert_eq!(
+                value.to_i128_scaled(),
+                Some((coefficient, scale)),
+                "{input}"
+            );
+        }
+
+        let (too_wide, error) = MyDecimal::from_string(
+            b"999999999999999999999999999999999999999999999999999999999999999999999999999999999",
+        );
+        assert_eq!(error, None);
+        assert_eq!(too_wide.to_i128_scaled(), None);
     }
 
     #[test]

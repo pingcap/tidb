@@ -202,6 +202,7 @@ pub(crate) fn leaf_index_path(
         false,
         false,
         demand.statement_forces_an_index(),
+        None,
     );
     if let Some(wanted) = wanted {
         // `matchProperty` as a FILTER over the enumeration.

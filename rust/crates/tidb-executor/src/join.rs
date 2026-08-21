@@ -99,11 +99,14 @@
 //! Building v2's partitioned machinery onto it would be a rewrite, not a
 //! port, and is NOT started.
 //!
-//! Still deferred relative to Go's `HashJoinExec`: parallel build/probe,
-//! residual-condition and semi/anti preserved-build variants, v2's
-//! partitioned spill, and outer-apply. Hash-aggregate spill, TopN spill,
-//! parallel-sort spill and `SortedRowContainer` are other operators' surfaces
-//! and are untouched.
+//! The unique single-integer slice uses Go's default five-way probe boundary:
+//! the session thread fetches a bounded window, workers share the immutable
+//! build table and own their chunks, and matched-bitmap writes return to the
+//! session thread. Pure equality and q17's proven DECIMAL residual shape use
+//! that boundary. General residual conditions, parallel build, semi/anti
+//! preserved-build variants, v2's partitioned spill, and outer-apply remain
+//! deferred. Hash-aggregate spill, TopN spill, parallel-sort spill and
+//! `SortedRowContainer` are other operators' surfaces and are untouched.
 //!
 //! # Memory accounting (`tidb_mem_quota_query`)
 //!
@@ -156,7 +159,7 @@ use crate::hash_join::{
 use crate::mem_quota::StatementMemory;
 use std::cell::Cell;
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::list::List;
@@ -207,7 +210,43 @@ struct HashState {
     /// Cursor for Go hash join's post-probe scan when the preserved side was
     /// built. `None` means the scan is complete (or was never needed).
     unmatched_build_scan: Option<RowPtr>,
+    /// Results produced by the bounded exact-integer probe workers, kept in
+    /// probe-input order so this path preserves the serial executor's row
+    /// order as well as its SQL result.
+    parallel_probe_pending: VecDeque<Chunk>,
+    /// Go returns consumed probe/result chunks to the fetcher/workers through
+    /// resource channels. These two pools are the same ownership loop without
+    /// exposing the non-`Send` executor tree to worker threads.
+    parallel_probe_input_reuse: Vec<Chunk>,
+    parallel_probe_output_reuse: Vec<Chunk>,
+    /// True only for the first bounded parallel slice: one ordinary integer
+    /// equality key and a unique exact build bucket.
+    parallel_exact_int_enabled: bool,
+    /// Number of bounded probe windows executed by the parallel exact-integer
+    /// path. Kept as an execution-path receipt for focused regression tests.
+    parallel_probe_windows: usize,
 }
+
+/// One worker's complete result for one source chunk. Pure equality over a
+/// unique build key produces at most one joined row per probe row, so this
+/// stays bounded to one input and one output chunk like Go's worker channel.
+struct ParallelProbeResult {
+    input: Chunk,
+    output: Chunk,
+    matched_build_rows: Vec<RowPtr>,
+    condition_evals: u64,
+}
+
+/// Go resolves the default hash-join concurrency through
+/// `tidb_executor_concurrency`, whose default is five probe workers.
+const HASH_JOIN_CONCURRENCY: usize = 5;
+
+/// Number of source chunks one scoped worker consumes before the join pays
+/// the cost of creating the worker threads again. Go keeps its hash-join
+/// goroutines alive for the complete probe; a bounded multi-chunk lane gives
+/// the scoped Rust implementation the same amortization without allowing
+/// probe/output memory to grow with the complete input.
+const PARALLEL_PROBE_CHUNKS_PER_WORKER: usize = 8;
 
 /// A residual DECIMAL comparison whose operands can be read directly from
 /// the two input rows. TPC-H q17's `l_quantity < 0.2 * avg(l_quantity)` is the
@@ -1019,6 +1058,24 @@ impl<C: Columns> JoinExec<C> {
     #[must_use]
     pub fn condition_evals(&self) -> u64 {
         self.condition_evals.get()
+    }
+
+    /// How many bounded exact-integer probe windows used multiple workers.
+    ///
+    /// Wall-clock assertions are machine-dependent; the focused performance
+    /// regression instead pins the Go-shaped worker path itself.
+    #[cfg(test)]
+    fn parallel_probe_windows(&self) -> usize {
+        self.hash
+            .as_ref()
+            .map_or(0, |hash| hash.parallel_probe_windows)
+    }
+
+    #[cfg(test)]
+    fn parallel_exact_int_enabled(&self) -> bool {
+        self.hash
+            .as_ref()
+            .is_some_and(|hash| hash.parallel_exact_int_enabled)
     }
 
     /// Forces the nested-loop path on a join that would otherwise hash.
@@ -2540,6 +2597,10 @@ impl<C: Columns> JoinExec<C> {
     /// probe chunk whose rows all miss (an inner join) produces none.
     fn next_hashed(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         self.build_table()?;
+        if self.can_parallelize_exact_int_probe() {
+            self.prepare_parallel_decimal_products()?;
+            return self.next_parallel_exact_int_hashed(req);
+        }
         loop {
             if self.hash.as_ref().is_some_and(|hash| hash.probe_done) {
                 if self.hash_builds_preserved_side() {
@@ -2553,6 +2614,597 @@ impl<C: Columns> JoinExec<C> {
                 return Ok(());
             }
         }
+    }
+
+    /// Whether this join can use the bounded worker path without moving the
+    /// executor tree or expression context across threads.
+    ///
+    /// The first slice is deliberately narrow: one ordinary integer equality
+    /// key, no residual predicate, and at most one build match per key. That
+    /// is enough for primary/unique-key dimension joins while proving each
+    /// worker can retain no more than one output chunk.
+    fn can_parallelize_exact_int_probe(&self) -> bool {
+        let [key] = self.keys.as_slice() else {
+            return false;
+        };
+        let residual_supported = self.residual_conditions.is_empty()
+            || (self.kind == JoinKind::Inner
+                && self.residual_decimal_mul_lt.is_some()
+                && self.parallel_decimal_product_build_column().is_some());
+        matches!(
+            self.kind,
+            JoinKind::Inner | JoinKind::Left | JoinKind::Right
+        ) && residual_supported
+            && key.class == KeyClass::Int
+            && !key.null_safe
+            && self
+                .hash
+                .as_ref()
+                .is_some_and(|hash| hash.parallel_exact_int_enabled && hash.table.has_exact_int())
+    }
+
+    /// Build-side column holding the right operand of q17's cached decimal
+    /// product. Returning `None` keeps a residual whose product lives on the
+    /// probe side out of the bounded worker path.
+    fn parallel_decimal_product_build_column(&self) -> Option<usize> {
+        let fast = self.residual_decimal_mul_lt.as_ref()?;
+        let left_width = self.left.ret_field_types().len();
+        let product_is_left = fast.right_column < left_width;
+        if product_is_left != self.hash_build_is_left() {
+            return None;
+        }
+        Some(if product_is_left {
+            fast.right_column
+        } else {
+            fast.right_column - left_width
+        })
+    }
+
+    /// Computes q17's `0.2 * AVG(...)` once per unique build row before any
+    /// worker borrows the table. The resulting map is immutable throughout
+    /// all probe windows and therefore crosses no mutable session boundary.
+    fn prepare_parallel_decimal_products(&mut self) -> Result<(), ExecError> {
+        let Some(fast) = self.residual_decimal_mul_lt.clone() else {
+            return Ok(());
+        };
+        let column = self
+            .parallel_decimal_product_build_column()
+            .expect("parallel decimal residual requires a build-side product");
+        let hash = self.hash.as_mut().expect("hash table was built");
+        if !hash.decimal_mul_products.is_empty() {
+            return Ok(());
+        }
+        let mut ptr = hash.table.first_ptr();
+        while let Some(current) = ptr {
+            ptr = hash.table.next_ptr(current);
+            let product = {
+                let table = &hash.table;
+                let build_types = &hash.build_types;
+                let build_buf = &mut hash.build_buf;
+                table
+                    .with_row(current, build_buf, |build_row| {
+                        Self::decimal_mul_product(&fast, build_row, build_types, column)
+                    })
+                    .map_err(|error| ExecError::SpillFailed(error.to_string()))??
+            };
+            hash.decimal_mul_products.insert(current, product);
+        }
+        Ok(())
+    }
+
+    /// Parallel counterpart of [`Self::next_hashed`] for the proven exact
+    /// integer slice. The session thread remains the sole child fetcher and
+    /// sole owner of matched-bitmap writes; workers borrow only the immutable
+    /// build table and own their scratch/input/output chunks.
+    fn next_parallel_exact_int_hashed(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        loop {
+            if self.take_parallel_probe_output(req) {
+                return Ok(());
+            }
+            if self.hash.as_ref().is_some_and(|hash| hash.probe_done) {
+                if self.hash_builds_preserved_side() {
+                    self.drain_preserved_build_rows(req)?;
+                }
+                return Ok(());
+            }
+            self.fill_parallel_exact_int_probe_window()?;
+        }
+    }
+
+    /// Moves the next worker result into the caller chunk without copying its
+    /// cells, then returns the caller's emptied column allocation to the
+    /// worker pool -- Go's `req.SwapColumns(result.chk); result.src <- chk`.
+    fn take_parallel_probe_output(&mut self, req: &mut Chunk) -> bool {
+        let output = self
+            .hash
+            .as_mut()
+            .and_then(|hash| hash.parallel_probe_pending.pop_front());
+        let Some(mut output) = output else {
+            return false;
+        };
+        req.swap_columns(&mut output);
+        output.reset();
+        // A parent may hand a zero-column scratch chunk to an executor whose
+        // runtime join output is wider. It is valid as the receiving buffer,
+        // but cannot be reused as a worker output.
+        if output.num_cols() == req.num_cols() {
+            self.hash
+                .as_mut()
+                .expect("parallel output requires hash state")
+                .parallel_probe_output_reuse
+                .push(output);
+        }
+        true
+    }
+
+    /// Fetches one bounded Go-shaped probe window and evaluates its chunks on
+    /// up to five workers. Thread lifetimes end before this method mutates the
+    /// build-side matched bitmap, so no shared mutable join state crosses the
+    /// worker boundary.
+    fn fill_parallel_exact_int_probe_window(&mut self) -> Result<(), ExecError> {
+        debug_assert!(self.can_parallelize_exact_int_probe());
+        debug_assert!(self
+            .hash
+            .as_ref()
+            .is_some_and(|hash| hash.parallel_probe_pending.is_empty()));
+
+        let probe_is_left = !self.hash_build_is_left();
+        let probe_types = if probe_is_left {
+            self.left.ret_field_types().to_vec()
+        } else {
+            self.right.ret_field_types().to_vec()
+        };
+        let build_types = self
+            .hash
+            .as_ref()
+            .expect("parallel probe requires hash state")
+            .build_types
+            .clone();
+        let output_types = if probe_is_left {
+            probe_types
+                .iter()
+                .chain(&build_types)
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            build_types
+                .iter()
+                .chain(&probe_types)
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let key = self.keys[0];
+        let key_offset = if probe_is_left { key.left } else { key.right };
+        let kind = self.kind;
+        let builds_preserved = self.hash_builds_preserved_side();
+        let decimal_mul_lt = self.residual_decimal_mul_lt.as_ref();
+
+        // Keep a bounded lane of reusable chunks per default Go worker. The
+        // child is intentionally fetched only here on the session thread:
+        // Executor and StmtContext retain their single-threaded ownership
+        // contract, while each scoped worker amortizes its startup over the
+        // chunks in one lane.
+        let window_chunks = HASH_JOIN_CONCURRENCY * PARALLEL_PROBE_CHUNKS_PER_WORKER;
+        let mut inputs = Vec::with_capacity(window_chunks);
+        for _ in 0..window_chunks {
+            let reused = self
+                .hash
+                .as_mut()
+                .expect("parallel probe requires hash state")
+                .parallel_probe_input_reuse
+                .pop();
+            let mut input = reused.unwrap_or_else(|| {
+                if probe_is_left {
+                    self.left.new_chunk()
+                } else {
+                    self.right.new_chunk()
+                }
+            });
+            let result = if probe_is_left {
+                self.left.next(&mut input)
+            } else {
+                self.right.next(&mut input)
+            };
+            if let Err(error) = result {
+                input.reset();
+                self.hash
+                    .as_mut()
+                    .expect("parallel probe requires hash state")
+                    .parallel_probe_input_reuse
+                    .push(input);
+                return Err(error);
+            }
+            if input.num_rows() == 0 {
+                input.reset();
+                let hash = self
+                    .hash
+                    .as_mut()
+                    .expect("parallel probe requires hash state");
+                hash.parallel_probe_input_reuse.push(input);
+                hash.probe_done = true;
+                break;
+            }
+            inputs.push(input);
+        }
+        if inputs.is_empty() {
+            return Ok(());
+        }
+
+        let mut work = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            let output = self
+                .hash
+                .as_mut()
+                .expect("parallel probe requires hash state")
+                .parallel_probe_output_reuse
+                .pop()
+                .filter(|output| output.num_cols() == output_types.len())
+                .unwrap_or_else(|| {
+                    Chunk::new(
+                        &output_types,
+                        self.meta.init_cap(),
+                        self.meta.max_chunk_size(),
+                    )
+                });
+            work.push((input, output));
+        }
+        let worker_count = work.len().min(HASH_JOIN_CONCURRENCY);
+
+        let outcomes = {
+            let hash = self
+                .hash
+                .as_ref()
+                .expect("parallel probe requires hash state");
+            let table = &hash.table;
+            let build_types = hash.build_types.as_slice();
+            let probe_types = probe_types.as_slice();
+            let decimal_products = &hash.decimal_mul_products;
+            if worker_count == 1 {
+                let (input, output) = work.pop().expect("one worker item");
+                vec![(
+                    0,
+                    Self::probe_unique_exact_int_chunk(
+                        table,
+                        build_types,
+                        probe_types,
+                        input,
+                        output,
+                        key_offset,
+                        probe_is_left,
+                        kind,
+                        builds_preserved,
+                        decimal_mul_lt,
+                        decimal_products,
+                    ),
+                )]
+            } else {
+                let mut lanes = (0..worker_count)
+                    .map(|_| Vec::with_capacity(PARALLEL_PROBE_CHUNKS_PER_WORKER))
+                    .collect::<Vec<_>>();
+                for (index, item) in work.into_iter().enumerate() {
+                    lanes[index % worker_count].push((index, item));
+                }
+                std::thread::scope(|scope| {
+                    let handles = lanes
+                        .into_iter()
+                        .map(|lane| {
+                            scope.spawn(move || {
+                                lane.into_iter()
+                                    .map(|(index, (input, output))| {
+                                        (
+                                            index,
+                                            Self::probe_unique_exact_int_chunk(
+                                                table,
+                                                build_types,
+                                                probe_types,
+                                                input,
+                                                output,
+                                                key_offset,
+                                                probe_is_left,
+                                                kind,
+                                                builds_preserved,
+                                                decimal_mul_lt,
+                                                decimal_products,
+                                            ),
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    let mut outcomes = Vec::with_capacity(PARALLEL_PROBE_CHUNKS_PER_WORKER);
+                    for handle in handles {
+                        let mut lane = handle.join().unwrap_or_else(|_| {
+                            vec![(
+                                0,
+                                Err(ExecError::internal("hash join probe worker panicked")),
+                            )]
+                        });
+                        outcomes.append(&mut lane);
+                    }
+                    outcomes
+                })
+            }
+        };
+
+        // Join every worker before observing an error. Only a completely
+        // successful window may update the preserved-side match bitmap. Lane
+        // assignment is round-robin, so restore source-chunk order before
+        // handing results to the parent executor.
+        let mut outcomes = outcomes;
+        outcomes.sort_unstable_by_key(|(index, _)| *index);
+        let results = outcomes
+            .into_iter()
+            .map(|(_, result)| result)
+            .collect::<Result<Vec<_>, _>>()?;
+        let condition_evals = results.iter().fold(0u64, |total, result| {
+            total.saturating_add(result.condition_evals)
+        });
+        self.condition_evals
+            .set(self.condition_evals.get().saturating_add(condition_evals));
+        let hash = self
+            .hash
+            .as_mut()
+            .expect("parallel probe requires hash state");
+        if worker_count > 1 {
+            hash.parallel_probe_windows = hash.parallel_probe_windows.saturating_add(1);
+        }
+        for mut result in results {
+            result.input.reset();
+            hash.parallel_probe_input_reuse.push(result.input);
+            for ptr in result.matched_build_rows {
+                hash.table.mark_matched(ptr);
+            }
+            if result.output.num_rows() == 0 {
+                result.output.reset();
+                hash.parallel_probe_output_reuse.push(result.output);
+            } else {
+                hash.parallel_probe_pending.push_back(result.output);
+            }
+        }
+        Ok(())
+    }
+
+    /// Evaluates one probe chunk against a unique exact-integer build table.
+    /// All arguments are `Send`/`Sync` data; notably neither the executor tree
+    /// nor the expression context is present in this worker contract.
+    #[allow(clippy::too_many_arguments)]
+    fn probe_unique_exact_int_chunk(
+        table: &BuildTable,
+        build_types: &[FieldType],
+        probe_types: &[FieldType],
+        input: Chunk,
+        mut output: Chunk,
+        key_offset: usize,
+        probe_is_left: bool,
+        kind: JoinKind,
+        builds_preserved: bool,
+        decimal_mul_lt: Option<&DecimalMulLtFastPath>,
+        decimal_products: &HashMap<RowPtr, Option<MyDecimal>>,
+    ) -> Result<ParallelProbeResult, ExecError> {
+        output.reset();
+        let required_columns = probe_types.len() + build_types.len();
+        if output.num_cols() < required_columns {
+            return Err(ExecError::internal(format!(
+                "parallel hash join output has {} columns, needs {} (probe {}, build {})",
+                output.num_cols(),
+                required_columns,
+                probe_types.len(),
+                build_types.len()
+            )));
+        }
+        if input.num_cols() < probe_types.len() {
+            return Err(ExecError::internal(format!(
+                "parallel hash join probe has {} columns, needs {}",
+                input.num_cols(),
+                probe_types.len()
+            )));
+        }
+        let mut build_buf = Chunk::new_with_capacity(build_types, 1);
+        let condition_evals = Cell::new(0u64);
+        let mut matched_build_rows = if builds_preserved {
+            Vec::with_capacity(input.num_rows())
+        } else {
+            Vec::new()
+        };
+        // Probe chunks produced by the coprocessor scan normally have no
+        // selection vector. Keep the key column borrowed once in that shape;
+        // the generic selected-chunk path below still uses the logical Row
+        // accessor so selection semantics remain unchanged.
+        let probe_key_values = input.sel().is_none().then(|| input.column(key_offset));
+        let exact_key_at = |row_index: usize| {
+            if let Some(values) = probe_key_values.as_ref() {
+                if values.is_null(row_index) {
+                    None
+                } else if probe_types[key_offset].is_unsigned() {
+                    Some(i128::from(values.get_uint64(row_index)))
+                } else {
+                    Some(i128::from(values.get_int64(row_index)))
+                }
+            } else {
+                let probe_row = input.get_row(row_index);
+                exact_int_key_chunk(probe_row, key_offset, &probe_types[key_offset])
+            }
+        };
+
+        // The common unique-key dimension join has one build candidate for
+        // every probe row. Preflight that shape once, then retain the build
+        // container's records read lock across the whole window instead of
+        // reacquiring it for every joined row. The decimal residual form is
+        // included here: q17 has one unique part row per probe key, and the
+        // residual still runs for every pair while the source lock is held.
+        if !builds_preserved && input.num_rows() > 0 {
+            let mut batch_ptrs = Vec::with_capacity(input.num_rows());
+            let mut all_matched = true;
+            for probe_index in 0..input.num_rows() {
+                let exact_key = exact_key_at(probe_index);
+                let candidates = exact_key.map_or(&[][..], |key| table.probe_exact_int(key));
+                if candidates.len() != 1 {
+                    all_matched = false;
+                    break;
+                }
+                batch_ptrs.push(candidates[0]);
+            }
+            if all_matched {
+                if let Some(fast) = decimal_mul_lt {
+                    let mut probe_index = 0;
+                    table
+                        .with_rows(&batch_ptrs, &mut build_buf, |build_row| {
+                            let current_probe_index = probe_index;
+                            probe_index += 1;
+                            // `get_row` maps through the selection vector, so
+                            // q17's residual can borrow the worker-owned input
+                            // directly. Deep-copying all probe columns here
+                            // doubled the 6M-row scan traffic before emitting
+                            // the small residual-selected result.
+                            let probe_row = input.get_row(current_probe_index);
+                            let ptr = batch_ptrs[current_probe_index];
+                            let (left, left_types, right, right_types) = if probe_is_left {
+                                (probe_row, probe_types, build_row, build_types)
+                            } else {
+                                (build_row, build_types, probe_row, probe_types)
+                            };
+                            if Self::matches_decimal_mul_lt(
+                                &condition_evals,
+                                fast,
+                                left,
+                                left_types,
+                                right,
+                                right_types,
+                                decimal_products.get(&ptr).map(Option::as_ref),
+                            )? {
+                                Self::append_joined_chunk_rows_order(
+                                    &mut output,
+                                    probe_is_left,
+                                    probe_row,
+                                    build_row,
+                                );
+                            }
+                            Ok::<(), ExecError>(())
+                        })
+                        .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
+                    drop(probe_key_values);
+                    return Ok(ParallelProbeResult {
+                        input,
+                        output,
+                        matched_build_rows,
+                        condition_evals: condition_evals.get(),
+                    });
+                }
+                // Bulk appends index physical row ranges and intentionally do
+                // not consult a source selection vector. Compact only this
+                // pure-equality arm; the residual arm above emits logical
+                // rows individually and needs no copy.
+                let probe = input.copy_construct_sel();
+                let build_key_from_probe = build_types.len() == 1
+                    && build_types[0].eval_type() == tidb_datatype::EvalType::Int
+                    && probe_types[key_offset].eval_type() == tidb_datatype::EvalType::Int
+                    && build_types[0].is_unsigned() == probe_types[key_offset].is_unsigned()
+                    && output
+                        .column(if probe_is_left { probe_types.len() } else { 0 })
+                        .type_size()
+                        == probe.column(key_offset).type_size();
+                if probe_is_left {
+                    output.append_partial_range_from(0, &probe, 0, probe.num_rows());
+                }
+                if build_key_from_probe {
+                    output.append_column_range_from(
+                        if probe_is_left { probe_types.len() } else { 0 },
+                        &probe,
+                        key_offset,
+                        0,
+                        probe.num_rows(),
+                    );
+                } else {
+                    table
+                        .with_rows(&batch_ptrs, &mut build_buf, |build_row| {
+                            output.append_partial_row(
+                                if probe_is_left { probe_types.len() } else { 0 },
+                                build_row,
+                            );
+                            Ok::<(), ExecError>(())
+                        })
+                        .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
+                }
+                // A selection-bearing probe chunk is compacted once. The
+                // output then receives the probe columns in bulk and the
+                // build suffix under one retained source lock, preserving
+                // row order while avoiding one source cell copy for every
+                // probe column on every joined row.
+                if !probe_is_left {
+                    output.append_partial_range_from(
+                        build_types.len(),
+                        &probe,
+                        0,
+                        probe.num_rows(),
+                    );
+                }
+                drop(probe_key_values);
+                return Ok(ParallelProbeResult {
+                    input,
+                    output,
+                    matched_build_rows,
+                    condition_evals: condition_evals.get(),
+                });
+            }
+        }
+        for probe_index in 0..input.num_rows() {
+            let probe_row = input.get_row(probe_index);
+            let exact_key = exact_key_at(probe_index);
+            let candidates: &[RowPtr] = exact_key.map_or(&[], |key| table.probe_exact_int(key));
+            debug_assert!(candidates.len() <= 1);
+            let mut matched = false;
+            for &ptr in candidates {
+                let emitted = table
+                    .with_row(ptr, &mut build_buf, |build_row| {
+                        if let Some(fast) = decimal_mul_lt {
+                            let (left, left_types, right, right_types) = if probe_is_left {
+                                (probe_row, probe_types, build_row, build_types)
+                            } else {
+                                (build_row, build_types, probe_row, probe_types)
+                            };
+                            if !Self::matches_decimal_mul_lt(
+                                &condition_evals,
+                                fast,
+                                left,
+                                left_types,
+                                right,
+                                right_types,
+                                decimal_products.get(&ptr).map(Option::as_ref),
+                            )? {
+                                return Ok::<bool, ExecError>(false);
+                            }
+                        }
+                        Self::append_joined_chunk_rows_order(
+                            &mut output,
+                            probe_is_left,
+                            probe_row,
+                            build_row,
+                        );
+                        Ok::<bool, ExecError>(true)
+                    })
+                    .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
+                matched |= emitted;
+                if emitted && builds_preserved {
+                    matched_build_rows.push(ptr);
+                }
+            }
+            if !matched && !builds_preserved && matches!(kind, JoinKind::Left | JoinKind::Right) {
+                Self::append_unmatched_probe_chunk_row(
+                    &mut output,
+                    probe_is_left,
+                    probe_row,
+                    build_types.len(),
+                );
+            }
+        }
+        drop(probe_key_values);
+        Ok(ParallelProbeResult {
+            input,
+            output,
+            matched_build_rows,
+            condition_evals: condition_evals.get(),
+        })
     }
 
     /// Materializes and indexes the chosen build side, once per `open()`.
@@ -2577,7 +3229,9 @@ impl<C: Columns> JoinExec<C> {
             self.meta.max_chunk_size(),
             self.memory.spill_storage(),
             track_matches,
-            self.kind == JoinKind::Inner && self.residual_conditions.is_empty(),
+            self.kind == JoinKind::Inner
+                || (matches!(self.kind, JoinKind::Left | JoinKind::Right)
+                    && self.residual_conditions.is_empty()),
         );
         table.mem_tracker().attach_to(&self.tracker);
         table.disk_tracker().attach_to(&self.disk_tracker);
@@ -2626,6 +3280,7 @@ impl<C: Columns> JoinExec<C> {
         // finishes and nothing more can change it.
         self.build_spilled = table.already_spilled();
         self.spilled_bytes = self.disk_tracker.bytes_consumed();
+        let parallel_exact_int_enabled = table.exact_int_is_unique();
         let build_buf = Chunk::new_with_capacity(&build_types, 1);
         let unmatched_build_scan = track_matches.then(|| table.first_ptr()).flatten();
         self.hash = Some(HashState {
@@ -2637,6 +3292,11 @@ impl<C: Columns> JoinExec<C> {
             probe_done: false,
             decimal_mul_products: HashMap::new(),
             unmatched_build_scan,
+            parallel_probe_pending: VecDeque::new(),
+            parallel_probe_input_reuse: Vec::new(),
+            parallel_probe_output_reuse: Vec::new(),
+            parallel_exact_int_enabled,
+            parallel_probe_windows: 0,
         });
         Ok(())
     }
@@ -2676,10 +3336,10 @@ impl<C: Columns> JoinExec<C> {
         // Keep pure-equality inputs chunk-backed from hash calculation through
         // output assembly. This is the common TPC-H path and avoids
         // materializing every wide probe row as `Vec<Datum>`.
-        let builds_preserved_outer = self.hash_builds_preserved_side()
-            && matches!(self.kind, JoinKind::Left | JoinKind::Right);
-        if (self.kind == JoinKind::Inner || builds_preserved_outer)
-            && self.residual_conditions.is_empty()
+        if matches!(
+            self.kind,
+            JoinKind::Inner | JoinKind::Left | JoinKind::Right
+        ) && self.residual_conditions.is_empty()
         {
             return self.drain_chunk_backed_probe(req, probe_is_left, &probe_types);
         }
@@ -2886,7 +3546,15 @@ impl<C: Columns> JoinExec<C> {
             let exact_key = exact_int.and_then(|key| {
                 exact_int_key_chunk(probe_row, offset(key), &probe_types[offset(key)])
             });
-            let key = row_hash_chunk(&keys, probe_row, probe_types, offset).map_err(key_error)?;
+            // The exact integer index uses the signed comparison-domain key
+            // directly. Avoid encoding the same value through the generic
+            // FNV path as well; this is the common single-column TPC-H join
+            // shape.
+            let key = if exact_int.is_some() {
+                None
+            } else {
+                row_hash_chunk(&keys, probe_row, probe_types, offset).map_err(key_error)?
+            };
             let mut matched = false;
             {
                 let HashState {
@@ -2897,12 +3565,19 @@ impl<C: Columns> JoinExec<C> {
                     ..
                 } = hash;
                 let probe_row = probe_chunk.get_row(probe_index);
-                let candidates: Vec<RowPtr> = if exact_int.is_some() {
-                    exact_key.map_or_else(Vec::new, |key| table.probe_exact_int(key).to_vec())
+                let candidates: &[RowPtr] = if exact_int.is_some() {
+                    exact_key.map_or(&[], |key| table.probe_exact_int(key))
                 } else {
-                    key.map_or_else(Vec::new, |key| table.probe(key).to_vec())
+                    key.map_or(&[], |key| table.probe(key))
                 };
-                for ptr in candidates {
+                // Marking a preserved build row mutates the same table that
+                // owns `candidates`, so defer those bitmap writes until the
+                // immutable slice is no longer borrowed. A unique build key
+                // (TPC-H q13's customer key) stays entirely on the stack;
+                // only a true one-to-many bucket allocates overflow storage.
+                let mut first_matched_ptr = None;
+                let mut additional_matched_ptrs = Vec::new();
+                for &ptr in candidates {
                     let accepted = table
                         .with_row(ptr, build_buf, |build_row| {
                             let (left, left_types, right, right_types) = if probe_is_left {
@@ -2938,12 +3613,22 @@ impl<C: Columns> JoinExec<C> {
                         .map_err(|error| ExecError::SpillFailed(error.to_string()))?
                         .map_err(key_error)?;
                     if builds_preserved && accepted {
-                        table.mark_matched(ptr);
+                        if first_matched_ptr.is_none() {
+                            first_matched_ptr = Some(ptr);
+                        } else {
+                            additional_matched_ptrs.push(ptr);
+                        }
                     }
                     matched |= accepted;
                     if matches!(kind, JoinKind::Semi) && matched {
                         break;
                     }
+                }
+                if let Some(ptr) = first_matched_ptr {
+                    table.mark_matched(ptr);
+                }
+                for ptr in additional_matched_ptrs {
+                    table.mark_matched(ptr);
                 }
             }
             if !matched && !builds_preserved {
@@ -2980,6 +3665,13 @@ impl<C: Columns> JoinExec<C> {
     ) -> Result<(), ExecError> {
         let keys = self.keys.clone();
         let offset = |key: &EquiKey| if probe_is_left { key.left } else { key.right };
+        let use_exact_int = self
+            .hash
+            .as_ref()
+            .is_some_and(|hash| hash.table.has_exact_int());
+        let exact_int = keys.first().filter(|key| {
+            use_exact_int && keys.len() == 1 && key.class == KeyClass::Int && !key.null_safe
+        });
         let conditions = &self.residual_conditions;
         let decimal_mul_lt = self.residual_decimal_mul_lt.as_ref();
         let product_build_column = decimal_mul_lt.and_then(|fast| {
@@ -3007,16 +3699,21 @@ impl<C: Columns> JoinExec<C> {
                 return Ok(());
             }
             let probe_index = hash.probe_row;
-            let key = row_hash_chunk(
-                &keys,
-                hash.probe_chunk.get_row(probe_index),
-                probe_types,
-                offset,
-            )
-            .map_err(key_error)?;
             let probe_row = hash.probe_chunk.get_row(probe_index);
-            let candidates = key.map_or_else(Vec::new, |key| hash.table.probe(key).to_vec());
-            for ptr in candidates {
+            let exact_key = exact_int.and_then(|key| {
+                exact_int_key_chunk(probe_row, offset(key), &probe_types[offset(key)])
+            });
+            let key = if exact_int.is_some() {
+                None
+            } else {
+                row_hash_chunk(&keys, probe_row, probe_types, offset).map_err(key_error)?
+            };
+            let candidates: &[RowPtr] = if exact_int.is_some() {
+                exact_key.map_or(&[], |key| hash.table.probe_exact_int(key))
+            } else {
+                key.map_or(&[], |key| hash.table.probe(key))
+            };
+            for &ptr in candidates {
                 let cached_product = match (decimal_mul_lt, product_build_column) {
                     (Some(fast), Some(column)) => {
                         if !hash.decimal_mul_products.contains_key(&ptr) {
@@ -3051,7 +3748,14 @@ impl<C: Columns> JoinExec<C> {
                         } else {
                             (build_row, build_types.as_slice(), probe_row, probe_types)
                         };
-                        if !equi_keys_equal_chunk_rows(&keys, left, left_types, right, right_types)
+                        if exact_int.is_none()
+                            && !equi_keys_equal_chunk_rows(
+                                &keys,
+                                left,
+                                left_types,
+                                right,
+                                right_types,
+                            )
                             .map_err(key_error)?
                             || !(match decimal_mul_lt {
                                 Some(fast) => Self::matches_decimal_mul_lt(

@@ -563,6 +563,15 @@ pub struct IndexRangeSourceExec {
     scanned: Rc<Cell<u64>>,
     /// Conjuncts this source took over from the `Selection` above it.
     filter: Option<crate::predicate_pushdown::ScanFilterProbe>,
+    /// The same conjunct descriptions, lowered into an index-side
+    /// coprocessor Selection before a handle TopN or table lookup.
+    pushed: Vec<crate::predicate_pushdown::ScanPredicate>,
+    /// Whether the driver proved the accepted filter is covered by this
+    /// index. This is an execution hint; the ordinary row filter remains as
+    /// a semantic check after the table lookup.
+    index_filter: bool,
+    /// A bounded TopN that can run on the index stream before table lookup.
+    top_n: Option<crate::remote_scan::PushdownTopN>,
     /// A pushed row cap (`offset + count`); see [`Executor::accept_scan_limit`].
     limit: Option<u64>,
     /// Handles skipped before a limit embedded in an ordered IndexLookUp.
@@ -589,10 +598,20 @@ pub struct IndexRangeSourceExec {
     /// Go's `indexWorker.batchSize`: how many handles the next batch collects,
     /// doubling per batch up to [`MAX_HANDLE_BATCH`].
     batch_size: usize,
+    /// A keep-order parent's output window, used only to seed the first
+    /// lookup task. It neither caps the scan nor changes plan shape.
+    initial_batch_size: usize,
     /// Rows decoded for the current handle batch, retained across output
     /// chunks when a batch is larger than the requested chunk size.
     lookup_rows: Vec<Option<Vec<Datum>>>,
     lookup_row_at: usize,
+    /// Whether the current lookup batch was completely filtered by TiKV.
+    /// When true, re-evaluating the same probe residual locally only adds
+    /// expression work and cannot change the result.
+    lookup_filter_complete: bool,
+    /// A remote coprocessor index stream, when the TiKV backend can serve the
+    /// selected index/filter/TopN shape.
+    remote_index: Option<crate::kv_table::RemoteIndexHandleCursor>,
     /// The statement-class flags and session zone the row is decoded under;
     /// the zone also encodes the index probe. See [`HandleSourceExec`].
     decode_context: crate::kv_table::RowDecodeContext,
@@ -668,6 +687,9 @@ impl IndexRangeSourceExec {
             produced: Rc::new(Cell::new(0)),
             scanned: Rc::new(Cell::new(0)),
             filter: None,
+            pushed: Vec::new(),
+            index_filter: false,
+            top_n: None,
             limit: None,
             lookup_offset: 0,
             skipped_handles: 0,
@@ -677,8 +699,11 @@ impl IndexRangeSourceExec {
             batch: Vec::new(),
             batch_at: 0,
             batch_size: INIT_HANDLE_BATCH,
+            initial_batch_size: INIT_HANDLE_BATCH,
             lookup_rows: Vec::new(),
             lookup_row_at: 0,
+            lookup_filter_complete: false,
+            remote_index: None,
             decode_context,
             statement,
             estimated_rows: None,
@@ -784,6 +809,7 @@ impl IndexRangeSourceExec {
             if self.lookup_row_at == self.lookup_rows.len() {
                 self.lookup_rows.clear();
                 self.lookup_row_at = 0;
+                self.lookup_filter_complete = false;
                 let target = self.limit.map_or(self.batch_size, |limit| {
                     self.batch_size.min(
                         usize::try_from(limit.saturating_sub(self.produced.get())).unwrap_or(0),
@@ -799,16 +825,42 @@ impl IndexRangeSourceExec {
                 if handles.is_empty() {
                     return Ok(None);
                 }
-                self.lookup_rows = self
-                    .table
-                    .get_rows_by_handles_projected_with_context(
-                        &handles,
-                        Some(&self.keep),
-                        &self.decode_context,
-                    )
-                    .map_err(|error| {
-                        ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
-                    })?;
+                // A clean table can answer the whole lookup batch in one
+                // coprocessor request even when no residual predicate was
+                // accepted on the index. The old gate only enabled this for
+                // non-empty `pushed`, leaving ordinary wide index lookups to
+                // decode every row through the local BatchGet path.
+                let remote = if self.partial_aggregate.is_none() {
+                    self.table
+                        .pushdown_rows_by_handles_filtered(
+                            &handles,
+                            &self.keep,
+                            &self.pushed,
+                            self.decode_context.zone(),
+                            &self.statement,
+                        )
+                        .map_err(|error| {
+                            ExecError::unsupported(format!("remote table lookup failed: {error:?}"))
+                        })?
+                } else {
+                    None
+                };
+                self.lookup_rows = if let Some((rows, predicates_applied)) = remote {
+                    self.lookup_filter_complete = predicates_applied;
+                    rows.into_iter().map(|(_, row)| Some(row)).collect()
+                } else {
+                    self.table
+                        .get_rows_by_handles_projected_with_context(
+                            &handles,
+                            Some(&self.keep),
+                            &self.decode_context,
+                        )
+                        .map_err(|error| {
+                            ExecError::unsupported(format!(
+                                "table bytes failed to decode: {error:?}"
+                            ))
+                        })?
+                };
             }
             let row = std::mem::take(&mut self.lookup_rows[self.lookup_row_at]);
             self.lookup_row_at += 1;
@@ -831,6 +883,11 @@ impl IndexRangeSourceExec {
     /// The next handle in index order across all ranges, opening the next
     /// range's cursor when the current one runs out.
     fn next_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
+        if let Some(remote) = self.remote_index.as_mut() {
+            return remote
+                .next_handle()
+                .map_err(|_| ExecError::unsupported("remote index row failed to decode"));
+        }
         loop {
             if let Some(cursor) = self.cursor.as_mut() {
                 let handle = cursor
@@ -1120,11 +1177,30 @@ impl Executor for IndexRangeSourceExec {
         self.scanned.set(0);
         self.batch.clear();
         self.batch_at = 0;
-        self.batch_size = INIT_HANDLE_BATCH;
+        self.batch_size = self.initial_batch_size;
+        self.lookup_rows.clear();
+        self.lookup_row_at = 0;
+        self.lookup_filter_complete = false;
         self.skipped_handles = 0;
         self.partial_remote = None;
         self.partial_rows = None;
         self.partial_done = false;
+        self.remote_index = if self.covering || (!self.index_filter && self.top_n.is_none()) {
+            None
+        } else {
+            self.table
+                .pushdown_index_handle_cursor(
+                    self.index_id,
+                    &self.ranges,
+                    &self.keep,
+                    &self.pushed,
+                    self.top_n.as_ref(),
+                    self.decode_context.zone(),
+                    &self.statement,
+                    self.descending,
+                )
+                .map_err(|_| ExecError::unsupported("remote index scan failed to open"))?
+        };
         if let Some(aggregate) = self.partial_aggregate.as_ref() {
             self.partial_remote = self
                 .table
@@ -1141,8 +1217,19 @@ impl Executor for IndexRangeSourceExec {
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        let cap = req.required_rows().clamp(1, self.meta.max_chunk_size());
+        if self.produced.get() == 0
+            && self.scanned.get() == 0
+            && self.lookup_rows.is_empty()
+            && self.batch.is_empty()
+        {
+            // Go seeds `indexWorker.batchSize` from the first output chunk's
+            // RequiredRows. A LIMIT/TopN parent therefore starts a double read
+            // at its requested window instead of decoding a full 1,024-row
+            // chunk that the parent will immediately discard.
+            self.batch_size = self.batch_size.min(cap).min(MAX_HANDLE_BATCH);
+        }
         req.reset();
-        let cap = self.meta.max_chunk_size();
         if let Some(remote) = self.partial_remote.as_mut() {
             while req.num_rows() < cap {
                 let Some(row) = remote.next_row().map_err(|error| {
@@ -1195,9 +1282,11 @@ impl Executor for IndexRangeSourceExec {
             // An index entry whose row is gone is not a row: the same
             // `if let Some(row)` the materializing path had.
             self.scanned.set(self.scanned.get() + 1);
-            if let Some(filter) = self.filter.as_mut() {
-                if !filter.admits(&row)? {
-                    continue;
+            if !self.lookup_filter_complete {
+                if let Some(filter) = self.filter.as_mut() {
+                    if !filter.admits(&row)? {
+                        continue;
+                    }
                 }
             }
             for (c, value) in row.iter().enumerate() {
@@ -1213,6 +1302,7 @@ impl Executor for IndexRangeSourceExec {
         self.partial_remote = None;
         self.partial_rows = None;
         self.partial_done = false;
+        self.remote_index = None;
         Ok(())
     }
 
@@ -1347,7 +1437,12 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
     fn accept_embedded_lookup_limit(&mut self, offset: u64, count: u64) -> bool {
         if self.covering
             || self.table.has_dirty_content()
-            || self.filter.is_some()
+            // With a zero SQL offset, a pushed index-side Selection can be
+            // evaluated by the lookup source while it continues collecting
+            // handles until `count` qualifying rows are produced. A non-zero
+            // offset must remain above that filter, so keep the conservative
+            // refusal there.
+            || (offset > 0 && self.filter.is_some())
             || self.partial_aggregate.is_some()
             || self.limit.is_some()
         {
@@ -1355,6 +1450,16 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         }
         self.lookup_offset = offset;
         self.limit = Some(count);
+        true
+    }
+
+    fn accept_lookup_batch_size(&mut self, size: u64) -> bool {
+        if self.covering || size == 0 {
+            return false;
+        }
+        self.initial_batch_size = usize::try_from(size)
+            .unwrap_or(MAX_HANDLE_BATCH)
+            .clamp(1, MAX_HANDLE_BATCH);
         true
     }
 
@@ -1376,6 +1481,52 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
             ctx.clone(),
             self.meta.new_chunk(),
         ));
+        self.pushed = filter.predicates().to_vec();
+        true
+    }
+
+    fn accept_index_filter(&mut self) -> bool {
+        if self.covering || self.filter.is_none() || self.table.has_dirty_content() {
+            return false;
+        }
+        self.index_filter = true;
+        true
+    }
+
+    fn accept_index_top_n(&mut self, order_by: &[(usize, bool)], limit: u64) -> bool {
+        if self.covering
+            || !self.index_filter
+            || self.top_n.is_some()
+            || self.table.has_dirty_content()
+            || order_by.is_empty()
+        {
+            return false;
+        }
+        let Some(index) = self
+            .table
+            .indexes()
+            .iter()
+            .find(|index| index.id == self.index_id)
+        else {
+            return false;
+        };
+        if order_by.iter().any(|(offset, _)| {
+            self.keep
+                .get(*offset)
+                .is_none_or(|physical| !index.column_offsets.contains(physical))
+        }) {
+            return false;
+        }
+        self.top_n = Some(crate::remote_scan::PushdownTopN {
+            order_by: order_by
+                .iter()
+                .map(|(offset, desc)| crate::remote_scan::PushdownTopNOrder {
+                    offset: *offset,
+                    desc: *desc,
+                })
+                .collect(),
+            limit,
+        });
         true
     }
 
@@ -2710,6 +2861,33 @@ mod tests {
             gets.load(Ordering::Relaxed),
             1,
             "the five rows share one table lookup batch"
+        );
+    }
+
+    /// Go seeds an IndexLookUp's first handle task from the parent's
+    /// `RequiredRows`. A non-index residual prevents a pushed-down Limit, but
+    /// the root Limit still asks for five rows, so the double read must not
+    /// prefetch and decode a full 1,024-handle batch.
+    #[test]
+    fn an_ordered_double_read_starts_at_the_parent_required_rows() {
+        let ctx = crate::StmtContext::for_query();
+        let (catalog, entries, gets) = table_of(ROWS, true);
+        let rows = run_select_on(
+            "SELECT * FROM t USE INDEX (ib) WHERE b > 0 AND c >= 0 ORDER BY b LIMIT 5",
+            &catalog,
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 5);
+        assert_eq!(
+            entries.load(Ordering::Relaxed),
+            5,
+            "the first index task follows the root Limit's RequiredRows"
+        );
+        assert_eq!(
+            gets.load(Ordering::Relaxed),
+            1,
+            "one five-handle lookup task"
         );
     }
 

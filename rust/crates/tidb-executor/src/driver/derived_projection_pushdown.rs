@@ -72,8 +72,30 @@ pub(crate) fn push_local_predicates_into_derived(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Option<SelectStmt> {
+    // A base-table query cannot expose a predicate through a derived
+    // projection. Avoid constructing the full RowSource/statistics model for
+    // this common shape; the physical single-table fast path owns its
+    // predicate planning below.
+    if !select.from.as_ref().is_some_and(join_contains_derived) {
+        return None;
+    }
     let mut rewritten = select.clone();
     push_select_predicates(&mut rewritten, catalog, current_db, ctx).then_some(rewritten)
+}
+
+fn join_contains_derived(join: &Join) -> bool {
+    fn node_contains_derived(node: &JoinNode) -> bool {
+        match node {
+            JoinNode::Derived { .. } => true,
+            JoinNode::Table(_) => false,
+            JoinNode::Join(join) => {
+                node_contains_derived(&join.left)
+                    || join.right.as_ref().is_some_and(node_contains_derived)
+            }
+        }
+    }
+
+    node_contains_derived(&join.left) || join.right.as_ref().is_some_and(node_contains_derived)
 }
 
 fn expand_join_derived_wildcards(join: &mut Join, catalog: &Catalog, current_db: &str) -> bool {

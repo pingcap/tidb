@@ -86,6 +86,14 @@ pub trait ColumnResolver {
         None
     }
 
+    /// Whether any column path in this resolver can currently materialize as
+    /// a planner-owned constant. Consumers that only need to substitute such
+    /// columns can use this to keep an ordinary AST borrowed instead of
+    /// cloning it speculatively.
+    fn has_resolved_constants(&self) -> bool {
+        false
+    }
+
     /// Resolves a `DEFAULT(column)` leaf to the statement-scoped constant its
     /// DML planner prepared. A default implementation keeps ordinary query
     /// resolvers unaware of write-only metadata; write resolvers override it
@@ -532,7 +540,18 @@ pub fn rewrite_expr_resolved(
     let mut built = rewrite_leaf(expr, resolver)?;
     derive_tree_collation_with_connection(&mut built, resolver.connection_charset_info())?;
     resolver.fold_constant(&mut built, resolver.fold_mode());
+    prepare_in_string_hash_sets(&mut built);
     Ok(built)
+}
+
+fn prepare_in_string_hash_sets(expr: &mut Expression) {
+    let Expression::ScalarFunction(function) = expr else {
+        return;
+    };
+    for argument in &mut function.args {
+        prepare_in_string_hash_sets(argument);
+    }
+    function.prepare_in_string_hash_set();
 }
 
 /// Runs Go's collation derivation over a freshly built expression tree,

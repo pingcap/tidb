@@ -65,7 +65,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -80,9 +79,15 @@ use tidb_executor::remote_scan::{
     PushdownScanRequest, PushdownScanner, PushdownScannerError, EXTRA_HANDLE_COLUMN_ID,
 };
 use tidb_executor::storage::StorageError;
+use tidb_planner::cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
+use tidb_planner::physical_index_scan::PhysicalIndexScanPlan;
 use tidb_planner::physical_table_scan::PhysicalTableScanPlan;
-use tidb_planner::tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec};
-use tidb_proto::tipb::{Aggregation, ExecType, Expr, ExprType, ScalarFuncSig};
+use tidb_planner::tikv_scan_spec::{
+    ResolvedIndexDescriptor, ScanColumnInfo, TiKvIndexScanSpec, TiKvTableScanSpec,
+};
+use tidb_proto::tipb::{
+    Aggregation, ByItem, ExecType, Executor as PbExecutor, Expr, ExprType, ScalarFuncSig, TopN,
+};
 use tidb_txnkv::KeyRange;
 
 use crate::dag_request::{
@@ -129,8 +134,16 @@ const MYSQL_TYPE_TINY: i32 = 1;
 /// The point of the bound is that it *is* a bound: a scan holds a few batches
 /// of decoded rows, never the relation, so the streaming property the scan
 /// source has above the seam survives the thread hop below it.
-const BATCH_ROWS: usize = 8192;
+// Keep the response-channel boundary above TiKV's small type chunks so a
+// reader can amortize cross-thread wakeups while the consumer drains a full
+// scan. The table-scan seam still transfers a source chunk directly when it
+// reaches its own executor cap.
+const BATCH_ROWS: usize = 32768;
 const MAX_BATCHES_AHEAD: usize = 64;
+/// Full scans have no early-stop consumer. A deeper bounded queue lets TiKV
+/// response decoding overlap local join/aggregate work; scans with LIMIT keep
+/// the caller's smaller read-ahead so cancellation remains tight.
+const FULL_SCAN_MIN_BATCHES_AHEAD: usize = 16;
 
 /// One coprocessor scan capability for a node's sessions.
 ///
@@ -388,12 +401,14 @@ where
         // those -- fewer rows than the query asked for, with nothing to say so.
         // This is the same hazard the staged buffer already guards against by
         // dropping the cap whenever rows are merged in locally.
-        let remote_limit =
-            if lowered.len() == request.predicates.len() && request.aggregate.is_none() {
-                request.limit
-            } else {
-                None
-            };
+        let remote_limit = if lowered.len() == request.predicates.len()
+            && request.aggregate.is_none()
+            && request.topn.is_none()
+        {
+            request.limit
+        } else {
+            None
+        };
 
         let aggregate = match request.aggregate.as_ref() {
             None => None,
@@ -460,21 +475,68 @@ where
         };
         let output_offsets: Vec<u32> = (0..field_types.len() as u32).collect();
 
-        let mut spec = TiKvTableScanSpec::new(request.table_id, columns.clone());
-        // Go's `desc` on the TableScan executor: the region walks the
-        // ranges backwards. The ranges themselves stay ascending.
-        spec.desc = request.desc;
-        // A CLUSTERED table's primary key lives in the row key, so the
-        // coprocessor needs the ids to rebuild those columns from it -- Go's
-        // `newRowDecoder` falls back to exactly this list when no column
-        // carries `PkHandle`. Dropping it here left every clustered
-        // primary-key column NULL in a pushed-down scan.
-        spec.primary_column_ids = request.primary_column_ids.clone();
-        spec.primary_prefix_column_ids = request.primary_prefix_column_ids.clone();
-        // The merge above reads the remote rows in record-key order, which is
-        // the order it merges the staged buffer against.
-        spec.keep_order = request.keep_order;
-        let scan = PhysicalTableScanPlan::init(0, 0, spec);
+        if request.topn.is_some() && !predicates_applied {
+            return Err(refuse(
+                "a coprocessor TopN requires every predicate in the TiKV Selection",
+            ));
+        }
+        let index_scan = request
+            .index
+            .as_ref()
+            .map(|index| {
+                let candidate = LiveIndexCandidate {
+                    index_id: index.index_id,
+                    ranges: Vec::new(),
+                    proven_equality_range: false,
+                    point_statistics: IndexPointStatistics {
+                        topn_count: None,
+                        cms_count: None,
+                        histogram_count: 0,
+                    },
+                    row_size: 1.0,
+                    scan_factor: 1.0,
+                    index_scan_cost_factor: 1.0,
+                };
+                let mut spec = TiKvIndexScanSpec::new(
+                    request.table_id,
+                    index.index_id,
+                    columns.clone(),
+                    index.declared_unique,
+                    index.index_column_count,
+                );
+                spec.desc = index.desc;
+                spec.primary_column_ids = request.primary_column_ids.clone();
+                PhysicalIndexScanPlan::init(0, 0, &candidate, 0.0)
+                    .try_with_pushdown(
+                        ResolvedIndexDescriptor {
+                            index_id: index.index_id,
+                            declared_unique: index.declared_unique,
+                            index_column_count: index.index_column_count,
+                        },
+                        spec,
+                    )
+                    .map_err(|error| refuse(&format!("invalid index scan metadata: {error:?}")))
+            })
+            .transpose()?;
+        let table_scan = if index_scan.is_none() {
+            let mut spec = TiKvTableScanSpec::new(request.table_id, columns.clone());
+            // Go's `desc` on the TableScan executor: the region walks the
+            // ranges backwards. The ranges themselves stay ascending.
+            spec.desc = request.desc;
+            // The merge above reads the remote rows in record-key order, which is
+            // the order it merges the staged buffer against.
+            spec.keep_order = request.keep_order;
+            spec.primary_column_ids = request.primary_column_ids.clone();
+            spec.primary_prefix_column_ids = request.primary_prefix_column_ids.clone();
+            Some(PhysicalTableScanPlan::init(0, 0, spec))
+        } else {
+            None
+        };
+        let scan = match (&index_scan, &table_scan) {
+            (Some(scan), None) => TiKvScanPlan::Index(scan),
+            (None, Some(scan)) => TiKvScanPlan::Table(scan),
+            _ => unreachable!("one physical scan is built per request"),
+        };
         // Go `ConstructDAGReq`: the zone comes from the SESSION VARIABLES of
         // the statement that issued this request, read fresh every time.
         let (time_zone_name, time_zone_offset_secs) = request.statement.time_zone.dag_zone();
@@ -491,13 +553,13 @@ where
             // this scan's bounded handoff, without per-row materialization.
             EncodeType::Chunk,
         );
-        let dag = match aggregate.as_ref() {
+        let mut dag = match aggregate.as_ref() {
             Some(LoweredAggregate::Legacy {
                 message,
                 output_width,
             }) => construct_aggregated_read_only_dag_req_with_conditions(
                 &context,
-                TiKvScanPlan::Table(&scan),
+                scan,
                 &conditions,
                 message.clone(),
                 *output_width,
@@ -505,7 +567,7 @@ where
             Some(LoweredAggregate::Global(functions)) => {
                 construct_aggregate_read_only_dag_req_with_conditions(
                     &context,
-                    TiKvScanPlan::Table(&scan),
+                    scan,
                     &conditions,
                     functions,
                     &output_offsets,
@@ -517,7 +579,7 @@ where
                 streamed,
             }) => construct_grouped_aggregate_read_only_dag_req_with_conditions(
                 &context,
-                TiKvScanPlan::Table(&scan),
+                scan,
                 &conditions,
                 functions,
                 group_by,
@@ -526,44 +588,77 @@ where
             ),
             None => construct_capped_read_only_dag_req_with_conditions(
                 &context,
-                TiKvScanPlan::Table(&scan),
+                scan,
                 &conditions,
                 remote_limit,
                 &output_offsets,
             ),
         }
         .map_err(|error| PushdownScannerError::Unsupported(error.to_string()))?;
+        if let Some(topn) = request.topn.as_ref() {
+            let order_by = topn
+                .order_by
+                .iter()
+                .map(|item| {
+                    let column = request.columns.get(item.offset).ok_or_else(|| {
+                        refuse("a coprocessor TopN column is outside the scan output")
+                    })?;
+                    let mut expression = tidb_expr::column::Column::new(
+                        item.offset as i64 + 1,
+                        column.field_type.clone(),
+                    );
+                    expression.index = item.offset as i64;
+                    let expression = tidb_expr::pushdown_catalog::expression_to_pb(
+                        &tidb_expr::expression::Expression::Column(expression),
+                        &|offset| scan_column_descriptor(&columns, offset),
+                    )
+                    .ok_or_else(|| refuse("a coprocessor TopN key cannot be lowered to TiPB"))?;
+                    Ok(ByItem {
+                        expr: Some(expression),
+                        desc: Some(item.desc),
+                    })
+                })
+                .collect::<Result<Vec<_>, PushdownScannerError>>()?;
+            dag.executors.push(PbExecutor {
+                tp: Some(ExecType::TypeTopN as i32),
+                tbl_scan: None,
+                idx_scan: None,
+                selection: None,
+                aggregation: None,
+                top_n: Some(TopN {
+                    order_by,
+                    limit: Some(topn.limit),
+                }),
+                limit: None,
+                executor_id: Some(String::new()),
+                parent_idx: None,
+            });
+        }
 
         let summary = dag_summary(&dag);
-        if std::env::var_os("TIDB_DEBUG_COP_SCAN").is_some() {
-            eprintln!(
-                "COP_SCAN_OPEN table_id={} ranges={} columns={} predicates={} lowered={} keep_order={} summary={}",
-                request.table_id,
-                request.ranges.len(),
-                request.columns.len(),
-                request.predicates.len(),
-                lowered.len(),
-                request.keep_order,
-                summary,
-            );
-        }
         let key_ranges: Vec<KeyRange> = request
             .ranges
             .iter()
             .map(|(start, end)| KeyRange::new(start.clone(), end.clone()))
             .collect();
-        let mut shapes = vec![ExecutorShape::new(ExecutorKind::TableScan)];
+        let mut shapes = vec![ExecutorShape::new(if request.index.is_some() {
+            ExecutorKind::IndexScan
+        } else {
+            ExecutorKind::TableScan
+        })];
         if !conditions.is_empty() {
             shapes.push(ExecutorShape::new(ExecutorKind::Other));
         }
         if remote_limit.is_some() {
             shapes.push(ExecutorShape::new(ExecutorKind::Other));
         }
+        if request.topn.is_some() {
+            shapes.push(ExecutorShape::new(ExecutorKind::Other));
+        }
         if aggregate.is_some() {
             shapes.push(ExecutorShape::new(ExecutorKind::Other));
         }
         let plan = RemoteScanPlan {
-            table_id: request.table_id,
             dag,
             envelope: RequestEnvelope::new(shapes),
             key_ranges,
@@ -575,6 +670,11 @@ where
             warnings: request.statement.warnings.clone(),
         };
         let batches_ahead = request.read_ahead_batches.clamp(1, MAX_BATCHES_AHEAD);
+        let batches_ahead = if request.limit.is_none() {
+            batches_ahead.max(FULL_SCAN_MIN_BATCHES_AHEAD)
+        } else {
+            batches_ahead
+        };
         let (rows, batches) = sync_channel::<Result<Chunk, String>>(batches_ahead);
         let factory = Arc::clone(&self.factory);
         let node_rows = Arc::clone(&self.rows_returned);
@@ -677,7 +777,6 @@ fn dag_summary(dag: &tidb_proto::tipb::DagRequest) -> String {
 
 /// Everything the reader thread needs, owned independently of the caller.
 struct RemoteScanPlan {
-    table_id: i64,
     dag: tidb_proto::tipb::DagRequest,
     /// The executor shapes the request builder reads for concurrency, which
     /// must match the DAG's own executor list.
@@ -731,9 +830,6 @@ where
 {
     use prost::Message;
 
-    let started = Instant::now();
-    let debug = std::env::var_os("TIDB_DEBUG_COP_SCAN").is_some();
-
     let mut transport = factory.open_session_transport()?;
     let cancellation = Arc::new(CancelHandle::default());
     // Go `SetFromSessionVars`, which EVERY read in `pkg/distsql` runs. The
@@ -774,55 +870,26 @@ where
         )
         .map_err(|error| error.to_string())?;
     let mut iter = result.into_select_iter(Vec::new());
-    let mut rows_received = 0u64;
-    let mut iterator_elapsed = Duration::ZERO;
-    let mut handoff_elapsed = Duration::ZERO;
-    let mut batches_sent = 0u64;
     loop {
-        let batch = if debug {
-            let next_started = Instant::now();
-            let batch = iter.next_chunk_with_required_rows(BATCH_ROWS);
-            iterator_elapsed += next_started.elapsed();
-            batch
-        } else {
-            iter.next_chunk_with_required_rows(BATCH_ROWS)
-        }
-        .map_err(|error| error.to_string())?;
+        let batch = iter
+            .next_chunk_with_required_rows(BATCH_ROWS)
+            .map_err(|error| error.to_string())?;
         let Some(batch) = batch else {
             break;
         };
         if batch.row.num_rows() != 0 {
             let sent = batch.row.num_rows() as u64;
-            rows_received += sent;
             // A consumer that stopped pulling -- an early-stopping `LIMIT`, or
             // a failed statement -- drops its receiver, and this is where the
             // scan learns it: the rest of the relation is never read.
-            let handoff_started = Instant::now();
             let send_result = rows.send(Ok(batch.row));
-            if debug {
-                handoff_elapsed += handoff_started.elapsed();
-            }
             if send_result.is_err() {
                 break;
             }
-            batches_sent += 1;
             node_rows.fetch_add(sent, Ordering::Relaxed);
         }
     }
     iter.close();
-    if debug {
-        eprintln!(
-            "COP_SCAN_DONE table_id={} thread={:?} snapshot_ts={} rows={} batches={} elapsed_ms={} iterator_ms={} handoff_ms={}",
-            plan.table_id,
-            std::thread::current().id(),
-            plan.snapshot_ts,
-            rows_received,
-            batches_sent,
-            started.elapsed().as_secs_f64() * 1000.0,
-            iterator_elapsed.as_secs_f64() * 1000.0,
-            handoff_elapsed.as_secs_f64() * 1000.0,
-        );
-    }
     Ok(())
 }
 

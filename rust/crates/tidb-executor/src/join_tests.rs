@@ -316,6 +316,51 @@ fn decimal_residual_fast_path_matches_general_join_evaluator() {
     );
 }
 
+#[test]
+fn decimal_residual_unique_integer_join_uses_parallel_probe_window() {
+    let decimal_type = FieldType::new(FieldTypeCode::NewDecimal);
+    let column = |index: usize, field_type: FieldType| {
+        let mut column = Column::new(index as i64 + 1, field_type);
+        column.index = index as i64;
+        Expression::Column(column)
+    };
+    let residual = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("lt"),
+        long(),
+        vec![
+            column(1, decimal_type.clone()),
+            Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("mul"),
+                decimal_type.clone(),
+                vec![
+                    Expression::Constant(Constant::new(
+                        Datum::Decimal(decimal("0.2")),
+                        decimal_type.clone(),
+                    )),
+                    column(3, decimal_type.clone()),
+                ],
+            )),
+        ],
+    ));
+    let left = (0..10_000)
+        .map(|row| {
+            vec![
+                Datum::Int(1),
+                Datum::Decimal(decimal(if row % 2 == 0 { "3.00" } else { "12.00" })),
+            ]
+        })
+        .collect();
+    let right = vec![vec![Datum::Int(1), Datum::Decimal(decimal("25.00"))]];
+    let types = [long(), decimal_type];
+    let mut join = join_with_types(vec![eq_on(0, 0, 2), residual], left, &types, right, &types);
+
+    assert_eq!(run_datums(&mut join).len(), 5_000);
+    assert!(
+        join.parallel_probe_windows() > 0,
+        "q17-shaped decimal residual joins must use the parallel probe path"
+    );
+}
+
 /// Drains a join to completion, exactly as a caller does: repeated
 /// `next()` until an empty chunk.
 pub(super) fn run(join: &mut JoinExec<NoColumns>) -> Vec<Vec<i64>> {
@@ -363,6 +408,37 @@ fn fixture(n: i64, modulus: i64) -> Vec<Vec<Datum>> {
         .collect()
 }
 
+#[test]
+fn exact_integer_build_table_detects_duplicate_buckets() {
+    let types = vec![long(), long()];
+    let rows = fixture(200, 5);
+    let mut chunk = Chunk::new_with_capacity(&types, rows.len());
+    for row in &rows {
+        for (column, datum) in row.iter().enumerate() {
+            chunk.append_datum(column, datum);
+        }
+    }
+    let key = EquiKey {
+        left: 0,
+        right: 0,
+        class: KeyClass::Int,
+        null_safe: false,
+    };
+    let mut table = BuildTable::new(
+        &types,
+        CHUNK,
+        StatementMemory::default().spill_storage(),
+        false,
+        true,
+    );
+    table
+        .index_chunk(chunk, &[key], &types, false)
+        .expect("build table");
+
+    assert_eq!(table.probe_exact_int(0).len(), 36);
+    assert!(!table.exact_int_is_unique());
+}
+
 /// The hash path must reproduce the nested loop ROW FOR ROW -- same
 /// rows, same order -- for every join kind, over data with duplicate
 /// keys, unmatched keys on both sides, and NULL keys on both sides.
@@ -386,8 +462,34 @@ fn hash_path_matches_the_nested_loop_row_for_row() {
         assert!(hashed.is_hash_join());
         let mut looped = join_of(kind, vec![eq_on(0, 0, 2)], left, right, 2);
         looped.force_nested_loop();
-        assert_eq!(run(&mut hashed), run(&mut looped), "{kind:?}");
+        let hashed_rows = run(&mut hashed);
+        assert!(
+            !hashed.parallel_exact_int_enabled(),
+            "duplicate build keys must not be classified as unique for {kind:?}"
+        );
+        assert_eq!(
+            hashed.parallel_probe_windows(),
+            0,
+            "duplicate build keys must keep the bounded unique-key path disabled for {kind:?}"
+        );
+        assert_eq!(hashed_rows, run(&mut looped), "{kind:?}");
     }
+}
+
+#[test]
+fn duplicate_integer_left_join_matches_loop_in_isolation() {
+    let left = fixture(200, 7);
+    let right = fixture(200, 5);
+    let mut hashed = join_of(
+        JoinKind::Left,
+        vec![eq_on(0, 0, 2)],
+        left.clone(),
+        right.clone(),
+        2,
+    );
+    let mut looped = join_of(JoinKind::Left, vec![eq_on(0, 0, 2)], left, right, 2);
+    looped.force_nested_loop();
+    assert_eq!(run(&mut hashed), run(&mut looped));
 }
 
 /// Go hash join v2 may build the preserved side of an outer join. Matches are
@@ -571,4 +673,50 @@ fn ten_thousand_by_ten_thousand_is_linear_not_quadratic() {
         evals * 10_000 <= nested_loop_evals,
         "{evals} evaluations vs the nested loop's {nested_loop_evals}"
     );
+}
+
+/// Go HashJoin hands probe chunks to five workers. A large pure integer
+/// equality join must take the corresponding bounded parallel path instead of
+/// running every probe chunk on the session thread.
+#[test]
+fn exact_integer_hash_join_uses_parallel_probe_window() {
+    let rows = 10_000i64;
+    let side: Vec<Vec<Datum>> = (0..rows)
+        .map(|i| vec![Datum::Int(i), Datum::Int(i * 2)])
+        .collect();
+    let mut join = join_of(JoinKind::Inner, vec![eq_on(0, 0, 2)], side.clone(), side, 2);
+
+    assert_eq!(run(&mut join).len(), rows as usize);
+    assert!(
+        join.parallel_probe_windows() > 0,
+        "large exact-integer probes must use the parallel worker path"
+    );
+}
+
+/// TPC-H q13 builds the preserved customer side and probes orders. Parallel
+/// workers must report matches back to the session thread so the post-probe
+/// scan emits only truly unmatched build rows.
+#[test]
+fn parallel_exact_integer_probe_marks_preserved_build_rows() {
+    let left = (0..6_000i64)
+        .map(|key| vec![Datum::Int(key), Datum::Int(key * 10)])
+        .collect::<Vec<_>>();
+    let right = (0..7_000i64)
+        .map(|value| vec![Datum::Int(value % 5_000), Datum::Int(value)])
+        .collect::<Vec<_>>();
+    let mut join = join_of(JoinKind::Left, vec![eq_on(0, 0, 2)], left, right, 2);
+    join.set_hash_build_is_left(true);
+
+    let mut actual = run(&mut join);
+    assert!(join.parallel_probe_windows() > 0);
+    let mut expected = (0..7_000i64)
+        .map(|value| {
+            let key = value % 5_000;
+            vec![key, key * 10, key, value]
+        })
+        .chain((5_000..6_000i64).map(|key| vec![key, key * 10, -1, -1]))
+        .collect::<Vec<_>>();
+    actual.sort();
+    expected.sort();
+    assert_eq!(actual, expected);
 }

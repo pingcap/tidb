@@ -80,6 +80,7 @@ pub use coprocessor::{
     RegionEpoch as CoprocessorRegionEpoch, RegionInfo as CoprocessorRegionInfo,
     Request as CoprocessorRequest, Response as CoprocessorResponse,
     ScanDetailV2 as CoprocessorScanDetailV2, StoreBatchTask, StoreBatchTaskResponse,
+    TimeDetail as CoprocessorTimeDetail, TimeDetailV2 as CoprocessorTimeDetailV2,
     VersionedKeyRange as CoprocessorVersionedKeyRange,
 };
 

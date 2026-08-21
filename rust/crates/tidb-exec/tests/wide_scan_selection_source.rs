@@ -650,6 +650,36 @@ fn a_string_comparison_lowers_to_the_string_signature_go_resolves() {
     assert_eq!(sent.children[1].val.as_deref(), Some(literal));
 }
 
+#[test]
+fn not_like_lowers_to_unary_not_over_gos_like_signature() {
+    let text = vec![string_column("utf8mb4_bin")];
+    let column_type = FieldType::new(FieldTypeCode::Varchar)
+        .with_charset_name("utf8mb4")
+        .with_collation_name("utf8mb4_bin");
+    let predicate = ScanPredicate::Not(Box::new(ScanPredicate::Like {
+        column_offset: 0,
+        column_type,
+        pattern: b"%pending%deposits%".to_vec(),
+        escape: b'\\',
+    }));
+
+    assert!(accepts(&predicate, &text));
+    let condition = wide_scan_selection_conditions(&[predicate], &text)
+        .unwrap()
+        .remove(0);
+    assert_eq!(condition.sig, Some(ScalarFuncSig::UnaryNotInt as i32));
+    let like = &condition.children[0];
+    assert_eq!(like.sig, Some(ScalarFuncSig::LikeSig as i32));
+    assert_eq!(like.children.len(), 3);
+    assert_eq!(like.children[0].tp, Some(ExprType::ColumnRef as i32));
+    assert_eq!(like.children[1].tp, Some(ExprType::String as i32));
+    assert_eq!(
+        like.children[1].val.as_deref(),
+        Some(b"%pending%deposits%".as_slice())
+    );
+    assert_eq!(like.children[2].tp, Some(ExprType::Int64 as i32));
+}
+
 /// Go chooses `InString` from the tested expression's type, retains the
 /// nested scalar as the first TiPB child, and removes constants equal under
 /// the function's derived collation before serialization.

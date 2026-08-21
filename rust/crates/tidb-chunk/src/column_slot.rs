@@ -184,6 +184,18 @@ impl ColumnSlot {
             .append_prepared_cell(!source.is_null(row), source.is_fixed(), &raw);
     }
 
+    pub(crate) fn append_range_from(&mut self, source: &Self, begin: usize, end: usize) {
+        if let (Self::Owned(destination), Self::Owned(source)) = (&mut *self, source) {
+            destination
+                .column
+                .append_range_from(&source.column, begin, end);
+            return;
+        }
+        for row in begin..end {
+            self.append_cell_from(source, row);
+        }
+    }
+
     pub(crate) fn is_shared(&self) -> bool {
         matches!(self, Self::Shared(_))
     }

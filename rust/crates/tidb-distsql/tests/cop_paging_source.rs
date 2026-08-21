@@ -17,12 +17,14 @@
 use std::time::Duration;
 
 use tidb_distsql::{
-    calculate_paging_remain, calculate_paging_retry, paging_response_read_bytes,
-    BatchBucketVersionUpdate, CopPagingError, CopPagingState, ReadEngineGeneration,
-    RegionTaskEnvelope, RegionTaskTopology, RequestKeyRange, ResponseChannelEvent,
+    calculate_paging_remain, calculate_paging_retry, coprocessor_response_process_time_nanos,
+    paging_response_read_bytes, BatchBucketVersionUpdate, CopPagingError, CopPagingState,
+    ReadEngineGeneration, RegionTaskEnvelope, RegionTaskTopology, RequestKeyRange,
+    ResponseChannelEvent,
 };
 use tidb_proto::{
     CoprocessorExecDetailsV2, CoprocessorKeyRange, CoprocessorResponse, CoprocessorScanDetailV2,
+    CoprocessorTimeDetail, CoprocessorTimeDetailV2,
 };
 use tidb_txnkv::{Key, KeyRange, KeyRanges};
 
@@ -132,6 +134,7 @@ fn response_read_bytes_matches_classic_and_next_generation_tables() {
                     processed_versions_size: processed,
                     total_versions_size: total,
                 }),
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -144,6 +147,44 @@ fn response_read_bytes_matches_classic_and_next_generation_tables() {
             next_generation
         );
     }
+}
+
+#[test]
+fn response_process_time_prefers_nanoseconds_and_falls_back_to_milliseconds() {
+    assert_eq!(
+        coprocessor_response_process_time_nanos(&CoprocessorResponse::default()),
+        None
+    );
+    let legacy_time = CoprocessorTimeDetail {
+        process_wall_time_ms: 7,
+        ..Default::default()
+    };
+    let legacy = CoprocessorResponse {
+        exec_details_v2: Some(CoprocessorExecDetailsV2 {
+            time_detail: Some(legacy_time.clone()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    assert_eq!(
+        coprocessor_response_process_time_nanos(&legacy),
+        Some(7_000_000)
+    );
+    let v2 = CoprocessorResponse {
+        exec_details_v2: Some(CoprocessorExecDetailsV2 {
+            time_detail: Some(legacy_time),
+            time_detail_v2: Some(CoprocessorTimeDetailV2 {
+                process_wall_time_ns: 8_765_432,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    assert_eq!(
+        coprocessor_response_process_time_nanos(&v2),
+        Some(8_765_432)
+    );
 }
 
 #[test]
@@ -173,6 +214,7 @@ fn successful_page_updates_ema_grows_size_and_feeds_response_channel() {
                 processed_versions_size: 1_000_000,
                 total_versions_size: 2_000_000,
             }),
+            ..Default::default()
         }),
         ..Default::default()
     };
