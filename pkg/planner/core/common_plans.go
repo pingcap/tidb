@@ -613,9 +613,10 @@ type MViewDeltaMerge struct {
 	MVColumnCount    int
 	DeltaColumnCount int
 	// MVTablePKCols stores MV table handle columns with positions in Source row layout.
-	MVTablePKCols     util.HandleCols `plan-cache-clone:"shallow"`
-	GroupKeyMVOffsets []int           `plan-cache-clone:"shallow"`
-	CountStarMVOffset int
+	MVTablePKCols                   util.HandleCols `plan-cache-clone:"shallow"`
+	GroupKeyMVOffsets               []int           `plan-cache-clone:"shallow"`
+	CountStarMVOffset               int
+	DefinitionDivPrecisionIncrement int
 
 	AggInfos []mview.AggInfo `plan-cache-clone:"shallow"`
 }
@@ -668,6 +669,8 @@ func formatMViewDeltaMergeAggKind(kind mview.AggKind) string {
 		return "count"
 	case mview.AggSum:
 		return "sum"
+	case mview.AggAvg:
+		return "avg"
 	case mview.AggMin:
 		return "min"
 	case mview.AggMax:

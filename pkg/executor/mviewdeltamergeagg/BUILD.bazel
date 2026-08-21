@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "exec.go",
         "merge.go",
+        "merge_avg.go",
         "merge_count.go",
         "merge_minmax.go",
         "merge_sum.go",

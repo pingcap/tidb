@@ -20,6 +20,7 @@ go_library(
         "//pkg/parser/opcode",
         "//pkg/planner/planctx",
         "//pkg/planner/util",
+        "//pkg/sessionctx/variable",
         "//pkg/table/tables",
         "//pkg/util/hint",
         "//pkg/util/mviewutil",

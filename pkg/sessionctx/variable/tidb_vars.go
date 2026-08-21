@@ -1672,6 +1672,7 @@ const (
 	DefTiDBSchemaCacheSize                            = 512 * 1024 * 1024
 	DefTiDBLowResolutionTSOUpdateInterval             = 2000
 	DefDivPrecisionIncrement                          = 4
+	MaxDivPrecisionIncrement                          = 30
 	DefTiDBDMLType                                    = "STANDARD"
 	DefGroupConcatMaxLen                              = uint64(1024)
 	DefDefaultWeekFormat                              = "0"

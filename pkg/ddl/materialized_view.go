@@ -26,6 +26,7 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -289,6 +291,9 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	if len(resultFields) != len(s.Cols) {
 		return errors.Errorf("materialized view column count %d does not match query output %d", len(s.Cols), len(resultFields))
 	}
+	if err := restoreMViewAvgFieldTypes(ctx, baseTable.Meta(), sel, resultFields); err != nil {
+		return err
+	}
 
 	colDefs := make([]*ast.ColumnDef, 0, len(resultFields))
 	for i, rf := range resultFields {
@@ -357,6 +362,18 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		AlertOverdueSec:    alertOverdueSec,
 		AlertRefreshFailed: alertRefreshFailed,
 		DefinitionSQLMode:  ctx.GetSessionVars().SQLMode,
+		MViewMaintenanceVersion: func() uint8 {
+			if queryAnalysis.HasAvg {
+				return model.MViewMaintenanceVersionAVG
+			}
+			return model.MViewMaintenanceVersionBase
+		}(),
+		DefinitionDivPrecisionIncrement: func() int {
+			if queryAnalysis.HasAvg {
+				return ctx.GetSessionVars().GetDivPrecisionIncrement()
+			}
+			return 0
+		}(),
 		DefinitionTimeZone: model.TimeZoneLocation{
 			Name:   tzName,
 			Offset: tzOffset,
@@ -384,6 +401,8 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	if err := initJobReorgMetaFromVariables(job, ctx); err != nil {
 		return err
 	}
+	job.ReorgMeta.MViewMaintenanceVersion = mvTableInfo.MaterializedView.MViewMaintenanceVersion
+	job.ReorgMeta.DefinitionDivPrecisionIncrement = mvTableInfo.MaterializedView.DefinitionDivPrecisionIncrement
 	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	AddMViewExecutionSessionVarsToJob(job, ctx.GetSessionVars())
 	jobW := NewJobWrapperWithArgs(job, &model.CreateMaterializedViewArgs{
@@ -571,6 +590,51 @@ func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMat
 		default:
 			return errors.Errorf("unknown alter materialized view action type: %d", action.Tp)
 		}
+	}
+	return nil
+}
+
+// restoreMViewAvgFieldTypes replaces AVG result metadata produced by an internal restricted
+// session with the definition session's AVG type. The physical MV schema must use the same
+// div_precision_increment as the session that owns the definition.
+func restoreMViewAvgFieldTypes(
+	ctx sessionctx.Context,
+	baseTable *model.TableInfo,
+	sel *ast.SelectStmt,
+	resultFields []*resolve.ResultField,
+) error {
+	for i, field := range sel.Fields.Fields {
+		agg, ok := field.Expr.(*ast.AggregateFuncExpr)
+		if !ok || !strings.EqualFold(agg.F, ast.AggFuncAvg) {
+			continue
+		}
+		if len(agg.Args) != 1 {
+			return errors.New("AVG must have exactly one argument in materialized view definition")
+		}
+		argCol, ok := agg.Args[0].(*ast.ColumnNameExpr)
+		if !ok {
+			return errors.New("AVG argument must be a column name in materialized view definition")
+		}
+		baseCol := baseTable.FindPublicColumnByName(argCol.Name.Name.L)
+		if baseCol == nil {
+			return errors.Errorf("AVG column %s does not exist in base table", argCol.Name.Name.O)
+		}
+		aggDesc, err := aggregation.NewAggFuncDesc(
+			ctx.GetExprCtx(),
+			ast.AggFuncAvg,
+			[]expression.Expression{&expression.Column{
+				Index:   0,
+				RetType: baseCol.FieldType.Clone(),
+			}},
+			false,
+		)
+		if err != nil {
+			return errors.Annotate(err, "cannot infer AVG materialized view type")
+		}
+		if aggDesc.RetTp == nil {
+			return errors.New("AVG materialized view type inference returned nil type")
+		}
+		resultFields[i].Column.FieldType = *aggDesc.RetTp.Clone()
 	}
 	return nil
 }
@@ -1510,6 +1574,7 @@ type mviewQueryAnalysis struct {
 	GroupByInfos []mviewGroupByInfo
 	GroupByCols  []string
 	HasMinOrMax  bool
+	HasAvg       bool
 }
 
 func validateCreateMaterializedViewQuery(
@@ -1568,6 +1633,8 @@ func validateCreateMaterializedViewQuery(
 	groupByCols := make([]string, 0, len(sel.GroupBy.Items))
 	groupByNotNull := make(map[string]bool, len(sel.GroupBy.Items))
 	countExprCols := make(map[string]struct{})
+	sumExprCols := make(map[string]struct{})
+	avgExprCols := make(map[string]struct{})
 	nullableSumCols := make(map[string]struct{})
 	usedCols := make(map[string]struct{}, 8)
 
@@ -1633,7 +1700,7 @@ func validateCreateMaterializedViewQuery(
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support DISTINCT aggregate function")
 			}
 			aggFunc := strings.ToLower(expr.F)
-			if aggFunc != ast.AggFuncCount && aggFunc != ast.AggFuncSum && aggFunc != ast.AggFuncMin && aggFunc != ast.AggFuncMax {
+			if aggFunc != ast.AggFuncCount && aggFunc != ast.AggFuncSum && aggFunc != ast.AggFuncMin && aggFunc != ast.AggFuncMax && aggFunc != ast.AggFuncAvg {
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported aggregate function in CREATE MATERIALIZED VIEW" + " agg " + expr.F)
 			}
 			switch aggFunc {
@@ -1659,7 +1726,7 @@ func validateCreateMaterializedViewQuery(
 					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports count(*)/count(1)")
 				}
 				hasCountStarOrOne = true
-			case ast.AggFuncSum, ast.AggFuncMin, ast.AggFuncMax:
+			case ast.AggFuncSum, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncAvg:
 				if len(expr.Args) != 1 {
 					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("aggregate function must have exactly one argument in CREATE MATERIALIZED VIEW")
 				}
@@ -1672,6 +1739,7 @@ func validateCreateMaterializedViewQuery(
 					return nil, err
 				}
 				if aggFunc == ast.AggFuncSum {
+					sumExprCols[colName] = struct{}{}
 					tp := baseColMap[colName].GetType()
 					if types.IsTypeTime(tp) || tp == mysql.TypeDuration {
 						return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support SUM on DATE/DATETIME/TIMESTAMP/TIME column")
@@ -1679,6 +1747,17 @@ func validateCreateMaterializedViewQuery(
 					if !mysql.HasNotNullFlag(baseColMap[colName].GetFlag()) {
 						nullableSumCols[colName] = struct{}{}
 					}
+				}
+				if aggFunc == ast.AggFuncAvg {
+					switch baseColMap[colName].GetType() {
+					case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
+						// Supported exact AVG inputs.
+					default:
+						return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+							fmt.Sprintf("CREATE MATERIALIZED VIEW AVG does not support column type %d", baseColMap[colName].GetType()),
+						)
+					}
+					avgExprCols[colName] = struct{}{}
 				}
 				if aggFunc == ast.AggFuncMin || aggFunc == ast.AggFuncMax {
 					hasMinOrMax = true
@@ -1698,6 +1777,18 @@ func validateCreateMaterializedViewQuery(
 		if _, ok := countExprCols[colName]; !ok {
 			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack(
 				fmt.Sprintf("CREATE MATERIALIZED VIEW SUM on nullable column %s requires matching COUNT(%s) in SELECT list", colName, colName),
+			)
+		}
+	}
+	for colName := range avgExprCols {
+		if _, ok := sumExprCols[colName]; !ok {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				fmt.Sprintf("unsupported aggregate function: CREATE MATERIALIZED VIEW AVG on column %s requires matching SUM(%s) in SELECT list", colName, colName),
+			)
+		}
+		if _, ok := countExprCols[colName]; !ok {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				fmt.Sprintf("CREATE MATERIALIZED VIEW AVG on column %s requires matching COUNT(%s) in SELECT list", colName, colName),
 			)
 		}
 	}
@@ -1730,6 +1821,7 @@ func validateCreateMaterializedViewQuery(
 		GroupByInfos: groupByInfos,
 		GroupByCols:  groupByCols,
 		HasMinOrMax:  hasMinOrMax,
+		HasAvg:       len(avgExprCols) > 0,
 	}, nil
 }
 

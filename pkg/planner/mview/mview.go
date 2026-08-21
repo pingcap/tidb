@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mviewutil"
@@ -171,7 +172,8 @@ type BuildResult struct {
 
 	// CountStarMVOffset is the offset (0-based) of COUNT(*) in MV output columns.
 	// Build returns error when MV definition does not include COUNT(*).
-	CountStarMVOffset int
+	CountStarMVOffset               int
+	DefinitionDivPrecisionIncrement int
 
 	AggInfos []AggInfo
 }
@@ -317,6 +319,8 @@ const (
 	AggCount
 	// AggSum represents SUM(expr).
 	AggSum
+	// AggAvg represents AVG(expr), finalized from matching SUM/COUNT state.
+	AggAvg
 	// AggMin represents MIN(expr).
 	AggMin
 	// AggMax represents MAX(expr).
@@ -334,6 +338,9 @@ type AggInfo struct {
 	ArgColName string
 	// ArgNotNull records whether the aggregate argument column is NOT NULL in the base table schema.
 	ArgNotNull bool
+	// RequiredExactState marks a SUM used by AVG. Such a SUM must be normalized
+	// without changing its numeric value before dependent outputs are published.
+	RequiredExactState bool
 
 	// Dependencies stores dependency offsets in merge-source output schema.
 	// The meaning depends on Kind:
@@ -346,6 +353,7 @@ type AggInfo struct {
 	//     - matched_count_expr_mv: absolute output offset of matched COUNT(expr) MV column.
 	//       COUNT(expr) must be updated before SUM(expr), and SUM should read this updated MV value.
 	//       The same matched COUNT(expr) can be a dependency for multiple aggregate functions.
+	//   - AggAvg: [matching_sum_mv, matching_count_expr_mv, count_all_rows_mv].
 	//   - AggMax / AggMin:
 	//     - [added_val, added_cnt, removed_val, removed_cnt] always.
 	//     - [added_val, added_cnt, removed_val, removed_cnt, matched_count_expr_mv] optionally when a
@@ -417,6 +425,15 @@ func buildLocal(
 	}
 	if mv.MaterializedView == nil {
 		return nil, errors.Errorf("table %s is not a materialized view", mv.Name.O)
+	}
+	if mv.MaterializedView.MViewMaintenanceVersion < model.MViewMaintenanceVersionBase ||
+		mv.MaterializedView.MViewMaintenanceVersion > model.MViewMaintenanceVersionAVG {
+		return nil, errors.Errorf("materialized view %s uses unsupported maintenance version %d", mv.Name.O, mv.MaterializedView.MViewMaintenanceVersion)
+	}
+	if mv.MaterializedView.MViewMaintenanceVersion > model.MViewMaintenanceVersionBase &&
+		(mv.MaterializedView.DefinitionDivPrecisionIncrement < 0 ||
+			mv.MaterializedView.DefinitionDivPrecisionIncrement > variable.MaxDivPrecisionIncrement) {
+		return nil, errors.Errorf("materialized view %s has invalid maintenance numeric metadata", mv.Name.O)
 	}
 	if len(mv.MaterializedView.BaseTableIDs) != 1 {
 		return nil, errors.Errorf(
@@ -490,6 +507,16 @@ func buildLocal(
 	aggCols, hasMinMax, err := extractAggInfosFromMVSelect(mvSel)
 	if err != nil {
 		return nil, err
+	}
+	hasAvg := false
+	for _, ac := range aggCols {
+		if ac.info.Kind == AggAvg {
+			hasAvg = true
+			break
+		}
+	}
+	if hasAvg != (mv.MaterializedView.MViewMaintenanceVersion > model.MViewMaintenanceVersionBase) {
+		return nil, errors.Errorf("materialized view %s has maintenance version inconsistent with its definition", mv.Name.O)
 	}
 
 	if len(mv.Columns) != len(mvSel.Fields.Fields) {
@@ -630,6 +657,13 @@ func buildFromLocal(
 	if err != nil {
 		return nil, err
 	}
+	avgDependencies, requiredExactSum, err := mapAvgDependencies(local.aggCols)
+	if err != nil {
+		return nil, err
+	}
+	for _, matches := range avgDependencies {
+		sumToCountExprIdx[matches[0]] = matches[1]
+	}
 	minMaxToCountExprIdx, err := mapMinMaxToCountExprDependencies(local.aggCols, aggArgNotNullByOffset)
 	if err != nil {
 		return nil, err
@@ -644,6 +678,7 @@ func buildFromLocal(
 	for i, ac := range local.aggCols {
 		di := ac.info
 		di.ArgNotNull = aggArgNotNullByOffset[di.MVOffset]
+		di.RequiredExactState = requiredExactSum[i]
 		deps := make([]int, 0, 5)
 		if ac.deltaName != "" {
 			off, ok := deltaOffsetByName[ac.deltaName]
@@ -654,13 +689,21 @@ func buildFromLocal(
 		}
 		switch di.Kind {
 		case AggSum:
-			if !aggArgNotNullByOffset[di.MVOffset] {
+			if !aggArgNotNullByOffset[di.MVOffset] || requiredExactSum[i] {
 				countIdx, ok := sumToCountExprIdx[i]
 				if !ok {
 					return nil, errors.Errorf("internal error: SUM at mv offset %d has no COUNT(expr) dependency", di.MVOffset)
 				}
 				countAgg := local.aggCols[countIdx]
 				deps = append(deps, mvColumnOffsetBase+countAgg.info.MVOffset)
+			}
+		case AggAvg:
+			matches, ok := avgDependencies[i]
+			if !ok {
+				return nil, errors.Errorf("internal error: AVG at mv offset %d has no resolved dependencies", di.MVOffset)
+			}
+			for _, matchIdx := range matches {
+				deps = append(deps, mvColumnOffsetBase+local.aggCols[matchIdx].info.MVOffset)
 			}
 		case AggMax, AggMin:
 			addedCntOff, ok := deltaOffsetByName[ac.addedCountDeltaName]
@@ -718,7 +761,13 @@ func buildFromLocal(
 		GroupKeyMVOffsets:              append([]int(nil), local.groupKeyOffs...),
 		GroupKeyBaseCols:               groupKeyBaseCols,
 		CountStarMVOffset:              local.countStarMVOffset,
-		AggInfos:                       outAggInfos,
+		DefinitionDivPrecisionIncrement: func() int {
+			if local.mv.MaterializedView == nil || local.mv.MaterializedView.MViewMaintenanceVersion <= model.MViewMaintenanceVersionBase {
+				return local.sctx.GetSessionVars().GetDivPrecisionIncrement()
+			}
+			return local.mv.MaterializedView.DefinitionDivPrecisionIncrement
+		}(),
+		AggInfos: outAggInfos,
 	}
 	return res, nil
 }
@@ -964,6 +1013,26 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 				deltaName: fmt.Sprintf("__mview_delta_sum_%d", i),
 				argExpr:   stripColumnQualifier(agg.Args[0]),
 			})
+		case ast.AggFuncAvg:
+			if len(agg.Args) != 1 {
+				return nil, false, errors.New("AVG must have exactly one argument for mview")
+			}
+			if agg.Distinct {
+				return nil, false, errors.New("AVG(DISTINCT ...) is not supported in mview")
+			}
+			argCol, ok := agg.Args[0].(*ast.ColumnNameExpr)
+			if !ok {
+				return nil, false, errors.New("AVG argument must be a column name for mview")
+			}
+			aggCols = append(aggCols, aggColInfo{
+				info: AggInfo{
+					Kind:       AggAvg,
+					MVOffset:   i,
+					ArgColName: argCol.Name.Name.L,
+				},
+				// AVG is finalized from explicit SUM/COUNT state and never gets a delta column.
+				argExpr: stripColumnQualifier(agg.Args[0]),
+			})
 		case ast.AggFuncMax:
 			argCol, ok := agg.Args[0].(*ast.ColumnNameExpr)
 			if !ok {
@@ -1042,6 +1111,53 @@ func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset m
 		sumToCountIdx[i] = matchIdx
 	}
 	return sumToCountIdx, nil
+}
+
+// mapAvgDependencies resolves each AVG to the first matching SUM, COUNT(expr),
+// and COUNT(*) in SELECT-list order. The returned SUM indexes are marked as
+// requiring exact state even when the base column is NOT NULL.
+func mapAvgDependencies(aggCols []aggColInfo) (map[int][3]int, map[int]bool, error) {
+	avgDeps := make(map[int][3]int)
+	requiredExactSum := make(map[int]bool)
+	countStarIdx := -1
+	for i, ac := range aggCols {
+		if ac.info.Kind == AggCountStar {
+			countStarIdx = i
+			break
+		}
+	}
+	if countStarIdx < 0 {
+		return nil, nil, errors.New("AVG requires COUNT(*) dependency")
+	}
+	for i, ac := range aggCols {
+		if ac.info.Kind != AggAvg {
+			continue
+		}
+		if ac.argExpr == nil {
+			return nil, nil, errors.Errorf("AVG aggregate argument is nil at mv offset %d", ac.info.MVOffset)
+		}
+		sumIdx, countIdx := -1, -1
+		for j, candidate := range aggCols {
+			if candidate.argExpr == nil || !exprStructuralEqual(ac.argExpr, candidate.argExpr) {
+				continue
+			}
+			if sumIdx < 0 && candidate.info.Kind == AggSum {
+				sumIdx = j
+			}
+			if countIdx < 0 && candidate.info.Kind == AggCount {
+				countIdx = j
+			}
+		}
+		if sumIdx < 0 {
+			return nil, nil, errors.Errorf("AVG expression %s at mv offset %d requires matching SUM(expr)", restoreExpr(ac.argExpr), ac.info.MVOffset)
+		}
+		if countIdx < 0 {
+			return nil, nil, errors.Errorf("AVG expression %s at mv offset %d requires matching COUNT(expr)", restoreExpr(ac.argExpr), ac.info.MVOffset)
+		}
+		avgDeps[i] = [3]int{sumIdx, countIdx, countStarIdx}
+		requiredExactSum[sumIdx] = true
+	}
+	return avgDeps, requiredExactSum, nil
 }
 
 // mapMinMaxToCountExprDependencies finds an optional first matching COUNT(expr) for nullable
@@ -1133,6 +1249,15 @@ func validateAggDependencies(
 						ai.MVOffset,
 						ai.Dependencies[1],
 					)
+				}
+			}
+		case AggAvg:
+			if len(ai.Dependencies) != 3 {
+				return errors.Errorf("AVG at mv offset %d expects dependencies [matching_sum_mv, matching_count_expr_mv, count_all_rows_mv], got %v", ai.MVOffset, ai.Dependencies)
+			}
+			for depPos, dep := range ai.Dependencies {
+				if dep < mvColumnOffsetBase || dep >= mvColumnEnd {
+					return errors.Errorf("AVG at mv offset %d has invalid dependency[%d] offset %d", ai.MVOffset, depPos, dep)
 				}
 			}
 		case AggMax, AggMin:
@@ -1374,6 +1499,9 @@ func buildMLogDeltaSelect(
 		switch ac.info.Kind {
 		case AggCountStar:
 			continue
+		case AggAvg:
+			// AVG is derived from the explicit SUM/COUNT state columns.
+			continue
 		case AggCount:
 			if ac.argExpr == nil {
 				return nil, errors.New("COUNT aggregate argument is nil for mview")
@@ -1575,6 +1703,9 @@ func buildMergeSourceSelect(
 	for _, ac := range aggCols {
 		switch ac.info.Kind {
 		case AggCountStar:
+			continue
+		case AggAvg:
+			// AVG has no delta payload; it is finalized by the merge executor.
 			continue
 		case AggMax, AggMin:
 			names := []string{ac.deltaName, ac.addedCountDeltaName, ac.removedValueDelta, ac.removedCountDelta}

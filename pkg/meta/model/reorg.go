@@ -80,19 +80,21 @@ const (
 
 // DDLReorgMeta is meta info of DDL reorganization.
 type DDLReorgMeta struct {
-	SQLMode           mysql.SQLMode                    `json:"sql_mode"`
-	Warnings          map[errors.ErrorID]*terror.Error `json:"warnings"`
-	WarningsCount     map[errors.ErrorID]int64         `json:"warnings_count"`
-	Location          *TimeZoneLocation                `json:"location"`
-	ReorgTp           ReorgType                        `json:"reorg_tp"`
-	IsFastReorg       bool                             `json:"is_fast_reorg"`
-	IsDistReorg       bool                             `json:"is_dist_reorg"`
-	UseCloudStorage   bool                             `json:"use_cloud_storage"`
-	ResourceGroupName string                           `json:"resource_group_name"`
-	Version           int64                            `json:"version"`
-	TargetScope       string                           `json:"target_scope"`
-	AnalyzeState      int8                             `json:"analyze_state"`
-	Stage             ReorgStage                       `json:"stage"`
+	SQLMode                         mysql.SQLMode                    `json:"sql_mode"`
+	Warnings                        map[errors.ErrorID]*terror.Error `json:"warnings"`
+	WarningsCount                   map[errors.ErrorID]int64         `json:"warnings_count"`
+	Location                        *TimeZoneLocation                `json:"location"`
+	MViewMaintenanceVersion         uint8                            `json:"mview_maintenance_version,omitempty"`
+	DefinitionDivPrecisionIncrement int                              `json:"definition_div_precision_increment,omitempty"`
+	ReorgTp                         ReorgType                        `json:"reorg_tp"`
+	IsFastReorg                     bool                             `json:"is_fast_reorg"`
+	IsDistReorg                     bool                             `json:"is_dist_reorg"`
+	UseCloudStorage                 bool                             `json:"use_cloud_storage"`
+	ResourceGroupName               string                           `json:"resource_group_name"`
+	Version                         int64                            `json:"version"`
+	TargetScope                     string                           `json:"target_scope"`
+	AnalyzeState                    int8                             `json:"analyze_state"`
+	Stage                           ReorgStage                       `json:"stage"`
 	// These two variables are used to control the concurrency and batch size of the reorganization process.
 	// They can be adjusted dynamically through `admin alter ddl jobs` command.
 	// Note: Don't get or set these two variables directly, use the functions instead.
