@@ -579,6 +579,13 @@ fn partition_info(
                 .map(|tuple| tuple.clone().into())
                 .collect::<Vec<_>>()
                 .into();
+            // Go `buildPartitionDefinitionsInfo` puts the validated comment on
+            // the definition it stores (`ddl/partition.go:1576` and `:1670`),
+            // and `AppendPartitionDefs` prints it back from there. Leaving it
+            // out here meant the comment was length-checked at CREATE and then
+            // dropped, so a cluster round trip lost it while the in-process
+            // path -- which reads the spec, not this -- still showed it.
+            stored.comment = definition.comment.clone();
             stored
         })
         .collect::<Vec<_>>()

@@ -2678,3 +2678,33 @@ fn cluster_create_persists_range_bounds_as_go_spells_them() {
         vec![vec!["10".to_owned()], vec!["MAXVALUE".to_owned()]]
     );
 }
+
+#[test]
+fn cluster_create_persists_a_partition_comment() {
+    // Go `buildPartitionDefinitionsInfo` stores the validated comment on the
+    // definition (`ddl/partition.go:1576` for LIST, `:1670` for RANGE), and
+    // `AppendPartitionDefs` prints it back from there. The comment was being
+    // length-checked at CREATE and then dropped before it reached the stored
+    // table, so a cluster round trip lost it -- invisible to the in-process
+    // `SHOW CREATE TABLE`, which reads the routing spec rather than this.
+    let DdlStatement::CreateTable { build, .. } = statement(
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY) PARTITION BY RANGE (id) \
+         (PARTITION p0 VALUES LESS THAN (10) COMMENT 'first', \
+          PARTITION p1 VALUES LESS THAN (MAXVALUE))",
+    ) else {
+        panic!("the fixture is CREATE TABLE");
+    };
+    let table = build.template();
+    let partition = table
+        .partition
+        .as_ref()
+        .expect("the clause reached the stored table")
+        .read();
+    let comments = partition
+        .definitions
+        .snapshot()
+        .iter()
+        .map(|definition| definition.comment.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(comments, vec!["first".to_owned(), String::new()]);
+}
