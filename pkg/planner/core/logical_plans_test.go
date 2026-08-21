@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"testing"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -41,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -2153,6 +2156,512 @@ func TestSkylinePruning(t *testing.T) {
 		require.Equal(t, tt.result, pathsName(paths), comment)
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}
+}
+
+func TestSameSortItems(t *testing.T) {
+	col1 := &expression.Column{UniqueID: 1}
+	col2 := &expression.Column{UniqueID: 2}
+	col3 := &expression.Column{UniqueID: 3}
+
+	tests := []struct {
+		name string
+		a    *property.PhysicalProperty
+		b    *property.PhysicalProperty
+		want bool
+	}{
+		{
+			name: "both empty",
+			a:    &property.PhysicalProperty{},
+			b:    &property.PhysicalProperty{},
+			want: true,
+		},
+		{
+			name: "same single column asc",
+			a:    &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col1, Desc: false}}},
+			b:    &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col1, Desc: false}}},
+			want: true,
+		},
+		{
+			name: "same column different direction",
+			a:    &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col1, Desc: false}}},
+			b:    &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col1, Desc: true}}},
+			want: false,
+		},
+		{
+			name: "different columns",
+			a:    &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col1}}},
+			b:    &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col2}}},
+			want: false,
+		},
+		{
+			name: "different lengths",
+			a:    &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col1}}},
+			b:    &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col1}, {Col: col2}}},
+			want: false,
+		},
+		{
+			name: "multi-column match",
+			a:    &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col1}, {Col: col2, Desc: true}}},
+			b:    &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col1}, {Col: col2, Desc: true}}},
+			want: true,
+		},
+		{
+			name: "multi-column order differs",
+			a:    &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col1}, {Col: col2}}},
+			b:    &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col2}, {Col: col1}}},
+			want: false,
+		},
+		{
+			name: "same sort items different ExpectedCnt are still same",
+			a: &property.PhysicalProperty{
+				SortItems:   []property.SortItem{{Col: col3}},
+				ExpectedCnt: 10,
+			},
+			b: &property.PhysicalProperty{
+				SortItems:   []property.SortItem{{Col: col3}},
+				ExpectedCnt: 100,
+			},
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, sameSortItems(tt.a, tt.b))
+		})
+	}
+}
+
+func TestCompareCandidatesLimitAware(t *testing.T) {
+	// Tests the limit-aware tiebreaker in compareCandidates: when totalSum and matchResult
+	// both favor the same candidate and there is a limit (ExpectedCnt > 0), the candidate
+	// whose CountAfterAccess fits within the limit should win.
+	sctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
+	// The limit-aware rule is gated on tidb_opt_enable_alternative_logical_plans.
+	sctx.GetSessionVars().EnableAlternativeLogicalPlans = true
+
+	col1 := &expression.Column{UniqueID: 1}
+
+	// Shared access condition column so accessResult = 0 (comparable, equal).
+	sharedColMap := util.Col2Len{1: -1}
+
+	// ExpectedCnt 52 sits between LHS.CountAfterAccess (50, the winner fits) and RHS's worst-case
+	// row count (max(50, 55) = 55, the loser overshoots), so the limit-aware rule fires.
+	propWithLimit := &property.PhysicalProperty{
+		SortItems:   []property.SortItem{{Col: col1}},
+		ExpectedCnt: 52,
+	}
+
+	// LHS: matches the sort and its CountAfterAccess fits the limit, but it carries the HIGHER
+	// risk ratio (MaxCountAfterAccess/CountAfterAccess = 70/50 = 1.4 vs RHS 55/50 = 1.1). Losing
+	// the risk dimension is what makes leftDidNotLose false, so the earlier skyline rules do not
+	// fire and evaluation actually reaches the limit-aware rule under test. riskResult is part of
+	// predicateResult but NOT of totalSum, so totalSum stays > 0 via matchResult.
+	lhs := &candidatePath{
+		path: &util.AccessPath{
+			CountAfterAccess:    50,
+			MaxCountAfterAccess: 70,
+			IsIntHandlePath:     true, // table path avoids nil Index deref
+		},
+		accessCondsColMap: sharedColMap,
+		matchPropResult:   property.PropMatched,
+		isFullRange:       true,
+	}
+
+	// RHS: does NOT match the sort, has the LOWER risk ratio and CountAfterAccess <= LHS (so LHS
+	// loses the risk dimension), yet its worst-case row count overshoots the limit
+	// (max(50, 55) = 55 > 52) -- the exact condition the limit-aware rule keys on.
+	rhs := &candidatePath{
+		path: &util.AccessPath{
+			CountAfterAccess:    50,
+			MaxCountAfterAccess: 55,
+			IsIntHandlePath:     true,
+		},
+		accessCondsColMap: sharedColMap,
+		matchPropResult:   property.PropNotMatched,
+		isFullRange:       true,
+	}
+
+	result, _ := compareCandidates(sctx, nil, propWithLimit, lhs, rhs, false)
+	// LHS wins specifically via the limit-aware rule: leftDidNotLose is false (lost risk),
+	// totalSum > 0 (matchResult=1), matchResult > 0, ExpectedCnt in (0, MaxFloat64), LHS has no
+	// residual filters, lhs.CountAfterAccess (50) <= 52, max(rhs.CountAfterAccess, Max) (55) > 52.
+	require.Equal(t, 1, result, "ordered candidate fitting the limit should win via the limit-aware rule")
+
+	// Symmetric: swap lhs/rhs, RHS should win.
+	result, _ = compareCandidates(sctx, nil, propWithLimit, rhs, lhs, false)
+	require.Equal(t, -1, result, "symmetric: ordered candidate should win when on rhs")
+
+	// Control (pins the worst-case semantics, not a sum): with ExpectedCnt 100 the loser's worst
+	// case max(50, 55) = 55 comfortably fits, so the rule must NOT fire. The buggy form that summed
+	// CountAfterAccess + MaxCountAfterAccess (50 + 55 = 105 > 100) would have wrongly returned 1
+	// here, pruning a non-ordered path whose worst case still satisfies the limit.
+	propFitsWorstCase := &property.PhysicalProperty{
+		SortItems:   []property.SortItem{{Col: col1}},
+		ExpectedCnt: 100,
+	}
+	result, _ = compareCandidates(sctx, nil, propFitsWorstCase, lhs, rhs, false)
+	require.Equal(t, 0, result, "limit-aware rule must not fire when the loser's worst case fits the limit")
+
+	// Control: prove it is the limit-aware rule doing the work. With a larger limit the
+	// non-ordered RHS no longer overshoots (55 <= 200), so the rule's overshoot condition
+	// fails; LHS still lost the risk dimension, so no rule produces a winner -> 0.
+	propLooseLimit := &property.PhysicalProperty{
+		SortItems:   []property.SortItem{{Col: col1}},
+		ExpectedCnt: 200,
+	}
+	result, _ = compareCandidates(sctx, nil, propLooseLimit, lhs, rhs, false)
+	require.Equal(t, 0, result, "limit-aware rule must not fire when RHS fits the limit")
+
+	// Control: with no limit (ExpectedCnt == 0) the limit-aware rule is gated off; LHS lost the
+	// risk dimension and nothing else decides, so there is no winner.
+	propNoLimit := &property.PhysicalProperty{
+		SortItems:   []property.SortItem{{Col: col1}},
+		ExpectedCnt: 0,
+	}
+	result, _ = compareCandidates(sctx, nil, propNoLimit, lhs, rhs, false)
+	require.Equal(t, 0, result, "limit-aware rule must not fire without a limit")
+
+	// Control: exercises the !orderRatioMayPenalize guard. Same firing setup as propWithLimit, but
+	// the ordered winner now carries a residual table filter. tidb_opt_ordering_index_selectivity_ratio
+	// penalizes such a path at cost time, so the rule must DEFER (return 0) instead of preempting it.
+	// Without the guard this would still return 1. (Within compareCandidates, TableFilters is read
+	// only by orderRatioMayPenalize, so adding it does not perturb any other dimension.)
+	lhsWithFilter := &candidatePath{
+		path: &util.AccessPath{
+			CountAfterAccess:    50,
+			MaxCountAfterAccess: 70,
+			IsIntHandlePath:     true,
+			TableFilters:        []expression.Expression{col1},
+		},
+		accessCondsColMap: sharedColMap,
+		matchPropResult:   property.PropMatched,
+		isFullRange:       true,
+	}
+	result, _ = compareCandidates(sctx, nil, propWithLimit, lhsWithFilter, rhs, false)
+	require.Equal(t, 0, result, "limit-aware rule must defer when the ordered winner carries residual filters")
+
+	// Control: an unbounded request (no LIMIT, ExpectedCnt == MaxFloat64) produces no winner. Note
+	// this pins the observable behavior, not the explicit prop.ExpectedCnt < MaxFloat64 bound in
+	// isolation: that bound is belt-and-suspenders with the overshoot check, since a finite row
+	// count can never satisfy max(CountAfterAccess, MaxCountAfterAccess) > MaxFloat64. The bound is
+	// kept for self-documentation and consistency with the cacheSortPropSkyline gate.
+	propUnbounded := &property.PhysicalProperty{
+		SortItems:   []property.SortItem{{Col: col1}},
+		ExpectedCnt: math.MaxFloat64,
+	}
+	result, _ = compareCandidates(sctx, nil, propUnbounded, lhs, rhs, false)
+	require.Equal(t, 0, result, "limit-aware rule must not fire for an unbounded (MaxFloat64) request")
+}
+
+// TestOrderRatioMayPenalize guards the residual-filter predicate that de-conflicts the
+// limit-aware compareCandidates rule from tidb_opt_ordering_index_selectivity_ratio: the rule
+// must not preempt the cost-time ratio penalty, which only applies to ordered paths that carry
+// residual (non-access) filters.
+func TestOrderRatioMayPenalize(t *testing.T) {
+	col := &expression.Column{UniqueID: 1}
+	// No residual filters -> ratio does not penalize -> rule may fire.
+	require.False(t, orderRatioMayPenalize(&util.AccessPath{}))
+	require.False(t, orderRatioMayPenalize(&util.AccessPath{AccessConds: []expression.Expression{col}}))
+	// Residual index/table filters -> ratio penalizes at cost time -> rule must defer.
+	require.True(t, orderRatioMayPenalize(&util.AccessPath{IndexFilters: []expression.Expression{col}}))
+	require.True(t, orderRatioMayPenalize(&util.AccessPath{TableFilters: []expression.Expression{col}}))
+}
+
+// TestCrossCacheDedupByExpectedCnt pins that skylineCrossCache entries are keyed by BOTH sort
+// items and ExpectedCnt. Identical (ORDER BY, LIMIT) requests are deduplicated, but the same
+// ORDER BY with a different LIMIT is stored as a separate dominator rather than being silently
+// dropped -- otherwise the first-seen limit would govern every later cross-prune and pruning
+// would depend on exploration order. Also covers the per-DataSource entry cap.
+func TestCrossCacheDedupByExpectedCnt(t *testing.T) {
+	col1 := &expression.Column{UniqueID: 1}
+	mkProp := func(cnt float64) *property.PhysicalProperty {
+		return &property.PhysicalProperty{
+			SortItems:   []property.SortItem{{Col: col1}},
+			ExpectedCnt: cnt,
+		}
+	}
+	cache := &skylineCrossCache{}
+
+	// First (items, cnt=5) entry is added.
+	require.True(t, cache.addEntryIfAbsent(nil, mkProp(5)))
+	require.Len(t, cache.entries, 1)
+	// Same (items, cnt=5) is deduplicated.
+	require.False(t, cache.addEntryIfAbsent(nil, mkProp(5)))
+	require.Len(t, cache.entries, 1)
+	// Same ORDER BY but a different LIMIT is a distinct dominator -> separate entry.
+	require.True(t, cache.addEntryIfAbsent(nil, mkProp(100)))
+	require.Len(t, cache.entries, 2)
+
+	// Entry cap: fill up to maxCrossCacheEntries with further distinct limits, then reject extras.
+	require.True(t, cache.addEntryIfAbsent(nil, mkProp(200)))
+	require.True(t, cache.addEntryIfAbsent(nil, mkProp(300)))
+	require.Len(t, cache.entries, maxCrossCacheEntries)
+	require.False(t, cache.addEntryIfAbsent(nil, mkProp(400)))
+	require.Len(t, cache.entries, maxCrossCacheEntries)
+}
+
+func TestCrossSkylinePrune(t *testing.T) {
+	sctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
+	// crossSkylinePrune relies on the limit-aware rule in compareCandidates, which is gated on
+	// tidb_opt_enable_alternative_logical_plans.
+	sctx.GetSessionVars().EnableAlternativeLogicalPlans = true
+
+	col1 := &expression.Column{UniqueID: 1}
+
+	// Build a DataSource with minimal fields needed for crossSkylinePrune.
+	// Table must be set because matchPropertyReadOnly -> matchProperty accesses ds.Table.
+	tblInfo := &model.TableInfo{
+		Name:    ast.NewCIStr("test_cross"),
+		Columns: []*model.ColumnInfo{},
+	}
+	ds := &logicalop.DataSource{}
+	ds.SetSCtx(sctx)
+	ds.Table = tables.MockTableFromMeta(tblInfo)
+	ds.TableInfo = tblInfo
+
+	sortProp := &property.PhysicalProperty{
+		SortItems:   []property.SortItem{{Col: col1}},
+		ExpectedCnt: 100,
+	}
+
+	// Cached candidate: matches sort on col1, has good access conditions on col1.
+	// IsIntHandlePath = true makes it a table path (avoids nil Index deref in compareGlobalIndex).
+	cachedOrdered := &candidatePath{
+		path: &util.AccessPath{
+			CountAfterAccess: 50,
+			IsIntHandlePath:  true,
+		},
+		accessCondsColMap: util.Col2Len{1: -1},
+		matchPropResult:   property.PropMatched,
+		isFullRange:       false,
+		eqOrInCount:       1,
+	}
+
+	cache := &skylineCrossCache{
+		entries: []skylineCrossCacheEntry{
+			{
+				candidates: []*candidatePath{cachedOrdered},
+				sortProp:   sortProp,
+			},
+		},
+	}
+
+	// Current candidate from empty-property call: no match on sort, same access conditions.
+	// This should be pruned because the cached ordered candidate dominates when the sort
+	// dimension is re-evaluated.
+	currentUnordered := &candidatePath{
+		path: &util.AccessPath{
+			CountAfterAccess: 50,
+			IsIntHandlePath:  true,
+		},
+		accessCondsColMap: util.Col2Len{1: -1},
+		matchPropResult:   property.PropNotMatched, // empty-property: no match
+		isFullRange:       false,
+		eqOrInCount:       1,
+	}
+
+	// Current candidate that the cached one cannot dominate (different access columns).
+	currentDifferentAccess := &candidatePath{
+		path: &util.AccessPath{
+			CountAfterAccess: 50,
+			IsIntHandlePath:  true,
+		},
+		accessCondsColMap: util.Col2Len{2: -1}, // different column
+		matchPropResult:   property.PropNotMatched,
+		isFullRange:       false,
+		eqOrInCount:       1,
+	}
+
+	// Test 1: dominated candidate is pruned (safety fallback when only candidate).
+	result := crossSkylinePrune(ds, []*candidatePath{currentUnordered}, cache)
+	// When there's only one candidate and it gets pruned, the safety fallback returns original.
+	require.Len(t, result, 1)
+
+	// Test with two candidates where only one is pruned.
+	result = crossSkylinePrune(ds, []*candidatePath{currentDifferentAccess, currentUnordered}, cache)
+	// currentDifferentAccess survives (incomparable access), currentUnordered is pruned.
+	require.Len(t, result, 1)
+	require.Same(t, currentDifferentAccess, result[0])
+
+	// Test 2: TiFlash candidates are never cross-pruned.
+	tiflashCandidate := &candidatePath{
+		path: &util.AccessPath{
+			StoreType:        kv.TiFlash,
+			CountAfterAccess: 50,
+		},
+		accessCondsColMap: util.Col2Len{1: -1},
+		matchPropResult:   property.PropNotMatched,
+	}
+	// Pair the protected candidate with a genuinely prunable one (currentUnordered) so the
+	// empty-result safety fallback cannot mask a regression: if the TiFlash skip were removed,
+	// BOTH would be pruned and the fallback would return the original set (Len 2). With the skip,
+	// only currentUnordered is removed, so result is exactly [tiflashCandidate].
+	result = crossSkylinePrune(ds, []*candidatePath{tiflashCandidate, currentUnordered}, cache)
+	require.Len(t, result, 1)
+	require.Same(t, tiflashCandidate, result[0])
+
+	// Test 3: nil/empty cache returns candidates unchanged.
+	result = crossSkylinePrune(ds, []*candidatePath{currentUnordered}, nil)
+	require.Len(t, result, 1)
+	result = crossSkylinePrune(ds, []*candidatePath{currentUnordered}, &skylineCrossCache{})
+	require.Len(t, result, 1)
+
+	// Test 4: index merge candidates are not cross-pruned.
+	indexMergeCandidate := &candidatePath{
+		path: &util.AccessPath{
+			CountAfterAccess:  50,
+			IsIntHandlePath:   true,
+			PartialIndexPaths: []*util.AccessPath{{}, {}},
+		},
+		accessCondsColMap: util.Col2Len{1: -1},
+		matchPropResult:   property.PropNotMatched,
+	}
+	result = crossSkylinePrune(ds, []*candidatePath{indexMergeCandidate}, cache)
+	require.Len(t, result, 1)
+
+	// Test 5: forced paths (USE_INDEX/FORCE_INDEX hints) are not cross-pruned.
+	forcedCandidate := &candidatePath{
+		path: &util.AccessPath{
+			CountAfterAccess: 50,
+			IsIntHandlePath:  true,
+			Forced:           true,
+		},
+		accessCondsColMap: util.Col2Len{1: -1},
+		matchPropResult:   property.PropNotMatched,
+	}
+	// Pair with a prunable candidate (see Test 2): without the Forced skip both would be pruned and
+	// the fallback would return the original set (Len 2), so this distinguishes the skip from the
+	// fallback rather than passing tautologically on a single candidate.
+	result = crossSkylinePrune(ds, []*candidatePath{forcedCandidate, currentUnordered}, cache)
+	require.Len(t, result, 1)
+	require.Same(t, forcedCandidate, result[0])
+
+	// Test 6: when every surviving candidate is an MVIndex path, fall back to the original
+	// set. MVIndex paths are incomparable in compareCandidates (and yield InvalidTask in
+	// convertToIndexScan), so they can never be pruned while every non-MVIndex path can.
+	// A result consisting solely of MVIndex survivors would otherwise bubble up as a
+	// "can't find a proper physical plan" error.
+	mvIndexCandidate := &candidatePath{
+		path: &util.AccessPath{
+			Index:            &model.IndexInfo{MVIndex: true},
+			CountAfterAccess: 50,
+		},
+		accessCondsColMap: util.Col2Len{1: -1},
+		matchPropResult:   property.PropNotMatched,
+	}
+	// currentUnordered would be pruned, leaving only the MVIndex survivor -> fallback fires.
+	result = crossSkylinePrune(ds, []*candidatePath{mvIndexCandidate, currentUnordered}, cache)
+	require.Len(t, result, 2, "all-MVIndex survivors must trigger the original-set fallback")
+}
+
+func TestSkylineCrossCacheDedup(t *testing.T) {
+	col1 := &expression.Column{UniqueID: 1}
+	col2 := &expression.Column{UniqueID: 2}
+
+	prop1 := &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col1}}}
+	prop1Dup := &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col1}}}
+	prop2 := &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col2}}}
+
+	cache := &skylineCrossCache{}
+	dummyCandidates := []*candidatePath{{path: &util.AccessPath{}}}
+
+	// Add first entry.
+	require.True(t, cache.addEntryIfAbsent(dummyCandidates, prop1))
+	require.Len(t, cache.entries, 1)
+
+	// Add duplicate — should be skipped.
+	require.False(t, cache.addEntryIfAbsent(dummyCandidates, prop1Dup))
+	require.Len(t, cache.entries, 1)
+
+	// Add different sort property — should succeed.
+	require.True(t, cache.addEntryIfAbsent(dummyCandidates, prop2))
+	require.Len(t, cache.entries, 2)
+
+	// Fill to cap.
+	for i := range maxCrossCacheEntries - 2 {
+		col := &expression.Column{UniqueID: int64(10 + i)}
+		p := &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col}}}
+		require.True(t, cache.addEntryIfAbsent(dummyCandidates, p))
+	}
+	require.Len(t, cache.entries, maxCrossCacheEntries)
+
+	// One more should be rejected due to cap.
+	col99 := &expression.Column{UniqueID: 99}
+	propOver := &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col99}}}
+	require.False(t, cache.addEntryIfAbsent(dummyCandidates, propOver))
+	require.Len(t, cache.entries, maxCrossCacheEntries)
+}
+
+// TestCacheSortPropSkyline exercises the eligibility gates that decide whether a sort-property
+// skyline is cached for cross-pruning. These gates are the load-bearing protection against
+// (a) caching infeasible candidates (no valid task) and (b) over-pruning order-less calls that
+// have no Limit consumer (unbounded ExpectedCnt).
+func TestCacheSortPropSkyline(t *testing.T) {
+	sctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
+	col1 := &expression.Column{UniqueID: 1}
+	candidates := []*candidatePath{{path: &util.AccessPath{}}}
+
+	// A Limit-bounded sort property is the only shape that should be cached.
+	limitProp := func() *property.PhysicalProperty {
+		return &property.PhysicalProperty{SortItems: []property.SortItem{{Col: col1}}, ExpectedCnt: 100}
+	}
+	newDS := func() *logicalop.DataSource {
+		ds := &logicalop.DataSource{}
+		ds.SetSCtx(sctx)
+		return ds
+	}
+	entryCount := func(ds *logicalop.DataSource) int {
+		cache, ok := ds.CrossSkylineCache.(*skylineCrossCache)
+		if !ok || cache == nil {
+			return 0
+		}
+		return len(cache.entries)
+	}
+
+	// Eligible: valid task + non-empty sort + finite ExpectedCnt -> cached.
+	ds := newDS()
+	cacheSortPropSkyline(ds, limitProp(), candidates, true)
+	require.Equal(t, 1, entryCount(ds), "Limit-bounded sort skyline should be cached")
+
+	// Gate: no valid task -> not cached (e.g. TABLESAMPLE rejects non-empty sort).
+	ds = newDS()
+	cacheSortPropSkyline(ds, limitProp(), candidates, false)
+	require.Equal(t, 0, entryCount(ds), "must not cache when no candidate produced a valid task")
+
+	// Gate: unbounded sort request (ExpectedCnt == MaxFloat64) -> not cached. This is the
+	// over-pruning guard: an order required by e.g. StreamAgg-for-DISTINCT has no Limit consumer.
+	ds = newDS()
+	unbounded := limitProp()
+	unbounded.ExpectedCnt = math.MaxFloat64
+	cacheSortPropSkyline(ds, unbounded, candidates, true)
+	require.Equal(t, 0, entryCount(ds), "must not cache an unbounded (non-Limit) sort request")
+
+	// Gate: empty sort items -> not cached.
+	ds = newDS()
+	cacheSortPropSkyline(ds, &property.PhysicalProperty{ExpectedCnt: 100}, candidates, true)
+	require.Equal(t, 0, entryCount(ds), "must not cache an empty sort property")
+
+	// Gate: PartialOrderInfo set -> not cached.
+	ds = newDS()
+	partial := limitProp()
+	partial.PartialOrderInfo = &property.PartialOrderInfo{}
+	cacheSortPropSkyline(ds, partial, candidates, true)
+	require.Equal(t, 0, entryCount(ds), "must not cache a partial-order property")
+
+	// Dedup across calls on the same DataSource: identical sort items add only one entry.
+	ds = newDS()
+	cacheSortPropSkyline(ds, limitProp(), candidates, true)
+	cacheSortPropSkyline(ds, limitProp(), candidates, true)
+	require.Equal(t, 1, entryCount(ds), "identical sort items must not create duplicate entries")
 }
 
 func TestFastPlanContextTables(t *testing.T) {
