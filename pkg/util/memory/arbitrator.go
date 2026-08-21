@@ -559,6 +559,7 @@ type MemArbitrator struct {
 		shardsMask uint64
 		num        atomic.Int64
 		limit      int64 // max number of digest profiles; shrink to limit/2 when num > limit;
+		top3       Top3Digest
 	}
 	entryMap  entryMap // sharded hash map & ordered quota map
 	awaitFree struct { // await-free pool
@@ -584,7 +585,7 @@ type MemArbitrator struct {
 		lastUpdateUtimeMilli atomic.Int64
 	}
 
-	buffer buffer // reserved buffer quota which only works under priority mode
+	buffer atomic.Int64 // reserved buffer quota which only works under priority mode
 
 	mu struct {
 		sync.Mutex
@@ -629,17 +630,20 @@ type MemArbitrator struct {
 	mode        ArbitratorWorkMode
 }
 
-type buffer struct {
-	size atomic.Int64 // approximate max quota usage of root pool
-	top3 Top3Digest
-}
-
 func (m *MemArbitrator) setBufferSize(v int64) {
-	m.buffer.size.Store(v)
+	m.buffer.Store(v)
 }
 
 func (m *MemArbitrator) bufferSize() int64 {
-	return m.buffer.size.Load()
+	return m.buffer.Load()
+}
+
+func (m *MemArbitrator) updateBuffer(sz int64) {
+	for b := m.bufferSize(); b < sz; b = m.bufferSize() {
+		if m.buffer.CompareAndSwap(b, sz) {
+			return
+		}
+	}
 }
 
 type digestProfileShard struct {
@@ -1697,12 +1701,15 @@ func NewMemArbitrator(limit int64, shardNum uint64, maxQuotaShardNum int, minQuo
 			m.heapController.memStateRecorder.lastMemState.Store(s)
 			m.doSetMemMagnif(s.Magnif)
 			m.poolAllocStats.mediumQuota.Store(s.PoolMediumCap)
-			m.buffer.top3.g[0].d = s.TopNProfiles
+			// init the digest profile cache
+			m.digestProfileCache.top3.index.Store(0)
+			m.digestProfileCache.top3.g[0] = s.TopNProfiles
 			for i := range s.TopNProfiles {
-				if s.TopNProfiles[i].DigestID == InvalidDigestID {
+				t := &s.TopNProfiles[i]
+				if t.DigestID == InvalidDigestID {
 					continue
 				}
-				m.UpdateDigestProfileCache(s.TopNProfiles[i].DigestID, s.TopNProfiles[i].Size, s.TopNProfiles[i].UtimeSec)
+				m.UpdateDigestProfileCache(t.DigestID, t.Size, t.UtimeSec)
 			}
 		}
 
@@ -2326,13 +2333,13 @@ func (m *MemArbitrator) tryStorePoolMediumCapacity(utimeMilli int64, capacity in
 		if lastState != nil {
 			s := *lastState // copy
 			s.PoolMediumCap = capacity
-			s.TopNProfiles = m.buffer.top3.g[m.buffer.top3.index.Load()].d
+			s.TopNProfiles = m.digestProfileCache.top3.g[m.digestProfileCache.top3.index.Load()]
 			memState = &s
 		} else {
 			memState = &RuntimeMemStateV1{
 				Version:       1,
 				PoolMediumCap: capacity,
-				TopNProfiles:  m.buffer.top3.g[m.buffer.top3.index.Load()].d,
+				TopNProfiles:  m.digestProfileCache.top3.g[m.digestProfileCache.top3.index.Load()],
 			}
 		}
 
@@ -2566,7 +2573,7 @@ func (m *MemArbitrator) HandleRuntimeStats(s memStats) {
 func (m *MemArbitrator) tryUpdateTrackedMemStats(utimeMilli int64) bool {
 	if m.avoidance.heapTracked.lastUpdateUtimeMilli.Load()+defTrackMemStatsDurMilli <= utimeMilli {
 		top3 := m.updateTrackedHeapStats()
-		m.buffer.top3.merge(top3, m.approxUnixTimeSec())
+		m.digestProfileCache.top3.merge(top3, m.approxUnixTimeSec())
 		return true
 	}
 	return false
@@ -2578,9 +2585,7 @@ type Top3DigestData struct {
 	UtimeSec int64  `json:"utime_sec"`
 }
 
-type Top3DigestDataGroup struct {
-	d [3]Top3DigestData
-}
+type Top3DigestDataGroup [3]Top3DigestData
 
 type Top3Digest struct {
 	index atomic.Int64
@@ -2603,8 +2608,8 @@ func (t *Top3DigestDataGroup) clean(utimeSec int64) Top3DigestDataGroup {
 	res := Top3DigestDataGroup{}
 	j := 0
 	for i := range 3 {
-		if t.d[i].UtimeSec+24*60*60 >= utimeSec {
-			res.d[j] = t.d[i]
+		if t[i].UtimeSec+24*60*60 >= utimeSec {
+			res[j] = t[i]
 			j++
 		}
 	}
@@ -2614,7 +2619,7 @@ func (t *Top3DigestDataGroup) clean(utimeSec int64) Top3DigestDataGroup {
 func (t *Top3DigestDataGroup) merge(other Top3DigestDataGroup) Top3DigestDataGroup {
 	res := *t
 	for i := range 3 {
-		res.update(other.d[i].DigestID, other.d[i].Size, other.d[i].UtimeSec)
+		res.update(other[i].DigestID, other[i].Size, other[i].UtimeSec)
 	}
 	return res
 }
@@ -2623,46 +2628,46 @@ func (t *Top3DigestDataGroup) update(digestID uint64, size int64, utimeSec int64
 	if digestID == 0 {
 		return
 	}
-	if size <= t.d[2].Size {
+	if size <= t[2].Size {
 		return
 	}
 	for i := range 3 {
-		if t.d[i].DigestID == digestID {
-			t.d[i].UtimeSec = utimeSec
-			if size <= t.d[i].Size {
+		if t[i].DigestID == digestID {
+			t[i].UtimeSec = utimeSec
+			if size <= t[i].Size {
 				return
 			}
-			t.d[i].Size = size
+			t[i].Size = size
 			// reorder
-			if t.d[1].Size < t.d[2].Size {
-				t.d[1], t.d[2] = t.d[2], t.d[1]
+			if t[1].Size < t[2].Size {
+				t[1], t[2] = t[2], t[1]
 			}
-			if t.d[0].Size < t.d[1].Size {
-				t.d[0], t.d[1] = t.d[1], t.d[0]
+			if t[0].Size < t[1].Size {
+				t[0], t[1] = t[1], t[0]
 			}
-			if t.d[1].Size < t.d[2].Size {
-				t.d[1], t.d[2] = t.d[2], t.d[1]
+			if t[1].Size < t[2].Size {
+				t[1], t[2] = t[2], t[1]
 			}
 			return
 		}
 	}
-	if size >= t.d[0].Size {
-		t.d[2] = t.d[1]
-		t.d[1] = t.d[0]
-		t.d[0] = Top3DigestData{
+	if size >= t[0].Size {
+		t[2] = t[1]
+		t[1] = t[0]
+		t[0] = Top3DigestData{
 			DigestID: digestID,
 			Size:     size,
 			UtimeSec: utimeSec,
 		}
-	} else if size >= t.d[1].Size {
-		t.d[2] = t.d[1]
-		t.d[1] = Top3DigestData{
+	} else if size >= t[1].Size {
+		t[2] = t[1]
+		t[1] = Top3DigestData{
 			DigestID: digestID,
 			Size:     size,
 			UtimeSec: utimeSec,
 		}
-	} else if size >= t.d[2].Size {
-		t.d[2] = Top3DigestData{
+	} else if size >= t[2].Size {
+		t[2] = Top3DigestData{
 			DigestID: digestID,
 			Size:     size,
 			UtimeSec: utimeSec,
@@ -2771,7 +2776,7 @@ func (m *MemArbitrator) calcMemRisk() *RuntimeMemStateV1 {
 			QuotaAlloc: m.allocated(),
 		},
 		PoolMediumCap: m.poolMediumQuota(),
-		TopNProfiles:  m.buffer.top3.g[m.buffer.top3.index.Load()].d,
+		TopNProfiles:  m.digestProfileCache.top3.g[m.digestProfileCache.top3.index.Load()],
 	}
 
 	if memState.LastRisk.QuotaAlloc == 0 || memState.LastRisk.HeapAlloc <= memState.LastRisk.QuotaAlloc {
