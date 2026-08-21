@@ -38,3 +38,13 @@ func topNMetaToDatum(val TopNMeta,
 	// because a histogram's chunk column is typed.
 	return tablecodec.Unflatten(dat, ft, loc)
 }
+
+// DecodeColumnTopNValue decodes an encoded column TopN value for consumers that
+// need to preserve string comparison bytes.
+func DecodeColumnTopNValue(encoded []byte, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
+	_, dat, err := codec.DecodeOne(encoded)
+	if err != nil || types.IsString(ft.GetType()) {
+		return dat, err
+	}
+	return tablecodec.Unflatten(dat, ft, loc)
+}

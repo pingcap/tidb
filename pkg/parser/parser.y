@@ -350,6 +350,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	ascii                      "ASCII"
 	attribute                  "ATTRIBUTE"
 	attributes                 "ATTRIBUTES"
+	auto                       "AUTO"
 	autoextendSize             "AUTOEXTEND_SIZE"
 	autoIdCache                "AUTO_ID_CACHE"
 	autoIncrement              "AUTO_INCREMENT"
@@ -7128,6 +7129,13 @@ IndexOptionList:
 				opt1.Global = true
 			} else if opt2.SplitOpt != nil {
 				opt1.SplitOpt = opt2.SplitOpt
+				opt1.AutoPreSplit = false
+			} else if opt2.AutoPreSplit {
+				// Explicit manual boundaries always take precedence over AUTO,
+				// regardless of the order of repeated options.
+				if opt1.SplitOpt == nil {
+					opt1.AutoPreSplit = true
+				}
 			} else if len(opt2.SecondaryEngineAttr) > 0 {
 				opt1.SecondaryEngineAttr = opt2.SecondaryEngineAttr
 			} else if opt2.Condition != nil {
@@ -7204,6 +7212,12 @@ IndexOption:
 			SplitOpt: &ast.SplitOption{
 				Num: $3.(int64),
 			},
+		}
+	}
+|	"PRE_SPLIT_REGIONS" EqOpt "AUTO"
+	{
+		$$ = &ast.IndexOption{
+			AutoPreSplit: true,
 		}
 	}
 |	"SECONDARY_ENGINE_ATTRIBUTE" EqOpt stringLit
@@ -7324,6 +7338,7 @@ UnReservedKeyword:
 |	"STATS_COL_LIST"
 |	"AUTO_ID_CACHE"
 |	"AUTO_INCREMENT"
+|	"AUTO"
 |	"AFFINITY"
 |	"AFTER"
 |	"ALWAYS"

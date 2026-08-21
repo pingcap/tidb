@@ -195,6 +195,19 @@ func (h *Handle) GetPhysicalTableStats(physicalTableID int64, tblInfo *model.Tab
 	return tblStats
 }
 
+// LoadColumnDistributionStats loads one column's metadata, TopN, and Histogram
+// from one MVCC snapshot. Any loading or decoding failure aborts the whole load.
+func (*Handle) LoadColumnDistributionStats(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	physicalTableID int64,
+	colInfo *model.ColumnInfo,
+	maxTopNKeys int,
+) (*statistics.Column, error) {
+	return storage.LoadColumnDistributionStats(
+		ctx, sctx, physicalTableID, colInfo, maxTopNKeys)
+}
+
 // GetNonPseudoPhysicalTableStats retrieves the statistics for a physical table from cache, but it will not return pseudo.
 // physicalTableID can be a table ID or partition ID.
 // Note: this function may return nil if the table is not found in the cache.

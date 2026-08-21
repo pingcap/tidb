@@ -238,9 +238,6 @@ func ExecWithCtx(
 
 // ExecRows is a helper function to execute sql and return rows and fields.
 func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
-	failpoint.Inject("ExecRowsTimeout", func() {
-		failpoint.Return(nil, nil, errors.New("inject timeout error"))
-	})
 	return ExecRowsWithCtx(StatsCtx, sctx, sql, args...)
 }
 
@@ -251,6 +248,9 @@ func ExecRowsWithCtx(
 	sql string,
 	args ...any,
 ) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
+	failpoint.Inject("ExecRowsTimeout", func() {
+		failpoint.Return(nil, nil, errors.New("inject timeout error"))
+	})
 	if intest.InTest {
 		if v := sctx.Value(mock.RestrictedSQLExecutorKey{}); v != nil {
 			return v.(*mock.MockRestrictedSQLExecutor).ExecRestrictedSQL(
@@ -265,8 +265,13 @@ func ExecRowsWithCtx(
 
 // ExecWithOpts is a helper function to execute sql and return rows and fields.
 func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
+	return ExecWithOptsWithCtx(StatsCtx, sctx, opts, sql, args...)
+}
+
+// ExecWithOptsWithCtx is a helper function to execute sql with context and options and return rows and fields.
+func ExecWithOptsWithCtx(ctx context.Context, sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
 	sqlExec := sctx.GetRestrictedSQLExecutor()
-	return sqlExec.ExecRestrictedSQL(StatsCtx, opts, sql, args...)
+	return sqlExec.ExecRestrictedSQL(ctx, opts, sql, args...)
 }
 
 // DurationToTS converts duration to timestamp.
