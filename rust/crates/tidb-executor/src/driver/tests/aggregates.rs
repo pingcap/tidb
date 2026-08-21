@@ -2804,6 +2804,84 @@ fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
         vec![vec![Datum::Int(2)]]
     );
 
+    // A full covering scan has no residual predicate. COUNT(*) reaches the
+    // aggregate descriptor as COUNT(1), whose cop input is a constant rather
+    // than a scan-column offset, and Go's unordered global path uses HashAgg.
+    let full_count_sql = "SELECT COUNT(*) FROM count_ranges";
+    let full_count_stmt = tidb_parser::parse(full_count_sql).unwrap();
+    let Stmt::Query(full_count_query) = &full_count_stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(full_count_select) = &**full_count_query else {
+        panic!("not a SELECT");
+    };
+    let (_, full_count_rows) = explain_select_stmt(
+        full_count_select,
+        &catalog,
+        "test",
+        &ctx,
+        ExplainFormat::Brief,
+    )
+    .unwrap();
+    let full_count_cell = |row: usize, column: usize| match &full_count_rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..full_count_rows.len())
+            .map(|row| full_count_cell(row, 0))
+            .collect::<Vec<_>>(),
+        vec![
+            "HashAgg",
+            "└─IndexReader",
+            "  └─HashAgg",
+            "    └─IndexFullScan"
+        ]
+    );
+    assert_eq!(
+        run_select_on(full_count_sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(3)]]
+    );
+
+    // Decimal SUM is decomposed through the global cop HashAgg as well. This
+    // matters for a covering index: without the index-source Global contract
+    // the executor would fetch every index row and cast it at the root.
+    let full_sum_sql = "SELECT SUM(k) FROM count_ranges";
+    let full_sum_stmt = tidb_parser::parse(full_sum_sql).unwrap();
+    let Stmt::Query(full_sum_query) = &full_sum_stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(full_sum_select) = &**full_sum_query else {
+        panic!("not a SELECT");
+    };
+    let (_, full_sum_rows) = explain_select_stmt(
+        full_sum_select,
+        &catalog,
+        "test",
+        &ctx,
+        ExplainFormat::Brief,
+    )
+    .unwrap();
+    let full_sum_cell = |row: usize, column: usize| match &full_sum_rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..full_sum_rows.len())
+            .map(|row| full_sum_cell(row, 0))
+            .collect::<Vec<_>>(),
+        vec![
+            "HashAgg",
+            "└─IndexReader",
+            "  └─HashAgg",
+            "    └─IndexFullScan"
+        ]
+    );
+    assert_eq!(
+        run_select_on(full_sum_sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Decimal(tidb_datatype::Decimal::from_int(36))]]
+    );
+
     // The loaded Sysbench fixture has most rows in TopN, with the queried
     // range below the histogram. Go builds both a column statistics node and
     // an index statistics node for the DNF, then its greedy cover prefers the

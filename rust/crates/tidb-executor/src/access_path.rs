@@ -960,11 +960,132 @@ impl IndexRangeSourceExec {
             PushdownPartialAggregate::Count { input_offset, .. } => {
                 let mut count = 0_i64;
                 while let Some(row) = self.next_partial_input_row()? {
-                    if !matches!(row.get(*input_offset), None | Some(Datum::Null)) {
+                    if input_offset
+                        .is_none_or(|offset| !matches!(row.get(offset), None | Some(Datum::Null)))
+                    {
                         count += 1;
                     }
                 }
                 Ok(vec![vec![Datum::Int(count)]])
+            }
+            PushdownPartialAggregate::Global { functions } => {
+                enum PartialValue {
+                    Count(i64),
+                    SumDecimal(Option<Decimal>),
+                    SumReal(Option<f64>),
+                    Extreme { value: Option<Datum>, is_max: bool },
+                }
+
+                let input_types = self.partial_input_types.clone().ok_or_else(|| {
+                    ExecError::unsupported("index partial aggregation lost its input schema")
+                })?;
+                let context = self.partial_context.clone().ok_or_else(|| {
+                    ExecError::unsupported("index partial aggregation lost its statement context")
+                })?;
+                let mut values = functions
+                    .iter()
+                    .map(|function| match function.kind {
+                        PushdownAggregateKind::Count => PartialValue::Count(0),
+                        PushdownAggregateKind::Sum
+                            if function.output_type.eval_type()
+                                == tidb_datatype::EvalType::Real =>
+                        {
+                            PartialValue::SumReal(None)
+                        }
+                        PushdownAggregateKind::Sum => PartialValue::SumDecimal(None),
+                        PushdownAggregateKind::Min => PartialValue::Extreme {
+                            value: None,
+                            is_max: false,
+                        },
+                        PushdownAggregateKind::Max => PartialValue::Extreme {
+                            value: None,
+                            is_max: true,
+                        },
+                    })
+                    .collect::<Vec<_>>();
+
+                while let Some(row) = self.next_partial_input_row()? {
+                    for (function, value) in functions.iter().zip(values.iter_mut()) {
+                        let input = function
+                            .input
+                            .as_ref()
+                            .map(|expression| {
+                                crate::generated_column::eval_over_row(
+                                    expression,
+                                    &input_types,
+                                    &row,
+                                    &context,
+                                )
+                                .map_err(ExecError::Eval)
+                            })
+                            .transpose()?;
+                        match (value, input) {
+                            (PartialValue::Count(count), None) => *count += 1,
+                            (PartialValue::Count(_), Some(Datum::Null)) => {}
+                            (PartialValue::Count(count), Some(_)) => *count += 1,
+                            (PartialValue::SumDecimal(_), None)
+                            | (PartialValue::SumReal(_), None)
+                            | (PartialValue::Extreme { .. }, None) => {
+                                return Err(ExecError::unsupported(
+                                    "only COUNT may omit an index partial aggregate input",
+                                ));
+                            }
+                            (PartialValue::SumDecimal(_), Some(Datum::Null))
+                            | (PartialValue::SumReal(_), Some(Datum::Null))
+                            | (PartialValue::Extreme { .. }, Some(Datum::Null)) => {}
+                            (PartialValue::SumDecimal(sum), Some(input)) => {
+                                let addend = match input {
+                                    Datum::Int(value) => Decimal::from_int(value),
+                                    Datum::UInt(value) => Decimal::from_uint(value),
+                                    Datum::Decimal(value) => value,
+                                    _ => {
+                                        return Err(ExecError::unsupported(
+                                            "index partial SUM requires integer or decimal input",
+                                        ));
+                                    }
+                                };
+                                *sum = Some(match sum.take() {
+                                    Some(current) => current.add(&addend),
+                                    None => addend,
+                                });
+                            }
+                            (PartialValue::SumReal(sum), Some(input)) => {
+                                let addend = input.to_f64().map_err(|_| {
+                                    ExecError::unsupported(
+                                        "index partial SUM requires numeric input",
+                                    )
+                                })?;
+                                *sum = Some(sum.unwrap_or(0.0) + addend.value);
+                            }
+                            (PartialValue::Extreme { value, is_max }, Some(candidate)) => {
+                                let replace = value.as_ref().is_none_or(|current| {
+                                    tidb_expr::compare_datums(&candidate, current).is_ok_and(
+                                        |ordering| {
+                                            if *is_max {
+                                                ordering.is_gt()
+                                            } else {
+                                                ordering.is_lt()
+                                            }
+                                        },
+                                    )
+                                });
+                                if replace {
+                                    *value = Some(candidate);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Ok(vec![values
+                    .into_iter()
+                    .map(|value| match value {
+                        PartialValue::Count(count) => Datum::Int(count),
+                        PartialValue::SumDecimal(sum) => sum.map_or(Datum::Null, Datum::Decimal),
+                        PartialValue::SumReal(sum) => sum.map_or(Datum::Null, Datum::Real),
+                        PartialValue::Extreme { value, .. } => value.unwrap_or(Datum::Null),
+                    })
+                    .collect::<Vec<_>>()])
             }
             PushdownPartialAggregate::Grouped {
                 group_offsets,
@@ -1207,11 +1328,14 @@ impl Executor for IndexRangeSourceExec {
                 .pushdown_index_partial_aggregate_cursor(
                     self.index_id,
                     &self.ranges,
+                    &self.keep,
                     aggregate,
                     self.decode_context.zone(),
                     &self.statement,
                 )
-                .map_err(|_| ExecError::unsupported("index aggregate request failed"))?;
+                .map_err(|error| {
+                    ExecError::unsupported(format!("index aggregate request failed: {error:?}"))
+                })?;
         }
         Ok(())
     }
@@ -1341,18 +1465,19 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         aggregate: &PushdownPartialAggregate,
         ctx: &crate::StmtContext,
     ) -> bool {
-        let supported = matches!(aggregate, PushdownPartialAggregate::Count { .. })
-            || matches!(
-                aggregate,
-                PushdownPartialAggregate::Grouped {
-                    streamed: false,
-                    ..
-                }
-            )
-            || (matches!(
-                aggregate,
-                PushdownPartialAggregate::Grouped { streamed: true, .. }
-            ) && !self.can_reorder_handles);
+        let supported = matches!(
+            aggregate,
+            PushdownPartialAggregate::Count { .. } | PushdownPartialAggregate::Global { .. }
+        ) || matches!(
+            aggregate,
+            PushdownPartialAggregate::Grouped {
+                streamed: false,
+                ..
+            }
+        ) || (matches!(
+            aggregate,
+            PushdownPartialAggregate::Grouped { streamed: true, .. }
+        ) && !self.can_reorder_handles);
         if self.estimated_rows.is_none_or(|rows| rows <= 1.0)
             || aggregate
                 .input_offsets()
