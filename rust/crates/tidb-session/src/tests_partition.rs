@@ -2387,3 +2387,58 @@ fn show_create_prints_the_stored_definition_text() {
     );
 }
 
+/// Go `checkAddPartitionValue` (`ddl/partition.go:428`) validates EVERY added
+/// definition, not merely the first one against the table's last bound.
+///
+/// These four statements are the arms of Go's loop. They are asserted at the
+/// session level because the rule lives on the `ALTER` path, which reads the
+/// table's existing bounds -- a unit test over the bound vector alone cannot
+/// reach it.
+#[test]
+fn add_partition_validates_every_added_definition_as_go_does() {
+    let base = "CREATE TABLE ap (a INT) PARTITION BY RANGE (a) \
+                (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))";
+
+    // Two added definitions that do not increase BETWEEN THEMSELVES. Go walks
+    // to the second and answers 1493; comparing only the first against the
+    // table's last bound accepted this.
+    let mut session = Session::new();
+    session.run(base).expect("base table");
+    let rendered = session
+        .run("ALTER TABLE ap ADD PARTITION (PARTITION p2 VALUES LESS THAN (30), \
+              PARTITION p3 VALUES LESS THAN (25))")
+        .expect_err("Go refuses a non-increasing pair")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 1493);
+
+    // A MAXVALUE that is not the last added definition is 1481.
+    let mut session = Session::new();
+    session.run(base).expect("base table");
+    let rendered = session
+        .run("ALTER TABLE ap ADD PARTITION (PARTITION p2 VALUES LESS THAN (MAXVALUE), \
+              PARTITION p3 VALUES LESS THAN (40))")
+        .expect_err("Go refuses MAXVALUE before the last definition")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 1481);
+
+    // A MAXVALUE that IS last ends Go's loop successfully.
+    let mut session = Session::new();
+    session.run(base).expect("base table");
+    session
+        .run("ALTER TABLE ap ADD PARTITION (PARTITION p2 VALUES LESS THAN (30), \
+              PARTITION p3 VALUES LESS THAN (MAXVALUE))")
+        .expect("a trailing MAXVALUE is accepted");
+
+    // The table's own last bound being MAXVALUE is refused before any added
+    // definition is read.
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE apm (a INT) PARTITION BY RANGE (a) \
+              (PARTITION p0 VALUES LESS THAN (10), PARTITION pm VALUES LESS THAN (MAXVALUE))")
+        .expect("base table");
+    let rendered = session
+        .run("ALTER TABLE apm ADD PARTITION (PARTITION p2 VALUES LESS THAN (30))")
+        .expect_err("nothing can follow MAXVALUE")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 1481);
+}

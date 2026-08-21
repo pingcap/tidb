@@ -673,21 +673,46 @@ fn add_partition_action(
                         })
                     },
                 )?;
-                match (less_than.last(), added.first()) {
-                    (Some(RangeBound::MaxValue), _) => {
+                // Go `checkAddPartitionValue` (`ddl/partition.go:428`) walks
+                // EVERY added definition, not just the first. It reads the
+                // last EXISTING bound as the running value, refuses outright
+                // if that one is already MAXVALUE, and then for each new
+                // definition in order: a MAXVALUE at the last position ends
+                // the check, a MAXVALUE anywhere else is 1481, and any other
+                // bound must be strictly greater than the running value.
+                //
+                // Comparing only `less_than.last()` against `added.first()`
+                // let `ADD PARTITION (p2 VALUES LESS THAN (30), p3 VALUES
+                // LESS THAN (20))` through -- Go answers 1493.
+                let mut current = match less_than.last() {
+                    Some(RangeBound::MaxValue) => {
                         return Err(DriverError::PartitionMaxValueNotLast)
                     }
-                    (Some(RangeBound::Value(old)), Some(RangeBound::Value(new))) => {
-                        let increases = if *unsigned {
-                            (*new as u64) > (*old as u64)
-                        } else {
-                            new > old
-                        };
-                        if !increases {
-                            return Err(DriverError::PartitionRangeNotIncreasing);
+                    Some(RangeBound::Value(value)) => Some(*value),
+                    None => None,
+                };
+                for (index, bound) in added.iter().enumerate() {
+                    match bound {
+                        RangeBound::MaxValue => {
+                            if index == added.len() - 1 {
+                                break;
+                            }
+                            return Err(DriverError::PartitionMaxValueNotLast);
+                        }
+                        RangeBound::Value(value) => {
+                            if let Some(previous) = current {
+                                let increases = if *unsigned {
+                                    (*value as u64) > (previous as u64)
+                                } else {
+                                    *value > previous
+                                };
+                                if !increases {
+                                    return Err(DriverError::PartitionRangeNotIncreasing);
+                                }
+                            }
+                            current = Some(*value);
                         }
                     }
-                    _ => {}
                 }
                 PartitionKind::Range {
                     less_than: added,
