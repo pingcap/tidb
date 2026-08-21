@@ -1451,6 +1451,12 @@ type SessionVars struct {
 	// SelectLimit limits the max counts of select statement's output
 	SelectLimit uint64
 
+	// SkipKeepOrderScanConcurrencyDowngrade, when true, prevents RequestBuilder.Build
+	// from downgrading a keep-order simple-scan request to concurrency 2. It is set for
+	// internal bulk reads whose rows are not sent to the client, such as the
+	// shard-boundary SELECT issued by non-transactional DML.
+	SkipKeepOrderScanConcurrencyDowngrade bool
+
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
 	EnableClusteredIndex vardef.ClusteredIndexDefMode
 
