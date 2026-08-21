@@ -742,15 +742,27 @@ fn add_partition_action(
                         })
                     },
                     )?;
-                if let (Some(old), Some(new)) = (less_than.last(), added_bounds.first()) {
-                    if !super::table_partition_range::range_columns_bound_increases(
-                        old,
-                        new,
-                        field_types,
-                    )? {
-                        return Err(DriverError::PartitionRangeNotIncreasing);
-                    }
-                }
+                // Go validates an addition by CONCATENATING it onto the
+                // existing definitions and running the whole CREATE-time
+                // battery over the result --
+                // `CheckAndUpdateAddedPartitionDefinitions`
+                // (`ddl/executor.go`) appends
+                // `clonePartitionDefinitions(meta.Partition.Definitions)`
+                // ahead of the added ones and calls
+                // `checkPartitionDefinitionConstraints` on the combined list.
+                //
+                // RANGE COLUMNS reaches that battery and NOTHING else:
+                // `checkAddPartitionValue` runs its increase loop only when
+                // `len(meta.Partition.Columns) == 0`, which is the scalar
+                // form. So comparing one pair here was the only check this
+                // method had, and additions that did not increase among
+                // THEMSELVES were accepted.
+                let mut combined = less_than.clone();
+                combined.extend(added_bounds.iter().cloned());
+                super::table_partition_range::check_range_columns_strictly_increasing(
+                    &combined,
+                    field_types,
+                )?;
                 PartitionKind::RangeColumns {
                     less_than: added_bounds.clone(),
                     field_types: added_types,

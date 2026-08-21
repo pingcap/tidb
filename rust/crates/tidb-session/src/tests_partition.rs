@@ -2442,3 +2442,37 @@ fn add_partition_validates_every_added_definition_as_go_does() {
         .to_mysql_error();
     assert_eq!(rendered.code, 1481);
 }
+
+/// Go validates an addition by CONCATENATING it onto the existing
+/// definitions and running the whole CREATE-time battery over the result
+/// (`CheckAndUpdateAddedPartitionDefinitions`, `ddl/executor.go`).
+///
+/// RANGE COLUMNS reaches that battery and nothing else, because
+/// `checkAddPartitionValue`'s own increase loop runs only for the scalar
+/// form (`len(meta.Partition.Columns) == 0`). So a pair of added tuples that
+/// does not increase among ITSELF has to be caught by the combined check.
+#[test]
+fn add_partition_on_range_columns_checks_the_combined_list() {
+    let base = "CREATE TABLE apc (a INT, b INT) PARTITION BY RANGE COLUMNS (a, b) \
+                (PARTITION p0 VALUES LESS THAN (10, 10), \
+                 PARTITION p1 VALUES LESS THAN (20, 20))";
+
+    // The first added tuple increases against the table's last bound, but the
+    // SECOND does not increase against the first.
+    let mut session = Session::new();
+    session.run(base).expect("base table");
+    let rendered = session
+        .run("ALTER TABLE apc ADD PARTITION (PARTITION p2 VALUES LESS THAN (30, 30), \
+              PARTITION p3 VALUES LESS THAN (25, 25))")
+        .expect_err("Go refuses a non-increasing added pair")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 1493);
+
+    // A properly increasing addition still lands.
+    let mut session = Session::new();
+    session.run(base).expect("base table");
+    session
+        .run("ALTER TABLE apc ADD PARTITION (PARTITION p2 VALUES LESS THAN (30, 30), \
+              PARTITION p3 VALUES LESS THAN (40, 40))")
+        .expect("an increasing addition is accepted");
+}
