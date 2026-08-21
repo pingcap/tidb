@@ -360,6 +360,8 @@ replace (
 	// Downgrade grpc to v1.63.2, as well as other related modules.
 	github.com/apache/arrow-go/v18 => github.com/joechenrh/arrow-go/v18 v18.0.0-20250911101656-62c34c9a3b82
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
+	// TODO: Remove after pingcap/kvproto#1592 merges into release-8.5.
+	github.com/pingcap/kvproto v0.0.0-20261026071505-70b5775c3362 => github.com/0xPoe/kvproto v0.0.0-20261109130652-84d3e0d6afdd
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 	// etcd 3.5 uses the interceptors removed in otelgrpc v0.60.0.
 	// Remove this compatibility pin when etcd is upgraded to v3.6.1 or later.
