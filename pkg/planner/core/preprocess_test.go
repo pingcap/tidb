@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -353,6 +354,43 @@ func TestValidator(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	for _, tt := range tests {
 		runSQL(t, tk.Session(), is, tt.sql, tt.inPrepare, tt.err)
+	}
+}
+
+func TestCreateViewRemovesNestedSelectLocks(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key)")
+
+	tests := []string{
+		"create view v as select * from (select * from t for update) as nested",
+		"create view v as select (select id from t for update) as id",
+		"create view v as select id from t outer_t where exists " +
+			"(select 1 from t inner_t where inner_t.id = outer_t.id for update)",
+		"create view v as select * from (select * from t lock in share mode) as nested",
+	}
+	for _, sql := range tests {
+		stmt, err := parser.New().ParseOneStmt(sql, "", "")
+		require.NoError(t, err, sql)
+		nodeW := resolve.NewNodeW(stmt)
+		require.NoError(t, core.Preprocess(
+			context.Background(),
+			tk.Session(),
+			nodeW,
+			core.WithPreprocessorReturn(&core.PreprocessorReturn{
+				InfoSchema: tk.Session().GetInfoSchema().(infoschema.InfoSchema),
+			}),
+		), sql)
+
+		createView := stmt.(*ast.CreateViewStmt)
+		var restored strings.Builder
+		require.NoError(t, createView.Select.Restore(format.NewRestoreCtx(
+			format.RestoreStringSingleQuotes|format.RestoreKeyWordUppercase|format.RestoreNameBackQuotes,
+			&restored,
+		)))
+		require.NotContains(t, restored.String(), "FOR UPDATE", sql)
+		require.NotContains(t, restored.String(), "LOCK IN SHARE MODE", sql)
 	}
 }
 
