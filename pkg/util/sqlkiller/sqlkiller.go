@@ -64,6 +64,12 @@ type SQLKiller struct {
 
 	lastCheckTime     atomic.Pointer[time.Time]
 	IsConnectionAlive atomic.Pointer[func() bool]
+	// ConnCancel cancels the current execution context so that in-flight RPCs
+	// (e.g. a coprocessor request blocked in TiKV) are aborted promptly, which
+	// sends a stream reset to TiKV instead of waiting for CoprReqTimeout. It is
+	// installed together with IsConnectionAlive and invoked when the connection
+	// is detected dead.
+	ConnCancel atomic.Pointer[func()]
 }
 
 // GetKillEventChan returns a recv chan which will be closed when the kill signal is sent.
@@ -128,6 +134,15 @@ func (killer *SQLKiller) sendKillSignal(reason killSignal) {
 
 func (killer *SQLKiller) sendKillSignalLocked(reason killSignal) (bool, string) {
 	if atomic.CompareAndSwapUint32(&killer.Signal, 0, reason) {
+		// Cancel the execution context so that any in-flight RPC (e.g. a
+		// coprocessor request already sent to TiKV) is aborted promptly via a
+		// gRPC stream reset, instead of blocking until CoprReqTimeout. The
+		// polled Killed flag only aborts at task/backoff boundaries, so a
+		// request stuck inside a single RPC would otherwise not observe the
+		// kill until the RPC deadline. This runs once, guarded by the CAS above.
+		if cancel := killer.ConnCancel.Load(); cancel != nil {
+			(*cancel)()
+		}
 		return true, killer.killEvent.desc
 	}
 	return false, ""
@@ -274,4 +289,5 @@ func (killer *SQLKiller) Reset() {
 		logutil.BgLogger().Warn("kill finished", zap.Uint64("conn", killer.ConnID.Load()))
 	}
 	killer.lastCheckTime.Store(nil)
+	killer.ConnCancel.Store(nil)
 }
