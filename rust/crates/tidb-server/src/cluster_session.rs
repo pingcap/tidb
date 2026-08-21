@@ -44,7 +44,7 @@ use tidb_exec::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_executor::access_cost::TableStatistics;
 use tidb_executor::cluster_storage::ClusterTableStorage;
 use tidb_executor::driver::{Catalog, ViewDef};
-use tidb_executor::kv_table::{KvColumn, KvIndex, KvTable, TableAutoId};
+use tidb_executor::kv_table::{FkAction, KvColumn, KvForeignKey, KvIndex, KvTable, TableAutoId};
 use tidb_executor::storage::TableStorage;
 use tidb_model::{GoShared, SchemaState, TableInfo};
 use tidb_planner::cardinality::row_count_estimator::{ColumnStats, IndexStats};
@@ -599,6 +599,44 @@ pub(crate) fn cluster_table(
             continue;
         }
         kv_table.add_index(kv_index(&index, &columns)?);
+    }
+    // Go `pkg/planner/core/operator/physicalop/foreign_key.go` builds child
+    // checks for every FKVersion1 entry and registers the same entries in
+    // infoschema's referred-FK map. A non-public FK uses RESTRICT on the
+    // parent side until it becomes public; only then do OnDelete/OnUpdate
+    // select CASCADE or SET NULL. The Rust DML layer already owns those checks
+    // and actions, so the loader must preserve the metadata they read.
+    for foreign_key in table.foreign_keys.iter_deref() {
+        let foreign_key = foreign_key.read();
+        if foreign_key.version < tidb_model::table::FK_VERSION1 {
+            continue;
+        }
+        let action = |value| {
+            if foreign_key.state == SchemaState::PUBLIC {
+                FkAction::from_metadata(value)
+            } else {
+                FkAction::Restrict
+            }
+        };
+        kv_table.add_foreign_key(KvForeignKey {
+            name: foreign_key.name.original().to_owned(),
+            cols: foreign_key
+                .cols
+                .snapshot()
+                .into_iter()
+                .map(|column| column.original().to_owned())
+                .collect(),
+            ref_schema: foreign_key.ref_schema.original().to_owned(),
+            ref_table: foreign_key.ref_table.original().to_owned(),
+            ref_cols: foreign_key
+                .ref_cols
+                .snapshot()
+                .into_iter()
+                .map(|column| column.original().to_owned())
+                .collect(),
+            on_delete: action(foreign_key.on_delete),
+            on_update: action(foreign_key.on_update),
+        });
     }
     if let Some(spec) = partition_spec {
         kv_table.set_partition(spec);
@@ -1974,6 +2012,130 @@ mod tests {
             "the read reaches both partitions' physical tables"
         );
         assert_eq!(spec.num(), 2);
+    }
+
+    /// Go `BuildOnInsertFKTriggers` checks every Version-1 child FK and
+    /// `buildOnDeleteOrUpdateFKTrigger` protects the parent side. The cluster
+    /// loader must carry the stored FK metadata into the same Rust checks.
+    #[test]
+    fn loaded_version_one_foreign_keys_guard_both_sides() {
+        let parent = TableInfo {
+            id: 470,
+            name: CiString::new("parent"),
+            columns: vec![column(1, 0, "id", true)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            ..TableInfo::default()
+        };
+        let child = TableInfo {
+            id: 471,
+            name: CiString::new("child"),
+            columns: vec![column(1, 0, "id", true), column(2, 1, "pid", false)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            indices: vec![index(1, "pid_idx", "pid", 1, -1)].into(),
+            foreign_keys: vec![tidb_model::table::FKInfo {
+                id: 1,
+                name: CiString::new("child_ibfk_1"),
+                ref_schema: CiString::new("app"),
+                ref_table: CiString::new("parent"),
+                ref_cols: vec![CiString::new("id")].into(),
+                cols: vec![CiString::new("pid")].into(),
+                on_delete: 1,
+                on_update: 1,
+                state: SchemaState::PUBLIC,
+                version: tidb_model::table::FK_VERSION1,
+            }]
+            .into(),
+            max_foreign_key_id: 1,
+            ..TableInfo::default()
+        };
+        let catalog = ClusterCatalog {
+            schema_version: 7,
+            databases: vec![tidb_exec::cluster_catalog::LoadedDatabase {
+                info: DBInfo {
+                    id: 5,
+                    name: CiString::new("app"),
+                    ..DBInfo::default()
+                },
+                tables: vec![parent, child],
+            }],
+        };
+        let (storage, _, _) = cluster_storage();
+        let (mut session, skipped) = session_with_cluster_storage(
+            &catalog,
+            &storage,
+            &StatsSnapshot::new(),
+            &LocalTableAutoIds::default(),
+        );
+        assert!(skipped.is_empty(), "{skipped:?}");
+        session.run("USE app").unwrap();
+
+        let missing_parent = session
+            .run("INSERT INTO child VALUES (1, 7)")
+            .expect_err("the parent row does not exist")
+            .to_mysql_error();
+        assert_eq!(missing_parent.code, 1452);
+
+        session.run("INSERT INTO parent VALUES (7)").unwrap();
+        session.run("INSERT INTO child VALUES (1, 7)").unwrap();
+        let referenced = session
+            .run("DELETE FROM parent WHERE id = 7")
+            .expect_err("the child still references this row")
+            .to_mysql_error();
+        assert_eq!(referenced.code, 1451);
+    }
+
+    #[test]
+    fn loaded_foreign_key_version_and_state_match_go_triggers() {
+        let table_with = |version, state, on_delete| TableInfo {
+            id: 472,
+            name: CiString::new("fk_shape"),
+            columns: vec![column(1, 0, "id", true), column(2, 1, "pid", false)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            foreign_keys: vec![tidb_model::table::FKInfo {
+                id: 1,
+                name: CiString::new("fk_shape_ibfk_1"),
+                ref_schema: CiString::new("app"),
+                ref_table: CiString::new("parent"),
+                ref_cols: vec![CiString::new("id")].into(),
+                cols: vec![CiString::new("pid")].into(),
+                on_delete,
+                state,
+                version,
+                ..tidb_model::table::FKInfo::default()
+            }]
+            .into(),
+            ..TableInfo::default()
+        };
+
+        for (version, state, expected) in [
+            (tidb_model::table::FK_VERSION0, SchemaState::PUBLIC, None),
+            (
+                tidb_model::table::FK_VERSION1,
+                SchemaState::WRITE_ONLY,
+                Some(FkAction::Restrict),
+            ),
+            (
+                tidb_model::table::FK_VERSION1,
+                SchemaState::PUBLIC,
+                Some(FkAction::Cascade),
+            ),
+        ] {
+            let (storage, _, _) = cluster_storage();
+            let loaded = cluster_table(
+                &table_with(version, state, 2),
+                &storage,
+                &AutoIdSource::Unavailable,
+            )
+            .expect("the table shape is otherwise supported");
+            assert_eq!(
+                loaded.foreign_keys().first().map(|key| key.on_delete),
+                expected,
+                "version={version} state={state}"
+            );
+        }
     }
 
     /// A KEY-partitioned table loads too: Go's `generateKeyPartitionExpr`

@@ -631,6 +631,21 @@ pub enum FkAction {
 }
 
 impl FkAction {
+    /// Decodes Go `pkg/parser/ast/model.go`'s `ReferOptionType` integer stored
+    /// in `model.FKInfo.OnDelete` / `OnUpdate`. An unknown value keeps the
+    /// zero-value `NoOption`, whose mutation behavior is restrictive.
+    #[must_use]
+    pub const fn from_metadata(value: i64) -> Self {
+        match value {
+            1 => Self::Restrict,
+            2 => Self::Cascade,
+            3 => Self::SetNull,
+            4 => Self::NoAction,
+            5 => Self::SetDefault,
+            _ => Self::NoOption,
+        }
+    }
+
     /// Whether this spelling rejects a parent mutation when children exist.
     #[must_use]
     pub fn is_restricting(self) -> bool {
