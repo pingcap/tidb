@@ -812,6 +812,86 @@ const (
 		UNIQUE KEY uk_table_policy(table_id, policy_name),
 		UNIQUE KEY uk_table_column(table_id, column_id)
 		);`
+
+	// CreateTiDBMViewRefreshInfoTable is a table to store current refresh scheduling info for each materialized view.
+	CreateTiDBMViewRefreshInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_info (
+		MVIEW_ID bigint NOT NULL,
+		LAST_SUCCESS_READ_TSO bigint unsigned DEFAULT NULL,
+		LAST_SUCCESS_ENDTIME datetime(6) DEFAULT NULL,
+		NEXT_TIME datetime DEFAULT NULL,
+		PRIMARY KEY(MVIEW_ID));`
+
+	// CreateTiDBMLogPurgeInfoTable is a table to store current purge scheduling info for each materialized view log.
+	CreateTiDBMLogPurgeInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_info (
+		MLOG_ID bigint NOT NULL,
+		NEXT_TIME datetime DEFAULT NULL,
+		LAST_PURGED_TSO bigint unsigned DEFAULT NULL,
+		PRIMARY KEY(MLOG_ID));`
+
+	// CreateTiDBMViewRefreshHistTable is a table to store materialized view refresh history.
+	CreateTiDBMViewRefreshHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_hist (
+		REFRESH_JOB_ID bigint unsigned NOT NULL,
+		MVIEW_ID bigint NOT NULL,
+		MV_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		MV_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		REFRESH_METHOD varchar(32) NOT NULL,
+		REFRESH_TIME datetime(6) DEFAULT NULL,
+		REFRESH_ENDTIME datetime(6) DEFAULT NULL,
+		REFRESH_DURATION_SEC decimal(18,6) DEFAULT NULL,
+		REFRESH_SCHEDULE_DURATION_SEC decimal(18,6) DEFAULT NULL,
+		REFRESH_STATUS varchar(16) DEFAULT NULL,
+		REFRESH_ROWS bigint DEFAULT NULL,
+		REFRESH_READ_TSO bigint unsigned DEFAULT NULL,
+		REFRESH_COMMIT_TSO bigint unsigned DEFAULT NULL,
+		REFRESH_FAILED_REASON text DEFAULT NULL,
+		CANCEL_REQUESTED_AT datetime(6) DEFAULT NULL,
+		CANCEL_REQUESTED_BY varchar(512) DEFAULT NULL,
+		LAST_HEARTBEAT_AT datetime(6) DEFAULT NULL,
+		PRIMARY KEY(REFRESH_JOB_ID),
+		KEY idx_mview_time (MVIEW_ID, REFRESH_TIME),
+		KEY idx_mv_name_time (MV_SCHEMA, MV_NAME, REFRESH_TIME),
+		KEY idx_mv_name_commit_tso (MV_SCHEMA, MV_NAME, REFRESH_COMMIT_TSO),
+		KEY idx_mview_status (MVIEW_ID, REFRESH_STATUS, REFRESH_TIME),
+		KEY idx_refresh_duration_sec (REFRESH_DURATION_SEC),
+		KEY idx_refresh_schedule_duration_sec (REFRESH_SCHEDULE_DURATION_SEC),
+		KEY idx_refresh_time (REFRESH_TIME),
+		KEY idx_refresh_status (REFRESH_STATUS, REFRESH_TIME));`
+
+	// CreateTiDBMViewRefreshAlertTable is a table to store the current refresh alert level for each materialized view.
+	CreateTiDBMViewRefreshAlertTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_alert (
+		MVIEW_ID bigint NOT NULL,
+		MV_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		MV_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		ALERT_LEVEL varchar(16) DEFAULT NULL,
+		REFRESH_FAILED varchar(3) DEFAULT NULL,
+		LAST_SUCCESS_TIME datetime(6) DEFAULT NULL,
+		UPDATED_AT datetime(6) DEFAULT NULL,
+		PRIMARY KEY(MVIEW_ID));`
+
+	// CreateTiDBMLogPurgeHistTable is a table to store materialized view log purge history.
+	CreateTiDBMLogPurgeHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_hist (
+		PURGE_JOB_ID bigint unsigned NOT NULL,
+		MLOG_ID bigint NOT NULL,
+		BASE_TABLE_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		BASE_TABLE_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		PURGE_METHOD varchar(32) NOT NULL,
+		PURGE_TIME datetime(6) DEFAULT NULL,
+		PURGE_ENDTIME datetime(6) DEFAULT NULL,
+		PURGE_DURATION_SEC decimal(18,6) DEFAULT NULL,
+		PURGE_ROWS bigint NOT NULL,
+		PURGE_STATUS varchar(16) DEFAULT NULL,
+		PURGE_CUTOFF_TSO bigint unsigned DEFAULT NULL,
+		PURGE_FAILED_REASON text DEFAULT NULL,
+		CANCEL_REQUESTED_AT datetime(6) DEFAULT NULL,
+		CANCEL_REQUESTED_BY varchar(512) DEFAULT NULL,
+		LAST_HEARTBEAT_AT datetime(6) DEFAULT NULL,
+		PRIMARY KEY(PURGE_JOB_ID),
+		KEY idx_mlog_time (MLOG_ID, PURGE_TIME),
+		KEY idx_table_name_time (BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_TIME),
+		KEY idx_mlog_status (MLOG_ID, PURGE_STATUS, PURGE_TIME),
+		KEY idx_purge_duration_sec (PURGE_DURATION_SEC),
+		KEY idx_purge_time (PURGE_TIME),
+		KEY idx_purge_status (PURGE_STATUS, PURGE_TIME));`
 )
 
 // all below are related to DDL or DXF tables
