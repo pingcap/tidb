@@ -1317,6 +1317,34 @@ func checkAutoForceIndexLookUpPushDown(ctx base.PlanContext, tblInfo *model.Tabl
 	return checkIndexLookUpPushDownSupported(ctx, tblInfo, index, true)
 }
 
+// checkAllIndicesServable returns an error if tableInfo carries any
+// writable index whose metadata format is newer than this TiDB binary
+// understands. Used by DML builders (INSERT / REPLACE / UPDATE / DELETE
+// / LOAD DATA / IMPORT INTO) to fail fast before reaching table-level
+// mutation paths that would silently mis-maintain the index.
+//
+// "Writable" here matches `tables.IsIndexWritable`, i.e. every state
+// except StateDeleteOnly / StateDeleteReorganization. Restricting to
+// StatePublic is wrong: StateWriteOnly and StateWriteReorganization
+// indexes (mid-DDL) are also written by `addRowIndices` and
+// `rebuildUpdateRecordIndices` in pkg/table/tables/tables.go via the
+// same IsIndexWritable predicate. An older TiDB binary running DML
+// against a table whose new DESC index is in WriteOnly would otherwise
+// pass the planner gate and corrupt the index in the mutation path.
+func checkAllIndicesServable(tableInfo *model.TableInfo) error {
+	for _, idx := range tableInfo.Indices {
+		// Mirror tables.IsIndexWritable on the bare IndexInfo, so the
+		// fence stays in lockstep with the actual write predicate.
+		if idx.State == model.StateDeleteOnly || idx.State == model.StateDeleteReorganization {
+			continue
+		}
+		if !idx.IsServable() {
+			return idx.UnservableErr(tableInfo.Name.O)
+		}
+	}
+	return nil
+}
+
 func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
@@ -1391,6 +1419,18 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				if latestIndex, ok := latestIndexes[index.ID]; !ok || latestIndex.State != model.StatePublic {
 					continue
 				}
+			}
+			// Refuse to plan against an index whose metadata format is newer
+			// than this binary understands (pingcap/tidb#2519). Silently
+			// skipping would risk wrong results — surface a clear error so
+			// the operator upgrades TiDB or drops the index.
+			//
+			// This check fires AFTER latest-index reconciliation so a snapshot
+			// copy of an index that the latest schema has dropped or moved out
+			// of StatePublic gets skipped before we error on its (now
+			// irrelevant) format version.
+			if !index.IsServable() {
+				return nil, index.UnservableErr(tblName.O)
 			}
 			if index.InvertedInfo != nil {
 				invertedIndexes[index.Name.L] = struct{}{}
@@ -2577,6 +2617,21 @@ func getModifiedIndexesInfoForAnalyze(
 	return idxsInfo, independentIdxsInfo, specialGlobalIdxsInfo
 }
 
+// skipDescIndexAnalyzeTask reports whether an index must be excluded from the
+// index-analyze pushdown because it has descending columns, appending a
+// warning when it is skipped. TiKV's index-analyze handler builds histogram
+// bucket bounds from raw index keys and would either fail on or mis-order the
+// bitwise-complemented bytes of descending columns, so such indexes rely on
+// the sampling-based stats built from row values instead.
+func (b *PlanBuilder) skipDescIndexAnalyzeTask(idx *model.IndexInfo) bool {
+	if !idx.HasDescColumn() {
+		return false
+	}
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+		"analyzing an index with descending columns is not supported, skip %s", idx.Name.L))
+	return true
+}
+
 // filterSkipColumnTypes filters out columns whose types are in the skipTypes list.
 func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *resolve.TableNameW, mustAnalyzedCols *calcOnceMap) (result []*model.ColumnInfo, skipCol []*model.ColumnInfo) {
 	// For auto-analyze, it uses @@global.tidb_analyze_skip_column_types to obtain the skipTypes list.
@@ -2792,6 +2847,9 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			}
 			analyzePlan.ColTasks = append(analyzePlan.ColTasks, newTask)
 			for _, indexInfo := range independentIndexes {
+				if b.skipDescIndexAnalyzeTask(indexInfo) {
+					continue
+				}
 				newIdxTask := AnalyzeIndexTask{
 					IndexInfo:   indexInfo,
 					TblInfo:     tbl.TableInfo,
@@ -2807,6 +2865,9 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			// When `needAnalyzeCols == true`, non-global indexes already covered by previous loop,
 			// deal with global index here.
 			for _, indexInfo := range specialGlobalIndexes {
+				if b.skipDescIndexAnalyzeTask(indexInfo) {
+					continue
+				}
 				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(indexInfo, as, tbl.TableInfo, nil, nil, version)...)
 			}
 		} else {
@@ -2814,6 +2875,9 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			for _, idxName := range as.IndexNames {
 				idx := tbl.TableInfo.FindIndexByName(idxName.L)
 				if idx == nil || !handleutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
+					continue
+				}
+				if b.skipDescIndexAnalyzeTask(idx) {
 					continue
 				}
 				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(idx, as, tbl.TableInfo, nil, nil, version)...)
@@ -4133,6 +4197,14 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		}
 		return nil, err
 	}
+	// Refuse INSERT/REPLACE if any of the table's indexes uses a metadata
+	// version newer than this TiDB binary understands — maintaining such an
+	// index would risk wrong rows or mismatched encoding (pingcap/tidb#2519).
+	// SELECT/UPDATE/DELETE plans are guarded by getPossibleAccessPaths, but
+	// INSERT VALUES never enumerates access paths, so check explicitly here.
+	if err := checkAllIndicesServable(tableInfo); err != nil {
+		return nil, err
+	}
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), tn.Schema, tableInfo)
 	if err != nil {
@@ -4544,6 +4616,14 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		options = append(options, &loadDataOpt)
 	}
 	tnW := b.resolveCtx.GetTableName(ld.Table)
+	// Same servability fence as INSERT (pingcap/tidb#2519): LOAD DATA writes
+	// every secondary index of the target table, so an unservable index
+	// would be silently mis-maintained without this guard.
+	if tnW != nil && tnW.TableInfo != nil {
+		if err := checkAllIndicesServable(tnW.TableInfo); err != nil {
+			return nil, err
+		}
+	}
 	p := LoadData{
 		FileLocRef:         ld.FileLocRef,
 		OnDuplicate:        ld.OnDuplicate,
@@ -4841,6 +4921,15 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		}
 		db := b.ctx.GetSessionVars().CurrentDB
 		return nil, infoschema.ErrTableNotExists.FastGenByArgs(db, tableInfo.Name.O)
+	}
+	// Same servability fence as INSERT (pingcap/tidb#2519): IMPORT INTO
+	// writes every secondary index of the target table. Run it against
+	// the same latest-schema snapshot the rest of buildImportInto uses
+	// — `tnW.TableInfo` can be stale here, so checking it would let an
+	// older TiDB miss a writable newer-format index that exists only in
+	// the latest schema.
+	if err := checkAllIndicesServable(tableInPlan.Meta()); err != nil {
+		return nil, err
 	}
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), ast.NewCIStr(""), tableInfo)
 	if err != nil {
