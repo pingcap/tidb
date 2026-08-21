@@ -44,9 +44,9 @@ func (c *ilikeFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	if err != nil {
 		return nil, err
 	}
-	bf.setPinnedCollator(getCollator(ctx, collate.ConvertAndGetBinCollation(bf.collation)))
 	bf.tp.SetFlen(1)
 	sig := &builtinIlikeSig{baseBuiltinFunc: bf}
+	sig.SetCharsetAndCollation(bf.CharsetAndCollation())
 	sig.setPbCode(tipb.ScalarFuncSig_IlikeSig)
 	return sig, nil
 }
@@ -56,6 +56,12 @@ type builtinIlikeSig struct {
 	// pattern is not serialized with builtinIlikeSig, treat them as a cache to accelerate
 	// the evaluation of builtinIlikeSig.
 	patternCache builtinFuncCache[collate.WildcardPattern]
+}
+
+func (b *builtinIlikeSig) SetCharsetAndCollation(chs, coll string) {
+	b.collationInfo.SetCharsetAndCollation(chs, coll)
+	// ILIKE lowercases both operands before matching with the binary counterpart of its collation.
+	b.ctor = collate.GetCollatorWithCollate(b.useNewCollate, collate.ConvertAndGetBinCollation(coll))
 }
 
 func (b *builtinIlikeSig) Clone() builtinFunc {

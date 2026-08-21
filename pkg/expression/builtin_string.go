@@ -1666,7 +1666,7 @@ func (b *builtinLocate3ArgsUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	if !b.collatorPinned && collate.IsCICollation(b.collation) {
+	if collate.IsCICollation(b.collation) {
 		subStr = strings.ToLower(subStr)
 		str = strings.ToLower(str)
 	}
@@ -4254,14 +4254,19 @@ func (c *weightStringFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err != nil {
 		return nil, err
 	}
-	bf.setPinnedCollator(getCollator(ctx, bf.args[0].GetType(ctx.GetEvalCtx()).GetCollate()))
 	types.SetBinChsClnFlag(bf.tp)
 	var sig builtinFunc
 	if padding == weightStringPaddingNull {
 		sig = &builtinWeightStringNullSig{bf}
 	} else {
 		maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
-		sig = &builtinWeightStringSig{bf, padding, length, maxAllowedPacket}
+		sig = &builtinWeightStringSig{
+			baseBuiltinFunc:  bf,
+			padding:          padding,
+			length:           length,
+			maxAllowedPacket: maxAllowedPacket,
+			weightCollator:   getCollator(ctx, bf.args[0].GetType(ctx.GetEvalCtx()).GetCollate()),
+		}
 	}
 	return sig, nil
 }
@@ -4292,6 +4297,8 @@ type builtinWeightStringSig struct {
 	padding          weightStringPadding
 	length           int
 	maxAllowedPacket uint64
+	// WEIGHT_STRING uses the first argument's collation, independently of its return type metadata.
+	weightCollator collate.Collator
 }
 
 func (b *builtinWeightStringSig) Clone() builtinFunc {
@@ -4300,6 +4307,7 @@ func (b *builtinWeightStringSig) Clone() builtinFunc {
 	newSig.padding = b.padding
 	newSig.length = b.length
 	newSig.maxAllowedPacket = b.maxAllowedPacket
+	newSig.weightCollator = b.weightCollator.Clone()
 	return newSig
 }
 
@@ -4328,7 +4336,7 @@ func (b *builtinWeightStringSig) evalString(ctx EvalContext, row chunk.Row) (str
 			}
 			str += strings.Repeat(" ", b.length-lenRunes)
 		}
-		ctor = b.collator()
+		ctor = b.weightCollator
 	case weightStringPaddingAsBinary:
 		lenStr := len(str)
 		if b.length < lenStr {
@@ -4344,7 +4352,7 @@ func (b *builtinWeightStringSig) evalString(ctx EvalContext, row chunk.Row) (str
 		}
 		ctor = collate.GetBinaryCollator()
 	case weightStringPaddingNone:
-		ctor = b.collator()
+		ctor = b.weightCollator
 	default:
 		return "", false, ErrIncorrectType.GenWithStackByArgs(ast.WeightString, string(b.padding))
 	}

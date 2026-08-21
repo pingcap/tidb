@@ -55,11 +55,8 @@ type baseBuiltinFunc struct {
 	pbCode       tipb.ScalarFuncSig
 	ctor         collate.Collator
 
-	childrenVectorized bool
-	useNewCollate      bool
-	// collatorPinned prevents an explicit collator from following later
-	// collation metadata changes.
-	collatorPinned         bool
+	childrenVectorized     bool
+	useNewCollate          bool
 	childrenVectorizedOnce *sync.Once
 
 	safeToShareAcrossSessionFlag uint32 // 0 not-initialized, 1 safe, 2 unsafe
@@ -97,20 +94,13 @@ func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
 	b.pbCode = c
 }
 
-func (b *baseBuiltinFunc) setPinnedCollator(ctor collate.Collator) {
-	b.ctor = ctor
-	b.collatorPinned = true
-}
-
 func (b *baseBuiltinFunc) collator() collate.Collator {
 	return b.ctor
 }
 
 func (b *baseBuiltinFunc) SetCharsetAndCollation(chs, coll string) {
 	b.collationInfo.SetCharsetAndCollation(chs, coll)
-	if !b.collatorPinned {
-		b.ctor = collate.GetCollatorWithCollate(b.useNewCollate, coll)
-	}
+	b.ctor = collate.GetCollatorWithCollate(b.useNewCollate, coll)
 }
 
 func adjustNullFlagForReturnType(ctx EvalContext, funcName string, args []Expression, bf baseBuiltinFunc) {
@@ -450,7 +440,6 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.tp = from.tp
 	b.pbCode = from.pbCode
 	b.useNewCollate = from.useNewCollate
-	b.collatorPinned = from.collatorPinned
 	b.childrenVectorizedOnce = new(sync.Once)
 	if from.ctor != nil {
 		b.ctor = from.ctor.Clone()
@@ -581,8 +570,6 @@ type builtinFunc interface {
 	setPbCode(tipb.ScalarFuncSig)
 	// PbCode returns PbCode of this signature.
 	PbCode() tipb.ScalarFuncSig
-	// setPinnedCollator sets a collator that does not follow later collation metadata changes.
-	setPinnedCollator(ctor collate.Collator)
 	// collator returns collator of this signature.
 	collator() collate.Collator
 	// metadata returns the metadata of a function.

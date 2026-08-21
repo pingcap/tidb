@@ -333,25 +333,37 @@ func TestCastValue(t *testing.T) {
 	require.ErrorContains(t, err, "[table:1366]Incorrect string value '\\x81' for column ''")
 	require.Equal(t, "utf8mb4_general_ci", val.Collation())
 
-	t.Run("fixed legacy collation for enum and set", func(t *testing.T) {
-		original := collate.NewCollationEnabled()
-		collate.SetNewCollationEnabledForTest(true)
-		t.Cleanup(func() { collate.SetNewCollationEnabledForTest(original) })
+	for _, tc := range []struct {
+		name                string
+		globalNewCollation  bool
+		contextNewCollation bool
+		expectedName        string
+		expectedValue       uint64
+	}{
+		{"matching legacy collation", false, false, "a", 2},
+		{"legacy collation on new-collation executor", true, false, "a", 2},
+		{"matching new collation", true, true, "A", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := collate.NewCollationEnabled()
+			collate.SetNewCollationEnabledForTest(tc.globalNewCollation)
+			t.Cleanup(func() { collate.SetNewCollationEnabledForTest(original) })
 
-		exprCtx := exprstatic.NewExprContext(exprstatic.WithNewCollationEnabled(false))
-		for _, tp := range []byte{mysql.TypeEnum, mysql.TypeSet} {
-			colInfo := &model.ColumnInfo{FieldType: *types.NewFieldType(tp)}
-			colInfo.SetCharset(charset.CharsetUTF8MB4)
-			colInfo.SetCollate("utf8mb4_general_ci")
-			colInfo.SetElems([]string{"A", "a", "B"})
+			exprCtx := exprstatic.NewExprContext(exprstatic.WithNewCollationEnabled(tc.contextNewCollation))
+			for _, tp := range []byte{mysql.TypeEnum, mysql.TypeSet} {
+				colInfo := &model.ColumnInfo{FieldType: *types.NewFieldType(tp)}
+				colInfo.SetCharset(charset.CharsetUTF8MB4)
+				colInfo.SetCollate("utf8mb4_general_ci")
+				colInfo.SetElems([]string{"A", "a", "B"})
 
-			casted, err := CastColumnValue(exprCtx, types.NewStringDatum("a"), colInfo, false, false)
-			require.NoError(t, err)
-			require.Equal(t, "a", casted.GetString())
-			require.Equal(t, uint64(2), casted.GetUint64())
-			require.Equal(t, "utf8mb4_general_ci", casted.Collation())
-		}
-	})
+				casted, err := CastColumnValue(exprCtx, types.NewStringDatum("a"), colInfo, false, false)
+				require.NoError(t, err)
+				require.Equal(t, tc.expectedName, casted.GetString())
+				require.Equal(t, tc.expectedValue, casted.GetUint64())
+				require.Equal(t, "utf8mb4_general_ci", casted.Collation())
+			}
+		})
+	}
 }
 
 func TestGetDefaultValue(t *testing.T) {

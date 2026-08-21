@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -141,7 +140,7 @@ func TestCILike(t *testing.T) {
 		inputs := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
 		f, err := fc.getFunction(ctx, inputs)
 		require.NoError(t, err, comment)
-		f.setPinnedCollator(collate.GetCollator("utf8mb4_general_ci"))
+		f.SetCharsetAndCollation("utf8mb4", "utf8mb4_general_ci")
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err, comment)
 		testutil.DatumEqual(t, types.NewDatum(tt.generalMatch), r, comment)
@@ -153,7 +152,7 @@ func TestCILike(t *testing.T) {
 		inputs := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
 		f, err := fc.getFunction(ctx, inputs)
 		require.NoError(t, err, comment)
-		f.setPinnedCollator(collate.GetCollator("utf8mb4_unicode_ci"))
+		f.SetCharsetAndCollation("utf8mb4", "utf8mb4_unicode_ci")
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err, comment)
 		testutil.DatumEqual(t, types.NewDatum(tt.unicodeMatch), r, comment)
@@ -165,7 +164,7 @@ func TestCILike(t *testing.T) {
 		inputs := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
 		f, err := fc.getFunction(ctx, inputs)
 		require.NoError(t, err, comment)
-		f.setPinnedCollator(collate.GetCollator("utf8mb4_0900_ai_ci"))
+		f.SetCharsetAndCollation("utf8mb4", "utf8mb4_0900_ai_ci")
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err, comment)
 		testutil.DatumEqual(t, types.NewDatum(tt.unicode0900Match), r, comment)
