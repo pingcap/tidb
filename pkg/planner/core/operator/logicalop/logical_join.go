@@ -252,6 +252,16 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
+		_, leftIsMemTable := p.Children()[0].(*LogicalMemTable)
+		_, rightIsMemTable := p.Children()[1].(*LogicalMemTable)
+		_, isPlainJoin := p.Self().(*LogicalJoin)
+		if isPlainJoin && p.JoinType == base.InnerJoin && (leftIsMemTable || rightIsMemTable) {
+			// Memtable extractors consume predicates during this pass, so expose
+			// transitive equalities before the extractor runs.
+			for _, child := range p.Children() {
+				tempCond = appendInnerJoinColumnEqualities(tempCond, child)
+			}
+		}
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
 		tempCond = ruleutil.ApplyPredicateSimplificationForJoin(p.SCtx(), tempCond,
 			p.Children()[0].Schema(), p.Children()[1].Schema(),
@@ -311,6 +321,29 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	ruleutil.BuildKeyInfoPortal(p)
 	newnChild, err := p.SemiJoinRewrite()
 	return ret, newnChild, err
+}
+
+func appendInnerJoinColumnEqualities(conditions []expression.Expression, plan base.LogicalPlan) []expression.Expression {
+	join, ok := plan.(*LogicalJoin)
+	if !ok || join.JoinType != base.InnerJoin {
+		return conditions
+	}
+	// Equalities from IN subqueries stay in OtherConditions and are filtered below.
+	conditions = append(conditions, expression.ScalarFuncs2Exprs(join.EqualConditions)...)
+	for _, condition := range join.OtherConditions {
+		sf, ok := condition.(*expression.ScalarFunction)
+		if !ok || sf.FuncName.L != ast.EQ || expression.IsEQCondFromIn(sf) {
+			continue
+		}
+		_, _, colOK := expression.IsColOpCol(sf)
+		if colOK {
+			conditions = append(conditions, sf)
+		}
+	}
+	for _, child := range join.Children() {
+		conditions = appendInnerJoinColumnEqualities(conditions, child)
+	}
+	return conditions
 }
 
 // simplifyOuterJoin transforms outer joins to simpler join types when predicates are null-rejected.
