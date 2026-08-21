@@ -69,6 +69,7 @@ const (
 	defMemRiskRatio                           = 0.9
 	defTickDurMilli                           = kilo * 1             // 1s
 	defStorePoolMediumCapDurMilli             = defTickDurMilli * 10 // 10s
+	defStoreTopNProfilesDurMilli              = defTickDurMilli * 10 // 10s
 	defTrackMemStatsDurMilli                  = kilo * 1
 	defMax                             int64  = 9e15
 	defServerlimitSmallLimitNum               = 1000
@@ -952,12 +953,6 @@ type wrapTimeMaxval struct {
 	maxVal  atomic.Int64
 }
 
-type wrapTimeSizeQuota struct {
-	ts    atomic.Int64
-	size  atomic.Int64
-	quota atomic.Int64
-}
-
 type statisticsTimedMapElement struct {
 	tsAlign atomic.Int64
 	slot    [defServerlimitMinUnitNum]uint32
@@ -1044,8 +1039,7 @@ type memProfile struct {
 type heapController struct {
 	memStateRecorder struct {
 		RecordMemState
-		lastMemState         atomic.Pointer[RuntimeMemStateV1]
-		lastRecordUtimeMilli atomic.Int64
+		lastMemState atomic.Pointer[RuntimeMemStateV1]
 		sync.Mutex
 	}
 	memRisk struct {
@@ -1702,8 +1696,7 @@ func NewMemArbitrator(limit int64, shardNum uint64, maxQuotaShardNum int, minQuo
 			m.heapController.memStateRecorder.lastMemState.Store(s)
 			m.doSetMemMagnif(s.Magnif)
 			m.poolAllocStats.mediumQuota.Store(s.PoolMediumCap)
-			m.digestProfileCache.top3.index.Store(0)
-			m.digestProfileCache.top3.g[0] = s.TopNProfiles
+			m.digestProfileCache.top3.restore(s.TopNProfiles)
 			for i := range s.TopNProfiles {
 				t := &s.TopNProfiles[i]
 				if t.DigestID == InvalidDigestID {
@@ -2317,33 +2310,20 @@ func (m *MemArbitrator) updatePoolMediumCapacity(utimeMilli int64) {
 		s.RUnlock()
 	}
 
-	m.tryStorePoolMediumCapacity(utimeMilli, m.poolMediumQuota())
+	m.tryStorePoolMediumCapacity(utimeMilli)
 }
 
-func (m *MemArbitrator) tryStorePoolMediumCapacity(utimeMilli int64, capacity int64) bool {
+func (m *MemArbitrator) tryStorePoolMediumCapacity(utimeMilli int64) bool {
+	capacity := m.poolMediumQuota()
 	if capacity == 0 {
 		return false
 	}
 	if lastState := m.lastMemState(); lastState == nil ||
 		(m.poolAllocStats.lastUpdateUtimeMilli.Load()+defStorePoolMediumCapDurMilli <= utimeMilli &&
 			lastState.PoolMediumCap != capacity) {
-		var memState *RuntimeMemStateV1
-
-		if lastState != nil {
-			s := *lastState // copy
-			s.PoolMediumCap = capacity
-			s.TopNProfiles = m.digestProfileCache.top3.g[m.digestProfileCache.top3.index.Load()]
-			memState = &s
-		} else {
-			memState = &RuntimeMemStateV1{
-				Version:       1,
-				PoolMediumCap: capacity,
-				TopNProfiles:  m.digestProfileCache.top3.g[m.digestProfileCache.top3.index.Load()],
-			}
+		if m.persistRuntimeMemState(utimeMilli, "new root pool medium cap", nil) == nil {
+			m.poolAllocStats.lastUpdateUtimeMilli.Store(utimeMilli)
 		}
-
-		_ = m.recordMemState(memState, "new root pool medium cap")
-		m.poolAllocStats.lastUpdateUtimeMilli.Store(utimeMilli)
 		return true
 	}
 	return false
@@ -2417,10 +2397,7 @@ func (m *MemArbitrator) updateMemMagnification(utimeMilli int64) (updatedPreProf
 			)
 
 			if lastMemState := m.lastMemState(); lastMemState != nil && newRatio < lastMemState.Magnif {
-				memState := *lastMemState
-				memState.Magnif = newRatio
-				memState.PoolMediumCap = m.poolMediumQuota()
-				_ = m.recordMemState(&memState, "new magnification ratio")
+				_ = m.persistRuntimeMemState(utimeMilli, "new magnification ratio", nil)
 			}
 		}
 
@@ -2506,6 +2483,8 @@ func (m *MemArbitrator) executeTick(utimeMilli int64) bool { // exec batch tasks
 	}
 	// suggest pool cap
 	m.updatePoolMediumCapacity(utimeMilli)
+	// persist changed top digest profiles without writing on every sampling interval
+	m.tryPersistTopNProfiles(utimeMilli)
 	// shrink mem profile cache
 	m.shrinkDigestProfile(utimeMilli/kilo, m.digestProfileCache.limit, m.digestProfileCache.limit/2)
 	return true
@@ -2587,21 +2566,78 @@ type Top3DigestData struct {
 
 type top3DigestDataGroup [3]Top3DigestData
 
-type top3Digest struct {
-	index atomic.Int64
-	sync.Mutex
-	g [4]top3DigestDataGroup
+type top3DigestSnapshot struct {
+	data    top3DigestDataGroup
+	version uint64
 }
 
-func (t *top3Digest) merge(other top3DigestDataGroup, utimeSec int64) {
+type top3Digest struct {
+	snapshotState [2]struct {
+		sync.Mutex
+		top3DigestSnapshot
+	}
+	index              atomic.Int64
+	lastPersistVersion atomic.Uint64
+	lastPersistMilli   atomic.Int64
+	sync.Mutex
+}
+
+func (t *top3Digest) restore(data top3DigestDataGroup) {
 	t.Lock()
 	defer t.Unlock()
 
-	ori := t.index.Load()
-	x := t.g[ori].clean(utimeSec)
-	index := (ori + 1) % 4
-	t.g[index] = x.merge(other)
+	t.index.Store(0)
+	t.snapshotState[0].Lock()
+	t.snapshotState[0].top3DigestSnapshot = top3DigestSnapshot{data: data}
+	t.lastPersistVersion.Store(0)
+	t.lastPersistMilli.Store(0)
+	t.snapshotState[0].Unlock()
+}
+
+func (t *top3Digest) snapshot() (res top3DigestSnapshot) {
+	index := t.index.Load()
+	t.snapshotState[index].Lock()
+	res = t.snapshotState[index].top3DigestSnapshot
+	t.snapshotState[index].Unlock()
+	return
+}
+
+func (t *top3Digest) version() (version uint64) {
+	index := t.index.Load()
+	t.snapshotState[index].Lock()
+	version = t.snapshotState[index].top3DigestSnapshot.version
+	t.snapshotState[index].Unlock()
+	return
+}
+
+func (t *top3Digest) merge(other top3DigestDataGroup, utimeSec int64) bool {
+	t.Lock()
+	defer t.Unlock()
+
+	s := t.snapshot()
+	cleaned := s.data.clean(utimeSec)
+	next := cleaned.merge(other)
+	if next == s.data {
+		return false
+	}
+	index := 1 - t.index.Load()
+	t.snapshotState[index].Lock()
+	t.snapshotState[index].top3DigestSnapshot = top3DigestSnapshot{data: next, version: s.version + 1}
+	t.snapshotState[index].Unlock()
+
 	t.index.Store(index)
+	return true
+}
+
+func (t *top3Digest) shouldPersist(utimeMilli int64) bool {
+	version := t.version()
+	return version > t.lastPersistVersion.Load() &&
+		t.lastPersistMilli.Load()+defStoreTopNProfilesDurMilli <= utimeMilli
+}
+
+func (t *top3Digest) markHandled(version uint64, utimeMilli int64) {
+	t.lastPersistMilli.Store(utimeMilli)
+	t.lastPersistVersion.Store(version)
 }
 
 func (t *top3DigestDataGroup) clean(utimeSec int64) top3DigestDataGroup {
@@ -2763,30 +2799,25 @@ func (m *MemArbitrator) isMemNoRisk() bool {
 	return m.isMemSafe() && m.heapController.heapAlloc.Load() < m.memRisk()
 }
 
-func (m *MemArbitrator) calcMemRisk() *RuntimeMemStateV1 {
+func (m *MemArbitrator) calcMemRisk() (lastRisk LastRisk, magnif int64, ok bool) {
 	if m.mu.softLimit.mode != SoftLimitModeAuto {
-		return nil
+		return LastRisk{}, 0, false
 	}
 
-	memState := RuntimeMemStateV1{
-		Version: 1,
-		LastRisk: LastRisk{
-			HeapAlloc:  m.heapController.heapAlloc.Load(),
-			QuotaAlloc: m.allocated(),
-		},
-		PoolMediumCap: m.poolMediumQuota(),
-		TopNProfiles:  m.digestProfileCache.top3.g[m.digestProfileCache.top3.index.Load()],
+	lastRisk = LastRisk{
+		HeapAlloc:  m.heapController.heapAlloc.Load(),
+		QuotaAlloc: m.allocated(),
 	}
 
-	if memState.LastRisk.QuotaAlloc == 0 || memState.LastRisk.HeapAlloc <= memState.LastRisk.QuotaAlloc {
-		return nil
+	if lastRisk.QuotaAlloc == 0 || lastRisk.HeapAlloc <= lastRisk.QuotaAlloc {
+		return LastRisk{}, 0, false
 	}
-	memState.Magnif = calcRatio(memState.LastRisk.HeapAlloc, memState.LastRisk.QuotaAlloc) + 100 /* 10 percent */
+	magnif = calcRatio(lastRisk.HeapAlloc, lastRisk.QuotaAlloc) + 100 /* 10 percent */
 	if p := m.lastMemState(); p != nil {
-		memState.Magnif = max(memState.Magnif, p.Magnif)
+		magnif = max(magnif, p.Magnif)
 	}
 
-	return &memState
+	return lastRisk, magnif, true
 }
 
 // return `true` is memory state is safe
@@ -3034,23 +3065,58 @@ type RuntimeMemStateV1 struct {
 	PoolMediumCap int64 `json:"pool-medium-cap"`
 	// top N digest profiles
 	TopNProfiles [3]Top3DigestData `json:"topn-profiles"`
+	// top3Version tracks the in-memory Top3 snapshot and is not persisted.
+	top3Version uint64
 }
 
-func (m *MemArbitrator) recordMemState(s *RuntimeMemStateV1, reason string) error {
+func (m *MemArbitrator) buildRuntimeMemState() (memState RuntimeMemStateV1) {
+	s := m.digestProfileCache.top3.snapshot()
+	memState = RuntimeMemStateV1{
+		Version:       1,
+		Magnif:        m.memMagnif(),
+		PoolMediumCap: m.poolMediumQuota(),
+		TopNProfiles:  s.data,
+		top3Version:   s.version,
+	}
+	if lastMemState := m.lastMemState(); lastMemState != nil {
+		memState.LastRisk = lastMemState.LastRisk
+	}
+	return
+}
+
+func (m *MemArbitrator) persistRuntimeMemState(utimeMilli int64, reason string, mutate func(*RuntimeMemStateV1)) error {
 	m.heapController.memStateRecorder.Lock()
 	defer m.heapController.memStateRecorder.Unlock()
-	m.heapController.memStateRecorder.lastMemState.Store(s)
 
-	if err := m.heapController.memStateRecorder.Store(s); err != nil {
+	memState := m.buildRuntimeMemState()
+	if mutate != nil {
+		mutate(&memState)
+	}
+
+	if err := m.heapController.memStateRecorder.Store(&memState); err != nil {
+		m.digestProfileCache.top3.markHandled(memState.top3Version, utimeMilli)
 		m.execMetrics.Action.RecordMemState.Fail++
 		return err
 	}
+	m.heapController.memStateRecorder.lastMemState.Store(&memState)
+	m.digestProfileCache.top3.markHandled(memState.top3Version, utimeMilli)
 	m.execMetrics.Action.RecordMemState.Succ++
 	m.actions.Info("Record mem state",
 		zap.String("reason", reason),
-		zap.String("data", fmt.Sprintf("%+v", s)),
+		zap.String("data", fmt.Sprintf("%+v", memState)),
 	)
 	return nil
+}
+
+func (m *MemArbitrator) tryPersistTopNProfiles(utimeMilli int64) bool {
+	if !m.digestProfileCache.top3.shouldPersist(utimeMilli) {
+		return false
+	}
+	if err := m.persistRuntimeMemState(utimeMilli, "updated top digest profiles", nil); err != nil {
+		m.actions.Error("Failed to save top digest profiles", zap.Error(err))
+		return false
+	}
+	return true
 }
 
 // GetAwaitFreeBudgets returns the concurrent budget shard by the given uid
@@ -3297,23 +3363,26 @@ func (m *MemArbitrator) intoMemRisk() {
 		m.reclaimHeap()
 	}
 
-	if memState := m.calcMemRisk(); memState != nil {
-		if memState.Magnif > defMaxMagnif {
+	if lastRisk, magnif, ok := m.calcMemRisk(); ok {
+		if magnif > defMaxMagnif {
 			// There may be extreme memory leak issues. It's recommended to set soft limit manually.
 			m.actions.Warn("Memory pressure is abnormally high",
-				zap.Int64("mem-magnification-ratio(‰)", memState.Magnif),
+				zap.Int64("mem-magnification-ratio(‰)", magnif),
 				zap.Int64("upper-limit-ratio(‰)", defMaxMagnif))
-			memState.Magnif = defMaxMagnif
+			magnif = defMaxMagnif
 		}
 		{
 			m.avoidance.memMagnif.Lock()
 
-			m.doSetMemMagnif(memState.Magnif)
+			m.doSetMemMagnif(magnif)
 
 			m.avoidance.memMagnif.Unlock()
 		}
 
-		if err := m.recordMemState(memState, "oom risk"); err != nil {
+		if err := m.persistRuntimeMemState(m.innerTime().UnixMilli(), "oom risk", func(s *RuntimeMemStateV1) {
+			s.LastRisk = lastRisk
+			s.Magnif = magnif
+		}); err != nil {
 			m.actions.Error("Failed to save mem-risk", zap.Error(err))
 		}
 	}
