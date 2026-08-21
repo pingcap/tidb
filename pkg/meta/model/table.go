@@ -772,10 +772,8 @@ func (s MVInitBuildState) AccessErrorMessage(objectName string) string {
 
 // MaterializedViewInfo is stored in TableInfo for a materialized view table.
 const (
-	// MViewMaintenanceVersionLegacy is the implicit version used by old metadata.
-	MViewMaintenanceVersionLegacy uint8 = iota
 	// MViewMaintenanceVersionBase is the maintenance contract without AVG state.
-	MViewMaintenanceVersionBase
+	MViewMaintenanceVersionBase uint8 = iota + 1
 	// MViewMaintenanceVersionAVG adds exact SUM/COUNT state maintenance for AVG.
 	MViewMaintenanceVersionAVG
 )
@@ -822,7 +820,7 @@ type MaterializedViewInfo struct {
 	DefinitionTimeZone TimeZoneLocation `json:"definition_time_zone"`
 
 	// MViewMaintenanceVersion identifies the persisted materialized-view maintenance contract.
-	// Version 0 is legacy metadata, version 1 is the base MV contract, and version 2 adds AVG state.
+	// Version 1 is the base MV contract, and version 2 adds AVG state. Version 0 is invalid.
 	MViewMaintenanceVersion uint8 `json:"mview_maintenance_version,omitempty"`
 	// DefinitionDivPrecisionIncrement is the div_precision_increment captured when the MV was created.
 	DefinitionDivPrecisionIncrement int `json:"definition_div_precision_increment,omitempty"`

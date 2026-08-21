@@ -426,7 +426,8 @@ func buildLocal(
 	if mv.MaterializedView == nil {
 		return nil, errors.Errorf("table %s is not a materialized view", mv.Name.O)
 	}
-	if mv.MaterializedView.MViewMaintenanceVersion > model.MViewMaintenanceVersionAVG {
+	if mv.MaterializedView.MViewMaintenanceVersion < model.MViewMaintenanceVersionBase ||
+		mv.MaterializedView.MViewMaintenanceVersion > model.MViewMaintenanceVersionAVG {
 		return nil, errors.Errorf("materialized view %s uses unsupported maintenance version %d", mv.Name.O, mv.MaterializedView.MViewMaintenanceVersion)
 	}
 	if mv.MaterializedView.MViewMaintenanceVersion > model.MViewMaintenanceVersionBase &&

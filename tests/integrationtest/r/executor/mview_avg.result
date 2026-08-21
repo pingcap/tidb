@@ -1,0 +1,55 @@
+use test;
+drop materialized view if exists mv_avg_e2e;
+drop table if exists t_mv_avg_e2e;
+create table t_mv_avg_e2e (a int not null, b int);
+insert into t_mv_avg_e2e values (1, 1), (1, 2), (2, null);
+create materialized view log on t_mv_avg_e2e (a, b) purge next date_add(now(), interval 1 hour);
+set @@session.div_precision_increment = 4;
+create materialized view mv_avg_e2e (a, cnt_all, avg_b, cnt_b, sum_b) refresh fast next date_add(now(), interval 1 hour) as
+select a, count(*), avg(b), count(b), sum(b) from t_mv_avg_e2e group by a;
+select a, cnt_all, avg_b, cnt_b, sum_b from mv_avg_e2e order by a;
+a	cnt_all	avg_b	cnt_b	sum_b
+1	2	1.5000	2	3
+2	1	NULL	0	NULL
+set @@session.div_precision_increment = 0;
+insert into t_mv_avg_e2e values (1, 4), (2, null), (3, 10);
+delete from t_mv_avg_e2e where a = 1 and b = 1;
+refresh materialized view mv_avg_e2e fast;
+select a, cnt_all, avg_b, cnt_b, sum_b from mv_avg_e2e order by a;
+a	cnt_all	avg_b	cnt_b	sum_b
+1	2	3.0000	2	6
+2	2	NULL	0	NULL
+3	1	10.0000	1	10
+delete from t_mv_avg_e2e where a = 2 and b is null limit 1;
+refresh materialized view mv_avg_e2e fast;
+select a, cnt_all, avg_b, cnt_b, sum_b from mv_avg_e2e order by a;
+a	cnt_all	avg_b	cnt_b	sum_b
+1	2	3.0000	2	6
+2	1	NULL	0	NULL
+3	1	10.0000	1	10
+update t_mv_avg_e2e set b = 8 where a = 1 and b = 2;
+refresh materialized view mv_avg_e2e complete in place;
+select a, cnt_all, avg_b, cnt_b, sum_b from mv_avg_e2e order by a;
+a	cnt_all	avg_b	cnt_b	sum_b
+1	2	6.0000	2	12
+2	1	NULL	0	NULL
+3	1	10.0000	1	10
+insert into t_mv_avg_e2e values (3, 14);
+refresh materialized view mv_avg_e2e complete out of place;
+select a, cnt_all, avg_b, cnt_b, sum_b from mv_avg_e2e order by a;
+a	cnt_all	avg_b	cnt_b	sum_b
+1	2	6.0000	2	12
+2	1	NULL	0	NULL
+3	2	12.0000	2	24
+delete from t_mv_avg_e2e where a = 2;
+insert into t_mv_avg_e2e values (4, 9);
+refresh materialized view mv_avg_e2e complete delta apply;
+select a, cnt_all, avg_b, cnt_b, sum_b from mv_avg_e2e order by a;
+a	cnt_all	avg_b	cnt_b	sum_b
+1	2	6.0000	2	12
+3	2	12.0000	2	24
+4	1	9.0000	1	9
+set @@session.div_precision_increment = 4;
+drop materialized view mv_avg_e2e;
+drop materialized view log on t_mv_avg_e2e;
+drop table if exists t_mv_avg_e2e;

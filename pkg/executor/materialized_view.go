@@ -5229,7 +5229,8 @@ func initRefreshMaterializedViewSession(
 	origTypeFlags := sessVars.StmtCtx.TypeFlags()
 	origErrLevels := sessVars.StmtCtx.ErrLevels()
 
-	if mviewInfo.MViewMaintenanceVersion > model.MViewMaintenanceVersionAVG {
+	if mviewInfo.MViewMaintenanceVersion < model.MViewMaintenanceVersionBase ||
+		mviewInfo.MViewMaintenanceVersion > model.MViewMaintenanceVersionAVG {
 		return nil, errors.New("refresh materialized view: unsupported materialized-view maintenance version")
 	}
 	if mviewInfo.MViewMaintenanceVersion > model.MViewMaintenanceVersionBase {
