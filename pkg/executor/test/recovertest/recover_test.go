@@ -19,17 +19,23 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/resourcemanager"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -40,7 +46,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	"go.opencensus.io/stats/view"
 )
 
 func TestRecoverTable(t *testing.T) {
@@ -713,16 +722,89 @@ func mockGC(tk *testkit.TestKit) (string, string, string, func()) {
 	ddlutil.EmulatorGCDisable()
 	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(tikvutil.GCTimeFormat)
 	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(tikvutil.GCTimeFormat)
-	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[1]s'`
+	safePointSQL := `REPLACE INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')`
 	// clear GC variables first.
 	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
 	return timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC
 }
 
+type flashbackClusterTestClient struct {
+	tikv.Client
+}
+
+func (c *flashbackClusterTestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	switch req.Type {
+	case tikvrpc.CmdPrepareFlashbackToVersion:
+		return &tikvrpc.Response{Resp: &kvrpcpb.PrepareFlashbackToVersionResponse{}}, nil
+	case tikvrpc.CmdFlashbackToVersion:
+		return &tikvrpc.Response{Resp: &kvrpcpb.FlashbackToVersionResponse{}}, nil
+	default:
+		return c.Client.SendRequest(ctx, addr, req, timeout)
+	}
+}
+
+type flashbackClusterTestStorage interface {
+	kv.Storage
+	tikv.Storage
+	kv.StorageWithPD
+}
+
+type flashbackClusterTestStore struct {
+	flashbackClusterTestStorage
+	minSafeTS *atomic.Uint64
+}
+
+var _ kv.StorageWithPD = (*flashbackClusterTestStore)(nil)
+
+func newFlashbackClusterTestStore(t *testing.T, minSafeTS *atomic.Uint64) kv.Storage {
+	t.Helper()
+
+	store, err := mockstore.NewMockStore(
+		mockstore.WithStoreType(mockstore.MockTiKV),
+		mockstore.WithClientHijacker(func(client tikv.Client) tikv.Client {
+			return &flashbackClusterTestClient{Client: client}
+		}),
+	)
+	require.NoError(t, err)
+	testStore, ok := store.(flashbackClusterTestStorage)
+	require.True(t, ok)
+	wrappedStore := &flashbackClusterTestStore{
+		flashbackClusterTestStorage: testStore,
+		minSafeTS:                   minSafeTS,
+	}
+
+	vardef.SetSchemaLease(500 * time.Millisecond)
+	session.DisableStats4Test()
+	domain.DisablePlanReplayerBackgroundJob4Test()
+	domain.DisableDumpHistoricalStats4Test()
+	dom, err := session.BootstrapSession(wrappedStore)
+	require.NoError(t, err)
+	dom.SetStatsUpdating(true)
+	// This test validates the flashback DDL path with a mock TiKV store. The
+	// asynchronous DDL notifier can observe transient mock event rows after the
+	// flashback and fail unrelated internal checks.
+	dom.DDLNotifier().Stop()
+	t.Cleanup(func() {
+		dom.Close()
+		view.Stop()
+		require.NoError(t, wrappedStore.Close())
+		resourcemanager.InstanceResourceManager.Reset()
+	})
+
+	return wrappedStore
+}
+
+func (*flashbackClusterTestStore) Name() string {
+	return "TiKV"
+}
+
+func (s *flashbackClusterTestStore) GetMinSafeTS(string) uint64 {
+	return s.minSafeTS.Load()
+}
+
 func TestFlashbackClusterWithManyDBs(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	var minSafeTS atomic.Uint64
+	store := newFlashbackClusterTestStore(t, &minSafeTS)
 	tk := testkit.NewTestKit(t, store)
 
 	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
@@ -755,14 +837,13 @@ func TestFlashbackClusterWithManyDBs(t *testing.T) {
 	}
 
 	wg.Wait()
+	require.Eventually(t, func() bool {
+		return tk.MustQuery("select count(*) from mysql.tidb_ddl_job").Rows()[0][0] == "0"
+	}, 5*time.Second, 10*time.Millisecond)
 
 	ts, _ := store.CurrentVersion(oracle.GlobalTxnScope)
 	flashbackTs := oracle.GetTimeFromTS(ts.Ver)
-
-	injectSafeTS := oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second))
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
-		fmt.Sprintf("return(%v)", injectSafeTS))
+	minSafeTS.Store(oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second)))
 
 	// this test will fail before the fix, because the DDL job KV entry is too large.
 	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs))
