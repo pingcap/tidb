@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/regionsplit"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -63,7 +64,7 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 		// Try to split global index region here.
 		regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter, tableID)...)
 		for _, def := range parts {
-			regionIDs = append(regionIDs, preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, def.ID, scatterScope)...)
+			regionIDs = append(regionIDs, preSplitPhysicalTableByShardBits(ctxWithTimeout, store, tbInfo, def.ID, scatterScope)...)
 		}
 	} else {
 		regionIDs = make([]uint64, 0, len(parts))
@@ -85,7 +86,7 @@ func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *
 	if hasSplitPolicies(tbInfo) {
 		regionIDs = applySplitPoliciesForTable(ctxWithTimeout, ctx, store, tbInfo, tbInfo.ID)
 	} else if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
-		regionIDs = preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, tbInfo.ID, scatterScope)
+		regionIDs = preSplitPhysicalTableByShardBits(ctxWithTimeout, store, tbInfo, tbInfo.ID, scatterScope)
 	} else {
 		regionIDs = append(regionIDs, SplitRecordRegion(ctxWithTimeout, store, tbInfo.ID, tbInfo.ID, scatterScope))
 	}
@@ -107,7 +108,7 @@ func getScatterConfig(scope string, tableID int64) (scatter bool, tID int64) {
 	}
 }
 
-func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableStore, tbInfo *model.TableInfo, physicalID int64, scatterScope string) []uint64 {
+func preSplitPhysicalTableByShardBits(ctx context.Context, store kv.SplittableStore, tbInfo *model.TableInfo, physicalID int64, scatterScope string) []uint64 {
 	// Example:
 	// sharding_bits = 4
 	// PreSplitRegions = 2
@@ -129,11 +130,15 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 	// 4611686018427387904 ~ 6917529027641081856
 	// 6917529027641081856 ~ 9223372036854775807 ( (1 << 63) - 1 )
 	//
-	// And the max _tidb_rowid is 9223372036854775807, it won't be negative number.
+	// This example assumes a signed BIGINT. NewShardIDFormat adjusts IncrementalBits
+	// for unsigned AUTO_RANDOM columns.
 
-	// Split table region.
+	// Select the field type that determines the shard-bit layout.
 	var ft *types.FieldType
-	if pkCol := tbInfo.GetPkColInfo(); pkCol != nil {
+	if tbInfo.IsCommonHandle {
+		primaryKey := tbInfo.GetPrimaryKey()
+		ft = &tbInfo.Columns[primaryKey.Columns[0].Offset].FieldType
+	} else if pkCol := tbInfo.GetPkColInfo(); pkCol != nil {
 		ft = &pkCol.FieldType
 	} else {
 		ft = types.NewFieldType(mysql.TypeLonglong)
@@ -146,7 +151,13 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 	for p := step; p < maxv; p += step {
 		recordID := p << shardFmt.IncrementalBits
 		recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
-		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
+		handle, err := buildPreSplitRecordHandle(tbInfo, ft, recordID)
+		if err != nil {
+			logutil.DDLLogger().Warn("build pre-split record handle failed",
+				zap.Stringer("table", tbInfo.Name), zap.Int64("record ID", recordID), zap.Error(err))
+			continue
+		}
+		key := tablecodec.EncodeRecordKey(recordPrefix, handle)
 		splitTableKeys = append(splitTableKeys, key)
 	}
 	scatter, tableID := getScatterConfig(scatterScope, tbInfo.ID)
@@ -157,6 +168,24 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 	}
 	regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter, physicalID)...)
 	return regionIDs
+}
+
+func buildPreSplitRecordHandle(tbInfo *model.TableInfo, ft *types.FieldType, recordID int64) (kv.Handle, error) {
+	if !tbInfo.IsCommonHandle {
+		return kv.IntHandle(recordID), nil
+	}
+
+	// AUTO_RANDOM must be the first primary-key column, so its encoded value is a
+	// valid prefix of the common handle used as a region boundary.
+	datum := types.NewIntDatum(recordID)
+	if mysql.HasUnsignedFlag(ft.GetFlag()) {
+		datum = types.NewUintDatum(uint64(recordID))
+	}
+	encoded, err := codec.EncodeKey(nil, nil, datum)
+	if err != nil {
+		return nil, err
+	}
+	return kv.NewCommonHandle(encoded)
 }
 
 // SplitRecordRegion is to split region in store by table prefix.
