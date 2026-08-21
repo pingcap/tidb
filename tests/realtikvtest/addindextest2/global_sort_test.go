@@ -1075,21 +1075,6 @@ func TestGlobalSortExtraParams(t *testing.T) {
 		t.Skip("only for nextgen kernel")
 	}
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask",
-		func(requiredSlots *int, params *proto.ExtraParams) {
-			*requiredSlots = 16
-			params.MaxRuntimeSlots = 12
-		},
-	)
-	var callCnt int
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool/NewWorkerPool", func(numWorkers int) {
-		// readerCnt or writerCnt is calculated, about half of the runtime slots
-		// merge-sort/ingest is 12
-		if numWorkers != 6 && numWorkers != 8 && numWorkers != 12 {
-			t.Fatalf("unexpected numWorkers: %d", numWorkers)
-		}
-		callCnt++
-	})
 	server, cloudStorageURI := genServerWithStorage(t)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -1105,7 +1090,39 @@ func TestGlobalSortExtraParams(t *testing.T) {
 	}()
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1), (2), (3);")
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask",
+		func(requiredSlots *int, params *proto.ExtraParams) {
+			*requiredSlots = 16
+			params.MaxRuntimeSlots = 12
+		},
+	)
+	var (
+		mu            sync.Mutex
+		observedSteps = make(map[proto.Step]struct{})
+	)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask",
+		func(e taskexecutor.TaskExecutor, _ *error, _ context.Context) {
+			taskBase := e.GetTaskBase()
+			if taskBase.Type != proto.Backfill {
+				return
+			}
+			require.Equal(t, 16, taskBase.RequiredSlots)
+			require.Equal(t, 12, taskBase.GetRuntimeSlots())
+			mu.Lock()
+			observedSteps[taskBase.Step] = struct{}{}
+			mu.Unlock()
+		},
+	)
 	tk.MustExec("alter table t add unique index idx(a);")
-	// read-index/merge-sort/ingest all create worker pool once
-	require.Equal(t, 4, callCnt)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask")
+	mu.Lock()
+	_, readIndexStep := observedSteps[proto.BackfillStepReadIndex]
+	_, mergeSortStep := observedSteps[proto.BackfillStepMergeSort]
+	_, ingestStep := observedSteps[proto.BackfillStepWriteAndIngest]
+	mu.Unlock()
+	require.True(t, readIndexStep)
+	require.True(t, mergeSortStep)
+	require.True(t, ingestStep)
 }
