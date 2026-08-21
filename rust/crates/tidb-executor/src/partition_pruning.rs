@@ -330,24 +330,70 @@ fn prune_list_ids(
         .collect()
 }
 
-type ScalarRangeEndpoint = (Option<i64>, bool);
+/// A scalar range endpoint: its value, whether the endpoint is EXCLUSIVE,
+/// and whether the value is UNSIGNED in its own right.
+///
+/// That third component is the one Go carries and this module used to throw
+/// away. Go compares a partition bound against a query constant with
+/// `types.CompareInt(bound, boundUnsigned, value, valueUnsigned)`
+/// (`pkg/planner/core/rule/rule_partition_processor.go:938`), where the two
+/// flags come from DIFFERENT places -- the bound's from the partitioning
+/// column's type, the constant's from its own. Folding them into one flag
+/// makes `a < 18446744073709551615` over a SIGNED column prune partitions
+/// that hold matching rows.
+type ScalarRangeEndpoint = (Option<i64>, bool, bool);
 type ScalarInterval = (ScalarRangeEndpoint, ScalarRangeEndpoint);
 
 /// One scalar ranger interval. `None` means an endpoint has a type that the
 /// partition expression cannot compare, so its safe pruning answer is every
 /// partition.
 fn scalar_interval(range: &IndexRange) -> Option<ScalarInterval> {
-    fn endpoint(value: Option<&Datum>) -> Option<Option<i64>> {
+    fn endpoint(value: Option<&Datum>) -> Option<(Option<i64>, bool)> {
         match value? {
-            Datum::Int(value) => Some(Some(*value)),
-            Datum::UInt(value) => Some(Some(*value as i64)),
-            Datum::Null | Datum::MinNotNull | Datum::MaxValue => Some(None),
+            Datum::Int(value) => Some((Some(*value), false)),
+            // Go keeps `HasUnsignedFlag(constExpr.GetType())` for the
+            // constant; the datum's own kind is that flag here.
+            Datum::UInt(value) => Some((Some(*value as i64), true)),
+            Datum::Null | Datum::MinNotNull | Datum::MaxValue => Some((None, false)),
             _ => None,
         }
     }
-    let low = endpoint(range.low.first())?;
-    let high = endpoint(range.high.first())?;
-    Some(((low, range.low_exclusive), (high, range.high_exclusive)))
+    let (low, low_unsigned) = endpoint(range.low.first())?;
+    let (high, high_unsigned) = endpoint(range.high.first())?;
+    Some((
+        (low, range.low_exclusive, low_unsigned),
+        (high, range.high_exclusive, high_unsigned),
+    ))
+}
+
+use std::cmp::Ordering;
+
+/// Go `types.CompareInt` (`pkg/types/compare.go`): compare two 64-bit
+/// integers that may independently be signed or unsigned.
+///
+/// The two mixed cases are the whole point. When only one side is unsigned,
+/// Go decides by whether the signed side is negative or the unsigned side
+/// exceeds `i64::MAX`; casting both to one type instead answers the opposite
+/// way for exactly the values that matter.
+fn compare_int(left: i64, left_unsigned: bool, right: i64, right_unsigned: bool) -> Ordering {
+    match (left_unsigned, right_unsigned) {
+        (true, true) => (left as u64).cmp(&(right as u64)),
+        (true, false) => {
+            if right < 0 || (left as u64) > i64::MAX as u64 {
+                Ordering::Greater
+            } else {
+                left.cmp(&right)
+            }
+        }
+        (false, true) => {
+            if left < 0 || (right as u64) > i64::MAX as u64 {
+                Ordering::Less
+            } else {
+                left.cmp(&right)
+            }
+        }
+        (false, false) => left.cmp(&right),
+    }
 }
 
 fn scalar_in_interval(
@@ -356,30 +402,23 @@ fn scalar_in_interval(
     high: ScalarRangeEndpoint,
     unsigned: bool,
 ) -> bool {
+    // `value` is a stored LIST value, so its signedness is the partition
+    // column's; each endpoint carries its own. Go compares the two with
+    // `types.CompareInt` rather than casting both to one type.
     let lower_ok = low.0.is_none_or(|bound| {
-        if unsigned {
-            if low.1 {
-                (value as u64) > (bound as u64)
-            } else {
-                (value as u64) >= (bound as u64)
-            }
-        } else if low.1 {
-            value > bound
+        let order = compare_int(value, unsigned, bound, low.2);
+        if low.1 {
+            order == Ordering::Greater
         } else {
-            value >= bound
+            order != Ordering::Less
         }
     });
     let upper_ok = high.0.is_none_or(|bound| {
-        if unsigned {
-            if high.1 {
-                (value as u64) < (bound as u64)
-            } else {
-                (value as u64) <= (bound as u64)
-            }
-        } else if high.1 {
-            value < bound
+        let order = compare_int(value, unsigned, bound, high.2);
+        if high.1 {
+            order == Ordering::Less
         } else {
-            value <= bound
+            order != Ordering::Greater
         }
     });
     lower_ok && upper_ok
@@ -545,19 +584,21 @@ fn range_meets_partition(
     //
     // A low end that is not an integer -- NULL, `MinNotNull`, a string --
     // proves nothing and keeps the partition.
-    if let (Some(high), Some(value)) = (high, interval_low(range)) {
-        if !less(value, high, unsigned) {
+    // `high`/`low` are PARTITION bounds, so they carry the partitioning
+    // column's signedness; the range endpoints carry their own.
+    if let (Some(high), Some((value, value_unsigned))) = (high, interval_low(range)) {
+        if compare_int(value, value_unsigned, high, unsigned) != Ordering::Less {
             return false;
         }
     }
     // A range whose high end is below the partition's INCLUSIVE lower bound
     // admits no value this partition stores. Here the exclusive case is
     // exact: `[..., low)` admits nothing at or above `low`.
-    if let (Some(low), Some((value, exclusive))) = (low, interval_high(range)) {
+    if let (Some(low), Some((value, exclusive, value_unsigned))) = (low, interval_high(range)) {
         let below = if exclusive {
-            !less(low, value, unsigned)
+            compare_int(low, unsigned, value, value_unsigned) != Ordering::Less
         } else {
-            less(value, low, unsigned)
+            compare_int(value, value_unsigned, low, unsigned) == Ordering::Less
         };
         if below {
             return false;
@@ -567,24 +608,17 @@ fn range_meets_partition(
 }
 
 /// `a < b`, read with the partition expression's own signedness.
-fn less(a: i64, b: i64, unsigned: bool) -> bool {
-    if unsigned {
-        (a as u64) < (b as u64)
-    } else {
-        a < b
-    }
-}
-
 /// The interval's low endpoint as an integer, or `None` for an endpoint this
 /// tier cannot compare against a partition bound.
-fn interval_low(range: &IndexRange) -> Option<i64> {
+fn interval_low(range: &IndexRange) -> Option<(i64, bool)> {
     integer_endpoint(range.low.first())
 }
 
 /// The interval's high endpoint and whether it is EXCLUSIVE, as
 /// [`interval_low`].
-fn interval_high(range: &IndexRange) -> Option<(i64, bool)> {
-    integer_endpoint(range.high.first()).map(|value| (value, range.high_exclusive))
+fn interval_high(range: &IndexRange) -> Option<(i64, bool, bool)> {
+    integer_endpoint(range.high.first())
+        .map(|(value, unsigned)| (value, range.high_exclusive, unsigned))
 }
 
 /// One endpoint datum as the 64-bit pattern a partition bound compares
@@ -593,10 +627,15 @@ fn interval_high(range: &IndexRange) -> Option<(i64, bool)> {
 /// `MinNotNull`/`MaxValue` are the range algebra's own infinities and NULL is
 /// below every value; none of them bounds a partition, so each answers
 /// `None` and keeps the partition.
-fn integer_endpoint(value: Option<&Datum>) -> Option<i64> {
+/// The endpoint's value AND whether it is unsigned in its own right.
+///
+/// Collapsing `Datum::UInt(v)` to `v as i64` and dropping the flag is what
+/// made a constant above `i64::MAX` read as a negative number and prune the
+/// wrong partitions.
+fn integer_endpoint(value: Option<&Datum>) -> Option<(i64, bool)> {
     match value? {
-        Datum::Int(value) => Some(*value),
-        Datum::UInt(value) => Some(*value as i64),
+        Datum::Int(value) => Some((*value, false)),
+        Datum::UInt(value) => Some((*value as i64, true)),
         _ => None,
     }
 }
@@ -909,5 +948,58 @@ mod tests {
             ids_for_selected_partitions(&spec, &["nosuch".to_owned()]),
             Err("nosuch".to_owned())
         );
+    }
+
+    /// Go `types.CompareInt` (`pkg/types/compare.go`), case by case.
+    ///
+    /// The expectations are read off Go's own branches, not off this port:
+    /// with both sides unsigned it compares as `uint64`; with both signed as
+    /// `int64`; and when exactly one side is unsigned Go answers by whether
+    /// the signed side is negative or the unsigned side exceeds `i64::MAX`,
+    /// only falling through to a signed comparison when neither holds.
+    #[test]
+    fn compare_int_matches_gos_four_signedness_cases() {
+        // (false, false): plain signed.
+        assert_eq!(compare_int(-5, false, 3, false), Ordering::Less);
+        assert_eq!(compare_int(3, false, 3, false), Ordering::Equal);
+
+        // (true, true): both read as unsigned, so the bit pattern of -1 is
+        // the largest value there is.
+        assert_eq!(compare_int(-1, true, 3, true), Ordering::Greater);
+
+        // (false, true): a NEGATIVE signed side is always smaller...
+        assert_eq!(compare_int(-5, false, 3, true), Ordering::Less);
+        // ...and so is any signed value when the unsigned side is above
+        // i64::MAX. This is the case that made pruning wrong: the bound 10
+        // is BELOW the constant 18446744073709551615, whose bit pattern as
+        // i64 is -1.
+        assert_eq!(compare_int(10, false, -1, true), Ordering::Less);
+        // Neither special condition holds, so it is an ordinary comparison.
+        assert_eq!(compare_int(10, false, 3, true), Ordering::Greater);
+
+        // (true, false): the mirror image.
+        assert_eq!(compare_int(3, true, -5, false), Ordering::Greater);
+        assert_eq!(compare_int(-1, true, 10, false), Ordering::Greater);
+        assert_eq!(compare_int(3, true, 10, false), Ordering::Less);
+    }
+
+    /// The whole point of carrying the second flag: a partition bound and a
+    /// query constant can disagree about signedness, and casting both to one
+    /// type answers backwards for exactly the values that matter.
+    #[test]
+    fn a_constant_above_i64_max_does_not_prune_a_signed_partition() {
+        // `PARTITION BY RANGE (a)` over a SIGNED column with bound 10, and
+        // the predicate `a < 18446744073709551615`, whose constant arrives as
+        // an unsigned datum. Go keeps every partition, because the bound is
+        // below the constant.
+        let bound_below_constant = compare_int(10, false, -1, true);
+        assert_eq!(bound_below_constant, Ordering::Less);
+
+        // Reading the constant with the COLUMN's signedness instead -- what
+        // this module used to do -- reaches the opposite verdict and would
+        // prune a partition holding matching rows.
+        let collapsed = 10_i64.cmp(&-1_i64);
+        assert_eq!(collapsed, Ordering::Greater);
+        assert_ne!(bound_below_constant, collapsed);
     }
 }
