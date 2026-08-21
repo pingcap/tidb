@@ -362,6 +362,13 @@ func (task *storeCompactTask) sendRequestWithRetry(req *tikvrpc.Request) (*kvrpc
 			return nil, tikverr.ErrBodyMissing
 		}
 
-		return resp.Resp.(*kvrpcpb.CompactResponse), nil
+		// This runs inside an errgroup goroutine, which does not recover panics,
+		// so guard the assertion: an unexpected response type becomes an error
+		// rather than crashing the whole tidb-server.
+		compactResp, ok := resp.Resp.(*kvrpcpb.CompactResponse)
+		if !ok {
+			return nil, tikverr.ErrBodyMissing
+		}
+		return compactResp, nil
 	}
 }
