@@ -480,7 +480,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
 		sql := a.Text()
-		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
+		maxExecutionTime := a.getMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
@@ -508,6 +508,39 @@ func (a *ExecStmt) OriginText() string {
 // Text returns utf8 encoded statement as a string.
 func (a *ExecStmt) Text() string {
 	return a.StmtNode.Text()
+}
+
+// getMaxExecutionTime returns the timeout that applies to the current statement.
+// max_execution_time keeps its MySQL-compatible SELECT-only semantics, while
+// tidb_dml_max_execution_time applies to transactional DML and COMMIT.
+func (a *ExecStmt) getMaxExecutionTime() uint64 {
+	vars := a.Ctx.GetSessionVars()
+	stmtCtx := vars.StmtCtx
+	if stmtCtx.InInsertStmt || stmtCtx.InUpdateStmt || stmtCtx.InDeleteStmt {
+		// Non-transactional and deprecated batch DML may have committed earlier
+		// shards/batches, and EXPLAIN ANALYZE DML returns a result set after commit.
+		// None has safe statement-timeout semantics, so keep them outside this feature.
+		batchDML := vars.BatchCommit || vardef.EnableBatchDML.Load() && vars.DMLBatchSize > 0 && !vars.InTxn() &&
+			((stmtCtx.InInsertStmt && vars.BatchInsert) ||
+				(stmtCtx.InDeleteStmt && vars.BatchDelete))
+		if vars.InNonTransactionalDML || batchDML || stmtCtx.InExplainStmt {
+			return 0
+		}
+		return vars.DMLMaxExecutionTime
+	}
+	_, isCommit := a.StmtNode.(*ast.CommitStmt)
+	if !isCommit {
+		if executePlan, ok := a.Plan.(*plannercore.Execute); ok {
+			_, isCommit = executePlan.Stmt.(*ast.CommitStmt)
+		}
+	}
+	if isCommit {
+		if vars.BatchCommit {
+			return 0
+		}
+		return vars.DMLMaxExecutionTime
+	}
+	return vars.GetMaxExecutionTime()
 }
 
 // IsPrepared returns true if stmt is a prepare statement.
@@ -680,6 +713,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		sctx.GetSessionVars().MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
 	}
 
+	// Resolve the timeout before replacing a prepared EXECUTE plan with its underlying plan.
+	// This preserves COMMIT classification for prepared statements.
+	maxExecutionTime := a.getMaxExecutionTime()
+
 	// must set plan according to the `Execute` plan before getting planDigest
 	a.inheritContextFromExecuteStmt()
 	var rm *runaway.Manager
@@ -721,16 +758,15 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	if pi != nil {
 		sql := a.getSQLForProcessInfo()
-		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, a.StmtNode)
 		}
-		// Since maxExecutionTime is used only for SELECT statements, here we limit its scope.
-		if !a.Ctx.GetSessionVars().StmtCtx.InSelectStmt {
-			maxExecutionTime = 0
-		}
 		pi.SetProcessInfo(sql, execStartTime, cmd, maxExecutionTime)
+	}
+	if err = checkMaxExecutionTimeExceeded(sctx); err != nil {
+		terror.Log(exec.Close(e))
+		return nil, err
 	}
 
 	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
