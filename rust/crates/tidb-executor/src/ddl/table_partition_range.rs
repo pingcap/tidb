@@ -61,21 +61,20 @@ pub(super) type RangeColumnsMetadata = (Vec<String>, Vec<FieldType>, Vec<Vec<Ran
 /// negative bound under an unsigned expression), 1659 (a `NULL` bound) and
 /// 1697 (a bound that is not an integer).
 pub(super) fn build_range_bounds(
-    partition_expr: &Expr,
+    built: &tidb_expr::expression::Expression,
     definitions: &[tidb_ast::PartitionDefinition],
-    names: &[String],
-    types: &[FieldType],
-    dependencies: &[usize],
     ctx: &crate::StmtContext,
     mode: super::table_partition::PartitionBuildMode,
+    definition_tail: &mut dyn FnMut(usize) -> Result<(), DriverError>,
 ) -> Result<(Vec<RangeBound>, bool), DriverError> {
     // Go `buildPartitionDefinitionsInfo`: a RANGE table with no definitions
     // is 1492, checked before any bound is read.
     if definitions.is_empty() {
         return Err(DriverError::PartitionsMustBeDefined("RANGE"));
     }
-    let unsigned = range_expression_is_unsigned(partition_expr, names, types, dependencies)?;
-    let bounds = build_range_bounds_with_unsigned(definitions, unsigned, ctx, mode)?;
+    let unsigned = partition_expression_is_unsigned(built);
+    let bounds =
+        build_range_bounds_with_unsigned(definitions, unsigned, ctx, mode, definition_tail)?;
     Ok((bounds, unsigned))
 }
 
@@ -84,6 +83,11 @@ pub(super) fn build_range_bounds_with_unsigned(
     unsigned: bool,
     ctx: &crate::StmtContext,
     mode: super::table_partition::PartitionBuildMode,
+    // Go's definition loop checks THIS definition's comment and name before
+    // it reads the NEXT one's values (`ddl/partition.go:1650-1670`), so the
+    // two cannot be run as separate passes without changing which error a
+    // statement that is wrong twice reports.
+    definition_tail: &mut dyn FnMut(usize) -> Result<(), DriverError>,
 ) -> Result<Vec<RangeBound>, DriverError> {
     if definitions.is_empty() {
         return Err(DriverError::PartitionsMustBeDefined("RANGE"));
@@ -119,21 +123,26 @@ pub(super) fn build_range_bounds_with_unsigned(
                 RangeBound::MaxValue
             }
             PartitionValue::Expr(expr) => {
-                RangeBound::Value(fold_range_bound(expr, &definition.name, unsigned, ctx)?)
+                RangeBound::Value(fold_range_bound(
+                    expr,
+                    &definition.name,
+                    unsigned,
+                    ctx,
+                    mode,
+                )?)
             }
             PartitionValue::Default | PartitionValue::Tuple(_) => {
                 return Err(DriverError::PartitionValuesNotInt(definition.name.clone()))
             }
         };
         bounds.push(bound);
+        definition_tail(index)?;
     }
-    // Go's strictly-increasing rule is CREATE-only (`ddl/partition.go:1938`).
-    // The loader never re-judges bounds it did not write: a table the cluster
-    // is serving must not be refused because this node re-derived a verdict
-    // Go reached once, at DDL time.
-    if mode.validates() {
-        check_strictly_increasing(&bounds, unsigned)?;
-    }
+    // Go's strictly-increasing rule lives in `checkPartitionByRange`, which
+    // `checkPartitionDefinitionConstraints` runs after 1517/1499/1652 -- so
+    // the caller raises it, not this folder. It is CREATE-only either way
+    // (`ddl/partition.go:1938`): the loader never re-judges bounds it did not
+    // write.
     Ok(bounds)
 }
 
@@ -151,6 +160,7 @@ pub(super) fn build_range_columns_bounds(
     types: &[FieldType],
     ctx: &crate::StmtContext,
     mode: super::table_partition::PartitionBuildMode,
+    definition_tail: &mut dyn FnMut(usize) -> Result<(), DriverError>,
 ) -> Result<RangeColumnsMetadata, DriverError> {
     if columns.is_empty() || definitions.is_empty() {
         return Err(DriverError::PartitionsMustBeDefined("RANGE"));
@@ -174,10 +184,10 @@ pub(super) fn build_range_columns_bounds(
         let offset = names
             .iter()
             .position(|candidate| candidate.eq_ignore_ascii_case(name))
-            .ok_or_else(|| DriverError::UnknownColumnInClause {
-                column: name.clone(),
-                clause: "partition function".to_owned(),
-            })?;
+            // Go `checkColumnsPartitionType` (`partition.go:787`) reports a
+            // column list's missing name as `ErrFieldNotFoundPart` (1488),
+            // not the 1054 the expression path raises.
+            .ok_or(DriverError::PartitionFieldNotFound)?;
         let field_type = types[offset].clone();
         if !super::table_partition_list::list_columns_type_allowed(&field_type) {
             // Go `checkColumnsPartitionType` is CREATE-only
@@ -191,7 +201,7 @@ pub(super) fn build_range_columns_bounds(
     }
 
     let mut less_than = Vec::with_capacity(definitions.len());
-    for definition in definitions {
+    for (index, definition) in definitions.iter().enumerate() {
         let PartitionDefinitionClause::LessThan(values) = &definition.clause else {
             return match &definition.clause {
                 PartitionDefinitionClause::In(_) => Err(DriverError::PartitionWrongValues {
@@ -240,13 +250,29 @@ pub(super) fn build_range_columns_bounds(
             })
             .collect::<Result<Vec<_>, _>>()?;
         less_than.push(bound);
+        definition_tail(index)?;
     }
+    Ok((dependency_names, field_types, less_than))
+}
+
+/// Go `checkPartitionByRange` -> `checkRangeColumnsPartitionValue`
+/// (`ddl/partition.go:5296`): the bounds must strictly increase.
+///
+/// Go reaches it from `checkPartitionDefinitionConstraints`, AFTER the
+/// name-uniqueness (1517), partition-count (1499) and duplicate-column
+/// (1652) checks -- so a statement wrong in two ways reports the one Go
+/// reports. Folding it into the per-definition loop above made 1493 win over
+/// all three.
+pub(super) fn check_range_columns_strictly_increasing(
+    less_than: &[Vec<RangeColumnBound>],
+    field_types: &[FieldType],
+) -> Result<(), DriverError> {
     for pair in less_than.windows(2) {
-        if !range_columns_bound_increases(&pair[0], &pair[1], &field_types)? {
+        if !range_columns_bound_increases(&pair[0], &pair[1], field_types)? {
             return Err(DriverError::PartitionRangeNotIncreasing);
         }
     }
-    Ok((dependency_names, field_types, less_than))
+    Ok(())
 }
 
 pub(super) fn range_columns_bound_increases(
@@ -288,6 +314,7 @@ pub(super) fn fold_range_bound(
     partition: &str,
     unsigned: bool,
     ctx: &crate::StmtContext,
+    mode: super::table_partition::PartitionBuildMode,
 ) -> Result<i64, DriverError> {
     // The fold reads `ctx`, which is the SESSION's, because a bound's VALUE
     // can depend on the session `time_zone` -- Go threads its own
@@ -317,7 +344,9 @@ pub(super) fn fold_range_bound(
         Datum::Int(value) => {
             // Go `checkPartitionValuesIsInt`: a NEGATIVE bound under an
             // unsigned partition expression is out of the function's domain.
-            if unsigned && value < 0 {
+            // That check lives in `buildPartitionDefinitionsInfo`, so it is
+            // CREATE-only -- the loader takes the stored bound as given.
+            if mode.validates() && unsigned && value < 0 {
                 return Err(DriverError::PartitionConstDomain);
             }
             Ok(value)
@@ -330,7 +359,10 @@ pub(super) fn fold_range_bound(
 
 /// Go `checkRangePartitionValue`: the bounds must strictly increase, with a
 /// trailing `MAXVALUE` exempt because it is above all of them by definition.
-fn check_strictly_increasing(bounds: &[RangeBound], unsigned: bool) -> Result<(), DriverError> {
+pub(super) fn check_strictly_increasing(
+    bounds: &[RangeBound],
+    unsigned: bool,
+) -> Result<(), DriverError> {
     let mut previous: Option<i64> = None;
     for bound in bounds {
         let RangeBound::Value(value) = *bound else {
@@ -351,142 +383,30 @@ fn check_strictly_increasing(bounds: &[RangeBound], unsigned: bool) -> Result<()
     Ok(())
 }
 
-/// Go `isPartExprUnsigned`: whether the partition expression's own result
-/// type is unsigned, which decides how every bound and every routed value
-/// compares.
+/// Go `isPartExprUnsigned` (`ddl/partition.go:4875`): whether the partition
+/// expression's own result type carries `mysql.UnsignedFlag`.
 ///
-/// Go asks the BUILT expression for its flag. This tier answers it for the
-/// one shape whose answer is unambiguous -- a bare column, which is unsigned
-/// exactly when the column is -- and REFUSES an arithmetic expression over an
-/// unsigned column rather than guessing which of MySQL's promotion rules
-/// applies. Guessing would put a row in the wrong partition silently, which
-/// is the failure this whole module exists to prevent.
-pub(super) fn range_expression_is_unsigned(
-    expr: &Expr,
-    names: &[String],
-    types: &[FieldType],
-    dependencies: &[usize],
-) -> Result<bool, DriverError> {
-    let reads_unsigned = dependencies
-        .iter()
-        .any(|offset| types[*offset].is_unsigned());
-    if !reads_unsigned {
-        return Ok(false);
-    }
-    if let Expr::Column(path) = unwrap_parentheses(expr) {
-        if let Some(offset) = path.last().and_then(|name| {
-            names
-                .iter()
-                .position(|candidate| candidate.eq_ignore_ascii_case(name))
-        }) {
-            return Ok(types[offset].is_unsigned());
-        }
-    }
-    Err(DriverError::unsupported(
-        "PARTITION BY RANGE over an EXPRESSION of an unsigned column is not supported by this \
-         node: whether the bounds compare as signed or unsigned would decide which partition a \
-         row lands in, and this node will not guess it"
-            .to_owned(),
-    ))
+/// Go builds the expression and reads the flag off it -- nothing more -- and
+/// on a build FAILURE it logs and answers `false`. It never refuses the
+/// table over this question.
+///
+/// The previous port answered only for a bare column and refused any
+/// arithmetic over an unsigned one rather than guess MySQL's promotion
+/// rules. But the promotion rules are already ported:
+/// `builtin_arithmetic::infer_arithmetic_type_with_context` sets
+/// `UNSIGNED` when either operand carries it, with Go's own
+/// `NO_UNSIGNED_SUBTRACTION` exception. So the built expression ALREADY
+/// knows the answer, and asking it is both exact and unable to refuse --
+/// which matters most on the LOAD path, where the refusal made a table a Go
+/// cluster serves unreadable here.
+pub(super) fn partition_expression_is_unsigned(
+    built: &tidb_expr::expression::Expression,
+) -> bool {
+    built.static_type().is_some_and(FieldType::is_unsigned)
 }
 
-/// The parenthesised expression's subject, since `(a)` partitions on `a`.
-fn unwrap_parentheses(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(inner) => unwrap_parentheses(inner),
-        other => other,
-    }
-}
 
-/// The `SHOW CREATE TABLE` tail Go prints for a RANGE table (Go
-/// `ddl.AppendPartitionInfo`'s definition-list form).
-///
-/// Captured verbatim, including the leading newline, the two-space
-/// continuation indent of one leading space, and `MAXVALUE` inside its own
-/// parentheses:
-///
-/// ```text
-/// PARTITION BY RANGE (`a`)
-/// (PARTITION `p0` VALUES LESS THAN (10),
-///  PARTITION `p1` VALUES LESS THAN (20),
-///  PARTITION `pm` VALUES LESS THAN (MAXVALUE))
-/// ```
-#[must_use]
-pub fn range_definitions_text(
-    definitions: &[crate::partition_routing::PartitionDef],
-    less_than: &[RangeBound],
-    unsigned: bool,
-) -> String {
-    let mut out = String::from("\n(");
-    for (index, definition) in definitions.iter().enumerate() {
-        if index > 0 {
-            out.push_str(",\n ");
-        }
-        // Go prints from the STORED `LessThan` text (`ddl/partition.go:5204`),
-        // which every path now records. The folded bound is the fallback for
-        // a definition that predates it rather than a second source of
-        // truth: the two are rendered by one helper.
-        let bound = definition.less_than.first().cloned().unwrap_or_else(|| {
-            super::table_partition::stored_range_bound_text(
-                less_than.get(index).copied().unwrap_or(RangeBound::MaxValue),
-                unsigned,
-            )
-        });
-        out.push_str(&format!(
-            "PARTITION `{}` VALUES LESS THAN ({bound}){}",
-            definition.name,
-            super::table_partition::partition_comment_text(&definition.comment)
-        ));
-    }
-    out.push(')');
-    out
-}
 
-/// `SHOW CREATE TABLE`'s typed `RANGE COLUMNS` definition list.
-#[must_use]
-pub fn range_columns_definitions_text(
-    definitions: &[crate::partition_routing::PartitionDef],
-    less_than: &[Vec<RangeColumnBound>],
-) -> String {
-    let mut out = String::from("\n(");
-    for (index, definition) in definitions.iter().enumerate() {
-        if index > 0 {
-            out.push_str(",\n ");
-        }
-        out.push_str(&format!(
-            "PARTITION `{}` VALUES LESS THAN (",
-            definition.name
-        ));
-        if let Some(bound) = less_than.get(index) {
-            for (component, value) in bound.iter().enumerate() {
-                if component > 0 {
-                    out.push(',');
-                }
-                match value {
-                    RangeColumnBound::MaxValue => out.push_str("MAXVALUE"),
-                    RangeColumnBound::Value(value) => {
-                        let rendered = value
-                            .restore_value_expr()
-                            .expect("RANGE COLUMNS metadata contains restorable values");
-                        // Go runs every printed bound through `hexIfNonPrint`
-                        // (`ddl/partition.go:5206`), so a value MySQL cannot
-                        // quote becomes a `0x...` literal rather than raw
-                        // bytes in the DDL.
-                        out.push_str(&super::table_partition::hex_if_non_print(
-                            &String::from_utf8_lossy(&rendered),
-                        ));
-                    }
-                }
-            }
-        }
-        out.push(')');
-        out.push_str(&super::table_partition::partition_comment_text(
-            &definition.comment,
-        ));
-    }
-    out.push(')');
-    out
-}
 
 #[cfg(test)]
 mod tests {
@@ -495,22 +415,22 @@ mod tests {
     /// The captured `SHOW CREATE TABLE` tail, character for character.
     #[test]
     fn the_definition_list_matches_gos_own_spelling() {
-        let definitions = ["p0", "p1", "pm"].map(|name| crate::partition_routing::PartitionDef {
-            id: 0,
-            name: name.to_owned(),
-            less_than: Vec::new(),
-            in_values: Vec::new(),
-            comment: String::new(),
+        let definitions = [("p0", "10"), ("p1", "20"), ("pm", "MAXVALUE")].map(|(name, bound)| {
+            crate::partition_routing::PartitionDef {
+                id: 0,
+                name: name.to_owned(),
+                less_than: vec![bound.to_owned()],
+                in_values: Vec::new(),
+                comment: String::new(),
+            }
         });
         assert_eq!(
-            range_definitions_text(
+            super::super::table_partition::append_partition_defs(
                 &definitions,
-                &[
-                    RangeBound::Value(10),
-                    RangeBound::Value(20),
-                    RangeBound::MaxValue
-                ],
-                false
+                &crate::partition_routing::PartitionKind::Range {
+                    less_than: Vec::new(),
+                    unsigned: false,
+                }
             ),
             "\n(PARTITION `p0` VALUES LESS THAN (10),\n PARTITION `p1` VALUES LESS THAN (20),\n \
              PARTITION `pm` VALUES LESS THAN (MAXVALUE))"

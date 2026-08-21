@@ -130,6 +130,9 @@ impl KvTable {
             .filter_map(|(old, definition)| remap[old].map(|_| definition))
             .collect();
         match &mut partition.kind {
+            // NONE keeps no per-partition structure beside the definitions
+            // that were just remapped.
+            PartitionKind::None => {}
             PartitionKind::Range { less_than, .. } => {
                 *less_than = less_than
                     .drain(..)

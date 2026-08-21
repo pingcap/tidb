@@ -1366,6 +1366,11 @@ impl DriverError {
             *b"HY000",
             format!("Field '{column}' is of a not allowed type for this type of partitioning"),
         ),
+        DriverError::PartitionFieldNotFound => MysqlError::new(
+            1488,
+            *b"HY000",
+            "Field in list of fields for partition function not found in table".to_owned(),
+        ),
         DriverError::PartitionGlobalIndexNeeded(index) => MysqlError::new(
             8264,
             *b"HY000",

@@ -380,7 +380,9 @@ fn truncate_partition_action(
                 let Some(ordinal) = partition
                     .definitions
                     .iter()
-                    .position(|definition| definition.name.eq_ignore_ascii_case(name))
+                    .position(|definition| {
+                        super::table_partition::partition_names_equal(&definition.name, name)
+                    })
                 else {
                     return Err(DriverError::UnknownPartition {
                         partition: name.clone(),
@@ -442,7 +444,9 @@ fn drop_partition_action(
             let Some(ordinal) = partition
                 .definitions
                 .iter()
-                .position(|definition| definition.name.eq_ignore_ascii_case(name))
+                .position(|definition| {
+                    super::table_partition::partition_names_equal(&definition.name, name)
+                })
             else {
                 if if_exists {
                     ctx.append_suppressed(&DriverError::PartitionDropNonexistent);
@@ -512,10 +516,14 @@ fn add_partition_action(
             let duplicate_existing = partition
                 .definitions
                 .iter()
-                .any(|old| old.name.eq_ignore_ascii_case(&definition.name));
+                .any(|old| {
+                    super::table_partition::partition_names_equal(&old.name, &definition.name)
+                });
             let duplicate_added = definitions
                 .iter()
-                .filter(|candidate| candidate.name.eq_ignore_ascii_case(&definition.name))
+                .filter(|candidate| {
+                    super::table_partition::partition_names_equal(&candidate.name, &definition.name)
+                })
                 .count()
                 > 1;
             if duplicate_existing || duplicate_added {
@@ -538,6 +546,13 @@ fn add_partition_action(
             .map(|column| column.field_type.clone())
             .collect::<Vec<_>>();
         match &partition.kind {
+            // A table wearing `PartitionTypeNone` is mid-`ALTER ...
+            // PARTITION BY`; it has no LIST values for a definition to join.
+            PartitionKind::None => {
+                return Err(DriverError::unsupported(
+                    "ADD PARTITION while the table is being repartitioned".to_owned(),
+                ))
+            }
             PartitionKind::List {
                 values,
                 null_partition,
@@ -549,11 +564,29 @@ fn add_partition_action(
                         "ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead",
                     ));
                 }
-                let added = super::table_partition_list::build_list_values_with_unsigned(
-                    definitions,
-                    *unsigned,
-                    ctx,
-                )?;
+                // On the ALTER path the added definitions are checked on
+                // their own, so a collision among them is raised here rather
+                // than deferred: there is no earlier partition-level check
+                // for it to lose to.
+                let (added, duplicate) =
+                    super::table_partition_list::build_list_values_with_unsigned(
+                        definitions,
+                        *unsigned,
+                        ctx,
+                    // Go reaches these builders through the SAME
+                    // `buildPartitionDefinitionsInfo` loop a CREATE uses, so
+                    // an added partition's name faces the 64-rune rule at the
+                    // same point. Per-partition options are refused above, so
+                    // there is no comment to validate.
+                    &mut |ordinal: usize| {
+                        definitions.get(ordinal).map_or(Ok(()), |definition| {
+                            super::table_partition::check_too_long_partition_name(&definition.name)
+                        })
+                    },
+                    )?;
+                if let Some(duplicate) = duplicate {
+                    return Err(duplicate);
+                }
                 let PartitionKind::List {
                     values: added_values,
                     null_partition: added_null,
@@ -594,6 +627,19 @@ fn add_partition_action(
                     &names,
                     &types,
                     ctx,
+                    // The added definitions are new metadata this statement
+                    // is writing, so they face the CREATE-time rules.
+                    super::table_partition::PartitionBuildMode::Create,
+                    // Go reaches these builders through the SAME
+                    // `buildPartitionDefinitionsInfo` loop a CREATE uses, so
+                    // an added partition's name faces the 64-rune rule at the
+                    // same point. Per-partition options are refused above, so
+                    // there is no comment to validate.
+                    &mut |ordinal: usize| {
+                        definitions.get(ordinal).map_or(Ok(()), |definition| {
+                            super::table_partition::check_too_long_partition_name(&definition.name)
+                        })
+                    },
                 )?;
                 let PartitionKind::ListColumns {
                     keys: added_keys,
@@ -621,6 +667,11 @@ fn add_partition_action(
                     *unsigned,
                     ctx,
                     super::table_partition::PartitionBuildMode::Create,
+                    &mut |ordinal: usize| {
+                        definitions.get(ordinal).map_or(Ok(()), |definition| {
+                            super::table_partition::check_too_long_partition_name(&definition.name)
+                        })
+                    },
                 )?;
                 match (less_than.last(), added.first()) {
                     (Some(RangeBound::MaxValue), _) => {
@@ -660,6 +711,11 @@ fn add_partition_action(
                         &types,
                         ctx,
                         super::table_partition::PartitionBuildMode::Create,
+                        &mut |ordinal: usize| {
+                        definitions.get(ordinal).map_or(Ok(()), |definition| {
+                            super::table_partition::check_too_long_partition_name(&definition.name)
+                        })
+                    },
                     )?;
                 if let (Some(old), Some(new)) = (less_than.last(), added_bounds.first()) {
                     if !super::table_partition_range::range_columns_bound_increases(
@@ -1899,6 +1955,9 @@ fn partition_column_change_allowed(
             || enum_or_set_appends(origin, to)
     };
     match &partition.kind {
+        // NONE routes every row to partition 0 regardless of any column, so
+        // no column change can break its routing.
+        PartitionKind::None => true,
         PartitionKind::Key => key_change(),
         PartitionKind::RangeColumns { .. } | PartitionKind::ListColumns { .. } => {
             key_change() || time_fsp_extends(origin, to)

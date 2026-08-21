@@ -127,6 +127,15 @@ pub enum PartitionKind {
         /// The declared types of each tuple position.
         field_types: Vec<tidb_datatype::FieldType>,
     },
+    /// Go `ast.PartitionTypeNone`: the single-partition shape a table wears
+    /// WHILE `ALTER TABLE ... PARTITION BY` reorganises it.
+    ///
+    /// Go's `newPartitionExpr` returns a nil `PartitionExpr` for it
+    /// (`tables/partition.go:313`) and `locatePartitionCommon` routes every
+    /// row to `idx = 0` (`:1453`). It is a real, readable table state, not a
+    /// corrupt one -- refusing to load it made the table disappear for the
+    /// whole reorg.
+    None,
 }
 
 impl PartitionKind {
@@ -141,6 +150,7 @@ impl PartitionKind {
             PartitionKind::RangeColumns { .. } => "RANGE",
             PartitionKind::List { .. } => "LIST",
             PartitionKind::ListColumns { .. } => "LIST",
+            PartitionKind::None => "NONE",
         }
     }
 }
@@ -264,7 +274,8 @@ impl PartitionSpec {
             | PartitionKind::ListColumns { field_types, .. } => {
                 field_types[index] = field_type.clone();
             }
-            PartitionKind::Hash
+            PartitionKind::None
+            | PartitionKind::Hash
             | PartitionKind::Key
             | PartitionKind::Range { .. }
             | PartitionKind::List { .. } => {}
@@ -351,6 +362,9 @@ impl PartitionSpec {
                 *default_partition,
                 ctx,
             ),
+            // Go routes NONE to partition 0 without touching an expression
+            // (`tables/partition.go:1453`); there is none to touch.
+            PartitionKind::None => Ok(0),
             kind => {
                 let value = crate::generated_column::eval_over_dependencies(
                     &self.expr,
@@ -380,7 +394,9 @@ impl PartitionSpec {
                         *default_partition,
                         *unsigned,
                     ),
-                    PartitionKind::ListColumns { .. } => unreachable!("matched above"),
+                    PartitionKind::ListColumns { .. } | PartitionKind::None => {
+                        unreachable!("matched above")
+                    }
                 }
             }
         }

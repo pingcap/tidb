@@ -181,15 +181,27 @@ fn build_table_partitioning_inner(
     }
 
     if method.kind == PartitionType::KEY {
-        let dependencies =
+        // Go's order, which four separate errors depend on:
+        //   phase 1 `buildTablePartitionInfo` -- resolve the column list,
+        //     `checkColumnsPartitionType` (1488/1659), then
+        //     `buildHashPartitionDefinitions`, whose FIRST act is the
+        //     partition-count cap (1499, `partition.go:1455`);
+        //   phase 2 `checkPartitionDefinitionConstraints` -- 1517, 1499,
+        //     1652, then `checkPartitionByHash`'s 1504;
+        //   last, `checkPartitioningKeysConstraints` -- 1105 and 1503.
+        let (dependencies, unresolved_with_keys) =
             build_key_partition_columns(&method.columns, names, types, handle_offsets, indexes)?;
         let definitions = build_hash_partition_definitions(create, method.count, allocate_id, ctx)?;
         check_partition_name_unique(&definitions)?;
         if definitions.len() as u64 > MAX_PARTITIONS {
             return Err(DriverError::PartitionTooMany);
         }
+        check_partition_columns_unique(&dependencies)?;
         if definitions.is_empty() {
             return Err(DriverError::PartitionNoParts("partitions"));
+        }
+        if unresolved_with_keys {
+            return Err(DriverError::PartitionMetadataIncomplete);
         }
         let dependency_offsets = dependencies
             .iter()
@@ -221,18 +233,21 @@ fn build_table_partitioning_inner(
     }
 
     if method.kind == PartitionType::LIST && method.expr.is_none() {
+        let mut definitions = Vec::with_capacity(partitioning.definitions.len());
         let (dependencies, kind) = super::table_partition_list::build_list_columns_values(
             &method.columns,
             &partitioning.definitions,
             names,
             types,
             ctx,
+            PartitionBuildMode::Create,
+            &mut definition_tail(partitioning, &mut definitions, allocate_id, ctx, false),
         )?;
-        let definitions = build_named_partition_definitions(create, allocate_id, ctx)?;
         check_partition_name_unique(&definitions)?;
         if definitions.len() as u64 > MAX_PARTITIONS {
             return Err(DriverError::PartitionTooMany);
         }
+        check_partition_columns_unique(&dependencies)?;
         let dependency_offsets = dependencies
             .iter()
             .map(|name| {
@@ -265,6 +280,7 @@ fn build_table_partitioning_inner(
     }
 
     if method.kind == PartitionType::RANGE && method.expr.is_none() {
+        let mut definitions = Vec::with_capacity(partitioning.definitions.len());
         let (dependencies, field_types, less_than) =
             super::table_partition_range::build_range_columns_bounds(
                 &method.columns,
@@ -273,12 +289,19 @@ fn build_table_partitioning_inner(
                 types,
                 ctx,
                 PartitionBuildMode::Create,
+                &mut definition_tail(partitioning, &mut definitions, allocate_id, ctx, true),
             )?;
-        let definitions = build_named_partition_definitions(create, allocate_id, ctx)?;
+        // Go `checkPartitionDefinitionConstraints` order: 1517, 1499, 1652,
+        // and only then `checkPartitionByRange`'s 1493.
         check_partition_name_unique(&definitions)?;
         if definitions.len() as u64 > MAX_PARTITIONS {
             return Err(DriverError::PartitionTooMany);
         }
+        check_partition_columns_unique(&dependencies)?;
+        super::table_partition_range::check_range_columns_strictly_increasing(
+            &less_than,
+            &field_types,
+        )?;
         let dependency_offsets = dependencies
             .iter()
             .map(|name| {
@@ -337,52 +360,66 @@ fn build_table_partitioning_inner(
         types,
         &ctx.session_zone(),
         ctx.like_default_escape(),
+        PartitionBuildMode::Create,
     )?;
     // Go `checkPartitionFuncType`: the partition expression must evaluate to
     // an integer -- asked of the BUILT expression, not re-derived from the
     // AST (`ddl/partition.go:1895`).
-    check_partition_expression_type(expr, &built, names, types)?;
+    check_partition_expression_type(expr, &built)?;
 
-    let (kind, definitions) = match method.kind {
+    // `deferred` carries the LIST duplicate-constant refusal (1495) that Go
+    // raises from `checkPartitionByList`, i.e. after 1517 and 1499.
+    let mut written = Vec::with_capacity(partitioning.definitions.len());
+    let (kind, definitions, deferred) = match method.kind {
         PartitionType::RANGE => {
             let (less_than, unsigned) = super::table_partition_range::build_range_bounds(
-                expr,
+                &built,
                 &partitioning.definitions,
-                names,
-                types,
-                &dependency_offsets,
                 ctx,
                 PartitionBuildMode::Create,
+                &mut definition_tail(partitioning, &mut written, allocate_id, ctx, true),
             )?;
-            let definitions = build_named_partition_definitions(create, allocate_id, ctx)?;
             (
                 PartitionKind::Range {
                     less_than,
                     unsigned,
                 },
-                definitions,
+                written,
+                None,
             )
         }
         PartitionType::LIST => {
-            let kind = super::table_partition_list::build_list_values(
-                expr,
+            let (kind, duplicate) = super::table_partition_list::build_list_values(
+                &built,
                 &partitioning.definitions,
-                names,
-                types,
-                &dependency_offsets,
                 ctx,
+                &mut definition_tail(partitioning, &mut written, allocate_id, ctx, false),
             )?;
-            let definitions = build_named_partition_definitions(create, allocate_id, ctx)?;
-            (kind, definitions)
+            (kind, written, duplicate)
         }
         _ => (
             PartitionKind::Hash,
             build_hash_partition_definitions(create, method.count, allocate_id, ctx)?,
+            None,
         ),
     };
     check_partition_name_unique(&definitions)?;
     if definitions.len() as u64 > MAX_PARTITIONS {
         return Err(DriverError::PartitionTooMany);
+    }
+    // Go's type-specific branch of `checkPartitionDefinitionConstraints`,
+    // which runs AFTER 1517 and 1499: `checkPartitionByRange` is where 1493
+    // lives, so a duplicate partition name beside a non-increasing bound
+    // reports the duplicate, as Go does.
+    if let PartitionKind::Range {
+        less_than,
+        unsigned,
+    } = &kind
+    {
+        super::table_partition_range::check_strictly_increasing(less_than, *unsigned)?;
+    }
+    if let Some(duplicate) = deferred {
+        return Err(duplicate);
     }
     // Go `checkNoHashPartitions`. The parser now rejects a written
     // `PARTITIONS 0` itself (as Go's does), so this check is defensive:
@@ -404,13 +441,26 @@ fn build_table_partitioning_inner(
 /// Resolve Go `PARTITION BY KEY` columns.  An empty list means the table's
 /// primary key; a heap table therefore hashes the empty byte stream, exactly
 /// as Go's `ForKeyPruning` does when `PartitionInfo.Columns` remains empty.
+///
+/// This is Go's PHASE ONE only -- the column resolution at
+/// `buildTablePartitionInfo` (`ddl/partition.go:627-643`) and the type gate
+/// `checkColumnsPartitionType` that applies there. The duplicate-column rule
+/// (1652) and the "has keys but none can serve" refusal (1105) belong to
+/// LATER phases and are raised by the caller, because Go reports four other
+/// errors ahead of them.
+///
+/// The returned flag is Go's `getPartitionColSlices` failure, deferred:
+/// `checkPartitioningKeysConstraints` returns early for a table with no
+/// indexes and no handle (`partition.go:4710`), so a bare heap table keeps
+/// its empty list and legally hashes the empty stream.
 fn build_key_partition_columns(
     columns: &[Vec<String>],
     names: &[String],
     types: &[FieldType],
     handle_offsets: &[usize],
     indexes: &[KvIndex],
-) -> Result<Vec<String>, DriverError> {
+) -> Result<(Vec<String>, bool), DriverError> {
+    let mut unresolved_with_keys = false;
     let selected: Vec<String> = if columns.is_empty() {
         if handle_offsets.is_empty() {
             // Go `buildTablePartitionInfo` (`ddl/partition.go:631`): with no
@@ -427,16 +477,12 @@ fn build_key_partition_columns(
             // 0 and `PARTITION (p1)` came back empty.
             let resolved = primary_or_implicit_key_columns(indexes, names, types);
             // Go `getPartitionColSlices` (`ddl/partition.go:781`) ends with a
-            // bare `errors.Errorf`, which reaches the client as 1105.
-            //
-            // It is reached only when the table HAS keys but none can serve:
-            // `checkPartitioningKeysConstraints` returns early for
-            // `len(Indices) == 0 && !PKIsHandle` (partition.go:4710), so a
-            // bare heap table keeps its empty list and hashes the empty
-            // stream. That is why the emptiness alone is not the error.
-            if resolved.is_empty() && !indexes.is_empty() {
-                return Err(DriverError::PartitionMetadataIncomplete);
-            }
+            // bare `errors.Errorf`, which reaches the client as 1105 -- but
+            // only from `checkPartitioningKeysConstraints`, the LAST check
+            // `checkTableInfoValidWithStmt` runs (`create_table.go:533`).
+            // Raising it here made it win over 1499, 1517, 1652 and 1504,
+            // every one of which Go reports first.
+            unresolved_with_keys = resolved.is_empty() && !indexes.is_empty();
             resolved
         } else {
             handle_offsets
@@ -456,25 +502,19 @@ fn build_key_partition_columns(
     };
     let mut dependencies = Vec::with_capacity(selected.len());
     for name in selected {
-        if dependencies
-            .iter()
-            .any(|candidate: &String| candidate.eq_ignore_ascii_case(&name))
-        {
-            return Err(DriverError::PartitionDuplicateField(name));
-        }
         let offset = names
             .iter()
             .position(|candidate| candidate.eq_ignore_ascii_case(&name))
-            .ok_or_else(|| DriverError::UnknownColumnInClause {
-                column: name.clone(),
-                clause: "partition function".to_owned(),
-            })?;
+            // Go `checkColumnsPartitionType` (`partition.go:787`) reports a
+            // column list's missing name as `ErrFieldNotFoundPart` (1488),
+            // a DIFFERENT error from the 1054 the expression path raises.
+            .ok_or(DriverError::PartitionFieldNotFound)?;
         if !key_partition_type_allowed(&types[offset]) {
             return Err(DriverError::PartitionFieldTypeNotAllowed(name));
         }
         dependencies.push(name);
     }
-    Ok(dependencies)
+    Ok((dependencies, unresolved_with_keys))
 }
 
 /// Go `TableInfo.GetPrimaryKey` (`meta/model/table.go:504`): the columns
@@ -519,13 +559,19 @@ fn primary_or_implicit_key_columns(
     implicit.map(columns_of).unwrap_or_default()
 }
 
-/// Go `isValidKeyPartitionColType`: only LOB/JSON/geometry/vector columns are
-/// rejected.  Character and temporal values hash through their datum keys.
+/// Go `isValidKeyPartitionColType` (`ddl/partition.go:798`): only LOB/JSON/
+/// geometry/vector columns are rejected. Character and temporal values hash
+/// through their datum keys.
+///
+/// Go's list is `TypeBlob, TypeMediumBlob, TypeLongBlob, TypeJSON,
+/// TypeGeometry, TypeTiDBVectorFloat32` -- `mysql.TypeTinyBlob` is NOT in it,
+/// so TINYBLOB and TINYTEXT fall to `default: return true` and are legal KEY
+/// partitioning columns. Adding TinyBlob here "corrected" a quirk Go does not
+/// have and rejected `PARTITION BY KEY (a)` over a TINYTEXT that Go accepts.
 fn key_partition_type_allowed(field_type: &FieldType) -> bool {
     !matches!(
         field_type.code(),
-        FieldTypeCode::TinyBlob
-            | FieldTypeCode::Blob
+        FieldTypeCode::Blob
             | FieldTypeCode::MediumBlob
             | FieldTypeCode::LongBlob
             | FieldTypeCode::Json
@@ -534,33 +580,6 @@ fn key_partition_type_allowed(field_type: &FieldType) -> bool {
     )
 }
 
-/// The partitions of a method whose definitions are all WRITTEN, which is
-/// RANGE (and would be LIST): one per source definition, in source order.
-fn build_named_partition_definitions(
-    create: &CreateTableStmt,
-    allocate_id: &mut dyn FnMut() -> i64,
-    ctx: &crate::StmtContext,
-) -> Result<Vec<PartitionDef>, DriverError> {
-    let Some(partitioning) = create.partitioning.as_ref() else {
-        return Ok(Vec::new());
-    };
-    partitioning
-        .definitions
-        .iter()
-        .map(|definition| {
-            check_too_long_partition_name(&definition.name)?;
-            Ok(PartitionDef {
-                id: allocate_id(),
-                name: definition.name.clone(),
-                // Filled by `build_partition_metadata`, which renders the
-                // stored text from the folded values exactly as Go does.
-                less_than: Vec::new(),
-                in_values: Vec::new(),
-                comment: partition_definition_comment(definition, ctx)?,
-            })
-        })
-        .collect()
-}
 
 /// The warning a `LINEAR HASH`/`LINEAR KEY` clause earns, or `None`.
 ///
@@ -609,6 +628,7 @@ fn build_partition_expression(
     types: &[FieldType],
     zone: &tidb_datatype::SessionTimeZone,
     like_default_escape: u8,
+    mode: PartitionBuildMode,
 ) -> Result<
     (
         String,
@@ -618,13 +638,23 @@ fn build_partition_expression(
     ),
     DriverError,
 > {
-    check_partition_expression_allowed(expr, names, types)?;
-    // Go `checkPartitionFuncValid` (`ddl/partition.go:1855`): after the walk,
-    // an expression that extracted NO column is 1486 however well-formed it
-    // is. `PARTITION BY HASH (1+1)` is constant, so every row would route to
-    // the same partition -- which is what the error's wording describes.
-    if !partition_expr_reads_a_column(expr) {
-        return Err(DriverError::PartitionWrongExprInFunc);
+    // The whitelist (1564), the argument rules (1486/1054) and the no-column
+    // rule (1486) all belong to `checkPartitionFuncValid`, which Go calls
+    // from `buildTablePartitionInfo` -- the CREATE path (`partition.go:615`).
+    // Its LOADER (`generateHashPartitionExpr` and friends) only PARSES and
+    // builds: `newPartitionExpr` re-judges nothing, because the verdict was
+    // reached once, at DDL time, and a table the cluster is serving must not
+    // become unreadable when this node reaches a different one.
+    if mode.validates() {
+        check_partition_expression_allowed(expr, names, types)?;
+        // Go `checkPartitionFuncValid` (`ddl/partition.go:1855`): after the
+        // walk, an expression that extracted NO column is 1486 however
+        // well-formed it is. `PARTITION BY HASH (1+1)` is constant, so every
+        // row would route to the same partition -- which is what the error's
+        // wording describes.
+        if !partition_expr_reads_a_column(expr) {
+            return Err(DriverError::PartitionWrongExprInFunc);
+        }
     }
     let resolver = TableColumnResolver::with_like_default_escape(
         names,
@@ -636,8 +666,11 @@ fn build_partition_expression(
         tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).map_err(|_| match resolver
             .missing_name()
         {
+            // Go's `extractColumns` quotes `columnNameExpr.Name.Name.L`,
+            // the folded name, so a mixed-case `NoSuch` is reported as
+            // `Unknown column 'nosuch'`.
             Some(name) => DriverError::UnknownColumnInClause {
-                column: name,
+                column: go_to_lower(&name),
                 clause: "partition function".to_owned(),
             },
             None => DriverError::unsupported(
@@ -649,15 +682,16 @@ fn build_partition_expression(
     // authority on 1054.
     if let Some(name) = resolver.missing_name() {
         return Err(DriverError::UnknownColumnInClause {
-            column: name,
+            column: go_to_lower(&name),
             clause: "partition function".to_owned(),
         });
     }
     let dependency_offsets = resolver.dependencies();
     let dependencies = resolver.dependency_names();
     // Go `checkPartitionFuncValid`: an expression naming no column at all is
-    // 1486 -- `PARTITION BY HASH(1)` has nothing to partition ON.
-    if dependencies.is_empty() {
+    // 1486 -- `PARTITION BY HASH(1)` has nothing to partition ON. CREATE-only
+    // for the same reason as the battery above.
+    if mode.validates() && dependencies.is_empty() {
         return Err(DriverError::PartitionWrongExprInFunc);
     }
     Ok((
@@ -724,11 +758,16 @@ fn check_partition_expression_allowed(
         | Expr::Bit(_)
         | Expr::String(_)
         | Expr::Bool(_)
+        // Go's allowed-leaf list is `*driver.ValueExpr`, which a NULL literal
+        // IS -- so `hash(-null)` reaches the no-column rule and is 1486, not
+        // the whitelist's 1564.
+        | Expr::Null
         | Expr::Default(_) => Ok(()),
         Expr::Paren(inner) => check_partition_expression_allowed(inner, names, types),
         Expr::Extract { value, .. } => check_partition_expression_allowed(value, names, types),
         // Go `AllowedPartition4UnaryOpMap`.
         Expr::Unary(tidb_ast::UnaryOp::Plus | tidb_ast::UnaryOp::Minus, inner) => {
+            check_no_timestamp_args(&[inner.as_ref()], names, types)?;
             check_partition_expression_allowed(inner, names, types)
         }
         // Go `AllowedPartition4BinaryOpMap`.
@@ -741,6 +780,10 @@ fn check_partition_expression_allowed(
             left,
             right,
         ) => {
+            // Go returns `checkNoTimestampArgs(tb, v.L, v.R)` from the
+            // operator node itself and only then descends, so a TIMESTAMP
+            // operand is 1486 here rather than something the children raise.
+            check_no_timestamp_args(&[left.as_ref(), right.as_ref()], names, types)?;
             check_partition_expression_allowed(left, names, types)?;
             check_partition_expression_allowed(right, names, types)
         }
@@ -778,23 +821,27 @@ fn check_partition_expression_allowed(
 fn check_partition_expression_type(
     expr: &Expr,
     built: &tidb_expr::expression::Expression,
-    names: &[String],
-    types: &[FieldType],
 ) -> Result<(), DriverError> {
-    // A bare column reference reports the name AS WRITTEN, which a qualified
-    // `t.a` shortens to `a` exactly as Go's `col2.Name.Name.L` does.
     let integral = built
         .static_type()
         .is_some_and(|field_type| field_type.eval_type() == tidb_datatype::EvalType::Int);
-    if let Expr::Column(path) = unwrap_parentheses(expr) {
-        if integral {
-            return Ok(());
-        }
-        let name = path.last().cloned().unwrap_or_else(|| "?".to_owned());
-        return Err(DriverError::PartitionFieldTypeNotAllowed(name));
-    }
     if integral {
         return Ok(());
+    }
+    // Go type-asserts the ORIGINAL node as `*ast.ColumnNameExpr` and quotes
+    // `col2.Name.Name.L` -- the folded name -- so a `DOUBLE A` reports
+    // `Field 'a'`. The assertion does not look through parentheses; that is
+    // why `unwrap_parentheses` has no place here.
+    if let Expr::Column(path) = expr {
+        let name = path.last().cloned().unwrap_or_else(|| "?".to_owned());
+        return Err(DriverError::PartitionFieldTypeNotAllowed(go_to_lower(&name)));
+    }
+    // Go's remaining `expression.Column` arm quotes `col.OrigName`, the name
+    // as the source spelled it -- which is what a parenthesised column
+    // reaches.
+    if let Expr::Column(path) = unwrap_parentheses(expr) {
+        let name = path.last().cloned().unwrap_or_else(|| "?".to_owned());
+        return Err(DriverError::PartitionFieldTypeNotAllowed(name));
     }
     Err(DriverError::PartitionFuncWrongType)
 }
@@ -808,20 +855,6 @@ fn unwrap_parentheses(expr: &Expr) -> &Expr {
     }
 }
 
-/// Whether a column's type is one a HASH partition expression may read: Go's
-/// `EvalType() == types.ETInt`.
-fn is_integer_type(field_type: &FieldType) -> bool {
-    matches!(
-        field_type.code(),
-        FieldTypeCode::Tiny
-            | FieldTypeCode::Short
-            | FieldTypeCode::Int24
-            | FieldTypeCode::Long
-            | FieldTypeCode::LongLong
-            | FieldTypeCode::Year
-            | FieldTypeCode::Bit
-    )
-}
 
 /// Go `buildHashPartitionDefinitions`: `n` partitions, named `p0..pn-1`
 /// unless the statement named them itself.
@@ -859,7 +892,7 @@ fn build_hash_partition_definitions(
         let name = written_definition
             .map_or_else(|| format!("p{index}"), |written| written.name.clone());
         let comment = match written_definition {
-            Some(definition) => partition_definition_comment(definition, ctx)?,
+            Some(definition) => partition_definition_comment(definition, ctx, false)?,
             None => String::new(),
         };
         definitions.push(PartitionDef {
@@ -890,6 +923,7 @@ const MAX_PARTITION_COMMENT_LENGTH: usize = 1024;
 fn partition_definition_comment(
     definition: &PartitionDefinition,
     ctx: &crate::StmtContext,
+    validate_length: bool,
 ) -> Result<String, DriverError> {
     let Some(comment) = definition.options.iter().find_map(|option| match option {
         tidb_ast::TableOption::Comment(comment) => Some(comment.clone()),
@@ -897,14 +931,28 @@ fn partition_definition_comment(
     }) else {
         return Ok(String::new());
     };
+    // Go calls `validateCommentLength` from the RANGE definition loop ONLY
+    // (`ddl/partition.go:1663`). The LIST loop (`:1571`) and
+    // `buildHashPartitionDefinitions` (`:1454`) take the comment verbatim, so
+    // a 1025-byte LIST or HASH partition comment is stored whole by Go and
+    // was refused here with 1793.
+    if !validate_length {
+        return Ok(comment);
+    }
     if comment.len() > MAX_PARTITION_COMMENT_LENGTH {
+        let too_long = DriverError::PartitionCommentTooLong {
+            name: definition.name.clone(),
+            limit: MAX_PARTITION_COMMENT_LENGTH,
+        };
         if ctx.strict() {
-            return Err(DriverError::PartitionCommentTooLong {
-                name: definition.name.clone(),
-                limit: MAX_PARTITION_COMMENT_LENGTH,
-            });
+            return Err(too_long);
         }
-        // Go truncates by BYTES, having already appended the warning.
+        // Go `validateCommentLength` appends the very error it would have
+        // returned as a WARNING and then truncates, so a non-strict session
+        // still learns the comment was cut.
+        let reported = too_long.to_mysql_error();
+        ctx.append_warning_parts(reported.code, &reported.message);
+        // Go truncates by BYTES.
         return Ok(comment[..MAX_PARTITION_COMMENT_LENGTH].to_owned());
     }
     Ok(comment)
@@ -961,10 +1009,7 @@ pub fn hex_if_non_print(value: &str) -> String {
     }
     // Go unwraps the single quotes first, so the hex covers the VALUE and not
     // the quoting around it.
-    let unwrapped = value
-        .strip_prefix('\'')
-        .and_then(|rest| rest.strip_suffix('\''))
-        .unwrap_or(value);
+    let unwrapped = unwrap_from_single_quotes(value);
     // Go `hex.EncodeToString` emits LOWERCASE digits, so the literal reads
     // `0x7f` and not `0x7F`. Captured against a recorded TiDB catalog read.
     let mut hex = String::from("0x");
@@ -981,13 +1026,23 @@ pub fn partition_comment_text(comment: &str) -> String {
     if comment.is_empty() {
         return String::new();
     }
-    // Go `format.OutputFormat`: a single quote doubles, a backslash escapes.
-    let escaped = comment.replace('\\', "\\\\").replace('\'', "''");
+    // Go `format.OutputFormat` (`parser/format/format.go:48`) replaces
+    // exactly four runes: NUL -> `\0`, `'` -> `''`, LF -> `\n`, CR -> `\r`.
+    // A BACKSLASH is NOT among them -- doubling it turned a stored `a\b`
+    // into `a\\b`, and leaving a real newline unescaped broke the statement
+    // across lines.
+    let mut escaped = String::with_capacity(comment.len());
+    for character in comment.chars() {
+        match character {
+            '\0' => escaped.push_str("\\0"),
+            '\'' => escaped.push_str("''"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            other => escaped.push(other),
+        }
+    }
     format!(" COMMENT '{escaped}'")
 }
-
-/// Go `types.UnspecifiedLength`.
-const UNSPECIFIED_DECIMAL: i64 = -1;
 
 /// Go `checkPartitionExprArgs` (`ddl/partition.go:4981`): the ARGUMENT types
 /// a whitelisted partition function will accept.
@@ -1006,17 +1061,41 @@ fn check_partition_expr_args(
     names: &[String],
     types: &[FieldType],
 ) -> Result<(), DriverError> {
-    let Expr::Func { name, args, .. } = expr else {
-        return Ok(());
-    };
-    // Go `collectArgsType`: the declared type of each COLUMN argument, in
-    // order; a non-column argument contributes nothing.
+    // Go's parser keeps `EXTRACT(unit FROM v)` as an `*ast.FuncCallExpr`
+    // whose `Args[0]` is the time unit, so it arrives here through the same
+    // door as every other call. THIS parser gives `EXTRACT` a dedicated
+    // `Expr::Extract`, so the arm has to be entered on its own -- and the
+    // unit Go reads out of `Args[0]` is the variant's own field. Matching
+    // only `Expr::Func` skipped the entire `case ast.Extract:` rule set.
+    match expr {
+        Expr::Func { name, args, .. } => {
+            let borrowed: Vec<&Expr> = args.iter().collect();
+            check_partition_call_args(&name.to_ascii_lowercase(), None, &borrowed, names, types)
+        }
+        Expr::Extract { unit, value } => check_partition_call_args(
+            "extract",
+            Some(unit.as_str()),
+            &[value.as_ref()],
+            names,
+            types,
+        ),
+        _ => Ok(()),
+    }
+}
+
+/// Go `collectArgsType` (`ddl/partition.go:5024`): the declared type of each
+/// COLUMN argument, in order; a non-column argument contributes nothing.
+///
+/// Go type-asserts `*ast.ColumnNameExpr` DIRECTLY and skips anything else, so
+/// it does NOT look through parentheses -- `YEAR((d))` collects no argument
+/// type at all, every positive rule then fails, and the call is 1486.
+fn collect_args_type(
+    args: &[&Expr],
+    names: &[String],
+    types: &[FieldType],
+) -> Result<Vec<FieldTypeCode>, DriverError> {
     let mut arg_types = Vec::new();
     for arg in args {
-        // Go type-asserts `*ast.ColumnNameExpr` DIRECTLY and skips anything
-        // else (`partition.go:5029`). It does NOT look through parentheses,
-        // so `YEAR((d))` collects no argument type at all -- every positive
-        // rule then fails and the call is 1486.
         let Expr::Column(path) = arg else {
             continue;
         };
@@ -1026,13 +1105,52 @@ fn check_partition_expr_args(
             .position(|candidate| candidate.eq_ignore_ascii_case(column))
         else {
             // Go `findColumnByName` returning nil is 1054 naming the clause.
+            // Go quotes `col.Name.Name.L`, the name the parser already folded,
+            // so the message reads `Unknown column 'nosuch'` for a `NoSuch`
+            // that was written in mixed case.
             return Err(DriverError::UnknownColumnInClause {
-                column: column.clone(),
+                column: go_to_lower(column),
                 clause: "partition function".to_owned(),
             });
         };
         arg_types.push(types[offset].code());
     }
+    Ok(arg_types)
+}
+
+/// Go `checkNoTimestampArgs` (`ddl/partition.go:5065`): the whitelisted
+/// binary and unary operators refuse a TIMESTAMP operand, because a
+/// TIMESTAMP's numeric value depends on the session time zone and rows would
+/// route to different partitions for different sessions.
+///
+/// Go applies this INSIDE `checkPartitionExprAllowed`, on the operator node
+/// itself, before the walk descends -- which is also why a missing column
+/// under an operator reports 1054 from here rather than 1564 from the child.
+fn check_no_timestamp_args(
+    args: &[&Expr],
+    names: &[String],
+    types: &[FieldType],
+) -> Result<(), DriverError> {
+    let arg_types = collect_args_type(args, names, types)?;
+    if arg_types
+        .iter()
+        .any(|code| matches!(code, FieldTypeCode::Timestamp))
+    {
+        return Err(DriverError::PartitionWrongExprInFunc);
+    }
+    Ok(())
+}
+
+/// The `switch expr.FnName.L` of Go's `checkPartitionExprArgs`, shared by the
+/// `Expr::Func` and `Expr::Extract` spellings of a call.
+fn check_partition_call_args(
+    name: &str,
+    extract_unit: Option<&str>,
+    args: &[&Expr],
+    names: &[String],
+    types: &[FieldType],
+) -> Result<(), DriverError> {
+    let arg_types = collect_args_type(args, names, types)?;
     let has_date = arg_types
         .iter()
         .any(|code| matches!(code, FieldTypeCode::Date | FieldTypeCode::Datetime));
@@ -1042,6 +1160,11 @@ fn check_partition_expr_args(
     let has_timestamp = arg_types
         .iter()
         .any(|code| matches!(code, FieldTypeCode::Timestamp));
+    // Go `hasDatetimeArgs` is DATETIME only -- a DATE column does not satisfy
+    // it, which is what separates the `DAY_HOUR` family from `DAY`.
+    let has_datetime = arg_types
+        .iter()
+        .any(|code| matches!(code, FieldTypeCode::Datetime));
     let ok = |accepted: bool| {
         if accepted {
             Ok(())
@@ -1049,7 +1172,7 @@ fn check_partition_expr_args(
             Err(DriverError::PartitionWrongExprInFunc)
         }
     };
-    match name.to_ascii_lowercase().as_str() {
+    match name {
         "to_days" | "to_seconds" | "dayofmonth" | "month" | "dayofyear" | "quarter"
         | "yearweek" | "year" | "weekday" | "dayofweek" | "day" => ok(has_date),
         "hour" | "minute" | "second" | "time_to_sec" | "microsecond" => ok(has_time),
@@ -1061,6 +1184,17 @@ fn check_partition_expr_args(
         "datediff" => ok(arg_types
             .iter()
             .all(|code| matches!(code, FieldTypeCode::Date | FieldTypeCode::Datetime))),
+        // Go's `case ast.Extract:` switches on the UNIT, and its `default:`
+        // is an unconditional 1486 -- so `EXTRACT(WEEK FROM d)` is refused
+        // however good the argument is.
+        "extract" => match extract_unit.unwrap_or_default() {
+            "YEAR" | "YEAR_MONTH" | "QUARTER" | "MONTH" | "DAY" => ok(has_date),
+            "DAY_MICROSECOND" | "DAY_HOUR" | "DAY_MINUTE" | "DAY_SECOND" => ok(has_datetime),
+            "HOUR" | "HOUR_MINUTE" | "HOUR_SECOND" | "MINUTE" | "MINUTE_SECOND" | "SECOND"
+            | "MICROSECOND" | "HOUR_MICROSECOND" | "MINUTE_MICROSECOND"
+            | "SECOND_MICROSECOND" => ok(has_time),
+            _ => Err(DriverError::PartitionWrongExprInFunc),
+        },
         // Go raises 1486 for a TIMESTAMP argument to these, because their
         // value depends on the session time zone.
         "abs" | "ceiling" | "floor" | "mod" => {
@@ -1113,10 +1247,21 @@ fn partition_metadata_context() -> crate::StmtContext {
     crate::StmtContext::for_query()
         .with_strict(false)
         .with_time_zone(tidb_datatype::SessionTimeZone::utc())
+        // Go's SQL mode here is `mysql.ModeAllowInvalidDates` and NOTHING
+        // else, so NO_ZERO_DATE and NO_ZERO_IN_DATE are CLEAR -- and
+        // `WithIgnoreZeroDateErr(true).WithIgnoreZeroInDate(true)` says the
+        // same thing a second way. Starting from `TIDB_DEFAULT_SQL_MODE` left
+        // both bits set, so a stored `'0000-00-00'` bound folded to an error
+        // here that a Go cluster folds to a value.
         .with_date_modes(crate::zero_date::DateModes {
+            no_zero_date: false,
+            no_zero_in_date: false,
             allow_invalid_dates: true,
-            ..crate::zero_date::DateModes::TIDB_DEFAULT_SQL_MODE
         })
+        // Go `WithErrLevelMap(ErrGroupTruncate: LevelIgnore)`, reinforced by
+        // `WithIgnoreTruncateErr(true)`: a truncation while folding stored
+        // metadata is silent, not a warning.
+        .with_truncate_level(tidb_expr::ErrorLevel::Ignore)
 }
 
 /// Which of Go's TWO partition-metadata paths a build is running as.
@@ -1165,6 +1310,210 @@ pub fn stored_range_bound_text(bound: RangeBound, unsigned: bool) -> String {
 
 /// Go `checkPartitionNameUnique` (1517), matched case-insensitively as
 /// partition names are.
+/// Go `driver.UnwrapFromSingleQuotes` (`types/parser_driver/value_expr.go:196`).
+///
+/// It is not a quote strip: inside the quotes it also collapses the doubled
+/// backslash and the doubled single quote that the stored spelling escaped
+/// with. Removing only the outer quotes hexed the escape characters as well
+/// as the value.
+///
+/// The guard is Go's own: a string shorter than two characters, or one that
+/// is not quoted at BOTH ends, is returned untouched.
+fn unwrap_from_single_quotes(value: &str) -> String {
+    let bytes = value.as_bytes();
+    if bytes.len() < 2 || bytes[0] != b'\'' || bytes[bytes.len() - 1] != b'\'' {
+        return value.to_owned();
+    }
+    value[1..value.len() - 1]
+        .replace("\\\\", "\\")
+        .replace("''", "'")
+}
+
+/// Go `dataForRangePruning` (`table/tables/partition.go`): how the LOADER
+/// reads a scalar RANGE bound back.
+///
+/// It does not evaluate an expression. It runs `strconv.ParseInt` on the
+/// stored text, retries as `ParseUint` when that overflows, and only then
+/// gives up. Re-folding the text as an expression instead meant the loader
+/// re-applied the CREATE-time rules -- the unsigned-domain refusal (1563),
+/// the must-be-integer refusal (1697) -- to metadata a Go cluster had already
+/// accepted, so a table this node could not re-derive a verdict for became
+/// unreadable rather than merely unpruned.
+fn range_bound_from_stored_text(text: &str) -> Option<RangeBound> {
+    if text.eq_ignore_ascii_case(PARTITION_MAX_VALUE) {
+        return Some(RangeBound::MaxValue);
+    }
+    if let Ok(value) = text.parse::<i64>() {
+        return Some(RangeBound::Value(value));
+    }
+    // Go's `ErrRange` retry: a bound above `i64::MAX` is stored as its
+    // unsigned spelling and kept in the same slot, reinterpreted.
+    if let Ok(value) = text.parse::<u64>() {
+        return Some(RangeBound::Value(value as i64));
+    }
+    None
+}
+
+/// Go `stringutil.Escape(def.Name.O, sqlMode)` (`ddl/partition.go:5201`):
+/// the partition name as an escaped identifier.
+///
+/// The doubling is what makes the output re-parseable -- a partition named
+/// ``p`0`` printed as ``` `p`0` ``` reads as three tokens, and reloading the
+/// dump fails. Go doubles the quote character it chose; this renderer is
+/// reached only from the backtick spelling today, so ANSI_QUOTES support
+/// belongs with the wider `SHOW CREATE TABLE` identifier work rather than
+/// here.
+#[must_use]
+pub fn escape_partition_name(name: &str) -> String {
+    format!("`{}`", name.replace('`', "``"))
+}
+
+/// Go `AppendPartitionDefs` (`ddl/partition.go:5196`): the whole definition
+/// list, for every partitioning method.
+///
+/// Go has ONE of these. It prints each definition's name, then switches on
+/// the partition TYPE for the values clause -- `VALUES LESS THAN` for RANGE,
+/// `VALUES IN`/`DEFAULT` for LIST, and nothing at all for HASH, KEY and NONE
+/// -- and every value it prints comes from the STORED text
+/// (`def.LessThan`, `def.InValues`) run through `hexIfNonPrint`.
+///
+/// Five separate renderers stood here, four of which re-derived the values
+/// from the folded routing structures. That is a second source of truth for
+/// something Go reads straight out of the metadata, and it drifted in ways
+/// only a comparison against Go could find: a LIST COLUMNS partition carrying
+/// both real values and `DEFAULT` printed as a bare `DEFAULT`, losing the
+/// values, and RANGE COLUMNS lost Go's `_binary` spelling.
+#[must_use]
+pub fn append_partition_defs(definitions: &[PartitionDef], kind: &PartitionKind) -> String {
+    let mut out = String::from("\n(");
+    for (ordinal, definition) in definitions.iter().enumerate() {
+        if ordinal > 0 {
+            out.push_str(",\n ");
+        }
+        out.push_str("PARTITION ");
+        out.push_str(&escape_partition_name(&definition.name));
+        match kind {
+            PartitionKind::Range { .. } | PartitionKind::RangeColumns { .. } => {
+                out.push_str(" VALUES LESS THAN (");
+                for (position, bound) in definition.less_than.iter().enumerate() {
+                    if position > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&hex_if_non_print(bound));
+                }
+                out.push(')');
+            }
+            PartitionKind::List { .. } | PartitionKind::ListColumns { .. } => {
+                // Go's two spellings of a DEFAULT partition: no stored values
+                // at all, or the single literal word.
+                let bare_default = definition.in_values.is_empty()
+                    || (definition.in_values.len() == 1
+                        && definition.in_values[0].len() == 1
+                        && definition.in_values[0][0].eq_ignore_ascii_case("DEFAULT"));
+                if bare_default {
+                    out.push_str(" DEFAULT");
+                } else {
+                    out.push_str(" VALUES IN (");
+                    for (index, tuple) in definition.in_values.iter().enumerate() {
+                        if index > 0 {
+                            out.push(',');
+                        }
+                        match tuple.as_slice() {
+                            [single] => out.push_str(&hex_if_non_print(single)),
+                            many => {
+                                out.push('(');
+                                for (position, value) in many.iter().enumerate() {
+                                    if position > 0 {
+                                        out.push(',');
+                                    }
+                                    out.push_str(&hex_if_non_print(value));
+                                }
+                                out.push(')');
+                            }
+                        }
+                    }
+                    out.push(')');
+                }
+            }
+            // HASH, KEY and NONE have no values clause.
+            PartitionKind::Hash | PartitionKind::Key | PartitionKind::None => {}
+        }
+        out.push_str(&partition_comment_text(&definition.comment));
+    }
+    out.push(')');
+    out
+}
+
+/// Whether two partition names denote the same partition.
+///
+/// Go compares `ast.CIStr.L` against `ast.CIStr.L` -- the `strings.ToLower`
+/// fold the parser already applied -- so the comparison is Unicode-simple,
+/// not ASCII-only. `eq_ignore_ascii_case` leaves every non-ASCII letter
+/// case-sensitive, which made `DROP PARTITION` miss a partition named with a
+/// non-ASCII capital that Go drops for the lowercase spelling.
+#[must_use]
+pub fn partition_names_equal(left: &str, right: &str) -> bool {
+    go_to_lower(left) == go_to_lower(right)
+}
+
+/// Go's per-definition remainder of `buildPartitionDefinitionsInfo`: the
+/// comment and the name, checked for THIS definition before the loop reads
+/// the NEXT one's values (`ddl/partition.go:1565-1578` for LIST,
+/// `:1661-1679` for RANGE).
+///
+/// Running the value folding and this as two separate passes reported the
+/// wrong error whenever a statement was wrong in both ways -- a 65-character
+/// name on definition 0 beside a bad bound on definition 1 is 1059 in Go, and
+/// was the bound's error here.
+///
+/// Go validates the comment LENGTH only in its RANGE loop; the LIST loop and
+/// `buildHashPartitionDefinitions` store whatever was written.
+fn definition_tail<'a>(
+    partitioning: &'a tidb_ast::TablePartitioning,
+    built: &'a mut Vec<PartitionDef>,
+    allocate_id: &'a mut dyn FnMut() -> i64,
+    ctx: &'a crate::StmtContext,
+    validate_comment_length: bool,
+) -> impl FnMut(usize) -> Result<(), DriverError> + 'a {
+    move |ordinal: usize| {
+        let Some(definition) = partitioning.definitions.get(ordinal) else {
+            return Ok(());
+        };
+        let comment = partition_definition_comment(definition, ctx, validate_comment_length)?;
+        check_too_long_partition_name(&definition.name)?;
+        built.push(PartitionDef {
+            id: allocate_id(),
+            name: definition.name.clone(),
+            // Filled by `build_table_partitioning`, which mirrors the stored
+            // text back onto every definition once the spec is complete.
+            less_than: Vec::new(),
+            in_values: Vec::new(),
+            comment,
+        });
+        Ok(())
+    }
+}
+
+/// Go `checkPartitionColumnsUnique` (`ddl/partition.go:4664`), which
+/// `checkPartitionDefinitionConstraints` runs AFTER the name-uniqueness and
+/// partition-count checks (`:5285`).
+///
+/// Go returns early for a list of one, and quotes `col.L` -- the folded name.
+fn check_partition_columns_unique(columns: &[String]) -> Result<(), DriverError> {
+    if columns.len() <= 1 {
+        return Ok(());
+    }
+    let mut seen: Vec<String> = Vec::with_capacity(columns.len());
+    for column in columns {
+        let folded = go_to_lower(column);
+        if seen.contains(&folded) {
+            return Err(DriverError::PartitionDuplicateField(folded));
+        }
+        seen.push(folded);
+    }
+    Ok(())
+}
+
 fn check_partition_name_unique(definitions: &[PartitionDef]) -> Result<(), DriverError> {
     for (index, definition) in definitions.iter().enumerate() {
         let folded = go_to_lower(&definition.name);
@@ -1220,7 +1569,7 @@ fn go_to_lower(name: &str) -> String {
 /// ones are not. Go runs it INSIDE the per-definition loop for RANGE and
 /// LIST only -- HASH and KEY partition names are never length-checked at all,
 /// which is a quirk of where the call sits rather than a rule.
-fn check_too_long_partition_name(name: &str) -> Result<(), DriverError> {
+pub(super) fn check_too_long_partition_name(name: &str) -> Result<(), DriverError> {
     const MAX_TABLE_NAME_LENGTH: usize = 64;
     if name.chars().count() > MAX_TABLE_NAME_LENGTH {
         return Err(DriverError::TooLongIdent(name.to_owned()));
@@ -1497,10 +1846,7 @@ pub fn partition_spec_from_metadata(
                     .iter()
                     .any(|candidate| candidate.eq_ignore_ascii_case(column))
                 {
-                    return Err(DriverError::UnknownColumnInClause {
-                        column: column.clone(),
-                        clause: "partition function".to_owned(),
-                    });
+                    return Err(DriverError::PartitionFieldNotFound);
                 }
             }
             Ok(PartitionSpec {
@@ -1524,6 +1870,10 @@ pub fn partition_spec_from_metadata(
                     types,
                     ctx,
                     PartitionBuildMode::Load,
+                    // Go's loader runs no per-definition name or comment
+                // check: `newPartitionExpr` re-judges nothing the DDL
+                // already accepted.
+                &mut |_| Ok(()),
                 )?;
             Ok(PartitionSpec {
                 is_empty_columns,
@@ -1544,6 +1894,11 @@ pub fn partition_spec_from_metadata(
                 names,
                 types,
                 ctx,
+                PartitionBuildMode::Load,
+                // Go's loader runs no per-definition name or comment
+                // check: `newPartitionExpr` re-judges nothing the DDL
+                // already accepted.
+                &mut |_| Ok(()),
             )?;
             Ok(PartitionSpec {
                 is_empty_columns,
@@ -1560,37 +1915,70 @@ pub fn partition_spec_from_metadata(
         PartitionType::HASH | PartitionType::RANGE | PartitionType::LIST => {
             let expr = tidb_model::generated_expr::parse_expression(expr_text)
                 .map_err(|error| DriverError::Parse(error.message))?;
-            let (expr_text, built, dependencies, dependency_offsets) = build_partition_expression(
+            let (expr_text, built, dependencies, _dependency_offsets) = build_partition_expression(
                 &expr,
                 names,
                 types,
                 &ctx.session_zone(),
                 ctx.like_default_escape(),
+                PartitionBuildMode::Load,
             )?;
             let kind = match kind {
                 PartitionType::RANGE => {
-                    let (less_than, unsigned) = super::table_partition_range::build_range_bounds(
-                        &expr,
-                        &ast_definitions()?,
-                        names,
-                        types,
-                        &dependency_offsets,
-                        ctx,
-                        PartitionBuildMode::Load,
-                    )?;
+                    // Go's loader reads each bound with `strconv`
+                    // (`dataForRangePruning`). Only a bound it cannot parse
+                    // that way falls back to folding the stored text as an
+                    // expression, which is where Go reaches
+                    // `fixOldVersionPartitionInfo`.
+                    let stored: Option<Vec<RangeBound>> = definitions
+                        .iter()
+                        .map(|definition| {
+                            definition
+                                .less_than
+                                .first()
+                                .and_then(|text| range_bound_from_stored_text(text))
+                        })
+                        .collect();
+                    // The routing flag stays the EXPRESSION's own signedness.
+                    // Go carries a second, text-derived `Unsigned` on
+                    // `ForRangePruning`, but that one only steers pruning --
+                    // Go routes a row through the built `UpperBounds`
+                    // comparisons, which use the expression's real type.
+                    let unsigned =
+                        super::table_partition_range::partition_expression_is_unsigned(&built);
+                    let less_than = match stored {
+                        Some(less_than) => less_than,
+                        None => super::table_partition_range::build_range_bounds_with_unsigned(
+                            &ast_definitions()?,
+                            unsigned,
+                            ctx,
+                            PartitionBuildMode::Load,
+                            // Go's loader runs no per-definition name or
+                            // comment check.
+                            &mut |_| Ok(()),
+                        )?,
+                    };
                     PartitionKind::Range {
                         less_than,
                         unsigned,
                     }
                 }
-                PartitionType::LIST => super::table_partition_list::build_list_values(
-                    &expr,
-                    &ast_definitions()?,
-                    names,
-                    types,
-                    &dependency_offsets,
-                    ctx,
-                )?,
+                // Go's LOADER (`generateListPartitionExpr`) never dedups: it
+                // fills a map, so a repeated value simply ends up owned by
+                // the LAST definition that claims it. `checkListPartitionValue`
+                // -- the 1495 -- belongs to CREATE only. Refusing here meant
+                // this node could not open a table a Go cluster serves.
+                PartitionType::LIST => {
+                    super::table_partition_list::build_list_values(
+                        &built,
+                        &ast_definitions()?,
+                        ctx,
+                        // Go's loader runs no per-definition name or comment
+                        // check.
+                        &mut |_| Ok(()),
+                    )?
+                    .0
+                }
                 _ => PartitionKind::Hash,
             };
             Ok(PartitionSpec {
@@ -1602,6 +1990,20 @@ pub fn partition_spec_from_metadata(
                 definitions: physical,
             })
         }
+        // Go `newPartitionExpr` returns `nil, nil` for NONE
+        // (`tables/partition.go:313`) and every row routes to index 0
+        // (`:1453`). This is the shape a table wears WHILE
+        // `ALTER TABLE ... PARTITION BY` reorganises it, so refusing it made
+        // an ordinary table unreadable for the length of the reorg -- a Go
+        // cluster serves it throughout.
+        PartitionType::NONE => Ok(PartitionSpec {
+            is_empty_columns,
+            kind: PartitionKind::None,
+            expr_text: expr_text.to_owned(),
+            expr: placeholder(),
+            dependencies: Vec::new(),
+            definitions: physical,
+        }),
         other => {
             let name = other.sql();
             Err(DriverError::unsupported(format!(
@@ -1746,8 +2148,8 @@ fn stored_definitions_for(
             comment: definition.comment.clone(),
         };
         match &spec.kind {
-            // HASH and KEY definitions carry a name and nothing else.
-            PartitionKind::Hash | PartitionKind::Key => {}
+            // HASH, KEY and NONE definitions carry a name and nothing else.
+            PartitionKind::Hash | PartitionKind::Key | PartitionKind::None => {}
             PartitionKind::Range { less_than, unsigned } => {
                 entry.less_than = vec![stored_range_bound_text(
                     less_than.get(ordinal).copied().unwrap_or(RangeBound::MaxValue),
@@ -1837,7 +2239,12 @@ fn stored_value_text(datum: &Datum, field_type: Option<&FieldType>) -> Result<St
                 _ => rendered(),
             }
         }
-        Some(EvalType::Datetime | EvalType::Timestamp | EvalType::Duration) => rendered(),
+        // Go's arm is `case types.ETDatetime, types.ETDuration:` -- there is
+        // no `ETTimestamp` in it. A TIMESTAMP partitioning column is refused
+        // long before this by `isColTypeAllowedAsPartitioningCol` (1659), so
+        // the extra arm was unreachable rather than wrong; it is dropped so
+        // the two switches read alike and cannot diverge if that changes.
+        Some(EvalType::Datetime | EvalType::Duration) => rendered(),
         // Go's switch has no other arm and returns
         // `ErrWrongTypeColumnValue` for anything else.
         _ => Err(DriverError::PartitionColumnValueWrongType),

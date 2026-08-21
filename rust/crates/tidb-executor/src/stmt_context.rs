@@ -1489,6 +1489,14 @@ impl StmtContext {
         self.apply_cache_capacity
     }
 
+    /// Sets how a truncation is reported, Go's `errctx.ErrGroupTruncate`
+    /// entry in the level map.
+    #[must_use]
+    pub fn with_truncate_level(mut self, truncate: ErrorLevel) -> Self {
+        self.truncate = truncate;
+        self
+    }
+
     /// Attaches `NO_ZERO_DATE`, `NO_ZERO_IN_DATE` and `ALLOW_INVALID_DATES`.
     #[must_use]
     pub fn with_date_modes(mut self, date_modes: crate::zero_date::DateModes) -> Self {

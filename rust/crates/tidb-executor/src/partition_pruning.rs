@@ -108,6 +108,8 @@ pub fn ids_for_selected_partitions(
 #[must_use]
 pub fn pruned_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64>> {
     match &spec.kind {
+        // Every row is in partition 0, so there is nothing to prune away.
+        PartitionKind::None => None,
         PartitionKind::Hash => prune_hash_ids(spec, ranges),
         PartitionKind::Key => Some(prune_key_ids(spec, ranges)),
         PartitionKind::Range {

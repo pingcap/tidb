@@ -237,8 +237,9 @@ pub use alter_table::{
     SettledColumnDefault,
 };
 pub use table_partition::{
-    build_partition_metadata, linear_partitioning_warning, partition_spec_from_metadata,
-    StoredPartitionDefinition, StoredPartitionMetadata,
+    append_partition_defs, build_partition_metadata, escape_partition_name,
+    linear_partitioning_warning,
+    partition_spec_from_metadata, StoredPartitionDefinition, StoredPartitionMetadata,
 };
 
 use column_types::{database_charset_of, field_type_of, table_charset_of, NOT_NULL_FLAG};

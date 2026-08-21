@@ -32,6 +32,8 @@ pub(super) fn build_list_columns_values(
     names: &[String],
     types: &[FieldType],
     ctx: &crate::StmtContext,
+    mode: super::table_partition::PartitionBuildMode,
+    definition_tail: &mut dyn FnMut(usize) -> Result<(), DriverError>,
 ) -> Result<(Vec<String>, PartitionKind), DriverError> {
     if columns.is_empty() || definitions.is_empty() {
         return Err(DriverError::PartitionsMustBeDefined("LIST"));
@@ -42,21 +44,26 @@ pub(super) fn build_list_columns_values(
         let name = path
             .last()
             .ok_or(DriverError::PartitionColumnValueWrongType)?;
-        if dependency_names
-            .iter()
-            .any(|candidate: &String| candidate.eq_ignore_ascii_case(name))
+        // Go `checkPartitionColumnsUnique` runs from
+        // `checkPartitionDefinitionConstraints`, i.e. CREATE only -- the
+        // RANGE COLUMNS twin in this module is gated the same way.
+        if mode.validates()
+            && dependency_names
+                .iter()
+                .any(|candidate: &String| candidate.eq_ignore_ascii_case(name))
         {
             return Err(DriverError::PartitionDuplicateField(name.clone()));
         }
         let offset = names
             .iter()
             .position(|candidate| candidate.eq_ignore_ascii_case(name))
-            .ok_or_else(|| DriverError::UnknownColumnInClause {
-                column: name.clone(),
-                clause: "partition function".to_owned(),
-            })?;
+            // Go `checkColumnsPartitionType` (`partition.go:787`) reports a
+            // column list's missing name as `ErrFieldNotFoundPart` (1488),
+            // not the 1054 the expression path raises.
+            .ok_or(DriverError::PartitionFieldNotFound)?;
         let field_type = types[offset].clone();
-        if !list_columns_type_allowed(&field_type) {
+        // Go `checkColumnsPartitionType` is CREATE-only (`partition.go:642`).
+        if mode.validates() && !list_columns_type_allowed(&field_type) {
             return Err(DriverError::PartitionFieldTypeNotAllowed(name.clone()));
         }
         dependency_names.push(name.clone());
@@ -69,12 +76,12 @@ pub(super) fn build_list_columns_values(
     for (ordinal, definition) in definitions.iter().enumerate() {
         match &definition.clause {
             PartitionDefinitionClause::Default => {
-                set_default_partition(&mut default_partition, ordinal)?;
+                set_default_partition(&mut default_partition, ordinal, mode)?;
             }
             PartitionDefinitionClause::In(items) => {
                 for item in items {
                     if matches!(item, PartitionValue::Default) {
-                        set_default_partition(&mut default_partition, ordinal)?;
+                        set_default_partition(&mut default_partition, ordinal, mode)?;
                         continue;
                     }
                     let exprs: &[Expr] = match item {
@@ -91,7 +98,10 @@ pub(super) fn build_list_columns_values(
                         .collect::<Result<Vec<_>, _>>()?;
                     let key = tidb_codec::encode_key_in_timezone(&ctx.session_zone(), &tuple)
                         .map_err(|_| DriverError::PartitionColumnValueWrongType)?;
-                    if keys.insert(key, ordinal).is_some() {
+                    // Go's loader fills a map and lets the LAST definition
+                    // own a repeated tuple; only `checkListPartitionValue`,
+                    // on the CREATE path, refuses it.
+                    if keys.insert(key, ordinal).is_some() && mode.validates() {
                         return Err(DriverError::PartitionDuplicateListValue);
                     }
                     values.push((tuple, ordinal));
@@ -105,6 +115,7 @@ pub(super) fn build_list_columns_values(
             }
             _ => return Err(DriverError::PartitionsMustBeDefined("LIST")),
         }
+        definition_tail(ordinal)?;
     }
     Ok((
         dependency_names,
@@ -117,12 +128,19 @@ pub(super) fn build_list_columns_values(
     ))
 }
 
-fn set_default_partition(slot: &mut Option<usize>, ordinal: usize) -> Result<(), DriverError> {
-    if slot.replace(ordinal).is_some() {
-        Err(DriverError::PartitionDuplicateListValue)
-    } else {
-        Ok(())
+fn set_default_partition(
+    slot: &mut Option<usize>,
+    ordinal: usize,
+    mode: super::table_partition::PartitionBuildMode,
+) -> Result<(), DriverError> {
+    // A second DEFAULT is `ErrMultipleDefConstInListPart` from
+    // `formatListPartitionValue` (`ddl/partition.go:2010`), which only
+    // `checkListPartitionValue` -- the CREATE path -- reaches. The loader
+    // takes the last one, as its map would.
+    if slot.replace(ordinal).is_some() && mode.validates() {
+        return Err(DriverError::PartitionDuplicateListValue);
     }
+    Ok(())
 }
 
 pub(super) fn fold_column_value(
@@ -175,30 +193,26 @@ pub(super) fn list_columns_type_allowed(field_type: &FieldType) -> bool {
 
 /// Folds scalar LIST definitions into exact-value routing metadata.
 pub(super) fn build_list_values(
-    partition_expr: &Expr,
+    built: &tidb_expr::expression::Expression,
     definitions: &[PartitionDefinition],
-    names: &[String],
-    types: &[FieldType],
-    dependencies: &[usize],
     ctx: &crate::StmtContext,
-) -> Result<PartitionKind, DriverError> {
+    definition_tail: &mut dyn FnMut(usize) -> Result<(), DriverError>,
+) -> Result<(PartitionKind, Option<DriverError>), DriverError> {
     if definitions.is_empty() {
         return Err(DriverError::PartitionsMustBeDefined("LIST"));
     }
-    let unsigned = super::table_partition_range::range_expression_is_unsigned(
-        partition_expr,
-        names,
-        types,
-        dependencies,
-    )?;
-    build_list_values_with_unsigned(definitions, unsigned, ctx)
+    let unsigned = super::table_partition_range::partition_expression_is_unsigned(built);
+    build_list_values_with_unsigned(definitions, unsigned, ctx, definition_tail)
 }
 
 pub(super) fn build_list_values_with_unsigned(
     definitions: &[PartitionDefinition],
     unsigned: bool,
     ctx: &crate::StmtContext,
-) -> Result<PartitionKind, DriverError> {
+    // Go's definition loop checks THIS definition's name before it reads the
+    // NEXT one's values (`ddl/partition.go:1565-1574`).
+    definition_tail: &mut dyn FnMut(usize) -> Result<(), DriverError>,
+) -> Result<(PartitionKind, Option<DriverError>), DriverError> {
     if definitions.is_empty() {
         return Err(DriverError::PartitionsMustBeDefined("LIST"));
     }
@@ -206,19 +220,27 @@ pub(super) fn build_list_values_with_unsigned(
     let mut seen = HashSet::new();
     let mut null_partition = None;
     let mut default_partition = None;
+    // Every 1495 Go raises for LIST comes from `checkListPartitionValue`
+    // (`ddl/partition.go:5296` -> `:2010` and `:2064`), which
+    // `checkPartitionDefinitionConstraints` reaches only AFTER the
+    // name-uniqueness (1517) and partition-count (1499) checks. Refusing
+    // inside this loop made a duplicate `VALUES IN` win over a duplicate
+    // partition NAME, which Go reports first -- so the collision is carried
+    // out to the caller and raised at Go's point instead.
+    let mut duplicate: Option<DriverError> = None;
 
     for (ordinal, definition) in definitions.iter().enumerate() {
         match &definition.clause {
             PartitionDefinitionClause::Default => {
                 if default_partition.replace(ordinal).is_some() {
-                    return Err(DriverError::PartitionDuplicateListValue);
+                    duplicate.get_or_insert(DriverError::PartitionDuplicateListValue);
                 }
             }
             PartitionDefinitionClause::In(items) => {
                 for item in items {
                     if matches!(item, PartitionValue::Default) {
                         if default_partition.replace(ordinal).is_some() {
-                            return Err(DriverError::PartitionDuplicateListValue);
+                            duplicate.get_or_insert(DriverError::PartitionDuplicateListValue);
                         }
                         continue;
                     };
@@ -228,14 +250,24 @@ pub(super) fn build_list_values_with_unsigned(
                     let value = fold_list_value(expr, &definition.name, unsigned, ctx)?;
                     let Some(bits) = value else {
                         if null_partition.replace(ordinal).is_some() {
-                            return Err(DriverError::PartitionDuplicateListValue);
+                            duplicate.get_or_insert(DriverError::PartitionDuplicateListValue);
                         }
                         continue;
                     };
-                    if !seen.insert(bits as u64) {
-                        return Err(DriverError::PartitionDuplicateListValue);
+                    if seen.insert(bits as u64) {
+                        values.push((bits, ordinal));
+                    } else {
+                        duplicate.get_or_insert(DriverError::PartitionDuplicateListValue);
+                        // Go's loader fills a map, so the LAST definition to
+                        // claim a value owns it. Pushing a second pair would
+                        // instead leave the FIRST one to win the search.
+                        if let Some(entry) = values
+                            .iter_mut()
+                            .find(|(value, _)| (*value as u64) == (bits as u64))
+                        {
+                            entry.1 = ordinal;
+                        }
                     }
-                    values.push((bits, ordinal));
                 }
             }
             PartitionDefinitionClause::LessThan(_) => {
@@ -246,13 +278,15 @@ pub(super) fn build_list_values_with_unsigned(
             }
             _ => return Err(DriverError::PartitionsMustBeDefined("LIST")),
         }
+        definition_tail(ordinal)?;
     }
-    Ok(PartitionKind::List {
+    let kind = PartitionKind::List {
         values,
         null_partition,
         default_partition,
         unsigned,
-    })
+    };
+    Ok((kind, duplicate))
 }
 
 fn fold_list_value(
@@ -288,126 +322,4 @@ fn fold_list_value(
     }
 }
 
-/// `SHOW CREATE TABLE`'s scalar LIST definition list.
-#[must_use]
-pub fn list_definitions_text(
-    definitions: &[crate::partition_routing::PartitionDef],
-    _values: &[(i64, usize)],
-    _null_partition: Option<usize>,
-    _default_partition: Option<usize>,
-    _unsigned: bool,
-) -> String {
-    // Go `AppendPartitionDefs` (`ddl/partition.go:5209`) prints a LIST
-    // partition from its STORED `InValues`, not from the folded values:
-    //
-    //   len(InValues) == 0                    -> " DEFAULT"
-    //   InValues == [["DEFAULT"]] (EqualFold) -> " DEFAULT"
-    //   otherwise                             -> " VALUES IN (...)"
-    //
-    // Rendering from the folded values lost the written position of `NULL`
-    // (it was appended last whatever the user wrote) and dropped the values
-    // of a partition that ALSO carried `DEFAULT`, printing a bare `DEFAULT`
-    // for `VALUES IN (1, 2, DEFAULT)`.
-    let mut out = String::from("\n(");
-    for (ordinal, definition) in definitions.iter().enumerate() {
-        if ordinal > 0 {
-            out.push_str(",\n ");
-        }
-        out.push_str(&format!("PARTITION `{}`", definition.name));
-        let bare_default = definition.in_values.is_empty()
-            || (definition.in_values.len() == 1
-                && definition.in_values[0].len() == 1
-                && definition.in_values[0][0].eq_ignore_ascii_case("DEFAULT"));
-        if bare_default {
-            out.push_str(" DEFAULT");
-        } else {
-            out.push_str(" VALUES IN (");
-            for (index, tuple) in definition.in_values.iter().enumerate() {
-                if index > 0 {
-                    out.push(',');
-                }
-                match tuple.as_slice() {
-                    [single] => out.push_str(&super::table_partition::hex_if_non_print(single)),
-                    many => {
-                        out.push('(');
-                        for (position, value) in many.iter().enumerate() {
-                            if position > 0 {
-                                out.push(',');
-                            }
-                            out.push_str(&super::table_partition::hex_if_non_print(value));
-                        }
-                        out.push(')');
-                    }
-                }
-            }
-            out.push(')');
-        }
-        out.push_str(&super::table_partition::partition_comment_text(
-            &definition.comment,
-        ));
-    }
-    out.push(')');
-    out
-}
 
-/// `SHOW CREATE TABLE`'s `LIST COLUMNS` definition list. The values held in
-/// metadata are already converted to their declared types, just like Go's
-/// `PartitionDefinition.InValues` after `formatListPartitionValue`.
-#[must_use]
-pub fn list_columns_definitions_text(
-    definitions: &[crate::partition_routing::PartitionDef],
-    values: &[(Vec<Datum>, usize)],
-    default_partition: Option<usize>,
-) -> String {
-    let mut out = String::from("\n(");
-    for (ordinal, definition) in definitions.iter().enumerate() {
-        if ordinal > 0 {
-            out.push_str(",\n ");
-        }
-        out.push_str(&format!("PARTITION `{}`", definition.name));
-        if default_partition == Some(ordinal) {
-            out.push_str(" DEFAULT");
-            out.push_str(&super::table_partition::partition_comment_text(
-                &definition.comment,
-            ));
-            continue;
-        }
-        out.push_str(" VALUES IN (");
-        let mut first = true;
-        for (tuple, owner) in values {
-            if *owner != ordinal {
-                continue;
-            }
-            if !first {
-                out.push(',');
-            }
-            first = false;
-            if tuple.len() > 1 {
-                out.push('(');
-            }
-            for (index, value) in tuple.iter().enumerate() {
-                if index > 0 {
-                    out.push(',');
-                }
-                let rendered = value
-                    .restore_value_expr()
-                    .expect("LIST COLUMNS metadata contains a restorable value expression");
-                // Go `AppendPartitionDefs` (`ddl/partition.go:5226`) runs
-                // every printed `VALUES IN` component through
-                // `hexIfNonPrint`.
-                out.push_str(&super::table_partition::hex_if_non_print(
-                    &String::from_utf8_lossy(&rendered),
-                ));
-            }
-            if tuple.len() > 1 {
-                out.push(')');
-            }
-        }
-        out.push(')');
-        out.push_str(&super::table_partition::partition_comment_text(
-            &definition.comment,
-        ));
-    }
-    out.push(')');
-    out
-}

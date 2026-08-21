@@ -510,23 +510,6 @@ fn hash_definitions_are_default(definitions: &[tidb_executor::PartitionDef]) -> 
     })
 }
 
-/// The explicit definition list a HASH/KEY table prints when it is not the
-/// default shape. Neither method has a `VALUES` clause
-/// (`ddl/partition.go:5202`), so a definition is its name and its comment.
-fn hash_definitions_text(definitions: &[tidb_executor::PartitionDef]) -> String {
-    let mut out = String::from("\n(");
-    for (ordinal, definition) in definitions.iter().enumerate() {
-        if ordinal > 0 {
-            out.push_str(",\n ");
-        }
-        out.push_str(&format!("PARTITION `{}`", definition.name));
-        out.push_str(&tidb_executor::ddl::table_partition::partition_comment_text(
-            &definition.comment,
-        ));
-    }
-    out.push(')');
-    out
-}
 
 fn partition_clause_text(table: &tidb_executor::KvTable) -> String {
     let Some(partition) = table.partition() else {
@@ -537,6 +520,7 @@ fn partition_clause_text(table: &tidb_executor::KvTable) -> String {
         partition.kind.sql(),
         partition.expr_text
     );
+    let defs = || tidb_executor::append_partition_defs(&partition.definitions, &partition.kind);
     match &partition.kind {
         // Go `AppendPartitionInfo` (`ddl/partition.go:5147-5171`): HASH and
         // KEY print the COMPACT `PARTITIONS n` form only when every partition
@@ -566,59 +550,25 @@ fn partition_clause_text(table: &tidb_executor::KvTable) -> String {
             if hash_definitions_are_default(&partition.definitions) {
                 format!("{head} PARTITIONS {}", partition.num())
             } else {
-                format!("{head}{}", hash_definitions_text(&partition.definitions))
+                format!("{head}{}", defs())
             }
         }
-        tidb_executor::PartitionKind::Range {
-            less_than,
-            unsigned,
-        } => format!(
-            "{head}{}",
-            tidb_executor::ddl::table_partition_range::range_definitions_text(
-                &partition.definitions,
-                less_than,
-                *unsigned
-            )
-        ),
-        tidb_executor::PartitionKind::RangeColumns {
-            less_than,
-            field_types: _,
-        } => format!(
-            "\nPARTITION BY RANGE COLUMNS({}){}",
+        tidb_executor::PartitionKind::Range { .. } | tidb_executor::PartitionKind::List { .. } => {
+            format!("{head}{}", defs())
+        }
+        // Go prints ` COLUMNS(` for the typed forms, with MySQL's two spaces
+        // after LIST (`ddl/partition.go:5185`).
+        tidb_executor::PartitionKind::RangeColumns { .. }
+        | tidb_executor::PartitionKind::ListColumns { .. } => format!(
+            "\nPARTITION BY {} COLUMNS({}){}",
+            partition.kind.sql(),
             partition.expr_text,
-            tidb_executor::ddl::table_partition_range::range_columns_definitions_text(
-                &partition.definitions,
-                less_than,
-            )
+            defs()
         ),
-        tidb_executor::PartitionKind::List {
-            values,
-            null_partition,
-            default_partition,
-            unsigned,
-        } => format!(
-            "{head}{}",
-            tidb_executor::ddl::table_partition_list::list_definitions_text(
-                &partition.definitions,
-                values,
-                *null_partition,
-                *default_partition,
-                *unsigned
-            )
-        ),
-        tidb_executor::PartitionKind::ListColumns {
-            values,
-            default_partition,
-            ..
-        } => format!(
-            "\nPARTITION BY LIST COLUMNS({}){}",
-            partition.expr_text,
-            tidb_executor::ddl::table_partition_list::list_columns_definitions_text(
-                &partition.definitions,
-                values,
-                *default_partition
-            )
-        ),
+        // Go `AppendPartitionInfo` has no NONE special case: `Columns` is
+        // empty, so it takes the `else` branch and prints
+        // `PARTITION BY NONE (<Expr>)` with the definition list.
+        tidb_executor::PartitionKind::None => format!("{head}{}", defs()),
     }
 }
 

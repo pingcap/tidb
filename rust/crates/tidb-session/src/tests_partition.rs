@@ -2197,3 +2197,193 @@ fn an_added_range_partition_prints_the_bound_it_was_given() {
         "and the original bound is unchanged: {created}"
     );
 }
+
+/// Every divergence an independent re-reading of Go turned up in the ported
+/// partition rules, as the statement that separates the two engines.
+///
+/// The existing suite passed on all of these: each one is a case where this
+/// node refused what Go accepts, accepted what Go refuses, or reported a
+/// different error for the same mistake. They are grouped by the Go function
+/// whose behaviour they pin, and every expectation here was read out of Go's
+/// source rather than out of this implementation.
+///
+/// A `None` errno means Go ACCEPTS the statement.
+const GO_DIVERGENCES: &[(&str, Option<u16>, &str)] = &[
+    // -- `checkPartitionExprArgs`, the `case ast.Extract:` arm (partition.go:5000).
+    // The parser gives EXTRACT its own node, so the whole rule set was skipped.
+    (
+        "CREATE TABLE d1 (a int) PARTITION BY HASH (extract(year from a)) PARTITIONS 4",
+        Some(1486),
+        "hasDateArgs over an INT column is false",
+    ),
+    (
+        "CREATE TABLE d2 (d date) PARTITION BY HASH (extract(day_hour from d)) PARTITIONS 4",
+        Some(1486),
+        "the DAY_HOUR family needs hasDatetimeArgs -- a DATE does not satisfy it",
+    ),
+    (
+        "CREATE TABLE d3 (d date) PARTITION BY HASH (extract(week from d)) PARTITIONS 4",
+        Some(1486),
+        "WEEK reaches Go's unconditional `default:` refusal",
+    ),
+    (
+        "CREATE TABLE d4 (d datetime) PARTITION BY HASH (extract(day_hour from d)) PARTITIONS 4",
+        None,
+        "a DATETIME does satisfy hasDatetimeArgs",
+    ),
+    // -- `checkNoTimestampArgs` on the whitelisted operators (partition.go:4968).
+    (
+        "CREATE TABLE d5 (ts timestamp) PARTITION BY HASH (ts + 0) PARTITIONS 2",
+        Some(1486),
+        "a TIMESTAMP operand routes by the session time zone",
+    ),
+    (
+        "CREATE TABLE d6 (ts timestamp) PARTITION BY RANGE (-ts) (PARTITION p0 VALUES LESS THAN (0))",
+        Some(1486),
+        "the unary arm runs checkNoTimestampArgs too -- and this was 1491",
+    ),
+    // -- the allowed-leaf list (partition.go:4975): NULL is a `*driver.ValueExpr`.
+    (
+        "CREATE TABLE d7 (a int) PARTITION BY HASH (-null) PARTITIONS 2",
+        Some(1486),
+        "the whitelist admits NULL, so the no-column rule is what refuses it",
+    ),
+    // -- `collectArgsType` / `extractColumns` quote the FOLDED name.
+    (
+        "CREATE TABLE d8 (d date) PARTITION BY HASH (year(NoSuch)) PARTITIONS 2",
+        Some(1054),
+        "Go quotes col.Name.Name.L, so the message says 'nosuch'",
+    ),
+    // -- `checkColumnsPartitionType` (partition.go:787) is 1488, not 1054.
+    (
+        "CREATE TABLE d9 (a int) PARTITION BY KEY (nosuch) PARTITIONS 2",
+        Some(1488),
+        "a column LIST reports ErrFieldNotFoundPart",
+    ),
+    (
+        "CREATE TABLE d10 (a int) PARTITION BY RANGE COLUMNS (b) (PARTITION p0 VALUES LESS THAN (1))",
+        Some(1488),
+        "same rule on RANGE COLUMNS",
+    ),
+    (
+        "CREATE TABLE d11 (a int) PARTITION BY LIST COLUMNS (b) (PARTITION p0 VALUES IN (1))",
+        Some(1488),
+        "same rule on LIST COLUMNS",
+    ),
+    // -- `isValidKeyPartitionColType` (partition.go:798) omits TypeTinyBlob.
+    (
+        "CREATE TABLE d12 (a tinytext) PARTITION BY KEY (a) PARTITIONS 2",
+        None,
+        "Go's reject list has BLOB/MEDIUMBLOB/LONGBLOB but NOT TINYBLOB",
+    ),
+    // -- Go's phase order: buildTablePartitionInfo, then
+    //    checkPartitionDefinitionConstraints (1517, 1499, 1652), then
+    //    checkPartitioningKeysConstraints (1105).
+    (
+        "CREATE TABLE d13 (a int, b int, KEY k(b)) PARTITION BY KEY () PARTITIONS 10000",
+        Some(1499),
+        "the HASH/KEY cap is checked inside the definition builder, long before 1105",
+    ),
+    (
+        "CREATE TABLE d14 (a int, b int, KEY k(b)) PARTITION BY KEY () (PARTITION p0, PARTITION p0)",
+        Some(1517),
+        "name-uniqueness precedes the 1105 as well",
+    ),
+    (
+        "CREATE TABLE d15 (a int, b int) PARTITION BY KEY (a, a) PARTITIONS 10000",
+        Some(1499),
+        "the cap precedes checkPartitionColumnsUnique's 1652",
+    ),
+    (
+        "CREATE TABLE d16 (a int) PARTITION BY RANGE (a) \
+         (PARTITION p0 VALUES LESS THAN (10), PARTITION p0 VALUES LESS THAN (5))",
+        Some(1517),
+        "1517 precedes checkPartitionByRange's 1493",
+    ),
+    (
+        "CREATE TABLE d17 (a int) PARTITION BY LIST (a) \
+         (PARTITION p0 VALUES IN (1), PARTITION p0 VALUES IN (1))",
+        Some(1517),
+        "1517 precedes checkPartitionByList's 1495",
+    ),
+];
+
+#[test]
+fn the_rules_read_back_out_of_go_agree_statement_by_statement() {
+    for (sql, expected, why) in GO_DIVERGENCES {
+        let mut session = Session::new();
+        match (session.run(sql), expected) {
+            (Ok(_), None) => {}
+            (Ok(_), Some(errno)) => {
+                panic!("{sql}\n  expected {errno} ({why}), but the statement was ACCEPTED")
+            }
+            (Err(error), None) => {
+                let rendered = error.to_mysql_error();
+                panic!(
+                    "{sql}\n  expected acceptance ({why}), but got {} {}",
+                    rendered.code, rendered.message
+                )
+            }
+            (Err(error), Some(errno)) => {
+                let rendered = error.to_mysql_error();
+                assert_eq!(rendered.code, *errno, "{sql}\n  {why}\n  got: {}", rendered.message);
+            }
+        }
+    }
+}
+
+/// `SHOW CREATE TABLE` prints what Go prints, for the definition shapes that
+/// re-deriving the values instead of reading the stored text got wrong.
+///
+/// Each of these is a case where the output was not merely differently
+/// spelled but WRONG: a name that no longer re-parses, values silently
+/// dropped, a comment that broke the statement across lines. Go builds all of
+/// them in one function, `AppendPartitionDefs`, from `def.LessThan` and
+/// `def.InValues` -- so this asserts on the whole tail, not on a fragment.
+#[test]
+fn show_create_prints_the_stored_definition_text() {
+    let mut session = Session::new();
+
+    // Go `stringutil.Escape`: the quote character DOUBLES, or the dump does
+    // not re-parse.
+    session
+        .run("CREATE TABLE bt (a int) PARTITION BY RANGE(a) (PARTITION `p``0` VALUES LESS THAN (10))")
+        .unwrap();
+    assert!(
+        tests_support::show_create(&mut session, "bt").ends_with(
+            "PARTITION BY RANGE (`a`)\n(PARTITION `p``0` VALUES LESS THAN (10))"
+        ),
+        "{}",
+        tests_support::show_create(&mut session, "bt")
+    );
+
+    // A LIST COLUMNS partition that carries real values AND `DEFAULT` keeps
+    // the values: only an EMPTY `InValues`, or the single literal word, is
+    // Go's bare-DEFAULT marker (`ddl/partition.go:5209`).
+    session
+        .run(
+            "CREATE TABLE lcd (a int) PARTITION BY LIST COLUMNS(a) \
+             (PARTITION p0 VALUES IN (1), PARTITION p1 VALUES IN (2,3,DEFAULT))",
+        )
+        .unwrap();
+    let rendered = tests_support::show_create(&mut session, "lcd");
+    assert!(
+        rendered.contains("PARTITION `p1` VALUES IN (2,3,DEFAULT)"),
+        "the real values were dropped: {rendered}"
+    );
+
+    // Go `format.OutputFormat` escapes NUL, LF and CR -- and does NOT touch a
+    // backslash. An unescaped newline broke the statement in half.
+    session
+        .run(
+            "CREATE TABLE cmt (a int) PARTITION BY RANGE(a) \
+             (PARTITION p0 VALUES LESS THAN (10) COMMENT 'x\ny')",
+        )
+        .unwrap();
+    let rendered = tests_support::show_create(&mut session, "cmt");
+    assert!(
+        rendered.contains(r"COMMENT 'x\ny'"),
+        "the newline was not escaped: {rendered:?}"
+    );
+}
+
