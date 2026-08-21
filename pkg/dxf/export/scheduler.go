@@ -289,11 +289,7 @@ func TaskKey(rootID int64, snapshotTS uint64) string {
 // Classic ignores keyspaceName because its task keys are not keyspace-scoped.
 func TaskKeyInKeyspace(keyspaceName string, rootID int64, snapshotTS uint64) string {
 	if kerneltype.IsNextGen() {
-		return taskKeyInKeyspace(keyspaceName, rootID, snapshotTS)
+		return fmt.Sprintf("%s/export/%d/%d", keyspaceName, rootID, snapshotTS)
 	}
 	return fmt.Sprintf("export/%d/%d", rootID, snapshotTS)
-}
-
-func taskKeyInKeyspace(keyspaceName string, rootID int64, snapshotTS uint64) string {
-	return fmt.Sprintf("%s/export/%d/%d", keyspaceName, rootID, snapshotTS)
 }
