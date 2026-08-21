@@ -252,6 +252,47 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
+		_, isPlainJoin := p.Self().(*LogicalJoin)
+		if isPlainJoin && p.JoinType == base.InnerJoin {
+			var childEqualities []expression.Expression
+			for _, child := range p.Children() {
+				childEqualities = appendChildColumnEqualities(childEqualities, child)
+			}
+			evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+			hasConstantEquality := slices.ContainsFunc(tempCond, func(condition expression.Expression) bool {
+				sf, ok := condition.(*expression.ScalarFunction)
+				return ok && sf.FuncName.L == ast.EQ && expression.ValidCompareConstantPredicate(evalCtx, sf)
+			})
+			if len(childEqualities) > 0 && hasConstantEquality {
+				propagationConditions := expression.CNFExprs(
+					append(slices.Clone(tempCond), childEqualities...),
+				).Clone()
+				propagated := expression.PropagateConstantForJoin(
+					p.SCtx().GetExprCtx(),
+					p.SCtx().GetSessionVars().AlwaysKeepJoinKey,
+					p.Children()[0].Schema(),
+					p.Children()[1].Schema(),
+					p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin,
+					propagationConditions...,
+				)
+				for _, condition := range propagated {
+					if expression.Contains(evalCtx, tempCond, condition) || expression.Contains(evalCtx, childEqualities, condition) {
+						continue
+					}
+					sf, ok := condition.(*expression.ScalarFunction)
+					if !ok || sf.FuncName.L != ast.EQ {
+						continue
+					}
+					column, _ := expression.ValidCompareConstantPredicateHelper(evalCtx, sf, true)
+					if column == nil {
+						column, _ = expression.ValidCompareConstantPredicateHelper(evalCtx, sf, false)
+					}
+					if column != nil && p.Schema().Contains(column) {
+						tempCond = append(tempCond, condition)
+					}
+				}
+			}
+		}
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
 		tempCond = ruleutil.ApplyPredicateSimplificationForJoin(p.SCtx(), tempCond,
 			p.Children()[0].Schema(), p.Children()[1].Schema(),
@@ -311,6 +352,40 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	ruleutil.BuildKeyInfoPortal(p)
 	newnChild, err := p.SemiJoinRewrite()
 	return ret, newnChild, err
+}
+
+func appendChildColumnEqualities(conditions []expression.Expression, plan base.LogicalPlan) []expression.Expression {
+	if selection, ok := plan.(*LogicalSelection); ok {
+		conditions = appendColumnEqualities(conditions, selection.Conditions, selection.Schema())
+		return appendChildColumnEqualities(conditions, selection.Children()[0])
+	}
+	join, ok := plan.(*LogicalJoin)
+	if !ok || join.JoinType != base.InnerJoin {
+		return conditions
+	}
+	conditions = appendColumnEqualities(conditions, expression.ScalarFuncs2Exprs(join.EqualConditions), join.Schema())
+	conditions = appendColumnEqualities(conditions, join.OtherConditions, join.Schema())
+	for _, child := range join.Children() {
+		conditions = appendChildColumnEqualities(conditions, child)
+	}
+	return conditions
+}
+
+func appendColumnEqualities(
+	conditions, candidates []expression.Expression,
+	schema *expression.Schema,
+) []expression.Expression {
+	for _, condition := range candidates {
+		sf, ok := condition.(*expression.ScalarFunction)
+		if !ok || sf.FuncName.L != ast.EQ || expression.IsEQCondFromIn(sf) {
+			continue
+		}
+		left, right, colOK := expression.IsColOpCol(sf)
+		if colOK && schema.Contains(left) && schema.Contains(right) {
+			conditions = append(conditions, sf)
+		}
+	}
+	return conditions
 }
 
 // simplifyOuterJoin transforms outer joins to simpler join types when predicates are null-rejected.

@@ -17,6 +17,7 @@ package issuetest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/errno"
@@ -29,6 +30,63 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
+
+func TestIssue70053ReferentialConstraintsJoinPredicates(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table parent (id int primary key)")
+	tk.MustExec("create table child (" +
+		"id int primary key, pid int, " +
+		"constraint fk_child foreign key (pid) references parent (id))")
+
+	query := `SELECT A.REFERENCED_TABLE_NAME
+FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE A
+JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS B
+USING (CONSTRAINT_SCHEMA, CONSTRAINT_NAME, TABLE_NAME)
+JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS R ON (
+	R.CONSTRAINT_NAME = B.CONSTRAINT_NAME
+	AND R.TABLE_NAME = B.TABLE_NAME
+	AND R.CONSTRAINT_SCHEMA = B.TABLE_SCHEMA)
+WHERE B.CONSTRAINT_TYPE = 'FOREIGN KEY'
+	AND A.TABLE_SCHEMA = 'test'
+	AND A.TABLE_NAME = 'child'
+	AND A.REFERENCED_TABLE_SCHEMA IS NOT NULL`
+
+	rows := tk.MustQuery("explain format = 'brief' " + query).Rows()
+	var referentialConstraintsInfo string
+	for _, row := range rows {
+		if strings.Contains(fmt.Sprint(row[3]), "REFERENTIAL_CONSTRAINTS") {
+			referentialConstraintsInfo = fmt.Sprint(row[4])
+			break
+		}
+	}
+	require.Contains(t, referentialConstraintsInfo, `table_name:["child"]`)
+	require.NotContains(t, referentialConstraintsInfo, "constraint_schema:")
+	tk.MustQuery(query).Check(testkit.Rows("parent"))
+}
+
+func TestNestedInnerJoinPredicatePropagation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("create table t3 (a int)")
+	tk.MustExec("insert into t1 values (1), (2)")
+	tk.MustExec("insert into t2 values (1), (2)")
+	tk.MustExec("insert into t3 values (1), (2)")
+
+	query := `SELECT STRAIGHT_JOIN t3.a
+FROM t1
+JOIN t2 ON t1.a = t2.a
+JOIN t3 ON t2.a = t3.a
+WHERE t1.a = 1`
+
+	plan := fmt.Sprint(tk.MustQuery("explain format = 'brief' " + query).Rows())
+	require.Contains(t, plan, "eq(test.t3.a, 1)")
+	tk.MustQuery(query).Check(testkit.Rows("1"))
+}
 
 func TestPlannerIssueRegressions(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
