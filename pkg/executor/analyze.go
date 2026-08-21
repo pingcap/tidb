@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -89,6 +90,17 @@ const (
 	idxTask
 )
 
+// runningUnderGoTest reports whether the current process is a Go test binary
+// (`go test`, including `make bench-daily`) rather than a real tidb-server
+// produced by `go build` of cmd/tidb-server. Test binaries register in-process
+// TiDB domains without binding a TiDB RPC listener, so a FLUSH STATS_DELTA
+// CLUSTER broadcast would hit a mock ":10080" and burn the TiKV RPC backoff
+// budget before analyze starts. testing.Testing() is set by the linker only
+// for binaries built via `go test`, so the gate is a no-op in production.
+func runningUnderGoTest() bool {
+	return testing.Testing()
+}
+
 // flushStatsDeltaForAnalyze flushes pending stats deltas for the tables whose column-analyze
 // tasks will capture base count / modify_count from mysql.stats_meta. Without this, a stale
 // pre-analyze delta can be applied later and double count rows or modifications.
@@ -101,12 +113,8 @@ func flushStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, pla
 		return err
 	}
 
-	// HACK: Some tests register in-process TiDB domains but do not start TiDB RPC
-	// endpoints. Broadcasting FLUSH STATS_DELTA CLUSTER to those mock endpoints can
-	// spend the TiKV RPC backoff budget before analyze really starts. When the test
-	// topology cannot receive TiDB broadcast requests, dumping local deltas is the
-	// only viable approximation.
-	if intest.InTest {
+	// HACK: test binaries have no real RPC peer to broadcast to; dump locally instead.
+	if runningUnderGoTest() {
 		flushedLocally, err := flushAnalyzeStatsDeltaForTest(ctx, sctx, plan)
 		if err != nil {
 			return err
@@ -125,7 +133,41 @@ func flushStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, pla
 	if err != nil {
 		return err
 	}
-	return broadcast(ctx, sctx, sql)
+	return tryBroadcast(ctx, sctx, sql)
+}
+
+// tryBroadcast runs FLUSH STATS_DELTA ... CLUSTER to flush every TiDB's pending
+// deltas before analyze. During a rolling upgrade a peer on an older release
+// cannot decode the BroadcastQuery executor and rejects it with "this exec type
+// <n> doesn't support yet"; the pre-flush is best-effort, so we warn and let
+// analyze proceed rather than fail it. Other errors propagate.
+func tryBroadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
+	err := broadcast(ctx, sctx, sql)
+	if err == nil {
+		return nil
+	}
+	if !isUnsupportedBroadcastQueryErr(err) {
+		return err
+	}
+	statslogutil.StatsLogger().Warn(
+		"FLUSH STATS_DELTA CLUSTER broadcast rejected by a peer TiDB during analyze; "+
+			"proceeding without the cluster-wide pre-analyze flush",
+		zap.Error(err),
+	)
+	return nil
+}
+
+// isUnsupportedBroadcastQueryErr reports whether err is a peer rejecting the
+// BroadcastQuery coprocessor executor with "this exec type <n> doesn't support
+// yet". An older TiDB that predates BroadcastQuery support returns this during a
+// rolling upgrade. The broadcast only ever sends a BroadcastQuery executor, so
+// that phrase coming back unambiguously means an unsupported peer.
+func isUnsupportedBroadcastQueryErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "exec type") && strings.Contains(msg, "doesn't support yet")
 }
 
 // collectStatsDeltaFlushObjectsForAnalyze returns the database-qualified table
@@ -297,6 +339,18 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		return err
 	}
 	buildStatsConcurrency = min(len(tasks), buildStatsConcurrency)
+
+	// Resolve once on the main goroutine before workers fan out;
+	// SessionVars.systems is not safe for concurrent lookup.
+	samplingStatsConcurrency, err := getBuildSamplingStatsConcurrency(e.Ctx())
+	if err != nil {
+		return err
+	}
+	for _, task := range tasks {
+		if task.colExec != nil {
+			task.colExec.samplingStatsConcurrency = samplingStatsConcurrency
+		}
+	}
 
 	// Start workers with channel to collect results.
 	taskCh := make(chan *analyzeTask, buildStatsConcurrency)
@@ -635,7 +689,9 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	enableAnalyzeSnapshot := e.Ctx().GetSessionVars().EnableAnalyzeSnapshot
 	for range saveStatsConcurrency {
 		worker := newAnalyzeSaveStatsWorker(saveResultsCh, errCh, &e.Ctx().GetSessionVars().SQLKiller)
-		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+		// Deliberately not the analyze source: the heavy TiKV scan is already done,
+		// so there is no point in throttling the save-stats writes as background work.
+		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 		wg.Run(func() {
 			worker.run(ctx1, statsHandle, enableAnalyzeSnapshot)
 		})

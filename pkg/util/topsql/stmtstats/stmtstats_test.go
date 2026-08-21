@@ -321,6 +321,56 @@ func TestStatementStatsRUV2Sampling(t *testing.T) {
 	})
 }
 
+// TestStatementStatsRUV2InFlightSamplingExcludesDrainOnlyFields asserts that
+// ResourceManager{Read,Write}Cnt are invisible to in-flight TopRU samples
+// until the end-of-statement drain, and that the in-flight + finalize deltas
+// telescope to the full per-statement total.
+func TestStatementStatsRUV2InFlightSamplingExcludesDrainOnlyFields(t *testing.T) {
+	stats := &StatementStats{
+		data:             StatementStatsMap{},
+		finished:         atomic.NewBool(false),
+		finishedRUBuffer: RUIncrementMap{},
+	}
+	ru := util.NewRUDetails()
+	metrics := execdetails.NewRUV2Metrics()
+	weights := execdetails.RUV2Weights{
+		RUScale:                 1,
+		PlanCnt:                 1,
+		ResourceManagerReadCnt:  0.02,
+		ResourceManagerWriteCnt: 0.07,
+	}
+	metrics.AddPlanCnt(1) // live field, not drain-fed
+
+	stats.OnExecutionBegin([]byte("sql"), []byte("plan"), &ExecBeginInfo{
+		Ctx:          context.WithValue(context.Background(), util.RUDetailsCtxKey, ru),
+		User:         "u1",
+		TopRUEnabled: true,
+		RUVersion:    rmclient.RUVersionV2,
+		RUV2Metrics:  metrics,
+		RUV2Weights:  weights,
+	})
+	key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}
+
+	// In-flight sample: only PlanCnt visible, drain-fed fields still zero.
+	inFlight := stats.MergeRUInto()
+	require.InDelta(t, 1.0, inFlight[key].TotalRU, 1e-9)
+	require.Equal(t, uint64(1), inFlight[key].ExecCount)
+
+	// Equivalent of finalizeStatementRUV2Metrics's drain; bypassing kvproto.
+	metrics.AddResourceManagerReadCnt(5)
+	metrics.AddResourceManagerWriteCnt(3)
+
+	stats.OnExecutionFinished([]byte("sql"), []byte("plan"), &ExecFinishInfo{
+		RUDetails:    ru,
+		User:         "u1",
+		ExecDuration: time.Second,
+		TopRUEnabled: true,
+	})
+	finish := stats.MergeRUInto()
+	require.InDelta(t, 0.31, finish[key].TotalRU, 1e-9) // 5*0.02 + 3*0.07
+	require.InDelta(t, 1.31, inFlight[key].TotalRU+finish[key].TotalRU, 1e-9)
+}
+
 func TestStatementStatsResetRUStateOnVersionChangePreservesStmtStats(t *testing.T) {
 	cases := []struct {
 		name           string

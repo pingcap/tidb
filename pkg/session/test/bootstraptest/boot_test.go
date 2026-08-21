@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -95,6 +96,15 @@ func TestTiDBHistoryTableConsistent(t *testing.T) {
 	require.Equal(t, int64(1), row.GetInt64(0))
 
 	dom.Close()
+}
+
+func TestBootstrapMaskingPolicyTable(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	tk := testkit.NewTestKit(t, store)
+	checkTiDBMaskingPolicyTableSchema(t, tk)
 }
 
 func TestANSISQLMode(t *testing.T) {

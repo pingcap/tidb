@@ -77,26 +77,32 @@ type StmtRecord struct {
 	MaxCopWaitTime       time.Duration `json:"max_cop_wait_time"`
 	MaxCopWaitAddress    string        `json:"max_cop_wait_address"`
 	// TiKV
-	SumProcessTime               time.Duration `json:"sum_process_time"`
-	MaxProcessTime               time.Duration `json:"max_process_time"`
-	SumWaitTime                  time.Duration `json:"sum_wait_time"`
-	MaxWaitTime                  time.Duration `json:"max_wait_time"`
-	SumBackoffTime               time.Duration `json:"sum_backoff_time"`
-	MaxBackoffTime               time.Duration `json:"max_backoff_time"`
-	SumTotalKeys                 int64         `json:"sum_total_keys"`
-	MaxTotalKeys                 int64         `json:"max_total_keys"`
-	SumProcessedKeys             int64         `json:"sum_processed_keys"`
-	MaxProcessedKeys             int64         `json:"max_processed_keys"`
-	SumRocksdbDeleteSkippedCount uint64        `json:"sum_rocksdb_delete_skipped_count"`
-	MaxRocksdbDeleteSkippedCount uint64        `json:"max_rocksdb_delete_skipped_count"`
-	SumRocksdbKeySkippedCount    uint64        `json:"sum_rocksdb_key_skipped_count"`
-	MaxRocksdbKeySkippedCount    uint64        `json:"max_rocksdb_key_skipped_count"`
-	SumRocksdbBlockCacheHitCount uint64        `json:"sum_rocksdb_block_cache_hit_count"`
-	MaxRocksdbBlockCacheHitCount uint64        `json:"max_rocksdb_block_cache_hit_count"`
-	SumRocksdbBlockReadCount     uint64        `json:"sum_rocksdb_block_read_count"`
-	MaxRocksdbBlockReadCount     uint64        `json:"max_rocksdb_block_read_count"`
-	SumRocksdbBlockReadByte      uint64        `json:"sum_rocksdb_block_read_byte"`
-	MaxRocksdbBlockReadByte      uint64        `json:"max_rocksdb_block_read_byte"`
+	SumProcessTime                 time.Duration `json:"sum_process_time"`
+	MaxProcessTime                 time.Duration `json:"max_process_time"`
+	SumWaitTime                    time.Duration `json:"sum_wait_time"`
+	MaxWaitTime                    time.Duration `json:"max_wait_time"`
+	SumBackoffTime                 time.Duration `json:"sum_backoff_time"`
+	MaxBackoffTime                 time.Duration `json:"max_backoff_time"`
+	SumTotalKeys                   int64         `json:"sum_total_keys"`
+	MaxTotalKeys                   int64         `json:"max_total_keys"`
+	SumProcessedKeys               int64         `json:"sum_processed_keys"`
+	MaxProcessedKeys               int64         `json:"max_processed_keys"`
+	SumRocksdbDeleteSkippedCount   uint64        `json:"sum_rocksdb_delete_skipped_count"`
+	MaxRocksdbDeleteSkippedCount   uint64        `json:"max_rocksdb_delete_skipped_count"`
+	SumRocksdbKeySkippedCount      uint64        `json:"sum_rocksdb_key_skipped_count"`
+	MaxRocksdbKeySkippedCount      uint64        `json:"max_rocksdb_key_skipped_count"`
+	SumRocksdbBlockCacheHitCount   uint64        `json:"sum_rocksdb_block_cache_hit_count"`
+	MaxRocksdbBlockCacheHitCount   uint64        `json:"max_rocksdb_block_cache_hit_count"`
+	SumRocksdbBlockReadCount       uint64        `json:"sum_rocksdb_block_read_count"`
+	MaxRocksdbBlockReadCount       uint64        `json:"max_rocksdb_block_read_count"`
+	SumRocksdbBlockReadByte        uint64        `json:"sum_rocksdb_block_read_byte"`
+	MaxRocksdbBlockReadByte        uint64        `json:"max_rocksdb_block_read_byte"`
+	SumIARemoteReadSegmentCount    uint64        `json:"sum_ia_remote_read_segment_count"`
+	MaxIARemoteReadSegmentCount    uint64        `json:"max_ia_remote_read_segment_count"`
+	SumIARemoteReadSegmentSize     uint64        `json:"sum_ia_remote_read_segment_size"`
+	MaxIARemoteReadSegmentSize     uint64        `json:"max_ia_remote_read_segment_size"`
+	SumIARemoteReadSegmentWaitTime time.Duration `json:"sum_ia_remote_read_segment_wait_time"`
+	MaxIARemoteReadSegmentWaitTime time.Duration `json:"max_ia_remote_read_segment_wait_time"`
 	// Txn
 	CommitCount          int64               `json:"commit_count"`
 	SumGetCommitTsTime   time.Duration       `json:"sum_get_commit_ts_time"`
@@ -320,6 +326,19 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 		if info.ExecDetail.ScanDetail.RocksdbBlockReadByte > r.MaxRocksdbBlockReadByte {
 			r.MaxRocksdbBlockReadByte = info.ExecDetail.ScanDetail.RocksdbBlockReadByte
 		}
+		iaStats := execdetails.GetIARemoteReadSegmentStats(info.ExecDetail.ScanDetail)
+		r.SumIARemoteReadSegmentCount += iaStats.Count
+		if iaStats.Count > r.MaxIARemoteReadSegmentCount {
+			r.MaxIARemoteReadSegmentCount = iaStats.Count
+		}
+		r.SumIARemoteReadSegmentSize += iaStats.Bytes
+		if iaStats.Bytes > r.MaxIARemoteReadSegmentSize {
+			r.MaxIARemoteReadSegmentSize = iaStats.Bytes
+		}
+		r.SumIARemoteReadSegmentWaitTime += iaStats.WaitTime
+		if iaStats.WaitTime > r.MaxIARemoteReadSegmentWaitTime {
+			r.MaxIARemoteReadSegmentWaitTime = iaStats.WaitTime
+		}
 	}
 	// Txn
 	commitDetails := info.ExecDetail.CommitDetail
@@ -436,7 +455,7 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	r.SumKVTotal += time.Duration(tikvExecDetails.WaitKVRespDuration)
 	r.SumPDTotal += time.Duration(tikvExecDetails.WaitPDRespDuration)
 	r.SumBackoffTotal += time.Duration(tikvExecDetails.BackoffDuration)
-	r.SumWriteSQLRespTotal += info.StmtExecDetails.WriteSQLRespDuration
+	r.SumWriteSQLRespTotal += info.WriteSQLRespDuration
 	r.SumTidbCPU += info.CPUUsages.TidbCPUTime
 	r.SumTikvCPU += info.CPUUsages.TikvCPUTime
 
@@ -524,6 +543,18 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	r.SumRocksdbBlockReadByte += other.SumRocksdbBlockReadByte
 	if r.MaxRocksdbBlockReadByte < other.MaxRocksdbBlockReadByte {
 		r.MaxRocksdbBlockReadByte = other.MaxRocksdbBlockReadByte
+	}
+	r.SumIARemoteReadSegmentCount += other.SumIARemoteReadSegmentCount
+	if r.MaxIARemoteReadSegmentCount < other.MaxIARemoteReadSegmentCount {
+		r.MaxIARemoteReadSegmentCount = other.MaxIARemoteReadSegmentCount
+	}
+	r.SumIARemoteReadSegmentSize += other.SumIARemoteReadSegmentSize
+	if r.MaxIARemoteReadSegmentSize < other.MaxIARemoteReadSegmentSize {
+		r.MaxIARemoteReadSegmentSize = other.MaxIARemoteReadSegmentSize
+	}
+	r.SumIARemoteReadSegmentWaitTime += other.SumIARemoteReadSegmentWaitTime
+	if r.MaxIARemoteReadSegmentWaitTime < other.MaxIARemoteReadSegmentWaitTime {
+		r.MaxIARemoteReadSegmentWaitTime = other.MaxIARemoteReadSegmentWaitTime
 	}
 	// Txn
 	r.CommitCount += other.CommitCount

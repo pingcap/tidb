@@ -16,11 +16,14 @@ package ttlworker
 
 import (
 	"context"
+	"encoding/json"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -36,6 +39,49 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
+
+type fakeExternalWorkloadManager struct {
+	role             config.ExternalWorkloadRole
+	recycledCreateTS uint64
+}
+
+func (m *fakeExternalWorkloadManager) Close() error { return nil }
+func (m *fakeExternalWorkloadManager) Role() config.ExternalWorkloadRole {
+	return m.role
+}
+func (*fakeExternalWorkloadManager) Meta() *keyspacepb.KeyspaceMeta { return nil }
+func (*fakeExternalWorkloadManager) InitializeGCV2(context.Context, time.Duration) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) AbortGCV2(context.Context) error { return nil }
+func (*fakeExternalWorkloadManager) RegisterGCV2(context.Context, uint64, time.Duration) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) RecycleGCV2(context.Context, uint64) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) UpdateGCLifeTime(context.Context, time.Duration) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) RegisterTTLTableInfo(context.Context, int64, bool) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) DeleteTTLTableInfo(context.Context, int64) error {
+	return nil
+}
+func (m *fakeExternalWorkloadManager) RecycleTTLTask(_ context.Context, completedJobCreateTime uint64) error {
+	m.recycledCreateTS = completedJobCreateTime
+	return nil
+}
+func (*fakeExternalWorkloadManager) UpdateTTLJobEnable(context.Context, bool) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) RegisterAutoAnalyze(context.Context, uint64) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) RecycleAutoAnalyze(context.Context, uint64) error {
+	return nil
+}
 
 func newTTLTableStatusRows(status ...*cache.TableStatus) []chunk.Row {
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{
@@ -132,6 +178,90 @@ func newTTLTableStatusRows(status ...*cache.TableStatus) []chunk.Row {
 
 		currentJobStatusUpdateTime := types.NewDatum(types.NewTime(types.FromGoTime(s.CurrentJobStatusUpdateTime), mysql.TypeDatetime, types.MaxFsp))
 		c.AppendDatum(16, &currentJobStatusUpdateTime)
+	}
+
+	iter := chunk.NewIterator4Chunk(c)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func newTTLTaskRows(t *testing.T, tasks ...*cache.TTLTask) []chunk.Row {
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{
+		types.NewFieldType(mysql.TypeString),   // job_id
+		types.NewFieldType(mysql.TypeLonglong), // table_id
+		types.NewFieldType(mysql.TypeLonglong), // scan_id
+		types.NewFieldType(mysql.TypeBlob),     // scan_range_start
+		types.NewFieldType(mysql.TypeBlob),     // scan_range_end
+		types.NewFieldType(mysql.TypeDatetime), // expire_time
+		types.NewFieldType(mysql.TypeString),   // owner_id
+		types.NewFieldType(mysql.TypeString),   // owner_addr
+		types.NewFieldType(mysql.TypeDatetime), // owner_hb_time
+		types.NewFieldType(mysql.TypeString),   // status
+		types.NewFieldType(mysql.TypeDatetime), // status_update_time
+		types.NewFieldType(mysql.TypeString),   // state
+		types.NewFieldType(mysql.TypeDatetime), // created_time
+	}, len(tasks))
+	var rows []chunk.Row
+
+	for _, task := range tasks {
+		jobID := types.NewDatum(task.JobID)
+		c.AppendDatum(0, &jobID)
+		tableID := types.NewDatum(task.TableID)
+		c.AppendDatum(1, &tableID)
+		scanID := types.NewDatum(task.ScanID)
+		c.AppendDatum(2, &scanID)
+
+		if len(task.ScanRangeStart) == 0 {
+			c.AppendNull(3)
+		} else {
+			require.FailNow(t, "non-empty ScanRangeStart is not supported by this helper")
+		}
+		if len(task.ScanRangeEnd) == 0 {
+			c.AppendNull(4)
+		} else {
+			require.FailNow(t, "non-empty ScanRangeEnd is not supported by this helper")
+		}
+
+		expireTime := types.NewDatum(types.NewTime(types.FromGoTime(task.ExpireTime), mysql.TypeDatetime, types.MaxFsp))
+		c.AppendDatum(5, &expireTime)
+
+		if task.OwnerID == "" {
+			c.AppendNull(6)
+		} else {
+			ownerID := types.NewDatum(task.OwnerID)
+			c.AppendDatum(6, &ownerID)
+		}
+		if task.OwnerAddr == "" {
+			c.AppendNull(7)
+		} else {
+			ownerAddr := types.NewDatum(task.OwnerAddr)
+			c.AppendDatum(7, &ownerAddr)
+		}
+		if task.OwnerHBTime.IsZero() {
+			c.AppendNull(8)
+		} else {
+			ownerHBTime := types.NewDatum(types.NewTime(types.FromGoTime(task.OwnerHBTime), mysql.TypeDatetime, types.MaxFsp))
+			c.AppendDatum(8, &ownerHBTime)
+		}
+
+		status := types.NewDatum(string(task.Status))
+		c.AppendDatum(9, &status)
+		statusUpdateTime := types.NewDatum(types.NewTime(types.FromGoTime(task.StatusUpdateTime), mysql.TypeDatetime, types.MaxFsp))
+		c.AppendDatum(10, &statusUpdateTime)
+
+		if task.State == nil {
+			c.AppendNull(11)
+		} else {
+			stateJSON, err := json.Marshal(task.State)
+			require.NoError(t, err)
+			stateDatum := types.NewDatum(string(stateJSON))
+			c.AppendDatum(11, &stateDatum)
+		}
+
+		createdTime := types.NewDatum(types.NewTime(types.FromGoTime(task.CreatedTime), mysql.TypeDatetime, types.MaxFsp))
+		c.AppendDatum(12, &createdTime)
 	}
 
 	iter := chunk.NewIterator4Chunk(c)
@@ -240,6 +370,128 @@ func (j *ttlJob) Finish(se session.Session, now time.Time, summary *TTLSummary) 
 
 func (j *ttlJob) ID() string {
 	return j.id
+}
+
+func TestCheckFinishedJobRecyclesExternalTTLTask(t *testing.T) {
+	t.Run("configures external workload manager", func(t *testing.T) {
+		externalMgr := &fakeExternalWorkloadManager{}
+		m := NewJobManager("test-id", nil, nil, nil, nil, WithExternalWorkloadManager(externalMgr))
+		require.Same(t, externalMgr, m.extWorkload)
+	})
+
+	t.Run("all local jobs finish", func(t *testing.T) {
+		createTime := time.Unix(1234, 0)
+		externalMgr := &fakeExternalWorkloadManager{role: config.RoleTTLTaskWorker}
+		m := NewJobManager("test-id", nil, nil, nil, nil, WithExternalWorkloadManager(externalMgr))
+		m.runningJobs = []*ttlJob{
+			{
+				id:         "job1",
+				ownerID:    "test-id",
+				createTime: createTime,
+				tableID:    1,
+				status:     cache.JobStatusRunning,
+			},
+		}
+
+		se := newMockSession(t)
+		sqlCounter := 0
+		se.executeSQL = func(_ context.Context, sql string, args ...any) ([]chunk.Row, error) {
+			sqlCounter++
+			if sqlCounter == 1 {
+				expectedSQL, expectedArgs := cache.SelectFromTTLTaskWithJobID("job1")
+				require.Equal(t, expectedSQL, sql)
+				require.Equal(t, expectedArgs, args)
+			}
+			return nil, nil
+		}
+
+		m.CheckFinishedJob(se)
+		require.Empty(t, m.runningJobs)
+		require.Equal(t, uint64(createTime.Unix()), externalMgr.recycledCreateTS)
+		require.Equal(t, 4, sqlCounter)
+	})
+
+	t.Run("do not recycle when an older local job is still running", func(t *testing.T) {
+		runningCreateTime := time.Unix(1234, 0)
+		finishedCreateTime := time.Unix(2234, 0)
+		externalMgr := &fakeExternalWorkloadManager{role: config.RoleTTLTaskWorker}
+		m := NewJobManager("test-id", nil, nil, nil, nil, WithExternalWorkloadManager(externalMgr))
+		m.runningJobs = []*ttlJob{
+			{
+				id:         "job-running",
+				ownerID:    "test-id",
+				createTime: runningCreateTime,
+				tableID:    1,
+				status:     cache.JobStatusRunning,
+			},
+			{
+				id:         "job-finished",
+				ownerID:    "test-id",
+				createTime: finishedCreateTime,
+				tableID:    2,
+				status:     cache.JobStatusRunning,
+			},
+		}
+
+		runningTasks := newTTLTaskRows(t, &cache.TTLTask{
+			JobID:            "job-running",
+			TableID:          1,
+			ScanID:           1,
+			ExpireTime:       runningCreateTime,
+			Status:           cache.TaskStatusRunning,
+			StatusUpdateTime: runningCreateTime,
+			CreatedTime:      runningCreateTime,
+		})
+		finishedTasks := newTTLTaskRows(t, &cache.TTLTask{
+			JobID:            "job-finished",
+			TableID:          2,
+			ScanID:           1,
+			ExpireTime:       finishedCreateTime,
+			Status:           cache.TaskStatusFinished,
+			StatusUpdateTime: finishedCreateTime,
+			CreatedTime:      finishedCreateTime,
+		})
+
+		se := newMockSession(t)
+		se.executeSQL = func(_ context.Context, sql string, args ...any) ([]chunk.Row, error) {
+			expectedSQL, _ := cache.SelectFromTTLTaskWithJobID("job-finished")
+			if sql != expectedSQL {
+				return nil, nil
+			}
+			switch args[0] {
+			case "job-running":
+				return runningTasks, nil
+			case "job-finished":
+				return finishedTasks, nil
+			default:
+				return nil, nil
+			}
+		}
+
+		m.CheckFinishedJob(se)
+		require.Len(t, m.runningJobs, 1)
+		require.Equal(t, "job-running", m.runningJobs[0].id)
+		require.Equal(t, uint64(0), externalMgr.recycledCreateTS)
+	})
+}
+
+func TestCheckFinishedJobDoesNotRecycleExternalTTLTaskFromMaster(t *testing.T) {
+	externalMgr := &fakeExternalWorkloadManager{role: config.RoleMaster}
+	m := NewJobManager("test-id", nil, nil, nil, nil, WithExternalWorkloadManager(externalMgr))
+	m.runningJobs = []*ttlJob{
+		{
+			id:         "job1",
+			ownerID:    "test-id",
+			createTime: time.Unix(1234, 0),
+			tableID:    1,
+			status:     cache.JobStatusRunning,
+		},
+	}
+	se := newMockSession(t)
+
+	m.CheckFinishedJob(se)
+	require.Empty(t, m.runningJobs)
+	require.Zero(t, externalMgr.recycledCreateTS)
 }
 
 func TestReadyForLockHBTimeoutJobTables(t *testing.T) {

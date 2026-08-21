@@ -437,12 +437,17 @@ func setTaskPresignedURL(ctx context.Context, task *PlanReplayerDumpTask) {
 	task.PresignedURL = url
 }
 
+const (
+	// PlanReplayerPresignExpire is how long a plan replayer presigned download URL stays valid.
+	PlanReplayerPresignExpire = time.Hour
+)
+
 func getPresignedURL(ctx context.Context, task *PlanReplayerDumpTask) (string, error) {
 	storage, err := extstore.GetGlobalExtStorage(ctx)
 	if err != nil {
 		return "", err
 	}
-	return storage.PresignFile(ctx, filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName), 1*time.Hour)
+	return storage.PresignFile(ctx, filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName), PlanReplayerPresignExpire)
 }
 
 func dumpSQLMeta(zw *zip.Writer, task *PlanReplayerDumpTask) error {

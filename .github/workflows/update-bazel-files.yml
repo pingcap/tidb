@@ -7,8 +7,7 @@ on:
       - completed
 
 permissions:
-  actions: read
-  contents: write
+  contents: read
 
 concurrency:
   group: update-bazel-files-${{ github.event.workflow_run.id }}
@@ -17,6 +16,10 @@ concurrency:
 jobs:
   update:
     name: Update Bazel Files
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: read
     if: >
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'pull_request'
@@ -59,10 +62,9 @@ jobs:
 
           if [[ "${head_repo}" != "${REPOSITORY}" ]]; then
             echo "same_repo=false" >> "${GITHUB_OUTPUT}"
-            exit 0
+          else
+            echo "same_repo=true" >> "${GITHUB_OUTPUT}"
           fi
-
-          echo "same_repo=true" >> "${GITHUB_OUTPUT}"
 
           if [[ "${pr_head_sha}" != "${RUN_HEAD_SHA}" ]]; then
             echo "stale=true" >> "${GITHUB_OUTPUT}"
@@ -75,9 +77,45 @@ jobs:
         shell: bash
         run: |
           echo "Skip stale bazel update for PR #${{ steps.pr.outputs.pr_number }}."
+      - name: Download Fork Bazel Files Artifact
+        if: steps.pr.outputs.same_repo != 'true' && steps.pr.outputs.stale != 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: bazel-files
+          path: bazel-artifact
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Report fork PR Bazel changes
+        if: steps.pr.outputs.same_repo != 'true' && steps.pr.outputs.stale != 'true'
+        shell: bash
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+
+          patch_path="${PWD}/bazel-artifact/bazel.patch"
+          if [[ ! -f "${patch_path}" ]]; then
+            echo "Missing bazel.patch artifact for fork PR #${PR_NUMBER}." >&2
+            exit 1
+          fi
+
+          if [[ ! -s "${patch_path}" ]]; then
+            echo "No generated Bazel changes for fork PR #${PR_NUMBER}."
+            exit 0
+          fi
+
+          {
+            echo "Generated Bazel changes cannot be committed automatically for fork PR #${PR_NUMBER}."
+            echo "Run: gh run download ${RUN_ID} --repo ${REPOSITORY} --name bazel-files --dir bazel-artifact && git apply bazel-artifact/bazel.patch"
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
+
+          exit 1
       - name: Checkout PR branch
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.stale != 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           repository: ${{ steps.pr.outputs.head_repo }}
           ref: ${{ steps.pr.outputs.head_ref }}
@@ -87,7 +125,7 @@ jobs:
           persist-credentials: false
       - name: Download Bazel Files Artifact
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.stale != 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: bazel-files
           path: bazel-artifact
@@ -101,7 +139,7 @@ jobs:
           set -euo pipefail
 
           patch_path="${PWD}/bazel-artifact/bazel.patch"
-          summary="$(git apply --summary "${patch_path}")"
+          summary="$(git -C pr apply --summary "${patch_path}")"
 
           while IFS= read -r line; do
             case "${line}" in
@@ -126,6 +164,12 @@ jobs:
                 echo "Unexpected patch path: ${path}" >&2
                 exit 1
                 ;;
+              build/BUILD.bazel|build/*/BUILD.bazel)
+                ;;
+              WORKSPACE|WORKSPACE.bazel|build|build/*)
+                echo "Unsafe patch path: ${path}" >&2
+                exit 1
+                ;;
               DEPS.bzl|*.bazel|*.bzl)
                 ;;
               *)
@@ -139,7 +183,7 @@ jobs:
               exit 1
             fi
             seen_paths["${path}"]=1
-          done < <(git apply --numstat -z "${patch_path}")
+          done < <(git -C pr apply --numstat -z "${patch_path}")
 
           git -C pr apply --check --index "${patch_path}"
           git -C pr apply --index "${patch_path}"

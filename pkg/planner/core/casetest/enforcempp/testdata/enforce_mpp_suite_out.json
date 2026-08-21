@@ -1794,6 +1794,61 @@
         "Warn": null
       },
       {
+        "SQL": "explain format = 'plan_tree' with c1 as (select * from t) select sum(a + b) from (select c1.a, c2.b from c1, c1 c2 where c1.a=c2.b) x",
+        "Plan": [
+          "HashAgg root  funcs:sum(Column)->Column",
+          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg mpp[tiflash]  funcs:sum(Column)->Column",
+          "      └─Projection mpp[tiflash]  cast(plus(test.t.a, test.t.b), decimal(20,0) BINARY)->Column",
+          "        └─Sequence mpp[tiflash]  Sequence Node",
+          "          ├─CTE_0 mpp[tiflash]  Non-Recursive CTE Storage",
+          "          │ └─Selection mpp[tiflash]  or(not(isnull(test.t.a)), not(isnull(test.t.b)))",
+          "          │   └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "          └─Projection mpp[tiflash]  test.t.a, test.t.b",
+          "            └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.b)]",
+          "              ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "              │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "              │   └─Selection mpp[tiflash]  not(isnull(test.t.a))",
+          "              │     └─CTEFullScan mpp[tiflash] CTE:c1 data:CTE_0",
+          "              └─Selection(Probe) mpp[tiflash]  not(isnull(test.t.b))",
+          "                └─CTEFullScan mpp[tiflash] CTE:c1 AS c2 data:CTE_0"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' with c1 as (select * from t) select sum(a) from (select c1.a from c1, c1 c2 where c1.a=c2.b union all select c1.a from c1, c1 c2 where c1.b=c2.c) x",
+        "Plan": [
+          "HashAgg root  funcs:sum(Column)->Column",
+          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg mpp[tiflash]  funcs:sum(Column)->Column",
+          "      └─Projection mpp[tiflash]  cast(Column, decimal(10,0) BINARY)->Column",
+          "        └─Sequence mpp[tiflash]  Sequence Node",
+          "          ├─CTE_0 mpp[tiflash]  Non-Recursive CTE Storage",
+          "          │ └─Selection mpp[tiflash]  or(not(isnull(test.t.a)), or(not(isnull(test.t.b)), not(isnull(test.t.c))))",
+          "          │   └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "          └─Union mpp[tiflash]  ",
+          "            ├─Projection mpp[tiflash]  test.t.a->Column",
+          "            │ └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.b)]",
+          "            │   ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "            │   │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "            │   │   └─Selection mpp[tiflash]  not(isnull(test.t.a))",
+          "            │   │     └─CTEFullScan mpp[tiflash] CTE:c1 data:CTE_0",
+          "            │   └─Selection(Probe) mpp[tiflash]  not(isnull(test.t.b))",
+          "            │     └─CTEFullScan mpp[tiflash] CTE:c1 AS c2 data:CTE_0",
+          "            └─Projection mpp[tiflash]  test.t.a->Column",
+          "              └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.c)]",
+          "                ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "                │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "                │   └─Selection mpp[tiflash]  not(isnull(test.t.b))",
+          "                │     └─CTEFullScan mpp[tiflash] CTE:c1 data:CTE_0",
+          "                └─Selection(Probe) mpp[tiflash]  not(isnull(test.t.c))",
+          "                  └─CTEFullScan mpp[tiflash] CTE:c1 AS c2 data:CTE_0"
+        ],
+        "Warn": null
+      },
+      {
         "SQL": "explain format = 'plan_tree' with c1 as (select * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2 where c1.a=c2.b",
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
@@ -1817,6 +1872,37 @@
           "      │     └─CTEFullScan mpp[tiflash] CTE:c2 AS c1 data:CTE_1",
           "      └─Selection(Probe) mpp[tiflash]  not(isnull(test.t.b))",
           "        └─CTEFullScan mpp[tiflash] CTE:c2 data:CTE_1"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' with c1 as (select * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select sum(c1.a + c2.b) from c2 c1, c2 where c1.a=c2.b",
+        "Plan": [
+          "HashAgg root  funcs:sum(Column)->Column",
+          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg mpp[tiflash]  funcs:sum(Column)->Column",
+          "      └─Projection mpp[tiflash]  cast(plus(test.t.a, test.t.b), decimal(20,0) BINARY)->Column",
+          "        └─Sequence mpp[tiflash]  Sequence Node",
+          "          ├─CTE_0 mpp[tiflash]  Non-Recursive CTE Storage",
+          "          │ └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "          ├─CTE_1 mpp[tiflash]  Non-Recursive CTE Storage",
+          "          │ └─Projection mpp[tiflash]  test.t.a, test.t.b, test.t.c",
+          "          │   └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.c)]",
+          "          │     ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "          │     │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "          │     │   └─Selection mpp[tiflash]  not(isnull(test.t.b)), or(not(isnull(test.t.a)), not(isnull(test.t.b)))",
+          "          │     │     └─CTEFullScan mpp[tiflash] CTE:c1 data:CTE_0",
+          "          │     └─Selection(Probe) mpp[tiflash]  not(isnull(test.t.c))",
+          "          │       └─CTEFullScan mpp[tiflash] CTE:c1 AS c2 data:CTE_0",
+          "          └─Projection mpp[tiflash]  test.t.a, test.t.b",
+          "            └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.b)]",
+          "              ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "              │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "              │   └─Selection mpp[tiflash]  not(isnull(test.t.a))",
+          "              │     └─CTEFullScan mpp[tiflash] CTE:c2 AS c1 data:CTE_1",
+          "              └─Selection(Probe) mpp[tiflash]  not(isnull(test.t.b))",
+          "                └─CTEFullScan mpp[tiflash] CTE:c2 data:CTE_1"
         ],
         "Warn": null
       },
@@ -2022,6 +2108,56 @@
         "Warn": [
           "MPP mode may be blocked because you have set a hint to read table `t` from TiKV."
         ]
+      },
+      {
+        "SQL": "explain format = 'plan_tree' with cte1 as (select p_partkey, substring(p_comment, 1, 20) as col0, substring(p_comment, 18, 10) as col1, substring(p_name, p_size % 10, 6) as col2 from part) select t3.col0, t3.col1 from (select t1.p_partkey as col0, t1.col0 as col1 from cte1 t1 join cte1 t2 on t1.col0 = t2.col1) as t3 join (select orders.o_orderkey as col0 from cte1 as t4 join orders on t4.col2 = substring(orders.o_comment, 1, 6)) as t5 on t3.col0 = t5.col0",
+        "Plan": [
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Sequence mpp[tiflash]  Sequence Node",
+          "    ├─CTE_0 mpp[tiflash]  Non-Recursive CTE Storage",
+          "    │ └─Projection mpp[tiflash]  test.part.p_partkey, substring(test.part.p_comment, 1, 20)->Column, substring(test.part.p_comment, 18, 10)->Column, substring(test.part.p_name, mod(test.part.p_size, 10), 6)->Column",
+          "    │   └─TableFullScan mpp[tiflash] table:part keep order:false, stats:pseudo",
+          "    └─Projection mpp[tiflash]  test.part.p_partkey, Column",
+          "      └─HashJoin mpp[tiflash]  inner join, equal:[eq(Column, Column)]",
+          "        ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "        │   └─CTEFullScan mpp[tiflash] CTE:cte1 AS t4 data:CTE_0",
+          "        └─Projection(Probe) mpp[tiflash]  test.part.p_partkey, Column, Column",
+          "          └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.part.p_partkey, test.orders.o_orderkey)]",
+          "            ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "            │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "            │   └─Projection mpp[tiflash]  test.part.p_partkey, Column",
+          "            │     └─HashJoin mpp[tiflash]  inner join, equal:[eq(Column, Column)]",
+          "            │       ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "            │       │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "            │       │   └─Selection mpp[tiflash]  not(isnull(Column)), not(isnull(test.part.p_partkey))",
+          "            │       │     └─CTEFullScan mpp[tiflash] CTE:cte1 AS t1 data:CTE_0",
+          "            │       └─Selection(Probe) mpp[tiflash]  not(isnull(Column))",
+          "            │         └─CTEFullScan mpp[tiflash] CTE:cte1 AS t2 data:CTE_0",
+          "            └─Projection(Probe) mpp[tiflash]  test.orders.o_orderkey, substring(test.orders.o_comment, 1, 6)->Column",
+          "              └─TableFullScan mpp[tiflash] table:orders keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' with cte1 as (select a, row_number() over (partition by b order by c) as rn from t) select a, rn from cte1 union all select a, rn from cte1",
+        "Plan": [
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Sequence mpp[tiflash]  Sequence Node",
+          "    ├─CTE_0 mpp[tiflash]  Non-Recursive CTE Storage",
+          "    │ └─Projection mpp[tiflash]  test.t.a, Column, stream_count: 8",
+          "    │   └─Window mpp[tiflash]  row_number()->Column over(partition by test.t.b order by test.t.c rows between current row and current row), stream_count: 8",
+          "    │     └─Sort mpp[tiflash]  test.t.b, test.t.c, stream_count: 8",
+          "    │       └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
+          "    │         └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary], stream_count: 8",
+          "    │           └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─Union mpp[tiflash]  ",
+          "      ├─CTEFullScan mpp[tiflash] CTE:cte1 data:CTE_0",
+          "      └─CTEFullScan mpp[tiflash] CTE:cte1 data:CTE_0"
+        ],
+        "Warn": null
       }
     ]
   },

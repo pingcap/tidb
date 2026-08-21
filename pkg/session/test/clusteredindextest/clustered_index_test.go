@@ -60,67 +60,62 @@ func TestClusteredWithOldRowFormat(t *testing.T) {
 
 	tk := createTestKit(t, store)
 	tk.Session().GetSessionVars().RowEncoder.Enable = false
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(id varchar(255) primary key, a int, b int, unique index idx(b));")
-	tk.MustExec("insert into t values ('b568004d-afad-11ea-8e4d-d651e3a981b7', 1, -1);")
-	tk.MustQuery("select * from t use index(primary);").Check(testkit.Rows("b568004d-afad-11ea-8e4d-d651e3a981b7 1 -1"))
+	tk.MustExec("create table t_base(id varchar(255) primary key, a int, b int, unique index idx(b));")
+	tk.MustExec("insert into t_base values ('b568004d-afad-11ea-8e4d-d651e3a981b7', 1, -1);")
+	tk.MustQuery("select * from t_base use index(primary);").Check(testkit.Rows("b568004d-afad-11ea-8e4d-d651e3a981b7 1 -1"))
 
 	// Test for issue https://github.com/pingcap/tidb/issues/21568
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (c_int int, c_str varchar(40), c_decimal decimal(12, 6), primary key(c_str));")
+	tk.MustExec("create table t_21568 (c_int int, c_str varchar(40), c_decimal decimal(12, 6), primary key(c_str));")
 	tk.MustExec("begin;")
-	tk.MustExec("insert into t (c_int, c_str) values (13, 'dazzling torvalds'), (3, 'happy rhodes');")
-	tk.MustExec("delete from t where c_decimal <= 3.024 or (c_int, c_str) in ((5, 'happy saha'));")
+	tk.MustExec("insert into t_21568 (c_int, c_str) values (13, 'dazzling torvalds'), (3, 'happy rhodes');")
+	tk.MustExec("delete from t_21568 where c_decimal <= 3.024 or (c_int, c_str) in ((5, 'happy saha'));")
+	tk.MustExec("commit;")
 
 	// Test for issue https://github.com/pingcap/tidb/issues/21502.
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (c_int int, c_double double, c_decimal decimal(12, 6), primary key(c_decimal, c_double), unique key(c_int));")
+	tk.MustExec("create table t_21502 (c_int int, c_double double, c_decimal decimal(12, 6), primary key(c_decimal, c_double), unique key(c_int));")
 	tk.MustExec("begin;")
-	tk.MustExec("insert into t values (5, 55.068712, 8.256);")
-	tk.MustExec("delete from t where c_int = 5;")
+	tk.MustExec("insert into t_21502 values (5, 55.068712, 8.256);")
+	tk.MustExec("delete from t_21502 where c_int = 5;")
+	tk.MustExec("commit;")
 
 	// Test for issue https://github.com/pingcap/tidb/issues/21568#issuecomment-741601887
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (c_int int, c_str varchar(40), c_timestamp timestamp, c_decimal decimal(12, 6), primary key(c_int, c_str), key(c_decimal));")
+	tk.MustExec("create table t_21568_comment (c_int int, c_str varchar(40), c_timestamp timestamp, c_decimal decimal(12, 6), primary key(c_int, c_str), key(c_decimal));")
 	tk.MustExec("begin;")
-	tk.MustExec("insert into t values (11, 'abc', null, null);")
-	tk.MustExec("update t set c_str = upper(c_str) where c_decimal is null;")
-	tk.MustQuery("select * from t where c_decimal is null;").Check(testkit.Rows("11 ABC <nil> <nil>"))
+	tk.MustExec("insert into t_21568_comment values (11, 'abc', null, null);")
+	tk.MustExec("update t_21568_comment set c_str = upper(c_str) where c_decimal is null;")
+	tk.MustQuery("select * from t_21568_comment where c_decimal is null;").Check(testkit.Rows("11 ABC <nil> <nil>"))
+	tk.MustExec("commit;")
 
 	// Test for issue https://github.com/pingcap/tidb/issues/22193
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (col_0 blob(20), col_1 int, primary key(col_0(1)), unique key idx(col_0(2)));")
-	tk.MustExec("insert into t values('aaa', 1);")
+	tk.MustExec("create table t_22193 (col_0 blob(20), col_1 int, primary key(col_0(1)), unique key idx(col_0(2)));")
+	tk.MustExec("insert into t_22193 values('aaa', 1);")
 	tk.MustExec("begin;")
-	tk.MustExec("update t set col_0 = 'ccc';")
-	tk.MustExec("update t set col_0 = 'ddd';")
+	tk.MustExec("update t_22193 set col_0 = 'ccc';")
+	tk.MustExec("update t_22193 set col_0 = 'ddd';")
 	tk.MustExec("commit;")
-	tk.MustQuery("select cast(col_0 as char(20)) from t use index (`primary`);").Check(testkit.Rows("ddd"))
-	tk.MustQuery("select cast(col_0 as char(20)) from t use index (idx);").Check(testkit.Rows("ddd"))
-	tk.MustExec("admin check table t")
+	tk.MustQuery("select cast(col_0 as char(20)) from t_22193 use index (`primary`);").Check(testkit.Rows("ddd"))
+	tk.MustQuery("select cast(col_0 as char(20)) from t_22193 use index (idx);").Check(testkit.Rows("ddd"))
+	tk.MustExec("admin check table t_22193")
 
 	// Test for issue https://github.com/pingcap/tidb/issues/23646
-	tk.MustExec("drop table if exists txx")
-	tk.MustExec("create table txx(c1 varchar(100), c2 set('dav', 'aaa'), c3 varchar(100), primary key(c1(2), c2) clustered, unique key uk1(c2), index idx1(c2, c1, c3))")
-	tk.MustExec("insert into txx select 'AarTrNoAL', 'dav', '1'")
-	tk.MustExec("update txx set c3 = '10', c1 = 'BxTXbyKRFBGbcPmPR' where c2 in ('dav', 'dav')")
-	tk.MustExec("admin check table txx")
+	tk.MustExec("create table t_23646(c1 varchar(100), c2 set('dav', 'aaa'), c3 varchar(100), primary key(c1(2), c2) clustered, unique key uk1(c2), index idx1(c2, c1, c3))")
+	tk.MustExec("insert into t_23646 select 'AarTrNoAL', 'dav', '1'")
+	tk.MustExec("update t_23646 set c3 = '10', c1 = 'BxTXbyKRFBGbcPmPR' where c2 in ('dav', 'dav')")
+	tk.MustExec("admin check table t_23646")
 
 	// TestClusteredIndexNewCollationWithOldRowFormat
 	// This case maybe not useful, because newCollation isn't convenience to run on TiKV(it's required serialSuit)
 	// but unistore doesn't support old row format.
-	tk.MustExec("drop table if exists t2")
-	tk.MustExec("create table t2(col_1 varchar(132) CHARACTER SET utf8 COLLATE utf8_unicode_ci, primary key(col_1) clustered)")
-	tk.MustExec("insert into t2 select 'aBc'")
-	tk.MustQuery("select col_1 from t2 where col_1 = 'aBc'").Check(testkit.Rows("aBc"))
+	tk.MustExec("create table t_collation(col_1 varchar(132) CHARACTER SET utf8 COLLATE utf8_unicode_ci, primary key(col_1) clustered)")
+	tk.MustExec("insert into t_collation select 'aBc'")
+	tk.MustQuery("select col_1 from t_collation where col_1 = 'aBc'").Check(testkit.Rows("aBc"))
 
 	// TestClusteredUnionScan with old row format.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE t (a int,b int,c int, PRIMARY KEY (a,b))")
-	tk.MustExec("insert t (a, b) values (1, 1)")
+	tk.MustExec("CREATE TABLE t_union_scan (a int,b int,c int, PRIMARY KEY (a,b))")
+	tk.MustExec("insert t_union_scan (a, b) values (1, 1)")
 	tk.MustExec("begin")
-	tk.MustExec("update t set c = 1")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
+	tk.MustExec("update t_union_scan set c = 1")
+	tk.MustQuery("select * from t_union_scan").Check(testkit.Rows("1 1 1"))
 	tk.MustExec("rollback")
 }
 

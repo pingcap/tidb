@@ -43,6 +43,8 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -137,7 +139,7 @@ func checkDropColumnForStatePublic(colInfo *model.ColumnInfo) (err error) {
 	return nil
 }
 
-func onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+func (w *worker) onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	tblInfo, colInfo, idxInfos, ifExists, err := checkDropColumn(jobCtx, job)
 	if err != nil {
 		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {
@@ -211,6 +213,13 @@ func onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != colInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
+		}
+
+		// Clean up masking policies associated with the dropped column.
+		if !job.IsRollingback() {
+			if err := w.dropMaskingPoliciesOnColumn(jobCtx, tblInfo.ID, colInfo.ID); err != nil {
+				return ver, errors.Wrapf(err, "failed to drop masking policies on column %d of table %d", colInfo.ID, tblInfo.ID)
+			}
 		}
 
 		// Finish this job.
@@ -803,7 +812,8 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	if w.checksumNeeded {
 		checksum = rowcodec.RawChecksum{Handle: handle}
 	}
-	newRowVal, err := tablecodec.EncodeRow(sysTZ, newRow, newColumnIDs, nil, nil, checksum, rd)
+	enc := codec.NewEncoder(collate.NewCollationEnabled())
+	newRowVal, err := tablecodec.EncodeRow(enc, sysTZ, newRow, newColumnIDs, nil, nil, checksum, rd)
 	err = ec.HandleError(err)
 	if err != nil {
 		return errors.Trace(err)

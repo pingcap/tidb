@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -178,6 +179,17 @@ func updateTableMeta(t *testing.T, store kv.Storage, dbID int64, tableInfo *mode
 	require.NoError(t, err)
 }
 
+func setUpMockTiFlash(t *testing.T) *infosync.MockTiFlash {
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	t.Cleanup(func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	})
+	return tiflash
+}
+
 func TestInfoSchemaForTiFlashReplica(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
@@ -186,6 +198,8 @@ func TestInfoSchemaForTiFlashReplica(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tiflash := setUpMockTiFlash(t)
+	tiflash.NotAvailable = true
 	rpcserver, _ := setUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
 	defer rpcserver.Stop()
 	tk.MustExec("use test")
@@ -211,6 +225,7 @@ func TestSetTiFlashReplicaForTemporaryTable(t *testing.T) {
 
 	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
 	tk := testkit.NewTestKit(t, store)
+	setUpMockTiFlash(t)
 	rpcserver, _ := setUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
 	defer rpcserver.Stop()
 	tk.MustExec("use test")

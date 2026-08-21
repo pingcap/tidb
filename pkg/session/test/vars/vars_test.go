@@ -22,6 +22,9 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	tikv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -243,6 +246,42 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	require.Equal(t, defaultValue, v)
 }
 
+func TestTTLJobEnableExternalWorkloadUpdateOnlyOnSetGlobal(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	originalEnable := vardef.EnableTTLJob.Load()
+	originalHook := variable.UpdateExternalWorkloadTTLJobEnable
+	t.Cleanup(func() {
+		vardef.EnableTTLJob.Store(originalEnable)
+		variable.UpdateExternalWorkloadTTLJobEnable = originalHook
+	})
+
+	updateCount := 0
+	variable.UpdateExternalWorkloadTTLJobEnable = func(context.Context, bool) error {
+		updateCount++
+		return nil
+	}
+
+	tk.MustExec("SET GLOBAL tidb_ttl_job_enable = OFF")
+	require.Equal(t, 1, updateCount)
+	require.False(t, vardef.EnableTTLJob.Load())
+
+	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache(true)
+	require.Equal(t, 1, updateCount)
+	require.False(t, vardef.EnableTTLJob.Load())
+
+	boom := fmt.Errorf("boom")
+	variable.UpdateExternalWorkloadTTLJobEnable = func(context.Context, bool) error {
+		updateCount++
+		return boom
+	}
+	_, err := tk.Exec("SET GLOBAL tidb_ttl_job_enable = ON")
+	require.ErrorContains(t, err, "boom")
+	require.Equal(t, 2, updateCount)
+	require.False(t, vardef.EnableTTLJob.Load())
+}
+
 func TestTimeZone(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -267,14 +306,23 @@ func TestTimeZone(t *testing.T) {
 }
 
 func TestGlobalVarAccessor(t *testing.T) {
+	originalMode := deploymode.Get()
+	if kerneltype.IsNextGen() {
+		require.NoError(t, deploymode.Set(deploymode.Premium))
+		t.Cleanup(func() {
+			require.NoError(t, deploymode.Set(originalMode))
+		})
+	}
+
 	varName := "max_allowed_packet"
-	varValue := strconv.FormatUint(vardef.DefMaxAllowedPacket, 10) // This is the default value for max_allowed_packet
+	varValue := strconv.FormatUint(config.GetMaxAllowedPacket(), 10) // This is the default value for max_allowed_packet
 
 	// The value of max_allowed_packet should be a multiple of 1024,
 	// so the setting of varValue1 and varValue2 would be truncated to varValue0
 	varValue0 := "4194304"
 	varValue1 := "4194305"
 	varValue2 := "4194306"
+	configuredMaxAllowedPacket := uint64(8 << 20)
 
 	store := testkit.CreateMockStore(t)
 
@@ -314,6 +362,55 @@ func TestGlobalVarAccessor(t *testing.T) {
 	v, err = se.GetGlobalSysVar(varName)
 	require.NoError(t, err)
 	require.Equal(t, varValue0, v)
+
+	t.Run("non-starter ignores max_allowed_packet from config", func(t *testing.T) {
+		originalMaxAllowedPacket := config.GetGlobalConfig().MaxAllowedPacket
+		t.Cleanup(func() {
+			config.UpdateGlobal(func(c *config.Config) {
+				c.MaxAllowedPacket = originalMaxAllowedPacket
+			})
+		})
+		config.UpdateGlobal(func(c *config.Config) {
+			c.MaxAllowedPacket = configuredMaxAllowedPacket
+		})
+		nonStarterStore := testkit.CreateMockStore(t)
+		nonStarterTk := testkit.NewTestKit(t, nonStarterStore)
+		nonStarterTk.MustExec("use test")
+		nonStarterSe := nonStarterTk.Session().(variable.GlobalVarAccessor)
+		v, err := nonStarterSe.GetGlobalSysVar(varName)
+		require.NoError(t, err)
+		require.Equal(t, strconv.FormatUint(vardef.DefMaxAllowedPacket, 10), v)
+		nonStarterTk.MustExec("set @@global.max_allowed_packet = 4194304")
+		nonStarterTk.MustQuery("select @@global.max_allowed_packet").Check(testkit.Rows("4194304"))
+	})
+
+	t.Run("starter uses max_allowed_packet from config", func(t *testing.T) {
+		if kerneltype.IsClassic() {
+			t.Skip("starter deploy mode is only available in nextgen")
+		}
+		originalMaxAllowedPacket := config.GetGlobalConfig().MaxAllowedPacket
+		t.Cleanup(func() {
+			config.UpdateGlobal(func(c *config.Config) {
+				c.MaxAllowedPacket = originalMaxAllowedPacket
+			})
+			require.NoError(t, deploymode.Set(deploymode.Premium))
+		})
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		config.UpdateGlobal(func(c *config.Config) {
+			c.MaxAllowedPacket = configuredMaxAllowedPacket
+		})
+		starterStore := testkit.CreateMockStore(t)
+		starterTk := testkit.NewTestKit(t, starterStore)
+		starterTk.MustExec("use test")
+		starterSe := starterTk.Session().(variable.GlobalVarAccessor)
+		v, err := starterSe.GetGlobalSysVar(varName)
+		require.NoError(t, err)
+		require.Equal(t, strconv.FormatUint(configuredMaxAllowedPacket, 10), v)
+		starterTk.MustContainErrMsg(
+			"set @@global.max_allowed_packet = 4194304",
+			"SET GLOBAL max_allowed_packet is not supported in starter deployment mode",
+		)
+	})
 
 	// For issue 10955, make sure the new session load `max_execution_time` into sessionVars.
 	tk1.MustExec("set @@global.max_execution_time = 100")

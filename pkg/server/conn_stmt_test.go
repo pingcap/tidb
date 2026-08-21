@@ -21,7 +21,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
@@ -29,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
@@ -36,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -118,6 +122,21 @@ func (*singleRowCursorRecordSet) Close() error { return nil }
 
 var _ sqlexec.RecordSet = &singleRowCursorRecordSet{}
 
+type failedWriteResponseWriter struct {
+	delay       time.Duration
+	failOnWrite int
+	writes      int
+}
+
+func (w *failedWriteResponseWriter) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writes == w.failOnWrite {
+		time.Sleep(w.delay)
+		return 0, mysql.ErrBadConn
+	}
+	return len(p), nil
+}
+
 func TestCursorExistsFlag(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := CreateMockServer(t, store)
@@ -185,6 +204,29 @@ func TestCursorExistsFlag(t *testing.T) {
 
 	// the following FETCH should fail, as the cursor has been automatically closed
 	require.Error(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
+}
+
+func TestResultSetWriteSQLRespDurationIncludesFailedRowWrite(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	c := CreateMockConn(t, srv).(*mockConn)
+	c.capability &^= mysql.ClientDeprecateEOF
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values (1)")
+
+	const delay = 50 * time.Millisecond
+	c.pkt.SetBufWriter(bufio.NewWriterSize(&failedWriteResponseWriter{
+		delay:       delay,
+		failOnWrite: 4,
+	}, 1))
+	require.Error(t, c.Dispatch(context.Background(), append([]byte{mysql.ComQuery}, "select * from t"...)))
+
+	require.GreaterOrEqual(t, c.Context().GetSessionVars().CacheStmtExecInfo.WriteSQLRespDuration, delay)
 }
 
 func TestCursorWithParams(t *testing.T) {
@@ -575,6 +617,93 @@ func dispatchSendLongData(c *mockConn, stmtID int, paramIndex uint16, parameter 
 			parameter..., // the parameter
 		),
 	)
+}
+
+func TestStmtSendLongDataMaxAllowedPacket(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	c := CreateMockConn(t, srv).(*mockConn)
+	c.capability = mysql.ClientProtocol41
+
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+
+	stmt, _, _, err := c.Context().Prepare("select ?, ?")
+	require.NoError(t, err)
+
+	c.Context().GetSessionVars().MaxAllowedPacket = 1024
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, bytes.Repeat([]byte{'a'}, 1024)))
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 1, bytes.Repeat([]byte{'b'}, 1024)))
+	require.NoError(t, stmt.CheckLongDataSize())
+
+	err = dispatchSendLongData(c, stmt.ID(), 0, []byte{'c'})
+	require.NoError(t, err)
+	require.Len(t, stmt.BoundParams()[0], 1024)
+	require.Len(t, stmt.BoundParams()[1], 1024)
+
+	err = c.Dispatch(context.Background(), append(
+		binary.LittleEndian.AppendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		0x0, 0x1, 0x0, 0x0, 0x0,
+		0x0, 0x0,
+	))
+	require.ErrorIs(t, err, servererr.ErrNetPacketTooLarge)
+	require.Nil(t, stmt.BoundParams()[0])
+	require.Nil(t, stmt.BoundParams()[1])
+	require.NoError(t, stmt.CheckLongDataSize())
+}
+
+func TestStmtSendLongDataMemQuotaQuery(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	c := CreateMockConn(t, srv).(*mockConn)
+	c.capability = mysql.ClientProtocol41
+
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+
+	stmt, _, _, err := c.Context().Prepare("select ?")
+	require.NoError(t, err)
+
+	vars := c.Context().GetSessionVars()
+	vars.MaxAllowedPacket = 64 << 20
+	require.NoError(t, vars.SetSystemVar("tidb_mem_quota_query", "1024"))
+	require.Equal(t, int64(1024), vars.MemQuotaQuery)
+	require.Equal(t, int64(1024), vars.MemTracker.GetBytesLimit())
+
+	base := vars.MemTracker.BytesConsumed()
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, bytes.Repeat([]byte{'a'}, 600)))
+	require.Equal(t, base+600, vars.MemTracker.BytesConsumed())
+	require.Equal(t, int64(1024), vars.MemTracker.GetBytesLimit())
+	require.NoError(t, stmt.CheckLongDataSize())
+
+	// Further long-data that would reach/exceed tidb_mem_quota_query is refused.
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, bytes.Repeat([]byte{'b'}, 500)))
+	require.Equal(t, int64(1024), vars.MemTracker.GetBytesLimit())
+	require.Len(t, stmt.BoundParams()[0], 600)
+	require.Equal(t, base+600, vars.MemTracker.BytesConsumed())
+
+	err = c.Dispatch(context.Background(), append(
+		binary.LittleEndian.AppendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		0x0, 0x1, 0x0, 0x0, 0x0,
+		0x0, 0x0,
+	))
+	require.Error(t, err)
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err) ||
+		exeerrors.ErrMemoryExceedForQuery.Equal(errors.Cause(err)))
+	require.Equal(t, base, vars.MemTracker.BytesConsumed())
+
+	// After release, the session can accept long-data again within the quota.
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, bytes.Repeat([]byte{'c'}, 1023)))
+	require.Len(t, stmt.BoundParams()[0], 1023)
+	require.Equal(t, base+1023, vars.MemTracker.BytesConsumed())
+	require.NoError(t, stmt.Close())
+	require.Equal(t, base, vars.MemTracker.BytesConsumed())
 }
 
 func TestCursorFetchSendLongData(t *testing.T) {

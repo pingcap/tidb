@@ -772,7 +772,7 @@ func getPlanCostVer24PhysicalMergeJoin(pp base.PhysicalPlan, taskType property.T
 // getPlanCostVer24PhysicalHashJoin returns the plan-cost of this sub-plan, which is:
 // plan-cost = build-child-cost + probe-child-cost +
 // build-hash-cost + build-filter-cost +
-// (probe-filter-cost + probe-hash-cost) / concurrency
+// (probe-filter-cost + probe-hash-cost + scan-build-unmatched-cost) / concurrency
 func getPlanCostVer24PhysicalHashJoin(pp base.PhysicalPlan, taskType property.TaskType, option *costusage.PlanCostOption) (costusage.CostVer2, error) {
 	p := pp.(*physicalop.PhysicalHashJoin)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
@@ -799,6 +799,13 @@ func getPlanCostVer24PhysicalHashJoin(pp base.PhysicalPlan, taskType property.Ta
 
 	probeFilterCost := filterCostVer2(option, probeRows, probeFilters, cpuFactor)
 	probeHashCost := hashProbeCostVer2(option, probeRows, float64(len(probeKeys)), cpuFactor)
+	scanBuildSideCost := costusage.NewZeroCostVer2(costusage.TraceCost(option))
+	if p.JoinType == base.FullOuterJoin {
+		// Probe tail still needs to scan build-side rows to emit unmatched rows.
+		scanBuildSideCost = costusage.NewCostVer2(option, cpuFactor,
+			buildRows*cpuFactor.Value,
+			func() string { return fmt.Sprintf("scanBuildUnmatched(%v*%v)", buildRows, cpuFactor) })
+	}
 
 	buildChildCost, err := build.GetPlanCostVer2(taskType, option)
 	if err != nil {
@@ -811,13 +818,13 @@ func getPlanCostVer24PhysicalHashJoin(pp base.PhysicalPlan, taskType property.Ta
 
 	if taskType == property.MppTaskType { // BCast or Shuffle Join, use mppConcurrency
 		p.PlanCostVer2 = costusage.SumCostVer2(buildChildCost, probeChildCost,
-			costusage.DivCostVer2(costusage.SumCostVer2(buildHashCost, buildFilterCost, probeHashCost, probeFilterCost), mppConcurrency))
+			costusage.DivCostVer2(costusage.SumCostVer2(buildHashCost, buildFilterCost, probeHashCost, probeFilterCost, scanBuildSideCost), mppConcurrency))
 	} else { // TiDB HashJoin
 		startCost := costusage.NewCostVer2(option, cpuFactor,
 			10*3*cpuFactor.Value, // 10rows * 3func * cpuFactor
 			func() string { return fmt.Sprintf("cpu(10*3*%v)", cpuFactor) })
 		p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, probeChildCost, buildHashCost, buildFilterCost,
-			costusage.DivCostVer2(costusage.SumCostVer2(probeFilterCost, probeHashCost), tidbConcurrency))
+			costusage.DivCostVer2(costusage.SumCostVer2(probeFilterCost, probeHashCost, scanBuildSideCost), tidbConcurrency))
 	}
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
@@ -907,7 +914,8 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	numRanges := getNumberOfRanges(probe)
 	seekingCost := indexJoinSeekingCostVer2(option, buildRows, float64(numRanges), scanFactor)
 
-	p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, seekingCost, costusage.DivCostVer2(costusage.SumCostVer2(doubleReadCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
+	p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, seekingCost,
+		costusage.DivCostVer2(costusage.SumCostVer2(doubleReadCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexJoinCostFactor)
@@ -987,6 +995,11 @@ func getPlanCostVer24PhysicalUnionAll(pp base.PhysicalPlan, taskType property.Ta
 		childCosts = append(childCosts, childCost)
 	}
 	p.PlanCostVer2 = costusage.DivCostVer2(costusage.SumCostVer2(childCosts...), concurrency)
+	if p.Mpp && p.SCtx().GetSessionVars().IsMPPEnforced() &&
+		!hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) { // show the real cost in explain-statements
+		// Keep enforced MPP UnionAll comparable through cost instead of bypassing the normal plan comparison path.
+		p.PlanCostVer2 = costusage.DivCostVer2(p.PlanCostVer2, 1000000000)
+	}
 	p.PlanCostInit = true
 	return p.PlanCostVer2, nil
 }

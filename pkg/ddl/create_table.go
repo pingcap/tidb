@@ -249,6 +249,10 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		return ver, errors.Trace(err)
 	}
 
+	if err := w.registerTTLTableToExternalWorkload(jobCtx.ctx, tbInfo); err != nil {
+		return ver, cancelJobOnExternalTTLWorkloadError(job, err)
+	}
+
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	return ver, errors.Trace(err)
@@ -292,6 +296,9 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 		err = asyncNotifyEvent(jobCtx, createTableEvent, job, noSubJob, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
+		}
+		if err := w.registerTTLTableToExternalWorkload(jobCtx.ctx, tbInfo); err != nil {
+			return ver, cancelJobOnExternalTTLWorkloadError(job, err)
 		}
 
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
@@ -352,11 +359,39 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			return ver, errors.Trace(err)
 		}
 	}
+	if err = w.registerTTLTablesToExternalWorkload(jobCtx.ctx, job, tableInfos); err != nil {
+		return ver, err
+	}
 
 	job.State = model.JobStateDone
 	job.SchemaState = model.StatePublic
 	job.BinlogInfo.SetTableInfos(ver, tableInfos)
 	return ver, errors.Trace(err)
+}
+
+func (w *worker) registerTTLTablesToExternalWorkload(
+	ctx context.Context,
+	job *model.Job,
+	tableInfos []*model.TableInfo,
+) error {
+	registeredTTLTableIDs := make([]int64, 0, len(tableInfos))
+	for i := range tableInfos {
+		if err := w.registerTTLTableToExternalWorkload(ctx, tableInfos[i]); err != nil {
+			for j := len(registeredTTLTableIDs) - 1; j >= 0; j-- {
+				compensateTableID := registeredTTLTableIDs[j]
+				if compensateErr := w.deleteTTLTableFromExternalWorkload(ctx, compensateTableID); compensateErr != nil {
+					logutil.DDLLogger().Warn("failed to roll back TTL table registration in external workload controller",
+						zap.Int64("tableID", compensateTableID),
+						zap.Error(compensateErr))
+				}
+			}
+			return cancelJobOnExternalTTLWorkloadError(job, err)
+		}
+		if tableInfos[i] != nil && tableInfos[i].TTLInfo != nil && tableInfos[i].TTLInfo.Enable {
+			registeredTTLTableIDs = append(registeredTTLTableIDs, tableInfos[i].ID)
+		}
+	}
+	return nil
 }
 
 func createTableOrViewWithCheck(t *meta.Mutator, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
@@ -523,6 +558,9 @@ func checkTableInfoValidWithStmt(ctx *metabuild.Context, tbInfo *model.TableInfo
 		if err := checkPartitionDefinitionConstraints(ctx.GetExprCtx(), tbInfo); err != nil {
 			return errors.Trace(err)
 		}
+		if err := rebuildStorageClassForPartitions(tbInfo, tbInfo.Partition.Definitions); err != nil {
+			return errors.Trace(err)
+		}
 		if s.Partition != nil {
 			if err := checkPartitionFuncType(ctx.GetExprCtx(), s.Partition.Expr, s.Table.Schema.O, tbInfo); err != nil {
 				return errors.Trace(err)
@@ -553,6 +591,9 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 		for _, option := range colDef.Options {
 			if option.Tp == ast.ColumnOptionGenerated {
 				if err := checkIllegalFn4Generated(colDef.Name.Name.L, typeColumn, option.Expr); err != nil {
+					return errors.Trace(err)
+				}
+				if err := checkEmbedTextGeneratedColumn(colDef.Name.Name.L, option.Expr, option.Stored); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -595,6 +636,25 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 			return errors.Trace(err)
 		}
 	}
+
+	embedTextCols := make(map[string]struct{})
+	for _, colDef := range colDefs {
+		for _, option := range colDef.Options {
+			if option.Tp == ast.ColumnOptionGenerated && expression.IsEmbedTextFuncCall(option.Expr) {
+				embedTextCols[colDef.Name.Name.L] = struct{}{}
+			}
+		}
+	}
+	for colName, colInfo := range colName2Generation {
+		if !colInfo.generated {
+			continue
+		}
+		for depCol := range colInfo.dependences {
+			if _, ok := embedTextCols[depCol]; ok {
+				return embedTextDependencyErr(colName, depCol)
+			}
+		}
+	}
 	return nil
 }
 
@@ -617,12 +677,14 @@ func checkColumnarIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, 
 	}
 
 	if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
-		replicas, err := infoschema.GetTiFlashStoreCount(store)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if replicas == 0 {
-			return errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
+		if config.GetGlobalConfig().CSE.IsTiFlashEnabled() {
+			replicas, err := infoschema.GetTiFlashStoreCount(store)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if replicas == 0 {
+				return errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
+			}
 		}
 
 		// Always try to set to 1 as the default replica count.
@@ -945,6 +1007,11 @@ func extractAutoRandomBitsFromColDef(colDef *ast.ColumnDef) (shardBits, rangeBit
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
 	var ttlOptionsHandled bool
 
+	engineAttribute, hasEngineAttribute, engineAttributeErr := GetEngineAttributeFromStorageClassTableOptions(options)
+	if engineAttributeErr != nil {
+		return engineAttributeErr
+	}
+
 	for _, op := range options {
 		switch op.Tp {
 		case ast.TableOptionAutoIncrement:
@@ -1006,8 +1073,12 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 				return errors.Trace(dbterror.ErrInvalidTableAffinity.GenWithStackByArgs(fmt.Sprintf("'%s'", op.StrValue)))
 			}
 			tbInfo.Affinity = affinity
-		case ast.TableOptionEngineAttribute:
-			return errors.Trace(dbterror.ErrUnsupportedEngineAttribute)
+		case ast.TableOptionEngineAttribute, ast.TableOptionStorageClass:
+		}
+	}
+	if hasEngineAttribute {
+		if err := handleEngineAttributeForCreateTable(engineAttribute, tbInfo); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	shardingBits := shardingBits(tbInfo)
@@ -1692,7 +1763,7 @@ func addIndexForForeignKey(ctx *metabuild.Context, tbInfo *model.TableInfo) erro
 		if handleCol != nil && len(fk.Cols) == 1 && handleCol.Name.L == fk.Cols[0].L {
 			continue
 		}
-		if model.FindIndexByColumns(tbInfo, tbInfo.Indices, fk.Cols...) != nil {
+		if model.FindIndexByColumnsForForeignKey(tbInfo, tbInfo.Indices, fk.Cols...) != nil {
 			continue
 		}
 		idxName := fk.Name

@@ -1,0 +1,1 @@
+CREATE TABLE v2(id INT);

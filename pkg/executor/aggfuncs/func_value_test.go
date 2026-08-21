@@ -34,12 +34,12 @@ func getEvaluatedMemDelta(row *chunk.Row, dataType *types.FieldType) (memDelta i
 	return
 }
 
-func lastValueEvaluateRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+func lastValueEvaluateRowUpdateMemDeltaGens(param updateMemDeltaGensParams) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	lastMemDelta := int64(0)
-	for range srcChk.NumRows() {
-		row := srcChk.GetRow(0)
-		curMemDelta := getEvaluatedMemDelta(&row, dataType)
+	for range param.srcChk.NumRows() {
+		row := param.srcChk.GetRow(0)
+		curMemDelta := getEvaluatedMemDelta(&row, param.keyType)
 		memDeltas = append(memDeltas, curMemDelta-lastMemDelta)
 		lastMemDelta = curMemDelta
 	}
@@ -47,14 +47,14 @@ func lastValueEvaluateRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types
 }
 
 func nthValueEvaluateRowUpdateMemDeltaGens(nth int) updateMemDeltaGens {
-	return func(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	return func(param updateMemDeltaGensParams) (memDeltas []int64, err error) {
 		memDeltas = make([]int64, 0)
-		for range srcChk.NumRows() {
+		for range param.srcChk.NumRows() {
 			memDeltas = append(memDeltas, int64(0))
 		}
-		if nth < srcChk.NumRows() {
-			row := srcChk.GetRow(nth - 1)
-			memDeltas[nth-1] = getEvaluatedMemDelta(&row, dataType)
+		if nth < param.srcChk.NumRows() {
+			row := param.srcChk.GetRow(nth - 1)
+			memDeltas[nth-1] = getEvaluatedMemDelta(&row, param.keyType)
 		}
 		return memDeltas, nil
 	}

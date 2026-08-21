@@ -136,7 +136,6 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 	}
 	// Register the RU runtime stats to the runtime stats collection after the analyze executor has been executed.
 	if e.explain.Analyze && e.analyzeExec != nil && e.executed {
-		recordInsertRows2Metrics(e.Ctx().GetSessionVars())
 		ruDetailsRaw := ctx.Value(clientutil.RUDetailsCtxKey)
 		if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil {
 			var ruDetails *clientutil.RUDetails

@@ -1691,6 +1691,9 @@ func opposite(op string) string {
 		return ast.GE
 	case ast.GE:
 		return ast.LE
+	case ast.NullEQ:
+		// Null-safe equality is symmetric, so flipping operands keeps the same operator.
+		return ast.NullEQ
 	}
 	panic("invalid input parameter" + op)
 }

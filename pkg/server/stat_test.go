@@ -133,7 +133,7 @@ func TestInitStatsSessionBlockGCCanBeCanceled(t *testing.T) {
 		cancel()
 	}()
 	require.ErrorIs(t, h.InitStats(ctx, dom.InfoSchema()), context.Canceled)
-	require.ErrorIs(t, h.InitStatsLite(ctx), context.Canceled)
+	require.ErrorIs(t, h.InitStatsLite(ctx, dom.InfoSchema()), context.Canceled)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/syssession/ForceBlockGCInTest"))
 	dom.Close()
 	require.NoError(t, store.Close())
