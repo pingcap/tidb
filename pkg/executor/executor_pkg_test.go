@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -205,7 +206,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 
 	keyOff2IdxOff := []int{1, 3}
 	ctx := mock.NewContext()
-	kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, nil, nil)
+	kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, nil, nil, distsql.NoIntHandleSuffix)
 	require.NoError(t, err)
 	// Check the kvRanges is in order.
 	for i, kvRange := range kvRanges {
@@ -235,7 +236,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 		keyOff2IdxOff := []int{1, 3}
 		ctx := mock.NewContext()
 		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
-		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil, distsql.NoIntHandleSuffix)
 		require.NoError(t, err)
 		// Check the kvRanges is in order.
 		for i, kvRange := range kvRanges {
@@ -257,7 +258,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 		keyOff2IdxOff := []int{1, 3}
 		ctx := mock.NewContext()
 		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
-		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil, distsql.NoIntHandleSuffix)
 		require.NoError(t, err)
 		// Check the kvRanges is in order.
 		for i, kvRange := range kvRanges {
@@ -291,6 +292,29 @@ func TestIndexReaderPartitionRangesUseMemoryTracker(t *testing.T) {
 	require.NoError(t, e.Open(context.Background()))
 	require.Greater(t, rangeMemTracker.BytesConsumed(), int64(0))
 	require.Nil(t, e.memTracker)
+}
+
+// TestIndexReaderPartitionRangesFallBackToExecutorMemoryTracker covers an index reader with
+// no dedicated range tracker: the range construction then charges the executor's own
+// tracker, the same fallback IndexLookUpExecutor.buildTableKeyRanges uses.
+func TestIndexReaderPartitionRangesFallBackToExecutorMemoryTracker(t *testing.T) {
+	sctx := mock.NewContext()
+	partition0 := tables.MockTableFromMeta(&model.TableInfo{ID: 101})
+	partition1 := tables.MockTableFromMeta(&model.TableInfo{ID: 102})
+	executorMemTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+	e := &IndexReaderExecutor{
+		indexReaderExecutorContext: newIndexReaderExecutorContext(sctx),
+		BaseExecutorV2:             exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 0),
+		index:                      &model.IndexInfo{ID: 1},
+		partitions:                 []table.PhysicalTable{partition0.(table.PhysicalTable), partition1.(table.PhysicalTable)},
+		ranges:                     []*ranger.Range{generateIndexRange(1, 1)},
+		memTracker:                 executorMemTracker,
+		dummy:                      true,
+	}
+
+	require.NoError(t, e.Open(context.Background()))
+	require.Nil(t, e.rangeMemTracker)
+	require.Greater(t, executorMemTracker.BytesConsumed(), int64(0))
 }
 
 func TestIndexLookUpPartitionRangesUseMemoryTracker(t *testing.T) {

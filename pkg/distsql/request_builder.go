@@ -15,8 +15,10 @@
 package distsql
 
 import (
+	"bytes"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -134,19 +136,19 @@ func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.R
 }
 
 // SetIndexRanges sets "KeyRanges" for "kv.Request" by converting index range
-// "ranges" to "KeyRanges" firstly.
-func (builder *RequestBuilder) SetIndexRanges(dctx *distsqlctx.DistSQLContext, tid, idxID int64, ranges []*ranger.Range) *RequestBuilder {
+// "ranges" to "KeyRanges" firstly. See IndexRangesToKVRanges for handleDim.
+func (builder *RequestBuilder) SetIndexRanges(dctx *distsqlctx.DistSQLContext, tid, idxID int64, ranges []*ranger.Range, handleDim int) *RequestBuilder {
 	if builder.err == nil {
-		builder.Request.KeyRanges, builder.err = IndexRangesToKVRanges(dctx, tid, idxID, ranges)
+		builder.Request.KeyRanges, builder.err = IndexRangesToKVRanges(dctx, tid, idxID, ranges, handleDim)
 	}
 	return builder
 }
 
 // SetIndexRangesForTables sets "KeyRanges" for "kv.Request" by converting multiple indexes range
 // "ranges" to "KeyRanges" firstly.
-func (builder *RequestBuilder) SetIndexRangesForTables(dctx *distsqlctx.DistSQLContext, tids []int64, idxID int64, ranges []*ranger.Range) *RequestBuilder {
+func (builder *RequestBuilder) SetIndexRangesForTables(dctx *distsqlctx.DistSQLContext, tids []int64, idxID int64, ranges []*ranger.Range, handleDim int) *RequestBuilder {
 	if builder.err == nil {
-		builder.Request.KeyRanges, builder.err = IndexRangesToKVRangesForTables(dctx, tids, idxID, ranges)
+		builder.Request.KeyRanges, builder.err = IndexRangesToKVRangesForTables(dctx, tids, idxID, ranges, handleDim)
 	}
 	return builder
 }
@@ -623,6 +625,162 @@ func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc
 	return signedRanges, unsignedRanges
 }
 
+// NoIntHandleSuffix marks index ranges whose dimensions cover only the declared index
+// columns, so no dimension needs the physical integer-handle encoding.
+const NoIntHandleSuffix = -1
+
+// UnsignedIntHandleSuffixDim returns the index-range dimension that carries the unsigned
+// integer handle TiKV appends to the key of a non-unique secondary index, or
+// NoIntHandleSuffix when the index key has no such suffix. Callers of the
+// IndexRangesToKVRanges family pass the result so that ranges built over the appended
+// handle are encoded the way the handle is physically stored.
+//
+// Only unsigned handles need this: GenIndexKey appends an integer handle as
+// codec.IntHandleFlag plus the handle reinterpreted as an int64, which is exactly what
+// codec.EncodeKey emits for a KindInt64 datum, so ranges over a signed handle already
+// match the stored key. The dimension is returned even for indexes whose ranges never
+// reach it (for example when the handle column is itself a declared index column, so the
+// planner appends nothing); the rewrite is a no-op for ranges that stop earlier.
+func UnsignedIntHandleSuffixDim(tblInfo *model.TableInfo, idx *model.IndexInfo) int {
+	if tblInfo == nil || idx == nil || idx.Unique || idx.Primary || !tblInfo.PKIsHandle {
+		return NoIntHandleSuffix
+	}
+	pkCol := tblInfo.GetPkColInfo()
+	if pkCol == nil || !mysql.HasUnsignedFlag(pkCol.GetFlag()) {
+		return NoIntHandleSuffix
+	}
+	return len(idx.Columns)
+}
+
+// unsignedHandleBounds resolves the handleDim dimension of ran into the closed unsigned
+// interval [low, high] it selects. A dimension the range does not reach, or an infinite
+// bound, covers the whole handle domain of the declared-column prefix. It reports false
+// when the interval is empty.
+func unsignedHandleBounds(ran *ranger.Range, handleDim int) (low, high uint64, ok bool) {
+	low, high = 0, math.MaxUint64
+	if handleDim < len(ran.LowVal) {
+		val := ran.LowVal[handleDim]
+		switch val.Kind() {
+		case types.KindUint64:
+			low = val.GetUint64()
+		case types.KindInt64:
+			// Not produced by ranger for an unsigned column, but a negative bound can
+			// only mean "from the start of the domain".
+			if v := val.GetInt64(); v > 0 {
+				low = uint64(v)
+			}
+		case types.KindMaxValue:
+			low = math.MaxUint64
+		default:
+			// NULL and MinNotNull both start at the beginning of the domain: the handle
+			// column is NOT NULL.
+		}
+		if ran.LowExclude && handleDim == len(ran.LowVal)-1 {
+			if low == math.MaxUint64 {
+				return 0, 0, false
+			}
+			low++
+		}
+	}
+	if handleDim < len(ran.HighVal) {
+		val := ran.HighVal[handleDim]
+		switch val.Kind() {
+		case types.KindUint64:
+			high = val.GetUint64()
+		case types.KindInt64:
+			v := val.GetInt64()
+			if v < 0 {
+				// A negative upper bound is below the whole unsigned domain.
+				return 0, 0, false
+			}
+			high = uint64(v)
+		case types.KindMaxValue:
+			high = math.MaxUint64
+		default:
+			// A NULL or MinNotNull upper bound selects nothing on a NOT NULL column.
+			return 0, 0, false
+		}
+		if ran.HighExclude && handleDim == len(ran.HighVal)-1 {
+			if high == 0 {
+				return 0, 0, false
+			}
+			high--
+		}
+	}
+	if low > high {
+		return 0, 0, false
+	}
+	return low, high, true
+}
+
+// intHandleSuffixRange rebuilds ran with its handleDim dimension replaced by the closed
+// interval [low, high] reinterpreted as int64, the form codec.EncodeKey turns into the
+// physical handle suffix. The interval must not straddle math.MaxInt64.
+func intHandleSuffixRange(ran *ranger.Range, handleDim int, low, high uint64) *ranger.Range {
+	newRange := &ranger.Range{
+		LowVal:    make([]types.Datum, handleDim+1),
+		HighVal:   make([]types.Datum, handleDim+1),
+		Collators: make([]collate.Collator, handleDim+1),
+	}
+	copy(newRange.LowVal, ran.LowVal)
+	copy(newRange.HighVal, ran.HighVal)
+	copy(newRange.Collators, ran.Collators)
+	newRange.LowVal[handleDim] = types.NewIntDatum(int64(low))
+	newRange.HighVal[handleDim] = types.NewIntDatum(int64(high))
+	if newRange.Collators[handleDim] == nil {
+		newRange.Collators[handleDim] = collate.GetBinaryCollator()
+	}
+	return newRange
+}
+
+// rewriteUnsignedIntHandleSuffix rewrites the handleDim dimension of index ranges from the
+// SQL-level unsigned handle value into the physical form of the handle suffix TiKV appends
+// to a non-unique index key. Unsigned values above math.MaxInt64 reinterpret as negative
+// int64 and therefore sort before the rest of the same declared-column prefix, so a range
+// covering both sides of the boundary is split into the two pieces that are each
+// contiguous in key order.
+//
+// The second result reports whether any wrapped piece was produced. The rewritten ranges
+// are then no longer in key order, and the caller must sort the key ranges it builds from
+// them.
+func rewriteUnsignedIntHandleSuffix(ranges []*ranger.Range, handleDim int) ([]*ranger.Range, bool) {
+	if handleDim < 0 {
+		return ranges, false
+	}
+	reachesHandle := false
+	for _, ran := range ranges {
+		if len(ran.LowVal) > handleDim || len(ran.HighVal) > handleDim {
+			reachesHandle = true
+			break
+		}
+	}
+	if !reachesHandle {
+		return ranges, false
+	}
+	rewritten := make([]*ranger.Range, 0, len(ranges)+1)
+	wrapped := false
+	for _, ran := range ranges {
+		if len(ran.LowVal) <= handleDim && len(ran.HighVal) <= handleDim {
+			rewritten = append(rewritten, ran)
+			continue
+		}
+		intest.Assert(len(ran.LowVal) == handleDim+1 && len(ran.HighVal) == handleDim+1,
+			"an index range that constrains the appended handle must bound it on both sides")
+		low, high, ok := unsignedHandleBounds(ran, handleDim)
+		if !ok {
+			continue
+		}
+		if low <= math.MaxInt64 {
+			rewritten = append(rewritten, intHandleSuffixRange(ran, handleDim, low, min(high, math.MaxInt64)))
+		}
+		if high > math.MaxInt64 {
+			wrapped = true
+			rewritten = append(rewritten, intHandleSuffixRange(ran, handleDim, max(low, math.MaxInt64+1), high))
+		}
+	}
+	return rewritten, wrapped
+}
+
 // TableHandlesToKVRanges converts sorted handle to kv ranges.
 // For continuous handles, we should merge them to a single key range.
 func TableHandlesToKVRanges(tid int64, handles []kv.Handle) ([]kv.KeyRange, []int) {
@@ -710,15 +868,17 @@ func PartitionHandlesToKVRanges(handles []kv.Handle) ([]kv.KeyRange, []int) {
 	return krs, hints
 }
 
-// IndexRangesToKVRanges converts index ranges to "KeyRange".
-func IndexRangesToKVRanges(dctx *distsqlctx.DistSQLContext, tid, idxID int64, ranges []*ranger.Range) (*kv.KeyRanges, error) {
-	return IndexRangesToKVRangesWithInterruptSignal(dctx, tid, idxID, ranges, nil, nil)
+// IndexRangesToKVRanges converts index ranges to "KeyRange". handleDim is the range
+// dimension holding an appended unsigned integer handle, or NoIntHandleSuffix when the
+// ranges cover declared index columns only; use UnsignedIntHandleSuffixDim to derive it.
+func IndexRangesToKVRanges(dctx *distsqlctx.DistSQLContext, tid, idxID int64, ranges []*ranger.Range, handleDim int) (*kv.KeyRanges, error) {
+	return IndexRangesToKVRangesWithInterruptSignal(dctx, tid, idxID, ranges, nil, nil, handleDim)
 }
 
 // IndexRangesToKVRangesWithInterruptSignal converts index ranges to "KeyRange".
 // The process can be interrupted by set `interruptSignal` to true.
-func IndexRangesToKVRangesWithInterruptSignal(dctx *distsqlctx.DistSQLContext, tid, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.KeyRanges, error) {
-	keyRanges, err := indexRangesToKVRangesForTablesWithInterruptSignal(dctx, []int64{tid}, idxID, ranges, memTracker, interruptSignal)
+func IndexRangesToKVRangesWithInterruptSignal(dctx *distsqlctx.DistSQLContext, tid, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value, handleDim int) (*kv.KeyRanges, error) {
+	keyRanges, err := indexRangesToKVRangesForTablesWithInterruptSignal(dctx, []int64{tid}, idxID, ranges, memTracker, interruptSignal, handleDim)
 	if err != nil {
 		return nil, err
 	}
@@ -727,14 +887,14 @@ func IndexRangesToKVRangesWithInterruptSignal(dctx *distsqlctx.DistSQLContext, t
 }
 
 // IndexRangesToKVRangesForTables converts indexes ranges to "KeyRange".
-func IndexRangesToKVRangesForTables(dctx *distsqlctx.DistSQLContext, tids []int64, idxID int64, ranges []*ranger.Range) (*kv.KeyRanges, error) {
-	return indexRangesToKVRangesForTablesWithInterruptSignal(dctx, tids, idxID, ranges, nil, nil)
+func IndexRangesToKVRangesForTables(dctx *distsqlctx.DistSQLContext, tids []int64, idxID int64, ranges []*ranger.Range, handleDim int) (*kv.KeyRanges, error) {
+	return indexRangesToKVRangesForTablesWithInterruptSignal(dctx, tids, idxID, ranges, nil, nil, handleDim)
 }
 
 // IndexRangesToKVRangesForTablesWithInterruptSignal converts indexes ranges to "KeyRange".
 // The process can be interrupted by set `interruptSignal` to true.
-func indexRangesToKVRangesForTablesWithInterruptSignal(dctx *distsqlctx.DistSQLContext, tids []int64, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.KeyRanges, error) {
-	return indexRangesToKVWithoutSplit(dctx, tids, idxID, ranges, memTracker, interruptSignal)
+func indexRangesToKVRangesForTablesWithInterruptSignal(dctx *distsqlctx.DistSQLContext, tids []int64, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value, handleDim int) (*kv.KeyRanges, error) {
+	return indexRangesToKVWithoutSplit(dctx, tids, idxID, ranges, memTracker, interruptSignal, handleDim)
 }
 
 // CommonHandleRangesToKVRanges converts common handle ranges to "KeyRange".
@@ -791,7 +951,8 @@ func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.MetaOn
 	return true
 }
 
-func indexRangesToKVWithoutSplit(dctx *distsqlctx.DistSQLContext, tids []int64, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.KeyRanges, error) {
+func indexRangesToKVWithoutSplit(dctx *distsqlctx.DistSQLContext, tids []int64, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value, handleDim int) (*kv.KeyRanges, error) {
+	ranges, wrappedHandle := rewriteUnsignedIntHandleSuffix(ranges, handleDim)
 	krs := make([][]kv.KeyRange, len(tids))
 	for i := range krs {
 		krs[i] = make([]kv.KeyRange, 0, len(ranges))
@@ -831,6 +992,17 @@ func indexRangesToKVWithoutSplit(dctx *distsqlctx.DistSQLContext, tids []int64, 
 			if memTracker != nil {
 				memTracker.HandleKillSignal()
 			}
+		}
+	}
+	if wrappedHandle {
+		// A handle above math.MaxInt64 wraps to a negative int64 and so precedes the rest
+		// of its declared-column prefix in the index. The ranges are still in SQL order,
+		// so restore key order: the ranges are disjoint, which makes sorting by start key
+		// the physical order the coprocessor expects.
+		for j := range krs {
+			slices.SortFunc(krs[j], func(a, b kv.KeyRange) int {
+				return bytes.Compare(a.StartKey, b.StartKey)
+			})
 		}
 	}
 	return kv.NewPartitionedKeyRanges(krs), nil
@@ -880,7 +1052,7 @@ func BuildTableRanges(tbl *model.TableInfo) ([]kv.KeyRange, error) {
 		if idx.State != model.StatePublic || !idx.Global {
 			continue
 		}
-		idxRanges, err := IndexRangesToKVRanges(nil, tbl.ID, idx.ID, ranger.FullRange())
+		idxRanges, err := IndexRangesToKVRanges(nil, tbl.ID, idx.ID, ranger.FullRange(), NoIntHandleSuffix)
 		if err != nil {
 			return nil, err
 		}
@@ -917,7 +1089,7 @@ func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
 			continue
 		}
 		ranges = ranger.FullRange()
-		idxRanges, err := IndexRangesToKVRanges(nil, tblID, index.ID, ranges)
+		idxRanges, err := IndexRangesToKVRanges(nil, tblID, index.ID, ranges, NoIntHandleSuffix)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

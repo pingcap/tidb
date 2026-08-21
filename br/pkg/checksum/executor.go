@@ -286,7 +286,7 @@ func buildIndexRequest(
 	var builder distsql.RequestBuilder
 	// Use low priority to reducing impact to other requests.
 	builder.Request.Priority = kv.PriorityLow
-	return builder.SetIndexRanges(nil, tableID, indexInfo.ID, ranges).
+	return builder.SetIndexRanges(nil, tableID, indexInfo.ID, ranges, distsql.NoIntHandleSuffix).
 		SetStartTS(startTS).
 		SetChecksumRequest(checksum).
 		SetConcurrency(int(concurrency)).

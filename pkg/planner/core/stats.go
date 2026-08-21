@@ -89,7 +89,7 @@ func deriveStats4LogicalIndexScan(lp base.LogicalPlan, selfSchema *expression.Sc
 		util.IndexInfo2Cols(is.Columns, selfSchema.Columns, is.Index)
 	if !is.Index.Unique && !is.Index.Primary && len(is.Index.Columns) == len(is.IdxCols) {
 		handleCol := is.GetPKIsHandleCol(selfSchema)
-		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
+		if handleCol != nil {
 			is.IdxCols = append(is.IdxCols, handleCol)
 			is.IdxColLens = append(is.IdxColLens, types.UnspecifiedLength)
 		}

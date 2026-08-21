@@ -327,6 +327,14 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	// They are two different sources of ranges, and should not appear together.
 	intest.Assert(!(len(e.partRangeMap) > 0 && len(e.groupedRanges) > 0), "partRangeMap and groupedRanges should not appear together")
 
+	// Ready the memory tracker before the ranges are built, not after: without a dedicated
+	// range tracker, buildKVRangesForIndexReader charges the ranges to this one, and
+	// preparing it afterwards would reset that away. A dummy executor sends no request and
+	// keeps no tracker.
+	if !e.dummy {
+		e.prepareMemTracker()
+	}
+
 	// Build kvRanges considering both partitions and groupedRanges
 	kvRanges, err := e.buildKVRangesForIndexReader()
 	if err != nil {
@@ -352,8 +360,13 @@ func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, erro
 	}
 
 	results := make([]kv.KeyRange, 0, len(groupedRanges))
+	rangeMemTracker := e.memTracker
+	if e.rangeMemTracker != nil {
+		rangeMemTracker = e.rangeMemTracker
+	}
 	for _, ranges := range groupedRanges {
-		kvRanges, err := buildKeyRanges(e.dctx, ranges, e.partRangeMap, tableIDs, e.index.ID, e.rangeMemTracker)
+		kvRanges, err := buildKeyRanges(e.dctx, ranges, e.partRangeMap, tableIDs, e.index.ID, rangeMemTracker,
+			unsignedIntHandleSuffixDim(e.table, e.index))
 		if err != nil {
 			return nil, err
 		}
@@ -383,6 +396,17 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 	return kvReq, err
 }
 
+// prepareMemTracker readies the executor's memory tracker for one Open cycle, detaching
+// and zeroing a tracker left over from a previous cycle.
+func (e *IndexReaderExecutor) prepareMemTracker() {
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.ID(), -1)
+	}
+	e.memTracker.AttachTo(e.stmtMemTracker)
+}
+
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	var err error
 	if e.corColInFilter {
@@ -404,12 +428,11 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		return nil
 	}
 
-	if e.memTracker != nil {
-		e.memTracker.Reset()
-	} else {
-		e.memTracker = memory.NewTracker(e.ID(), -1)
+	if e.memTracker == nil {
+		// An index join inner task builds its ranges before the executor and enters here
+		// directly, so Open has not readied the tracker.
+		e.prepareMemTracker()
 	}
-	e.memTracker.AttachTo(e.stmtMemTracker)
 	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
 		return bytes.Compare(i.StartKey, j.StartKey)
 	})
@@ -633,12 +656,24 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	return e.open(ctx)
 }
 
+// unsignedIntHandleSuffixDim resolves the index-range dimension that carries the unsigned
+// integer handle TiKV appends to a non-unique secondary index key. A nil table resolves to
+// no suffix: reader executors assembled directly, without the table they read, have no
+// index key layout to reason about, and must not fault here.
+func unsignedIntHandleSuffixDim(tbl table.Table, idx *model.IndexInfo) int {
+	if tbl == nil {
+		return distsql.NoIntHandleSuffix
+	}
+	return distsql.UnsignedIntHandleSuffixDim(tbl.Meta(), idx)
+}
+
 func buildKeyRanges(dctx *distsqlctx.DistSQLContext,
 	ranges []*ranger.Range,
 	rangeOverrideForPartitionID map[int64][]*ranger.Range,
 	physicalIDs []int64,
 	indexID int64,
 	memTracker *memory.Tracker,
+	handleDim int,
 ) ([][]kv.KeyRange, error) {
 	results := make([][]kv.KeyRange, 0, len(physicalIDs))
 	for _, physicalID := range physicalIDs {
@@ -652,7 +687,7 @@ func buildKeyRanges(dctx *distsqlctx.DistSQLContext,
 			}
 			results = append(results, rRanges.FirstPartitionRange())
 		} else {
-			singleRanges, err := distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, physicalID, indexID, ranges, memTracker, nil)
+			singleRanges, err := distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, physicalID, indexID, ranges, memTracker, nil, handleDim)
 			if err != nil {
 				return nil, err
 			}
@@ -684,7 +719,8 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 		rangeMemTracker = e.rangeMemTracker
 	}
 	for _, ranges := range groupedRanges {
-		kvRange, err := buildKeyRanges(e.dctx, ranges, e.partitionRangeMap, tableIDs, e.index.ID, rangeMemTracker)
+		kvRange, err := buildKeyRanges(e.dctx, ranges, e.partitionRangeMap, tableIDs, e.index.ID, rangeMemTracker,
+			unsignedIntHandleSuffixDim(e.table, e.index))
 		if err != nil {
 			return err
 		}

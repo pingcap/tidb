@@ -4211,7 +4211,7 @@ func (builder *dataReaderBuilder) buildPartitionedTableReaderKVRangesForIndexJoi
 		}
 		if canLocateByKey {
 			for pid, contents := range contentsByPID {
-				tmp, err := buildKvRangesForIndexJoin(dctx, rctx, pid, -1, contents, indexRanges, keyOff2IdxOff, cwc, kvRangeMemTracker, interruptSignal)
+				tmp, err := buildKvRangesForIndexJoin(dctx, rctx, pid, -1, contents, indexRanges, keyOff2IdxOff, cwc, kvRangeMemTracker, interruptSignal, distsql.NoIntHandleSuffix)
 				if err != nil {
 					return nil, err
 				}
@@ -4219,7 +4219,7 @@ func (builder *dataReaderBuilder) buildPartitionedTableReaderKVRangesForIndexJoi
 			}
 		} else {
 			for _, p := range usedPartitionList {
-				tmp, err := buildKvRangesForIndexJoin(dctx, rctx, p.GetPhysicalID(), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc, kvRangeMemTracker, interruptSignal)
+				tmp, err := buildKvRangesForIndexJoin(dctx, rctx, p.GetPhysicalID(), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc, kvRangeMemTracker, interruptSignal, distsql.NoIntHandleSuffix)
 				if err != nil {
 					return nil, err
 				}
@@ -5188,7 +5188,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	tbInfo := e.table.Meta()
 	if tbInfo.GetPartitionInfo() == nil || !builder.sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		if v.IsCommonHandle {
-			kvRanges, err := buildKvRangesForIndexJoin(e.dctx, e.rctx, getPhysicalTableID(e.table), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
+			kvRanges, err := buildKvRangesForIndexJoin(e.dctx, e.rctx, getPhysicalTableID(e.table), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal, distsql.NoIntHandleSuffix)
 			if err != nil {
 				return nil, err
 			}
@@ -5362,7 +5362,8 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	}
 	tbInfo := e.table.Meta()
 	if tbInfo.GetPartitionInfo() == nil || !builder.sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		kvRanges, err := buildKvRangesForIndexJoin(e.dctx, e.rctx, e.physicalTableID, e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memoryTracker, interruptSignal)
+		kvRanges, err := buildKvRangesForIndexJoin(e.dctx, e.rctx, e.physicalTableID, e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memoryTracker, interruptSignal,
+			distsql.UnsignedIntHandleSuffixDim(tbInfo, e.index))
 		if err != nil {
 			return nil, err
 		}
@@ -5419,7 +5420,8 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 
 	tbInfo := e.table.Meta()
 	if tbInfo.GetPartitionInfo() == nil || !builder.sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		kvRange, err := buildKvRangesForIndexJoin(e.dctx, e.rctx, getPhysicalTableID(e.table), e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
+		kvRange, err := buildKvRangesForIndexJoin(e.dctx, e.rctx, getPhysicalTableID(e.table), e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal,
+			distsql.UnsignedIntHandleSuffixDim(tbInfo, e.index))
 		if err != nil {
 			return nil, err
 		}
@@ -5554,6 +5556,7 @@ func buildRangesForIndexJoin(rctx *rangerctx.RangerContext, lookUpContents []*jo
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
 func buildKvRangesForIndexJoin(dctx *distsqlctx.DistSQLContext, pctx *rangerctx.RangerContext, tableID, indexID int64, lookUpContents []*join.IndexJoinLookUpContent,
 	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value,
+	handleDim int,
 ) (_ []kv.KeyRange, err error) {
 	kvRanges := make([]kv.KeyRange, 0, len(ranges)*len(lookUpContents))
 	if len(ranges) == 0 {
@@ -5575,7 +5578,7 @@ func buildKvRangesForIndexJoin(dctx *distsqlctx.DistSQLContext, pctx *rangerctx.
 			if indexID == -1 {
 				tmpKvRanges, err = distsql.CommonHandleRangesToKVRanges(dctx, []int64{tableID}, ranges)
 			} else {
-				tmpKvRanges, err = distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, tableID, indexID, ranges, memTracker, interruptSignal)
+				tmpKvRanges, err = distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, tableID, indexID, ranges, memTracker, interruptSignal, handleDim)
 			}
 			if err != nil {
 				return nil, err
@@ -5623,7 +5626,7 @@ func buildKvRangesForIndexJoin(dctx *distsqlctx.DistSQLContext, pctx *rangerctx.
 		tmpKeyRanges, err := distsql.CommonHandleRangesToKVRanges(dctx, []int64{tableID}, tmpDatumRanges)
 		return tmpKeyRanges.FirstPartitionRange(), err
 	}
-	tmpKeyRanges, err := distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, tableID, indexID, tmpDatumRanges, memTracker, interruptSignal)
+	tmpKeyRanges, err := distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, tableID, indexID, tmpDatumRanges, memTracker, interruptSignal, handleDim)
 	return tmpKeyRanges.FirstPartitionRange(), err
 }
 
