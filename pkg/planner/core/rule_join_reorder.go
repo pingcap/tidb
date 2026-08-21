@@ -56,6 +56,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 // 3. Build current node's colExprMap and return
 // This approach is consistent with rule_eliminate_projection.go.
 func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
+	ownerQueryBlockOffset := p.QueryBlockOffset()
 	// NOTE: We only support extracting join groups through a single Selection/Projection layer for now.
 	// TODO: Support stacked unary operators like Projection->Selection->Join or Selection->Projection->Join.
 	// Check if the current plan is a Selection. If its child is a join, add the selection conditions
@@ -191,7 +192,8 @@ func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
 	// So we don't need to split the left child part. The right child part is the same.
 
 	// Check if left child should be preserved due to LEADING hint reference
-	leftShouldPreserve := currentLeadingHint != nil && joinorder.IsDerivedTableInLeadingHint(join.Children()[0], currentLeadingHint)
+	leftShouldPreserve := currentLeadingHint != nil &&
+		joinorder.IsDerivedTableInLeadingHint(join.Children()[0], currentLeadingHint, ownerQueryBlockOffset)
 
 	if join.JoinType != base.RightOuterJoin && !leftHasHint && !leftShouldPreserve {
 		lhsJoinGroupResult := extractJoinGroupImpl(join.Children()[0])
@@ -218,7 +220,8 @@ func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
 	}
 
 	// Check if right child should be preserved due to LEADING hint reference
-	rightShouldPreserve := currentLeadingHint != nil && joinorder.IsDerivedTableInLeadingHint(join.Children()[1], currentLeadingHint)
+	rightShouldPreserve := currentLeadingHint != nil &&
+		joinorder.IsDerivedTableInLeadingHint(join.Children()[1], currentLeadingHint, ownerQueryBlockOffset)
 
 	// You can see the comments in the upside part which we try to split the left child part. It's the same here.
 	if join.JoinType != base.LeftOuterJoin && !rightHasHint && !rightShouldPreserve {
@@ -301,11 +304,12 @@ func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
 		hasOuterJoin:      hasOuterJoin,
 		joinOrderHintInfo: joinOrderHintInfo,
 		basicJoinGroupInfo: &basicJoinGroupInfo{
-			eqEdges:            eqEdges,
-			otherConds:         otherConds,
-			joinTypes:          joinTypes,
-			nullExtendedCols:   nullExtendedSchema,
-			joinMethodHintInfo: joinMethodHintInfo,
+			ownerQueryBlockOffset: ownerQueryBlockOffset,
+			eqEdges:               eqEdges,
+			otherConds:            otherConds,
+			joinTypes:             joinTypes,
+			nullExtendedCols:      nullExtendedSchema,
+			joinMethodHintInfo:    joinMethodHintInfo,
 		},
 		colExprMap: colExprMap,
 	}
@@ -425,7 +429,7 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 			if err != nil {
 				return fallbackOnErr(err)
 			}
-			p, err = restoreSchemaIfChanged(p, originalSchema, result.colExprMap)
+			p, err = restoreSchemaIfChanged(p, originalSchema, result.colExprMap, result.ownerQueryBlockOffset)
 			if err != nil {
 				return fallbackOnErr(err)
 			}
@@ -459,6 +463,7 @@ func restoreSchemaIfChanged(
 	p base.LogicalPlan,
 	originalSchema *expression.Schema,
 	colExprMap map[int64]expression.Expression,
+	ownerQueryBlockOffset int,
 ) (base.LogicalPlan, error) {
 	if p == nil || originalSchema == nil {
 		return p, nil
@@ -509,7 +514,7 @@ func restoreSchemaIfChanged(
 
 	proj := logicalop.LogicalProjection{
 		Exprs: projExprs,
-	}.Init(p.SCtx(), p.QueryBlockOffset())
+	}.Init(p.SCtx(), ownerQueryBlockOffset)
 	// Clone the schema here, because the schema may be changed by column pruning rules.
 	proj.SetSchema(originalSchema.Clone())
 	proj.SetChildren(p)
@@ -518,9 +523,13 @@ func restoreSchemaIfChanged(
 
 // basicJoinGroupInfo represents basic information for a join group in the join reorder process.
 type basicJoinGroupInfo struct {
-	eqEdges    []*expression.ScalarFunction
-	otherConds []expression.Expression
-	joinTypes  []*joinTypeWithExtMsg
+	// ownerQueryBlockOffset identifies the query block where the original join
+	// group is defined. It is intentionally independent from the origins of the
+	// group's operands, which may come from flattened derived query blocks.
+	ownerQueryBlockOffset int
+	eqEdges               []*expression.ScalarFunction
+	otherConds            []expression.Expression
+	joinTypes             []*joinTypeWithExtMsg
 	// nullExtendedCols records columns that may become NULL due to outer joins
 	// in this join group. It is used to avoid semantically invalid non-eq reorder.
 	nullExtendedCols *expression.Schema
@@ -595,7 +604,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateNestedLeadingJoinGroup(
 	copy(leftJoinGroup, curJoinGroup)
 
 	find := func(available []base.LogicalPlan, hint *ast.HintTable) (base.LogicalPlan, []base.LogicalPlan, bool) {
-		return joinorder.FindAndRemovePlanByAstHint(s.ctx, available, hint, func(plan base.LogicalPlan) base.LogicalPlan {
+		return joinorder.FindAndRemovePlanByAstHint(s.ctx, available, hint, s.ownerQueryBlockOffset, func(plan base.LogicalPlan) base.LogicalPlan {
 			return plan
 		})
 	}
@@ -942,7 +951,7 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []base
 	if len(s.otherConds) > 0 {
 		additionSelection := logicalop.LogicalSelection{
 			Conditions: s.otherConds,
-		}.Init(cartesianJoinGroup[0].SCtx(), cartesianJoinGroup[0].QueryBlockOffset())
+		}.Init(cartesianJoinGroup[0].SCtx(), s.ownerQueryBlockOffset)
 		additionSelection.SetChildren(cartesianJoinGroup[0])
 		cartesianJoinGroup[0] = additionSelection
 	}
@@ -950,10 +959,7 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []base
 }
 
 func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild base.LogicalPlan) *logicalop.LogicalJoin {
-	offset := lChild.QueryBlockOffset()
-	if offset != rChild.QueryBlockOffset() {
-		offset = -1
-	}
+	offset := s.ownerQueryBlockOffset
 	join := logicalop.LogicalJoin{
 		JoinType:  base.InnerJoin,
 		Reordered: true,

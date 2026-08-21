@@ -513,18 +513,12 @@ func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 }
 
 // Init initialize a PlanBuilder.
-// Return the original PlannerSelectBlockAsName as well, callers decide if
-// PlannerSelectBlockAsName should be restored after using this builder.
+// Return the original planner select-block alias state as well, callers decide
+// if it should be restored after using this builder.
 // This is The comman code pattern to use it:
 // NewPlanBuilder().Init(sctx, is, processor)
-func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, processor *hint.QBHintHandler) (*PlanBuilder, []ast.HintTable) {
-	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName.Load()
-	if processor == nil {
-		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&[]ast.HintTable{})
-	} else {
-		newPlannerSelectBlockAsName := make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
-		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&newPlannerSelectBlockAsName)
-	}
+func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, processor *hint.QBHintHandler) (*PlanBuilder, plannerSelectBlockState) {
+	savedState := initPlannerSelectBlockState(sctx, processor)
 
 	b.ctx = sctx
 	b.is = is
@@ -534,10 +528,38 @@ func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, proc
 	}
 	b.isForUpdateRead = sctx.GetSessionVars().IsPessimisticReadConsistency()
 	b.noDecorrelate = sctx.GetSessionVars().EnableNoDecorrelateInSelect
-	if savedBlockNames == nil {
-		return b, nil
+	return b, savedState
+}
+
+type plannerSelectBlockState struct {
+	blockNames *[]ast.HintTable
+	aliasInfo  *[]hint.SelectBlockAlias
+}
+
+func savePlannerSelectBlockState(sctx base.PlanContext) plannerSelectBlockState {
+	return plannerSelectBlockState{
+		blockNames: sctx.GetSessionVars().PlannerSelectBlockAsName.Load(),
+		aliasInfo:  sctx.GetSessionVars().PlannerSelectBlockAliasInfo.Load(),
 	}
-	return b, *savedBlockNames
+}
+
+func restorePlannerSelectBlockState(sctx base.PlanContext, state plannerSelectBlockState) {
+	sctx.GetSessionVars().PlannerSelectBlockAsName.Store(state.blockNames)
+	sctx.GetSessionVars().PlannerSelectBlockAliasInfo.Store(state.aliasInfo)
+}
+
+func initPlannerSelectBlockState(sctx base.PlanContext, processor *hint.QBHintHandler) plannerSelectBlockState {
+	savedState := savePlannerSelectBlockState(sctx)
+	if processor == nil {
+		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&[]ast.HintTable{})
+		sctx.GetSessionVars().PlannerSelectBlockAliasInfo.Store(&[]hint.SelectBlockAlias{})
+	} else {
+		newPlannerSelectBlockAsName := make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
+		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&newPlannerSelectBlockAsName)
+		newAliasInfo := make([]hint.SelectBlockAlias, processor.MaxSelectStmtOffset()+1)
+		sctx.GetSessionVars().PlannerSelectBlockAliasInfo.Store(&newAliasInfo)
+	}
+	return savedState
 }
 
 // ResetForReuse reset the plan builder, put it into pool for reuse.

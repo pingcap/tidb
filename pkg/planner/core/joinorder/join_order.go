@@ -46,6 +46,10 @@ type JoinOrder struct {
 // vertexes are the leaf nodes of the subtree, it may have its children, but they are considered as a vertex in this subtree.
 type joinGroup struct {
 	root base.LogicalPlan
+	// ownerOffset is frozen from the original join-group root. Reordered joins
+	// use it as their query-block identity even when operands originate from
+	// different (flattened) query blocks.
+	ownerOffset int
 	// All vertexes in this join group.
 	// A vertex means a leaf node in this join group tree,
 	// it may have its own children, but they are considered as a single unit in this join group.
@@ -197,12 +201,14 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 
 	resJoinGroup = &joinGroup{
 		root:         p,
+		ownerOffset:  p.QueryBlockOffset(),
 		vertexes:     []base.LogicalPlan{},
 		vertexHints:  vertexHints,
 		allInnerJoin: join.JoinType == base.InnerJoin,
 	}
 
-	leftShouldPreserve := curLeadingHint != nil && IsDerivedTableInLeadingHint(join.Children()[0], curLeadingHint)
+	leftShouldPreserve := curLeadingHint != nil &&
+		IsDerivedTableInLeadingHint(join.Children()[0], curLeadingHint, resJoinGroup.ownerOffset)
 	var leftJoinGroup, rightJoinGroup *joinGroup
 	if !leftHasHint && !leftShouldPreserve {
 		leftJoinGroup = extractJoinGroup(join.Children()[0])
@@ -211,7 +217,8 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 	}
 	resJoinGroup.merge(leftJoinGroup)
 
-	rightShouldPreserve := curLeadingHint != nil && IsDerivedTableInLeadingHint(join.Children()[1], curLeadingHint)
+	rightShouldPreserve := curLeadingHint != nil &&
+		IsDerivedTableInLeadingHint(join.Children()[1], curLeadingHint, resJoinGroup.ownerOffset)
 	if !rightHasHint && !rightShouldPreserve {
 		rightJoinGroup = extractJoinGroup(join.Children()[1])
 	} else {
@@ -224,6 +231,7 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 func makeSingleGroup(p base.LogicalPlan) *joinGroup {
 	return &joinGroup{
 		root:         p,
+		ownerOffset:  p.QueryBlockOffset(),
 		vertexes:     []base.LogicalPlan{p},
 		allInnerJoin: true,
 	}
@@ -335,7 +343,7 @@ func optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup) (p base.Logica
 	if !p.Schema().Equal(originalSchema) {
 		proj := logicalop.LogicalProjection{
 			Exprs: expression.Column2Exprs(originalSchema.Columns),
-		}.Init(p.SCtx(), p.QueryBlockOffset())
+		}.Init(p.SCtx(), group.ownerOffset)
 		proj.SetSchema(originalSchema.Clone())
 		proj.SetChildren(p)
 		return proj, nil
@@ -501,7 +509,7 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 	}
 
 	findAndRemoveByHint := func(available []*Node, hint *ast.HintTable) (*Node, []*Node, bool) {
-		return FindAndRemovePlanByAstHint(j.ctx, available, hint, func(node *Node) base.LogicalPlan {
+		return FindAndRemovePlanByAstHint(j.ctx, available, hint, j.group.ownerOffset, func(node *Node) base.LogicalPlan {
 			return node.p
 		})
 	}
@@ -979,7 +987,14 @@ func makeBushyTree(ctx base.PlanContext, detector *ConflictDetector, cartesianNo
 			}
 			var newJoin *Node
 			if fastPath {
-				p, err1 := newCartesianJoin(ctx, base.InnerJoin, cartesianNodes[i].p, cartesianNodes[i+1].p, vertexHints)
+				p, err1 := newCartesianJoin(
+					ctx,
+					base.InnerJoin,
+					cartesianNodes[i].p,
+					cartesianNodes[i+1].p,
+					vertexHints,
+					detector.groupOwnerQB,
+				)
 				newJoin = &Node{p: p}
 				err = err1
 			} else {

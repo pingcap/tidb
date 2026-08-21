@@ -914,7 +914,28 @@ func (e *Explain) RenderResult() error {
 	case types.ExplainFormatHint:
 		flat := FlattenPhysicalPlan(e.TargetPlan, false)
 		hints := GenHintsFromFlatPlan(flat)
-		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)...)
+		originalHints := hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)
+		hasOriginalLeading := false
+		for _, originalHint := range originalHints {
+			if originalHint.HintName.L == hint.HintLeading {
+				hasOriginalLeading = true
+				break
+			}
+		}
+		if hasOriginalLeading {
+			// TODO(#70238): Reconcile LEADING hints by query-block identity. Until then,
+			// do not add plan-derived LEADING hints to the original ones, which could
+			// invalidate otherwise valid original LEADING hints.
+			filtered := hints[:0]
+			for _, generatedHint := range hints {
+				if generatedHint.HintName.L == hint.HintLeading {
+					continue
+				}
+				filtered = append(filtered, generatedHint)
+			}
+			hints = filtered
+		}
+		hints = append(hints, originalHints...)
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	case types.ExplainFormatBinary:
 		flat := FlattenPhysicalPlan(e.TargetPlan, false)
