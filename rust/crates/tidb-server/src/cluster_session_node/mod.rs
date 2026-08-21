@@ -1401,6 +1401,10 @@ impl QuerySession for ClusterServerSession {
         self.session.flush_multi_statement_warning();
     }
 
+    fn discard_multi_statement_warning(&mut self) {
+        self.session.discard_multi_statement_warning();
+    }
+
     /// The live status word Go reads with `cc.ctx.Status()` before every
     /// OK/EOF packet. The driver session owns the transaction state this tier
     /// acts on, so the wire word and the tier's behaviour cannot disagree.

@@ -1401,7 +1401,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         }
                     }
                 }
-                if !aborted {
+                if aborted {
+                    engine.discard_multi_statement_warning();
+                } else {
                     engine.flush_multi_statement_warning();
                 }
             }

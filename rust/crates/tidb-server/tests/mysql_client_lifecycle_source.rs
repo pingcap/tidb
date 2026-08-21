@@ -1608,6 +1608,113 @@ fn query_error_is_written_as_err_and_connection_remains_command_aligned() {
     assert_eq!(tracker.failed(), 0);
 }
 
+#[derive(Debug, Default)]
+struct MultiStatementWarningState {
+    deferred: bool,
+    flushed: usize,
+    discarded: usize,
+}
+
+struct AbortingMultiStatementSession {
+    warning: Arc<Mutex<MultiStatementWarningState>>,
+}
+
+impl QuerySession for AbortingMultiStatementSession {
+    fn split_statements(
+        &mut self,
+        sql: &str,
+        _client_multi_statements: bool,
+    ) -> Result<Vec<String>, SqlQueryError> {
+        assert_eq!(sql, "broken; SELECT 1");
+        self.warning.lock().unwrap().deferred = true;
+        Ok(vec!["broken;".to_owned(), "SELECT 1".to_owned()])
+    }
+
+    fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        assert_eq!(sql, "broken;");
+        Err(SqlQueryError::unknown("the first statement failed"))
+    }
+
+    fn flush_multi_statement_warning(&mut self) {
+        let mut warning = self.warning.lock().unwrap();
+        let deferred = warning.deferred;
+        warning.flushed += usize::from(deferred);
+        warning.deferred = false;
+    }
+
+    fn discard_multi_statement_warning(&mut self) {
+        let mut warning = self.warning.lock().unwrap();
+        let deferred = warning.deferred;
+        warning.discarded += usize::from(deferred);
+        warning.deferred = false;
+    }
+}
+
+struct AbortingMultiStatementFactory {
+    warning: Arc<Mutex<MultiStatementWarningState>>,
+}
+
+impl QuerySessionFactory for AbortingMultiStatementFactory {
+    type Session = AbortingMultiStatementSession;
+
+    fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        Ok(AbortingMultiStatementSession {
+            warning: Arc::clone(&self.warning),
+        })
+    }
+}
+
+/// Go's `handleQuery` keeps parser warnings in a command-local slice. If an
+/// earlier statement fails, returning from the loop drops that slice; it must
+/// not become a warning on the next COM_QUERY handled by the same session.
+#[test]
+fn an_aborted_multi_statement_command_discards_its_deferred_warning() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let warning = Arc::new(Mutex::new(MultiStatementWarningState::default()));
+    let worker_warning = Arc::clone(&warning);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &AbortingMultiStatementFactory {
+                warning: worker_warning,
+            },
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    let mut command = vec![COM_QUERY];
+    command.extend_from_slice(b"broken; SELECT 1");
+    write_packet(&mut client, 0, &command);
+    reader.set_sequence(1);
+    assert_mysql_error(&reader.read_packet().unwrap(), 1105, b"HY000");
+    write_packet(&mut client, 0, &[COM_QUIT]);
+
+    let report = worker.join().unwrap();
+    assert_eq!(report.exit, ConnectionExit::Quit);
+    let warning = warning.lock().unwrap();
+    assert!(
+        !warning.deferred,
+        "the aborted command owns no later warning"
+    );
+    assert_eq!(warning.flushed, 0, "an aborted command is never flushed");
+    assert_eq!(warning.discarded, 1, "its deferred warning is dropped once");
+}
+
 /// A session that owns only the transaction state machine, faithfully mirroring
 /// `RealTiKvServerSession`: `control_transaction` delegates to the same
 /// classifier plus [`SessionTransaction`], and a text `execute` reports whether
