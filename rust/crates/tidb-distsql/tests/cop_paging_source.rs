@@ -23,8 +23,8 @@ use tidb_distsql::{
     ResponseChannelEvent,
 };
 use tidb_proto::{
-    CoprocessorExecDetailsV2, CoprocessorKeyRange, CoprocessorResponse, CoprocessorScanDetailV2,
-    CoprocessorTimeDetail, CoprocessorTimeDetailV2,
+    CoprocessorExecDetails, CoprocessorExecDetailsV2, CoprocessorKeyRange, CoprocessorResponse,
+    CoprocessorScanDetailV2, CoprocessorTimeDetail, CoprocessorTimeDetailV2,
 };
 use tidb_txnkv::{Key, KeyRange, KeyRanges};
 
@@ -185,6 +185,30 @@ fn response_process_time_prefers_nanoseconds_and_falls_back_to_milliseconds() {
         coprocessor_response_process_time_nanos(&v2),
         Some(8_765_432)
     );
+
+    let response_legacy_time = CoprocessorResponse {
+        exec_details: Some(CoprocessorExecDetails {
+            time_detail: Some(CoprocessorTimeDetail {
+                process_wall_time_ms: 9,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    assert_eq!(
+        coprocessor_response_process_time_nanos(&response_legacy_time),
+        Some(9_000_000)
+    );
+
+    // Go treats the V2 envelope as authoritative when present, even when its
+    // time-detail projections are both absent.
+    let mixed = CoprocessorResponse {
+        exec_details: response_legacy_time.exec_details.clone(),
+        exec_details_v2: Some(CoprocessorExecDetailsV2::default()),
+        ..Default::default()
+    };
+    assert_eq!(coprocessor_response_process_time_nanos(&mixed), None);
 }
 
 #[test]

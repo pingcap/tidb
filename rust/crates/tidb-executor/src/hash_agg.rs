@@ -2119,11 +2119,12 @@ impl<C: Columns> HashAggExec<C> {
         // hash aggregate use one direct integer key and only COUNT/FIRST_ROW.
         // The bounded worker path does not participate in round-based spill.
         // Keep low-quota statements on the serial implementation where the
-        // spill action can enforce Go's memory contract; normal 1 GiB query
-        // budgets (including TPC-H) have ample headroom for this path.
-        if (self.memory.tmp_storage_on_oom()
-            && self.memory.quota() > 0
-            && self.memory.quota() < 256 * 1024 * 1024)
+        // tracker and, when enabled, spill action enforce Go's memory
+        // contract. This applies even when temporary storage is disabled:
+        // that shape must still reach the statement's 8175 cancellation.
+        // Normal 1 GiB query budgets (including TPC-H) have ample headroom for
+        // this bounded worker path.
+        if (self.memory.quota() > 0 && self.memory.quota() < 256 * 1024 * 1024)
             || self.group_by.len() != 1
         {
             return None;
@@ -2252,12 +2253,18 @@ impl<C: Columns> HashAggExec<C> {
                 })
                 .collect::<Vec<_>>();
             for row_index in 0..chunk.num_rows() {
-                let key = if group_values.is_null(row_index) {
+                // Typed columns are indexed physically, while `num_rows` and
+                // `get_row` are logical and map through `sel`. Go's chunk
+                // workers use the selected physical row for every vectorized
+                // argument, so preserve that mapping on this direct-column
+                // fast path as well.
+                let physical_row = chunk.sel().map_or(row_index, |sel| sel[row_index]);
+                let key = if group_values.is_null(physical_row) {
                     ParallelIntKey::Null
                 } else if group_unsigned {
-                    ParallelIntKey::Unsigned(group_values.get_uint64(row_index))
+                    ParallelIntKey::Unsigned(group_values.get_uint64(physical_row))
                 } else {
-                    ParallelIntKey::Signed(group_values.get_int64(row_index))
+                    ParallelIntKey::Signed(group_values.get_int64(physical_row))
                 };
                 let entry = groups.entry(key).or_insert_with(|| ParallelIntGroup {
                     first_seq: sequence + row_index,
@@ -2288,7 +2295,7 @@ impl<C: Columns> HashAggExec<C> {
                                 !spec_values[index]
                                     .as_ref()
                                     .expect("COUNT column installed")
-                                    .is_null(row_index)
+                                    .is_null(physical_row)
                             }) {
                                 entry.counts[index] = entry.counts[index].wrapping_add(1);
                             }
@@ -2300,13 +2307,13 @@ impl<C: Columns> HashAggExec<C> {
                             let values = spec_values[index]
                                 .as_ref()
                                 .expect("FINAL_COUNT column installed");
-                            if values.is_null(row_index) {
+                            if values.is_null(physical_row) {
                                 continue;
                             }
                             let value = if *unsigned {
-                                i64::try_from(values.get_uint64(row_index)).unwrap_or(i64::MAX)
+                                i64::try_from(values.get_uint64(physical_row)).unwrap_or(i64::MAX)
                             } else {
-                                values.get_int64(row_index)
+                                values.get_int64(physical_row)
                             };
                             entry.counts[index] = entry.counts[index].wrapping_add(value);
                         }
@@ -2321,24 +2328,28 @@ impl<C: Columns> HashAggExec<C> {
                             let sum_values = sum_values[index]
                                 .as_ref()
                                 .expect("AVG sum column installed");
-                            if count_values.is_null(row_index) || sum_values.is_null(row_index) {
+                            if count_values.is_null(physical_row)
+                                || sum_values.is_null(physical_row)
+                            {
                                 continue;
                             }
                             let count = if *count_unsigned {
-                                i64::try_from(count_values.get_uint64(row_index)).map_err(|_| {
-                                    ExecError::unsupported(
-                                        "partial AVG count exceeds i64 in parallel aggregate",
-                                    )
-                                })?
+                                i64::try_from(count_values.get_uint64(physical_row)).map_err(
+                                    |_| {
+                                        ExecError::unsupported(
+                                            "partial AVG count exceeds i64 in parallel aggregate",
+                                        )
+                                    },
+                                )?
                             } else {
-                                count_values.get_int64(row_index)
+                                count_values.get_int64(physical_row)
                             };
                             if count < 0 {
                                 return Err(ExecError::unsupported(
                                     "partial AVG count is negative in parallel aggregate",
                                 ));
                             }
-                            let sum = sum_values.get_my_decimal(row_index);
+                            let sum = sum_values.get_my_decimal(physical_row);
                             entry.counts[index] = entry.counts[index].wrapping_add(count);
                             entry.decimal_sums[index] =
                                 Some(match entry.decimal_sums[index].take() {
@@ -3058,6 +3069,50 @@ mod tests {
                 assert_eq!(fast, generic, "row {row_index}, column {column}");
             }
         }
+    }
+
+    #[test]
+    fn parallel_integer_aggregate_maps_logical_rows_through_selection() {
+        let types = [long(), long()];
+        let mut chunk = Chunk::new_with_capacity(&types, 3);
+        for (group, value) in [(10, None), (20, Some(2)), (30, Some(3))] {
+            chunk.append_int64(0, group);
+            match value {
+                Some(value) => chunk.append_int64(1, value),
+                None => chunk.append_null(1),
+            }
+        }
+        chunk.set_sel(Some(vec![2, 0]));
+
+        let specs = [ParallelIntAggSpec::Count(Some(1))];
+        let mut groups =
+            HashAggExec::<NoColumns>::parallel_int_agg_chunk(vec![(chunk, 0)], 0, false, &specs)
+                .unwrap();
+
+        assert_eq!(groups.len(), 2);
+        assert_eq!(
+            groups.remove(&ParallelIntKey::Signed(30)).unwrap().counts,
+            vec![1]
+        );
+        assert_eq!(
+            groups.remove(&ParallelIntKey::Signed(10)).unwrap().counts,
+            vec![0]
+        );
+    }
+
+    #[test]
+    fn bounded_integer_aggregate_keeps_low_quota_on_accounted_serial_path() {
+        let exec = HashAggExec::new(
+            out_meta(1),
+            vec![col(0)],
+            vec![AggFunc::new(AggKind::Count, Some(col(1)))],
+            source(&[(1, Some(1))]),
+            NoColumns,
+            StatementMemory::new(1 << 20, crate::mem_quota::OomAction::Cancel, 42)
+                .with_tmp_storage_on_oom(false),
+        );
+
+        assert!(exec.parallel_int_agg_specs().is_none());
     }
 
     fn decimal() -> FieldType {
