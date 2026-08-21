@@ -406,7 +406,7 @@ func (m *MemArbitrator) resetExecMetricsForTest() {
 	m.buffer.Store(0)
 	m.digestProfileCache.top3.Lock()
 	m.digestProfileCache.top3.index.Store(0)
-	m.digestProfileCache.top3.g = [4]Top3DigestDataGroup{}
+	m.digestProfileCache.top3.g = [4]top3DigestDataGroup{}
 	m.digestProfileCache.top3.Unlock()
 	m.resetDigestProfileCache(uint64(len(m.digestProfileCache.shards)))
 	m.resetStatistics()
@@ -487,18 +487,18 @@ func TestTop3Digest(t *testing.T) {
 	const now = int64(200000)
 
 	t.Run("update keeps the largest three profiles ordered", func(t *testing.T) {
-		var group Top3DigestDataGroup
+		var group top3DigestDataGroup
 		group.update(1, 30, now)
 		group.update(2, 10, now+1)
 		group.update(3, 20, now+2)
-		require.Equal(t, Top3DigestDataGroup{
+		require.Equal(t, top3DigestDataGroup{
 			{DigestID: 1, Size: 30, UtimeSec: now},
 			{DigestID: 3, Size: 20, UtimeSec: now + 2},
 			{DigestID: 2, Size: 10, UtimeSec: now + 1},
 		}, group)
 
 		group.update(4, 40, now+3)
-		require.Equal(t, Top3DigestDataGroup{
+		require.Equal(t, top3DigestDataGroup{
 			{DigestID: 4, Size: 40, UtimeSec: now + 3},
 			{DigestID: 1, Size: 30, UtimeSec: now},
 			{DigestID: 3, Size: 20, UtimeSec: now + 2},
@@ -506,14 +506,14 @@ func TestTop3Digest(t *testing.T) {
 
 		group.update(3, 50, now+4)
 		group.update(1, 45, now+5)
-		require.Equal(t, Top3DigestDataGroup{
+		require.Equal(t, top3DigestDataGroup{
 			{DigestID: 3, Size: 50, UtimeSec: now + 4},
 			{DigestID: 1, Size: 45, UtimeSec: now + 5},
 			{DigestID: 4, Size: 40, UtimeSec: now + 3},
 		}, group)
 
 		group.update(InvalidDigestID, 100, now+6)
-		require.Equal(t, Top3DigestDataGroup{
+		require.Equal(t, top3DigestDataGroup{
 			{DigestID: 3, Size: 50, UtimeSec: now + 4},
 			{DigestID: 1, Size: 45, UtimeSec: now + 5},
 			{DigestID: 4, Size: 40, UtimeSec: now + 3},
@@ -521,25 +521,25 @@ func TestTop3Digest(t *testing.T) {
 	})
 
 	t.Run("clean removes profiles older than one day", func(t *testing.T) {
-		group := Top3DigestDataGroup{
+		group := top3DigestDataGroup{
 			{DigestID: 1, Size: 30, UtimeSec: now - 24*60*60 - 1},
 			{DigestID: 2, Size: 20, UtimeSec: now - 24*60*60},
 			{DigestID: 3, Size: 10, UtimeSec: now},
 		}
-		require.Equal(t, Top3DigestDataGroup{
+		require.Equal(t, top3DigestDataGroup{
 			{DigestID: 2, Size: 20, UtimeSec: now - 24*60*60},
 			{DigestID: 3, Size: 10, UtimeSec: now},
 		}, group.clean(now))
 	})
 
 	t.Run("merge publishes the combined top three", func(t *testing.T) {
-		var top3 Top3Digest
-		top3.merge(Top3DigestDataGroup{{DigestID: 1, Size: 100, UtimeSec: now}}, now)
-		top3.merge(Top3DigestDataGroup{
+		var top3 top3Digest
+		top3.merge(top3DigestDataGroup{{DigestID: 1, Size: 100, UtimeSec: now}}, now)
+		top3.merge(top3DigestDataGroup{
 			{DigestID: 2, Size: 200, UtimeSec: now},
 			{DigestID: 3, Size: 150, UtimeSec: now},
 		}, now)
-		require.Equal(t, Top3DigestDataGroup{
+		require.Equal(t, top3DigestDataGroup{
 			{DigestID: 2, Size: 200, UtimeSec: now},
 			{DigestID: 3, Size: 150, UtimeSec: now},
 			{DigestID: 1, Size: 100, UtimeSec: now},
@@ -581,7 +581,7 @@ func TestTopNProfilesPersistence(t *testing.T) {
 		},
 	})
 	require.Equal(t, persisted, *m.lastMemState())
-	require.Equal(t, Top3DigestDataGroup(expected), m.digestProfileCache.top3.g[m.digestProfileCache.top3.index.Load()])
+	require.Equal(t, top3DigestDataGroup(expected), m.digestProfileCache.top3.g[m.digestProfileCache.top3.index.Load()])
 	for _, profile := range expected {
 		value, ok := m.GetDigestProfileCache(profile.DigestID, now)
 		require.True(t, ok)

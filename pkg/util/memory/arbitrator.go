@@ -559,7 +559,7 @@ type MemArbitrator struct {
 		shardsMask uint64
 		num        atomic.Int64
 		limit      int64 // max number of digest profiles; shrink to limit/2 when num > limit;
-		top3       Top3Digest
+		top3       top3Digest
 	}
 	entryMap  entryMap // sharded hash map & ordered quota map
 	awaitFree struct { // await-free pool
@@ -2578,21 +2578,22 @@ func (m *MemArbitrator) tryUpdateTrackedMemStats(utimeMilli int64) bool {
 	return false
 }
 
+// Top3DigestData records the memory profile of a SQL digest for runtime state persistence.
 type Top3DigestData struct {
 	DigestID uint64 `json:"id"`
 	Size     int64  `json:"size"`
 	UtimeSec int64  `json:"utime_sec"`
 }
 
-type Top3DigestDataGroup [3]Top3DigestData
+type top3DigestDataGroup [3]Top3DigestData
 
-type Top3Digest struct {
+type top3Digest struct {
 	index atomic.Int64
 	sync.Mutex
-	g [4]Top3DigestDataGroup
+	g [4]top3DigestDataGroup
 }
 
-func (t *Top3Digest) merge(other Top3DigestDataGroup, utimeSec int64) {
+func (t *top3Digest) merge(other top3DigestDataGroup, utimeSec int64) {
 	t.Lock()
 	defer t.Unlock()
 
@@ -2603,8 +2604,8 @@ func (t *Top3Digest) merge(other Top3DigestDataGroup, utimeSec int64) {
 	t.index.Store(index)
 }
 
-func (t *Top3DigestDataGroup) clean(utimeSec int64) Top3DigestDataGroup {
-	res := Top3DigestDataGroup{}
+func (t *top3DigestDataGroup) clean(utimeSec int64) top3DigestDataGroup {
+	res := top3DigestDataGroup{}
 	j := 0
 	for i := range 3 {
 		if t[i].UtimeSec+24*60*60 >= utimeSec {
@@ -2615,7 +2616,7 @@ func (t *Top3DigestDataGroup) clean(utimeSec int64) Top3DigestDataGroup {
 	return res
 }
 
-func (t *Top3DigestDataGroup) merge(other Top3DigestDataGroup) Top3DigestDataGroup {
+func (t *top3DigestDataGroup) merge(other top3DigestDataGroup) top3DigestDataGroup {
 	res := *t
 	for i := range 3 {
 		res.update(other[i].DigestID, other[i].Size, other[i].UtimeSec)
@@ -2623,7 +2624,7 @@ func (t *Top3DigestDataGroup) merge(other Top3DigestDataGroup) Top3DigestDataGro
 	return res
 }
 
-func (t *Top3DigestDataGroup) update(digestID uint64, size int64, utimeSec int64) {
+func (t *top3DigestDataGroup) update(digestID uint64, size int64, utimeSec int64) {
 	if digestID == 0 {
 		return
 	}
@@ -2674,16 +2675,16 @@ func (t *Top3DigestDataGroup) update(digestID uint64, size int64, utimeSec int64
 	}
 }
 
-func (m *MemArbitrator) updateTrackedHeapStats() (top3 Top3DigestDataGroup) {
+func (m *MemArbitrator) updateTrackedHeapStats() (top3 top3DigestDataGroup) {
 	totalTrackedHeap := int64(0)
+	maxHeapUsed := int64(0)
 	if m.entryMap.contextCache.num.Load() != 0 {
-		maxHeapUsed := int64(0)
 		m.entryMap.contextCache.Range(func(_, value any) bool {
 			e := value.(*rootPoolEntry)
 			if e.notRunning() {
 				return true
 			}
-			if ctx := e.ctx.Load(); ctx.available() {
+			if ctx := e.ctx.Load(); ctx != nil && ctx.arbitrateHelper != nil {
 				inuse := ctx.arbitrateHelper.MemUsage()
 				totalTrackedHeap += inuse.RootPoolUsed
 				top3.update(ctx.id, inuse.HeapInuse, m.approxUnixTimeSec())
@@ -2691,9 +2692,8 @@ func (m *MemArbitrator) updateTrackedHeapStats() (top3 Top3DigestDataGroup) {
 			}
 			return true
 		})
-		m.setBufferSize(maxHeapUsed)
 	}
-
+	m.setBufferSize(maxHeapUsed)
 	totalTrackedHeap += m.awaitFreePoolUsed().trackedHeap
 	m.avoidance.heapTracked.Store(totalTrackedHeap)
 	m.avoidance.heapTracked.lastUpdateUtimeMilli.Store(nowUnixMilli())
