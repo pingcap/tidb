@@ -46,6 +46,10 @@ const (
 	baseSizePerConc = 25 * units.GiB
 	// The maximum number of nodes that can be used for add-index.
 	maxNodeCountLimitForAddIndex = 30
+	// The maximum number of nodes that can be used for export. Export reads record
+	// data and writes files to object storage; this conservative initial value can
+	// be tuned once we have performance data.
+	maxNodeCountLimitForExport = 30
 	// The maximum number of nodes that can be used for import-into.
 	// this value is based on previous performance test, for a quite common scenario,
 	// to import 100TiB data within 24 hours, we need about 32 8c nodes.
@@ -93,6 +97,13 @@ func NewRCCalc(dataSize int64, nodeCPU int, indexSizeRatio float64, factors *sch
 func (rc *ResourceCalc) CalcMaxNodeCountForAddIndex() int {
 	size := rc.getAmplifiedDataSize()
 	limit := rc.factors.AmplifyFactor * maxNodeCountLimitForAddIndex
+	return rc.calcMaxNodeCountBySize(size, limit)
+}
+
+// CalcMaxNodeCountForExport calculates the maximum number of nodes to execute export.
+func (rc *ResourceCalc) CalcMaxNodeCountForExport() int {
+	size := rc.getAmplifiedDataSize()
+	limit := rc.factors.AmplifyFactor * maxNodeCountLimitForExport
 	return rc.calcMaxNodeCountBySize(size, limit)
 }
 

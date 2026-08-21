@@ -28,21 +28,14 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
-	"github.com/pingcap/tidb/pkg/util/tiflash"
-	tikvstore "github.com/tikv/client-go/v2/kv"
 )
 
 // backfillExecutor is used to manage the lifetime of backfill workers.
@@ -150,32 +143,7 @@ func NewReorgCopContext(
 func newDefaultReorgDistSQLCtx(kvClient kv.Client, warnHandler contextutil.WarnAppender) *distsqlctx.DistSQLContext {
 	intest.AssertNotNil(kvClient)
 	intest.AssertNotNil(warnHandler)
-	var sqlKiller sqlkiller.SQLKiller
-	var execDetails execdetails.SyncExecDetails
-	var cpuUsages ppcpuusage.SQLCPUUsages
-	return &distsqlctx.DistSQLContext{
-		WarnHandler:                          warnHandler,
-		Client:                               kvClient,
-		EnableChunkRPC:                       true,
-		EnabledRateLimitAction:               vardef.DefTiDBEnableRateLimitAction,
-		KVVars:                               tikvstore.NewVariables(&sqlKiller.Signal),
-		SessionMemTracker:                    memory.NewTracker(memory.LabelForSession, -1),
-		Location:                             time.UTC,
-		SQLKiller:                            &sqlKiller,
-		CPUUsage:                             &cpuUsages,
-		ErrCtx:                               errctx.NewContextWithLevels(stmtctx.DefaultStmtErrLevels, warnHandler),
-		TiFlashReplicaRead:                   tiflash.GetTiFlashReplicaReadByStr(vardef.DefTiFlashReplicaRead),
-		TiFlashMaxThreads:                    vardef.DefTiFlashMaxThreads,
-		TiFlashMaxBytesBeforeExternalJoin:    vardef.DefTiFlashMaxBytesBeforeExternalJoin,
-		TiFlashMaxBytesBeforeExternalGroupBy: vardef.DefTiFlashMaxBytesBeforeExternalGroupBy,
-		TiFlashMaxBytesBeforeExternalSort:    vardef.DefTiFlashMaxBytesBeforeExternalSort,
-		TiFlashMaxQueryMemoryPerNode:         vardef.DefTiFlashMemQuotaQueryPerNode,
-		TiFlashQuerySpillRatio:               vardef.DefTiFlashQuerySpillRatio,
-		TiFlashHashJoinVersion:               vardef.DefTiFlashHashJoinVersion,
-		ResourceGroupName:                    resourcegroup.DefaultResourceGroupName,
-		ExecDetails:                          &execDetails,
-		RuntimeStatsColl:                     execdetails.NewRuntimeStatsColl(nil),
-	}
+	return distsqlctx.NewDefaultContext(kvClient, warnHandler, stmtctx.DefaultStmtErrLevels)
 }
 
 func newReorgDistSQLCtxWithReorgMeta(kvClient kv.Client, reorgMeta *model.DDLReorgMeta, warnHandler contextutil.WarnAppender) (*distsqlctx.DistSQLContext, error) {
