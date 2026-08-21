@@ -292,6 +292,7 @@ where
             key_ranges,
             snapshot_ts: request.snapshot_ts,
             keep_order: request.keep_order,
+            desc: request.desc,
             field_types: field_types.clone(),
             time_zone: request.statement.time_zone.clone(),
             warnings: request.statement.warnings.clone(),
@@ -568,6 +569,7 @@ where
             key_ranges,
             snapshot_ts: request.snapshot_ts,
             keep_order: request.keep_order,
+            desc: request.desc,
             field_types: field_types.clone(),
             time_zone: request.statement.time_zone.clone(),
             warnings: request.statement.warnings.clone(),
@@ -687,6 +689,12 @@ struct RemoteScanPlan {
     snapshot_ts: u64,
     /// Whether region tasks and the response stream must preserve key order.
     keep_order: bool,
+    /// Whether DistSQL must visit region tasks in descending key order. Go
+    /// carries this through `pkg/distsql/request_builder.go`'s
+    /// `RequestBuilder.SetDesc`; `pkg/store/copr/coprocessor.go`'s
+    /// `buildCopTasks` then reverses the task list. The TableScan executor
+    /// separately carries the direction for rows inside each region.
+    desc: bool,
     field_types: Vec<FieldType>,
     time_zone: tidb_datatype::SessionTimeZone,
     /// The statement's warning sink, carried onto the scan thread. It is an
@@ -744,6 +752,7 @@ where
     builder
         .set_start_ts(plan.snapshot_ts)
         .set_keep_order(plan.keep_order)
+        .set_desc(plan.desc)
         .set_non_partitioned_key_ranges(plan.key_ranges)
         .set_dag_request(plan.envelope, plan.dag.encode_to_vec());
     let request = builder

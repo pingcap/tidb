@@ -95,6 +95,11 @@ fn encode_signed_varint(output: &mut Vec<u8>, value: i64) {
 /// half of the seam produced the answer.
 #[derive(Clone, Debug, Default)]
 struct Observation {
+    /// Direction carried by the DistSQL request, which orders region tasks.
+    request_desc: bool,
+    /// Direction carried by the TableScan executor, which orders rows inside
+    /// each region.
+    scan_desc: bool,
     /// Common-handle column ids carried by the table scan.
     primary_column_ids: Vec<i64>,
     /// Common-handle prefix column ids carried by the table scan.
@@ -162,6 +167,8 @@ impl QueryTransport for FakeTransport {
             .map(|column| column.column_id.unwrap_or(-1))
             .collect();
         let mut observation = Observation::default();
+        observation.request_desc = metadata.desc;
+        observation.scan_desc = scan.desc.unwrap_or(false);
         observation.primary_column_ids = scan.primary_column_ids.clone();
         observation.primary_prefix_column_ids = scan.primary_prefix_column_ids.clone();
         for executor in &dag.executors {
@@ -500,5 +507,59 @@ fn count_star_lowers_to_count_with_one_constant_child() {
         tidb_codec::decode_int(argument.val.as_deref().expect("the literal value"))
             .expect("the signed literal encoding"),
         (&[][..], 1)
+    );
+}
+
+/// A globally ordered descending scan has two direction owners: TableScan
+/// walks each region backwards, while the DistSQL request visits the region
+/// tasks backwards. Setting only the former returns descending islands in
+/// ascending region order once a table spans more than one region.
+#[test]
+fn a_descending_scan_marks_both_the_dag_and_dist_sql_request() {
+    let region = Arc::new(FakeRegion::default());
+    let scanner = CopScanSource::new(Arc::new(FakeFactory {
+        region: Arc::clone(&region),
+    }));
+    let request = PushdownScanRequest {
+        table_id: 91,
+        index: None,
+        columns: vec![PushdownScanColumn {
+            id: 1,
+            field_type: FieldType::new(FieldTypeCode::LongLong),
+            is_handle: true,
+            origin_default: None,
+        }],
+        handle_index: Some(0),
+        primary_column_ids: Vec::new(),
+        primary_prefix_column_ids: Vec::new(),
+        predicates: Vec::new(),
+        output_offsets: None,
+        topn: None,
+        limit: Some(1),
+        aggregate: None,
+        keep_order: true,
+        desc: true,
+        read_ahead_batches: tidb_executor::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
+        snapshot_ts: 4_242,
+        ranges: vec![(Key::from_bytes(b"a"), Key::from_bytes(b"z"))],
+        statement: PushdownStatementContext::default(),
+    };
+    let mut stream = scanner
+        .open(&request)
+        .expect("the descending scan is served by the coprocessor");
+    assert!(stream.next_row().expect("the first row").is_some());
+    stream.close();
+
+    let observations = region.observations.lock().unwrap();
+    let [observation] = observations.as_slice() else {
+        panic!("exactly one coprocessor request: {observations:?}");
+    };
+    assert!(
+        observation.scan_desc,
+        "TableScan must walk rows backwards inside each region"
+    );
+    assert!(
+        observation.request_desc,
+        "DistSQL must visit region tasks backwards for global order"
     );
 }
