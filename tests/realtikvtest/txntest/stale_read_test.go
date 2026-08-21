@@ -319,7 +319,25 @@ func TestStaleReadKVRequest(t *testing.T) {
 	tk.MustExec(`drop table if exists t2`)
 	tk.MustExec("create table t (id int primary key);")
 	tk.MustExec(`create table t1 (c int primary key, d int,e int,index idx_d(d),index idx_e(e))`)
-	time.Sleep(2000 * time.Millisecond)
+	getCurrentTS := func() uint64 {
+		ts, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		require.NoError(t, err)
+		return ts
+	}
+	waitTSAfter := func(after uint64) uint64 {
+		afterTime := oracle.GetTimeFromTS(after)
+		for {
+			ts := getCurrentTS()
+			if oracle.GetTimeFromTS(ts).After(afterTime) {
+				return ts
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	formatTS := func(ts uint64) string {
+		return oracle.GetTimeFromTS(ts).Format("2006-1-2 15:04:05.000")
+	}
+	staleTxnTime := formatTS(waitTSAfter(getCurrentTS()))
 	defer tk.MustExec(`drop table if exists t`)
 	defer tk.MustExec(`drop table if exists t1`)
 	conf := *config.GetGlobalConfig()
@@ -354,14 +372,14 @@ func TestStaleReadKVRequest(t *testing.T) {
 		tk.MustExec("set @@tidb_replica_read='closest-replicas'")
 		for _, testcase := range testcases {
 			require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
-			tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 1 SECOND`)
+			tk.MustExec(fmt.Sprintf(`START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, staleTxnTime))
 			tk.MustQuery(testcase.sql)
 			tk.MustExec(`commit`)
 			require.NoError(t, failpoint.Disable(testcase.assert))
 		}
 		for _, testcase := range testcases {
 			require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
-			tk.MustExec(`SET TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 1 SECOND`)
+			tk.MustExec(fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, staleTxnTime))
 			tk.MustExec(`begin;`)
 			tk.MustQuery(testcase.sql)
 			tk.MustExec(`commit`)
@@ -376,27 +394,26 @@ func TestStaleReadKVRequest(t *testing.T) {
 	}
 	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)
-	time.Sleep(2 * time.Second)
-	tsv := time.Now().Add(-1 * time.Second).Format("2006-1-2 15:04:05.000")
+	tsv := getCurrentTS()
 	tk.MustExec(`insert into t1 (c,d,e) values (3,3,7);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (4,0,5);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (5,0,5);`)
 	// IndexLookUp Reader Executor
-	rows1 := tk.MustQuery(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%v' use index (idx_d) where c < 5 and d < 5", tsv)).Rows()
+	rows1 := tk.MustQuery(fmt.Sprintf("select * from t1 AS OF TIMESTAMP %d use index (idx_d) where c < 5 and d < 5", tsv)).Rows()
 	require.Len(t, rows1, 2)
 	// IndexMerge Reader Executor
-	rows2 := tk.MustQuery(fmt.Sprintf("select /*+ USE_INDEX_MERGE(t1, idx_d, idx_e) */ * from t1 AS OF TIMESTAMP '%v' where c <5 and (d =5 or e=5)", tsv)).Rows()
+	rows2 := tk.MustQuery(fmt.Sprintf("select /*+ USE_INDEX_MERGE(t1, idx_d, idx_e) */ * from t1 AS OF TIMESTAMP %d where c <5 and (d =5 or e=5)", tsv)).Rows()
 	require.Len(t, rows2, 1)
 	// TableReader Executor
-	rows3 := tk.MustQuery(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%v' where c < 6", tsv)).Rows()
+	rows3 := tk.MustQuery(fmt.Sprintf("select * from t1 AS OF TIMESTAMP %d where c < 6", tsv)).Rows()
 	require.Len(t, rows3, 2)
 	// IndexReader Executor
-	rows4 := tk.MustQuery(fmt.Sprintf("select /*+ USE_INDEX(t1, idx_d) */ d from t1 AS OF TIMESTAMP '%v' where c < 5 and d < 1;", tsv)).Rows()
+	rows4 := tk.MustQuery(fmt.Sprintf("select /*+ USE_INDEX(t1, idx_d) */ d from t1 AS OF TIMESTAMP %d where c < 5 and d < 1;", tsv)).Rows()
 	require.Len(t, rows4, 0)
 	// point get executor
-	rows5 := tk.MustQuery(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%v' where c = 3;", tsv)).Rows()
+	rows5 := tk.MustQuery(fmt.Sprintf("select * from t1 AS OF TIMESTAMP %d where c = 3;", tsv)).Rows()
 	require.Len(t, rows5, 0)
-	rows6 := tk.MustQuery(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%v' where c in (3,4,5);", tsv)).Rows()
+	rows6 := tk.MustQuery(fmt.Sprintf("select * from t1 AS OF TIMESTAMP %d where c in (3,4,5);", tsv)).Rows()
 	require.Len(t, rows6, 0)
 }
 
