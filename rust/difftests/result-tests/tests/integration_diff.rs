@@ -2262,7 +2262,12 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // part NUL-padded the sort key, the repaired interval emptied, and
     // `WHERE user = '...'` through `KEY i_user (User)` planned
     // `TableDual rows:0`.
-    const KNOWN_DIVERGENCES: usize = 32;
+    //
+    // 32 -> 30 at the merge of the mysql.user line of work (its own
+    // accounting above): `executor/dual_password` fully closed, and
+    // `compared` 9629 -> 9670 as the account statements became reachable
+    // through a real table.
+    const KNOWN_DIVERGENCES: usize = 30;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path
