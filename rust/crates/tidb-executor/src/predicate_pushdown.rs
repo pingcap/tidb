@@ -139,6 +139,27 @@ impl ScanComparisonOp {
 /// [`Expression`] is what an in-process source evaluates. Both halves describe
 /// the same conjunct, so a lowering may refuse any subset of them without
 /// changing an answer -- see [`PushedScanFilter`].
+///
+/// # The `collation` a string comparison runs in
+///
+/// It is the FUNCTION's derived collation, not the column's declared one. Go
+/// derives it over ALL the arguments (`expression/collation.go:290` for
+/// `ast.In`, `:282` for `ast.Like`) and writes it onto the function's own
+/// `FieldType`, which is what `ExprToPB` sends and what TiKV picks its
+/// collator from. The two differ whenever an argument carries an explicit
+/// `COLLATE`: that is EXPLICIT coercibility, and it outranks the column's
+/// IMPLICIT.
+///
+/// Every variant that compares strings therefore CARRIES that collation
+/// rather than letting each consumer re-derive it from `column_type`. Five
+/// consumers had re-derived it, and each got a different answer than the
+/// expression beside it; carrying it is what makes "the description and the
+/// expression agree" true by construction instead of by repetition.
+///
+/// The value a constructor supplies is the column's, which is right whenever
+/// no argument is explicit; [`adopt_refined_literals`] replaces it with the
+/// built expression's for every conjunct that goes through
+/// `split_scan_predicates`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ScanPredicate {
     /// A column compared with a constant, in either operand order.
@@ -173,6 +194,9 @@ pub enum ScanPredicate {
         literals: Vec<Datum>,
         /// `true` for the `NOT IN` spelling.
         negated: bool,
+        /// The collation the comparison RUNS IN -- see [`ScanPredicate`]'s
+        /// note on it.
+        collation: tidb_datatype::Collation,
     },
     /// A pushable string scalar tested against non-NULL string constants.
     ///
@@ -186,6 +210,9 @@ pub enum ScanPredicate {
         literals: Vec<Datum>,
         /// `true` for the `NOT IN` spelling.
         negated: bool,
+        /// The collation the comparison RUNS IN -- see [`ScanPredicate`]'s
+        /// note on it.
+        collation: tidb_datatype::Collation,
     },
     /// `string_column LIKE constant_pattern` with a constant escape byte.
     /// `NOT LIKE` is represented by the existing [`Self::Not`] wrapper, as
@@ -199,6 +226,9 @@ pub enum ScanPredicate {
         pattern: Vec<u8>,
         /// Explicit escape byte, or the session default supplied by rewrite.
         escape: u8,
+        /// The collation the comparison RUNS IN -- see [`ScanPredicate`]'s
+        /// note on it.
+        collation: tidb_datatype::Collation,
     },
     /// A builtin function call whose `tipb.ScalarFuncSig` the push-down
     /// catalog resolved and whose signature TiKV evaluates.
@@ -259,6 +289,9 @@ pub struct ScanComparison {
     /// the flipped spelling (`5 < a`). The lowering preserves operand order
     /// rather than canonicalizing it, as the source protobuf does.
     pub column_on_left: bool,
+    /// The collation the comparison RUNS IN -- see [`ScanPredicate`]'s note
+    /// on it. Meaningful only for a string comparison.
+    pub collation: tidb_datatype::Collation,
 }
 
 /// A source-ordered column-to-column comparison.
@@ -320,8 +353,7 @@ impl PushedScanFilter {
         );
         let fast_paths = predicates
             .iter()
-            .zip(&filters)
-            .map(|(predicate, filter)| FastScanFilter::from_predicate(predicate, filter))
+            .map(FastScanFilter::from_predicate)
             .collect();
         Self {
             predicates,
@@ -409,8 +441,7 @@ impl PushedScanFilter {
         Some(Self {
             fast_paths: predicates
                 .iter()
-                .zip(&filters)
-                .map(|(predicate, filter)| FastScanFilter::from_predicate(predicate, filter))
+                .map(FastScanFilter::from_predicate)
                 .collect(),
             predicates,
             filters,
@@ -419,30 +450,7 @@ impl PushedScanFilter {
 }
 
 impl FastScanFilter {
-    /// The collation this comparison runs in.
-    ///
-    /// Go's `in` and `like` builtins compare with the collation
-    /// `deriveCollation` gave the FUNCTION (`expression/collation.go:290` for
-    /// `ast.In`, over ALL its arguments), which an explicit `COLLATE` on any
-    /// argument decides. The COLUMN's declared collation is only one input to
-    /// that, and the loser whenever an argument is explicit.
-    ///
-    /// So the fast path reads it off the built expression, which is where the
-    /// derivation already landed, rather than re-deriving it from the column
-    /// and reaching a different answer than the row filter beside it.
-    fn comparison_collation(filter: &Expression) -> Option<tidb_datatype::Collation> {
-        let Expression::ScalarFunction(function) = filter else {
-            return None;
-        };
-        // `NOT IN` and `NOT LIKE` are the negated wrapper the description
-        // unwraps the same way.
-        if function.func_name.lowercase() == "not" {
-            return function.args.first().and_then(Self::comparison_collation);
-        }
-        Some(function.derived_collation())
-    }
-
-    fn from_predicate(predicate: &ScanPredicate, filter: &Expression) -> Option<Self> {
+    fn from_predicate(predicate: &ScanPredicate) -> Option<Self> {
         let (like, negated) = match predicate {
             ScanPredicate::Like { .. } => (predicate, false),
             ScanPredicate::Not(inner) if matches!(&**inner, ScanPredicate::Like { .. }) => {
@@ -452,40 +460,40 @@ impl FastScanFilter {
         };
         if let ScanPredicate::Like {
             column_offset,
-            column_type,
             pattern,
             escape,
+            collation,
+            ..
         } = like
         {
             return Some(Self::Like {
                 column_offset: usize::try_from(*column_offset).ok()?,
                 pattern: pattern.clone(),
                 escape: *escape,
-                collation: Self::comparison_collation(filter).or_else(|| {
-                    tidb_datatype::Collation::from_name(column_type.collation_name())
-                })?,
+                collation: *collation,
                 negated,
             });
         }
-        let (column_offset, column_type, literals, negated) = match predicate {
+        let (column_offset, column_type, literals, negated, collation) = match predicate {
             ScanPredicate::In {
                 column_offset,
                 column_type,
                 literals,
                 negated,
-            } => (*column_offset, column_type, literals, *negated),
+                collation,
+            } => (*column_offset, column_type, literals, *negated, *collation),
             ScanPredicate::ScalarIn {
                 tested: tidb_expr::pushdown_catalog::PbScalar::Column { offset, field_type },
                 literals,
                 negated,
-            } => (*offset, field_type, literals, *negated),
+                collation,
+            } => (*offset, field_type, literals, *negated, *collation),
             _ => return None,
         };
         if !column_type.is_string() || literals.is_empty() {
             return None;
         }
-        let collation = Self::comparison_collation(filter)
-            .map_or_else(|| column_type.collation_name().to_owned(), |c| c.name().to_owned());
+        let collation = collation.name().to_owned();
         let mut keys = literals
             .iter()
             .map(|literal| literal.as_raw_bytes().map(|bytes| (literal, bytes)))
@@ -601,6 +609,37 @@ pub(crate) fn adopt_refined_literals(
     else {
         return;
     };
+    // The collation a string comparison RUNS IN travels with the description
+    // for the reason [`ScanPredicate`] states: five consumers had each
+    // re-derived it from `column_type` and each disagreed with the expression
+    // beside them. This is where the one answer is copied across.
+    //
+    // `after` is the built function, so its own derived collation is the
+    // answer Go writes onto the function's `FieldType` -- what `ExprToPB`
+    // sends and what every in-process evaluator here already uses.
+    match predicate {
+        ScanPredicate::Like { collation, .. }
+        | ScanPredicate::In { collation, .. }
+        | ScanPredicate::ScalarIn { collation, .. } => {
+            *collation = after.derived_collation();
+        }
+        ScanPredicate::Compare(comparison) => {
+            comparison.collation = after.derived_collation();
+        }
+        ScanPredicate::Not(inner) => {
+            if after.func_name.lowercase() == "not" && after.args.len() == 1 {
+                if let Expression::ScalarFunction(negated) = &after.args[0] {
+                    if let ScanPredicate::Like { collation, .. }
+                    | ScanPredicate::In { collation, .. }
+                    | ScanPredicate::ScalarIn { collation, .. } = &mut **inner
+                    {
+                        *collation = negated.derived_collation();
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
     match predicate {
         ScanPredicate::Compare(comparison) => {
             let literal_offset = usize::from(comparison.column_on_left);

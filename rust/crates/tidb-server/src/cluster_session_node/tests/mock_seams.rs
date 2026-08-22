@@ -418,7 +418,14 @@ impl ClusterDdl for MockDdl {
                         .to_owned(),
                 ))
             }
-            DdlStatement::ModifyTableComment { .. }
+            // A PLACEMENT POLICY is a schema object of its own, not a change
+            // to a database or table this mock models. `cluster_ddl_source`
+            // owns those plans, as it does the column and truncate changes
+            // below.
+            DdlStatement::CreatePlacementPolicy { .. }
+            | DdlStatement::AlterPlacementPolicy { .. }
+            | DdlStatement::DropPlacementPolicy { .. }
+            | DdlStatement::ModifyTableComment { .. }
             | DdlStatement::RebaseAutoIncrementId { .. }
             | DdlStatement::IgnoredTableOption { .. }
             | DdlStatement::OrderByColumns { .. }

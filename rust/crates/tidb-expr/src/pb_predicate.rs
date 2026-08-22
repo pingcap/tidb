@@ -298,9 +298,12 @@ pub fn string_comparison_to_pb(
     operator: BinaryOp,
     left: StringPbOperand,
     right: StringPbOperand,
+    collation: &str,
 ) -> Result<Expr, PbPredicateError> {
     let signature = string_comparison_signature(operator)?;
-    let collation = derived_string_collation(&left, &right)?;
+    check_string_collation_is_sendable(&left, collation)?;
+    check_string_collation_is_sendable(&right, collation)?;
+    let collation = collation.to_owned();
     let children = vec![string_operand_to_pb(left)?, string_operand_to_pb(right)?];
     Ok(Expr {
         tp: Some(ExprType::ScalarFunc as i32),
@@ -323,62 +326,40 @@ pub fn string_comparison_to_pb(
     })
 }
 
-/// The collation the comparison is evaluated with, for the one operand shape
-/// this lowering derives. See [`string_comparison_to_pb`].
+/// Refuses an operand whose CHARSET this lowering cannot faithfully describe.
 ///
-/// KNOWN DIVERGENCE, RECORDED RATHER THAN FIXED. This returns the COLUMN's
-/// collation on the assumption that the other operand is a literal and so
-/// COERCIBLE, which the column's IMPLICIT coercibility outranks. An explicit
-/// `COLLATE` on the literal is neither -- it is EXPLICIT, and it wins the
-/// merge -- so `a LIKE 'aa' COLLATE utf8mb4_general_ci` over a `utf8mb4_bin`
-/// column is sent to TiKV asking for a BINARY comparison, where Go writes the
-/// derived collation onto the function's own `FieldType` (`ExprToPB`) and TiKV
-/// picks its collator from that.
+/// This used to DERIVE the comparison's collation here, by returning the
+/// column operand's on the assumption that the other side was a literal and
+/// so COERCIBLE. An explicit `COLLATE` is EXPLICIT and outranks the column,
+/// so that inference sent TiKV a BINARY comparison for
+/// `a LIKE 'aa' COLLATE utf8mb4_general_ci` over a `utf8mb4_bin` column. The
+/// collation is now CARRIED from the description
+/// (`tidb_executor::predicate_pushdown::ScanPredicate`), which takes it from
+/// the built expression -- the same value Go writes onto the function's own
+/// `FieldType` for `ExprToPB` to send.
 ///
-/// The in-process paths were fixed in `13455e3646`, `fd9687ca84` and
-/// `78c0b4cee6` by reading the collation off the BUILT EXPRESSION instead of
-/// re-deriving it. This one cannot: it is reached from a `ScanPredicate`
-/// (`tidb_exec::wide_scan_selection`), and that description carries only the
-/// column's declared `FieldType`, so the comparison's collation is not
-/// present to read.
-///
-/// The fix is plumbing, in this order:
-///   1. carry the comparison's collation on `ScanPredicate::{Like, In}` --
-///      `split_scan_predicates` already pairs each description with its built
-///      expression, and `adopt_refined_literals` is the step that copies from
-///      one to the other;
-///   2. take it as a parameter here, and in `string_comparison_to_pb`,
-///      `string_like_to_pb` and `string_in_to_pb`, replacing this inference;
-///   3. drop `FastScanFilter::comparison_collation`, which reads the same
-///      fact off the expression because the description could not supply it.
-///
-/// Left undone rather than half-done: a partial thread-through would leave
-/// two sources of this collation disagreeing, which is the defect being
-/// removed. It affects the cluster path only -- every in-process test
-/// evaluates through the expression.
-fn derived_string_collation(
-    left: &StringPbOperand,
-    right: &StringPbOperand,
-) -> Result<String, PbPredicateError> {
-    let (charset, collation) = match (left, right) {
-        (
-            StringPbOperand::Column {
-                charset, collation, ..
-            },
-            StringPbOperand::Literal(_),
-        )
-        | (
-            StringPbOperand::Literal(_),
-            StringPbOperand::Column {
-                charset, collation, ..
-            },
-        ) => (charset.as_str(), collation.clone()),
-        _ => return Err(PbPredicateError::UnderivableStringCollation),
-    };
-    if charset != UTF8MB4_CHARSET && charset != BINARY_CHARSET {
+/// What remains is the charset gate that inference also performed: a column
+/// charset other than `utf8mb4` or `binary` (`latin1`, `ascii`, `gbk`)
+/// reaches `inferCollation`'s repertoire branches, where a literal that does
+/// not fit the column's repertoire changes the derived answer, so those are
+/// refused rather than approximated. A literal operand carries no charset of
+/// its own here and passes.
+fn check_string_collation_is_sendable(
+    operand: &StringPbOperand,
+    collation: &str,
+) -> Result<(), PbPredicateError> {
+    if collation.is_empty() {
         return Err(PbPredicateError::UnderivableStringCollation);
     }
-    Ok(collation)
+    match operand {
+        StringPbOperand::Column { charset, .. } => {
+            if charset != UTF8MB4_CHARSET && charset != BINARY_CHARSET {
+                return Err(PbPredicateError::UnderivableStringCollation);
+            }
+            Ok(())
+        }
+        StringPbOperand::Literal(_) => Ok(()),
+    }
 }
 
 fn string_operand_to_pb(operand: StringPbOperand) -> Result<Expr, PbPredicateError> {
@@ -500,6 +481,7 @@ pub fn int_in_to_pb(
 pub fn string_in_to_pb(
     tested: Expr,
     list: impl IntoIterator<Item = Vec<u8>>,
+    collation_name: &str,
 ) -> Result<Expr, PbPredicateError> {
     let tested_type = tested
         .field_type
@@ -511,12 +493,11 @@ pub fn string_in_to_pb(
     if !is_string_family_type(tested_mysql_type) {
         return Err(PbPredicateError::UnderivableStringCollation);
     }
-    let collation_name = tidb_datatype::proto_to_collation(
-        tested_type
-            .collate
-            .ok_or(PbPredicateError::UnderivableStringCollation)?,
-    );
-    let collation = tidb_datatype::Collation::from_name(&collation_name)
+    // The COMPARISON's collation, carried from the description rather than
+    // read back off the tested operand's own type: an explicit `COLLATE` on a
+    // list item outranks the tested expression's, and reading the operand
+    // could not see that. See [`check_string_collation_is_sendable`].
+    let collation = tidb_datatype::Collation::from_name(collation_name)
         .filter(|collation| *collation != tidb_datatype::Collation::Utf8Mb4ZhPinyinTiDbAsCs)
         .ok_or(PbPredicateError::UnderivableStringCollation)?;
 
@@ -547,9 +528,10 @@ pub fn string_like_to_pb(
     tested: StringPbOperand,
     pattern: Vec<u8>,
     escape: i64,
+    collation: &str,
 ) -> Result<Expr, PbPredicateError> {
     let pattern = StringPbOperand::Literal(pattern);
-    let collation = derived_string_collation(&tested, &pattern)?;
+    check_string_collation_is_sendable(&tested, collation)?;
     let children = vec![
         string_operand_to_pb(tested)?,
         string_operand_to_pb(pattern)?,

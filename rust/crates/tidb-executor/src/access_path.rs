@@ -2618,6 +2618,11 @@ fn scan_predicate_from_expression(expression: &Expression) -> Option<ScanPredica
     (!matches!(literal, Datum::Null)).then(|| {
         Some(ScanPredicate::Compare(ScanComparison {
             column_offset: u32::try_from(column.index).ok()?,
+            // The column's, which is the derived collation whenever no
+            // argument is explicit; `adopt_refined_literals` replaces it with
+            // the built expression's for a conjunct that goes through
+            // `split_scan_predicates`.
+            collation: column.get_static_type()?.collation(),
             column_type: column.get_static_type()?.clone(),
             literal_type: constant.get_static_type()?.clone(),
             op: operation,

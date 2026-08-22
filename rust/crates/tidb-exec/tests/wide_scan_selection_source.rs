@@ -79,6 +79,7 @@ fn pushed(
     column_on_left: bool,
 ) -> ScanPredicate {
     ScanPredicate::Compare(ScanComparison {
+        collation: tidb_datatype::Collation::Utf8Mb4Bin,
         column_offset,
         column_type: bigint(),
         literal_type: bigint(),
@@ -227,6 +228,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
     let upper_discount = Decimal::from_literal("0.07");
     let predicates = vec![
         ScanPredicate::Compare(ScanComparison {
+        collation: tidb_datatype::Collation::Utf8Mb4Bin,
             column_offset: 0,
             column_type: FieldType::new(FieldTypeCode::Date),
             literal_type: FieldType::new(FieldTypeCode::Datetime)
@@ -237,6 +239,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
             column_on_left: true,
         }),
         ScanPredicate::Compare(ScanComparison {
+        collation: tidb_datatype::Collation::Utf8Mb4Bin,
             column_offset: 0,
             column_type: FieldType::new(FieldTypeCode::Date),
             literal_type: FieldType::new(FieldTypeCode::Datetime)
@@ -248,6 +251,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
         }),
         ScanPredicate::And(vec![
             ScanPredicate::Compare(ScanComparison {
+        collation: tidb_datatype::Collation::Utf8Mb4Bin,
                 column_offset: 1,
                 column_type: FieldType::new(FieldTypeCode::NewDecimal)
                     .with_flen(5)
@@ -260,6 +264,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
                 column_on_left: true,
             }),
             ScanPredicate::Compare(ScanComparison {
+        collation: tidb_datatype::Collation::Utf8Mb4Bin,
                 column_offset: 1,
                 column_type: FieldType::new(FieldTypeCode::NewDecimal)
                     .with_flen(5)
@@ -273,6 +278,7 @@ fn tpch_q6_typed_conditions_precede_the_partial_aggregation_on_the_wire() {
             }),
         ]),
         ScanPredicate::Compare(ScanComparison {
+        collation: tidb_datatype::Collation::Utf8Mb4Bin,
             column_offset: 2,
             column_type: FieldType::new(FieldTypeCode::NewDecimal)
                 .with_flen(15)
@@ -543,8 +549,17 @@ fn string_column(collation: &str) -> ScanColumnInfo {
     }
 }
 
-fn string_compare(op: ScanComparisonOp, literal: &[u8], column_on_left: bool) -> ScanPredicate {
+/// `collation` is what the description CARRIES -- the collation the
+/// comparison runs in. With no explicit `COLLATE` anywhere that is the
+/// column's, which is what every caller here passes.
+fn string_compare_in(
+    op: ScanComparisonOp,
+    literal: &[u8],
+    column_on_left: bool,
+    collation: &str,
+) -> ScanPredicate {
     ScanPredicate::Compare(ScanComparison {
+        collation: tidb_datatype::Collation::from_name(collation).unwrap(),
         column_offset: 0,
         column_type: FieldType::new(FieldTypeCode::Varchar),
         literal_type: FieldType::new(FieldTypeCode::VarString)
@@ -560,16 +575,31 @@ fn string_compare(op: ScanComparisonOp, literal: &[u8], column_on_left: bool) ->
     })
 }
 
+fn string_compare(op: ScanComparisonOp, literal: &[u8], column_on_left: bool) -> ScanPredicate {
+    string_compare_in(op, literal, column_on_left, "utf8mb4_bin")
+}
+
+/// `collation` is what the description CARRIES; see [`string_compare_in`].
+fn string_scalar_in_with(
+    tested: tidb_expr::pushdown_catalog::PbScalar,
+    literals: Vec<Datum>,
+    negated: bool,
+    collation: &str,
+) -> ScanPredicate {
+    ScanPredicate::ScalarIn {
+        collation: tidb_datatype::Collation::from_name(collation).unwrap(),
+        tested,
+        literals,
+        negated,
+    }
+}
+
 fn string_scalar_in(
     tested: tidb_expr::pushdown_catalog::PbScalar,
     literals: Vec<Datum>,
     negated: bool,
 ) -> ScanPredicate {
-    ScanPredicate::ScalarIn {
-        tested,
-        literals,
-        negated,
-    }
+    string_scalar_in_with(tested, literals, negated, "utf8mb4_bin")
 }
 
 /// A string comparison travels, as the `*String` signature Go's
@@ -657,6 +687,7 @@ fn not_like_lowers_to_unary_not_over_gos_like_signature() {
         .with_charset_name("utf8mb4")
         .with_collation_name("utf8mb4_bin");
     let predicate = ScanPredicate::Not(Box::new(ScanPredicate::Like {
+        collation: tidb_datatype::Collation::Utf8Mb4Bin,
         column_offset: 0,
         column_type,
         pattern: b"%pending%deposits%".to_vec(),
@@ -703,7 +734,7 @@ fn string_expression_in_lowers_with_the_tested_collation() {
         ],
     )
     .unwrap();
-    let predicate = string_scalar_in(
+    let predicate = string_scalar_in_with(
         tested,
         vec![
             Datum::new_string("A"),
@@ -711,6 +742,7 @@ fn string_expression_in_lowers_with_the_tested_collation() {
             Datum::new_string("B"),
         ],
         false,
+        "utf8mb4_general_ci",
     );
     let columns = vec![string_column("utf8mb4_general_ci")];
 
@@ -759,7 +791,7 @@ fn the_comparison_node_carries_the_columns_collation_and_that_collation_decides_
     ] {
         let columns = vec![string_column(name)];
         let condition = wide_scan_selection_conditions(
-            &[string_compare(ScanComparisonOp::Eq, b"a", true)],
+            &[string_compare_in(ScanComparisonOp::Eq, b"a", true, name)],
             &columns,
         )
         .unwrap()
@@ -841,6 +873,7 @@ fn the_string_lowering_refuses_every_comparison_whose_collation_it_cannot_derive
     assert_eq!(
         wide_scan_selection_conditions(
             &[ScanPredicate::In {
+        collation: tidb_datatype::Collation::Binary,
                 column_offset: 0,
                 column_type: FieldType::new(FieldTypeCode::Varchar),
                 literals: vec![Datum::Bytes(b"a".to_vec())],
@@ -892,6 +925,7 @@ fn the_composed_integer_predicates_lower_to_gos_own_signatures() {
     );
 
     let membership = |negated, literals: Vec<i64>| ScanPredicate::In {
+        collation: tidb_datatype::Collation::Binary,
         column_offset: 0,
         column_type: bigint(),
         literals: literals.into_iter().map(Datum::Int).collect(),

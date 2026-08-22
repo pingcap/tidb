@@ -2895,6 +2895,10 @@ fn scan_predicate(
                 if column_type.eval_type() != tidb_datatype::EvalType::String {
                     return Some(ScanPredicate::In {
                         column_offset: offset,
+                        // A non-string column compares under `binary`, and
+                        // no `COLLATE` can change that; the adoption step
+                        // leaves it alone.
+                        collation: column_type.collation(),
                         column_type,
                         literals: literals.into_iter().map(|(value, _)| value).collect(),
                         negated: *not,
@@ -2915,6 +2919,16 @@ fn scan_predicate(
                 return None;
             }
             Some(ScanPredicate::ScalarIn {
+                // The tested expression's own collation, which is the derived
+                // one whenever no argument is explicit;
+                // `adopt_refined_literals` replaces it with the built
+                // expression's.
+                collation: match &tested {
+                    tidb_expr::pushdown_catalog::PbScalar::Column { field_type, .. } => {
+                        field_type.collation()
+                    }
+                    _ => tidb_datatype::Collation::Utf8Mb4Bin,
+                },
                 tested,
                 literals: literals.into_iter().map(|(value, _)| value).collect(),
                 negated: *not,
@@ -2943,6 +2957,10 @@ fn scan_predicate(
             };
             let predicate = ScanPredicate::Like {
                 column_offset,
+                // The column's, which is the derived collation whenever no
+                // argument is explicit; `adopt_refined_literals` replaces it
+                // with the built expression's.
+                collation: column_type.collation(),
                 column_type,
                 pattern,
                 escape: escape.unwrap_or_else(|| resolver.like_default_escape()),
@@ -2966,6 +2984,7 @@ fn scan_predicate(
             Some(ScanPredicate::And(vec![
                 ScanPredicate::Compare(ScanComparison {
                     column_offset,
+                    collation: column_type.collation(),
                     column_type: column_type.clone(),
                     literal_type: low_type,
                     op: ScanComparisonOp::Ge,
@@ -2974,6 +2993,7 @@ fn scan_predicate(
                 }),
                 ScanPredicate::Compare(ScanComparison {
                     column_offset,
+                    collation: column_type.collation(),
                     column_type,
                     literal_type: high_type,
                     op: ScanComparisonOp::Le,
@@ -3129,6 +3149,7 @@ fn scan_comparison(
     }
     Some(ScanComparison {
         column_offset: u32::try_from(offset).ok()?,
+        collation: column_type.collation(),
         column_type,
         literal_type,
         op,

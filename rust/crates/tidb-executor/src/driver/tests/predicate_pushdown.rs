@@ -749,6 +749,7 @@ fn the_scan_takes_string_expression_in() {
         tested,
         literals,
         negated,
+        ..
     }] = pushed.predicates()
     else {
         panic!("one scalar IN description: {:?}", pushed.predicates());

@@ -238,6 +238,7 @@ fn predicate_to_pb(
             tested,
             literals,
             negated,
+            collation,
         } => {
             let tested = tidb_expr::pushdown_catalog::to_pb(tested, &|offset| {
                 scan_column_descriptor(offset, columns)
@@ -251,13 +252,14 @@ fn predicate_to_pb(
                     _ => Err(WideScanSelectionError::UnsupportedBuiltinOperand),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let membership = string_in_to_pb(tested, literals)?;
+            let membership = string_in_to_pb(tested, literals, collation.name())?;
             Ok(negate_if(membership, *negated))
         }
         ScanPredicate::Like {
             column_offset,
             pattern,
             escape,
+            collation,
             ..
         } => {
             let column = columns.get(*column_offset as usize).ok_or(
@@ -270,6 +272,7 @@ fn predicate_to_pb(
                 string_column_operand(*column_offset, column)?,
                 pattern.clone(),
                 i64::from(*escape),
+                collation.name(),
             )?)
         }
         // A resolved builtin call: the catalog that admitted it is also what
@@ -576,6 +579,7 @@ fn string_comparison(
         comparison_op(comparison.op),
         lhs,
         rhs,
+        comparison.collation.name(),
     )?)
 }
 

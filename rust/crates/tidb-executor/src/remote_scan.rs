@@ -842,16 +842,20 @@ mod tests {
             ScanPredicate::Builtin(_) | ScanPredicate::ScalarIn { .. } => Some(true),
             ScanPredicate::Like {
                 column_offset,
-                column_type,
                 pattern,
                 escape,
+                collation,
+                ..
             } => {
                 let value = row.get(*column_offset as usize)?;
                 if *value == Datum::Null {
                     return None;
                 }
                 let bytes = value.as_raw_bytes()?;
-                let collation = tidb_datatype::Collation::from_name(column_type.collation_name())?;
+                // The comparison's collation, which the description carries;
+                // re-deriving it from `column_type` here answered a `LIKE`
+                // with an explicit `COLLATE` in the wrong one.
+                let collation = *collation;
                 Some(tidb_expr::like_match_with_collation(
                     bytes,
                     pattern,
