@@ -225,6 +225,13 @@ fn conditions_below_join(session: &mut Session, sql: &str) -> Vec<(String, Strin
 /// Recovers only integer-handle ranges whose SQL predicate is unambiguous.
 /// General ranges deliberately remain access evidence rather than guessed
 /// logical conditions.
+///
+/// The recovered condition names the column the way a PLAN names it: by its
+/// BASE table, never by the alias. TiDB's own recording of a self-join
+/// (`tests/integrationtest/r/explain_easy.result:442-449`) prints
+/// `explain_easy.t.b` under both `table:t1` and `table:t2`, so an access
+/// object's `t1` says only WHICH scan this is -- and every relation in this
+/// corpus is the one table [`CREATE_T`] creates.
 fn integer_handle_condition(access_object: &str, info: &str) -> Option<String> {
     let table = access_object
         .strip_prefix("table:")?
@@ -234,7 +241,7 @@ fn integer_handle_condition(access_object: &str, info: &str) -> Option<String> {
     if table.is_empty() {
         return None;
     }
-    let column = format!("test.{table}.a");
+    let column = "test.t.a".to_owned();
 
     if let Some(handle) = info.strip_prefix("handle:") {
         let handle = handle.trim().parse::<i64>().ok()?;
@@ -887,39 +894,85 @@ fn mutable_predicates_are_not_duplicated_below_a_join() {
 }
 
 /// Asserts each side of the join carries exactly Go's condition list.
-///
-/// The plan is read in `EXPLAIN` order, so the first conditioned operator
-/// under the join belongs to the build side and the second to the probe side;
-/// `crate::explain` prints the build side first (`(Build)` then `(Probe)`),
-/// and this tier builds the RIGHT table as the build side -- so the first is
-/// Go's `Right` and the second Go's `Left`.
 fn assert_pushed_conditions(cases: &[PushDownCase]) {
     let mut session = signed_table_session();
     for (sql, left, right, _) in cases {
-        let below = conditions_below_join(&mut session, sql);
-        let mut found_left = Vec::new();
-        let mut found_right = Vec::new();
-        for (_, info) in &below {
-            let side = if info.contains("test.t1.") {
-                &mut found_left
-            } else if info.contains("test.t2.") {
-                &mut found_right
-            } else {
-                continue;
-            };
-            for condition in logical_conditions(
-                &info
-                    .replace("test.t1.", "test.t.")
-                    .replace("test.t2.", "test.t."),
-            ) {
-                if !side.contains(&condition) {
-                    side.push(condition);
-                }
-            }
-        }
+        let (found_left, found_right) = conditions_by_side(&mut session, sql);
         assert_condition_list(&found_left, left, "left", sql);
         assert_condition_list(&found_right, right, "right", sql);
     }
+}
+
+/// The conditions below the join, split by WHICH of the two aliases the scan
+/// beneath each one reads.
+///
+/// The condition text cannot say. A plan prints a column by its BASE table --
+/// `test.t.e` whether it came from `t1.e` or `t2.e` -- and Go prints it the
+/// same way; its own recording of a self-join
+/// (`tests/integrationtest/r/explain_easy.result:915-925`) shows
+/// `not(isnull(explain_easy.t.e))` under BOTH readers, with only the
+/// `table:t1`/`table:t2` access objects telling them apart. So the scan's
+/// access object is what assigns a side here.
+///
+/// `EXPLAIN` is depth-first, so every conditioned operator between one scan
+/// and the previous one sits above that scan and belongs to its side.
+fn conditions_by_side(session: &mut Session, sql: &str) -> (Vec<String>, Vec<String>) {
+    let plan = match session
+        .run(&format!("EXPLAIN {sql}"))
+        .unwrap_or_else(|error| panic!("EXPLAIN failed for `{sql}`: {error:?}"))
+    {
+        StmtResult::Rows(rows) => rows,
+        other => panic!("expected rows from EXPLAIN, got {other:?}"),
+    };
+    let Some(join_at) = plan
+        .iter()
+        .position(|row| cell_text(&row[0]).contains("Join"))
+    else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut left = Vec::new();
+    let mut right = Vec::new();
+    let mut pending: Vec<String> = Vec::new();
+    for row in &plan[join_at + 1..] {
+        let access_object = cell_text(&row[3]);
+        let info = cell_text(&row[4]);
+        let conditions = match integer_handle_condition(&access_object, &info) {
+            Some(condition) => vec![condition],
+            None if info.is_empty()
+                || info.starts_with("keep order:")
+                || info.starts_with("data:")
+                || info.starts_with("index:")
+                || info.starts_with("range:") =>
+            {
+                Vec::new()
+            }
+            None => logical_conditions(&info),
+        };
+        let Some(alias) = access_object
+            .strip_prefix("table:")
+            .and_then(|table| table.split(',').next())
+            .map(str::trim)
+        else {
+            pending.extend(conditions);
+            continue;
+        };
+        // `t1` is Go's Left and `t2` its Right; any other alias is a table
+        // this corpus does not name, and its conditions go with it.
+        let side = match alias {
+            "t1" => &mut left,
+            "t2" => &mut right,
+            _ => {
+                pending.clear();
+                continue;
+            }
+        };
+        for condition in pending.drain(..).chain(conditions) {
+            if !side.contains(&condition) {
+                side.push(condition);
+            }
+        }
+    }
+    (left, right)
 }
 
 fn logical_conditions(info: &str) -> Vec<String> {
@@ -1285,7 +1338,7 @@ fn a_repeated_join_conjunct_is_deduplicated_at_the_leaf() {
     assert_eq!(
         conditions
             .iter()
-            .filter(|(_, info)| info.contains("gt(test.t1.a, 1)"))
+            .filter(|(_, info)| info.contains("gt(test.t.a, 1)"))
             .count(),
         1
     );

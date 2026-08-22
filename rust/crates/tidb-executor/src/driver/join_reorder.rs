@@ -2751,6 +2751,26 @@ pub(crate) fn row_source(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Option<RowSource> {
+    row_source_for_join_type(join, where_clause, catalog, current_db, ctx, false)
+}
+
+/// [`row_source`] told whether the top join is an ANTI SEMI one -- a
+/// decorrelated `NOT EXISTS`/`NOT IN`, which this tier spells as a `Cross`
+/// node.
+///
+/// Go's `AntiSemiJoin` arm of `PredicatePushDown` (`logical_join.go:260`)
+/// derives no `is not null` from the join's own conditions, on EITHER side,
+/// and says why: a `NOT EXISTS` row whose key is NULL matches nothing, so it
+/// belongs in the answer. Deriving it here would put that filter in the leaf
+/// inventory and print a `Selection` the answer does not have.
+pub(crate) fn row_source_for_join_type(
+    join: &Join,
+    where_clause: Option<&Expr>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    anti_semi: bool,
+) -> Option<RowSource> {
     let mut ids = Ids::default();
     let mut leaves = Vec::new();
     let mut on_conds = Vec::new();
@@ -2792,7 +2812,7 @@ pub(crate) fn row_source(
         match classify(condition.expr, &leaves, None)? {
             Classified::Edge(edge) => {
                 for side in [edge.left, edge.right] {
-                    if condition.outer.is_none_or(|outer| outer.contains(side.0)) {
+                    if !anti_semi && condition.outer.is_none_or(|outer| outer.contains(side.0)) {
                         not_null[side.0].insert(side.1);
                     }
                 }

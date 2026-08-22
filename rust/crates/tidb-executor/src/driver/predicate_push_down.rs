@@ -107,11 +107,18 @@ struct Binding {
 }
 
 /// Builds Go's child-condition distribution for the join tree.
+///
+/// `anti_semi` says the TOP node is really an ANTI SEMI join -- a decorrelated
+/// `NOT EXISTS` or `NOT IN`, which this tier spells as a `Cross` node with the
+/// correlated conditions in its `ON`. Go treats that join type apart from
+/// every other, and the difference is not an optimisation: see
+/// [`distribute_join`]. Nested joins below the top node are ordinary.
 pub(crate) fn plan(
     join: &Join,
     where_clause: Option<&Expr>,
     catalog: &Catalog,
     current_db: &str,
+    anti_semi: bool,
 ) -> Plan {
     let Some(bindings) = bindings(&JoinNode::Join(Box::new(join.clone())), catalog, current_db)
     else {
@@ -119,16 +126,26 @@ pub(crate) fn plan(
     };
     let inherited = where_clause.map(extracted_conjuncts).unwrap_or_default();
     let mut plan = Plan::default();
-    distribute_join(join, &inherited, &bindings, catalog, current_db, &mut plan);
+    distribute_join(
+        join,
+        &inherited,
+        &bindings,
+        catalog,
+        current_db,
+        anti_semi,
+        &mut plan,
+    );
     plan
 }
 
+#[allow(clippy::too_many_arguments)]
 fn distribute_join(
     join: &Join,
     inherited: &[Expr],
     bindings: &[Binding],
     catalog: &Catalog,
     current_db: &str,
+    anti_semi: bool,
     plan: &mut Plan,
 ) {
     if join.right.is_none() && join.on.is_none() && join.using.is_empty() && !join.natural {
@@ -153,7 +170,44 @@ fn distribute_join(
 
     match join.tp {
         JoinType::Cross => {
-            for condition in inherited.iter().chain(&on) {
+            for condition in inherited {
+                derive_for_sides(
+                    condition,
+                    &left_names,
+                    &right_names,
+                    bindings,
+                    true,
+                    true,
+                    &mut left,
+                    &mut right_filters,
+                );
+            }
+            for condition in &on {
+                // Go's `SemiJoin`/`InnerJoin` arm merges the join's own
+                // conditions into the set `extractOnCondition` walks
+                // (`logical_join.go:238-243`), which is what derives
+                // `is not null` from `t1.e = t2.e`. Its `AntiSemiJoin` arm
+                // (`:260`) deliberately does NOT, and says why:
+                //
+                //   Do not derive `is not null` for anti join, since it may
+                //   cause wrong results. For example: ... `select * from t t1
+                //   where not exists (select * from t t2 where t2.a = t1.a)`
+                //   does not imply `t1.a is not null`.
+                //
+                // A `NOT EXISTS` row whose key is NULL matches nothing, so it
+                // BELONGS in the answer; filtering it out of the outer side
+                // deletes it. What still reaches the inner child is a
+                // single-sided RIGHT condition, which Go carries there as
+                // `p.RightConditions` (`:278`).
+                if anti_semi {
+                    if safe_to_duplicate(condition)
+                        && expression_side(condition, &left_names, &right_names, bindings)
+                            == Side::Right
+                    {
+                        right_filters.push(condition.clone());
+                    }
+                    continue;
+                }
                 derive_for_sides(
                     condition,
                     &left_names,
@@ -247,7 +301,7 @@ fn distribute_node(
             }
         }
         JoinNode::Join(join) => {
-            distribute_join(join, inherited, bindings, catalog, current_db, plan)
+            distribute_join(join, inherited, bindings, catalog, current_db, false, plan)
         }
         // Pushing through a projection requires rewriting its output columns
         // to defining expressions. Leave that separate rule at its boundary.

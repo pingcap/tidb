@@ -169,16 +169,20 @@ pub(crate) fn decorrelate_where(
                     physical_select.where_clause.as_ref(),
                     catalog,
                     current_db,
+                    // `NOT EXISTS` becomes Go's `AntiSemiJoin`, which derives
+                    // no `is not null` from its own conditions.
+                    not,
                 );
                 let wanted = crate::driver::leaf_demand::LeafDemand::of_select(&physical_select);
                 let output_wanted =
                     crate::driver::leaf_demand::LeafDemand::of_select_output(&physical_select);
-                let Some(rows) = crate::driver::join_reorder::row_source(
+                let Some(rows) = crate::driver::join_reorder::row_source_for_join_type(
                     &physical_join,
                     physical_select.where_clause.as_ref(),
                     catalog,
                     current_db,
                     ctx,
+                    not,
                 ) else {
                     break;
                 };

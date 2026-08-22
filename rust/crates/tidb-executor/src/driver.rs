@@ -1298,6 +1298,7 @@ fn run_select_traced_with_delivery_choice(
                 select.where_clause.as_ref(),
                 catalog,
                 current_db,
+                false,
             );
             // Go's aggregation elimination runs before physical property
             // enforcement. Once a unique group becomes a projection, the
