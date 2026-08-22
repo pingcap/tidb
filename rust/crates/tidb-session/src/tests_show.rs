@@ -2083,3 +2083,65 @@ fn show_create_table_prints_the_ttl_clauses() {
     session.run("CREATE TABLE v (id int)").unwrap();
     assert!(!row_text(session.run("SHOW CREATE TABLE v"))[0][1].contains("ttl"));
 }
+
+/// `MATCH ... AGAINST`'s LIKE fallback: Go `fts_to_like.go`, gated on
+/// `tidb_opt_enable_alternative_logical_plans` and boolean context.
+///
+/// The statements and answers are the source corpus's own
+/// (`planner/core/fulltext_search`).
+#[test]
+fn match_against_rewrites_to_ilike_under_the_gate() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE articles (id int primary key, title varchar(200), body text)")
+        .unwrap();
+    session
+        .run(
+            "INSERT INTO articles VALUES \
+             (1, 'MySQL Tutorial', 'This tutorial provides a basic MySQL tutorial'), \
+             (2, 'How To Use MySQL Well', 'After you went through a MySQL tutorial'), \
+             (3, 'Optimizing MySQL', 'In this tutorial we will show how to optimize MySQL'), \
+             (4, 'MySQL vs. PostgreSQL', 'This article compares MySQL and PostgreSQL'), \
+             (5, 'MySQL Security', 'How to secure your MySQL database')",
+        )
+        .unwrap();
+
+    // Default OFF: only the native builtin exists, which this tier refuses
+    // exactly as Go does with no FTS replica.
+    assert!(session
+        .run("SELECT id FROM articles WHERE MATCH(title) AGAINST('MySQL')")
+        .is_err());
+
+    session
+        .run("SET @@tidb_opt_enable_alternative_logical_plans=ON")
+        .unwrap();
+    // Natural language: any word in the column matches, case-insensitively.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT id FROM articles WHERE MATCH(title) AGAINST('MySQL tutorial') ORDER BY id"
+        )),
+        vec![vec!["1"], vec!["2"], vec!["3"], vec!["4"], vec!["5"]]
+    );
+    // Boolean mode: `+` requires, `-` excludes.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT id FROM articles WHERE MATCH(title) AGAINST('+MySQL -tutorial' IN BOOLEAN MODE) ORDER BY id"
+        )),
+        vec![vec!["2"], vec!["3"], vec!["4"], vec!["5"]]
+    );
+    // Only excluded terms: MySQL boolean mode answers the empty set.
+    assert!(row_text(session.run(
+        "SELECT id FROM articles WHERE MATCH(title) AGAINST('-MySQL' IN BOOLEAN MODE)"
+    ))
+    .is_empty());
+    // A non-string matched column refuses BEFORE the NULL fast path -- Go's
+    // "Doesn't support match search on a non-string column" precedes it.
+    assert!(session
+        .run("SELECT id FROM articles WHERE MATCH(id) AGAINST(NULL)")
+        .is_err());
+    // A scalar position needs the float relevance score only the native
+    // builtin computes; it stays unrewritten and refuses.
+    assert!(session
+        .run("SELECT MATCH(title) AGAINST('MySQL') FROM articles")
+        .is_err());
+}

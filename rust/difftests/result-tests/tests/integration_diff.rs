@@ -2220,7 +2220,26 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // Go's `8,8,8 / 7,7,7` order comes from the hash join emitting a
     // cartesian probe's matches in build-chain order (reverse insertion),
     // a join-executor contract outside this seam.
-    const KNOWN_DIVERGENCES: usize = 36;
+    //
+    // 36 -> 32 at the merge of two lines. One: the per-partition index
+    // lookup (its own accounting above; -3, `executor/
+    // index_lookup_pushdown_partition` fully closed). The other: `MATCH ...
+    // AGAINST`'s LIKE fallback, Go `fts_to_like.go` and
+    // `matchAgainstToLike` -- a direct-boolean-context `MATCH` becomes
+    // `IFNULL(col ILIKE '%term%' ESCAPE '\\', 0)` predicates (ILIKE because
+    // MySQL FTS is case-insensitive regardless of collation; IFNULL so a
+    // NULL column is "does not contain", which keeps NOT over an excluded
+    // term honest), composed per mode: natural language is one OR; boolean
+    // mode ANDs required-term DNFs, NOTs excluded-term DNFs, and anchors on
+    // optionals only when nothing required does. Gated exactly as Go gates
+    // it: `tidb_opt_enable_alternative_logical_plans` (default OFF), only
+    // the strict token subset, only STRING columns -- a non-string column
+    // stays unrewritten and refuses BEFORE the NULL fast path, which is why
+    // `match(int_col) against(NULL)` errors rather than answering NULL. The
+    // corpus flips the gate both ways and reads all of it:
+    // `planner/core/fulltext_search` went 33 matched / 1 diverged to 60
+    // matched / 0, with 26 more statements answering ROWS.
+    const KNOWN_DIVERGENCES: usize = 32;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

@@ -582,6 +582,83 @@ impl Session {
         self.statement_insert_id = 0;
         // The Apply channel describes THIS statement's plan.
         self.planned_apply.set(false);
+        // Go's `matchAgainstToLike` rewrites a direct-boolean-context
+        // `MATCH ... AGAINST` into ILIKE predicates inside the expression
+        // rewriter, so every query block gets it -- subqueries, EXPLAIN
+        // targets and prepared bodies included. The one seam every parsed
+        // statement passes here plays that role: walk the statement and
+        // rewrite each SELECT's boolean roots in place.
+        // Gated exactly as Go gates the fallback machinery:
+        // `tidb_opt_enable_alternative_logical_plans`, default OFF -- without
+        // it only the native builtin exists, which errors here as it errors
+        // there with no FTS replica. The corpus flips the variable both ways.
+        let fts_rewrite_enabled = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ALTERNATIVE_LOGICAL_PLANS)
+            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
+        if fts_rewrite_enabled {
+            // Go checks the RESOLVED column's eval type; the closure answers
+            // it from this session's catalog for the one FROM shape the
+            // rewrite reaches through the AST alone -- a single named table.
+            // A join or derived FROM stays unrewritten, which is NARROWER
+            // than Go (a string column there would rewrite) and is the
+            // refusal path rather than a wrong answer.
+            let current_db = self.current_db.clone();
+            let catalog = std::sync::Arc::clone(&self.catalog);
+            let columns_are_strings = move |select: &tidb_ast::SelectStmt,
+                                            columns: &[Vec<String>]|
+                  -> bool {
+                let Some(join) = select.from.as_ref() else {
+                    return false;
+                };
+                let (tidb_ast::JoinNode::Table(table), None) = (&join.left, &join.right) else {
+                    return false;
+                };
+                let name = match table.name.as_slice() {
+                    [name] => name.clone(),
+                    [_, name] => name.clone(),
+                    _ => return false,
+                };
+                let Ok(guard) = catalog.lock() else {
+                    return false;
+                };
+                let Some(tidb_executor::TableEntry::Kv(kv)) =
+                    guard.table_in(&current_db, &name)
+                else {
+                    return false;
+                };
+                columns.iter().all(|path| {
+                    let Some(column_name) = path.last() else {
+                        return false;
+                    };
+                    kv.visible_columns().iter().any(|column| {
+                        column.name.eq_ignore_ascii_case(column_name)
+                            && column.field_type.eval_type() == tidb_datatype::EvalType::String
+                    })
+                })
+            };
+            struct FtsRewriter<'a> {
+                columns_are_strings: &'a tidb_executor::fts_like_rewrite::ColumnsAreStrings<'a>,
+            }
+            impl tidb_ast::Visitor for FtsRewriter<'_> {
+                fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+                    if let Some(select) = node.downcast_mut::<tidb_ast::SelectStmt>() {
+                        tidb_executor::fts_like_rewrite::rewrite_select_fts(
+                            select,
+                            self.columns_are_strings,
+                        );
+                    }
+                    false
+                }
+                fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+                    true
+                }
+            }
+            use tidb_ast::Visitable as _;
+            stmt.accept(&mut FtsRewriter {
+                columns_are_strings: &columns_are_strings,
+            });
+        }
         // Go's row-id shard generator belongs to the TRANSACTION, so a
         // statement that IS its own transaction starts a fresh run. Inside an
         // explicit `BEGIN`/`COMMIT` the run continues across statements,

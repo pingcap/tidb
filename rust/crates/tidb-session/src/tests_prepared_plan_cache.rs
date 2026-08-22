@@ -139,3 +139,27 @@ fn a_correlated_apply_plan_never_hits() {
         assert_eq!(cache_flag(&mut session), "0");
     }
 }
+
+/// The fulltext LIKE fallback and the plan cache, together: a LITERAL
+/// `AGAINST` is cacheable, because the baked pattern constants are stable
+/// across executions (the corpus's own test 37,
+/// `planner/core/fulltext_search`).
+#[test]
+fn a_literal_fts_search_is_cacheable() {
+    let mut session = Session::new();
+    session
+        .run("SET @@tidb_opt_enable_alternative_logical_plans=ON")
+        .unwrap();
+    session
+        .run("CREATE TABLE articles (id int primary key, title varchar(200), body text)")
+        .unwrap();
+    session
+        .run("INSERT INTO articles VALUES (1, 'MySQL Tutorial', 'basic')")
+        .unwrap();
+    session
+        .run("PREPARE st FROM 'select id, title from articles where match(title) against(''MySQL'')'")
+        .unwrap();
+    session.run("EXECUTE st").unwrap();
+    session.run("EXECUTE st").unwrap();
+    assert_eq!(cache_flag(&mut session), "1");
+}
