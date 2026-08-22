@@ -142,11 +142,8 @@ func (r *RetryInfo) ResetStmtOffset() {
 	r.autoRandomIDs.resetStmtOffset()
 }
 
-// AddAutoIncrementID adds id to autoIncrementIDs unless a transaction is being retried.
+// AddAutoIncrementID adds id to autoIncrementIDs.
 func (r *RetryInfo) AddAutoIncrementID(id int64) {
-	if r.Retrying {
-		return
-	}
 	r.autoIncrementIDs.add(id)
 }
 
@@ -155,11 +152,8 @@ func (r *RetryInfo) GetCurrAutoIncrementID() (int64, bool) {
 	return r.autoIncrementIDs.getCurrent()
 }
 
-// AddAutoRandomID adds id to autoRandomIDs unless a transaction is being retried.
+// AddAutoRandomID adds id to autoRandomIDs.
 func (r *RetryInfo) AddAutoRandomID(id int64) {
-	if r.Retrying {
-		return
-	}
 	r.autoRandomIDs.add(id)
 }
 
