@@ -1561,15 +1561,25 @@ mod tests_push_down_verdict {
         ] {
             assert_eq!(pushes(expr), Some(true), "{expr} is a pushed predicate");
         }
-        // And the shapes the *split* keeps above the scan: a second column
-        // reference, and functions with their own NULL semantics and their own
-        // signatures. Note what is deliberately not in this list -- `s = 'x'`
-        // and `dec > 1` DO pass the split, because the split is type-agnostic
-        // by design: it hands the source a description, and the coprocessor
-        // lowering applies the type gate (`tidb_exec::wide_scan_selection`).
-        // Refusing there costs wire volume only, because the source evaluates
-        // every pushed conjunct itself regardless.
-        for expr in ["i = r", "i IS TRUE", "i <=> 1", "i + 1 = 2"] {
+        // A scan-local column comparison pushes too: Go's
+        // `scalarExprSupportedByTiKV` admits EQ unconditionally and both
+        // operands are this table's own ColumnRefs, which `columnToPBExpr`
+        // encodes directly. The split describes it as a typed
+        // `ScanColumnComparison` (see the driver's own predicate tests).
+        assert_eq!(
+            pushes("i = r"),
+            Some(true),
+            "a scan-local column comparison is pushed"
+        );
+        // And the shapes the *split* keeps above the scan: functions with
+        // their own NULL semantics and their own signatures. Note what is
+        // deliberately not in this list -- `s = 'x'` and `dec > 1` DO pass
+        // the split, because the split is type-agnostic by design: it hands
+        // the source a description, and the coprocessor lowering applies the
+        // type gate (`tidb_exec::wide_scan_selection`). Refusing there costs
+        // wire volume only, because the source evaluates every pushed conjunct
+        // itself regardless.
+        for expr in ["i IS TRUE", "i <=> 1", "i + 1 = 2"] {
             assert_eq!(pushes(expr), Some(false), "{expr} stays above the scan");
         }
     }
