@@ -64,22 +64,22 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='PRIMARY' order by seq_in_index").
 		Check(testkit.Rows("refresh_job_id"))
-	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_mview_time' order by seq_in_index").
-		Check(testkit.Rows("mview_id", "refresh_time"))
-	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_mv_name_time' order by seq_in_index").
-		Check(testkit.Rows("mv_schema", "mv_name", "refresh_time"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_mview_start_time' order by seq_in_index").
+		Check(testkit.Rows("mview_id", "refresh_start_time"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_mv_name_start_time' order by seq_in_index").
+		Check(testkit.Rows("mv_schema", "mv_name", "refresh_start_time"))
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_mv_name_commit_tso' order by seq_in_index").
 		Check(testkit.Rows("mv_schema", "mv_name", "refresh_commit_tso"))
-	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_mview_status' order by seq_in_index").
-		Check(testkit.Rows("mview_id", "refresh_status", "refresh_time"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_mview_status_start_time' order by seq_in_index").
+		Check(testkit.Rows("mview_id", "refresh_status", "refresh_start_time"))
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_refresh_duration_sec' order by seq_in_index").
 		Check(testkit.Rows("refresh_duration_sec"))
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_refresh_schedule_duration_sec' order by seq_in_index").
 		Check(testkit.Rows("refresh_schedule_duration_sec"))
-	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_refresh_time' order by seq_in_index").
-		Check(testkit.Rows("refresh_time"))
-	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_refresh_status' order by seq_in_index").
-		Check(testkit.Rows("refresh_status", "refresh_time"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_refresh_start_time' order by seq_in_index").
+		Check(testkit.Rows("refresh_start_time"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_refresh_status_start_time' order by seq_in_index").
+		Check(testkit.Rows("refresh_status", "refresh_start_time"))
 	tk.MustQuery("select lower(column_name) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' order by ordinal_position limit 1").
 		Check(testkit.Rows("refresh_job_id"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='REFRESH_JOB_ID'").
@@ -93,18 +93,18 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='REFRESH_COMMIT_TSO'").
 		Check(testkit.Rows("bigint(20) unsigned"))
 	tk.MustQuery("select lower(column_name) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and ordinal_position between 2 and 9 order by ordinal_position").
-		Check(testkit.Rows("mview_id", "mv_schema", "mv_name", "refresh_method", "refresh_time", "refresh_endtime", "refresh_duration_sec", "refresh_schedule_duration_sec"))
+		Check(testkit.Rows("mview_id", "mv_schema", "mv_name", "refresh_method", "refresh_start_time", "refresh_end_time", "refresh_duration_sec", "refresh_schedule_duration_sec"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='REFRESH_DURATION_SEC'").
 		Check(testkit.Rows("decimal(18,6)"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='REFRESH_SCHEDULE_DURATION_SEC'").
 		Check(testkit.Rows("decimal(18,6)"))
-	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name in ('REFRESH_TIME', 'REFRESH_ENDTIME') order by column_name").
+	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name in ('REFRESH_START_TIME', 'REFRESH_END_TIME') order by column_name").
 		Check(testkit.Rows("6", "6"))
-	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='CANCEL_REQUESTED_AT'").
+	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='CANCEL_REQUEST_TIME'").
 		Check(testkit.Rows("6"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='CANCEL_REQUESTED_BY'").
 		Check(testkit.Rows("varchar(512)"))
-	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='LAST_HEARTBEAT_AT'").
+	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='LAST_HEARTBEAT_TIME'").
 		Check(testkit.Rows("6"))
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and index_name='PRIMARY' order by seq_in_index").
 		Check(testkit.Rows("mview_id"))
@@ -118,22 +118,22 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 		Check(testkit.Rows("YES"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and column_name='REFRESH_FAILED'").
 		Check(testkit.Rows("varchar(3)"))
-	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and column_name in ('LAST_SUCCESS_TIME', 'UPDATED_AT') order by column_name").
+	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and column_name in ('LAST_SUCCESS_SNAPSHOT_TIME', 'UPDATE_TIME') order by column_name").
 		Check(testkit.Rows("6", "6"))
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and index_name='PRIMARY' order by seq_in_index").
 		Check(testkit.Rows("purge_job_id"))
-	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and index_name='idx_mlog_time' order by seq_in_index").
-		Check(testkit.Rows("mlog_id", "purge_time"))
-	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and index_name='idx_table_name_time' order by seq_in_index").
-		Check(testkit.Rows("base_table_schema", "base_table_name", "purge_time"))
-	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and index_name='idx_mlog_status' order by seq_in_index").
-		Check(testkit.Rows("mlog_id", "purge_status", "purge_time"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and index_name='idx_mlog_start_time' order by seq_in_index").
+		Check(testkit.Rows("mlog_id", "purge_start_time"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and index_name='idx_table_name_start_time' order by seq_in_index").
+		Check(testkit.Rows("base_table_schema", "base_table_name", "purge_start_time"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and index_name='idx_mlog_status_start_time' order by seq_in_index").
+		Check(testkit.Rows("mlog_id", "purge_status", "purge_start_time"))
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and index_name='idx_purge_duration_sec' order by seq_in_index").
 		Check(testkit.Rows("purge_duration_sec"))
-	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and index_name='idx_purge_time' order by seq_in_index").
-		Check(testkit.Rows("purge_time"))
-	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and index_name='idx_purge_status' order by seq_in_index").
-		Check(testkit.Rows("purge_status", "purge_time"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and index_name='idx_purge_start_time' order by seq_in_index").
+		Check(testkit.Rows("purge_start_time"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and index_name='idx_purge_status_start_time' order by seq_in_index").
+		Check(testkit.Rows("purge_status", "purge_start_time"))
 	tk.MustQuery("select lower(column_name) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' order by ordinal_position limit 1").
 		Check(testkit.Rows("purge_job_id"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='PURGE_JOB_ID'").
@@ -145,14 +145,14 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 	tk.MustQuery("select count(*) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='PURGE_FAILED_REASON' and lower(data_type)='text'").
 		Check(testkit.Rows("1"))
 	tk.MustQuery("select lower(column_name) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and ordinal_position between 2 and 8 order by ordinal_position").
-		Check(testkit.Rows("mlog_id", "base_table_schema", "base_table_name", "purge_method", "purge_time", "purge_endtime", "purge_duration_sec"))
+		Check(testkit.Rows("mlog_id", "base_table_schema", "base_table_name", "purge_method", "purge_start_time", "purge_end_time", "purge_duration_sec"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='PURGE_DURATION_SEC'").
 		Check(testkit.Rows("decimal(18,6)"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='PURGE_CUTOFF_TSO'").
 		Check(testkit.Rows("bigint(20) unsigned"))
-	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name in ('PURGE_TIME', 'PURGE_ENDTIME') order by column_name").
+	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name in ('PURGE_START_TIME', 'PURGE_END_TIME') order by column_name").
 		Check(testkit.Rows("6", "6"))
-	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='CANCEL_REQUESTED_AT'").
+	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='CANCEL_REQUEST_TIME'").
 		Check(testkit.Rows("6"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='CANCEL_REQUESTED_BY'").
 		Check(testkit.Rows("varchar(512)"))
@@ -165,7 +165,7 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 	require.False(t, refreshInfoMeta.IsCommonHandle)
 	require.Len(t, refreshInfoMeta.Columns, 4)
 	require.Equal(t, "MVIEW_ID", refreshInfoMeta.Columns[0].Name.O)
-	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='LAST_HEARTBEAT_AT'").
+	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='LAST_HEARTBEAT_TIME'").
 		Check(testkit.Rows("6"))
 }
 
@@ -251,13 +251,13 @@ func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {
 		Check(testkit.Rows("utf8mb4_general_ci", "utf8mb4_general_ci"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='PURGE_DURATION_SEC'").
 		Check(testkit.Rows("decimal(18,6)"))
-	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name in ('REFRESH_TIME', 'REFRESH_ENDTIME') order by column_name").
+	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name in ('REFRESH_START_TIME', 'REFRESH_END_TIME') order by column_name").
 		Check(testkit.Rows("6", "6"))
-	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name in ('PURGE_TIME', 'PURGE_ENDTIME') order by column_name").
+	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name in ('PURGE_START_TIME', 'PURGE_END_TIME') order by column_name").
 		Check(testkit.Rows("6", "6"))
-	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='CANCEL_REQUESTED_AT'").
+	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='CANCEL_REQUEST_TIME'").
 		Check(testkit.Rows("6"))
-	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='CANCEL_REQUESTED_AT'").
+	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='CANCEL_REQUEST_TIME'").
 		Check(testkit.Rows("6"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='CANCEL_REQUESTED_BY'").
 		Check(testkit.Rows("varchar(512)"))

@@ -186,7 +186,7 @@ Bootstrap creates:
   - `PURGE_JOB_ID` (PK, one row per purge statement)
   - `MLOG_ID`
   - `PURGE_METHOD`
-  - `PURGE_TIME` / `PURGE_ENDTIME`
+  - `PURGE_START_TIME` / `PURGE_END_TIME`
   - `PURGE_ROWS`
   - `PURGE_STATUS` (`running` / `success` / `failed`)
 

@@ -1573,11 +1573,11 @@ func TestPurgeMaterializedViewLogCancelWatcherUsesHistRequest(t *testing.T) {
 	requestedCh := waitMVTaskCancelWatcherRequested(t, "mlog-purge-")
 	tk.MustExec(
 		`UPDATE mysql.tidb_mlog_purge_hist
-SET CANCEL_REQUESTED_AT = NOW(6),
+SET CANCEL_REQUEST_TIME = NOW(6),
 	CANCEL_REQUESTED_BY = ?
 WHERE MLOG_ID = ?
   AND PURGE_STATUS = 'running'
-  AND CANCEL_REQUESTED_AT IS NULL`,
+  AND CANCEL_REQUEST_TIME IS NULL`,
 		requester,
 		mlogID,
 	)
@@ -1599,7 +1599,7 @@ WHERE MLOG_ID = ?
 	}
 
 	tk.MustQuery(fmt.Sprintf(
-		"select PURGE_STATUS, PURGE_METHOD, PURGE_ENDTIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
+		"select PURGE_STATUS, PURGE_METHOD, PURGE_END_TIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
 		mlogID,
 	)).Check(testkit.Rows("failed manual 1"))
 	tk.MustQuery(fmt.Sprintf(
@@ -1693,7 +1693,7 @@ func TestCancelMaterializedViewLogPurgeJob(t *testing.T) {
 	}
 
 	tk.MustQuery(fmt.Sprintf(
-		"select PURGE_STATUS, PURGE_METHOD, PURGE_ENDTIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
+		"select PURGE_STATUS, PURGE_METHOD, PURGE_END_TIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
 		mlogID,
 	)).Check(testkit.Rows("failed manual 1"))
 	reasonRows := tk.MustQuery(fmt.Sprintf(
@@ -1747,7 +1747,7 @@ func TestPurgeMaterializedViewLogRunningHistHeartbeat(t *testing.T) {
 	var firstHeartbeat string
 	require.Eventually(t, func() bool {
 		rows := tk.MustQuery(fmt.Sprintf(
-			"select cast(LAST_HEARTBEAT_AT as char) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d and PURGE_STATUS = 'running' order by PURGE_JOB_ID desc limit 1",
+			"select cast(LAST_HEARTBEAT_TIME as char) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d and PURGE_STATUS = 'running' order by PURGE_JOB_ID desc limit 1",
 			mlogID,
 		)).Rows()
 		if len(rows) == 0 || rows[0][0] == nil {
@@ -1759,7 +1759,7 @@ func TestPurgeMaterializedViewLogRunningHistHeartbeat(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		rows := tk.MustQuery(fmt.Sprintf(
-			"select cast(LAST_HEARTBEAT_AT as char) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d and PURGE_STATUS = 'running' order by PURGE_JOB_ID desc limit 1",
+			"select cast(LAST_HEARTBEAT_TIME as char) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d and PURGE_STATUS = 'running' order by PURGE_JOB_ID desc limit 1",
 			mlogID,
 		)).Rows()
 		if len(rows) == 0 || rows[0][0] == nil {
@@ -1779,7 +1779,7 @@ func TestPurgeMaterializedViewLogRunningHistHeartbeat(t *testing.T) {
 	}
 
 	tk.MustQuery(fmt.Sprintf(
-		"select PURGE_STATUS, LAST_HEARTBEAT_AT is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
+		"select PURGE_STATUS, LAST_HEARTBEAT_TIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
 		mlogID,
 	)).Check(testkit.Rows("success 1"))
 }
@@ -1861,7 +1861,7 @@ func TestPurgeMaterializedViewLogBatchDelete(t *testing.T) {
 
 	tk.MustQuery("select count(*) from `$mlog$t_purge_batch_delete`").Check(testkit.Rows("0"))
 	tk.MustQuery(fmt.Sprintf(
-		"select PURGE_STATUS, PURGE_ROWS, PURGE_DURATION_SEC = cast(timestampdiff(microsecond, PURGE_TIME, PURGE_ENDTIME) as decimal(18,6)) / 1000000, PURGE_DURATION_SEC >= 0 "+
+		"select PURGE_STATUS, PURGE_ROWS, PURGE_DURATION_SEC = cast(timestampdiff(microsecond, PURGE_START_TIME, PURGE_END_TIME) as decimal(18,6)) / 1000000, PURGE_DURATION_SEC >= 0 "+
 			"from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
 		mlogID,
 	)).Check(testkit.Rows("success 5 1 1"))
@@ -1970,7 +1970,7 @@ func TestPurgeMaterializedViewLogSkipsWhenCutoffFenceWouldGoBackward(t *testing.
 	tk.MustExec(fmt.Sprintf(
 		`insert into mysql.tidb_mlog_purge_hist (
 			PURGE_JOB_ID, MLOG_ID, BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_METHOD,
-			PURGE_TIME, PURGE_ROWS, PURGE_STATUS, PURGE_CUTOFF_TSO, LAST_HEARTBEAT_AT
+			PURGE_START_TIME, PURGE_ROWS, PURGE_STATUS, PURGE_CUTOFF_TSO, LAST_HEARTBEAT_TIME
 		) values (
 			%[1]d, %[2]d, 'test', 't_purge_cutoff_fence', 'manual',
 			now(6), 0, 'success', %[1]d, now(6)
@@ -2015,7 +2015,7 @@ func TestPurgeMaterializedViewLogDeleteErrorNoDirtyWrite(t *testing.T) {
 	require.ErrorContains(t, err, "mock purge mlog delete error")
 
 	tk.MustQuery("select count(*) from `$mlog$t_purge_delete_err`").Check(testkit.Rows("3"))
-	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ROWS, PURGE_ENDTIME is not null, PURGE_FAILED_REASON like '%%mock purge mlog delete error%%' from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ROWS, PURGE_END_TIME is not null, PURGE_FAILED_REASON like '%%mock purge mlog delete error%%' from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
 		Check(testkit.Rows("failed 0 1 1"))
 }
 
@@ -2057,8 +2057,8 @@ func TestPurgeMaterializedViewLogEarlyFailureWritesHist(t *testing.T) {
 		mlogID,
 	)).Check(testkit.Rows(fmt.Sprintf("%d", histCountBefore+1)))
 	tk.MustQuery(fmt.Sprintf(
-		"select PURGE_STATUS, PURGE_METHOD = 'manual', PURGE_ROWS, PURGE_TIME is not null, PURGE_ENDTIME is not null, "+
-			"PURGE_DURATION_SEC = cast(timestampdiff(microsecond, PURGE_TIME, PURGE_ENDTIME) as decimal(18,6)) / 1000000, PURGE_FAILED_REASON is not null "+
+		"select PURGE_STATUS, PURGE_METHOD = 'manual', PURGE_ROWS, PURGE_START_TIME is not null, PURGE_END_TIME is not null, "+
+			"PURGE_DURATION_SEC = cast(timestampdiff(microsecond, PURGE_START_TIME, PURGE_END_TIME) as decimal(18,6)) / 1000000, PURGE_FAILED_REASON is not null "+
 			"from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
 		mlogID,
 	)).Check(testkit.Rows("failed 1 0 1 1 1 1"))
@@ -2095,7 +2095,7 @@ func TestPurgeMaterializedViewLogFinalizeFailureAfterCommitIsWarning(t *testing.
 
 	tk.MustExec("purge materialized view log on t_purge_finalize_warn")
 	tk.MustQuery("select count(*) from `$mlog$t_purge_finalize_warn`").Check(testkit.Rows("0"))
-	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ENDTIME is null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_END_TIME is null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
 		Check(testkit.Rows("running 1"))
 }
 
@@ -2118,7 +2118,7 @@ func TestPurgeMaterializedViewLogFinalizeRetrySucceeds(t *testing.T) {
 	}()
 
 	tk.MustExec("purge materialized view log on t_purge_finalize_retry")
-	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ENDTIME is not null, PURGE_ROWS from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_END_TIME is not null, PURGE_ROWS from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
 		Check(testkit.Rows("success 1 0"))
 }
 
@@ -2169,7 +2169,7 @@ func TestPurgeMaterializedViewLogFinalizeFailureUsesWithoutCancel(t *testing.T) 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "context canceled")
 
-	tkObserver.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ENDTIME is not null, PURGE_FAILED_REASON like '%%context canceled%%' from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+	tkObserver.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_END_TIME is not null, PURGE_FAILED_REASON like '%%context canceled%%' from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
 		Check(testkit.Rows("failed 1 1"))
 }
 
@@ -2271,11 +2271,11 @@ func TestPurgeMaterializedViewLogManualCancelAfterPartialSuccess(t *testing.T) {
 	requester := "'partial_cancel_req'@'stage-d'"
 	tkObserver.MustExec(
 		`UPDATE mysql.tidb_mlog_purge_hist
-SET CANCEL_REQUESTED_AT = NOW(6),
+SET CANCEL_REQUEST_TIME = NOW(6),
 	CANCEL_REQUESTED_BY = ?
 WHERE MLOG_ID = ?
   AND PURGE_STATUS = 'running'
-  AND CANCEL_REQUESTED_AT IS NULL`,
+  AND CANCEL_REQUEST_TIME IS NULL`,
 		requester,
 		mlogID,
 	)
@@ -2327,7 +2327,7 @@ func TestPurgeMaterializedViewLogBeginFailure(t *testing.T) {
 
 	tk.MustQuery("select count(*) from `$mlog$t_purge_begin_fail`").Check(testkit.Rows("3"))
 	tk.MustQuery(fmt.Sprintf(
-		"select PURGE_STATUS, PURGE_ROWS, PURGE_ENDTIME is not null, PURGE_FAILED_REASON like '%%mock purge begin error%%' from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
+		"select PURGE_STATUS, PURGE_ROWS, PURGE_END_TIME is not null, PURGE_FAILED_REASON like '%%mock purge begin error%%' from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
 		mlogID,
 	)).Check(testkit.Rows("failed 0 1 1"))
 }
@@ -2448,7 +2448,7 @@ func TestPurgeMaterializedViewLogMissingPublicMViewRefreshRow(t *testing.T) {
 	require.ErrorContains(t, err, "materialized view refresh info is missing")
 
 	// Purge failure should still be finalized in history.
-	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ROWS, PURGE_ENDTIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ROWS, PURGE_END_TIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
 		Check(testkit.Rows("failed 0 1"))
 }
 
@@ -2466,13 +2466,13 @@ func TestPurgeMaterializedViewLogWritesState(t *testing.T) {
 	mlogID := mlogTable.Meta().ID
 
 	tk.MustExec("purge materialized view log on t_purge_state")
-	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_METHOD, PURGE_ROWS, PURGE_ENDTIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_METHOD, PURGE_ROWS, PURGE_END_TIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
 		Check(testkit.Rows("success manual 0 1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d", mlogID)).
 		Check(testkit.Rows("1"))
 
 	tk.MustExec("purge materialized view log on t_purge_state")
-	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_METHOD, PURGE_ROWS, PURGE_ENDTIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_METHOD, PURGE_ROWS, PURGE_END_TIME is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
 		Check(testkit.Rows("success manual 0 1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d", mlogID)).
 		Check(testkit.Rows("2"))

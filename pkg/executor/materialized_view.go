@@ -434,7 +434,7 @@ func readRefreshHistCancelRequest(
 	rows, err := sqlexec.ExecSQL(
 		kctx,
 		sqlExec,
-		`SELECT CANCEL_REQUESTED_AT, CANCEL_REQUESTED_BY
+		`SELECT CANCEL_REQUEST_TIME, CANCEL_REQUESTED_BY
 FROM mysql.tidb_mview_refresh_hist
 WHERE REFRESH_JOB_ID = %?
   AND MVIEW_ID = %?`,
@@ -465,7 +465,7 @@ func readPurgeHistCancelRequest(
 	rows, err := sqlexec.ExecSQL(
 		kctx,
 		sqlExec,
-		`SELECT CANCEL_REQUESTED_AT, CANCEL_REQUESTED_BY
+		`SELECT CANCEL_REQUEST_TIME, CANCEL_REQUESTED_BY
 FROM mysql.tidb_mlog_purge_hist
 WHERE PURGE_JOB_ID = %?
   AND MLOG_ID = %?`,
@@ -496,11 +496,11 @@ func requestRefreshHistCancel(
 	_, err := sctx.GetSQLExecutor().ExecuteInternal(
 		kctx,
 		`UPDATE mysql.tidb_mview_refresh_hist
-SET CANCEL_REQUESTED_AT = NOW(6),
+SET CANCEL_REQUEST_TIME = NOW(6),
 	CANCEL_REQUESTED_BY = %?
 WHERE REFRESH_JOB_ID = %?
   AND REFRESH_STATUS = 'running'
-  AND CANCEL_REQUESTED_AT IS NULL`,
+  AND CANCEL_REQUEST_TIME IS NULL`,
 		requester,
 		refreshJobID,
 	)
@@ -519,11 +519,11 @@ func requestPurgeHistCancel(
 	_, err := sctx.GetSQLExecutor().ExecuteInternal(
 		kctx,
 		`UPDATE mysql.tidb_mlog_purge_hist
-SET CANCEL_REQUESTED_AT = NOW(6),
+SET CANCEL_REQUEST_TIME = NOW(6),
 	CANCEL_REQUESTED_BY = %?
 WHERE PURGE_JOB_ID = %?
   AND PURGE_STATUS = 'running'
-  AND CANCEL_REQUESTED_AT IS NULL`,
+  AND CANCEL_REQUEST_TIME IS NULL`,
 		requester,
 		purgeJobID,
 	)
@@ -542,7 +542,7 @@ func updateRefreshHistHeartbeat(
 	_, err := sqlExec.ExecuteInternal(
 		kctx,
 		`UPDATE mysql.tidb_mview_refresh_hist
-SET LAST_HEARTBEAT_AT = NOW(6)
+SET LAST_HEARTBEAT_TIME = NOW(6)
 WHERE REFRESH_JOB_ID = %?
   AND MVIEW_ID = %?
   AND REFRESH_STATUS = 'running'`,
@@ -567,7 +567,7 @@ func updatePurgeHistHeartbeat(
 	_, err := sqlExec.ExecuteInternal(
 		kctx,
 		`UPDATE mysql.tidb_mlog_purge_hist
-SET LAST_HEARTBEAT_AT = NOW(6)
+SET LAST_HEARTBEAT_TIME = NOW(6)
 WHERE PURGE_JOB_ID = %?
   AND MLOG_ID = %?
   AND PURGE_STATUS = 'running'`,
@@ -3750,11 +3750,11 @@ func insertMLogPurgeHistRunning(
 		BASE_TABLE_SCHEMA,
 		BASE_TABLE_NAME,
 		PURGE_METHOD,
-		PURGE_TIME,
+		PURGE_START_TIME,
 		PURGE_ROWS,
 		PURGE_STATUS,
 		PURGE_CUTOFF_TSO,
-		LAST_HEARTBEAT_AT
+		LAST_HEARTBEAT_TIME
 	) VALUES (
 		%?,
 		%?,
@@ -3813,8 +3813,8 @@ func insertMLogPurgeHistFailed(
 		BASE_TABLE_SCHEMA,
 		BASE_TABLE_NAME,
 		PURGE_METHOD,
-		PURGE_TIME,
-		PURGE_ENDTIME,
+		PURGE_START_TIME,
+		PURGE_END_TIME,
 		PURGE_ROWS,
 		PURGE_DURATION_SEC,
 		PURGE_STATUS,
@@ -3924,7 +3924,7 @@ func finalizeMLogPurgeHist(
 	}
 	updateSQL := `UPDATE mysql.tidb_mlog_purge_hist
 	SET
-		PURGE_ENDTIME = %?,
+		PURGE_END_TIME = %?,
 		PURGE_ROWS = %?,
 		PURGE_DURATION_SEC = %?,
 		PURGE_STATUS = %?,
@@ -6167,7 +6167,7 @@ func markRefreshFailedAlertState(
 	MV_SCHEMA,
 	MV_NAME,
 	REFRESH_FAILED,
-	UPDATED_AT
+	UPDATE_TIME
 ) VALUES (
 	%?,
 	%?,
@@ -6178,7 +6178,7 @@ func markRefreshFailedAlertState(
 MV_SCHEMA = VALUES(MV_SCHEMA),
 MV_NAME = VALUES(MV_NAME),
 REFRESH_FAILED = VALUES(REFRESH_FAILED),
-UPDATED_AT = VALUES(UPDATED_AT)`,
+UPDATE_TIME = VALUES(UPDATE_TIME)`,
 		mviewID,
 		mvSchema,
 		mvName,
@@ -6262,9 +6262,9 @@ func insertRefreshHistRunning(
 	MV_SCHEMA,
 	MV_NAME,
 	REFRESH_METHOD,
-	REFRESH_TIME,
+	REFRESH_START_TIME,
 	REFRESH_STATUS,
-	LAST_HEARTBEAT_AT
+	LAST_HEARTBEAT_TIME
 ) VALUES (
 	%?,
 	%?,
@@ -6327,8 +6327,8 @@ func insertRefreshHistFailed(
 	MV_SCHEMA,
 	MV_NAME,
 	REFRESH_METHOD,
-	REFRESH_TIME,
-	REFRESH_ENDTIME,
+	REFRESH_START_TIME,
+	REFRESH_END_TIME,
 	REFRESH_STATUS,
 	REFRESH_ROWS,
 	REFRESH_DURATION_SEC,
@@ -6527,7 +6527,7 @@ func finalizeRefreshHist(
 	}
 	updateSQL := `UPDATE mysql.tidb_mview_refresh_hist
 SET
-	REFRESH_ENDTIME = %?,
+	REFRESH_END_TIME = %?,
 	REFRESH_STATUS = %?,
 	REFRESH_ROWS = %?,
 	REFRESH_DURATION_SEC = %?,

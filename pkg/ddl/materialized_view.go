@@ -1163,7 +1163,7 @@ func (e *executor) deleteMaterializedViewRefreshAlert(ctx sessionctx.Context, mv
 	defer releaseInternalSession()
 
 	clearSQL := sqlescape.MustEscapeSQL(
-		"UPDATE mysql.tidb_mview_refresh_alert SET ALERT_LEVEL = NULL, UPDATED_AT = NOW(6) WHERE MVIEW_ID = %? AND ALERT_LEVEL IS NOT NULL",
+		"UPDATE mysql.tidb_mview_refresh_alert SET ALERT_LEVEL = NULL, UPDATE_TIME = NOW(6) WHERE MVIEW_ID = %? AND ALERT_LEVEL IS NOT NULL",
 		mviewID,
 	)
 	_, err = ddlSess.Execute(kctx, clearSQL, "alter-materialized-view-refresh-clear-alert-level")
