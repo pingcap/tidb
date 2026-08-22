@@ -199,6 +199,9 @@ pub fn table_rows(
     if name.eq_ignore_ascii_case("TABLES") {
         return Some(tables_rows(catalog, visibility));
     }
+    if name.eq_ignore_ascii_case("PARTITIONS") {
+        return Some(partitions_rows(catalog, visibility));
+    }
     if name.eq_ignore_ascii_case("VIEWS") {
         return Some(views_rows(catalog, visibility));
     }
@@ -595,6 +598,117 @@ fn schemata_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Da
 }
 
 /// One row per table, in schema then table order.
+/// Go `setDataFromPartitions` (`executor/infoschema_reader.go`).
+///
+/// EVERY visible table produces at least one row. An unpartitioned one gets a
+/// single row whose partition columns are all NULL -- not zero rows -- so a
+/// client joining against this table still sees it. Reporting nothing for
+/// unpartitioned tables would make them look absent rather than unpartitioned.
+fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
+    let mut rows = Vec::new();
+    for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
+        let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
+            continue;
+        };
+        let catalog_value = || Datum::Bytes(b"def".to_vec());
+        let Some(partition) = table.partition() else {
+            rows.push(vec![
+                catalog_value(),
+                Datum::Bytes(schema.clone().into_bytes()),
+                Datum::Bytes(table_name.clone().into_bytes()),
+                // Every partition column is NULL for an unpartitioned table.
+                Datum::Null, Datum::Null, Datum::Null, Datum::Null, Datum::Null,
+                Datum::Null, Datum::Null, Datum::Null, Datum::Null,
+                Datum::Int(0), Datum::Int(0), Datum::Int(0),
+                Datum::Null, Datum::Int(0), Datum::Null,
+                Datum::Null, Datum::Null, Datum::Null, Datum::Null,
+                Datum::Null, Datum::Null, Datum::Null, Datum::Null,
+                Datum::Null, Datum::Null, Datum::Null,
+            ]);
+            continue;
+        };
+        // Go names the COLUMNS forms differently from the expression forms and
+        // prints the column list in place of the expression
+        // (`infoschema_reader.go`): `RANGE COLUMNS`, `LIST COLUMNS`, `KEY`.
+        let (method, expression) = match &partition.kind {
+            tidb_executor::PartitionKind::RangeColumns { .. } => {
+                ("RANGE COLUMNS".to_owned(), partition.expr_text.clone())
+            }
+            tidb_executor::PartitionKind::ListColumns { .. } => {
+                ("LIST COLUMNS".to_owned(), partition.expr_text.clone())
+            }
+            tidb_executor::PartitionKind::Key => {
+                ("KEY".to_owned(), partition.expr_text.clone())
+            }
+            other => (other.sql().to_owned(), partition.expr_text.clone()),
+        };
+        for (ordinal, definition) in partition.definitions.iter().enumerate() {
+            // Go's `PARTITION_DESCRIPTION`: the RANGE bounds joined by commas,
+            // or the LIST tuples with multi-column ones parenthesised.
+            let description = match &partition.kind {
+                tidb_executor::PartitionKind::Range { .. }
+                | tidb_executor::PartitionKind::RangeColumns { .. } => {
+                    definition.less_than.join(",")
+                }
+                tidb_executor::PartitionKind::List { .. }
+                | tidb_executor::PartitionKind::ListColumns { .. } => definition
+                    .in_values
+                    .iter()
+                    .map(|tuple| {
+                        if tuple.len() == 1 {
+                            tuple[0].clone()
+                        } else {
+                            format!("({})", tuple.join(","))
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(","),
+                _ => String::new(),
+            };
+            let description = if description.is_empty() {
+                Datum::Null
+            } else {
+                Datum::Bytes(description.into_bytes())
+            };
+            let policy = definition
+                .placement_policy
+                .as_ref()
+                .map_or(Datum::Null, |reference| {
+                    Datum::Bytes(reference.name.original().as_bytes().to_vec())
+                });
+            let comment = if definition.comment.is_empty() {
+                Datum::Null
+            } else {
+                Datum::Bytes(definition.comment.clone().into_bytes())
+            };
+            rows.push(vec![
+                catalog_value(),
+                Datum::Bytes(schema.clone().into_bytes()),
+                Datum::Bytes(table_name.clone().into_bytes()),
+                Datum::Bytes(definition.name.clone().into_bytes()),
+                Datum::Null,
+                // Go's ordinal is ONE-based.
+                Datum::Int(ordinal as i64 + 1),
+                Datum::Null,
+                Datum::Bytes(method.clone().into_bytes()),
+                Datum::Null,
+                Datum::Bytes(expression.clone().into_bytes()),
+                Datum::Null,
+                description,
+                Datum::Int(0), Datum::Int(0), Datum::Int(0),
+                Datum::Null, Datum::Int(0), Datum::Null,
+                Datum::Null, Datum::Null, Datum::Null, Datum::Null,
+                comment,
+                Datum::Null, Datum::Null,
+                Datum::Int(definition.id),
+                policy,
+                Datum::Null, Datum::Null,
+            ]);
+        }
+    }
+    rows
+}
+
 fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {

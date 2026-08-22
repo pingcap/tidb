@@ -9,13 +9,19 @@
 # integer display widths below were therefore stripped; every other byte is
 # the capture verbatim.
 #
-# TWO BLOCKS ARE DERIVED, NOT CAPTURED: `TIDB_SERVERS_INFO` and
-# `CLUSTER_INFO` were added after this capture was taken, so their blocks are
-# written from Go's own column declarations (`pkg/infoschema/tables.go`'s
-# `tableTiDBServersInfoCols` and `tableClusterInfoCols`: name, type and size,
-# with no flags and no defaults) rendered under the conventions every
-# captured block above establishes. Re-capture them the next time `gorun` is
-# available.
+# THREE BLOCKS ARE DERIVED, NOT CAPTURED: `TIDB_SERVERS_INFO`,
+# `CLUSTER_INFO` and `PARTITIONS` were added after this capture was taken, so
+# their blocks are written from Go's own column declarations
+# (`pkg/infoschema/tables.go`'s `tableTiDBServersInfoCols`,
+# `tableClusterInfoCols` and `partitionsCols`: name, type and size, with no
+# flags and no defaults) rendered under the conventions every captured block
+# above establishes. Re-capture them the next time `gorun` is available.
+#
+# `partitionsCols` declares `PARTITION_EXPRESSION`, `SUBPARTITION_EXPRESSION`
+# and `PARTITION_DESCRIPTION` as `mysql.TypeLongBlob` with no explicit size,
+# which renders `longtext` here for the same reason `VIEWS.VIEW_DEFINITION`
+# does -- the column carries the table's utf8mb4 charset, so the blob type
+# prints as its text spelling.
 #
 # Go declares a `comment` on `CLUSTER_INFO`'s `SERVER_ID`, which renders as a
 # trailing `COMMENT '...'`; among the served tables it is the only one that
@@ -27,6 +33,37 @@ CREATE TABLE `SCHEMATA` (
   `DEFAULT_COLLATION_NAME` varchar(32) DEFAULT NULL,
   `SQL_PATH` varchar(512) DEFAULT NULL,
   `TIDB_PLACEMENT_POLICY_NAME` varchar(64) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+CREATE TABLE `PARTITIONS` (
+  `TABLE_CATALOG` varchar(512) DEFAULT NULL,
+  `TABLE_SCHEMA` varchar(64) DEFAULT NULL,
+  `TABLE_NAME` varchar(64) DEFAULT NULL,
+  `PARTITION_NAME` varchar(64) DEFAULT NULL,
+  `SUBPARTITION_NAME` varchar(64) DEFAULT NULL,
+  `PARTITION_ORDINAL_POSITION` bigint DEFAULT NULL,
+  `SUBPARTITION_ORDINAL_POSITION` bigint DEFAULT NULL,
+  `PARTITION_METHOD` varchar(18) DEFAULT NULL,
+  `SUBPARTITION_METHOD` varchar(12) DEFAULT NULL,
+  `PARTITION_EXPRESSION` longtext DEFAULT NULL,
+  `SUBPARTITION_EXPRESSION` longtext DEFAULT NULL,
+  `PARTITION_DESCRIPTION` longtext DEFAULT NULL,
+  `TABLE_ROWS` bigint DEFAULT NULL,
+  `AVG_ROW_LENGTH` bigint DEFAULT NULL,
+  `DATA_LENGTH` bigint DEFAULT NULL,
+  `MAX_DATA_LENGTH` bigint DEFAULT NULL,
+  `INDEX_LENGTH` bigint DEFAULT NULL,
+  `DATA_FREE` bigint DEFAULT NULL,
+  `CREATE_TIME` datetime DEFAULT NULL,
+  `UPDATE_TIME` datetime DEFAULT NULL,
+  `CHECK_TIME` datetime DEFAULT NULL,
+  `CHECKSUM` bigint DEFAULT NULL,
+  `PARTITION_COMMENT` varchar(80) DEFAULT NULL,
+  `NODEGROUP` varchar(12) DEFAULT NULL,
+  `TABLESPACE_NAME` varchar(64) DEFAULT NULL,
+  `TIDB_PARTITION_ID` bigint DEFAULT NULL,
+  `TIDB_PLACEMENT_POLICY_NAME` varchar(64) DEFAULT NULL,
+  `TIDB_AFFINITY` varchar(128) DEFAULT NULL,
+  `TIDB_STORAGE_CLASS` varchar(32) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 CREATE TABLE `TABLES` (
   `TABLE_CATALOG` varchar(512) DEFAULT NULL,

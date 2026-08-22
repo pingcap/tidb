@@ -3113,3 +3113,111 @@ fn truncate_empties_a_partitioned_table() {
         vec![vec!["0".to_owned()]]
     );
 }
+
+/// Every partition-management statement Go serves that this node does not
+/// must be REFUSED, never accepted and ignored.
+///
+/// The distinction is the whole point. A refused `REORGANIZE PARTITION` is a
+/// feature gap the user can see and work around; an accepted-and-ignored one
+/// reports success and leaves the table partitioned the old way, so the next
+/// statement operates on partitions the user believes are gone.
+#[test]
+fn unserved_partition_management_is_refused_not_ignored() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE pm (a INT) PARTITION BY RANGE (a) \
+              (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))")
+        .expect("range table");
+    session
+        .run("CREATE TABLE pmh (a INT) PARTITION BY HASH (a) PARTITIONS 4")
+        .expect("hash table");
+    session.run("CREATE TABLE plain (a INT)").expect("plain table");
+
+    let unserved = [
+        "ALTER TABLE pm REORGANIZE PARTITION p0, p1 INTO \
+         (PARTITION q0 VALUES LESS THAN (20))",
+        "ALTER TABLE pmh COALESCE PARTITION 2",
+        "ALTER TABLE pm EXCHANGE PARTITION p0 WITH TABLE plain",
+        "ALTER TABLE pmh ADD PARTITION PARTITIONS 2",
+        "ALTER TABLE plain PARTITION BY HASH (a) PARTITIONS 2",
+    ];
+    for sql in unserved {
+        match session.run(sql) {
+            Err(_) => {}
+            Ok(outcome) => panic!(
+                "{sql} was ACCEPTED ({outcome:?}); an unserved partition change \
+                 must be refused, or it reports success and changes nothing"
+            ),
+        }
+    }
+}
+
+/// `information_schema.PARTITIONS`, per Go's `setDataFromPartitions`
+/// (`executor/infoschema_reader.go`).
+///
+/// Every visible table produces at least one row: an UNPARTITIONED one gets a
+/// single row with the partition columns NULL, not zero rows, so a client
+/// joining against this table still sees it. Reporting nothing would make an
+/// unpartitioned table look absent rather than unpartitioned.
+#[test]
+fn information_schema_partitions_reports_gos_rows() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE ip (a INT) PARTITION BY RANGE (a) \
+              (PARTITION p0 VALUES LESS THAN (10) COMMENT 'first', \
+               PARTITION p1 VALUES LESS THAN (MAXVALUE))")
+        .expect("range table");
+    session.run("CREATE TABLE plainp (a INT)").expect("plain table");
+
+    let rows = tests_support::row_text(session.run(
+        "SELECT partition_name, partition_ordinal_position, partition_method, \
+                partition_expression, partition_description, partition_comment \
+         FROM information_schema.partitions \
+         WHERE table_name = 'ip' ORDER BY partition_ordinal_position",
+    ));
+    assert_eq!(
+        rows,
+        vec![
+            vec![
+                "p0".to_owned(), "1".to_owned(), "RANGE".to_owned(),
+                "`a`".to_owned(), "10".to_owned(), "first".to_owned()
+            ],
+            vec![
+                "p1".to_owned(), "2".to_owned(), "RANGE".to_owned(),
+                "`a`".to_owned(), "MAXVALUE".to_owned(), "NULL".to_owned()
+            ],
+        ],
+        "the ordinal is ONE-based and the description is the stored bound"
+    );
+
+    // An unpartitioned table is present with NULL partition columns.
+    let rows = tests_support::row_text(session.run(
+        "SELECT partition_name, partition_method FROM information_schema.partitions \
+         WHERE table_name = 'plainp'",
+    ));
+    assert_eq!(
+        rows,
+        vec![vec!["NULL".to_owned(), "NULL".to_owned()]],
+        "an unpartitioned table is one NULL row, not zero rows"
+    );
+}
+
+/// The COLUMNS forms are named differently from the expression forms, and
+/// print the column list where the expression would go.
+#[test]
+fn information_schema_partitions_names_the_columns_forms_as_go_does() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE rc (a INT, b INT) PARTITION BY RANGE COLUMNS (a, b) \
+              (PARTITION p0 VALUES LESS THAN (10, 10))")
+        .expect("range columns table");
+    let rows = tests_support::row_text(session.run(
+        "SELECT partition_method, partition_expression \
+         FROM information_schema.partitions WHERE table_name = 'rc'",
+    ));
+    assert_eq!(
+        rows,
+        vec![vec!["RANGE COLUMNS".to_owned(), "`a`,`b`".to_owned()]],
+        "Go names it RANGE COLUMNS and prints the column list"
+    );
+}
