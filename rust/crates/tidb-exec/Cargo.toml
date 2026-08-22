@@ -38,6 +38,9 @@ chrono.workspace = true
 prost.workspace = true
 regex.workspace = true
 serde_json = { workspace = true }
+reqwest = { workspace = true }
+tidb-placement = { path = "../tidb-placement" }
+tokio = { workspace = true }
 
 [dev-dependencies]
 chrono-tz.workspace = true

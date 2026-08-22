@@ -150,6 +150,7 @@ pub mod read_consistency;
 pub mod readable_size;
 pub mod real_tikv_analyze;
 pub mod real_tikv_catalog;
+pub mod placement_delivery;
 pub mod real_tikv_ddl;
 pub mod real_tikv_dml;
 pub mod real_tikv_multi_read;
