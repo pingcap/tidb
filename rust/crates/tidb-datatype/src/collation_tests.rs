@@ -558,3 +558,41 @@ fn the_registry_and_the_const_path_give_one_default_collation_per_charset() {
     assert!(is_default("gb18030_chinese_ci"));
     assert!(!is_default("gb18030_bin"));
 }
+
+/// Go `pkg/util/collate/gb18030_bin.go` feeds four-byte PUA runes a trailing
+/// NUL through `customGB18030Encoder`, so `KeyWithoutTrimRightSpace` emits the
+/// 4-byte override encoding plus one 0x00 byte. Vectors from master's
+/// `pkg/parser/charset/encoding_gb18030_data.go` `unicodeToGB18030` table.
+#[test]
+fn gb18030_bin_key_pads_four_byte_pua_runes_like_go() {
+    let expected: &[(&str, &[u8])] = &[
+        ("\u{E78D}", &[0x84, 0x31, 0x82, 0x36, 0x00]),
+        ("\u{E790}", &[0x84, 0x31, 0x82, 0x39, 0x00]),
+        ("\u{E796}", &[0x84, 0x31, 0x83, 0x35, 0x00]),
+        ("\u{E7C7}", &[0x81, 0x35, 0xF4, 0x37, 0x00]),
+        ("\u{E826}", &[0x82, 0x35, 0x90, 0x38, 0x00]),
+        ("\u{E864}", &[0x82, 0x35, 0x91, 0x34, 0x00]),
+    ];
+    for (input, want) in expected {
+        assert_eq!(Collation::Gb18030Bin.key(input.as_bytes()), want.to_vec());
+        assert_eq!(
+            Collation::Gb18030Bin.key_without_trim_right_space(input.as_bytes()),
+            want.to_vec()
+        );
+    }
+    // Non-PUA runes keep the plain two-byte encoding (U+4E2D -> 0xD6 0xD0).
+    assert_eq!(
+        Collation::Gb18030Bin.key("中".as_bytes()),
+        b"\xD6\xD0".to_vec()
+    );
+    // Trailing spaces are still trimmed on the `key` path.
+    assert_eq!(
+        Collation::Gb18030Bin.key("中 ".as_bytes()),
+        b"\xD6\xD0".to_vec()
+    );
+    // The Compare path stays unpadded, exactly like Go's per-rune Compare.
+    assert_eq!(
+        Collation::Gb18030Bin.compare("\u{E78D}".as_bytes(), "\u{E78D}".as_bytes()),
+        Ordering::Equal
+    );
+}
