@@ -75,6 +75,19 @@ pub enum PlanStatement {
     /// The recording is not a text operator tree, so there is no access row to
     /// read a property out of.
     NotComparable(&'static str),
+    /// The recording is not comparable, but the statement still PLANS on the
+    /// real server and its side effects are observable afterwards: TiDB's
+    /// `explain format='hint' select /*+ inl_merge_join(t2) */ ...` leaves
+    /// warning 1815 for the `show warnings` the corpus runs next. Run the
+    /// carried default-format spelling for those effects, discard its output,
+    /// and count the skip -- skipping COLD leaves the follow-up reading a
+    /// warning buffer the recording's server filled and ours never did.
+    RunAndDiscard {
+        /// The default-format `EXPLAIN` over the same target.
+        sql: String,
+        /// Why the output itself is not compared.
+        reason: &'static str,
+    },
 }
 
 /// Plan formats whose recording is the same operator tree in text.
@@ -156,15 +169,21 @@ pub fn plan_statement(sql: &str) -> Option<PlanStatement> {
         return Some(PlanStatement::NotComparable("unterminated format name"));
     };
     let name = &value[usize::from(quote)..name_end];
-    if !TEXT_TREE_FORMATS.contains(&name) {
-        return Some(PlanStatement::NotComparable(
-            "EXPLAIN FORMAT is not a text operator tree",
-        ));
-    }
     // The format clause's own span in the ORIGINAL sql, whose case and spacing
     // the lowercased copy mirrors byte for byte.
     let clause_len = rest.len() - value.len() + name_end + usize::from(quote);
     let explained = rest[clause_len..].trim_start();
+    if !TEXT_TREE_FORMATS.contains(&name) {
+        if is_explainable(explained) {
+            return Some(PlanStatement::RunAndDiscard {
+                sql: format!("explain {explained}"),
+                reason: "EXPLAIN FORMAT is not a text operator tree",
+            });
+        }
+        return Some(PlanStatement::NotComparable(
+            "EXPLAIN FORMAT is not a text operator tree",
+        ));
+    }
     if !is_explainable(explained) {
         return None;
     }

@@ -1457,7 +1457,8 @@ fn run_select_traced_with_delivery_choice_inner(
             // Go's `SetPreferredJoinTypeAndOrder`: the statement's own join
             // hints, which decide at some sites which physical families are
             // enumerated AT ALL. See `driver::join_method_hints`.
-            let join_hints = join_method_hints::JoinMethodHints::of_select(select);
+            let join_hints =
+                join_method_hints::JoinMethodHints::of_select_reporting(select, Some(ctx));
             let demand = leaf_demand::FromDemand {
                 offered: &offered,
                 pushdown: Some(&pushdown),

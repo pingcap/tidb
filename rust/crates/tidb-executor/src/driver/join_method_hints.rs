@@ -120,6 +120,17 @@ impl JoinMethodHints {
     /// which is the same answer as no hint at all -- the safe direction, since
     /// every rule below only ever REMOVES a candidate.
     pub(crate) fn of_select(select: &SelectStmt) -> Self {
+        Self::of_select_reporting(select, None)
+    }
+
+    /// [`Self::of_select`], reporting hint deprecations into `ctx`.
+    ///
+    /// Split so the many tests that only read the collected lists need no
+    /// context; the one production caller passes the statement's.
+    pub(crate) fn of_select_reporting(
+        select: &SelectStmt,
+        ctx: Option<&crate::StmtContext>,
+    ) -> Self {
         let mut hints = Self::default();
         for hint in &select.hints {
             let Some(tables) = hinted_tables(hint) else {
@@ -133,7 +144,20 @@ impl JoinMethodHints {
                 "hash_join" | "tidb_hj" => &mut hints.hash,
                 "inl_join" | "tidb_inlj" => &mut hints.index,
                 "inl_hash_join" => &mut hints.index_hash,
-                "inl_merge_join" => &mut hints.index_merge,
+                // Go `hint.go`'s `HintINLMJ` arm: the hint is DROPPED, not
+                // collected -- `warnHandler.SetHintWarning(...); continue` --
+                // so the plan is whatever the optimizer picks without it, and
+                // the statement carries warning 1815. Collecting it here used
+                // to build an IndexMergeJoin TiDB no longer builds.
+                "inl_merge_join" => {
+                    if let Some(ctx) = ctx {
+                        ctx.append_warning_parts(
+                            1815,
+                            "The INDEX MERGE JOIN hint is deprecated for usage, try other hints.",
+                        );
+                    }
+                    continue;
+                }
                 _ => continue,
             };
             list.extend(tables);
@@ -389,7 +413,6 @@ mod tests {
         for (hint, expected) in [
             ("INL_JOIN(t2)", "IndexJoin"),
             ("INL_HASH_JOIN(t2)", "IndexHashJoin"),
-            ("INL_MERGE_JOIN(t2)", "IndexMergeJoin"),
         ] {
             let hints = hints_of(&format!(
                 "select /*+ {hint} */ * from t t1 join t t2 on t1.a = t2.a"
@@ -399,6 +422,14 @@ mod tests {
                 Some(expected)
             );
         }
+        // `INL_MERGE_JOIN` is DROPPED, not collected: Go's `HintINLMJ` arm
+        // warns 1815 ("The INDEX MERGE JOIN hint is deprecated for usage")
+        // and `continue`s, so the optimizer plans as if it were not written.
+        let hints = hints_of("select /*+ INL_MERGE_JOIN(t2) */ * from t t1 join t t2 on t1.a = t2.a");
+        assert_eq!(
+            hints.forced_index_join_name((Some("t1"), Some("t2")), true),
+            None
+        );
     }
 
     /// The merge hint is read FIRST, so it wins over every other -- including

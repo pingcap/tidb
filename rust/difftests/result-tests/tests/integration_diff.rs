@@ -663,6 +663,15 @@ fn compare_output(
             report.skip(SkipClass::PlanFormatNotComparable(reason));
             return Err(None);
         }
+        // TiDB PLANNED this statement even though its output is not a tree
+        // this reader compares, and planning has observable side effects: the
+        // hint-deprecation warning a following `show warnings` reads. Run the
+        // default-format spelling for the effects, discard the output.
+        Some(PlanStatement::RunAndDiscard { sql, reason }) if !recorded_error => {
+            drop(session.run_with_columns(sql));
+            report.skip(SkipClass::PlanFormatNotComparable(reason));
+            return Err(None);
+        }
         Some(PlanStatement::RunDefaultExplain(sql)) => sql.as_str(),
         _ => stmt_sql,
     };
@@ -2171,7 +2180,21 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // containing a `PhysicalApply`. The driver now reports Apply construction
     // through the statement context, and the prepared path neither stores nor
     // hits for such a statement.
-    const KNOWN_DIVERGENCES: usize = 37;
+    //
+    // 37 -> 36. `INL_MERGE_JOIN` is DROPPED, as Go's `hint.go` `HintINLMJ`
+    // arm drops it -- `SetHintWarning("The INDEX MERGE JOIN hint is
+    // deprecated for usage, try other hints."); continue` -- so the optimizer
+    // plans as if it were not written and the statement carries warning 1815.
+    // This tier still collected it and built an IndexMergeJoin TiDB no longer
+    // builds.
+    //
+    // Reaching that also took a harness fix: an `EXPLAIN FORMAT='hint'` was
+    // skipped COLD as not-comparable, but TiDB PLANNED it, and planning has
+    // observable side effects -- the deprecation warning the corpus's next
+    // `show warnings` reads. A non-tree-format EXPLAIN over an explainable
+    // target now runs as the default-format spelling for its effects, with
+    // the output still discarded and the skip still counted.
+    const KNOWN_DIVERGENCES: usize = 36;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path
