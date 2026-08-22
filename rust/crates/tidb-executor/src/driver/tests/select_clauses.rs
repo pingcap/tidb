@@ -56,6 +56,18 @@ fn an_explicit_case_insensitive_collation_controls_comparison() {
     )
     .unwrap();
 
+    crate::run_create_table_on(
+        "CREATE TABLE plain (a VARCHAR(10) COLLATE utf8mb4_bin)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO plain VALUES ('AA'), ('aa'), ('AAA'), ('aaa')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
     let values = |sql: &str| {
         let mut values: Vec<String> = run_select_on(sql, &catalog, &ctx)
             .unwrap()
@@ -72,6 +84,33 @@ fn an_explicit_case_insensitive_collation_controls_comparison() {
     assert_eq!(
         values("SELECT a FROM collated WHERE a IN ('AAA' COLLATE utf8mb4_general_ci, 'aa')",),
         ["AA", "AAA", "aa", "aaa"],
+    );
+    // The same `IN` in HAVING, which this tier answers with the LOCAL
+    // `SelectionExec` rather than a filter pushed into the scan. The two have
+    // separate `IN` fast paths, and each one re-derived the collation for
+    // itself: over a `utf8mb4_bin` column the scan's answered the four rows
+    // above while HAVING's answered only the two that match BINARY. Go has
+    // one derivation, on the function (`expression/collation.go:290`), so
+    // both have to read it rather than the column's.
+    assert_eq!(
+        values("SELECT a FROM collated HAVING a IN ('AAA' COLLATE utf8mb4_general_ci, 'aa')"),
+        ["AA", "AAA", "aa", "aaa"],
+    );
+    // `LIKE` derives the same way (`collation.go:282`) and had the same
+    // re-derivation in the pushed filter.
+    //
+    // Asked of an UNPARTITIONED copy deliberately. On the partitioned table
+    // above the same predicate answers `["aa"]`, and the reason is not
+    // collation derivation -- traced to the row filter, `AA` and `AAA` never
+    // reach the `LIKE` at all, and `... PARTITION (p_upper)` alone returns
+    // nothing even though that partition holds them. A wildcard-free `LIKE`
+    // is being turned into an access RANGE compared with BINARY bytes, so the
+    // range misses every row the derived collation would have matched. That
+    // is a separate gap in range building, recorded here with its
+    // reproduction rather than folded into this assertion.
+    assert_eq!(
+        values("SELECT a FROM plain WHERE a LIKE 'aa' COLLATE utf8mb4_general_ci"),
+        ["AA", "aa"],
     );
 }
 

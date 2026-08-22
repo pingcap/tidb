@@ -155,6 +155,15 @@ impl FastSelectionFilter {
             return None;
         }
         let column_offset = usize::try_from(column.index).ok()?;
+        // The comparison's own derived collation, not the column's. Go's
+        // `deriveCollation` for `ast.In` (`expression/collation.go:290`) runs
+        // over ALL the arguments, so an explicit `COLLATE` on any one of them
+        // decides it -- and the evaluator this fast path stands in for
+        // already keys its hash set that way
+        // (`ScalarFunction::prepare_in_string_hash_set`). Re-deriving from the
+        // column makes the two disagree on exactly the rows the explicit
+        // collation was written to catch.
+        let collator = tidb_datatype::get_collator(function.derived_collation().name());
         let mut keys = function
             .args
             .iter()
@@ -170,13 +179,13 @@ impl FastSelectionFilter {
             })
             .collect::<Option<Vec<_>>>()?
             .into_iter()
-            .map(|bytes| field_type.runtime_collator().key(&bytes))
+            .map(|bytes| collator.key(&bytes))
             .collect::<Vec<_>>();
         keys.sort_unstable();
         keys.dedup();
         Some(Self::StringIn {
             column_offset,
-            collator: field_type.runtime_collator(),
+            collator,
             keys,
         })
     }

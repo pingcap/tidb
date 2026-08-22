@@ -5002,11 +5002,6 @@ fn build_join_with_choice(
                     Some(index_join_physical_probe_rows_one(decision, catalog, rows)),
                 )
             });
-        let access_rows_floor = decision.probe_access_rows_floor(
-            catalog
-                .table_statistics(decision.table.table_id)
-                .map(AsRef::as_ref),
-        );
         let (outer_not_null, inner_not_null) = comparison_not_null.iter().copied().fold(
             (Vec::new(), Vec::new()),
             |mut offsets, offset| {
