@@ -525,6 +525,19 @@ impl Decimal {
         !self.digits.0.spilled()
     }
 
+    /// Builds a value straight from coefficient parts for differential tests
+    /// of [`Ord::cmp`]: the tests need shapes the parser cannot produce
+    /// directly (hidden division precision, excess leading zeros).
+    #[cfg(test)]
+    pub(crate) fn from_test_parts(
+        negative: bool,
+        digits: &str,
+        scale: u32,
+        storage_scale: u32,
+    ) -> Self {
+        Self::new_with_storage(negative, digits.to_string(), scale, storage_scale)
+    }
+
     /// Returns the scale of the lossless stored coefficient.
     ///
     /// This can exceed [`Self::scale`], which is the rounded SQL presentation
@@ -1504,6 +1517,11 @@ impl Ord for Decimal {
     /// sign mismatch decides it outright (zero is always non-negative, so a
     /// mismatch means one side is genuinely nonzero); otherwise the aligned
     /// magnitudes decide, reversed when both are negative.
+    ///
+    /// Allocation-free: sorts, hash-join probes and range filters compare
+    /// decimals once per row, where the previous pad-both-sides-into-`String`
+    /// form cost four heap allocations Go's word-wise `MyDecimal.Compare`
+    /// does not have.
     fn cmp(&self, other: &Self) -> Ordering {
         if self.negative != other.negative {
             return if self.negative {
@@ -1512,15 +1530,61 @@ impl Ord for Decimal {
                 Ordering::Greater
             };
         }
-        let scale = self.storage_scale.max(other.storage_scale);
-        let a = pad_scale(&self.digits, self.storage_scale, scale);
-        let b = pad_scale(&other.digits, other.storage_scale, scale);
-        let mag_cmp = digit_cmp(&a, &b);
+        let mag_cmp = cmp_magnitude(
+            self.digits.as_str(),
+            self.storage_scale,
+            other.digits.as_str(),
+            other.storage_scale,
+        );
         if self.negative {
             mag_cmp.reverse()
         } else {
             mag_cmp
         }
+    }
+}
+
+/// Compares two unsigned coefficients placed at the decimal point:
+/// `digits * 10^-storage_scale` each, digit-by-digit with missing trailing
+/// fraction digits read as `0`. Equivalent to right-padding both sides to
+/// the common storage scale and comparing the digit strings.
+fn cmp_magnitude(
+    a_digits: &str,
+    a_storage_scale: u32,
+    b_digits: &str,
+    b_storage_scale: u32,
+) -> Ordering {
+    let a_int_end = a_digits.len() - (a_storage_scale as usize).min(a_digits.len());
+    let b_int_end = b_digits.len() - (b_storage_scale as usize).min(b_digits.len());
+    let (a_int, a_frac) = (&a_digits[..a_int_end], &a_digits[a_int_end..]);
+    let (b_int, b_frac) = (&b_digits[..b_int_end], &b_digits[b_int_end..]);
+    // Leading zeros carry no magnitude; strip them so length decides first.
+    let a_int_tz = a_int.trim_start_matches('0');
+    let b_int_tz = b_int.trim_start_matches('0');
+    match a_int_tz
+        .len()
+        .cmp(&b_int_tz.len())
+        .then_with(|| a_int_tz.cmp(b_int_tz))
+    {
+        Ordering::Equal => {}
+        non_eq => return non_eq,
+    }
+    // Equal-length ASCII digit strings compare numerically byte-wise.
+    let common = a_frac.len().min(b_frac.len());
+    match a_frac[..common].cmp(&b_frac[..common]) {
+        Ordering::Equal => {}
+        non_eq => return non_eq,
+    }
+    // A longer fraction only wins when its extra digits are not all zero.
+    let (rest, sign) = if a_frac.len() > b_frac.len() {
+        (&a_frac[common..], Ordering::Greater)
+    } else {
+        (&b_frac[common..], Ordering::Less)
+    };
+    if rest.bytes().any(|digit| digit != b'0') {
+        sign
+    } else {
+        Ordering::Equal
     }
 }
 
