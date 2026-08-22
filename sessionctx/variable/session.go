@@ -118,9 +118,33 @@ func (r *RetryInfo) ResetOffset() {
 	r.autoRandomIDs.resetOffset()
 }
 
+// BeginStmt starts recording the auto IDs allocated by a statement.
+func (r *RetryInfo) BeginStmt() {
+	r.autoIncrementIDs.beginStmt()
+	r.autoRandomIDs.beginStmt()
+}
+
+// CommitStmt commits the auto IDs recorded for a successful statement.
+func (r *RetryInfo) CommitStmt() {
+	r.autoIncrementIDs.commitStmt()
+	r.autoRandomIDs.commitStmt()
+}
+
+// BeginRetryStmt selects the auto IDs recorded for a history statement.
+func (r *RetryInfo) BeginRetryStmt(offset int) {
+	r.autoIncrementIDs.beginRetryStmt(offset)
+	r.autoRandomIDs.beginRetryStmt(offset)
+}
+
+// ResetStmtOffset resets the auto ID offsets of the current statement.
+func (r *RetryInfo) ResetStmtOffset() {
+	r.autoIncrementIDs.resetStmtOffset()
+	r.autoRandomIDs.resetStmtOffset()
+}
+
 // AddAutoIncrementID adds id to autoIncrementIDs.
 func (r *RetryInfo) AddAutoIncrementID(id int64) {
-	r.autoIncrementIDs.autoIDs = append(r.autoIncrementIDs.autoIDs, id)
+	r.autoIncrementIDs.add(id)
 }
 
 // GetCurrAutoIncrementID gets current autoIncrementID.
@@ -130,7 +154,7 @@ func (r *RetryInfo) GetCurrAutoIncrementID() (int64, bool) {
 
 // AddAutoRandomID adds id to autoRandomIDs.
 func (r *RetryInfo) AddAutoRandomID(id int64) {
-	r.autoRandomIDs.autoIDs = append(r.autoRandomIDs.autoIDs, id)
+	r.autoRandomIDs.add(id)
 }
 
 // GetCurrAutoRandomID gets current AutoRandomID.
@@ -139,27 +163,62 @@ func (r *RetryInfo) GetCurrAutoRandomID() (int64, bool) {
 }
 
 type retryInfoAutoIDs struct {
-	currentOffset int
-	autoIDs       []int64
+	autoIDs    [][]int64
+	stmtIdx    int
+	stmtOffset int
 }
 
 func (r *retryInfoAutoIDs) resetOffset() {
-	r.currentOffset = 0
+	r.stmtIdx = 0
+	r.stmtOffset = 0
+}
+
+func (r *retryInfoAutoIDs) beginStmt() {
+	for i := r.stmtIdx; i < len(r.autoIDs); i++ {
+		r.autoIDs[i] = nil
+	}
+	r.autoIDs = append(r.autoIDs[:r.stmtIdx], nil)
+	r.stmtOffset = 0
+}
+
+func (r *retryInfoAutoIDs) commitStmt() {
+	if r.stmtIdx == len(r.autoIDs) {
+		r.autoIDs = append(r.autoIDs, nil)
+	}
+	r.stmtIdx++
+}
+
+func (r *retryInfoAutoIDs) beginRetryStmt(offset int) {
+	r.stmtIdx = offset
+	r.stmtOffset = 0
+}
+
+func (r *retryInfoAutoIDs) resetStmtOffset() {
+	r.stmtOffset = 0
 }
 
 func (r *retryInfoAutoIDs) clean() {
-	r.currentOffset = 0
-	if len(r.autoIDs) > 0 {
-		r.autoIDs = r.autoIDs[:0]
+	r.stmtIdx = 0
+	r.stmtOffset = 0
+	for i := range r.autoIDs {
+		r.autoIDs[i] = nil
 	}
+	r.autoIDs = r.autoIDs[:0]
+}
+
+func (r *retryInfoAutoIDs) add(id int64) {
+	if r.stmtIdx == len(r.autoIDs) {
+		r.autoIDs = append(r.autoIDs, nil)
+	}
+	r.autoIDs[r.stmtIdx] = append(r.autoIDs[r.stmtIdx], id)
 }
 
 func (r *retryInfoAutoIDs) getCurrent() (int64, bool) {
-	if r.currentOffset >= len(r.autoIDs) {
+	if r.stmtIdx >= len(r.autoIDs) || r.stmtOffset >= len(r.autoIDs[r.stmtIdx]) {
 		return 0, false
 	}
-	id := r.autoIDs[r.currentOffset]
-	r.currentOffset++
+	id := r.autoIDs[r.stmtIdx][r.stmtOffset]
+	r.stmtOffset++
 	return id, true
 }
 

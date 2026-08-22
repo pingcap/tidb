@@ -1386,6 +1386,145 @@ func TestAutoRandIDRetry(t *testing.T) {
 	require.Equal(t, []int64{1, 2, 3, 4, 5, 7}, maskedHandles)
 }
 
+func TestAutoRandomIDRetryAfterPessimisticStatementRetry(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id bigint primary key clustered auto_random, u int unique key, v int)")
+	tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+
+	// Use autocommit=0 to start an explicit transaction without replaying an
+	// explicit BEGIN. Replaying BEGIN restores the original optimistic mode
+	// and does not reach the pessimistic statement retry path.
+	tk.MustExec("set @@autocommit = 0")
+
+	// S1 and S2 allocate two different AUTO_RANDOM IDs. The commit failpoint
+	// below makes the whole transaction replay in pessimistic mode.
+	tk.MustExec("insert into t (u, v) values (1, 1)")
+	tk.MustExec("insert into t (u, v) values (2, 2) on duplicate key update v = values(v)")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID"))
+		session.ResetMockAutoRandIDRetryCount(0)
+	}()
+	session.ResetMockAutoRandIDRetryCount(1)
+	lockConflictFailpoint := "github.com/pingcap/tidb/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict"
+	require.NoError(t, failpoint.Enable(lockConflictFailpoint, "1*return(false)->1*return(true)->return(false)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(lockConflictFailpoint))
+	}()
+
+	// S2 must retain its own replayed AUTO_RANDOM ID. Before this fix it
+	// reuses S1's ID after ResetOffset and updates S1 instead of inserting u=2.
+	tk.MustExec("commit")
+	tk.MustQuery("select u, v from t order by u").Check(testkit.Rows("1 1", "2 2"))
+}
+
+func TestAutoIncrementIDRetryDoesNotDuplicate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int not null auto_increment primary key, idx int unique key, c int)")
+	tk.MustExec("insert into t values (1, 1, 1)")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into t (id, idx, c) values (10, 11, 12)")
+	tk.MustExec("update t set c = 15 where idx = 1")
+	tk.MustExec("insert into t (idx, c) values (13, 14)")
+
+	// The explicit statement, the UPDATE's nil cache row, and the generated
+	// statement must retain separate cache positions during a real
+	// write-conflict replay.
+	tk2.MustExec("update t set c = 100 where idx = 1")
+	tk.MustExec("commit")
+	tk.MustQuery("select id, idx, c from t order by id").Check(testkit.Rows(
+		"1 1 15",
+		"10 11 12",
+		"11 13 14",
+	))
+}
+
+func TestAutoIncrementIDRetryWhenStatementRowCountChanges(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table src (u int primary key, v int)")
+	tk.MustExec("create table t (id int auto_increment primary key, u int unique key)")
+	tk.MustExec("insert into src values (1, 0)")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into t (u) select u from src")
+	tk.MustExec("insert into t (u) values (2)")
+	tk.MustExec("update src set v = 1 where u = 1")
+
+	// The retry gets a new snapshot after src is changed, so the first history
+	// statement consumes fewer auto IDs than it did originally.
+	tk2.MustExec("delete from src where u = 1")
+
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 2"))
+}
+
+func TestAutoRandomIDRetryUsesCurrentExplicitID(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table src (id bigint primary key, u int)")
+	tk.MustExec("create table t (id bigint primary key clustered auto_random, u int)")
+	tk.MustExec("insert into src values (200, 2), (300, 3)")
+	tk.MustExec("set @@allow_auto_random_explicit_insert = 1")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into t select id, u from src")
+	tk.MustExec("insert into t (id, u) values (null, 10), (400, 20), (null, 30)")
+	tk.MustExec("update src set u = 4 where id = 200")
+
+	// The retry sees one fewer source row. Explicit IDs in both statements must
+	// remain authoritative without consuming generated-ID cache entries.
+	tk2.MustExec("delete from src where id = 200")
+
+	tk.MustExec("commit")
+	tk.MustQuery("select id, u from t where u in (3, 20) order by u").Check(testkit.Rows(
+		"300 3",
+		"400 20",
+	))
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
+}
+
+func TestAutoIncrementIDRetryWithMixedValues(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table src (u int primary key, v int)")
+	tk.MustExec("create table t (id int auto_increment primary key, u int unique key)")
+	tk.MustExec("insert into src values (1, 0)")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into t (u) select u from src")
+	tk.MustExec("insert into t values (null, 2), (100, 3), (null, 4)")
+	tk.MustExec("update src set v = 1 where u = 1")
+
+	// The first statement produces no rows during retry. The next statement
+	// must use its own generated-ID cache and skip its explicit ID.
+	tk2.MustExec("delete from src where u = 1")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t order by u").Check(testkit.Rows(
+		"2 2",
+		"100 3",
+		"101 4",
+	))
+}
+
 func TestAutoRandRecoverTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
