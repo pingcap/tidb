@@ -2633,7 +2633,11 @@ impl<C: Columns> JoinExec<C> {
                 && self.parallel_decimal_product_build_column().is_some());
         matches!(
             self.kind,
-            JoinKind::Inner | JoinKind::Left | JoinKind::Right
+            JoinKind::Inner
+                | JoinKind::Left
+                | JoinKind::Right
+                | JoinKind::Semi
+                | JoinKind::AntiSemi
         ) && residual_supported
             && key.class == KeyClass::Int
             && !key.null_safe
@@ -2760,7 +2764,11 @@ impl<C: Columns> JoinExec<C> {
             .expect("parallel probe requires hash state")
             .build_types
             .clone();
-        let output_types = if probe_is_left {
+        // A semi/anti join's output carries only the preserved LEFT columns;
+        // every other family emits the joined left-then-right row.
+        let output_types = if matches!(self.kind, JoinKind::Semi | JoinKind::AntiSemi) {
+            self.left.ret_field_types().to_vec()
+        } else if probe_is_left {
             probe_types
                 .iter()
                 .chain(&build_types)
@@ -2983,7 +2991,20 @@ impl<C: Columns> JoinExec<C> {
         decimal_products: &HashMap<RowPtr, Option<MyDecimal>>,
     ) -> Result<ParallelProbeResult, ExecError> {
         output.reset();
-        let required_columns = probe_types.len() + build_types.len();
+        // A semi/anti join emits only the preserved LEFT columns; the other
+        // two-column families emit the joined left-then-right row.
+        let preserved_only = matches!(kind, JoinKind::Semi | JoinKind::AntiSemi);
+        // A semi/anti join emits only the preserved LEFT columns, whichever
+        // side was built.
+        let required_columns = if preserved_only {
+            if probe_is_left {
+                probe_types.len()
+            } else {
+                build_types.len()
+            }
+        } else {
+            probe_types.len() + build_types.len()
+        };
         if output.num_cols() < required_columns {
             return Err(ExecError::internal(format!(
                 "parallel hash join output has {} columns, needs {} (probe {}, build {})",
@@ -3052,6 +3073,31 @@ impl<C: Columns> JoinExec<C> {
                 batch_ptrs.push(candidates[0]);
             }
             if all_matched {
+                // Semi/anti have no joined row to assemble: a preserved
+                // build side only records the matches for the post-probe
+                // scan, and a probe-side semi join emits each preserved row
+                // once, in bulk, exactly because every row matched.
+                if preserved_only {
+                    if matches!(kind, JoinKind::Semi) && !builds_preserved {
+                        let probe_compact = input.copy_construct_sel();
+                        output.append_partial_range_from(
+                            0,
+                            &probe_compact,
+                            0,
+                            probe_compact.num_rows(),
+                        );
+                    }
+                    if builds_preserved {
+                        matched_build_rows.extend(batch_ptrs.iter().copied());
+                    }
+                    drop(probe_key_values);
+                    return Ok(ParallelProbeResult {
+                        input,
+                        output,
+                        matched_build_rows,
+                        condition_evals: condition_evals.get(),
+                    });
+                }
                 if let Some(fast) = decimal_mul_lt {
                     let mut probe_index = 0;
                     table
@@ -3159,6 +3205,24 @@ impl<C: Columns> JoinExec<C> {
             let exact_key = exact_key_at(probe_index);
             let candidates: &[RowPtr] = exact_key.map_or(&[], |key| table.probe_exact_int(key));
             debug_assert!(candidates.len() <= 1);
+            // Semi/anti emit the preserved LEFT row once per match decision;
+            // with the preserved side built they only collect matches for the
+            // post-probe scan.
+            if preserved_only {
+                let matched = !candidates.is_empty();
+                if matches!(kind, JoinKind::Semi) && matched && !builds_preserved {
+                    output.append_partial_row(0, probe_row);
+                }
+                if builds_preserved {
+                    if let Some(&ptr) = candidates.first() {
+                        matched_build_rows.push(ptr);
+                    }
+                }
+                if matches!(kind, JoinKind::AntiSemi) && !matched && !builds_preserved {
+                    output.append_partial_row(0, probe_row);
+                }
+                continue;
+            }
             let mut matched = false;
             for &ptr in candidates {
                 let emitted = table
@@ -3236,8 +3300,10 @@ impl<C: Columns> JoinExec<C> {
             self.memory.spill_storage(),
             track_matches,
             self.kind == JoinKind::Inner
-                || (matches!(self.kind, JoinKind::Left | JoinKind::Right)
-                    && self.residual_conditions.is_empty()),
+                || (matches!(
+                    self.kind,
+                    JoinKind::Left | JoinKind::Right | JoinKind::Semi | JoinKind::AntiSemi
+                ) && self.residual_conditions.is_empty()),
         );
         table.mem_tracker().attach_to(&self.tracker);
         table.disk_tracker().attach_to(&self.disk_tracker);
@@ -3347,7 +3413,11 @@ impl<C: Columns> JoinExec<C> {
         // keeps `EXISTS`/`NOT EXISTS` off the per-row `Vec<Datum>` path.
         if matches!(
             self.kind,
-            JoinKind::Inner | JoinKind::Left | JoinKind::Right | JoinKind::Semi | JoinKind::AntiSemi
+            JoinKind::Inner
+                | JoinKind::Left
+                | JoinKind::Right
+                | JoinKind::Semi
+                | JoinKind::AntiSemi
         ) && self.residual_conditions.is_empty()
         {
             return self.drain_chunk_backed_probe(req, probe_is_left, &probe_types);
