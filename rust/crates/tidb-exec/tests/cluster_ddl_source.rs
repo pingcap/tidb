@@ -2708,3 +2708,29 @@ fn cluster_create_persists_a_partition_comment() {
         .collect::<Vec<_>>();
     assert_eq!(comments, vec!["first".to_owned(), String::new()]);
 }
+
+#[test]
+fn cluster_create_table_resolves_a_placement_policy_by_id() {
+    // Go `CreateTableWithInfo` resolves a table's `PLACEMENT POLICY = name`
+    // against the infoschema and records a reference carrying the policy's
+    // ID as well as its name. The id is the load-bearing half: placement
+    // bundles resolve by id, so a name-only reference would describe
+    // placement that never reaches the scheduler.
+    //
+    // The resolution happens at PLANNING time, not lowering, because the
+    // lookup needs the same snapshot the rest of the statement plans
+    // against.
+    let DdlStatement::CreateTable { build, .. } = statement(
+        "CREATE TABLE u6.t (a INT) PLACEMENT POLICY = pol",
+    ) else {
+        panic!("the fixture is CREATE TABLE");
+    };
+    // Lowering must NOT refuse it -- the option reaches the planner intact.
+    assert!(
+        build
+            .template()
+            .placement_policy_ref
+            .is_none(),
+        "the reference is stamped by the planner, not the lowering step"
+    );
+}

@@ -359,6 +359,12 @@ pub fn build_table_info_with_context(
             // storage engine is always InnoDB in name only, and the statistics
             // options are MySQL compatibility no-ops.
             TableOption::Engine(_) | TableOption::StatsPersistent | TableOption::PackKeys => {}
+            // The policy REFERENCE is stamped by the planner, which holds the
+            // snapshot the name resolves against (`plan_ddl`'s CreateTable
+            // arm). This builder only has the statement, so it records
+            // nothing here rather than refusing an option the statement can
+            // in fact honour.
+            TableOption::PlacementPolicy(_) => {}
             other => {
                 return Err(DdlAdmissionError::new(format!(
                     "CREATE TABLE option {other:?} is not supported by this node"

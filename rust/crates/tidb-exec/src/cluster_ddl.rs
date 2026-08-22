@@ -1765,29 +1765,6 @@ fn lower_create_table(
     context: &tidb_executor::StmtContext,
 ) -> Result<DdlStatement, DdlAdmissionError> {
     let (schema, table) = split_name(&create.name, default_schema, "table")?;
-    // A table-level `PLACEMENT POLICY = name` has to resolve against the
-    // cluster's policies to record the reference BY ID, and lowering runs
-    // before the snapshot is taken -- `find_policy` needs one. The policies
-    // themselves now live on the cluster, so this is a wiring step (carry the
-    // name through lowering and resolve it in `plan_ddl`), not a missing
-    // feature.
-    //
-    // Accepting the option and dropping it -- which is what the catch-all arm
-    // of `validate_table_options` did -- creates a table that reports no
-    // policy while the statement asked for one, and places its data
-    // somewhere the user did not choose. The refusal names the option so it
-    // cannot be mistaken for an unrelated failure.
-    if create
-        .table_options
-        .iter()
-        .any(|option| matches!(option, tidb_ast::TableOption::PlacementPolicy(_)))
-    {
-        return Err(DdlAdmissionError::unsupported(
-            "CREATE TABLE ... PLACEMENT POLICY is not supported against a cluster by this \
-             node yet: the policy name is resolved against a snapshot, which this lowering \
-             step does not hold",
-        ));
-    }
     // Go `BuildTableInfoWithLike` copies a table that already exists, so the
     // statement carries no column list to build from and the source has to be
     // resolved against the catalog at apply time.
@@ -2662,6 +2639,40 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         .definitions
                         .update(ordinal, |definition| definition.id = *id);
                 }
+            }
+            // Go `CreateTableWithInfo` resolves a table's
+            // `PLACEMENT POLICY = name` against the policies in the
+            // infoschema and refuses an unknown one with
+            // `ErrPlacementPolicyNotExists` (8239). The reference records the
+            // policy's ID as well as its name, because placement bundles
+            // resolve by id -- a name-only reference would describe placement
+            // that never reaches the scheduler.
+            //
+            // This runs HERE rather than in the lowering step because the
+            // lookup needs the same snapshot the rest of the statement plans
+            // against; `CreateTableBuild` keeps the original statement, so
+            // the written name is still in reach.
+            if let Some(policy_name) = build
+                .create
+                .table_options
+                .iter()
+                .find_map(|option| match option {
+                    tidb_ast::TableOption::PlacementPolicy(name) => Some(name.clone()),
+                    _ => None,
+                })
+            {
+                let Some(policy) = find_policy(snapshot, &policy_name)? else {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        8239,
+                        format!("Unknown placement policy '{policy_name}'"),
+                    )));
+                };
+                info.placement_policy_ref = Some(tidb_model::GoShared::new(
+                    tidb_model::PolicyRefInfo {
+                        id: policy.id,
+                        name: CiString::new(policy_name),
+                    },
+                ));
             }
             // Go `createTable` stamps the job transaction's own start timestamp.
             info.update_ts = start_ts;
