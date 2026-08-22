@@ -667,6 +667,27 @@ impl IndexRangeSourceExec {
     /// Builds an index source carrying the statement context required by a
     /// real TiKV partial-aggregation request.
     #[must_use]
+    /// Names the TABLE columns this source's schema stands for.
+    ///
+    /// Go's `DataSource` carries `Columns []*model.ColumnInfo` beside its
+    /// schema, so a reader built after `rule_column_pruning` narrowed that
+    /// DataSource still knows which STORED column each output slot is --
+    /// `PhysicalIndexLookUpReader`'s table side reads exactly those. This
+    /// tier hands the reader the narrowed schema ALONE, and the `keep` it
+    /// decodes with defaults to `0..schema.len()`: the first n table columns,
+    /// which is the right answer only when nothing was pruned.
+    ///
+    /// Without this, `select b from t partition(p0) use index(idx1) where
+    /// b <= 2` answered with `a`'s value -- one output slot, decoded from
+    /// table column 0. The partition clause is what made it visible: it is
+    /// the shape whose leaf demand prunes the scope BEFORE the access path
+    /// replaces the source, so the replacement was the first reader ever
+    /// built over a narrowed schema.
+    pub(crate) fn read_table_columns(&mut self, offsets: Vec<usize>) {
+        debug_assert_eq!(offsets.len(), self.meta.schema().columns.len());
+        self.keep = offsets;
+    }
+
     pub fn new_with_statement(
         meta: ExecutorMeta,
         table: KvTable,
@@ -675,6 +696,9 @@ impl IndexRangeSourceExec {
         decode_context: crate::kv_table::RowDecodeContext,
         statement: PushdownStatementContext,
     ) -> Self {
+        // The IDENTITY default is only right when the schema is the table's
+        // leading columns; a caller whose schema was narrowed by column
+        // pruning must say so with [`Self::read_table_columns`].
         let keep = (0..meta.schema().columns.len()).collect();
         IndexRangeSourceExec {
             meta,
@@ -1699,6 +1723,29 @@ pub(crate) enum IndexMergeKind {
 
 /// A non-MV IndexMerge reader: each partial index produces row handles, then
 /// the root reader unions or intersects those handles before fetching rows.
+/// The TABLE column offset each of `columns` stands for, by name.
+///
+/// `None` when any of them is not a stored column of `table`, which leaves
+/// the caller to keep whatever default its source already has rather than
+/// decode the wrong slot. Hidden expression-index columns are appended after
+/// the visible ones, so a visible column's position here is the offset the
+/// row decoder wants.
+#[must_use]
+pub(crate) fn stored_column_offsets(
+    table: &crate::KvTable,
+    columns: &[(String, tidb_datatype::FieldType)],
+) -> Option<Vec<usize>> {
+    columns
+        .iter()
+        .map(|(name, _)| {
+            table
+                .columns
+                .iter()
+                .position(|column| column.name.eq_ignore_ascii_case(name))
+        })
+        .collect()
+}
+
 pub(crate) struct IndexMergeSourceExec {
     meta: ExecutorMeta,
     table: KvTable,

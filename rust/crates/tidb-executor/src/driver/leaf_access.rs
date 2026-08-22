@@ -486,6 +486,13 @@ pub(crate) fn leaf_index_source(
         ranges,
         crate::kv_table::RowDecodeContext::for_query(ctx),
     );
+    // The schema above may already be NARROWER than the table (the leaf
+    // demand prunes before the access path replaces the source), so the
+    // reader is told which stored column each slot is rather than assuming
+    // the first n.
+    if let Some(offsets) = crate::access_path::stored_column_offsets(table, columns) {
+        exec.read_table_columns(offsets);
+    }
     crate::table_access::TableAccess::accept_scan_estimate(&mut exec, estimate.rows);
     if keep_order {
         // Go's `keep order:true` index read: `canReorderHandles` is false, so

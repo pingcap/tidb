@@ -1395,6 +1395,8 @@ mod tests_outer_join_elimination;
 #[cfg(test)]
 mod tests_partition;
 #[cfg(test)]
+mod tests_partition_projection;
+#[cfg(test)]
 mod tests_planner_core_rewriter;
 #[cfg(test)]
 mod tests_prepared_statements;
