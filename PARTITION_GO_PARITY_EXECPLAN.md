@@ -62,10 +62,21 @@ Therefore: **do not verify by inspecting the Rust code.** For each rule, open th
 - [ ] M4 — Verify expression restore text and INTERVAL partitioning against Go.
 - [ ] M5 — Re-verify the twenty-six landed fixes against Go.
 - [ ] M6 — Partition `PLACEMENT POLICY` end to end (model layer already complete; remaining: policy objects, metadata reference, bundle construction wiring, PD delivery).
-- [ ] M7 — Keep-order and unsigned-handle range split (gated on M8).
+- [~] M7 — Keep-order and unsigned-handle range split. The UNSIGNED-HANDLE half is DONE (`6e5b949cb1`, `6505831751`); the keep-order half — Go's `matchProperty` Case 3, grouped ranges plus a merge sort — is NOT started.
 - [x] (2026-08-21) M8 — The upstream constant-overflow regression no longer reproduces and is pinned by a differential test instead of reported.
 
 ## Surprises & Discoveries
+
+- Observation (M7, FIXED): the table path refused an UNSIGNED clustered handle entirely, and the two Go steps that make one work had BOTH been ported and BOTH were unreachable. The obstacle sat between them, in the OPEN bounds.
+  Evidence: Go `convertPointsInPlace` (`pkg/util/ranger/ranger.go:71-78`) materialises an open endpoint in the COLUMN's domain -- `0` and `MaxUint64` for an unsigned column, `MinInt64`/`MaxInt64` otherwise. `to_table_range` knew only the signed extremes, so `id >= 2^63` became the key interval `[negative, i64::MAX]`, which spans the whole table; `split_ranges_across_int64_boundary` then saw no INTEGER bound past the boundary -- a sentinel is not one -- and returned the ranges untouched. That is why the first wiring attempt answered 5 where the answer is 2, and why the fix is a change to range CONSTRUCTION rather than to the split.
+  Resolution (2026-08-21): `to_table_range_in_domain` takes the handle's own signedness; `record_key_ranges` materialises, splits, and concatenates the halves in value order; a scan with NO `WHERE` builds Go's `ranger.FullIntRange(true)` and goes through the same encoder, which is what lets `full_table_handle_order` promise the order Go's `matchProperty` promises without consulting signedness (`find_best_task.go:1084`).
+
+- Observation (M7): enabling that path exposed three further divergences, none of them in the split.
+  Evidence and resolution: (1) the partition MERGE ordered by raw record key, and key order is SIGNED order -- `ORDER BY id` over `PARTITION BY HASH (id) PARTITIONS 4` answered `2^63, u64::MAX, 1, i64::MAX`. Go compares the `byItems`' decoded VALUES (`NewSortedSelectResults`); `record_merge_key` flips the codec's sign bit back, which is the same order without decoding a row. (2) `EXPLAIN` printed a point access's handle as its signed reading, `-1` for `18446744073709551615`; Go's plan carries `UnsignedHandle` and formats the identical bits with `strconv.FormatUint` (`physical_batch_point_get.go:206`). (3) the open LOW bound printed `-inf` where Go prints `0`, because Go materialises before the plan prints and `formatDatum` (`ranger/types.go:371`) spells a `KindUint64` low bound as the number.
+
+- Observation: the differential that should have existed from the start finds nothing now, which is the point of writing it down. 383 predicates -- every comparison and interval over nine values chosen around `i64::MAX`, `i64::MAX + 1` and `u64::MAX` -- asked of the same rows stored three ways (clustered handle, the same partitioned four ways, and a plain column with a `_tidb_rowid` handle so nothing is ranged), compared unordered, ascending and descending. The same corpus run against the SIGNED handle, a common handle, and index-versus-scan also reports zero.
+  Evidence: `every_unsigned_handle_predicate_reads_the_same_rows_ranged_as_filtered` in `rust/crates/tidb-session/src/tests_partition.rs`.
+
 
 - Observation: Every one of the twenty-six divergences passed the existing test suite. Tests written from the same misunderstanding as the code cannot detect that misunderstanding.
   Evidence: partition suites reported 90/91 passing both before and after fixes that changed eight distinct user-visible behaviors.
@@ -119,8 +130,8 @@ Therefore: **do not verify by inspecting the Rust code.** For each rule, open th
   Evidence: measured directly, then pinned as `a_constant_above_i64_max_filters_the_same_on_both_paths`. Not fixed by the `compare_int` work in this plan: that lives in partition pruning and the fixture table is not partitioned, so it must have arrived with an upstream merge. Recorded rather than reported, since there is nothing left to report.
   Note on why it is pinned as a DIFFERENTIAL rather than a value assertion: each path alone looked plausible when this regressed, and only running one question down two paths that must agree showed that one of them was not filtering at all.
 
-- Observation (M7): an UNSIGNED row handle answers CORRECTLY today, including ordering; what differs from Go is the PLAN, not the rows. `handle_column` (`rust/crates/tidb-executor/src/handle_range.rs:179`) returns `None` for an unsigned handle, so no range is built and the scan is a full one with the predicate applied afterwards. Go instead ranges over it and splits the ranges at the signed boundary.
-  Evidence: measured across the boundary -- total, both sides of `i64::MAX + 1`, a straddling `BETWEEN`, equality at `i64::MAX` and at `i64::MAX + 1`, and `ORDER BY`, which returns unsigned order rather than the key order that would put the two large values first. Pinned as `an_unsigned_row_handle_answers_correctly_across_the_int64_boundary`.
+- Observation (M7, since FIXED -- see the entry at the top of this section): an UNSIGNED row handle answered CORRECTLY before the split was ported, including ordering; what differed from Go was the PLAN, not the rows. `handle_column` returned `None` for an unsigned handle, so no range was built and the scan was a full one with the predicate applied afterwards.
+  Evidence: measured across the boundary -- total, both sides of `i64::MAX + 1`, a straddling `BETWEEN`, equality at `i64::MAX` and at `i64::MAX + 1`, and `ORDER BY`, which returns unsigned order rather than the key order that would put the two large values first. Pinned as `an_unsigned_row_handle_answers_correctly_across_the_int64_boundary`, which is unchanged by the port: what changed is the plan underneath it.
 
 - Decision: the correct answers are pinned BEFORE `SplitRangesAcrossInt64Boundary` is ported, and the port is treated as an optimisation rather than a fix.
   Rationale: the trade is a correct slow plan for a fast one whose failure mode is silently missing or duplicated rows -- an unsigned handle above `i64::MAX` encodes NEGATIVE, so it sorts before every ordinary handle in key order, and a split that is wrong at either edge loses rows with no error. Go's algorithm (`distsql/request_builder.go:575`) has four edges to get right: the clean split when no range straddles, the straddling range itself, the two exclusive-bound special cases at `MaxInt64` and `MaxInt64 + 1`, and the keepOrder/desc orderings that decide which half is read first. Porting it against a pinned answer set is safe; porting it against nothing is not.
@@ -265,11 +276,39 @@ Implement in that order — policy objects, then metadata reference, then bundle
 
 ### M7 — Keep-order and the unsigned-handle range split
 
-Port Go's `matchProperty` three-valued result (`PropNotMatched`, `PropMatched`, `PropMatchedNeedMergeSort`), the prefix walk with constant-column skipping, and grouped-range merge sort. Then port the unsigned-handle range split, whose Go entry point is `SplitRangesAcrossInt64Boundary` at `pkg/distsql/request_builder.go` line 575, and whose Rust counterpart `handle_column` in `rust/crates/tidb-executor/src/handle_range.rs` currently returns `None` for unsigned handles. This milestone is gated on M8, because it touches the path carrying the upstream regression.
+DONE: the unsigned-handle range split. `handle_column` no longer refuses an
+unsigned handle; `to_table_range_in_domain` materialises an open endpoint in
+the handle's own domain, `record_key_ranges` cuts the ranges at the sign flip
+and reads the halves in value order, and a scan with no `WHERE` goes through
+the same encoder as Go's `ranger.FullIntRange(true)`. Three further
+divergences surfaced with it and were fixed: the cross-partition merge order,
+the `handle:` text of a point access, and the printed open low bound. See the
+first two entries of `Surprises & Discoveries`.
+
+NOT STARTED: the keep-order half. Go's `matchProperty`
+(`pkg/planner/core/find_best_task.go:1061`) has a THREE-valued result, and
+this tier implements two of the three. `IndexAccessOrder::from_ranges`
+(`rust/crates/tidb-executor/src/driver/access.rs`) covers Case 1 (a sort item
+matched by an index column) and Case 2 (a column the range pins to ONE value,
+skipped), and deliberately excludes Case 3: a column that is a point WITHIN
+EACH of several ranges. Go groups the ranges by those columns
+(`GroupRangesByCols`, capped at 2048 groups) and returns
+`PropMatchedNeedMergeSort`, so `WHERE a IN (1,2,3) ORDER BY b, c` over
+`INDEX (a,b,c)` reads three ranges and merge-sorts them instead of sorting
+above the reader. The answers agree either way; the plan does not.
+
+The obstacle is that the merge cannot be done on raw key bytes. Go's grouped
+columns need not be a contiguous prefix -- with sort items `(b, d)` over
+`INDEX (a,b,c,d)` the skipped positions are 0 and 2 -- so the comparison has
+to be on the DECODED sort items, as Go's `byItems` comparator is, rather than
+on the index-key suffix this tier's `IndexMergeHeap` compares.
 
 ### M8 — Report the upstream regression
 
-Since commit `72600aadd8` ("rust: align covering aggregate pushdown with Go"), `SELECT count(*) FROM ix WHERE u >= 9223372036854775808` returns 5 rows on the scan path and 2 on the index path, and `e = 18446744073709551615` returns 2 instead of 1. Only constants greater than the maximum signed 64-bit integer are affected, and the predicate is lost rather than mis-evaluated. Report this to the owning author with the reproducing statements and the differing answers.
+CLOSED, nothing to report: the regression no longer reproduces. See the M8
+entry in `Surprises & Discoveries`. It is pinned as a differential --
+`a_constant_above_i64_max_filters_the_same_on_both_paths` -- rather than as a
+value assertion, because each path alone looked plausible while it was broken.
 
 ## Validation and Acceptance
 
@@ -303,4 +342,25 @@ Round one is complete. Twenty-six divergences between the Rust and Go partition 
 
 The lesson worth carrying forward is about evidence. Every one of those twenty-six was in code that cited Go line numbers, carried comments asserting parity, and passed its tests. The comments were written by the same author as the code, from the same misunderstanding, and the tests were written to match. Only re-derivation from the Go source, by a reader who had not written the Rust, surfaced them — and the adversarial second pass is what kept the finding list honest.
 
-Remaining gaps at this checkpoint: roughly half the partition surface, listed in M1 through M4, has never been compared against Go; the twenty-six fixes themselves have not been independently re-verified; partition `PLACEMENT POLICY` is unimplemented; the keep-order and unsigned-handle work is unstarted; and one upstream regression is unreported. Each is tracked as a milestone above.
+Remaining gaps at this checkpoint: roughly half the partition surface, listed
+in M1 through M4, has never been compared against Go, and the twenty-six fixes
+themselves have not been independently re-verified.
+
+Since that checkpoint, M8 closed (the regression is gone and is pinned as a
+differential), M6 landed end to end, and M7's unsigned-handle half landed with
+three further divergences it exposed. What is left of M7 is the keep-order
+half, whose shape and obstacle are written down in its section rather than
+left as a title.
+
+Two gaps outside this plan's partition scope are recorded in
+`Surprises & Discoveries` rather than started, so they are not mistaken for
+done: the executor ignores a partition's mid-DDL state, and the cluster path
+writes nothing to `mysql.gc_delete_range`.
+
+Method note carried forward: three of the four bugs found while landing M7
+were found by DIFFERENTIAL probing -- one question sent down two code paths
+that must agree -- and none of them by reading the code. The corpus that now
+guards it (`every_unsigned_handle_predicate_reads_the_same_rows_ranged_as_
+filtered`) is cheap enough to keep in the ordinary suite, and the same corpus
+run against the signed handle, a common handle, and index-versus-scan reports
+zero, which is what makes a report of zero meaningful.
