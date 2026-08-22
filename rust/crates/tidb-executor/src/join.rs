@@ -485,6 +485,27 @@ pub(crate) struct IndexLookupAggregation {
 }
 
 impl IndexLookupAggregation {
+    /// The field types of one aggregated output row, in output order: every
+    /// FIRST_ROW/MAX/SUM carrier keeps its source column's type and COUNT is
+    /// Go's `count(1)` INT64. These are the types of the rows [`Self::apply`]
+    /// returns -- the physical lookup layout only describes its INPUTS.
+    fn output_types(&self, source_types: &[FieldType]) -> Vec<FieldType> {
+        self.outputs
+            .iter()
+            .map(|output| match output {
+                IndexLookupAggregateOutput::Column(offset)
+                | IndexLookupAggregateOutput::Max { offset, .. }
+                | IndexLookupAggregateOutput::DecimalSum(offset) => source_types
+                    .get(*offset)
+                    .cloned()
+                    .expect("an aggregate output names one of the lookup's own columns"),
+                IndexLookupAggregateOutput::Count(_) => {
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+                }
+            })
+            .collect()
+    }
+
     fn apply(
         &self,
         rows: Vec<Vec<Datum>>,
@@ -1903,12 +1924,19 @@ impl<C: Columns> JoinExec<C> {
             tracker.consume(bytes);
             memory.check()?;
         }
+        // Once the retained aggregation has run, the inner rows are its own
+        // OUTPUT layout -- one column per aggregate carrier -- and no longer
+        // the physical lookup width. Everything after this point (the
+        // non-NULL filter, the join-key extraction, and the emit path in
+        // `drain_index_batch`) must read them with those types.
+        let mut materialized_types = inner_types.clone();
         if let Some(aggregation) = aggregation {
             let rows = list_datum_rows(&state.inner, &inner_types);
             let raw_bytes = state.inner_bytes;
             let aggregated = aggregation.apply(rows, aggregation_stream_ordered)?;
+            materialized_types = aggregation.output_types(&inner_types);
             let aggregated_bytes = aggregated.iter().map(|row| row_bytes(row)).sum::<i64>();
-            replace_list_with_rows(&mut state.inner, &inner_types, aggregated);
+            replace_list_with_rows(&mut state.inner, &materialized_types, aggregated);
             state.inner_bytes = aggregated_bytes;
             tracker.consume(aggregated_bytes - raw_bytes);
             memory.check()?;
@@ -1916,14 +1944,14 @@ impl<C: Columns> JoinExec<C> {
         if !inner_not_null.is_empty() {
             let before = state.inner_bytes;
             let mut retained = Vec::with_capacity(state.inner.len());
-            for row in list_datum_rows(&state.inner, &inner_types) {
+            for row in list_datum_rows(&state.inner, &materialized_types) {
                 if row_non_null_at(&row, inner_not_null)? {
                     retained.push(row);
                 }
             }
             let after = retained.iter().map(|row| row_bytes(row)).sum::<i64>();
             tracker.consume(after - before);
-            replace_list_with_rows(&mut state.inner, &inner_types, retained);
+            replace_list_with_rows(&mut state.inner, &materialized_types, retained);
             state.inner_bytes = after;
             memory.check()?;
         }
@@ -1935,7 +1963,7 @@ impl<C: Columns> JoinExec<C> {
                 let row = state.inner.get_row(ptr);
                 let key = row_key_by(keys, |key| {
                     let offset = inner_offset(key);
-                    row.get_datum(offset, &inner_types[offset])
+                    row.get_datum(offset, &materialized_types[offset])
                 })
                 .map_err(|_: KeyError| {
                     ExecError::unsupported("a join key column has no comparable encoding")
@@ -1968,13 +1996,18 @@ impl<C: Columns> JoinExec<C> {
                 ExecError::unsupported("a join key column has no comparable encoding")
             })?;
             if let Some(positions) = key.and_then(|key| state.matched.get(&key)) {
-                let inner_types = self
+                // The stored rows are the retained aggregation's OUTPUT layout
+                // when one ran (see `materialize_index_inner`), so the emit
+                // path must convert them with those types, not the physical
+                // lookup width.
+                let plan = self
                     .index_lookup
                     .as_ref()
-                    .expect("this path runs only with a plan")
-                    .source
-                    .ret_field_types()
-                    .to_vec();
+                    .expect("this path runs only with a plan");
+                let mut inner_types = plan.source.ret_field_types().to_vec();
+                if let Some(aggregation) = &plan.aggregation {
+                    inner_types = aggregation.output_types(&inner_types);
+                }
                 self.emit_outer_chunk_rows(
                     req,
                     outer_row,
