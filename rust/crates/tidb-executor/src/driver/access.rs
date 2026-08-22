@@ -2392,7 +2392,11 @@ fn pruned_partition_ids(
     if range_columns.is_empty() {
         return None;
     }
-    let built = crate::index_range::detach_cond_and_build_range_for_index(
+    // Go `DetachCondAndBuildRangeForPartition`, which is the one ranger entry
+    // that does NOT convert its points to sort keys: a partition bound is a
+    // written value compared under the partition column's own collation, not
+    // an index's stored form.
+    let built = crate::index_range::detach_cond_and_build_range_for_partition(
         &range_columns,
         where_clause,
         zone,

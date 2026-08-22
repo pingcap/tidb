@@ -1243,6 +1243,7 @@ pub(crate) fn enumerate_paths(
                 range_clause,
                 &resolver.time_zone(),
                 resolver.like_default_escape(),
+                true,
             )
         });
         let Some(built) = built else {
@@ -1511,6 +1512,7 @@ pub(crate) fn index_residual_filters_for_path(
             where_clause,
             &resolver.time_zone(),
             resolver.like_default_escape(),
+            true,
         ) {
             Some(built) => built.residual,
             None => {

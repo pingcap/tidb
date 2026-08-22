@@ -1741,7 +1741,33 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //
     // One topic LEFT the list in the same window: `ddl/db_change`, from the
     // `TIMESTAMP NOT NULL` substitution.
-    const KNOWN_DIVERGENCES: usize = 108;
+    //
+    // 108 -> 87, `compared` FLAT at 9477. An index stores a string column's
+    // COLLATION KEY, and Go's ranger converts its points to that key once, at
+    // build time (`convertPointsToSortKeyInPlace`), so the range carries the
+    // key from then on and `EXPLAIN` prints it: `["\x00A\x00A",
+    // "\x00A\x00A"]` for `a = 'aa'` under `utf8mb4_general_ci`, not `"aa"`.
+    // This tier kept the written value in the range and collated at ENCODE
+    // time instead -- the same stored key, a different range, and 21
+    // statements printing a range TiDB does not.
+    //
+    // The conversion has exactly one entry that opts out, and Go names it:
+    // `DetachCondAndBuildRangeForPartition` passes `convertToSortKey =
+    // false`, because a partition bound is a written VALUE compared under the
+    // partition column's own collation, not an index's stored form. That
+    // entry now exists here too.
+    //
+    // One of the 21 was a WRONG ANSWER, not a printed range:
+    // `a like '测试%'` on `KEY (a(3))` returned nothing. The `LIKE` arm cuts
+    // its prefix and converts its two bounds itself -- it has to, because the
+    // upper bound is derived FROM the cut value and the two bounds need
+    // different trimming -- so the shared tail was cutting an already
+    // converted point a second time, reading a SORT KEY as text. It
+    // truncated `6D4B8BD5` at a character boundary the key does not have,
+    // and converting the remains again gave the weights of `'m'`, `'K'` and
+    // one replacement character. `ColumnPoints::finished` is that arm saying
+    // it is done, which is what Go's per-arm structure says by construction.
+    const KNOWN_DIVERGENCES: usize = 87;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

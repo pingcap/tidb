@@ -557,6 +557,16 @@ struct ColumnPoints {
     /// Whether the condition is an `=`/`IN`, which is what lets the range
     /// builder move on to the next index column (Go's `eqOrInCount`).
     eq_or_in: bool,
+    /// Whether the arm that built these points already cut the prefix and
+    /// converted to the sort key, so the shared tail must leave them alone.
+    ///
+    /// Only `LIKE` does: Go's `newBuildFromPatternLike` cuts its START point
+    /// itself, because the upper bound is derived FROM the cut value, and
+    /// converts both bounds itself, because the two need different trimming
+    /// (`shouldTrimTrailingSpace` for the start, never for the end). It then
+    /// returns without a further `cutPrefixForPoints`, which is what this
+    /// records.
+    finished: bool,
 }
 
 /// Whether an expression names this column, ignoring any qualifier.
@@ -980,20 +990,81 @@ fn cut_prefix_for_points(points: &mut [Point], column: &RangeColumn) {
     }
 }
 
+/// Go `convertPointsToSortKeyInPlace` / `convertPointToSortKeyInPlace`
+/// (`ranger/points.go`).
+///
+/// An index stores a string column's COLLATION KEY, so the ranger converts
+/// its points to that key once, at build time, and the range carries the key
+/// from then on. That is why `EXPLAIN` prints
+/// `range:["\x00A\x00A","\x00A\x00A"]` for `a like 'aa'` on a
+/// `utf8mb4_general_ci` column rather than the written `"aa"`, and it is also
+/// what makes the encoded key right without a second conversion: the point is
+/// already bytes, and the key encoder writes bytes through.
+///
+/// Go's guards, all three:
+///
+///  * only the STRING eval type, so an integer or temporal point is
+///    untouched;
+///  * never `ENUM` or `SET` -- Go handles those through
+///    `handleEnumFromBinOp`, which only builds point ranges;
+///  * never the `binary` collation, and not at all while new collations are
+///    disabled, where the key IS the bytes.
+///
+/// `MinNotNull`, `MaxValue` and `NULL` are not string values and pass
+/// through, which is Go's `p.value.Kind() != types.KindString` check.
+fn convert_points_to_sort_key(points: &mut [Point], field_type: &FieldType) {
+    if field_type.eval_type() != tidb_datatype::EvalType::String
+        || matches!(
+            field_type.code(),
+            tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
+        )
+    {
+        return;
+    }
+    let collation = field_type.collation();
+    if collation == Collation::Binary || !tidb_datatype::new_collation_enabled() {
+        return;
+    }
+    for point in points {
+        if let Datum::String(value) = &point.value {
+            // Go `convertPointsToSortKeyInPlace` always trims: it passes
+            // `trimTrailingSpace = true`. Only the LIKE builder needs the
+            // untrimmed key, and it asks for it directly.
+            point.value = Datum::Bytes(collation.key(value.bytes()));
+        }
+    }
+}
+
 /// Go `builder.build` for one condition against one index column: the
 /// condition's endpoints on that column, or `None` when the condition is not
 /// an access condition for it.
 ///
-/// Go cuts a prefix key part at the tail of every `build` arm; doing it once
-/// here, on the way out, is the same cut with one place to get it right.
+/// Go cuts a prefix key part and converts to the sort key at the tail of
+/// every `build` arm; doing both once here, on the way out, is the same pair
+/// with one place to get it right -- except for the one arm that has to do
+/// them itself, which says so with `ColumnPoints::finished`.
 fn points_for_condition(
     condition: &Expr,
     column: &RangeColumn,
     zone: &tidb_datatype::SessionTimeZone,
     like_default_escape: u8,
+    convert_to_sort_key: bool,
 ) -> Option<ColumnPoints> {
     let mut column_points = points_on_column(condition, column, zone, like_default_escape)?;
-    cut_prefix_for_points(&mut column_points.points, column);
+    // Go cuts and converts at the tail of each `build` arm; the one arm that
+    // does both itself says so, and is left alone here. Cutting an already
+    // converted point a second time reads a SORT KEY as text -- for
+    // `a like '测试%'` on `KEY (a(3))` that truncated the key `6D4B8BD5` at a
+    // character boundary it does not have, and converting the remains again
+    // gave `\x00M\x00K\xff\xfd`: the weights of `'m'`, `'K'` and one
+    // replacement character. The range collapsed to a point and the matching
+    // rows went missing.
+    if !column_points.finished {
+        cut_prefix_for_points(&mut column_points.points, column);
+        if convert_to_sort_key {
+            convert_points_to_sort_key(&mut column_points.points, &column.field_type);
+        }
+    }
     // Go's `conditionChecker` rejects a condition that bounds nothing --- a
     // LIKE with no literal prefix, an IS NOT NULL --- and `points.go` signals
     // the same by returning the full range. A range spanning the whole index
@@ -1053,7 +1124,11 @@ fn points_on_column(
             // here), and Go's `getPotentialEqOrInColOffset` gives up on the
             // whole disjunction the moment one branch is a conjunction.
             let eq_or_in = matches!(op, BinaryOp::LogicOr) && lhs.eq_or_in && rhs.eq_or_in;
-            Some(ColumnPoints { points, eq_or_in })
+            Some(ColumnPoints {
+                points,
+                eq_or_in,
+                finished: false,
+            })
         }
         Expr::Binary(op, lhs, rhs) => {
             if !comparison_collation_allows_range(
@@ -1081,17 +1156,20 @@ fn points_on_column(
                 return Some(ColumnPoints {
                     points: Vec::new(),
                     eq_or_in,
+                    finished: false,
                 });
             };
             let Some((value, op)) = handle_bound_col(&column.field_type, value, op) else {
                 return Some(ColumnPoints {
                     points: Vec::new(),
                     eq_or_in,
+                    finished: false,
                 });
             };
             Some(ColumnPoints {
                 points: points_from_bin_op(op, value)?,
                 eq_or_in,
+                finished: false,
             })
         }
         Expr::In { expr, list, not } => {
@@ -1109,6 +1187,7 @@ fn points_on_column(
             Some(ColumnPoints {
                 points,
                 eq_or_in: !*not,
+                finished: false,
             })
         }
         // Go rewrites BETWEEN into `>= AND <=` before the ranger sees it, and
@@ -1141,6 +1220,7 @@ fn points_on_column(
             Some(ColumnPoints {
                 points,
                 eq_or_in: false,
+                finished: false,
             })
         }
         Expr::Like {
@@ -1211,6 +1291,7 @@ fn points_on_column(
                     column,
                 ),
                 eq_or_in: false,
+                finished: true,
             })
         }
         Expr::Is {
@@ -1236,6 +1317,7 @@ fn points_on_column(
             Some(ColumnPoints {
                 points,
                 eq_or_in: !*not,
+                finished: false,
             })
         }
         _ => None,
@@ -1281,6 +1363,7 @@ fn build_cnf_ranges<'a>(
     conditions: &[&'a Expr],
     zone: &tidb_datatype::SessionTimeZone,
     like_default_escape: u8,
+    convert_to_sort_key: bool,
 ) -> IndexRanges<'a> {
     let mut consumed = vec![false; conditions.len()];
     let mut eq_in_points: Vec<Vec<Point>> = Vec::new();
@@ -1294,7 +1377,13 @@ fn build_cnf_ranges<'a>(
             if consumed[i] {
                 continue;
             }
-            let Some(column) = points_for_condition(condition, key_part, zone, like_default_escape)
+            let Some(column) = points_for_condition(
+                condition,
+                key_part,
+                zone,
+                like_default_escape,
+                convert_to_sort_key,
+            )
             else {
                 continue;
             };
@@ -1326,7 +1415,13 @@ fn build_cnf_ranges<'a>(
             if consumed[i] {
                 continue;
             }
-            let Some(column) = points_for_condition(condition, key_part, zone, like_default_escape)
+            let Some(column) = points_for_condition(
+                condition,
+                key_part,
+                zone,
+                like_default_escape,
+                convert_to_sort_key,
+            )
             else {
                 continue;
             };
@@ -1440,6 +1535,7 @@ fn build_dnf_ranges<'a>(
     disjunct: &'a Expr,
     zone: &tidb_datatype::SessionTimeZone,
     like_default_escape: u8,
+    convert_to_sort_key: bool,
 ) -> Option<IndexRanges<'a>> {
     let mut branches = Vec::new();
     collect_disjuncts(disjunct, &mut branches);
@@ -1454,7 +1550,13 @@ fn build_dnf_ranges<'a>(
     for branch in branches {
         let mut conjuncts = Vec::new();
         collect_conjuncts(branch, &mut conjuncts);
-        let built = build_cnf_ranges(index_columns, &conjuncts, zone, like_default_escape);
+        let built = build_cnf_ranges(
+            index_columns,
+            &conjuncts,
+            zone,
+            like_default_escape,
+            convert_to_sort_key,
+        );
         // A branch that constrains nothing, or that keeps a residual of its
         // own, makes the disjunction unusable for access.
         if built.access_count == 0 || built.access_count != conjuncts.len() {
@@ -1523,7 +1625,9 @@ pub(crate) fn detach_conds_for_column<'a>(
     for condition in conditions {
         // Go `ExtractAccessConditionsForColumn`: a condition belongs to the
         // column exactly when the point builder can turn it into points.
-        match points_for_condition(condition, column, zone, b'\\') {
+        // Go `BuildColumnRange` builds through `buildColumnRange`, which
+        // passes `convertToSortKey = true` for every column it ranges.
+        match points_for_condition(condition, column, zone, b'\\', true) {
             Some(column_points) => {
                 points = intersection(
                     &points,
@@ -1575,6 +1679,7 @@ fn build_row_in_ranges<'a>(
     index_columns: &[RangeColumn],
     condition: &Expr,
     zone: &tidb_datatype::SessionTimeZone,
+    convert_to_sort_key: bool,
 ) -> Option<IndexRanges<'a>> {
     let Expr::In {
         expr,
@@ -1645,7 +1750,7 @@ fn build_row_in_ranges<'a>(
         .into_iter()
         .reduce(|left, right| Expr::Binary(BinaryOp::LogicOr, Box::new(left), Box::new(right)))
         .expect("the empty branch set returned above");
-    let built = build_dnf_ranges(index_columns, &dnf, zone, b'\\')?;
+    let built = build_dnf_ranges(index_columns, &dnf, zone, b'\\', convert_to_sort_key)?;
     Some(IndexRanges {
         ranges: built.ranges,
         access_count: 1,
@@ -1672,6 +1777,30 @@ pub(crate) fn detach_cond_and_build_range_for_index<'a>(
         where_clause,
         zone,
         b'\\',
+        true,
+    )
+}
+
+/// Go `DetachCondAndBuildRangeForPartition`, the one entry that does NOT
+/// convert its points to sort keys (`detachCondAndBuildRange(..., false,
+/// false)`).
+///
+/// A partition bound is a written VALUE, compared under the partition
+/// column's collation by `ForRangeColumnsPruning`/`ForListColumnPruning`. An
+/// index range is the index's stored form, which for a non-binary collation
+/// is the sort key -- so the two cannot share one representation, and Go
+/// keeps them apart with this flag rather than converting twice.
+pub(crate) fn detach_cond_and_build_range_for_partition<'a>(
+    columns: &[RangeColumn],
+    where_clause: &'a Expr,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<IndexRanges<'a>> {
+    detach_cond_and_build_range_for_index_with_like_default_escape(
+        columns,
+        where_clause,
+        zone,
+        b'\\',
+        false,
     )
 }
 
@@ -1683,6 +1812,7 @@ pub(crate) fn detach_cond_and_build_range_for_index_with_like_default_escape<'a>
     where_clause: &'a Expr,
     zone: &tidb_datatype::SessionTimeZone,
     like_default_escape: u8,
+    convert_to_sort_key: bool,
 ) -> Option<IndexRanges<'a>> {
     let mut conjuncts = Vec::new();
     collect_conjuncts(where_clause, &mut conjuncts);
@@ -1692,6 +1822,7 @@ pub(crate) fn detach_cond_and_build_range_for_index_with_like_default_escape<'a>
         &conjuncts,
         zone,
         like_default_escape,
+        convert_to_sort_key,
     )
 }
 
@@ -1712,6 +1843,7 @@ pub(crate) fn detach_conjuncts_and_build_range_for_index<'a>(
         conjuncts,
         zone,
         b'\\',
+        true,
     )
 }
 
@@ -1720,9 +1852,10 @@ fn detach_conjuncts_and_build_range_for_index_with_like_default_escape<'a>(
     conjuncts: &[&'a Expr],
     zone: &tidb_datatype::SessionTimeZone,
     like_default_escape: u8,
+    convert_to_sort_key: bool,
 ) -> Option<IndexRanges<'a>> {
     if let [condition] = conjuncts {
-        if let Some(built) = build_row_in_ranges(index_columns, condition, zone) {
+        if let Some(built) = build_row_in_ranges(index_columns, condition, zone, convert_to_sort_key) {
             return Some(built);
         }
     }
@@ -1731,11 +1864,23 @@ fn detach_conjuncts_and_build_range_for_index_with_like_default_escape<'a>(
     // deferred, so a mixed AND/OR reaches the CNF walk, where the OR simply
     // stays a filter.
     if conjuncts.len() == 1 && is_or(conjuncts[0]) {
-        let built = build_dnf_ranges(index_columns, conjuncts[0], zone, like_default_escape)?;
+        let built = build_dnf_ranges(
+            index_columns,
+            conjuncts[0],
+            zone,
+            like_default_escape,
+            convert_to_sort_key,
+        )?;
         return (built.column_count > 0).then_some(built);
     }
 
-    let built = build_cnf_ranges(index_columns, &conjuncts, zone, like_default_escape);
+    let built = build_cnf_ranges(
+        index_columns,
+        &conjuncts,
+        zone,
+        like_default_escape,
+        convert_to_sort_key,
+    );
     (built.access_count > 0).then_some(built)
 }
 
