@@ -1505,20 +1505,23 @@ func TestAutoIncrementIDRetryWithMixedValues(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
+	tk.MustExec("create table src (u int primary key, v int)")
 	tk.MustExec("create table t (id int auto_increment primary key, u int unique key)")
-	tk.MustExec("create table conflict (id int primary key, v int)")
-	tk.MustExec("insert into conflict values (1, 0)")
+	tk.MustExec("insert into src values (1, 0)")
 	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("begin optimistic")
-	tk.MustExec("insert into t values (null, 1), (100, 2), (null, 3)")
-	tk.MustExec("update conflict set v = 1 where id = 1")
+	tk.MustExec("insert into t (u) select u from src")
+	tk.MustExec("insert into t values (null, 2), (100, 3), (null, 4)")
+	tk.MustExec("update src set v = 1 where u = 1")
 
-	tk2.MustExec("update conflict set v = 2 where id = 1")
+	// The first statement produces no rows during retry. The next statement
+	// must use its own generated-ID cache and skip its explicit ID.
+	tk2.MustExec("delete from src where u = 1")
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t order by u").Check(testkit.Rows(
-		"1 1",
-		"100 2",
-		"101 3",
+		"2 2",
+		"100 3",
+		"101 4",
 	))
 }
 
