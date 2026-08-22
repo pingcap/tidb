@@ -585,6 +585,33 @@ pub enum DdlStatement {
         /// decide whether a doubtful spelling warns or refuses.
         context: DdlStatementContext,
     },
+    /// `CREATE PLACEMENT POLICY`.
+    CreatePlacementPolicy {
+        /// The policy name as written.
+        name: String,
+        /// The folded settings clause.
+        settings: tidb_model::PlacementSettings,
+        /// Whether a duplicate name is demoted to a note.
+        if_not_exists: bool,
+        /// Whether an existing policy's settings are replaced.
+        or_replace: bool,
+    },
+    /// `ALTER PLACEMENT POLICY`.
+    AlterPlacementPolicy {
+        /// The policy name as written.
+        name: String,
+        /// The settings that replace the stored ones.
+        settings: tidb_model::PlacementSettings,
+        /// Whether a missing policy is demoted to a note.
+        if_exists: bool,
+    },
+    /// `DROP PLACEMENT POLICY`.
+    DropPlacementPolicy {
+        /// The policy name as written.
+        name: String,
+        /// Whether a missing policy is demoted to a note.
+        if_exists: bool,
+    },
     /// A table option Go's `ALTER TABLE` switch accepts and does nothing
     /// with: `ENGINE`, `ENGINE_ATTRIBUTE`, `STORAGE_CLASS`, `ROW_FORMAT`.
     /// Their cases in `executor.go` are empty, so the statement succeeds and
@@ -755,6 +782,32 @@ pub fn lower_ddl_with_context(
         }
         DdlStmt::CreateIndex(create) => lower_create_index(create, default_schema).map(Some),
         DdlStmt::DropIndex(drop) => lower_drop_index(drop, default_schema).map(Some),
+        DdlStmt::CreatePlacementPolicy(create) => {
+            // Go checks the pairing before building the settings, so a
+            // statement wrong in both ways reports the contradiction
+            // (`ddl/executor.go:6808`).
+            if create.or_replace && create.if_not_exists {
+                return Err(DdlAdmissionError::with_code(
+                    1221,
+                    "Incorrect usage of OR REPLACE and IF NOT EXISTS".to_owned(),
+                ));
+            }
+            Ok(Some(DdlStatement::CreatePlacementPolicy {
+                name: create.name.clone(),
+                settings: placement_settings_from_options(&create.options)?,
+                if_not_exists: create.if_not_exists,
+                or_replace: create.or_replace,
+            }))
+        }
+        DdlStmt::AlterPlacementPolicy(alter) => Ok(Some(DdlStatement::AlterPlacementPolicy {
+            name: alter.name.clone(),
+            settings: placement_settings_from_options(&alter.options)?,
+            if_exists: alter.if_exists,
+        })),
+        DdlStmt::DropPlacementPolicy(drop) => Ok(Some(DdlStatement::DropPlacementPolicy {
+            name: drop.name.clone(),
+            if_exists: drop.if_exists,
+        })),
         DdlStmt::AlterTable(alter) => lower_alter_table_catalog(alter, default_schema),
         DdlStmt::RenameTable(rename) => lower_rename_table_stmt(rename, default_schema),
         DdlStmt::TruncateTable(name) => {
@@ -772,6 +825,97 @@ pub fn lower_ddl_with_context(
 /// and backfill ownership in one place.  Multi-action ALTERs stay refused: the
 /// catalog transaction has no representation for their atomic job bundle, so
 /// accepting only its index action would silently half-apply the SQL.
+/// Go `SetDirectPlacementOpt` (`ddl/placement_policy.go:530`): folds the
+/// source-ordered options into one settings record, a later option of the
+/// same kind overwriting an earlier one.
+/// The stored policy a name refers to, folded as Go folds it.
+///
+/// Go reads policies out of the infoschema; this reads them from the same
+/// snapshot the rest of the statement plans against, so a policy created by
+/// a concurrent DDL is either visible to the whole statement or to none of
+/// it.
+fn find_policy<S: MetaSnapshot>(
+    snapshot: &mut S,
+    name: &str,
+) -> Result<Option<tidb_model::PolicyInfo>, DdlPlanError> {
+    let folded = CiString::new(name.to_owned());
+    for (_, encoded) in snapshot.scan_prefix(&key::policies_kv_prefix())? {
+        let policy = value::parse_policy_info(&encoded)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        if policy.name.lowercase() == folded.lowercase() {
+            return Ok(Some(policy));
+        }
+    }
+    Ok(None)
+}
+
+/// Go `CheckPlacementPolicyNotInUseFromInfoSchema`: whether any table or
+/// partition still names this policy.
+fn policy_referenced(catalog: &ClusterCatalog, policy: &CiString) -> bool {
+    catalog.databases.iter().any(|database| {
+        database.tables.iter().any(|table| {
+            if table
+                .placement_policy_ref
+                .as_ref()
+                .is_some_and(|reference| reference.read().name.lowercase() == policy.lowercase())
+            {
+                return true;
+            }
+            table.partition.as_ref().is_some_and(|partition| {
+                partition.read().definitions.snapshot().iter().any(|definition| {
+                    definition
+                        .placement_policy_ref
+                        .as_ref()
+                        .is_some_and(|reference| {
+                            reference.read().name.lowercase() == policy.lowercase()
+                        })
+                })
+            })
+        })
+    })
+}
+
+fn placement_settings_from_options(
+    options: &[tidb_ast::PlacementOption],
+) -> Result<tidb_model::PlacementSettings, DdlAdmissionError> {
+    let mut settings = tidb_model::PlacementSettings::default();
+    for option in options {
+        match option {
+            tidb_ast::PlacementOption::PrimaryRegion(v) => settings.primary_region = v.clone(),
+            tidb_ast::PlacementOption::Regions(v) => settings.regions = v.clone(),
+            tidb_ast::PlacementOption::Followers(v) => settings.followers = *v,
+            tidb_ast::PlacementOption::Voters(v) => settings.voters = *v,
+            tidb_ast::PlacementOption::Learners(v) => settings.learners = *v,
+            tidb_ast::PlacementOption::Schedule(v) => settings.schedule = v.clone(),
+            tidb_ast::PlacementOption::Constraints(v) => settings.constraints = v.clone(),
+            tidb_ast::PlacementOption::LeaderConstraints(v) => {
+                settings.leader_constraints = v.clone();
+            }
+            tidb_ast::PlacementOption::FollowerConstraints(v) => {
+                settings.follower_constraints = v.clone();
+            }
+            tidb_ast::PlacementOption::VoterConstraints(v) => {
+                settings.voter_constraints = v.clone();
+            }
+            tidb_ast::PlacementOption::LearnerConstraints(v) => {
+                settings.learner_constraints = v.clone();
+            }
+            tidb_ast::PlacementOption::SurvivalPreferences(v) => {
+                settings.survival_preferences = v.clone();
+            }
+            // Go's `SetDirectPlacementOpt` has no arm for `PLACEMENT POLICY =
+            // name`: that spelling is a table option or `ALTER RANGE`, not a
+            // setting of a policy itself, and its `default` refuses it.
+            tidb_ast::PlacementOption::Policy(_) => {
+                return Err(DdlAdmissionError::unsupported(
+                    "PLACEMENT POLICY = <name> is not a setting of a policy itself",
+                ));
+            }
+        }
+    }
+    Ok(settings)
+}
+
 fn lower_alter_table_catalog(
     alter: &AlterTableStmt,
     default_schema: &str,
@@ -1622,9 +1766,11 @@ fn lower_create_table(
 ) -> Result<DdlStatement, DdlAdmissionError> {
     let (schema, table) = split_name(&create.name, default_schema, "table")?;
     // A table-level `PLACEMENT POLICY = name` has to resolve against the
-    // cluster's policies, and this tier keeps none: `CREATE PLACEMENT POLICY`
-    // is not among the statements the catalog transaction serves, so there is
-    // nothing here for the name to point at.
+    // cluster's policies to record the reference BY ID, and lowering runs
+    // before the snapshot is taken -- `find_policy` needs one. The policies
+    // themselves now live on the cluster, so this is a wiring step (carry the
+    // name through lowering and resolve it in `plan_ddl`), not a missing
+    // feature.
     //
     // Accepting the option and dropping it -- which is what the catch-all arm
     // of `validate_table_options` did -- creates a table that reports no
@@ -1637,7 +1783,9 @@ fn lower_create_table(
         .any(|option| matches!(option, tidb_ast::TableOption::PlacementPolicy(_)))
     {
         return Err(DdlAdmissionError::unsupported(
-            "CREATE TABLE ... PLACEMENT POLICY is not supported against a cluster by this              node: it keeps no placement policies, so the name could not be resolved",
+            "CREATE TABLE ... PLACEMENT POLICY is not supported against a cluster by this \
+             node yet: the policy name is resolved against a snapshot, which this lowering \
+             step does not hold",
         ));
     }
     // Go `BuildTableInfoWithLike` copies a table that already exists, so the
@@ -2150,6 +2298,129 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
     };
 
     match statement {
+        // A placement policy is a schema object of its own: Go keys it under
+        // `POLICIES` by id (`Mutator.CreatePolicy`), draws the id from the
+        // same global counter every schema object uses, and spends a schema
+        // version like any other DDL.
+        DdlStatement::CreatePlacementPolicy {
+            name,
+            settings,
+            if_not_exists,
+            or_replace,
+        } => {
+            let existing = find_policy(snapshot, name)?;
+            match (&existing, *if_not_exists, *or_replace) {
+                (Some(found), true, _) => {
+                    return Ok(already(format!(
+                        "placement policy `{}` already exists",
+                        found.name.original()
+                    )));
+                }
+                // Go's `OnExistReplace` keeps the policy OBJECT and swaps its
+                // settings, so references by id stay pointed at it.
+                (Some(found), _, true) => {
+                    let updated = tidb_model::PolicyInfo {
+                        placement_settings: Some(tidb_model::GoShared::new(settings.clone())),
+                        id: found.id,
+                        name: found.name.clone(),
+                        state: tidb_model::SchemaState::PUBLIC,
+                    };
+                    let encoded = value::serialize_policy_info(&updated)
+                        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+                    writes.push(OptimisticMutation::meta_put(
+                        key::policy_kv_key(found.id),
+                        encoded,
+                    )?);
+                    diff.action_type = ActionType::ACTION_ALTER_PLACEMENT_POLICY;
+                    diff.schema_id = found.id;
+                }
+                (Some(_), _, _) => {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        8238,
+                        format!("Placement policy '{name}' already exists"),
+                    )));
+                }
+                (None, _, _) => {
+                    let policy_id = allocate(snapshot, &mut writes, 1)?[0];
+                    created_id = Some(policy_id);
+                    let policy = tidb_model::PolicyInfo {
+                        placement_settings: Some(tidb_model::GoShared::new(settings.clone())),
+                        id: policy_id,
+                        name: CiString::new(name.clone()),
+                        state: tidb_model::SchemaState::PUBLIC,
+                    };
+                    let encoded = value::serialize_policy_info(&policy)
+                        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+                    writes.push(OptimisticMutation::meta_put(
+                        key::policy_kv_key(policy_id),
+                        encoded,
+                    )?);
+                    diff.action_type = ActionType::ACTION_CREATE_PLACEMENT_POLICY;
+                    diff.schema_id = policy_id;
+                }
+            }
+        }
+        DdlStatement::AlterPlacementPolicy {
+            name,
+            settings,
+            if_exists,
+        } => {
+            let Some(found) = find_policy(snapshot, name)? else {
+                if *if_exists {
+                    return Ok(already(format!(
+                        "placement policy `{name}` does not exist"
+                    )));
+                }
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    8239,
+                    format!("Unknown placement policy '{name}'"),
+                )));
+            };
+            // The ID survives an ALTER: references are by id, and re-issuing
+            // one would orphan every object naming this policy.
+            let updated = tidb_model::PolicyInfo {
+                placement_settings: Some(tidb_model::GoShared::new(settings.clone())),
+                id: found.id,
+                name: found.name.clone(),
+                state: tidb_model::SchemaState::PUBLIC,
+            };
+            let encoded = value::serialize_policy_info(&updated)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::policy_kv_key(found.id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_ALTER_PLACEMENT_POLICY;
+            diff.schema_id = found.id;
+        }
+        DdlStatement::DropPlacementPolicy { name, if_exists } => {
+            let Some(found) = find_policy(snapshot, name)? else {
+                if *if_exists {
+                    return Ok(already(format!(
+                        "placement policy `{name}` does not exist"
+                    )));
+                }
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    8239,
+                    format!("Unknown placement policy '{name}'"),
+                )));
+            };
+            // Go `CheckPlacementPolicyNotInUseFromInfoSchema`: a policy still
+            // named by a table or a partition cannot be dropped, or those
+            // objects would point at nothing. `IF EXISTS` does not excuse it
+            // -- the policy exists.
+            if policy_referenced(&catalog, &found.name) {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    8241,
+                    format!("Placement policy '{name}' is still in use"),
+                )));
+            }
+            writes.push(OptimisticMutation::meta_delete(key::policy_kv_key(
+                found.id,
+            ))?);
+            diff.action_type = ActionType::ACTION_DROP_PLACEMENT_POLICY;
+            diff.schema_id = found.id;
+        }
         DdlStatement::CreateDatabase {
             name,
             if_not_exists,
