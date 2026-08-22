@@ -1395,6 +1395,8 @@ mod tests_outer_join_elimination;
 #[cfg(test)]
 mod tests_partition;
 #[cfg(test)]
+mod tests_index_join_inner_pattern;
+#[cfg(test)]
 mod tests_partition_projection;
 #[cfg(test)]
 mod tests_partition_prune_collation;

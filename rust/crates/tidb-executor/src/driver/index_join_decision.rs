@@ -1592,8 +1592,13 @@ fn discover_composite_target<'a>(
     if side.table.is_some() {
         return side;
     }
+    let key_names = key_outputs
+        .iter()
+        .filter_map(|output| side.names.get(*output))
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     let mut tables = Vec::new();
-    collect_table_refs(node, &mut tables);
+    collect_index_join_inner_tables(node, &key_names, &mut tables);
     for table_ref in tables {
         if !table_ref.partitions.is_empty()
             || table_ref.as_of.is_some()
@@ -1645,26 +1650,112 @@ fn discover_composite_target<'a>(
     side
 }
 
-fn collect_table_refs<'a>(node: &'a tidb_ast::JoinNode, out: &mut Vec<&'a tidb_ast::TableRef>) {
+/// Every table an index join may re-seed on this side: Go
+/// `admitIndexJoinInnerChildPattern`.
+///
+/// Go walks DOWN from the join and asks of each operator whether it may sit
+/// between the join and the `DataSource` it re-seeds. `DataSource`,
+/// `Projection`, `Selection` and `UnionScan` may; a `LogicalJoin` may only if
+/// it is an INNER join; a `LogicalAggregation` may only if
+/// `checkIndexJoinInnerTaskWithAgg` holds. Everything else takes the
+/// function's `default` arm and is refused, with the reason stated there:
+/// "index join inner side couldn't allow join, sort, limit, because they are
+/// Optimization Fence".
+///
+/// Walking to any table that merely CARRIES the key by name, as this used to,
+/// re-seeds a leaf through operators that change what the leaf's rows mean.
+/// `group by t2.a with rollup` was the visible one: the probe key reached
+/// `t2` through the rollup's `Expand`, which Go's switch does not name at all.
+fn collect_index_join_inner_tables<'a>(
+    node: &'a tidb_ast::JoinNode,
+    key_names: &[&str],
+    out: &mut Vec<&'a tidb_ast::TableRef>,
+) {
     match node {
         tidb_ast::JoinNode::Table(table) => out.push(table),
+        // Go admits a `LogicalJoin` only when it is an INNER join; `Cross` is
+        // this AST's spelling for `JOIN`/`INNER JOIN`/`CROSS JOIN`/the comma
+        // join. An AST join node with no `right` is the single-relation
+        // wrapper, which is no join at all.
         tidb_ast::JoinNode::Join(join) => {
-            collect_table_refs(&join.left, out);
+            if join.right.is_some() && !matches!(join.tp, tidb_ast::JoinType::Cross) {
+                return;
+            }
+            collect_index_join_inner_tables(&join.left, key_names, out);
             if let Some(right) = &join.right {
-                collect_table_refs(right, out);
+                collect_index_join_inner_tables(right, key_names, out);
             }
         }
         tidb_ast::JoinNode::Derived { subquery, .. } => {
-            if let tidb_ast::QueryStmt::Select(select) = &**subquery {
-                if let Some(from) = &select.from {
-                    collect_table_refs(&from.left, out);
-                    if let Some(right) = &from.right {
-                        collect_table_refs(right, out);
-                    }
+            let tidb_ast::QueryStmt::Select(select) = &**subquery else {
+                // A set operation is none of the admitted operators.
+                return;
+            };
+            if !derived_admits_index_join_inner(select, key_names) {
+                return;
+            }
+            if let Some(from) = &select.from {
+                collect_index_join_inner_tables(&from.left, key_names, out);
+                if let Some(right) = &from.right {
+                    collect_index_join_inner_tables(right, key_names, out);
                 }
             }
         }
     }
+}
+
+/// Whether the operators a derived table stands for are ones Go admits
+/// between an index join and the leaf it re-seeds.
+///
+/// `WITH ROLLUP` is an `Expand`, a window spec is a `Window`, and `LIMIT` is a
+/// `Limit`; none is in Go's switch. The remaining clauses build a
+/// `Projection`, a `Selection` (`WHERE`/`HAVING`) or a `LogicalAggregation`,
+/// which Go admits -- the aggregation only under
+/// [`group_keys_cover`].
+fn derived_admits_index_join_inner(select: &tidb_ast::SelectStmt, key_names: &[&str]) -> bool {
+    if select.with.is_some()
+        || !select.values.is_empty()
+        || select.rollup
+        || select.limit.is_some()
+        || !select.windows.is_empty()
+    {
+        return false;
+    }
+    // `DISTINCT` groups by the whole output row, so any output column is a
+    // group key and the cover below is trivially met.
+    if select.group_by.is_empty() {
+        return true;
+    }
+    group_keys_cover(&select.group_by, key_names)
+}
+
+/// Go `checkIndexJoinInnerTaskWithAgg`: every inner join key that comes from
+/// the re-seeded `DataSource` must also be a GROUP BY key.
+///
+/// Otherwise the probe splits the aggregate's groups -- Go's own words,
+/// "the aggregation group might be split into multiple groups by the join
+/// keys, which generate incorrect result". Go compares `UniqueID`s and says
+/// it is deliberately conservative for GROUP BY EXPRESSIONS, rejecting valid
+/// plans rather than risking a wrong one; comparing written column names here
+/// is the same trade at this tier, and a non-column group item refuses for
+/// the same reason.
+fn group_keys_cover(group_by: &[tidb_ast::GroupByItem], key_names: &[&str]) -> bool {
+    let group_columns = group_by
+        .iter()
+        .map(|item| match &item.expr {
+            tidb_ast::Expr::Column(path) => path.last().map(String::as_str),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>();
+    let Some(group_columns) = group_columns else {
+        return false;
+    };
+    key_names.iter().all(|name| {
+        let column = name.rsplit('.').next().unwrap_or(name);
+        group_columns
+            .iter()
+            .any(|group| group.eq_ignore_ascii_case(column))
+    })
 }
 
 fn side_of<'a>(
