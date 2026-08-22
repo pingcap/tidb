@@ -525,7 +525,7 @@ impl Catalog {
                 };
                 if table
                     .placement_policy()
-                    .is_some_and(|policy| tidb_ast::CiString::new(policy).lowercase() == folded)
+                    .is_some_and(|reference| reference.name.lowercase() == folded)
                 {
                     return true;
                 }
@@ -533,8 +533,8 @@ impl Catalog {
                     partition.definitions.iter().any(|definition| {
                         definition
                             .placement_policy
-                            .as_deref()
-                            .is_some_and(|policy| tidb_ast::CiString::new(policy).lowercase() == folded)
+                            .as_ref()
+                            .is_some_and(|reference| reference.name.lowercase() == folded)
                     })
                 })
             })

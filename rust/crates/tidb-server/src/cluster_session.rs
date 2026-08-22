@@ -650,7 +650,7 @@ fn partition_spec_for(
             placement_policy: definition
                 .placement_policy_ref
                 .as_ref()
-                .map(|reference| reference.read().name.original().to_owned()),
+                .map(|reference| reference.read().clone()),
         })
         .collect();
     let columns: Vec<String> = partition

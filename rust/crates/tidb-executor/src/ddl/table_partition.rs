@@ -941,9 +941,19 @@ const MAX_PARTITION_COMMENT_LENGTH: usize = 1024;
 /// range already, so copying would freeze a snapshot and break the cascade
 /// when the policy is altered. Only a policy written on this definition is
 /// recorded.
-fn partition_definition_placement(definition: &PartitionDefinition) -> Option<String> {
+fn partition_definition_placement(
+    definition: &PartitionDefinition,
+) -> Option<tidb_model::PolicyRefInfo> {
     definition.options.iter().find_map(|option| match option {
-        tidb_ast::TableOption::PlacementPolicy(name) => Some(name.clone()),
+        // The ID is left at zero here and stamped by
+        // `resolve_placement_policies`, which runs where the catalog is in
+        // reach. Go resolves a table's and its partitions' references in ONE
+        // place for the same reason (`CreateTableWithInfo`): the policy has
+        // to exist, and the reference is BY id once it does.
+        tidb_ast::TableOption::PlacementPolicy(name) => Some(tidb_model::PolicyRefInfo {
+            id: 0,
+            name: tidb_ast::CiString::new(name.clone()),
+        }),
         _ => None,
     })
 }
@@ -1722,8 +1732,8 @@ pub struct StoredPartitionDefinition {
     pub in_values: Vec<Vec<String>>,
     /// Go `PartitionDefinition.Comment`.
     pub comment: String,
-    /// Go `PartitionDefinition.PlacementPolicyRef`, by name.
-    pub placement_policy: Option<String>,
+    /// Go `PartitionDefinition.PlacementPolicyRef`: id AND name.
+    pub placement_policy: Option<tidb_model::PolicyRefInfo>,
 }
 
 /// Rebuild the AST value clause a stored definition was written from, so the

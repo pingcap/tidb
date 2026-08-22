@@ -192,7 +192,12 @@ pub struct PartitionDef {
     /// the partition's key range is appended to the table's rule coverage
     /// instead, so altering the policy cascades to both. Only a policy
     /// written on the partition ITSELF is recorded here.
-    pub placement_policy: Option<String>,
+    ///
+    /// Both halves of Go's `PolicyRefInfo` are kept, not just the name: the
+    /// placement BUNDLES that carry these settings to PD are resolved by
+    /// policy ID (`PolicyGetter::get_policy`), so a reference that remembers
+    /// only the name cannot build one.
+    pub placement_policy: Option<tidb_model::PolicyRefInfo>,
 }
 
 /// A table's partitioning: Go `model.PartitionInfo` plus the built expression

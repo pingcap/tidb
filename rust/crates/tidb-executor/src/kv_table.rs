@@ -483,7 +483,7 @@ pub struct KvTable {
     /// A table-level policy covers the whole table's key range, including
     /// every partition that does not name one of its own -- which is why Go
     /// does not copy it down onto the partitions.
-    placement_policy: Option<String>,
+    placement_policy: Option<tidb_model::PolicyRefInfo>,
     /// The physical ids a READ of this table may touch, when something has
     /// narrowed them: `PARTITION (p)` naming them explicitly, or pruning
     /// proving the rest cannot match. `None` is "every partition", which is
@@ -772,14 +772,19 @@ impl KvTable {
         self.partition.as_deref()
     }
 
+    /// The table's partitioning for in-place edits.
+    pub fn partition_mut(&mut self) -> Option<&mut crate::partition_routing::PartitionSpec> {
+        self.partition.as_deref_mut()
+    }
+
     /// Go `TableInfo.PlacementPolicyRef`, by name.
     #[must_use]
-    pub fn placement_policy(&self) -> Option<&str> {
-        self.placement_policy.as_deref()
+    pub fn placement_policy(&self) -> Option<&tidb_model::PolicyRefInfo> {
+        self.placement_policy.as_ref()
     }
 
     /// Records the policy this table names.
-    pub fn set_placement_policy(&mut self, policy: Option<String>) {
+    pub fn set_placement_policy(&mut self, policy: Option<tidb_model::PolicyRefInfo>) {
         self.placement_policy = policy;
     }
 

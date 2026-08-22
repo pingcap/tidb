@@ -2870,3 +2870,41 @@ fn a_partition_level_placement_policy_counts_as_a_reference() {
         .to_mysql_error();
     assert_eq!(rendered.code, 8241);
 }
+
+/// A resolved policy reference carries Go's `PolicyRefInfo` in FULL -- the
+/// policy's id as well as its name.
+///
+/// The id is not decoration. Placement bundles, which are what actually
+/// carry these settings to PD, resolve a reference through
+/// `PolicyGetter::get_policy(policy_id)`; a reference that remembered only
+/// the name would look correct in the catalog and build no bundle at all.
+/// An unknown policy on a PARTITION is refused with 8239, exactly as one on
+/// the table is.
+#[test]
+fn a_resolved_policy_reference_carries_the_policy_id() {
+    let mut session = Session::new();
+    session
+        .run("CREATE PLACEMENT POLICY pr FOLLOWERS=2")
+        .expect("policy");
+
+    // An unknown policy named by a PARTITION is refused, not stored with a
+    // dangling reference.
+    let rendered = session
+        .run("CREATE TABLE tr (a INT) PARTITION BY RANGE (a) \
+              (PARTITION p0 VALUES LESS THAN (10) PLACEMENT POLICY = nosuch)")
+        .expect_err("an unknown policy on a partition is refused")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 8239);
+
+    // A resolved one is recorded, and holds the policy down.
+    session
+        .run("CREATE TABLE tr2 (a INT) PARTITION BY RANGE (a) \
+              (PARTITION p0 VALUES LESS THAN (10) PLACEMENT POLICY = pr, \
+               PARTITION p1 VALUES LESS THAN (20))")
+        .expect("a partition naming a real policy");
+    let rendered = session
+        .run("DROP PLACEMENT POLICY pr")
+        .expect_err("the reference holds the policy down")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 8241);
+}

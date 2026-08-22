@@ -1316,14 +1316,36 @@ pub fn run_create_table_in(
     // `ErrPlacementPolicyNotExists` (8239). Accepting the option and dropping
     // it -- which is what happened before this -- produced a table that
     // reported no policy while the statement said otherwise.
-    if let Some(policy) = create.table_options.iter().find_map(|option| match option {
+    // Go `CreateTableWithInfo` resolves the table's AND its partitions'
+    // `PLACEMENT POLICY = name` against the policies in the infoschema, in
+    // one place, refusing an unknown one with `ErrPlacementPolicyNotExists`
+    // (8239). Resolution means stamping the policy's ID onto the reference:
+    // the placement BUNDLES that carry these settings to PD are looked up by
+    // id, so a reference holding only a name cannot build one.
+    if let Some(name) = create.table_options.iter().find_map(|option| match option {
         tidb_ast::TableOption::PlacementPolicy(name) => Some(name.clone()),
         _ => None,
     }) {
-        if catalog.policy(&policy).is_none() {
-            return Err(DriverError::PlacementPolicyNotExists(policy));
+        let Some(policy) = catalog.policy(&name) else {
+            return Err(DriverError::PlacementPolicyNotExists(name));
+        };
+        table.set_placement_policy(Some(tidb_model::PolicyRefInfo {
+            id: policy.id,
+            name: tidb_ast::CiString::new(name),
+        }));
+    }
+    if let Some(partition) = table.partition_mut() {
+        for definition in &mut partition.definitions {
+            let Some(reference) = definition.placement_policy.as_mut() else {
+                continue;
+            };
+            let Some(policy) = catalog.policy(reference.name.original()) else {
+                return Err(DriverError::PlacementPolicyNotExists(
+                    reference.name.original().to_owned(),
+                ));
+            };
+            reference.id = policy.id;
         }
-        table.set_placement_policy(Some(policy));
     }
     catalog.register_kv_in(&database, name, table)?;
     Ok(true)
