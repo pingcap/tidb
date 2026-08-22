@@ -721,6 +721,54 @@ impl std::fmt::Display for FdSet {
     }
 }
 
+/// Go `FindCommonEquivClasses`: the equivalence classes shared by EVERY set,
+/// computed by folding pairwise class intersections across the sets.
+///
+/// A class survives a round only when its intersection with some equivalence
+/// edge of the next set keeps more than one column: a single-column remainder
+/// is meaningless in the bi-relation of equivalence, and an empty one carries
+/// no class at all.
+pub fn find_common_equiv_classes(fd_sets: &[&FdSet]) -> Vec<ColSet> {
+    if fd_sets.is_empty() {
+        return Vec::new();
+    }
+    let mut result: Vec<ColSet> = fd_sets[0]
+        .edges
+        .iter()
+        .filter(|edge| edge.equiv)
+        // clone one for later mutable intersection.
+        .map(|edge| edge.from.copy())
+        .collect();
+    // iterate intersection with later all fdSets.
+    for fd_set in &fd_sets[1..] {
+        let mut new_result = Vec::with_capacity(result.len());
+        // iterate all equivalence classes in the current fdSet.
+        for equiv_class in &result {
+            // iterate all equivalence FDs in the current fdSet.
+            for edge in &fd_set.edges {
+                if !edge.equiv {
+                    continue;
+                }
+                let mut intersection = equiv_class.copy();
+                intersection.intersection_with(&edge.from);
+                // * if the intersection has changed and not empty. (become a subset)
+                // * if the intersection is still the same (it means two equivalence classes are the same)
+                // * intersection with the single point is meaningless in bi-relation of equivalence.
+                if intersection.len() > 1 {
+                    new_result.push(intersection);
+                }
+            }
+        }
+        result = new_result;
+        // if the result is empty, no need to continue. (intersection with empty
+        // set continuously is meaningless)
+        if result.is_empty() {
+            return Vec::new();
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -943,5 +991,50 @@ mod tests {
         // `WHERE a IS NOT NULL` supplies the rest of the determinant.
         fd.make_not_null(ColSet::of([1]));
         assert!(ColSet::of([3]).subset_of(&fd.closure_of_strict(&ColSet::of([1, 2]))));
+    }
+
+    /// Go `TestFindCommonEquivClasses`.
+    #[test]
+    fn find_common_equiv_classes_between_sets() {
+        // Go's tests reach the unexported `addEquivalence(eqs)`, which appends
+        // one `{eqs}=={eqs}` edge per class; the public Rust
+        // `FdSet::add_equivalence` would normalize a singleton class away.
+        fn with_equiv_classes(classes: &[&[i64]]) -> FdSet {
+            let mut fd = FdSet::new();
+            for class in classes {
+                let set = ColSet::of(class.iter().copied());
+                fd.edges.push(FdEdge {
+                    from: set.copy(),
+                    to: set,
+                    strict: true,
+                    equiv: true,
+                });
+            }
+            fd
+        }
+
+        // fd1 is with equivalence classes for {1,2} and {3,4}
+        let fd1 = with_equiv_classes(&[&[1, 2], &[3, 4]]);
+        // fd2 is with equivalence classes for {1,3} and {2,4}
+        let fd2 = with_equiv_classes(&[&[1, 3], &[2, 4]]);
+        // fd3 is with equivalence classes for {1} and {3,4}
+        let fd3 = with_equiv_classes(&[&[1], &[3, 4]]);
+
+        // find common equivalence classes between fd1 and fd2.
+        let res = find_common_equiv_classes(&[&fd1, &fd2]);
+        assert_eq!(res.len(), 0);
+
+        // find common equivalence classes between fd2 and fd3.
+        let res = find_common_equiv_classes(&[&fd2, &fd3]);
+        assert_eq!(res.len(), 0);
+
+        // find common equivalence classes between fd1 and fd3.
+        let res = find_common_equiv_classes(&[&fd1, &fd3]);
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].to_string(), "(3,4)");
+
+        // find common equivalence classes between fd1, fd2 and fd3.
+        let res = find_common_equiv_classes(&[&fd1, &fd2, &fd3]);
+        assert_eq!(res.len(), 0);
     }
 }
