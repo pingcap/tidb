@@ -11,6 +11,7 @@ autotests = false
 build = "../../scripts/aggregate-tests.rs"
 
 [dependencies]
+stacker = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
 crc32fast = { workspace = true }

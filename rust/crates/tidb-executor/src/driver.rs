@@ -881,6 +881,43 @@ fn run_select_traced_with_delivery_choice(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    trace: Option<&mut PlanTrace>,
+    required: &tidb_planner::physical_property::PhysicalProperty,
+    output_delivered: Option<&mut from::Delivered>,
+    deferred_exec: Option<&mut Option<Box<dyn Executor>>>,
+    parent_duplicate_agnostic: bool,
+    aggregation_choice: AggregationChoice,
+) -> Result<SelectMeta, DriverError> {
+    // Every nested SELECT -- a derived table, a subquery, a view -- plans by
+    // recursing through here, and a debug build's planner frames run to
+    // hundreds of KB per level (this function's alone is ~276 KB). Go never
+    // aborts on that depth because a goroutine's stack grows on demand;
+    // `maybe_grow` is that semantics for a Rust thread. The red zone must
+    // cover one full level of the planner -- this frame plus `build_from`,
+    // `build_join_with_choice` and the aggregation builder -- before the
+    // next check runs, hence 2 MB, with 16 MB segments so growth is rare.
+    stacker::maybe_grow(2 * 1024 * 1024, 16 * 1024 * 1024, move || {
+        run_select_traced_with_delivery_choice_inner(
+            select,
+            catalog,
+            current_db,
+            ctx,
+            trace,
+            required,
+            output_delivered,
+            deferred_exec,
+            parent_duplicate_agnostic,
+            aggregation_choice,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_select_traced_with_delivery_choice_inner(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
     required: &tidb_planner::physical_property::PhysicalProperty,
     mut output_delivered: Option<&mut from::Delivered>,

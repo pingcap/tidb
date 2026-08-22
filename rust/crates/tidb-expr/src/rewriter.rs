@@ -520,6 +520,22 @@ pub fn rewrite_expr_resolved(
     expr: &Expr,
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
+    // Go's rewriter walks arbitrarily nested expressions because a
+    // goroutine's stack grows on demand. This is that semantics for a Rust
+    // thread: when fewer than 128 KB remain, the walk continues on a fresh
+    // 4 MB segment instead of aborting the process. The red zone covers the
+    // deepest single step below ([`rewrite_leaf`]'s split keeps one level
+    // under ~30 KB in a debug build); the check itself is a few instructions
+    // on the non-growing path.
+    stacker::maybe_grow(128 * 1024, 4 * 1024 * 1024, || {
+        rewrite_expr_resolved_inner(expr, resolver)
+    })
+}
+
+fn rewrite_expr_resolved_inner(
+    expr: &Expr,
+    resolver: &impl ColumnResolver,
+) -> Result<Expression, EvalError> {
     if let Expr::Default(Some(path)) = expr {
         return resolver
             .resolve_default(path)

@@ -111,6 +111,14 @@ snap = "1"
 # creation, all of which `tempfile` provides without a hand-rolled loop.
 tempfile = "3.27"
 toml = "0.8"
+# Go's planner walks arbitrarily nested expressions and subqueries because a
+# goroutine's stack GROWS ON DEMAND; a Rust thread's does not, and a debug
+# build's planner frames run to hundreds of KB, so eight levels of nesting
+# aborted the process. `stacker::maybe_grow` is the direct port of Go's
+# semantics -- it moves execution onto a freshly allocated segment when the
+# remaining stack drops below a red zone -- and is what rustc itself uses in
+# its own recursive walkers.
+stacker = "0.1"
 # TiDB's `TIDB_SHARD` uses Vitess' exact DES-ECB/null-key hash. RustCrypto's
 # audited DES implementation preserves that algorithm without a hand-rolled
 # cryptographic primitive.
