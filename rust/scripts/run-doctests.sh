@@ -47,7 +47,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # a caller that forgets simply gets a slow gate and no explanation.
 export CARGO_TARGET_DIR="${PWD}/target/doctest-gate"
 
-log="$(mktemp -t tidb-doctests)"
+# GNU coreutils mktemp requires explicit X runes in the template (BSD mktemp
+# appends them for `-t PREFIX`), so spell the suffix out for both.
+log="$(mktemp "${TMPDIR:-/tmp}/tidb-doctests.XXXXXX")"
 trap 'rm -f "$log"' EXIT
 
 echo "== cargo test --workspace --doc --no-fail-fast"
