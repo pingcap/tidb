@@ -401,9 +401,12 @@ mod tests {
                 "explain SELECT 1".to_owned()
             ))
         );
+        // A non-tree format over an EXPLAINABLE target is run for its side
+        // effects and discarded (see `RunAndDiscard`'s own doc); the output
+        // is still never compared.
         assert!(matches!(
             plan_statement("explain format = 'json' select 1;"),
-            Some(PlanStatement::NotComparable(_))
+            Some(PlanStatement::RunAndDiscard { .. })
         ));
         assert!(matches!(
             plan_statement("explain analyze select 1;"),

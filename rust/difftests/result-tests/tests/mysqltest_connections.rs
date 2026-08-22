@@ -254,6 +254,16 @@ impl Connections {
         session
             .run("SET NAMES utf8mb4 COLLATE utf8mb4_general_ci")
             .expect("mysql-tester's driver handshake collation is accepted");
+        // The second half of the same handshake: mysql-tester's DSN is
+        // `...?time_zone='Asia/Shanghai'` (its `OpenDBWithRetry` call sites,
+        // pinned at commit f2d90ea), which go-sql-driver turns into
+        // `SET time_zone = 'Asia/Shanghai'` on every connection it opens --
+        // and run-tests.sh exports TZ=Asia/Shanghai for the server to match.
+        // Without it `select @@time_zone` reads the recording's literal
+        // value, and every FROM_UNIXTIME/UUID_TIMESTAMP cell is shifted.
+        session
+            .run("SET time_zone = 'Asia/Shanghai'")
+            .expect("mysql-tester's driver handshake time zone is accepted");
         // mysql-tester puts these in the DSN of EVERY connection it opens, so
         // the driver issues them before the script's first statement. They are
         // in the recorded output's provenance, not the engine's defaults:

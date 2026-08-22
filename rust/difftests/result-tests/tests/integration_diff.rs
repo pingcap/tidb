@@ -2267,7 +2267,41 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // accounting above): `executor/dual_password` fully closed, and
     // `compared` 9629 -> 9670 as the account statements became reachable
     // through a real table.
-    const KNOWN_DIVERGENCES: usize = 30;
+    //
+    // 30 -> 27, and the mechanism is the recording CLIENT's, found in its
+    // source rather than guessed: mysql-tester's DSN is
+    // `...?time_zone='Asia/Shanghai'` (every `OpenDBWithRetry` call site at
+    // the pinned commit f2d90ea), which go-sql-driver turns into
+    // `SET time_zone = 'Asia/Shanghai'` on each connection it opens --
+    // beside the `SET NAMES utf8mb4 COLLATE utf8mb4_general_ci` half this
+    // harness already modelled. `run-tests.sh` exports TZ=Asia/Shanghai for
+    // the SERVER to agree. The harness's `new_session` now runs both, so
+    // `select @@time_zone` reads the recorded literal and every
+    // FROM_UNIXTIME/UUID_TIMESTAMP cell lands in the recorded zone.
+    // `session/vars` and `expression/uuid` are both fully closed.
+    //
+    // 27 -> 26: the chooser gap 973dc3ba2d's pin work exposed. Go selects
+    // the access path for `update t set j = -j where i = 1 and j = 1` on
+    // `t (i int key, j int, unique key (i, j))` by HEURISTIC, not by cost:
+    // `derivePathStatsAndTryHeuristics` (`pkg/planner/core/stats.go`) walks
+    // the paths table-first and the FIRST only-point-range path that is the
+    // table path or a unique index AND a single scan wins outright, pruning
+    // every other path before skyline pruning or `findBestTask` ever run --
+    // so the int handle's `[1,1]` beats the unique `(i, j)` point, which is
+    // never even examined. The whole selection is ported
+    // (`access_cost::heuristic_point_path`: the empty-range short-circuit,
+    // the immediate single-scan point win, and the
+    // `uniqueBest`/`refinedBest` double-scan arbitration with its 2x range
+    // bound), gated off for the IndexMerge partial enumerations exactly as
+    // Go's `generateIndexMergePath` runs after -- never through -- the
+    // heuristic. The write plan reaches it because its read falls through
+    // to the same ordinary `DataSource`, and the single-point handle range
+    // then prints as Go's `convertToPointGet` bare handle plan
+    // (`trace_dml_source`'s Ranges arm, the write-side twin of the read's
+    // `single_point_handle` conversion). `explain_easy` drops 2 -> 1; its
+    // remaining divergence is the decorrelation cost shape, a different
+    // family. Both are `PlanProperty`-kind, so `compared` holds at 9670.
+    const KNOWN_DIVERGENCES: usize = 26;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path
