@@ -1780,15 +1780,22 @@ pub(crate) fn detach_conds_for_column<'a>(
     // EVERY condition it took, with no equality prefix and no per-column walk
     // -- there is only one column, so `a IN (1,2,3) AND a > 1` narrows to
     // `[2,2], [3,3]` rather than leaving the `>` behind as a filter.
+    //
+    // Points stay in RAW VALUE space here. This detacher serves row-count
+    // ESTIMATION against column histograms, whose bounds are written values;
+    // Go passes `convertToSortKey = true` into the same ranger entry because
+    // ITS histograms are read back in collation-key form, so both sides of
+    // that comparison live in the key domain. This tier's statistics compare
+    // written datums -- `l_shipinstruct = '...'` estimated 1499051 rows
+    // before the key conversion arrived here and 1 row after, while Go
+    // prints 1499051.50.
     let mut points = full_range();
     let mut access_count = 0;
     let mut residual = Vec::new();
     for condition in conditions {
         // Go `ExtractAccessConditionsForColumn`: a condition belongs to the
         // column exactly when the point builder can turn it into points.
-        // Go `BuildColumnRange` builds through `buildColumnRange`, which
-        // passes `convertToSortKey = true` for every column it ranges.
-        match points_for_condition(condition, column, zone, b'\\', true) {
+        match points_for_condition(condition, column, zone, b'\\', false) {
             Some(column_points) => {
                 points = intersection(
                     &points,
