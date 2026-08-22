@@ -626,6 +626,9 @@ impl<'a> Lexer<'a> {
             return self.scan_identifier(start);
         }
         let ch0 = self.r.read_byte(); // first digit
+        // Mirrors Go's `tok` variable in `startWithNumber`: the hex/bit arms
+        // only SET the kind; control always reaches the shared tail below.
+        let mut kind = TokenKind::IntLit;
         if ch0 == b'0' {
             match self.r.peek() {
                 b'0'..=b'7' => {
@@ -646,8 +649,11 @@ impl<'a> Lexer<'a> {
                         self.r.inc_as_long_as(is_ident_char);
                         return (TokenKind::Ident, start, self.r.offset());
                     }
-                    // Hex literal, unless trailing identifier chars glue on.
-                    return self.finish_number(start, TokenKind::HexLit);
+                    // Hex literal candidate. Go does NOT return here: the
+                    // switch arm only sets `tok`, then control falls through
+                    // to the shared scanDigits/float/ident-glue tail below
+                    // (`0x7f.5` lexes `0`, `x7f`, ... in Go, not a hex lit).
+                    kind = TokenKind::HexLit;
                 }
                 b'b' => {
                     self.r.inc();
@@ -658,7 +664,9 @@ impl<'a> Lexer<'a> {
                         self.r.inc_as_long_as(is_ident_char);
                         return (TokenKind::Ident, start, self.r.offset());
                     }
-                    return self.finish_number(start, TokenKind::BitLit);
+                    // Same fall-through as the hex arm (`0b101e5` -> `0`,
+                    // `b101e5`).
+                    kind = TokenKind::BitLit;
                 }
                 b'.' => return self.scan_float(start),
                 b'B' => {
@@ -669,39 +677,26 @@ impl<'a> Lexer<'a> {
             }
         }
 
+        // Go's post-switch tail (lexer.go:886-898): scanDigits, then
+        // '.'/'e'/'E' re-scan from the span start, then identifier glue, then
+        // emit `kind`. Identifiers may begin with a digit but unless quoted
+        // may not consist solely of digits.
         self.r.inc_as_long_as(is_digit);
         let ch = self.r.peek();
         if ch == b'.' || ch == b'e' || ch == b'E' {
             return self.scan_float(start);
         }
-        self.finish_number(start, TokenKind::IntLit)
-    }
-
-    /// After a HEX/BIT/INT literal body, a trailing identifier char turns the
-    /// whole span into an identifier (`0x1ag`, `0b1z`, `12ab`).
-    fn finish_number(&mut self, start: usize, kind: TokenKind) -> (TokenKind, usize, usize) {
-        if kind == TokenKind::IntLit {
-            let ch0 = self.r.peek();
-            if !self.r.eof() && is_ident_char(ch0) {
-                self.r.inc_as_long_as(is_ident_char);
-                return (TokenKind::Ident, start, self.r.offset());
-            }
-            let end = self.r.offset();
-            // An integer that overflows u64 is a DECIMAL literal, matching
-            // toInt -> toDecimal on strconv.ErrRange.
-            if self.r.src()[start..end].parse::<u64>().is_err() {
-                return (TokenKind::DecLit, start, end);
-            }
-            return (kind, start, end);
-        }
-        // HEX/BIT: mirror scanDigits() + identifier-glue check.
-        self.r.inc_as_long_as(is_digit);
-        let ch0 = self.r.peek();
-        if !self.r.eof() && is_ident_char(ch0) {
+        if !self.r.eof() && is_ident_char(ch) {
             self.r.inc_as_long_as(is_ident_char);
             return (TokenKind::Ident, start, self.r.offset());
         }
-        (kind, start, self.r.offset())
+        let end = self.r.offset();
+        // An integer that overflows u64 is a DECIMAL literal, matching Go's
+        // toInt -> toDecimal on strconv.ErrRange.
+        if kind == TokenKind::IntLit && self.r.src()[start..end].parse::<u64>().is_err() {
+            return (TokenKind::DecLit, start, end);
+        }
+        (kind, start, end)
     }
 
     fn scan_dot(&mut self, start: usize) -> (TokenKind, usize, usize) {
@@ -1182,6 +1177,28 @@ mod tests {
         assert_eq!(labels("12abc"), "IDENT:12abc");
         // u64 overflow degrades an integer to a decimal.
         assert_eq!(labels("999999999999999999999999999"), "NUM:DEC");
+    }
+
+    #[test]
+    fn number_hex_bit_fall_through_matches_go() {
+        // Go `startWithNumber`'s hex/bit switch arms do NOT return: control
+        // falls through to the shared scanDigits/'.'-'e'-'E'/ident-glue tail,
+        // so a hex/bit body followed by '.' or 'e' restarts the float scan
+        // from the SPAN START (lexer_test.go TestScanNumber/TestIdentifier).
+        // After `x7f`, Go's identifierDot flag stays set, so `.5` lexes as
+        // `.` + identifier `5` (startWithNumber's identifierDot gate).
+        assert_eq!(labels("0x7f.5"), "NUM:DEC IDENT:x7f OP:. IDENT:5");
+        assert_eq!(labels("0b101e5"), "NUM:DEC IDENT:b101e5");
+        // Invalid bodies stay identifiers (pinned by TestIdentifier).
+        assert_eq!(labels("0x7fz3"), "IDENT:0x7fz3");
+        assert_eq!(labels("0b1ab"), "IDENT:0b1ab");
+        assert_eq!(labels("023a4"), "IDENT:023a4");
+        // Valid literals still lex as before.
+        assert_eq!(labels("0x7f"), "NUM:HEX");
+        assert_eq!(labels("0b1010"), "NUM:BIT");
+        // Octal-prefix floats re-scan to ONE decimal on both sides.
+        assert_eq!(labels("0777.5"), "NUM:DEC");
+        assert_eq!(labels("0123e5"), "NUM:FLOAT");
     }
 
     #[test]
