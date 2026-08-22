@@ -3346,6 +3346,15 @@ fn build_aggregation(
         && matches!(state.agg_funcs[0].kind, AggKind::Count);
     let complex_stream_agg =
         complex_global_count && joined_logical_rows.is_none_or(prefer_stream_agg_for_global_count);
+    // A decorrelated `EXISTS`/`NOT EXISTS` places the aggregate above a semi/
+    // anti join rather than a bare consumed scan, so the scan shortcut below
+    // must not fire. Go enumerates BOTH root implementations there and lets
+    // the cost model decide (`getStreamAggs` keeps applying: a global
+    // aggregate has no group-by ordering requirement).
+    let semi_join_stream_preferred = semi_join_source
+        && joined_logical_rows
+            .map(prefer_stream_agg_for_global_count)
+            .unwrap_or(false);
     let source_is_index_reader = matches!(
         input_candidate.as_ref(),
         Some(tidb_planner::candidate_cost::Candidate::Reader {
@@ -3359,7 +3368,9 @@ fn build_aggregation(
         && group_by.is_empty()
         && !has_pre_agg_applies
         && (complex_stream_agg
+            || semi_join_stream_preferred
             || (!complex_global_count
+                && !semi_join_source
                 && scan_consumed_where
                 && (!source_is_index_reader
                     || select.where_clause.as_ref().is_some_and(contains_logic_or))))
