@@ -320,7 +320,8 @@ impl PushedScanFilter {
         );
         let fast_paths = predicates
             .iter()
-            .map(FastScanFilter::from_predicate)
+            .zip(&filters)
+            .map(|(predicate, filter)| FastScanFilter::from_predicate(predicate, filter))
             .collect();
         Self {
             predicates,
@@ -408,7 +409,8 @@ impl PushedScanFilter {
         Some(Self {
             fast_paths: predicates
                 .iter()
-                .map(FastScanFilter::from_predicate)
+                .zip(&filters)
+                .map(|(predicate, filter)| FastScanFilter::from_predicate(predicate, filter))
                 .collect(),
             predicates,
             filters,
@@ -417,7 +419,30 @@ impl PushedScanFilter {
 }
 
 impl FastScanFilter {
-    fn from_predicate(predicate: &ScanPredicate) -> Option<Self> {
+    /// The collation this comparison runs in.
+    ///
+    /// Go's `in` and `like` builtins compare with the collation
+    /// `deriveCollation` gave the FUNCTION (`expression/collation.go:290` for
+    /// `ast.In`, over ALL its arguments), which an explicit `COLLATE` on any
+    /// argument decides. The COLUMN's declared collation is only one input to
+    /// that, and the loser whenever an argument is explicit.
+    ///
+    /// So the fast path reads it off the built expression, which is where the
+    /// derivation already landed, rather than re-deriving it from the column
+    /// and reaching a different answer than the row filter beside it.
+    fn comparison_collation(filter: &Expression) -> Option<tidb_datatype::Collation> {
+        let Expression::ScalarFunction(function) = filter else {
+            return None;
+        };
+        // `NOT IN` and `NOT LIKE` are the negated wrapper the description
+        // unwraps the same way.
+        if function.func_name.lowercase() == "not" {
+            return function.args.first().and_then(Self::comparison_collation);
+        }
+        Some(function.derived_collation())
+    }
+
+    fn from_predicate(predicate: &ScanPredicate, filter: &Expression) -> Option<Self> {
         let (like, negated) = match predicate {
             ScanPredicate::Like { .. } => (predicate, false),
             ScanPredicate::Not(inner) if matches!(&**inner, ScanPredicate::Like { .. }) => {
@@ -436,7 +461,9 @@ impl FastScanFilter {
                 column_offset: usize::try_from(*column_offset).ok()?,
                 pattern: pattern.clone(),
                 escape: *escape,
-                collation: tidb_datatype::Collation::from_name(column_type.collation_name())?,
+                collation: Self::comparison_collation(filter).or_else(|| {
+                    tidb_datatype::Collation::from_name(column_type.collation_name())
+                })?,
                 negated,
             });
         }
@@ -457,18 +484,23 @@ impl FastScanFilter {
         if !column_type.is_string() || literals.is_empty() {
             return None;
         }
+        let collation = Self::comparison_collation(filter)
+            .map_or_else(|| column_type.collation_name().to_owned(), |c| c.name().to_owned());
         let mut keys = literals
             .iter()
             .map(|literal| literal.as_raw_bytes().map(|bytes| (literal, bytes)))
             .collect::<Option<Vec<_>>>()?
             .into_iter()
-            .map(|(_, bytes)| tidb_datatype::get_collator(column_type.collation_name()).key(bytes))
+            .map(|(_, bytes)| tidb_datatype::get_collator(&collation).key(bytes))
             .collect::<Vec<_>>();
         keys.sort_unstable();
         keys.dedup();
         Some(Self::StringIn {
             column_offset: usize::try_from(column_offset).ok()?,
-            collator: column_type.runtime_collator(),
+            // The PROBE has to use the same collator the keys were built
+            // with, or the set is searched in a collation nothing was
+            // inserted under.
+            collator: tidb_datatype::get_collator(&collation),
             keys,
             negated,
         })

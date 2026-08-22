@@ -973,7 +973,11 @@ impl IndexRangeSourceExec {
                     Count(i64),
                     SumDecimal(Option<Decimal>),
                     SumReal(Option<f64>),
-                    Extreme { value: Option<Datum>, is_max: bool },
+                    Extreme {
+                        value: Option<Datum>,
+                        is_max: bool,
+                        collation: tidb_datatype::Collation,
+                    },
                 }
 
                 let input_types = self.partial_input_types.clone().ok_or_else(|| {
@@ -996,10 +1000,16 @@ impl IndexRangeSourceExec {
                         PushdownAggregateKind::Min => PartialValue::Extreme {
                             value: None,
                             is_max: false,
+                            collation: crate::remote_scan::extreme_collation(
+                                function.input.as_ref(),
+                            ),
                         },
                         PushdownAggregateKind::Max => PartialValue::Extreme {
                             value: None,
                             is_max: true,
+                            collation: crate::remote_scan::extreme_collation(
+                                function.input.as_ref(),
+                            ),
                         },
                     })
                     .collect::<Vec<_>>();
@@ -1057,16 +1067,17 @@ impl IndexRangeSourceExec {
                                 })?;
                                 *sum = Some(sum.unwrap_or(0.0) + addend.value);
                             }
-                            (PartialValue::Extreme { value, is_max }, Some(candidate)) => {
+                            (PartialValue::Extreme {
+                                    value,
+                                    is_max,
+                                    collation,
+                                }, Some(candidate)) => {
                                 let replace = value.as_ref().is_none_or(|current| {
-                                    tidb_expr::compare_datums(&candidate, current).is_ok_and(
-                                        |ordering| {
-                                            if *is_max {
-                                                ordering.is_gt()
-                                            } else {
-                                                ordering.is_lt()
-                                            }
-                                        },
+                                    crate::remote_scan::extreme_replaces(
+                                        &candidate,
+                                        current,
+                                        *is_max,
+                                        *collation,
                                     )
                                 });
                                 if replace {
@@ -1110,7 +1121,11 @@ impl IndexRangeSourceExec {
                     Count(i64),
                     SumDecimal(Option<Decimal>),
                     SumReal(Option<f64>),
-                    Extreme { value: Option<Datum>, is_max: bool },
+                    Extreme {
+                        value: Option<Datum>,
+                        is_max: bool,
+                        collation: tidb_datatype::Collation,
+                    },
                 }
                 let new_values = || {
                     functions
@@ -1127,10 +1142,16 @@ impl IndexRangeSourceExec {
                             PushdownAggregateKind::Min => PartialValue::Extreme {
                                 value: None,
                                 is_max: false,
+                                collation: crate::remote_scan::extreme_collation(
+                                    function.input.as_ref(),
+                                ),
                             },
                             PushdownAggregateKind::Max => PartialValue::Extreme {
                                 value: None,
                                 is_max: true,
+                                collation: crate::remote_scan::extreme_collation(
+                                    function.input.as_ref(),
+                                ),
                             },
                         })
                         .collect::<Vec<_>>()
@@ -1224,16 +1245,17 @@ impl IndexRangeSourceExec {
                                     })?;
                                     *sum = Some(sum.unwrap_or(0.0) + addend.value);
                                 }
-                                (PartialValue::Extreme { value, is_max }, Some(candidate)) => {
+                                (PartialValue::Extreme {
+                                        value,
+                                        is_max,
+                                        collation,
+                                    }, Some(candidate)) => {
                                     let replace = value.as_ref().is_none_or(|current| {
-                                        tidb_expr::compare_datums(&candidate, current).is_ok_and(
-                                            |ordering| {
-                                                if *is_max {
-                                                    ordering.is_gt()
-                                                } else {
-                                                    ordering.is_lt()
-                                                }
-                                            },
+                                        crate::remote_scan::extreme_replaces(
+                                            &candidate,
+                                            current,
+                                            *is_max,
+                                            *collation,
                                         )
                                     });
                                     if replace {

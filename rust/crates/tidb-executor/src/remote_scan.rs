@@ -127,6 +127,41 @@ pub struct PushdownAggregateFunction {
     pub output_type: FieldType,
 }
 
+/// The collation a MIN/MAX partial orders under: its ARGUMENT expression's
+/// derived one.
+///
+/// Go builds `collate.GetCollator(RetTp.GetCollate())` for every MIN/MAX
+/// signature (`aggfuncs/builder.go:460-468`), and `RetTp` is the aggregate
+/// ARGUMENT's type -- so a `utf8mb4_general_ci` column orders
+/// case-insensitively and a computed argument such as `UPPER(s)` orders under
+/// whatever IT derived. A partial aggregate computed at the scan has to use
+/// the same collation as the root one or the two disagree: over 'a', 'B', 'A'
+/// in `utf8mb4_general_ci`, a binary comparison answers max='a' min='A' where
+/// TiDB answers max='B' min='a'.
+#[must_use]
+pub fn extreme_collation(input: Option<&Expression>) -> tidb_datatype::Collation {
+    input.map_or(tidb_datatype::Collation::DEFAULT, |expression| {
+        tidb_expr::collation_derive::collation_of_node(expression)
+    })
+}
+
+/// Whether `candidate` becomes the new MIN/MAX, under [`extreme_collation`].
+#[must_use]
+pub fn extreme_replaces(
+    candidate: &tidb_datatype::Datum,
+    current: &tidb_datatype::Datum,
+    is_max: bool,
+    collation: tidb_datatype::Collation,
+) -> bool {
+    tidb_expr::compare_datums_with_collation(candidate, current, collation).is_ok_and(|ordering| {
+        if is_max {
+            ordering.is_gt()
+        } else {
+            ordering.is_lt()
+        }
+    })
+}
+
 /// One function in a global partial aggregation. Unlike the older bounded
 /// column-offset variants, Go permits any TiKV-pushable scalar expression as
 /// an aggregate argument.
