@@ -2038,6 +2038,49 @@ impl KvTable {
         row: &[Datum],
         ctx: &impl tidb_expr::Columns,
     ) -> Result<TableHandle, KvTableError> {
+        self.insert_row_with_row_id(row, None, ctx)
+    }
+
+    /// [`Self::insert_row`] for a statement that WROTE `_tidb_rowid`.
+    ///
+    /// Go `adjustImplicitRowID`: a non-zero written value becomes the record
+    /// handle, after `rebaseImplicitRowID` lifts the counter above it so a
+    /// later automatic handle cannot collide with it. A NULL or a ZERO is not
+    /// a handle -- it means "allocate one", which is the ordinary path -- and
+    /// that is Go's own rule, not a convenience: `insert t (a, _tidb_rowid)
+    /// values (1, 0)` gets the next id rather than handle zero.
+    pub fn insert_row_with_row_id(
+        &mut self,
+        row: &[Datum],
+        row_id: Option<i64>,
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<TableHandle, KvTableError> {
+        let explicit_handle = match row_id {
+            // Go rebases only for a NON-ZERO value (`if recordID != 0`); a
+            // stored zero under `NO_AUTO_VALUE_ON_ZERO` reaches the handle
+            // without moving the counter, which is why the next automatic row
+            // id after it is the counter's own next value.
+            Some(0) => Some(TableHandle::Int(0)),
+            Some(value) => {
+                // Go `rebaseImplicitRowID`, which rebases the SAME counter an
+                // AUTO_INCREMENT column allocates from -- one counter serves
+                // both, so writing a high row id also moves the auto column.
+                self.auto_id
+                    .rebase(value as u64)
+                    .map_err(|error| KvTableError::Storage(error.0))?;
+                Some(TableHandle::Int(value))
+            }
+            _ => None,
+        };
+        self.insert_row_at(row, explicit_handle, ctx)
+    }
+
+    fn insert_row_at(
+        &mut self,
+        row: &[Datum],
+        explicit_handle: Option<TableHandle>,
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<TableHandle, KvTableError> {
         let zone = ctx.time_zone();
         // The generated columns are recomputed HERE, at the one place every
         // row reaches, so the stored bytes, the row handle and the index
@@ -2055,8 +2098,12 @@ impl KvTable {
         let value = self.encode_row_value(row, &zone)?;
         // Go `addRecord`: every record key is unique. A clustered key derives
         // it from visible columns; a heap table derives it from `_tidb_rowid`,
-        // which `FORCE AUTO_INCREMENT` can intentionally rewind.
-        let handle = self.handle_of_row(row, &zone)?;
+        // which `FORCE AUTO_INCREMENT` can intentionally rewind -- or which
+        // the statement wrote itself.
+        let handle = match explicit_handle {
+            Some(handle) => handle,
+            None => self.handle_of_row(row, &zone)?,
+        };
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
         if self.row_exists(&handle)? {
             return Err(KvTableError::DuplicateEntry {

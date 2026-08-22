@@ -433,6 +433,11 @@ impl Session {
             .unwrap_or_else(|_| "utf8mb4_bin".to_owned());
         let zone = self.session_time_zone();
         let clock = self.statement_clock(&zone);
+        // Go `SessionVars.AllowWriteRowID`, set by `tidb_opt_write_row_id`.
+        let allow_write_row_id = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_OPT_WRITE_ROW_ID)
+            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
         let sysdate_is_now = self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_SYSDATE_IS_NOW)
@@ -699,6 +704,7 @@ impl Session {
                 .with_outer_join_reorder(outer_join_reorder)
                 .with_index_merge(index_merge)
                 .with_pushdown_blacklists(self.pushdown_blacklists.snapshot())
+                .with_allow_write_row_id(allow_write_row_id)
                 .with_static_partition_prune(static_partition_prune)
                 .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
                 .with_new_only_full_group_by_check(new_only_full_group_by_check)
@@ -747,6 +753,7 @@ impl Session {
             ignore_err,
         )
         .with_date_modes(date_modes)
+        .with_allow_write_row_id(allow_write_row_id)
         .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
         .with_new_only_full_group_by_check(new_only_full_group_by_check)
         .with_session_state(current_db, version, tidb_info)

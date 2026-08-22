@@ -426,6 +426,9 @@ pub struct StmtContext {
     /// Go `SessionVars.EnableIndexMerge`: whether automatic IndexMerge paths
     /// participate in this statement's costed access-path selection.
     index_merge: bool,
+    /// Go `SessionVars.AllowWriteRowID` (`tidb_opt_write_row_id`): whether an
+    /// `INSERT`/`REPLACE`/`UPDATE` may name `_tidb_rowid` and write it.
+    allow_write_row_id: bool,
     /// Go `expression.DefaultExprPushDownBlacklist`, the map
     /// `IsPushDownEnabled` reads. Empty until an `ADMIN RELOAD
     /// EXPR_PUSHDOWN_BLACKLIST` publishes one, and every decision that
@@ -660,6 +663,7 @@ impl StmtContext {
             outer_join_reorder: true,
             // Go `vardef.DefTiDBEnableIndexMerge = true`.
             index_merge: true,
+            allow_write_row_id: false,
             expr_pushdown_blacklist: std::sync::Arc::default(),
             disabled_logical_rules: std::sync::Arc::default(),
             // Go's shipped `tidb_partition_prune_mode` is `dynamic`.
@@ -1184,6 +1188,19 @@ impl StmtContext {
     pub fn with_index_merge(mut self, enabled: bool) -> Self {
         self.index_merge = enabled;
         self
+    }
+
+    /// Sets `@@tidb_opt_write_row_id` for this statement.
+    #[must_use]
+    pub fn with_allow_write_row_id(mut self, allowed: bool) -> Self {
+        self.allow_write_row_id = allowed;
+        self
+    }
+
+    /// Go `SessionVars.AllowWriteRowID`.
+    #[must_use]
+    pub fn allow_write_row_id(&self) -> bool {
+        self.allow_write_row_id
     }
 
     /// Installs the two published blacklists. See

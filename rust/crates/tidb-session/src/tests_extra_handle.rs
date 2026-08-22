@@ -241,3 +241,113 @@ fn a_rowid_equality_is_a_point_get_with_no_filter_above_it() {
     // A handle no row has answers nothing rather than failing.
     assert!(row_text(session.run("SELECT a FROM t WHERE _tidb_rowid = 99")).is_empty());
 }
+
+/// Writing `_tidb_rowid` needs `tidb_opt_write_row_id`, and the value becomes
+/// the record HANDLE.
+///
+/// Go `initInsertColumns` refuses the named column outright without the
+/// variable, with a plain error that reaches the client as 1105. With it, a
+/// non-zero value is the handle and `rebaseImplicitRowID` lifts the counter
+/// above it so a later automatic handle cannot collide.
+///
+/// The sequence is the source corpus's own:
+/// `tests/integrationtest/t/executor/rowid.test`.
+#[test]
+fn an_insert_may_write_the_extra_handle_under_its_variable() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a int, b int)")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1, 7), (1, 8), (1, 9)")
+        .unwrap();
+
+    // Refused by default, in Go's own words.
+    let error = session
+        .run("INSERT INTO t (a, b, _tidb_rowid) VALUES (2, 2, 2)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1105);
+    assert_eq!(
+        error.message,
+        "insert, update and replace statements for _tidb_rowid are not supported"
+    );
+
+    session
+        .run("SET SESSION tidb_opt_write_row_id = ON")
+        .unwrap();
+    session.run("DELETE FROM t WHERE _tidb_rowid = 2").unwrap();
+    session
+        .run("INSERT INTO t (a, b, _tidb_rowid) VALUES (2, 2, 2), (5, 5, 5)")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT a, b, _tidb_rowid FROM t")),
+        vec![
+            vec!["1", "7", "1"],
+            vec!["2", "2", "2"],
+            vec!["1", "9", "3"],
+            vec!["5", "5", "5"],
+        ]
+    );
+    // `rebaseImplicitRowID`: the next automatic handle clears the written 5.
+    session.run("INSERT INTO t VALUES (9, 9)").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT _tidb_rowid FROM t WHERE a = 9")),
+        vec![vec!["6"]]
+    );
+    // Writing a handle that exists is the ordinary duplicate.
+    let error = session
+        .run("INSERT INTO t (a, _tidb_rowid) VALUES (1, 1)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1062);
+}
+
+/// A written ZERO row id is "allocate one", unless `NO_AUTO_VALUE_ON_ZERO`
+/// says otherwise.
+///
+/// Go `adjustImplicitRowID`: a non-zero value is the handle; a NULL or zero
+/// falls to the allocation branch, whose condition is `d.IsNull() ||
+/// SQLMode&ModeNoAutoValueOnZero == 0` -- so with the mode set, a written
+/// zero falls PAST it and is stored as handle 0.
+#[test]
+fn a_written_zero_row_id_is_stored_only_under_no_auto_value_on_zero() {
+    let mut session = Session::new();
+    session
+        .run("SET SESSION tidb_opt_write_row_id = ON")
+        .unwrap();
+    session.run("CREATE TABLE t (a int)").unwrap();
+
+    session
+        .run("SET sql_mode = CONCAT(@@sql_mode, ',NO_AUTO_VALUE_ON_ZERO')")
+        .unwrap();
+    session
+        .run("INSERT INTO t (a, _tidb_rowid) VALUES (5, 0)")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT a, _tidb_rowid FROM t WHERE a = 5")),
+        vec![vec!["5", "0"]],
+        "the mode stores the zero as the handle"
+    );
+
+    session
+        .run("SET sql_mode = REPLACE(@@sql_mode, 'NO_AUTO_VALUE_ON_ZERO', '')")
+        .unwrap();
+    session
+        .run("INSERT INTO t (a, _tidb_rowid) VALUES (6, 0)")
+        .unwrap();
+    assert_ne!(
+        row_text(session.run("SELECT _tidb_rowid FROM t WHERE a = 6")),
+        vec![vec!["0"]],
+        "without it the zero means allocate"
+    );
+
+    // A NULL means allocate under either mode.
+    session
+        .run("INSERT INTO t (a, _tidb_rowid) VALUES (7, NULL)")
+        .unwrap();
+    assert_ne!(
+        row_text(session.run("SELECT _tidb_rowid FROM t WHERE a = 7")),
+        vec![vec!["0"]]
+    );
+}

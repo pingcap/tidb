@@ -1884,7 +1884,26 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // blacklists became INSTANCE-wide rather than per-session, which is Go's
     // scope: its atomics are package-level, so `ADMIN RELOAD` on one
     // connection changes what every other connection plans.
-    const KNOWN_DIVERGENCES: usize = 86;
+    //
+    // 86 -> 77, and `compared` 9557 -> 9565. An INSERT may WRITE
+    // `_tidb_rowid` now: Go `initInsertColumns` takes the named column as the
+    // extra handle and gates it on `tidb_opt_write_row_id`, raising a plain
+    // error -- 1105 to the client -- without it. `fillRow` appends the
+    // pseudo-column at `len(tCols)` and widens the row buffer by one, so the
+    // value travels with the row and `adjustImplicitRowID` takes it off as
+    // the record HANDLE rather than storing it, after `rebaseImplicitRowID`
+    // lifts the counter above it.
+    //
+    // A written ZERO is not a handle: it means "allocate", and Go's condition
+    // for that is `d.IsNull() || SQLMode&ModeNoAutoValueOnZero == 0` -- so
+    // with `NO_AUTO_VALUE_ON_ZERO` set the zero falls PAST the allocation
+    // branch and IS stored as handle 0. The corpus asserts the pair, the same
+    // statement answering masked row id 0 with the mode and 8 without it, and
+    // those three statements were the last of this topic to diverge.
+    //
+    // `executor/rowid` went from 38 matched / 9 diverged / 8 unreachable to
+    // 55 matched, 0 diverged, 0 unreachable.
+    const KNOWN_DIVERGENCES: usize = 77;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

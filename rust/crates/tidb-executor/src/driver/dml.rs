@@ -106,7 +106,18 @@ struct InsertTargetLayout {
     target_offsets: Vec<usize>,
     generated_targets: Vec<bool>,
     column_meta: Vec<ColumnDefaultMeta>,
+    /// Where `_tidb_rowid` sits in `column_list`, when the statement named
+    /// it. Go appends the same pseudo-column at `len(tCols)` in `fillRow`
+    /// and widens the row buffer by one (`initEvalBuffer`), so the value
+    /// travels with the row and is taken off it as the record HANDLE rather
+    /// than stored as a column.
+    extra_handle_offset: Option<usize>,
 }
+
+/// Go's message for writing `_tidb_rowid` without `tidb_opt_write_row_id`,
+/// raised as a plain error and so reaching the client as 1105.
+const WRITE_ROW_ID_REFUSED: &str =
+    "insert, update and replace statements for _tidb_rowid are not supported";
 
 /// Resolves everything owned by the INSERT target before an INSERT SELECT
 /// source is executed. Go plans the target and rejects a view, sequence,
@@ -116,6 +127,7 @@ fn resolve_insert_target(
     insert: &tidb_ast::InsertStmt,
     catalog: &Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<InsertTargetLayout, DriverError> {
     let (database, table_name) = split_table_path(&insert.table, current_db)?;
     let (database, table_name) = (database.to_owned(), table_name.to_owned());
@@ -133,7 +145,8 @@ fn resolve_insert_target(
     if matches!(table, TableEntry::Cte(_)) {
         return Err(DriverError::unsupported("a CTE is not an INSERT target"));
     }
-    let column_list = table.column_list();
+    let mut column_list = table.column_list();
+    let stored_width = column_list.len();
     let named_columns: Vec<String> = if insert.set_syntax {
         insert
             .set_columns
@@ -143,6 +156,27 @@ fn resolve_insert_target(
     } else {
         insert.columns.clone()
     };
+    // Go `initInsertColumns`: `_tidb_rowid` among the named columns is the
+    // extra handle, which only `tidb_opt_write_row_id` admits writing. A
+    // table with a real handle has no such column at all, so the name falls
+    // through to the ordinary 1054 there -- which is what TiDB answers for
+    // `insert s (a, _tidb_rowid) values (1, 2)` on a table with a primary
+    // key.
+    let extra_handle_offset = ((insert.set_syntax || insert.columns_specified)
+        && crate::driver::from::extra_handle_column(table).is_some()
+        && named_columns.iter().any(|name| {
+            name.eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)
+        }))
+    .then(|| {
+        column_list.push((
+            crate::driver::leaf_demand::EXTRA_HANDLE_NAME.to_owned(),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        ));
+        stored_width
+    });
+    if extra_handle_offset.is_some() && !ctx.allow_write_row_id() {
+        return Err(DriverError::unsupported(WRITE_ROW_ID_REFUSED));
+    }
     let target_offsets = if insert.set_syntax || insert.columns_specified {
         named_columns
             .iter()
@@ -159,18 +193,34 @@ fn resolve_insert_target(
     } else {
         (0..column_list.len()).collect()
     };
-    let generated_targets: Vec<bool> = match table {
+    let mut generated_targets: Vec<bool> = match table {
         TableEntry::Kv(kv) => kv
             .visible_columns()
             .iter()
             .map(|column| column.generated.is_some())
             .collect(),
-        TableEntry::Mem(_) => vec![false; column_list.len()],
+        TableEntry::Mem(_) => vec![false; stored_width],
         TableEntry::Cte(_) | TableEntry::View(_) | TableEntry::Sequence(_) => {
             unreachable!("read-only targets were refused above")
         }
     };
-    let column_meta = column_metadata(table);
+    let mut column_meta = column_metadata(table);
+    // The pseudo-column carries the same shape as a stored one so every
+    // per-target lookup below stays indexed the same way. It is never
+    // generated, and its "default" is the NULL that means "allocate a
+    // handle" (Go `adjustImplicitRowID`'s `!hasValue` branch).
+    if extra_handle_offset.is_some() {
+        generated_targets.push(false);
+        column_meta.push(ColumnDefaultMeta {
+            default_value: None,
+            not_null: false,
+            no_default_value: false,
+            name: crate::driver::leaf_demand::EXTRA_HANDLE_NAME.to_owned(),
+            field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            column_info_version: 0,
+            generated: false,
+        });
+    }
     if insert.source.is_some() {
         for &offset in &target_offsets {
             if generated_targets[offset] {
@@ -188,6 +238,7 @@ fn resolve_insert_target(
         target_offsets,
         generated_targets,
         column_meta,
+        extra_handle_offset,
     })
 }
 
@@ -208,7 +259,7 @@ pub(crate) fn run_insert_traced(
         return Err(DriverError::unsupported("partitions are not supported yet"));
     }
 
-    let target_layout = resolve_insert_target(insert, catalog, current_db)?;
+    let target_layout = resolve_insert_target(insert, catalog, current_db, ctx)?;
     let eval_chunk = {
         let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
         chunk.set_num_virtual_rows(1);
@@ -267,6 +318,7 @@ pub(crate) fn run_insert_traced(
         database,
         table_name,
         column_list,
+        extra_handle_offset,
         target_offsets,
         generated_targets,
         column_meta,
@@ -624,11 +676,23 @@ pub(crate) fn run_insert_traced(
         // parses a numeric string.
         if let TableEntry::Kv(kv) = &*table {
             for (offset, value) in row.iter_mut().enumerate() {
-                let column = &kv.columns[offset];
+                // The row is one wider than the table when the statement
+                // wrote `_tidb_rowid`. Go gives that slot a synthetic
+                // `table.Column` built from `NewExtraHandleColInfo()`
+                // (`fillRow`) so every per-column step has an entry; the cast
+                // it performs is `setDatumAutoIDAndCast` against that
+                // column's `TypeLonglong`.
+                let (field_type, name) = match kv.columns.get(offset) {
+                    Some(column) => (&column.field_type, column.name.as_str()),
+                    None => (
+                        &column_meta[offset].field_type,
+                        column_meta[offset].name.as_str(),
+                    ),
+                };
                 *value = cast_value_for_column(
                     std::mem::replace(value, Datum::Null),
-                    &column.field_type,
-                    &column.name,
+                    field_type,
+                    name,
                     new_rows.len(),
                     ctx,
                 )?;
@@ -929,13 +993,47 @@ pub(crate) fn run_insert_traced(
         if let Some(allocated) = first_allocated {
             ctx.publish_last_insert_id(allocated);
         }
-        if let Err(error) = target(catalog, &database, &table_name).insert_row(row, ctx) {
+        // Go `fillRow` appends the extra handle at `len(tCols)` and
+        // `adjustImplicitRowID` takes it off the row as the record HANDLE --
+        // it is not a stored column, so the row that reaches the table is the
+        // stored one again.
+        let (row, written_row_id): (&[Datum], Option<i64>) = match extra_handle_offset {
+            Some(offset) => (
+                &row[..offset.min(row.len())],
+                row.get(offset).and_then(|value| written_row_id(value, ctx)),
+            ),
+            None => (row.as_slice(), None),
+        };
+        if let Err(error) =
+            target(catalog, &database, &table_name).insert_row_with_row_id(row, written_row_id, ctx)
+        {
             handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
             continue;
         }
         inserted += 1;
     }
     Ok((inserted, first_allocated))
+}
+
+
+/// Go `adjustImplicitRowID`'s reading of a written `_tidb_rowid`: the handle
+/// the statement asked for, or `None` for "allocate one".
+///
+/// Go decides it in two steps. A non-zero value is always the handle. A NULL
+/// or a ZERO is normally "allocate", EXCEPT that the zero is kept when
+/// `NO_AUTO_VALUE_ON_ZERO` is in the `sql_mode` -- Go's condition is
+/// `d.IsNull() || SQLMode&ModeNoAutoValueOnZero == 0`, so with the mode set a
+/// written zero falls past the allocation branch and is stored as handle 0.
+/// The corpus asserts exactly that pair: the same
+/// `insert t (a, _tidb_rowid) values (n, 0)` answers masked row id 0 with the
+/// mode and 8 without it.
+fn written_row_id(value: &Datum, ctx: &crate::StmtContext) -> Option<i64> {
+    let written = match value {
+        Datum::Int(value) => *value,
+        Datum::UInt(value) => *value as i64,
+        _ => return None,
+    };
+    (written != 0 || ctx.auto_increment_zero_is_explicit()).then_some(written)
 }
 
 /// The one rendering of a byte-backed write failure, so every write path
@@ -1571,16 +1669,25 @@ pub(crate) fn run_update_traced(
         let (offset, _, _) = resolver
             .resolve(&assignment.col)
             .ok_or(DriverError::unsupported("unknown column in SET"))?;
-        // `_tidb_rowid` READS as an ordinary column and is not a stored one,
-        // so it cannot be an assignment target: Go gates writing it behind
-        // `tidb_opt_write_row_id`, and even then only for INSERT
-        // (`executor/rowid`'s recorded 1105, "insert, update and replace
-        // statements for _tidb_rowid are not supported"). Refusing keeps the
-        // column-metadata lookup below indexed by a STORED column, which is
-        // the only thing it describes.
+        // `_tidb_rowid` READS as an ordinary column but is not a stored one,
+        // so it cannot be an assignment target here. Go gates writing it
+        // behind `tidb_opt_write_row_id` (`executor/builder.go:3025`), and
+        // WITHOUT that variable the refusal is the same 1105 an INSERT gets
+        // -- which is what this reports, in Go's own words.
+        //
+        // NARROWER THAN GO with the variable set: Go accepts the assignment
+        // and MOVES the row, because changing the handle means removing the
+        // old record and adding a new one (`tables.UpdateRecord`'s
+        // handle-changed path). That move is unported, so the statement is
+        // refused rather than silently writing the column and leaving the row
+        // under its old handle. Refusing also keeps the column-metadata
+        // lookup below indexed by a STORED column, which is all it describes.
         if extra_handle_slot == Some(offset) {
+            if !ctx.allow_write_row_id() {
+                return Err(DriverError::unsupported(WRITE_ROW_ID_REFUSED));
+            }
             return Err(DriverError::unsupported(
-                "update of _tidb_rowid is not a statement TiDB accepts",
+                "UPDATE of _tidb_rowid moves the row, which is not supported yet",
             ));
         }
         // Go `IsDefaultExprSameColumn`: a generated target accepts only bare
