@@ -1067,6 +1067,7 @@ pub(crate) fn commit_fast_path_source(
                     estimate,
                     covering,
                     index_point_allowed,
+                    hints.lookup_pushdown_hinted(index_id),
                     from_source,
                     trace.as_deref_mut(),
                     &mut index_order,
@@ -1974,6 +1975,11 @@ fn commit_index_range_source(
     // Whether the WHERE left no conjunct unconsumed by this index's ranges,
     // which is what gates Go's fast point shapes.
     index_point_allowed: bool,
+    // Whether an `INDEX_LOOKUP_PUSHDOWN` hint elected this index's lookup
+    // for Go's `LocalIndexLookUp` execution (`AvailablePaths::
+    // lookup_pushdown_hinted`). Meaningless for a covering path, which
+    // builds no handle batch to push down.
+    lookup_pushdown: bool,
     from_source: &mut Option<Box<dyn Executor>>,
     trace: Option<&mut PlanTrace>,
     index_order: &mut Option<IndexAccessOrder>,
@@ -2023,6 +2029,13 @@ fn commit_index_range_source(
     // transaction that has written this table answers in index order too.
     if covering || table.has_dirty_content() {
         exec.answer_in_index_order();
+    }
+    if lookup_pushdown && !covering {
+        // Go plans a `LocalIndexLookUp` for the hinted index and its
+        // executor truncates a pushed LIMIT per partition AFTER the handle
+        // sort, where the plain lookup truncates the index stream before
+        // it; see `IndexRangeSourceExec::lookup_pushdown`.
+        exec.mark_lookup_pushdown();
     }
     let index = table
         .indexes()

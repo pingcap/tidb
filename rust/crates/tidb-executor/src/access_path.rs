@@ -605,6 +605,15 @@ pub struct IndexRangeSourceExec {
     /// Handles skipped before a limit embedded in an ordered IndexLookUp.
     lookup_offset: u64,
     skipped_handles: u64,
+    /// Go's `indexWorker.scannedKeys` net of the offset skip: how many
+    /// handles have been extracted into batches. The PLAIN flavour's
+    /// cumulative limit cut (`extractTaskHandles`' `leftCnt`) is computed
+    /// from THIS, not from `produced`: Go counts keys at EXTRACTION time,
+    /// and a partitioned fill extracts the next partition's batch before the
+    /// previous one's rows are emitted -- budgeting on emissions would
+    /// over-collect the boundary partition and sort handles into the answer
+    /// that Go's index-order cut excludes.
+    limit_scanned_keys: u64,
     /// Go's `canReorderHandles` (`builder.go`): whether this read may answer
     /// in handle order. FALSE for the two reads whose answer is the index
     /// walk itself -- a COVERING path, which is Go's `PhysicalIndexReader`
@@ -630,9 +639,38 @@ pub struct IndexRangeSourceExec {
     lookup_handles: Vec<Option<TableHandle>>,
     /// The current handle batch -- Go's `lookupTableTask.handles`, already
     /// sorted unless [`Self::keep_order`].
+    ///
+    /// A batch NEVER spans two partitions: Go's `indexWorker` builds each
+    /// `lookupTableTask` from one per-partition `SelectResult` and tags it
+    /// `prunedPartitions[curResultIdx]` (`buildAndDispatchLookupTasks`), so
+    /// the sort above is per partition and a partitioned lookup answers
+    /// partition by partition. Filling across the boundary would sort one
+    /// batch globally and interleave the partitions by handle.
     batch: Vec<TableHandle>,
     /// How much of `batch` has been read.
     batch_at: usize,
+    /// The pruned-partition ordinal `batch` was read from.
+    batch_partition: usize,
+    /// The first handle of the NEXT partition, pulled while filling the
+    /// current partition's batch and held for the next one -- the storage
+    /// cursor cannot be peeked without consuming.
+    pending_handle: Option<(TableHandle, usize)>,
+    /// Whether this lookup is Go's `LocalIndexLookUp` -- the
+    /// `INDEX_LOOKUP_PUSHDOWN` hint honoured by
+    /// `checkIndexLookUpPushDownSupported`. It changes WHERE a pushed
+    /// `LIMIT` truncates: the limit rides INSIDE each per-partition cop
+    /// request (`Limit | cop[tikv]` under `LocalIndexLookUp` in the recorded
+    /// plans), so each partition's index stream is cut at the FULL
+    /// `offset + count` -- not at the cumulative remainder -- and the
+    /// storage-side lookup then sorts those keys by handle (unistore
+    /// `indexLookUpExec.fetchTableScans`: `sort.Slice(sortedHandles, ...)`).
+    /// The cumulative offset/count accounting happens on ARRIVAL, over the
+    /// sorted stream (`extractLookUpPushDownRowsOrHandles`: `scannedKeys <=
+    /// Offset` skips, `> Offset + Count` stops). A plain lookup instead cuts
+    /// the index stream cumulatively BEFORE the sort
+    /// (`extractTaskHandles`' `leftCnt`), so the two flavours keep a
+    /// different row of the partition the limit lands in.
+    lookup_pushdown: bool,
     /// Go's `indexWorker.batchSize`: how many handles the next batch collects,
     /// doubling per batch up to [`MAX_HANDLE_BATCH`].
     batch_size: usize,
@@ -769,6 +807,7 @@ impl IndexRangeSourceExec {
             limit: None,
             lookup_offset: 0,
             skipped_handles: 0,
+            limit_scanned_keys: 0,
             can_reorder_handles: true,
             descending: false,
             covering: false,
@@ -776,6 +815,9 @@ impl IndexRangeSourceExec {
             lookup_handles: Vec::new(),
             batch: Vec::new(),
             batch_at: 0,
+            batch_partition: 0,
+            pending_handle: None,
+            lookup_pushdown: false,
             batch_size: INIT_HANDLE_BATCH,
             initial_batch_size: INIT_HANDLE_BATCH,
             lookup_rows: Vec::new(),
@@ -843,6 +885,15 @@ impl IndexRangeSourceExec {
         self.covering = true;
     }
 
+    /// Declares this lookup Go's `LocalIndexLookUp`: the comment hint
+    /// `INDEX_LOOKUP_PUSHDOWN` named this index and
+    /// `checkIndexLookUpPushDownSupported` admitted it. See the field doc on
+    /// [`Self::lookup_pushdown`] for what it changes -- only where a pushed
+    /// `LIMIT` truncates relative to the per-partition handle sort.
+    pub(crate) fn mark_lookup_pushdown(&mut self) {
+        self.lookup_pushdown = true;
+    }
+
     /// The next handle to READ A ROW FOR: Go's `lookupTableTask` walk, which
     /// is the index walk regrouped into batches and each batch sorted.
     ///
@@ -852,31 +903,143 @@ impl IndexRangeSourceExec {
     /// the sort, so the rows a `LIMIT` keeps are the index-order prefix even
     /// though they are answered in handle order.
     fn next_lookup_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
-        if self.batch_at == self.batch.len() {
-            let mut want = self.batch_size;
-            if let Some(limit) = self.limit {
-                let remaining = limit.saturating_sub(self.produced.get());
-                want = want.min(usize::try_from(remaining).unwrap_or(usize::MAX));
-            }
-            self.batch.clear();
-            self.batch_at = 0;
-            while self.batch.len() < want {
-                let Some(handle) = self.next_window_handle()? else {
-                    break;
-                };
-                self.batch.push(handle);
-            }
-            self.batch_size = (self.batch_size * 2).min(MAX_HANDLE_BATCH);
-            if self.can_reorder_handles {
-                self.batch.sort();
-            }
-            if self.batch.is_empty() {
+        while self.batch_at == self.batch.len() {
+            // An empty batch after a fill that still consumed handles is a
+            // partition the pushdown offset skipped whole -- the stream
+            // continues in the next partition, so refill rather than end.
+            if !self.fill_handle_batch()? && self.batch.is_empty() {
                 return Ok(None);
             }
         }
         let handle = self.batch[self.batch_at].clone();
         self.batch_at += 1;
         Ok(Some(handle))
+    }
+
+    /// Fills the next handle batch -- ONE of Go's `lookupTableTask`s.
+    ///
+    /// The fill stops at a partition boundary even when the batch has room:
+    /// Go's `indexWorker.fetchHandles` drains one per-partition
+    /// `SelectResult` to exhaustion before opening the next, and every task
+    /// it builds is tagged with exactly one partition
+    /// (`buildAndDispatchLookupTasks`: `tableLookUpTask.partitionTable =
+    /// w.idxLookup.prunedPartitions[curResultIdx]`). Cutting here is what
+    /// makes the handle sort below per-PARTITION, so a partitioned lookup
+    /// answers partition after partition in pruned order -- filling across
+    /// the boundary would sort one batch globally and interleave the
+    /// partitions by handle (`select ... from tp3` in
+    /// `executor/index_lookup_pushdown_partition` records `4 | 1,5 | 2,6 |
+    /// 3`, not `1..6`).
+    ///
+    /// Returns whether any handle was drawn from the index stream at all,
+    /// so the caller can tell an exhausted stream from a batch the pushdown
+    /// offset consumed whole.
+    fn fill_handle_batch(&mut self) -> Result<bool, ExecError> {
+        self.batch.clear();
+        self.batch_at = 0;
+        let mut pulled = false;
+        // Go's `LocalIndexLookUp` produces its completed rows only on the
+        // unordered side ("completedRows is only produced by index lookup
+        // push down which does not support keep order"), so the pushdown
+        // truncation rules below never apply to a keep-order read.
+        let pushdown = self.lookup_pushdown && self.can_reorder_handles;
+        let mut want = self.batch_size;
+        if let Some(limit) = self.limit {
+            let cap = if pushdown {
+                // The pushed limit rides INSIDE each per-partition cop
+                // request (Go plants `Limit offset:o, count:c | cop[tikv]`
+                // under `LocalIndexLookUp`), so it cuts THIS partition's
+                // index stream at the full `offset + count` -- NOT at the
+                // cumulative remainder. The cumulative count stop happens
+                // on ARRIVAL, over the handle-sorted stream
+                // (`extractLookUpPushDownRowsOrHandles`: `scannedKeys >
+                // Offset + Count` stops), which the emission loop in
+                // [`Executor::next`] reproduces by stopping at `limit`
+                // produced rows -- dropping exactly the sorted tail Go
+                // skips. Using the remainder here instead would truncate
+                // BEFORE the sort and keep the partition's index-order
+                // prefix where Go keeps its handle-order prefix:
+                // `select ... from tp2 where a > 33 limit 5` records `e`
+                // as its fifth row, not `f`.
+                self.lookup_offset.saturating_add(limit)
+            } else if self.filter.is_none() {
+                // Go `extractTaskHandles`: `leftCnt := w.PushedLimit.Offset
+                // + w.PushedLimit.Count - w.scannedKeys` cuts the
+                // INDEX-ORDER stream cumulatively, BEFORE the sort -- the
+                // rows a plain capped lookup keeps are the index-order
+                // prefix. Counted against EXTRACTED keys, as Go does: a
+                // partitioned collection fills the boundary partition's
+                // batch before earlier rows are emitted, so `produced`
+                // lags and would let extra handles into the sort. (The
+                // offset itself is skipped handle by handle by
+                // `next_window_handle` below, so this counter is net of
+                // it.)
+                limit.saturating_sub(self.limit_scanned_keys)
+            } else {
+                // With a residual filter accepted at the source, Go's cop
+                // evaluates its Selection BELOW the pushed limit, so
+                // `scannedKeys` counts only QUALIFYING keys -- which this
+                // tier only learns after the table read. Budgeting on
+                // `produced` keeps collecting handles until `count`
+                // qualifying rows exist, the same fixpoint one refill at a
+                // time.
+                limit.saturating_sub(self.produced.get())
+            };
+            want = want.min(usize::try_from(cap).unwrap_or(usize::MAX));
+        }
+        while self.batch.len() < want {
+            let entry = if pushdown {
+                // The arrival-order offset skip after the sort replaces the
+                // index-order skip `next_window_handle` does for the plain
+                // flavour.
+                self.next_handle()?
+            } else {
+                self.next_window_handle()?
+            };
+            let Some((handle, partition)) = entry else {
+                break;
+            };
+            pulled = true;
+            if self.batch.is_empty() {
+                self.batch_partition = partition;
+            } else if partition != self.batch_partition {
+                // The first handle of the NEXT partition. It belongs to the
+                // next task -- Go never lets one task span two partitions --
+                // and the storage cursor cannot be peeked without consuming,
+                // so it is held over.
+                self.pending_handle = Some((handle, partition));
+                break;
+            }
+            self.batch.push(handle);
+            // Extracted into a batch: Go's `w.scannedKeys++`. The stashed
+            // boundary handle above is deliberately NOT counted until the
+            // fill that actually takes it -- Go never reads ahead across
+            // per-partition results.
+            self.limit_scanned_keys += 1;
+        }
+        self.batch_size = (self.batch_size * 2).min(MAX_HANDLE_BATCH);
+        if self.can_reorder_handles {
+            // Go `buildTableReaderFromHandles(..., canReorderHandles=true)`:
+            // `slices.SortFunc(handles, ...i.Compare(j))` -- per TASK, which
+            // the boundary above has made per PARTITION.
+            self.batch.sort();
+        }
+        if pushdown {
+            // Go `extractLookUpPushDownRowsOrHandles`: `scannedKeys <=
+            // Offset` skips ARRIVALS, and the storage-side lookup delivered
+            // them handle-sorted per partition (unistore
+            // `indexLookUpExec.fetchTableScans`: `sort.Slice`), so the
+            // offset consumes the SORTED front of each partition batch, not
+            // the index-order front.
+            let skip = usize::try_from(self.lookup_offset.saturating_sub(self.skipped_handles))
+                .unwrap_or(usize::MAX)
+                .min(self.batch.len());
+            if skip > 0 {
+                self.batch.drain(..skip);
+                self.skipped_handles += skip as u64;
+            }
+        }
+        Ok(pulled)
     }
 
     /// Fetches and decodes one whole index-lookup handle batch. This is the
@@ -972,7 +1135,7 @@ impl IndexRangeSourceExec {
         }
     }
 
-    fn next_window_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
+    fn next_window_handle(&mut self) -> Result<Option<(TableHandle, usize)>, ExecError> {
         while self.skipped_handles < self.lookup_offset {
             if self.next_handle()?.is_none() {
                 return Ok(None);
@@ -982,23 +1145,59 @@ impl IndexRangeSourceExec {
         self.next_handle()
     }
 
-    /// The next handle in index order across all ranges, opening the next
-    /// range's cursor when the current one runs out.
-    fn next_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
+    /// The next handle in index order across all ranges, with the
+    /// pruned-partition ordinal it was read from, opening the next cursor
+    /// when the current one runs out.
+    fn next_handle(&mut self) -> Result<Option<(TableHandle, usize)>, ExecError> {
+        if let Some(pending) = self.pending_handle.take() {
+            return Ok(Some(pending));
+        }
         if let Some(remote) = self.remote_index.as_mut() {
-            return remote
+            // The remote coprocessor stream only opens for an unpartitioned
+            // table (`pushdown_index_handle_cursor` refuses a partitioned
+            // one), so every handle is ordinal 0.
+            return Ok(remote
                 .next_handle()
-                .map_err(|_| ExecError::unsupported("remote index row failed to decode"));
+                .map_err(|_| ExecError::unsupported("remote index row failed to decode"))?
+                .map(|handle| (handle, 0)));
         }
         loop {
             if let Some(cursor) = self.cursor.as_mut() {
-                let handle = cursor
-                    .next_handle()
+                let entry = cursor
+                    .next_handle_in_partition()
                     .map_err(|_| ExecError::unsupported("index bytes failed to decode"))?;
-                if let Some(handle) = handle {
-                    return Ok(Some(handle));
+                if let Some(entry) = entry {
+                    return Ok(Some(entry));
                 }
                 self.cursor = None;
+            }
+            if self.can_reorder_handles {
+                // An UNORDERED lookup opens ONE cursor over every range,
+                // partition-major: Go builds one index request per pruned
+                // partition holding ALL the ranges
+                // (`IndexLookUpExecutor.buildTableKeyRanges`) and drains
+                // each partition's result before the next
+                // (`indexWorker.fetchHandles`). Opening one cursor per
+                // range here instead would answer RANGE-major and
+                // interleave the partitions of a multi-range lookup.
+                // `next_range == len` doubles as the "already opened"
+                // sentinel; an unordered read is never descending
+                // (`descending` is only set by `accept_keep_order`, which
+                // clears `can_reorder_handles`).
+                if self.next_range >= self.ranges.len() {
+                    return Ok(None);
+                }
+                self.next_range = self.ranges.len();
+                self.cursor = Some(
+                    self.table
+                        .index_lookup_ranges_cursor(
+                            self.index_id,
+                            &self.ranges,
+                            self.decode_context.zone(),
+                        )
+                        .map_err(|_| ExecError::unsupported("index range is not scannable"))?,
+                );
+                continue;
             }
             let range = if self.descending {
                 let Some(next_range) = self.next_range.checked_sub(1) else {
@@ -1023,11 +1222,11 @@ impl IndexRangeSourceExec {
                         // Go's `byItems`, the half of `needMergeSort` this
                         // tier was missing: non-empty exactly when the answer
                         // has to come back in index order, which is what
-                        // `can_reorder_handles` being FALSE already records
-                        // here -- a covering read, or a `keep order:true`
-                        // lookup. An unordered read may answer partition by
-                        // partition, and Go's index worker does.
-                        !self.can_reorder_handles,
+                        // `can_reorder_handles` being FALSE records on this
+                        // arm -- a covering read, or a `keep order:true`
+                        // lookup, whose partitions merge back into one index
+                        // order.
+                        true,
                     )
                     .map_err(|_| ExecError::unsupported("index range is not scannable"))?,
             );
@@ -1427,6 +1626,9 @@ impl Executor for IndexRangeSourceExec {
         self.lookup_row_at = 0;
         self.lookup_filter_complete = false;
         self.skipped_handles = 0;
+        self.limit_scanned_keys = 0;
+        self.batch_partition = 0;
+        self.pending_handle = None;
         self.partial_remote = None;
         self.partial_rows = None;
         self.partial_done = false;
@@ -1522,6 +1724,7 @@ impl Executor for IndexRangeSourceExec {
                 self.next_range = self.ranges.len();
                 self.batch.clear();
                 self.batch_at = 0;
+                self.pending_handle = None;
                 return Ok(());
             }
             let Some(row) = self.next_lookup_row()? else {
