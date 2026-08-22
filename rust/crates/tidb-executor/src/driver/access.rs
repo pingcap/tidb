@@ -459,7 +459,7 @@ pub(crate) fn try_fast_point_select(
             MAX_CHUNK_SIZE,
         ),
         table.clone(),
-        handle.clone().into_iter().collect(),
+        handle.handle.clone().into_iter().collect(),
         output.offsets,
         crate::kv_table::RowDecodeContext::for_query(ctx),
     );
@@ -467,7 +467,7 @@ pub(crate) fn try_fast_point_select(
         trace.push_fast_point_get(
             source_table_name(&scope, &table.name),
             &table,
-            handle.as_ref(),
+            handle.handle.as_ref(),
         );
         trace.set_scan_act_rows(exec.produced_rows());
     }
@@ -996,6 +996,7 @@ pub(crate) fn commit_fast_path_source(
                                 source_table_name(scope, &table.name),
                                 &table,
                                 Some(&handle),
+                                None,
                             );
                         } else {
                             trace.table_range_scan(
@@ -1102,7 +1103,7 @@ pub(crate) fn commit_fast_path_source(
             .flatten();
         let exec = handle_source_exec(
             &table,
-            handle.clone().into_iter().collect(),
+            handle.handle.clone().into_iter().collect(),
             &columns,
             output.as_ref(),
             ctx,
@@ -1111,7 +1112,8 @@ pub(crate) fn commit_fast_path_source(
             trace.point_get(
                 source_table_name(scope, &table.name),
                 &table,
-                handle.as_ref(),
+                handle.handle.as_ref(),
+                handle.index.as_ref(),
             );
             trace.set_scan_act_rows(exec.produced_rows());
         }
@@ -2865,9 +2867,11 @@ pub(crate) fn single_table_trace_estimate(
 /// acts on, so the affected row set is the full scan's either way -- see
 /// [`write_read_path`].
 pub(crate) enum WriteReadPath {
-    /// Go's `Point_Get`: one record, read by key. `None` is a key no row can
-    /// carry, which Go also plans as a `Point_Get` that reads nothing.
-    Point(Option<TableHandle>),
+    /// Go's `Point_Get`: one record, read by key -- carrying HOW it was
+    /// pinned, because the plan prints the pin (`AccessObject`). A `None`
+    /// handle is a key no row can carry, which Go also plans as a
+    /// `Point_Get` that reads nothing.
+    Point(PointGetPin),
     /// Go's `Batch_Point_Get`: several records read directly by their
     /// clustered or unique handles.
     Batch(Vec<TableHandle>),
@@ -4173,12 +4177,26 @@ impl<'a> PointPlanStmt<'a> {
 ///
 /// Returns `Ok(None)` when the statement does not qualify, so the caller
 /// falls back to the ordinary scan.
+/// What pinned a point get: Go `PointGetPlan`'s split between a HANDLE plan
+/// and an INDEX plan, which is exactly what its `AccessObject` prints --
+/// `table:t handle:N` for the first, `table:t, index:idx(cols)` for the
+/// second, never both.
+#[derive(Clone, Debug)]
+pub(crate) struct PointGetPin {
+    /// The resolved record handle (`None` = a key no row can carry; Go still
+    /// plans the `Point_Get` and reads nothing).
+    pub(crate) handle: Option<TableHandle>,
+    /// The UNIQUE INDEX that pinned the row, when one did: its name and its
+    /// column names, in index order. `None` is the handle pin.
+    pub(crate) index: Option<(String, Vec<String>)>,
+}
+
 pub(crate) fn try_point_get(
     select: &PointPlanStmt<'_>,
     table: &KvTable,
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
-) -> Result<Option<Option<TableHandle>>, DriverError> {
+) -> Result<Option<PointGetPin>, DriverError> {
     if select.having.is_some() || !select.order_by.is_empty() || !select.group_by.is_empty() {
         return Ok(None);
     }
@@ -4237,10 +4255,13 @@ pub(crate) fn try_point_get(
         let Some(value) = point_get_value(&handle_type, &pairs[0].value) else {
             return Ok(None);
         };
-        return Ok(Some(match value {
-            Datum::Int(value) => Some(TableHandle::Int(value)),
-            Datum::UInt(value) => Some(TableHandle::Int(value as i64)),
-            _ => return Ok(None),
+        return Ok(Some(PointGetPin {
+            handle: match value {
+                Datum::Int(value) => Some(TableHandle::Int(value)),
+                Datum::UInt(value) => Some(TableHandle::Int(value as i64)),
+                _ => return Ok(None),
+            },
+            index: None,
         }));
     }
 
@@ -4258,13 +4279,30 @@ pub(crate) fn try_point_get(
     if let Some(handle_offset) = table.pk_handle_offset() {
         let handle_column = &columns[handle_offset].0;
         if pairs.len() == 1 && pairs[0].column.eq_ignore_ascii_case(handle_column) {
-            return Ok(Some(match &pairs[0].value {
-                Datum::Int(value) => Some(TableHandle::Int(*value)),
-                Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
-                // Unreachable: the conversion above has already put the value
-                // in the handle column's integer domain or refused the plan.
-                _ => return Ok(None),
+            return Ok(Some(PointGetPin {
+                handle: match &pairs[0].value {
+                    Datum::Int(value) => Some(TableHandle::Int(*value)),
+                    Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
+                    // Unreachable: the conversion above has already put the
+                    // value in the handle column's integer domain or refused
+                    // the plan.
+                    _ => return Ok(None),
+                },
+                index: None,
             }));
+        }
+        // Go's `else if handlePair.value.Kind() != KindNull { return nil }`:
+        // once a HANDLE pair exists among the conjuncts, the unique-index arm
+        // is never tried -- the fast point plan is refused outright and the
+        // ordinary planner takes over, whose `convertToPointGet` prints the
+        // bare handle plan (`Point_Get table:t`) with the extra conjunct as a
+        // filter. Falling through to the unique index here instead printed
+        // `index:i(i, j)` where TiDB's recorded plan names no index.
+        if pairs
+            .iter()
+            .any(|pair| pair.column.eq_ignore_ascii_case(handle_column))
+        {
+            return Ok(None);
         }
     }
 
@@ -4294,7 +4332,12 @@ pub(crate) fn try_point_get(
                 .map_err(|e| DriverError::Parse(format!("common handle encode failed: {e:?}")))?;
             let handle = tidb_txnkv::CommonHandle::new(encoded)
                 .map_err(|e| DriverError::Parse(format!("common handle build failed: {e:?}")))?;
-            return Ok(Some(Some(TableHandle::Common(handle.encoded().to_vec()))));
+            // A clustered common handle IS the record key, so it prints as
+            // a handle plan, not an index one.
+            return Ok(Some(PointGetPin {
+                handle: Some(TableHandle::Common(handle.encoded().to_vec())),
+                index: None,
+            }));
         }
     }
 
@@ -4341,7 +4384,19 @@ pub(crate) fn try_point_get(
         let handle = table
             .lookup_unique(index.id, &values, zone)
             .map_err(|e| DriverError::Parse(format!("index lookup failed: {e:?}")))?;
-        return Ok(Some(handle));
+        // Go `PointGetPlan.AccessObject` prints the pinning index --
+        // `table:t, index:idx(cols)` -- and no handle, even though execution
+        // resolved one through the index entry.
+        let index_columns = index
+            .column_offsets
+            .iter()
+            .filter_map(|offset| table.columns.get(*offset))
+            .map(|column| column.name.clone())
+            .collect();
+        return Ok(Some(PointGetPin {
+            handle,
+            index: Some((index.name.clone(), index_columns)),
+        }));
     }
     Ok(None)
 }

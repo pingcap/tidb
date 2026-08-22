@@ -167,11 +167,11 @@ pub(crate) fn leaf_index_path(
     if hints.allows_table() {
         if let Some(where_clause) = where_clause {
             let stmt = PointPlanStmt::of_write(Some(where_clause), &[], None);
-            if let Ok(Some(handle)) =
+            if let Ok(Some(pin)) =
                 super::access::try_point_get(&stmt, table, columns, &ctx.session_zone())
             {
                 return Some(LeafAccessPath::Point {
-                    handle,
+                    handle: pin.handle,
                     order: wanted.map(|order| order.to_vec()).unwrap_or_default(),
                     candidate: tidb_planner::candidate_cost::Candidate::Fixed {
                         rows: 1.0,

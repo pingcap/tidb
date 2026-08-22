@@ -1023,7 +1023,7 @@ pub(crate) fn build_from(
                                     crate::kv_table::RowDecodeContext::for_query(ctx),
                                 );
                                 if let Some(trace) = trace.as_deref_mut() {
-                                    trace.point_get(&visible, kv, handle.as_ref());
+                                    trace.point_get(&visible, kv, handle.as_ref(), None);
                                 }
                                 Box::new(source)
                             }
@@ -1112,7 +1112,7 @@ pub(crate) fn build_from(
                                                 crate::driver::access::single_point_handle(&ranges)
                                             })
                                         {
-                                            trace.point_get(&visible, kv, Some(&handle));
+                                            trace.point_get(&visible, kv, Some(&handle), None);
                                         } else {
                                             trace.table_range_scan(&visible, &ranges, estimate);
                                             if keep_order {

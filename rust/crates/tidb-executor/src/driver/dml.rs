@@ -2523,8 +2523,8 @@ fn fetch_write_rows(
 ) -> Result<Vec<(crate::kv_table::TableHandle, Vec<Datum>)>, DriverError> {
     let decode_failed = |e| DriverError::Parse(format!("row decode failed: {e:?}"));
     match read_path {
-        Some(super::access::WriteReadPath::Point(handle)) => {
-            let Some(handle) = handle else {
+        Some(super::access::WriteReadPath::Point(pin)) => {
+            let Some(handle) = pin.handle.as_ref() else {
                 return Ok(Vec::new());
             };
             Ok(kv
@@ -2673,9 +2673,9 @@ fn trace_dml_source(
                 trace.batch_point_get(&visible, table, handles, handles.len(), &partitions);
             }
         }
-        Some(super::access::WriteReadPath::Point(handle)) => {
+        Some(super::access::WriteReadPath::Point(pin)) => {
             if let Some(super::catalog::TableEntry::Kv(table)) = catalog.get_in(database, name) {
-                trace.point_get(&visible, table, handle.as_ref());
+                trace.point_get(&visible, table, pin.handle.as_ref(), pin.index.as_ref());
             }
         }
         None => {}

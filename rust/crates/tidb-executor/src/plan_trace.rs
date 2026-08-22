@@ -1224,8 +1224,29 @@ impl PlanTrace {
         visible: &str,
         table: &KvTable,
         handle: Option<&TableHandle>,
+        index: Option<&(String, Vec<String>)>,
     ) {
         let partitions = sole_read_partition_name(table);
+        // Go `PointGetPlan.AccessObject`: an INDEX point get prints
+        // `table:t, index:idx(cols)` and NO handle -- execution resolved one
+        // through the index entry, but the plan names what pinned the row.
+        if let Some((name, columns)) = index {
+            let point = PlanNode::new(
+                "Point_Get",
+                Some(1.0),
+                format!(
+                    "table:{visible}{}, index:{name}({})",
+                    partition_object(&partitions),
+                    columns.join(", ")
+                ),
+                String::new(),
+            );
+            let mut point = point;
+            point.key_ndv_ratio = Some(1.0);
+            self.replace_top(point);
+            self.mark_top_access_consumed();
+            return;
+        }
         let (access, info) = match common_handle_access(visible, table, &partitions) {
             Some(access) => (access, String::new()),
             None => {
@@ -1262,7 +1283,7 @@ impl PlanTrace {
             String::new(),
             String::new(),
         ));
-        self.point_get(visible, table, handle);
+        self.point_get(visible, table, handle, None);
     }
 
     /// A read of the WHOLE of a covering index, which also REPLACES the

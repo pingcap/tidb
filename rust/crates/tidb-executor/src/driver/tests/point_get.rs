@@ -237,6 +237,9 @@ fn point_get_is_chosen_only_for_the_shapes_go_accepts() {
             &tidb_datatype::SessionTimeZone::utc(),
         )
         .unwrap()
+        // The tests below assert WHICH handle was pinned; the pin's index
+        // half has its own coverage through the recorded plans.
+        .map(|pin| pin.handle)
     };
 
     // Accepted: the handle, and a whole unique index.
