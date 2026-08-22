@@ -1243,21 +1243,30 @@ fn lower_select_fields(
         // a grouped column, or an aggregate the window's own spec named
         // (`SUM(v)` beside `RANK() OVER (ORDER BY SUM(v))`) -- is REUSED
         // rather than carried twice: two columns of the same name in the
-        // window stage's scope would be ambiguous there. Both are addressed
-        // by the same text the hoist stored, a column's name or an
-        // aggregate's restored form.
+        // window stage's scope would be ambiguous there.
+        //
+        // The lookup key must be the text the HOIST stored, which for
+        // anything but a column is `Expr::restore` -- not this field's
+        // display name. The two differ whenever the field is aliased
+        // (`SUM(v) s` displays as `s`), whenever the written form is not the
+        // restored one (`SUM(v)` restores as ``SUM(`v`)``), and whenever
+        // restoring normalises the call (`COUNT(*)` restores as `COUNT(1)`).
+        // Missing the match carried the aggregate a second time under the
+        // same restored name, and the window stage's scope then held two
+        // columns called ``SUM(`v`)`` -- which is why every one of those
+        // three spellings failed to resolve its own window spec.
         if !state.window_calls.is_empty() {
-            let name = match expr {
+            let hoisted_as = match expr {
                 tidb_ast::Expr::Column(path) => path.last().cloned().unwrap_or_default(),
-                _ => display.clone(),
+                _ => expr.restore(),
             };
             if let Some(index) = state
                 .names
                 .iter()
-                .position(|have| have.eq_ignore_ascii_case(&name))
+                .position(|have| have.eq_ignore_ascii_case(&hoisted_as))
             {
                 state.slots.push(OutputSlot::Agg(index));
-                state.slot_names.push(Some(alias.clone().unwrap_or(name)));
+                state.slot_names.push(Some(alias.clone().unwrap_or(display)));
                 continue;
             }
         }

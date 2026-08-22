@@ -104,6 +104,71 @@ fn window_over_group_by() {
     ));
 }
 
+/// The same aggregate named in BOTH the select list and a window's own
+/// specification is carried out of the aggregation ONCE, however each of the
+/// two is spelled.
+///
+/// The window hoist runs first and stores the aggregate under
+/// `Expr::restore`; the select list must recognise its own field as that same
+/// value or the aggregate is carried a SECOND time, and the window stage then
+/// sees two columns of one name and can resolve neither. The three spellings
+/// below are the three ways the field's written text differs from the stored
+/// one: an ALIAS replaces it, backticks are added to an identifier, and
+/// `COUNT(*)` normalises to `COUNT(1)`.
+#[test]
+fn an_aggregate_shared_by_the_select_list_and_a_window_spec_is_carried_once() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE gw (g BIGINT, h BIGINT, v BIGINT)")
+        .unwrap();
+    session
+        .run("INSERT INTO gw VALUES (1,1,10),(1,2,20),(2,1,30),(2,2,5),(3,1,15)")
+        .unwrap();
+
+    // Group sums are 30, 35, 15, so the ranks are 2, 3, 1 -- the same answer
+    // whichever way the shared `SUM(v)` is written.
+    let ranked = [["1", "30", "2"], ["2", "35", "3"], ["3", "15", "1"]];
+    for field in ["SUM(v) s", "SUM(v)", "SUM(`v`)", "SUM(v) AS `SUM(v)`"] {
+        assert_eq!(
+            row_text(session.run(&format!(
+                "SELECT g, {field}, RANK() OVER (ORDER BY SUM(v)) r FROM gw GROUP BY g ORDER BY g"
+            ))),
+            ranked,
+            "`{field}` beside a window spec naming the same aggregate"
+        );
+    }
+    // A named window's specification is substituted once, on the definition,
+    // and reaches the select list through the same stored text.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT g, SUM(v) s, RANK() OVER w r FROM gw GROUP BY g \
+                 WINDOW w AS (ORDER BY SUM(v)) ORDER BY g"
+        )),
+        ranked
+    );
+    // `COUNT(*)` restores as `COUNT(1)`: the written text is never the stored
+    // one here, so this shape failed even unaliased.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT g, COUNT(*) c, RANK() OVER (ORDER BY COUNT(*)) r FROM gw GROUP BY g \
+                 ORDER BY g"
+        )),
+        [["1", "2", "2"], ["2", "2", "2"], ["3", "1", "1"]]
+    );
+    // The field keeps its own label, which is the written text or the alias --
+    // never the restored form the hoist matched on.
+    let (columns, _) = query_text(
+        &mut session,
+        "SELECT g, COUNT(*), RANK() OVER (ORDER BY COUNT(*)) r FROM gw GROUP BY g",
+    );
+    assert_eq!(columns, ["g", "COUNT(*)", "r"]);
+    let (columns, _) = query_text(
+        &mut session,
+        "SELECT g, SUM(v) s, RANK() OVER (ORDER BY SUM(v)) r FROM gw GROUP BY g",
+    );
+    assert_eq!(columns, ["g", "s", "r"]);
+}
+
 /// A window function over `GROUP BY ... WITH ROLLUP`: the window sees the
 /// rollup OUTPUT rows, supergroup rows included, and their NULLed columns
 /// participate in `PARTITION BY`/`ORDER BY` like any other NULL.
