@@ -321,6 +321,53 @@ impl GlobalPriv {
         }
     }
 
+    /// Go `mysql.Priv2UserCol`: the `mysql.user` column this global
+    /// privilege is stored in, spelled as that map spells it (the column
+    /// resolves case-insensitively against `CreateUserTable`'s own casing,
+    /// e.g. `File_priv` vs the declared `FILE_priv`). Used by the
+    /// `mysql.user` mirror (`crate::user_table`) to write the same `'Y'`/
+    /// `'N'` updates Go's `composeGlobalPrivUpdate` writes -- a wrong name
+    /// here would make a GRANT visible to `SHOW GRANTS` (registry) but not
+    /// to `SELECT ... FROM mysql.user` (table), the exact split the mirror
+    /// exists to prevent.
+    #[must_use]
+    pub fn user_table_column(self) -> &'static str {
+        match self {
+            Self::Create => "Create_priv",
+            Self::Select => "Select_priv",
+            Self::Insert => "Insert_priv",
+            Self::Update => "Update_priv",
+            Self::Delete => "Delete_priv",
+            Self::ShowDatabases => "Show_db_priv",
+            Self::Super => "Super_priv",
+            Self::CreateUser => "Create_user_priv",
+            Self::CreateTablespace => "Create_tablespace_priv",
+            Self::Trigger => "Trigger_priv",
+            Self::Drop => "Drop_priv",
+            Self::Process => "Process_priv",
+            Self::GrantOption => "Grant_priv",
+            Self::References => "References_priv",
+            Self::Alter => "Alter_priv",
+            Self::Execute => "Execute_priv",
+            Self::Index => "Index_priv",
+            Self::CreateView => "Create_view_priv",
+            Self::ShowView => "Show_view_priv",
+            Self::CreateRole => "Create_role_priv",
+            Self::DropRole => "Drop_role_priv",
+            Self::CreateTemporaryTables => "Create_tmp_table_priv",
+            Self::LockTables => "Lock_tables_priv",
+            Self::CreateRoutine => "Create_routine_priv",
+            Self::AlterRoutine => "Alter_routine_priv",
+            Self::Event => "Event_priv",
+            Self::Shutdown => "Shutdown_priv",
+            Self::Reload => "Reload_priv",
+            Self::File => "File_priv",
+            Self::Config => "Config_priv",
+            Self::ReplicationClient => "Repl_client_priv",
+            Self::ReplicationSlave => "Repl_slave_priv",
+        }
+    }
+
     /// Resolves the exact spelling `tidb-parser`'s `GrantPrivilege::name`
     /// restores for a standard (non-dynamic) privilege token. Returns `None`
     /// for names this tier does not model as a static privilege (roles,

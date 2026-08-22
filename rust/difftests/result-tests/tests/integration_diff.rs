@@ -2171,7 +2171,30 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // containing a `PhysicalApply`. The driver now reports Apply construction
     // through the statement context, and the prepared path neither stores nor
     // hits for such a statement.
-    const KNOWN_DIVERGENCES: usize = 37;
+    // 37 -> 35: `executor/dual_password`'s two `show create user` lines, and
+    // they were CASCADES, not a hashing bug: TiDB's recorded hash is of the
+    // password a `RETAIN CURRENT PASSWORD` statement set, and this tier had
+    // refused those statements, so it printed the hash of the password the
+    // account STILL had. `mysql.user` is a real bootstrapped table now
+    // (`tidb_session::bootstrap` runs Go `metadef.CreateUserTable` plus
+    // `doDMLWorks`' root row; `tidb_session::user_table` keeps the account
+    // statements writing it), and `ALTER USER`/`SET PASSWORD` carry MySQL
+    // 8.0 dual passwords (`executeAlterUser`/`executeSetPwd`: the
+    // `$.additional_password` promotion, the 3894/3895/3878 validation
+    // order, and the APPLICATION_PASSWORD_ADMIN self-service gate). The
+    // topic itself went 39 matched / 2 diverged / 39 OutOfDomain to
+    // 80 / 0 / 0 (12 BothRejected either way), which is also why `compared`
+    // rose. Two engine bugs fell out of the same corpus and are fixed at
+    // their roots rather than worked around: `NULLIF` compared only NUMERIC
+    // pairs where Go's rewriter makes it `IF(a = b, NULL, a)` with the FULL
+    // comparison (`expression_rewriter.go`'s `ast.NullIf` arm; the JSON
+    // domain is what `DISCARD OLD PASSWORD`'s NULLIF collapse needs), and
+    // the ranger converted endpoints into the column's DECLARED length where
+    // Go's `newFieldType` (`ranger.go:779`) strips it -- a `CHAR(32)` key
+    // part NUL-padded the sort key, the repaired interval emptied, and
+    // `WHERE user = '...'` through `KEY i_user (User)` planned
+    // `TableDual rows:0`.
+    const KNOWN_DIVERGENCES: usize = 35;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

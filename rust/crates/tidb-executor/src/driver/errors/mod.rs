@@ -1012,6 +1012,42 @@ impl DriverError {
             *b"42000",
             "Can't find any matching row in the user table".to_owned(),
         ),
+        // Go's `errors.Errorf` fallback (1105, ER_UNKNOWN_ERROR) -- the
+        // dual-password plugin-capability refusal has no dedicated errno.
+        DriverError::DualPasswordUnsupportedForPlugin { plugin } => MysqlError::new(
+            1105,
+            *b"HY000",
+            format!("Dual password is not supported for users authenticating with plugin '{plugin}'"),
+        ),
+        // Go `ErrSecondPasswordCannotBeEmpty` (3878), message template from
+        // `errno/errname.go` with the `%-.64s` width specifiers applied to
+        // names far below the truncation width.
+        DriverError::SecondPasswordCannotBeEmpty { user, host } => MysqlError::new(
+            3878,
+            *b"HY000",
+            format!(
+                "Empty password can not be retained as second password for user \
+                 '{user}'@'{host}'."
+            ),
+        ),
+        // Go `ErrPasswordCannotBeRetainedOnPluginChange` (3894).
+        DriverError::PasswordCannotBeRetainedOnPluginChange { user, host } => MysqlError::new(
+            3894,
+            *b"HY000",
+            format!(
+                "Current password can not be retained for user '{user}'@'{host}' because \
+                 authentication plugin is being changed."
+            ),
+        ),
+        // Go `ErrCurrentPasswordCannotBeRetained` (3895).
+        DriverError::CurrentPasswordCannotBeRetained { user, host } => MysqlError::new(
+            3895,
+            *b"HY000",
+            format!(
+                "Current password can not be retained for user '{user}'@'{host}' because new \
+                 password is empty."
+            ),
+        ),
         // Go `ErrPluginIsNotLoaded` (1524).
         DriverError::PluginIsNotLoaded { plugin } => MysqlError::new(
             1524,

@@ -5,6 +5,7 @@
 
 mod accounts;
 mod column_grants;
+mod dual_password;
 mod dynamic_grants;
 mod enforcement;
 mod password_policy;

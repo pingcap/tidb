@@ -150,16 +150,24 @@ fn the_bootstrap_tables_are_refused_by_name() {
     let mut session = Session::new();
     session.run("USE mysql").unwrap();
 
+    // FLIPPED TO SUPPORT: `mysql.user` is a real bootstrapped table now
+    // (`crate::bootstrap` runs Go `metadef.CreateUserTable` plus
+    // `doDMLWorks`' root row, and `crate::user_table` keeps it written by
+    // the account statements). Go's captured `select count(*) from
+    // mysql.user` answers 1 on a fresh cluster -- the bootstrap root row --
+    // and so does this tier.
+    assert_eq!(
+        row_text(session.run("SELECT count(*) FROM mysql.user")),
+        [["1"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT Host, User, plugin FROM user")),
+        [["%", "root", "mysql_native_password"]]
+    );
+
     // A sample across the families Go's `show tables` in `mysql` lists:
-    // accounts, privileges, TiDB's own metadata, and statistics.
-    for table in [
-        "user",
-        "db",
-        "tables_priv",
-        "global_priv",
-        "tidb",
-        "stats_meta",
-    ] {
+    // privileges, TiDB's own metadata, and statistics.
+    for table in ["db", "tables_priv", "global_priv", "tidb", "stats_meta"] {
         let error = session
             .run(&format!("ADMIN CHECK TABLE {table}"))
             .unwrap_err()
@@ -238,6 +246,7 @@ fn enumerating_the_system_schema_under_reports() {
         ["bind_info"],
         ["expr_pushdown_blacklist"],
         ["opt_rule_blacklist"],
+        ["user"],
     ];
     assert_eq!(row_text(session.run("SHOW TABLES")), stored);
 

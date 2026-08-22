@@ -521,27 +521,23 @@ pub(crate) fn eval_func_values(
             let (a, b) = (vals[0].clone(), vals[1].clone());
             Ok(if a != Datum::Null { a } else { b })
         }
-        // NULLIF(a, b): NULL when a and b are equal, else a — numeric
-        // equality reuses `eval_binary`'s own Int/Decimal/Float promotion
-        // (confirmed via goeval: a MIXED pair like `NULLIF(150, 1.5e2)`
-        // is also NULL, not just same-type pairs), so no per-type-pair
-        // matching is hand-rolled here; strings stay excluded (never
-        // NULL), matching this function's pre-existing scope boundary.
+        // NULLIF(a, b): NULL when a and b are equal, else a. Go has no
+        // builtin for this at all -- the expression rewriter turns
+        // `NULLIF(a, b)` into `IF(a = b, NULL, a)`
+        // (`expression_rewriter.go`'s `ast.NullIf` arm) -- so the equality
+        // is the ORDINARY comparison with its full type derivation:
+        // Int/Decimal/Float promotion (confirmed via goeval: the MIXED pair
+        // `NULLIF(150, 1.5e2)` is NULL), string collation, and the JSON
+        // domain (`nullif(json_remove(..), cast('{}' as json))` is the
+        // collapse `ALTER USER ... DISCARD OLD PASSWORD` writes; comparing
+        // only numeric pairs left it always non-NULL). A NULL condition --
+        // either operand NULL -- makes IF take the else branch and answer
+        // `a`, which `eval_binary_in`'s NULL propagation reproduces.
         "NULLIF" if vals.len() == 2 => {
             let (a, b) = (vals[0].clone(), vals[1].clone());
-            let numeric = |v: &Datum| {
-                matches!(
-                    v,
-                    Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_)
-                )
-            };
-            let equal = if numeric(&a) && numeric(&b) {
-                match crate::ops::eval_binary_in(BinaryOp::Eq, a.clone(), b.clone(), ctx) {
-                    Ok(v) => v == Datum::Int(1),
-                    Err(e) => return Some(Err(e)),
-                }
-            } else {
-                false
+            let equal = match crate::ops::eval_binary_in(BinaryOp::Eq, a.clone(), b, ctx) {
+                Ok(v) => v == Datum::Int(1),
+                Err(e) => return Some(Err(e)),
             };
             Ok(if equal { Datum::Null } else { a })
         }

@@ -14,10 +14,12 @@
 
 //! The session-layer bootstrap: Go `pkg/session/bootstrap.go`'s
 //! `doDDLWorks`/`doDMLWorks`, reduced to the system tables this tier actually
-//! serves. Today that is three: `mysql.bind_info`, whose absence was the
-//! measured gap the GLOBAL-binding refusal pointed at, and the two blacklist
-//! tables `ADMIN RELOAD` reads (`crate::blacklist`) -- a statement that can
-//! only report what a table holds needs the table to exist first.
+//! serves. Today that is four: `mysql.user` (Go `metadef.CreateUserTable`
+//! plus `doDMLWorks`' root row -- account statements keep it in sync, see
+//! `crate::user_table`), `mysql.bind_info`, whose absence was the measured
+//! gap the GLOBAL-binding refusal pointed at, and the two blacklist tables
+//! `ADMIN RELOAD` reads (`crate::blacklist`) -- a statement that can only
+//! report what a table holds needs the table to exist first.
 //!
 //! Faithful to Go in shape: the table is created by running its OWN
 //! `CREATE TABLE` text (`tidb_metadef::system_tables_def`, the transcreated
@@ -87,6 +89,10 @@ impl Session {
         };
         let ddl_ctx = self.statement_context(false);
         for create in [
+            // Go creates `mysql.user` FIRST (`tableList` in `doDDLWorks`
+            // starts with `CreateUserTable`); kept first here so a failure
+            // names the account table rather than a bystander.
+            tidb_metadef::system_tables_def::CREATE_USER_TABLE,
             tidb_metadef::system_tables_def::CREATE_BIND_INFO_TABLE,
             // Go bootstraps these two empty (`doDDLWorks`); only an upgrade
             // from a pre-v4 cluster seeds `expr_pushdown_blacklist` rows
@@ -105,13 +111,16 @@ impl Session {
         // Go `insertBuiltinBindInfoRow`, minus the `HIGH_PRIORITY` word (a
         // scheduler hint this tier has no scheduler for). The zero timestamps
         // are Go's own values, admitted by the permissive date modes below.
-        let insert_ctx = tidb_executor::StmtContext::for_dml(false, false, false).with_date_modes(
-            tidb_datatype::DateModes {
+        // Built from the session's own DML context so the statement clock is
+        // attached: `mysql.user.Password_last_changed` defaults to
+        // `CURRENT_TIMESTAMP()`, which the insert path evaluates.
+        let insert_ctx = self
+            .statement_context(true)
+            .with_date_modes(tidb_datatype::DateModes {
                 no_zero_date: false,
                 no_zero_in_date: false,
                 allow_invalid_dates: false,
-            },
-        );
+            });
         let insert = format!(
             "INSERT INTO mysql.bind_info(original_sql, bind_sql, default_db, status, \
              create_time, update_time, charset, collation, source) VALUES \
@@ -121,6 +130,34 @@ impl Session {
         );
         self.with_catalog_mut(|catalog| {
             tidb_executor::run_insert_in(&insert, catalog, "mysql", &insert_ctx).map(|_| ())
+        })?;
+
+        // Go `doDMLWorks`' bootstrap `root`@`%` row, minus the
+        // `HIGH_PRIORITY` scheduler hint: every static privilege column `Y`
+        // except `Account_locked` (`N`), an EMPTY `authentication_string`
+        // under `mysql_native_password`, NULL `User_attributes`, empty
+        // `Token_issuer`. Columns Go omits (`Password_expired`,
+        // `Password_last_changed`, `Max_user_connections`, ...) take their
+        // `CreateUserTable` declared defaults exactly as they do in Go.
+        //
+        // Written even for a session whose `PrivilegeRegistry` was
+        // bootstrapped from a different account list: Go's answer to "what
+        // is in mysql.user on a fresh store" is this one row, and the
+        // registry-vs-table deviation is documented in `crate::user_table`.
+        let root = "INSERT INTO mysql.user (Host,User,authentication_string,plugin,Select_priv,\
+             Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,\
+             References_priv,Alter_priv,Show_db_priv,Super_priv,Create_tmp_table_priv,\
+             Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Create_routine_priv,\
+             Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,\
+             Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,\
+             Shutdown_priv,Reload_priv,FILE_priv,Config_priv,Create_Tablespace_Priv,\
+             User_attributes,Token_issuer) VALUES (\"%\", \"root\", \"\", \
+             \"mysql_native_password\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \
+             \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \
+             \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"N\", \"Y\", \"Y\", \"Y\", \"Y\", \
+             \"Y\", null, \"\")";
+        self.with_catalog_mut(|catalog| {
+            tidb_executor::run_insert_in(root, catalog, "mysql", &insert_ctx).map(|_| ())
         })
     }
 }
