@@ -431,10 +431,10 @@ pub struct StmtContext {
     /// EXPR_PUSHDOWN_BLACKLIST` publishes one, and every decision that
     /// consults it short-circuits on empty, so the ordinary path pays
     /// nothing.
-    expr_pushdown_blacklist: Rc<tidb_expr::infer_pushdown::ExprPushDownBlacklist>,
+    expr_pushdown_blacklist: std::sync::Arc<tidb_expr::infer_pushdown::ExprPushDownBlacklist>,
     /// Go `plannercore.DefaultDisabledLogicalRulesList`, published by `ADMIN
     /// RELOAD OPT_RULE_BLACKLIST` and read by `isLogicalRuleDisabled`.
-    disabled_logical_rules: Rc<std::collections::HashSet<String>>,
+    disabled_logical_rules: std::sync::Arc<std::collections::HashSet<String>>,
     /// Go `SessionVars.PartitionPruneMode == Static`: see
     /// [`StmtContext::static_partition_prune`].
     static_partition_prune: bool,
@@ -660,8 +660,8 @@ impl StmtContext {
             outer_join_reorder: true,
             // Go `vardef.DefTiDBEnableIndexMerge = true`.
             index_merge: true,
-            expr_pushdown_blacklist: Rc::default(),
-            disabled_logical_rules: Rc::default(),
+            expr_pushdown_blacklist: std::sync::Arc::default(),
+            disabled_logical_rules: std::sync::Arc::default(),
             // Go's shipped `tidb_partition_prune_mode` is `dynamic`.
             static_partition_prune: false,
             sequences: Rc::default(),
@@ -1191,11 +1191,12 @@ impl StmtContext {
     #[must_use]
     pub fn with_pushdown_blacklists(
         mut self,
-        expressions: Rc<tidb_expr::infer_pushdown::ExprPushDownBlacklist>,
-        rules: Rc<std::collections::HashSet<String>>,
+        published: (
+            std::sync::Arc<tidb_expr::infer_pushdown::ExprPushDownBlacklist>,
+            std::sync::Arc<std::collections::HashSet<String>>,
+        ),
     ) -> Self {
-        self.expr_pushdown_blacklist = expressions;
-        self.disabled_logical_rules = rules;
+        (self.expr_pushdown_blacklist, self.disabled_logical_rules) = published;
         self
     }
 

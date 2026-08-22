@@ -358,6 +358,18 @@ impl Session {
     /// connection shares; this is the equivalent handle, installed by the
     /// front end the same way [`Session::attach_process`] installs the
     /// process-list registry.
+    /// Installs the instance-wide push-down blacklists
+    /// ([`crate::blacklist::PushdownBlacklists`]) this session plans against.
+    ///
+    /// Go's are package-level, so `ADMIN RELOAD` on one connection changes
+    /// what every other connection plans. A front end that opens more than
+    /// one session hands them all the same handle to reproduce that; a
+    /// session that never gets one keeps its own empty pair, which is what a
+    /// single-session embedding wants.
+    pub fn attach_pushdown_blacklists(&mut self, blacklists: crate::blacklist::PushdownBlacklists) {
+        self.pushdown_blacklists = blacklists;
+    }
+
     pub fn attach_privileges(&mut self, registry: privilege::PrivilegeRegistry) {
         // Go's `Auth` activates the account's DEFAULT roles the moment the
         // connection is authenticated (captured: a fresh session reports its

@@ -1858,7 +1858,33 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // tier refuses `CREATE TEMPORARY TABLE` itself, so `tmp1` never exists,
     // and Go's own rule skips a table that does not exist. They close when
     // temporary tables land, not before.
-    const KNOWN_DIVERGENCES: usize = 91;
+    //
+    // 91 -> 86, `compared` flat at 9557. `_tidb_rowid` IS the row handle, and
+    // Go says so structurally: `buildDataSource` appends
+    // `NewExtraHandleSchemaCol()` to a table with neither an integer primary
+    // key nor a common handle, and builds `ds.handleCols` FROM it. So the
+    // ranger bounds a scan by it exactly as it does by an integer primary
+    // key, and `findPKHandle`'s `!tblInfo.PKIsHandle` branch makes an
+    // equality on it a `Point_Get` -- with no `Selection` above, because the
+    // handle pins the row completely. This tier read every row and filtered.
+    //
+    // Both are refused for a PARTITIONED table, which is Go's own carve-out
+    // ("Partition table can't use `_tidb_rowid` to generate PointGet Plan"):
+    // a row id alone does not say which partition holds the row.
+    //
+    // The point-get source had to learn the column too. Nothing in a decoded
+    // row fills the extra handle -- it reports the HANDLE -- so a schema that
+    // names it has a slot only the source can write, the same contract the
+    // table scan already had.
+    //
+    // Also here: `mysql.expr_pushdown_blacklist` now refuses an AGGREGATE by
+    // its own name (`CheckAggPushDown`'s last line), which it did not before
+    // -- the executor's partial-aggregate offer asked nothing, and the
+    // planner crate's own check was handed a hardcoded empty map. And the two
+    // blacklists became INSTANCE-wide rather than per-session, which is Go's
+    // scope: its atomics are package-level, so `ADMIN RELOAD` on one
+    // connection changes what every other connection plans.
+    const KNOWN_DIVERGENCES: usize = 86;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

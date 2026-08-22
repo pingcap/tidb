@@ -152,3 +152,92 @@ fn a_write_reads_the_extra_handle_without_writing_it() {
     // `tidb_opt_write_row_id`; refused here rather than silently accepted.
     assert!(session.run("UPDATE t SET _tidb_rowid = 7 WHERE a = 10").is_err());
 }
+
+/// A condition on `_tidb_rowid` bounds the SCAN, because the extra handle IS
+/// the row handle.
+///
+/// Go `buildDataSource` appends `NewExtraHandleSchemaCol()` for a table with
+/// neither an integer primary key nor a common handle, and builds
+/// `ds.handleCols` FROM it -- so the ranger treats it exactly as it treats an
+/// integer primary key, and `deriveTablePathStats` gives the table path real
+/// ranges. Without that this tier read every row and filtered above.
+///
+/// Queries and shapes are the source corpus's own:
+/// `tests/integrationtest/t/explain_easy.test`.
+#[test]
+fn a_rowid_comparison_bounds_the_table_scan() {
+    let mut session = fixture();
+
+    let scan = |session: &mut Session, sql: &str| {
+        row_text(session.run(sql))
+            .into_iter()
+            .map(|row| row.join(" | "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let plan = scan(&mut session, "EXPLAIN SELECT * FROM t WHERE _tidb_rowid > 1");
+    assert!(
+        plan.contains("TableRangeScan") && plan.contains("range:(1,+inf]"),
+        "the rowid bounds the scan:\n{plan}"
+    );
+    assert_eq!(
+        row_text(session.run("SELECT a FROM t WHERE _tidb_rowid > 1")),
+        vec![vec!["20"], vec!["30"]]
+    );
+
+    // A second, unrelated conjunct stays above the range, as Go's does.
+    let plan = scan(
+        &mut session,
+        "EXPLAIN SELECT * FROM t WHERE _tidb_rowid > 1 AND a > 0",
+    );
+    assert!(
+        plan.contains("TableRangeScan") && plan.contains("gt(test.t.a, 0)"),
+        "the other conjunct is still a filter:\n{plan}"
+    );
+
+    // And a predicate that names no rowid still reads the whole table.
+    let plan = scan(&mut session, "EXPLAIN SELECT * FROM t WHERE a > 0");
+    assert!(
+        plan.contains("TableFullScan"),
+        "an unrelated predicate builds no handle range:\n{plan}"
+    );
+}
+
+/// An EQUALITY on `_tidb_rowid` is a point get, and consumes the predicate.
+///
+/// Go `findPKHandle`'s `!tblInfo.PKIsHandle` branch takes the `_tidb_rowid`
+/// pair as the handle pair, typed `TypeLonglong`. Its recorded plan for
+/// `select * from t where _tidb_rowid = 0` is a bare `Point_Get table:t
+/// handle:0` -- no `Selection` above it, because the handle pins the row
+/// completely.
+#[test]
+fn a_rowid_equality_is_a_point_get_with_no_filter_above_it() {
+    let mut session = fixture();
+
+    let plan = row_text(session.run("EXPLAIN SELECT * FROM t WHERE _tidb_rowid = 2"))
+        .into_iter()
+        .map(|row| row.join(" | "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        plan.contains("Point_Get") && plan.contains("handle:2"),
+        "a rowid equality is a point get:\n{plan}"
+    );
+    assert!(
+        !plan.contains("Selection"),
+        "and the handle consumed the predicate:\n{plan}"
+    );
+
+    assert_eq!(
+        row_text(session.run("SELECT a, b FROM t WHERE _tidb_rowid = 2")),
+        vec![vec!["20", "2"]]
+    );
+    // The point get still reports the column when the statement asks for it.
+    assert_eq!(
+        row_text(session.run("SELECT _tidb_rowid, a FROM t WHERE _tidb_rowid = 2")),
+        vec![vec!["2", "20"]]
+    );
+    // A handle no row has answers nothing rather than failing.
+    assert!(row_text(session.run("SELECT a FROM t WHERE _tidb_rowid = 99")).is_empty());
+}

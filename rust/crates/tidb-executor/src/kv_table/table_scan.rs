@@ -3068,6 +3068,12 @@ impl crate::table_access::TableAccess for TableScanExec {
         aggregate: &PushdownPartialAggregate,
         ctx: &crate::StmtContext,
     ) -> bool {
+        // Go `CheckAggPushDown` ends with `IsPushDownEnabled(aggFunc.Name,
+        // storeType)`, so `mysql.expr_pushdown_blacklist` refuses an
+        // aggregate by its own name exactly as it refuses a scalar function.
+        if !crate::pushdown_blacklist::aggregate_admits(aggregate, ctx) {
+            return false;
+        }
         if self.estimated_rows.is_none_or(|rows| rows <= 1.0)
             || aggregate
                 .input_offsets()

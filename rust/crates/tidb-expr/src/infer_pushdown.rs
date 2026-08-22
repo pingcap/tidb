@@ -149,11 +149,16 @@ pub fn blacklist_name(name: &str) -> String {
 /// Go `LoadExprPushdownBlacklist`'s per-row `store_type` word list, as the OR
 /// of its bits. An unrecognized word contributes nothing, which is what Go's
 /// `if`/`else if` chain does with it.
+///
+/// The words are NOT trimmed, because Go's are not: `strings.Split` on `,`
+/// and then `typeString == kv.TiKV.Name()`, so a row written
+/// `'tikv, tiflash'` sets the TiKV bit and NOT the TiFlash one. Trimming
+/// would blacklist more than the operator wrote.
 #[must_use]
 pub fn blacklist_store_mask(store_types: &str) -> u32 {
     let mut mask = 0;
     for word in store_types.to_lowercase().split(',') {
-        mask |= match word.trim() {
+        mask |= match word {
             "tikv" => 1 << PushDownStore::TiKv as u8,
             "tiflash" => 1 << PushDownStore::TiFlash as u8,
             "tidb" => 1 << PushDownStore::TiDb as u8,
@@ -879,5 +884,57 @@ mod tests {
             "plus",
             &FieldType::new(FieldTypeCode::LongLong)
         ));
+    }
+
+    /// Go `LoadExprPushdownBlacklist`'s two per-row transforms.
+    #[test]
+    fn a_blacklist_row_is_lowercased_aliased_and_masked_as_go_does() {
+        // `funcName2Alias`: the operator spelling and the function name land
+        // on the same key, and a name with no entry is left alone.
+        assert_eq!(blacklist_name("<"), "lt");
+        assert_eq!(blacklist_name("LT"), "lt");
+        assert_eq!(blacklist_name("<>"), "ne");
+        assert_eq!(blacklist_name("!="), "ne");
+        assert_eq!(blacklist_name("DIV"), "intdiv");
+        assert_eq!(blacklist_name("Is Null"), "isnull");
+        assert_eq!(blacklist_name("enum"), "enum");
+        assert_eq!(blacklist_name("MOD"), "mod");
+
+        let tikv = 1 << PushDownStore::TiKv as u8;
+        let tiflash = 1 << PushDownStore::TiFlash as u8;
+        let tidb = 1 << PushDownStore::TiDb as u8;
+        assert_eq!(
+            blacklist_store_mask("tikv,tiflash,tidb"),
+            tikv | tiflash | tidb
+        );
+        assert_eq!(blacklist_store_mask("TiKV"), tikv);
+        assert_eq!(blacklist_store_mask("mock"), 0);
+        // NOT trimmed, because Go's `strings.Split` result is compared
+        // verbatim: the space keeps `tiflash` out.
+        assert_eq!(blacklist_store_mask("tikv, tiflash"), tikv);
+    }
+
+    /// Go `IsPushDownEnabled`: a store set refuses only when EVERY bit the
+    /// question asks about is blacklisted.
+    #[test]
+    fn a_store_set_refuses_only_when_it_covers_the_question() {
+        let mut blacklist = ExprPushDownBlacklist::new();
+        blacklist.insert("lt".to_owned(), blacklist_store_mask("tikv"));
+        // The TiKV question is covered.
+        assert!(!is_push_down_enabled(&blacklist, "lt", PushDownStore::TiKv));
+        // The `kv.UnSpecified` one asks for all three, and one bit is not all.
+        assert!(is_push_down_enabled(
+            &blacklist,
+            "lt",
+            PushDownStore::Unspecified
+        ));
+        blacklist.insert("lt".to_owned(), blacklist_store_mask("tikv,tiflash,tidb"));
+        assert!(!is_push_down_enabled(
+            &blacklist,
+            "lt",
+            PushDownStore::Unspecified
+        ));
+        // A name that is not in the map at all is always enabled.
+        assert!(is_push_down_enabled(&blacklist, "gt", PushDownStore::TiKv));
     }
 }

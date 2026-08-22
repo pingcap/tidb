@@ -72,7 +72,7 @@ use crate::access_cost::realtime_row_count;
 use crate::access_cost::TableStatistics;
 use crate::index_range::IndexRanges;
 use crate::kv_table::{IndexRange, KvIndex, KvTable};
-use tidb_datatype::{Datum, FieldTypeCode};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_distsql::{signed_handle_ranges_to_kv_ranges, SignedHandleRange};
 use tidb_planner::cardinality::row_count_estimator::{
     get_row_count_by_column_ranges, ColumnRange, EstimatorOptions,
@@ -199,19 +199,61 @@ fn build_common_handle_ranges<'a>(
 
 /// The primary-key column that IS the row handle, when the table has one and
 /// this tier can range over it.
-fn handle_column(table: &KvTable) -> Option<&crate::kv_table::KvColumn> {
-    let column = table.columns.get(table.pk_handle_offset()?)?;
-    // The handle codec is integer; a clustered non-integer key reaches this
-    // tier as a common handle, which `pk_handle_offset` already excludes.
-    matches!(
-        column.field_type.code(),
-        FieldTypeCode::Tiny
-            | FieldTypeCode::Short
-            | FieldTypeCode::Int24
-            | FieldTypeCode::Long
-            | FieldTypeCode::LongLong
-    )
-    .then_some(column)
+fn handle_column(table: &KvTable) -> Option<HandleColumn> {
+    if let Some(offset) = table.pk_handle_offset() {
+        let column = table.columns.get(offset)?;
+        // The handle codec is integer; a clustered non-integer key reaches
+        // this tier as a common handle, which `pk_handle_offset` excludes.
+        if !matches!(
+            column.field_type.code(),
+            FieldTypeCode::Tiny
+                | FieldTypeCode::Short
+                | FieldTypeCode::Int24
+                | FieldTypeCode::Long
+                | FieldTypeCode::LongLong
+        ) {
+            return None;
+        }
+        return Some(HandleColumn {
+            name: column.name.clone(),
+            field_type: column.field_type.clone(),
+            id: column.id,
+        });
+    }
+    // Go `buildDataSource`: a table with neither an integer primary key nor a
+    // common handle gets `NewExtraHandleSchemaCol()` appended, and
+    // `ds.handleCols` is built FROM it. So `_tidb_rowid` is that table's
+    // handle for range building exactly as an integer primary key is, and
+    // `WHERE _tidb_rowid > 0` reads a TABLE RANGE rather than every row.
+    //
+    // A common-handle table never reaches here (the caller routes it to
+    // `build_common_handle_ranges`), and a table WITH an integer primary key
+    // has no `_tidb_rowid` to name -- which is why TiDB answers "Unknown
+    // column" for it there. Both are the same test
+    // `crate::driver::from::extra_handle_column` applies to the name.
+    (!table.common_handle_offsets().is_empty())
+        .then_some(())
+        .map_or(
+            Some(HandleColumn {
+                name: crate::driver::leaf_demand::EXTRA_HANDLE_NAME.to_owned(),
+                // Go `NewExtraHandleSchemaCol`: `TypeLonglong`, signed, with
+                // `PriKeyFlag | NotNullFlag`.
+                field_type: FieldType::new(FieldTypeCode::LongLong)
+                    .with_flags(tidb_datatype::FieldTypeFlags::NOT_NULL),
+                id: crate::remote_scan::EXTRA_HANDLE_COLUMN_ID,
+            }),
+            |()| None,
+        )
+}
+
+/// The column a table's INTEGER row handle IS: its integer primary key, or
+/// `_tidb_rowid` when it has none.
+struct HandleColumn {
+    name: String,
+    field_type: FieldType,
+    /// The statistics column id: a real column's own, or Go's
+    /// `model.ExtraHandleID` for the extra handle.
+    id: i64,
 }
 
 /// Whether this table's row handle spans the UNSIGNED domain.

@@ -290,6 +290,12 @@ pub struct HandleSourceExec {
     /// Source-row offsets this complete point plan emits, in result order.
     /// `None` keeps the ordinary visible-row schema for residual root work.
     output_offsets: Option<Vec<usize>>,
+    /// Where `_tidb_rowid` sits in the source row, when the schema carries
+    /// it. Go's extra handle column reports the record HANDLE rather than any
+    /// stored value, so nothing in the decoded row fills this slot and the
+    /// source has to write it -- the same contract
+    /// [`crate::kv_table::table_scan`] has for a scan.
+    extra_handle_slot: Option<usize>,
 }
 
 impl HandleSourceExec {
@@ -310,6 +316,7 @@ impl HandleSourceExec {
             produced: Rc::new(Cell::new(0)),
             decode_context,
             output_offsets: None,
+            extra_handle_slot: None,
         }
     }
 
@@ -349,6 +356,7 @@ impl HandleSourceExec {
             produced: Rc::new(Cell::new(0)),
             decode_context,
             output_offsets: Some(output_offsets),
+            extra_handle_slot: None,
         }
     }
 
@@ -378,7 +386,15 @@ impl HandleSourceExec {
             produced: Rc::new(Cell::new(0)),
             decode_context,
             output_offsets,
+            extra_handle_slot: None,
         }
+    }
+
+    /// Reports `_tidb_rowid` at `slot`, for a schema that names it.
+    #[must_use]
+    pub(crate) fn reporting_extra_handle_at(mut self, slot: Option<usize>) -> Self {
+        self.extra_handle_slot = slot;
+        self
     }
 
     /// The live count of rows this source produced.
@@ -423,7 +439,19 @@ impl Executor for HandleSourceExec {
                 ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
             })?;
             if let Some(row) = row {
-                let visible = visible_of(&self.table, &row);
+                let borrowed = visible_of(&self.table, &row);
+                let owned;
+                let visible: &[tidb_datatype::Datum] = match self.extra_handle_slot {
+                    Some(slot) => {
+                        owned = crate::kv_table::insert_extra_handle(
+                            borrowed.to_vec(),
+                            slot,
+                            handle,
+                        );
+                        &owned
+                    }
+                    None => borrowed,
+                };
                 if let Some(offsets) = &self.output_offsets {
                     for (output, source) in offsets.iter().copied().enumerate() {
                         let value = visible.get(source).ok_or_else(|| {
@@ -1574,6 +1602,12 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
             aggregate,
             PushdownPartialAggregate::Grouped { streamed: true, .. }
         ) && !self.can_reorder_handles);
+        // Go `CheckAggPushDown` ends with `IsPushDownEnabled(aggFunc.Name,
+        // storeType)`, so `mysql.expr_pushdown_blacklist` refuses an
+        // aggregate by its own name exactly as it refuses a scalar function.
+        if !crate::pushdown_blacklist::aggregate_admits(aggregate, ctx) {
+            return false;
+        }
         if self.estimated_rows.is_none_or(|rows| rows <= 1.0)
             || aggregate
                 .input_offsets()

@@ -95,6 +95,9 @@ pub struct Connections {
     /// Go's per-connection `ConnectionID`, which `CONNECTION_ID()` reports and
     /// which must differ between two live connections.
     next_connection_id: u64,
+    /// Go's two package-level push-down blacklists, shared by every session
+    /// this pool opens because they are one server's.
+    pushdown_blacklists: tidb_session::blacklist::PushdownBlacklists,
 }
 
 impl Connections {
@@ -109,6 +112,7 @@ impl Connections {
             globals: GlobalSysvars::new(),
             privileges: PrivilegeRegistry::default(),
             next_connection_id: 1,
+            pushdown_blacklists: tidb_session::blacklist::PushdownBlacklists::default(),
         };
         let database = topic_database(topic);
         let mut session = pool.new_session("root", ANY_HOST, None)?;
@@ -222,6 +226,10 @@ impl Connections {
         initial_database: Option<&str>,
     ) -> Result<Session, String> {
         let mut session = Session::with_catalog(SharedCatalog::clone(&self.catalog));
+        // Go's push-down blacklists are package-level, so `ADMIN RELOAD` on
+        // one connection changes what every other connection plans. Every
+        // session in this pool is the same server, so they share one handle.
+        session.attach_pushdown_blacklists(self.pushdown_blacklists.clone());
         let identity = format!("{user}@{host}");
         session.set_user(identity.clone(), identity);
         session.set_connection_id(self.next_connection_id);

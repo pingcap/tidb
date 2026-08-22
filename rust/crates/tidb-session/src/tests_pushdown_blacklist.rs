@@ -198,3 +198,80 @@ fn blacklisting_predicate_push_down_leaves_every_path_a_full_scan() {
     session.run("ADMIN RELOAD OPT_RULE_BLACKLIST").unwrap();
     assert!(plan(&mut session, "SELECT * FROM t WHERE a < 3").contains("IndexRangeScan"));
 }
+
+/// An AGGREGATE is refused by its own name too.
+///
+/// Go asks the same question at the end of `CheckAggPushDown`
+/// (`aggregation.go:263`): `ret = IsPushDownEnabled(aggFunc.Name,
+/// storeType)`. Refusing it collapses the two-stage split -- a partial
+/// `HashAgg` inside the coprocessor and a final one at the root -- back into
+/// a single root aggregate over the whole scan.
+#[test]
+fn blacklisting_an_aggregate_function_keeps_the_whole_aggregate_at_the_root() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t(a int, b int, key ia(a))")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1,1),(2,2),(3,3)").unwrap();
+
+    let before = plan(&mut session, "SELECT sum(b) FROM t GROUP BY a");
+    assert!(
+        before.contains("data:HashAgg") && before.contains("cop[tikv]"),
+        "the split is the starting point:\n{before}"
+    );
+
+    session
+        .run("INSERT INTO mysql.expr_pushdown_blacklist VALUES ('sum','tikv,tiflash,tidb','x')")
+        .unwrap();
+    session.run("ADMIN RELOAD EXPR_PUSHDOWN_BLACKLIST").unwrap();
+
+    let after = plan(&mut session, "SELECT sum(b) FROM t GROUP BY a");
+    assert!(
+        !after.contains("data:HashAgg") && !after.contains("cop[tikv]"),
+        "a blacklisted aggregate stays whole at the root:\n{after}"
+    );
+    assert!(
+        after.contains("HashAgg") && after.contains("funcs:sum(test.t.b)"),
+        "and it is still one aggregate over the scanned column:\n{after}"
+    );
+    let mut rows = row_text(session.run("SELECT sum(b) FROM t GROUP BY a"));
+    rows.sort();
+    assert_eq!(rows, vec![vec!["1"], vec!["2"], vec!["3"]]);
+}
+
+/// A reload on ONE connection changes what every other connection plans.
+///
+/// Go's blacklists are package-level (`expression.DefaultExprPushDownBlacklist`,
+/// `plannercore.DefaultDisabledLogicalRulesList`), so their scope is one
+/// SERVER. A front end that opens more than one session hands them all the
+/// same [`crate::blacklist::PushdownBlacklists`] handle to reproduce that.
+#[test]
+fn a_reload_on_one_session_changes_what_another_plans() {
+    let shared = crate::blacklist::PushdownBlacklists::default();
+    let catalog = crate::SharedCatalog::default();
+
+    let mut writer = Session::with_catalog(crate::SharedCatalog::clone(&catalog));
+    writer.attach_pushdown_blacklists(shared.clone());
+    writer.bootstrap_fresh_store();
+    writer
+        .run("CREATE TABLE t(a enum('a','b','c'), b int, index ia(a))")
+        .unwrap();
+
+    let mut reader = Session::with_catalog(crate::SharedCatalog::clone(&catalog));
+    reader.attach_pushdown_blacklists(shared.clone());
+    assert!(
+        plan(&mut reader, "SELECT * FROM t WHERE a = 'a'").contains("IndexRangeScan"),
+        "the reader ranges over the enum index to begin with"
+    );
+
+    writer
+        .run("INSERT INTO mysql.expr_pushdown_blacklist(name) VALUES ('enum')")
+        .unwrap();
+    writer.run("ADMIN RELOAD EXPR_PUSHDOWN_BLACKLIST").unwrap();
+
+    let after = plan(&mut reader, "SELECT * FROM t WHERE a = 'a'");
+    assert!(
+        !after.contains("IndexRangeScan"),
+        "the OTHER session must see the reload:\n{after}"
+    );
+}

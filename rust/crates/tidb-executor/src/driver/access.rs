@@ -1485,6 +1485,11 @@ fn handle_source_exec(
     output: Option<&FastPointOutput>,
     ctx: &crate::StmtContext,
 ) -> HandleSourceExec {
+    // Go's extra handle column reports the record HANDLE, and nothing in the
+    // decoded row fills it, so a schema that names `_tidb_rowid` has a slot
+    // only the source can write. Both arms need it: the projected one's
+    // offsets are into the same source row, and one of them may BE the slot.
+    let extra_handle = crate::access_path::extra_handle_slot(columns);
     match output {
         Some(output) => HandleSourceExec::new_projected_with_context(
             ExecutorMeta::new(
@@ -1497,7 +1502,8 @@ fn handle_source_exec(
             handles,
             output.offsets.clone(),
             crate::kv_table::RowDecodeContext::for_query(ctx),
-        ),
+        )
+        .reporting_extra_handle_at(extra_handle),
         None => HandleSourceExec::new_with_context(
             ExecutorMeta::new(
                 Schema::new(source_schema_columns(columns)),
@@ -1508,7 +1514,8 @@ fn handle_source_exec(
             table.clone(),
             handles,
             crate::kv_table::RowDecodeContext::for_query(ctx),
-        ),
+        )
+        .reporting_extra_handle_at(extra_handle),
     }
 }
 
@@ -1756,6 +1763,20 @@ pub(crate) fn point_get_predicate_is_consumed(
         .pk_handle_offset()
         .is_some_and(|offset| key_matches(std::slice::from_ref(&offset)))
         || key_matches(table.common_handle_offsets())
+    {
+        return true;
+    }
+    // The extra handle pins a row as completely as an integer primary key
+    // does, so Go's point plan over `_tidb_rowid = c` carries no `Selection`
+    // either -- its recorded plan for `select * from t where _tidb_rowid = 0`
+    // is a bare `Point_Get table:t handle:0`.
+    if table.pk_handle_offset().is_none()
+        && table.common_handle_offsets().is_empty()
+        && table.partition().is_none()
+        && pairs.len() == 1
+        && pairs[0]
+            .column
+            .eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)
     {
         return true;
     }
@@ -4062,6 +4083,34 @@ pub(crate) fn try_point_get(
     if !name_value_pairs(where_clause, &mut pairs, zone) || pairs.is_empty() {
         return Ok(None);
     }
+    // Go `findPKHandle`'s `!tblInfo.PKIsHandle` branch: when the table has no
+    // primary-key handle, the pair naming `_tidb_rowid` IS the handle pair,
+    // and its type is `TypeLonglong` rather than any stored column's -- which
+    // is why this runs BEFORE the column-domain conversion below, where
+    // `_tidb_rowid` names nothing to convert against.
+    //
+    // Go refuses it for a PARTITIONED table (`point_get_plan.go:993`: "Partition
+    // table can't use `_tidb_rowid` to generate PointGet Plan"), because a row
+    // id alone does not say which partition holds the row.
+    if table.pk_handle_offset().is_none()
+        && table.common_handle_offsets().is_empty()
+        && table.partition().is_none()
+        && pairs.len() == 1
+        && pairs[0]
+            .column
+            .eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)
+    {
+        let handle_type = FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let Some(value) = point_get_value(&handle_type, &pairs[0].value) else {
+            return Ok(None);
+        };
+        return Ok(Some(match value {
+            Datum::Int(value) => Some(TableHandle::Int(value)),
+            Datum::UInt(value) => Some(TableHandle::Int(value as i64)),
+            _ => return Ok(None),
+        }));
+    }
+
     // Go `getNameValuePairs` moves every constant into its column's domain
     // before the pair is usable as a key, and abandons the whole point plan
     // when one of them will not survive the round trip. Doing it here, once

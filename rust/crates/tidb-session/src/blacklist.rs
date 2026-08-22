@@ -31,10 +31,49 @@
 //! would share.
 
 use std::collections::HashSet;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use crate::Session;
-use tidb_executor::DriverError;
+use tidb_executor::{DriverError, ExprPushDownBlacklist};
+
+/// Go's two process-wide atomics -- `expression.DefaultExprPushDownBlacklist`
+/// and `plannercore.DefaultDisabledLogicalRulesList` -- held at this tier's
+/// INSTANCE boundary instead.
+///
+/// Go's are package-level because its optimizer runs far from any session,
+/// and the scope that gives them is one SERVER: `ADMIN RELOAD` on one
+/// connection changes what every other connection plans. A per-session copy
+/// would not, so this is a shared handle a front end installs on each session
+/// it opens, the same way it installs [`crate::privilege::PrivilegeRegistry`].
+///
+/// A reload REPLACES the published map rather than mutating one, which is
+/// what Go's atomic `Store` does: a statement that already snapshotted the
+/// old map keeps planning against it, and no reader ever sees a half-built
+/// one.
+#[derive(Clone, Debug, Default)]
+pub struct PushdownBlacklists {
+    expressions: Arc<Mutex<Arc<ExprPushDownBlacklist>>>,
+    rules: Arc<Mutex<Arc<HashSet<String>>>>,
+}
+
+impl PushdownBlacklists {
+    /// The two published maps as they stand now, for one statement to plan
+    /// against.
+    pub(crate) fn snapshot(&self) -> (Arc<ExprPushDownBlacklist>, Arc<HashSet<String>>) {
+        (
+            Arc::clone(&self.expressions.lock().expect("blacklist mutex")),
+            Arc::clone(&self.rules.lock().expect("blacklist mutex")),
+        )
+    }
+
+    fn publish_expressions(&self, loaded: ExprPushDownBlacklist) {
+        *self.expressions.lock().expect("blacklist mutex") = Arc::new(loaded);
+    }
+
+    fn publish_rules(&self, loaded: HashSet<String>) {
+        *self.rules.lock().expect("blacklist mutex") = Arc::new(loaded);
+    }
+}
 
 impl Session {
     /// Go `LoadExprPushdownBlacklist`, and the `ADMIN RELOAD
@@ -49,7 +88,7 @@ impl Session {
                 &ctx,
             )
         })?;
-        let mut loaded = tidb_executor::ExprPushDownBlacklist::new();
+        let mut loaded = ExprPushDownBlacklist::new();
         for row in rows {
             let Some(name) = row.first().and_then(crate::datum_text) else {
                 continue;
@@ -60,7 +99,7 @@ impl Session {
                 | tidb_executor::blacklist_store_mask(&store_types);
             loaded.insert(name, value);
         }
-        self.expr_pushdown_blacklist = Rc::new(loaded);
+        self.pushdown_blacklists.publish_expressions(loaded);
         Ok(())
     }
 
@@ -84,7 +123,7 @@ impl Session {
                 loaded.insert(name);
             }
         }
-        self.disabled_logical_rules = Rc::new(loaded);
+        self.pushdown_blacklists.publish_rules(loaded);
         Ok(())
     }
 }
@@ -92,13 +131,11 @@ impl Session {
 #[cfg(test)]
 impl Session {
     pub(crate) fn debug_blacklists(&self) -> (Vec<(String, u32)>, Vec<String>) {
-        let mut map: Vec<(String, u32)> = self
-            .expr_pushdown_blacklist
-            .iter()
-            .map(|(k, v)| (k.clone(), *v))
-            .collect();
+        let (expressions, rules) = self.pushdown_blacklists.snapshot();
+        let mut map: Vec<(String, u32)> =
+            expressions.iter().map(|(k, v)| (k.clone(), *v)).collect();
         map.sort();
-        let mut rules: Vec<String> = self.disabled_logical_rules.iter().cloned().collect();
+        let mut rules: Vec<String> = rules.iter().cloned().collect();
         rules.sort();
         (map, rules)
     }
