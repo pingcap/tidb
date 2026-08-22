@@ -2962,3 +2962,42 @@ fn a_partition_policy_prints_as_gos_feature_gated_comment() {
         "and the policy survives into it, got: {shown}"
     );
 }
+
+/// `SHOW CREATE PLACEMENT POLICY`, per Go's
+/// `ConstructResultOfShowCreatePlacementPolicy` (`executor/show.go:1742`)
+/// over `PlacementSettings.String()` (`meta/model/placement.go`).
+///
+/// The settings clause has its OWN emission order, which is not the struct's
+/// field order: primary region, regions, schedule, constraints, leader
+/// constraints, then voters, voter constraints, followers, follower
+/// constraints, learners, learner constraints, and survival preferences
+/// last. Unset items -- an empty string or a zero count -- are skipped, and
+/// what remains is joined by single spaces.
+#[test]
+fn show_create_placement_policy_prints_gos_clause() {
+    let mut session = Session::new();
+    session
+        .run("CREATE PLACEMENT POLICY sp PRIMARY_REGION=\"us\" REGIONS=\"us,eu\" FOLLOWERS=3")
+        .expect("policy");
+    let shown = crate::tests_support::show_create_policy(&mut session, "sp");
+    assert_eq!(
+        shown,
+        "CREATE PLACEMENT POLICY `sp` PRIMARY_REGION=\"us\" REGIONS=\"us,eu\" FOLLOWERS=3"
+    );
+
+    // VOTERS precedes FOLLOWERS in Go's order even when written after it.
+    let mut session = Session::new();
+    session
+        .run("CREATE PLACEMENT POLICY so FOLLOWERS=2 VOTERS=5")
+        .expect("policy");
+    let shown = crate::tests_support::show_create_policy(&mut session, "so");
+    assert_eq!(shown, "CREATE PLACEMENT POLICY `so` VOTERS=5 FOLLOWERS=2");
+
+    // An unknown policy is 8239, as Go's `fetchShowCreatePlacementPolicy`
+    // reports it.
+    let rendered = session
+        .run("SHOW CREATE PLACEMENT POLICY nosuch")
+        .expect_err("unknown policy")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 8239);
+}

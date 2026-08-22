@@ -132,6 +132,57 @@ pub struct PlacementSettings {
     pub survival_preferences: String,
 }
 
+impl PlacementSettings {
+    /// Go `PlacementSettings.String` (`meta/model/placement.go`): the clause
+    /// `SHOW CREATE PLACEMENT POLICY` prints after the policy name.
+    ///
+    /// The EMISSION ORDER is Go's and is not the struct's field order:
+    /// primary region, regions, schedule, constraints, leader constraints,
+    /// then voters/voter constraints, followers/follower constraints,
+    /// learners/learner constraints, and finally survival preferences. Each
+    /// item is emitted only when it is set -- a zero count and an empty
+    /// string are both "unset" -- and items are separated by ONE space.
+    ///
+    /// A string value is wrapped in double quotes with any embedded double
+    /// quote backslash-escaped (`writeSettingStringToBuilder`); an integer is
+    /// written bare (`writeSettingIntegerToBuilder`).
+    #[must_use]
+    pub fn to_clause(&self) -> String {
+        let mut out = String::new();
+        let mut push_string = |out: &mut String, item: &str, value: &str| {
+            if value.is_empty() {
+                return;
+            }
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(&format!("{item}=\"{}\"", value.replace('"', "\\\"")));
+        };
+        push_string(&mut out, "PRIMARY_REGION", &self.primary_region);
+        push_string(&mut out, "REGIONS", &self.regions);
+        push_string(&mut out, "SCHEDULE", &self.schedule);
+        push_string(&mut out, "CONSTRAINTS", &self.constraints);
+        push_string(&mut out, "LEADER_CONSTRAINTS", &self.leader_constraints);
+        let mut push_int = |out: &mut String, item: &str, value: u64| {
+            if value == 0 {
+                return;
+            }
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(&format!("{item}={value}"));
+        };
+        push_int(&mut out, "VOTERS", self.voters);
+        push_string(&mut out, "VOTER_CONSTRAINTS", &self.voter_constraints);
+        push_int(&mut out, "FOLLOWERS", self.followers);
+        push_string(&mut out, "FOLLOWER_CONSTRAINTS", &self.follower_constraints);
+        push_int(&mut out, "LEARNERS", self.learners);
+        push_string(&mut out, "LEARNER_CONSTRAINTS", &self.learner_constraints);
+        push_string(&mut out, "SURVIVAL_PREFERENCES", &self.survival_preferences);
+        out
+    }
+}
+
 impl_go_json_merge_object!(PlacementSettings, destination, map, key, {
     if go_json_field_matches(&key, "primary_region") {
         map.next_value_seed(NullNoopSeed(&mut destination.primary_region))?;

@@ -647,6 +647,7 @@ mod process_arm;
 mod show;
 mod show_admin;
 mod show_create_database;
+mod show_create_placement_policy;
 mod show_index;
 pub mod sysvar;
 pub mod vars;

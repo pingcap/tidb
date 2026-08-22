@@ -58,6 +58,17 @@ pub(crate) fn warnings_of(session: &Session) -> Vec<(u16, String)> {
 }
 
 /// The `Create Table` text of one table.
+/// The `Create Policy` column of `SHOW CREATE PLACEMENT POLICY`.
+pub(crate) fn show_create_policy(session: &mut Session, policy: &str) -> String {
+    match session
+        .run_with_columns(&format!("SHOW CREATE PLACEMENT POLICY {policy}"))
+        .unwrap()
+    {
+        StmtOutput::Rows { rows, .. } => datum_text(&rows[0][1]).unwrap(),
+        other => panic!("expected rows, got {other:?}"),
+    }
+}
+
 pub(crate) fn show_create(session: &mut Session, table: &str) -> String {
     match session
         .run_with_columns(&format!("SHOW CREATE TABLE {table}"))

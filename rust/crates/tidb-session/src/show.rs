@@ -1869,6 +1869,34 @@ impl Session {
                         *if_not_exists,
                     )));
                 }
+                // Go `fetchShowCreatePlacementPolicy` (`executor/show.go:1774`)
+                // looks the policy up and reports `ErrPlacementPolicyNotExists`
+                // (8239) for a name that is not there. The row is the policy's
+                // ORIGINAL-cased name beside
+                // `ConstructResultOfShowCreatePlacementPolicy` (`:1742`).
+                if *kind == tidb_ast::ShowCreateKind::PlacementPolicy {
+                    let [policy_name] = name.as_slice() else {
+                        return Err(DriverError::unsupported("empty policy name"));
+                    };
+                    let (reported, clause) = self.with_catalog_mut(|catalog| {
+                        catalog
+                            .policy(policy_name)
+                            .map(|policy| {
+                                let settings = policy
+                                    .placement_settings
+                                    .as_ref()
+                                    .map(|settings| settings.read().to_clause())
+                                    .unwrap_or_default();
+                                (policy.name.original().to_owned(), settings)
+                            })
+                            .ok_or_else(|| {
+                                DriverError::PlacementPolicyNotExists(policy_name.clone())
+                            })
+                    })?;
+                    return Ok(Some(crate::show_create_placement_policy::output(
+                        &reported, &clause,
+                    )));
+                }
                 // `SHOW CREATE SEQUENCE` and `SHOW CREATE TABLE` take the
                 // SAME path: Go's `buildShow` picks the column names from
                 // whether the object IS a sequence, not from the keyword
