@@ -359,6 +359,44 @@ fn convert_point_in_place(p: &mut Point, target: &FieldType) {
             return;
         }
     }
+    // Go `newFieldType` (`ranger.go:779`): the ranger NEVER converts an
+    // endpoint into the column's DECLARED length -- every string/blob (and
+    // float) target is cloned with `types.UnspecifiedLength` "to avoid data
+    // truncate error". The length mattered here beyond truncation: a
+    // `utf8mb4_bin` SORT KEY (a `Datum::Bytes`) converted into the
+    // binary-collated `CHAR(32)` clone below was NUL-PADDED to 32 bytes
+    // (`convert_to`'s fixed-length `BINARY(n)` pad, Go's own
+    // `ProduceStrWithSpecifiedTp` `padZero` arm -- which Go dodges only
+    // because its `newTp` has no flen). The padded endpoint then compared
+    // ABOVE the original, the exclusivity repair closed the high bound, and
+    // `u = 'a'` over a CHAR-keyed index planned `TableDual rows:0` -- rows
+    // missing, measured on `mysql.user`'s `KEY i_user (User)`. Integer
+    // widening (Go's LongLong arm) is deliberately NOT mirrored: the
+    // saturate-and-repair below is this tier's equivalent (see the doc
+    // above).
+    let unlimited;
+    let target = if matches!(
+        target.code(),
+        tidb_datatype::FieldTypeCode::Float
+            | tidb_datatype::FieldTypeCode::Double
+            | tidb_datatype::FieldTypeCode::TinyBlob
+            | tidb_datatype::FieldTypeCode::MediumBlob
+            | tidb_datatype::FieldTypeCode::LongBlob
+            | tidb_datatype::FieldTypeCode::Blob
+            | tidb_datatype::FieldTypeCode::String
+            | tidb_datatype::FieldTypeCode::Varchar
+            | tidb_datatype::FieldTypeCode::VarString
+    ) && target.flen() != UNSPECIFIED_LENGTH
+    {
+        unlimited = {
+            let mut clone = target.clone();
+            clone.set_flen(UNSPECIFIED_LENGTH);
+            clone
+        };
+        &unlimited
+    } else {
+        target
+    };
     // Go `convertStringFTToBinaryCollate` (`ranger.go:616`): `points2Ranges`
     // is handed a BINARY-collated clone of the column's type, because by then
     // every string endpoint is a weight string rather than text. Converting a
@@ -2187,6 +2225,26 @@ mod tests {
             .map(|(name, ft)| RangeColumn::whole((*name).to_owned(), ft.clone()))
             .collect();
         derive_with_columns(&typed, where_sql)
+    }
+
+    /// Go's ranger derives real point ranges for a CHAR-typed key part:
+    /// `newFieldType` (`ranger.go:779`) strips the declared length before
+    /// endpoint conversion, so nothing pads the endpoint to `flen` -- the
+    /// NUL-pad that once turned this range into `TableDual rows:0` and lost
+    /// the `mysql.user` rows `WHERE user = ...` reads through
+    /// `KEY i_user (User)`.
+    #[test]
+    fn char_key_part_derives_point_ranges() {
+        let mut char32 = FieldType::new(tidb_datatype::FieldTypeCode::String);
+        char32.set_flen(32);
+        assert_eq!(
+            derive_typed(&[("u", char32.clone())], "u = 'a'"),
+            "[\"a\",\"a\"]"
+        );
+        assert_eq!(
+            derive_typed(&[("u", char32)], "u in ('a','c')"),
+            "[\"a\",\"a\"], [\"c\",\"c\"]"
+        );
     }
 
     /// [`derive`] over key parts that declare a PREFIX length, which is what

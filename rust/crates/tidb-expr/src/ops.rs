@@ -339,6 +339,33 @@ pub(crate) fn eval_binary_full(
         if l == Datum::Null || r == Datum::Null {
             return Ok(Datum::Null);
         }
+        // The STRING side of a JSON comparison is PARSED as a JSON document,
+        // not wrapped as a JSON string scalar: Go's `GetCmpFunction` wraps
+        // both operands with `WrapWithCastAsJSON`, and EVERY string-to-JSON
+        // cast that builder constructs carries `mysql.ParseToJSONFlag`
+        // (`castAsJSONFunctionClass.getFunction`'s `types.ETString` arm), so
+        // `castStringAsJSONSig` takes its `ParseBinaryJSONFromString` branch.
+        // Without the parse, `json_remove(..) = cast('{}' as json)` compared
+        // an OBJECT against the string scalar `"{}"` and answered 0 -- which
+        // broke the NULLIF collapse `ALTER USER ... DISCARD OLD PASSWORD`
+        // relies on. Non-string operands keep `Datum::to_mysql_json`'s
+        // wrapping, which is those casts' `CreateBinaryJSON` arm.
+        let parse_string_side = |value: Datum| -> Result<Datum, EvalError> {
+            let text: &[u8] = match &value {
+                Datum::String(text) => text.bytes(),
+                Datum::Bytes(text) => text,
+                _ => return Ok(value),
+            };
+            let text =
+                std::str::from_utf8(text).map_err(|_| EvalError::Unsupported("JSON comparison"))?;
+            // Go's parse failure here is ErrInvalidJSONText (3140), the same
+            // error the explicit CAST raises.
+            tidb_datatype::BinaryJSON::parse(text)
+                .map(Datum::Json)
+                .map_err(|_| EvalError::Json(crate::JsonError::InvalidText))
+        };
+        let l = parse_string_side(l)?;
+        let r = parse_string_side(r)?;
         let ordering = l
             .compare(&r, collation)
             .map_err(|_| EvalError::Unsupported("JSON comparison"))?;

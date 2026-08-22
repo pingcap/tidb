@@ -83,13 +83,13 @@ struct TableScopePrivs {
 #[derive(Default)]
 pub(crate) struct PasswordOrLockOptions {
     /// `ACCOUNT LOCK` / `ACCOUNT UNLOCK`.
-    locked: Option<bool>,
+    pub(crate) locked: Option<bool>,
     /// `FAILED_LOGIN_ATTEMPTS n`, clamped as Go clamps it.
     failed_login_attempts: Option<i64>,
     /// `PASSWORD_LOCK_TIME n | UNBOUNDED`; `UNBOUNDED` is `-1`.
     password_lock_time_days: Option<i64>,
     /// `PASSWORD EXPIRE [DEFAULT | NEVER | INTERVAL n DAY]`.
-    expire: Option<privilege::PasswordExpireSetting>,
+    pub(crate) expire: Option<privilege::PasswordExpireSetting>,
 }
 
 /// Go clamps `FAILED_LOGIN_ATTEMPTS` and `PASSWORD_LOCK_TIME` to
@@ -173,7 +173,7 @@ impl PasswordOrLockOptions {
     /// the new policy, leaving the captured
     /// `ALTER USER u5 ACCOUNT UNLOCK FAILED_LOGIN_ATTEMPTS 3
     /// PASSWORD_LOCK_TIME 6` -> policy 3/6 with count 0.
-    fn apply(&self, registry: &privilege::PrivilegeRegistry, user: &str, host: &str) {
+    pub(crate) fn apply(&self, registry: &privilege::PrivilegeRegistry, user: &str, host: &str) {
         if self.failed_login_attempts.is_some() || self.password_lock_time_days.is_some() {
             registry.set_password_locking_options(
                 user,
@@ -217,7 +217,7 @@ fn role_identity(spec: &tidb_ast::RoleSpec) -> privilege::Account {
 /// transport being ADMITTED here over ordinary TLS, which is the fail-OPEN
 /// direction. `TOKEN_ISSUER` is refused for the same reason one level over:
 /// it belongs to `tidb_auth_token`, whose login this tier does not serve.
-fn ssl_type_of(
+pub(crate) fn ssl_type_of(
     tls_options: &[tidb_ast::AlterUserTlsOption],
 ) -> Result<privilege::SslType, DriverError> {
     let mut ssl_type = privilege::SslType::None;
@@ -248,7 +248,7 @@ fn ssl_type_of(
 }
 
 impl Session {
-    fn validate_password_if_enabled(&self, password: &str) -> Result<(), DriverError> {
+    pub(crate) fn validate_password_if_enabled(&self, password: &str) -> Result<(), DriverError> {
         let globals = SessionPasswordGlobals(&self.vars);
         if !password_validation::validation_enabled(&globals).map_err(password_validation_error)? {
             return Ok(());
@@ -337,7 +337,7 @@ impl Session {
     /// `SYSTEM_USER` (or `RESTRICTED_USER_ADMIN`) too. Because SUPER is the
     /// fallback for every dynamic privilege, this reads as "only a SUPER may
     /// touch a SUPER", which is why Go's message names both.
-    fn require_system_user_privilege_over(
+    pub(crate) fn require_system_user_privilege_over(
         &self,
         user: &str,
         host: &str,
@@ -359,25 +359,6 @@ impl Session {
             ));
         }
         Ok(())
-    }
-
-    /// Go's `executeAlterUser` admin gate (`executor/simple.go` around line
-    /// 1941): the global `CREATE USER` privilege, or `UPDATE` on
-    /// `mysql.user`. A caller changing only its OWN password with a bare
-    /// `IDENTIFIED BY` skips the gate entirely (Go's `alterCurrentUser &&
-    /// alterPassword`), which is what lets any account rotate its own
-    /// password -- and what a sandboxed session relies on.
-    fn require_alter_user_privilege(&self, user: &str, host: &str) -> Result<(), DriverError> {
-        if self.has_scoped_privilege("", "", privilege::GlobalPriv::CreateUser)
-            || self.has_scoped_privilege(
-                tidb_mysql::consts::SystemDB,
-                tidb_mysql::consts::UserTable,
-                privilege::GlobalPriv::Update,
-            )
-        {
-            return self.require_system_user_privilege_over(user, host);
-        }
-        Err(DriverError::SpecificAccessDenied("CREATE USER".to_owned()))
     }
 
     /// Go's `GRANT`/`REVOKE` gate: "to GRANT, you must have the privileges
@@ -445,7 +426,7 @@ impl Session {
     /// Whether `(user, host)` is the account this session authenticated as --
     /// Go's `alterCurrentUser`, which keys on the AUTHENTICATED identity so a
     /// statement naming that account explicitly is still self-service.
-    fn is_own_account(&self, user: &str, host: &str) -> bool {
+    pub(crate) fn is_own_account(&self, user: &str, host: &str) -> bool {
         self.current_identity() == Some((user, host))
     }
 
@@ -460,15 +441,27 @@ impl Session {
         comment_or_attribute: &Option<tidb_ast::CreateUserCommentOrAttribute>,
         resource_group: &Option<String>,
     ) -> Result<StmtOutput, DriverError> {
-        if !resource_options.is_empty()
-            || comment_or_attribute.is_some()
-            || resource_group.is_some()
-        {
+        if !resource_options.is_empty() || resource_group.is_some() {
             return Err(DriverError::unsupported(
                 "CREATE USER options beyond the account list are not supported yet",
             ));
         }
         let ssl_type = ssl_type_of(tls_options)?;
+        // Go `executeCreateUser`'s `userAttributes`: a COMMENT clause is
+        // wrapped as `{"metadata": {"comment": "<text>"}}`, an ATTRIBUTE
+        // clause embeds the caller's JSON as `{"metadata": <json>}`, and a
+        // statement with neither stores the literal empty object `'{}'` --
+        // NOT NULL (captured: a fresh account's `User_attributes` prints
+        // `{}`; only the bootstrap root row is NULL).
+        let user_attributes_json = match comment_or_attribute {
+            None => "{}".to_owned(),
+            Some(tidb_ast::CreateUserCommentOrAttribute::Comment(text)) => {
+                format!("{{\"metadata\": {{\"comment\": \"{text}\"}}}}")
+            }
+            Some(tidb_ast::CreateUserCommentOrAttribute::Attribute(json)) => {
+                format!("{{\"metadata\": {json}}}")
+            }
+        };
         // Go validates every statement-level option BEFORE writing any row,
         // so a bad `PASSWORD EXPIRE INTERVAL 0 DAY` creates no account.
         let options = PasswordOrLockOptions::load(password_options)?;
@@ -488,9 +481,14 @@ impl Session {
             });
         }
         for spec in users {
+            // TiDB's grammar rejects RETAIN/DISCARD on CREATE USER with 1064
+            // (the corpus asserts it), and this tier's parser does too, so
+            // this arm is a belt matching Go `executeCreateUser`'s own guard
+            // for AST-built statements.
             if spec.dual_password.is_some() {
                 return Err(DriverError::unsupported(
-                    "CREATE USER ... RETAIN CURRENT PASSWORD is not supported yet",
+                    "RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD clause is not supported in \
+                     CREATE USER statement",
                 ));
             }
             let user = spec.user.user.as_str();
@@ -528,6 +526,26 @@ impl Session {
             if registry.create_user_with_plugin(user, host, &auth_string, &plugin) {
                 options.apply(&registry, user, host);
                 registry.set_ssl_type(user, host, ssl_type);
+                // The `mysql.user` row Go's INSERT writes for this account.
+                // Column values come from the statement's own clauses, the
+                // way Go's `plOptions` feeds the VALUES list.
+                let (password_expired, password_lifetime) = match options.expire {
+                    Some(privilege::PasswordExpireSetting::Now) => (true, None),
+                    Some(privilege::PasswordExpireSetting::Never) => (false, Some(0)),
+                    Some(privilege::PasswordExpireSetting::Interval(days)) => (false, Some(days)),
+                    Some(privilege::PasswordExpireSetting::Default) | None => (false, None),
+                };
+                let (user, host) = (user.to_owned(), host.to_owned());
+                self.mirror_create_user_row(
+                    &user,
+                    &host,
+                    &auth_string,
+                    &plugin,
+                    &user_attributes_json,
+                    matches!(options.locked, Some(true)),
+                    password_expired,
+                    password_lifetime,
+                )?;
             } else if !if_not_exists {
                 return Err(DriverError::CreateUserAlreadyExists {
                     user: user.to_owned(),
@@ -557,9 +575,30 @@ impl Session {
                 "CREATE ROLE requires a server front end with a privilege registry",
             ));
         };
+        // Go `executeCreateUser` (reached with `IsCreateRole`) resolves the
+        // row's plugin from `default_authentication_plugin` exactly as it
+        // does for a user with no `IDENTIFIED WITH`.
+        let default_plugin = self
+            .vars
+            .get_global("default_authentication_plugin")
+            .unwrap_or_else(|_| tidb_mysql::consts::AuthNativePassword.to_owned());
         for spec in roles {
             let (role, host) = role_identity(spec);
-            if !registry.create_role(&role, &host) && !if_not_exists {
+            if registry.create_role(&role, &host) {
+                // The same INSERT as CREATE USER's, with `IsCreateRole`'s
+                // overrides: `Account_locked='Y'`, `Password_expired='Y'`,
+                // empty password, `'{}'` attributes.
+                self.mirror_create_user_row(
+                    &role,
+                    &host,
+                    "",
+                    &default_plugin,
+                    "{}",
+                    true,
+                    true,
+                    None,
+                )?;
+            } else if !if_not_exists {
                 return Err(DriverError::CannotUserRole {
                     operation: "CREATE ROLE",
                     target: format!("'{role}'@'{host}'"),
@@ -909,7 +948,7 @@ impl Session {
     /// [`privilege::CREATE_USER_PLUGINS`] can never be loaded. A missing
     /// `IDENTIFIED` clause uses the live `default_authentication_plugin` and
     /// an empty authentication string, as Go's account executor does.
-    fn resolve_auth_string_and_plugin(
+    pub(crate) fn resolve_auth_string_and_plugin(
         auth: Option<&tidb_ast::CreateUserAuth>,
         default_plugin: &str,
     ) -> Result<(String, String), DriverError> {
@@ -941,321 +980,6 @@ impl Session {
                 Ok((auth_string, plugin.clone()))
             }
         }
-    }
-
-    /// `ALTER USER [IF EXISTS] <account> [IDENTIFIED [WITH '<plugin>'] BY
-    /// '<password>'] [ACCOUNT LOCK | ACCOUNT UNLOCK]`, the `ALTER USER`
-    /// actions this tier stores: a password/plugin change rewrites the
-    /// account's `mysql.user.authentication_string` (and `plugin`) in place,
-    /// and `ACCOUNT LOCK`/`UNLOCK` flips `account_locked` (Go
-    /// `executeAlterUser`). Every other statement-level option (TLS,
-    /// resource limits, comment/attribute, resource group, and all other
-    /// `PASSWORD ...` clauses) remains unsupported.
-    pub(crate) fn alter_user_stmt(
-        &mut self,
-        alter: &tidb_ast::AlterUserStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        if alter.user_function_auth.is_some()
-            || alter.user_function_dual_password.is_some()
-            || !alter.resource_options.is_empty()
-            || alter.comment_or_attribute.is_some()
-            || alter.resource_group.is_some()
-        {
-            return Err(DriverError::unsupported(
-                "ALTER USER options beyond IDENTIFIED [WITH] BY / ACCOUNT LOCK|UNLOCK are not supported yet",
-            ));
-        }
-        let options = PasswordOrLockOptions::load(&alter.password_options)?;
-        let ssl_type = ssl_type_of(&alter.tls_options)?;
-        let Some(registry) = self.privileges.clone() else {
-            return Err(DriverError::unsupported(
-                "ALTER USER requires a server front end with a privilege registry",
-            ));
-        };
-        for spec in &alter.users {
-            if spec.dual_password.is_some() {
-                return Err(DriverError::unsupported(
-                    "ALTER USER options beyond IDENTIFIED [WITH] BY / ACCOUNT LOCK|UNLOCK are not supported yet",
-                ));
-            }
-            let (user, host) = self.resolve_account(&spec.user)?;
-            // Go's `needAdminPrivCheck` (`executor/simple.go` around line
-            // 1924): a bare self password change -- `IDENTIFIED BY` with no
-            // `WITH <plugin>` and no statement-level option -- is
-            // self-service and needs no privilege; everything else needs
-            // ALTER USER authority. `alterUserHasPrivilegedOptions` is the
-            // statement-level option test, and every option kind it names
-            // other than `PASSWORD ...`/`ACCOUNT ...` is already refused as
-            // unsupported above, so `password_options` is what remains.
-            let bare_self_password_change = self.is_own_account(&user, &host)
-                && matches!(spec.auth, Some(tidb_ast::CreateUserAuth::By(_)))
-                && alter.password_options.is_empty();
-            if !bare_self_password_change {
-                self.require_alter_user_privilege(&user, &host)?;
-            }
-            if !registry.user_exists(&user, &host) {
-                if alter.if_exists {
-                    continue;
-                }
-                return Err(DriverError::AlterUserMissing { user, host });
-            }
-            if let Some(auth) = spec.auth.as_ref() {
-                // A bare `IDENTIFIED BY` (no `WITH <plugin>`) keeps the
-                // account's CURRENT plugin (Go backfills
-                // `spec.AuthOpt.AuthPlugin` from `currentAuthPlugin` rather
-                // than resetting it to `mysql_native_password`); only an
-                // explicit `IDENTIFIED WITH` changes it.
-                let (auth_string, plugin, plaintext) = match auth {
-                    tidb_ast::CreateUserAuth::By(password) => {
-                        let current_plugin = registry
-                            .plugin(&user, &host)
-                            .unwrap_or_else(|| tidb_mysql::consts::AuthNativePassword.to_owned());
-                        (
-                            privilege::encode_password_for_plugin(
-                                &current_plugin,
-                                &privilege::PluginCredential::By(password),
-                            )?,
-                            current_plugin,
-                            Some(password.as_str()),
-                        )
-                    }
-                    tidb_ast::CreateUserAuth::With { credential, .. } => {
-                        let (auth_string, plugin) = Self::resolve_auth_string_and_plugin(
-                            Some(auth),
-                            tidb_mysql::consts::AuthNativePassword,
-                        )?;
-                        let plaintext = match credential {
-                            Some(tidb_ast::CreateUserCredential::By(password)) => {
-                                Some(password.as_str())
-                            }
-                            None | Some(tidb_ast::CreateUserCredential::As(_)) => None,
-                        };
-                        (auth_string, plugin, plaintext)
-                    }
-                };
-                if plaintext.is_some_and(|_| tidb_mysql::is_auth_plugin_clear_text(&plugin)) {
-                    self.validate_password_if_enabled(plaintext.expect("checked above"))?;
-                }
-                if registry.set_auth_string_and_plugin(&user, &host, &auth_string, &plugin) {
-                    // Go writes `password_expired='N'` and a fresh
-                    // `Password_last_changed` in the same UPDATE as the new
-                    // hash, which is what lets an expired account recover by
-                    // setting a password (captured: after
-                    // `ALTER USER e5 IDENTIFIED BY 'pw2'`, `SHOW CREATE USER`
-                    // reports `PASSWORD EXPIRE DEFAULT` again).
-                    registry.mark_password_changed(&user, &host);
-                } else if !alter.if_exists {
-                    return Err(DriverError::AlterUserMissing { user, host });
-                }
-            } else if options.is_empty() && alter.tls_options.is_empty() {
-                return Err(DriverError::unsupported(
-                    "ALTER USER options beyond IDENTIFIED [WITH] BY / password-and-lock options are not supported yet",
-                ));
-            } else if !registry.user_exists(&user, &host) && !alter.if_exists {
-                return Err(DriverError::AlterUserMissing { user, host });
-            }
-            // Go applies the statement's options in the same UPDATE that
-            // writes the password, so a statement doing both lands both.
-            options.apply(&registry, &user, &host);
-            // Go REPLACES the whole `mysql.global_priv` PRIV JSON when the
-            // statement carries any `REQUIRE` clause, and leaves the row
-            // untouched when it carries none -- so `ALTER USER ... REQUIRE
-            // NONE` clears an earlier `REQUIRE SSL` (captured:
-            // `{"ssl_type":1}` becomes `{}`) while a password-only ALTER
-            // keeps it.
-            if !alter.tls_options.is_empty() {
-                registry.set_ssl_type(&user, &host, ssl_type);
-            }
-        }
-        // A sandboxed session escapes by giving ITSELF a new password, which
-        // is the only thing it was allowed in here to do (Go's
-        // `executeAlterUser` -> `checkSandboxMode`, whose gate ran before the
-        // statement reached this driver).
-        if self.sandbox_mode && alter.users.iter().any(|spec| spec.auth.is_some()) {
-            self.sandbox_mode = false;
-        }
-        Ok(StmtOutput::Affected(0))
-    }
-
-    /// `SHOW CREATE USER <account>`. Go's `fetchShowCreateUser`
-    /// (`pkg/executor/show.go`) reads `mysql.user`/`mysql.global_priv`
-    /// columns this tier has no storage for beyond `authentication_string`,
-    /// `plugin`, and `account_locked` (the `ACCOUNT LOCK`/`UNLOCK` flag
-    /// `set_locked` writes) -- every other clause therefore prints its
-    /// Go-observed DEFAULT rather than a tracked value:
-    /// - `PASSWORD HISTORY DEFAULT` / `PASSWORD REUSE INTERVAL DEFAULT`
-    ///   always (no `Password_reuse_history`/`Password_reuse_time` storage).
-    /// - No ` token_issuer`, ` WITH MAX_USER_CONNECTIONS`, or ` ATTRIBUTE`
-    ///   suffix (no storage for any of them; Go omits each when its column is
-    ///   NULL/empty too, so a freshly created account's line matches byte for
-    ///   byte).
-    ///
-    /// The `PASSWORD EXPIRE ...` clause and the
-    /// ` FAILED_LOGIN_ATTEMPTS n PASSWORD_LOCK_TIME n|UNBOUNDED` suffix DO
-    /// reflect real stored columns, including the bare `PASSWORD EXPIRE` a
-    /// `CREATE ROLE` account prints (Go's `CREATE ROLE` writes
-    /// `Password_expired='Y'`) -- the divergence noted here before.
-    ///
-    /// The `IDENTIFIED WITH '<plugin>' AS '<hash>'` clause DOES reflect the
-    /// account's real plugin and stored hash, and `ACCOUNT LOCK`/`UNLOCK`
-    /// DOES reflect the real `account_locked` flag (shared with `is_role`;
-    /// a `CREATE ROLE` account therefore prints `ACCOUNT LOCK` here, matching
-    /// Go).
-    pub(crate) fn show_create_user_stmt(
-        &mut self,
-        spec: &tidb_ast::UserSpec,
-    ) -> Result<StmtOutput, DriverError> {
-        let (user, host) = self.resolve_account(spec)?;
-        // Go `executor/show.go`'s `fetchShowCreateUser` (around line 1873):
-        // this statement renders `IDENTIFIED WITH '<plugin>' AS '<hash>'`,
-        // so naming ANOTHER account needs `SELECT` on `mysql.user` -- the
-        // privilege that would let the caller read the stored hash directly.
-        if !spec.current_user
-            && !self.is_own_account(&user, &host)
-            && !self.has_scoped_privilege(
-                tidb_mysql::consts::SystemDB,
-                tidb_mysql::consts::UserTable,
-                privilege::GlobalPriv::Select,
-            )
-        {
-            let (caller, caller_host) = self.own_account()?;
-            return Err(DriverError::TableAccessDenied {
-                privilege: "SELECT",
-                user: caller,
-                host: caller_host,
-                table: tidb_mysql::consts::UserTable.to_owned(),
-            });
-        }
-        let Some(registry) = self.privileges.clone() else {
-            return Err(DriverError::unsupported(
-                "SHOW CREATE USER requires a server front end with a privilege registry",
-            ));
-        };
-        if !registry.user_exists(&user, &host) {
-            return Err(DriverError::CannotUserRole {
-                operation: "SHOW CREATE USER",
-                target: format!("'{user}'@'{host}'"),
-            });
-        }
-        let plugin = registry
-            .plugin(&user, &host)
-            .unwrap_or_else(|| tidb_mysql::consts::AuthNativePassword.to_owned());
-        let auth_string = registry.auth_string(&user, &host).unwrap_or_default();
-        // Go: `authStr` is empty ONLY for `auth_socket` with no stored data;
-        // every other plugin (including a native/sha2/sm3 account with an
-        // empty, passwordless hash) still prints ` AS '<possibly empty>'`.
-        let auth_clause = if plugin == tidb_mysql::consts::AuthSocket && auth_string.is_empty() {
-            String::new()
-        } else {
-            format!(" AS '{auth_string}'")
-        };
-        let account_clause = if registry.is_role(&user, &host) {
-            "LOCK"
-        } else {
-            "UNLOCK"
-        };
-        // Go picks ONE expiry clause from the two columns, in this order
-        // (all four captured): `Password_expired='Y'` prints a bare
-        // `PASSWORD EXPIRE` whatever the lifetime is, then a zero lifetime
-        // prints `NEVER`, then a positive one prints `INTERVAL n DAY`, and a
-        // NULL lifetime prints `DEFAULT`.
-        let expiry = registry.password_expiry(&user, &host).unwrap_or_default();
-        let expire_clause = if expiry.expired {
-            "PASSWORD EXPIRE".to_owned()
-        } else {
-            match expiry.lifetime {
-                Some(0) => "PASSWORD EXPIRE NEVER".to_owned(),
-                Some(days) if days > 0 => format!("PASSWORD EXPIRE INTERVAL {days} DAY"),
-                _ => "PASSWORD EXPIRE DEFAULT".to_owned(),
-            }
-        };
-        // Both suffixes appear together or not at all, because Go reads them
-        // from one `Password_locking` object that exists only when at least
-        // one of the two options is nonzero (captured:
-        // `FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3` prints both, a plain
-        // account prints neither, and `PASSWORD_LOCK_TIME 6` alone still
-        // prints ` FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 6`).
-        let locking_clause = registry
-            .password_locking(&user, &host)
-            .map(|locking| {
-                let lock_time = if locking.password_lock_time_days == -1 {
-                    "UNBOUNDED".to_owned()
-                } else {
-                    locking.password_lock_time_days.to_string()
-                };
-                format!(
-                    " FAILED_LOGIN_ATTEMPTS {} PASSWORD_LOCK_TIME {lock_time}",
-                    locking.failed_login_attempts
-                )
-            })
-            .unwrap_or_default();
-        // Go's `fetchShowCreateUser` reads the `mysql.global_priv` PRIV
-        // JSON's `ssl_type` for this clause (captured: `REQUIRE SSL` for an
-        // account created with it, `REQUIRE NONE` for one without).
-        let require_clause = registry.ssl_type(&user, &host).show_create_user_clause();
-        let show_str = format!(
-            "CREATE USER '{user}'@'{host}' IDENTIFIED WITH '{plugin}'{auth_clause} REQUIRE {require_clause} {expire_clause} ACCOUNT {account_clause} PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT{locking_clause}"
-        );
-        // Go: `fmt.Sprintf("CREATE USER for %s", s.User)` -- `s.User.String()`
-        // is unquoted `user@host` (same shape `SHOW GRANTS`'s header uses).
-        Ok(string_column_output(
-            &format!("CREATE USER for {user}@{host}"),
-            vec![show_str],
-        ))
-    }
-
-    /// `SET PASSWORD [FOR <account>] = '<password>'`: the same
-    /// `authentication_string` write as `ALTER USER ... IDENTIFIED BY`
-    /// (captured: both leave the identical `*HEX` value), defaulting to the
-    /// session's own account.
-    pub(crate) fn set_password_stmt(
-        &mut self,
-        set_password: &tidb_ast::SetPasswordStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        if set_password.retain_current_password {
-            return Err(DriverError::unsupported(
-                "SET PASSWORD ... RETAIN CURRENT PASSWORD is not supported yet",
-            ));
-        }
-        let Some(registry) = self.privileges.clone() else {
-            return Err(DriverError::unsupported(
-                "SET PASSWORD requires a server front end with a privilege registry",
-            ));
-        };
-        let (user, host) = match &set_password.user {
-            Some(spec) => self.resolve_account(spec)?,
-            None => self.own_account()?,
-        };
-        // Go `executeSetPwd` (`executor/simple.go` around line 2905):
-        // changing ANOTHER account's password is TiDB's long-standing
-        // SUPER-only operation, and the refusal names the `mysql` schema
-        // rather than the privilege.
-        if !self.is_own_account(&user, &host)
-            && !self.has_scoped_privilege("", "", privilege::GlobalPriv::Super)
-        {
-            let (caller, caller_host) = self.own_account()?;
-            return Err(DriverError::DbAccessDenied {
-                user: caller,
-                host: caller_host,
-                database: tidb_mysql::consts::SystemDB.to_owned(),
-            });
-        }
-        let Some(plugin) = registry.plugin(&user, &host) else {
-            return Err(DriverError::SetPasswordNoMatchingRow);
-        };
-        self.validate_password_if_enabled(&set_password.password)?;
-        let auth_string = privilege::encode_password_for_plugin(
-            &plugin,
-            &privilege::PluginCredential::By(&set_password.password),
-        )?;
-        if !registry.set_auth_string(&user, &host, &auth_string) {
-            return Err(DriverError::SetPasswordNoMatchingRow);
-        }
-        // Same UPDATE as `ALTER USER ... IDENTIFIED BY`: a stored password
-        // is an unexpired password.
-        registry.mark_password_changed(&user, &host);
-        self.sandbox_mode = false;
-        Ok(StmtOutput::Affected(0))
     }
 
     /// `RENAME USER <old> TO <new> [, ...]`. Go's `executeRenameUser` moves
@@ -1290,6 +1014,9 @@ impl Session {
                     old_missing,
                 });
             }
+            // Go `renameUserHostInSystemTable` on `mysql.user`: the row moves
+            // with the account, authentication string included.
+            self.mirror_rename_user_row(&old_user, &old_host, &new_user, &new_host)?;
         }
         Ok(StmtOutput::Affected(0))
     }
@@ -1362,7 +1089,12 @@ impl Session {
             self.require_system_user_privilege_over(&spec.user, &spec.host)?;
         }
         for spec in users {
-            registry.drop_user(&spec.user, &spec.host);
+            if registry.drop_user(&spec.user, &spec.host) {
+                // Go `executeDropUser` deletes the account's `mysql.user`
+                // row in the same transaction; a target that never existed
+                // (reachable only under IF EXISTS) deletes nothing.
+                self.mirror_drop_user_row(&spec.user, &spec.host)?;
+            }
         }
         // A dropped role stops being active in THIS session too; the edge it
         // was activated through is gone, so keeping it would confer
@@ -1408,6 +1140,22 @@ impl Session {
                 "GRANT requires a server front end with a privilege registry",
             ));
         };
+        // Go's GRANT is ATOMIC across its user list: the executor writes
+        // every row inside one transaction and rolls the whole statement
+        // back when a grantee is missing (captured, `executor/grant`'s
+        // TestGrantPrivilegeAtomic: `grant ... to r1, r2, r4` with `r4`
+        // absent leaves r1 and r2 at 'N'). Each arm below verifies every
+        // grantee AFTER its privilege gate (Go's plan-time check precedes
+        // the executor's user lookup) and BEFORE its first registry write,
+        // which reproduces the rollback without one.
+        let all_grantees_exist = |users: &[tidb_ast::CreateUserSpec]| -> Result<(), DriverError> {
+            for spec in users {
+                if !registry.user_exists(&spec.user.user, &spec.user.host) {
+                    return Err(DriverError::GrantToUnknownUser);
+                }
+            }
+            Ok(())
+        };
         match &grant.level {
             tidb_ast::GrantLevel::Global => {
                 let (static_mask, dynamic) = self.split_global_privs(&grant.privileges, true)?;
@@ -1422,6 +1170,7 @@ impl Session {
                 let names_static = grant.privileges.iter().any(|privilege| !privilege.dynamic);
                 let mask = static_mask | if names_static { with_grant } else { 0 };
                 self.require_grant_privileges("", "", static_mask, &dynamic, true)?;
+                all_grantees_exist(&grant.users)?;
                 for spec in &grant.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
@@ -1435,6 +1184,12 @@ impl Session {
                     for name in &dynamic {
                         registry.grant_dynamic(user, host, name, grant.with_grant);
                     }
+                    // Go `grant.go` `composeGlobalPrivUpdate`: the same bits
+                    // flip the account's `mysql.user` privilege columns to
+                    // `'Y'`. Dynamic privileges live in `global_grants`, not
+                    // here, so only the static mask is mirrored.
+                    let (user, host) = (user.to_owned(), host.to_owned());
+                    self.mirror_global_priv_columns(&user, &host, mask, true)?;
                 }
             }
             tidb_ast::GrantLevel::Database(database) => {
@@ -1442,6 +1197,7 @@ impl Session {
                 let privs = self.resolve_scoped_privs(&grant.privileges, ScopeKind::Database)?;
                 let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit()) | with_grant;
                 self.require_grant_privileges(&database, "", mask, &[], true)?;
+                all_grantees_exist(&grant.users)?;
                 for spec in &grant.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
@@ -1463,6 +1219,7 @@ impl Session {
                 // like any other privilege in the same statement.
                 let column_mask = columns.iter().fold(mask, |mask, (_, bits)| mask | bits);
                 self.require_grant_privileges(&database, table, column_mask, &[], true)?;
+                all_grantees_exist(&grant.users)?;
                 // Go allows granting on a table that does not exist only
                 // when the privilege list includes `CREATE` (captured:
                 // issues #28533/#29268); otherwise it reports
@@ -1531,10 +1288,27 @@ impl Session {
                 return Err(DriverError::IllegalPrivilegeLevel(dynamic.join(",")));
             }
         }
+        // Go's REVOKE is ATOMIC across its user list, like GRANT's rollback
+        // (captured, `executor/grant`: `revoke all ... from r1, r2, r4, r3`
+        // with `r4` absent reports "Unknown user" and r1/r2/r3 keep every
+        // bit). Verified after each arm's privilege gate, before its first
+        // registry write.
+        let all_revokees_exist = |users: &[tidb_ast::CreateUserSpec]| -> Result<(), DriverError> {
+            for spec in users {
+                if !registry.user_exists(&spec.user.user, &spec.user.host) {
+                    return Err(DriverError::RevokeUnknownUser {
+                        user: spec.user.user.clone(),
+                        host: spec.user.host.clone(),
+                    });
+                }
+            }
+            Ok(())
+        };
         match &revoke.level {
             tidb_ast::GrantLevel::Global => {
                 let (mask, dynamic) = self.split_global_privs(&revoke.privileges, false)?;
                 self.require_grant_privileges("", "", mask, &dynamic, false)?;
+                all_revokees_exist(&revoke.users)?;
                 let revoke_all_dynamic = revoke
                     .privileges
                     .iter()
@@ -1560,6 +1334,10 @@ impl Session {
                     for name in &dynamic {
                         registry.revoke_dynamic(user, host, name);
                     }
+                    // Go `revoke.go` `composeGlobalPrivUpdate(.., "N")`: the
+                    // revoked bits flip the same `mysql.user` columns back.
+                    let (user, host) = (user.to_owned(), host.to_owned());
+                    self.mirror_global_priv_columns(&user, &host, mask, false)?;
                 }
                 // An unregistered name is a WARNING here, not the error
                 // `GRANT` raises for it, and the delete still runs
@@ -1577,6 +1355,7 @@ impl Session {
                 let privs = self.resolve_scoped_privs(&revoke.privileges, ScopeKind::Database)?;
                 let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit());
                 self.require_grant_privileges(&database, "", mask, &[], false)?;
+                all_revokees_exist(&revoke.users)?;
                 for spec in &revoke.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
@@ -1605,6 +1384,7 @@ impl Session {
                 let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit());
                 let column_mask = columns.iter().fold(mask, |mask, (_, bits)| mask | bits);
                 self.require_grant_privileges(&database, table, column_mask, &[], false)?;
+                all_revokees_exist(&revoke.users)?;
                 for spec in &revoke.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();

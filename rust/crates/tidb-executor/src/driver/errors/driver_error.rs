@@ -1058,6 +1058,44 @@ pub enum DriverError {
     /// with no `mysql.user` row. `SET PASSWORD` does NOT reuse
     /// `ErrCannotUser` (captured).
     SetPasswordNoMatchingRow,
+    /// Go's plain `errors.Errorf("Dual password is not supported for users
+    /// authenticating with plugin '%s'", ...)` (1105): `RETAIN CURRENT
+    /// PASSWORD` on an account whose resolved plugin is not password-based
+    /// (LDAP / socket / token) -- there is no second hash to store.
+    DualPasswordUnsupportedForPlugin {
+        /// The account's resolved authentication plugin.
+        plugin: String,
+    },
+    /// Go `exeerrors.ErrSecondPasswordCannotBeEmpty` (3878): `RETAIN CURRENT
+    /// PASSWORD` when the account's CURRENT primary password is empty --
+    /// there is nothing to retain (`buildAdditionalPasswordEntry`).
+    SecondPasswordCannotBeEmpty {
+        /// The account username.
+        user: String,
+        /// The account host.
+        host: String,
+    },
+    /// Go `exeerrors.ErrPasswordCannotBeRetainedOnPluginChange` (3894):
+    /// `RETAIN CURRENT PASSWORD` combined with an `IDENTIFIED WITH` that
+    /// changes the account's authentication plugin -- the old hash would be
+    /// unverifiable under the new plugin (`executeAlterUser`'s RETAIN
+    /// validation).
+    PasswordCannotBeRetainedOnPluginChange {
+        /// The account username.
+        user: String,
+        /// The account host.
+        host: String,
+    },
+    /// Go `exeerrors.ErrCurrentPasswordCannotBeRetained` (3895): `RETAIN
+    /// CURRENT PASSWORD` without a new password, or with an empty one --
+    /// MySQL requires the primary to be replaced in the same statement
+    /// (`executeAlterUser` / `executeSetPwd`).
+    CurrentPasswordCannotBeRetained {
+        /// The account username.
+        user: String,
+        /// The account host.
+        host: String,
+    },
     /// Go `ErrPluginIsNotLoaded` (1524): `CREATE`/`ALTER USER ... IDENTIFIED
     /// WITH <plugin>` named a plugin that is neither one of Go's built-in
     /// `CREATE USER`-accepted plugins (`mysql_native_password`,

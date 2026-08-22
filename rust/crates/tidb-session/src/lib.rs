@@ -676,6 +676,7 @@ fn new_time_seeded_rand() -> Rc<MysqlRng> {
 pub use tidb_executor::TxnErrorKind;
 
 mod account;
+mod account_password;
 mod admin_check_arm;
 mod analyze_arm;
 pub mod binding;
@@ -701,6 +702,7 @@ pub mod session_vars;
 mod stmt_ctx;
 mod table_privilege;
 mod txn;
+mod user_table;
 mod variables;
 pub mod varsutil;
 mod warnings;
