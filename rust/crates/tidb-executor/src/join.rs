@@ -3011,7 +3011,13 @@ impl<C: Columns> JoinExec<C> {
         // selection vector. Keep the key column borrowed once in that shape;
         // the generic selected-chunk path below still uses the logical Row
         // accessor so selection semantics remain unchanged.
-        let probe_key_values = input.sel().is_none().then(|| input.column(key_offset));
+        // A HYBRID key column (Go `FieldType.Hybrid()`) is variable-length in
+        // the chunk even though it compares as an integer, so the borrowed
+        // fixed-width accessors below cannot read it. Those keys take the
+        // generic row path, which goes through `Row::get_datum` exactly as
+        // Go's `Column.EvalInt` does.
+        let probe_key_values = (input.sel().is_none() && !probe_types[key_offset].is_hybrid())
+            .then(|| input.column(key_offset));
         let exact_key_at = |row_index: usize| {
             if let Some(values) = probe_key_values.as_ref() {
                 if values.is_null(row_index) {

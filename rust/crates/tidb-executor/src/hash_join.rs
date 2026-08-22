@@ -342,11 +342,7 @@ fn key_part(class: KeyClass, datum: &Datum) -> Result<Option<Vec<u8>>, KeyError>
         // `integer_cmp` orders a signed and an unsigned operand on one number
         // line without reinterpreting either bit pattern, so the exact `i128`
         // position of the value IS its equality class.
-        KeyClass::Int => match datum {
-            Datum::Int(value) => Some(i128::from(*value).to_be_bytes().to_vec()),
-            Datum::UInt(value) => Some(i128::from(*value).to_be_bytes().to_vec()),
-            _ => return Err(KeyError),
-        },
+        KeyClass::Int => Some(datum_int_key(datum).ok_or(KeyError)?.to_be_bytes().to_vec()),
         // A float comparison promotes an integral operand to `f64`, so an
         // integral datum in a float key column encodes as its `f64` value.
         // `-0.0 == 0.0` is TRUE, so the two must share a key; `NaN = NaN` is
@@ -436,17 +432,10 @@ pub(crate) fn row_key_by(
         encoded.resize(part_start + 8, 0);
         let value_start = encoded.len();
         let present = match key.class {
-            KeyClass::Int => match value {
-                Datum::Int(value) => {
-                    encoded.extend_from_slice(&i128::from(value).to_be_bytes());
-                    true
-                }
-                Datum::UInt(value) => {
-                    encoded.extend_from_slice(&i128::from(value).to_be_bytes());
-                    true
-                }
-                _ => return Err(KeyError),
-            },
+            KeyClass::Int => {
+                encoded.extend_from_slice(&datum_int_key(&value).ok_or(KeyError)?.to_be_bytes());
+                true
+            }
             KeyClass::Real => {
                 let value = match value {
                     Datum::Real(value) | Datum::Float32(value) => value,
@@ -509,11 +498,7 @@ pub(crate) fn row_hash_by(
         let present = match key.class {
             KeyClass::Int => {
                 encoded.write(&16u64.to_be_bytes());
-                match value {
-                    Datum::Int(value) => encoded.write(&i128::from(value).to_be_bytes()),
-                    Datum::UInt(value) => encoded.write(&i128::from(value).to_be_bytes()),
-                    _ => return Err(KeyError),
-                }
+                encoded.write(&datum_int_key(&value).ok_or(KeyError)?.to_be_bytes());
                 true
             }
             KeyClass::Real => {
@@ -569,11 +554,11 @@ pub(crate) fn row_hash_chunk(
         match key.class {
             KeyClass::Int => {
                 encoded.write(&16u64.to_be_bytes());
-                if types[at].is_unsigned() {
-                    encoded.write(&i128::from(row.get_uint64(at)).to_be_bytes());
-                } else {
-                    encoded.write(&i128::from(row.get_int64(at)).to_be_bytes());
-                }
+                encoded.write(
+                    &chunk_int_key(row, at, &types[at])
+                        .ok_or(KeyError)?
+                        .to_be_bytes(),
+                );
             }
             KeyClass::Real => {
                 let value = match types[at].code() {
@@ -607,14 +592,54 @@ pub(crate) fn exact_int_key_chunk(
     offset: usize,
     field_type: &FieldType,
 ) -> Option<i128> {
+    chunk_int_key(row, offset, field_type)
+}
+
+/// The integer a `KeyClass::Int` column holds at `offset`, or `None` for SQL
+/// NULL and for a value outside the class.
+///
+/// Go `EncodeHashChunkRowIdx` dispatches the hash key on the column's MYSQL
+/// TYPE, not on its eval type, and `mysql.TypeBit` has an arm of its own:
+/// `BinaryLiteral(row.GetBytes(idx)).ToInt(ctx)`. That arm exists because a
+/// HYBRID type -- Go `FieldType.Hybrid()`, so `BIT`/`ENUM`/`SET` -- COMPARES
+/// as an integer while `getFixedLen` gives it a VARIABLE-length cell. The
+/// fixed 8-byte `GetInt64` accessor therefore reads off the end of one: a
+/// `bit(64)` holding `1` is four bytes wide here, and asking it for eight
+/// panicked the whole statement. Go takes the same branch in
+/// `Column.EvalInt` before it ever reaches `row.GetInt64`.
+fn chunk_int_key(row: Row<'_>, offset: usize, field_type: &FieldType) -> Option<i128> {
     if row.is_null(offset) {
         return None;
     }
-    if field_type.is_unsigned() {
-        Some(i128::from(row.get_uint64(offset)))
-    } else {
-        Some(i128::from(row.get_int64(offset)))
+    if field_type.is_hybrid() {
+        return datum_int_key(&row.get_datum(offset, field_type));
     }
+    Some(if field_type.is_unsigned() {
+        i128::from(row.get_uint64(offset))
+    } else {
+        i128::from(row.get_int64(offset))
+    })
+}
+
+/// The same value read from an already-decoded datum.
+///
+/// Every hybrid arm is UNSIGNED in Go -- `BinaryLiteral.ToInt` returns
+/// `uint64`, and `Enum`/`Set` carry a `uint64` ordinal/mask -- so widening to
+/// `i128` places each one at its own exact position on the number line, which
+/// is what makes `bit(64)` holding `-1` match `18446744073709551615` in a
+/// `BIGINT UNSIGNED` and NOT match `-1` in a signed one.
+///
+/// A literal wider than eight significant bytes answers `u64::MAX`, which is
+/// Go's value alongside the `ErrTruncatedWrongVal` it logs rather than raises.
+fn datum_int_key(datum: &Datum) -> Option<i128> {
+    Some(match datum {
+        Datum::Int(value) => i128::from(*value),
+        Datum::UInt(value) => i128::from(*value),
+        Datum::Bit(literal) => i128::from(literal.to_int().value()),
+        Datum::Enum(value, _) => i128::from(value.value()),
+        Datum::Set(value, _) => i128::from(value.value()),
+        _ => return None,
+    })
 }
 
 /// Go `hashRowContainer.matchJoinKey`: a 64-bit hash match selects candidates
@@ -634,17 +659,9 @@ pub(crate) fn equi_keys_equal(
             return Ok(false);
         }
         let equal = match key.class {
-            KeyClass::Int => match (left, right) {
-                (Datum::Int(left), Datum::Int(right)) => left == right,
-                (Datum::UInt(left), Datum::UInt(right)) => left == right,
-                (Datum::Int(left), Datum::UInt(right)) => {
-                    *left >= 0 && u64::try_from(*left).ok() == Some(*right)
-                }
-                (Datum::UInt(left), Datum::Int(right)) => {
-                    *right >= 0 && u64::try_from(*right).ok() == Some(*left)
-                }
-                _ => return Err(KeyError),
-            },
+            KeyClass::Int => {
+                datum_int_key(left).ok_or(KeyError)? == datum_int_key(right).ok_or(KeyError)?
+            }
             KeyClass::Real => {
                 let number = |datum: &Datum| match datum {
                     Datum::Real(value) | Datum::Float32(value) => Some(*value),
@@ -695,21 +712,8 @@ pub(crate) fn equi_keys_equal_row(
         let field_type = row_types.get(row_at).ok_or(KeyError)?;
         let equal = match key.class {
             KeyClass::Int => {
-                if field_type.is_unsigned() {
-                    let value = row.get_uint64(row_at);
-                    match datum {
-                        Datum::UInt(other) => value == *other,
-                        Datum::Int(other) => *other >= 0 && value == *other as u64,
-                        _ => return Err(KeyError),
-                    }
-                } else {
-                    let value = row.get_int64(row_at);
-                    match datum {
-                        Datum::Int(other) => value == *other,
-                        Datum::UInt(other) => value >= 0 && value as u64 == *other,
-                        _ => return Err(KeyError),
-                    }
-                }
+                chunk_int_key(row, row_at, field_type).ok_or(KeyError)?
+                    == datum_int_key(datum).ok_or(KeyError)?
             }
             KeyClass::Real => {
                 let value = match field_type.code() {
@@ -769,18 +773,10 @@ pub(crate) fn equi_keys_equal_chunk_rows(
             return Ok(false);
         }
         let equal = match key.class {
-            KeyClass::Int => match (left_type.is_unsigned(), right_type.is_unsigned()) {
-                (false, false) => left.get_int64(key.left) == right.get_int64(key.right),
-                (true, true) => left.get_uint64(key.left) == right.get_uint64(key.right),
-                (false, true) => {
-                    let left = left.get_int64(key.left);
-                    left >= 0 && left as u64 == right.get_uint64(key.right)
-                }
-                (true, false) => {
-                    let right = right.get_int64(key.right);
-                    right >= 0 && left.get_uint64(key.left) == right as u64
-                }
-            },
+            KeyClass::Int => {
+                chunk_int_key(left, key.left, left_type).ok_or(KeyError)?
+                    == chunk_int_key(right, key.right, right_type).ok_or(KeyError)?
+            }
             KeyClass::Real => {
                 let number = |row: Row<'_>, offset: usize, field_type: &FieldType| {
                     if field_type.code() == tidb_datatype::FieldTypeCode::Float {
