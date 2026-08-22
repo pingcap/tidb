@@ -3341,10 +3341,13 @@ impl<C: Columns> JoinExec<C> {
         };
         // Keep pure-equality inputs chunk-backed from hash calculation through
         // output assembly. This is the common TPC-H path and avoids
-        // materializing every wide probe row as `Vec<Datum>`.
+        // materializing every wide probe row as `Vec<Datum>`. Semi and anti
+        // joins qualify too: their match arms below are the same row-at-a-time
+        // decisions Go's semiJoiner/antiSemiJoiner make, and routing them here
+        // keeps `EXISTS`/`NOT EXISTS` off the per-row `Vec<Datum>` path.
         if matches!(
             self.kind,
-            JoinKind::Inner | JoinKind::Left | JoinKind::Right
+            JoinKind::Inner | JoinKind::Left | JoinKind::Right | JoinKind::Semi | JoinKind::AntiSemi
         ) && self.residual_conditions.is_empty()
         {
             return self.drain_chunk_backed_probe(req, probe_is_left, &probe_types);
@@ -3611,8 +3614,13 @@ impl<C: Columns> JoinExec<C> {
                                         build_row,
                                     );
                                 }
-                                JoinKind::Semi => req.append_partial_row(0, probe_row),
-                                JoinKind::AntiSemi => {}
+                                // With the preserved side built, emission
+                                // belongs to the post-probe build scan; the
+                                // probe pass only marks matches.
+                                JoinKind::Semi if !builds_preserved => {
+                                    req.append_partial_row(0, probe_row);
+                                }
+                                JoinKind::Semi | JoinKind::AntiSemi => {}
                             }
                             Ok(true)
                         })
@@ -3626,7 +3634,10 @@ impl<C: Columns> JoinExec<C> {
                         }
                     }
                     matched |= accepted;
-                    if matches!(kind, JoinKind::Semi) && matched {
+                    // First match settles a probe-side semi join, but when the
+                    // preserved side was built every matching build row must
+                    // still be marked for the post-probe scan.
+                    if matches!(kind, JoinKind::Semi) && matched && !builds_preserved {
                         break;
                     }
                 }
