@@ -91,7 +91,8 @@ pub mod stats_bridge {
         }
     }
 
-    /// Go `GetPseudoRowCountByIndexRanges` over this port's range model.
+    /// Go `getPseudoRowCountByIndexRanges` (`cardinality/pseudo.go:173`,
+    /// unexported) over this port's range model.
     #[must_use]
     pub fn pseudo_count_by_ranges(ranges: &super::types::Ranges, table_row_count: f64) -> f64 {
         let mut index_ranges = Vec::with_capacity(ranges.len());
@@ -150,7 +151,10 @@ pub mod stats_bridge {
         pseudo_row_count_by_index_ranges(&index_ranges, table_row_count, None)
     }
 
-    /// Go `GetPseudoRowCountByIntRanges` for the int-handle table path.
+    /// Go's int-handle pseudo estimate: `getPseudoRowCountBySignedIntRanges`
+    /// and `getPseudoRowCountByUnsignedIntRanges` (`cardinality/pseudo.go:101`
+    /// and `:137`, both unexported), chosen by the handle's signedness as Go's
+    /// `GetRowCountByIntColumnRanges` chooses between them.
     #[must_use]
     pub fn pseudo_count_by_int_ranges(
         ranges: &super::types::Ranges,
