@@ -1411,10 +1411,10 @@ func TestAutoRandomIDRetryAfterPessimisticStatementRetry(t *testing.T) {
 	}()
 	session.ResetMockAutoRandIDRetryCount(1)
 	lockConflictFailpoint := "github.com/pingcap/tidb/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict"
+	require.NoError(t, failpoint.Enable(lockConflictFailpoint, "1*return(false)->1*return(true)->return(false)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable(lockConflictFailpoint))
 	}()
-	require.NoError(t, failpoint.Enable(lockConflictFailpoint, "1*return(false)->1*return(true)->return(false)"))
 
 	// S2 must retain its own replayed AUTO_RANDOM ID. Before this fix it
 	// reuses S1's ID after ResetOffset and updates S1 instead of inserting u=2.
@@ -1431,20 +1431,19 @@ func TestAutoIncrementIDRetryDoesNotDuplicate(t *testing.T) {
 	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("begin optimistic")
 	tk.MustExec("insert into t (id, idx, c) values (10, 11, 12)")
-	tk.MustExec("insert into t (idx, c) values (13, 14)")
 	tk.MustExec("update t set c = 15 where idx = 1")
+	tk.MustExec("insert into t (idx, c) values (13, 14)")
 
-	commitRetryFailpoint := "github.com/pingcap/tidb/session/mockCommitRetryForAutoIncID"
-	session.ResetMockAutoIncIDRetry()
+	commitRetryFailpoint := "github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID"
+	session.ResetMockAutoRandIDRetryCount(1)
 	require.NoError(t, failpoint.Enable(commitRetryFailpoint, "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable(commitRetryFailpoint))
-		session.ResetMockAutoIncIDRetry()
+		session.ResetMockAutoRandIDRetryCount(0)
 	}()
 
-	// The commit failpoint makes the optimistic transaction replay. The
-	// explicit AUTO_INCREMENT value and the generated value must not be added
-	// to RetryInfo again while the replay consumes the cached values.
+	// The explicit statement, the UPDATE's nil cache row, and the generated
+	// statement must retain separate cache positions during replay.
 	tk.MustExec("commit")
 	tk.MustQuery("select id, idx, c from t order by id").Check(testkit.Rows(
 		"1 1 15",
@@ -1470,12 +1469,12 @@ func TestAutoIncrementIDRetryWhenStatementRowCountChanges(t *testing.T) {
 	// The retry gets a new snapshot after src is changed, so the first history
 	// statement consumes fewer auto IDs than it did originally.
 	tk2.MustExec("delete from src where u = 1")
-	commitRetryFailpoint := "github.com/pingcap/tidb/session/mockCommitRetryForAutoIncID"
-	session.ResetMockAutoIncIDRetry()
+	commitRetryFailpoint := "github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID"
+	session.ResetMockAutoRandIDRetryCount(1)
 	require.NoError(t, failpoint.Enable(commitRetryFailpoint, "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable(commitRetryFailpoint))
-		session.ResetMockAutoIncIDRetry()
+		session.ResetMockAutoRandIDRetryCount(0)
 	}()
 
 	tk.MustExec("commit")
@@ -1490,16 +1489,15 @@ func TestAutoRandomIDRetryUsesCurrentExplicitID(t *testing.T) {
 	tk2.MustExec("use test")
 	tk.MustExec("create table src (id bigint primary key, u int)")
 	tk.MustExec("create table t (id bigint primary key clustered auto_random, u int)")
-	tk.MustExec("insert into src values (100, 1)")
+	tk.MustExec("insert into src values (100, 1), (200, 2)")
 	tk.MustExec("set @@allow_auto_random_explicit_insert = 1")
 	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("begin optimistic")
 	tk.MustExec("insert into t select id, u from src")
 
-	// Keep the row count stable while changing the explicit AUTO_RANDOM ID.
-	// The retry must use the current explicit ID instead of overwriting it with
-	// the cached ID 100.
-	tk2.MustExec("update src set id = 200 where id = 100")
+	// The retry sees one fewer row. It must use the remaining row's current
+	// explicit ID instead of overwriting it with the first cached ID.
+	tk2.MustExec("delete from src where id = 100")
 	commitRetryFailpoint := "github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID"
 	require.NoError(t, failpoint.Enable(commitRetryFailpoint, "return(true)"))
 	defer func() {
@@ -1509,7 +1507,7 @@ func TestAutoRandomIDRetryUsesCurrentExplicitID(t *testing.T) {
 	session.ResetMockAutoRandIDRetryCount(1)
 
 	tk.MustExec("commit")
-	tk.MustQuery("select * from t").Check(testkit.Rows("200 1"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("200 2"))
 }
 
 func TestAutoRandRecoverTable(t *testing.T) {

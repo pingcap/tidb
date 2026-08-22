@@ -553,9 +553,14 @@ func testInsertWithAutoidSchema(t *testing.T, tk *testkit.TestKit) {
 		},
 		// last test : auto increment allocation can find in retryInfo.
 		{
-			`retry : insert into t8 values (null, 16), (null, 17)`,
+			`retry : insert into t8 values (null, 16), (2000, 18), (null, 17)`,
 			`select * from t8 where id = 1000`,
 			testkit.Rows(`1000 16`),
+		},
+		{
+			`;`,
+			`select * from t8 where id = 2000`,
+			testkit.Rows(`2000 18`),
 		},
 		{
 			`;`,
@@ -573,9 +578,11 @@ func testInsertWithAutoidSchema(t *testing.T, tk *testkit.TestKit) {
 	for _, tt := range tests {
 		if strings.HasPrefix(tt.insert, "retry : ") {
 			// it's the last retry insert case, change the sessionVars.
-			retryInfo := &variable.RetryInfo{Retrying: true}
+			retryInfo := &variable.RetryInfo{}
 			retryInfo.AddAutoIncrementID(1000)
+			retryInfo.AddAutoIncrementID(1005)
 			retryInfo.AddAutoIncrementID(1001)
+			retryInfo.Retrying = true
 			tk.Session().GetSessionVars().RetryInfo = retryInfo
 			tk.MustExec(tt.insert[8:])
 			tk.Session().GetSessionVars().RetryInfo = &variable.RetryInfo{}

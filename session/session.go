@@ -2418,11 +2418,11 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		if err := checkStmtLimit(ctx, se, false); err != nil {
 			return nil, err
 		}
+		if !sessVars.RetryInfo.Retrying {
+			sessVars.RetryInfo.BeginStmt()
+		}
 	}
 
-	if sessVars.TxnCtx.CouldRetry && !s.IsReadOnly(sessVars) && !sessVars.RetryInfo.Retrying {
-		sessVars.RetryInfo.BeginStmt()
-	}
 	rs, err = s.Exec(ctx)
 	se.updateTelemetryMetric(s.(*executor.ExecStmt))
 	sessVars.TxnCtx.StatementCount++

@@ -350,11 +350,6 @@ func mockAutoIncIDRetry() bool {
 	return atomic.LoadInt64(&hasMockAutoIncIDRetry) == 1
 }
 
-// ResetMockAutoIncIDRetry resets the one-shot AUTO_INCREMENT commit retry failpoint state.
-func ResetMockAutoIncIDRetry() {
-	atomic.StoreInt64(&hasMockAutoIncIDRetry, 0)
-}
-
 var mockAutoRandIDRetryCount = int64(0)
 
 func needMockAutoRandIDRetry() bool {
