@@ -1714,7 +1714,34 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //  * a NULL stayed NULL when its column turned `TIMESTAMP NOT NULL`, so
     //    the rewrite failed outright -- which is where the three extra
     //    `compared` come from (3).
-    const KNOWN_DIVERGENCES: usize = 53;
+    //
+    // 53 -> 108, and `compared` 9278 -> 9477. This one RISES, so read the
+    // pair: `_tidb_rowid` -- Go's extra handle column -- now resolves, and
+    // 199 statements that used to fail with "Unknown column" are comparable
+    // for the first time. 144 of them AGREE. No statement that agreed before
+    // diverges now: the change fires only where the name is written, and
+    // every such statement was previously unreachable.
+    //
+    // The 55 that diverge are pre-existing gaps in OTHER features, which only
+    // these statements reach:
+    //
+    //  * 33 `planner/core/range_scan_for_like`: TiDB prints an index range in
+    //    the collation's SORT KEY bytes -- `["\x00A\x00A","\x00A\x00A"]`
+    //    for `'aa'`, `["",""]` for `' '` under PAD SPACE -- and this tier
+    //    prints the written string.
+    //  * 11 `executor/rowid`: that topic's own rows differ, so the values
+    //    being compared are of different data.
+    //  * 4 `planner/core/integration_partition`: `where _tidb_rowid = 1`
+    //    should build a HANDLE range (`TableRangeScan range:[1,1]`) and still
+    //    full-scans. `_tidb_rowid` IS the handle, so this is the extra-handle
+    //    increment's own next step, not a foreign gap.
+    //  * 3 `table/tables`: `SHARD_ROW_ID_BITS`, which this tier does not
+    //    allocate, so `_tidb_rowid >> 48` is constant here.
+    //  * 1 `executor/autoid`: row order.
+    //
+    // One topic LEFT the list in the same window: `ddl/db_change`, from the
+    // `TIMESTAMP NOT NULL` substitution.
+    const KNOWN_DIVERGENCES: usize = 108;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

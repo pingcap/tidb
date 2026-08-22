@@ -2097,6 +2097,15 @@ pub struct TableScanExec {
     /// the same reason: `Executor::open`, where the request is built, has no
     /// statement context of its own.
     statement: PushdownStatementContext,
+    /// The output slot carrying `_tidb_rowid`, Go's extra handle column.
+    ///
+    /// Go appends it to a heap table's `DataSource` schema
+    /// (`buildDataSource`'s `NewExtraHandleSchemaCol`) and it is the row's
+    /// HANDLE, not a stored column -- so it has no entry in `keep`, and the
+    /// local cursor's `(TableHandle, Vec<Datum>)` already carries its value.
+    /// `None` for every scan the statement did not ask for it, which is all
+    /// of them until the leaf sees the name.
+    extra_handle_slot: Option<usize>,
 }
 
 /// A partial `SUM` in progress.
@@ -2208,6 +2217,7 @@ impl TableScanExec {
             handle_ranges: None,
             decode_context,
             statement,
+            extra_handle_slot: None,
         }
     }
 
@@ -2318,9 +2328,15 @@ impl TableScanExec {
         }
         let next = match (self.remote.as_mut(), self.cursor.as_mut()) {
             (Some(remote), _) => remote.next_row(),
-            (None, Some(cursor)) => cursor
-                .next_row()
-                .map(|row| row.map(|(_, projected)| projected)),
+            (None, Some(cursor)) => cursor.next_row().map(|row| {
+                row.map(|(handle, projected)| match self.extra_handle_slot {
+                    // Go's extra handle column IS the record handle, so the
+                    // value the cursor already carries beside the row is the
+                    // one `_tidb_rowid` reports.
+                    Some(slot) => insert_extra_handle(projected, slot, &handle),
+                    None => projected,
+                })
+            }),
             (None, None) => return Ok(None),
         }
         .map_err(|error| {
@@ -2787,6 +2803,13 @@ impl Executor for TableScanExec {
         // conjuncts and the cap are applied below either way, which is what
         // makes the fall-through a performance choice rather than a semantic
         // one.
+        // A remote cursor answers the projected STORED columns and carries no
+        // record handle beside them, so a scan that owes `_tidb_rowid` reads
+        // records itself. This is the same performance-only choice the
+        // comment above describes, taken for a slot the wire cannot fill.
+        if self.extra_handle_slot.is_some() {
+            return self.open_local_cursor();
+        }
         self.remote = self
             .table
             .pushdown_row_cursor_with_context(
@@ -3187,6 +3210,42 @@ impl crate::table_access::TableAccess for TableScanExec {
         true
     }
 
+    /// Names the output slot that carries `_tidb_rowid`.
+    ///
+    /// Refused unless this scan reads records with the LOCAL cursor: the
+    /// value is the record handle, and only that path carries one beside the
+    /// row. A refusal leaves the leaf to decline the column rather than
+    /// answer a slot it cannot fill.
+    fn accept_extra_handle(&mut self, slot: usize) -> bool {
+        // The slot sits immediately after the stored columns this scan
+        // emits; anywhere else and the row would not line up with the schema
+        // the leaf built. A partial aggregate produces no record handles at
+        // all, so it cannot make the promise.
+        if self.partial_aggregate.is_some()
+            || self.remote_topn.is_some()
+            || self.post_filter_projection.is_some()
+            || slot != self.meta.schema().columns.len()
+        {
+            return false;
+        }
+        let mut columns = self.meta.schema().columns.clone();
+        let mut handle = tidb_expr::column::Column::new(
+            slot as i64 + 1,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+                .with_flags(tidb_datatype::FieldTypeFlags::NOT_NULL),
+        );
+        handle.index = slot as i64;
+        columns.push(handle);
+        self.meta = ExecutorMeta::new(
+            Schema::new(columns),
+            self.meta.id(),
+            self.meta.init_cap(),
+            self.meta.max_chunk_size(),
+        );
+        self.extra_handle_slot = Some(slot);
+        true
+    }
+
     /// The scan reads the named partitions and no others: the restriction
     /// goes onto the table handle, which is where every one of this scan's
     /// key ranges -- whole-relation and handle-narrowed alike -- gets its id
@@ -3206,6 +3265,13 @@ impl crate::table_access::TableAccess for TableScanExec {
     /// remapped to the narrowed row without changing the predicate.
     fn accept_column_prune(&mut self, keep: &[usize]) -> bool {
         if keep.is_empty() {
+            return false;
+        }
+        // `_tidb_rowid` sits beside the stored columns rather than among
+        // them, so a projection expressed in stored offsets can no longer
+        // describe this row. The leaf offers the handle slot only after it
+        // has finished pruning, so this cannot refuse a prune that matters.
+        if self.extra_handle_slot.is_some() {
             return false;
         }
         if keep.iter().any(|offset| *offset >= self.keep.len()) {
@@ -3482,5 +3548,41 @@ mod remote_cursor_tests {
             append_partial_remote_chunk(&mut stream, &mut pending, &mut output, 4).unwrap(),
             None
         );
+    }
+}
+
+/// Places the record handle in the output slot Go gives `_tidb_rowid`.
+///
+/// A common-handle table has no extra handle column at all -- Go builds its
+/// `HandleCols` from the primary index instead -- so only the integer form
+/// can reach here, and an unsigned one keeps the value it was stored under.
+pub(crate) fn insert_extra_handle(
+    mut row: Vec<Datum>,
+    slot: usize,
+    handle: &TableHandle,
+) -> Vec<Datum> {
+    let value = match integer_record_handle(&handle.record_handle()) {
+        Some(value) => Datum::Int(value),
+        // Fail-closed rather than inventing a rowid a heap table cannot have.
+        None => Datum::Null,
+    };
+    if slot == row.len() {
+        row.push(value);
+    } else if let Some(cell) = row.get_mut(slot) {
+        *cell = value;
+    }
+    row
+}
+
+/// The integer inside a record handle, through a partition's wrapper.
+///
+/// A partitioned heap table's rows are keyed by `(partition_id, handle)`, and
+/// Go's `_tidb_rowid` reports the handle -- which is why the same rowid
+/// recurs across partitions, as the source corpus's own comments note.
+fn integer_record_handle(handle: &RecordHandle) -> Option<i64> {
+    match handle {
+        RecordHandle::Int(value) => Some(*value),
+        RecordHandle::Partition { handle, .. } => integer_record_handle(handle),
+        RecordHandle::Common(_) => None,
     }
 }

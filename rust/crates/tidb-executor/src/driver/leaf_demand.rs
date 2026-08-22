@@ -109,6 +109,15 @@ pub(crate) struct FromDemand<'a> {
     /// the caller has no statement to compute them from -- which every leaf
     /// reads as "every column", the answer it gave before this existed.
     pub(crate) columns: Option<&'a LeafDemand>,
+    /// The same walk, but supplied whether or not the leaf plans its own
+    /// access path -- `columns` is withheld from a single-KV-table `SELECT`
+    /// because `commit_fast_path_source` costs that one later.
+    ///
+    /// It answers only questions about which names the statement WRITES, not
+    /// which columns a leaf must produce, so withholding it would change an
+    /// answer rather than defer a decision. [`LeafDemand::names_extra_handle`]
+    /// is the one such question.
+    pub(crate) all_names: Option<&'a LeafDemand>,
     /// The columns this `FROM` must expose to its parent logical operator.
     /// Unlike `columns`, this excludes predicates that a join below can
     /// consume. Join costing uses it to reproduce the schemas left by Go's
@@ -156,6 +165,7 @@ impl FromDemand<'_> {
             offered: &[],
             pushdown: None,
             columns: None,
+            all_names: None,
             output_columns: None,
             rows: None,
             join_hints: None,
@@ -165,6 +175,10 @@ impl FromDemand<'_> {
         }
     }
 }
+
+/// Go `model.ExtraHandleName`: the name of a heap table's implicit handle
+/// column, lowercased as this walk stores every name.
+pub(crate) const EXTRA_HANDLE_NAME: &str = "_tidb_rowid";
 
 /// The column names a statement reads, keyed the way a `FROM` leaf can be
 /// named. See the module doc for the rules and for why they may over-count.
@@ -275,6 +289,25 @@ impl LeafDemand {
     /// scope. Go can prune the preserved child of a semi join before physical
     /// search; Rust reaches that join with the child executor already built,
     /// so the same name-level demand is applied to its concatenated schema.
+    /// Whether the statement NAMES `_tidb_rowid` on this relation.
+    ///
+    /// Go appends the extra handle column to every heap `DataSource` and lets
+    /// `rule_column_pruning` take it away again; asking the demand first
+    /// reaches the same post-pruning schema without the round trip, and
+    /// leaves every statement that never writes the name untouched.
+    ///
+    /// A bare `*` deliberately does NOT count: `unfoldWildStar` skips
+    /// `model.ExtraHandleID`, so `select * from t` never carries it.
+    #[must_use]
+    pub(crate) fn names_extra_handle(&self, visible: &str) -> bool {
+        let visible = visible.to_ascii_lowercase();
+        self.unqualified.contains(EXTRA_HANDLE_NAME)
+            || self
+                .qualified
+                .get(&visible)
+                .is_some_and(|names| names.contains(EXTRA_HANDLE_NAME))
+    }
+
     pub(crate) fn needed_scope(&self, scope: &crate::driver::FromScope) -> Vec<usize> {
         scope
             .tables

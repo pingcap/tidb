@@ -489,8 +489,15 @@ pub(crate) fn leaf_index_source(
     // The schema above may already be NARROWER than the table (the leaf
     // demand prunes before the access path replaces the source), so the
     // reader is told which stored column each slot is rather than assuming
-    // the first n.
-    if let Some(offsets) = crate::access_path::stored_column_offsets(table, columns) {
+    // the first n. `_tidb_rowid` has no stored column at all -- it is the
+    // record HANDLE, which this reader already holds for every row it looks
+    // up -- so it is named separately.
+    let handle_slot = crate::access_path::extra_handle_slot(columns);
+    if let Some(slot) = handle_slot {
+        exec.read_extra_handle(slot);
+    }
+    let stored = handle_slot.map_or(columns, |slot| &columns[..slot]);
+    if let Some(offsets) = crate::access_path::stored_column_offsets(table, stored) {
         exec.read_table_columns(offsets);
     }
     crate::table_access::TableAccess::accept_scan_estimate(&mut exec, estimate.rows);

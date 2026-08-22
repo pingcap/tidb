@@ -887,6 +887,8 @@ pub(crate) fn build_from(
             // offsets. Empty until an index branch fills it in; the table
             // branch's answer is read off the catalog at the end of the arm.
             let mut walked_index: Option<Vec<usize>> = None;
+            // The leaf offset carrying `_tidb_rowid`, so `*` can skip it.
+            let mut extra_handle_offset: Option<usize> = None;
             let mut cost_candidate = None;
             // A handle range consumes only its access conjuncts. The
             // remainder is still executed by the scan as a cop Selection and
@@ -1197,6 +1199,27 @@ pub(crate) fn build_from(
                     columns = keep.iter().map(|offset| columns[*offset].clone()).collect();
                 }
             }
+            // Go appends the extra handle column to a heap table's
+            // `DataSource` schema (`buildDataSource`: no `PKIsHandle` column
+            // and not `IsCommonHandle` -> `NewExtraHandleSchemaCol`), where
+            // it names the record HANDLE rather than any stored column. It
+            // goes on AFTER pruning for the same reason Go's survives it:
+            // the pruner works in stored offsets and this slot has none.
+            let extra_handle = demand
+                .all_names
+                .is_some_and(|wanted| wanted.names_extra_handle(&visible))
+                .then(|| extra_handle_column(entry))
+                .flatten();
+            if let Some(handle_column) = extra_handle {
+                let slot = columns.len();
+                if exec
+                    .table_access()
+                    .is_some_and(|access| access.accept_extra_handle(slot))
+                {
+                    columns.push(handle_column);
+                    extra_handle_offset = Some(slot);
+                }
+            }
             if leaf_where.is_some() {
                 if let Some(rows) = demand.rows {
                     if access_consumed_filter || scan_consumed_filter {
@@ -1212,6 +1235,13 @@ pub(crate) fn build_from(
             }
             // The leaf's final row layout by name, after logical pruning.
             let column_names: Vec<String> = columns.iter().map(|(name, _)| name.clone()).collect();
+            // `unfoldWildStar` skips `model.ExtraHandleID`, so `*` expands to
+            // the stored columns alone even while `_tidb_rowid` sits beside
+            // them. Naming the surviving offsets is how this scope says that.
+            let star = match extra_handle_offset {
+                Some(handle) => (0..columns.len()).filter(|at| *at != handle).collect(),
+                None => Vec::new(),
+            };
             let scope = FromScope {
                 tables: vec![FromTable {
                     name: visible.clone(),
@@ -1222,6 +1252,7 @@ pub(crate) fn build_from(
                     columns,
                     offset: 0,
                 }],
+                star,
                 ..FromScope::for_statement(ctx)
             };
             let derived_trace_filter = demand
@@ -5967,4 +5998,24 @@ mod join_schema_tests {
         );
         projected.close().unwrap();
     }
+}
+
+/// Go `buildDataSource`'s extra handle column, for a table that has one.
+///
+/// A table whose primary key IS the handle reports that column instead, and a
+/// clustered common handle builds `HandleCols` from the primary index -- in
+/// both cases `_tidb_rowid` names nothing, which is why TiDB answers
+/// "Unknown column" for it there. Only a HEAP table gets the extra column.
+fn extra_handle_column(entry: &TableEntry) -> Option<(String, FieldType)> {
+    let TableEntry::Kv(kv) = entry else {
+        return None;
+    };
+    if kv.pk_handle_offset().is_some() || !kv.common_handle_offsets().is_empty() {
+        return None;
+    }
+    Some((
+        crate::driver::leaf_demand::EXTRA_HANDLE_NAME.to_owned(),
+        FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+            .with_flags(tidb_datatype::FieldTypeFlags::NOT_NULL),
+    ))
 }

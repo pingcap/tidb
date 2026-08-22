@@ -195,6 +195,9 @@ pub(crate) fn decorrelate_where(
                     offered: &offered,
                     pushdown: Some(&pushdown),
                     columns: Some(&wanted),
+                    // `wanted` IS the statement-wide walk (`of_select`), so
+                    // it answers both questions for this rewritten select.
+                    all_names: Some(&wanted),
                     output_columns: Some(&output_wanted),
                     rows: Some(&rows),
                     join_hints: None,

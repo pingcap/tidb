@@ -1368,7 +1368,12 @@ fn run_select_traced_with_delivery_choice_inner(
             // here instead of waiting for the later empty-property fast path.
             let plan_at_leaf = access::single_kv_table(&select.from, catalog, current_db).is_none()
                 || aggregation_order.is_some();
-            let wanted = plan_at_leaf.then(|| leaf_demand::LeafDemand::of_select(select));
+            // The statement-wide name walk, always taken: `wanted` below is
+            // withheld from a single-KV-table `SELECT` because that leaf is
+            // costed later, and a question about which names the statement
+            // WRITES cannot be deferred with it.
+            let all_names = leaf_demand::LeafDemand::of_select(select);
+            let wanted = plan_at_leaf.then(|| all_names.clone());
             let output_wanted = leaf_demand::LeafDemand::of_select_output(select);
             // The estimate owner: every relation of this `FROM` with the row
             // count `derive_stats` derives for it, read off the statement,
@@ -1457,6 +1462,7 @@ fn run_select_traced_with_delivery_choice_inner(
                 offered: &offered,
                 pushdown: Some(&pushdown),
                 columns: wanted.as_ref(),
+                all_names: Some(&all_names),
                 output_columns: Some(&output_wanted),
                 rows: row_source.as_ref(),
                 join_hints: (!join_hints.is_empty()).then_some(&join_hints),

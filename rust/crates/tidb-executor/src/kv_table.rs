@@ -65,6 +65,7 @@ pub use table_meta::{
     KvForeignKey, KvIndex, PreparedPointGetDecodeContext, RowDecodeContext, TableCharset,
     TableHandle,
 };
+pub(crate) use table_scan::insert_extra_handle;
 pub use table_scan::{
     capture_decoded_column_ids, IndexRangeCursor, RemoteIndexHandleCursor, RemoteRowCursor,
     RowCursor, TableScanExec,

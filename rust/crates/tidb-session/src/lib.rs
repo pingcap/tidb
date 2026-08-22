@@ -1408,6 +1408,8 @@ mod tests_outer_join_elimination;
 #[cfg(test)]
 mod tests_partition;
 #[cfg(test)]
+mod tests_extra_handle;
+#[cfg(test)]
 mod tests_index_join_inner_pattern;
 #[cfg(test)]
 mod tests_modify_column_null;

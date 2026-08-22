@@ -278,4 +278,22 @@ pub trait TableAccess {
         let _ = descending;
         false
     }
+
+    /// Offers this source the output slot that must carry `_tidb_rowid`.
+    ///
+    /// Go's extra handle column is not a stored column: `buildDataSource`
+    /// appends `NewExtraHandleSchemaCol` to a heap table's schema and it
+    /// reports the record HANDLE. So this is not a projection offer like
+    /// [`TableAccess::accept_column_prune`] -- the slot sits BESIDE the
+    /// scan's stored columns, and only a source that reads records with
+    /// their handles can fill it.
+    ///
+    /// Returning `true` promises that from the next `open` on, every row this
+    /// source emits is `slot + 1` wide and holds the record handle there.
+    /// The default refuses, which leaves the leaf to decline the column
+    /// rather than answer a slot nothing fills.
+    fn accept_extra_handle(&mut self, slot: usize) -> bool {
+        let _ = slot;
+        false
+    }
 }

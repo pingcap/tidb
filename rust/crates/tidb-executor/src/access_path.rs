@@ -590,6 +590,16 @@ pub struct IndexRangeSourceExec {
     /// Whether the selected columns are served by Go's single-read
     /// `PhysicalIndexReader`, which cannot accept an IndexLookUp-only limit.
     covering: bool,
+    /// The output slot carrying `_tidb_rowid`, Go's extra handle column.
+    ///
+    /// An index entry carries the row's HANDLE, which is precisely what this
+    /// column reports, so a reader that already looks rows up by handle can
+    /// fill it without reading anything more. `None` until the leaf offers
+    /// it, which is every read that does not name `_tidb_rowid`.
+    extra_handle_slot: Option<usize>,
+    /// The handle each pending lookup row came from, parallel to
+    /// `lookup_rows`. Only collected while `extra_handle_slot` is set.
+    lookup_handles: Vec<Option<TableHandle>>,
     /// The current handle batch -- Go's `lookupTableTask.handles`, already
     /// sorted unless [`Self::keep_order`].
     batch: Vec<TableHandle>,
@@ -680,8 +690,22 @@ impl IndexRangeSourceExec {
     /// the shape whose leaf demand prunes the scope BEFORE the access path
     /// replaces the source, so the replacement was the first reader ever
     /// built over a narrowed schema.
+    /// Names the output slot that carries `_tidb_rowid`.
+    ///
+    /// Unlike the table scan's, this needs no fallback: every row this source
+    /// emits was looked up BY handle, so the value is already in hand at the
+    /// moment the row is produced.
+    pub(crate) fn read_extra_handle(&mut self, slot: usize) {
+        self.extra_handle_slot = Some(slot);
+    }
+
     pub(crate) fn read_table_columns(&mut self, offsets: Vec<usize>) {
-        debug_assert_eq!(offsets.len(), self.meta.schema().columns.len());
+        // `_tidb_rowid` occupies a schema slot with no stored offset behind
+        // it, so the two widths differ by exactly one when it is present.
+        debug_assert_eq!(
+            offsets.len() + usize::from(self.extra_handle_slot.is_some()),
+            self.meta.schema().columns.len()
+        );
         self.keep = offsets;
     }
 
@@ -720,6 +744,8 @@ impl IndexRangeSourceExec {
             can_reorder_handles: true,
             descending: false,
             covering: false,
+            extra_handle_slot: None,
+            lookup_handles: Vec::new(),
             batch: Vec::new(),
             batch_at: 0,
             batch_size: INIT_HANDLE_BATCH,
@@ -871,8 +897,22 @@ impl IndexRangeSourceExec {
                 };
                 self.lookup_rows = if let Some((rows, predicates_applied)) = remote {
                     self.lookup_filter_complete = predicates_applied;
+                    // The remote answers only the rows that survived its
+                    // filter, so its own handles are the ones to keep.
+                    self.lookup_handles = if self.extra_handle_slot.is_some() {
+                        rows.iter().map(|(handle, _)| Some(handle.clone())).collect()
+                    } else {
+                        Vec::new()
+                    };
                     rows.into_iter().map(|(_, row)| Some(row)).collect()
                 } else {
+                    // The local batch answers one slot per requested handle,
+                    // in the order asked, so `handles` lines up with it.
+                    self.lookup_handles = if self.extra_handle_slot.is_some() {
+                        handles.iter().cloned().map(Some).collect()
+                    } else {
+                        Vec::new()
+                    };
                     self.table
                         .get_rows_by_handles_projected_with_context(
                             &handles,
@@ -887,9 +927,19 @@ impl IndexRangeSourceExec {
                 };
             }
             let row = std::mem::take(&mut self.lookup_rows[self.lookup_row_at]);
+            let handle = self
+                .lookup_handles
+                .get(self.lookup_row_at)
+                .and_then(Option::as_ref)
+                .cloned();
             self.lookup_row_at += 1;
             if let Some(row) = row {
-                return Ok(Some(row));
+                return Ok(Some(match (self.extra_handle_slot, handle) {
+                    (Some(slot), Some(handle)) => {
+                        crate::kv_table::insert_extra_handle(row, slot, &handle)
+                    }
+                    _ => row,
+                }));
             }
         }
     }
@@ -1723,6 +1773,18 @@ pub(crate) enum IndexMergeKind {
 
 /// A non-MV IndexMerge reader: each partial index produces row handles, then
 /// the root reader unions or intersects those handles before fetching rows.
+/// The output slot carrying `_tidb_rowid`, if this column list has one.
+///
+/// Go appends the extra handle column LAST when it builds a heap table's
+/// `DataSource` schema, and every consumer here preserves that position, so
+/// the columns before it are exactly the stored ones.
+#[must_use]
+pub(crate) fn extra_handle_slot(columns: &[(String, tidb_datatype::FieldType)]) -> Option<usize> {
+    columns.iter().position(|(name, _)| {
+        name.eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)
+    })
+}
+
 /// The TABLE column offset each of `columns` stands for, by name.
 ///
 /// `None` when any of them is not a stored column of `table`, which leaves

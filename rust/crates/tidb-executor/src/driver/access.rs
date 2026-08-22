@@ -1828,8 +1828,15 @@ fn commit_index_range_source(
     // The schema above may already be NARROWER than the table (the leaf
     // demand prunes before the access path replaces the source), so the
     // reader is told which stored column each slot is rather than assuming
-    // the first n.
-    if let Some(offsets) = crate::access_path::stored_column_offsets(table, columns) {
+    // the first n. `_tidb_rowid` has no stored column at all -- it is the
+    // record HANDLE, which this reader already holds for every row it looks
+    // up -- so it is named separately.
+    let handle_slot = crate::access_path::extra_handle_slot(columns);
+    if let Some(slot) = handle_slot {
+        exec.read_extra_handle(slot);
+    }
+    let stored = handle_slot.map_or(columns, |slot| &columns[..slot]);
+    if let Some(offsets) = crate::access_path::stored_column_offsets(table, stored) {
         exec.read_table_columns(offsets);
     }
     crate::table_access::TableAccess::accept_scan_estimate(&mut exec, estimate.rows);
@@ -2474,6 +2481,20 @@ pub(crate) fn full_scan_estimate(
 /// `stats:pseudo` flag stays where it was decided
 /// ([`full_scan_estimate`]) -- which statistics exist is unchanged here, only
 /// what is computed from them.
+
+/// Whether this scope carries Go's extra handle column, `_tidb_rowid`.
+///
+/// It is named rather than counted because it is the one scope column with no
+/// stored offset behind it; see [`crate::driver::from`]'s leaf, which appends
+/// it, and `TableAccess::accept_extra_handle`, which fills it.
+pub(crate) fn scope_carries_extra_handle(scope: &FromScope) -> bool {
+    scope.tables.iter().any(|table| {
+        table.columns.iter().any(|(name, _)| {
+            name.eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)
+        })
+    })
+}
+
 pub(crate) fn stats_selectivity(
     catalog: &Catalog,
     table: &KvTable,
