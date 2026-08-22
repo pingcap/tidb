@@ -1505,6 +1505,21 @@ func TestPointGetWithSelectLock(t *testing.T) {
 	}
 }
 
+func TestIssue67041BitMaxWithGroupByOrderBy(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("set @@sql_mode='';")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (c0 bit(5), c1 bit(1), primary key(c0))")
+		tk.MustExec("insert into t values (b'10', b'0')")
+		tk.MustQuery("select abs(max(b'10')) as r from t group by c0 order by c1").Check(testkit.Rows("2"))
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (c0 bit(5), c1 bit(1))")
+		tk.MustExec("insert into t values (b'10', b'0')")
+		tk.MustQuery("select abs(max(b'10')) as r from t group by c0 order by c1").Check(testkit.Rows("2"))
+	})
+}
+
 func TestPlanCacheForIndexRangeFallback(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec(`set @@tidb_enable_prepared_plan_cache=1`)
