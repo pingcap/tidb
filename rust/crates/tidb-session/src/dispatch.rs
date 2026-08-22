@@ -487,6 +487,17 @@ impl Session {
         // place that has to say. See `Catalog::clear_dirty_content`.
         if !self.in_transaction() {
             self.lock_catalog()?.clear_dirty_content();
+            // The same boundary is where a GLOBAL temporary table empties.
+            // Its rows live in Go's `TxnCtx.TemporaryTables`, which is built
+            // fresh for each transaction and whose keys `temporaryTableKV
+            // Filter` strips before commit, so nothing a previous transaction
+            // wrote is ever readable again -- `ON COMMIT DELETE ROWS` is that
+            // and nothing more, which is also why TiDB refuses
+            // `ON COMMIT PRESERVE ROWS` outright. In autocommit every
+            // statement is its own transaction, so clearing here covers both
+            // shapes: the statement before this one was the transaction that
+            // ended, and a `BEGIN` arriving here starts from empty.
+            self.discard_global_temporary_rows();
         }
         // The non-prepared plan cache reads the SAME parse every door below
         // uses. It only decides whether this statement's plan would already

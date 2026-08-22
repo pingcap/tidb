@@ -204,7 +204,19 @@ fn show_create_table_text(
     table: &tidb_executor::KvTable,
     ctx: &tidb_executor::StmtContext,
 ) -> Result<String, DriverError> {
-    let mut out = format!("CREATE TABLE {} (\n", escape_name(name));
+    // Go `ConstructResultOfShowCreateTable` (`executor/show.go:1073`): the
+    // header names the table's kind, and the two temporary spellings are NOT
+    // symmetric -- a global one prints `GLOBAL TEMPORARY` while a local one
+    // prints plain `TEMPORARY`, which is the syntax each was created with.
+    let mut out = match table.temp_table_type() {
+        tidb_model::TempTableType::GLOBAL => {
+            format!("CREATE GLOBAL TEMPORARY TABLE {} (\n", escape_name(name))
+        }
+        tidb_model::TempTableType::LOCAL => {
+            format!("CREATE TEMPORARY TABLE {} (\n", escape_name(name))
+        }
+        _ => format!("CREATE TABLE {} (\n", escape_name(name)),
+    };
     let mut clauses: Vec<String> = Vec::with_capacity(table.columns.len() + 1);
 
     let table_charset = table.charset();
@@ -482,6 +494,16 @@ fn show_create_table_text(
     }
     if let Some(base) = table.next_auto_random().filter(|base| *base > 1) {
         out.push_str(&format!(" /*T![auto_rand_base] AUTO_RANDOM_BASE={base} */"));
+    }
+    // Go `ConstructResultOfShowCreateTable` (`executor/show.go:1421`) prints
+    // the clause for every GLOBAL temporary table UNCONDITIONALLY, after the
+    // comment and before the placement policy. It is unconditional because
+    // nothing stores the mode: `TableInfo` has no `OnCommitDelete` field, and
+    // `ON COMMIT PRESERVE ROWS` is refused at CREATE, so a global temporary
+    // table in the catalog can only be a DELETE ROWS one. A local temporary
+    // table prints no ON COMMIT clause at all.
+    if table.temp_table_type() == tidb_model::TempTableType::GLOBAL {
+        out.push_str(" ON COMMIT DELETE ROWS");
     }
     // Go `ShowCreateTable` (`executor/show.go:1425`) prints the table's own
     // policy after the comment and BEFORE the cached marker, under the same

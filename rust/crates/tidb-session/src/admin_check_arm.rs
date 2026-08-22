@@ -61,7 +61,7 @@ impl Session {
                     ));
                 };
                 let (database, name) = self.split_table_path(path)?;
-                self.run_admin_check(&database, &name, None)?;
+                self.run_admin_check(&database, &name, None, "admin check table")?;
                 Ok(admin_check_passed())
             }
             tidb_ast::AdminCheckStmt::Index {
@@ -71,7 +71,7 @@ impl Session {
             } => {
                 let (database, name) = self.split_table_path(table)?;
                 if handle_ranges.is_empty() {
-                    self.run_admin_check(&database, &name, Some(index))?;
+                    self.run_admin_check(&database, &name, Some(index), "admin check index")?;
                     return Ok(admin_check_passed());
                 }
                 let index = index.clone();
@@ -79,7 +79,8 @@ impl Session {
                 let ctx = self.statement_context(false);
                 let decode_context = tidb_executor::RowDecodeContext::for_query(&ctx);
                 let (names, rows) = self.with_catalog_mut(|catalog| {
-                    let table = admin_check_table_mut(catalog, &database, &name)?;
+                    let table =
+                        admin_check_table_mut(catalog, &database, &name, "admin check index")?;
                     tidb_executor::admin_check::check_index_ranges(
                         table,
                         &index,
@@ -112,13 +113,14 @@ impl Session {
         database: &str,
         name: &str,
         only_index: Option<&str>,
+        statement: &'static str,
     ) -> Result<usize, DriverError> {
         let (database, name) = (database.to_owned(), name.to_owned());
         let only_index = only_index.map(str::to_owned);
         let ctx = self.statement_context(false);
         let decode_context = tidb_executor::RowDecodeContext::for_query(&ctx);
         self.with_catalog_mut(|catalog| {
-            let table = admin_check_table_mut(catalog, &database, &name)?;
+            let table = admin_check_table_mut(catalog, &database, &name, statement)?;
             tidb_executor::admin_check::check_table(table, only_index.as_deref(), &decode_context)
                 .map_err(admin_check_error)
         })
@@ -143,6 +145,9 @@ fn admin_check_table_mut<'a>(
     catalog: &'a mut tidb_executor::Catalog,
     database: &str,
     name: &str,
+    // The statement name Go's 8006 carries: `admin check table` or
+    // `admin check index`, spelled as Go spells it.
+    statement: &'static str,
 ) -> Result<&'a mut tidb_executor::kv_table::KvTable, DriverError> {
     let Some(entry) = catalog.table_mut_in(database, name) else {
         return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
@@ -150,6 +155,15 @@ fn admin_check_table_mut<'a>(
         ))));
     };
     match entry {
+        // Go `checkAdminCheckTableGrammar` (`preprocess.go:908`): a temporary
+        // table's rows are in a session membuffer, never in TiKV, so there is
+        // no stored index for the check to compare them against and TiDB
+        // refuses the statement instead of answering OK about nothing. Both
+        // scopes are refused; the argument names the statement, which is why
+        // the caller passes it.
+        tidb_executor::TableEntry::Kv(table) if table.is_temporary() => {
+            Err(DriverError::OptOnTemporaryTable(statement))
+        }
         tidb_executor::TableEntry::Kv(table) => Ok(table),
         // A view has no rows of its own and a sequence has no index; a
         // `MemTable` has rows but stores no index entries, so "consistent"

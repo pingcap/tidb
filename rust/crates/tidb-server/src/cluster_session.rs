@@ -547,6 +547,15 @@ pub(crate) fn cluster_table(
             .unwrap_or(tidb_executor::TableCharset::default().collation),
     });
     kv_table.set_cache_status(table.table_cache_status_type);
+    // Go `TableInfo.TempTableType`, which the meta store really does carry:
+    // a GLOBAL temporary table is created by an ordinary DDL job and its
+    // `TableInfo` is persisted like any other. Dropping it here would make
+    // such a table read back as a permanent one -- `SHOW CREATE TABLE` would
+    // lose both the `GLOBAL TEMPORARY` header and the `ON COMMIT DELETE ROWS`
+    // clause, and every 8006 refusal keyed on the kind would stop firing.
+    // (A LOCAL temporary table is in no meta store, so it can never arrive
+    // through this loader.)
+    kv_table.set_temp_table_type(table.temp_table_type);
     // The AUTO_INCREMENT column and the counter that feeds it. Both halves
     // have to be here: marking the column without giving the counter a
     // cluster-wide home would allocate from a fresh in-process cell and

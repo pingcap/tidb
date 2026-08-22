@@ -697,6 +697,65 @@ fn tidb_executor_default_database() -> &'static str {
     crate::driver::DEFAULT_DATABASE
 }
 
+/// Go `DDLExec`'s local-temporary-table guard, which it repeats verbatim in
+/// front of six statements (`pkg/executor/ddl.go:273`, `:349`, `:413`,
+/// `:425`, `:740`, `:763`): `getLocalTemporaryTable` and, if it matched,
+/// `ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs(<statement>)`.
+///
+/// The reason is structural rather than a policy choice: each of these
+/// statements is carried out by a DDL JOB, the job names its table by the id
+/// it has in the meta store, and a local temporary table is in no meta store.
+/// There is nothing for the job to find. `TRUNCATE` is deliberately NOT in
+/// the set -- Go serves it from the session instead
+/// (`temptable.TruncateLocalTemporaryTable`), so a local temporary table can
+/// be emptied.
+///
+/// `statement` is the spelling Go passes, upper case and spaced as the
+/// statement is written (`ALTER TABLE`, `CREATE INDEX`, ...).
+pub(crate) fn refuse_local_temporary_table_ddl(
+    catalog: &Catalog,
+    database: &str,
+    name: &str,
+    statement: &'static str,
+) -> Result<(), DriverError> {
+    if matches!(catalog.table_in(database, name), Some(crate::TableEntry::Kv(table))
+        if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
+    {
+        return Err(DriverError::UnsupportedLocalTempTableDDL(statement));
+    }
+    Ok(())
+}
+
+/// Go `setTemporaryType` (`pkg/ddl/create_table.go:1026`): the ONE place a
+/// written `TEMPORARY` keyword becomes a `TableInfo.TempTableType`.
+///
+/// `ON COMMIT PRESERVE ROWS` is the interesting arm. TiDB parses it -- so
+/// `OnCommitDelete` is simply false -- and then refuses the statement,
+/// because a global temporary table's rows are discarded by the commit-time
+/// KV filter (`temporaryTableKVFilter`) whatever the clause said. Accepting
+/// the spelling and preserving nothing would be a wrong answer rather than a
+/// missing feature, which is why Go raises `ErrUnsupportedOnCommitPreserve`
+/// (8200) instead.
+///
+/// Nothing records `on_commit_delete` past this point, and Go does not
+/// either: `TableInfo` has no such field, so `SHOW CREATE TABLE` prints
+/// ` ON COMMIT DELETE ROWS` for every global temporary table unconditionally.
+fn temp_table_type_of(
+    create: &tidb_ast::CreateTableStmt,
+) -> Result<tidb_model::TempTableType, DriverError> {
+    match create.temporary {
+        tidb_ast::CreateTableTemporary::None => Ok(tidb_model::TempTableType::NONE),
+        tidb_ast::CreateTableTemporary::Global => {
+            if create.on_commit_delete {
+                Ok(tidb_model::TempTableType::GLOBAL)
+            } else {
+                Err(DriverError::UnsupportedOnCommitPreserve)
+            }
+        }
+        tidb_ast::CreateTableTemporary::Local => Ok(tidb_model::TempTableType::LOCAL),
+    }
+}
+
 /// [`run_create_table_on`] creating the table in `current_db`.
 ///
 /// `enable_check_constraint` is `@@global.tidb_enable_check_constraint`, and it
@@ -761,18 +820,43 @@ pub fn run_create_table_in(
         ));
     }
 
-    // `DROP TEMPORARY TABLE` is already refused here; creating one and
-    // storing it as an ORDINARY table is the same gap on the other side, and
-    // the more dangerous half: the table then outlives its session, is
-    // visible to every other one, and answers statements TiDB refuses on a
-    // temporary table outright -- `ADMIN CHECK TABLE` among them (Go's 8006,
-    // `preprocessor.checkAdminCheckTableGrammar`). Refusing at CREATE keeps
-    // the TEMPORARY keyword from being silently dropped.
+    // Go `preprocessor.checkCreateTableGrammar` (`preprocess.go:946`): two
+    // table options are refused on a temporary table before anything else is
+    // built, because neither has a meaning for a relation that never reaches
+    // TiKV -- `SHARD_ROW_ID_BITS` spreads a table's record keys over regions
+    // and `PLACEMENT` pins them to stores. The argument spellings are Go's
+    // and differ in CASE from the ones `checkReferInfoForTemporaryTable`
+    // passes for the same settings inherited through `LIKE`, so they are
+    // written out rather than derived.
     if create.temporary != tidb_ast::CreateTableTemporary::None {
-        return Err(DriverError::unsupported(
-            "temporary tables are not supported yet",
-        ));
+        for option in &create.table_options {
+            match option {
+                tidb_ast::TableOption::ShardRowIdBits(_) => {
+                    return Err(DriverError::OptOnTemporaryTable("shard_row_id_bits"))
+                }
+                tidb_ast::TableOption::PlacementPolicy(_) => {
+                    return Err(DriverError::OptOnTemporaryTable("PLACEMENT"))
+                }
+                _ => {}
+            }
+        }
+        // Go `checkColumnOptions` (`preprocess.go:1197`): `AUTO_RANDOM` needs
+        // a persisted allocator and a sharded handle domain, so a temporary
+        // table cannot carry one.
+        if create.columns.iter().any(|column| {
+            column
+                .options
+                .iter()
+                .any(|option| matches!(option, tidb_ast::ColumnOption::AutoRandom(_)))
+        }) {
+            return Err(DriverError::OptOnTemporaryTable("auto_random"));
+        }
     }
+    // Go `setTemporaryType`, which the DDL builder reaches only after the
+    // preprocessor checks above have passed. The order is observable:
+    // `create global temporary table t (a int) shard_row_id_bits = 4
+    //  on commit preserve rows` is 8006, not 8200.
+    let temporary = temp_table_type_of(create)?;
     validate_table_options(&create.table_options)?;
     // Go refuses CTAS outright and has never implemented it:
     // `preprocess.go` -> `checkCreateTableGrammar` does
@@ -799,7 +883,20 @@ pub fn run_create_table_in(
 
     let (database, name) = crate::driver::split_table_path_pub(&create.name, current_db)?;
     let (database, name) = (database.to_owned(), name);
-    if catalog.contains_in(&database, name) {
+    // Go `createSessionTemporaryTable` (`pkg/executor/ddl.go:301`) asks
+    // `getLocalTemporaryTable`, NOT the infoschema: a local temporary table
+    // collides only with another LOCAL temporary table of the same name.
+    // `CREATE TEMPORARY TABLE t` in a schema that already has a permanent `t`
+    // therefore succeeds and SHADOWS it for this session, which is MySQL's
+    // rule and the reason the shadowed entry has to be preserved rather than
+    // overwritten (see `Catalog::register_local_temporary_in`).
+    let name_taken = if temporary == tidb_model::TempTableType::LOCAL {
+        matches!(catalog.table_in(&database, name), Some(crate::TableEntry::Kv(table))
+            if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
+    } else {
+        catalog.contains_in(&database, name)
+    };
+    if name_taken {
         if create.if_not_exists {
             return Ok(false);
         }
@@ -820,6 +917,30 @@ pub fn run_create_table_in(
         let (source_db, source_name) = (source_db.to_owned(), source_name.to_owned());
         // The ids are allocated between the two borrows of the source table,
         // because allocating needs the catalog mutably.
+        // Go `checkCreateTableGrammar` (`preprocess.go:933`): copying a
+        // TEMPORARY table is refused whatever the target is. A local one is
+        // not in any shared schema to copy from, and a global one's copy
+        // would carry a `TempTableType` its own statement never asked for.
+        if create_like_source(&source_db, &source_name, catalog)?.is_temporary() {
+            return Err(DriverError::OptOnTemporaryTable("create table like"));
+        }
+        // Go `checkReferInfoForTemporaryTable` (`preprocess.go:1556`): a
+        // temporary COPY may not inherit any of the settings a temporary
+        // table cannot carry. The spellings are lower case here and upper
+        // case in the option check above -- Go's own inconsistency, kept
+        // because the message is what the client sees.
+        if temporary != tidb_model::TempTableType::NONE {
+            let source = create_like_source(&source_db, &source_name, catalog)?;
+            if source.auto_random().is_some() {
+                return Err(DriverError::OptOnTemporaryTable("auto_random"));
+            }
+            if source.partition().is_some() {
+                return Err(DriverError::PartitionNoTemporary);
+            }
+            if source.placement_policy().is_some() {
+                return Err(DriverError::OptOnTemporaryTable("placement"));
+            }
+        }
         let partitions = create_like_source(&source_db, &source_name, catalog)?
             .partition()
             .map_or(0, |partition| partition.definitions.len());
@@ -831,7 +952,14 @@ pub fn run_create_table_in(
         let mut copy = create_like_source(&source_db, &source_name, catalog)?
             .create_like(id, &mut || ids.next().expect("one id per copied partition"));
         copy.name = name.to_owned();
-        catalog.register_kv_in(&database, name, copy)?;
+        // Go `BuildTableInfoWithLike` (`create_table.go:1300`) strips the TTL
+        // from a temporary copy rather than refusing it, because the source's
+        // TTL is not something this statement asked for.
+        if temporary != tidb_model::TempTableType::NONE {
+            copy.set_ttl_info(None);
+        }
+        copy.set_temp_table_type(temporary);
+        register_created_table(catalog, &database, name, copy, temporary)?;
         return Ok(true);
     }
 
@@ -1198,6 +1326,7 @@ pub fn run_create_table_in(
         .collect();
     let table = KvTable::new(table_id, kv_columns);
     let mut table = table;
+    table.set_temp_table_type(temporary);
     table.set_name(name);
     table.set_charset(table_charset);
     if let Some(comment) = table_comment_option(&create.table_options, name, ctx)? {
@@ -1245,7 +1374,13 @@ pub fn run_create_table_in(
     // back. There is no background job here to delete expired rows, so this
     // is metadata only -- but without it a definition carrying `TTL=` did not
     // round-trip through its own output.
-    table.set_ttl_info(ttl_info_from_options(&create.table_options)?);
+    // Go `checkTTLInfoValid` (`pkg/ddl/ttl.go:97`): the TTL job deletes
+    // expired rows from TiKV, and a temporary table has no rows there.
+    let ttl_info = ttl_info_from_options(&create.table_options)?;
+    if ttl_info.is_some() && temporary != tidb_model::TempTableType::NONE {
+        return Err(DriverError::TempTableNotAllowedWithTTL);
+    }
+    table.set_ttl_info(ttl_info);
     for option in &create.table_options {
         if let tidb_ast::TableOption::AutoIdCache(value) = option {
             let cache = value
@@ -1373,6 +1508,13 @@ pub fn run_create_table_in(
         &mut || catalog.allocate_table_id(),
         ctx,
     )? {
+        // Go `checkAddPartitionOnTemporaryMode` (`pkg/ddl/partition.go:4657`),
+        // reached from `checkTableInfoValidWithStmt`: a partition is a
+        // distinct PHYSICAL table, and a temporary table has no physical
+        // tables at all.
+        if temporary != tidb_model::TempTableType::NONE {
+            return Err(DriverError::PartitionNoTemporary);
+        }
         table.set_partition(partition);
     }
     // Go `CreateTableWithInfo` resolves the table's `PLACEMENT POLICY = name`
@@ -1411,8 +1553,30 @@ pub fn run_create_table_in(
             reference.id = policy.id;
         }
     }
-    catalog.register_kv_in(&database, name, table)?;
+    register_created_table(catalog, &database, name, table, temporary)?;
     Ok(true)
+}
+
+/// Files a freshly built table where its kind belongs.
+///
+/// This is the fork Go makes one level up, in the executor rather than the
+/// DDL package (`pkg/executor/ddl.go:107`): a LOCAL temporary table is
+/// intercepted before any transaction is opened and lands in the SESSION's
+/// `SessionTables`, while everything else -- an ordinary table and a GLOBAL
+/// temporary one alike -- goes through a real DDL job into the shared
+/// infoschema. Putting the fork here means no create path can forget it.
+fn register_created_table(
+    catalog: &mut Catalog,
+    database: &str,
+    name: &str,
+    table: KvTable,
+    temporary: tidb_model::TempTableType,
+) -> Result<(), DriverError> {
+    if temporary == tidb_model::TempTableType::LOCAL {
+        catalog.register_local_temporary_in(database, name, table)
+    } else {
+        catalog.register_kv_in(database, name, table)
+    }
 }
 
 /// Resolves the table `CREATE TABLE ... LIKE` copies.

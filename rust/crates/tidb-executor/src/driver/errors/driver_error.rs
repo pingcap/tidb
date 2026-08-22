@@ -61,6 +61,40 @@ pub enum DriverError {
     UnknownStorageEngine(String),
     /// TiDB `ErrOptOnCacheTable` (8242), carrying the operation or reason.
     OperationOnCachedTable(&'static str),
+    /// Go `dbterror.ErrOptOnTemporaryTable` (8006), carrying the operation
+    /// name Go passes to `GenWithStackByArgs`.
+    ///
+    /// The argument spellings are Go's own and are observable, down to their
+    /// case: `checkCreateTableGrammar` passes `"PLACEMENT"` for the table
+    /// OPTION while `checkReferInfoForTemporaryTable` passes `"placement"`
+    /// for the same setting inherited through `LIKE`. Anything that
+    /// normalizes them would report a message TiDB never prints.
+    OptOnTemporaryTable(&'static str),
+    /// Go `dbterror.ErrUnsupportedOnCommitPreserve` (8200): a
+    /// `CREATE GLOBAL TEMPORARY TABLE` written `ON COMMIT PRESERVE ROWS`.
+    ///
+    /// TiDB's global temporary table has no way to keep rows past the
+    /// transaction that wrote them -- the commit filter discards every key
+    /// under a temporary table's prefix -- so the mode is refused rather
+    /// than accepted and silently ignored.
+    UnsupportedOnCommitPreserve,
+    /// Go `dbterror.ErrPartitionNoTemporary` (1562): a temporary table may
+    /// not be partitioned (`checkAddPartitionOnTemporaryMode`).
+    PartitionNoTemporary,
+    /// Go `plannererrors.ErrDropTableOnTemporaryTable` (8007):
+    /// `DROP GLOBAL TEMPORARY TABLE` naming a table that is not a global
+    /// temporary one (`checkDropTemporaryTableGrammar`).
+    DropTableOnTemporaryTable,
+    /// Go `plannererrors.ErrViewSelectTemporaryTable` (1352), carrying the
+    /// table name: a view's body named a LOCAL temporary table.
+    ViewSelectTemporaryTable(String),
+    /// Go `dbterror.ErrTempTableNotAllowedWithTTL` (8151): `TTL` on a
+    /// temporary table (`checkTTLInfoValid`).
+    TempTableNotAllowedWithTTL,
+    /// Go `dbterror.ErrUnsupportedLocalTempTableDDL` (8200), carrying the
+    /// statement name: a local temporary table exists only in the session,
+    /// so the DDL job every one of these would need cannot be submitted.
+    UnsupportedLocalTempTableDDL(&'static str),
     /// Go `dbterror.ErrUnsupportedAlterCacheForSysTable` (8200).
     UnsupportedAlterCacheForSystemTable,
     /// Rewriting an expression or executing failed.

@@ -57,6 +57,36 @@ pub fn run_create_view_in(
     Ok(())
 }
 
+/// Every written table path in a `CREATE VIEW` body, including the ones
+/// inside subqueries and CTEs -- Go reaches them all because `buildDataSource`
+/// runs once per `TableName` node however deep it is.
+///
+/// A CTE's own name is in here too and resolves to nothing, which is
+/// harmless: the caller only asks whether a path names a LOCAL temporary
+/// table.
+fn view_body_table_paths(create: &CreateViewStmt) -> Vec<Vec<String>> {
+    struct Collector {
+        paths: Vec<Vec<String>>,
+    }
+    impl tidb_ast::Visitor for Collector {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
+                self.paths.push(table_ref.name.clone());
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    use tidb_ast::Visitable;
+    let mut query = (*create.query).clone();
+    let mut collector = Collector { paths: Vec::new() };
+    query.accept(&mut collector);
+    collector.paths
+}
+
 /// Resolves a `CREATE VIEW` into the [`ViewDef`] it would register, without
 /// registering it: the shared first half of [`run_create_view_in`], split out
 /// so the cluster DDL route can validate and settle a view's columns against
@@ -79,6 +109,30 @@ pub fn resolve_view_definition(
         return Err(DriverError::Schema(SchemaErrorKind::TableExists(format!(
             "{database}.{name}"
         ))));
+    }
+
+    // Go `buildDataSource` (`pkg/planner/core/logical_plan_builder.go:4963`):
+    // a view whose body names a LOCAL temporary table is refused with 1352.
+    // The view definition is shared -- any session may read it -- while the
+    // table it would read belongs to one connection and dies with it, so the
+    // view would be unresolvable for everyone including its own creator after
+    // reconnecting. A GLOBAL temporary table is NOT refused here: its schema
+    // is a real, shared infoschema object, and every session simply reads its
+    // own (empty) rows through it.
+    for path in view_body_table_paths(create) {
+        let Ok((referenced_db, referenced_name)) =
+            crate::driver::split_table_path_pub(&path, current_db)
+        else {
+            continue;
+        };
+        if matches!(catalog.table_in(referenced_db, referenced_name),
+            Some(crate::TableEntry::Kv(table))
+                if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
+        {
+            return Err(DriverError::ViewSelectTemporaryTable(
+                referenced_name.to_owned(),
+            ));
+        }
     }
 
     // `CREATE OR REPLACE VIEW v AS SELECT ... FROM v` is Go's `ErrTableNotExists`,

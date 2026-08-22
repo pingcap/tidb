@@ -80,6 +80,7 @@ pub fn run_alter_table_in(
             format!("{database}.{name}"),
         )));
     }
+    super::refuse_local_temporary_table_ddl(catalog, &database, &name, "ALTER TABLE")?;
     super::table_cache::guard_alter_actions(catalog, &database, &name, &alter.actions)?;
 
     // A constraint names its columns and its referenced table, and a DROP

@@ -134,6 +134,7 @@ impl Session {
         } else {
             binding::default_db_of(origin, &current_db)
         };
+        self.refuse_binding_on_temporary_table(origin)?;
         let (original_sql, sql_digest) = binding::normalize_with_db(origin, &current_db);
         let (hinted_normalized, _) = binding::normalize_with_db(hinted, &current_db);
         // Go's preprocessor check: erasing the hints must leave two identical
@@ -173,6 +174,50 @@ impl Session {
             self.session_bindings.create(binding);
         }
         Ok(StmtOutput::Affected(0))
+    }
+
+    /// Go `preprocessor.checkBindGrammar`'s temporary-table pass
+    /// (`pkg/planner/core/preprocess.go:598`).
+    ///
+    /// A binding is a plan hint stored in `mysql.bind_info` and matched by
+    /// every session, while a temporary table is one session's private
+    /// object: a plan pinned against a table another connection cannot even
+    /// name is meaningless, and against a LOCAL temporary table it would
+    /// outlive the table itself. TiDB refuses the whole statement with 8006
+    /// rather than storing such a binding.
+    ///
+    /// Three details are Go's and are observable:
+    ///
+    /// * the operation name is `create binding` even for `DROP BINDING`,
+    ///   which reaches the same check;
+    /// * a name that does NOT resolve is skipped, not an error -- Go's own
+    ///   comment says "drop table -> drop binding" must keep working, and it
+    ///   is also what lets the `cte1` in `WITH cte1 AS (...)` through, since
+    ///   a CTE name resolves to no table;
+    /// * the check runs BEFORE the origin/hinted comparison, so a statement
+    ///   that is both mismatched and over a temporary table reports 8006.
+    fn refuse_binding_on_temporary_table(&mut self, origin: &Stmt) -> Result<(), DriverError> {
+        let names = binding::collect_table_names(origin);
+        let current_db = self.current_db.clone();
+        self.with_catalog_mut(|catalog| {
+            for (schema, table) in &names {
+                let database = if schema.is_empty() {
+                    current_db.as_str()
+                } else {
+                    schema.as_str()
+                };
+                if database.is_empty() {
+                    continue;
+                }
+                if matches!(
+                    catalog.table_in(database, table),
+                    Some(tidb_executor::TableEntry::Kv(found)) if found.is_temporary()
+                ) {
+                    return Err(DriverError::OptOnTemporaryTable("create binding"));
+                }
+            }
+            Ok(())
+        })
     }
 
     /// Go `bindingOperator.CreateBinding`'s storage half: older rows for the
@@ -225,6 +270,15 @@ impl Session {
     ) -> Result<StmtOutput, DriverError> {
         let digests: Vec<String> = match &drop.target {
             DropBindingTarget::Statement(target) => {
+                // Go `preprocessor` reaches `checkBindGrammar` for a
+                // `DropBindingStmt` only when it carries a hinted statement
+                // too (`preprocess.go:355`), so `DROP BINDING FOR <sql>`
+                // alone is NOT refused over a temporary table -- which is the
+                // point of the "drop table -> drop binding" comment inside
+                // the check.
+                if target.hinted.is_some() {
+                    self.refuse_binding_on_temporary_table(target.origin.as_ref())?;
+                }
                 let current_db = self.current_db.clone();
                 let (_, digest) = binding::normalize_with_db(target.origin.as_ref(), &current_db);
                 vec![digest]

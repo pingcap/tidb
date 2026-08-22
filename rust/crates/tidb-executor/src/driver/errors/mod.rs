@@ -160,6 +160,37 @@ impl DriverError {
             tidb_error::tidb::errcode::ErrOptOnCacheTable,
             format!("'{operation}' is unsupported on cache tables."),
         ),
+        // Go `dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs(op)` over
+        // `` `%s` is unsupported on temporary tables. `` -- the backquotes
+        // are part of the FORMAT, not decoration added here.
+        DriverError::OptOnTemporaryTable(operation) => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrOptOnTemporaryTable,
+            format!("`{operation}` is unsupported on temporary tables."),
+        ),
+        DriverError::UnsupportedOnCommitPreserve => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+            "TiDB doesn't support ON COMMIT PRESERVE ROWS for now",
+        ),
+        DriverError::PartitionNoTemporary => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrPartitionNoTemporary,
+            tidb_error::tidb::errname::ErrPartitionNoTemporary.raw,
+        ),
+        DriverError::DropTableOnTemporaryTable => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrDropTableOnTemporaryTable,
+            tidb_error::tidb::errname::ErrDropTableOnTemporaryTable.raw,
+        ),
+        DriverError::ViewSelectTemporaryTable(name) => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrViewSelectTmptable,
+            format!("View's SELECT refers to a temporary table '{name}'"),
+        ),
+        DriverError::TempTableNotAllowedWithTTL => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrTempTableNotAllowedWithTTL,
+            tidb_error::tidb::errname::ErrTempTableNotAllowedWithTTL.raw,
+        ),
+        DriverError::UnsupportedLocalTempTableDDL(statement) => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+            format!("TiDB doesn't support {statement} for local temporary table"),
+        ),
         DriverError::UnsupportedAlterCacheForSystemTable => MysqlError::coded(
             tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
             "ALTER table cache for tables in system database is currently unsupported",

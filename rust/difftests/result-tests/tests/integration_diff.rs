@@ -1857,7 +1857,8 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // 8006 (`preprocess.go`'s `TempTableType != TempTableNone` check). This
     // tier refuses `CREATE TEMPORARY TABLE` itself, so `tmp1` never exists,
     // and Go's own rule skips a table that does not exist. They close when
-    // temporary tables land, not before.
+    // temporary tables land, not before. (They have; see the 76 -> 52 note
+    // below.)
     //
     // 91 -> 86, `compared` flat at 9557. `_tidb_rowid` IS the row handle, and
     // Go says so structurally: `buildDataSource` appends
@@ -1912,7 +1913,42 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // back. This tier accepted the option and stored nothing, so a definition
     // did not round-trip through its own output. Metadata only: there is no
     // background job here to delete expired rows.
-    const KNOWN_DIVERGENCES: usize = 76;
+    // 76 -> 52, and `compared` 9557 -> 9595. TEMPORARY TABLES, both scopes.
+    //
+    // The 24 the note above promised are gone, and they are gone for the
+    // reason it named: `CREATE TEMPORARY TABLE` and
+    // `CREATE GLOBAL TEMPORARY TABLE` now build a table with Go's
+    // `TableInfo.TempTableType` on it (`setTemporaryType`), so `tmp1` and
+    // `tmp2` exist, so `checkBindGrammar`'s `TempTableType != TempTableNone`
+    // test finds them and every `create global binding` over one is 8006.
+    // `bindinfo/temptable` went from 4 matched / 24 diverged to 8 matched /
+    // 0 diverged of 38.
+    //
+    // The other 38 statements are `executor/executor_txn`'s
+    // `TestSavepointWithTemporaryTable`, which used to stop at the first
+    // `create temporary table` and skip the rest as `OutOfDomain`; the topic
+    // went from 81 matched / 0 diverged / 40 skipped to 114 matched /
+    // 0 diverged / 1 skipped. It is the reason the compare COUNT rose rather
+    // than a divergence being hidden.
+    //
+    // What those 38 forced, and what they caught: a temporary table's rows
+    // are TRANSACTIONAL. Go keeps them in the transaction membuffer, so
+    // `ROLLBACK TO SAVEPOINT` truncates them back with everything else
+    // (`RollbackMemDBToCheckpoint`), and only at COMMIT does
+    // `commitTxnWithTemporaryData` copy the LOCAL ones into the session's own
+    // buffer while `temporaryTableKVFilter` throws every temporary key away.
+    // The first attempt here rolled back only the local kind and left the
+    // six global-temporary savepoint reads diverging inside a net
+    // improvement -- the count alone would have shown 58 and looked like a
+    // win. Both kinds are snapshotted per savepoint now.
+    //
+    // Two kinds, two homes, which is the whole feature: a GLOBAL temporary
+    // table's `TableInfo` is shared (a real DDL job creates it) while its
+    // rows are one session's and die with the transaction; a LOCAL one is in
+    // no shared schema at all and lives in `SessionVars.LocalTemporaryTables`
+    // (`tidb_session`'s per-statement attach/detach), where it SHADOWS a
+    // permanent table of the same name without destroying it.
+    const KNOWN_DIVERGENCES: usize = 52;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

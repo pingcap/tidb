@@ -347,6 +347,46 @@ pub struct Session {
     session_memory: tidb_executor::SessionMemory,
     /// The open transaction, if any.
     txn: Option<Transaction>,
+    /// Go `SessionVars.LocalTemporaryTables` (an `infoschema.SessionTables`):
+    /// the LOCAL temporary tables this connection created, as
+    /// `(folded schema, folded name, table)`.
+    ///
+    /// They live HERE and not in the shared catalog because that is the whole
+    /// meaning of the kind: no DDL job creates one, no other session can name
+    /// one, and none of them outlives the connection. The catalog sees them
+    /// only for the duration of one statement --
+    /// [`Session::with_catalog_mut`] attaches them and takes them back, which
+    /// is Go's `AttachLocalTemporaryTableInfoSchema` /
+    /// `DetachLocalTemporaryTableInfoSchema` pair around each statement.
+    ///
+    /// NOT MODELLED (documented): Go DETACHES the overlay again in three
+    /// narrower places, and this tier keeps it attached in all three. Two are
+    /// harmless here -- `SHOW CREATE VIEW`/`SHOW CREATE SEQUENCE`
+    /// (`preprocess.go:551`) and the by-name `SHOW TABLES`, which
+    /// `Catalog::table_names` already excludes. The third is real: while
+    /// EXPANDING a view's body (`logical_plan_builder.go:4941`), so a local
+    /// temporary table that SHADOWS a permanent table the view reads is
+    /// followed here where Go reads the permanent one. Creating a view over a
+    /// local temporary table is refused (1352), so the shadowing case is the
+    /// only way to reach it, and closing it would mean handing the view
+    /// builder a catalog with the overlay removed -- a whole-catalog clone
+    /// per view read on this tier's shape.
+    local_temporary_tables: Vec<(String, String, tidb_executor::KvTable)>,
+    /// Go `SessionVars.TxnCtx.TemporaryTables`: the rows this session has
+    /// written to GLOBAL temporary tables, by physical table id.
+    ///
+    /// A global temporary table's SCHEMA is shared -- it is created by a real
+    /// DDL job and every session can name it -- while its ROWS belong to one
+    /// transaction of one session. Go gets that from two places at once: the
+    /// snapshot interceptor answers an EMPTY iterator for a global temporary
+    /// table, so nothing outside the current transaction's own buffer is
+    /// readable, and `temporaryTableKVFilter` discards every temporary-table
+    /// key before two-phase commit, so nothing is ever written down. This map
+    /// is both halves: it is swapped into the shared table object for the
+    /// statement's duration and CLEARED at each transaction end, which is
+    /// what `ON COMMIT DELETE ROWS` means here.
+    global_temporary_data:
+        std::collections::HashMap<i64, Box<dyn tidb_executor::storage::TableStorage>>,
     /// The session's system and user variables.
     vars: SessionVars,
     /// The warnings the last statement produced, which Go keeps in
@@ -562,6 +602,8 @@ impl Default for Session {
                 0,
             ),
             txn: None,
+            local_temporary_tables: Vec::new(),
+            global_temporary_data: std::collections::HashMap::new(),
             vars: SessionVars::new(),
             warnings: Vec::new(),
             deferred_multi_statement_warning: false,
@@ -1461,6 +1503,8 @@ mod tests_tidb_decode_key;
 mod tests_timestamp_range;
 #[cfg(test)]
 mod tests_timezone_storage;
+#[cfg(test)]
+mod tests_temporary_tables;
 #[cfg(test)]
 mod tests_topn;
 #[cfg(test)]
