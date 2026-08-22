@@ -506,7 +506,12 @@ fn show_create_table_text(
 /// still exactly the ones `PARTITIONS n` would generate.
 fn hash_definitions_are_default(definitions: &[tidb_executor::PartitionDef]) -> bool {
     definitions.iter().enumerate().all(|(ordinal, definition)| {
-        definition.name == format!("p{ordinal}") && definition.comment.is_empty()
+        definition.name == format!("p{ordinal}")
+            && definition.comment.is_empty()
+            // Go's third condition: a partition carrying a PLACEMENT POLICY
+            // is not default-shaped either (`AppendPartitionInfo`), so the
+            // compact `PARTITIONS n` form would lose the policy.
+            && definition.placement_policy.is_none()
     })
 }
 

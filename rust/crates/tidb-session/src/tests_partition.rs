@@ -2908,3 +2908,57 @@ fn a_resolved_policy_reference_carries_the_policy_id() {
         .to_mysql_error();
     assert_eq!(rendered.code, 8241);
 }
+
+/// Go prints a partition's policy as a feature-gated comment:
+/// ` /*T![placement] PLACEMENT POLICY=<name> */`, after any COMMENT
+/// (`AppendPartitionDefs`, `ddl/partition.go:5241`).
+///
+/// The `/*T![placement] ... */` wrapper matters: another MySQL-compatible
+/// parser skips it while TiDB reads it back, so a dump stays loadable
+/// elsewhere. And a partition carrying a policy is NOT default-shaped, so a
+/// HASH table with one prints its definition list rather than the compact
+/// `PARTITIONS n` -- which would otherwise drop the policy from the dump
+/// entirely.
+#[test]
+fn a_partition_policy_prints_as_gos_feature_gated_comment() {
+    let mut session = Session::new();
+    session
+        .run("CREATE PLACEMENT POLICY ps FOLLOWERS=2")
+        .expect("policy");
+    session
+        .run("CREATE TABLE tp (a INT) PARTITION BY RANGE (a) \
+              (PARTITION p0 VALUES LESS THAN (10) COMMENT 'c' PLACEMENT POLICY = ps, \
+               PARTITION p1 VALUES LESS THAN (20))")
+        .expect("a partition naming a policy");
+    let shown = show_create(&mut session, "tp");
+    assert!(
+        shown.contains("/*T![placement] PLACEMENT POLICY=`ps` */"),
+        "the policy prints as a feature-gated comment, got: {shown}"
+    );
+    // Go emits the COMMENT first, then the placement.
+    let comment_at = shown.find("COMMENT 'c'").expect("the comment prints");
+    let placement_at = shown.find("/*T![placement]").expect("the placement prints");
+    assert!(
+        comment_at < placement_at,
+        "Go writes the comment before the placement, got: {shown}"
+    );
+
+    // A HASH partition carrying a policy is not default-shaped.
+    let mut session = Session::new();
+    session
+        .run("CREATE PLACEMENT POLICY ph FOLLOWERS=1")
+        .expect("policy");
+    session
+        .run("CREATE TABLE th (a INT) PARTITION BY HASH (a) \
+              (PARTITION p0 PLACEMENT POLICY = ph, PARTITION p1)")
+        .expect("hash table with a policy on one partition");
+    let shown = show_create(&mut session, "th");
+    assert!(
+        !shown.contains("PARTITIONS 2"),
+        "a policy-carrying partition forces the full list, got: {shown}"
+    );
+    assert!(
+        shown.contains("/*T![placement] PLACEMENT POLICY=`ph` */"),
+        "and the policy survives into it, got: {shown}"
+    );
+}

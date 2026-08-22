@@ -1477,9 +1477,30 @@ pub fn append_partition_defs(definitions: &[PartitionDef], kind: &PartitionKind)
             PartitionKind::Hash | PartitionKind::Key | PartitionKind::None => {}
         }
         out.push_str(&partition_comment_text(&definition.comment));
+        out.push_str(&partition_placement_text(definition.placement_policy.as_ref()));
     }
     out.push(')');
     out
+}
+
+/// Go `AppendPartitionDefs` (`ddl/partition.go:5241`): the
+/// ` /*T![placement] PLACEMENT POLICY=<name> */` tail a definition carrying
+/// a policy earns, after its comment.
+///
+/// The `/*T![placement] ... */` wrapper is TiDB's feature-gated comment
+/// syntax: another MySQL-compatible parser skips it, while TiDB reads it
+/// back. Printing the clause bare would make the dump unloadable elsewhere.
+#[must_use]
+pub fn partition_placement_text(reference: Option<&tidb_model::PolicyRefInfo>) -> String {
+    let Some(reference) = reference else {
+        return String::new();
+    };
+    // Go escapes the policy NAME as an identifier, so one needing quoting
+    // round-trips.
+    format!(
+        " /*T![placement] PLACEMENT POLICY={} */",
+        escape_partition_name(reference.name.original())
+    )
 }
 
 /// Whether two partition names denote the same partition.
