@@ -604,7 +604,89 @@ fn derive_tree_collation_with_connection(
     Ok(())
 }
 
+/// The dispatcher over `Expr`'s shapes, holding only the two that a NESTED
+/// predicate walks through -- `(...)` and a binary operator -- and handing
+/// every other shape to one of the three functions below.
+///
+/// The split is about STACK, not structure. A debug build gives one frame a
+/// slot for every match arm's locals at once, so the single 33-arm match this
+/// was carried a 174 KB frame; this function recurses once per level of a
+/// nested predicate, so `... on ((c=1 and ((a=3 and a=3) or (a=4 and a=4)))
+/// or (a=2 and a=2))` -- eight levels -- overflowed a 2 MB stack while
+/// PLANNING and aborted the process. Measured after the split: 25 KB per
+/// level, and that same predicate nests fifteen deep before it runs out.
+///
+/// Go has no equivalent limit: a goroutine's stack grows on demand, so its
+/// planner walks an arbitrarily nested expression. Anything that shrinks
+/// these frames therefore moves this tier toward Go rather than merely
+/// tuning it.
 fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expression, EvalError> {
+    match expr {
+        Expr::Paren(inner) => rewrite_expr_resolved(inner, resolver),
+        Expr::Binary(op, lhs, rhs) => {
+            if matches!(
+                op,
+                BinaryOp::Eq
+                    | BinaryOp::Ne
+                    | BinaryOp::NullEq
+                    | BinaryOp::Lt
+                    | BinaryOp::Le
+                    | BinaryOp::Gt
+                    | BinaryOp::Ge
+            ) && (matches!(lhs.as_ref(), Expr::Row(_)) || matches!(rhs.as_ref(), Expr::Row(_)))
+            {
+                return rewrite_comparison(*op, lhs, rhs, resolver);
+            }
+            let mode = if matches!(op, BinaryOp::LogicAnd | BinaryOp::LogicOr) {
+                ConstantFoldMode::Try
+            } else {
+                ConstantFoldMode::Normal
+            };
+            let child_resolver = FoldModeResolver::new(resolver, mode);
+            let resolver = &child_resolver;
+            let left = rewrite_expr_resolved(lhs, resolver)?;
+            let right = rewrite_expr_resolved(rhs, resolver)?;
+            // Result types come from the transcreated function classes:
+            // builtin_arithmetic (plus/minus/mul/div/intdiv/mod),
+            // builtin_compare (eq/nulleq/ne/lt/le/gt/ge) and builtin_op
+            // (logic and bit operators). Anything still uncovered keeps the
+            // LongLong placeholder.
+            Ok(binary_expression(*op, left, right, resolver))
+        }
+        Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::Bool(_)
+        | Expr::Null
+        | Expr::String(_)
+        | Expr::Decimal(_)
+        | Expr::Hex(_)
+        | Expr::Bit(_)
+        | Expr::CharsetBinary { .. }
+        | Expr::Assign { .. }
+        | Expr::Collate { .. }
+        | Expr::CharsetString { .. } => rewrite_leaf_literal(expr, resolver),
+        Expr::In { .. }
+        | Expr::Between { .. }
+        | Expr::Like { .. }
+        | Expr::Regexp { .. }
+        | Expr::Case { .. }
+        | Expr::MemberOf { .. }
+        | Expr::Is { .. }
+        | Expr::Unary(..) => rewrite_leaf_compound(expr, resolver),
+        _ => rewrite_leaf_call(expr, resolver),
+    }
+}
+
+/// [`rewrite_leaf`]'s arms for LITERALS and the single-value wrappers, in a function of their own.
+///
+/// The split is about STACK, not structure. A debug build gives one frame a
+/// slot for every arm's locals at once, so a single 33-arm match over `Expr`
+/// carried a 174 KB frame -- and `rewrite_leaf` recurses once per level of a
+/// nested predicate, which made eight levels of `AND`/`OR` overflow a 2 MB
+/// stack while planning. Each group pays only its own arms now, and the
+/// dispatcher that recurses pays almost nothing.
+#[inline(never)]
+fn rewrite_leaf_literal(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expression, EvalError> {
     match expr {
         // Go's `ast.NewValueExpr` hands the scanned literal to
         // `types.NewDatum`, whose int64/uint64 split puts a literal above
@@ -753,7 +835,6 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                 args,
             )))
         }
-        Expr::Paren(inner) => rewrite_expr_resolved(inner, resolver),
         // Go `expression_rewriter`'s `case *ast.SetCollationExpr`: the
         // collation is written onto the argument's own result type and its
         // coercibility is raised to EXPLICIT, so it outranks every column and
@@ -800,6 +881,21 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             };
             Ok(Expression::Constant(Constant::new(datum, ft)))
         }
+        _ => unreachable!("dispatched by rewrite_leaf"),
+    }
+}
+
+/// [`rewrite_leaf`]'s arms for the COMPOUND predicates, in a function of their own.
+///
+/// The split is about STACK, not structure. A debug build gives one frame a
+/// slot for every arm's locals at once, so a single 33-arm match over `Expr`
+/// carried a 174 KB frame -- and `rewrite_leaf` recurses once per level of a
+/// nested predicate, which made eight levels of `AND`/`OR` overflow a 2 MB
+/// stack while planning. Each group pays only its own arms now, and the
+/// dispatcher that recurses pays almost nothing.
+#[inline(never)]
+fn rewrite_leaf_compound(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expression, EvalError> {
+    match expr {
         // Go's `in` builtin takes the tested value as args[0] and the list as
         // the remaining arguments; `NOT IN` wraps it in a unary NOT, which
         // keeps NULL as NULL exactly as MySQL requires.
@@ -866,90 +962,6 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                 )));
             }
             Ok(call)
-        }
-        // Go rewrites `x IS <target>` into the isnull/istrue/isfalse builtin,
-        // wrapping `IS NOT` in a unary NOT. These return 0/1 and never NULL,
-        // so the wrapping NOT is exact.
-        Expr::Is { expr, target, not } => {
-            let arg = rewrite_expr_resolved(expr, resolver)?;
-            let name = match target {
-                // `IS UNKNOWN` is `IS NULL` (Go maps both to isnull).
-                IsTarget::Null | IsTarget::Unknown => "isnull",
-                IsTarget::True => "istrue",
-                IsTarget::False => "isfalse",
-            };
-            // Go's result is a one-digit integer (`flen` 1, boolean-flagged):
-            // `ast.IsNull`, `ast.IsTruthWithNull` and `ast.IsFalsity` are all in
-            // the `booleanFunctions` map, so a `JSON_ARRAY(x IS NULL)` element is
-            // JSON `true`/`false`.
-            let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
-            ret_type.set_flen(1);
-            ret_type.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
-            let call = Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new(name),
-                ret_type.clone(),
-                vec![arg],
-            ));
-            if *not {
-                return Ok(Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new(unary_op_name(UnaryOp::Not)),
-                    ret_type,
-                    vec![call],
-                )));
-            }
-            Ok(call)
-        }
-        Expr::Unary(op, inner) => {
-            let arg = rewrite_expr_resolved(inner, resolver)?;
-            // Go `unaryOpToExpression`: `case opcode.Plus: return` -- the
-            // expression `(+ a)` IS `a`, so no function is built at all. That
-            // is also the only reason `+ a` needs no return-type rule: there
-            // is nothing whose type could disagree with `a`'s.
-            if matches!(op, UnaryOp::Plus) {
-                return Ok(arg);
-            }
-            let name = unary_op_name(*op);
-            // not/bitneg/unaryminus result types come from the transcreated
-            // builtin_op function classes; anything uncovered (the deferred
-            // unaryminus arms) keeps the LongLong placeholder.
-            if let Some(ret_type) = crate::builtin_op::infer_unary_op_type(name, &arg) {
-                return Ok(Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new(name),
-                    ret_type,
-                    vec![arg],
-                )));
-            }
-            Ok(scalar(name, vec![arg]))
-        }
-        Expr::Binary(op, lhs, rhs) => {
-            if matches!(
-                op,
-                BinaryOp::Eq
-                    | BinaryOp::Ne
-                    | BinaryOp::NullEq
-                    | BinaryOp::Lt
-                    | BinaryOp::Le
-                    | BinaryOp::Gt
-                    | BinaryOp::Ge
-            ) && (matches!(lhs.as_ref(), Expr::Row(_)) || matches!(rhs.as_ref(), Expr::Row(_)))
-            {
-                return rewrite_comparison(*op, lhs, rhs, resolver);
-            }
-            let mode = if matches!(op, BinaryOp::LogicAnd | BinaryOp::LogicOr) {
-                ConstantFoldMode::Try
-            } else {
-                ConstantFoldMode::Normal
-            };
-            let child_resolver = FoldModeResolver::new(resolver, mode);
-            let resolver = &child_resolver;
-            let left = rewrite_expr_resolved(lhs, resolver)?;
-            let right = rewrite_expr_resolved(rhs, resolver)?;
-            // Result types come from the transcreated function classes:
-            // builtin_arithmetic (plus/minus/mul/div/intdiv/mod),
-            // builtin_compare (eq/nulleq/ne/lt/le/gt/ge) and builtin_op
-            // (logic and bit operators). Anything still uncovered keeps the
-            // LongLong placeholder.
-            Ok(binary_expression(*op, left, right, resolver))
         }
         // Go `expressionRewriter.betweenToExpression`: `x BETWEEN l AND h`
         // is `x >= l AND x <= h`, and the negated form is `x < l OR x > h` --
@@ -1101,6 +1113,90 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                 args,
             )))
         }
+        // Go's parser represents `candidate MEMBER OF (document)` as a
+        // two-argument JSON_MEMBER_OF call; only the restore syntax is infix.
+        Expr::MemberOf { expr, array } => {
+            let args = vec![
+                rewrite_expr_resolved(expr, resolver)?,
+                rewrite_expr_resolved(array, resolver)?,
+            ];
+            let ret_type =
+                builtin_return_type("json_member_of", &args).expect("JSON_MEMBER_OF is registered");
+            Ok(Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("json_member_of"),
+                ret_type,
+                args,
+            )))
+        }
+        // Go rewrites `x IS <target>` into the isnull/istrue/isfalse builtin,
+        // wrapping `IS NOT` in a unary NOT. These return 0/1 and never NULL,
+        // so the wrapping NOT is exact.
+        Expr::Is { expr, target, not } => {
+            let arg = rewrite_expr_resolved(expr, resolver)?;
+            let name = match target {
+                // `IS UNKNOWN` is `IS NULL` (Go maps both to isnull).
+                IsTarget::Null | IsTarget::Unknown => "isnull",
+                IsTarget::True => "istrue",
+                IsTarget::False => "isfalse",
+            };
+            // Go's result is a one-digit integer (`flen` 1, boolean-flagged):
+            // `ast.IsNull`, `ast.IsTruthWithNull` and `ast.IsFalsity` are all in
+            // the `booleanFunctions` map, so a `JSON_ARRAY(x IS NULL)` element is
+            // JSON `true`/`false`.
+            let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
+            ret_type.set_flen(1);
+            ret_type.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
+            let call = Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new(name),
+                ret_type.clone(),
+                vec![arg],
+            ));
+            if *not {
+                return Ok(Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new(unary_op_name(UnaryOp::Not)),
+                    ret_type,
+                    vec![call],
+                )));
+            }
+            Ok(call)
+        }
+        Expr::Unary(op, inner) => {
+            let arg = rewrite_expr_resolved(inner, resolver)?;
+            // Go `unaryOpToExpression`: `case opcode.Plus: return` -- the
+            // expression `(+ a)` IS `a`, so no function is built at all. That
+            // is also the only reason `+ a` needs no return-type rule: there
+            // is nothing whose type could disagree with `a`'s.
+            if matches!(op, UnaryOp::Plus) {
+                return Ok(arg);
+            }
+            let name = unary_op_name(*op);
+            // not/bitneg/unaryminus result types come from the transcreated
+            // builtin_op function classes; anything uncovered (the deferred
+            // unaryminus arms) keeps the LongLong placeholder.
+            if let Some(ret_type) = crate::builtin_op::infer_unary_op_type(name, &arg) {
+                return Ok(Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new(name),
+                    ret_type,
+                    vec![arg],
+                )));
+            }
+            Ok(scalar(name, vec![arg]))
+        }
+        _ => unreachable!("dispatched by rewrite_leaf"),
+    }
+}
+
+/// [`rewrite_leaf`]'s arms for CALLS and casts -- and the catch-all, in a function of their own.
+///
+/// The split is about STACK, not structure. A debug build gives one frame a
+/// slot for every arm's locals at once, so a single 33-arm match over `Expr`
+/// carried a 174 KB frame -- and `rewrite_leaf` recurses once per level of a
+/// nested predicate, which made eight levels of `AND`/`OR` overflow a 2 MB
+/// stack while planning. Each group pays only its own arms now, and the
+/// dispatcher that recurses pays almost nothing.
+#[inline(never)]
+fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expression, EvalError> {
+    match expr {
         // `EXTRACT(unit FROM value)` is sugar for the SAME single-argument
         // function `unit` already names, exactly as the AST evaluator treats
         // it (see `crate::eval_in`'s own `Expr::Extract` arm) — so it is
@@ -1150,21 +1246,6 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             let ret_type = builtin_return_type("locate", &args).expect("LOCATE is registered");
             Ok(Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new("locate"),
-                ret_type,
-                args,
-            )))
-        }
-        // Go's parser represents `candidate MEMBER OF (document)` as a
-        // two-argument JSON_MEMBER_OF call; only the restore syntax is infix.
-        Expr::MemberOf { expr, array } => {
-            let args = vec![
-                rewrite_expr_resolved(expr, resolver)?,
-                rewrite_expr_resolved(array, resolver)?,
-            ];
-            let ret_type =
-                builtin_return_type("json_member_of", &args).expect("JSON_MEMBER_OF is registered");
-            Ok(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("json_member_of"),
                 ret_type,
                 args,
             )))
@@ -1564,6 +1645,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
         )),
     }
 }
+
 
 #[cfg(test)]
 mod tests {

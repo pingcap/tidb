@@ -1326,6 +1326,37 @@ fn no_decorrelate_hint_keeps_the_correlated_apply() {
     );
 }
 
+/// A NESTED join condition plans without running the process out of stack.
+///
+/// `((c=1 and ((a=3 and a=3) or (a=4 and a=4))) or (a=2 and a=2))` -- eight
+/// levels of `AND`/`OR`, and one of Go's own `TestJoinPredicatePushDown`
+/// cases -- used to abort the process during PLANNING with a stack overflow,
+/// which is how the two tests over that corpus failed. The expression
+/// rewriter recurses once per level, and its single 33-arm match over `Expr`
+/// carried a 174 KB frame in a debug build.
+///
+/// Go has no such limit: a goroutine's stack grows on demand. This pins the
+/// depth at which this tier still answers, well above anything the corpus
+/// needs, so a regression that re-inflates those frames fails here rather
+/// than by aborting an unrelated test.
+#[test]
+fn a_deeply_nested_join_condition_plans_without_exhausting_the_stack() {
+    let mut session = signed_table_session();
+    let mut predicate = "(t1.a=2 and t2.a=2)".to_owned();
+    for level in 0..10 {
+        predicate = format!(
+            "((t1.c={level} and ({predicate} or (t1.a=4 and t2.a=4))) or (t1.a=2 and t2.a=2))"
+        );
+    }
+    let sql = format!("select t1.a from t as t1 left join t as t2 on {predicate}");
+    // Every level is unsatisfiable for these rows, so the answer is the five
+    // NULL-extended left rows -- what matters is that there IS an answer.
+    assert_eq!(
+        rows(&mut session, &format!("select count(*) from ({sql}) k")),
+        [["5".to_owned()]]
+    );
+}
+
 /// The last Go `TestJoinPredicatePushDown` case leaves exactly one copy on the
 /// left DataSource and none on the join.
 #[test]
