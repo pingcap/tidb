@@ -622,7 +622,7 @@ impl Collation {
                 trim_trailing_spaces(value).to_vec()
             }
             Self::GbkBin => encoded_binary_key(Encoding::Gbk, value, true),
-            Self::Gb18030Bin => encoded_binary_key(Encoding::Gb18030, value, true),
+            Self::Gb18030Bin => gb18030_bin_key(value, true),
             Self::Utf8GeneralCi | Self::Utf8Mb4GeneralCi => general_ci_key(value, true),
             Self::Utf8UnicodeCi | Self::Utf8Mb4UnicodeCi => unicode_0400_key(value, true),
             Self::Utf8Mb40900AiCi => unicode_0900_key(value),
@@ -649,7 +649,7 @@ impl Collation {
             | Self::Utf8Mb4Bin
             | Self::Utf8Mb40900Bin => value.to_vec(),
             Self::GbkBin => encoded_binary_key(Encoding::Gbk, value, false),
-            Self::Gb18030Bin => encoded_binary_key(Encoding::Gb18030, value, false),
+            Self::Gb18030Bin => gb18030_bin_key(value, false),
             Self::Utf8GeneralCi | Self::Utf8Mb4GeneralCi => general_ci_key(value, false),
             Self::Utf8UnicodeCi | Self::Utf8Mb4UnicodeCi => unicode_0400_key(value, false),
             Self::Utf8Mb40900AiCi => unicode_0900_key(value),
@@ -681,6 +681,64 @@ impl Collation {
             }
         }
     }
+}
+
+/// Go's `fourBytesRune` set (`pkg/util/collate/gb18030_bin.go`): 19 three-byte
+/// UTF-8 PUA runes whose `customGB18030Encoder` override emits 4 bytes. The
+/// key path feeds a trailing NUL through the encoder so the emitted sort key
+/// is the 4-byte encoding plus one 0x00 byte, matching Go's 5-byte output.
+const GB18030_FOUR_BYTES_RUNES: [u32; 19] = [
+    0xE78D, 0xE78E, 0xE78F, 0xE790, 0xE791, 0xE792, 0xE793, 0xE794, 0xE795, 0xE796, //
+    0xE7C7, 0xE81E, 0xE826, 0xE82B, 0xE82C, 0xE832, 0xE843, 0xE854, 0xE864,
+];
+
+/// Go's `runeLen` (`pkg/util/collate/collate.go`): first-byte width class,
+/// independent of UTF-8 validity.
+fn go_rune_len(first: u8) -> usize {
+    if first < 0x80 {
+        1
+    } else if first < 0xE0 {
+        2
+    } else if first < 0xF0 {
+        3
+    } else {
+        4
+    }
+}
+
+/// Mirrors Go's `gb18030BinCollator.KeyWithoutTrimRightSpace`: walks rune-wise,
+/// feeds four-byte PUA runes an extra trailing NUL through the encoder, and
+/// emits one `'?'` per errored group. The `Compare` path deliberately keeps
+/// using the unpadded [`encoded_binary_key`], because Go's `Compare` also
+/// compares unpadded per-rune encodings.
+fn gb18030_bin_key(value: &[u8], trim: bool) -> Vec<u8> {
+    let value = if trim {
+        trim_trailing_spaces(value)
+    } else {
+        value
+    };
+    let mut buf = Vec::with_capacity(value.len() + value.len() / 3);
+    let mut rest = value;
+    while !rest.is_empty() {
+        let l = go_rune_len(rest[0]).min(rest.len());
+        let rune = std::str::from_utf8(&rest[..l])
+            .ok()
+            .and_then(|s| s.chars().next());
+        let mut chunk = rest[..l].to_vec();
+        if matches!(rune, Some(r) if GB18030_FOUR_BYTES_RUNES.contains(&(r as u32))) {
+            chunk.push(0x00);
+        }
+        let (bytes, error) = Encoding::Gb18030
+            .transform(&chunk, TransformOp::ENCODE_REPLACE)
+            .into_parts();
+        if error.is_some() {
+            buf.push(b'?');
+        } else {
+            buf.extend_from_slice(&bytes);
+        }
+        rest = &rest[l..];
+    }
+    buf
 }
 
 fn encoded_binary_key(encoding: Encoding, value: &[u8], trim: bool) -> Vec<u8> {
