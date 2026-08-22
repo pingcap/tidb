@@ -3001,3 +3001,39 @@ fn show_create_placement_policy_prints_gos_clause() {
         .to_mysql_error();
     assert_eq!(rendered.code, 8239);
 }
+
+/// A TABLE's own placement policy prints too, under the same feature gate a
+/// partition's uses, after the comment and before the cached marker
+/// (`ShowCreateTable`, `executor/show.go:1425`).
+#[test]
+fn a_table_policy_prints_in_show_create_table() {
+    let mut session = Session::new();
+    session
+        .run("CREATE PLACEMENT POLICY tp1 FOLLOWERS=2")
+        .expect("policy");
+    session
+        .run("CREATE TABLE tt (a INT) COMMENT='hello' PLACEMENT POLICY = tp1")
+        .expect("table naming a policy");
+    let shown = show_create(&mut session, "tt");
+    assert!(
+        shown.contains("/*T![placement] PLACEMENT POLICY=`tp1` */"),
+        "the table's policy prints, got: {shown}"
+    );
+    // Go writes the comment first, then the placement.
+    let comment_at = shown.find("COMMENT='hello'").expect("the comment prints");
+    let placement_at = shown.find("/*T![placement]").expect("the placement prints");
+    assert!(
+        comment_at < placement_at,
+        "Go writes COMMENT before the placement, got: {shown}"
+    );
+
+    // A table naming no policy prints no clause at all.
+    session
+        .run("CREATE TABLE tn (a INT)")
+        .expect("plain table");
+    let shown = show_create(&mut session, "tn");
+    assert!(
+        !shown.contains("PLACEMENT POLICY"),
+        "a table without a policy prints none, got: {shown}"
+    );
+}

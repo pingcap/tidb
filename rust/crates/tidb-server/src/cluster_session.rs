@@ -520,6 +520,17 @@ pub(crate) fn cluster_table(
     // both the DDL that wrote it and the printer that renders it were
     // right.
     kv_table.set_comment(table.comment.clone());
+    // Go `TableInfo.PlacementPolicyRef`. A table a Go cluster wrote can name
+    // a policy; dropping it here would mean this node stores the table back
+    // WITHOUT the reference, erasing a policy binding Go put there -- the
+    // same loss the partition-level reference and the partition comment each
+    // had before they were carried through.
+    kv_table.set_placement_policy(
+        table
+            .placement_policy_ref
+            .as_ref()
+            .map(|reference| reference.read().clone()),
+    );
     // Go `TableInfo.AutoIDCache`. The allocator's step already comes from it
     // (`auto_id_step`); this is the value `SHOW CREATE TABLE` prints back.
     kv_table.set_recorded_auto_id_cache(table.auto_id_cache);

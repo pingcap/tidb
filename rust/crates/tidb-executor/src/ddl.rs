@@ -242,6 +242,7 @@ pub use placement_policy::{
 };
 pub use table_partition::{
     append_partition_defs, build_partition_metadata, escape_partition_name,
+    partition_placement_text,
     linear_partitioning_warning,
     partition_spec_from_metadata, StoredPartitionDefinition, StoredPartitionMetadata,
 };

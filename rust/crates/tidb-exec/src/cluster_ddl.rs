@@ -1621,6 +1621,25 @@ fn lower_create_table(
     context: &tidb_executor::StmtContext,
 ) -> Result<DdlStatement, DdlAdmissionError> {
     let (schema, table) = split_name(&create.name, default_schema, "table")?;
+    // A table-level `PLACEMENT POLICY = name` has to resolve against the
+    // cluster's policies, and this tier keeps none: `CREATE PLACEMENT POLICY`
+    // is not among the statements the catalog transaction serves, so there is
+    // nothing here for the name to point at.
+    //
+    // Accepting the option and dropping it -- which is what the catch-all arm
+    // of `validate_table_options` did -- creates a table that reports no
+    // policy while the statement asked for one, and places its data
+    // somewhere the user did not choose. The refusal names the option so it
+    // cannot be mistaken for an unrelated failure.
+    if create
+        .table_options
+        .iter()
+        .any(|option| matches!(option, tidb_ast::TableOption::PlacementPolicy(_)))
+    {
+        return Err(DdlAdmissionError::unsupported(
+            "CREATE TABLE ... PLACEMENT POLICY is not supported against a cluster by this              node: it keeps no placement policies, so the name could not be resolved",
+        ));
+    }
     // Go `BuildTableInfoWithLike` copies a table that already exists, so the
     // statement carries no column list to build from and the source has to be
     // resolved against the catalog at apply time.

@@ -149,6 +149,7 @@ pub use cte_storage::{CteStorage, CteTable};
 pub use ddl::{
     added_check_constraint_actions, check_constraint_count, discarded_check_constraint_actions,
     append_partition_defs, escape_partition_name, linear_partitioning_warning,
+    partition_placement_text,
     resolve_database_charset,
     run_alter_placement_policy, run_alter_table_in, run_create_index_in,
     run_create_placement_policy, run_drop_placement_policy,

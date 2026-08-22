@@ -473,6 +473,13 @@ fn show_create_table_text(
     if let Some(base) = table.next_auto_random().filter(|base| *base > 1) {
         out.push_str(&format!(" /*T![auto_rand_base] AUTO_RANDOM_BASE={base} */"));
     }
+    // Go `ShowCreateTable` (`executor/show.go:1425`) prints the table's own
+    // policy after the comment and BEFORE the cached marker, under the same
+    // `/*T![placement] ... */` feature gate a partition's uses -- so a dump
+    // carrying placement still loads on a parser that does not know it.
+    out.push_str(&tidb_executor::partition_placement_text(
+        table.placement_policy(),
+    ));
     if table.is_cached() {
         out.push_str(" /* CACHED ON */");
     }
