@@ -71,7 +71,7 @@ fn bytes(hex: &str) -> Vec<u8> {
 /// All twenty rows and all eight columns from
 /// `pkg/util/collate/collate_test.go::TestUTF8CollatorCompare`.
 #[test]
-fn compare_executes_all_original_columns() {
+fn test_utf8_collator_compare() {
     let collations = [
         Collation::Binary,
         Collation::Utf8Mb4Bin,
@@ -127,7 +127,7 @@ fn compare_executes_all_original_columns() {
 /// columns in `TestUTF8CollatorKey`. Rust owns immutable `Vec<u8>`
 /// keys, so one result covers both source methods without an aliasing seam.
 #[test]
-fn key_executes_all_original_columns() {
+fn test_utf8_collator_key() {
     let rows: &[(&str, [&str; 8])] = &[
         ("a", ["61", "61", "0041", "0E33", "1C47", "61", "61", "41"]),
         ("A", ["41", "41", "0041", "0E33", "1C47", "41", "41", "41"]),
@@ -320,7 +320,7 @@ fn test_get_collator() {
 /// state: compare returns equality at the first invalid sequence and key keeps
 /// the valid prefix.
 #[test]
-fn invalid_utf8_executes_all_original_collator_assertions() {
+fn test_campare_invalid_utf8_rune() {
     for (index, collation) in [
         Collation::Utf8Mb4GeneralCi,
         Collation::Utf8Mb40900AiCi,
