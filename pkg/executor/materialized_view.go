@@ -64,7 +64,6 @@ import (
 	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -4643,7 +4642,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return finalizeFailure(err)
 	}
 
-	lastSuccessEndTime := mviewutil.FormatMViewRefreshInfoEndTime(time.Now())
+	lastSuccessRefreshEndUnixSeconds := time.Now().Unix()
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.persistRefreshInfo, func() error {
 		return persistRefreshSuccess(
 			kctx,
@@ -4652,7 +4651,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			lockedRefreshInfo.lastSuccessReadTSO,
 			lockedRefreshInfo.lastSuccessReadTSONull,
 			refreshReadTSO,
-			lastSuccessEndTime,
+			lastSuccessRefreshEndUnixSeconds,
 			nextRefreshUnixSeconds,
 			shouldUpdateNextRefreshUnixSeconds,
 		)
@@ -5396,15 +5395,15 @@ func checkRefreshMaterializedViewReady(schemaName pmodel.CIStr, tblInfo *model.T
 }
 
 type refreshInfoSnapshot struct {
-	lastSuccessReadTSO     uint64
-	lastSuccessReadTSONull bool
-	lastSuccessEndTime     time.Time
-	lastSuccessEndTimeNull bool
+	lastSuccessReadTSO                   uint64
+	lastSuccessReadTSONull               bool
+	lastSuccessRefreshEndUnixSeconds     int64
+	lastSuccessRefreshEndUnixSecondsNull bool
 }
 
 func (s refreshInfoSnapshot) previousSuccessTime() time.Time {
-	if !s.lastSuccessEndTimeNull && !s.lastSuccessEndTime.IsZero() {
-		return s.lastSuccessEndTime
+	if !s.lastSuccessRefreshEndUnixSecondsNull {
+		return time.Unix(s.lastSuccessRefreshEndUnixSeconds, 0)
 	}
 	if !s.lastSuccessReadTSONull && s.lastSuccessReadTSO > 0 {
 		return time.UnixMilli(oracle.ExtractPhysical(s.lastSuccessReadTSO))
@@ -5436,24 +5435,20 @@ func observeMVRefreshScheduleDuration(duration *time.Duration) {
 	tidbmetrics.MVServiceRefreshScheduleDurationHistogram.Observe(duration.Seconds())
 }
 
-func decodeRefreshInfoSnapshot(row chunk.Row, readTSOIdx int, endTimeIdx int) (refreshInfoSnapshot, error) {
+func decodeRefreshInfoSnapshot(row chunk.Row, readTSOIdx int, endUnixSecondsIdx int) refreshInfoSnapshot {
 	info := refreshInfoSnapshot{
-		lastSuccessReadTSONull: true,
-		lastSuccessEndTimeNull: true,
+		lastSuccessReadTSONull:               true,
+		lastSuccessRefreshEndUnixSecondsNull: true,
 	}
 	if !row.IsNull(readTSOIdx) {
 		info.lastSuccessReadTSO = row.GetUint64(readTSOIdx)
 		info.lastSuccessReadTSONull = false
 	}
-	if !row.IsNull(endTimeIdx) {
-		lastSuccessEndTime, err := row.GetTime(endTimeIdx).GoTime(time.UTC)
-		if err != nil {
-			return info, errors.Trace(err)
-		}
-		info.lastSuccessEndTime = lastSuccessEndTime
-		info.lastSuccessEndTimeNull = false
+	if !row.IsNull(endUnixSecondsIdx) {
+		info.lastSuccessRefreshEndUnixSeconds = row.GetInt64(endUnixSecondsIdx)
+		info.lastSuccessRefreshEndUnixSecondsNull = false
 	}
-	return info, nil
+	return info
 }
 
 func lockRefreshInfoRow(
@@ -5464,7 +5459,7 @@ func lockRefreshInfoRow(
 	lockRS, err := sqlExec.ExecuteInternal(
 		kctx,
 		// Also select LAST_SUCCESS_READ_TSO so FAST refresh can reuse this mutex/metadata load path.
-		"SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_ENDTIME FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT",
+		"SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT",
 		mviewID,
 	)
 	if infoschema.ErrTableNotExists.Equal(err) {
@@ -5488,8 +5483,7 @@ func lockRefreshInfoRow(
 		return refreshInfoSnapshot{}, errors.New("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh_info")
 	}
 
-	info, err := decodeRefreshInfoSnapshot(lockRows[0], 1, 2)
-	return info, errors.Trace(err)
+	return decodeRefreshInfoSnapshot(lockRows[0], 1, 2), nil
 }
 
 func buildMVRefreshAdvisoryLockName(schemaID int64, mviewID int64) string {
@@ -5543,7 +5537,7 @@ func readRefreshInfoSnapshot(
 ) (refreshInfoSnapshot, error) {
 	recheckRS, err := sqlExec.ExecuteInternal(
 		kctx,
-		"SELECT LAST_SUCCESS_READ_TSO, LAST_SUCCESS_ENDTIME FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
+		"SELECT LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
 		mviewID,
 	)
 	if err != nil {
@@ -5566,8 +5560,7 @@ func readRefreshInfoSnapshot(
 	if len(recheckRows) == 0 {
 		return refreshInfoSnapshot{}, errors.New("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh_info")
 	}
-	info, err := decodeRefreshInfoSnapshot(recheckRows[0], 0, 1)
-	return info, errors.Trace(err)
+	return decodeRefreshInfoSnapshot(recheckRows[0], 0, 1), nil
 }
 
 func readMLogPurgeInfoLastPurgedTSO(
@@ -6108,15 +6101,15 @@ func persistRefreshSuccess(
 	lockedReadTSO uint64,
 	lockedReadTSONull bool,
 	refreshReadTSO uint64,
-	lastSuccessEndTime string,
+	lastSuccessRefreshEndUnixSeconds int64,
 	nextRefreshUnixSeconds *int64,
 	shouldUpdateNextRefreshUnixSeconds bool,
 ) error {
 	setClauses := []string{
 		"LAST_SUCCESS_READ_TSO = %?",
-		"LAST_SUCCESS_ENDTIME = %?",
+		"LAST_SUCCESS_REFRESH_END_UNIX_SECONDS = %?",
 	}
-	args := []any{refreshReadTSO, lastSuccessEndTime}
+	args := []any{refreshReadTSO, lastSuccessRefreshEndUnixSeconds}
 	if shouldUpdateNextRefreshUnixSeconds {
 		setClauses = append(setClauses, "NEXT_REFRESH_UNIX_SECONDS = %?")
 		var nextRefreshUnixSecondsArg any

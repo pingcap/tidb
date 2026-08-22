@@ -147,24 +147,24 @@ func TestBuildCreateMaterializedViewRefreshInfoUpsertSQL(t *testing.T) {
 		return strings.Join(strings.Fields(sql), " ")
 	}
 
-	lastSuccessEndTime := "2026-01-02 03:04:05.123456"
-	sqlNoUpdate := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessEndTime, nil, false))
+	lastSuccessRefreshEndUnixSeconds := int64(1_767_312_304)
+	sqlNoUpdate := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessRefreshEndUnixSeconds, nil, false))
 	require.NotContains(t, sqlNoUpdate, "NEXT_REFRESH_UNIX_SECONDS")
 	require.NotContains(t, sqlNoUpdate, "VALUES(NEXT_REFRESH_UNIX_SECONDS)")
-	require.Contains(t, sqlNoUpdate, "LAST_SUCCESS_ENDTIME")
-	require.Contains(t, sqlNoUpdate, lastSuccessEndTime)
+	require.Contains(t, sqlNoUpdate, "LAST_SUCCESS_REFRESH_END_UNIX_SECONDS")
+	require.Contains(t, sqlNoUpdate, "1767312304")
 
 	sqlPrewrite := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, nil, nil, false))
-	require.NotContains(t, sqlPrewrite, lastSuccessEndTime)
+	require.NotContains(t, sqlPrewrite, "1767312304")
 	require.Contains(t, sqlPrewrite, "NULL")
 
 	nextRefreshUnixSeconds := int64(1_767_312_305)
-	sqlWithValue := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessEndTime, &nextRefreshUnixSeconds, true))
+	sqlWithValue := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessRefreshEndUnixSeconds, &nextRefreshUnixSeconds, true))
 	require.Contains(t, sqlWithValue, "NEXT_REFRESH_UNIX_SECONDS")
 	require.Contains(t, sqlWithValue, "VALUES(NEXT_REFRESH_UNIX_SECONDS)")
 	require.Contains(t, sqlWithValue, "1767312305")
 
-	sqlWithNull := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessEndTime, nil, true))
+	sqlWithNull := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessRefreshEndUnixSeconds, nil, true))
 	require.Contains(t, sqlWithNull, "NEXT_REFRESH_UNIX_SECONDS")
 	require.Contains(t, sqlWithNull, "VALUES(NEXT_REFRESH_UNIX_SECONDS)")
 	require.Contains(t, sqlWithNull, ", NULL)")

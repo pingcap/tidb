@@ -47,7 +47,7 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 	// or the MVIEW_ID handle property changes, update that function together
 	// with this test.
 	tk.MustQuery("select lower(column_name), lower(column_type), is_nullable from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_info' order by ordinal_position").
-		Check(testkit.Rows("mview_id bigint(20) NO", "last_success_read_tso bigint(20) unsigned YES", "last_success_endtime datetime(6) YES", "next_refresh_unix_seconds bigint(20) YES"))
+		Check(testkit.Rows("mview_id bigint(20) NO", "last_success_read_tso bigint(20) unsigned YES", "last_success_refresh_end_unix_seconds bigint(20) YES", "next_refresh_unix_seconds bigint(20) YES"))
 
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_info' and index_name='PRIMARY' order by seq_in_index").
 		Check(testkit.Rows("mlog_id"))
@@ -55,8 +55,8 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 		Check(testkit.Rows("bigint(20) unsigned"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_info' and column_name='NEXT_REFRESH_UNIX_SECONDS'").
 		Check(testkit.Rows("bigint(20)"))
-	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_info' and column_name='LAST_SUCCESS_ENDTIME'").
-		Check(testkit.Rows("6"))
+	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_info' and column_name='LAST_SUCCESS_REFRESH_END_UNIX_SECONDS'").
+		Check(testkit.Rows("bigint(20)"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_info' and column_name='LAST_PURGED_TSO'").
 		Check(testkit.Rows("bigint(20) unsigned"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_info' and column_name='NEXT_PURGE_UNIX_SECONDS'").
@@ -219,8 +219,8 @@ func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {
 		Check(testkit.Rows("bigint(20) unsigned"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_info' and column_name='NEXT_REFRESH_UNIX_SECONDS'").
 		Check(testkit.Rows("bigint(20)"))
-	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_info' and column_name='LAST_SUCCESS_ENDTIME'").
-		Check(testkit.Rows("6"))
+	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_info' and column_name='LAST_SUCCESS_REFRESH_END_UNIX_SECONDS'").
+		Check(testkit.Rows("bigint(20)"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_info' and column_name='LAST_PURGED_TSO'").
 		Check(testkit.Rows("bigint(20) unsigned"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_info' and column_name='NEXT_PURGE_UNIX_SECONDS'").

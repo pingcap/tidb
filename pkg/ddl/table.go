@@ -46,7 +46,6 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
-	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"go.uber.org/zap"
 )
 
@@ -1387,7 +1386,7 @@ func (w *worker) migrateMViewRefreshInfoForOutOfPlaceCutover(
 
 	oldRows, err := w.sess.Execute(
 		ctx,
-		"SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_ENDTIME, NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
+		"SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS, NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
 		"mview-refresh-cutover-read-refresh-info",
 		args.OldMViewID,
 	)
@@ -1434,7 +1433,7 @@ func (w *worker) migrateMViewRefreshInfoForOutOfPlaceCutover(
 		return errors.Trace(convertMViewRefreshInfoTableNotExistsErrOnOutOfPlaceCutover(err))
 	}
 	// The table API mutation below relies on the fixed refresh-info schema:
-	// columns are [MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_ENDTIME, NEXT_REFRESH_UNIX_SECONDS],
+	// columns are [MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS, NEXT_REFRESH_UNIX_SECONDS],
 	// and MVIEW_ID is the single integer primary-key handle used by kv.IntHandle.
 	// If this system table schema changes, update this function together with
 	// TestBootstrapMaterializedViewSystemTables.
@@ -1454,12 +1453,7 @@ func (w *worker) migrateMViewRefreshInfoForOutOfPlaceCutover(
 	copy(newDatums, oldDatums)
 	newDatums[0] = types.NewIntDatum(args.ShadowTableID)
 	newDatums[1] = types.NewUintDatum(args.BuildReadTSO)
-	lastSuccessEndTime := mviewutil.FormatMViewRefreshInfoEndTime(time.Now())
-	endTimeDatum := types.NewStringDatum(lastSuccessEndTime)
-	newDatums[2], err = table.CastColumnValue(sctx.GetExprCtx(), endTimeDatum, refreshInfoTbl.Meta().Columns[2], false, false)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	newDatums[2] = types.NewIntDatum(time.Now().Unix())
 	if args.ShouldUpdateNextRefreshUnixSeconds {
 		newDatums[3].SetNull()
 		if args.NextRefreshUnixSeconds != nil {

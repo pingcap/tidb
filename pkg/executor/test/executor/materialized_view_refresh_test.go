@@ -1296,7 +1296,7 @@ func TestMaterializedViewRefreshScheduleDurationOnlyForInternalSQL(t *testing.T)
 	require.NoError(t, err)
 	mviewID := mvTable.Meta().ID
 
-	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_ENDTIME is not null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
+	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_REFRESH_END_UNIX_SECONDS > 0 from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
 
 	tk.MustExec("insert into t_refresh_schedule_duration values (3, 30)")
@@ -1306,16 +1306,17 @@ func TestMaterializedViewRefreshScheduleDurationOnlyForInternalSQL(t *testing.T)
 		mviewID,
 	)).Check(testkit.Rows("fast manual 1"))
 
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set LAST_SUCCESS_REFRESH_END_UNIX_SECONDS = UNIX_TIMESTAMP() - 120 where MVIEW_ID = %d", mviewID))
 	tk.MustExec("insert into t_refresh_schedule_duration values (4, 40)")
 	metricCountBefore := readMVServiceRefreshScheduleDurationCount(t)
 	mustExecInternal(t, tk, "refresh materialized view mv_refresh_schedule_duration fast")
 	tk.MustQuery(fmt.Sprintf(
-		"select REFRESH_METHOD, REFRESH_SCHEDULE_DURATION_SEC is not null, REFRESH_SCHEDULE_DURATION_SEC >= 0 from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		"select REFRESH_METHOD, REFRESH_SCHEDULE_DURATION_SEC >= 100, REFRESH_SCHEDULE_DURATION_SEC <= 150 from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
 		mviewID,
 	)).Check(testkit.Rows("fast auto 1 1"))
 	require.Greater(t, readMVServiceRefreshScheduleDurationCount(t), metricCountBefore)
 
-	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set LAST_SUCCESS_ENDTIME = null where MVIEW_ID = %d", mviewID))
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set LAST_SUCCESS_REFRESH_END_UNIX_SECONDS = null where MVIEW_ID = %d", mviewID))
 	tk.MustExec("insert into t_refresh_schedule_duration values (5, 50)")
 	mustExecInternal(t, tk, "refresh materialized view mv_refresh_schedule_duration fast")
 	tk.MustQuery(fmt.Sprintf(

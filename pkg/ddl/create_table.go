@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
@@ -956,8 +955,8 @@ func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvS
 	if err != nil {
 		return errors.Trace(err)
 	}
-	lastSuccessEndTime := mviewutil.FormatMViewRefreshInfoEndTime(time.Now())
-	return errors.Trace(execCreateMaterializedViewRefreshInfoUpsert(ctx, w.sess, mvTblInfo.ID, readTS, &lastSuccessEndTime, nextRefreshUnixSeconds, shouldUpdateNextRefreshUnixSeconds))
+	lastSuccessRefreshEndUnixSeconds := time.Now().Unix()
+	return errors.Trace(execCreateMaterializedViewRefreshInfoUpsert(ctx, w.sess, mvTblInfo.ID, readTS, &lastSuccessRefreshEndUnixSeconds, nextRefreshUnixSeconds, shouldUpdateNextRefreshUnixSeconds))
 }
 
 func (w *worker) upsertCreateMaterializedViewLogPurgeInfo(jobCtx *jobContext, mlogSchemaName string, mlogTblInfo *model.TableInfo) error {
@@ -1008,11 +1007,11 @@ func execCreateMaterializedViewRefreshInfoUpsert(
 	ddlSess *sess.Session,
 	mviewID int64,
 	readTS uint64,
-	lastSuccessEndTime *string,
+	lastSuccessRefreshEndUnixSeconds *int64,
 	nextRefreshUnixSeconds *int64,
 	shouldUpdateNextRefreshUnixSeconds bool,
 ) error {
-	upsertSQL := buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID, readTS, lastSuccessEndTime, nextRefreshUnixSeconds, shouldUpdateNextRefreshUnixSeconds)
+	upsertSQL := buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID, readTS, lastSuccessRefreshEndUnixSeconds, nextRefreshUnixSeconds, shouldUpdateNextRefreshUnixSeconds)
 	_, err := ddlSess.Execute(ctx, upsertSQL, "mview-refresh-info-upsert")
 	failpoint.Inject("mockUpsertCreateMaterializedViewRefreshInfoTableNotExists", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1354,10 +1353,10 @@ func evalCreateMaterializedViewScheduleExprToDatetime(ddlSess *sess.Session, exp
 	return &t, nil
 }
 
-func buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID int64, readTS uint64, lastSuccessEndTime *string, nextRefreshUnixSeconds *int64, shouldUpdateNextRefreshUnixSeconds bool) string {
-	var lastSuccessEndTimeArg any
-	if lastSuccessEndTime != nil {
-		lastSuccessEndTimeArg = *lastSuccessEndTime
+func buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID int64, readTS uint64, lastSuccessRefreshEndUnixSeconds *int64, nextRefreshUnixSeconds *int64, shouldUpdateNextRefreshUnixSeconds bool) string {
+	var lastSuccessRefreshEndUnixSecondsArg any
+	if lastSuccessRefreshEndUnixSeconds != nil {
+		lastSuccessRefreshEndUnixSecondsArg = *lastSuccessRefreshEndUnixSeconds
 	}
 	if shouldUpdateNextRefreshUnixSeconds {
 		var nextRefreshUnixSecondsArg any
@@ -1367,30 +1366,30 @@ func buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID int64, readTS uint6
 		return sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh_info (
 		MVIEW_ID,
 		LAST_SUCCESS_READ_TSO,
-		LAST_SUCCESS_ENDTIME,
+		LAST_SUCCESS_REFRESH_END_UNIX_SECONDS,
 		NEXT_REFRESH_UNIX_SECONDS
 	) VALUES (%?, %?, %?, %?)
 	ON DUPLICATE KEY UPDATE
 		LAST_SUCCESS_READ_TSO = VALUES(LAST_SUCCESS_READ_TSO),
-		LAST_SUCCESS_ENDTIME = VALUES(LAST_SUCCESS_ENDTIME),
+		LAST_SUCCESS_REFRESH_END_UNIX_SECONDS = VALUES(LAST_SUCCESS_REFRESH_END_UNIX_SECONDS),
 		NEXT_REFRESH_UNIX_SECONDS = VALUES(NEXT_REFRESH_UNIX_SECONDS)`,
 			mviewID,
 			readTS,
-			lastSuccessEndTimeArg,
+			lastSuccessRefreshEndUnixSecondsArg,
 			nextRefreshUnixSecondsArg,
 		)
 	}
 	return sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh_info (
 		MVIEW_ID,
 		LAST_SUCCESS_READ_TSO,
-		LAST_SUCCESS_ENDTIME
+		LAST_SUCCESS_REFRESH_END_UNIX_SECONDS
 	) VALUES (%?, %?, %?)
 	ON DUPLICATE KEY UPDATE
 		LAST_SUCCESS_READ_TSO = VALUES(LAST_SUCCESS_READ_TSO),
-		LAST_SUCCESS_ENDTIME = VALUES(LAST_SUCCESS_ENDTIME)`,
+		LAST_SUCCESS_REFRESH_END_UNIX_SECONDS = VALUES(LAST_SUCCESS_REFRESH_END_UNIX_SECONDS)`,
 		mviewID,
 		readTS,
-		lastSuccessEndTimeArg,
+		lastSuccessRefreshEndUnixSecondsArg,
 	)
 }
 
