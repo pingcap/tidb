@@ -1245,7 +1245,7 @@ func TestMaterializedViewRefreshDryRunUsesCurrentSessionTiFlashSessionVars(t *te
 	requireCurrentSessionTiFlashSessionVarsRestored(t, tk.Session().GetSessionVars())
 }
 
-func TestMaterializedViewRefreshNextTimeOnlyUpdatesForInternalSQL(t *testing.T) {
+func TestMaterializedViewRefreshNextUnixSecondsOnlyUpdatesForInternalSQL(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1259,21 +1259,21 @@ func TestMaterializedViewRefreshNextTimeOnlyUpdatesForInternalSQL(t *testing.T) 
 	require.NoError(t, err)
 	mviewID := mvTable.Meta().ID
 
-	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set NEXT_TIME = null where MVIEW_ID = %d", mviewID))
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set NEXT_REFRESH_UNIX_SECONDS = null where MVIEW_ID = %d", mviewID))
 
-	// User SQL refresh should not update NEXT_TIME.
+	// User SQL refresh should not update NEXT_REFRESH_UNIX_SECONDS.
 	tk.MustExec("refresh materialized view mv_internal_next complete delta apply")
-	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
+	tk.MustQuery(fmt.Sprintf("select NEXT_REFRESH_UNIX_SECONDS is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf(
 		"select REFRESH_METHOD from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
 		mviewID,
 	)).Check(testkit.Rows("complete delta apply manual"))
 
-	// Internal SQL refresh should update NEXT_TIME by evaluating RefreshNext.
+	// Internal SQL refresh should update NEXT_REFRESH_UNIX_SECONDS by evaluating RefreshNext.
 	mustExecInternal(t, tk, "refresh materialized view mv_internal_next complete delta apply")
 	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 20 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 2 hour from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		"select NEXT_REFRESH_UNIX_SECONDS is not null, NEXT_REFRESH_UNIX_SECONDS > TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 20 minute), NEXT_REFRESH_UNIX_SECONDS < TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 2 hour) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
 		mviewID,
 	)).Check(testkit.Rows("1 1 1"))
 	tk.MustQuery(fmt.Sprintf(
@@ -1324,7 +1324,7 @@ func TestMaterializedViewRefreshScheduleDurationOnlyForInternalSQL(t *testing.T)
 	)).Check(testkit.Rows("fast auto 1 1"))
 }
 
-func TestMaterializedViewRefreshInternalSQLStartWithNoNextSetsNextTimeNull(t *testing.T) {
+func TestMaterializedViewRefreshInternalSQLStartWithNoNextSetsNextUnixSecondsNull(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1342,20 +1342,20 @@ func TestMaterializedViewRefreshInternalSQLStartWithNoNextSetsNextTimeNull(t *te
 	mvTable.Meta().MaterializedView.RefreshNext = ""
 	mviewID := mvTable.Meta().ID
 
-	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set NEXT_TIME = UTC_TIMESTAMP() + interval 3 hour where MVIEW_ID = %d", mviewID))
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set NEXT_REFRESH_UNIX_SECONDS = UNIX_TIMESTAMP() + 3 * 60 * 60 where MVIEW_ID = %d", mviewID))
 
-	// User SQL refresh should keep NEXT_TIME unchanged.
+	// User SQL refresh should keep NEXT_REFRESH_UNIX_SECONDS unchanged.
 	tk.MustExec("refresh materialized view mv_internal_start_only complete delta apply")
-	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is not null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
+	tk.MustQuery(fmt.Sprintf("select NEXT_REFRESH_UNIX_SECONDS is not null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf(
 		"select REFRESH_METHOD from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
 		mviewID,
 	)).Check(testkit.Rows("complete delta apply manual"))
 
-	// Internal SQL refresh should explicitly set NEXT_TIME = NULL when START WITH exists and NEXT is empty.
+	// Internal SQL refresh should explicitly set NEXT_REFRESH_UNIX_SECONDS = NULL when START WITH exists and NEXT is empty.
 	mustExecInternal(t, tk, "refresh materialized view mv_internal_start_only complete delta apply")
-	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
+	tk.MustQuery(fmt.Sprintf("select NEXT_REFRESH_UNIX_SECONDS is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf(
 		"select REFRESH_METHOD from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
@@ -1363,7 +1363,7 @@ func TestMaterializedViewRefreshInternalSQLStartWithNoNextSetsNextTimeNull(t *te
 	)).Check(testkit.Rows("complete delta apply auto"))
 }
 
-func TestMaterializedViewRefreshInternalSQLNoScheduleSetsNextTimeNull(t *testing.T) {
+func TestMaterializedViewRefreshInternalSQLNoScheduleSetsNextUnixSecondsNull(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1381,10 +1381,10 @@ func TestMaterializedViewRefreshInternalSQLNoScheduleSetsNextTimeNull(t *testing
 	mvTable.Meta().MaterializedView.RefreshNext = ""
 	mviewID := mvTable.Meta().ID
 
-	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set NEXT_TIME = UTC_TIMESTAMP() + interval 3 hour where MVIEW_ID = %d", mviewID))
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set NEXT_REFRESH_UNIX_SECONDS = UNIX_TIMESTAMP() + 3 * 60 * 60 where MVIEW_ID = %d", mviewID))
 
 	mustExecInternal(t, tk, "refresh materialized view mv_internal_no_schedule complete delta apply")
-	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
+	tk.MustQuery(fmt.Sprintf("select NEXT_REFRESH_UNIX_SECONDS is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf(
 		"select REFRESH_METHOD from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
@@ -1392,7 +1392,7 @@ func TestMaterializedViewRefreshInternalSQLNoScheduleSetsNextTimeNull(t *testing
 	)).Check(testkit.Rows("complete delta apply auto"))
 }
 
-func TestMaterializedViewRefreshInternalSQLOutOfPlaceUpdatesNextTime(t *testing.T) {
+func TestMaterializedViewRefreshInternalSQLOutOfPlaceUpdatesNextUnixSeconds(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1406,7 +1406,7 @@ func TestMaterializedViewRefreshInternalSQLOutOfPlaceUpdatesNextTime(t *testing.
 	require.NoError(t, err)
 	oldMViewID := mvTable.Meta().ID
 
-	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set NEXT_TIME = null where MVIEW_ID = %d", oldMViewID))
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set NEXT_REFRESH_UNIX_SECONDS = null where MVIEW_ID = %d", oldMViewID))
 	tk.MustExec("insert into t_internal_oop_next values (3, 30)")
 
 	mustExecInternal(t, tk, "refresh materialized view mv_internal_oop_next complete out of place")
@@ -1420,7 +1420,7 @@ func TestMaterializedViewRefreshInternalSQLOutOfPlaceUpdatesNextTime(t *testing.
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", oldMViewID)).
 		Check(testkit.Rows("0"))
 	tk.MustQuery(fmt.Sprintf(
-		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 20 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 2 hour from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
+		"select NEXT_REFRESH_UNIX_SECONDS is not null, NEXT_REFRESH_UNIX_SECONDS > TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 20 minute), NEXT_REFRESH_UNIX_SECONDS < TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 2 hour) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
 		newMViewID,
 	)).Check(testkit.Rows("1 1 1"))
 	tk.MustQuery(fmt.Sprintf(

@@ -769,13 +769,13 @@ const (
 		MVIEW_ID bigint NOT NULL,
 		LAST_SUCCESS_READ_TSO bigint unsigned DEFAULT NULL,
 		LAST_SUCCESS_ENDTIME datetime(6) DEFAULT NULL,
-		NEXT_TIME datetime DEFAULT NULL,
+		NEXT_REFRESH_UNIX_SECONDS bigint DEFAULT NULL,
 		PRIMARY KEY(MVIEW_ID))`
 
 	// CreateTiDBMLogPurgeInfoTable is a table to store current purge scheduling info for each materialized view log.
 	CreateTiDBMLogPurgeInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_info (
 		MLOG_ID bigint NOT NULL,
-		NEXT_TIME datetime DEFAULT NULL,
+		NEXT_PURGE_UNIX_SECONDS bigint DEFAULT NULL,
 		LAST_PURGED_TSO bigint unsigned DEFAULT NULL,
 		PRIMARY KEY(MLOG_ID))`
 

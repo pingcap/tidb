@@ -208,7 +208,7 @@ func buildClearDisabledMVRefreshAlertLevelSQL() string {
 	return `UPDATE mysql.tidb_mview_refresh_alert AS a
 JOIN mysql.tidb_mview_refresh_info AS i ON a.MVIEW_ID = i.MVIEW_ID
 SET a.ALERT_LEVEL = NULL, a.UPDATED_AT = NOW(6)
-WHERE i.NEXT_TIME IS NULL AND a.ALERT_LEVEL IS NOT NULL`
+WHERE i.NEXT_REFRESH_UNIX_SECONDS IS NULL AND a.ALERT_LEVEL IS NOT NULL`
 }
 
 func (*serviceHelper) SyncMVRefreshAlertStates(
@@ -434,14 +434,14 @@ func resolveMVLogIdentityByID(
 // 1. Gets a system session from the pool.
 // 2. Resolves schema/table names from MVIEW_ID.
 // 3. Executes `REFRESH MATERIALIZED VIEW ... FAST`.
-// 4. Reads NEXT_TIME from mysql.tidb_mview_refresh_info.
+// 4. Reads NEXT_REFRESH_UNIX_SECONDS from mysql.tidb_mview_refresh_info.
 //
 // The returned error only represents execution failures. A zero nextRefresh means
 // no further scheduling is needed (for example, the MV metadata was removed).
 func (*serviceHelper) RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID int64) (nextRefresh time.Time, err error) {
 	const (
 		refreshMVSQL    = `REFRESH MATERIALIZED VIEW %n.%n FAST`
-		findNextTimeSQL = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
+		findNextTimeSQL = `SELECT NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
 	)
 	startAt := mvsNow()
 	var schemaName, mviewName string
@@ -873,11 +873,11 @@ func applyRefreshSessionVars(sessVars *variable.SessionVars, target variable.MVi
 // 1. Gets a system session from the pool.
 // 2. Resolves schema/table names from mvLogID.
 // 3. Executes `purge materialized view log on <schema>.<table>`.
-// 4. Reads NEXT_TIME from mysql.tidb_mlog_purge_info.
+// 4. Reads NEXT_PURGE_UNIX_SECONDS from mysql.tidb_mlog_purge_info.
 func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID int64) (nextPurge time.Time, err error) {
 	const (
 		purgeMVLogSQL   = `PURGE MATERIALIZED VIEW LOG ON %n.%n`
-		findNextTimeSQL = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_TIME IS NOT NULL`
+		findNextTimeSQL = `SELECT NEXT_PURGE_UNIX_SECONDS FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_PURGE_UNIX_SECONDS IS NOT NULL`
 	)
 	var (
 		baseSchema string
@@ -976,8 +976,8 @@ func (*serviceHelper) TryBackoffRefreshManualCancel(
 	return tryBackoffMVTaskManualCancel(
 		ctx,
 		sysSessionPool,
-		`SELECT NEXT_TIME FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT`,
-		`UPDATE mysql.tidb_mview_refresh_info SET NEXT_TIME = %? WHERE MVIEW_ID = %?`,
+		`SELECT NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT`,
+		`UPDATE mysql.tidb_mview_refresh_info SET NEXT_REFRESH_UNIX_SECONDS = %? WHERE MVIEW_ID = %?`,
 		mvID,
 		nextRefresh,
 		deriveMVRefreshManualCancelNextTime,
@@ -993,8 +993,8 @@ func (*serviceHelper) TryBackoffPurgeManualCancel(
 	return tryBackoffMVTaskManualCancel(
 		ctx,
 		sysSessionPool,
-		`SELECT NEXT_TIME FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT`,
-		`UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?`,
+		`SELECT NEXT_PURGE_UNIX_SECONDS FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT`,
+		`UPDATE mysql.tidb_mlog_purge_info SET NEXT_PURGE_UNIX_SECONDS = %? WHERE MLOG_ID = %?`,
 		mvLogID,
 		nextPurge,
 		deriveMLogPurgeManualCancelNextTime,
@@ -1017,12 +1017,17 @@ func deriveMVRefreshManualCancelNextTime(
 	if mvMeta == nil || mvMeta.MaterializedView == nil {
 		return nil, false, errors.New("materialized view metadata is invalid")
 	}
+	scheduleTimeZone, err := mvMeta.MaterializedView.RefreshScheduleTimeZone.GetLocation()
+	if err != nil {
+		return nil, false, err
+	}
 	nextTime, shouldUpdate, err := deriveMaterializedScheduleNextTimeForManualCancel(
 		ctx,
 		sctx,
 		mvMeta.MaterializedView.RefreshStartWith,
 		mvMeta.MaterializedView.RefreshNext,
 		mvMeta.MaterializedView.DefinitionSQLMode,
+		scheduleTimeZone,
 	)
 	if err != nil {
 		return nil, false, err
@@ -1051,12 +1056,17 @@ func deriveMLogPurgeManualCancelNextTime(
 	if mlogMeta == nil || mlogMeta.MaterializedViewLog == nil {
 		return nil, false, errors.New("materialized view log metadata is invalid")
 	}
+	scheduleTimeZone, err := mlogMeta.MaterializedViewLog.PurgeScheduleTimeZone.GetLocation()
+	if err != nil {
+		return nil, false, err
+	}
 	nextTime, shouldUpdate, err := deriveMaterializedScheduleNextTimeForManualCancel(
 		ctx,
 		sctx,
 		mlogMeta.MaterializedViewLog.PurgeStartWith,
 		mlogMeta.MaterializedViewLog.PurgeNext,
 		mlogMeta.MaterializedViewLog.DefinitionSQLMode,
+		scheduleTimeZone,
 	)
 	if err != nil {
 		return nil, false, err
@@ -1077,14 +1087,15 @@ func deriveMaterializedScheduleNextTimeForManualCancel(
 	startExpr string,
 	nextExpr string,
 	scheduleSQLMode mysql.SQLMode,
+	scheduleTimeZone *time.Location,
 ) (*time.Time, bool, error) {
-	nextAt, shouldUpdate, err := expression.DeriveMaterializedScheduleNextTimeUTC(
+	nextAt, shouldUpdate, err := expression.DeriveMaterializedScheduleNextTime(
 		ctx,
-		sctx,
 		sctx,
 		startExpr,
 		nextExpr,
 		scheduleSQLMode,
+		scheduleTimeZone,
 	)
 	if err != nil {
 		return nil, false, err
@@ -1092,11 +1103,12 @@ func deriveMaterializedScheduleNextTimeForManualCancel(
 	if !shouldUpdate || nextAt == nil {
 		return nil, shouldUpdate, nil
 	}
-	goTime, err := nextAt.GoTime(time.UTC)
+	nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt, scheduleTimeZone)
 	if err != nil {
 		return nil, false, err
 	}
-	return &goTime, true, nil
+	nextTime := mvsUnix(*nextUnixSeconds, 0)
+	return &nextTime, true, nil
 }
 
 func logManualCancelMaterializedViewRefreshNextTimeUpdateNull(
@@ -1108,7 +1120,7 @@ func logManualCancelMaterializedViewRefreshNextTimeUpdateNull(
 		return
 	}
 	logutil.BgLogger().Error(
-		"refresh MV manual cancel backoff: automatic refresh schedule disabled because NEXT expression evaluated to NULL, updating NEXT_TIME to NULL",
+		"refresh MV manual cancel backoff: automatic refresh schedule disabled because NEXT expression evaluated to NULL, updating NEXT_REFRESH_UNIX_SECONDS to NULL",
 		zap.String("schemaName", schemaName),
 		zap.String("tableName", mvName),
 		zap.String("refreshNext", nextExpr),
@@ -1124,7 +1136,7 @@ func logManualCancelMaterializedViewLogPurgeNextTimeUpdateNull(
 		return
 	}
 	logutil.BgLogger().Error(
-		"purge MV log manual cancel backoff: automatic purge schedule disabled because NEXT expression evaluated to NULL, updating NEXT_TIME to NULL",
+		"purge MV log manual cancel backoff: automatic purge schedule disabled because NEXT expression evaluated to NULL, updating NEXT_PURGE_UNIX_SECONDS to NULL",
 		zap.String("schemaName", schemaName),
 		zap.String("tableName", mlogName),
 		zap.String("purgeNext", nextExpr),
@@ -1188,7 +1200,7 @@ func tryBackoffMVTaskManualCancel(
 	}
 
 	appliedNextUTC := nextTimeUTC
-	var appliedNextArg any = nextTimeUTC
+	var appliedNextArg any = nextTimeUTC.Unix()
 	clearAppliedNext := false
 	resolvedNext, shouldUpdate, err := resolveExpectedNext(ctx, sctx, objectID)
 	// If current metadata cannot provide a better schedule, keep the cooldown fallback
@@ -1203,7 +1215,7 @@ func tryBackoffMVTaskManualCancel(
 				if appliedNextUTC.Before(nextTimeUTC) {
 					appliedNextUTC = nextTimeUTC
 				}
-				appliedNextArg = appliedNextUTC
+				appliedNextArg = appliedNextUTC.Unix()
 			}
 		}
 	} else {
@@ -1444,7 +1456,7 @@ func purgeMVHistoryByCountLimitInBatches(
 
 // LoadAllTiDBMVLogPurge loads all scheduled MV log purge tasks from metadata.
 func (*serviceHelper) LoadAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error) {
-	const sql = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
+	const sql = `SELECT NEXT_PURGE_UNIX_SECONDS, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_PURGE_UNIX_SECONDS IS NOT NULL`
 	rows, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, sql, nil)
 	if err != nil {
 		return nil, err
@@ -1724,7 +1736,7 @@ func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.S
 
 // LoadAllTiDBMVRefresh loads all scheduled MV refresh tasks from metadata.
 func (*serviceHelper) LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error) {
-	const sql = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
+	const sql = `SELECT NEXT_REFRESH_UNIX_SECONDS, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
 	se, err := sysSessionPool.Get()
 	if err != nil {
 		return nil, err

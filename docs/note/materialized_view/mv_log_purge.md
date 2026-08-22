@@ -24,20 +24,21 @@ It also records the design rationale and follow-up items for the refined MV/MLog
 - Execution is handled by a dedicated utility executor (`PurgeMaterializedViewLogExec`).
 - No DDL job is submitted for purge execution.
 - Purge metadata is split into:
-  - `mysql.tidb_mlog_purge_info`: metadata + lock-row carrier (`NEXT_TIME`, `LAST_PURGED_TSO`).
+  - `mysql.tidb_mlog_purge_info`: metadata + lock-row carrier (`NEXT_PURGE_UNIX_SECONDS`, `LAST_PURGED_TSO`).
   - `mysql.tidb_mlog_purge_hist`: per-purge lifecycle/result records.
 - After lock acquisition, purge inserts one `running` history row; when purge finishes, it updates the same history row to final status.
 - `LAST_PURGED_TSO` is used as a persisted purge checkpoint to skip redundant purge runs.
 
-## Runtime `NEXT_TIME` Update (Internal SQL Success Path)
+## Runtime `NEXT_PURGE_UNIX_SECONDS` Update (Internal SQL Success Path)
 
-- For **internal SQL** triggered purge (identified by `SessionVars.InRestrictedSQL`), after successful purge completion, `mysql.tidb_mlog_purge_info.NEXT_TIME` should be updated together with purge success state.
-- Runtime `NEXT_TIME` derivation in this path is intentionally different from create-time derivation:
+- For **internal SQL** triggered purge (identified by `SessionVars.InRestrictedSQL`), after successful purge completion, `mysql.tidb_mlog_purge_info.NEXT_PURGE_UNIX_SECONDS` should be updated together with purge success state.
+- `NEXT_PURGE_UNIX_SECONDS` is a signed Unix epoch-seconds value.
+- Runtime `NEXT_PURGE_UNIX_SECONDS` derivation in this path is intentionally different from create-time derivation:
   - evaluate and use only `PurgeNext` expression;
   - do not apply create-time `START WITH` priority / near-now rules;
-  - if `PurgeStartWith` is non-empty and `PurgeNext` is empty, explicitly set `NEXT_TIME = NULL`;
-  - if both are empty, keep `NEXT_TIME` unchanged.
-- For non-internal (user) SQL purge, keep existing behavior (do not update `NEXT_TIME` on success path).
+  - if `PurgeStartWith` is non-empty and `PurgeNext` is empty, explicitly set `NEXT_PURGE_UNIX_SECONDS = NULL`;
+  - if both are empty, keep `NEXT_PURGE_UNIX_SECONDS` unchanged.
+- For non-internal (user) SQL purge, keep existing behavior (do not update `NEXT_PURGE_UNIX_SECONDS` on success path).
 
 ## Why utility execution (not DDL statement execution)
 
@@ -90,7 +91,7 @@ The statement must run as a standalone statement.
 7. If `LAST_PURGED_TSO` is not null and `LAST_PURGED_TSO >= safe_purge_tso`, end this purge directly (no delete work in this run).
 8. Delete eligible MLog rows in batches.
 9. If a batch deletes `< batch_size` rows, update `LAST_PURGED_TSO = safe_purge_tso` in the same transaction before `COMMIT`.
-   - runtime internal-SQL rule: update `NEXT_TIME` by evaluating only `PurgeNext`; if `PurgeStartWith != ''` and `PurgeNext == ''`, set `NEXT_TIME = NULL`.
+   - runtime internal-SQL rule: update `NEXT_PURGE_UNIX_SECONDS` by evaluating only `PurgeNext`; if `PurgeStartWith != ''` and `PurgeNext == ''`, set `NEXT_PURGE_UNIX_SECONDS = NULL`.
 10. At statement end, update that history row to final status (`success` / `failed`) and fill completion fields.
 
 ## Internal context
@@ -179,7 +180,7 @@ Bootstrap creates:
 
 - `mysql.tidb_mlog_purge_info`
   - `MLOG_ID` (PK, lock row carrier)
-  - `NEXT_TIME` (scheduling metadata)
+  - `NEXT_PURGE_UNIX_SECONDS` (scheduling metadata)
   - `LAST_PURGED_TSO` (last completed purge boundary checkpoint)
 - `mysql.tidb_mlog_purge_hist`
   - `PURGE_JOB_ID` (PK, one row per purge statement)
@@ -194,38 +195,46 @@ Write responsibilities:
 - `tidb_mlog_purge_info`:
   - lock-row/scheduling metadata;
   - update `LAST_PURGED_TSO` when one purge batch confirms all rows `<= safe_purge_tso` are deleted (`deleted_rows < batch_size`), and do it before committing that batch.
-  - in internal SQL success path, also update `NEXT_TIME` with runtime rule (`PurgeNext`-only evaluation; explicit `NULL` when `PurgeStartWith` exists but `PurgeNext` is empty).
+  - in internal SQL success path, also update `NEXT_PURGE_UNIX_SECONDS` with runtime rule (`PurgeNext`-only evaluation; explicit `NULL` when `PurgeStartWith` exists but `PurgeNext` is empty).
 - `tidb_mlog_purge_hist`:
   - insert one `running` row after lock acquisition;
   - update the same row when statement finishes.
 
-## Create-time `NEXT_TIME` Initialization (`CREATE MATERIALIZED VIEW LOG`)
+## Create-time `NEXT_PURGE_UNIX_SECONDS` Initialization (`CREATE MATERIALIZED VIEW LOG`)
 
 Purge requires an existing lock row in `mysql.tidb_mlog_purge_info`.
 
 `CREATE MATERIALIZED VIEW LOG` initializes (or upserts) this row in DDL worker:
 
 - `MLOG_ID` is always inserted/ensured.
-- `NEXT_TIME` is written according to create-time purge schedule derivation.
+- `NEXT_PURGE_UNIX_SECONDS` is written according to create-time purge schedule derivation.
 
-Create-time `NEXT_TIME` derivation rules (for `PurgeStartWith` / `PurgeNext`) are:
+Create-time `NEXT_PURGE_UNIX_SECONDS` derivation rules (for `PurgeStartWith` / `PurgeNext`) are:
 
-1. If both are empty, do not update `NEXT_TIME` (row keeps default `NULL`).
-2. Evaluate expressions in prepared eval session (`UTC` timezone + DDL job SQL mode).
+1. If both are empty, do not update `NEXT_PURGE_UNIX_SECONDS` (row keeps default `NULL`).
+2. Evaluate expressions in a prepared eval session using the schedule timezone captured from the
+   `CREATE MATERIALIZED VIEW LOG` or `ALTER MATERIALIZED VIEW LOG ... PURGE START WITH/NEXT`
+   statement, together with the DDL job SQL mode.
 3. `START WITH` has higher priority, unless it is near-now (`START WITH < now + 10s`) and `NEXT` exists; in that case use `NEXT`.
-4. If the chosen expression evaluates to `NULL`, explicitly write `NEXT_TIME = NULL`.
+4. If the chosen expression evaluates to `NULL`, explicitly write `NEXT_PURGE_UNIX_SECONDS = NULL`.
 
 Purge runtime reschedule rule (internal SQL success path) is intentionally different:
 
 - runtime purge uses `PurgeNext` only;
 - runtime purge does not apply create-time `START WITH`/near-now priority.
 
+The persisted value is a Unix epoch-seconds instant. Literal `DATETIME` schedule values are
+interpreted in the captured schedule timezone before conversion to Unix seconds. An
+`ALTER MATERIALIZED VIEW LOG ... PURGE` that only changes the purge method or clears the
+schedule does not change `PurgeScheduleTimeZone`; the timezone is replaced only when
+`START WITH` or `NEXT` is specified.
+
 If this system table is missing, create MLog fails with explicit error.
 
 Related dependency from `CREATE MATERIALIZED VIEW` side:
 
 - purge computes `safe_purge_tso` from `mysql.tidb_mview_refresh_info` of dependent MVs;
-- `CREATE MATERIALIZED VIEW` creates/upserts those refresh-info rows and also initializes their `NEXT_TIME` with the same create-time schedule rule style (create-time `START WITH`/`NEXT` derivation).
+- `CREATE MATERIALIZED VIEW` creates/upserts those refresh-info rows and also initializes their `NEXT_REFRESH_UNIX_SECONDS` with the same create-time schedule rule style (create-time `START WITH`/`NEXT` derivation).
 
 ## MLog accumulation alert threshold (`ALERT ROWS`)
 

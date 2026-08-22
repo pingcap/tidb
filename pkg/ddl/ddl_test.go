@@ -149,8 +149,8 @@ func TestBuildCreateMaterializedViewRefreshInfoUpsertSQL(t *testing.T) {
 
 	lastSuccessEndTime := "2026-01-02 03:04:05.123456"
 	sqlNoUpdate := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessEndTime, nil, false))
-	require.NotContains(t, sqlNoUpdate, "NEXT_TIME")
-	require.NotContains(t, sqlNoUpdate, "VALUES(NEXT_TIME)")
+	require.NotContains(t, sqlNoUpdate, "NEXT_REFRESH_UNIX_SECONDS")
+	require.NotContains(t, sqlNoUpdate, "VALUES(NEXT_REFRESH_UNIX_SECONDS)")
 	require.Contains(t, sqlNoUpdate, "LAST_SUCCESS_ENDTIME")
 	require.Contains(t, sqlNoUpdate, lastSuccessEndTime)
 
@@ -158,15 +158,15 @@ func TestBuildCreateMaterializedViewRefreshInfoUpsertSQL(t *testing.T) {
 	require.NotContains(t, sqlPrewrite, lastSuccessEndTime)
 	require.Contains(t, sqlPrewrite, "NULL")
 
-	next := "2026-01-02 03:04:05"
-	sqlWithValue := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessEndTime, &next, true))
-	require.Contains(t, sqlWithValue, "NEXT_TIME")
-	require.Contains(t, sqlWithValue, "VALUES(NEXT_TIME)")
-	require.Contains(t, sqlWithValue, "2026-01-02 03:04:05")
+	nextRefreshUnixSeconds := int64(1_767_312_305)
+	sqlWithValue := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessEndTime, &nextRefreshUnixSeconds, true))
+	require.Contains(t, sqlWithValue, "NEXT_REFRESH_UNIX_SECONDS")
+	require.Contains(t, sqlWithValue, "VALUES(NEXT_REFRESH_UNIX_SECONDS)")
+	require.Contains(t, sqlWithValue, "1767312305")
 
 	sqlWithNull := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessEndTime, nil, true))
-	require.Contains(t, sqlWithNull, "NEXT_TIME")
-	require.Contains(t, sqlWithNull, "VALUES(NEXT_TIME)")
+	require.Contains(t, sqlWithNull, "NEXT_REFRESH_UNIX_SECONDS")
+	require.Contains(t, sqlWithNull, "VALUES(NEXT_REFRESH_UNIX_SECONDS)")
 	require.Contains(t, sqlWithNull, ", NULL)")
 }
 
@@ -176,18 +176,18 @@ func TestBuildCreateMaterializedViewLogPurgeInfoUpsertSQL(t *testing.T) {
 	}
 
 	sqlNoUpdate := compactSQL(buildCreateMaterializedViewLogPurgeInfoUpsertSQL(1, nil, false))
-	require.NotContains(t, sqlNoUpdate, "NEXT_TIME")
-	require.NotContains(t, sqlNoUpdate, "VALUES(NEXT_TIME)")
+	require.NotContains(t, sqlNoUpdate, "NEXT_PURGE_UNIX_SECONDS")
+	require.NotContains(t, sqlNoUpdate, "VALUES(NEXT_PURGE_UNIX_SECONDS)")
 
-	next := "2026-01-02 03:04:05"
-	sqlWithValue := compactSQL(buildCreateMaterializedViewLogPurgeInfoUpsertSQL(1, &next, true))
-	require.Contains(t, sqlWithValue, "NEXT_TIME")
-	require.Contains(t, sqlWithValue, "VALUES(NEXT_TIME)")
-	require.Contains(t, sqlWithValue, "2026-01-02 03:04:05")
+	nextPurgeUnixSeconds := int64(1_767_312_305)
+	sqlWithValue := compactSQL(buildCreateMaterializedViewLogPurgeInfoUpsertSQL(1, &nextPurgeUnixSeconds, true))
+	require.Contains(t, sqlWithValue, "NEXT_PURGE_UNIX_SECONDS")
+	require.Contains(t, sqlWithValue, "VALUES(NEXT_PURGE_UNIX_SECONDS)")
+	require.Contains(t, sqlWithValue, "1767312305")
 
 	sqlWithNull := compactSQL(buildCreateMaterializedViewLogPurgeInfoUpsertSQL(1, nil, true))
-	require.Contains(t, sqlWithNull, "NEXT_TIME")
-	require.Contains(t, sqlWithNull, "VALUES(NEXT_TIME)")
+	require.Contains(t, sqlWithNull, "NEXT_PURGE_UNIX_SECONDS")
+	require.Contains(t, sqlWithNull, "VALUES(NEXT_PURGE_UNIX_SECONDS)")
 	require.Contains(t, sqlWithNull, ", NULL)")
 }
 
