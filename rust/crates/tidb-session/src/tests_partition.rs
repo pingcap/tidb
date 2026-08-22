@@ -3076,3 +3076,40 @@ fn alter_table_can_set_a_placement_policy() {
         .to_mysql_error();
     assert_eq!(rendered.code, 8241);
 }
+
+/// `TRUNCATE TABLE` on a PARTITIONED table must actually empty it.
+///
+/// A partitioned table's rows are keyed by the PARTITION's physical id, not
+/// the table's, so giving the table a new id while the partitions keep
+/// theirs would leave every row exactly where it was and still addressable.
+/// Go reassigns the partition ids for precisely this reason
+/// (`onTruncateTable`, `ddl/table.go:510`, whose comment says the old data
+/// "can not be accessed anymore" BECAUSE the ids changed).
+#[test]
+fn truncate_empties_a_partitioned_table() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE tt (a INT) PARTITION BY RANGE (a) \
+              (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))")
+        .expect("partitioned table");
+    session.run("INSERT INTO tt VALUES (1),(2),(11),(12)").expect("rows");
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT count(*) FROM tt")),
+        vec![vec!["4".to_owned()]]
+    );
+    session.run("TRUNCATE TABLE tt").expect("truncate");
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT count(*) FROM tt")),
+        vec![vec!["0".to_owned()]],
+        "a truncated partitioned table holds no rows"
+    );
+    // And each partition individually.
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT count(*) FROM tt PARTITION (p0)")),
+        vec![vec!["0".to_owned()]]
+    );
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT count(*) FROM tt PARTITION (p1)")),
+        vec![vec!["0".to_owned()]]
+    );
+}

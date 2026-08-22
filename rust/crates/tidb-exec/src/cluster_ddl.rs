@@ -3615,11 +3615,33 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         DdlStatement::TruncateTable { schema, table } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
             let old_table_id = stored.id;
-            let [new_table_id] = allocate(snapshot, &mut writes, 1)?[..] else {
-                return Err(DdlPlanError::Encode("truncate allocated no id".to_owned()));
-            };
+            // Go `onTruncateTable` reassigns the PARTITION ids as well as the
+            // table's (`ddl/table.go:510`), and its comment says why: "all the
+            // old data is encoded with the old partition ID, it can not be
+            // accessed anymore". A partitioned table's rows are keyed by the
+            // PARTITION's physical id, not the table's -- so giving the table
+            // a new id while the partitions kept theirs would leave every row
+            // exactly where it was and still addressable. The truncate would
+            // report success and empty nothing.
+            //
+            // The ids are drawn in ONE call, table first then one per
+            // partition in definition order, which is the same contiguous
+            // block shape `CREATE TABLE` uses.
+            let partition_count = stored.partition.as_ref().map_or(0, |partition| {
+                partition.read().definitions.with_visible(<[_]>::len)
+            }) as i64;
+            let ids = allocate(snapshot, &mut writes, 1 + partition_count)?;
+            let new_table_id = ids[0];
             let mut info = stored.clone_like_go();
             info.id = new_table_id;
+            if let Some(partition) = &info.partition {
+                let partition = partition.read();
+                for (ordinal, id) in ids[1..].iter().enumerate() {
+                    partition
+                        .definitions
+                        .update(ordinal, |definition| definition.id = *id);
+                }
+            }
             info.update_ts = start_ts;
             writes.push(OptimisticMutation::meta_delete(key::table_kv_key(
                 db_id,
@@ -3641,6 +3663,30 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 if snapshot.get(&allocator)?.is_some() {
                     writes.push(OptimisticMutation::meta_delete(allocator)?);
                 }
+            }
+            // Go `onTruncateTable` rebuilds the bundles once the new id is
+            // stamped and sends them (`ddl/table.go:574`). Truncate gives the
+            // table a NEW identity, and PD's rules are keyed by id -- so
+            // without this the truncated table has no rules at all and its
+            // data goes wherever the default says, silently losing the
+            // placement the table still claims in its own catalog entry.
+            if info.placement_policy_ref.is_some()
+                || info.partition.as_ref().is_some_and(|partition| {
+                    partition
+                        .read()
+                        .definitions
+                        .snapshot()
+                        .iter()
+                        .any(|definition| definition.placement_policy_ref.is_some())
+                })
+            {
+                let policies = load_policies(snapshot)?;
+                placement_bundles = tidb_placement::new_full_table_bundles(&policies, &info)
+                    .map_err(|error| {
+                        DdlPlanError::Admission(DdlAdmissionError::new(format!(
+                            "building placement rules: {error}"
+                        )))
+                    })?;
             }
             diff.action_type = ActionType::ACTION_TRUNCATE_TABLE;
             diff.schema_id = db_id;

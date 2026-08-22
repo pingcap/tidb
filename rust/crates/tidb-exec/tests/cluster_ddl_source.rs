@@ -2734,3 +2734,50 @@ fn cluster_create_table_resolves_a_placement_policy_by_id() {
         "the reference is stamped by the planner, not the lowering step"
     );
 }
+
+#[test]
+fn cluster_truncate_reassigns_partition_ids() {
+    // Go `onTruncateTable` reassigns the PARTITION ids as well as the table's
+    // (`ddl/table.go:510`), and its comment gives the reason: "all the old data
+    // is encoded with the old partition ID, it can not be accessed anymore".
+    //
+    // A partitioned table's rows are keyed by the PARTITION's physical id, not
+    // the table's. A truncate that changed only the table id would leave every
+    // row exactly where it was and still addressable -- reporting success and
+    // emptying nothing.
+    let mut store = bootstrapped();
+    let created = plan(
+        &mut store,
+        "CREATE TABLE u6.pt (a INT) PARTITION BY RANGE (a) \
+         (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+        7,
+    );
+    apply(&mut store, &created);
+
+    let before = partition_ids(&mut store, "pt");
+    assert_eq!(before.len(), 2, "the fixture has two partitions");
+
+    let truncated = plan(&mut store, "TRUNCATE TABLE u6.pt", 8);
+    apply(&mut store, &truncated);
+
+    let after = partition_ids(&mut store, "pt");
+    assert_eq!(after.len(), 2, "the partition count is unchanged");
+    for (old, new) in before.iter().zip(after.iter()) {
+        assert_ne!(
+            old, new,
+            "every partition must take a NEW id, or its rows survive the truncate"
+        );
+    }
+}
+
+/// The physical ids of one table's partitions, in definition order.
+fn partition_ids(store: &mut MetaStore, table: &str) -> Vec<i64> {
+    let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(store)
+        .expect("the catalog loads");
+    let (_, info) = catalog
+        .find_table("u6", table)
+        .unwrap_or_else(|| panic!("table {table} exists"));
+    let partition = info.partition.as_ref().expect("a partitioned table");
+    let definitions = partition.read().definitions.snapshot();
+    definitions.iter().map(|definition| definition.id).collect()
+}
