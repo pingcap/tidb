@@ -63,7 +63,7 @@ Therefore: **do not verify by inspecting the Rust code.** For each rule, open th
 - [ ] M5 — Re-verify the twenty-six landed fixes against Go.
 - [ ] M6 — Partition `PLACEMENT POLICY` end to end (model layer already complete; remaining: policy objects, metadata reference, bundle construction wiring, PD delivery).
 - [ ] M7 — Keep-order and unsigned-handle range split (gated on M8).
-- [ ] M8 — Report the upstream constant-overflow regression.
+- [x] (2026-08-21) M8 — The upstream constant-overflow regression no longer reproduces and is pinned by a differential test instead of reported.
 
 ## Surprises & Discoveries
 
@@ -114,6 +114,10 @@ Therefore: **do not verify by inspecting the Rust code.** For each rule, open th
 - Observation (M2, gap recorded, NOT fixed): the cluster path records nothing in `mysql.gc_delete_range`, so the data behind a dropped or truncated table is never reclaimed. Reads are correct -- a dropped table's meta key is gone and a truncated one's ids are new, so nothing addresses the old bytes -- but they stay on disk for the life of the cluster.
   Evidence: Go's `delRange.addDelRangeJob` (`pkg/ddl/delete_range.go:95`) writes a row per range, and its `ActionDropTable` arm (`:296`) deletes every partition id AND the logical table id, noting that the latter "may contain global index regions"; `ActionTruncateTable` (`:312`) does the same for the OLD partition ids plus the table id, always including the table range even for a partitioned table. `ActionDropTablePartition` (`:327`) covers the partition case. A search of `crates/tidb-exec/src/cluster_ddl.rs` and `real_tikv_ddl.rs` finds no delete-range writer at all.
   Scope: this is not partition-specific -- an unpartitioned DROP TABLE leaks its rows the same way -- but partitioned tables leak more of it, one range per partition. Filling it means writing rows to a system table from the DDL transaction, which is a wider piece of work than the partition rules this plan covers, and it is recorded here rather than started so it is not mistaken for done.
+
+- Observation (M8, resolved): the upstream regression this plan owed a report on no longer reproduces. `SELECT count(*) FROM ix WHERE u >= 9223372036854775808` now answers 2 on BOTH the index and the scan path, and `e = 18446744073709551615` answers 1 on both; the answers are also correct for the fixture. It previously returned 5 -- every row -- on the scan path, which is the signature of a predicate being LOST rather than mis-evaluated.
+  Evidence: measured directly, then pinned as `a_constant_above_i64_max_filters_the_same_on_both_paths`. Not fixed by the `compare_int` work in this plan: that lives in partition pruning and the fixture table is not partitioned, so it must have arrived with an upstream merge. Recorded rather than reported, since there is nothing left to report.
+  Note on why it is pinned as a DIFFERENTIAL rather than a value assertion: each path alone looked plausible when this regressed, and only running one question down two paths that must agree showed that one of them was not filtering at all.
 
 ## Decision Log
 

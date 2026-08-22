@@ -3254,3 +3254,59 @@ fn show_table_status_reports_partitioned_like_information_schema_does() {
     let status = tests_support::row_text(session.run("SHOW TABLE STATUS LIKE 'sq'"));
     assert_eq!(status[0].get(16).map(String::as_str), Some(""));
 }
+
+/// A predicate over a constant ABOVE the maximum signed 64-bit integer must
+/// answer the same on the index path and the scan path, and answer correctly.
+///
+/// This shape regressed once on this branch: `u >= 9223372036854775808`
+/// returned every row on the scan path and the right two through the index,
+/// which is the signature of a predicate being LOST rather than
+/// mis-evaluated -- a scan with no filter returns everything. It is fixed
+/// now, and pinned here because a differential like this is the only thing
+/// that catches it: each path alone looks plausible, and only comparing them
+/// shows one of them is not filtering at all.
+#[test]
+fn a_constant_above_i64_max_filters_the_same_on_both_paths() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE ix (u BIGINT UNSIGNED, e BIGINT UNSIGNED, KEY ku(u), KEY ke(e))")
+        .expect("table");
+    for value in ["1", "2", "9223372036854775808", "18446744073709551615", "0"] {
+        session
+            .run(&format!("INSERT INTO ix VALUES ({value}, {value})"))
+            .expect("row");
+    }
+
+    // Two rows are at or above 2^63: 9223372036854775808 and 2^64-1.
+    let expected = vec![vec!["2".to_owned()]];
+    assert_eq!(
+        tests_support::row_text(
+            session.run("SELECT count(*) FROM ix WHERE u >= 9223372036854775808")
+        ),
+        expected,
+        "the index path filters"
+    );
+    assert_eq!(
+        tests_support::row_text(session.run(
+            "SELECT count(*) FROM ix IGNORE INDEX (ku) WHERE u >= 9223372036854775808"
+        )),
+        expected,
+        "and so does the scan path -- returning every row here means the \
+         predicate was dropped, not evaluated"
+    );
+
+    // And an equality on the largest representable value.
+    let one = vec![vec!["1".to_owned()]];
+    assert_eq!(
+        tests_support::row_text(
+            session.run("SELECT count(*) FROM ix WHERE e = 18446744073709551615")
+        ),
+        one
+    );
+    assert_eq!(
+        tests_support::row_text(session.run(
+            "SELECT count(*) FROM ix IGNORE INDEX (ke) WHERE e = 18446744073709551615"
+        )),
+        one
+    );
+}
