@@ -856,7 +856,8 @@ pub(crate) fn index_join_decisions_with_context(
         let Some(table) = inner.table else {
             continue;
         };
-        let statistics = catalog.and_then(|catalog| catalog.table_statistics(table.table_id));
+        let statistics =
+            catalog.and_then(|catalog| catalog.table_statistics(table.stats_physical_id()));
         decisions.extend(decide_over(
             table,
             lookup_is_left,

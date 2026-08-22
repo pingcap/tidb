@@ -1697,12 +1697,12 @@ pub(crate) fn point_get_predicate_is_consumed(
 /// An unresolvable `PARTITION (p)` name answers the FULL list rather than
 /// failing here: the read has already raised 1735 for it, and this is only
 /// ever asked for a plan that got built.
-pub(crate) fn surviving_partition_names(
+pub(crate) fn surviving_partitions(
     select: &tidb_ast::SelectStmt,
     table_ref: Option<&tidb_ast::TableRef>,
     table: &KvTable,
     zone: &tidb_datatype::SessionTimeZone,
-) -> Vec<String> {
+) -> Vec<(String, i64)> {
     let Some(partition) = table.partition() else {
         return Vec::new();
     };
@@ -1718,7 +1718,30 @@ pub(crate) fn surviving_partition_names(
         .iter()
         .filter(|def| selected.as_ref().is_none_or(|ids| ids.contains(&def.id)))
         .filter(|def| pruned.as_ref().is_none_or(|ids| ids.contains(&def.id)))
-        .map(|def| def.name.clone())
+        .map(|def| (def.name.clone(), def.id))
+        .collect()
+}
+
+/// The estimate each surviving partition's own `DataSource` carries, in the
+/// order [`surviving_partitions`] lists them.
+///
+/// Go reads it from that partition's `PhysicalTableID`
+/// (`stats.GetStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID)`),
+/// which under static pruning is the only id `ANALYZE` ever stored a
+/// histogram under.
+pub(crate) fn surviving_partition_estimates(
+    catalog: &Catalog,
+    partitions: &[(String, i64)],
+) -> Vec<crate::access_cost::ScanEstimate> {
+    partitions
+        .iter()
+        .map(|(_, id)| {
+            let stats = catalog.table_statistics(*id);
+            crate::access_cost::ScanEstimate {
+                rows: crate::access_cost::realtime_row_count(stats.map(AsRef::as_ref)),
+                pseudo: stats.is_none_or(|stats| stats.pseudo),
+            }
+        })
         .collect()
 }
 
@@ -2503,6 +2526,47 @@ pub(crate) fn select_stats_selectivity(
 /// `cardinality.Selectivity` for one residual predicate of a single-table
 /// `SELECT`. Unlike [`select_stats_selectivity`], this deliberately does not
 /// re-price access conditions already represented by a range scan.
+/// The `KvTable` a scan of this `SELECT` will actually read: the catalog
+/// handle narrowed by an explicit `PARTITION (...)` clause and then by
+/// pruning.
+///
+/// Go runs `PartitionProcessor` during LOGICAL optimization, so by the time
+/// anything asks `Selectivity` or
+/// `stats.GetStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID)` the
+/// `DataSource` IS the surviving partition and its id names that partition.
+/// Reading the catalog handle straight, as [`single_kv_table`] does, skips
+/// that step -- and static pruning stores a histogram per PHYSICAL partition
+/// and no merged one, so the lookup missed and a pruned scan printed
+/// `stats:pseudo` over 10000 rows after `ANALYZE` had just measured two.
+/// [`plan_access_path`] already narrows before its own lookup; this is the
+/// same narrowing for the estimate callers that build their own handle.
+fn pruned_single_kv_table(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<KvTable> {
+    let mut table = single_kv_table(&select.from, catalog, current_db)?;
+    if table.partition().is_none() {
+        return Some(table);
+    }
+    if let Some(table_ref) = single_table_ref(&select.from) {
+        if !table_ref.partitions.is_empty() {
+            let name = table_ref
+                .name
+                .last()
+                .map(String::as_str)
+                .unwrap_or(table.name.as_str());
+            table =
+                super::from::restricted_to_partitions(&table, &table_ref.partitions, name).ok()?;
+        }
+    }
+    if let Some(ids) = pruned_partition_ids(select, &table, zone) {
+        table.restrict_read_to_partitions(&ids);
+    }
+    Some(table)
+}
+
 pub(crate) fn select_predicate_stats_selectivity(
     select: &tidb_ast::SelectStmt,
     predicate: &tidb_ast::Expr,
@@ -2510,7 +2574,7 @@ pub(crate) fn select_predicate_stats_selectivity(
     current_db: &str,
     scope: &FromScope,
 ) -> Option<f64> {
-    let table = single_kv_table(&select.from, catalog, current_db)?;
+    let table = pruned_single_kv_table(select, catalog, current_db, &scope.zone)?;
     stats_selectivity(catalog, &table, scope, Some(predicate))
 }
 
@@ -2529,8 +2593,8 @@ pub(crate) fn select_predicate_stats_rows(
     current_db: &str,
     scope: &FromScope,
 ) -> Option<f64> {
-    let table = single_kv_table(&select.from, catalog, current_db)?;
-    let stats = catalog.table_statistics(table.table_id);
+    let table = pruned_single_kv_table(select, catalog, current_db, &scope.zone)?;
+    let stats = catalog.table_statistics(table.stats_physical_id());
     let realtime = crate::access_cost::realtime_row_count(stats.map(AsRef::as_ref));
     let selectivity = predicate
         .map(|predicate| stats_selectivity(catalog, &table, scope, Some(predicate)).unwrap_or(1.0))

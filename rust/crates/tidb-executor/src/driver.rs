@@ -1739,12 +1739,19 @@ fn run_select_traced_with_delivery_choice_inner(
             trace.as_deref_mut(),
             crate::driver::access::sole_kv_table(&select.from, catalog, current_db),
         ) {
-            trace.partition_union(&crate::driver::access::surviving_partition_names(
+            let surviving = crate::driver::access::surviving_partitions(
                 select,
                 crate::driver::access::sole_table_ref(&select.from),
                 &table,
                 &ctx.session_zone(),
-            ));
+            );
+            let estimates =
+                crate::driver::access::surviving_partition_estimates(catalog, &surviving);
+            let names = surviving
+                .iter()
+                .map(|(name, _)| name.clone())
+                .collect::<Vec<_>>();
+            trace.partition_union(&names, &estimates);
         }
     }
     // An exact ordered handle range still has root work to do, so it cannot

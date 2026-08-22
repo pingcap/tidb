@@ -173,6 +173,29 @@ impl PlanNode {
     }
 }
 
+/// Re-costs one pruned scan from the statistics of the partition it survived
+/// into.
+///
+/// Go's `PartitionProcessor` replaces the logical `DataSource` with one per
+/// surviving partition, and each carries THAT partition's own
+/// `PhysicalTableID` -- which is what
+/// `stats.GetStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID)` is
+/// handed. The leaf this tier costed was built before pruning ran, so it read
+/// the LOGICAL table's statistics; static pruning stores a histogram per
+/// physical partition and no merged one, so that lookup missed and a pruned
+/// scan printed `stats:pseudo` over 10000 rows right after `ANALYZE` had
+/// measured two.
+fn re_estimate(node: &mut PlanNode, estimate: ScanEstimate) {
+    node.est_rows = Some(estimate.rows);
+    node.key_ndv_ratio = estimate.pseudo.then_some(DISTINCT_FACTOR);
+    let bare = node
+        .info
+        .strip_suffix(", stats:pseudo")
+        .unwrap_or(&node.info)
+        .to_owned();
+    node.info = format!("{bare}{}", pseudo_suffix(estimate));
+}
+
 fn scan_is_index_join_outer(node: &PlanNode) -> Option<bool> {
     match node.name {
         "IndexFullScan" | "IndexRangeScan" => Some(true),
@@ -571,7 +594,11 @@ impl PlanTrace {
     ///
     /// `p0` is absent because pruning already dropped it -- the fan-out names
     /// what SURVIVED, never every declared partition.
-    pub(crate) fn partition_union(&mut self, partitions: &[String]) {
+    pub(crate) fn partition_union(
+        &mut self,
+        partitions: &[String],
+        estimates: &[ScanEstimate],
+    ) {
         // Only a SCAN fans out. A point get names its own partition from the
         // handle it already has (Go `PointGetPlan.AccessObject`) and is never
         // a union; a `TableDual` reads nothing to divide.
@@ -588,6 +615,9 @@ impl PlanTrace {
         if partitions.len() < 2 {
             if let ([partition], Some(top)) = (partitions, self.stack.last_mut()) {
                 top.access = with_partition(&top.access, partition);
+                if let [estimate] = estimates {
+                    re_estimate(top, *estimate);
+                }
             }
             return;
         }
@@ -596,9 +626,10 @@ impl PlanTrace {
         };
         let mut union = PlanNode::new(
             "PartitionUnion",
-            // Go's `PhysicalUnionAll` sums its children's estimates, and each
-            // branch reads the same partition-blind estimate this tier costed
-            // the one scan with.
+            // Go's `PhysicalUnionAll` sums its children's estimates. With
+            // per-partition estimates that sum is taken below; without them
+            // every branch carries the same partition-blind estimate this
+            // tier costed the one scan with, so the sum is a multiple.
             leaf.est_rows.map(|rows| rows * partitions.len() as f64),
             String::new(),
             String::new(),
@@ -610,7 +641,7 @@ impl PlanTrace {
         // whole scan's rows as one partition's. It moves to the union, whose
         // count it really is.
         union.act_rows = leaf.act_rows.clone();
-        for partition in partitions {
+        for (index, partition) in partitions.iter().enumerate() {
             let mut branch = PlanNode::new(
                 leaf.name,
                 leaf.est_rows,
@@ -619,7 +650,13 @@ impl PlanTrace {
             );
             branch.key_ndv_ratio = leaf.key_ndv_ratio;
             branch.access_consumed = leaf.access_consumed;
+            if let Some(estimate) = estimates.get(index) {
+                re_estimate(&mut branch, *estimate);
+            }
             union.children.push(branch);
+        }
+        if !estimates.is_empty() {
+            union.est_rows = Some(estimates.iter().map(|estimate| estimate.rows).sum());
         }
         self.stack.push(union);
     }
@@ -1066,7 +1103,7 @@ impl PlanTrace {
             "keep order:false, desc:false".to_owned(),
         ));
         if static_partition_prune {
-            self.partition_union(partitions);
+            self.partition_union(partitions, &[]);
         }
         self.mark_top_access_consumed();
     }

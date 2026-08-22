@@ -1041,7 +1041,7 @@ fn leaf_of<'a>(
                 return None;
             };
             let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
-            let stats = catalog.table_statistics(table.table_id);
+            let stats = catalog.table_statistics(table.stats_physical_id());
             let realtime = crate::access_cost::realtime_row_count(stats.map(AsRef::as_ref));
             let columns: Vec<(String, FieldType)> = table
                 .visible_columns()

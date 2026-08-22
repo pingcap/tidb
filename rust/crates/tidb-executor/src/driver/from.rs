@@ -1280,7 +1280,7 @@ pub(crate) fn build_from(
                 })
                 .collect::<Vec<_>>();
             let trace_selectivity = trace_filter.as_ref().and_then(|predicate| match entry {
-                TableEntry::Kv(table) if catalog.table_statistics(table.table_id).is_some() => {
+                TableEntry::Kv(table) if catalog.table_statistics(table.stats_physical_id()).is_some() => {
                     crate::driver::access::stats_selectivity_with_default_string_match_selectivity(
                         catalog,
                         table,
@@ -1795,7 +1795,7 @@ fn index_probe_candidate(
     // scales that logical output expectation back to its filtered child rows;
     // the data-source builders then remove only residual path selectivity.
     let after_filter = source_rows.max(0.0);
-    let stats = catalog.table_statistics(decision.table.table_id);
+    let stats = catalog.table_statistics(decision.table.stats_physical_id());
     let access_rows_floor = decision.probe_access_rows_floor(stats.map(AsRef::as_ref));
     let physical_output_rows = if decision.aggregation.is_some() && access_rows_floor > 0.0 {
         source_rows
@@ -2240,7 +2240,7 @@ fn index_join_source_rows_one(
         rows.right
     };
     let Some(stats) = catalog
-        .table_statistics(decision.table.table_id)
+        .table_statistics(decision.table.stats_physical_id())
         .filter(|stats| !stats.pseudo && stats.row_count > 0)
     else {
         return logical_output_rows;
@@ -2268,7 +2268,7 @@ fn index_join_physical_probe_rows_one(
     rows: crate::driver::join_reorder::JoinRows,
 ) -> f64 {
     let logical = index_join_probe_rows_one(decision, rows);
-    let stats = catalog.table_statistics(decision.table.table_id);
+    let stats = catalog.table_statistics(decision.table.stats_physical_id());
     if decision.aggregation.is_some()
         && decision.probe_access_rows_floor(stats.as_deref().map(AsRef::as_ref)) > 0.0
     {
@@ -4280,7 +4280,7 @@ fn build_join_with_choice(
     for decision in &index_joins {
         decision.record_stats_access(
             catalog
-                .table_statistics(decision.table.table_id)
+                .table_statistics(decision.table.stats_physical_id())
                 .map(AsRef::as_ref),
         );
     }
@@ -5051,7 +5051,7 @@ fn build_join_with_choice(
                         &decision.table,
                         &decision.visible,
                         catalog
-                            .table_statistics(decision.table.table_id)
+                            .table_statistics(decision.table.stats_physical_id())
                             .map(AsRef::as_ref),
                         &ctx.session_zone(),
                     )
