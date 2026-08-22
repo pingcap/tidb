@@ -3037,3 +3037,42 @@ fn a_table_policy_prints_in_show_create_table() {
         "a table without a policy prints none, got: {shown}"
     );
 }
+
+/// `ALTER TABLE ... PLACEMENT POLICY = name`, per Go's
+/// `ast.TableOptionPlacementPolicy` arm (`ddl/executor.go:1927`).
+///
+/// The reference it records must hold the policy down for `DROP PLACEMENT
+/// POLICY` exactly as one written at CREATE does -- a reference the in-use
+/// check cannot see is a reference that lets the policy be dropped out from
+/// under the table.
+#[test]
+fn alter_table_can_set_a_placement_policy() {
+    let mut session = Session::new();
+    session
+        .run("CREATE PLACEMENT POLICY ap FOLLOWERS=2")
+        .expect("policy");
+    session.run("CREATE TABLE at1 (a INT)").expect("table");
+
+    // An unknown policy is refused rather than recorded.
+    let rendered = session
+        .run("ALTER TABLE at1 PLACEMENT POLICY = nosuch")
+        .expect_err("an unknown policy is refused")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 8239);
+
+    session
+        .run("ALTER TABLE at1 PLACEMENT POLICY = ap")
+        .expect("setting a real policy");
+    let shown = show_create(&mut session, "at1");
+    assert!(
+        shown.contains("/*T![placement] PLACEMENT POLICY=`ap` */"),
+        "the policy prints after ALTER, got: {shown}"
+    );
+
+    // And it counts for the in-use check.
+    let rendered = session
+        .run("DROP PLACEMENT POLICY ap")
+        .expect_err("the ALTER-set reference holds the policy down")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 8241);
+}

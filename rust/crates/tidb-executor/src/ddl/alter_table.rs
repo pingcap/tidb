@@ -1056,6 +1056,7 @@ fn set_table_options_action(
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     super::validate_table_options(options)?;
+    let mut pending_placement: Option<String> = None;
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
         return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
@@ -1131,12 +1132,40 @@ fn set_table_options_action(
                     .set_auto_id_cache(cache)
                     .map_err(DriverError::unsupported)?;
             }
+            // Go `AlterTable`'s `ast.TableOptionPlacementPolicy` arm
+            // (`ddl/executor.go:1927`) builds a `PolicyRefInfo` from the
+            // written name; the policy must exist, or the statement is
+            // `ErrPlacementPolicyNotExists` (8239).
+            //
+            // The reference is stamped with the policy's ID as well as its
+            // name, for the same reason CREATE stamps it: placement bundles
+            // resolve a reference by id, so a name-only one would record a
+            // policy that never reaches the scheduler.
+            tidb_ast::TableOption::PlacementPolicy(policy_name) => {
+                // The catalog is borrowed mutably through `table`, so the
+                // lookup is deferred to after this loop rather than fought
+                // with here.
+                pending_placement = Some(policy_name.clone());
+            }
             _ => {
                 return Err(DriverError::unsupported(
                     "this ALTER TABLE table option is not supported yet",
                 ));
             }
         }
+    }
+    if let Some(policy_name) = pending_placement {
+        let Some(policy) = catalog.policy(&policy_name) else {
+            return Err(DriverError::PlacementPolicyNotExists(policy_name));
+        };
+        let reference = tidb_model::PolicyRefInfo {
+            id: policy.id,
+            name: tidb_ast::CiString::new(policy_name),
+        };
+        let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
+            unreachable!("the table was resolved above")
+        };
+        table.set_placement_policy(Some(reference));
     }
     Ok(())
 }
