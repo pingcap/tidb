@@ -31,16 +31,27 @@ use tidb_datatype::Datum;
 /// Go `builder.newBuildFromPatternLike`: the literal prefix before the first
 /// wildcard bounds the scan below, and the next weight string above that
 /// prefix bounds it from above.
+/// Returns the points and whether this arm already cut the prefix and moved
+/// them into the sort key -- Go's `newBuildFromPatternLike` does that itself
+/// in exactly one of its five return cases, and leaves the rest to the shared
+/// tail. Reporting the whole function as self-finished skipped the conversion
+/// for the exact-match case, which then printed its raw text where Go prints
+/// a weight string.
 pub(super) fn points_from_like(
     pattern: &str,
     escape: u8,
     collation: tidb_datatype::Collation,
     column: &RangeColumn,
-) -> Vec<Point> {
+    convert_to_sort_key: bool,
+) -> (Vec<Point>, bool) {
     let string = |bytes: Vec<u8>| Datum::new_collation_string(bytes, collation);
+    // Go's "non-exceptional return case 1": the shared tail converts it.
     if pattern.is_empty() {
         let empty = string(Vec::new());
-        return vec![Point::start(empty.clone(), false), Point::end(empty, false)];
+        return (
+            vec![Point::start(empty.clone(), false), Point::end(empty, false)],
+            false,
+        );
     }
     let bytes = pattern.as_bytes();
     let mut low = Vec::with_capacity(bytes.len());
@@ -86,13 +97,29 @@ pub(super) fn points_from_like(
         low.push(bytes[i]);
         i += 1;
     }
-    // No literal characters before the wildcard: nothing to bound the scan.
+    // Go's case 2. No literal characters before the wildcard: nothing to bound
+    // the scan. Returned as-is -- there is no text in it to convert.
     if low.is_empty() {
-        return not_null_full_range();
+        return (not_null_full_range(), true);
     }
+    // Go's case 3: a pattern with no wildcard at all is an equality on the
+    // pattern text, and the shared tail cuts and converts it exactly as Go's
+    // `cutPrefixForPoints` + `convertPointsToSortKeyInPlace` pair does here.
     if exact {
         let value = string(low);
-        return vec![Point::start(value.clone(), false), Point::end(value, false)];
+        return (
+            vec![Point::start(value.clone(), false), Point::end(value, false)],
+            false,
+        );
+    }
+    // Go's case 4-1. The upper bound below is the incremented SORT KEY of the
+    // prefix, so it only bounds a scan whose keys are sort keys. An entry
+    // point that reads raw values instead -- partition pruning -- would be
+    // comparing a weight string against the stored text, so Go declines to
+    // build a wildcard range at all unless the collation is one where the two
+    // coincide.
+    if !convert_to_sort_key && !tidb_datatype::is_bin_collation(collation.name()) {
+        return (not_null_full_range(), true);
     }
     // Go cuts the START point before deriving the upper bound from it
     // (`newBuildFromPatternLike`'s case 4-2 calls `cutPrefixForPoints` on the
@@ -141,7 +168,11 @@ pub(super) fn points_from_like(
     } else {
         collation.key_without_trim_right_space(&low)
     });
-    vec![start, Point::end(high, true)]
+    // Go's case 4-2, the one arm that cuts and converts its own points: the
+    // two bounds take DIFFERENT conversions (the start trims trailing spaces
+    // under a PAD SPACE collation, the bound it is derived from does not), so
+    // the shared tail must not touch them again.
+    (vec![start, Point::end(high, true)], true)
 }
 
 /// Go `collate.IsPadSpaceCollation`, over the [`tidb_datatype::Collation`]

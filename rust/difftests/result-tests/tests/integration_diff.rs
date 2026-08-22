@@ -1776,7 +1776,32 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // they did, every later statement of that topic was comparing different
     // data, which is what made its divergences look like value mismatches
     // rather than a missing feature.
-    const KNOWN_DIVERGENCES: usize = 85;
+    // 85 -> 75, `compared` FLAT at 9480. `ColumnPoints::finished` was too
+    // broad: it reported the WHOLE `LIKE` arm as having converted its own
+    // points, when Go's `newBuildFromPatternLike` does that in exactly one of
+    // its five return cases. Its "case 3" -- a pattern with no wildcard at
+    // all, `a LIKE 'aa'` -- is an equality on the pattern text, and Go cuts
+    // and converts it through the same shared pair as every other arm. Marked
+    // finished, it skipped both, so those ranges printed their raw text
+    // (`["aa","aa"]`, `[" "," "]`) where TiDB prints the weight string.
+    // `points_from_like` now reports per-case which of the two it did, which
+    // is the shape Go's own five returns have.
+    //
+    // The same read added Go's "case 4-1", which had no counterpart here: a
+    // wildcard range's upper bound is the INCREMENTED SORT KEY of the prefix,
+    // so it only bounds a scan whose keys are sort keys. Go declines to build
+    // one at all for the entry that reads raw values --
+    // `DetachCondAndBuildRangeForPartition` -- unless the collation makes the
+    // key and the value the same string.
+    //
+    // 75 -> 73, `compared` still 9480. `!=` is not an access condition on a
+    // PREFIX index column, which Go's `conditionChecker` says in one line:
+    // `if scalar.FuncName.L == ast.NE { return isFullLength, !isFullLength }`.
+    // Cutting a point to the prefix widens every other comparison into a
+    // superset that the reserved filter narrows back; `!=` is the one shape
+    // it makes SMALLER, because the cut excludes the prefix rather than the
+    // value and takes every row sharing it. Go reads the whole index instead.
+    const KNOWN_DIVERGENCES: usize = 73;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

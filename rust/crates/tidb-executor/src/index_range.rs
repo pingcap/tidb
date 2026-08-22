@@ -1050,7 +1050,8 @@ fn points_for_condition(
     like_default_escape: u8,
     convert_to_sort_key: bool,
 ) -> Option<ColumnPoints> {
-    let mut column_points = points_on_column(condition, column, zone, like_default_escape)?;
+    let mut column_points =
+        points_on_column(condition, column, zone, like_default_escape, convert_to_sort_key)?;
     // Go cuts and converts at the tail of each `build` arm; the one arm that
     // does both itself says so, and is left alone here. Cutting an already
     // converted point a second time reads a SORT KEY as text -- for
@@ -1078,15 +1079,25 @@ fn points_for_condition(
 
 /// The raw endpoints one condition puts on one column, before the
 /// bounds-nothing check above.
+/// Go `conditionChecker.isFullLengthColumn`: an index column that stores the
+/// whole value, either because no prefix was declared or because the declared
+/// prefix reaches the column's own `flen`.
+fn is_full_length_column(column: &RangeColumn) -> bool {
+    column.prefix_len == UNSPECIFIED_LENGTH || column.prefix_len == column.field_type.flen()
+}
+
 fn points_on_column(
     condition: &Expr,
     column: &RangeColumn,
     zone: &tidb_datatype::SessionTimeZone,
     like_default_escape: u8,
+    convert_to_sort_key: bool,
 ) -> Option<ColumnPoints> {
     let name = column.name.as_str();
     match condition {
-        Expr::Paren(inner) => points_on_column(inner, column, zone, like_default_escape),
+        Expr::Paren(inner) => {
+            points_on_column(inner, column, zone, like_default_escape, convert_to_sort_key)
+        }
         // Go `buildFromScalarFunc`'s `ast.LogicAnd` / `ast.LogicOr` arms. A
         // boolean connective over ONE index column is still a point set on
         // that column: `b = 1 OR b = 2` is the union of the two, and
@@ -1100,8 +1111,10 @@ fn points_on_column(
         // is not merely a lost opportunity but a WRONG range -- keeping only
         // the side that parsed would exclude rows the other side admits.
         Expr::Binary(op @ (BinaryOp::LogicAnd | BinaryOp::LogicOr), lhs, rhs) => {
-            let lhs = points_on_column(lhs, column, zone, like_default_escape)?;
-            let rhs = points_on_column(rhs, column, zone, like_default_escape)?;
+            let lhs =
+                points_on_column(lhs, column, zone, like_default_escape, convert_to_sort_key)?;
+            let rhs =
+                points_on_column(rhs, column, zone, like_default_escape, convert_to_sort_key)?;
             let collation = column.field_type.collation();
             let points = if matches!(op, BinaryOp::LogicAnd) {
                 intersection(&lhs.points, &rhs.points, collation)
@@ -1146,6 +1159,25 @@ fn points_on_column(
             } else {
                 return None;
             };
+            // Go `conditionChecker.checkScalarFunction`: `if scalar.FuncName.L
+            // == ast.NE { return isFullLength, !isFullLength }` -- `!=` is an
+            // access condition only over a FULL-LENGTH column.
+            //
+            // Cutting a point to a prefix widens every other comparison into
+            // a superset, which the reserved filter then narrows back. `!=`
+            // is the one shape cutting makes SMALLER: it is the complement of
+            // a point, so the cut excludes the prefix rather than the value,
+            // and every row sharing that prefix goes missing. `a != 'aabbb'`
+            // over `KEY (a(3))` would exclude the key `'aab'` and lose
+            // `'aab'`, `'aabB'` and `'aabcc'`, all of which do differ from
+            // `'aabbb'`. Go's checker decides per COLUMN, before it has seen
+            // the value, so it declines the condition outright and reads the
+            // whole index (`IndexFullScan` under the lookup, with `ne` as the
+            // probe-side filter). This tier was building
+            // `[-inf,"\x00A\x00A"), ("\x00A\x00A",+inf]`.
+            if matches!(op, BinaryOp::Ne) && !is_full_length_column(column) {
+                return None;
+            }
             let eq_or_in = matches!(op, BinaryOp::Eq);
             // Go `buildFromBinOp` runs both domain fixups BEFORE building any
             // point, and a `false` from either is Go's `return nil` -- no
@@ -1283,15 +1315,17 @@ fn points_on_column(
             };
             let collation = column.field_type.collation();
             let pattern = String::from_utf8(bytes).ok()?;
+            let (points, finished) = points_from_like(
+                &pattern,
+                escape.unwrap_or(like_default_escape),
+                collation,
+                column,
+                convert_to_sort_key,
+            );
             Some(ColumnPoints {
-                points: points_from_like(
-                    &pattern,
-                    escape.unwrap_or(like_default_escape),
-                    collation,
-                    column,
-                ),
+                points,
                 eq_or_in: false,
-                finished: true,
+                finished,
             })
         }
         Expr::Is {
@@ -1972,7 +2006,7 @@ fn simple_comparison_points(
         Expr::Binary(
             BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le | BinaryOp::Ge,
             ..,
-        ) => points_on_column(condition, column, zone, b'\\'),
+        ) => points_on_column(condition, column, zone, b'\\', true),
         _ => None,
     }
 }
