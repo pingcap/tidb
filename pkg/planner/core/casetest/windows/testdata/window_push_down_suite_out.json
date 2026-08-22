@@ -569,8 +569,6 @@
           "      └─TableReader root  data:TableFullScan",
           "        └─TableFullScan cop[tikv] table:ref_0 keep order:false, stats:pseudo",
           "ScalarSubQuery root  Output: ",
-          "└─TableDual root  rows:1",
-          "ScalarSubQuery root  Output: ",
           "└─TableDual root  rows:1"
         ],
         "Result": [
