@@ -1386,6 +1386,132 @@ func TestAutoRandIDRetry(t *testing.T) {
 	require.Equal(t, []int64{1, 2, 3, 4, 5, 7}, maskedHandles)
 }
 
+func TestAutoRandomIDRetryAfterPessimisticStatementRetry(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id bigint primary key clustered auto_random, u int unique key, v int)")
+	tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+
+	// Use autocommit=0 to start an explicit transaction without replaying an
+	// explicit BEGIN. Replaying BEGIN restores the original optimistic mode
+	// and does not reach the pessimistic statement retry path.
+	tk.MustExec("set @@autocommit = 0")
+
+	// S1 and S2 allocate two different AUTO_RANDOM IDs. The commit failpoint
+	// below makes the whole transaction replay in pessimistic mode.
+	tk.MustExec("insert into t (u, v) values (1, 1)")
+	tk.MustExec("insert into t (u, v) values (2, 2) on duplicate key update v = values(v)")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID"))
+		session.ResetMockAutoRandIDRetryCount(0)
+	}()
+	session.ResetMockAutoRandIDRetryCount(1)
+	lockConflictFailpoint := "github.com/pingcap/tidb/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict"
+	defer func() {
+		require.NoError(t, failpoint.Disable(lockConflictFailpoint))
+	}()
+	require.NoError(t, failpoint.Enable(lockConflictFailpoint, "1*return(false)->1*return(true)->return(false)"))
+
+	// S2 must retain its own replayed AUTO_RANDOM ID. Before this fix it
+	// reuses S1's ID after ResetOffset and updates S1 instead of inserting u=2.
+	tk.MustExec("commit")
+	tk.MustQuery("select u, v from t order by u").Check(testkit.Rows("1 1", "2 2"))
+}
+
+func TestAutoIncrementIDRetryDoesNotDuplicate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int not null auto_increment primary key, idx int unique key, c int)")
+	tk.MustExec("insert into t values (1, 1, 1)")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into t (id, idx, c) values (10, 11, 12)")
+	tk.MustExec("insert into t (idx, c) values (13, 14)")
+	tk.MustExec("update t set c = 15 where idx = 1")
+
+	commitRetryFailpoint := "github.com/pingcap/tidb/session/mockCommitRetryForAutoIncID"
+	session.ResetMockAutoIncIDRetry()
+	require.NoError(t, failpoint.Enable(commitRetryFailpoint, "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(commitRetryFailpoint))
+		session.ResetMockAutoIncIDRetry()
+	}()
+
+	// The commit failpoint makes the optimistic transaction replay. The
+	// explicit AUTO_INCREMENT value and the generated value must not be added
+	// to RetryInfo again while the replay consumes the cached values.
+	tk.MustExec("commit")
+	tk.MustQuery("select id, idx, c from t order by id").Check(testkit.Rows(
+		"1 1 15",
+		"10 11 12",
+		"11 13 14",
+	))
+}
+
+func TestAutoIncrementIDRetryFailsWhenStatementRowCountChanges(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table src (u int primary key)")
+	tk.MustExec("create table t (id int auto_increment primary key, u int unique key)")
+	tk.MustExec("insert into src values (1)")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into t (u) select u from src")
+	tk.MustExec("insert into t (u) values (2)")
+
+	// The retry gets a new snapshot after src is changed, so the first history
+	// statement consumes fewer auto IDs than it did originally.
+	tk2.MustExec("delete from src where u = 1")
+	commitRetryFailpoint := "github.com/pingcap/tidb/session/mockCommitRetryForAutoIncID"
+	session.ResetMockAutoIncIDRetry()
+	require.NoError(t, failpoint.Enable(commitRetryFailpoint, "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(commitRetryFailpoint))
+		session.ResetMockAutoIncIDRetry()
+	}()
+
+	tk.MustGetErrCode("commit", errno.ErrTxnRetryable)
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+}
+
+func TestAutoRandomIDRetryFailsWhenExplicitIDChanges(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table src (id bigint primary key, u int)")
+	tk.MustExec("create table t (id bigint primary key clustered auto_random, u int)")
+	tk.MustExec("insert into src values (100, 1)")
+	tk.MustExec("set @@allow_auto_random_explicit_insert = 1")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into t select id, u from src")
+
+	// Keep the row count stable while changing the explicit AUTO_RANDOM ID.
+	// The retry must reject the mismatch instead of overwriting 200 with the
+	// cached ID 100.
+	tk2.MustExec("update src set id = 200 where id = 100")
+	commitRetryFailpoint := "github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID"
+	require.NoError(t, failpoint.Enable(commitRetryFailpoint, "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(commitRetryFailpoint))
+		session.ResetMockAutoRandIDRetryCount(0)
+	}()
+	session.ResetMockAutoRandIDRetryCount(1)
+
+	tk.MustGetErrCode("commit", errno.ErrTxnRetryable)
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+}
+
 func TestAutoRandRecoverTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

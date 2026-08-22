@@ -233,6 +233,7 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 	if !sql.IsReadOnly(sessVars) {
 		// All the history should be added here.
 		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {
+			sessVars.RetryInfo.CommitStmt()
 			GetHistory(se).Add(sql, sessVars.StmtCtx)
 		}
 

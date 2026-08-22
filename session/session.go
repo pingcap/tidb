@@ -1287,6 +1287,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			if err != nil {
 				return err
 			}
+			hasAutoIDRange := s.sessionVars.RetryInfo.BeginRetryStmt(i)
 
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
@@ -1310,6 +1311,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			s.txn.onStmtStart(digest.String())
 			if err = sessiontxn.GetTxnManager(s).OnStmtStart(ctx, st.GetStmtNode()); err == nil {
 				_, err = st.Exec(ctx)
+			}
+			if autoIDConsistent := s.sessionVars.RetryInfo.EndRetryStmt(); err == nil && hasAutoIDRange && !autoIDConsistent {
+				err = executor.ErrAutoIDRetryInconsistent.GenWithStackByArgs()
 			}
 			s.txn.onStmtEnd()
 			if err != nil {
@@ -2419,6 +2423,9 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		}
 	}
 
+	if sessVars.TxnCtx.CouldRetry && !s.IsReadOnly(sessVars) && !sessVars.RetryInfo.Retrying {
+		sessVars.RetryInfo.BeginStmt()
+	}
 	rs, err = s.Exec(ctx)
 	se.updateTelemetryMetric(s.(*executor.ExecStmt))
 	sessVars.TxnCtx.StatementCount++
