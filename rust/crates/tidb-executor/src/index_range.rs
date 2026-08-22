@@ -615,25 +615,33 @@ fn comparison_collation_allows_range(
     if column.field_type.eval_type() != tidb_datatype::EvalType::String {
         return true;
     }
-    // A large plain-string IN list derives the connection's default
-    // utf8mb4_bin collation from its literal leaves.  Rewriting the whole
-    // list here is needlessly expensive: this predicate is probed once per
-    // candidate index while building ranges, and the same 1,000 literals
-    // would otherwise be collated and hashed repeatedly.  Keep the exact
-    // slow path for introduced/parameter/compound values, whose collation
-    // can differ from the connection default.
+    // A plain-string IN list over this column derives THIS COLUMN'S
+    // collation, whatever the connection's is. Go derives once over ALL of
+    // `ast.In`'s arguments (`expression/collation.go`), and a column is
+    // IMPLICIT while a bare literal is COERCIBLE -- the stronger operand
+    // wins, and the only operand that could outrank the column is an
+    // EXPLICIT `COLLATE`, which the shape below excludes.
+    //
+    // Answering it here rather than through the rewrite is a cost decision:
+    // this predicate is probed once per candidate index while ranges are
+    // built, and a thousand-literal list would otherwise be collated and
+    // hashed on every probe. The exact slow path still owns every
+    // introduced, parameter or compound value, whose collation can differ.
+    //
+    // The shortcut used to answer `column.collation == Collation::DEFAULT`,
+    // reading the list's leaves as if they decided. That kept EVERY
+    // partition of a `RANGE COLUMNS` table whose column is not
+    // `utf8mb4_bin`: `select * from t where a in ('AA', 'aaa')` over a
+    // `utf8mb4_general_ci` column scanned all seven where TiDB reads
+    // `paaa,pAAAA`. `a = 'AA'` pruned correctly all along, because equality
+    // never took this branch.
     if let Expr::In { expr, list, .. } = condition {
         if is_column(expr, &column.name)
             && list
                 .iter()
                 .all(|item| matches!(item, Expr::String(_) | Expr::Null))
         {
-            let default = Collation::DEFAULT;
-            return column.field_type.collation() == default
-                || (equality
-                    && tidb_expr::expr_collation::is_bin_collation(
-                        column.field_type.collation().name(),
-                    ));
+            return true;
         }
     }
     let Ok(rewritten) = rewrite_expr_resolved(condition, &RangeColumnResolver { column, zone })

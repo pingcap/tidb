@@ -664,9 +664,6 @@ impl IndexRangeSourceExec {
         )
     }
 
-    /// Builds an index source carrying the statement context required by a
-    /// real TiKV partial-aggregation request.
-    #[must_use]
     /// Names the TABLE columns this source's schema stands for.
     ///
     /// Go's `DataSource` carries `Columns []*model.ColumnInfo` beside its
@@ -688,6 +685,9 @@ impl IndexRangeSourceExec {
         self.keep = offsets;
     }
 
+    /// Builds an index source carrying the statement context required by a
+    /// real TiKV partial-aggregation request.
+    #[must_use]
     pub fn new_with_statement(
         meta: ExecutorMeta,
         table: KvTable,
