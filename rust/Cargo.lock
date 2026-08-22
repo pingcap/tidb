@@ -2648,6 +2648,7 @@ dependencies = [
 name = "tidb-executor"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "chrono",
  "chrono-tz",
  "crc32fast",

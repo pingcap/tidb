@@ -343,11 +343,17 @@ impl Session {
             // The two are not in tension -- this classification answers "would
             // this change state outside the process", and in-process the answer
             // is no.
+            // `LOAD STATS` writes the same `mysql.stats_*` tables an
+            // `ANALYZE` does (Go's `loadStatsFromJSON` ends in
+            // `SaveColOrIdxStatsToStorage` + `SaveMetaToStorage`), so it
+            // classifies with it: routed at a cluster node when the tables
+            // live in the cluster, run by `crate::load_stats_arm` in-process.
             Stmt::Admin(admin)
                 if matches!(
                     admin.as_ref(),
                     tidb_ast::AdminStmt::AnalyzeTable(_)
                         | tidb_ast::AdminStmt::AnalyzeIncremental(_)
+                        | tidb_ast::AdminStmt::LoadStats(_)
                 ) =>
             {
                 StoredStateChange::Statistics

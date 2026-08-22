@@ -245,7 +245,8 @@ pub const TOPICS: &[(&str, &str)] = &[
     ),
     (
         "explain_stats",
-        "EXPLAIN over statistics-driven plans, 8 of 9 compared",
+        "EXPLAIN over statistics-driven plans, 9 of 9 compared now that `load stats` \
+     installs its dump",
     ),
     (
         "expression/constant_fold",
@@ -381,8 +382,8 @@ pub const TOPICS: &[(&str, &str)] = &[
     ),
     (
         "tpch",
-        "11 of 40 at zero divergences: the TPC-H schema and its queries, the only \
-     analytic workload shape on the gate",
+        "19 of 40 at zero divergences: the TPC-H schema, its `load stats` dumps and \
+     its queries, the only analytic workload shape on the gate",
     ),
     (
         "executor/import_into",
@@ -523,9 +524,9 @@ pub const TOPICS: &[(&str, &str)] = &[
     ),
     (
         "explain_complex",
-        "35 of 45 with 3 PLAN divergences of one cause: an index-join inner side and \
-     two `BETWEEN`/`=` ranges are read as `TableFullScan` where TiDB narrows \
-     them -- the index-join access-path increment, not a row difference",
+        "42 of 45 at zero divergences: the index-join access-path increment closed \
+     the `TableFullScan`-vs-narrowed reads, and `load stats` closed the last \
+     two `stats:pseudo`-only differences on `issue_50080`'s dump",
     ),
     (
         "explain_foreign_key",

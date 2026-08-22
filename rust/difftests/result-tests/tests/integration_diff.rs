@@ -545,12 +545,98 @@ fn warning_difference(session: &mut Session, want: Option<&[Vec<u8>]>) -> Option
 
 /// Compares one statement's own output -- rows or rejection -- against the
 /// recorded block, with any appended warnings block already removed.
+/// Resolves a `load stats 'relative/path.json'` statement against
+/// `tests/integrationtest/`, the directory the recording's CLIENT ran from.
+///
+/// This is a HARNESS concern, not an engine one, and the boundary is Go's
+/// own: TiDB's executor never opens the file -- the connection layer fetches
+/// the bytes from the client over the local-infile protocol
+/// (`pkg/executor/plan_replayer.go`'s `FileTransInConnHandlers`), so a
+/// relative path in a script resolves against mysql-tester's working
+/// directory, which `run-tests.sh` sets to `tests/integrationtest/`. This
+/// replay's engine reads the path as given, so the harness substitutes the
+/// absolute path the recording's client would have opened. An already
+/// absolute path passes through untouched.
+///
+/// The fixtures themselves ship zipped (`s.zip`; `run-tests.sh` line 129
+/// runs `unzip -qq s.zip` before any test), so the first `load stats` also
+/// unpacks the archive if `s/` is not there yet.
+fn rewrite_load_stats_path(sql: &str) -> Option<String> {
+    let trimmed = sql.trim();
+    if !trimmed
+        .get(..10)
+        .is_some_and(|head| head.eq_ignore_ascii_case("load stats"))
+    {
+        return None;
+    }
+    let first = trimmed.find('\'')?;
+    let last = trimmed.rfind('\'')?;
+    if last <= first {
+        return None;
+    }
+    let path = &trimmed[first + 1..last];
+    if std::path::Path::new(path).is_absolute() {
+        return None;
+    }
+    let dir = integrationtest_dir();
+    if path.starts_with("s/") {
+        ensure_stats_fixtures_unzipped(&dir);
+    }
+    Some(format!("load stats '{}'", dir.join(path).display()))
+}
+
+/// Unpacks `tests/integrationtest/s.zip` into `s/` once, the way
+/// `run-tests.sh` does before starting mysql-tester.
+///
+/// Concurrency is the reason this is not a plain `unzip -o`: the full replay
+/// runs topics in parallel and `replay_in_child` adds separate PROCESSES, so
+/// two racers must never read each other's half-written files. Each racer
+/// extracts into its own scratch directory and installs with one `rename`;
+/// the loser of the rename finds `s/` present and discards its copy.
+fn ensure_stats_fixtures_unzipped(dir: &std::path::Path) {
+    static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    ONCE.get_or_init(|| {
+        let target = dir.join("s");
+        if target.exists() {
+            return;
+        }
+        let scratch = dir.join(format!(".s_unzip_{}", std::process::id()));
+        let unzipped = std::process::Command::new("unzip")
+            .arg("-qq")
+            .arg(dir.join("s.zip"))
+            .arg("-d")
+            .arg(&scratch)
+            .status();
+        match unzipped {
+            Ok(status) if status.success() => {
+                // A losing rename means another process installed `s/` while
+                // we extracted; its copy is identical, so ours just goes.
+                if fs::rename(scratch.join("s"), &target).is_err() && !target.exists() {
+                    eprintln!("could not install {}", target.display());
+                }
+                let _ = fs::remove_dir_all(&scratch);
+            }
+            outcome => {
+                // Leave the statement to fail on the missing file, which the
+                // report then counts and names instead of hiding.
+                eprintln!("unzip s.zip failed: {outcome:?}");
+                let _ = fs::remove_dir_all(&scratch);
+            }
+        }
+    });
+}
+
 fn compare_output(
     session: &mut Session,
     stmt: &Stmt,
     recorded: &[Vec<u8>],
     report: &mut TopicReport,
 ) -> Result<MatchKind, Option<String>> {
+    // The one statement class whose TEXT the harness owns a piece of: a
+    // relative `load stats` path belongs to the recording client's working
+    // directory, resolved here so the engine below can take it literally.
+    let resolved_load_stats = rewrite_load_stats_path(&stmt.sql);
+    let stmt_sql: &str = resolved_load_stats.as_deref().unwrap_or(&stmt.sql);
     if let Some(reason) = stmt.blocker {
         // The recorder rewrote this statement's output, so nothing about it is
         // comparable -- but mysql-tester still RAN it, and what it did is what
@@ -560,7 +646,7 @@ fn compare_output(
         // happened here and the next four `select @@global.x` diverged on a
         // value this driver had suppressed rather than on anything the engine
         // does. Run it, discard the outcome, and count the skip.
-        drop(session.run_with_columns(&stmt.sql));
+        drop(session.run_with_columns(stmt_sql));
         report.skip(SkipClass::RecorderRewroteOutput(reason));
         return Err(None);
     }
@@ -571,14 +657,14 @@ fn compare_output(
 
     // A plan statement runs as this tier's own default EXPLAIN whatever format
     // the recording asked for -- see `PlanStatement::RunDefaultExplain`.
-    let plan = plan_statement(&stmt.sql);
+    let plan = plan_statement(stmt_sql);
     let sql = match &plan {
         Some(PlanStatement::NotComparable(reason)) if !recorded_error => {
             report.skip(SkipClass::PlanFormatNotComparable(reason));
             return Err(None);
         }
         Some(PlanStatement::RunDefaultExplain(sql)) => sql.as_str(),
-        _ => stmt.sql.as_str(),
+        _ => stmt_sql,
     };
     // A statement that PANICS takes the process with it, so its identity is
     // not in any report -- and attributing a crashing topic means knowing
@@ -2055,6 +2141,20 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // 48 -> 41 at the merge of the partition-processor line of work, whose
     // measured delta on its own base was exactly -7 -- the same seven close
     // here, so the two lines compose without overlap.
+    // 48 -> 46: `LOAD STATS` executes. The two closed divergences are
+    // `explain_complex`'s pair over `issue_50080.json` -- identical
+    // `IndexRangeScan` object and range on both sides, differing ONLY by
+    // `stats:pseudo`, because the statement that would have installed the
+    // dump's 859M-row histograms was refused and every estimate under it
+    // stayed pseudo. The dump now loads through
+    // `tidb_executor::load_stats` (Go `storage.TableStatsFromJSON`:
+    // column bounds string-decoded back to their types, index bounds kept
+    // as key bytes, TopN re-sorted) into the same catalog slot `ANALYZE`
+    // publishes to, so the estimates flow through the unchanged estimator.
+    // The compare count RISES with the divergence count falling:
+    // `explain_complex` 39 -> 42 matched of 45, `explain_stats` 8 -> 9,
+    // and `tpch`'s eight dump loads go from `OutOfDomain` to side-effect
+    // matches (11 -> 19 of 40), all at zero divergences.
     const KNOWN_DIVERGENCES: usize = 41;
     //
     //
