@@ -361,6 +361,17 @@ pub struct Session {
     /// that inherit the buffer, and the reason `WarningCount()` reports 0 for
     /// them. See [`Session::wire_warning_count`].
     in_show_warning: bool,
+    /// Go `SessionVars.SysWarningCount` / `SysErrorCount`: the PREVIOUS
+    /// statement's counts, which is what `@@warning_count` and
+    /// `@@error_count` report.
+    ///
+    /// `ResetContextOfStmt` snapshots them from the outgoing
+    /// `StmtCtx.NumErrorWarnings()` at every statement start, whatever the
+    /// incoming statement is -- unlike the buffer above, which only the
+    /// statements that REPORT warnings inherit. Reading the buffer instead
+    /// answered `0` for every statement that is not one of those three.
+    sys_warning_count: usize,
+    sys_error_count: usize,
     /// Go `SessionVars.User` in its two spellings: the matched grant
     /// identity `CURRENT_USER()` reports and the login identity `USER()`
     /// reports. Empty until a front end authenticates one.
@@ -549,6 +560,8 @@ impl Default for Session {
             warnings: Vec::new(),
             deferred_multi_statement_warning: false,
             in_show_warning: false,
+            sys_warning_count: 0,
+            sys_error_count: 0,
             current_user: None,
             login_user: None,
             active_roles: Vec::new(),
@@ -1398,6 +1411,8 @@ mod tests_partition;
 mod tests_index_join_inner_pattern;
 #[cfg(test)]
 mod tests_partition_projection;
+#[cfg(test)]
+mod tests_session_var_hooks;
 #[cfg(test)]
 mod tests_partition_prune_collation;
 #[cfg(test)]

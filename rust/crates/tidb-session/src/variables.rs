@@ -321,7 +321,7 @@ impl Session {
         };
         // Go stores every system variable as a string.
         let value = value.unwrap_or_default();
-        self.check_read_only_noop(&assignment.name, &value, is_global)?;
+        self.check_noop_gated_variable(&assignment.name, &value, is_global)?;
         self.check_isolation_level(&assignment.name, &value)?;
         self.check_max_allowed_packet_scope(&assignment.name, &value, is_node_wide)?;
         self.warn_removed_feature_var(&assignment.name, &value);
@@ -846,6 +846,24 @@ impl Session {
                 {
                     return Ok(Expr::Int(self.last_insert_id.to_string()));
                 }
+                // `@@warning_count` and `@@error_count` are Go's `GetSession`
+                // hooks on `s.SysWarningCount` / `s.SysErrorCount`: the
+                // PREVIOUS statement's counts, snapshotted by
+                // `ResetContextOfStmt` at every statement start. The variable
+                // table's entries carry only the type and the read-only flag,
+                // so answering from them -- which this port did -- reported
+                // the registration's `0` for every statement, including right
+                // after one that warned.
+                if *scope != Some(tidb_ast::SysVarScope::Global)
+                    && name.eq_ignore_ascii_case("warning_count")
+                {
+                    return Ok(Expr::Int(self.sys_warning_count().to_string()));
+                }
+                if *scope != Some(tidb_ast::SysVarScope::Global)
+                    && name.eq_ignore_ascii_case("error_count")
+                {
+                    return Ok(Expr::Int(self.sys_error_count().to_string()));
+                }
                 // `@@last_plan_from_cache` is Go's `PrevFoundInPlanCache`
                 // read (`sysvar.go`'s GetSession hook), not a stored value --
                 // the variable table's entry is only the type and the
@@ -1001,6 +1019,10 @@ impl Session {
                     }
                 }
             }
+            // Go's `SetSystemVarWithRelaxedValidation`: the hook still
+            // runs and still decides the value, but its error and its
+            // warnings are dropped.
+            let value = self.relaxed_noop_gated_value(&name, value);
             let snapshot = self.vars.snapshot_system(&name);
             if self.vars.set_system(&name, value).is_ok() {
                 self.set_var_hint_restore.extend(snapshot);

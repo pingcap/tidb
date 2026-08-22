@@ -233,36 +233,37 @@ const ALIASES: &[(&str, &str)] = &[
     ("tx_read_only", "transaction_read_only"),
 ];
 
-/// Go `noop.go`: the five registrations whose `Validation` is
-/// `checkReadOnly`. Enabling any of them needs `tidb_enable_noop_functions`,
-/// because the server does not actually make anything read-only; the flag
-/// selects which clause name the 1235 diagnostic uses.
+/// Every `noop.go` variable whose `Validation` refuses an ON value unless
+/// `tidb_enable_noop_functions` allows it, paired with the clause name its
+/// 1235 diagnostic uses.
+///
+/// The five read-only ones share `varsutil.go:checkReadOnly`, which picks
+/// `OFFLINE MODE` or `READ ONLY` from its `offlineMode` argument.
+/// `sql_auto_is_null` carries the SAME logic inline in its own registration
+/// -- same three-way branch, same refusal to `Off`, same warning in `WARN`
+/// mode -- and differs only in naming ITSELF as the clause. It belongs here
+/// rather than in a sixth copy of the rule.
 ///
 /// HAND-MAINTAINED for the same reason as the tables above: the registry the
 /// generator reads does not expose `Validation`.
-const READ_ONLY_NOOP_VARS: &[(&str, bool)] = &[
-    ("tx_read_only", false),
-    ("transaction_read_only", false),
-    ("offline_mode", true),
-    ("super_read_only", false),
-    ("read_only", false),
+const NOOP_GATED_VARS: &[(&str, &str)] = &[
+    ("tx_read_only", "READ ONLY"),
+    ("transaction_read_only", "READ ONLY"),
+    ("offline_mode", "OFFLINE MODE"),
+    ("super_read_only", "READ ONLY"),
+    ("read_only", "READ ONLY"),
+    ("sql_auto_is_null", "sql_auto_is_null"),
 ];
 
-/// The clause name `checkReadOnly` would put in its 1235 diagnostic for
-/// `name`, or `None` when `name` is not one of the read-only no-op
-/// variables.
+/// The clause name the `tidb_enable_noop_functions` gate would put in its
+/// 1235 diagnostic for `name`, or `None` when `name`'s `Validation` does not
+/// consult that gate.
 #[must_use]
-pub fn read_only_noop_clause(name: &str) -> Option<&'static str> {
-    READ_ONLY_NOOP_VARS
+pub fn noop_gated_clause(name: &str) -> Option<&'static str> {
+    NOOP_GATED_VARS
         .iter()
         .find(|(candidate, _)| name.eq_ignore_ascii_case(candidate))
-        .map(|&(_, offline_mode)| {
-            if offline_mode {
-                "OFFLINE MODE"
-            } else {
-                "READ ONLY"
-            }
-        })
+        .map(|&(_, clause)| clause)
 }
 
 /// The other spelling of `name`, if it has one.

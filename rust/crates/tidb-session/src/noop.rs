@@ -57,29 +57,47 @@ impl Session {
         }
     }
 
-    /// Go `varsutil.go:checkReadOnly`, the `Validation` hook on the five
-    /// `noop.go` read-only variables: turning one ON is refused with 1235
-    /// unless `tidb_enable_noop_functions` allows it, because the server does
-    /// not actually stop writes. Turning one OFF is always accepted, and so
-    /// is a value the registry would reject -- that is
-    /// [`vars::SessionSysvars::set_system`]'s job, and Go likewise validates
-    /// the type before it runs this hook.
-    pub(crate) fn check_read_only_noop(
+    /// Go `varsutil.go:checkReadOnly` and the identical branch inlined in
+    /// `sql_auto_is_null`'s own registration: turning one of these ON is
+    /// refused with 1235 unless `tidb_enable_noop_functions` allows it,
+    /// because the server does not actually do what the setting names.
+    /// Turning one OFF is always accepted, and so is a value the registry
+    /// would reject -- that is [`vars::SessionSysvars::set_system`]'s job,
+    /// and Go likewise validates the type before it runs this hook.
+    pub(crate) fn check_noop_gated_variable(
         &mut self,
         name: &str,
         value: &str,
         is_global: bool,
     ) -> Result<(), DriverError> {
-        let Some(clause) = sysvar::read_only_noop_clause(name) else {
+        let Some(clause) = sysvar::noop_gated_clause(name) else {
             return Ok(());
         };
-        let normalized = sysvar::get_sys_var(name)
-            .and_then(|def| def.validate(value).ok())
-            .map(|validated| validated.value);
-        if normalized.as_deref() != Some("ON") {
+        if !turns_on(name, value) {
             return Ok(());
         }
         self.gate_noop_clause(clause, is_global)
+    }
+
+    /// The value a `SET_VAR` hint actually installs for one of these
+    /// variables.
+    ///
+    /// Go applies the hint through `SetSystemVarWithRelaxedValidation`, which
+    /// runs the same `Validation` and then keeps the VALUE it returned while
+    /// discarding its error -- and `ValidateWithRelaxedValidation` restores
+    /// the warning list around the call, so a warning the hook appended does
+    /// not survive either. The refusal branch returns `vardef.Off`, so
+    /// `select /*+ set_var(sql_auto_is_null=1) */ @@sql_auto_is_null` answers
+    /// `0` while the hint is in force, rather than failing the statement or
+    /// taking the requested value.
+    pub(crate) fn relaxed_noop_gated_value(&self, name: &str, value: String) -> String {
+        if sysvar::noop_gated_clause(name).is_none() || !turns_on(name, &value) {
+            return value;
+        }
+        match self.noop_funcs_mode(false) {
+            NoopFuncsMode::On | NoopFuncsMode::Warn => value,
+            NoopFuncsMode::Off => "OFF".to_owned(),
+        }
     }
 
     /// The three-way `tidb_enable_noop_functions` decision, which every gated
@@ -253,4 +271,13 @@ fn collect_noop_in_expr(expr: &tidb_ast::Expr, out: &mut Vec<&'static str>) {
         }
         _ => {}
     }
+}
+
+/// Whether this assignment is the ON that Go's `TiDBOptOn(normalizedValue)`
+/// tests, taken after the registry's own type normalization -- which Go also
+/// runs first, in `ValidateFromType`.
+fn turns_on(name: &str, value: &str) -> bool {
+    sysvar::get_sys_var(name)
+        .and_then(|def| def.validate(value).ok())
+        .is_some_and(|validated| validated.value == "ON")
 }

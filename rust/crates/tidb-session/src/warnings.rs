@@ -263,20 +263,56 @@ impl Session {
     /// ordinary run path: the previous statement's warnings go, and the
     /// statement is never SHOW WARNINGS.
     pub fn begin_ddl_statement_warnings(&mut self) {
+        self.snapshot_previous_warning_counts();
         self.warnings.clear();
         self.in_show_warning = false;
     }
 
     pub(crate) fn begin_cached_prepared_query_boundary(&mut self) {
+        self.snapshot_previous_warning_counts();
         self.warnings.clear();
         self.in_show_warning = false;
     }
 
     fn install_statement_warning_state(&mut self, stmt: &Stmt, previous: Vec<SqlWarning>) {
+        self.set_previous_warning_counts(&previous);
         self.in_show_warning = reports_warnings(stmt);
         if self.in_show_warning {
             self.warnings = previous;
         }
+    }
+
+    /// Go `ResetContextOfStmt`'s
+    /// `errCount, warnCount := vars.StmtCtx.NumErrorWarnings()` followed by
+    /// the two assignments to `vars.SysErrorCount` / `vars.SysWarningCount`,
+    /// for the boundaries that discard the buffer without taking it first.
+    fn snapshot_previous_warning_counts(&mut self) {
+        let previous = std::mem::take(&mut self.warnings);
+        self.set_previous_warning_counts(&previous);
+        self.warnings = previous;
+    }
+
+    /// Go's `NumErrorWarnings`: the error count is the ERROR-level entries,
+    /// the warning count is every entry.
+    fn set_previous_warning_counts(&mut self, previous: &[SqlWarning]) {
+        self.sys_warning_count = previous.len();
+        self.sys_error_count = previous
+            .iter()
+            .filter(|warning| warning.level == WarningLevel::Error)
+            .count();
+    }
+
+    /// Go `sysvar.go`'s `GetSession` hook on `warning_count`, which returns
+    /// `s.SysWarningCount`.
+    #[must_use]
+    pub(crate) fn sys_warning_count(&self) -> usize {
+        self.sys_warning_count
+    }
+
+    /// Go's matching hook on `error_count`, `s.SysErrorCount`.
+    #[must_use]
+    pub(crate) fn sys_error_count(&self) -> usize {
+        self.sys_error_count
     }
 
     /// Go `clientConn.initResultEncoder`'s read:
