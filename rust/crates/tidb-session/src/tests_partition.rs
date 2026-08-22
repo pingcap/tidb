@@ -2708,3 +2708,40 @@ fn a_doubly_wrong_partition_clause_reports_gos_first_error() {
         assert_eq!(rendered.code, *errno, "{why}\n  {sql}\n  got: {}", rendered.message);
     }
 }
+
+/// Go prints HASH and KEY in the compact `PARTITIONS n` form only when every
+/// definition is DEFAULT-SHAPED: named `p{i}`, carrying no comment, and
+/// carrying no placement policy (`AppendPartitionInfo`, `ddl/partition.go`).
+/// Anything else forces the full definition list.
+///
+/// The comment half of that rule only became reachable once partition
+/// comments were actually persisted, so it is pinned here.
+#[test]
+fn a_commented_hash_partition_prints_the_full_definition_list() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE hc (a INT) PARTITION BY HASH (a) \
+              (PARTITION p0 COMMENT 'first', PARTITION p1)")
+        .expect("hash table with a commented partition");
+    let shown = show_create(&mut session, "hc");
+    assert!(
+        !shown.contains("PARTITIONS 2"),
+        "a commented partition is not default-shaped, so Go prints the full \
+         list rather than the compact form, got: {shown}"
+    );
+    assert!(
+        shown.contains("COMMENT 'first'"),
+        "the comment must survive to the printed definition, got: {shown}"
+    );
+
+    // A default-shaped one still takes the compact form.
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE hd (a INT) PARTITION BY HASH (a) PARTITIONS 2")
+        .expect("plain hash table");
+    let shown = show_create(&mut session, "hd");
+    assert!(
+        shown.contains("PARTITIONS 2"),
+        "an all-default definition list keeps the compact form, got: {shown}"
+    );
+}
