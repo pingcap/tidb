@@ -586,6 +586,18 @@ fn partition_info(
             // dropped, so a cluster round trip lost it while the in-process
             // path -- which reads the spec, not this -- still showed it.
             stored.comment = definition.comment.clone();
+            // Go `setPartitionPlacementFromOptions` stores the partition's
+            // OWN policy reference; an inherited table policy is deliberately
+            // not copied down, because the table's rules already cover the
+            // partition's range and copying would freeze the cascade.
+            stored.placement_policy_ref = definition.placement_policy.as_ref().map(|name| {
+                tidb_model::GoShared::new(tidb_model::PolicyRefInfo {
+                    // The id is stamped when the policy is resolved; the name
+                    // is what the definition carries.
+                    id: 0,
+                    name: tidb_ast::CiString::new(name.clone()),
+                })
+            });
             stored
         })
         .collect::<Vec<_>>()

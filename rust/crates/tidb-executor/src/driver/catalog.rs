@@ -88,6 +88,15 @@ struct Database {
 #[derive(Clone, Debug)]
 pub struct Catalog {
     databases: HashMap<String, Database>,
+    /// Go `infoschema`'s policy map, keyed by the FOLDED policy name.
+    ///
+    /// A placement policy is a schema object in its own right, not an
+    /// attribute of a table: `DROP PLACEMENT POLICY` has to know whether any
+    /// table or partition still references it, and `ALTER PLACEMENT POLICY`
+    /// changes what every referencing object means at once. Both need the
+    /// policy to live here rather than being copied into each user.
+    policies: HashMap<String, tidb_model::PolicyInfo>,
+    next_policy_id: i64,
     next_database_id: i64,
     next_table_id: i64,
     /// Bumped by every mutation that actually CHANGED something, so a
@@ -186,6 +195,8 @@ impl Default for Catalog {
         );
         let mut catalog = Catalog {
             databases,
+            policies: HashMap::new(),
+            next_policy_id: 0,
             next_database_id: 3,
             next_table_id: 0,
             version: 0,
@@ -439,6 +450,97 @@ impl Catalog {
 
     /// Creates `database`, reporting whether it was new. Go raises
     /// `ErrDBCreateExists` (1007) unless `IF NOT EXISTS` was written.
+    /// Go `infoschema.PolicyByName`: the policy a name refers to, folded.
+    #[must_use]
+    pub fn policy(&self, name: &str) -> Option<&tidb_model::PolicyInfo> {
+        self.policies.get(&tidb_ast::CiString::new(name).lowercase().to_owned())
+    }
+
+    /// Every policy, for `information_schema` and `SHOW` surfaces.
+    #[must_use]
+    pub fn policies(&self) -> impl Iterator<Item = &tidb_model::PolicyInfo> {
+        self.policies.values()
+    }
+
+    /// Go `CreatePlacementPolicyWithInfo`: stores a new policy.
+    ///
+    /// Returns `false` when one of that name already exists, leaving the
+    /// stored policy untouched -- the caller decides whether that is
+    /// `OnExistError` (8238), `OnExistIgnore`, or `OnExistReplace`, exactly
+    /// as Go's `OnExist` does.
+    pub fn create_policy(&mut self, mut policy: tidb_model::PolicyInfo) -> bool {
+        let key = policy.name.lowercase().to_owned();
+        if self.policies.contains_key(&key) {
+            return false;
+        }
+        self.next_policy_id += 1;
+        policy.id = self.next_policy_id;
+        self.policies.insert(key, policy);
+        self.version += 1;
+        true
+    }
+
+    /// Replaces a stored policy's settings, KEEPING its id.
+    ///
+    /// Go's `ALTER PLACEMENT POLICY` alters the policy every referencing
+    /// object points at, so the id has to survive: the references are by id,
+    /// and re-issuing one would orphan them.
+    pub fn replace_policy_settings(
+        &mut self,
+        name: &str,
+        settings: tidb_model::PlacementSettings,
+    ) -> bool {
+        let key = tidb_ast::CiString::new(name).lowercase().to_owned();
+        let Some(policy) = self.policies.get_mut(&key) else {
+            return false;
+        };
+        policy.placement_settings = Some(tidb_model::GoShared::new(settings));
+        self.version += 1;
+        true
+    }
+
+    /// Go `DropPlacementPolicy`: removes a policy by name.
+    pub fn drop_policy(&mut self, name: &str) -> bool {
+        let key = tidb_ast::CiString::new(name).lowercase().to_owned();
+        if self.policies.remove(&key).is_none() {
+            return false;
+        }
+        self.version += 1;
+        true
+    }
+
+    /// Go `CheckPlacementPolicyNotInUseFromInfoSchema`: the first table or
+    /// partition still pointing at `name`, if any.
+    ///
+    /// Go refuses `DROP PLACEMENT POLICY` while anything references it
+    /// (8241), because dropping it would leave those objects naming a policy
+    /// that no longer exists.
+    #[must_use]
+    pub fn policy_in_use(&self, name: &str) -> bool {
+        let folded = tidb_ast::CiString::new(name).lowercase().to_owned();
+        self.databases.values().any(|database| {
+            database.tables.values().any(|entry| {
+                let crate::TableEntry::Kv(table) = entry else {
+                    return false;
+                };
+                if table
+                    .placement_policy()
+                    .is_some_and(|policy| tidb_ast::CiString::new(policy).lowercase() == folded)
+                {
+                    return true;
+                }
+                table.partition().is_some_and(|partition| {
+                    partition.definitions.iter().any(|definition| {
+                        definition
+                            .placement_policy
+                            .as_deref()
+                            .is_some_and(|policy| tidb_ast::CiString::new(policy).lowercase() == folded)
+                    })
+                })
+            })
+        })
+    }
+
     pub fn create_database(&mut self, database: &str) -> bool {
         self.create_database_with_charset(database, TableCharset::default())
     }

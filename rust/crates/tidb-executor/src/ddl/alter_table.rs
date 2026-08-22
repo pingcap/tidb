@@ -816,6 +816,9 @@ fn add_partition_action(
                 ctx,
             )?,
             comment: String::new(),
+            // Per-partition OPTIONS are refused on this path, so an added
+            // partition names no policy of its own.
+            placement_policy: None,
         });
     }
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {

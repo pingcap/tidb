@@ -422,6 +422,7 @@ mod tests {
                 less_than: vec![bound.to_owned()],
                 in_values: Vec::new(),
                 comment: String::new(),
+                placement_policy: None,
             }
         });
         assert_eq!(

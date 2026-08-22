@@ -906,6 +906,7 @@ fn build_hash_partition_definitions(
             Some(definition) => partition_definition_comment(definition, ctx, false)?,
             None => String::new(),
         };
+        let placement_policy = written_definition.and_then(partition_definition_placement);
         definitions.push(PartitionDef {
             id: allocate_id(),
             name,
@@ -913,6 +914,7 @@ fn build_hash_partition_definitions(
             less_than: Vec::new(),
             in_values: Vec::new(),
             comment,
+            placement_policy,
         });
     }
     Ok(definitions)
@@ -931,6 +933,21 @@ const MAX_PARTITION_COMMENT_LENGTH: usize = 1024;
 /// this did, loses it from `SHOW CREATE TABLE` AND changes the shape of the
 /// clause: `AppendPartitionInfo` prints the definition list rather than
 /// `PARTITIONS n` as soon as one partition carries a comment.
+/// Go `setPartitionPlacementFromOptions` (`ddl/partition.go`): the policy a
+/// partition definition names for ITSELF.
+///
+/// Go's comment there is the important part: a partition does NOT inherit a
+/// copy of the table's policy. The table's rules cover the partition's key
+/// range already, so copying would freeze a snapshot and break the cascade
+/// when the policy is altered. Only a policy written on this definition is
+/// recorded.
+fn partition_definition_placement(definition: &PartitionDefinition) -> Option<String> {
+    definition.options.iter().find_map(|option| match option {
+        tidb_ast::TableOption::PlacementPolicy(name) => Some(name.clone()),
+        _ => None,
+    })
+}
+
 fn partition_definition_comment(
     definition: &PartitionDefinition,
     ctx: &crate::StmtContext,
@@ -1500,6 +1517,7 @@ fn definition_tail<'a>(
             less_than: Vec::new(),
             in_values: Vec::new(),
             comment,
+            placement_policy: partition_definition_placement(definition),
         });
         Ok(())
     }
@@ -1704,6 +1722,8 @@ pub struct StoredPartitionDefinition {
     pub in_values: Vec<Vec<String>>,
     /// Go `PartitionDefinition.Comment`.
     pub comment: String,
+    /// Go `PartitionDefinition.PlacementPolicyRef`, by name.
+    pub placement_policy: Option<String>,
 }
 
 /// Rebuild the AST value clause a stored definition was written from, so the
@@ -1821,6 +1841,7 @@ pub fn partition_spec_from_metadata(
             less_than: definition.less_than.clone(),
             in_values: definition.in_values.clone(),
             comment: definition.comment.clone(),
+            placement_policy: definition.placement_policy.clone(),
         })
         .collect::<Vec<_>>();
     // The COLUMNS forms name their inputs directly. The builders take the
@@ -2157,6 +2178,7 @@ fn stored_definitions_for(
             less_than: Vec::new(),
             in_values: Vec::new(),
             comment: definition.comment.clone(),
+            placement_policy: definition.placement_policy.clone(),
         };
         match &spec.kind {
             // HASH, KEY and NONE definitions carry a name and nothing else.

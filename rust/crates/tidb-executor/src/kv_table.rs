@@ -478,6 +478,12 @@ pub struct KvTable {
     /// this field once and then has no cases left. See
     /// [`crate::partition_routing`].
     partition: Option<Box<crate::partition_routing::PartitionSpec>>,
+    /// Go `TableInfo.PlacementPolicyRef`, reduced to the policy NAME.
+    ///
+    /// A table-level policy covers the whole table's key range, including
+    /// every partition that does not name one of its own -- which is why Go
+    /// does not copy it down onto the partitions.
+    placement_policy: Option<String>,
     /// The physical ids a READ of this table may touch, when something has
     /// narrowed them: `PARTITION (p)` naming them explicitly, or pruning
     /// proving the rest cannot match. `None` is "every partition", which is
@@ -658,6 +664,7 @@ impl KvTable {
             foreign_keys: Vec::new(),
             max_foreign_key_id: 0,
             partition: None,
+            placement_policy: None,
             read_partitions: None,
             dirty_content: false,
         }
@@ -763,6 +770,17 @@ impl KvTable {
     #[must_use]
     pub fn partition(&self) -> Option<&crate::partition_routing::PartitionSpec> {
         self.partition.as_deref()
+    }
+
+    /// Go `TableInfo.PlacementPolicyRef`, by name.
+    #[must_use]
+    pub fn placement_policy(&self) -> Option<&str> {
+        self.placement_policy.as_deref()
+    }
+
+    /// Records the policy this table names.
+    pub fn set_placement_policy(&mut self, policy: Option<String>) {
+        self.placement_policy = policy;
     }
 
     /// How many rows each partition holds, in definition order, or an empty

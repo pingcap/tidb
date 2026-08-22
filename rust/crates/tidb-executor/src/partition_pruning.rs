@@ -671,6 +671,7 @@ mod tests {
                     less_than: Vec::new(),
                     in_values: Vec::new(),
                     comment: String::new(),
+                    placement_policy: None,
                 },
                 PartitionDef {
                     id: 102,
@@ -678,6 +679,7 @@ mod tests {
                     less_than: Vec::new(),
                     in_values: Vec::new(),
                     comment: String::new(),
+                    placement_policy: None,
                 },
                 PartitionDef {
                     id: 103,
@@ -685,6 +687,7 @@ mod tests {
                     less_than: Vec::new(),
                     in_values: Vec::new(),
                     comment: String::new(),
+                    placement_policy: None,
                 },
             ],
         }
@@ -714,6 +717,7 @@ mod tests {
                     less_than: Vec::new(),
                     in_values: Vec::new(),
                     comment: String::new(),
+                    placement_policy: None,
                 },
                 PartitionDef {
                     id: 202,
@@ -721,6 +725,7 @@ mod tests {
                     less_than: Vec::new(),
                     in_values: Vec::new(),
                     comment: String::new(),
+                    placement_policy: None,
                 },
                 PartitionDef {
                     id: 203,
@@ -728,6 +733,7 @@ mod tests {
                     less_than: Vec::new(),
                     in_values: Vec::new(),
                     comment: String::new(),
+                    placement_policy: None,
                 },
             ],
         }

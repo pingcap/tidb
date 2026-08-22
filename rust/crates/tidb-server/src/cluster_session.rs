@@ -643,6 +643,14 @@ fn partition_spec_for(
                 .into_iter()
                 .map(|tuple| tuple.snapshot())
                 .collect(),
+            // Go's `PartitionDefinition.PlacementPolicyRef`. A definition a
+            // Go cluster wrote can name a policy, and dropping it here would
+            // mean this node stores the partition back WITHOUT the reference
+            // -- the catalog would lose a policy binding that Go put there.
+            placement_policy: definition
+                .placement_policy_ref
+                .as_ref()
+                .map(|reference| reference.read().name.original().to_owned()),
         })
         .collect();
     let columns: Vec<String> = partition

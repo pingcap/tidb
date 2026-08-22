@@ -184,6 +184,15 @@ pub struct PartitionDef {
     /// what makes a HASH table print its definition list rather than the
     /// compact `PARTITIONS n`.
     pub comment: String,
+    /// Go `PartitionDefinition.PlacementPolicyRef`, reduced to the policy
+    /// NAME this definition points at.
+    ///
+    /// Go deliberately does NOT copy an inherited table policy down onto a
+    /// partition (`setPartitionPlacementFromOptions`, `ddl/partition.go`):
+    /// the partition's key range is appended to the table's rule coverage
+    /// instead, so altering the policy cascades to both. Only a policy
+    /// written on the partition ITSELF is recorded here.
+    pub placement_policy: Option<String>,
 }
 
 /// A table's partitioning: Go `model.PartitionInfo` plus the built expression
