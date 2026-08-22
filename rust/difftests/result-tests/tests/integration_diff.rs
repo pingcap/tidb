@@ -1685,7 +1685,36 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // demand into each operand and eliminates the unread outer join (69 -> 68).
     // `ddl/serial` now truncates physical partitions and validates AUTO_RANDOM
     // ranges before creating a table (68 -> 66).
-    const KNOWN_DIVERGENCES: usize = 54;
+    //
+    // 54 -> 53, and `compared` 9275 -> 9278. Read that pair together: this
+    // ratchet reported NOTHING between 2026-08-15 and 2026-08-22, because the
+    // replay was aborting on a panic in `chunk::Column::get_uint64` -- a
+    // `bit(64)` join key read through the fixed 8-byte accessor -- and a test
+    // that panics never reaches its own assertion. When it ran again the count
+    // was 97, not 54. Every step back down was measured and committed one at a
+    // time; the causes, in the order they were found:
+    //
+    //  * a subquery rewrite's synthesized relation became an output column,
+    //    because `*` was left to resolve against the `FROM` the rewrite had
+    //    just replaced (9);
+    //  * static pruning divided a bare scan but not a whole reader, so an
+    //    `IndexLookUp` never fanned out per partition (11);
+    //  * a pruned partition was costed from the LOGICAL table's statistics,
+    //    which static pruning never stores (6);
+    //  * a plain-string `IN` list was pruned under the CONNECTION's collation
+    //    instead of the column's (6);
+    //  * a pruned reader decoded the table's FIRST columns rather than the
+    //    ones its narrowed schema names (4);
+    //  * an index join re-seeded a leaf through a rollup `Expand`, which Go's
+    //    `admitIndexJoinInnerChildPattern` does not admit (2);
+    //  * the `IN`-to-join rewrite deduplicated in the inner column's own
+    //    domain while its join compared in another (1);
+    //  * `SET_VAR` skipped the variable's `Validation`, and `@@warning_count`
+    //    read a buffer only three statements inherit (2);
+    //  * a NULL stayed NULL when its column turned `TIMESTAMP NOT NULL`, so
+    //    the rewrite failed outright -- which is where the three extra
+    //    `compared` come from (3).
+    const KNOWN_DIVERGENCES: usize = 53;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path
