@@ -111,6 +111,10 @@ Therefore: **do not verify by inspecting the Rust code.** For each rule, open th
 - Correction: an earlier note treated the PD wire contract and the delivery failure semantics as questions needing an outside answer. Neither did. The contract is public source and was fetchable; the semantics follow from Go being the source of truth. Recorded because the failure mode -- turning "this needs verifying" into "this needs deciding" -- stalls work that is not actually blocked.
   Date/Author: 2026-08-21, ngaut.
 
+- Observation (M2, gap recorded, NOT fixed): the cluster path records nothing in `mysql.gc_delete_range`, so the data behind a dropped or truncated table is never reclaimed. Reads are correct -- a dropped table's meta key is gone and a truncated one's ids are new, so nothing addresses the old bytes -- but they stay on disk for the life of the cluster.
+  Evidence: Go's `delRange.addDelRangeJob` (`pkg/ddl/delete_range.go:95`) writes a row per range, and its `ActionDropTable` arm (`:296`) deletes every partition id AND the logical table id, noting that the latter "may contain global index regions"; `ActionTruncateTable` (`:312`) does the same for the OLD partition ids plus the table id, always including the table range even for a partitioned table. `ActionDropTablePartition` (`:327`) covers the partition case. A search of `crates/tidb-exec/src/cluster_ddl.rs` and `real_tikv_ddl.rs` finds no delete-range writer at all.
+  Scope: this is not partition-specific -- an unpartitioned DROP TABLE leaks its rows the same way -- but partitioned tables leak more of it, one range per partition. Filling it means writing rows to a system table from the DDL transaction, which is a wider piece of work than the partition rules this plan covers, and it is recorded here rather than started so it is not mistaken for done.
+
 ## Decision Log
 
 - Decision: Verification is done by re-deriving each rule from the Go source, with an independent second reader attempting to refute each claimed difference; the Rust code and its comments are never treated as evidence.
