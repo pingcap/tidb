@@ -48,7 +48,10 @@ const DEFAULT_MAX_TOPN_ROWS: usize = 1_024;
 /// reload thread ticks at half of it, matching Go's domain reload loop.
 const DEFAULT_SCHEMA_LEASE_MS: u64 = 45_000;
 const MAX_CONFIGURED_TOPN_ROWS: usize = 65_536;
-const MAX_CONFIGURED_READ_TABLES: usize = 2;
+// The benchmark gate serves a full 32-table sysbench schema, so the loaded
+// catalog must scale past the original campaign-sized surface. The per-column
+// and per-index caps still bound each table's shape.
+const MAX_CONFIGURED_READ_TABLES: usize = 4_096;
 const MAX_CONFIGURED_READ_COLUMNS: usize = 4096;
 const MAX_CONFIGURED_READ_INDEXES: usize = 64;
 
@@ -1436,7 +1439,7 @@ fn validate_load_tables(
     if load_tables.len() > MAX_CONFIGURED_READ_TABLES {
         return Err(invalid(
             "--load-table",
-            "loaded table count must not exceed two",
+            &format!("loaded table count must not exceed {MAX_CONFIGURED_READ_TABLES}"),
         ));
     }
     let mut names = HashSet::with_capacity(load_tables.len());
@@ -1471,7 +1474,7 @@ fn validate_read_tables(
     if tables.len() > MAX_CONFIGURED_READ_TABLES {
         return Err(invalid(
             "--read-table",
-            "configured table count must not exceed two",
+            &format!("configured table count must not exceed {MAX_CONFIGURED_READ_TABLES}"),
         ));
     }
     let mut names = HashSet::with_capacity(tables.len());
