@@ -4038,28 +4038,26 @@ impl IndexAccessOrder {
 /// `ORDER BY o_id LIMIT 1` property. More than one range is declined for the
 /// same conservative reason as an index path: each range is ordered, but this
 /// layer does not promise that their concatenation is one total order.
-/// The order claim of a WHOLE-table scan: the clustered SIGNED int handle,
-/// over the one unbounded range the scan is.
+/// The order claim of a WHOLE-table scan: the clustered int handle, over the
+/// one unbounded range the scan is.
 ///
-/// Narrow by construction. An UNSIGNED handle's record keys are the i64
-/// REINTERPRETATION of its values -- a value above `i64::MAX` is stored
-/// under a negative key and walks FIRST -- so key order is not `ORDER BY`
-/// order there (the same reason `handle_range` refuses to range over one).
-/// A common handle's key order matches its datum order only for the column
-/// families the ranger admits, which the range path proves per statement;
-/// the whole-table claim has no such proof and stays out.
+/// Go's `matchProperty` makes this claim without looking at the handle's
+/// SIGNEDNESS (`find_best_task.go:1084`, the `path.IsIntHandlePath` arm): an
+/// unsigned handle above `i64::MAX` is stored under a negative record key and
+/// walks FIRST, but the table reader cuts the domain at that point and reads
+/// the two halves in value order (`table_reader.go:295`). This tier makes the
+/// same cut, in `KvTable::record_key_ranges`, so the claim holds here for the
+/// same reason.
+///
+/// A COMMON handle is still refused: its key order matches its datum order
+/// only for the column families the ranger admits, which the range path
+/// proves per statement; the whole-table claim has no such proof.
 fn full_table_handle_order(table: &KvTable) -> Option<IndexAccessOrder> {
     if !table.common_handle_offsets().is_empty() {
         return None;
     }
     let offset = table.pk_handle_offset()?;
-    if table
-        .columns
-        .get(offset)
-        .is_none_or(|column| column.field_type.is_unsigned())
-    {
-        return None;
-    }
+    table.columns.get(offset)?;
     Some(IndexAccessOrder::from_ranges(
         &[offset],
         &[IndexRange::full()],

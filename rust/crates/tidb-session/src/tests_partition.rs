@@ -3605,3 +3605,198 @@ fn a_narrow_unsigned_row_handle_is_ranged_over_without_a_split() {
         "the open high end is the unsigned DOMAIN's maximum, not the column's"
     );
 }
+
+/// A whole-table scan of an unsigned handle KEEPS ORDER, because the scan is
+/// cut at the sign flip like any other range.
+///
+/// Go's `matchProperty` makes this claim without consulting the handle's
+/// signedness (`find_best_task.go:1084`), and its table reader earns it by
+/// splitting `ranger.FullIntRange(true)` -- the domain as one range -- into
+/// the two halves it reads in value order. Reading the raw key range instead
+/// walks the block above `i64::MAX` FIRST, so the claim would be a lie and
+/// `ORDER BY id` would need a `Sort` this plan does not have.
+#[test]
+fn a_full_scan_of_an_unsigned_handle_keeps_order() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE uh (id BIGINT UNSIGNED PRIMARY KEY, v INT)")
+        .expect("table");
+    for value in UNSIGNED_HANDLE_VALUES {
+        session
+            .run(&format!("INSERT INTO uh VALUES ({value}, 1)"))
+            .expect("row");
+    }
+    let plan = |session: &mut Session, sql: &str| -> Vec<String> {
+        tests_support::row_text(session.run(sql))
+            .into_iter()
+            .map(|row| row.join(" "))
+            .collect()
+    };
+    let ordered = plan(&mut session, "EXPLAIN SELECT id FROM uh ORDER BY id");
+    assert!(
+        ordered.iter().any(|line| line.contains("keep order:true")),
+        "the scan itself has to promise the order: {ordered:?}"
+    );
+    assert!(
+        !ordered.iter().any(|line| line.contains("Sort")),
+        "and so nothing above it sorts: {ordered:?}"
+    );
+
+    let ascending: Vec<Vec<String>> = UNSIGNED_HANDLE_VALUES
+        .iter()
+        .map(|value| vec![(*value).to_owned()])
+        .collect();
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT id FROM uh ORDER BY id")),
+        ascending
+    );
+    let mut descending = ascending.clone();
+    descending.reverse();
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT id FROM uh ORDER BY id DESC")),
+        descending
+    );
+    // A `LIMIT` rides that promise into the scan, so taking the wrong two rows
+    // is the failure this pins: the largest values live in the LOWEST keys.
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT id FROM uh ORDER BY id LIMIT 2")),
+        ascending[..2].to_vec()
+    );
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT id FROM uh ORDER BY id DESC LIMIT 2")),
+        descending[..2].to_vec()
+    );
+}
+
+/// Nine values around the point where the handle key encoding flips sign:
+/// either side of `i64::MAX`, either side of `i64::MAX + 1`, and either side
+/// of the domain's ends. They are both the stored rows and the bounds the
+/// predicates below are written against, so every interval endpoint lands on,
+/// just below, or just above a row that exists.
+const UNSIGNED_HANDLE_VALUES: &[&str] = &[
+    "0",
+    "1",
+    "2",
+    "9223372036854775806",
+    "9223372036854775807",
+    "9223372036854775808",
+    "9223372036854775809",
+    "18446744073709551614",
+    "18446744073709551615",
+];
+
+/// One question down two paths that must agree, over the whole neighbourhood
+/// of the sign flip.
+///
+/// `uh` stores the unsigned column as its CLUSTERED HANDLE, so a predicate on
+/// it becomes a key range and the predicate itself is dropped. `up` is the
+/// same table partitioned four ways, so the range is cut per partition and
+/// re-merged. `uf` stores the identical values in a plain column with a
+/// `_tidb_rowid` handle, so nothing is ranged and every row is tested.
+///
+/// A range that reads the wrong records cannot hide here: the answer is
+/// compared unordered, ascending and descending, for every comparison and
+/// interval over nine values chosen around `i64::MAX`, `i64::MAX + 1` and
+/// `u64::MAX`.
+#[test]
+fn every_unsigned_handle_predicate_reads_the_same_rows_ranged_as_filtered() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE uh (id BIGINT UNSIGNED PRIMARY KEY, v INT)")
+        .expect("uh");
+    session
+        .run("CREATE TABLE uf (id BIGINT UNSIGNED, v INT)")
+        .expect("uf");
+    for value in UNSIGNED_HANDLE_VALUES {
+        session
+            .run(&format!("INSERT INTO uh VALUES ({value}, 1)"))
+            .expect("uh row");
+        session
+            .run(&format!("INSERT INTO uf VALUES ({value}, 1)"))
+            .expect("uf row");
+    }
+
+    let mut predicates: Vec<String> = Vec::new();
+    for bound in UNSIGNED_HANDLE_VALUES {
+        for op in ["=", "!=", "<", "<=", ">", ">="] {
+            predicates.push(format!("id {op} {bound}"));
+        }
+    }
+    for low in UNSIGNED_HANDLE_VALUES {
+        for high in UNSIGNED_HANDLE_VALUES {
+            predicates.push(format!("id BETWEEN {low} AND {high}"));
+            predicates.push(format!("id > {low} AND id < {high}"));
+            predicates.push(format!("id >= {low} AND id <= {high}"));
+            predicates.push(format!("id < {low} OR id > {high}"));
+        }
+    }
+    predicates.push("id IN (0, 9223372036854775808, 18446744073709551615)".to_owned());
+    predicates.push("id IN (1, 2) OR id > 18446744073709551614".to_owned());
+    predicates.push("id NOT IN (1, 9223372036854775808)".to_owned());
+    predicates.push("id IS NULL".to_owned());
+    predicates.push("id IS NOT NULL".to_owned());
+
+    let read = |session: &mut Session, sql: &str| -> Vec<String> {
+        let mut rows: Vec<String> = tests_support::row_text(session.run(sql))
+            .into_iter()
+            .map(|row| row.join("|"))
+            .collect();
+        rows.sort();
+        rows
+    };
+
+    session
+        .run("CREATE TABLE up (id BIGINT UNSIGNED PRIMARY KEY, v INT) PARTITION BY HASH (id) PARTITIONS 4")
+        .expect("up");
+    for value in UNSIGNED_HANDLE_VALUES {
+        session
+            .run(&format!("INSERT INTO up VALUES ({value}, 1)"))
+            .expect("up row");
+    }
+    let ordered = |session: &mut Session, sql: &str| -> Vec<String> {
+        tests_support::row_text(session.run(sql))
+            .into_iter()
+            .map(|row| row.join("|"))
+            .collect()
+    };
+
+    let mut mismatches = Vec::new();
+    for predicate in &predicates {
+        let ranged = read(&mut session, &format!("SELECT id FROM uh WHERE {predicate}"));
+        let filtered = read(&mut session, &format!("SELECT id FROM uf WHERE {predicate}"));
+        if ranged != filtered {
+            mismatches.push(format!(
+                "  {predicate}\n    range : {ranged:?}\n    filter: {filtered:?}"
+            ));
+        }
+        let partitioned = read(&mut session, &format!("SELECT id FROM up WHERE {predicate}"));
+        if partitioned != filtered {
+            mismatches.push(format!(
+                "  {predicate}\n    parts : {partitioned:?}\n    filter: {filtered:?}"
+            ));
+        }
+        for direction in ["ASC", "DESC"] {
+            let want = ordered(
+                &mut session,
+                &format!("SELECT id FROM uf WHERE {predicate} ORDER BY id {direction}"),
+            );
+            for table in ["uh", "up"] {
+                let got = ordered(
+                    &mut session,
+                    &format!("SELECT id FROM {table} WHERE {predicate} ORDER BY id {direction}"),
+                );
+                if got != want {
+                    mismatches.push(format!(
+                        "  {predicate} ORDER BY id {direction}\n    {table}: {got:?}\n    filter: {want:?}"
+                    ));
+                }
+            }
+        }
+    }
+    println!("checked {} predicates", predicates.len());
+    assert!(
+        mismatches.is_empty(),
+        "the range path and the filter path disagree:\n{}",
+        mismatches.join("\n")
+    );
+}

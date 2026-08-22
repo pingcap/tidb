@@ -307,10 +307,29 @@ impl KvTable {
             low_exclusive: false,
             high_exclusive: false,
         }];
-        let handle_ranges = if handle_ranges.is_none()
-            && crate::handle_range::common_handle_primary(self).is_some()
-        {
+        // Go `ranger.FullIntRange(isUnsigned)`: a scan with no `WHERE` still
+        // carries the handle domain as ONE range, and the table reader splits
+        // it like any other (`table_reader.go:295`). For an UNSIGNED handle
+        // that split is what puts the read in VALUE order -- the block above
+        // `i64::MAX` encodes negative and would otherwise be walked first --
+        // and it is what lets [`full_table_handle_order`] promise the order at
+        // all.
+        //
+        // A SIGNED handle needs none of this: its whole domain is one key
+        // interval already, and building it here instead of through the range
+        // encoder would only re-derive the same bytes.
+        let full_unsigned_handle = [IndexRange {
+            low: vec![Datum::UInt(0)],
+            high: vec![Datum::UInt(u64::MAX)],
+            low_exclusive: false,
+            high_exclusive: false,
+        }];
+        let handle_ranges = if handle_ranges.is_some() {
+            handle_ranges
+        } else if crate::handle_range::common_handle_primary(self).is_some() {
             Some(full_common_handle.as_slice())
+        } else if self.unsigned_pk_handle() {
+            Some(full_unsigned_handle.as_slice())
         } else {
             handle_ranges
         };
