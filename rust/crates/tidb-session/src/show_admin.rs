@@ -148,6 +148,7 @@ pub(crate) fn show_table_status_row(
     auto_increment: Option<i64>,
     charset: tidb_executor::TableCharset,
     comment: &str,
+    create_options: &str,
 ) -> Vec<Datum> {
     let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
     vec![
@@ -169,8 +170,13 @@ pub(crate) fn show_table_status_row(
         Datum::Null, // Update_time
         Datum::Null, // Check_time
         text(charset.collation.name()),
-        text(""),      // Checksum
-        text(""),      // Create_options
+        text(""), // Checksum
+        // Go's `fetchShowTableStatus` (`executor/show.go:636`) SELECTs
+        // `create_options` straight out of `information_schema.tables`, so
+        // this cell is that column: `partitioned` for a partitioned table and
+        // `cached=on` for a cached one. Hard-coding it empty reported every
+        // partitioned table as if it had no partitioning.
+        text(create_options),
         text(comment), // Comment
     ]
 }

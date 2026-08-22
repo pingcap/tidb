@@ -1325,13 +1325,23 @@ impl Session {
                     })?;
                     for name in names {
                         let entry = catalog.table_in(&database, &name);
-                        let (auto_increment, table_charset, comment) = match entry {
+                        let (auto_increment, table_charset, comment, create_options) = match entry {
                             Some(tidb_executor::TableEntry::Kv(table)) => (
                                 table.next_auto_increment(),
                                 table.charset(),
                                 table.comment(),
+                                // The same rule `information_schema.tables`
+                                // reports, which is where Go's SHOW TABLE
+                                // STATUS reads this from.
+                                if table.partition().is_some() {
+                                    "partitioned"
+                                } else if table.is_cached() {
+                                    "cached=on"
+                                } else {
+                                    ""
+                                },
                             ),
-                            _ => (None, tidb_executor::TableCharset::default(), ""),
+                            _ => (None, tidb_executor::TableCharset::default(), "", ""),
                         };
                         let row = if entry.is_some_and(tidb_executor::TableEntry::is_view) {
                             crate::show_admin::show_table_status_view_row(&name)
@@ -1341,6 +1351,7 @@ impl Session {
                                 auto_increment,
                                 table_charset,
                                 comment,
+                                create_options,
                             )
                         };
                         rows.push(row);

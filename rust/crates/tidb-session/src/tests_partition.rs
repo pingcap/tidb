@@ -3221,3 +3221,36 @@ fn information_schema_partitions_names_the_columns_forms_as_go_does() {
         "Go names it RANGE COLUMNS and prints the column list"
     );
 }
+
+/// `SHOW TABLE STATUS` reports `Create_options`, and Go reads that cell
+/// straight out of `information_schema.tables` -- its
+/// `fetchShowTableStatus` (`executor/show.go:636`) SELECTs `create_options`
+/// from there. So a partitioned table reports `partitioned` in BOTH places,
+/// and a cached one `cached=on`.
+///
+/// Reporting it empty made every partitioned table look unpartitioned to any
+/// client that asks this way rather than through `SHOW CREATE TABLE`.
+#[test]
+fn show_table_status_reports_partitioned_like_information_schema_does() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE sp (a INT) PARTITION BY HASH (a) PARTITIONS 2")
+        .expect("partitioned table");
+    session.run("CREATE TABLE sq (a INT)").expect("plain table");
+
+    let status = tests_support::row_text(session.run("SHOW TABLE STATUS LIKE 'sp'"));
+    let create_options = status[0]
+        .get(16)
+        .unwrap_or_else(|| panic!("Create_options column, got row {:?}", status[0]));
+    assert_eq!(create_options, "partitioned");
+
+    // And the two surfaces agree, which is the property Go gets for free by
+    // reading one from the other.
+    let from_infoschema = tests_support::row_text(session.run(
+        "SELECT create_options FROM information_schema.tables WHERE table_name = 'sp'",
+    ));
+    assert_eq!(from_infoschema, vec![vec!["partitioned".to_owned()]]);
+
+    let status = tests_support::row_text(session.run("SHOW TABLE STATUS LIKE 'sq'"));
+    assert_eq!(status[0].get(16).map(String::as_str), Some(""));
+}
