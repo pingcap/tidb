@@ -726,6 +726,51 @@ pub(crate) fn refuse_local_temporary_table_ddl(
     Ok(())
 }
 
+/// The `ALTER TABLE` options Go refuses on a temporary table of EITHER scope
+/// with 8006, each named as Go names it.
+///
+/// These live in the DDL package rather than the executor
+/// (`ddl/executor.go:646` for placement, `:2172` for `shard_row_id_bits`,
+/// `:6927` for the cache mode), which is why they are reached only AFTER
+/// [`refuse_local_temporary_table_ddl`] has let the statement through -- a
+/// LOCAL temporary table never gets this far, and reports 8200 instead.
+pub(crate) fn refuse_temporary_table_alter_options(
+    catalog: &Catalog,
+    database: &str,
+    name: &str,
+    actions: &[tidb_ast::AlterTableAction],
+) -> Result<(), DriverError> {
+    let temporary = matches!(catalog.table_in(database, name), Some(crate::TableEntry::Kv(table))
+        if table.is_temporary());
+    if !temporary {
+        return Ok(());
+    }
+    for action in actions {
+        match action {
+            tidb_ast::AlterTableAction::Cache(_) => {
+                return Err(DriverError::OptOnTemporaryTable(
+                    "alter temporary table cache",
+                ))
+            }
+            tidb_ast::AlterTableAction::SetTableOptions { options } => {
+                for option in options {
+                    match option {
+                        tidb_ast::TableOption::PlacementPolicy(_) => {
+                            return Err(DriverError::OptOnTemporaryTable("placement"))
+                        }
+                        tidb_ast::TableOption::ShardRowIdBits(_) => {
+                            return Err(DriverError::OptOnTemporaryTable("shard_row_id_bits"))
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// Go `setTemporaryType` (`pkg/ddl/create_table.go:1026`): the ONE place a
 /// written `TEMPORARY` keyword becomes a `TableInfo.TempTableType`.
 ///

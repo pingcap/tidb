@@ -657,6 +657,87 @@ fn a_view_over_a_local_temporary_table_is_1352_and_over_a_global_one_is_not() {
         .expect("a global temporary table's schema is shared");
 }
 
+/// `ddl/db_integration`'s `TestPlacementOnTemporaryTable`, which asserts that
+/// the SAME statement reports two different errors depending on the scope.
+///
+/// A LOCAL temporary table is intercepted in Go's EXECUTOR
+/// (`pkg/executor/ddl.go:425`) before any option is looked at, so it is 8200;
+/// a GLOBAL one reaches the DDL package, where `executor.go:646` names the
+/// option and reports 8006.
+#[test]
+fn alter_placement_is_8200_on_a_local_temporary_table_and_8006_on_a_global_one() {
+    let mut session = temporary_session();
+    session
+        .run("create placement policy x primary_region='r1' regions='r1'")
+        .expect("policy");
+    session
+        .run("create global temporary table tplacement1 (id int) on commit delete rows")
+        .expect("global");
+    session
+        .run("create temporary table tplacement2 (id int)")
+        .expect("local");
+    assert_eq!(
+        refusal(&mut session, "alter table tplacement1 placement policy='x'"),
+        (
+            8006,
+            "`placement` is unsupported on temporary tables.".to_owned()
+        )
+    );
+    assert_eq!(
+        refusal(&mut session, "alter table tplacement2 placement policy='x'"),
+        (
+            8200,
+            "TiDB doesn't support ALTER TABLE for local temporary table".to_owned()
+        )
+    );
+}
+
+/// `ddl/db_integration`'s `TestDropWithGlobalTemporaryTableKeyWord`, which is
+/// the sharpest statement of `DROP GLOBAL TEMPORARY TABLE`'s two outcomes: a
+/// name that EXISTS and is the wrong kind is 8007 even under `IF EXISTS`,
+/// while a name that does not exist at all falls through to the ordinary drop
+/// and is 1051 -- or a warning under `IF EXISTS`.
+#[test]
+fn drop_global_temporary_table_separates_wrong_kind_from_missing() {
+    let mut session = temporary_session();
+    session.run("create table tb(id int)").expect("permanent");
+    session
+        .run("create global temporary table temp(id int) on commit delete rows")
+        .expect("global");
+    session
+        .run("create temporary table ltemp1(id int)")
+        .expect("local");
+
+    for sql in [
+        "drop global temporary table tb",
+        "drop global temporary table ltemp1",
+        "drop global temporary table ltemp1, temp",
+        "drop global temporary table temp, ltemp1",
+        "drop global temporary table xxx, ltemp1",
+        "drop global temporary table if exists tb",
+        "drop global temporary table if exists ltemp1",
+    ] {
+        assert_eq!(
+            refusal(&mut session, sql),
+            (
+                8007,
+                "`drop global temporary table` can only drop global temporary table".to_owned()
+            ),
+            "{sql}"
+        );
+    }
+    assert_eq!(
+        refusal(&mut session, "drop global temporary table xxx"),
+        (1051, "Unknown table 'test.xxx'".to_owned())
+    );
+    session
+        .run("drop global temporary table if exists xxx")
+        .expect("a missing name under IF EXISTS is a warning");
+    session
+        .run("drop global temporary table temp")
+        .expect("the right kind, named alone");
+}
+
 /// Go `checkTTLInfoValid` (`pkg/ddl/ttl.go:97`): the TTL job deletes expired
 /// rows from TiKV, and a temporary table has none there.
 #[test]

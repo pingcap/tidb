@@ -434,7 +434,24 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
 /// 35 -> 30: the TTL block of `SHOW CREATE TABLE`, which this tier accepted
 /// at `CREATE TABLE` and then printed nothing for. The compare count is
 /// unchanged at 299 and the floor rose by the same five.
-const KNOWN_CATALOG_DIVERGENCES: usize = 30;
+///
+/// 30 -> 28: TEMPORARY TABLES, both scopes. `ddl/db_integration`'s
+/// `TestPlacementOnTemporaryTable` prints four definitions back --
+/// `CREATE GLOBAL TEMPORARY TABLE ... ON COMMIT DELETE ROWS` and
+/// `CREATE TEMPORARY TABLE ...`, each once written out and once copied with
+/// `LIKE` -- and this tier used to refuse the CREATE, so the read that
+/// followed had no table to describe. Two of the four were already skipped as
+/// `OutOfDomain`, which is why the count falls by two while the COMPARE count
+/// rises by 13 (294 -> 307) and the floor by 15.
+///
+/// The set was inspected with `CATALOG_SHOW_DIVERGENCES=1` rather than
+/// re-recorded: all 28 that remain are the same generated-column casing,
+/// view-column naming, `AUTO_INCREMENT=`, `SHARD_ROW_ID_BITS` and binary-
+/// charset gaps that were already there, and none of them names a temporary
+/// table. The four reads this closed also pin the two things a temporary
+/// table must NOT inherit -- `db2` is created `PLACEMENT POLICY x` and
+/// `db2.t1` carries `PLACEMENT POLICY 'default'`, and no copy prints either.
+const KNOWN_CATALOG_DIVERGENCES: usize = 28;
 
 /// Exact lower bound for definitions already matching TiDB.
 // 257 -> 259: the partition clause of `SHOW CREATE TABLE` now matches Go's
@@ -444,7 +461,12 @@ const KNOWN_CATALOG_DIVERGENCES: usize = 30;
 // 259 -> 264: `SHOW CREATE TABLE` prints a table's TTL back. The compare
 // COUNT is unchanged at 299, so these are five more reads agreeing with real
 // TiDB rather than five fewer reads being examined.
-const MATCHED_FLOOR: usize = 264;
+//
+// 264 -> 279: temporary tables. Here the compare count DOES move, 294 -> 307,
+// because `ddl/db_integration` and `executor/show` stop refusing the
+// statements that build the tables these reads describe; 13 more reads are
+// examined and 15 more agree, two of which used to be counted as divergences.
+const MATCHED_FLOOR: usize = 279;
 
 /// Stable identity of the known mismatch set, independent of topic order.
 // Moved with the count above: two recorded catalog reads that used to
@@ -466,7 +488,16 @@ const MATCHED_FLOOR: usize = 264;
 // new divergence inside a net improvement of four, exactly as the hex literal
 // did. Go restores it with `RestoreStringSingleQuotes |
 // RestoreNameBackQuotes` and nothing else (`getTTLInfoInOptions`).
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 17_378_261_734_299_899_739;
+//
+// Moved a third time for TEMPORARY TABLES: two of `ddl/db_integration`'s
+// `SHOW CREATE TABLE` reads left the set because the `CREATE TEMPORARY TABLE`
+// above them now succeeds. The set was DUMPED and read, not re-recorded --
+// all 28 that remain are the generated-column casing, view-column naming,
+// `AUTO_INCREMENT=`, `SHARD_ROW_ID_BITS`, decimal-default and binary-charset
+// gaps that were already carried, and none of them names a temporary table.
+// That is the check the fingerprint exists for: two reads leaving while two
+// unrelated ones broke would have held the count at 28 and moved only this.
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 13_463_424_530_366_165_556;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.
