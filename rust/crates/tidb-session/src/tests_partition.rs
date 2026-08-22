@@ -3800,3 +3800,214 @@ fn every_unsigned_handle_predicate_reads_the_same_rows_ranged_as_filtered() {
         mismatches.join("\n")
     );
 }
+
+/// A partitioned UNORDERED index lookup answers PARTITION BY PARTITION, in
+/// pruned-partition order, handles ascending within each partition -- never
+/// as one globally handle-sorted (or index-ordered) stream.
+///
+/// Go's `IndexLookUpExecutor` builds one index request per pruned partition
+/// (`buildTableKeyRanges`), drains each partition's result before the next
+/// (`indexWorker.fetchHandles`), tags every `lookupTableTask` with exactly
+/// one partition (`buildAndDispatchLookupTasks`:
+/// `tableLookUpTask.partitionTable = prunedPartitions[curResultIdx]`), and
+/// sorts each task's handles before its table read
+/// (`buildTableReaderFromHandles`: `slices.SortFunc`). Captured:
+/// `executor/index_lookup_pushdown_partition`'s `select ... from tp3`
+/// records `4 | 1,5 | 2,6 | 3`.
+///
+/// The layout: `HASH(a) PARTITIONS 4` routes `a` 1..6 as p0={4}, p1={1,5},
+/// p2={2,6}, p3={3}, and `_tidb_rowid` follows insertion order 1..6, so
+/// partition-major handle order (4,1,5,2,6,3), global handle order (1..6)
+/// and index order over `b` (6,5,4,3,2,1) are three DIFFERENT sequences --
+/// the assertion cannot pass by accident of any other rule.
+#[test]
+fn a_partitioned_index_lookup_answers_partition_by_partition_in_handle_order() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE tp (a INT, b INT, c INT, KEY b(b)) \
+             PARTITION BY HASH(a) PARTITIONS 4",
+        )
+        .expect("tp");
+    session
+        .run(
+            "INSERT INTO tp VALUES (1, 10, 10), (2, 9, 20), (3, 8, 30), \
+             (4, 7, 40), (5, 6, 50), (6, 5, 60)",
+        )
+        .expect("rows");
+    // The read has to be the DOUBLE READ under test, not a table scan.
+    let plan: Vec<String> = tests_support::row_text(
+        session.run("EXPLAIN SELECT * FROM tp USE INDEX(b) WHERE b <= 10"),
+    )
+    .into_iter()
+    .map(|row| row.join(" "))
+    .collect();
+    assert!(
+        plan.iter().any(|line| line.contains("IndexLookUp")),
+        "USE INDEX(b) under SELECT * must plan a double read: {plan:?}"
+    );
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT a FROM tp USE INDEX(b) WHERE b <= 10")),
+        [4, 1, 5, 2, 6, 3]
+            .iter()
+            .map(|a| vec![a.to_string()])
+            .collect::<Vec<_>>(),
+        "partition-major, handle-ascending within each partition \
+         (p0={{4}}, p1={{1,5}}, p2={{2,6}}, p3={{3}})"
+    );
+}
+
+/// A MULTI-RANGE partitioned lookup is still PARTITION-major, not
+/// range-major.
+///
+/// Go puts EVERY range into each partition's one index request
+/// (`buildTableKeyRanges` hands `buildKeyRanges` all of `e.ranges` for all
+/// `tableIDs`), so `b IN (5, 8, 10)` reads p1's matches, then p2's, then
+/// p3's. Walking range by range across the partitions instead would answer
+/// `6, 3, 1` -- the `[5,5]` matches of every partition first.
+#[test]
+fn a_multi_range_partitioned_lookup_stays_partition_major() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE tp (a INT, b INT, c INT, KEY b(b)) \
+             PARTITION BY HASH(a) PARTITIONS 4",
+        )
+        .expect("tp");
+    session
+        .run(
+            "INSERT INTO tp VALUES (1, 10, 10), (2, 9, 20), (3, 8, 30), \
+             (4, 7, 40), (5, 6, 50), (6, 5, 60)",
+        )
+        .expect("rows");
+    // b=10 -> a=1 (p1), b=8 -> a=3 (p3), b=5 -> a=6 (p2): partition order
+    // p1, p2, p3.
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT a FROM tp USE INDEX(b) WHERE b IN (5, 8, 10)")),
+        [1, 6, 3]
+            .iter()
+            .map(|a| vec![a.to_string()])
+            .collect::<Vec<_>>(),
+        "every range belongs to each partition's one request, so the answer \
+         is p1(b=10), p2(b=5), p3(b=8) -- not the ranges in listed order"
+    );
+}
+
+/// An embedded `LIMIT` truncates a PLAIN partitioned lookup in INDEX order,
+/// and an `INDEX_LOOKUP_PUSHDOWN` one in HANDLE order -- the two flavours
+/// keep a DIFFERENT row of the partition the limit lands in.
+///
+/// The `WHERE` is fully consumed by the index range (`b < 10`, nothing
+/// else), which is what lets the limit embed into the lookup at all -- a
+/// leftover conjunct keeps a root `Limit` above a root `Selection` here,
+/// and a root limit over the partition-major stream truncates like the
+/// pushdown flavour by construction.
+///
+/// Plain: Go's `extractTaskHandles` cuts the index stream cumulatively
+/// BEFORE the handle sort (`leftCnt := Offset + Count - scannedKeys`), so
+/// the partition where the budget runs out contributes its INDEX-order
+/// prefix. p0 and p1 contribute one qualifying row each (p1's `b=10` entry
+/// is outside the range), leaving budget 1 in p2, whose index order over
+/// `b` is `a=6 (b=5), a=2 (b=9)` -- so the plain lookup keeps 6.
+///
+/// Pushdown: the pushed Limit rides INSIDE each per-partition cop request
+/// (`Limit | cop[tikv]` under `LocalIndexLookUp`), unistore's local lookup
+/// sorts the surviving keys by handle (`indexLookUpExec.fetchTableScans`:
+/// `sort.Slice(sortedHandles, ...)`), and the cumulative stop counts those
+/// ARRIVALS (`extractLookUpPushDownRowsOrHandles`: `scannedKeys > Offset +
+/// Count` stops) -- so p2 contributes its HANDLE-order prefix, keeping 2.
+/// The same mechanism is captured in the corpus:
+/// `executor/index_lookup_pushdown_partition` records `4, 5, 2` for its
+/// hinted `where b < 10 and a > 1 limit 3`.
+#[test]
+fn an_embedded_limit_truncates_plain_and_pushdown_partitioned_lookups_differently() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE tp (a INT PRIMARY KEY, b INT, c INT, KEY b(b)) \
+             PARTITION BY HASH(a) PARTITIONS 4",
+        )
+        .expect("tp");
+    session
+        .run(
+            "INSERT INTO tp VALUES (1, 10, 10), (2, 9, 20), (3, 8, 30), \
+             (4, 7, 40), (5, 6, 50), (6, 5, 60)",
+        )
+        .expect("rows");
+    // `SELECT *` keeps the read NON-COVERING (the corpus statements read the
+    // whole row): a bare `SELECT a` is answered by the index alone -- Go's
+    // `PhysicalIndexReader` -- and never builds the handle batch under test.
+    let firsts = |rows: Vec<Vec<String>>| -> Vec<String> {
+        rows.into_iter()
+            .map(|row| row.into_iter().next().expect("a"))
+            .collect()
+    };
+    assert_eq!(
+        firsts(tests_support::row_text(session.run(
+            "SELECT /*+ index_lookup_pushdown(tp, b) */ * FROM tp \
+             WHERE b < 10 LIMIT 3"
+        ))),
+        vec!["4", "5", "2"],
+        "pushdown: p2's handle-order prefix"
+    );
+    assert_eq!(
+        firsts(tests_support::row_text(session.run(
+            "SELECT /*+ use_index(tp, b) */ * FROM tp \
+             WHERE b < 10 LIMIT 3"
+        ))),
+        vec!["4", "5", "6"],
+        "plain: p2's index-order prefix (b=5 -> a=6 comes first)"
+    );
+}
+
+/// The same two flavours over a COMMON-handle RANGE COLUMNS table: the
+/// mirror of `executor/index_lookup_pushdown_partition`'s `tp2`, whose
+/// hinted `limit 5` records `a,b,c,d,e` -- p2's HANDLE-order prefix `e`,
+/// where the plain lookup's index-order truncation keeps `f` (`a=44` is
+/// p2's first index key).
+#[test]
+fn a_common_handle_partitioned_lookup_limit_keeps_the_flavour_prefix() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE tpc (id1 VARCHAR(32), id2 INT, a INT, b INT, \
+             PRIMARY KEY (id1, id2) CLUSTERED, INDEX a(a)) \
+             PARTITION BY RANGE COLUMNS (id1) (\
+             PARTITION p0 VALUES LESS THAN ('c'), \
+             PARTITION p1 VALUES LESS THAN ('e'), \
+             PARTITION p2 VALUES LESS THAN ('g'), \
+             PARTITION p3 VALUES LESS THAN MAXVALUE)",
+        )
+        .expect("tpc");
+    session
+        .run(
+            "INSERT INTO tpc VALUES ('a', 1, 99, 10), ('b', 2, 88, 20), \
+             ('c', 3, 77, 30), ('d', 4, 66, 40), ('e', 5, 55, 50), \
+             ('f', 6, 44, 60), ('g', 7, 33, 70), ('h', 8, 22, 80)",
+        )
+        .expect("rows");
+    let firsts = |rows: Vec<Vec<String>>| -> Vec<String> {
+        rows.into_iter()
+            .map(|row| row.into_iter().next().expect("id1"))
+            .collect()
+    };
+    // `SELECT *` keeps the read NON-COVERING, as in the corpus: `id1` alone
+    // is a common-handle prefix the index itself carries.
+    assert_eq!(
+        firsts(tests_support::row_text(session.run(
+            "SELECT /*+ index_lookup_pushdown(tpc, a) */ * FROM tpc \
+             WHERE a > 33 LIMIT 5"
+        ))),
+        vec!["a", "b", "c", "d", "e"],
+        "the recorded corpus answer: p0 (a,b), p1 (c,d), then p2's \
+         handle-order prefix (e)"
+    );
+    assert_eq!(
+        firsts(tests_support::row_text(session.run(
+            "SELECT /*+ use_index(tpc, a) */ * FROM tpc \
+             WHERE a > 33 LIMIT 5"
+        ))),
+        vec!["a", "b", "c", "d", "f"],
+        "plain: p2's INDEX-order prefix -- a=44 belongs to f"
+    );
+}

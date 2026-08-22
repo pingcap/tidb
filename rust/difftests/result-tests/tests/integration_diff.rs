@@ -2194,6 +2194,32 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // `show warnings` reads. A non-tree-format EXPLAIN over an explainable
     // target now runs as the default-format spelling for its effects, with
     // the output still discarded and the skip still counted.
+    // 37 -> 34: the three ROW-ORDER divergences of
+    // `executor/index_lookup_pushdown_partition` (43 of 44 matched now), the
+    // "per-partition lookupTableTask" debt named twice above. Go's
+    // `IndexLookUpExecutor` builds one index request per pruned partition
+    // (`buildTableKeyRanges`), drains each partition's `SelectResult` before
+    // the next (`indexWorker.fetchHandles`), never lets a task span two
+    // partitions (`buildAndDispatchLookupTasks` tags each with
+    // `prunedPartitions[curResultIdx]`), and sorts each task's handles
+    // before the table read (`buildTableReaderFromHandles`'
+    // `slices.SortFunc`) -- so a partitioned unordered lookup answers
+    // partition by partition, handle-ascending within each.
+    // `IndexRangeSourceExec` now cuts its handle batches at partition
+    // boundaries over a partition-major all-ranges cursor, and a pushed
+    // LIMIT truncates per Go's TWO flavours: the plain lookup cuts the
+    // index-order stream cumulatively BEFORE the sort
+    // (`extractTaskHandles`' `leftCnt`, counted against extracted keys),
+    // while the hinted `LocalIndexLookUp` carries the limit INSIDE each
+    // per-partition cop request and counts handle-sorted ARRIVALS
+    // (`extractLookUpPushDownRowsOrHandles`), which is why the recorded
+    // `tp2 ... limit 5` keeps `e` and not `f`. Every other topic's
+    // matched/diverged/skipped triple is unchanged -- in particular the
+    // `casetest/partition/partition_pruner` row-order entry did NOT close:
+    // its inner side `t2` is UNPARTITIONED there (`test_partition_2`), and
+    // Go's `8,8,8 / 7,7,7` order comes from the hash join emitting a
+    // cartesian probe's matches in build-chain order (reverse insertion),
+    // a join-executor contract outside this seam.
     const KNOWN_DIVERGENCES: usize = 36;
     //
     //

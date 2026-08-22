@@ -89,6 +89,16 @@ pub(crate) struct AvailablePaths {
     /// Whether `IGNORE INDEX(PRIMARY)` removed the clustered common-handle
     /// primary index from fast-plan consideration.
     ignored_common_primary: bool,
+    /// The index ids an `INDEX_LOOKUP_PUSHDOWN` hint named and
+    /// [`check_index_look_up_push_down_supported`] admitted -- Go's
+    /// `path.IndexLookUpPushDownBy = IndexLookUpPushDownByHint`
+    /// (`getPossibleAccessPaths` sets it when
+    /// `hint.ShouldPushDownIndexLookUp()` holds and the support check
+    /// passes). A lookup over such an index executes as `LocalIndexLookUp`,
+    /// whose pushed-`LIMIT` truncation differs observably from the plain
+    /// lookup's; see
+    /// [`crate::access_path::IndexRangeSourceExec::mark_lookup_pushdown`].
+    pushdown_lookup_indexes: Vec<i64>,
 }
 
 impl AvailablePaths {
@@ -100,6 +110,7 @@ impl AvailablePaths {
             ignored: Vec::new(),
             forced_common_primary: false,
             ignored_common_primary: false,
+            pushdown_lookup_indexes: Vec::new(),
         }
     }
 
@@ -111,7 +122,17 @@ impl AvailablePaths {
             ignored: Vec::new(),
             forced_common_primary: false,
             ignored_common_primary: false,
+            pushdown_lookup_indexes: Vec::new(),
         }
+    }
+
+    /// Whether an `INDEX_LOOKUP_PUSHDOWN` hint elects this index's lookup
+    /// for Go's `LocalIndexLookUp` execution. Only the default
+    /// `hint-only` value of `@@tidb_index_lookup_pushdown_policy` is
+    /// modelled: the policy-driven `force`/`affinity-force` elections
+    /// appear in this corpus only under `EXPLAIN`, never executed.
+    pub(crate) fn lookup_pushdown_hinted(&self, index_id: i64) -> bool {
+        self.pushdown_lookup_indexes.contains(&index_id)
     }
 
     /// Whether an index may still become a candidate path.
@@ -206,6 +227,8 @@ struct HintAccumulator {
     ignored: Vec<i64>,
     /// Whether `IGNORE INDEX(PRIMARY)` named a clustered common handle.
     ignored_common_primary: bool,
+    /// See [`AvailablePaths::pushdown_lookup_indexes`].
+    pushdown_lookup_indexes: Vec<i64>,
 }
 
 impl HintAccumulator {
@@ -339,6 +362,14 @@ impl HintAccumulator {
                     self.has_use_or_force = true;
                     continue;
                 }
+                if kind.push_down_look_up {
+                    // The admitted pushdown election survives to execution:
+                    // Go tags the path `IndexLookUpPushDownBy = ...ByHint`
+                    // and the lookup it plans becomes `LocalIndexLookUp`.
+                    if let HintedPath::Index(id) = path {
+                        self.pushdown_lookup_indexes.push(id);
+                    }
+                }
                 self.take_resolved(kind.hint, path);
             }
         }
@@ -355,6 +386,7 @@ impl HintAccumulator {
             forced_common_primary,
             ignored,
             ignored_common_primary,
+            pushdown_lookup_indexes,
         } = self;
         let (mut forced_indexes, mut table) = if has_scan_hint && has_use_or_force {
             (Some(forced_indexes), forced_table)
@@ -377,6 +409,7 @@ impl HintAccumulator {
             ignored,
             forced_common_primary,
             ignored_common_primary,
+            pushdown_lookup_indexes,
         }
     }
 }

@@ -1328,6 +1328,42 @@ impl KvTable {
         )
     }
 
+    /// The UNORDERED cursor an index LOOKUP walks: every range, partition by
+    /// partition, no cross-partition merge.
+    ///
+    /// Go's `IndexLookUpExecutor.buildTableKeyRanges` builds ONE index
+    /// request per pruned partition holding EVERY range for that partition
+    /// (`buildKeyRanges` is called once with all ranges and all `tableIDs`),
+    /// and `indexWorker.fetchHandles` drains request `i` to exhaustion
+    /// before touching `i + 1` -- so the handle stream of an unordered
+    /// partitioned lookup is PARTITION-major. Opening one cursor per range
+    /// instead (each concatenating every partition) would make the stream
+    /// RANGE-major, and a multi-range lookup such as `b IN (...)` over a
+    /// partitioned table would interleave partitions where Go finishes each
+    /// partition's tasks first.
+    ///
+    /// Always ascending: an unordered lookup has no `Desc` -- Go sets
+    /// `PhysicalIndexScan.Desc` only for a keep-order plan, and a keep-order
+    /// lookup answers through the cross-partition merge
+    /// ([`Self::index_range_cursor_with_direction`] with `ordered`), never
+    /// through this cursor.
+    pub fn index_lookup_ranges_cursor(
+        &mut self,
+        index_id: i64,
+        ranges: &[IndexRange],
+        zone: &SessionTimeZone,
+    ) -> Result<IndexRangeCursor, KvTableError> {
+        let physical_ids = self.record_physical_ids();
+        self.index_ranges_cursor_for_physical_ids(
+            index_id,
+            ranges,
+            zone,
+            &physical_ids,
+            false,
+            false,
+        )
+    }
+
     fn index_ranges_cursor_for_physical_ids(
         &mut self,
         index_id: i64,
@@ -1352,8 +1388,16 @@ impl KvTable {
                 .map_err(|e| KvTableError::Encode(format!("{e:?}")))
         };
         let mut iterators = Vec::new();
-        for physical_id in physical_ids.iter().copied() {
+        // Which pruned-partition ordinal each iterator reads, parallel to
+        // `iterators`. The unordered lookup cuts its handle batches on this:
+        // Go's `lookupTableTask` is built per partition SelectResult
+        // (`buildAndDispatchLookupTasks` tags it
+        // `prunedPartitions[curResultIdx]`), so the consumer must see WHERE
+        // one partition ends and the next begins.
+        let mut partition_of_iterator = Vec::new();
+        for (ordinal, physical_id) in physical_ids.iter().copied().enumerate() {
             for range in ranges {
+                partition_of_iterator.push(ordinal);
                 let mut low = Key::from_bytes(encode_index_seek_key(
                     physical_id,
                     index_id,
@@ -1381,6 +1425,7 @@ impl KvTable {
         }
         if descending {
             iterators.reverse();
+            partition_of_iterator.reverse();
         }
         // Go `needMergeSort` (`executor/distsql.go`):
         //
@@ -1410,6 +1455,7 @@ impl KvTable {
         }
         Ok(IndexRangeCursor {
             iterators,
+            partition_of_iterator,
             next_iterator: 0,
             merge_by_index_key,
             merge_heap,
@@ -1958,6 +2004,9 @@ impl Drop for RemoteIndexHandleCursor {
 /// See [`KvTable::index_range_cursor`].
 pub struct IndexRangeCursor {
     iterators: Vec<Box<dyn StorageIterator>>,
+    /// The pruned-partition ordinal each iterator reads, parallel to
+    /// `iterators`. Always `0` for an unpartitioned table.
+    partition_of_iterator: Vec<usize>,
     next_iterator: usize,
     merge_by_index_key: bool,
     merge_heap: IndexMergeHeap,
@@ -1968,6 +2017,26 @@ pub struct IndexRangeCursor {
 impl IndexRangeCursor {
     /// The next row handle in index order, or `None` at the end of the range.
     pub fn next_handle(&mut self) -> Result<Option<TableHandle>, KvTableError> {
+        Ok(self
+            .next_handle_in_partition()?
+            .map(|(handle, _partition)| handle))
+    }
+
+    /// The next row handle together with the pruned-partition ordinal it was
+    /// read from.
+    ///
+    /// The ordinal is what lets an unordered index LOOKUP cut its handle
+    /// batches at partition boundaries: Go's `indexWorker` builds one
+    /// `lookupTableTask` per per-partition `SelectResult`
+    /// (`buildAndDispatchLookupTasks` tags it
+    /// `prunedPartitions[curResultIdx]`), so no task -- and therefore no
+    /// handle sort and no table read -- ever spans two partitions. A caller
+    /// that ignored the ordinal would sort one storage batch GLOBALLY and
+    /// answer the partitions interleaved by handle, where Go answers them
+    /// one after another.
+    pub fn next_handle_in_partition(
+        &mut self,
+    ) -> Result<Option<(TableHandle, usize)>, KvTableError> {
         if self.merge_by_index_key {
             let Some(position) = self.merge_heap.pop() else {
                 return Ok(None);
@@ -1988,7 +2057,8 @@ impl IndexRangeCursor {
                     position,
                 );
             }
-            return Ok(Some(handle));
+            let partition = self.partition_of_iterator.get(position).copied().unwrap_or(0);
+            return Ok(Some((handle, partition)));
         }
         while self.next_iterator < self.iterators.len() {
             let iterator = &mut self.iterators[self.next_iterator];
@@ -2006,7 +2076,12 @@ impl IndexRangeCursor {
             iterator
                 .next()
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-            return Ok(Some(handle));
+            let partition = self
+                .partition_of_iterator
+                .get(self.next_iterator)
+                .copied()
+                .unwrap_or(0);
+            return Ok(Some((handle, partition)));
         }
         Ok(None)
     }
