@@ -109,6 +109,7 @@ pub mod plan_hints;
 mod plan_trace;
 pub mod point_get;
 pub mod predicate_pushdown;
+mod pushdown_blacklist;
 pub mod projection;
 pub mod qb_hint;
 pub mod remote_scan;
@@ -206,6 +207,7 @@ pub use tidb_decode_key::TidbDecodeKeySnapshot;
 /// without depending on `tidb-distsql` directly.
 pub use tidb_distsql::WarningLevel as WarnLevel;
 pub use tidb_expr::builtin_registry::builtin_list;
+pub use tidb_expr::infer_pushdown::{blacklist_name, blacklist_store_mask, ExprPushDownBlacklist};
 pub use tidb_expr::CurrentTso;
 pub use tidb_expr::{
     eval_in, like_match_with_collation, truthy_of, BlockEncryptionMode, Columns, EvalError,

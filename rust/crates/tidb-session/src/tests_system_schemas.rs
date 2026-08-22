@@ -218,19 +218,28 @@ fn the_system_schema_is_listed_among_the_databases() {
 /// DIVERGENCE, pinned: enumerating `mysql` under-reports.
 ///
 /// Captured from Go, `use mysql; show tables;` returns 61 names --
-/// `advisory_locks` through `user`. This tier returns the ONE it stores:
-/// `bind_info`, bootstrapped by `crate::bootstrap`. Under-reporting an
-/// enumeration is the price of refusing every absent name in it (see
+/// `advisory_locks` through `user`. This tier returns the THREE it stores,
+/// bootstrapped by `crate::bootstrap`. Under-reporting an enumeration is the
+/// price of refusing every absent name in it (see
 /// [`the_bootstrap_tables_are_refused_by_name_with_1146`]); the alternative,
 /// fabricating empty tables so the count looks right, would turn a loud 1146
 /// into a silent zero-row answer.
 ///
 /// FLIPS TO SUPPORT as the bootstrap tables land: this count rises toward 61.
+/// It has risen twice so far -- `bind_info` for GLOBAL bindings, then the two
+/// blacklist tables `ADMIN RELOAD` reads (`crate::blacklist`) -- and each
+/// arrival is a feature that needed the table, not a name added to make the
+/// count look better.
 #[test]
 fn enumerating_the_system_schema_under_reports() {
     let mut session = Session::new();
     session.run("USE mysql").unwrap();
-    assert_eq!(row_text(session.run("SHOW TABLES")), [["bind_info"]]);
+    let stored = [
+        ["bind_info"],
+        ["expr_pushdown_blacklist"],
+        ["opt_rule_blacklist"],
+    ];
+    assert_eq!(row_text(session.run("SHOW TABLES")), stored);
 
     assert_eq!(
         row_text(
@@ -238,7 +247,7 @@ fn enumerating_the_system_schema_under_reports() {
                 "SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = 'mysql'"
             )
         ),
-        [["bind_info"]]
+        stored
     );
 }
 

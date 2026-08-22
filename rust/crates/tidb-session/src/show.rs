@@ -1266,6 +1266,18 @@ impl Session {
             tidb_ast::AdminStmt::AnalyzeTable(_) | tidb_ast::AdminStmt::AnalyzeIncremental(_) => {
                 self.analyze_stmt(admin)
             }
+            // `ADMIN RELOAD <blacklist>`: Go's `ReloadExprPushdownBlacklist`
+            // and `ReloadOptRuleBlacklist` executors, each of which reads its
+            // `mysql.*` table and publishes what the optimizer consults. Both
+            // answer no rows, as every ADMIN maintenance statement does.
+            tidb_ast::AdminStmt::Reload(tidb_ast::AdminReloadKind::ExprPushdownBlacklist) => {
+                self.reload_expr_pushdown_blacklist()?;
+                Ok(Some(StmtOutput::Done(true)))
+            }
+            tidb_ast::AdminStmt::Reload(tidb_ast::AdminReloadKind::OptRuleBlacklist) => {
+                self.reload_opt_rule_blacklist()?;
+                Ok(Some(StmtOutput::Done(true)))
+            }
             tidb_ast::AdminStmt::Grant(grant) => Ok(Some(self.grant_stmt(grant)?)),
             tidb_ast::AdminStmt::Revoke(revoke) => Ok(Some(self.revoke_stmt(revoke)?)),
             tidb_ast::AdminStmt::ShowGrants(show) => Ok(Some(self.show_grants_stmt(show)?)),

@@ -14,8 +14,10 @@
 
 //! The session-layer bootstrap: Go `pkg/session/bootstrap.go`'s
 //! `doDDLWorks`/`doDMLWorks`, reduced to the system tables this tier actually
-//! serves. Today that is exactly one: `mysql.bind_info`, whose absence was
-//! the measured gap the GLOBAL-binding refusal pointed at.
+//! serves. Today that is three: `mysql.bind_info`, whose absence was the
+//! measured gap the GLOBAL-binding refusal pointed at, and the two blacklist
+//! tables `ADMIN RELOAD` reads (`crate::blacklist`) -- a statement that can
+//! only report what a table holds needs the table to exist first.
 //!
 //! Faithful to Go in shape: the table is created by running its OWN
 //! `CREATE TABLE` text (`tidb_metadef::system_tables_def`, the transcreated
@@ -41,6 +43,23 @@ use tidb_executor::DriverError;
 pub(crate) const BUILTIN_PSEUDO_SQL_FOR_BIND_LOCK: &str = "builtin_pseudo_sql_for_bind_lock";
 
 impl Session {
+    /// Creates the system tables a fresh catalog is born with, for a caller
+    /// that BUILT the catalog and therefore knows it is a fresh store.
+    ///
+    /// [`Session::default`] calls this for the catalog it creates itself. A
+    /// front end that hands in its own catalog
+    /// ([`Session::with_catalog`](crate::Session::with_catalog)) is the one
+    /// that knows which case it is in -- Go decides the same question from
+    /// `getStoreBootstrapVersion`, not from anything a session can see -- so
+    /// a harness that opens a fresh store calls this once, and the cluster
+    /// loader, whose peer already ran Go's own bootstrap, does not.
+    ///
+    /// Idempotent: the presence test short-circuits and the `CREATE` text
+    /// carries `IF NOT EXISTS`.
+    pub fn bootstrap_fresh_store(&mut self) {
+        self.bootstrap_system_tables();
+    }
+
     /// Creates the system tables a fresh catalog is born with.
     ///
     /// Idempotent by construction: the presence test short-circuits, and the
@@ -56,7 +75,7 @@ impl Session {
             return;
         }
         self.run_bootstrap_statements()
-            .expect("bootstrap: mysql.bind_info must be creatable by this tier's own DDL");
+            .expect("bootstrap: the mysql system tables must be creatable by this tier's own DDL");
     }
 
     fn run_bootstrap_statements(&mut self) -> Result<(), DriverError> {
@@ -67,16 +86,21 @@ impl Session {
             clustered_index_mode: self.clustered_index_mode(),
         };
         let ddl_ctx = self.statement_context(false);
-        self.with_catalog_mut(|catalog| {
-            tidb_executor::run_create_table_in(
-                tidb_metadef::system_tables_def::CREATE_BIND_INFO_TABLE,
-                catalog,
-                "mysql",
-                settings,
-                &ddl_ctx,
-            )
-            .map(|_| ())
-        })?;
+        for create in [
+            tidb_metadef::system_tables_def::CREATE_BIND_INFO_TABLE,
+            // Go bootstraps these two empty (`doDDLWorks`); only an upgrade
+            // from a pre-v4 cluster seeds `expr_pushdown_blacklist` rows
+            // (`writeDefaultExprPushDownBlacklist`), and a fresh cluster --
+            // which is what every session here is -- starts with neither
+            // table holding anything.
+            tidb_metadef::system_tables_def::CREATE_EXPR_PUSHDOWN_BLACKLIST_TABLE,
+            tidb_metadef::system_tables_def::CREATE_OPT_RULE_BLACKLIST_TABLE,
+        ] {
+            self.with_catalog_mut(|catalog| {
+                tidb_executor::run_create_table_in(create, catalog, "mysql", settings, &ddl_ctx)
+                    .map(|_| ())
+            })?;
+        }
 
         // Go `insertBuiltinBindInfoRow`, minus the `HIGH_PRIORITY` word (a
         // scheduler hint this tier has no scheduler for). The zero timestamps

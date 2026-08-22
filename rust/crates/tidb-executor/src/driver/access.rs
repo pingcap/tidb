@@ -522,6 +522,63 @@ fn fast_batch_partition_supported(table: &KvTable) -> bool {
 /// narrowed path (see [`crate::access_path`]), not a `Vec` of rows it already
 /// read, so an index range over a huge table costs one chunk of memory and a
 /// pushed `LIMIT` never reads past its cap.
+
+/// Go `rule_predicate_push_down.go`'s `(*PPDSolver).Name()`, the string an
+/// operator writes into `mysql.opt_rule_blacklist` to switch the rule off.
+const PREDICATE_PUSH_DOWN_RULE: &str = "predicate_push_down";
+
+/// Go `DataSource.PredicatePushDown`: `ds.PushedDownConds, predicates =
+/// expression.PushDownExprs(...)`, and every access path is derived from
+/// `PushedDownConds` alone.
+///
+/// Returns a `SELECT` whose `WHERE` is that subset, or `None` when it is the
+/// whole `WHERE` -- which is every session that never ran an `ADMIN RELOAD`,
+/// so the ordinary path neither clones nor re-resolves anything.
+///
+/// The full `WHERE` stays with the caller as Go's `AllConds`, and is what the
+/// residual `Selection` above the scan applies. That split is the point: a
+/// condition the blacklist refuses still filters correctly, it just stops
+/// bounding any scan, so the index whose leading column it constrained is no
+/// longer a candidate.
+fn pushed_down_conds(
+    select: &tidb_ast::SelectStmt,
+    scope: &FromScope,
+    ctx: &crate::StmtContext,
+) -> Option<tidb_ast::SelectStmt> {
+    let where_clause = select.where_clause.as_ref()?;
+    // Go `isLogicalRuleDisabled`: the rule does not run at all, so the
+    // `DataSource` is handed no predicate and every path is a full scan.
+    if ctx.logical_rule_disabled(PREDICATE_PUSH_DOWN_RULE) {
+        let mut filtered = select.clone();
+        filtered.where_clause = None;
+        return Some(filtered);
+    }
+    if ctx.expr_pushdown_blacklist().is_empty() {
+        return None;
+    }
+    let mut conjuncts = Vec::new();
+    collect_conjuncts(where_clause, &mut conjuncts);
+    let total = conjuncts.len();
+    let resolver = scope_resolver(scope);
+    let kept: Vec<&tidb_ast::Expr> = conjuncts
+        .into_iter()
+        .filter(|conjunct| {
+            crate::pushdown_blacklist::blacklist_admits(
+                conjunct,
+                &resolver,
+                ctx,
+                tidb_expr::infer_pushdown::PushDownStore::Unspecified,
+            )
+        })
+        .collect();
+    if kept.len() == total {
+        return None;
+    }
+    let mut filtered = select.clone();
+    filtered.where_clause = join_predicates(&kept);
+    Some(filtered)
+}
+
 pub(crate) fn commit_fast_path_source(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
@@ -555,6 +612,17 @@ pub(crate) fn commit_fast_path_source(
     };
     let Some(table) = sole_kv_table(&select.from, catalog, current_db) else {
         return Ok(AccessPathCommit::default());
+    };
+    // Go's `PushedDownConds`, which is what the ranger sees. `select` stays
+    // the full `AllConds` for every residual and consumed-WHERE decision
+    // below.
+    let narrowed;
+    let (path_select, conds_narrowed) = match pushed_down_conds(select, scope, ctx) {
+        Some(filtered) => {
+            narrowed = filtered;
+            (&narrowed, true)
+        }
+        None => (select, false),
     };
     let table_name = table_ref
         .name
@@ -833,7 +901,7 @@ pub(crate) fn commit_fast_path_source(
                     ordering_index_selectivity_ratio: ctx.ordering_index_selectivity_ratio(),
                     default_string_match_selectivity: ctx.default_string_match_selectivity(),
                 };
-                if let Some(plan) = choose_automatic_index_merge_union(select, &automatic) {
+                if let Some(plan) = choose_automatic_index_merge_union(path_select, &automatic) {
                     commit_index_merge_source(
                         &table,
                         scope,
@@ -851,7 +919,7 @@ pub(crate) fn commit_fast_path_source(
             }
         }
         match choose_index_range_path(
-            select,
+            path_select,
             catalog,
             scope,
             &table,
@@ -885,8 +953,17 @@ pub(crate) fn commit_fast_path_source(
                     // Go returns a PhysicalTableDual as soon as the chosen
                     // path has no ranges. No residual predicate survives
                     // above a source that is already known to return no row.
-                    consumed_where =
-                        ranges.is_empty() || handle_path_consumes_where(select, &table, zone);
+                    // Never once the conditions were narrowed: the ones
+                    // `PushDownExprs` refused are not in `path_select` at
+                    // all, so nothing the ranger did can have accounted for
+                    // them and they MUST survive as the `Selection` above.
+                    // Go's `len(path.Ranges) == 0` short-circuit reads an
+                    // empty range set as "the predicate is contradictory";
+                    // here the emptiness can instead mean "there was no
+                    // predicate left to range", and dropping the filter on
+                    // that reading answered every row.
+                    consumed_where = !conds_narrowed
+                        && (ranges.is_empty() || handle_path_consumes_where(select, &table, zone));
                     handle_range_residual = select.where_clause.as_ref().and_then(|predicate| {
                         let built =
                             crate::handle_range::build_handle_ranges(&table, predicate, zone)?;
@@ -953,8 +1030,11 @@ pub(crate) fn commit_fast_path_source(
                 // Go's empty-range task is the whole DataSource result, so it
                 // consumes the WHERE even when the ordinary index-detach
                 // check would leave that predicate as a residual.
-                consumed_where =
-                    ranges.is_empty() || index_path_consumes_where(select, &table, index_id, zone);
+                // See the handle-range arm: an empty range set after
+                // narrowing is not a contradiction.
+                consumed_where = !conds_narrowed
+                    && (ranges.is_empty()
+                        || index_path_consumes_where(select, &table, index_id, zone));
                 reader_ready = covering && consumed_where;
                 commit_index_range_source(
                     &table,
@@ -2876,6 +2956,18 @@ pub(crate) fn split_scan_predicates(
     let mut filters = Vec::new();
     let mut residual: Vec<&tidb_ast::Expr> = Vec::new();
     for conjunct in conjuncts {
+        // Go `find_best_task.go`'s two `expression.PushDownExprs(pctx,
+        // ..., kv.TiKV)` calls, which split the index and table filters into
+        // what the coprocessor may run and what stays above it.
+        if !crate::pushdown_blacklist::blacklist_admits(
+            conjunct,
+            resolver,
+            ctx,
+            tidb_expr::infer_pushdown::PushDownStore::TiKv,
+        ) {
+            residual.push(conjunct);
+            continue;
+        }
         match scan_predicate(conjunct, resolver).and_then(|mut predicate| {
             let mut filter = rewrite_expr_resolved(conjunct, resolver).ok()?;
             // Go `refineArgs`: `int column <cmp> non-int constant` folds the

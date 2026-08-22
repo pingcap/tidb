@@ -93,6 +93,76 @@ pub const fn store_type_mask(store: PushDownStore) -> u32 {
     }
 }
 
+/// Go `LoadExprPushdownBlacklist`'s published map: function name to the OR of
+/// the store bits it is blacklisted for. Go holds it in the process-wide
+/// atomic `DefaultExprPushDownBlacklist`; this tier passes a handle to it.
+pub type ExprPushDownBlacklist = std::collections::HashMap<String, u32>;
+
+/// Go `funcName2Alias`, minus its 241 identity entries.
+///
+/// The map exists so an operator may blacklist a function by the spelling
+/// they know -- `<` rather than `lt` -- and most of its entries map a name to
+/// itself, which the lookup's `if alias, ok := ...; ok` makes
+/// indistinguishable from being absent. Only these 27 rewrites change
+/// anything.
+const FUNC_NAME_TO_ALIAS: &[(&str, &str)] = &[
+    ("<<", "leftshift"),
+    (">>", "rightshift"),
+    (">=", "ge"),
+    ("<=", "le"),
+    ("=", "eq"),
+    ("!=", "ne"),
+    ("<>", "ne"),
+    ("<", "lt"),
+    (">", "gt"),
+    ("+", "plus"),
+    ("-", "minus"),
+    ("&&", "bitand"),
+    ("||", "bitor"),
+    ("%", "mod"),
+    ("xor_bit", "bitxor"),
+    ("/", "div"),
+    ("*", "mul"),
+    ("!", "not"),
+    ("~", "bitneg"),
+    ("div", "intdiv"),
+    ("xor_logic", "xor"),
+    ("<=>", "nulleq"),
+    ("+_unary", "unaryplus"),
+    ("-_unary", "unaryminus"),
+    ("is null", "isnull"),
+    ("is true", "istrue"),
+    ("is false", "isfalse"),
+];
+
+/// Go `LoadExprPushdownBlacklist`'s per-row name: lowercased, then rewritten
+/// through `funcName2Alias` when it has an entry.
+#[must_use]
+pub fn blacklist_name(name: &str) -> String {
+    let lowered = name.to_lowercase();
+    FUNC_NAME_TO_ALIAS
+        .iter()
+        .find(|(from, _)| *from == lowered)
+        .map_or(lowered, |(_, to)| (*to).to_owned())
+}
+
+/// Go `LoadExprPushdownBlacklist`'s per-row `store_type` word list, as the OR
+/// of its bits. An unrecognized word contributes nothing, which is what Go's
+/// `if`/`else if` chain does with it.
+#[must_use]
+pub fn blacklist_store_mask(store_types: &str) -> u32 {
+    let mut mask = 0;
+    for word in store_types.to_lowercase().split(',') {
+        mask |= match word.trim() {
+            "tikv" => 1 << PushDownStore::TiKv as u8,
+            "tiflash" => 1 << PushDownStore::TiFlash as u8,
+            "tidb" => 1 << PushDownStore::TiDb as u8,
+            _ => 0,
+        };
+    }
+    mask
+}
+
 /// Go `IsPushDownEnabled`, parameterized by the atomically published map.
 #[must_use]
 pub fn is_push_down_enabled(

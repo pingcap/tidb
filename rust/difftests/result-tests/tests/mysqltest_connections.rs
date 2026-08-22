@@ -112,6 +112,13 @@ impl Connections {
         };
         let database = topic_database(topic);
         let mut session = pool.new_session("root", ANY_HOST, None)?;
+        // The catalog above was created here, so this IS a fresh store and
+        // the `mysql.*` system tables have to be created the way Go's
+        // `bootstrap()` creates them for one. A recording's own statements
+        // read and write them -- `black_list` inserts into
+        // `mysql.expr_pushdown_blacklist` and reloads it -- so a replay over
+        // an unbootstrapped catalog answers 1146 where TiDB answers rows.
+        session.bootstrap_fresh_store();
         session
             .run(&format!("create database if not exists `{database}`"))
             .map_err(|e| format!("create topic database `{database}`: {e:?}"))?;

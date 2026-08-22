@@ -698,6 +698,10 @@ impl Session {
                 .with_join_reorder_through_sel(join_reorder_through_sel)
                 .with_outer_join_reorder(outer_join_reorder)
                 .with_index_merge(index_merge)
+                .with_pushdown_blacklists(
+                    Rc::clone(&self.expr_pushdown_blacklist),
+                    Rc::clone(&self.disabled_logical_rules),
+                )
                 .with_static_partition_prune(static_partition_prune)
                 .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
                 .with_new_only_full_group_by_check(new_only_full_group_by_check)

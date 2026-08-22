@@ -1827,7 +1827,38 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // The 3 that remain in `black_list` all need `mysql.expr_pushdown_blacklist`
     // and `ADMIN RELOAD`, which this tier does not have at all: with `enum`
     // blacklisted TiDB drops the enum index path and full-scans.
-    const KNOWN_DIVERGENCES: usize = 72;
+    //
+    // 72 -> 91, and `compared` 9480 -> 9557. The count ROSE because 77 more
+    // statements are now reachable, not because anything regressed: the
+    // divergence set gained 24 and lost 5, and every one of the 24 is a
+    // statement that used to be an `OutOfDomain` skip.
+    //
+    // `mysql.expr_pushdown_blacklist` and `mysql.opt_rule_blacklist` now
+    // exist, `ADMIN RELOAD` publishes each, and the optimizer reads them.
+    // The mechanism is not "the filter runs somewhere else": Go filters a
+    // `DataSource`'s predicates through `PushDownExprs` BEFORE any access
+    // path is derived, and the ranger sees only `PushedDownConds` -- so a
+    // refused condition stops bounding any scan and the index it constrained
+    // stops being a candidate. Blacklisting `enum` makes `columnToPBExpr`
+    // refuse the column, which is how TiDB's recording turns an
+    // `IndexRangeScan` over `idx(b,a)` into a root `Selection` over a
+    // `TableFullScan`. `black_list` went from 25 matched / 3 diverged / 26
+    // skipped to 54 matched, 0 diverged, 0 skipped.
+    //
+    // The tables exist because the REPLAY's catalog is now bootstrapped: it
+    // is created by `Connections::open`, so it is a fresh store and gets the
+    // `mysql.*` tables Go's `bootstrap()` creates for one. That is what made
+    // the other 4 fixes and all 24 new divergences reachable at once --
+    // `mysql.bind_info` too, so `@@last_plan_from_binding` reports a real
+    // GLOBAL binding in `planner/core/physical_plan`.
+    //
+    // All 24 are `bindinfo/temptable`, and all are the same missing feature:
+    // Go refuses `CREATE BINDING` whose origin names a TEMPORARY table with
+    // 8006 (`preprocess.go`'s `TempTableType != TempTableNone` check). This
+    // tier refuses `CREATE TEMPORARY TABLE` itself, so `tmp1` never exists,
+    // and Go's own rule skips a table that does not exist. They close when
+    // temporary tables land, not before.
+    const KNOWN_DIVERGENCES: usize = 91;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

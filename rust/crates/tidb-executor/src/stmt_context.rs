@@ -426,6 +426,15 @@ pub struct StmtContext {
     /// Go `SessionVars.EnableIndexMerge`: whether automatic IndexMerge paths
     /// participate in this statement's costed access-path selection.
     index_merge: bool,
+    /// Go `expression.DefaultExprPushDownBlacklist`, the map
+    /// `IsPushDownEnabled` reads. Empty until an `ADMIN RELOAD
+    /// EXPR_PUSHDOWN_BLACKLIST` publishes one, and every decision that
+    /// consults it short-circuits on empty, so the ordinary path pays
+    /// nothing.
+    expr_pushdown_blacklist: Rc<tidb_expr::infer_pushdown::ExprPushDownBlacklist>,
+    /// Go `plannercore.DefaultDisabledLogicalRulesList`, published by `ADMIN
+    /// RELOAD OPT_RULE_BLACKLIST` and read by `isLogicalRuleDisabled`.
+    disabled_logical_rules: Rc<std::collections::HashSet<String>>,
     /// Go `SessionVars.PartitionPruneMode == Static`: see
     /// [`StmtContext::static_partition_prune`].
     static_partition_prune: bool,
@@ -651,6 +660,8 @@ impl StmtContext {
             outer_join_reorder: true,
             // Go `vardef.DefTiDBEnableIndexMerge = true`.
             index_merge: true,
+            expr_pushdown_blacklist: Rc::default(),
+            disabled_logical_rules: Rc::default(),
             // Go's shipped `tidb_partition_prune_mode` is `dynamic`.
             static_partition_prune: false,
             sequences: Rc::default(),
@@ -1173,6 +1184,32 @@ impl StmtContext {
     pub fn with_index_merge(mut self, enabled: bool) -> Self {
         self.index_merge = enabled;
         self
+    }
+
+    /// Installs the two published blacklists. See
+    /// [`crate::pushdown_blacklist`].
+    #[must_use]
+    pub fn with_pushdown_blacklists(
+        mut self,
+        expressions: Rc<tidb_expr::infer_pushdown::ExprPushDownBlacklist>,
+        rules: Rc<std::collections::HashSet<String>>,
+    ) -> Self {
+        self.expr_pushdown_blacklist = expressions;
+        self.disabled_logical_rules = rules;
+        self
+    }
+
+    /// The published `mysql.expr_pushdown_blacklist`.
+    #[must_use]
+    pub fn expr_pushdown_blacklist(&self) -> &tidb_expr::infer_pushdown::ExprPushDownBlacklist {
+        &self.expr_pushdown_blacklist
+    }
+
+    /// Go `isLogicalRuleDisabled`: whether `mysql.opt_rule_blacklist` names
+    /// this logical rule.
+    #[must_use]
+    pub fn logical_rule_disabled(&self, name: &str) -> bool {
+        self.disabled_logical_rules.contains(name)
     }
 
     /// Go `SessionVars.GetEnableIndexMerge`. This controls automatic paths;

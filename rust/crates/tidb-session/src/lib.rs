@@ -526,6 +526,19 @@ pub struct Session {
     /// `mysql.bind_info`, which this tier has no catalog entry for. See
     /// [`binding`].
     session_bindings: binding::SessionBindings,
+    /// Go `expression.DefaultExprPushDownBlacklist`, the map
+    /// `IsPushDownEnabled` reads. Published by `ADMIN RELOAD
+    /// EXPR_PUSHDOWN_BLACKLIST` and empty until then, so an `INSERT` into
+    /// `mysql.expr_pushdown_blacklist` alone changes no plan. See
+    /// [`blacklist`].
+    ///
+    /// Behind an `Rc` because every `StmtContext` this session builds carries
+    /// a handle to the same published copy, and a reload swaps the whole map
+    /// the way Go's atomic `Store` does rather than mutating one readers hold.
+    expr_pushdown_blacklist: std::rc::Rc<tidb_executor::ExprPushDownBlacklist>,
+    /// Go `plannercore.DefaultDisabledLogicalRulesList`, published by `ADMIN
+    /// RELOAD OPT_RULE_BLACKLIST`. Holds a logical rule's own `Name()`.
+    disabled_logical_rules: std::rc::Rc<std::collections::HashSet<String>>,
     /// Go `SessionVars.FoundInBinding`: whether the statement RUNNING now
     /// took its hints from a binding.
     found_in_binding: bool,
@@ -595,6 +608,8 @@ impl Default for Session {
             rand: new_time_seeded_rand(),
             prepared_statements: prepared_statements::PreparedStore::default(),
             session_bindings: binding::SessionBindings::default(),
+            expr_pushdown_blacklist: std::rc::Rc::default(),
+            disabled_logical_rules: std::rc::Rc::default(),
             found_in_binding: false,
             prev_found_in_binding: false,
         };
@@ -629,6 +644,7 @@ mod binding_arm;
 pub mod binding_cache;
 pub mod binding_plan_evolution;
 pub mod binding_utils;
+mod blacklist;
 mod bootstrap;
 mod classify;
 pub mod cursor;
@@ -1421,6 +1437,8 @@ mod tests_session_var_hooks;
 mod tests_partition_prune_collation;
 #[cfg(test)]
 mod tests_enum_index_range;
+#[cfg(test)]
+mod tests_pushdown_blacklist;
 #[cfg(test)]
 mod tests_planner_core_rewriter;
 #[cfg(test)]
