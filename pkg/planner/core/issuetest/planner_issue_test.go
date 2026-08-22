@@ -883,6 +883,33 @@ ORDER BY field1`).Check(testkit.Rows())
 		))
 	}
 
+	// issue-65161-constant-if-keeps-selected-float-branch-type
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table issue_65161_t0(c0 float)")
+		tk.MustExec("create table issue_65161_t1 like issue_65161_t0")
+		tk.MustExec("insert into issue_65161_t1(c0) values(-1811968123),(-662745492)")
+		tk.MustExec("insert into issue_65161_t0(c0) values(-1811968123),(-662745492),(0)")
+
+		expectedRows := testkit.Rows("-1811968100 -1811968100", "-662745500 -662745500")
+		tk.MustQuery(`SELECT /* issue:65161 */ t1.c0, t0.c0
+FROM issue_65161_t0 t0, issue_65161_t1 t1
+WHERE t0.c0 IN (IF(NULL, "'K", t1.c0))
+ORDER BY t1.c0, t0.c0`).Check(expectedRows)
+		tk.MustQuery(`SELECT /* issue:65161 */ t1.c0, t0.c0
+FROM issue_65161_t0 t0, issue_65161_t1 t1
+WHERE t0.c0 IN (CASE WHEN NULL THEN "'K" ELSE t1.c0 END)
+ORDER BY t1.c0, t0.c0`).Check(expectedRows)
+		tk.MustQuery(`SELECT /* issue:65161 */ t1.c0, t0.c0
+FROM issue_65161_t0 t0, issue_65161_t1 t1
+WHERE t0.c0 = t1.c0
+ORDER BY t1.c0, t0.c0`).Check(expectedRows)
+		tk.MustQuery(`SELECT /* issue:65161 */ t1.c0, t0.c0
+FROM issue_65161_t0 t0, issue_65161_t1 t1
+WHERE t0.c0 IN (t1.c0)
+ORDER BY t1.c0, t0.c0`).Check(expectedRows)
+	}
+
 	// issue-67967-unionscan-should-eliminate-tabledual-for-null-comparison
 	{
 		tk := prepareSharedTestKit(t)
