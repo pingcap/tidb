@@ -82,6 +82,7 @@ pub(crate) const SELECTIVITY_FACTOR: f64 = 0.8;
 pub(crate) const DISTINCT_FACTOR: f64 = 0.8;
 
 /// One node of the recorded plan, before ids are assigned.
+#[derive(Clone)]
 pub(crate) struct PlanNode {
     /// Go's operator name without the `_N` suffix (`TableFullScan`).
     pub(crate) name: &'static str,
@@ -194,6 +195,56 @@ fn re_estimate(node: &mut PlanNode, estimate: ScanEstimate) {
         .unwrap_or(&node.info)
         .to_owned();
     node.info = format!("{bare}{}", pseudo_suffix(estimate));
+}
+
+/// Every operator whose access object NAMES a partition when its table has
+/// one. Go's `access.ScanAccessObject` writes `table:t, partition:p` for each
+/// of them, the `TableRowIDScan` an `IndexLookUp` probes with included.
+const PARTITIONED_ACCESS: &[&str] = &[
+    "TableFullScan",
+    "TableRangeScan",
+    "IndexFullScan",
+    "IndexRangeScan",
+    "TableRowIDScan",
+];
+
+/// Whether this subtree reads a table at all, so the partition processor has
+/// something to divide.
+///
+/// The reader is not always the scan itself: an `IndexLookUp` holds its index
+/// scan and its row-id probe as children, and a `Limit` may sit between. Go
+/// divides the `DataSource`, so every one of those shapes fans out -- asking
+/// only whether the TOP node is a scan is what left
+/// `select * from trange use index (ia) where a > 10 order by a limit 10`
+/// printing one partition-less `IndexRangeScan` where TiDB prints three
+/// `IndexLookUp`s under a `PartitionUnion`.
+fn reads_a_partitioned_table(node: &PlanNode) -> bool {
+    PARTITIONED_ACCESS.contains(&node.name) || node.children.iter().any(reads_a_partitioned_table)
+}
+
+/// Names every access object in this subtree for one partition.
+fn name_partition(node: &mut PlanNode, partition: &str) {
+    if PARTITIONED_ACCESS.contains(&node.name) && !node.access.is_empty() {
+        node.access = with_partition(&node.access, partition);
+    }
+    for child in &mut node.children {
+        name_partition(child, partition);
+    }
+}
+
+/// Drops the runtime row counters from a duplicated subtree.
+///
+/// There is ONE executor underneath that no fan-out split, so its count
+/// belongs to the union rather than to any branch -- the same choice the
+/// union already makes for the leaf's own counter.
+fn without_row_counters(mut node: PlanNode) -> PlanNode {
+    node.act_rows = None;
+    node.children = node
+        .children
+        .into_iter()
+        .map(without_row_counters)
+        .collect();
+    node
 }
 
 fn scan_is_index_join_outer(node: &PlanNode) -> Option<bool> {
@@ -602,11 +653,7 @@ impl PlanTrace {
         // Only a SCAN fans out. A point get names its own partition from the
         // handle it already has (Go `PointGetPlan.AccessObject`) and is never
         // a union; a `TableDual` reads nothing to divide.
-        if !self
-            .stack
-            .last()
-            .is_some_and(|top| PARTITIONED_SCANS.contains(&top.name))
-        {
+        if !self.stack.last().is_some_and(reads_a_partitioned_table) {
             return;
         }
         // Nothing to fan out: an unpartitioned table, or a pruned set of one,
@@ -614,8 +661,8 @@ impl PlanTrace {
         // one branch.
         if partitions.len() < 2 {
             if let ([partition], Some(top)) = (partitions, self.stack.last_mut()) {
-                top.access = with_partition(&top.access, partition);
-                if let [estimate] = estimates {
+                name_partition(top, partition);
+                if let ([estimate], true) = (estimates, PARTITIONED_SCANS.contains(&top.name)) {
                     re_estimate(top, *estimate);
                 }
             }
@@ -642,15 +689,16 @@ impl PlanTrace {
         // count it really is.
         union.act_rows = leaf.act_rows.clone();
         for (index, partition) in partitions.iter().enumerate() {
-            let mut branch = PlanNode::new(
-                leaf.name,
-                leaf.est_rows,
-                with_partition(&leaf.access, partition),
-                leaf.info.clone(),
-            );
-            branch.key_ndv_ratio = leaf.key_ndv_ratio;
-            branch.access_consumed = leaf.access_consumed;
-            if let Some(estimate) = estimates.get(index) {
+            // The WHOLE reader is duplicated, not just its top node: Go
+            // replaces one `DataSource` with one per partition, so an
+            // `IndexLookUp` becomes one `IndexLookUp` per partition and both
+            // its index scan and its row-id probe name that partition.
+            let mut branch = without_row_counters(leaf.clone());
+            name_partition(&mut branch, partition);
+            if let (Some(estimate), true) = (
+                estimates.get(index),
+                PARTITIONED_SCANS.contains(&branch.name),
+            ) {
                 re_estimate(&mut branch, *estimate);
             }
             union.children.push(branch);
@@ -3685,6 +3733,27 @@ impl PlanTrace {
         count: u64,
         logical_rows: Option<f64>,
     ) -> bool {
+        // Go pushes the `Limit` into each partition's own reader: its
+        // `PartitionProcessor` has already replaced the one `DataSource` with
+        // one per partition by the time physical optimization embeds
+        // anything, so the recorded plan is a `PartitionUnion` of
+        // `IndexLookUp`s that EACH say `limit embedded(...)`. This tier
+        // records the plan in one bottom-up pass, so the union is already on
+        // the stack here and the embed descends into it.
+        if self.stack.last().is_some_and(|top| top.name == "PartitionUnion") {
+            let mut union = self.stack.pop().expect("the union was just seen");
+            let branches = std::mem::take(&mut union.children);
+            let mut embedded = true;
+            for branch in branches {
+                self.stack.push(branch);
+                embedded &= self.embedded_lookup_limit(offset, count, logical_rows);
+                union
+                    .children
+                    .push(self.stack.pop().expect("every branch is left on the stack"));
+            }
+            self.stack.push(union);
+            return embedded;
+        }
         let Some(top) = self.stack.pop() else {
             return false;
         };
@@ -3757,6 +3826,29 @@ impl PlanTrace {
         let Some(mut selection) = self.stack.pop() else {
             return false;
         };
+        // The residual filter belongs to each partition's own reader. Go's
+        // `PartitionProcessor` divided the `DataSource` before this filter
+        // was ever placed, so the recorded plan shows one `Selection(Probe)`
+        // INSIDE every branch -- never one above the union. This tier records
+        // the plan bottom-up, so the filter arrives after the fan-out and is
+        // distributed into the branches here.
+        if selection.children.first().is_some_and(|child| child.name == "PartitionUnion") {
+            let mut union = selection.children.pop().expect("the union was just seen");
+            let branches = std::mem::take(&mut union.children);
+            let mut placed = true;
+            for branch in branches {
+                let mut per_branch = selection.clone();
+                per_branch.act_rows = None;
+                per_branch.children = vec![branch];
+                self.stack.push(per_branch);
+                placed &= self.lookup_probe_selection(logical_rows);
+                union
+                    .children
+                    .push(self.stack.pop().expect("every branch is left on the stack"));
+            }
+            self.stack.push(union);
+            return placed;
+        }
         if selection.name != "Selection" || selection.children.len() != 1 {
             self.stack.push(selection);
             return false;
