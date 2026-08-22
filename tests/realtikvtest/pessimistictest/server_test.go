@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package servertest
+package pessimistictest
 
 import (
 	"context"
@@ -29,10 +29,6 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
-
-func TestMain(m *testing.M) {
-	realtikvtest.RunTestMain(m)
-}
 
 func TestMultiStatementPrefetchInterruptedOnDisconnect(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
