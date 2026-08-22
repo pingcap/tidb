@@ -343,6 +343,31 @@ fn comparison_key_cast(
     if cmp_type == inner_type.eval_type() {
         return KeyCast::None;
     }
+    // A STRING-domain inner key coerced into a NUMERIC comparison domain
+    // stays on the Apply/fold path, whose `IN` evaluation coerces every list
+    // value per outer row. Projecting the coerced key below the duplicate
+    // elimination -- Go's repair (`expression_rewriter.go`, handleInSubquery,
+    // "DISTINCT must be applied on the same comparison domain ...") -- keeps
+    // the ANSWER right but moves the coercion from per-comparison to
+    // once-per-inner-row, and a string-to-number coercion is observable:
+    // each one raises 1292 `Truncated incorrect DOUBLE value` through the
+    // statement's truncate policy (`builtin_cast.go` CastStringAsRealSig ->
+    // types.StrToFloat). Go reaches the same per-comparison coercions only
+    // because its vectorized `IN` re-evaluates every arg per chunk; this
+    // tier's join shape cannot reproduce that surface, so it declines the
+    // rewrite exactly where the existing `Inexpressible` arm already does --
+    // the fold needs no duplicate elimination to be correct.
+    let numeric = |eval_type: tidb_datatype::EvalType| {
+        matches!(
+            eval_type,
+            tidb_datatype::EvalType::Int
+                | tidb_datatype::EvalType::Real
+                | tidb_datatype::EvalType::Decimal
+        )
+    };
+    if inner_type.eval_type() == tidb_datatype::EvalType::String && numeric(cmp_type) {
+        return KeyCast::Inexpressible;
+    }
     match cmp_type {
         // Go `WrapWithCastAsReal`: `TypeDouble`, no length of its own.
         EvalType::Real => KeyCast::To(tidb_ast::CastType::Double),
