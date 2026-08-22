@@ -3759,6 +3759,24 @@ fn build_aggregation(
                 has_ungrouped_carrier,
                 state_order,
             } = plan;
+            // A join-reorder schema restoration already installed this exact
+            // compact projection above the join. Go's `InjectProjBelowAgg`
+            // adds a Projection only for arguments that are NOT its child's
+            // columns; when every group item and aggregate argument already
+            // reads one in order, re-wrapping would stack two identical
+            // Projections (TPCC condition 01).
+            if restored_join_column_names.is_some()
+                && expressions
+                    .iter()
+                    .enumerate()
+                    .all(|(position, expression)| {
+                        expression
+                            .as_column()
+                            .is_some_and(|column| column.index == position as i64)
+                    })
+            {
+                return true;
+            }
             // Go's physical HashAgg state layout is aggregate-functions
             // first and FIRST_ROW carriers second even when every argument is
             // already a column and InjectProjBelowAgg has no Projection to
@@ -4267,7 +4285,13 @@ fn build_aggregation(
                 }
                 if let Some(info) = grouped_stream_physical_agg_trace.as_deref() {
                     trace.physical_hash_agg(info, grouped_logical_rows);
-                } else if let Some((group_by, functions, column_names)) = hash_agg_trace.as_ref() {
+                } else if let Some((group_by, functions, column_names)) =
+                    hash_agg_trace.as_ref().filter(|_| {
+                        state.grouped_hash_output_reordered
+                            || !grouped_stream_extra_first_rows.is_empty()
+                            || grouped_input_projection_trace.is_some()
+                    })
+                {
                     trace.hash_agg_first_row_sum(
                         traced_select,
                         &qualify,
@@ -4276,7 +4300,17 @@ fn build_aggregation(
                         column_names,
                         grouped_logical_rows,
                     );
-                } else if state.grouped_hash_output_reordered || grouped_hash_has_first_row {
+                } else if state.grouped_hash_output_reordered
+                    || !grouped_stream_extra_first_rows.is_empty()
+                    || grouped_input_projection_trace.is_some()
+                {
+                    // A reordered state layout, a carrier no written field
+                    // shows, or an injected input projection is the PHYSICAL
+                    // aggregate, and only its own renderer describes it. An
+                    // ordinary grouped SELECT whose states already follow the
+                    // written list keeps the logical rendering: Go explains
+                    // such an aggregation over its WRITTEN select fields, not
+                    // its internal carriers.
                     trace.grouped_hash_agg(traced_select, &qualify, grouped_logical_rows);
                 } else {
                     trace.hash_agg(traced_select, &qualify, grouped_logical_rows);

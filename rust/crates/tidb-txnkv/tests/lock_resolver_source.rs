@@ -1580,6 +1580,7 @@ fn the_snapshot_read_path_stamps_its_lock_sets_on_every_send() {
             );
         }
     }
-    assert!(snapshot
-        .contains(".publish_transaction_batch_get(batch.address(), &request, &context, call)"));
+    // BatchGet publishes a whole round of region-routed requests at once; the
+    // freshly routed (and stamped) contexts travel inside `requests`.
+    assert!(snapshot.contains(".publish_transaction_batch_gets(&requests, call)"));
 }

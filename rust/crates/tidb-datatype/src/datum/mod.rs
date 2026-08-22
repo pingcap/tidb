@@ -914,7 +914,7 @@ mod tests {
                 std::mem::size_of::<Decimal>(),
                 std::mem::size_of::<Time>()
             ),
-            (64, 64, 16)
+            (80, 80, 16)
         );
 
         let bytes = b"abcd";

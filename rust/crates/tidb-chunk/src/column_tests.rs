@@ -13,6 +13,10 @@
 // limitations under the License.
 
 use super::*;
+use crate::chunk::Chunk;
+use crate::column::Column;
+use crate::iterator::{ChunkIterator, Iterator4Chunk};
+use tidb_datatype::Decimal;
 
 /// Stands in for Go's `rand` in the reconstruct tests: those tests draw a
 /// fresh random selection and null pattern on every run, so a fixed
@@ -767,4 +771,472 @@ fn vector_decoder_accepts_a_valid_image_with_a_suffix() {
     let mut column = Column::new_var_len(1);
     column.append_bytes(&encoded);
     assert_eq!(column.get_vector_float32(0), expected);
+}
+
+
+/// Go `TestColumnCopy` (`pkg/util/chunk/column_test.go`): `CopyConstruct(nil)`
+/// is an equal deep copy, and `CopyConstruct(dst)` reuses the destination.
+#[test]
+fn go_test_column_copy() {
+    let mut col = Column::new_fixed_len(8, 10);
+    for i in 0..10i64 {
+        col.append_int64(i);
+    }
+
+    let c1 = col.copy_construct();
+    assert_eq!(col, c1);
+
+    let c2 = col.copy_reconstruct(None, Some(Column::new_fixed_len(8, 10)));
+    assert_eq!(col, c2);
+}
+
+/// Go `TestColumnCopyReconstructFixedLen`: a random selection and null
+/// pattern survive `CopyReconstruct`, and 128 appended rows land AFTER the
+/// selected prefix untouched.
+#[test]
+fn go_test_column_copy_reconstruct_fixed_len() {
+    for seed in 1..=4u64 {
+        let mut rng = Rng(seed);
+        let mut col = Column::new_column(
+            &FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            1024,
+        );
+        let mut results: Vec<i64> = Vec::with_capacity(1024);
+        let mut nulls: Vec<bool> = Vec::with_capacity(1024);
+        let mut sel: Vec<usize> = Vec::with_capacity(1024);
+        for i in 0..1024 {
+            if rng.intn10() < 6 {
+                sel.push(i);
+            }
+            if rng.intn10() < 2 {
+                col.append_null();
+                nulls.push(true);
+                results.push(0);
+                continue;
+            }
+            let v = rng.int63();
+            col.append_int64(v);
+            results.push(v);
+            nulls.push(false);
+        }
+
+        let col = col.copy_reconstruct(Some(&sel), None);
+        let mut null_cnt = 0usize;
+        for (n, &i) in sel.iter().enumerate() {
+            if nulls[i] {
+                null_cnt += 1;
+                assert!(col.is_null(n));
+            } else {
+                assert_eq!(results[i], col.get_int64(n));
+            }
+        }
+        assert_eq!(col.null_count(), null_cnt);
+        assert_eq!(col.length(), sel.len());
+
+        let mut col = col;
+        for i in 0..128usize {
+            if i % 2 == 0 {
+                col.append_null();
+            } else {
+                col.append_int64((i * i * i) as i64);
+            }
+        }
+
+        assert_eq!(col.length() - 128, sel.len());
+        assert_eq!(col.null_count(), null_cnt + 128 / 2);
+        for i in 0..128usize {
+            if i % 2 == 0 {
+                assert!(col.is_null(sel.len() + i));
+            } else {
+                assert_eq!(col.get_int64(sel.len() + i), (i * i * i) as i64);
+                assert!(!col.is_null(sel.len() + i));
+            }
+        }
+    }
+}
+
+/// Go `TestColumnCopyReconstructVarLen`: the same contract over strings,
+/// where reconstruct must also rewrite every offset.
+#[test]
+fn go_test_column_copy_reconstruct_var_len() {
+    for seed in 1..=4u64 {
+        let mut rng = Rng(seed);
+        let mut col = Column::new_column(
+            &FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+            1024,
+        );
+        let mut results: Vec<String> = Vec::with_capacity(1024);
+        let mut nulls: Vec<bool> = Vec::with_capacity(1024);
+        let mut sel: Vec<usize> = Vec::with_capacity(1024);
+        for i in 0..1024 {
+            if rng.intn10() < 6 {
+                sel.push(i);
+            }
+            if rng.intn10() < 2 {
+                col.append_null();
+                nulls.push(true);
+                results.push(String::new());
+                continue;
+            }
+            let v = rng.int63().to_string();
+            col.append_string(v.as_str());
+            results.push(v);
+            nulls.push(false);
+        }
+
+        let col = col.copy_reconstruct(Some(&sel), None);
+        let mut null_cnt = 0usize;
+        for (n, &i) in sel.iter().enumerate() {
+            if nulls[i] {
+                null_cnt += 1;
+                assert!(col.is_null(n));
+            } else {
+                assert_eq!(col.get_string(n).as_bytes(), results[i].as_bytes());
+            }
+        }
+        assert_eq!(col.null_count(), null_cnt);
+        assert_eq!(col.length(), sel.len());
+
+        let mut col = col;
+        for i in 0..128usize {
+            if i % 2 == 0 {
+                col.append_null();
+            } else {
+                col.append_string((i * i * i).to_string().as_str());
+            }
+        }
+
+        assert_eq!(col.length() - 128, sel.len());
+        assert_eq!(col.null_count(), null_cnt + 128 / 2);
+        for i in 0..128usize {
+            if i % 2 == 0 {
+                assert!(col.is_null(sel.len() + i));
+            } else {
+                assert_eq!(
+                    col.get_string(sel.len() + i).as_bytes(),
+                    (i * i * i).to_string().as_bytes()
+                );
+                assert!(!col.is_null(sel.len() + i));
+            }
+        }
+    }
+}
+
+/// Go `TestI64Column`: mutating the `Int64s()` slice writes through to the
+/// chunk, and the iterator observes it.
+#[test]
+fn go_test_i64_column() {
+    let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
+    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    for i in 0..1024i64 {
+        chk.column_mut(0).append_int64(i);
+    }
+
+    chk.column_mut(0).with_int64s_mut(|values| {
+        for value in values.iter_mut() {
+            *value += 1;
+        }
+    });
+
+    let mut it = crate::iterator::Iterator4Chunk::new(&chk);
+    let mut i = 0i64;
+    let mut row = it.begin();
+    while row != it.end() {
+        assert_eq!(row.expect("not end").get_int64(0), i + 1);
+        assert_eq!(chk.column(0).get_int64(i as usize), i + 1);
+        i += 1;
+        row = it.next_row();
+    }
+    assert_eq!(i, 1024);
+}
+
+/// Go `TestF64Column`: mutating the `Float64s()` slice writes through to the
+/// chunk, and the iterator observes it.
+#[test]
+fn go_test_f64_column() {
+    let fields = vec![FieldType::new(FieldTypeCode::Double)];
+    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    for i in 0..1024i64 {
+        chk.column_mut(0).append_float64(i as f64);
+    }
+
+    chk.column_mut(0).with_float64s_mut(|values| {
+        for value in values.iter_mut() {
+            *value /= 2.0;
+        }
+    });
+
+    let mut it = crate::iterator::Iterator4Chunk::new(&chk);
+    let mut i = 0i64;
+    let mut row = it.begin();
+    while row != it.end() {
+        assert_eq!(row.expect("not end").get_float64(0), i as f64 / 2.0);
+        assert_eq!(chk.column(0).get_float64(i as usize), i as f64 / 2.0);
+        i += 1;
+        row = it.next_row();
+    }
+}
+
+/// Go `TestF32Column`: the same write-through contract over `Float32s()`.
+#[test]
+fn go_test_f32_column() {
+    let fields = vec![FieldType::new(FieldTypeCode::Float)];
+    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    for i in 0..1024i64 {
+        chk.column_mut(0).append_float32(i as f32);
+    }
+
+    chk.column_mut(0).with_float32s_mut(|values| {
+        for value in values.iter_mut() {
+            *value /= 2.0;
+        }
+    });
+
+    let mut it = crate::iterator::Iterator4Chunk::new(&chk);
+    let mut i = 0i64;
+    let mut row = it.begin();
+    while row != it.end() {
+        assert_eq!(row.expect("not end").get_float32(0), i as f32 / 2.0);
+        assert_eq!(chk.column(0).get_float32(i as usize), i as f32 / 2.0);
+        i += 1;
+        row = it.next_row();
+    }
+}
+
+/// Go `TestDurationSliceColumn`: mutating `GoDurations()` doubles every cell
+/// the iterator reads back.
+#[test]
+fn go_test_duration_slice_column() {
+    let fields = vec![FieldType::new(FieldTypeCode::Duration)];
+    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    for i in 0..1024i64 {
+        let d = MySqlDuration::from_nanoseconds(i, 0).expect("valid duration");
+        chk.column_mut(0).append_duration(d);
+    }
+
+    chk.column_mut(0).with_go_durations_mut(|values| {
+        for value in values.iter_mut() {
+            *value *= 2;
+        }
+    });
+
+    let mut it = crate::iterator::Iterator4Chunk::new(&chk);
+    let mut i = 0i64;
+    let mut row = it.begin();
+    while row != it.end() {
+        assert_eq!(row.expect("not end").get_duration(0, 0).nanoseconds(), i * 2);
+        assert_eq!(
+            chk.column(0).get_duration(i as usize, 0).nanoseconds(),
+            i * 2
+        );
+        i += 1;
+        row = it.next_row();
+    }
+}
+
+/// Go `TestMyDecimal`: decimals round-trip through the raw 40-byte struct,
+/// doubling is observable through the column, and the iterator agrees with
+/// Go's InDelta tolerance.
+#[test]
+fn go_test_my_decimal() {
+    let fields = vec![FieldType::new(FieldTypeCode::NewDecimal)];
+    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    for i in 0..1024i64 {
+        let (d, error) = MyDecimal::from_float64(i as f64 * 1.1);
+        assert!(error.is_none());
+        chk.column_mut(0).append_my_decimal(&d);
+    }
+
+    for i in 0..1024usize {
+        let (d, error) = MyDecimal::from_float64(i as f64 * 1.1);
+        assert!(error.is_none());
+        assert_eq!(d.compare(&chk.column(0).get_my_decimal(i)), std::cmp::Ordering::Equal);
+    }
+
+    // Go mutates the stored cells through the `Decimals()` slice view:
+    // types.DecimalAdd(&ds[i], d, &ds[i]) doubles every stored decimal.
+    chk.column_mut(0).with_decimals_mut(|ds| {
+        for (i, cell) in ds.iter_mut().enumerate() {
+            let (d, error) = MyDecimal::from_float64(i as f64 * 1.1);
+            assert!(error.is_none());
+            let (sum, warning) =
+                Decimal::from_my_decimal(cell).add_mysql(&Decimal::from_my_decimal(&d));
+            assert!(warning.is_none());
+            *cell = sum.to_chunk_my_decimal().expect("doubled decimal fits");
+        }
+    });
+
+    let mut it = crate::iterator::Iterator4Chunk::new(&chk);
+    let mut i = 0i64;
+    let mut row = it.begin();
+    while row != it.end() {
+        let (d, error) = MyDecimal::from_float64(i as f64 * 1.1 * 2.0);
+        assert!(error.is_none());
+        // Go: delta := DecimalSub(d, row.GetMyDecimal(0), fDelta); InDelta(0, fDelta, 0.0001).
+        let got = row.expect("not end").get_my_decimal(0);
+        let (got_f64, error) = got.to_float64();
+        assert!(error.is_none());
+        assert!((got_f64 - d.to_float64().0).abs() < 0.0001, "row {i}");
+        i += 1;
+        row = it.next_row();
+    }
+}
+
+/// Go `TestStringColumn`: strings written into the chunk read back identically
+/// through both the column and the iterator.
+#[test]
+fn go_test_string_column() {
+    let fields = vec![FieldType::new(FieldTypeCode::VarString)];
+    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    for i in 0..1024usize {
+        chk.column_mut(0).append_string((i * i).to_string().as_str());
+    }
+
+    let mut it = crate::iterator::Iterator4Chunk::new(&chk);
+    let mut i = 0usize;
+    let mut row = it.begin();
+    while row != it.end() {
+        let expect = (i * i).to_string();
+        assert_eq!(row.expect("not end").get_string(0).as_bytes(), expect.as_bytes());
+        assert_eq!(chk.column(0).get_string(i).as_bytes(), expect.as_bytes());
+        i += 1;
+        row = it.next_row();
+    }
+}
+
+/// Go `TestSetColumn`: Set name/value cells agree across column and iterator.
+#[test]
+fn go_test_set_column() {
+    let fields = vec![FieldType::new(FieldTypeCode::Set)];
+    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    for i in 0..1024u64 {
+        chk.column_mut(0)
+            .append_set(&MysqlSet::new(i.to_string(), i));
+    }
+
+    let mut it = crate::iterator::Iterator4Chunk::new(&chk);
+    let mut i = 0u64;
+    let mut row = it.begin();
+    while row != it.end() {
+        let s1 = chk.column(0).get_set(i as usize);
+        let s2 = row.expect("not end").get_set(0);
+        assert_eq!(s2.name(), s1.name());
+        assert_eq!(s2.value(), s1.value());
+        assert_eq!(s1.name_bytes(), i.to_string().as_bytes());
+        assert_eq!(s1.value(), i);
+        i += 1;
+        row = it.next_row();
+    }
+}
+
+/// Go `TestTimeColumn`: times written into the chunk agree across the column,
+/// the packed `Times()` slice, and the iterator.
+#[test]
+fn go_test_time_column() {
+    use tidb_datatype::CoreTime;
+    let fields = vec![FieldType::new(FieldTypeCode::Datetime)];
+    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    let mut times = Vec::with_capacity(1024);
+    for i in 0..1024i64 {
+        let t = Time::new(
+            CoreTime::from_date(2020, 1, (i % 28 + 1) as u8, 12, 30, 45, i as u32),
+            tidb_datatype::TimeType::DateTime,
+            0,
+        )
+        .expect("valid time");
+        times.push(t);
+        chk.column_mut(0).append_time(t);
+    }
+
+    let mut it = crate::iterator::Iterator4Chunk::new(&chk);
+    let mut i = 0usize;
+    let mut row = it.begin();
+    while row != it.end() {
+        let j1 = chk.column(0).get_time(i);
+        let j2 = row.expect("not end").get_time(0);
+        assert_eq!(j1.compare(j2), std::cmp::Ordering::Equal);
+        assert_eq!(j1.compare(times[i]), std::cmp::Ordering::Equal);
+        i += 1;
+        row = it.next_row();
+    }
+}
+
+/// Go `TestDurationColumn`: durations agree across the column and iterator.
+#[test]
+fn go_test_duration_column() {
+    let fields = vec![FieldType::new(FieldTypeCode::Duration)];
+    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    for i in 0..1024i64 {
+        chk.column_mut(0)
+            .append_duration(MySqlDuration::from_raw_parts(i * 1_000_000_000, 0));
+    }
+
+    let mut it = crate::iterator::Iterator4Chunk::new(&chk);
+    let mut i = 0usize;
+    let mut row = it.begin();
+    while row != it.end() {
+        let j1 = chk.column(0).get_duration(i, 0);
+        let j2 = row.expect("not end").get_duration(0, 0);
+        assert_eq!(
+            j1.nanoseconds().cmp(&j2.nanoseconds()),
+            std::cmp::Ordering::Equal
+        );
+        i += 1;
+        row = it.next_row();
+    }
+}
+
+/// Go `TestEnumColumn`: Enum name/value cells agree across column and iterator.
+#[test]
+fn go_test_enum_column() {
+    let fields = vec![FieldType::new(FieldTypeCode::Enum)];
+    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    for i in 0..1024u64 {
+        chk.column_mut(0)
+            .append_enum(&MysqlEnum::new(i.to_string(), i));
+    }
+
+    let mut it = crate::iterator::Iterator4Chunk::new(&chk);
+    let mut i = 0u64;
+    let mut row = it.begin();
+    while row != it.end() {
+        let s1 = chk.column(0).get_enum(i as usize);
+        let s2 = row.expect("not end").get_enum(0);
+        assert_eq!(s2.name(), s1.name());
+        assert_eq!(s2.value(), s1.value());
+        assert_eq!(s1.name_bytes(), i.to_string().as_bytes());
+        assert_eq!(s1.value(), i);
+        i += 1;
+        row = it.next_row();
+    }
+}
+
+/// Go `TestNullsColumn`: alternating nulls are visible to both the column and
+/// the iterator.
+#[test]
+fn go_test_nulls_column() {
+    let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
+    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    for i in 0..1024usize {
+        if i % 2 == 0 {
+            chk.column_mut(0).append_null();
+            continue;
+        }
+        chk.column_mut(0).append_int64(i as i64);
+    }
+
+    let mut it = crate::iterator::Iterator4Chunk::new(&chk);
+    let mut i = 0usize;
+    let mut row = it.begin();
+    while row != it.end() {
+        let cur = row.expect("not end");
+        if i % 2 == 0 {
+            assert!(cur.is_null(0));
+            assert!(chk.column(0).is_null(i));
+        } else {
+            assert_eq!(cur.get_int64(0), i as i64);
+        }
+        i += 1;
+        row = it.next_row();
+    }
 }

@@ -132,7 +132,10 @@ pub(crate) fn eval_cast(
             i64::from(fsp.unwrap_or(0)),
         ),
         CastType::Year => cast_to_year(&v),
-        CastType::Double | CastType::Float => Ok(Datum::Real(to_f64_for_cast(&v))),
+        CastType::Double | CastType::Float => {
+            let converted = str_to_real_for_cast(&v, ctx)?;
+            Ok(Datum::Real(converted))
+        }
         CastType::Vector { dimensions } => {
             let mut target = FieldType::new(FieldTypeCode::VectorFloat32);
             if let Some(dimensions) = dimensions {
@@ -840,6 +843,33 @@ fn exponent_prefix(s: &str) -> i32 {
 /// digit-run-only one — confirmed via `goeval`: `CAST('3.5e1abc' AS
 /// DOUBLE)` is `35`, consuming the `.` and exponent `SIGNED`'s own scan
 /// would stop before).
+/// Go `builtinCastStringAsRealSig.evalReal`
+/// (`pkg/expression/builtin_cast.go:1839`): the string operand goes through
+/// `types.StrToFloat(ctx, val, true)`, whose trailing-garbage scan raises 1292
+/// `Truncated incorrect DOUBLE value: '<trimmed>'` through the statement's
+/// truncate policy -- once per evaluated row, exactly where the coercion
+/// happens. Every non-string operand keeps the silent numeric conversion
+/// below; Go reaches this signature only for a string-eval-type source.
+///
+/// `is_function_cast=true` is what makes an EMPTY string parse as `0`
+/// silently (`getValidFloatPrefix`'s early return), matching the explicit
+/// `CAST` this arm implements.
+fn str_to_real_for_cast(v: &Datum, ctx: &dyn crate::Columns) -> Result<f64, EvalError> {
+    let text = match v {
+        Datum::String(value) => String::from_utf8_lossy(value.bytes()).into_owned(),
+        Datum::Bytes(value) => String::from_utf8_lossy(value).into_owned(),
+        _ => return Ok(to_f64_for_cast(v)),
+    };
+    let converted = tidb_datatype::str_to_float(&text, true);
+    if converted.event.is_some() {
+        ctx.handle_truncate(&format!(
+            "Truncated incorrect DOUBLE value: '{}'",
+            text.trim()
+        ))?;
+    }
+    Ok(converted.value)
+}
+
 fn to_f64_for_cast(v: &Datum) -> f64 {
     match v {
         Datum::Int(i) => *i as f64,

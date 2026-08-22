@@ -578,16 +578,45 @@ fn fold_temporal_comparison_string_constant(
                     && matches!(constant.value, Datum::String(_) | Datum::Bytes(_))
         )
     };
-    let constant = if is_temporal_expr(left) && string_constant(right) {
-        right
+    let (constant, column_kind) = if is_temporal_expr(left) && string_constant(right) {
+        (right, temporal_expr_kind(left))
     } else if is_temporal_expr(right) && string_constant(left) {
-        left
+        (left, temporal_expr_kind(right))
     } else {
         return Ok(());
     };
     let Expression::Constant(source) = constant else {
         return Ok(());
     };
+    // Go folds a VALID constant cast at build time, but an UNPARSEABLE one
+    // never becomes a folded `NULL` here: Go's own fold path warns once
+    // through the coprocessor's merged-warning channel, while this tier
+    // evaluates the comparison row by row, and each of those evaluations
+    // parses the same string and warns 1292 itself
+    // (`ops::time_compare_ordering`). Folding an unparseable string would
+    // silence every per-row warning, so leave such a constant in place --
+    // the row-level parse answers NULL for every row, which is the same
+    // result with the warning surface intact. The validity probe mirrors the
+    // evaluator's own flags (`Time::compare_string`: zero-in-date and
+    // invalid-date allowed, fsp 6) so anything it accepts still folds.
+    let source_text = match &source.value {
+        Datum::String(value) => String::from_utf8_lossy(value.bytes()).into_owned(),
+        Datum::Bytes(value) => String::from_utf8_lossy(value).into_owned(),
+        _ => return Ok(()),
+    };
+    let parses_cleanly = tidb_datatype::parse_time(
+        source_text.trim(),
+        column_kind,
+        6,
+        false,
+        true,
+        true,
+        &chrono_tz::Tz::UTC,
+    )
+    .is_ok_and(|parsed| !parsed.truncated);
+    if !parses_cleanly {
+        return Ok(());
+    }
     let converted = crate::cast::parse_computed_time(
         &source.value,
         ctx,
@@ -600,6 +629,16 @@ fn fold_temporal_comparison_string_constant(
     target.set_flen(26);
     *constant = Expression::Constant(Constant::new(converted, target));
     Ok(())
+}
+
+/// The parse kind the ROW-LEVEL evaluation uses for a temporal expression:
+/// its own field type's code, exactly as `ops::time_compare_ordering` reads
+/// it off the evaluated `Datum::Time`.
+fn temporal_expr_kind(expression: &Expression) -> tidb_datatype::TimeType {
+    match expression.static_type().map(tidb_datatype::FieldType::code) {
+        Some(tidb_datatype::FieldTypeCode::Date) => tidb_datatype::TimeType::Date,
+        _ => tidb_datatype::TimeType::DateTime,
+    }
 }
 
 /// Go `handleDurationTypeComparisonForNullEq`: when a plain non-NULL
@@ -936,9 +975,18 @@ mod tests {
             assert_eq!(target.decimal(), 6);
         }
 
+        // An UNPARSEABLE constant is left in place: folding it to NULL would
+        // silence the per-row 1292 `Incorrect datetime value` warnings the
+        // evaluated comparison raises (`ops::time_compare_ordering`), which
+        // is the warning surface a live session observes.
         let (invalid, warnings) = refine("lt", date_column(), string_constant("not-a-datetime"));
-        assert_eq!(constant_of(&invalid, 1), Datum::Null);
-        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            constant_of(&invalid, 1)
+                .sql_string()
+                .is_ok_and(|text| text == "not-a-datetime"),
+            "an unparseable constant must stay unfolded"
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]

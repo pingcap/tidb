@@ -179,7 +179,10 @@ fn a_spilled_outer_join_pads_exactly_where_the_unspilled_one_does() {
             fixture(PROBE_ROWS, BUILD_KEYS),
             // Fewer distinct keys retain less bucket memory than the inner
             // fixture, so use enough rows to exceed the several-chunk quota.
-            fixture(BUILD_ROWS * 2, 97),
+            // Twice BUILD_ROWS landed at 253008 accounted bytes -- just under
+            // the 256000-byte quota, so the build silently stayed in memory;
+            // four times keeps a wide margin above it.
+            fixture(BUILD_ROWS * 4, 97),
             2,
             memory,
         )

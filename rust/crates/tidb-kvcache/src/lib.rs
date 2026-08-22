@@ -255,6 +255,13 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
         self.elements.is_empty()
     }
 
+    /// The configured entry bound. Go's tests read the unexported
+    /// `capacity` field directly; this accessor exposes the same value.
+    #[must_use]
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
     /// Returns values in most-recently-used order.
     #[must_use]
     pub fn values(&self) -> Vec<&V> {

@@ -1036,6 +1036,28 @@ pub(crate) fn commit_fast_path_source(
                     && (ranges.is_empty()
                         || index_path_consumes_where(select, &table, index_id, zone));
                 reader_ready = covering && consumed_where;
+                let index_residual = crate::access_cost::index_residual_filters_for_path(
+                    &table,
+                    index_id,
+                    select.where_clause.as_ref(),
+                    &ScopeResolver { scope },
+                );
+                access_residual = index_residual.iter().cloned().reduce(|left, right| {
+                    tidb_ast::Expr::Binary(
+                        tidb_ast::BinaryOp::LogicAnd,
+                        Box::new(left),
+                        Box::new(right),
+                    )
+                });
+                // Go's point plans exist ONLY while every WHERE conjunct is a
+                // `column = constant` pair over the chosen key
+                // (`point_get_plan.go` getNameValuePairs: one non-pair
+                // conjunct makes `pairs == nil` and tryPointGetPlan bails).
+                // A leftover conjunct therefore prints the ordinary shape --
+                // `IndexRangeScan` inside an `IndexLookUp`, with the residual
+                // as its Probe-side `Selection` -- never a `Point_Get` or
+                // `Batch_Point_Get` carrying a filter.
+                let index_point_allowed = index_residual.is_empty();
                 commit_index_range_source(
                     &table,
                     scope,
@@ -1044,25 +1066,12 @@ pub(crate) fn commit_fast_path_source(
                     ranges,
                     estimate,
                     covering,
+                    index_point_allowed,
                     from_source,
                     trace.as_deref_mut(),
                     &mut index_order,
                     ctx,
                 );
-                access_residual = crate::access_cost::index_residual_filters_for_path(
-                    &table,
-                    index_id,
-                    select.where_clause.as_ref(),
-                    &ScopeResolver { scope },
-                )
-                .into_iter()
-                .reduce(|left, right| {
-                    tidb_ast::Expr::Binary(
-                        tidb_ast::BinaryOp::LogicAnd,
-                        Box::new(left),
-                        Box::new(right),
-                    )
-                });
             }
             Some(ChosenPath::FullTable(planner_candidate, source_rows)) => {
                 logical_rows = Some(source_rows);
@@ -1908,6 +1917,9 @@ fn commit_index_range_source(
     estimate: crate::access_cost::ScanEstimate,
     // Go's `path.IsSingleScan`; see [`ChosenPath::Index`].
     covering: bool,
+    // Whether the WHERE left no conjunct unconsumed by this index's ranges,
+    // which is what gates Go's fast point shapes.
+    index_point_allowed: bool,
     from_source: &mut Option<Box<dyn Executor>>,
     trace: Option<&mut PlanTrace>,
     index_order: &mut Option<IndexAccessOrder>,
@@ -1963,10 +1975,20 @@ fn commit_index_range_source(
         .iter()
         .find(|index| index.id == index_id)
         .expect("the chosen path names an index of this table");
-    *index_order = Some(IndexAccessOrder::from_ranges(
-        index.ordered_column_offsets(),
-        &ranges,
-    ));
+    // An index entry always carries its table's handle in the key suffix --
+    // that is what makes `a` readable from an `idx_b(b)` entry of a
+    // clustered-PK table, and it is the same fact Go's `IsCoveringIndex`
+    // relies on when it counts `pkIsHandle` columns as covered
+    // (`pkg/planner/core/find_best_task.go`). The ORDER claim stays the
+    // index's own key order; the handle offsets ride along separately so a
+    // RESIDUAL over them is known to be answerable from the index source.
+    let mut order = IndexAccessOrder::from_ranges(index.ordered_column_offsets(), &ranges);
+    order.handle_covered_offsets = table
+        .pk_handle_offset()
+        .into_iter()
+        .chain(table.common_handle_offsets().iter().copied())
+        .collect();
+    *index_order = Some(order);
     if let Some(trace) = trace {
         let index_columns: Vec<String> = index
             .column_offsets
@@ -2007,7 +2029,7 @@ fn commit_index_range_source(
             .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false);
         // A path the ranger narrowed nothing on reads the whole index, which
         // Go names `IndexFullScan` and prints without a `range:`.
-        let fast_point_trace = point_ranges && fast_point_allowed;
+        let fast_point_trace = point_ranges && fast_point_allowed && index_point_allowed;
         if fast_point_trace && ranges.len() == 1 {
             trace.index_point_get(
                 source_table_name(scope, &table.name),
@@ -4227,6 +4249,11 @@ pub(crate) struct IndexAccessOrder {
     /// equivalent fact in `AccessPath.ConstCols` and skips those positions in
     /// `matchProperty` Case 2.
     constant_positions: Vec<bool>,
+    /// The table's handle column offsets. An index entry stores them in its
+    /// key suffix regardless of the indexed columns, so a residual filter may
+    /// read them straight off the index source; they are NOT part of the
+    /// order claim.
+    handle_covered_offsets: Vec<usize>,
 }
 
 impl IndexAccessOrder {
@@ -4255,6 +4282,7 @@ impl IndexAccessOrder {
             column_offsets: column_offsets.to_vec(),
             single_range: ranges.len() == 1,
             constant_positions,
+            handle_covered_offsets: Vec::new(),
         }
     }
 
@@ -4279,6 +4307,8 @@ impl IndexAccessOrder {
             })
             .collect();
         (self.column_offsets, self.constant_positions) = remapped.into_iter().unzip();
+        // The handle rides in every index KEY suffix, not in the projected
+        // row shape, so pruning the scan projection cannot take it away.
     }
 
     /// Whether a residual predicate can run against the index entry before
@@ -4290,9 +4320,10 @@ impl IndexAccessOrder {
         resolver: &ScopeResolver<'_>,
     ) -> bool {
         crate::column_prune::expr_column_offsets(predicate, resolver).is_some_and(|offsets| {
-            offsets
-                .iter()
-                .all(|offset| self.column_offsets.contains(offset))
+            offsets.iter().all(|offset| {
+                self.column_offsets.contains(offset)
+                    || self.handle_covered_offsets.contains(offset)
+            })
         })
     }
 }
@@ -4519,6 +4550,7 @@ mod find_best_task_property_tests {
             column_offsets: vec![0, 1],
             single_range: true,
             constant_positions: vec![true, false],
+            handle_covered_offsets: Vec::new(),
         };
         assert!(order_is_index_order(&query, &fixed_prefix, &resolver));
         assert!(order_is_index_order(

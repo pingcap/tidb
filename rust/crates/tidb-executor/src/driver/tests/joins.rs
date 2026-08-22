@@ -42,6 +42,26 @@ fn joins() {
     );
 
     // LEFT JOIN pads the unmatched left row with NULLs.
+    //
+    // CORRECTION. This pinned probe-side order -- the unmatched row between
+    // its matched neighbors -- which is the order an INNER-build hash join
+    // produces. Go's planner no longer stops there:
+    // `getHashJoins` enumerates BOTH build orientations for a left outer
+    // join (`exhaust_physical_plans.go`, `case base.LeftOuterJoin`), and cost
+    // ver2 prices each by the PRUNED build schema's average row width
+    // (`getPlanCostVer24PhysicalHashJoin` -> `getAvgRowSize(build.StatsInfo(),
+    // build.Schema().Columns)`, whose no-HistColl branch sums
+    // `chunk.EstimateTypeWidth` per column; the child table scans themselves
+    // cost identically because `GetScanRowSize` reads `TblCols`, not the
+    // pruned schema). Here pruning leaves `l` carrying only `id` (8 bytes)
+    // while `r` must keep its join key beside the output column, `id, w`
+    // (16 bytes), so building the OUTER side is strictly cheaper and TiDB
+    // plans `UseOuterToBuild`. That executor emits every unmatched BUILD row
+    // after all probe results (`hash_join_v1.go`,
+    // `handleUnmatchedRowsFromHashTable` behind `if e.UseOuterToBuild`; hash
+    // join v2's `NeedScanRowTable` path likewise), so the padded row lands at
+    // the tail. The multiset is unchanged; only the position of the pad
+    // moves.
     assert_eq!(
         run_select_on(
             "SELECT l.id, r.w FROM l LEFT JOIN r ON l.id = r.id",
@@ -51,9 +71,9 @@ fn joins() {
         .unwrap(),
         vec![
             vec![Datum::Int(1), Datum::Int(100)],
-            vec![Datum::Int(2), Datum::Null],
             vec![Datum::Int(3), Datum::Int(300)],
             vec![Datum::Int(3), Datum::Int(301)],
+            vec![Datum::Int(2), Datum::Null],
         ]
     );
 

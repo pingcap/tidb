@@ -22,6 +22,8 @@
 //! this dispatch; RAND additionally receives the original argument AST so its
 //! constant-versus-row-dependent generator identity remains unchanged.
 
+mod go_trig;
+
 use std::cmp::Ordering;
 
 use tidb_ast::Expr;
@@ -446,19 +448,19 @@ fn unary_finite(
 }
 
 fn sin(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    unary_finite(vals, ctx, f64::sin)
+    unary_finite(vals, ctx, go_trig::go_sin)
 }
 
 fn cos(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    unary_finite(vals, ctx, f64::cos)
+    unary_finite(vals, ctx, go_trig::go_cos)
 }
 
 fn tan(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    unary_finite(vals, ctx, f64::tan)
+    unary_finite(vals, ctx, go_trig::go_tan)
 }
 
 fn cot(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    unary_finite(vals, ctx, |x| 1.0 / x.tan())
+    unary_finite(vals, ctx, |x| 1.0 / go_trig::go_tan(x))
 }
 
 fn radians(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
