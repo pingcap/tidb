@@ -227,7 +227,8 @@ mod indexes;
 mod table_cache;
 mod table_constraints;
 mod table_lifecycle;
-pub mod table_partition;
+pub mod placement_policy;
+mod table_partition;
 pub mod table_partition_list;
 pub mod table_partition_range;
 
@@ -235,6 +236,9 @@ pub use alter_table::{
     check_column_default_value, normalize_column_default, prepare_column_default,
     run_alter_table_in, settle_column_default, validate_column_default, PreparedColumnDefault,
     SettledColumnDefault,
+};
+pub use placement_policy::{
+    run_alter_placement_policy, run_create_placement_policy, run_drop_placement_policy,
 };
 pub use table_partition::{
     append_partition_defs, build_partition_metadata, escape_partition_name,
@@ -1306,6 +1310,20 @@ pub fn run_create_table_in(
         ctx,
     )? {
         table.set_partition(partition);
+    }
+    // Go `CreateTableWithInfo` resolves the table's `PLACEMENT POLICY = name`
+    // against the policies in the infoschema and refuses an unknown one with
+    // `ErrPlacementPolicyNotExists` (8239). Accepting the option and dropping
+    // it -- which is what happened before this -- produced a table that
+    // reported no policy while the statement said otherwise.
+    if let Some(policy) = create.table_options.iter().find_map(|option| match option {
+        tidb_ast::TableOption::PlacementPolicy(name) => Some(name.clone()),
+        _ => None,
+    }) {
+        if catalog.policy(&policy).is_none() {
+            return Err(DriverError::PlacementPolicyNotExists(policy));
+        }
+        table.set_placement_policy(Some(policy));
     }
     catalog.register_kv_in(&database, name, table)?;
     Ok(true)

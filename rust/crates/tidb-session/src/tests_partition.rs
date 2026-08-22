@@ -2745,3 +2745,128 @@ fn a_commented_hash_partition_prints_the_full_definition_list() {
         "an all-default definition list keeps the compact form, got: {shown}"
     );
 }
+
+/// `CREATE`, `ALTER` and `DROP PLACEMENT POLICY`, against Go's rules in
+/// `pkg/ddl/executor.go:6802` onward.
+///
+/// A placement policy is a schema object that tables and partitions
+/// REFERENCE, so its lifecycle rules are about those references: a duplicate
+/// name is 8238, an unknown one 8239, and dropping one that something still
+/// names is 8241.
+#[test]
+fn placement_policy_lifecycle_follows_gos_rules() {
+    let mut session = Session::new();
+
+    session
+        .run("CREATE PLACEMENT POLICY p1 FOLLOWERS=4")
+        .expect("a new policy is created");
+
+    // Go: `ErrPlacementPolicyExists` (8238).
+    let rendered = session
+        .run("CREATE PLACEMENT POLICY p1 FOLLOWERS=2")
+        .expect_err("a duplicate policy name is refused")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 8238);
+    assert!(rendered.message.contains("'p1'"), "{}", rendered.message);
+
+    // IF NOT EXISTS demotes that to a note.
+    session
+        .run("CREATE PLACEMENT POLICY IF NOT EXISTS p1 FOLLOWERS=2")
+        .expect("IF NOT EXISTS suppresses the duplicate");
+
+    // Go checks the OR REPLACE / IF NOT EXISTS pairing BEFORE building the
+    // settings, and calls it `ErrWrongUsage` (1221).
+    let rendered = session
+        .run("CREATE OR REPLACE PLACEMENT POLICY IF NOT EXISTS p2 FOLLOWERS=1")
+        .expect_err("OR REPLACE and IF NOT EXISTS cannot be combined")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 1221);
+
+    // Go: `ErrPlacementPolicyNotExists` (8239).
+    let rendered = session
+        .run("ALTER PLACEMENT POLICY nosuch FOLLOWERS=1")
+        .expect_err("altering an unknown policy is refused")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 8239);
+    let rendered = session
+        .run("DROP PLACEMENT POLICY nosuch")
+        .expect_err("dropping an unknown policy is refused")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 8239);
+    session
+        .run("DROP PLACEMENT POLICY IF EXISTS nosuch")
+        .expect("IF EXISTS suppresses the missing policy");
+
+    // An unreferenced policy drops cleanly.
+    session
+        .run("ALTER PLACEMENT POLICY p1 FOLLOWERS=3")
+        .expect("altering an existing policy");
+    session
+        .run("DROP PLACEMENT POLICY p1")
+        .expect("an unreferenced policy drops");
+}
+
+/// A table or partition REFERENCES a policy, and Go enforces both ends of
+/// that reference: naming a policy that does not exist is 8239, and dropping
+/// a policy something still names is 8241
+/// (`CheckPlacementPolicyNotInUseFromInfoSchema`).
+#[test]
+fn a_placement_policy_reference_is_enforced_at_both_ends() {
+    let mut session = Session::new();
+    session
+        .run("CREATE PLACEMENT POLICY pp FOLLOWERS=2")
+        .expect("policy");
+
+    // Naming an unknown policy on a table is refused, not silently dropped.
+    let rendered = session
+        .run("CREATE TABLE t1 (a INT) PLACEMENT POLICY = nosuch")
+        .expect_err("an unknown policy is refused")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 8239);
+
+    // A table may name a policy that exists.
+    session
+        .run("CREATE TABLE t2 (a INT) PLACEMENT POLICY = pp")
+        .expect("a table naming a real policy");
+
+    // ... and while it does, the policy cannot be dropped.
+    let rendered = session
+        .run("DROP PLACEMENT POLICY pp")
+        .expect_err("a referenced policy cannot be dropped")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 8241);
+    // IF EXISTS does NOT suppress this: the policy DOES exist, it is in use.
+    let rendered = session
+        .run("DROP PLACEMENT POLICY IF EXISTS pp")
+        .expect_err("IF EXISTS does not excuse an in-use policy")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 8241);
+
+    // Once the reference is gone, the drop succeeds.
+    session.run("DROP TABLE t2").expect("drop the referencing table");
+    session
+        .run("DROP PLACEMENT POLICY pp")
+        .expect("an unreferenced policy drops");
+}
+
+/// A PARTITION can name a policy of its own, and that reference counts for
+/// the in-use check exactly as a table's does -- Go's
+/// `CheckPlacementPolicyNotInUseFromInfoSchema` walks partition definitions
+/// as well as tables.
+#[test]
+fn a_partition_level_placement_policy_counts_as_a_reference() {
+    let mut session = Session::new();
+    session
+        .run("CREATE PLACEMENT POLICY pq FOLLOWERS=1")
+        .expect("policy");
+    session
+        .run("CREATE TABLE t3 (a INT) PARTITION BY RANGE (a) \
+              (PARTITION p0 VALUES LESS THAN (10) PLACEMENT POLICY = pq, \
+               PARTITION p1 VALUES LESS THAN (20))")
+        .expect("a partition naming a policy");
+    let rendered = session
+        .run("DROP PLACEMENT POLICY pq")
+        .expect_err("a policy referenced by a PARTITION is still in use")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 8241);
+}

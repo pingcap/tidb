@@ -1015,6 +1015,37 @@ impl Session {
                         Ok(StmtOutput::Affected(0))
                     })
                 }
+                // A placement policy is a schema object, not a table
+                // attribute: Go handles it through its own executor methods
+                // (`ddl/executor.go:6802` onward) rather than the table DDL
+                // pipeline, and so does this.
+                DdlStmt::CreatePlacementPolicy(create) => {
+                    let create = (**create).clone();
+                    let context = self.ddl_statement_context();
+                    self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_create_placement_policy(catalog, &create, &context)
+                    })?;
+                    self.drain_context_warnings(&context);
+                    Ok(StmtOutput::Done(false))
+                }
+                DdlStmt::AlterPlacementPolicy(alter) => {
+                    let alter = (**alter).clone();
+                    let context = self.ddl_statement_context();
+                    self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_alter_placement_policy(catalog, &alter, &context)
+                    })?;
+                    self.drain_context_warnings(&context);
+                    Ok(StmtOutput::Done(false))
+                }
+                DdlStmt::DropPlacementPolicy(drop) => {
+                    let drop = (**drop).clone();
+                    let context = self.ddl_statement_context();
+                    self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_drop_placement_policy(catalog, &drop, &context)
+                    })?;
+                    self.drain_context_warnings(&context);
+                    Ok(StmtOutput::Done(false))
+                }
                 DdlStmt::DropView { if_exists, names } => {
                     let current_db = self.current_db.clone();
                     let (if_exists, names) = (*if_exists, names.clone());

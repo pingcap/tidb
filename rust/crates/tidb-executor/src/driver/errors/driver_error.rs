@@ -478,6 +478,13 @@ pub enum DriverError {
     /// Go `dbterror.ErrNotAllowedTypeInPartition` (1659), carrying the column
     /// whose type the partition expression may not read.
     PartitionFieldTypeNotAllowed(String),
+    /// Go `infoschema.ErrPlacementPolicyExists` (8238).
+    PlacementPolicyExists(String),
+    /// Go `infoschema.ErrPlacementPolicyNotExists` (8239).
+    PlacementPolicyNotExists(String),
+    /// Go `dbterror.ErrPlacementPolicyInUse` (8241): a policy cannot be
+    /// dropped while a table or partition still names it.
+    PlacementPolicyInUse(String),
     /// Go `dbterror.ErrFieldNotFoundPart` (1488): a name in a partitioning
     /// COLUMN LIST that no column answers to. The expression path reports the
     /// same mistake as 1054 instead, so the two cannot share a variant.

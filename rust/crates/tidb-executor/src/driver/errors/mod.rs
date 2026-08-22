@@ -1366,6 +1366,21 @@ impl DriverError {
             *b"HY000",
             format!("Field '{column}' is of a not allowed type for this type of partitioning"),
         ),
+        DriverError::PlacementPolicyExists(name) => MysqlError::new(
+            8238,
+            *b"HY000",
+            format!("Placement policy '{name}' already exists"),
+        ),
+        DriverError::PlacementPolicyNotExists(name) => MysqlError::new(
+            8239,
+            *b"HY000",
+            format!("Unknown placement policy '{name}'"),
+        ),
+        DriverError::PlacementPolicyInUse(name) => MysqlError::new(
+            8241,
+            *b"HY000",
+            format!("Placement policy '{name}' is still in use"),
+        ),
         DriverError::PartitionFieldNotFound => MysqlError::new(
             1488,
             *b"HY000",
