@@ -1767,7 +1767,16 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // and converting the remains again gave the weights of `'m'`, `'K'` and
     // one replacement character. `ColumnPoints::finished` is that arm saying
     // it is done, which is what Go's per-arm structure says by construction.
-    const KNOWN_DIVERGENCES: usize = 87;
+    //
+    // 87 -> 85, and `compared` 9477 -> 9480. `_tidb_rowid` now resolves in a
+    // WRITE as well as a read: Go gives an `UPDATE`/`DELETE` `DataSource` the
+    // same schema a `SELECT` gets, so the name reads there too. The three
+    // extra `compared` are `executor/rowid`'s `update ... where _tidb_rowid`
+    // and its `delete` sibling, which used to fail outright -- and because
+    // they did, every later statement of that topic was comparing different
+    // data, which is what made its divergences look like value mismatches
+    // rather than a missing feature.
+    const KNOWN_DIVERGENCES: usize = 85;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

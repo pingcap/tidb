@@ -6006,7 +6006,7 @@ mod join_schema_tests {
 /// clustered common handle builds `HandleCols` from the primary index -- in
 /// both cases `_tidb_rowid` names nothing, which is why TiDB answers
 /// "Unknown column" for it there. Only a HEAP table gets the extra column.
-fn extra_handle_column(entry: &TableEntry) -> Option<(String, FieldType)> {
+pub(crate) fn extra_handle_column(entry: &TableEntry) -> Option<(String, FieldType)> {
     let TableEntry::Kv(kv) = entry else {
         return None;
     };

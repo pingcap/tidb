@@ -625,7 +625,7 @@ fn aggregates_anywhere(expr: &tidb_ast::Expr) -> bool {
 
 /// Every column `expr` reads OUTSIDE an aggregate, a window call or an
 /// `ANY_VALUE()`, which are the subtrees that answer for their own columns.
-pub(super) fn bare_columns(expr: &tidb_ast::Expr) -> Vec<Vec<String>> {
+pub(crate) fn bare_columns(expr: &tidb_ast::Expr) -> Vec<Vec<String>> {
     struct Collector {
         found: Vec<Vec<String>>,
     }

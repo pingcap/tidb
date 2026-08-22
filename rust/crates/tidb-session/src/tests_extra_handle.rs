@@ -101,3 +101,54 @@ fn a_clustered_table_has_no_extra_handle_column() {
         assert_eq!(error.code, 1054, "{table}");
     }
 }
+
+/// Go gives a WRITE's `DataSource` the same schema a read gets, so
+/// `_tidb_rowid` resolves in an `UPDATE`'s `WHERE` and `SET` and in a
+/// `DELETE`'s `WHERE` exactly as it does in a `SELECT`.
+///
+/// The row the write STAGES is still the stored one -- Go composes its new
+/// row from the DataSource's stored columns, and the extra handle is not one
+/// of them -- which is why the column can be read here without widening what
+/// gets written. Source rows: `tests/integrationtest/t/executor/rowid.test`.
+#[test]
+fn a_write_reads_the_extra_handle_without_writing_it() {
+    let mut session = fixture();
+
+    assert_eq!(
+        session
+            .run("UPDATE t SET a = 99 WHERE _tidb_rowid = 2")
+            .unwrap(),
+        crate::StmtResult::Affected(1)
+    );
+    assert_eq!(
+        row_text(session.run("SELECT a, b, _tidb_rowid FROM t")),
+        vec![
+            vec!["10", "1", "1"],
+            vec!["99", "2", "2"],
+            vec!["30", "3", "3"]
+        ]
+    );
+
+    // Readable in the SET list too, and the staged row stays two columns
+    // wide -- a third would not decode.
+    session
+        .run("UPDATE t SET b = _tidb_rowid * 10 WHERE a = 10")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT a, b FROM t WHERE _tidb_rowid = 1")),
+        vec![vec!["10", "10"]]
+    );
+
+    assert_eq!(
+        session.run("DELETE FROM t WHERE _tidb_rowid = 2").unwrap(),
+        crate::StmtResult::Affected(1)
+    );
+    assert_eq!(
+        row_text(session.run("SELECT a, _tidb_rowid FROM t")),
+        vec![vec!["10", "1"], vec!["30", "3"]]
+    );
+
+    // Writing it is a different capability, gated in Go behind
+    // `tidb_opt_write_row_id`; refused here rather than silently accepted.
+    assert!(session.run("UPDATE t SET _tidb_rowid = 7 WHERE a = 10").is_err());
+}

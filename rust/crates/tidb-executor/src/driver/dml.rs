@@ -1534,8 +1534,25 @@ pub(crate) fn run_update_traced(
             table: name.clone(),
         });
     }
-    let column_list = table.column_list();
+    let mut column_list = table.column_list();
     let column_meta = column_metadata(table);
+    // Go gives a write's `DataSource` the same schema a read gets, so
+    // `_tidb_rowid` resolves in an `UPDATE`'s `WHERE` and `SET` exactly as it
+    // does in a `SELECT`. It is appended LAST, after the stored columns, so
+    // the row the write itself stages is the same slice it always was.
+    let extra_handle_slot = statement_names_extra_handle(
+        update
+            .where_clause
+            .iter()
+            .chain(update.assignments.iter().map(|a| &a.value)),
+    )
+    .then(|| crate::driver::from::extra_handle_column(table))
+    .flatten()
+    .map(|column| {
+        column_list.push(column);
+        column_list.len() - 1
+    });
+    let column_list = column_list;
 
     // An alias REPLACES the table name as the only usable qualifier, in the
     // SET list as much as the WHERE: `UPDATE u AS x SET x.v = 1` resolves and
@@ -1554,6 +1571,18 @@ pub(crate) fn run_update_traced(
         let (offset, _, _) = resolver
             .resolve(&assignment.col)
             .ok_or(DriverError::unsupported("unknown column in SET"))?;
+        // `_tidb_rowid` READS as an ordinary column and is not a stored one,
+        // so it cannot be an assignment target: Go gates writing it behind
+        // `tidb_opt_write_row_id`, and even then only for INSERT
+        // (`executor/rowid`'s recorded 1105, "insert, update and replace
+        // statements for _tidb_rowid are not supported"). Refusing keeps the
+        // column-metadata lookup below indexed by a STORED column, which is
+        // the only thing it describes.
+        if extra_handle_slot == Some(offset) {
+            return Err(DriverError::unsupported(
+                "update of _tidb_rowid is not a statement TiDB accepts",
+            ));
+        }
         // Go `IsDefaultExprSameColumn`: a generated target accepts only bare
         // DEFAULT or DEFAULT(the same resolved column). DEFAULT(other), even
         // though it has the same AST variant, is error 3105.
@@ -1782,6 +1811,7 @@ pub(crate) fn run_update_traced(
         current_db,
         ctx,
         on_update_now: &on_update_now,
+        extra_handle: extra_handle_slot.is_some(),
     };
     match source_rows {
         SourceRows::Mem(rows) => {
@@ -1790,7 +1820,7 @@ pub(crate) fn run_update_traced(
                 if row_limit.is_some_and(|cap| matched >= cap) {
                     break;
                 }
-                if let Some(new_row) = row_evaluator.compute(row, &mut matched)? {
+                if let Some(new_row) = row_evaluator.compute(row, None, &mut matched)? {
                     updates.push((index, new_row));
                 }
             }
@@ -1817,7 +1847,9 @@ pub(crate) fn run_update_traced(
                 if row_limit.is_some_and(|cap| matched >= cap) {
                     break;
                 }
-                if let Some(mut new_row) = row_evaluator.compute(&row, &mut matched)? {
+                if let Some(mut new_row) =
+                    row_evaluator.compute(&row, extra_handle_value(&handle), &mut matched)?
+                {
                     kv.materialize_generated(&mut new_row, ctx)
                         .map_err(kv_write_error)?;
                     if let Some(partitions) = &partition_ids {
@@ -1953,13 +1985,36 @@ struct UpdateRowEvaluator<'a> {
     current_db: &'a str,
     ctx: &'a crate::StmtContext,
     on_update_now: &'a PreparedOnUpdateNow,
+    /// Whether `field_types` ends in Go's extra handle column, so the row
+    /// this evaluates has one more slot than the row it stages.
+    extra_handle: bool,
 }
 
 impl UpdateRowEvaluator<'_> {
     /// Applies the `SET` assignments to one row, returning the new row only
     /// when the `WHERE` selected it AND a column actually changed (Go's
     /// `changed` flag).
-    fn compute(&self, row: &[Datum], matched: &mut u64) -> Result<Option<Vec<Datum>>, DriverError> {
+    fn compute(
+        &self,
+        row: &[Datum],
+        handle: Option<i64>,
+        matched: &mut u64,
+    ) -> Result<Option<Vec<Datum>>, DriverError> {
+        // `_tidb_rowid` is the record HANDLE, so it joins the row only for
+        // the reading half of this statement. The row that gets STAGED is
+        // still `row` -- Go's write composes its new row from the
+        // `DataSource`'s stored columns, and the extra handle column is not
+        // one of them.
+        let evaluated: std::borrow::Cow<'_, [Datum]> = match (self.extra_handle, handle) {
+            (true, Some(handle)) => {
+                let mut widened = Vec::with_capacity(row.len() + 1);
+                widened.extend_from_slice(row);
+                widened.push(Datum::Int(handle));
+                std::borrow::Cow::Owned(widened)
+            }
+            _ => std::borrow::Cow::Borrowed(row),
+        };
+        let row = evaluated.as_ref();
         let chunk = row_chunk(row, self.field_types)?;
         if let Some(predicate) = self.predicate {
             let selected = predicate.eval(row, self.catalog, self.current_db, self.ctx)?;
@@ -2116,6 +2171,20 @@ pub(crate) fn run_delete_traced(
             )))
         })?
         .column_list();
+    // As in UPDATE: Go gives the write's `DataSource` the same schema a read
+    // gets, so `_tidb_rowid` resolves in a `DELETE`'s `WHERE` too. The row
+    // handed to the DELETE itself stays the stored one.
+    let mut column_list = column_list;
+    let extra_handle = statement_names_extra_handle(delete.where_clause.iter())
+        .then(|| {
+            catalog
+                .get_in(&database, &name)
+                .and_then(crate::driver::from::extra_handle_column)
+        })
+        .flatten()
+        .inspect(|column| column_list.push(column.clone()))
+        .is_some();
+    let column_list = column_list;
     if !table_ref.partitions.is_empty()
         && !matches!(catalog.get_in(&database, &name), Some(TableEntry::Kv(_)))
     {
@@ -2260,7 +2329,14 @@ pub(crate) fn run_delete_traced(
                 if row_limit.is_some_and(|cap| doomed.len() as u64 >= cap) {
                     break;
                 }
-                if dml_row_is_selected(&row, &predicate, catalog, current_db, ctx)? {
+                if dml_row_is_selected_with_handle(
+                    &row,
+                    extra_handle.then(|| extra_handle_value(&handle)).flatten(),
+                    &predicate,
+                    catalog,
+                    current_db,
+                    ctx,
+                )? {
                     doomed.push((handle, row));
                 }
             }
@@ -2532,11 +2608,35 @@ fn dml_row_is_selected(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<bool, DriverError> {
+    dml_row_is_selected_with_handle(row, None, predicate, catalog, current_db, ctx)
+}
+
+/// [`dml_row_is_selected`] where the statement also names `_tidb_rowid`.
+///
+/// The handle joins the row only for the reading half: the row the write
+/// stages is the stored one, which is the schema Go composes its write from.
+fn dml_row_is_selected_with_handle(
+    row: &[Datum],
+    handle: Option<i64>,
+    predicate: &Option<DmlExpression>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<bool, DriverError> {
     let Some(predicate) = predicate else {
         return Ok(true);
     };
+    let evaluated: std::borrow::Cow<'_, [Datum]> = match handle {
+        Some(handle) => {
+            let mut widened = Vec::with_capacity(row.len() + 1);
+            widened.extend_from_slice(row);
+            widened.push(Datum::Int(handle));
+            std::borrow::Cow::Owned(widened)
+        }
+        None => std::borrow::Cow::Borrowed(row),
+    };
     Ok(datum_is_true(
-        &predicate.eval(row, catalog, current_db, ctx)?,
+        &predicate.eval(evaluated.as_ref(), catalog, current_db, ctx)?,
     ))
 }
 
@@ -2574,4 +2674,37 @@ pub(crate) fn datum_is_true(value: &Datum) -> bool {
         Datum::Real(v) => *v != 0.0,
         other => !matches!(other, Datum::Null),
     }
+}
+
+/// Whether a write statement WRITES the name `_tidb_rowid`.
+///
+/// Go appends the extra handle column to every heap `DataSource` and lets
+/// `rule_column_pruning` take it away again; asking the statement first
+/// reaches the same schema, and leaves a write that never mentions the name
+/// with exactly the row it had before.
+fn statement_names_extra_handle<'a>(exprs: impl Iterator<Item = &'a tidb_ast::Expr>) -> bool {
+    exprs
+        .flat_map(crate::driver::only_full_group_by::bare_columns)
+        .any(|path| {
+            path.last().is_some_and(|name| {
+                name.eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)
+            })
+        })
+}
+
+/// The integer a record handle reports as `_tidb_rowid`.
+///
+/// A partitioned heap table keys its rows by `(partition_id, handle)` and Go
+/// reports the handle, which is why the same rowid recurs across partitions.
+/// A common handle has no rowid at all, and the leaf never offers the column
+/// for such a table.
+fn extra_handle_value(handle: &crate::kv_table::TableHandle) -> Option<i64> {
+    fn integer(handle: &tidb_codec::table_key::RecordHandle) -> Option<i64> {
+        match handle {
+            tidb_codec::table_key::RecordHandle::Int(value) => Some(*value),
+            tidb_codec::table_key::RecordHandle::Partition { handle, .. } => integer(handle),
+            tidb_codec::table_key::RecordHandle::Common(_) => None,
+        }
+    }
+    integer(&handle.record_handle())
 }
