@@ -20,6 +20,7 @@ tidb-expr = { path = "../../crates/tidb-expr" }
 tidb-datatype = { path = "../../crates/tidb-datatype" }
 tidb-executor = { path = "../../crates/tidb-executor" }
 tidb-session = { path = "../../crates/tidb-session" }
+tidb-protocol = { path = "../../crates/tidb-protocol" }
 
 [[test]]
 name = "expr_diff"

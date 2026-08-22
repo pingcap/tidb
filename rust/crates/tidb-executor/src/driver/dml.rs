@@ -742,7 +742,7 @@ pub(crate) fn run_insert_traced(
                         ctx.auto_increment_step(),
                         ctx.allow_auto_random_explicit_insert(),
                         || ctx.reuse_auto_random_id(),
-                        ctx.next_auto_random_shard(1),
+                        ctx.next_row_id_shard(1),
                     )
                     .map_err(|error| match error {
                         AutoRandomError::ExplicitInsertDisabled => DriverError::InvalidAutoRandom(
@@ -1004,8 +1004,17 @@ pub(crate) fn run_insert_traced(
             ),
             None => (row.as_slice(), None),
         };
-        if let Err(error) =
-            target(catalog, &database, &table_name).insert_row_with_row_id(row, written_row_id, ctx)
+        // Go `AllocHandleIDs` asks the SESSION's row-id shard generator for
+        // the shard covering the next `n` ids, and only when the table
+        // declares shard bits -- asking otherwise would advance a generator
+        // whose run length is observable (`tidb_shard_allocate_step`).
+        let shard = if target(catalog, &database, &table_name).shard_row_id_bits() > 0 {
+            ctx.next_row_id_shard(1) as i64
+        } else {
+            0
+        };
+        if let Err(error) = target(catalog, &database, &table_name)
+            .insert_row_with_row_id(row, written_row_id, shard, ctx)
         {
             handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
             continue;

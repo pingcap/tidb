@@ -483,6 +483,21 @@ fn show_create_table_text(
     if let Some(base) = table.next_auto_random().filter(|base| *base > 1) {
         out.push_str(&format!(" /*T![auto_rand_base] AUTO_RANDOM_BASE={base} */"));
     }
+    // Go `ShowCreateTable` (`executor/show.go:1405`), in this position:
+    // after `AUTO_RANDOM_BASE` and before the placement policy.
+    // `PRE_SPLIT_REGIONS` shares the ONE comment rather than opening a second
+    // -- it gets its own only for an `AUTO_RANDOM` table, which has no shard
+    // clause to join.
+    if table.shard_row_id_bits() > 0 {
+        out.push_str(&format!(
+            " /*T! SHARD_ROW_ID_BITS={} ",
+            table.shard_row_id_bits()
+        ));
+        if table.pre_split_regions() > 0 {
+            out.push_str(&format!("PRE_SPLIT_REGIONS={} ", table.pre_split_regions()));
+        }
+        out.push_str("*/");
+    }
     // Go `ShowCreateTable` (`executor/show.go:1425`) prints the table's own
     // policy after the comment and BEFORE the cached marker, under the same
     // `/*T![placement] ... */` feature gate a partition's uses -- so a dump

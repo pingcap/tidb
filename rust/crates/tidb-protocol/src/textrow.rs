@@ -149,6 +149,11 @@ pub enum TextFormatError {
     UnsupportedType(u8),
     /// The supplied scalar does not match the source type branch.
     ScalarTypeMismatch(u8),
+    /// A datum kind that is a RANGE SENTINEL, not a value any row carries:
+    /// `MinNotNull`, `MaxValue`, and the undecoded `Raw`. Kept apart from
+    /// [`Self::UnsupportedType`] because the column's type is not the
+    /// problem, and saying so is what makes the failure diagnosable.
+    NotARowValue(&'static str),
 }
 
 impl fmt::Display for TextFormatError {
@@ -159,6 +164,9 @@ impl fmt::Display for TextFormatError {
                     formatter,
                     "invalid column type for text serialization: {type_code}"
                 )
+            }
+            Self::NotARowValue(label) => {
+                write!(formatter, "cannot render {label} as a SQL row")
             }
             Self::ScalarTypeMismatch(type_code) => {
                 write!(
@@ -291,6 +299,107 @@ pub fn format_text_value(
         type_code => return Err(TextFormatError::UnsupportedType(type_code)),
     }
     Ok(Some(formatted))
+}
+
+impl TextColumn {
+    /// The protocol column a result column's declared type is, for
+    /// [`format_datum_text`].
+    ///
+    /// `table_is_empty` is Go's `ColumnInfo.Table == ""`, which decides
+    /// whether a fixed decimal precision is honoured -- a computed column has
+    /// no source table and formats at full precision.
+    #[must_use]
+    pub fn from_field_type(field_type: &tidb_datatype::FieldType, table_is_empty: bool) -> Self {
+        Self {
+            type_code: field_type.code().mysql_type(),
+            flag: field_type.flags() as u16,
+            decimal: u8::try_from(field_type.decimal()).unwrap_or(NOT_FIXED_DECIMAL),
+            table_is_empty,
+        }
+    }
+}
+
+/// The bytes a client receives for one `Datum` in a column of `column`'s
+/// type: Go's `dumpTextRow` over one cell, and the ONE place a result value
+/// becomes text.
+///
+/// Both the server's row writer and the recorded-output harness go through
+/// here, because a recording captures exactly what mysql-tester read off the
+/// wire. Rendering a cell any other way -- `Datum`'s own `to_bytes`, say --
+/// agrees for most types and then quietly disagrees for the ones whose text
+/// depends on the COLUMN rather than the value: a `FLOAT` prints
+/// `2.77311e38` where the value alone prints every digit, and only the
+/// column's declared width says which.
+///
+/// `Ok(None)` is SQL NULL, which the caller spells for its own protocol.
+pub fn format_datum_text(
+    column: TextColumn,
+    datum: &tidb_datatype::Datum,
+) -> Result<Option<Vec<u8>>, TextFormatError> {
+    use tidb_datatype::Datum;
+    match datum {
+        Datum::Null => Ok(None),
+        // None of these is a value a row can carry: two are range sentinels
+        // and the third is an undecoded blob.
+        Datum::MinNotNull => Err(TextFormatError::NotARowValue("MinNotNull")),
+        Datum::MaxValue => Err(TextFormatError::NotARowValue("MaxValue")),
+        Datum::Raw(_) => Err(TextFormatError::NotARowValue("Raw")),
+        Datum::Int(value) => format_text_value(column, TextScalar::Signed(*value)),
+        Datum::UInt(value)
+            if column.type_code == TYPE_LONGLONG && column.flag & UNSIGNED_FLAG != 0 =>
+        {
+            format_text_value(column, TextScalar::Unsigned(*value))
+        }
+        Datum::UInt(value) => format_text_value(column, TextScalar::Signed(*value as i64)),
+        // Go picks the float WIDTH from the column, not the value: a `FLOAT`
+        // column formats at 32 bits even though the datum travels as an f64.
+        Datum::Real(value) => format_text_value(
+            column,
+            TextScalar::Float {
+                value: *value,
+                bit_size: if column.type_code == TYPE_FLOAT { 32 } else { 64 },
+            },
+        ),
+        Datum::Float32(value) => format_text_value(
+            column,
+            TextScalar::Float {
+                value: *value,
+                bit_size: 32,
+            },
+        ),
+        Datum::Decimal(value) => {
+            let value = value.to_string();
+            format_text_value(column, TextScalar::Decimal(value.as_bytes()))
+        }
+        Datum::String(value) => format_text_value(column, TextScalar::Bytes(value.bytes())),
+        Datum::Bytes(value) => format_text_value(column, TextScalar::Bytes(value)),
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => {
+            format_text_value(column, TextScalar::Bytes(value.as_bytes()))
+        }
+        Datum::Duration(value) => {
+            let value = tidb_datatype::MySqlDuration::from_nanoseconds(
+                value.nanoseconds(),
+                i64::from(column.decimal),
+            )
+            .map_err(|_| TextFormatError::ScalarTypeMismatch(column.type_code))?
+            .to_string();
+            format_text_value(column, TextScalar::Temporal(value.as_bytes()))
+        }
+        Datum::Enum(value, _) => format_text_value(column, TextScalar::Bytes(value.name_bytes())),
+        Datum::Set(value, _) => format_text_value(column, TextScalar::Bytes(value.name_bytes())),
+        Datum::Time(value) => {
+            let value = value.to_string();
+            format_text_value(column, TextScalar::Temporal(value.as_bytes()))
+        }
+        Datum::Json(value) => {
+            let value = value.to_string();
+            format_text_value(column, TextScalar::Bytes(value.as_bytes()))
+        }
+        Datum::VectorFloat32(value) => {
+            let value = value.to_string();
+            format_text_value(column, TextScalar::Bytes(value.as_bytes()))
+        }
+    }
 }
 
 fn float_precision(column: TextColumn) -> i32 {

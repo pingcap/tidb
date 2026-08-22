@@ -287,13 +287,37 @@ fn cell(value: &Datum) -> String {
     value.sql_string().unwrap_or_else(|_| value.label())
 }
 
-fn cell_bytes(value: &Datum) -> Vec<u8> {
+/// One result cell, as the CLIENT receives it.
+///
+/// A recording is what mysql-tester read off the wire, so the comparison has
+/// to render the same way the wire does --
+/// [`tidb_protocol::format_datum_text`], which the server's own row writer
+/// uses. Rendering the `Datum` alone agrees for most types and then quietly
+/// disagrees for the ones whose text depends on the COLUMN: a `FLOAT` prints
+/// `2.77311e38` where the value alone prints every digit, and only the
+/// column's declared width says which. A harness that cannot tell those apart
+/// reports a divergence for a correct answer -- or, worse, a match for a
+/// wrong one.
+fn cell_bytes(field_type: &tidb_datatype::FieldType, value: &Datum) -> Vec<u8> {
     if value.is_null() {
         return b"NULL".to_vec();
     }
-    value
-        .to_bytes()
-        .unwrap_or_else(|_| value.label().into_bytes())
+    // `table_is_empty` is Go's `ColumnInfo.Table == ""`. This tier does not
+    // carry the source table on a result column, and the flag only decides
+    // whether a FIXED decimal precision is honoured, so the conservative
+    // reading -- treat every column as computed, format at full precision --
+    // is the one that cannot silently truncate a cell.
+    let column = tidb_protocol::TextColumn::from_field_type(field_type, true);
+    match tidb_protocol::format_datum_text(column, value) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => b"NULL".to_vec(),
+        // A value the protocol cannot render is not something to paper over
+        // with a different spelling: fall back to what the datum says, which
+        // is what this did for every cell before.
+        Err(_) => value
+            .to_bytes()
+            .unwrap_or_else(|_| value.label().into_bytes()),
+    }
 }
 
 /// Renders a result set as the recorder does: a tab-separated header of column
@@ -314,7 +338,14 @@ fn render_rows(
             if index > 0 {
                 line.push(b'\t');
             }
-            line.extend(cell_bytes(value));
+            match columns.get(index) {
+                Some((_, field_type)) => line.extend(cell_bytes(field_type, value)),
+                None => line.extend(
+                    value
+                        .to_bytes()
+                        .unwrap_or_else(|_| value.label().into_bytes()),
+                ),
+            }
         }
         line
     }));
@@ -469,7 +500,9 @@ fn survey_unwatched_warning(session: &mut Session, stmt: &Stmt) {
 /// is also exactly what mysqltest itself did to produce the recording.
 fn warning_difference(session: &mut Session, want: Option<&[Vec<u8>]>) -> Option<String> {
     let ours = match session.run_with_columns("SHOW WARNINGS") {
-        Ok(StmtOutput::Rows { columns: _, rows }) => rows
+        // `SHOW WARNINGS` answers `Level`, `Code`, `Message` -- and its rows
+        // go through the same client rendering every other result set does.
+        Ok(StmtOutput::Rows { columns, rows }) => rows
             .iter()
             .map(|row| {
                 let mut line = Vec::new();
@@ -477,7 +510,14 @@ fn warning_difference(session: &mut Session, want: Option<&[Vec<u8>]>) -> Option
                     if index > 0 {
                         line.push(b'\t');
                     }
-                    line.extend(cell_bytes(value));
+                    match columns.get(index) {
+                        Some((_, field_type)) => line.extend(cell_bytes(field_type, value)),
+                        None => line.extend(
+                            value
+                                .to_bytes()
+                                .unwrap_or_else(|_| value.label().into_bytes()),
+                        ),
+                    }
                 }
                 line
             })
@@ -1912,7 +1952,45 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // back. This tier accepted the option and stored nothing, so a definition
     // did not round-trip through its own output. Metadata only: there is no
     // background job here to delete expired rows.
-    const KNOWN_DIVERGENCES: usize = 76;
+    //
+    // 76 -> 74. Result cells are rendered the way a CLIENT receives them
+    // rather than the way a `Datum` prints itself: the ONE renderer, Go's
+    // `dumpTextRow` for a cell, now lives in `tidb_protocol` and both the
+    // server's row writer and this harness go through it. A recording is what
+    // mysql-tester read off the wire, so anything else is a different
+    // question being asked.
+    //
+    // The two that closed are `FLOAT` columns, whose text depends on the
+    // COLUMN and not the value: Go switches to e-format at 1e15 and trims the
+    // `+` and trailing zeros, so `2.77311e38` where the value alone prints
+    // all 39 digits. They were counted against `planner/core/partition_pruner`
+    // and had nothing to do with partitioning.
+    //
+    // The wider point is what this harness could not previously see: with the
+    // datum rendering itself, a correctly formatted float and a wrong one
+    // read the same here, in both directions.
+    //
+    // 74 -> 71. `SHARD_ROW_ID_BITS` exists now, and it is three things at
+    // once. The option is STORED on the table (Go `handleTableOptions`), it
+    // is printed back by `SHOW CREATE TABLE` together with the
+    // `PRE_SPLIT_REGIONS` that shares its one feature comment, and -- the
+    // part that decides the recorded answers -- `AllocHandleIDs` composes
+    // those HIGH bits into every allocated `_tidb_rowid`:
+    // `NewShardIDFormat` leaves `64 - shardBits - 1` bits for the counter, so
+    // with 15 shard bits a row's shard is `_tidb_rowid >> 48`.
+    //
+    // The shard comes from `GetRowIDShardGenerator().GetCurrentShard(n)`, and
+    // that generator belongs to the TRANSACTION -- Go builds one per
+    // transaction from `TxnCtx.StartTS` and drops it at the end. It is what
+    // makes `tidb_shard_allocate_step` count ROWS inside a transaction rather
+    // than statements, which the corpus reads directly: ten rows across four
+    // statements inside one `BEGIN`/`COMMIT` are two shards, while three
+    // separate `INSERT`s are three shards however large the step is. A
+    // session-lived run answers neither.
+    //
+    // `table/tables` went from 22 matched / 3 diverged to 25 matched, 0
+    // diverged.
+    const KNOWN_DIVERGENCES: usize = 71;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

@@ -538,6 +538,7 @@ dependencies = [
  "tidb-executor",
  "tidb-expr",
  "tidb-parser",
+ "tidb-protocol",
  "tidb-session",
 ]
 

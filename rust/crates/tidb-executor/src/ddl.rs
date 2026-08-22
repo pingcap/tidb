@@ -1246,6 +1246,31 @@ pub fn run_create_table_in(
     // is metadata only -- but without it a definition carrying `TTL=` did not
     // round-trip through its own output.
     table.set_ttl_info(ttl_info_from_options(&create.table_options)?);
+    // Go `handleTableOptions`: `SHARD_ROW_ID_BITS = n` is recorded on the
+    // TableInfo and read by `AllocHandleIDs`, which composes those HIGH bits
+    // into every allocated `_tidb_rowid` so concurrent inserts land in
+    // different regions rather than all at the end of one.
+    for option in &create.table_options {
+        if let tidb_ast::TableOption::ShardRowIdBits(value) = option {
+            let bits = value.parse::<u64>().map_err(|_| {
+                DriverError::unsupported("SHARD_ROW_ID_BITS needs an integer value")
+            })?;
+            // Go `checkShardRowIDBits`: the shard has to leave room for the
+            // counter and the sign bit.
+            if bits >= 16 {
+                return Err(DriverError::unsupported(
+                    "shard_row_id_bits should be less than 16",
+                ));
+            }
+            table.set_shard_row_id_bits(bits);
+        }
+        if let tidb_ast::TableOption::PreSplitRegions(value) = option {
+            let regions = value.parse::<u64>().map_err(|_| {
+                DriverError::unsupported("PRE_SPLIT_REGIONS needs an integer value")
+            })?;
+            table.set_pre_split_regions(regions);
+        }
+    }
     for option in &create.table_options {
         if let tidb_ast::TableOption::AutoIdCache(value) = option {
             let cache = value

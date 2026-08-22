@@ -194,6 +194,18 @@ pub struct RowIdShardGenerator {
 }
 
 impl RowIdShardGenerator {
+    /// Ends the current run, so the next id picks a fresh shard.
+    ///
+    /// Go's generator belongs to the TRANSACTION -- `GetRowIDShardGenerator`
+    /// builds one seeded from `TxnCtx.StartTS` and the session drops it when
+    /// the transaction ends -- so a run of ids never spans two of them. The
+    /// corpus reads that directly: three separate `INSERT`s land three
+    /// distinct shards no matter how large `tidb_shard_allocate_step` is,
+    /// while the same rows inside one `BEGIN`/`COMMIT` share a run.
+    pub fn end_run(&mut self) {
+        self.remaining = 0;
+    }
+
     fn next(&mut self, step: u64, count: u64) -> u64 {
         let step = step.max(1);
         if self.step != step {
@@ -1756,8 +1768,10 @@ impl StmtContext {
         self.retry_auto_ids.borrow_mut().record_random(id);
     }
 
-    /// Chooses the shard for the next `count` generated row IDs.
-    pub fn next_auto_random_shard(&self, count: u64) -> u64 {
+    /// Go `GetRowIDShardGenerator().GetCurrentShard(count)`: the shard
+    /// covering the next `count` generated row ids. ONE generator serves both
+    /// `SHARD_ROW_ID_BITS` and `AUTO_RANDOM`, as Go's does.
+    pub fn next_row_id_shard(&self, count: u64) -> u64 {
         self.row_id_shards
             .borrow_mut()
             .next(self.shard_allocate_step, count)

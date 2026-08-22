@@ -351,3 +351,84 @@ fn a_written_zero_row_id_is_stored_only_under_no_auto_value_on_zero() {
         vec![vec!["0"]]
     );
 }
+
+/// `SHARD_ROW_ID_BITS` puts a shard in the HIGH bits of an allocated
+/// `_tidb_rowid`, and the run of ids one shard covers belongs to the
+/// TRANSACTION.
+///
+/// Go `AllocHandleIDs`: `if meta.ShardRowIDBits > 0 { base =
+/// shardFmt.Compose(shard, base) }`, where `NewShardIDFormat` leaves
+/// `64 - shardBits - 1` bits for the counter -- so with 15 shard bits a row's
+/// shard is `_tidb_rowid >> 48`.
+///
+/// The shard comes from `GetRowIDShardGenerator().GetCurrentShard(n)`, whose
+/// generator Go builds per TRANSACTION from `TxnCtx.StartTS` and drops when
+/// the transaction ends. That is what makes `tidb_shard_allocate_step` count
+/// ROWS within a transaction rather than statements: the same ten rows are
+/// two shards inside one `BEGIN`/`COMMIT`, while three separate `INSERT`s are
+/// three shards however large the step is.
+///
+/// Statements and expected counts are the source corpus's own:
+/// `tests/integrationtest/t/table/tables.test`.
+#[test]
+fn a_sharded_rowid_carries_its_shard_and_the_run_belongs_to_the_transaction() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE shard_t (a int) SHARD_ROW_ID_BITS = 15")
+        .unwrap();
+    let shards = |session: &mut Session| {
+        row_text(session.run("SELECT count(distinct(_tidb_rowid>>48)) FROM shard_t"))[0][0].clone()
+    };
+
+    // One statement, one transaction: the step counts rows, so eleven rows at
+    // a step of three span four shards.
+    session.run("SET @@tidb_shard_allocate_step=3").unwrap();
+    session
+        .run("INSERT INTO shard_t VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11)")
+        .unwrap();
+    assert_eq!(shards(&mut session), "4");
+
+    // Four statements inside ONE transaction: still one run, so ten rows at a
+    // step of five span two shards -- not four, which is what a
+    // per-statement run would give.
+    session.run("TRUNCATE TABLE shard_t").unwrap();
+    session.run("SET @@tidb_shard_allocate_step=5").unwrap();
+    session.run("BEGIN").unwrap();
+    session.run("INSERT INTO shard_t VALUES (1),(2),(3)").unwrap();
+    session.run("INSERT INTO shard_t VALUES (4),(5),(6)").unwrap();
+    session.run("INSERT INTO shard_t VALUES (7),(8),(9)").unwrap();
+    session.run("INSERT INTO shard_t VALUES (10)").unwrap();
+    session.run("COMMIT").unwrap();
+    assert_eq!(shards(&mut session), "2");
+
+    // Three autocommit statements are three transactions, so three shards
+    // even at the default step, which is far larger than three rows.
+    session.run("TRUNCATE TABLE shard_t").unwrap();
+    session
+        .run("SET @@tidb_shard_allocate_step=default")
+        .unwrap();
+    session.run("INSERT INTO shard_t VALUES (10)").unwrap();
+    session.run("INSERT INTO shard_t VALUES (11)").unwrap();
+    session.run("INSERT INTO shard_t VALUES (12)").unwrap();
+    assert_eq!(shards(&mut session), "3");
+
+    // And the option is part of the definition.
+    let text = row_text(session.run("SHOW CREATE TABLE shard_t"))[0][1].clone();
+    assert!(
+        text.ends_with(" /*T! SHARD_ROW_ID_BITS=15 */"),
+        "the option round-trips through SHOW CREATE TABLE:\n{text}"
+    );
+}
+
+/// An unsharded table's handle is the counter itself.
+#[test]
+fn a_table_without_shard_bits_allocates_a_plain_counter() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a int)").unwrap();
+    session.run("INSERT INTO t VALUES (1),(2),(3)").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT _tidb_rowid FROM t")),
+        vec![vec!["1"], vec!["2"], vec!["3"]]
+    );
+    assert!(!row_text(session.run("SHOW CREATE TABLE t"))[0][1].contains("SHARD_ROW_ID_BITS"));
+}

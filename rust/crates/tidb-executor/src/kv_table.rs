@@ -452,6 +452,18 @@ pub struct KvTable {
     /// delete expired rows -- but it is what `SHOW CREATE TABLE` prints, and
     /// a definition has to round-trip through its own output.
     ttl_info: Option<tidb_model::TTLInfo>,
+    /// Go `TableInfo.ShardRowIDBits`: how many HIGH bits of an allocated
+    /// `_tidb_rowid` carry a shard, so concurrent inserts land in different
+    /// regions instead of all at the end of one.
+    ///
+    /// Zero -- the default -- means an unsharded, monotonically increasing
+    /// handle, which is what every table here had before.
+    shard_row_id_bits: u64,
+    /// Go `TableInfo.PreSplitRegions`: how many regions a sharded table is
+    /// pre-split into at creation. This tier has one store and splits
+    /// nothing, but the number is part of the definition and `SHOW CREATE
+    /// TABLE` prints it back.
+    pre_split_regions: u64,
     /// Go `TableInfo.TableCacheStatusType`. The synchronous local DDL has no
     /// externally visible switching phase, so tables are either enabled or
     /// disabled here; cluster-loaded metadata may still carry the source
@@ -614,6 +626,28 @@ fn generation_error(error: crate::generated_column::GenerationError) -> KvTableE
     }
 }
 
+/// Go `ShardIDFormat.Compose` for a SIGNED `BIGINT` handle, which is what
+/// `_tidb_rowid` always is.
+///
+/// `NewShardIDFormat` computes `incrementalBits = RowIDBitLength - shardBits`
+/// and then subtracts one more for the sign bit, so with
+/// `SHARD_ROW_ID_BITS = 15` the shard occupies the top 15 value bits and the
+/// counter keeps the low 48 -- which is why the corpus reads a row's shard as
+/// `_tidb_rowid >> 48`.
+///
+/// Zero shard bits leave the id alone: an unsharded table's handle is the
+/// counter itself.
+fn compose_row_id_shard(shard_bits: u64, shard: i64, id: i64) -> i64 {
+    if shard_bits == 0 {
+        return id;
+    }
+    let incremental_bits = ROW_ID_BIT_LENGTH - shard_bits - 1;
+    ((shard & ((1 << shard_bits) - 1)) << incremental_bits) | id
+}
+
+/// Go `autoid.RowIDBitLength`.
+const ROW_ID_BIT_LENGTH: u64 = 64;
+
 impl KvTable {
     /// Builds an empty table over the in-process backend.
     #[must_use]
@@ -652,6 +686,8 @@ impl KvTable {
         KvTable {
             auto_id_cache: 0,
             ttl_info: None,
+            shard_row_id_bits: 0,
+            pre_split_regions: 0,
             table_id,
             name: String::new(),
             columns,
@@ -1172,6 +1208,28 @@ impl KvTable {
         self.ttl_info.as_ref()
     }
 
+    /// Records `SHARD_ROW_ID_BITS` (Go `TableInfo.ShardRowIDBits`).
+    pub fn set_shard_row_id_bits(&mut self, bits: u64) {
+        self.shard_row_id_bits = bits;
+    }
+
+    /// Go `TableInfo.ShardRowIDBits`.
+    #[must_use]
+    pub const fn shard_row_id_bits(&self) -> u64 {
+        self.shard_row_id_bits
+    }
+
+    /// Records `PRE_SPLIT_REGIONS` (Go `TableInfo.PreSplitRegions`).
+    pub fn set_pre_split_regions(&mut self, regions: u64) {
+        self.pre_split_regions = regions;
+    }
+
+    /// Go `TableInfo.PreSplitRegions`.
+    #[must_use]
+    pub const fn pre_split_regions(&self) -> u64 {
+        self.pre_split_regions
+    }
+
     /// Replaces the table-level comment.
     pub fn set_comment(&mut self, comment: String) {
         self.comment = comment;
@@ -1289,6 +1347,7 @@ impl KvTable {
         &mut self,
         row: &[Datum],
         zone: &SessionTimeZone,
+        shard: i64,
     ) -> Result<TableHandle, KvTableError> {
         if !self.common_handle_offsets.is_empty() {
             let values: Vec<Datum> = self
@@ -1317,7 +1376,15 @@ impl KvTable {
                     AutoIdError::Store(detail) => KvTableError::Encode(detail.0),
                     _ => KvTableError::AutoIdExhausted,
                 })?;
-                Ok(TableHandle::Int(handle as i64))
+                // Go `AllocHandleIDs`: `if meta.ShardRowIDBits > 0 { base =
+                // shardFmt.Compose(shard, base) }`. Composing here rather
+                // than at the caller keeps the ONE place a heap table's
+                // handle is minted responsible for its whole shape.
+                Ok(TableHandle::Int(compose_row_id_shard(
+                    self.shard_row_id_bits,
+                    shard,
+                    handle as i64,
+                )))
             }
         }
     }
@@ -1869,7 +1936,7 @@ impl KvTable {
         let mut found: Vec<TableHandle> = Vec::new();
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
         if clustered {
-            let handle = self.handle_of_row(row, &zone)?;
+            let handle = self.handle_of_row(row, &zone, 0)?;
             if self.row_exists(&handle)? {
                 found.push(handle);
             }
@@ -1919,7 +1986,7 @@ impl KvTable {
         let physical_id = self.record_physical_id(row, ctx)?;
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
         if clustered {
-            let handle = self.handle_of_row(row, &zone)?;
+            let handle = self.handle_of_row(row, &zone, 0)?;
             if self.row_exists(&handle)? {
                 return Ok(KvTableError::DuplicateEntry {
                     value: clustered_key_text(self, row),
@@ -2055,7 +2122,7 @@ impl KvTable {
         row: &[Datum],
         ctx: &impl tidb_expr::Columns,
     ) -> Result<TableHandle, KvTableError> {
-        self.insert_row_with_row_id(row, None, ctx)
+        self.insert_row_with_row_id(row, None, 0, ctx)
     }
 
     /// [`Self::insert_row`] for a statement that WROTE `_tidb_rowid`.
@@ -2066,10 +2133,15 @@ impl KvTable {
     /// a handle -- it means "allocate one", which is the ordinary path -- and
     /// that is Go's own rule, not a convenience: `insert t (a, _tidb_rowid)
     /// values (1, 0)` gets the next id rather than handle zero.
+    /// `shard` is Go's `GetRowIDShardGenerator().GetCurrentShard(n)`, which
+    /// the caller reads because the generator is the SESSION's -- one shard
+    /// serves a run of ids and both `SHARD_ROW_ID_BITS` and `AUTO_RANDOM`
+    /// draw from it. Ignored when the table declares no shard bits.
     pub fn insert_row_with_row_id(
         &mut self,
         row: &[Datum],
         row_id: Option<i64>,
+        shard: i64,
         ctx: &impl tidb_expr::Columns,
     ) -> Result<TableHandle, KvTableError> {
         let explicit_handle = match row_id {
@@ -2089,13 +2161,14 @@ impl KvTable {
             }
             _ => None,
         };
-        self.insert_row_at(row, explicit_handle, ctx)
+        self.insert_row_at(row, explicit_handle, shard, ctx)
     }
 
     fn insert_row_at(
         &mut self,
         row: &[Datum],
         explicit_handle: Option<TableHandle>,
+        shard: i64,
         ctx: &impl tidb_expr::Columns,
     ) -> Result<TableHandle, KvTableError> {
         let zone = ctx.time_zone();
@@ -2119,7 +2192,7 @@ impl KvTable {
         // the statement wrote itself.
         let handle = match explicit_handle {
             Some(handle) => handle,
-            None => self.handle_of_row(row, &zone)?,
+            None => self.handle_of_row(row, &zone, shard)?,
         };
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
         if self.row_exists(&handle)? {
@@ -2381,7 +2454,7 @@ impl KvTable {
         // that the row's values do not determine.
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
         let new_handle = if clustered {
-            self.handle_of_row(row, &zone)?
+            self.handle_of_row(row, &zone, 0)?
         } else {
             handle.clone()
         };

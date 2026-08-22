@@ -569,6 +569,14 @@ impl Session {
         let sql_mode = self.scanner_sql_mode();
         // Only an allocating INSERT sets it; every other statement reports 0.
         self.statement_insert_id = 0;
+        // Go's row-id shard generator belongs to the TRANSACTION, so a
+        // statement that IS its own transaction starts a fresh run. Inside an
+        // explicit `BEGIN`/`COMMIT` the run continues across statements,
+        // which is what makes `tidb_shard_allocate_step` count rows rather
+        // than statements.
+        if !self.in_transaction() {
+            self.row_id_shards.borrow_mut().end_run();
+        }
         // Go sets the `InSelectStmt`/`In*Stmt` bits here, before execution,
         // so a statement that FAILS still classifies itself for the next
         // statement's `ROW_COUNT()` (captured: a failed SELECT leaves -1, a

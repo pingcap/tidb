@@ -17,8 +17,7 @@
 use tidb_datatype::Datum;
 use tidb_protocol::resultset_stream::ResultSetStream;
 use tidb_protocol::{
-    format_text_value, PacketWriter, ResultSetOptions, TextColumn, TextFormatError, TextScalar,
-    TYPE_FLOAT, TYPE_LONGLONG, UNSIGNED_FLAG,
+    format_datum_text, PacketWriter, ResultSetOptions, TextColumn, TextFormatError,
 };
 
 use crate::resultset_source::ResultSetSource;
@@ -236,76 +235,14 @@ fn format_row(
         .collect()
 }
 
+/// Go `dumpTextRow` for one cell, over the ONE renderer both this writer and
+/// the recorded-output harness use ([`tidb_protocol::format_datum_text`]).
 fn format_datum(column: TextColumn, datum: Datum) -> Result<Option<Vec<u8>>, String> {
-    match datum {
-        Datum::Null => Ok(None),
-        Datum::MinNotNull => Err("cannot render MinNotNull as a SQL row".to_owned()),
-        Datum::MaxValue => Err("cannot render MaxValue as a SQL row".to_owned()),
-        Datum::Int(value) => format_scalar(column, TextScalar::Signed(value)),
-        Datum::UInt(value)
-            if column.type_code == TYPE_LONGLONG && column.flag & UNSIGNED_FLAG != 0 =>
-        {
-            format_scalar(column, TextScalar::Unsigned(value))
-        }
-        Datum::UInt(value) => format_scalar(column, TextScalar::Signed(value as i64)),
-        Datum::Real(value) => format_scalar(
-            column,
-            TextScalar::Float {
-                value,
-                bit_size: if column.type_code == TYPE_FLOAT {
-                    32
-                } else {
-                    64
-                },
-            },
-        ),
-        Datum::Float32(value) => format_scalar(
-            column,
-            TextScalar::Float {
-                value,
-                bit_size: 32,
-            },
-        ),
-        Datum::Decimal(value) => {
-            let value = value.to_string();
-            format_scalar(column, TextScalar::Decimal(value.as_bytes()))
-        }
-        Datum::String(value) => format_scalar(column, TextScalar::Bytes(value.bytes())),
-        Datum::Bytes(value) => format_scalar(column, TextScalar::Bytes(&value)),
-        Datum::BinaryLiteral(value) | Datum::Bit(value) => {
-            format_scalar(column, TextScalar::Bytes(value.as_bytes()))
-        }
-        Datum::Duration(value) => {
-            let value = tidb_datatype::MySqlDuration::from_nanoseconds(
-                value.nanoseconds(),
-                i64::from(column.decimal),
-            )
-            .map_err(|error| error.to_string())?
-            .to_string();
-            format_scalar(column, TextScalar::Temporal(value.as_bytes()))
-        }
-        Datum::Enum(value, _) => format_scalar(column, TextScalar::Bytes(value.name_bytes())),
-        Datum::Set(value, _) => format_scalar(column, TextScalar::Bytes(value.name_bytes())),
-        Datum::Time(value) => {
-            let value = value.to_string();
-            format_scalar(column, TextScalar::Temporal(value.as_bytes()))
-        }
-        Datum::Json(value) => {
-            let value = value.to_string();
-            format_scalar(column, TextScalar::Bytes(value.as_bytes()))
-        }
-        Datum::VectorFloat32(value) => {
-            let value = value.to_string();
-            format_scalar(column, TextScalar::Bytes(value.as_bytes()))
-        }
-        Datum::Raw(_) => Err("cannot render Raw as a SQL row".to_owned()),
-    }
-}
-
-fn format_scalar(column: TextColumn, value: TextScalar<'_>) -> Result<Option<Vec<u8>>, String> {
-    format_text_value(column, value).map_err(|error| match error {
+    format_datum_text(column, &datum).map_err(|error| match error {
         TextFormatError::UnsupportedType(type_code) => format!("invalid type {type_code}"),
-        TextFormatError::ScalarTypeMismatch(_) => error.to_string(),
+        TextFormatError::NotARowValue(_) | TextFormatError::ScalarTypeMismatch(_) => {
+            error.to_string()
+        }
     })
 }
 

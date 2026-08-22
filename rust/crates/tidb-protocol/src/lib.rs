@@ -95,7 +95,8 @@ pub use resultset::{
     ResultSetError, ResultSetOptions, EOF_HEADER, OK_HEADER,
 };
 pub use textrow::{
-    append_format_float, format_text_value, TextColumn, TextFormatError, TextScalar,
+    append_format_float, format_datum_text, format_text_value, TextColumn, TextFormatError,
+    TextScalar,
     NOT_FIXED_DECIMAL, TYPE_DATE, TYPE_DATETIME, TYPE_DOUBLE, TYPE_DURATION, TYPE_FLOAT,
     TYPE_GEOMETRY, TYPE_INT24, TYPE_LONG, TYPE_LONGLONG, TYPE_NEW_DECIMAL, TYPE_SHORT,
     TYPE_TIMESTAMP, TYPE_TINY, TYPE_YEAR, UNSIGNED_FLAG,
