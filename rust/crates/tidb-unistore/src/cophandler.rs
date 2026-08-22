@@ -816,6 +816,8 @@ fn eval_datum(
             .ok_or_else(|| "aggregate input is outside the scanned row".to_owned()),
         SimpleExpr::Int(value) => Ok(Datum::Int(*value)),
         SimpleExpr::Bytes(bytes) => Ok(Datum::Bytes(bytes.clone())),
+        SimpleExpr::Decimal(value) => Ok(Datum::Decimal(value.clone())),
+        SimpleExpr::Time(value) => Ok(Datum::Time(*value)),
         SimpleExpr::Null => Ok(Datum::Null),
         SimpleExpr::Func(..) => Err("a computed aggregate argument is a later course".to_owned()),
     }
@@ -933,6 +935,14 @@ pub enum SimpleExpr {
     /// trimmed proto -- no leaf this path builds is that kind.) The
     /// COMPARISON's collation decides how these order, as in Go.
     Bytes(Vec<u8>),
+    /// `ExprType_MysqlDecimal`, val decimal-codec decoded
+    /// (`distsql_builtin.go`'s `decodeValueList` -> `codec.DecodeDecimal`).
+    Decimal(tidb_datatype::Decimal),
+    /// `ExprType_MysqlTime`, val codec-uint decoded into Go's PACKED form
+    /// (`distsql_builtin.go`'s `MysqlTime` arm -> `types.NewTime` from
+    /// `FromPackedUint`). The type and fsp come from the leaf's own field
+    /// type, as they do there.
+    Time(tidb_datatype::Time),
     /// `ExprType_ScalarFunc` over a supported signature.
     Func(SimpleSig, Vec<SimpleExpr>),
 }
@@ -968,6 +978,37 @@ pub enum SimpleSig {
     EqString(i32),
     /// See [`SimpleSig::LtString`].
     NeString(i32),
+    /// `LtDecimal`/`LeDecimal`/`GtDecimal`/`GeDecimal`/`EqDecimal`/
+    /// `NeDecimal`. Go picks these from `GetAccurateCmpType` whenever either
+    /// side is DECIMAL, having folded the other side's cast at build time --
+    /// so `dc > 0` arrives as `GtDecimal(ColumnRef, MysqlDecimal(0))` and
+    /// never as an int comparison.
+    LtDecimal,
+    /// See [`SimpleSig::LtDecimal`].
+    LeDecimal,
+    /// See [`SimpleSig::LtDecimal`].
+    GtDecimal,
+    /// See [`SimpleSig::LtDecimal`].
+    GeDecimal,
+    /// See [`SimpleSig::LtDecimal`].
+    EqDecimal,
+    /// See [`SimpleSig::LtDecimal`].
+    NeDecimal,
+    /// `LtTime`/`LeTime`/`GtTime`/`GeTime`/`EqTime`/`NeTime`. Go picks these
+    /// from `GetAccurateCmpType` whenever either side is DATE/DATETIME/
+    /// TIMESTAMP, the string side's cast having been folded at build time --
+    /// so `d > '2024-01-01'` arrives as `GtTime(ColumnRef, MysqlTime(..))`.
+    LtTime,
+    /// See [`SimpleSig::LtTime`].
+    LeTime,
+    /// See [`SimpleSig::LtTime`].
+    GtTime,
+    /// See [`SimpleSig::LtTime`].
+    GeTime,
+    /// See [`SimpleSig::LtTime`].
+    EqTime,
+    /// See [`SimpleSig::LtTime`].
+    NeTime,
     /// `LogicalAnd` — MySQL three-valued: `NULL AND FALSE` is FALSE.
     LogicalAnd,
     /// `LogicalOr` — `NULL OR TRUE` is TRUE.
@@ -998,6 +1039,29 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
     }
     if tp == tipb::ExprType::String {
         return Ok(SimpleExpr::Bytes(expr.val().to_vec()));
+    }
+    if tp == tipb::ExprType::MysqlTime {
+        let (_, packed) = tidb_codec::decode_uint(expr.val())
+            .map_err(|err| format!("invalid time literal: {err:?}"))?;
+        let field_type = expr.field_type.as_ref();
+        let kind = field_type
+            .and_then(|ft| u8::try_from(ft.tp()).ok())
+            .map_or(tidb_datatype::TimeType::DateTime, |tp| {
+                match tidb_datatype::FieldTypeCode::from_mysql_type(tp) {
+                    tidb_datatype::FieldTypeCode::Date => tidb_datatype::TimeType::Date,
+                    tidb_datatype::FieldTypeCode::Timestamp => tidb_datatype::TimeType::Timestamp,
+                    _ => tidb_datatype::TimeType::DateTime,
+                }
+            });
+        let fsp = field_type.map_or(0, |ft| i64::from(ft.decimal()));
+        let value = tidb_datatype::Time::from_packed_uint(packed, kind, fsp)
+            .map_err(|err| format!("invalid time literal: {err:?}"))?;
+        return Ok(SimpleExpr::Time(value));
+    }
+    if tp == tipb::ExprType::MysqlDecimal {
+        let (_, value, _, _) = tidb_codec::decode_decimal(expr.val())
+            .map_err(|err| format!("invalid decimal literal: {err:?}"))?;
+        return Ok(SimpleExpr::Decimal(value));
     }
     if tp == tipb::ExprType::ColumnRef {
         let (_, offset) = tidb_codec::decode_int(expr.val())
@@ -1034,6 +1098,18 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::GeString => SimpleSig::GeString(collation_of(expr)),
             tipb::ScalarFuncSig::EqString => SimpleSig::EqString(collation_of(expr)),
             tipb::ScalarFuncSig::NeString => SimpleSig::NeString(collation_of(expr)),
+            tipb::ScalarFuncSig::LtDecimal => SimpleSig::LtDecimal,
+            tipb::ScalarFuncSig::LeDecimal => SimpleSig::LeDecimal,
+            tipb::ScalarFuncSig::GtDecimal => SimpleSig::GtDecimal,
+            tipb::ScalarFuncSig::GeDecimal => SimpleSig::GeDecimal,
+            tipb::ScalarFuncSig::EqDecimal => SimpleSig::EqDecimal,
+            tipb::ScalarFuncSig::NeDecimal => SimpleSig::NeDecimal,
+            tipb::ScalarFuncSig::LtTime => SimpleSig::LtTime,
+            tipb::ScalarFuncSig::LeTime => SimpleSig::LeTime,
+            tipb::ScalarFuncSig::GtTime => SimpleSig::GtTime,
+            tipb::ScalarFuncSig::GeTime => SimpleSig::GeTime,
+            tipb::ScalarFuncSig::EqTime => SimpleSig::EqTime,
+            tipb::ScalarFuncSig::NeTime => SimpleSig::NeTime,
             other => {
                 return Err(format!(
                     "scalar signature {other:?} waits on its distsql_builtin.go course"
@@ -1055,6 +1131,46 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
 /// The bytes a string operand carries: a literal, or a string-valued
 /// column. Anything else -- including SQL NULL -- is `None`, which the
 /// caller propagates as MySQL's UNKNOWN.
+/// The DECIMAL value of one operand of a decimal comparison.
+///
+/// Go's `GtDecimal` and its siblings evaluate both children as decimals, the
+/// other side's cast having been folded at build time -- so a literal arrives
+/// already `MysqlDecimal` and a column arrives as one. An integer column can
+/// still reach here through `dc > i`, where Go wraps the int side in
+/// `CastIntAsDecimal`; that cast is a signature of its own and is refused
+/// above rather than approximated, so only exact decimal operands get here.
+fn eval_decimal(
+    expr: &SimpleExpr,
+    row: &[tidb_datatype::Datum],
+) -> Option<tidb_datatype::Decimal> {
+    use tidb_datatype::Datum;
+    match expr {
+        SimpleExpr::Decimal(value) => Some(value.clone()),
+        SimpleExpr::Column(offset) => match row.get(*offset) {
+            Some(Datum::Decimal(value)) => Some(value.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The TIME value of one operand of a temporal comparison; see
+/// [`eval_decimal`] for why only exact operands reach here.
+fn eval_time(
+    expr: &SimpleExpr,
+    row: &[tidb_datatype::Datum],
+) -> Option<tidb_datatype::Time> {
+    use tidb_datatype::Datum;
+    match expr {
+        SimpleExpr::Time(value) => Some(*value),
+        SimpleExpr::Column(offset) => match row.get(*offset) {
+            Some(Datum::Time(value)) => Some(*value),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn eval_bytes(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<Vec<u8>> {
     use tidb_datatype::Datum;
     match expr {
@@ -1145,8 +1261,9 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
             Some(Datum::Null) | None => None,
             Some(_) => None, // non-int columns wait on their course
         },
-        // A bare string is not a truth value; only a comparison reads it.
-        SimpleExpr::Bytes(_) => None,
+        // A bare string or decimal is not a truth value; only a comparison
+        // reads them.
+        SimpleExpr::Bytes(_) | SimpleExpr::Decimal(_) | SimpleExpr::Time(_) => None,
         SimpleExpr::Func(sig, children) => {
             let child = |i: usize| children.get(i).and_then(|c| eval_expr(c, row));
             match sig {
@@ -1185,6 +1302,48 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
                         SimpleSig::GtString(_) => ordering.is_gt(),
                         SimpleSig::GeString(_) => ordering.is_ge(),
                         _ => ordering.is_eq(),
+                    };
+                    Some(i128::from(truth))
+                }
+                SimpleSig::LtDecimal
+                | SimpleSig::LeDecimal
+                | SimpleSig::GtDecimal
+                | SimpleSig::GeDecimal
+                | SimpleSig::EqDecimal
+                | SimpleSig::NeDecimal => {
+                    let (left, right) = (
+                        eval_decimal(children.first()?, row)?,
+                        eval_decimal(children.get(1)?, row)?,
+                    );
+                    let ordering = left.cmp(&right);
+                    let truth = match sig {
+                        SimpleSig::LtDecimal => ordering.is_lt(),
+                        SimpleSig::LeDecimal => ordering.is_le(),
+                        SimpleSig::GtDecimal => ordering.is_gt(),
+                        SimpleSig::GeDecimal => ordering.is_ge(),
+                        SimpleSig::EqDecimal => ordering.is_eq(),
+                        _ => !ordering.is_eq(),
+                    };
+                    Some(i128::from(truth))
+                }
+                SimpleSig::LtTime
+                | SimpleSig::LeTime
+                | SimpleSig::GtTime
+                | SimpleSig::GeTime
+                | SimpleSig::EqTime
+                | SimpleSig::NeTime => {
+                    let (left, right) = (
+                        eval_time(children.first()?, row)?,
+                        eval_time(children.get(1)?, row)?,
+                    );
+                    let ordering = left.compare(right);
+                    let truth = match sig {
+                        SimpleSig::LtTime => ordering.is_lt(),
+                        SimpleSig::LeTime => ordering.is_le(),
+                        SimpleSig::GtTime => ordering.is_gt(),
+                        SimpleSig::GeTime => ordering.is_ge(),
+                        SimpleSig::EqTime => ordering.is_eq(),
+                        _ => !ordering.is_eq(),
                     };
                     Some(i128::from(truth))
                 }
