@@ -525,11 +525,30 @@ impl ConfiguredColumn {
     /// Configures the table's signed `BIGINT PRIMARY KEY CLUSTERED` column.
     #[must_use]
     pub fn clustered_primary_key(name: impl Into<String>, id: i64) -> Self {
+        Self::clustered_primary_key_of_type(name, id, ConfiguredScalarType::BigInt)
+    }
+
+    /// Configures the table's signed `INT PRIMARY KEY CLUSTERED` column.
+    ///
+    /// The persisted row key encodes the handle as an `int64` either way
+    /// (`tablecodec`'s handle encoding), exactly as Go admits any signed
+    /// integer primary key; only the wire metadata and the admitted value
+    /// range differ from [`ConfiguredColumn::clustered_primary_key`].
+    #[must_use]
+    pub fn clustered_primary_key_int(name: impl Into<String>, id: i64) -> Self {
+        Self::clustered_primary_key_of_type(name, id, ConfiguredScalarType::Int)
+    }
+
+    fn clustered_primary_key_of_type(
+        name: impl Into<String>,
+        id: i64,
+        scalar_type: ConfiguredScalarType,
+    ) -> Self {
         Self {
             name: name.into(),
             id,
             kind: ConfiguredColumnKind::ClusteredPrimaryKey,
-            scalar_type: ConfiguredScalarType::BigInt,
+            scalar_type,
             nullable: false,
         }
     }

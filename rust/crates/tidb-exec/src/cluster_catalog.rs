@@ -324,13 +324,24 @@ fn configure_loaded_column(column: &ColumnInfo) -> Result<ConfiguredColumn, Stri
     }
     let code = column.get_type();
     if handle {
-        if code != FieldTypeCode::LongLong || unsigned {
-            return Err(format!(
-                "column `{name}` is the row handle but has type {}, not signed BIGINT",
-                describe_type(column)
-            ));
+        // Go admits any signed integer primary key as the clustered handle
+        // (`tablecodec` encodes every signed handle as one `int64`), so both
+        // `BIGINT` and `INT` are configured here; only the declared wire type
+        // and the admitted value range differ. Unsigned handles would flip
+        // the key ordering, so they stay refused.
+        match (code, unsigned) {
+            (FieldTypeCode::LongLong, false) => {
+                return Ok(ConfiguredColumn::clustered_primary_key(name, column.id));
+            }
+            (FieldTypeCode::Long, false) => {
+                return Ok(ConfiguredColumn::clustered_primary_key_int(name, column.id));
+            }
+            _ => {}
         }
-        return Ok(ConfiguredColumn::clustered_primary_key(name, column.id));
+        return Err(format!(
+            "column `{name}` is the row handle but has type {}, not a signed BIGINT or INT",
+            describe_type(column)
+        ));
     }
     let column = match code {
         FieldTypeCode::LongLong if unsigned => Ok(
