@@ -2155,7 +2155,23 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // `explain_complex` 39 -> 42 matched of 45, `explain_stats` 8 -> 9,
     // and `tpch`'s eight dump loads go from `OutOfDomain` to side-effect
     // matches (11 -> 19 of 40), all at zero divergences.
-    const KNOWN_DIVERGENCES: usize = 41;
+    //
+    // 41 -> 37: two from `LOAD STATS` (merged; its own accounting above) and
+    // two from the PREPARED plan cache's observable contract. Go decides
+    // cacheability at PREPARE (`IsASTCacheable`) and a second `EXECUTE` under
+    // an identical key -- schema version, database, sql_mode, time zone, and
+    // the push-down blacklist's reload counter (`plan_cache_utils.go:443`) --
+    // reports `@@last_plan_from_cache = 1`. This tier re-plans from text, so
+    // no plan is reused; the ADMISSION and the HIT are what is modelled, the
+    // same honesty split `non_prepared_plan_cache` documents.
+    //
+    // The first cut over-reported: `executor/parallel_apply` expects 0 after
+    // two executes of a correlated subquery, because Go's SECOND gate --
+    // `isPhysicalPlanCacheable`, on the BUILT plan -- refuses any plan
+    // containing a `PhysicalApply`. The driver now reports Apply construction
+    // through the statement context, and the prepared path neither stores nor
+    // hits for such a statement.
+    const KNOWN_DIVERGENCES: usize = 37;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

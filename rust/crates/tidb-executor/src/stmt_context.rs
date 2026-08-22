@@ -438,6 +438,12 @@ pub struct StmtContext {
     /// Go `SessionVars.EnableIndexMerge`: whether automatic IndexMerge paths
     /// participate in this statement's costed access-path selection.
     index_merge: bool,
+    /// Whether planning this statement built an Apply -- Go
+    /// `isPhysicalPlanCacheable`'s `*physicalop.PhysicalApply` arm, which
+    /// refuses to cache any plan containing one. A channel because the
+    /// prepared-statement layer that reads it is outside the driver that
+    /// knows.
+    planned_apply: Rc<std::cell::Cell<bool>>,
     /// Go `SessionVars.AllowWriteRowID` (`tidb_opt_write_row_id`): whether an
     /// `INSERT`/`REPLACE`/`UPDATE` may name `_tidb_rowid` and write it.
     allow_write_row_id: bool,
@@ -675,6 +681,7 @@ impl StmtContext {
             outer_join_reorder: true,
             // Go `vardef.DefTiDBEnableIndexMerge = true`.
             index_merge: true,
+            planned_apply: Rc::default(),
             allow_write_row_id: false,
             expr_pushdown_blacklist: std::sync::Arc::default(),
             disabled_logical_rules: std::sync::Arc::default(),
@@ -1213,6 +1220,19 @@ impl StmtContext {
     #[must_use]
     pub fn allow_write_row_id(&self) -> bool {
         self.allow_write_row_id
+    }
+
+    /// Installs the channel [`Self::report_planned_apply`] writes.
+    #[must_use]
+    pub fn with_planned_apply_channel(mut self, channel: Rc<std::cell::Cell<bool>>) -> Self {
+        self.planned_apply = channel;
+        self
+    }
+
+    /// Records that this statement's plan contains an Apply (Go
+    /// `PhysicalApply`), which `isPhysicalPlanCacheable` refuses to cache.
+    pub fn report_planned_apply(&self) {
+        self.planned_apply.set(true);
     }
 
     /// Installs the two published blacklists. See

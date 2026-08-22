@@ -1275,6 +1275,12 @@ pub(crate) fn extract_correlated_subquery(
                 // the already-widened Apply scope.
                 return false;
             }
+            // Go `isPhysicalPlanCacheable`: a plan containing a
+            // `PhysicalApply` is refused by the prepared plan cache, because
+            // a per-outer-row executor cannot be reused across parameter
+            // sets. This is the one place the driver decides an Apply IS the
+            // plan, so it is the one place that can say so.
+            self.ctx.report_planned_apply();
             self.found = Some(CorrelatedSubquery {
                 query,
                 kind,

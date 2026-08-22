@@ -54,6 +54,11 @@ use tidb_executor::{DriverError, ExprPushDownBlacklist};
 pub struct PushdownBlacklists {
     expressions: Arc<Mutex<Arc<ExprPushDownBlacklist>>>,
     rules: Arc<Mutex<Arc<HashSet<String>>>>,
+    /// Go `ExprPushDownBlackListReloadTimeStamp`, as a counter rather than a
+    /// wall clock: bumped by every publish, and mixed into the prepared plan
+    /// cache's key (`plan_cache_utils.go:443`) so a reload invalidates every
+    /// cached plan.
+    generation: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl PushdownBlacklists {
@@ -68,6 +73,13 @@ impl PushdownBlacklists {
 
     fn publish_expressions(&self, loaded: ExprPushDownBlacklist) {
         *self.expressions.lock().expect("blacklist mutex") = Arc::new(loaded);
+        self.generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The reload counter [`crate::prepared_plan_cache`] mixes into its key.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn publish_rules(&self, loaded: HashSet<String>) {

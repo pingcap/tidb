@@ -97,6 +97,14 @@ pub(crate) struct PreparedStatement {
     /// Go `PlanCacheStmt.ParamCount`: the number of `?` markers the statement
     /// carries, which fixes exactly how many values an `EXECUTE` must supply.
     param_count: usize,
+    /// Go `PlanCacheStmt.StmtCacheable` and `UncacheableReason`, decided ONCE
+    /// at `PREPARE` by `IsASTCacheable` -- an uncacheable statement never
+    /// reports a hit, and never pays the walk again.
+    cacheable: Result<(), String>,
+    /// The [`crate::prepared_plan_cache::PreparedPlanKey`] the LAST `EXECUTE`
+    /// planned against. An `EXECUTE` whose key equals it is the one Go serves
+    /// from the cache, and is what `@@last_plan_from_cache` reports.
+    last_plan_key: Option<crate::prepared_plan_cache::PreparedPlanKey>,
     /// The marker orders that stand in a `LIMIT`, whose bound values Go admits
     /// only as a non-negative `int64` or a `uint64`
     /// (`CheckParamTypeInt64orUint64` / `getUintFromNode`). Captured: with
@@ -161,6 +169,9 @@ impl Session {
         }
         let param_count = tidb_executor::parameter_count(&text, self.scanner_sql_mode())?;
         let limit_markers = limit_marker_orders(&statement);
+        // Go `GeneratePlanCacheStmtWithAST` runs `CacheableWithCtx` here, at
+        // PREPARE, and stores the verdict on the `PlanCacheStmt`.
+        let cacheable = crate::prepared_plan_cache::stmt_cacheable(&mut statement);
         // Only a statement that CARRIES markers is ever restored (that is what
         // binding does), so only that statement needs its column names pinned
         // against the restore. A marker-free statement keeps the text the user
@@ -176,6 +187,8 @@ impl Session {
                 sql,
                 param_count,
                 limit_markers,
+                cacheable,
+                last_plan_key: None,
             },
         );
         Ok(())
@@ -245,12 +258,40 @@ impl Session {
         } else {
             tidb_executor::bind_parameters(&prepared.sql, &values, self.scanner_sql_mode())?
         };
+        // Go `GetPlanFromPlanCache`: a hit is this statement, cacheable,
+        // planned before under an IDENTICAL key -- schema version, database,
+        // sql_mode, time zone, and the push-down blacklist's reload counter.
+        // Decided BEFORE the run (the key describes what planning would see),
+        // reported AFTER it succeeds, so a failing statement publishes
+        // nothing, and recorded back onto the session's copy of the handle.
+        let cache_enabled = self.prepared_plan_cache_enabled();
+        let key = cache_enabled.then(|| self.prepared_plan_key());
+        let hit = prepared.cacheable.is_ok()
+            && key.is_some()
+            && prepared.last_plan_key == key;
         // Go builds the prepared statement's own plan and runs it as this
         // statement's body, so the inner statement goes through the same
         // dispatch every other statement does -- including DDL's implicit
         // commit, which is why `EXECUTE` of a prepared `CREATE TABLE` works
         // (captured).
-        self.execute_statement(&sql)
+        let output = self.execute_statement(&sql)?;
+        // Go `isPhysicalPlanCacheable`'s `PhysicalApply` arm runs on the
+        // BUILT plan, after the AST checker said yes: a plan containing an
+        // Apply is refused outright -- neither stored nor reported -- because
+        // a per-outer-row executor cannot be reused across parameter sets.
+        // The driver reports it through the statement context's channel.
+        if self.planned_apply.get() {
+            return Ok(output);
+        }
+        if hit {
+            self.found_in_plan_cache = true;
+        }
+        if let (Ok(()), Some(key)) = (&prepared.cacheable, key) {
+            if let Some(stored) = self.prepared_statements.get_mut(name) {
+                stored.last_plan_key = Some(key);
+            }
+        }
+        Ok(output)
     }
 
     /// Go `DeallocateExec.Next`: drops the name, or reports

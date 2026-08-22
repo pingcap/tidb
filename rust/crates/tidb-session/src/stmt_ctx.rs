@@ -704,6 +704,7 @@ impl Session {
                 .with_outer_join_reorder(outer_join_reorder)
                 .with_index_merge(index_merge)
                 .with_pushdown_blacklists(self.pushdown_blacklists.snapshot())
+                .with_planned_apply_channel(Rc::clone(&self.planned_apply))
                 .with_allow_write_row_id(allow_write_row_id)
                 .with_static_partition_prune(static_partition_prune)
                 .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
@@ -753,6 +754,7 @@ impl Session {
             ignore_err,
         )
         .with_date_modes(date_modes)
+        .with_planned_apply_channel(Rc::clone(&self.planned_apply))
         .with_allow_write_row_id(allow_write_row_id)
         .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
         .with_new_only_full_group_by_check(new_only_full_group_by_check)

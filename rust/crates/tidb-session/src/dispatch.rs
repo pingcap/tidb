@@ -580,6 +580,8 @@ impl Session {
         let sql_mode = self.scanner_sql_mode();
         // Only an allocating INSERT sets it; every other statement reports 0.
         self.statement_insert_id = 0;
+        // The Apply channel describes THIS statement's plan.
+        self.planned_apply.set(false);
         // Go's row-id shard generator belongs to the TRANSACTION, so a
         // statement that IS its own transaction starts a fresh run. Inside an
         // explicit `BEGIN`/`COMMIT` the run continues across statements,

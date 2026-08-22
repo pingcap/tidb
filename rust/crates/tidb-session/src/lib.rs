@@ -572,6 +572,10 @@ pub struct Session {
     /// alone changes no plan. SHARED across the sessions a front end opens,
     /// because Go's scope for them is one server. See [`blacklist`].
     pushdown_blacklists: blacklist::PushdownBlacklists,
+    /// The channel `StmtContext::report_planned_apply` writes: whether the
+    /// statement now running planned an Apply. Read by the prepared plan
+    /// cache (Go's `PhysicalApply` refusal) and cleared per statement.
+    planned_apply: Rc<std::cell::Cell<bool>>,
     /// Go `SessionVars.FoundInBinding`: whether the statement RUNNING now
     /// took its hints from a binding.
     found_in_binding: bool,
@@ -644,6 +648,7 @@ impl Default for Session {
             prepared_statements: prepared_statements::PreparedStore::default(),
             session_bindings: binding::SessionBindings::default(),
             pushdown_blacklists: blacklist::PushdownBlacklists::default(),
+            planned_apply: Rc::default(),
             found_in_binding: false,
             prev_found_in_binding: false,
         };
@@ -690,6 +695,7 @@ mod load_stats_arm;
 mod non_prepared_plan_cache;
 mod noop;
 mod prepared_ast;
+mod prepared_plan_cache;
 mod prepared_statements;
 pub mod session_vars;
 mod stmt_ctx;
@@ -1478,6 +1484,8 @@ mod tests_partition_prune_collation;
 mod tests_enum_index_range;
 #[cfg(test)]
 mod tests_pushdown_blacklist;
+#[cfg(test)]
+mod tests_prepared_plan_cache;
 #[cfg(test)]
 mod tests_planner_core_rewriter;
 #[cfg(test)]
