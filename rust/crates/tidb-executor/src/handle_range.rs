@@ -178,6 +178,9 @@ fn build_common_handle_ranges<'a>(
 /// this tier can range over it.
 fn handle_column(table: &KvTable) -> Option<&crate::kv_table::KvColumn> {
     let column = table.columns.get(table.pk_handle_offset()?)?;
+    // An UNSIGNED handle is deliberately refused here; see
+    // `split_ranges_across_int64_boundary` for what is still missing before
+    // it can be ranged over.
     if column.field_type.is_unsigned() {
         return None;
     }
@@ -341,6 +344,32 @@ fn common_handle_record_key_ranges(
     }
     Ok(key_ranges)
 }
+
+/// WHY THIS IS NOT YET CALLED.
+///
+/// Wiring it was attempted and reverted: enabling an unsigned handle made
+/// `SELECT count(*) FROM uh WHERE id >= 9223372036854775808` answer 5 -- every
+/// row -- where the pinned answer is 2.
+///
+/// The split is not what fails. The obstacle is upstream of it, in the OPEN
+/// bounds. This tier's ranger leaves an open end as `Datum::MaxValue`, and
+/// `to_table_range` maps that to `i64::MAX`; for an unsigned handle the
+/// domain maximum is `u64::MAX`, which encodes as -1. So `id >= 2^63` becomes
+/// the key interval `[negative, i64::MAX]`, which spans the whole table, and
+/// `split_ranges_across_int64_boundary` never sees a bound it recognises --
+/// `MaxValue` is not an integer, so it reports nothing past the boundary and
+/// returns the range untouched.
+///
+/// Go does not hit this because its ranger materialises the column's own
+/// domain for an open end, so the high bound of that range is the unsigned
+/// maximum rather than a sentinel.
+///
+/// Filling it therefore means teaching the handle range builder the column's
+/// signedness and materialising open bounds in the right domain -- 0 and
+/// `u64::MAX` for an unsigned handle -- before this function can do its job.
+/// That is a change to range CONSTRUCTION, not to this split, and it is left
+/// undone rather than half-done because the failure mode is silently reading
+/// the wrong rows.
 
 /// Go `SplitRangesAcrossInt64Boundary`
 /// (`pkg/distsql/request_builder.go:575`): divides an UNSIGNED handle's
