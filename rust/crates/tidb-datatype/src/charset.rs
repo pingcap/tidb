@@ -60,16 +60,28 @@ impl Charset {
     }
 
     /// Resolves a supported name, including the `utf8mb3` alias.
+    ///
+    /// Case-insensitive without allocating: this sits on the per-row
+    /// evaluation path (`ScalarFunction::derived_collation`), where Go reads
+    /// an enum field and this used to build a lowered `String` per call.
     pub fn from_name(name: &str) -> Option<Self> {
-        match name.to_ascii_lowercase().as_str() {
-            "binary" => Some(Self::Binary),
-            "ascii" => Some(Self::Ascii),
-            "latin1" => Some(Self::Latin1),
-            "utf8" | "utf8mb3" => Some(Self::Utf8),
-            "utf8mb4" => Some(Self::Utf8Mb4),
-            "gbk" => Some(Self::Gbk),
-            "gb18030" => Some(Self::Gb18030),
-            _ => None,
+        let eq = |canonical: &str| name.eq_ignore_ascii_case(canonical);
+        if eq("binary") {
+            Some(Self::Binary)
+        } else if eq("ascii") {
+            Some(Self::Ascii)
+        } else if eq("latin1") {
+            Some(Self::Latin1)
+        } else if eq("utf8") || eq("utf8mb3") {
+            Some(Self::Utf8)
+        } else if eq("utf8mb4") {
+            Some(Self::Utf8Mb4)
+        } else if eq("gbk") {
+            Some(Self::Gbk)
+        } else if eq("gb18030") {
+            Some(Self::Gb18030)
+        } else {
+            None
         }
     }
 
@@ -213,8 +225,24 @@ impl Collation {
     }
 
     /// Resolves a typed collation, including UTF8MB3 aliases.
+    ///
+    /// Case-insensitive without a heap allocation: this sits on the per-row
+    /// evaluation path (`ScalarFunction::derived_collation`), where Go reads
+    /// its collator from an enum and this used to build a lowered `String`
+    /// per call. The name folds into a stack buffer instead; names longer
+    /// than any registry entry cannot match and fall through unchanged.
     pub fn from_name(name: &str) -> Option<Self> {
-        match utf8_alias(&name.to_ascii_lowercase()) {
+        const MAX_COLLATION_NAME_LEN: usize = 64;
+        let mut fold_buf = [0u8; MAX_COLLATION_NAME_LEN];
+        let lowered = match try_lower_ascii_into(name, &mut fold_buf) {
+            Some(folded) => folded,
+            None => {
+                // Longer than every canonical name: no arm can match either
+                // way, so the unfolded name behaves identically.
+                name
+            }
+        };
+        match utf8_alias(lowered) {
             "binary" => Some(Self::Binary),
             "ascii_bin" => Some(Self::AsciiBin),
             "latin1_bin" => Some(Self::Latin1Bin),
@@ -487,6 +515,19 @@ fn apply_new_collation_defaults(guard: &mut Registry, enabled: bool) {
     }
 }
 
+/// Folds `name` into `buf` with Go's ASCII-only lowercasing and returns the
+/// folded slice, or `None` when the name does not fit. Non-ASCII bytes pass
+/// through untouched, so a valid UTF-8 input stays valid UTF-8.
+fn try_lower_ascii_into<'a>(name: &'a str, buf: &'a mut [u8]) -> Option<&'a str> {
+    if name.len() > buf.len() {
+        return None;
+    }
+    for (out, byte) in buf.iter_mut().zip(name.as_bytes()) {
+        *out = byte.to_ascii_lowercase();
+    }
+    std::str::from_utf8(&buf[..name.len()]).ok()
+}
+
 fn utf8_alias(name: &str) -> &str {
     match name {
         "utf8mb3_bin" => "utf8_bin",
@@ -703,5 +744,48 @@ mod tests {
         assert_eq!(get_collation_by_id(99_999).unwrap().sortlen, 8);
         remove_charset("custom");
         assert!(get_charset_info("custom").is_err());
+    }
+
+    #[test]
+    fn collation_from_name_is_case_insensitive_without_allocating() {
+        // Every canonical spelling resolves from any ASCII casing, including
+        // the UTF8MB3 aliases Go accepts.
+        for (name, expected) in [
+            ("utf8mb4_bin", Collation::Utf8Mb4Bin),
+            ("UTF8MB4_BIN", Collation::Utf8Mb4Bin),
+            ("Utf8Mb4_Bin", Collation::Utf8Mb4Bin),
+            ("utf8mb3_bin", Collation::Utf8Bin),
+            ("UTF8MB3_UNICODE_CI", Collation::Utf8UnicodeCi),
+            ("utf8_general_ci", Collation::Utf8GeneralCi),
+            ("binary", Collation::Binary),
+            ("BINARY", Collation::Binary),
+            ("gbk_chinese_ci", Collation::GbkChineseCi),
+            ("GB18030_BIN", Collation::Gb18030Bin),
+        ] {
+            assert_eq!(Collation::from_name(name), Some(expected), "{name}");
+        }
+        // Unknown and over-long names resolve to nothing, exactly as the
+        // allocating lowercase did.
+        assert_eq!(Collation::from_name("not_a_collation"), None);
+        assert_eq!(
+            Collation::from_name(&"x".repeat(65)),
+            None,
+            "names longer than the fold buffer must stay unmatched"
+        );
+    }
+
+    #[test]
+    fn charset_from_name_is_case_insensitive() {
+        for (name, expected) in [
+            ("utf8mb4", Charset::Utf8Mb4),
+            ("UTF8MB4", Charset::Utf8Mb4),
+            ("utf8mb3", Charset::Utf8),
+            ("Utf8", Charset::Utf8),
+            ("gb18030", Charset::Gb18030),
+        ] {
+            assert_eq!(Charset::from_name(name), Some(expected), "{name}");
+        }
+        assert_eq!(Charset::from_name("not_a_charset"), None);
+        assert_eq!(Charset::from_name(&"y".repeat(65)), None);
     }
 }
