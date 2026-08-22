@@ -119,6 +119,13 @@ Therefore: **do not verify by inspecting the Rust code.** For each rule, open th
   Evidence: measured directly, then pinned as `a_constant_above_i64_max_filters_the_same_on_both_paths`. Not fixed by the `compare_int` work in this plan: that lives in partition pruning and the fixture table is not partitioned, so it must have arrived with an upstream merge. Recorded rather than reported, since there is nothing left to report.
   Note on why it is pinned as a DIFFERENTIAL rather than a value assertion: each path alone looked plausible when this regressed, and only running one question down two paths that must agree showed that one of them was not filtering at all.
 
+- Observation (M7): an UNSIGNED row handle answers CORRECTLY today, including ordering; what differs from Go is the PLAN, not the rows. `handle_column` (`rust/crates/tidb-executor/src/handle_range.rs:179`) returns `None` for an unsigned handle, so no range is built and the scan is a full one with the predicate applied afterwards. Go instead ranges over it and splits the ranges at the signed boundary.
+  Evidence: measured across the boundary -- total, both sides of `i64::MAX + 1`, a straddling `BETWEEN`, equality at `i64::MAX` and at `i64::MAX + 1`, and `ORDER BY`, which returns unsigned order rather than the key order that would put the two large values first. Pinned as `an_unsigned_row_handle_answers_correctly_across_the_int64_boundary`.
+
+- Decision: the correct answers are pinned BEFORE `SplitRangesAcrossInt64Boundary` is ported, and the port is treated as an optimisation rather than a fix.
+  Rationale: the trade is a correct slow plan for a fast one whose failure mode is silently missing or duplicated rows -- an unsigned handle above `i64::MAX` encodes NEGATIVE, so it sorts before every ordinary handle in key order, and a split that is wrong at either edge loses rows with no error. Go's algorithm (`distsql/request_builder.go:575`) has four edges to get right: the clean split when no range straddles, the straddling range itself, the two exclusive-bound special cases at `MaxInt64` and `MaxInt64 + 1`, and the keepOrder/desc orderings that decide which half is read first. Porting it against a pinned answer set is safe; porting it against nothing is not.
+  Date/Author: 2026-08-21, ngaut.
+
 ## Decision Log
 
 - Decision: Verification is done by re-deriving each rule from the Go source, with an independent second reader attempting to refute each claimed difference; the Rust code and its comments are never treated as evidence.

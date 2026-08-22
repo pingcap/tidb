@@ -3310,3 +3310,87 @@ fn a_constant_above_i64_max_filters_the_same_on_both_paths() {
         one
     );
 }
+
+/// An UNSIGNED row handle stores values above the maximum signed 64-bit
+/// integer, and the handle key encoding is signed -- so such a value encodes
+/// NEGATIVE and sorts, in key order, before every ordinary one.
+///
+/// Go copes by splitting a scan's ranges at that boundary
+/// (`SplitRangesAcrossInt64Boundary`, `distsql/request_builder.go:575`) and
+/// reading the two halves in the right order. This tier does not range over
+/// an unsigned handle at all -- `handle_column` returns `None` for one -- so
+/// it full-scans and filters, which is slower than Go and answers the same.
+///
+/// These are the answers. They are pinned BEFORE any attempt to port the
+/// split, because that port trades a correct slow plan for a fast one whose
+/// failure mode is silently missing or duplicated rows, and the boundary
+/// cases below are exactly where it would break: at `i64::MAX`, one past it,
+/// and at the top of the domain.
+#[test]
+fn an_unsigned_row_handle_answers_correctly_across_the_int64_boundary() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE uh (id BIGINT UNSIGNED PRIMARY KEY, v INT)")
+        .expect("table");
+    for value in [
+        "0",
+        "1",
+        "9223372036854775807",  // i64::MAX
+        "9223372036854775808",  // i64::MAX + 1, the first value that encodes negative
+        "18446744073709551615", // u64::MAX
+    ] {
+        session
+            .run(&format!("INSERT INTO uh VALUES ({value}, 1)"))
+            .expect("row");
+    }
+
+    let count = |session: &mut Session, sql: &str| {
+        tests_support::row_text(session.run(sql))
+            .into_iter()
+            .next()
+            .and_then(|row| row.into_iter().next())
+            .unwrap_or_default()
+    };
+
+    assert_eq!(count(&mut session, "SELECT count(*) FROM uh"), "5");
+    // The two values at or above the boundary.
+    assert_eq!(
+        count(&mut session, "SELECT count(*) FROM uh WHERE id >= 9223372036854775808"),
+        "2"
+    );
+    // ... and the three below it.
+    assert_eq!(
+        count(&mut session, "SELECT count(*) FROM uh WHERE id < 9223372036854775808"),
+        "3"
+    );
+    // A range that STRADDLES the boundary is the case Go has to split.
+    assert_eq!(
+        count(
+            &mut session,
+            "SELECT count(*) FROM uh WHERE id BETWEEN 1 AND 18446744073709551615"
+        ),
+        "4"
+    );
+    // Exactly at the boundary, both sides.
+    assert_eq!(
+        count(&mut session, "SELECT count(*) FROM uh WHERE id = 9223372036854775807"),
+        "1"
+    );
+    assert_eq!(
+        count(&mut session, "SELECT count(*) FROM uh WHERE id = 9223372036854775808"),
+        "1"
+    );
+
+    // Ordering is UNSIGNED, not the signed order the key encoding would give.
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT id FROM uh ORDER BY id")),
+        vec![
+            vec!["0".to_owned()],
+            vec!["1".to_owned()],
+            vec!["9223372036854775807".to_owned()],
+            vec!["9223372036854775808".to_owned()],
+            vec!["18446744073709551615".to_owned()],
+        ],
+        "reading in KEY order would put the two large values first"
+    );
+}
