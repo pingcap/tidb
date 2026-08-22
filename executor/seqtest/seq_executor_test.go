@@ -1453,7 +1453,7 @@ func TestAutoIncrementIDRetryDoesNotDuplicate(t *testing.T) {
 	))
 }
 
-func TestAutoIncrementIDRetryFailsWhenStatementRowCountChanges(t *testing.T) {
+func TestAutoIncrementIDRetryWhenStatementRowCountChanges(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -1478,11 +1478,11 @@ func TestAutoIncrementIDRetryFailsWhenStatementRowCountChanges(t *testing.T) {
 		session.ResetMockAutoIncIDRetry()
 	}()
 
-	tk.MustGetErrCode("commit", errno.ErrTxnRetryable)
-	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 2"))
 }
 
-func TestAutoRandomIDRetryFailsWhenExplicitIDChanges(t *testing.T) {
+func TestAutoRandomIDRetryUsesCurrentExplicitID(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -1497,8 +1497,8 @@ func TestAutoRandomIDRetryFailsWhenExplicitIDChanges(t *testing.T) {
 	tk.MustExec("insert into t select id, u from src")
 
 	// Keep the row count stable while changing the explicit AUTO_RANDOM ID.
-	// The retry must reject the mismatch instead of overwriting 200 with the
-	// cached ID 100.
+	// The retry must use the current explicit ID instead of overwriting it with
+	// the cached ID 100.
 	tk2.MustExec("update src set id = 200 where id = 100")
 	commitRetryFailpoint := "github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID"
 	require.NoError(t, failpoint.Enable(commitRetryFailpoint, "return(true)"))
@@ -1508,8 +1508,8 @@ func TestAutoRandomIDRetryFailsWhenExplicitIDChanges(t *testing.T) {
 	}()
 	session.ResetMockAutoRandIDRetryCount(1)
 
-	tk.MustGetErrCode("commit", errno.ErrTxnRetryable)
-	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("200 1"))
 }
 
 func TestAutoRandRecoverTable(t *testing.T) {

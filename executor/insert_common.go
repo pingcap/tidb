@@ -777,21 +777,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		needsAutoID := autoDatum.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0
 		if retryInfo.Retrying {
 			cachedID, ok := retryInfo.GetCurrAutoIncrementID()
-			if ok {
-				if recordID != 0 {
-					if cachedID != recordID {
-						return nil, ErrAutoIDRetryInconsistent.GenWithStackByArgs()
-					}
-					alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoIncrementType)
-					if err = alloc.Rebase(ctx, recordID, true); err != nil {
-						return nil, err
-					}
-					e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
-					continue
-				}
-				if !needsAutoID && cachedID != 0 {
-					return nil, ErrAutoIDRetryInconsistent.GenWithStackByArgs()
-				}
+			if ok && recordID == 0 && needsAutoID {
 				if err = setDatumAutoIDAndCast(e.ctx, &rows[processedIdx][idx], cachedID, col); err != nil {
 					return nil, err
 				}
@@ -875,20 +861,11 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	needsAutoID := d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0
 	if retryInfo.Retrying {
 		cachedID, ok := retryInfo.GetCurrAutoIncrementID()
-		if ok {
-			if recordID != 0 {
-				if cachedID != recordID {
-					return types.Datum{}, ErrAutoIDRetryInconsistent.GenWithStackByArgs()
-				}
-			} else {
-				if !needsAutoID && cachedID != 0 {
-					return types.Datum{}, ErrAutoIDRetryInconsistent.GenWithStackByArgs()
-				}
-				if err = setDatumAutoIDAndCast(e.ctx, &d, cachedID, c); err != nil {
-					return types.Datum{}, err
-				}
-				return d, nil
+		if ok && recordID == 0 && needsAutoID {
+			if err = setDatumAutoIDAndCast(e.ctx, &d, cachedID, c); err != nil {
+				return types.Datum{}, err
 			}
+			return d, nil
 		}
 	}
 	// Use the value if it's not null and not 0.
@@ -963,20 +940,11 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	needsAutoID := d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0
 	if retryInfo.Retrying {
 		cachedID, ok := retryInfo.GetCurrAutoRandomID()
-		if ok {
-			if recordID != 0 {
-				if cachedID != recordID {
-					return types.Datum{}, ErrAutoIDRetryInconsistent.GenWithStackByArgs()
-				}
-			} else {
-				if !needsAutoID && cachedID != 0 {
-					return types.Datum{}, ErrAutoIDRetryInconsistent.GenWithStackByArgs()
-				}
-				if err = setDatumAutoIDAndCast(e.ctx, &d, cachedID, c); err != nil {
-					return types.Datum{}, err
-				}
-				return d, nil
+		if ok && recordID == 0 && needsAutoID {
+			if err = setDatumAutoIDAndCast(e.ctx, &d, cachedID, c); err != nil {
+				return types.Datum{}, err
 			}
+			return d, nil
 		}
 	}
 	// Use the value if it's not null and not 0.

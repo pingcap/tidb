@@ -57,10 +57,6 @@ var (
 	ErrInstanceScope                 = dbterror.ClassExecutor.NewStd(mysql.ErrInstanceScope)
 	ErrSettingNoopVariable           = dbterror.ClassExecutor.NewStd(mysql.ErrSettingNoopVariable)
 	ErrLazyUniquenessCheckFailure    = dbterror.ClassExecutor.NewStd(mysql.ErrLazyUniquenessCheckFailure)
-	ErrAutoIDRetryInconsistent       = dbterror.ClassExecutor.NewStdErr(
-		mysql.ErrTxnRetryable,
-		parser_mysql.Message("auto ID allocation changed during transaction retry [try again later]", nil),
-	)
 
 	ErrBRIEBackupFailed               = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEBackupFailed)
 	ErrBRIERestoreFailed              = dbterror.ClassExecutor.NewStd(mysql.ErrBRIERestoreFailed)

@@ -131,20 +131,9 @@ func (r *RetryInfo) CommitStmt() {
 }
 
 // BeginRetryStmt selects the auto IDs recorded for a history statement.
-// It returns false when the statement has no cache entry, which keeps retry
-// behavior compatible with history assembled without BeginStmt and CommitStmt.
-func (r *RetryInfo) BeginRetryStmt(offset int) bool {
-	autoIncrementOK := r.autoIncrementIDs.beginRetryStmt(offset)
-	autoRandomOK := r.autoRandomIDs.beginRetryStmt(offset)
-	return autoIncrementOK && autoRandomOK
-}
-
-// EndRetryStmt returns whether the retried statement consumed exactly its
-// recorded auto IDs.
-func (r *RetryInfo) EndRetryStmt() bool {
-	autoIncrementOK := r.autoIncrementIDs.endRetryStmt()
-	autoRandomOK := r.autoRandomIDs.endRetryStmt()
-	return autoIncrementOK && autoRandomOK
+func (r *RetryInfo) BeginRetryStmt(offset int) {
+	r.autoIncrementIDs.beginRetryStmt(offset)
+	r.autoRandomIDs.beginRetryStmt(offset)
 }
 
 // ResetStmtOffset resets the auto ID offsets of the current statement.
@@ -199,22 +188,14 @@ func (r *retryInfoAutoIDs) commitStmt() {
 	r.stmtIdx++
 }
 
-func (r *retryInfoAutoIDs) beginRetryStmt(offset int) bool {
+func (r *retryInfoAutoIDs) beginRetryStmt(offset int) {
 	if offset < 0 || offset >= len(r.autoIDs) {
 		r.stmtIdx = len(r.autoIDs)
 		r.stmtOffset = 0
-		return false
+		return
 	}
 	r.stmtIdx = offset
 	r.stmtOffset = 0
-	return true
-}
-
-func (r *retryInfoAutoIDs) endRetryStmt() bool {
-	if r.stmtIdx >= len(r.autoIDs) {
-		return true
-	}
-	return r.stmtOffset == len(r.autoIDs[r.stmtIdx])
 }
 
 func (r *retryInfoAutoIDs) resetStmtOffset() {
@@ -239,7 +220,6 @@ func (r *retryInfoAutoIDs) add(id int64) {
 
 func (r *retryInfoAutoIDs) getCurrent() (int64, bool) {
 	if r.stmtIdx >= len(r.autoIDs) || r.stmtOffset >= len(r.autoIDs[r.stmtIdx]) {
-		r.stmtOffset++
 		return 0, false
 	}
 	id := r.autoIDs[r.stmtIdx][r.stmtOffset]
