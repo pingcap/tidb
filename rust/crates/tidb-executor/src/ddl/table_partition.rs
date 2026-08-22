@@ -2801,3 +2801,108 @@ mod round_trip_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod load_permissiveness_tests {
+    use super::*;
+
+    /// Go's LOADER re-judges nothing. `newPartitionExpr`
+    /// (`tables/partition.go:306`) rebuilds what a DDL already validated, and
+    /// the CREATE-time rules live on the CREATE path alone.
+    ///
+    /// That asymmetry is the whole point: a table a Go cluster is serving
+    /// must open here even when this node's CREATE would refuse the same
+    /// shape. Round-trip tests cannot cover it, because they start from a
+    /// CREATE and so only ever produce metadata CREATE accepts.
+    fn definition(id: i64, name: &str, less_than: &[&str], in_values: &[&[&str]]) -> StoredPartitionDefinition {
+        StoredPartitionDefinition {
+            id,
+            name: name.to_owned(),
+            less_than: less_than.iter().map(|bound| (*bound).to_owned()).collect(),
+            in_values: in_values
+                .iter()
+                .map(|tuple| tuple.iter().map(|value| (*value).to_owned()).collect())
+                .collect(),
+            comment: String::new(),
+            placement_policy: None,
+        }
+    }
+
+    fn int_column() -> (Vec<String>, Vec<FieldType>) {
+        (
+            vec!["a".to_owned()],
+            vec![FieldType::new(FieldTypeCode::Long)],
+        )
+    }
+
+    #[test]
+    fn a_list_table_with_a_repeated_value_loads() {
+        // `checkListPartitionValue`'s 1495 is CREATE-only. Go's loader fills a
+        // map, so a repeated value is simply owned by the LAST definition that
+        // claims it -- refusing here would make a table a Go cluster serves
+        // unopenable.
+        let (names, types) = int_column();
+        let spec = partition_spec_from_metadata(
+            PartitionType::LIST,
+            "`a`",
+            &[],
+            false,
+            &[
+                definition(1, "p0", &[], &[&["1"], &["2"]]),
+                definition(2, "p1", &[], &[&["2"], &["3"]]),
+            ],
+            &names,
+            &types,
+        )
+        .expect("a Go cluster's LIST metadata loads even with a repeated value");
+        let PartitionKind::List { values, .. } = &spec.kind else {
+            panic!("a scalar LIST spec");
+        };
+        // The repeated value belongs to the LAST claimant, as Go's map does.
+        let owner = values
+            .iter()
+            .find(|(value, _)| *value == 2)
+            .map(|(_, ordinal)| *ordinal);
+        assert_eq!(owner, Some(1), "the later definition owns the repeat");
+    }
+
+    #[test]
+    fn a_range_table_whose_bounds_do_not_increase_loads() {
+        // `checkPartitionByRange`'s 1493 is CREATE-only for the same reason.
+        let (names, types) = int_column();
+        partition_spec_from_metadata(
+            PartitionType::RANGE,
+            "`a`",
+            &[],
+            false,
+            &[
+                definition(1, "p0", &["10"], &[]),
+                definition(2, "p1", &["5"], &[]),
+            ],
+            &names,
+            &types,
+        )
+        .expect("the loader does not re-judge bounds it did not write");
+    }
+
+    #[test]
+    fn a_table_mid_repartition_loads_and_routes_to_partition_zero() {
+        // `PartitionTypeNone` is what a table WEARS during
+        // `ALTER TABLE ... PARTITION BY`. Go returns a nil expression for it
+        // (`tables/partition.go:313`) and routes every row to index 0
+        // (`:1453`). Refusing it made an ordinary table unreadable for the
+        // length of the reorg.
+        let (names, types) = int_column();
+        let spec = partition_spec_from_metadata(
+            PartitionType::NONE,
+            "",
+            &[],
+            false,
+            &[definition(1, "p0", &[], &[])],
+            &names,
+            &types,
+        )
+        .expect("a table mid-repartition opens");
+        assert!(matches!(spec.kind, PartitionKind::None));
+    }
+}
