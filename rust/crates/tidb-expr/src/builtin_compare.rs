@@ -1082,3 +1082,149 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
     }
 }
+
+// ***** GetAccurateCmpType *****
+
+/// One operand of a comparison, as much of it as `GetAccurateCmpType` reads.
+///
+/// Go passes whole `Expression`s and asks them three questions: their
+/// `FieldType`, whether they are a `*Constant`, and whether they are a
+/// `*Column` (`isTemporalColumn`). Carrying those three answers keeps the
+/// port a pure function of what Go actually consults.
+#[derive(Debug, Clone, Copy)]
+pub struct CmpOperand<'a> {
+    /// Go `expr.GetType(ctx)`.
+    pub field_type: &'a FieldType,
+    /// Go `_, ok := expr.(*Constant)`.
+    pub is_constant: bool,
+    /// Go `_, ok := expr.(*Column)`, which `isTemporalColumn` also requires.
+    pub is_column: bool,
+}
+
+impl<'a> CmpOperand<'a> {
+    /// A non-constant column operand, the shape a scanned column takes.
+    #[must_use]
+    pub const fn column(field_type: &'a FieldType) -> Self {
+        Self {
+            field_type,
+            is_constant: false,
+            is_column: true,
+        }
+    }
+
+    /// A literal operand.
+    #[must_use]
+    pub const fn constant(field_type: &'a FieldType) -> Self {
+        Self {
+            field_type,
+            is_constant: true,
+            is_column: false,
+        }
+    }
+
+    /// Go `isTemporalColumn(ctx, expr)`: a COLUMN whose type carries a date,
+    /// or a `DURATION` one.
+    const fn is_temporal_column(self) -> bool {
+        self.is_column
+            && (self.field_type.code().is_temporal_with_date()
+                || matches!(self.field_type.code(), FieldTypeCode::Duration))
+    }
+}
+
+/// Go `getBaseCmpType(lhs, rhs, lft, rft)` (`builtin_compare.go`): the
+/// comparison domain two operand TYPES share, before `GetAccurateCmpType`'s
+/// overrides.
+fn base_cmp_type(left: &FieldType, right: &FieldType) -> EvalType {
+    let (mut lhs, mut rhs) = (left.eval_type(), right.eval_type());
+    let (left_code, right_code) = (left.code(), right.code());
+    if left_code == FieldTypeCode::Unspecified || right_code == FieldTypeCode::Unspecified {
+        if left_code == right_code {
+            return EvalType::String;
+        }
+        if left_code == FieldTypeCode::Unspecified {
+            lhs = rhs;
+        } else {
+            rhs = lhs;
+        }
+    }
+    // A HYBRID type reads as an integer here even though its own eval type
+    // may not be one, which is what puts `ENUM`/`SET` alongside `BIT`.
+    let left_int = lhs == EvalType::Int || left.is_hybrid();
+    let right_int = rhs == EvalType::Int || right.is_hybrid();
+    if lhs.is_string_kind() && rhs.is_string_kind() {
+        EvalType::String
+    } else if left_int && right_int {
+        EvalType::Int
+    } else if (lhs == EvalType::Decimal && rhs == EvalType::String)
+        || (lhs == EvalType::String && rhs == EvalType::Decimal)
+    {
+        EvalType::Real
+    } else if (left_int || lhs == EvalType::Decimal) && (right_int || rhs == EvalType::Decimal) {
+        EvalType::Decimal
+    } else if (left_code.is_temporal_with_date() && right_code == FieldTypeCode::Year)
+        || (left_code == FieldTypeCode::Year && right_code.is_temporal_with_date())
+    {
+        EvalType::Datetime
+    } else {
+        EvalType::Real
+    }
+}
+
+/// Go `expression.GetAccurateCmpType(ctx, lhs, rhs)`: the eval type a
+/// comparison of these two operands is EVALUATED in, which is also the domain
+/// each side is cast into before the comparison runs.
+///
+/// This is not the comparison's RESULT type -- that is always the ETInt of
+/// [`infer_compare_type`]. It is the domain, and any caller that has to
+/// reproduce the comparison's own equality relation (rather than just run it)
+/// needs it: two values distinct in their own type can be EQUAL here, since
+/// `blob <cmp> int` compares as REAL and `'gO'` and `'W'` are both `0`.
+#[must_use]
+pub fn get_accurate_cmp_type(left: CmpOperand<'_>, right: CmpOperand<'_>) -> EvalType {
+    let (left_type, right_type) = (left.field_type, right.field_type);
+    let (left_eval, right_eval) = (left_type.eval_type(), right_type.eval_type());
+    let (left_code, right_code) = (left_type.code(), right_type.code());
+    let mut cmp_type = base_cmp_type(left_type, right_type);
+    if left_eval == EvalType::VectorFloat32 || right_eval == EvalType::VectorFloat32 {
+        cmp_type = EvalType::VectorFloat32;
+    } else if (left_eval.is_string_kind() && left_code == FieldTypeCode::Json)
+        || (right_eval.is_string_kind() && right_code == FieldTypeCode::Json)
+    {
+        cmp_type = EvalType::Json;
+    } else if cmp_type == EvalType::String
+        && (left_code.is_type_time() || right_code.is_type_time())
+    {
+        // `date[time] <cmp> date[time]`, and `string <cmp> date[time]`.
+        cmp_type = if left_code == right_code {
+            left_eval
+        } else {
+            EvalType::Datetime
+        };
+    } else if left_code == FieldTypeCode::Duration && right_code == FieldTypeCode::Duration {
+        cmp_type = EvalType::Duration;
+    } else if cmp_type == EvalType::Real || cmp_type == EvalType::String {
+        if (left_eval == EvalType::Decimal
+            && !left.is_constant
+            && right_eval.is_string_kind()
+            && right.is_constant)
+            || (right_eval == EvalType::Decimal
+                && !right.is_constant
+                && left_eval.is_string_kind()
+                && left.is_constant)
+        {
+            // A non-constant DECIMAL against a constant string compares as
+            // DECIMAL rather than REAL, so the precision survives.
+            cmp_type = EvalType::Decimal;
+        } else if (left.is_temporal_column() && right.is_constant)
+            || (right.is_temporal_column() && left.is_constant)
+        {
+            // Go narrows only the DURATION case here; a date-bearing column
+            // against a non-temporal constant keeps the REAL it already has.
+            let column = if left.is_column { left } else { right };
+            if column.field_type.code() == FieldTypeCode::Duration {
+                cmp_type = EvalType::Duration;
+            }
+        }
+    }
+    cmp_type
+}

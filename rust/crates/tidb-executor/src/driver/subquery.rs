@@ -171,6 +171,31 @@ pub(crate) fn rewrite_filter_in_subqueries(
             continue;
         }
 
+        // The DISTINCT below dedups in the INNER column's own domain, while
+        // the join predicate compares in the domain Go's `GetAccurateCmpType`
+        // picks for the pair. When those differ the rewrite is unsound on its
+        // own: `0 in (select c1 from t0)` over a `blob` compares as REAL, so
+        // `'gO'` and `'W'` are two distinct keys that are both `0`, and each
+        // outer row matched BOTH -- `select hex(t0.c1) from t0 where 0 in
+        // (select t0.c1 from t0)` answered four rows where TiDB answers two.
+        //
+        // Go carries the same repair and says why (`expression_rewriter.go`,
+        // `handleInSubquery`): "DISTINCT must be applied on the same
+        // comparison domain as the join predicate ... deduplicating raw inner
+        // values is insufficient". It projects the coerced key below the
+        // duplicate elimination so both the DISTINCT and the join read
+        // exactly that expression.
+        let key_cast = match comparison_key_cast(&lhs_expression, &lhs_type, inner_type) {
+            KeyCast::None => None,
+            KeyCast::To(cast_type) => Some(cast_type),
+            // A coercion this tier cannot spell as a `CAST` leaves the
+            // predicate to the Apply path, whose IN evaluation needs no
+            // duplicate elimination to be correct.
+            KeyCast::Inexpressible => {
+                residual.push(conjunct);
+                continue;
+            }
+        };
         let relation_alias = fresh_in_subquery_alias(&outer, rewritten, "relation");
         let key_alias = format!("__in_subquery_key_{rewritten}");
         let mut distinct = (*inner).clone();
@@ -182,9 +207,22 @@ pub(crate) fn rewrite_filter_in_subqueries(
         // unique and still keeps duplicate elimination.
         distinct.distinct = !grouped_output_is_unique(inner);
         distinct.all = false;
-        let [SelectField::Expr { alias, .. }] = distinct.fields.fields_mut() else {
+        let [SelectField::Expr { expr, alias }] = distinct.fields.fields_mut() else {
             unreachable!("the one-field shape was checked above");
         };
+        if let Some(cast_type) = key_cast {
+            *expr = tidb_ast::Expr::Cast(tidb_ast::CastExpr {
+                expr: Box::new(expr.clone()),
+                cast_type,
+                style: tidb_ast::CastStyle::Cast,
+                array: false,
+            });
+            // A group tuple that is unique in the inner column's own domain
+            // says nothing about the PROJECTED key, so the duplicate
+            // elimination Go's `AggregationEliminator` would have removed has
+            // to stay -- it is the only thing that stops the collapse.
+            distinct.distinct = true;
+        }
         *alias = Some(key_alias.clone());
 
         rewritten_from = Join {
@@ -269,6 +307,90 @@ pub(crate) fn expand_unqualified_wildcards(
     }
     select.fields = expanded.into();
     true
+}
+
+/// What the inner key must be cast to before duplicate elimination, so that
+/// DISTINCT runs in the same domain as the join predicate.
+enum KeyCast {
+    /// The comparison already runs in the inner column's own domain.
+    None,
+    /// Project `CAST(inner AS ...)` and dedup on that.
+    To(tidb_ast::CastType),
+    /// The domain differs and this tier has no `CAST` target for it.
+    Inexpressible,
+}
+
+/// Go `GetAccurateCmpType(lhs, rhs)` applied to the `IN`'s two keys, reduced
+/// to the cast the projected key needs.
+///
+/// The inner side is the subquery's output COLUMN, which is Go's
+/// `np.Schema().Columns[0]` -- never a constant.
+fn comparison_key_cast(
+    lhs: &tidb_expr::expression::Expression,
+    lhs_type: &tidb_datatype::FieldType,
+    inner_type: &tidb_datatype::FieldType,
+) -> KeyCast {
+    use tidb_datatype::EvalType;
+    use tidb_expr::builtin_compare::{get_accurate_cmp_type, CmpOperand};
+    let cmp_type = get_accurate_cmp_type(
+        CmpOperand {
+            field_type: lhs_type,
+            is_constant: matches!(lhs, tidb_expr::expression::Expression::Constant(_)),
+            is_column: matches!(lhs, tidb_expr::expression::Expression::Column(_)),
+        },
+        CmpOperand::column(inner_type),
+    );
+    if cmp_type == inner_type.eval_type() {
+        return KeyCast::None;
+    }
+    match cmp_type {
+        // Go `WrapWithCastAsReal`: `TypeDouble`, no length of its own.
+        EvalType::Real => KeyCast::To(tidb_ast::CastType::Double),
+        // Go `WrapWithCastAsInt` keeps only the source's UNSIGNED flag, and
+        // every source that reaches an INT comparison without already being
+        // one is a hybrid, whose value is an unsigned ordinal or literal.
+        EvalType::Int => KeyCast::To(if inner_type.is_unsigned() || inner_type.is_hybrid() {
+            tidb_ast::CastType::Unsigned
+        } else {
+            tidb_ast::CastType::Signed
+        }),
+        // Go `WrapWithCastAsDecimal`.
+        EvalType::Decimal => {
+            let (flen, scale) = decimal_cast_shape(inner_type);
+            KeyCast::To(tidb_ast::CastType::Decimal { flen, scale })
+        }
+        _ => KeyCast::Inexpressible,
+    }
+}
+
+/// Go `WrapWithCastAsDecimal`'s target `flen`/`decimal`, without its
+/// constant-folding refinement (the inner key is a column, never a constant).
+fn decimal_cast_shape(source: &tidb_datatype::FieldType) -> (u32, u32) {
+    use tidb_datatype::{EvalType, FieldTypeCode, MAX_DECIMAL_WIDTH, UNSPECIFIED_LENGTH};
+    // Go `mysql.MaxIntWidth`, `getFixedLen`'s widest integer display width.
+    const MAX_INT_WIDTH: i64 = 20;
+    let (mut flen, mut scale) = (source.flen(), source.decimal());
+    if source.eval_type() == EvalType::Int {
+        // `minimalDecimalLenForHoldingInteger`.
+        flen = match source.code() {
+            FieldTypeCode::Tiny => 3,
+            FieldTypeCode::Short => 5,
+            FieldTypeCode::Int24 => 8,
+            FieldTypeCode::Long => 10,
+            FieldTypeCode::LongLong => 20,
+            FieldTypeCode::Year => 4,
+            _ => MAX_INT_WIDTH,
+        };
+        scale = 0;
+    }
+    if flen == UNSPECIFIED_LENGTH || flen > MAX_DECIMAL_WIDTH {
+        flen = MAX_DECIMAL_WIDTH;
+    }
+    let cap = u32::try_from(MAX_DECIMAL_WIDTH).unwrap_or(65);
+    (
+        u32::try_from(flen).unwrap_or(cap),
+        u32::try_from(scale).unwrap_or(0),
+    )
 }
 
 fn grouped_output_is_unique(select: &tidb_ast::SelectStmt) -> bool {
