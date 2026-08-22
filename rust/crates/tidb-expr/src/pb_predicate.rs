@@ -325,6 +325,37 @@ pub fn string_comparison_to_pb(
 
 /// The collation the comparison is evaluated with, for the one operand shape
 /// this lowering derives. See [`string_comparison_to_pb`].
+///
+/// KNOWN DIVERGENCE, RECORDED RATHER THAN FIXED. This returns the COLUMN's
+/// collation on the assumption that the other operand is a literal and so
+/// COERCIBLE, which the column's IMPLICIT coercibility outranks. An explicit
+/// `COLLATE` on the literal is neither -- it is EXPLICIT, and it wins the
+/// merge -- so `a LIKE 'aa' COLLATE utf8mb4_general_ci` over a `utf8mb4_bin`
+/// column is sent to TiKV asking for a BINARY comparison, where Go writes the
+/// derived collation onto the function's own `FieldType` (`ExprToPB`) and TiKV
+/// picks its collator from that.
+///
+/// The in-process paths were fixed in `13455e3646`, `fd9687ca84` and
+/// `78c0b4cee6` by reading the collation off the BUILT EXPRESSION instead of
+/// re-deriving it. This one cannot: it is reached from a `ScanPredicate`
+/// (`tidb_exec::wide_scan_selection`), and that description carries only the
+/// column's declared `FieldType`, so the comparison's collation is not
+/// present to read.
+///
+/// The fix is plumbing, in this order:
+///   1. carry the comparison's collation on `ScanPredicate::{Like, In}` --
+///      `split_scan_predicates` already pairs each description with its built
+///      expression, and `adopt_refined_literals` is the step that copies from
+///      one to the other;
+///   2. take it as a parameter here, and in `string_comparison_to_pb`,
+///      `string_like_to_pb` and `string_in_to_pb`, replacing this inference;
+///   3. drop `FastScanFilter::comparison_collation`, which reads the same
+///      fact off the expression because the description could not supply it.
+///
+/// Left undone rather than half-done: a partial thread-through would leave
+/// two sources of this collation disagreeing, which is the defect being
+/// removed. It affects the cluster path only -- every in-process test
+/// evaluates through the expression.
 fn derived_string_collation(
     left: &StringPbOperand,
     right: &StringPbOperand,
