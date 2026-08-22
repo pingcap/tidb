@@ -1469,6 +1469,12 @@ fn run_select_traced_with_delivery_choice_inner(
                 physical_source_names,
                 plan_columns: &plan_columns,
                 runtime_lookup: None,
+                // A MULTI-table `FROM` fans its partitioned leaves out in the
+                // leaf builder; a sole KV table is fanned out below instead,
+                // after its fast paths have replaced the scan. Exactly one of
+                // the two must fire -- see `FromDemand::partition_fan_out`.
+                partition_fan_out: access::sole_kv_table(&select.from, catalog, current_db)
+                    .is_none(),
             };
             // Go's `join_reorder` rule, which runs on the logical plan
             // between predicate pushdown and physical planning. It only ever
@@ -1757,7 +1763,18 @@ fn run_select_traced_with_delivery_choice_inner(
                 .iter()
                 .map(|(name, _)| name.clone())
                 .collect::<Vec<_>>();
-            trace.partition_union(&names, &estimates);
+            // Go `makeUnionAllChildren` builds NO union when pruning left
+            // nothing -- it returns a `LogicalTableDual{RowCount: 0}` -- and
+            // an unpartitioned table simply never reaches that rule. The two
+            // reach `surviving` as the same empty vector, so the table's own
+            // partitioning is what separates them.
+            if names.is_empty() {
+                if table.partition().is_some() {
+                    trace.pruned_away_table_dual();
+                }
+            } else {
+                trace.partition_union(&names, &estimates);
+            }
         }
     }
     // An exact ordered handle range still has root work to do, so it cannot

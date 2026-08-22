@@ -43,7 +43,96 @@
 //!
 use crate::kv_table::IndexRange;
 use crate::partition_routing::{PartitionKind, PartitionSpec, RangeBound};
+use tidb_ast::{BinaryOp, Expr, UnaryOp};
 use tidb_datatype::Datum;
+
+/// Go `expression.PushDownNot` (`pkg/expression/util.go`'s
+/// `pushNotAcrossExpr`), as the partition processor calls it.
+///
+/// `PartitionProcessor.prune` opens by running its conditions through
+/// `applyPredicateSimplification`, whose first act is this rewrite, and the
+/// rule's own comment says why: "When we build range from ds.AllConds, the
+/// condition like 'not (a != 1)' would not be handled so we need to convert
+/// it to 'a = 1', which can be handled when building range." A `NOT` the
+/// ranger cannot read yields NO range, which reads as "prune nothing" and
+/// leaves `where not (a < 5)` scanning the `values less than (0)` partition
+/// that provably holds no matching row -- TiDB prints `p1` and `p2` there.
+///
+/// The rewrite is the one Go performs and no more:
+///
+/// * `NOT` over a comparison becomes the OPPOSITE comparison (Go's
+///   `oppositeOp`: `<`/`>=`, `>`/`<=`, `=`/`!=`), which is equivalent under
+///   three-valued logic because both sides are UNKNOWN on a NULL operand;
+/// * `NOT` over `AND`/`OR` is De Morgan, again Go's `oppositeOp`;
+/// * `NOT` over anything else STAYS a `NOT`. Go's fallthrough rebuilds
+///   `unaryNot(expr)`, and leaving the node intact is what keeps
+///   `not (a in (1,2))` and `not (a is null)` unprunable rather than wrongly
+///   prunable.
+///
+/// Parentheses are unwrapped on the way through: Go's expression tier has no
+/// `ParenthesesExpr` at all -- the rewriter drops it -- so `not (a < 5)`
+/// reaches `pushNotAcrossExpr` as `not(lt(a, 5))`.
+///
+/// Returns an OWNED rewrite. Callers hand the result to the ranger and keep
+/// only its ranges, so nothing downstream borrows from it.
+pub(crate) fn push_down_not(expr: &Expr) -> Expr {
+    push_not_across_expr(expr, false)
+}
+
+/// [`push_down_not`]'s recursion, carrying Go's `not` flag: whether an odd
+/// number of `NOT`s has been absorbed on the way down.
+fn push_not_across_expr(expr: &Expr, not: bool) -> Expr {
+    match expr {
+        Expr::Paren(inner) => push_not_across_expr(inner, not),
+        Expr::Unary(UnaryOp::Not | UnaryOp::NotKeyword, inner) => {
+            push_not_across_expr(inner, !not)
+        }
+        Expr::Binary(op, left, right) => match opposite_binary_op(*op) {
+            Some(opposite) => {
+                // Go pushes the flag INTO an `AND`/`OR`'s arguments and only
+                // flips the connective; a comparison's arguments are values
+                // rather than predicates, so the flag stops at the operator.
+                let (op, argument_not) = if matches!(op, BinaryOp::LogicAnd | BinaryOp::LogicOr) {
+                    (if not { opposite } else { *op }, not)
+                } else {
+                    (if not { opposite } else { *op }, false)
+                };
+                Expr::Binary(
+                    op,
+                    Box::new(push_not_across_expr(left, argument_not)),
+                    Box::new(push_not_across_expr(right, argument_not)),
+                )
+            }
+            None => negated_if(expr.clone(), not),
+        },
+        other => negated_if(other.clone(), not),
+    }
+}
+
+/// Go's fallthrough: an expression the rewrite cannot enter keeps whatever
+/// `NOT` was still pending, rebuilt as `unaryNot(expr)`.
+fn negated_if(expr: Expr, not: bool) -> Expr {
+    if not {
+        Expr::Unary(UnaryOp::NotKeyword, Box::new(expr))
+    } else {
+        expr
+    }
+}
+
+/// Go's `oppositeOp` map, restricted to the operators it holds.
+fn opposite_binary_op(op: BinaryOp) -> Option<BinaryOp> {
+    Some(match op {
+        BinaryOp::Lt => BinaryOp::Ge,
+        BinaryOp::Ge => BinaryOp::Lt,
+        BinaryOp::Gt => BinaryOp::Le,
+        BinaryOp::Le => BinaryOp::Gt,
+        BinaryOp::Eq => BinaryOp::Ne,
+        BinaryOp::Ne => BinaryOp::Eq,
+        BinaryOp::LogicAnd => BinaryOp::LogicOr,
+        BinaryOp::LogicOr => BinaryOp::LogicAnd,
+        _ => return None,
+    })
+}
 
 /// Go `FindByName` over an explicit `PARTITION (p, ...)` list: the physical
 /// ids those partitions occupy, in the table's own definition order.

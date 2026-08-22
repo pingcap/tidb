@@ -144,6 +144,18 @@ pub(crate) struct FromDemand<'a> {
     /// A composite index-join rebuild asks one base-table leaf below this
     /// `FROM` to consume probes published by its enclosing join.
     pub(crate) runtime_lookup: Option<&'a RuntimeLookupDemand>,
+    /// Whether a partitioned base-table leaf of this `FROM` must fan itself
+    /// out into Go's `LogicalPartitionUnionAll` under static pruning.
+    ///
+    /// Go's `PartitionProcessor` divides every `DataSource` in the tree, but
+    /// this tier has TWO sites that could do it and they must not both fire:
+    /// a single-table `SELECT`'s source is fanned out by `run_select_stmt`
+    /// AFTER its fast paths have replaced the scan, which is the only point
+    /// at which that node is final. So the leaf builder does it for a leaf of
+    /// a MULTI-table `FROM` and nothing else, and this flag -- set from the
+    /// same `sole_kv_table` test `run_select_stmt` reads -- is that split.
+    /// Both firing would wrap one union inside another, once per partition.
+    pub(crate) partition_fan_out: bool,
 }
 
 /// Runtime lookup metadata propagated through a composite inner subtree.
@@ -172,6 +184,7 @@ impl FromDemand<'_> {
             physical_source_names: false,
             plan_columns: &[],
             runtime_lookup: None,
+            partition_fan_out: false,
         }
     }
 }

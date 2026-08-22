@@ -204,6 +204,7 @@ pub(crate) fn decorrelate_where(
                     physical_source_names: false,
                     plan_columns: &[],
                     runtime_lookup: None,
+                    partition_fan_out: false,
                 };
                 let (planned, planned_scope, planned_delivered) =
                     crate::driver::from::build_semi_join(

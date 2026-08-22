@@ -1005,6 +1005,12 @@ pub(crate) fn build_from(
                                         kv,
                                         &columns,
                                         &ctx.session_zone(),
+                                        // A join leaf carries the `PARTITION
+                                        // (p)` list of its OWN table ref; the
+                                        // `_tidb_rowid` exception this feeds
+                                        // is a single-table plan's, so a leaf
+                                        // never claims it.
+                                        &[],
                                     );
                                 if access_consumed_filter {
                                     path_residual_filters = Some(Vec::new());
@@ -1151,6 +1157,30 @@ pub(crate) fn build_from(
                     unreachable!("views and sequences take the branches above")
                 }
             };
+            // Go's `PartitionProcessor` walks the WHOLE logical plan
+            // (`rewriteDataSource` recurses through every operator) and
+            // replaces EVERY partitioned `DataSource` with one per surviving
+            // partition, so a partitioned table read as a join leaf fans out
+            // exactly as a single-table `SELECT`'s source does. Doing it only
+            // for the single-table shape (`run_select_stmt`'s own call) is
+            // what printed one partition-less `TableFullScan table:tx2` where
+            // TiDB prints `partition:p1` and `partition:p2` under a
+            // `PartitionUnion(Probe)`. Like that call, this fires only under
+            // `@@tidb_partition_prune_mode = 'static'`; dynamic pruning keeps
+            // the one scan.
+            if ctx.static_partition_prune() && demand.partition_fan_out {
+                if let (Some(trace), TableEntry::Kv(kv)) = (trace.as_deref_mut(), entry) {
+                    let read = crate::driver::access::leaf_read_partitions(
+                        kv,
+                        &table_ref.partitions,
+                    );
+                    let estimates =
+                        crate::driver::access::surviving_partition_estimates(catalog, &read);
+                    let names: Vec<String> =
+                        read.iter().map(|(name, _)| name.clone()).collect();
+                    trace.partition_union(&names, &estimates);
+                }
+            }
             // Record predicate consumption only from the physical path that
             // was actually built. A point path consumes its exact key; a
             // streaming source may accept the complete pushed filter. Any
@@ -4359,6 +4389,8 @@ fn build_join_with_choice(
         };
         let runtime_demand = crate::driver::leaf_demand::FromDemand {
             runtime_lookup: Some(&runtime),
+            // A cost-only rebuild of one inner leaf, not a plan being printed.
+            partition_fan_out: false,
             ..child_demand
         };
         let target = if decision.lookup_is_left {
@@ -4793,6 +4825,8 @@ fn build_join_with_choice(
         };
         let runtime_demand = crate::driver::leaf_demand::FromDemand {
             runtime_lookup: Some(&runtime),
+            // A cost-only rebuild of one inner leaf, not a plan being printed.
+            partition_fan_out: false,
             ..child_demand
         };
         let target = if decision.lookup_is_left {

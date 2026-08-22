@@ -942,6 +942,34 @@ impl PlanTrace {
         self.mark_top_access_consumed();
     }
 
+    /// Go `makeUnionAllChildren`'s `len(children) == 0` branch
+    /// (`pkg/planner/core/rule/rule_partition_processor.go`): under static
+    /// pruning a read whose surviving-partition set is EMPTY becomes
+    /// `LogicalTableDual{RowCount: 0}`, replacing the `DataSource` outright.
+    ///
+    /// There is no such thing as a scan over zero partitions in Go's plan --
+    /// the union has no children to build, so the whole source collapses.
+    /// Printing the scan anyway is what left `select a from tlist use index
+    /// () where b > 10 order by b limit 10` (LIST(b) over `in (0,1,2)` and
+    /// `in (3,4,5)`, so no partition can hold `b > 10`) showing a
+    /// `TableRangeScan range:(10,+inf]` where TiDB prints `TableDual rows:0`.
+    ///
+    /// DYNAMIC pruning is a different plan and NOT this one: it keeps the one
+    /// scan and names the empty set on the reader above it (`partition:dual`),
+    /// which is why the caller asks this only under
+    /// `@@tidb_partition_prune_mode = 'static'`.
+    pub(crate) fn pruned_away_table_dual(&mut self) {
+        // Only a SCAN collapses, for the same reason only a scan fans out in
+        // [`Self::partition_union`].
+        if !self.stack.last().is_some_and(reads_a_partitioned_table) {
+            return;
+        }
+        // The executor is still there, narrowed to no partition at all, and
+        // still counts its (zero) rows -- only its printed identity changes.
+        self.rename_top(Self::dual_node(0));
+        self.mark_top_access_consumed();
+    }
+
     fn dual_node(rows: u32) -> PlanNode {
         PlanNode::new(
             "TableDual",
@@ -1136,22 +1164,45 @@ impl PlanTrace {
         index: &str,
         static_partition_prune: bool,
     ) {
-        let access_partitions = if static_partition_prune && partitions.len() > 1 {
-            &[][..]
-        } else {
-            partitions
+        let branch = |partitions: &[String]| {
+            PlanNode::new(
+                "Batch_Point_Get",
+                Some(count as f64),
+                format!("table:{visible}{}, {index}", partition_object(partitions)),
+                "keep order:false, desc:false".to_owned(),
+            )
         };
-        self.replace_top(PlanNode::new(
-            "Batch_Point_Get",
-            Some(count as f64),
-            format!(
-                "table:{visible}{}, {index}",
-                partition_object(access_partitions)
-            ),
-            "keep order:false, desc:false".to_owned(),
-        ));
-        if static_partition_prune {
-            self.partition_union(partitions, &[]);
+        // Go's static mode gives every surviving partition its OWN
+        // `DataSource` (`makeUnionAllChildren`), so the batch point get is
+        // built once per partition and each names the one it reads. Captured
+        // from TiDB over `key(b) partitions 3`, `@@tidb_partition_prune_mode
+        // = 'static'`:
+        //
+        // ```text
+        // explain format = 'brief' select * from t where b in (1,2);
+        // PartitionUnion       3.00  root
+        // ├─Batch_Point_Get    2.00  root  table:t, partition:p1, index:PRIMARY(b)
+        // └─Batch_Point_Get    1.00  root  table:t, partition:p2, index:PRIMARY(b)
+        // ```
+        //
+        // [`Self::partition_union`] cannot build this: it fans out SCANS, and
+        // a point get is not one. Blanking the access object and calling it
+        // anyway is what printed a single partition-less `Batch_Point_Get`
+        // where TiDB names p1 and p2.
+        if static_partition_prune && partitions.len() > 1 {
+            let mut union = PlanNode::new(
+                "PartitionUnion",
+                Some(count as f64),
+                String::new(),
+                String::new(),
+            );
+            union.children = partitions
+                .iter()
+                .map(|partition| branch(std::slice::from_ref(partition)))
+                .collect();
+            self.replace_top(union);
+        } else {
+            self.replace_top(branch(partitions));
         }
         self.mark_top_access_consumed();
     }
@@ -1174,14 +1225,18 @@ impl PlanTrace {
         table: &KvTable,
         handle: Option<&TableHandle>,
     ) {
-        let (access, info) = match common_handle_access(visible, table, &[]) {
+        let partitions = sole_read_partition_name(table);
+        let (access, info) = match common_handle_access(visible, table, &partitions) {
             Some(access) => (access, String::new()),
             None => {
                 let printed = match handle {
                     Some(handle) => handle_text(handle, table.unsigned_pk_handle()),
                     None => "NULL".to_owned(),
                 };
-                (format!("table:{visible}"), format!("handle:{printed}"))
+                (
+                    format!("table:{visible}{}", partition_object(&partitions)),
+                    format!("handle:{printed}"),
+                )
             }
         };
         let mut point = PlanNode::new("Point_Get", Some(1.0), access, info);
@@ -3989,6 +4044,19 @@ impl PlanTrace {
         let reader_name = match input.name {
             "TableFullScan" | "TableRangeScan" => "TableReader",
             "IndexFullScan" | "IndexRangeScan" => "IndexReader",
+            // A source that collapsed to `TableDual` reads no partition and
+            // no range at all ([`Self::pruned_away_table_dual`],
+            // [`Self::empty_range_table_dual`]). There is no cop task to push
+            // a cap into and Go has no reader here either -- its own plan for
+            // `select a from tlist use index () where b > 10 order by b limit
+            // 10` over a `LIST (b)` table of `0..5` is the ONE line
+            // `TableDual root rows:0`. Accepting it as a no-op is what keeps
+            // that statement PLANNABLE: refusing made the whole `EXPLAIN`
+            // unprintable, which reads as "this engine cannot plan it".
+            "TableDual" => {
+                self.stack.push(input);
+                return true;
+            }
             _ => {
                 self.stack.push(input);
                 return false;
@@ -5309,6 +5377,39 @@ const PARTITIONED_SCANS: &[&str] = &[
     "IndexFullScan",
     "IndexRangeScan",
 ];
+
+/// Go `PointGetPlan.AccessObject`'s partition clause
+/// (`pkg/planner/core/operator/physicalop/physical_batch_point_get.go`):
+///
+/// ```go
+/// if idxPointer := p.PartitionIdx; idxPointer != nil {
+///     res.Partitions = []string{pi.Definitions[*idxPointer].Name.O}
+/// }
+/// ```
+///
+/// A point get names ONE partition -- the one its plan resolved -- and never
+/// a list. A read this tier has narrowed to a single physical table IS that
+/// one, whether the narrowing came from an explicit `PARTITION (p)` or from
+/// pruning. Answering nothing here is what printed `Point_Get table:t` for
+/// `select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1`, which
+/// TiDB records as `Point_Get table:t, partition:p0`.
+///
+/// Empty for an unpartitioned table (nothing to name) and for a read that
+/// still spans several partitions (no single answer exists).
+fn sole_read_partition_name(table: &KvTable) -> Vec<String> {
+    let Some(partition) = table.partition() else {
+        return Vec::new();
+    };
+    let [id] = table.record_physical_ids()[..] else {
+        return Vec::new();
+    };
+    partition
+        .definitions
+        .iter()
+        .find(|definition| definition.id == id)
+        .map(|definition| vec![definition.name.clone()])
+        .unwrap_or_default()
+}
 
 /// Go `access.ScanAccessObject.String()` writes its three fields in a fixed
 /// order -- `table:t, partition:p, index:i(c)` -- so the partition clause
