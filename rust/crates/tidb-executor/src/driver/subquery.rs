@@ -213,9 +213,62 @@ pub(crate) fn rewrite_filter_in_subqueries(
         return Ok(None);
     }
     let mut result = select.clone();
+    if !expand_unqualified_wildcards(&mut result, &outer) {
+        return Ok(None);
+    }
     result.from = Some(rewritten_from);
     result.where_clause = combine_filter_conjuncts(residual);
     Ok(Some(result))
+}
+
+/// Expands an unqualified `*` against `scope`, which must be the scope of the
+/// `FROM` the statement had BEFORE a rewrite added a relation to it.
+///
+/// Go makes this cut by ORDERING: `buildSelect` calls
+/// `unfoldWildStar(p, sel.Fields.Fields)` (`logical_plan_builder.go:4351`)
+/// and only afterwards `buildSelection` (`:4436`), which is where
+/// `handleInSubquery` replaces the plan with the join it synthesizes. So `*`
+/// is already a column list by the time the join exists, even though the join
+/// takes `MergeSchema(plan, agg)` for its own schema.
+///
+/// This tier rewrites the AST rather than the plan, so the two steps happen in
+/// the other order and a surviving `*` resolves against the REWRITTEN `FROM`:
+/// `select * from t1 where 1 in (select b from t2)` answered
+/// `a, __in_subquery_key_0` where TiDB answers `a`, the synthesized join key
+/// having become an output column. Expanding here restores Go's order.
+///
+/// Only an unqualified `*` is affected -- `t1.*` names a relation the rewrite
+/// does not touch. Returns `false` when a column cannot be given a qualified
+/// path, which leaves the caller to decline its rewrite rather than emit a
+/// statement whose `*` means something new.
+pub(crate) fn expand_unqualified_wildcards(
+    select: &mut tidb_ast::SelectStmt,
+    scope: &FromScope,
+) -> bool {
+    let unqualified = |field: &SelectField| {
+        matches!(field, SelectField::Wildcard(path) if path.last().is_none())
+    };
+    if !select.fields.fields().iter().any(unqualified) {
+        return true;
+    }
+    let mut expanded = Vec::with_capacity(select.fields.fields().len());
+    for field in select.fields.fields() {
+        if !unqualified(field) {
+            expanded.push(field.clone());
+            continue;
+        }
+        for (offset, _, _) in scope.star_columns() {
+            let Some(path) = scope.qualified_path(offset) else {
+                return false;
+            };
+            expanded.push(SelectField::Expr {
+                expr: tidb_ast::Expr::Column(path),
+                alias: None,
+            });
+        }
+    }
+    select.fields = expanded.into();
+    true
 }
 
 fn grouped_output_is_unique(select: &tidb_ast::SelectStmt) -> bool {

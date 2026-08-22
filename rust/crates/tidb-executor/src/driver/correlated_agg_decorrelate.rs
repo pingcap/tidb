@@ -258,6 +258,12 @@ fn rewrite_predicate_aggregate(
             join_conditions.push(residual);
         }
         let mut grouped = select.clone();
+        // Go unfolds `*` before it builds the WHERE clause, so the relation
+        // a decorrelation adds is never an output column. See
+        // `super::subquery::expand_unqualified_wildcards`.
+        if !super::subquery::expand_unqualified_wildcards(&mut grouped, &outer_scope) {
+            return None;
+        }
         grouped.from = Some(Join {
             left: join_node(select.from.clone()?),
             right: Some(join_node(inner_from)),
@@ -400,6 +406,12 @@ fn rewrite_predicate_aggregate(
     );
 
     let mut rewritten = select.clone();
+    // Go unfolds `*` before it builds the WHERE clause, so the relation
+    // a decorrelation adds is never an output column. See
+    // `super::subquery::expand_unqualified_wildcards`.
+    if !super::subquery::expand_unqualified_wildcards(&mut rewritten, &outer_scope) {
+        return None;
+    }
     remaining.push(predicate);
     rewritten.where_clause = combine_and(remaining);
     rewritten.from = Some(Join {
