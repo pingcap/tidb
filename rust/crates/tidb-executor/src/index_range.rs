@@ -560,6 +560,20 @@ struct ColumnPoints {
 }
 
 /// Whether an expression names this column, ignoring any qualifier.
+/// The collation an explicit `COLLATE` clause puts on `expr`, if any.
+///
+/// Go reads the same fact off the built expression's coercibility; this
+/// builder works on the AST, where the clause is the node itself.
+fn explicit_collation(expr: &Expr) -> Option<tidb_datatype::Collation> {
+    match expr {
+        Expr::Paren(inner) => explicit_collation(inner),
+        Expr::Collate { collation, .. } => {
+            tidb_datatype::Collation::from_name(&collation.to_ascii_lowercase())
+        }
+        _ => None,
+    }
+}
+
 fn is_column(expr: &Expr, name: &str) -> bool {
     match expr {
         Expr::Column(path) => path
@@ -1143,6 +1157,37 @@ fn points_on_column(
             // Taking the LITERAL's collation instead read `utf8mb4_bin` off
             // `'abc_%'` even for a `VARBINARY` key, which is a PAD SPACE
             // collation and so silently kept the inclusive low bound.
+            // Go's FIRST act in `newBuildFromPatternLike` (`points.go:718`) is
+            // to refuse the range outright when the comparison's DERIVED
+            // collation is not compatible with argument 0's:
+            //
+            //   _, collation := expr.CharsetAndCollation()
+            //   if !collate.CompatibleCollate(
+            //           expr.GetArgs()[0].GetType(..).GetCollate(), collation) {
+            //       return getFullRange()
+            //   }
+            //
+            // The two differ exactly when an argument carries an explicit
+            // `COLLATE`, which outranks the column's IMPLICIT coercibility.
+            // Then the bounds below sort by the COLUMN's collation while the
+            // predicate matches by the derived one, so the range cuts rows the
+            // predicate accepts. Measured over a `utf8mb4_bin` column holding
+            // 'AA','aa','AAA','aaa' PARTITIONED BY RANGE COLUMNS(a):
+            // `a LIKE 'aa' COLLATE utf8mb4_general_ci` answered `["aa"]`,
+            // because pruning built `['aa','aa']` in BINARY and dropped the
+            // partition holding 'AA' -- which never reached the matcher at
+            // all. `... PARTITION (p_upper)` alone answered nothing.
+            //
+            // Declining leaves the condition an ordinary filter, which is what
+            // `getFullRange()` amounts to here.
+            if let Some(explicit) = explicit_collation(pattern) {
+                if !tidb_datatype::compatible_collate(
+                    column.field_type.collation_name(),
+                    explicit.name(),
+                ) {
+                    return None;
+                }
+            }
             let bytes = match constant_value(pattern, zone)? {
                 Datum::String(value) => value.bytes().to_vec(),
                 Datum::Bytes(value) => value,

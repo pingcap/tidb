@@ -99,19 +99,23 @@ fn an_explicit_case_insensitive_collation_controls_comparison() {
     // `LIKE` derives the same way (`collation.go:282`) and had the same
     // re-derivation in the pushed filter.
     //
-    // Asked of an UNPARTITIONED copy deliberately. On the partitioned table
-    // above the same predicate answers `["aa"]`, and the reason is not
-    // collation derivation -- traced to the row filter, `AA` and `AAA` never
-    // reach the `LIKE` at all, and `... PARTITION (p_upper)` alone returns
-    // nothing even though that partition holds them. A wildcard-free `LIKE`
-    // is being turned into an access RANGE compared with BINARY bytes, so the
-    // range misses every row the derived collation would have matched. That
-    // is a separate gap in range building, recorded here with its
-    // reproduction rather than folded into this assertion.
-    assert_eq!(
-        values("SELECT a FROM plain WHERE a LIKE 'aa' COLLATE utf8mb4_general_ci"),
-        ["AA", "aa"],
-    );
+    // Asked of BOTH the partitioned table and an unpartitioned copy. The
+    // partitioned one is the case that used to answer `["aa"]`: a
+    // wildcard-free `LIKE` became an access RANGE compared as BINARY bytes,
+    // so `AA` was cut before the matcher ever saw it -- and `... PARTITION
+    // (p_upper)` alone returned nothing even though that partition holds it.
+    // Go refuses to build the range at all when the derived collation is not
+    // `CompatibleCollate` with the column's (`points.go:718-725`), which is
+    // what `index_range`'s builder now does.
+    for table in ["collated", "plain"] {
+        assert_eq!(
+            values(&format!(
+                "SELECT a FROM {table} WHERE a LIKE 'aa' COLLATE utf8mb4_general_ci"
+            )),
+            ["AA", "aa"],
+            "{table}",
+        );
+    }
 }
 
 /// Row-valued `IN` is the predicate shape go-tpc uses to lock stock rows.
