@@ -333,6 +333,60 @@ fn explain_select() {
     );
 }
 
+/// A pushed `WHERE` keeps its `Selection` BETWEEN the partial aggregate and
+/// the scan, all three in the same coprocessor task.
+///
+/// TiDB's own recording of the same shape
+/// (`tests/integrationtest/r/explain_easy.result:208-214`):
+///
+/// ```text
+/// StreamAgg             root       funcs:count(1)->Column
+/// └─StreamAgg           root       funcs:count(Column)->Column
+///   └─TableReader       root       data:StreamAgg
+///     └─StreamAgg       cop[tikv]  funcs:count(1)->Column
+///       └─Selection     cop[tikv]  eq(explain_easy.t1.c3, 100)
+///         └─TableFullScan cop[tikv] table:t1  keep order:false, stats:pseudo
+/// ```
+///
+/// The partial aggregate goes to the top of the COP TASK, not directly onto
+/// the scan. Requiring a bare scan under it left this shape unprintable.
+///
+/// The constant is the refined one for the reason
+/// [`crate::tests_compare_refinement`] states: Go runs `refineArgs` before it
+/// builds the comparison at all, so `int_col > '10ab'` is `gt(..., 10)`
+/// everywhere -- in the plan text, and in what the scan is asked to evaluate.
+#[test]
+fn a_pushed_where_keeps_its_cop_selection_under_the_partial_aggregate() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, b INT)").unwrap();
+    session.run("INSERT INTO t VALUES (1,1),(2,1),(3,2),(10,4)").unwrap();
+    let plan = |session: &mut Session, sql: &str| -> Vec<String> {
+        row_text(session.run(sql))
+            .into_iter()
+            .map(|row| row.join("|"))
+            .collect()
+    };
+    assert_eq!(
+        plan(&mut session, "EXPLAIN SELECT count(*) FROM t WHERE a > '10ab'"),
+        [
+            "StreamAgg_5|1.00|root||funcs:count(Column#0)->Column#0",
+            "└─TableReader_4|1.00|root||data:StreamAgg",
+            "  └─StreamAgg_3|1.00|cop[tikv]||funcs:count(1)->Column#0",
+            "    └─Selection_2|3333.33|cop[tikv]||gt(test.t.a, 10)",
+            "      └─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+        ]
+    );
+    // The answer the refined plan gives is the answer the string gave.
+    assert_eq!(
+        row_text(session.run("SELECT count(*) FROM t WHERE a > '10ab'")),
+        [["0"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT count(*) FROM t WHERE a > 1")),
+        [["3"]]
+    );
+}
+
 /// `EXPLAIN ANALYZE <select>` really executes the query, and reports the
 /// REAL number of rows each operator produced -- not an estimate.
 ///

@@ -2780,14 +2780,23 @@ pub(crate) fn split_scan_predicates(
     let mut filters = Vec::new();
     let mut residual: Vec<&tidb_ast::Expr> = Vec::new();
     for conjunct in conjuncts {
-        match scan_predicate(conjunct, resolver).and_then(|predicate| {
+        match scan_predicate(conjunct, resolver).and_then(|mut predicate| {
             let mut filter = rewrite_expr_resolved(conjunct, resolver).ok()?;
             // Go `refineArgs`: `int column <cmp> non-int constant` folds the
             // constant into the column's type ONCE here, so the filter this
             // scan runs on every row compares int to int. Without it the
             // string is re-coerced per row -- the same work, and the same
             // 1292 truncation, once for each row scanned.
+            let unrefined = filter.clone();
             tidb_expr::builtin_compare::refine_comparisons(&mut filter, ctx).ok()?;
+            // ... and the DESCRIPTION beside it has to say the same thing:
+            // Go refines before it builds the comparison at all, so the
+            // constant it sends TiKV -- and prints -- is the refined one.
+            crate::predicate_pushdown::adopt_refined_literals(
+                &mut predicate,
+                &unrefined,
+                &filter,
+            );
             Some((predicate, filter))
         }) {
             Some((predicate, filter)) => {

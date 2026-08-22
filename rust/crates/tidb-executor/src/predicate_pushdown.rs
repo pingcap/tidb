@@ -541,6 +541,94 @@ fn normalized_and_conditions(
         .collect()
 }
 
+/// Replaces a described comparison's constant with the one Go's `refineArgs`
+/// produced, wherever that refinement CHANGED the operand.
+///
+/// The two halves of a pushed conjunct are built apart: the description is
+/// read off the conjunct as written, with the comparison-domain folding Go's
+/// `GetAccurateCmpType`/`WrapWithCastAs*` do (`comparison_constant`), while
+/// the expression beside it is rewritten and then refined by
+/// [`tidb_expr::builtin_compare::refine_comparisons`]. The description models
+/// the second half of Go's `getFunction` and not the first, so `int_col >
+/// '10ab'` described the STRING where Go sends -- and prints -- the refined
+/// `10`.
+///
+/// `before` is the same expression as `after` from just before that
+/// refinement ran, and only an operand the two disagree on is adopted. That
+/// is what keeps this to `refineArgs` alone: a constant refinement left
+/// untouched is one the description's own folding already put in the
+/// comparison's domain, and re-reading it from the expression would UNDO that
+/// -- `decimal_col < 24` would go back to the integer `24` Go casts to
+/// `24.00` before it ever reaches TiKV.
+pub(crate) fn adopt_refined_literals(
+    predicate: &mut ScanPredicate,
+    before: &Expression,
+    after: &Expression,
+) {
+    let (Expression::ScalarFunction(before), Expression::ScalarFunction(after)) = (before, after)
+    else {
+        return;
+    };
+    match predicate {
+        ScanPredicate::Compare(comparison) => {
+            let literal_offset = usize::from(comparison.column_on_left);
+            let Some(Expression::Constant(refined)) = after.args.get(literal_offset) else {
+                return;
+            };
+            let unchanged = matches!(
+                before.args.get(literal_offset),
+                Some(Expression::Constant(original))
+                    if original.value == refined.value && original.ret_type == refined.ret_type
+            );
+            if unchanged
+                || refined.deferred_expr.is_some()
+                || refined.param_marker.is_some()
+                // A NULL literal is not a shape this description carries; the
+                // caller declines such a conjunct before it gets here.
+                || refined.value.is_null()
+            {
+                return;
+            }
+            let Some(field_type) = refined.ret_type.as_ref() else {
+                return;
+            };
+            comparison.literal = refined.value.clone();
+            comparison.literal_type = field_type.clone();
+        }
+        ScanPredicate::And(branches) => adopt_refined_branches(branches, before, after, "and"),
+        ScanPredicate::Or(branches) => adopt_refined_branches(branches, before, after, "or"),
+        ScanPredicate::Not(inner) => {
+            if after.func_name.lowercase() != "not"
+                || after.args.len() != 1
+                || before.args.len() != 1
+            {
+                return;
+            }
+            adopt_refined_literals(inner, &before.args[0], &after.args[0]);
+        }
+        _ => {}
+    }
+}
+
+/// The `AND`/`OR` half of [`adopt_refined_literals`]: each described branch
+/// against the matching argument, when every shape agrees.
+fn adopt_refined_branches(
+    branches: &mut [ScanPredicate],
+    before: &tidb_expr::scalar_function::ScalarFunction,
+    after: &tidb_expr::scalar_function::ScalarFunction,
+    expected: &str,
+) {
+    if after.func_name.lowercase() != expected
+        || after.args.len() != branches.len()
+        || before.args.len() != branches.len()
+    {
+        return;
+    }
+    for ((branch, original), refined) in branches.iter_mut().zip(&before.args).zip(&after.args) {
+        adopt_refined_literals(branch, original, refined);
+    }
+}
+
 fn normalized_comparison(comparison: &ScanComparison, filter: &Expression) -> Expression {
     let mut normalized = filter.clone();
     let Expression::ScalarFunction(function) = &mut normalized else {

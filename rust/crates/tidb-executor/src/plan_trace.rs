@@ -1456,16 +1456,8 @@ impl PlanTrace {
         qualify: &Qualifier<'_>,
         sum: bool,
     ) -> bool {
-        let Some(mut scan) = self.stack.pop() else {
+        let Some(mut top) = self.stack.pop() else {
             return false;
-        };
-        let reader = match scan.name {
-            "TableFullScan" | "TableRangeScan" => "TableReader",
-            "IndexFullScan" | "IndexRangeScan" => "IndexReader",
-            _ => {
-                self.stack.push(scan);
-                return false;
-            }
         };
         let argument = select.fields.fields().iter().find_map(|field| match field {
             tidb_ast::SelectField::Expr {
@@ -1475,12 +1467,64 @@ impl PlanTrace {
             _ => None,
         });
         let Some(argument) = argument else {
-            self.stack.push(scan);
+            self.stack.push(top);
             return false;
         };
+        // Go pushes the partial aggregate to the top of the COP TASK, not
+        // directly onto the scan -- a `WHERE` pushed into the same task keeps
+        // its `Selection` between them:
+        //
+        // ```text
+        // StreamAgg          root       funcs:count(Column#N)->Column#M
+        // └─TableReader      root       data:StreamAgg
+        //   └─StreamAgg      cop[tikv]  funcs:count(1)->Column#N
+        //     └─Selection    cop[tikv]  gt(test.t.a, 10)
+        //       └─TableFullScan cop[tikv]  table:t
+        // ```
+        let mut filter = None;
+        if top.name == "Selection" && top.children.len() == 1 {
+            let child = top.children.pop().expect("the Selection's one child");
+            top.children.push(child);
+            if matches!(
+                top.children[0].name,
+                "TableFullScan" | "TableRangeScan" | "IndexFullScan" | "IndexRangeScan"
+            ) {
+                let scan = top.children.pop().expect("the Selection's scan");
+                filter = Some(top);
+                top = scan;
+            }
+        }
+        let mut scan = top;
+        let reader = match scan.name {
+            "TableFullScan" | "TableRangeScan" => "TableReader",
+            "IndexFullScan" | "IndexRangeScan" => "IndexReader",
+            _ => {
+                self.stack.push(match filter {
+                    Some(mut filter) => {
+                        filter.children.push(scan);
+                        filter
+                    }
+                    None => scan,
+                });
+                return false;
+            }
+        };
         scan.task = "cop[tikv]";
-        let act_rows = scan.act_rows.clone();
+        // The rows that leave the cop task are the FILTERED ones, so the
+        // reader and the partial aggregate count what the `Selection` emitted
+        // rather than what the scan read.
+        let act_rows = filter
+            .as_ref()
+            .map_or_else(|| scan.act_rows.clone(), |filter| filter.act_rows.clone());
         let key_ndv_ratio = scan.key_ndv_ratio;
+        let scan = match filter {
+            Some(mut filter) => {
+                filter.task = "cop[tikv]";
+                filter.children.push(scan);
+                filter
+            }
+            None => scan,
+        };
         let mut partial = PlanNode::new(
             "StreamAgg",
             Some(1.0),
