@@ -469,6 +469,21 @@ pub struct KvTable {
     /// disabled here; cluster-loaded metadata may still carry the source
     /// value verbatim.
     cache_status: tidb_model::TableCacheStatusType,
+    /// Go `TableInfo.TempTableType` (`setTemporaryType`, `create_table.go`):
+    /// whether this is an ordinary table, a GLOBAL temporary table, or a
+    /// LOCAL one.
+    ///
+    /// It is metadata on the table object rather than a fact the session
+    /// keeps beside it because EVERY reader of it -- `SHOW CREATE TABLE`'s
+    /// header, the `CREATE BINDING` refusal (Go's 8006), the DDL guards that
+    /// refuse a temporary table an option -- already has the table in hand
+    /// and must not have to ask a second authority that can disagree.
+    ///
+    /// The rows a temporary table holds are NOT stored here: a global
+    /// temporary table's `TableInfo` is shared by every session while its
+    /// DATA is private to one (Go `pkg/table/temptable`), which is what
+    /// `tidb-session`'s temporary-table overlay carries.
+    temp_table_type: tidb_model::TempTableType,
     /// The cluster's persisted new-collation mode, captured when this table
     /// object is built.
     ///
@@ -703,6 +718,7 @@ impl KvTable {
             charset: TableCharset::default(),
             comment: String::new(),
             cache_status: tidb_model::TableCacheStatusType::DISABLE,
+            temp_table_type: tidb_model::TempTableType::NONE,
             use_new_collation,
             foreign_keys: Vec::new(),
             max_foreign_key_id: 0,
@@ -1195,6 +1211,41 @@ impl KvTable {
     #[must_use]
     pub const fn auto_id_cache(&self) -> i64 {
         self.auto_id_cache
+    }
+
+    /// Exchanges this table's row storage for `store`, returning the one it
+    /// held.
+    ///
+    /// The ONE caller is the session's GLOBAL temporary table overlay. Go
+    /// keeps such a table's `TableInfo` in the shared infoschema and its rows
+    /// in the SESSION -- reads go through
+    /// `temptable.TemporaryTableSnapshotInterceptor`, which answers an empty
+    /// iterator for a global temporary table so the shared store is never
+    /// read at all. This tier has one table object per name, so the swap is
+    /// how a session gets its own rows under the shared schema; without it,
+    /// two connections writing the same global temporary table would see each
+    /// other's rows, which is the single thing the type exists to prevent.
+    pub fn swap_storage(&mut self, store: Box<dyn TableStorage>) -> Box<dyn TableStorage> {
+        std::mem::replace(&mut self.store, store)
+    }
+
+    /// Records Go `TableInfo.TempTableType` (`setTemporaryType`).
+    pub fn set_temp_table_type(&mut self, kind: tidb_model::TempTableType) {
+        self.temp_table_type = kind;
+    }
+
+    /// Go `TableInfo.TempTableType`.
+    #[must_use]
+    pub const fn temp_table_type(&self) -> tidb_model::TempTableType {
+        self.temp_table_type
+    }
+
+    /// Whether this table is temporary at all, in either scope -- Go's
+    /// `tbl.Meta().TempTableType != model.TempTableNone`, which is the exact
+    /// test every 8006 refusal makes.
+    #[must_use]
+    pub const fn is_temporary(&self) -> bool {
+        self.temp_table_type.0 != tidb_model::TempTableType::NONE.0
     }
 
     /// Records the table's `TTL` configuration (Go `TableInfo.TTLInfo`).

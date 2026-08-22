@@ -80,6 +80,15 @@ pub fn run_alter_table_in(
             format!("{database}.{name}"),
         )));
     }
+    super::refuse_local_temporary_table_ddl(catalog, &database, &name, "ALTER TABLE")?;
+    // Go's ALTER path checks the two guards in THIS order, and the corpus
+    // asserts the difference: `ddl/db_integration`'s
+    // `TestPlacementOnTemporaryTable` gets 8200 for
+    // `alter table <local temp> placement policy='x'` -- the executor's
+    // local-temporary refusal above, which fires before any option is looked
+    // at -- and 8006 for the same statement over a GLOBAL temporary table,
+    // which reaches the DDL package and `ddl/executor.go:646`.
+    super::refuse_temporary_table_alter_options(catalog, &database, &name, &alter.actions)?;
     super::table_cache::guard_alter_actions(catalog, &database, &name, &alter.actions)?;
 
     // A constraint names its columns and its referenced table, and a DROP

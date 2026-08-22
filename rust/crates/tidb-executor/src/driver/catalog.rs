@@ -111,6 +111,24 @@ pub struct Catalog {
     /// commit (`tidb-session`'s `txn.rs` compares this against the version it
     /// started from). Go advances its schema version per COMPLETED DDL job.
     version: u64,
+    /// The entries a session's LOCAL temporary tables are DISPLACING while
+    /// they are attached: `(folded database, folded name, the entry that was
+    /// there)`.
+    ///
+    /// Go models the same shadowing with a wrapper rather than a list:
+    /// `infoschema.SessionExtendedInfoSchema.TableByName` consults
+    /// `LocalTemporaryTables` first and falls through to the shared
+    /// infoschema, so `CREATE TEMPORARY TABLE t` in a schema that already has
+    /// a permanent `t` hides it for this session and leaves it untouched for
+    /// every other one. This tier resolves names against ONE table map, so
+    /// the overlay has to be spelled as "put the temporary one in the slot
+    /// and remember what came out"; [`Catalog::take_local_temporary_tables`]
+    /// puts the remembered entry back.
+    ///
+    /// Without the list the permanent table would be DESTROYED by the
+    /// temporary one that shadowed it -- the create would overwrite the slot
+    /// and the detach would empty it.
+    shadowed_by_local_temporary: Vec<(String, String, TableEntry)>,
     /// Loaded statistics by physical table id, Go's `StatsHandle` cache as
     /// the planner sees it.
     ///
@@ -200,6 +218,7 @@ impl Default for Catalog {
             next_database_id: 3,
             next_table_id: 0,
             version: 0,
+            shadowed_by_local_temporary: Vec::new(),
             statistics: HashMap::new(),
         };
         // Go's bootstrap builds the `information_schema` tables into the
@@ -418,10 +437,29 @@ impl Catalog {
 
     /// Every table name in `database`, sorted as Go's `fetchShowTables` sorts
     /// them. `None` when the database does not exist.
+    ///
+    /// LOCAL temporary tables are NOT here. Go cannot list them because they
+    /// are not in the infoschema an enumeration reads
+    /// (`SchemaSimpleTableInfos`), and it excludes them from the by-name form
+    /// too -- `fetchShowInfoByName` (`pkg/executor/show.go:540`) finds the
+    /// table through the session overlay and then returns nothing for a
+    /// `TempTableLocal`. This tier keeps such a table in the SAME map for the
+    /// duration of a statement, so the exclusion has to be stated; it is
+    /// stated once, here, because `SHOW TABLES`, `SHOW FULL TABLES` and
+    /// `information_schema.tables` all enumerate through this one call and
+    /// must not disagree.
     #[must_use]
     pub fn table_names(&self, database: &str) -> Option<Vec<String>> {
         let database = self.databases.get(&database.to_lowercase())?;
-        let mut names: Vec<String> = database.tables.keys().cloned().collect();
+        let mut names: Vec<String> = database
+            .tables
+            .iter()
+            .filter(|(_, entry)| {
+                !matches!(entry, TableEntry::Kv(table)
+                    if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
         names.sort();
         Some(names)
     }
@@ -921,6 +959,144 @@ impl Catalog {
         table: KvTable,
     ) -> Result<(), DriverError> {
         self.register_in(database, name, TableEntry::Kv(table))
+    }
+
+    /// Registers a LOCAL temporary table in `database`, remembering whatever
+    /// permanent object the name held so the detach can put it back.
+    ///
+    /// Go `temptable.CreateLocalTemporaryTable` -> `SessionTables.AddTable`:
+    /// the table goes into the SESSION's own map, never into the shared
+    /// infoschema, so it neither takes a DDL job nor moves the schema
+    /// version. This does not bump [`Catalog::version`] for the same reason:
+    /// a session creating a scratch table of its own must not abort a peer's
+    /// open transaction, which the version counter is what decides.
+    ///
+    /// The schema must exist -- Go's `createSessionTemporaryTable` reports
+    /// `ErrDatabaseNotExists` (1049) before it builds anything.
+    ///
+    /// # Errors
+    ///
+    /// 1049 when `database` does not exist.
+    pub fn register_local_temporary_in(
+        &mut self,
+        database: &str,
+        name: &str,
+        table: KvTable,
+    ) -> Result<(), DriverError> {
+        let folded_database = database.to_lowercase();
+        let folded_name = name.to_lowercase();
+        let schema = self.databases.get_mut(&folded_database).ok_or_else(|| {
+            DriverError::Schema(crate::SchemaErrorKind::UnknownDatabase(database.to_owned()))
+        })?;
+        if let Some(displaced) = schema.tables.insert(folded_name.clone(), TableEntry::Kv(table)) {
+            self.shadowed_by_local_temporary
+                .push((folded_database, folded_name, displaced));
+        }
+        Ok(())
+    }
+
+    /// Attaches a session's LOCAL temporary tables for the duration of one
+    /// statement -- Go `temptable.AttachLocalTemporaryTableInfoSchema`.
+    ///
+    /// Each entry is `(folded database, folded name, table)`. A name whose
+    /// schema has since been dropped is DISCARDED rather than resurrecting
+    /// the schema: Go keeps such a table alive in `SessionTables` (which owns
+    /// its `DBInfo` by value) and this tier cannot, which is the one
+    /// documented gap in the overlay.
+    pub fn attach_local_temporary_tables(&mut self, tables: Vec<(String, String, KvTable)>) {
+        for (database, name, table) in tables {
+            let Some(schema) = self.databases.get_mut(&database) else {
+                continue;
+            };
+            if let Some(displaced) = schema.tables.insert(name.clone(), TableEntry::Kv(table)) {
+                self.shadowed_by_local_temporary
+                    .push((database, name, displaced));
+            }
+        }
+    }
+
+    /// Detaches every LOCAL temporary table, restoring what each one shadowed
+    /// -- Go `temptable.DetachLocalTemporaryTableInfoSchema`.
+    ///
+    /// The tables are found by their own metadata rather than by the list
+    /// that was attached, which is what makes the statement's own DDL come
+    /// out right: a `CREATE TEMPORARY TABLE` run during the statement leaves
+    /// here, and a `DROP TEMPORARY TABLE` does not. Restoring a shadowed
+    /// entry only into an EMPTY slot is the other half of that: a statement
+    /// that dropped the temporary table and created a permanent one under the
+    /// same name keeps the new table rather than the resurrected old one.
+    pub fn take_local_temporary_tables(&mut self) -> Vec<(String, String, KvTable)> {
+        let mut slots = Vec::new();
+        for (folded_database, schema) in &self.databases {
+            for (folded_name, entry) in &schema.tables {
+                if matches!(entry, TableEntry::Kv(table)
+                    if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
+                {
+                    slots.push((folded_database.clone(), folded_name.clone()));
+                }
+            }
+        }
+        let mut taken = Vec::with_capacity(slots.len());
+        for (folded_database, folded_name) in slots {
+            let Some(schema) = self.databases.get_mut(&folded_database) else {
+                continue;
+            };
+            let Some(TableEntry::Kv(table)) = schema.tables.remove(&folded_name) else {
+                continue;
+            };
+            taken.push((folded_database, folded_name, table));
+        }
+        for (folded_database, folded_name, entry) in
+            std::mem::take(&mut self.shadowed_by_local_temporary)
+        {
+            let Some(schema) = self.databases.get_mut(&folded_database) else {
+                continue;
+            };
+            schema.tables.entry(folded_name).or_insert(entry);
+        }
+        taken
+    }
+
+    /// Every GLOBAL temporary table in the catalog, by physical id, for the
+    /// session that has to swap its own rows in.
+    ///
+    /// A global temporary table's `TableInfo` is shared by every session (it
+    /// is created by a real DDL job) while its ROWS are private to one and
+    /// die with the transaction that wrote them -- Go
+    /// `temptable.TemporaryTableSnapshotInterceptor`, whose `iterTable`
+    /// answers an EMPTY iterator for `TempTableGlobal` so nothing outside the
+    /// current transaction's own buffer is ever visible.
+    pub fn global_temporary_table_ids(&self) -> Vec<(String, String)> {
+        let mut ids = Vec::new();
+        for (folded_database, schema) in &self.databases {
+            for (folded_name, entry) in &schema.tables {
+                if matches!(entry, TableEntry::Kv(table)
+                    if table.temp_table_type() == tidb_model::TempTableType::GLOBAL)
+                {
+                    ids.push((folded_database.clone(), folded_name.clone()));
+                }
+            }
+        }
+        ids.sort();
+        ids
+    }
+
+    /// A mutable handle on a table for the temporary-table overlay, which
+    /// swaps row storage in and out without changing any schema.
+    ///
+    /// It deliberately does NOT bump [`Catalog::version`]: moving a session's
+    /// own rows into and out of the slot they are read through is not a
+    /// schema change, and counting it as one would abort every concurrent
+    /// transaction whenever any session touched a temporary table.
+    pub fn temporary_overlay_table_mut(
+        &mut self,
+        database: &str,
+        name: &str,
+    ) -> Option<&mut KvTable> {
+        match self.databases.get_mut(database)?.tables.get_mut(name) {
+            Some(TableEntry::Kv(table)) => Some(table),
+            _ => None,
+        }
     }
 
     /// Registers a view in `database`, replacing whatever the name held --

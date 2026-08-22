@@ -54,6 +54,7 @@ pub fn run_create_index_in(
     };
     let (database, table_name) = crate::driver::split_table_path_pub(&create.table, current_db)?;
     let (database, table_name) = (database.to_owned(), table_name.to_owned());
+    super::refuse_local_temporary_table_ddl(catalog, &database, &table_name, "CREATE INDEX")?;
     let unique = match create.kind {
         tidb_ast::IndexKind::Ordinary => false,
         tidb_ast::IndexKind::Unique => true,
@@ -405,6 +406,7 @@ pub fn run_drop_index_in(
     };
     let (database, table_name) = crate::driver::split_table_path_pub(&drop.table, current_db)?;
     let (database, table_name) = (database.to_owned(), table_name.to_owned());
+    super::refuse_local_temporary_table_ddl(catalog, &database, &table_name, "DROP INDEX")?;
     if matches!(
         catalog.table_in(&database, &table_name),
         Some(crate::TableEntry::Kv(table)) if table.is_cache_table()

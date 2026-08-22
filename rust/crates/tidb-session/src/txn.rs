@@ -55,6 +55,20 @@ pub(crate) struct Transaction {
     /// The transaction's savepoint stack, oldest first -- Go's
     /// `TxnCtx.Savepoints` (`pkg/sessionctx/variable/session.go`).
     savepoints: Vec<Savepoint>,
+    /// The session's LOCAL temporary tables as they stood at `BEGIN`.
+    ///
+    /// Their ROWS are transactional in Go and their SCHEMA is not, and the
+    /// two halves come from different places:
+    /// `session.commitTxnWithTemporaryData` copies a local temporary table's
+    /// keys out of the transaction membuffer into the session's own buffer
+    /// only at COMMIT, so a rolled-back transaction's writes are simply
+    /// dropped with the membuffer; but `createSessionTemporaryTable` and
+    /// `DropLocalTemporaryTable` edit `SessionVars.LocalTemporaryTables`
+    /// directly, outside any transaction, so a `CREATE TEMPORARY TABLE` or
+    /// `DROP` inside a transaction SURVIVES its rollback. See
+    /// [`Session::restore_local_temporary_rows`], which restores exactly the
+    /// first half.
+    local_temporary_at_open: Vec<(String, String, tidb_executor::KvTable)>,
 }
 
 impl Transaction {
@@ -70,12 +84,17 @@ impl Transaction {
     /// stack an explicit BEGIN does, which is what Go does: it makes no
     /// distinction between the two once `InTxn()` holds, so SAVEPOINT works in
     /// either.
-    fn open(catalog: &Catalog, mode: SessionTxnMode) -> Self {
+    fn open(
+        catalog: &Catalog,
+        mode: SessionTxnMode,
+        local_temporary_at_open: Vec<(String, String, tidb_executor::KvTable)>,
+    ) -> Self {
         Transaction {
             working: catalog.clone(),
             base_version: catalog.version(),
             mode,
             savepoints: Vec::new(),
+            local_temporary_at_open,
         }
     }
 }
@@ -100,6 +119,89 @@ pub(crate) struct Savepoint {
     /// `RollbackToSavepoint` truncates the stack to `[:idx+1]` -- the named
     /// savepoint SURVIVES its own rollback and can be rolled back to again.
     image: Catalog,
+    /// The session's LOCAL temporary tables at the savepoint, for the same
+    /// reason [`Transaction::local_temporary_at_open`] exists: their rows are
+    /// in the transaction membuffer Go truncates back to the checkpoint, so
+    /// they roll back with everything else, while the table map does not.
+    local_temporary: Vec<(String, String, tidb_executor::KvTable)>,
+    /// The session's GLOBAL temporary rows at the savepoint.
+    ///
+    /// These are transactional in Go with no exception at all: a global
+    /// temporary table has NO storage outside the transaction, so every one
+    /// of its keys is in the membuffer `RollbackMemDBToCheckpoint` truncates.
+    /// The corpus asserts exactly this -- `executor/executor_txn`'s
+    /// `TestSavepointWithTemporaryTable` inserts three rows under three
+    /// savepoints and rolls back to each in turn.
+    global_temporary:
+        std::collections::HashMap<i64, Box<dyn tidb_executor::storage::TableStorage>>,
+}
+
+/// The session's temporary-table state while it is OFF the catalog, and the
+/// two moves that put it on and take it back.
+///
+/// Go does the same in two pieces that this tier has to do in one, because
+/// its infoschema and its store are separate objects and here they are the
+/// same object:
+///
+/// * `temptable.AttachLocalTemporaryTableInfoSchema` wraps the statement's
+///   infoschema so `TableByName` finds a LOCAL temporary table before the
+///   shared one of the same name;
+/// * `temptable.SessionSnapshotInterceptor` routes reads of a temporary
+///   table's key range away from TiKV and into the session's own membuffer.
+///
+/// The local half is a whole table object moved into the catalog and back;
+/// the global half is only the ROW STORAGE, because a global temporary
+/// table's `TableInfo` is genuinely shared and must stay where it is.
+struct TemporaryTableOverlay {
+    local: Vec<(String, String, tidb_executor::KvTable)>,
+    global: std::collections::HashMap<i64, Box<dyn tidb_executor::storage::TableStorage>>,
+}
+
+impl TemporaryTableOverlay {
+    /// Attaches the overlay to `catalog`, runs `body`, and takes the overlay
+    /// back.
+    ///
+    /// A PANIC inside `body` leaves the overlay attached, which is safe only
+    /// because of what a panic already costs here: on the shared-catalog path
+    /// the mutex is poisoned and every later statement is refused with
+    /// `CatalogPoisoned`, and on the transaction path the catalog being
+    /// mutated is the transaction's private copy, which is dropped. Neither
+    /// leaves a temporary table visible to another session.
+    fn run<T>(
+        &mut self,
+        catalog: &mut Catalog,
+        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+    ) -> Result<T, DriverError> {
+        catalog.attach_local_temporary_tables(std::mem::take(&mut self.local));
+        self.swap_global_storage(catalog);
+        let value = body(catalog);
+        self.swap_global_storage(catalog);
+        self.local = catalog.take_local_temporary_tables();
+        value
+    }
+
+    /// Exchanges every GLOBAL temporary table's row storage between the
+    /// catalog's (always-empty) one and this session's.
+    ///
+    /// The same call attaches and detaches, because the catalog's own copy
+    /// carries no rows in either direction: nothing writes to a global
+    /// temporary table except a session that has its own storage swapped in,
+    /// so what comes out at attach is empty and what goes back at detach can
+    /// be the empty store that came out.
+    fn swap_global_storage(&mut self, catalog: &mut Catalog) {
+        for (database, name) in catalog.global_temporary_table_ids() {
+            let Some(table) = catalog.temporary_overlay_table_mut(&database, &name) else {
+                continue;
+            };
+            let id = table.table_id;
+            let incoming = self.global.remove(&id).unwrap_or_else(|| {
+                Box::new(tidb_executor::storage::MemTableStorage::new())
+                    as Box<dyn tidb_executor::storage::TableStorage>
+            });
+            let outgoing = table.swap_storage(incoming);
+            self.global.insert(id, outgoing);
+        }
+    }
 }
 
 /// The image of the catalog a statement started from, restored on ANY exit
@@ -172,9 +274,36 @@ impl Session {
     /// installation, because [`Transaction::open`] copies the catalog it is
     /// given and needs nothing from it afterwards.
     fn open_transaction(&mut self, mode: SessionTxnMode) -> Result<(), DriverError> {
-        let txn = Transaction::open(&*self.lock_catalog()?, mode);
+        let local_temporary_at_open = self.local_temporary_tables.clone();
+        let txn = Transaction::open(&*self.lock_catalog()?, mode, local_temporary_at_open);
         self.txn = Some(txn);
         Ok(())
+    }
+
+    /// Puts back the ROWS of the local temporary tables that already existed
+    /// at the point `snapshot` was taken, leaving every other change alone.
+    ///
+    /// A table created after the snapshot stays (it is not named there), a
+    /// table dropped after it stays dropped (nothing matches it), and a table
+    /// that was truncated and rebuilt under a new id is left alone for the
+    /// same reason -- which is Go's split between the transactional row data
+    /// and the non-transactional session table map. See
+    /// [`Transaction::local_temporary_at_open`].
+    fn restore_local_temporary_rows(
+        &mut self,
+        snapshot: Vec<(String, String, tidb_executor::KvTable)>,
+    ) {
+        for (database, name, table) in snapshot {
+            if let Some(current) = self.local_temporary_tables.iter_mut().find(
+                |(current_database, current_name, current_table)| {
+                    current_database == &database
+                        && current_name == &name
+                        && current_table.table_id == table.table_id
+                },
+            ) {
+                current.2 = table;
+            }
+        }
     }
 
     /// Go `newProviderWithRequest`: `BEGIN <mode>` wins over `@@tidb_txn_mode`.
@@ -249,7 +378,11 @@ impl Session {
                     return Ok(Some(true));
                 }
                 // Dropping the staged copy discards every staged write.
-                self.txn = None;
+                // A local temporary table's rows are not in that copy -- they
+                // are in the session -- so they are put back by hand.
+                if let Some(txn) = self.txn.take() {
+                    self.restore_local_temporary_rows(txn.local_temporary_at_open);
+                }
                 Ok(Some(false))
             }
             SessionStmt::Savepoint(name) => {
@@ -283,13 +416,20 @@ impl Session {
         // Go's `Txn(true)`: with autocommit OFF this is the statement that
         // opens the pending transaction.
         self.begin_implicit_transaction()?;
+        let local_temporary = self.local_temporary_tables.clone();
+        let global_temporary = self.global_temporary_data.clone();
         let Some(txn) = &mut self.txn else {
             return Ok(());
         };
         let name = name.to_lowercase();
         let image = txn.working.clone();
         txn.savepoints.retain(|savepoint| savepoint.name != name);
-        txn.savepoints.push(Savepoint { name, image });
+        txn.savepoints.push(Savepoint {
+            name,
+            image,
+            local_temporary,
+            global_temporary,
+        });
         Ok(())
     }
 
@@ -316,7 +456,11 @@ impl Session {
             .position(|savepoint| savepoint.name == lowered)
             .ok_or_else(|| DriverError::SavepointNotExists(name.to_owned()))?;
         txn.working = txn.savepoints[index].image.clone();
+        let local_temporary = txn.savepoints[index].local_temporary.clone();
+        let global_temporary = txn.savepoints[index].global_temporary.clone();
         txn.savepoints.truncate(index + 1);
+        self.restore_local_temporary_rows(local_temporary);
+        self.global_temporary_data = global_temporary;
         Ok(())
     }
 
@@ -373,16 +517,39 @@ impl Session {
         &mut self,
         body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
-        match &mut self.txn {
-            Some(txn) => body(&mut txn.working),
+        // Go wraps every statement's infoschema in a
+        // `SessionExtendedInfoSchema` (`temptable.AttachLocalTemporaryTable
+        // InfoSchema`) and installs a snapshot interceptor for the temporary
+        // rows (`temptable.SessionSnapshotInterceptor`). Both are per
+        // STATEMENT, and both are undone before the statement's catalog is
+        // shared with anyone -- which is exactly why they belong here, at the
+        // one door every statement reaches the catalog through, rather than
+        // in each statement arm.
+        let mut overlay = TemporaryTableOverlay {
+            local: std::mem::take(&mut self.local_temporary_tables),
+            global: std::mem::take(&mut self.global_temporary_data),
+        };
+        let value = match &mut self.txn {
+            Some(txn) => overlay.run(&mut txn.working, body),
             None => {
                 let mut catalog = self
                     .catalog
                     .lock()
                     .map_err(|_| DriverError::CatalogPoisoned)?;
-                body(&mut catalog)
+                overlay.run(&mut catalog, body)
             }
-        }
+        };
+        self.local_temporary_tables = std::mem::take(&mut overlay.local);
+        self.global_temporary_data = std::mem::take(&mut overlay.global);
+        value
+    }
+
+    /// Drops every row this session has written to a GLOBAL temporary table.
+    ///
+    /// See the call site in `dispatch` for why the transaction boundary is
+    /// the only place this happens.
+    pub(crate) fn discard_global_temporary_rows(&mut self) {
+        self.global_temporary_data.clear();
     }
 
     /// Runs one DML statement over a STAGE of the catalog this statement sees,

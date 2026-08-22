@@ -91,6 +91,7 @@ pub fn run_rename_table_in(
         let (to_db, to_name) = crate::driver::split_table_path_pub(to, current_db)?;
         let (to_db, to_name) = (to_db.to_lowercase(), to_name.to_lowercase());
 
+        super::refuse_local_temporary_table_ddl(catalog, &from_db, &from_name, "RENAME TABLE")?;
         if !staged_table_exists(catalog, &staged, &from_db, &from_name) {
             return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
                 format!("{from_db}.{from_name}"),
@@ -241,9 +242,14 @@ pub fn run_truncate_table_in(
 /// Without `IF EXISTS` the list becomes the error's own text and the return
 /// is empty.
 ///
-/// DEFERRED (documented): `TEMPORARY` tables, which this executor never
-/// models, are rejected rather than silently dropping a permanent table of
-/// the same name.
+/// A plain `DROP TABLE` drops a LOCAL temporary table too, and does it
+/// without a DDL job: Go strips such names out of the statement first
+/// (`pkg/executor/ddl.go:118`) and, when none are left, never opens a
+/// transaction at all. Here the local temporary table is in the catalog for
+/// the statement's duration (the session's overlay attached it), so removing
+/// it is the same call -- and the session's detach is what makes it
+/// permanent, and what puts back any permanent table the temporary one was
+/// shadowing.
 pub fn run_drop_table_in(
     sql: &str,
     catalog: &mut Catalog,
@@ -271,10 +277,68 @@ pub fn run_drop_table_in(
             ))
         }
     };
-    if drop.temporary != tidb_ast::DropTemporary::None {
-        return Err(DriverError::unsupported(
-            "temporary tables are not supported yet",
-        ));
+    // The kind of table each written name currently resolves to, resolved
+    // ONCE so the two temporary arms below and the ordinary drop all judge
+    // the same catalog state.
+    // `None` is "no such object"; a view or a sequence answers
+    // `TempTableType::NONE`, because Go's `TableByName` finds those too and
+    // judges them by the `TempTableType` their `TableInfo` carries.
+    let kind_of = |catalog: &Catalog, database: &str, name: &str| match catalog
+        .table_in(database, name)
+    {
+        Some(crate::TableEntry::Kv(table)) => Some(table.temp_table_type()),
+        Some(_) => Some(tidb_model::TempTableType::NONE),
+        None => None,
+    };
+
+    match drop.temporary {
+        tidb_ast::DropTemporary::None => {}
+        // Go `DDLExec.Next` (`pkg/executor/ddl.go:129`): `DROP TEMPORARY
+        // TABLE` matches LOCAL temporary tables only. Every other name --
+        // a permanent table, a GLOBAL temporary table, a name that is not
+        // there at all -- is collected and reported as ONE
+        // `infoschema.ErrTableDropExists` (1051), and the statement drops
+        // NOTHING: Go returns before `dropLocalTemporaryTables` runs, so a
+        // local temporary table listed beside a bad name survives.
+        tidb_ast::DropTemporary::Local => {
+            let mut not_local = Vec::new();
+            for path in &drop.names {
+                let (database, name) = crate::driver::split_table_path_pub(path, current_db)?;
+                if kind_of(catalog, database, name) != Some(tidb_model::TempTableType::LOCAL) {
+                    not_local.push(format!("{database}.{name}"));
+                }
+            }
+            if !not_local.is_empty() {
+                if drop.if_exists {
+                    // Go files the same error as a NOTE and returns success,
+                    // which is what the caller's returned list becomes.
+                    return Ok(not_local);
+                }
+                return Err(DriverError::Schema(crate::SchemaErrorKind::BadTable(
+                    not_local.join(","),
+                )));
+            }
+            for path in &drop.names {
+                let (database, name) = crate::driver::split_table_path_pub(path, current_db)?;
+                let (database, name) = (database.to_owned(), name.to_owned());
+                catalog.drop_table_in(&database, &name);
+            }
+            return Ok(Vec::new());
+        }
+        // Go `checkDropTemporaryTableGrammar` (`preprocess.go:1122`): a name
+        // that does not exist is left to the drop itself, but a name that
+        // exists and is not a GLOBAL temporary table is 8007 -- checked over
+        // the WHOLE list before anything is dropped, as a preprocessor pass
+        // is. The drop that follows is the ordinary one.
+        tidb_ast::DropTemporary::Global => {
+            for path in &drop.names {
+                let (database, name) = crate::driver::split_table_path_pub(path, current_db)?;
+                match kind_of(catalog, database, name) {
+                    None | Some(tidb_model::TempTableType::GLOBAL) => {}
+                    Some(_) => return Err(DriverError::DropTableOnTemporaryTable),
+                }
+            }
+        }
     }
 
     // Go `checkDropTableHasForeignKeyReferredInOwner` runs over the WHOLE
