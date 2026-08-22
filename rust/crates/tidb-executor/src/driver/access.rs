@@ -1720,7 +1720,13 @@ fn point_get_consumes_where(
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> bool {
-    point_get_predicate_is_consumed(select.where_clause.as_ref(), table, columns, zone)
+    point_get_predicate_is_consumed(
+        select.where_clause.as_ref(),
+        table,
+        columns,
+        zone,
+        sole_table_ref(&select.from).map_or(&[][..], |table_ref| table_ref.partitions.as_slice()),
+    )
 }
 
 /// Whether a write's narrowed read path consumed its complete predicate.
@@ -1736,7 +1742,13 @@ pub(crate) fn write_read_path_consumes_predicate(
     match read_path {
         Some(WriteReadPath::Batch(_)) => true,
         Some(WriteReadPath::Point(_)) => {
-            point_get_predicate_is_consumed(stmt.where_clause, table, columns, zone)
+            point_get_predicate_is_consumed(
+                stmt.where_clause,
+                table,
+                columns,
+                zone,
+                stmt.named_partitions,
+            )
         }
         Some(WriteReadPath::Ranges(..)) => {
             handle_predicate_is_consumed(stmt.where_clause, table, zone)
@@ -1750,6 +1762,7 @@ pub(crate) fn point_get_predicate_is_consumed(
     table: &KvTable,
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
+    named_partitions: &[String],
 ) -> bool {
     let Some(where_clause) = where_clause else {
         return false;
@@ -1781,7 +1794,7 @@ pub(crate) fn point_get_predicate_is_consumed(
     // is a bare `Point_Get table:t handle:0`.
     if table.pk_handle_offset().is_none()
         && table.common_handle_offsets().is_empty()
-        && table.partition().is_none()
+        && (table.partition().is_none() || named_partitions.len() == 1)
         && pairs.len() == 1
         && pairs[0]
             .column
@@ -1828,6 +1841,47 @@ pub(crate) fn surviving_partitions(
         .iter()
         .filter(|def| selected.as_ref().is_none_or(|ids| ids.contains(&def.id)))
         .filter(|def| pruned.as_ref().is_none_or(|ids| ids.contains(&def.id)))
+        .map(|def| (def.name.clone(), def.id))
+        .collect()
+}
+
+/// The partitions ONE LEAF of a multi-table `FROM` reads, named as declared
+/// and in definition order.
+///
+/// Go's `PartitionProcessor.rewriteDataSource` walks the WHOLE logical plan
+/// and divides every `DataSource` it finds, so a partitioned table inside a
+/// join is fanned out exactly as a single-table `SELECT`'s is -- captured
+/// over `PARTITION BY LIST (ltype)` with a predicate on a non-partitioning
+/// column, where TiDB prints
+/// `TableFullScan table:tx2, partition:p1` and `... partition:p2` under a
+/// `PartitionUnion(Probe)`. Recognising only the single-table shape is what
+/// printed one partition-less `TableFullScan table:tx2` there.
+///
+/// This is [`surviving_partitions`] MINUS the `WHERE` narrowing: a join
+/// leaf's read is restricted by its `PARTITION (p, ...)` list alone
+/// (`restricted_to_partitions` at the leaf build site), so the list named
+/// here is exactly the set the leaf's executor walks. Go additionally prunes
+/// the leaf by its own pushed-down conditions; doing that here would have to
+/// narrow the leaf's READ in the same breath, which the index and lookup
+/// arms do not yet route through one restriction point. Naming more
+/// partitions than Go is a plan that over-describes the read, never one that
+/// reads too few rows.
+pub(crate) fn leaf_read_partitions(
+    table: &KvTable,
+    named_partitions: &[String],
+) -> Vec<(String, i64)> {
+    let Some(partition) = table.partition() else {
+        return Vec::new();
+    };
+    let selected = Some(named_partitions)
+        .filter(|names| !names.is_empty())
+        .and_then(|names| {
+            crate::partition_pruning::ids_for_selected_partitions(partition, names).ok()
+        });
+    partition
+        .definitions
+        .iter()
+        .filter(|def| selected.as_ref().is_none_or(|ids| ids.contains(&def.id)))
         .map(|def| (def.name.clone(), def.id))
         .collect()
 }
@@ -2515,13 +2569,20 @@ fn pruned_partition_ids(
     if range_columns.is_empty() {
         return None;
     }
+    // Go `PartitionProcessor.prune` runs its conditions through
+    // `applyPredicateSimplification` -- whose first act is
+    // `expression.PushDownNot` -- BEFORE handing them to the pruner, and its
+    // own comment gives the reason: a `not (a < 5)` the ranger cannot read
+    // yields no range at all, which reads here as "prune nothing" and leaves
+    // the `values less than (0)` partition in a plan TiDB prunes it out of.
+    let normalized = crate::partition_pruning::push_down_not(where_clause);
     // Go `DetachCondAndBuildRangeForPartition`, which is the one ranger entry
     // that does NOT convert its points to sort keys: a partition bound is a
     // written value compared under the partition column's own collation, not
     // an index's stored form.
     let built = crate::index_range::detach_cond_and_build_range_for_partition(
         &range_columns,
-        where_clause,
+        &normalized,
         zone,
     )?;
     crate::partition_pruning::pruned_ids(partition, &built.ranges)
@@ -4035,6 +4096,16 @@ pub(crate) struct PointPlanStmt<'a> {
     group_by: &'a [tidb_ast::GroupByItem],
     /// `DISTINCT` is present only on a real `SELECT`; writes set this false.
     distinct: bool,
+    /// Go's `DataSource.PartitionNames`: the statement's own
+    /// `PARTITION (p, ...)` list, EXACTLY as written and before any pruning.
+    ///
+    /// It is a point-plan input rather than a read restriction because
+    /// `find_best_task.go`'s point-get conversion tests its LENGTH: "Partition
+    /// table can't use `_tidb_rowid` to generate PointGet Plan unless one
+    /// partition is explicitly specified" -- `len(ds.PartitionNames) != 1`
+    /// disables the conversion. What the `WHERE` happened to prune is NOT
+    /// that list, which is why the restricted `KvTable` cannot answer this.
+    named_partitions: &'a [String],
 }
 
 impl<'a> PointPlanStmt<'a> {
@@ -4047,6 +4118,8 @@ impl<'a> PointPlanStmt<'a> {
             having: select.having.as_ref(),
             group_by: &select.group_by,
             distinct: select.distinct,
+            named_partitions: sole_table_ref(&select.from)
+                .map_or(&[][..], |table_ref| table_ref.partitions.as_slice()),
         }
     }
 
@@ -4065,6 +4138,14 @@ impl<'a> PointPlanStmt<'a> {
             having: None,
             group_by: &[],
             distinct: false,
+            // Go's synthesized statement for a write copies `TableRefs`, but
+            // the `_tidb_rowid` exception below belongs to the READ planner's
+            // `convertToPointGet`; `tryPointGetPlan` -- the only rule a write
+            // goes through -- refuses `_tidb_rowid` on a partitioned table
+            // outright (`point_get_plan.go`: "Partition table can't use
+            // `_tidb_rowid` to generate PointGet Plan"). An empty list is that
+            // refusal.
+            named_partitions: &[],
         }
     }
 }
@@ -4111,12 +4192,29 @@ pub(crate) fn try_point_get(
     // is why this runs BEFORE the column-domain conversion below, where
     // `_tidb_rowid` names nothing to convert against.
     //
-    // Go refuses it for a PARTITIONED table (`point_get_plan.go:993`: "Partition
+    // Go refuses it for a PARTITIONED table (`point_get_plan.go`: "Partition
     // table can't use `_tidb_rowid` to generate PointGet Plan"), because a row
-    // id alone does not say which partition holds the row.
+    // id alone does not say which partition holds the row -- UNLESS the
+    // statement said which one. `find_best_task.go`'s point-get conversion
+    // carries the exception verbatim:
+    //
+    // ```go
+    // // Partition table can't use `_tidb_rowid` to generate PointGet Plan
+    // // unless one partition is explicitly specified.
+    // if canConvertPointGet && path.IsIntHandlePath &&
+    //     !ds.Table.Meta().PKIsHandle && len(ds.PartitionNames) != 1 {
+    //     canConvertPointGet = false
+    // }
+    // ```
+    //
+    // The test is on the WRITTEN list's length, not on how many partitions
+    // survived: TiDB's own recording gives `Point_Get table:t, partition:p0`
+    // for `select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1`,
+    // and a `TableRangeScan` for both the bare form and `partition(p0,p1)`.
+    let single_named_partition = select.named_partitions.len() == 1;
     if table.pk_handle_offset().is_none()
         && table.common_handle_offsets().is_empty()
-        && table.partition().is_none()
+        && (table.partition().is_none() || single_named_partition)
         && pairs.len() == 1
         && pairs[0]
             .column

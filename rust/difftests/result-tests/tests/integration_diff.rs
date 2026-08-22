@@ -2000,7 +2000,62 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // to the TRANSACTION as Go's `GetRowIDShardGenerator` is (which is what
     // makes `tidb_shard_allocate_step` count rows, not statements;
     // `table/tables` 3 -> 0).
-    const KNOWN_DIVERGENCES: usize = 48;
+    //
+    // 76 -> 69. PARTITION PRUNING, one Go rule
+    // (`pkg/planner/core/rule/rule_partition_processor.go`) and the two
+    // places that read its output. Every item is one recorded TiDB statement:
+    //
+    //  * `PartitionProcessor.prune` runs its conditions through
+    //    `applyPredicateSimplification` -- whose first act is
+    //    `expression.PushDownNot` -- BEFORE pruning, and the rule's own
+    //    comment says why: a condition "like 'not (a != 1)' would not be
+    //    handled ... when building range". A `NOT` the ranger cannot read
+    //    yields NO range, which this tier read as "prune nothing", so
+    //    `where not (a < 5)` over `range (a)` kept the `values less than (0)`
+    //    partition TiDB drops (1).
+    //
+    //  * `makeUnionAllChildren` returns `LogicalTableDual{RowCount: 0}` when
+    //    pruning left NO partition -- there are no children to union with.
+    //    This tier printed the scan over an empty partition set instead, so
+    //    `where b > 10` over a `list (b)` table of values `0..5` showed
+    //    `TableRangeScan range:(10,+inf]` where TiDB prints `TableDual
+    //    rows:0` (1). Neither side has an access row left, so that statement
+    //    moves from compared-and-diverged to the `PlanWithoutProperty` skip
+    //    class, exactly as the three `PredicateSimplification` duals above
+    //    did.
+    //
+    //  * `rewriteDataSource` recurses through the WHOLE logical plan, so a
+    //    partitioned table read as a JOIN LEAF fans out into a
+    //    `PartitionUnion` exactly as a single-table source does. Only the
+    //    single-table shape did here, so TiDB's `partition:p1` +
+    //    `partition:p2` under a `PartitionUnion(Probe)` was one
+    //    partition-less `TableFullScan` (2).
+    //
+    //  * `makeUnionAllChildren` gives a static-mode `Batch_Point_Get` one
+    //    `DataSource` per partition too, each naming its own.
+    //    `PlanTrace::partition_union` fans out SCANS and a point get is not
+    //    one, so it printed a single partition-less node (1).
+    //
+    //  * `find_best_task.go`'s point-get conversion allows a heap table's
+    //    `_tidb_rowid` on a PARTITIONED table when exactly one partition is
+    //    NAMED ("unless one partition is explicitly specified":
+    //    `len(ds.PartitionNames) != 1` disables it), and
+    //    `PointGetPlan.AccessObject` then names that partition (2).
+    //
+    // Still open in this cluster and none of it this rule: TiDB builds one
+    // `lookupTableTask` PER PARTITION (`executor/distsql.go`:
+    // `tableLookUpTask.partitionTable = prunedPartitions[curResultIdx]`), so
+    // an `IndexLookUp` over a partitioned table answers partition by
+    // partition where this tier answers one merged batch (3 rows-kind);
+    // a hash join's tie order over an UNPARTITIONED pair (1); and a `HAVING`
+    // on the GROUP BY key pushed under the aggregate and intersected with
+    // the `WHERE`'s DNF, which leaves one point on a clustered `gbk_bin`
+    // primary key and lets TiDB plan a `Point_Get` (1).
+    //
+    // 48 -> 41 at the merge of the partition-processor line of work, whose
+    // measured delta on its own base was exactly -7 -- the same seven close
+    // here, so the two lines compose without overlap.
+    const KNOWN_DIVERGENCES: usize = 41;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

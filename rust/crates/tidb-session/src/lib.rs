@@ -1468,6 +1468,8 @@ mod tests_partition_projection;
 #[cfg(test)]
 mod tests_session_var_hooks;
 #[cfg(test)]
+mod tests_partition_processor;
+#[cfg(test)]
 mod tests_partition_prune_collation;
 #[cfg(test)]
 mod tests_enum_index_range;
