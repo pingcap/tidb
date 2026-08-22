@@ -1410,6 +1410,8 @@ mod tests_partition;
 #[cfg(test)]
 mod tests_index_join_inner_pattern;
 #[cfg(test)]
+mod tests_modify_column_null;
+#[cfg(test)]
 mod tests_partition_projection;
 #[cfg(test)]
 mod tests_session_var_hooks;

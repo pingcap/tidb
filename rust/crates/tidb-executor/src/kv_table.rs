@@ -1660,12 +1660,14 @@ impl KvTable {
         ctx: &crate::StmtContext,
     ) -> Result<(), KvTableError> {
         let zone = ctx.session_zone();
+        let substitute = null_timestamp_substitute(&new_column.field_type, ctx);
         self.modify_column_in(
             offset,
             new_column,
             new_position,
             &zone,
             &RowDecodeContext::for_ddl(ctx),
+            substitute,
         )
     }
 
@@ -1678,12 +1680,15 @@ impl KvTable {
         new_position: Option<usize>,
         zone: &SessionTimeZone,
     ) -> Result<(), KvTableError> {
+        // No statement context, so no statement clock: the NULL substitution
+        // below needs one and this caller cannot supply it.
         self.modify_column_in(
             offset,
             new_column,
             new_position,
             zone,
             &RowDecodeContext::legacy_default(zone),
+            None,
         )
     }
 
@@ -1694,6 +1699,7 @@ impl KvTable {
         new_position: Option<usize>,
         zone: &SessionTimeZone,
         decode_context: &RowDecodeContext,
+        null_substitute: Option<Datum>,
     ) -> Result<(), KvTableError> {
         let target = new_column.field_type.clone();
         let not_null = target.flags() & NOT_NULL_FLAG != 0;
@@ -1706,7 +1712,14 @@ impl KvTable {
         let mut converted_rows = Vec::with_capacity(rows.len());
         for (row_number, (physical_id, handle, row)) in rows.into_iter().enumerate() {
             let mut row = row;
-            let value = row[offset].clone();
+            let mut value = row[offset].clone();
+            // Go `updateColumnWorker.getRowRecord`: "convert null value to
+            // timestamp should be substituted with current timestamp if
+            // NOT_NULL flag is set". The substituted value then takes the
+            // ordinary cast below, exactly as a stored one would.
+            if let (true, Some(substitute)) = (value.is_null(), null_substitute.as_ref()) {
+                value = substitute.clone();
+            }
             // Go reports the offending row's 1-based position for a value the
             // new NOT NULL rejects, and the value itself for a bad conversion.
             if value.is_null() {
@@ -3047,4 +3060,36 @@ mod tests {
             "the delete left orphaned index entries behind"
         );
     }
+}
+
+/// The value a NULL takes when a column is rewritten to `TIMESTAMP NOT NULL`.
+///
+/// Go `updateColumnWorker.getRowRecord` substitutes the CURRENT TIMESTAMP
+/// before it casts, guarded on exactly three things: the old value is NULL,
+/// the new type is `mysql.TypeTimestamp`, and the new column carries
+/// `NotNullFlag`. A `DATETIME NOT NULL` is deliberately not included, and
+/// still refuses the NULL.
+///
+/// The clock is the STATEMENT's, so every row of one reorg takes the same
+/// instant even across a second boundary -- Go reads it through
+/// `GetTimeCurrentTimestamp(ctx.GetEvalCtx(), ...)` for the same reason.
+fn null_timestamp_substitute(
+    field_type: &tidb_datatype::FieldType,
+    ctx: &crate::StmtContext,
+) -> Option<Datum> {
+    if field_type.code() != tidb_datatype::FieldTypeCode::Timestamp
+        || field_type.flags() & NOT_NULL_FLAG == 0
+    {
+        return None;
+    }
+    let now = crate::column_default::on_update_current_timestamp(field_type).ok()?;
+    crate::column_default::evaluate(
+        &now,
+        field_type,
+        tidb_model::column::COLUMN_INFO_VERSION2,
+        ctx.write_conversion_flags(),
+        ctx,
+        tidb_chunk::row::Row::empty(),
+    )
+    .ok()
 }
