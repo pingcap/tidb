@@ -1299,3 +1299,185 @@ pub(crate) fn new_native_args_preserve_go_null_duplicate_and_pointer_rules() {
         "*model.ColumnInfo"
     );
 }
+
+// ---- Verbatim Go-test ports (pkg/meta/model/job_args_test.go) -------------
+// Each test below translates the same-named Go test's rows and assertions
+// one-for-one, for name-auditable Go/Rust parity.
+
+#[test]
+pub(crate) fn go_test_create_schema_args() {
+    let in_db_id = 100i64;
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let args = GoShared::new(CreateSchemaArgs {
+            db_info: GoField::new(Some(GoShared::new(DBInfo {
+                id: in_db_id,
+                ..Default::default()
+            }))),
+        });
+        let mut job = encoded_job(version, ActionType::ACTION_CREATE_SCHEMA, args);
+        let decoded = get_create_schema_args(&mut job).unwrap().unwrap();
+        assert_eq!(
+            decoded.read().db_info.get().map(|db| db.read().id),
+            Some(in_db_id)
+        );
+    }
+}
+
+#[test]
+pub(crate) fn go_test_drop_schema_args() {
+    // Go: inArgs = &DropSchemaArgs{FKCheck: true}; both versions round-trip.
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let args = GoShared::new(DropSchemaArgs {
+            fk_check: GoField::new(true),
+            ..Default::default()
+        });
+        let mut job = encoded_job(version, ActionType::ACTION_DROP_SCHEMA, args);
+        let decoded = get_drop_schema_args(&mut job).unwrap().unwrap();
+        assert!(decoded.read().fk_check.get());
+    }
+    // Go finished args: AllDroppedTableIDs: []int64{1, 2}; both versions.
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let args = GoShared::new(DropSchemaArgs {
+            all_dropped_table_ids: GoField::new(GoSharedSlice::from_vec(vec![1, 2])),
+            ..Default::default()
+        });
+        let mut job = encoded_finished_job(version, ActionType::ACTION_DROP_SCHEMA, args);
+        let decoded = get_finished_drop_schema_args(&mut job).unwrap().unwrap();
+        assert_eq!(
+            decoded.read().all_dropped_table_ids.get().snapshot(),
+            [1, 2]
+        );
+    }
+}
+
+#[test]
+pub(crate) fn go_test_modify_schema_args() {
+    // Go: ToCharset "aa" / ToCollate "bb" over ActionModifySchemaCharsetAndCollate.
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let args = GoShared::new(ModifySchemaArgs {
+            to_charset: GoField::new(GoString::from("aa")),
+            to_collate: GoField::new(GoString::from("bb")),
+            ..Default::default()
+        });
+        let mut job = encoded_job(
+            version,
+            ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE,
+            args,
+        );
+        let decoded = get_modify_schema_args(&mut job).unwrap().unwrap();
+        let decoded = decoded.read();
+        assert_eq!(decoded.to_charset.get(), "aa");
+        assert_eq!(decoded.to_collate.get(), "bb");
+    }
+    // Go: {PolicyRef: &PolicyRefInfo{ID: 123}} then {} over
+    // ActionModifySchemaDefaultPlacement; PolicyRef round-trips (or stays nil).
+    for in_policy_id in [Some(123i64), None] {
+        for version in [JobVersion::V1, JobVersion::V2] {
+            let args = GoShared::new(ModifySchemaArgs {
+                policy_ref: GoField::new(
+                    in_policy_id.map(|id| GoShared::new(PolicyRefInfo { id, ..Default::default() })),
+                ),
+                ..Default::default()
+            });
+            let mut job = encoded_job(
+                version,
+                ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT,
+                args,
+            );
+            let decoded = get_modify_schema_args(&mut job).unwrap().unwrap();
+            assert_eq!(
+                decoded.read().policy_ref.get().map(|p| p.read().id),
+                in_policy_id
+            );
+        }
+    }
+}
+
+#[test]
+pub(crate) fn go_test_create_table_args() {
+    // Subtest "create table": TableInfo ID 100 + FKCheck true.
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let args = GoShared::new(CreateTableArgs {
+            table_info: GoField::new(Some(GoShared::new(TableInfo {
+                id: 100,
+                ..Default::default()
+            }))),
+            fk_check: GoField::new(true),
+            ..Default::default()
+        });
+        let mut job = encoded_job(version, ActionType::ACTION_CREATE_TABLE, args);
+        let decoded = get_create_table_args(&mut job).unwrap().unwrap();
+        let decoded = decoded.read();
+        assert_eq!(
+            decoded.table_info.get().map(|t| t.read().id),
+            Some(100)
+        );
+        assert!(decoded.fk_check.get());
+    }
+    // Subtest "create view": ID 122, OnExistReplace, OldViewTblID 123.
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let args = GoShared::new(CreateTableArgs {
+            table_info: GoField::new(Some(GoShared::new(TableInfo {
+                id: 122,
+                ..Default::default()
+            }))),
+            on_exist_replace: GoField::new(true),
+            old_view_table_id: GoField::new(123),
+            ..Default::default()
+        });
+        let mut job = encoded_job(version, ActionType::ACTION_CREATE_VIEW, args);
+        let decoded = get_create_table_args(&mut job).unwrap().unwrap();
+        let decoded = decoded.read();
+        assert_eq!(decoded.table_info.get().map(|t| t.read().id), Some(122));
+        assert!(decoded.on_exist_replace.get());
+        assert_eq!(decoded.old_view_table_id.get(), 123);
+    }
+    // Subtest "create sequence": ID 22 only.
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let args = GoShared::new(CreateTableArgs {
+            table_info: GoField::new(Some(GoShared::new(TableInfo {
+                id: 22,
+                ..Default::default()
+            }))),
+            ..Default::default()
+        });
+        let mut job = encoded_job(version, ActionType::ACTION_CREATE_SEQUENCE, args);
+        let decoded = get_create_table_args(&mut job).unwrap().unwrap();
+        assert_eq!(
+            decoded.read().table_info.get().map(|t| t.read().id),
+            Some(22)
+        );
+    }
+}
+
+#[test]
+pub(crate) fn go_test_truncate_table_args() {
+    // Go: NewTableID 1, FKCheck true, OldPartitionIDs [11 2], NewPartitionIDs [2 3],
+    // over ActionTruncateTable AND ActionTruncateTablePartition, V1+V2.
+    let args = GoShared::new(TruncateTableArgs {
+        new_table_id: GoField::new(1),
+        fk_check: GoField::new(true),
+        old_partition_ids: GoField::new(GoSharedSlice::from_vec(vec![11, 2])),
+        new_partition_ids: GoField::new(GoSharedSlice::from_vec(vec![2, 3])),
+        ..Default::default()
+    });
+    for action in [
+        ActionType::ACTION_TRUNCATE_TABLE,
+        ActionType::ACTION_TRUNCATE_TABLE_PARTITION,
+    ] {
+        for version in [JobVersion::V1, JobVersion::V2] {
+            let mut job = encoded_job(version, action, args.clone());
+            let decoded = get_truncate_table_args(&mut job).unwrap().unwrap();
+            let decoded = decoded.read();
+            // Go asserts conditionally per action: NewTableID/FKCheck only on
+            // ActionTruncateTable; OldPartitionIDs only on the partition action.
+            if action == ActionType::ACTION_TRUNCATE_TABLE {
+                assert_eq!(decoded.new_table_id.get(), 1);
+                assert!(decoded.fk_check.get());
+            } else {
+                assert_eq!(decoded.old_partition_ids.get().snapshot(), [11, 2]);
+            }
+            assert_eq!(decoded.new_partition_ids.get().snapshot(), [2, 3]);
+        }
+    }
+}
