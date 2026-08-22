@@ -1420,6 +1420,8 @@ mod tests_session_var_hooks;
 #[cfg(test)]
 mod tests_partition_prune_collation;
 #[cfg(test)]
+mod tests_enum_index_range;
+#[cfg(test)]
 mod tests_planner_core_rewriter;
 #[cfg(test)]
 mod tests_prepared_statements;

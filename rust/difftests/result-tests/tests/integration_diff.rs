@@ -1801,7 +1801,33 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // superset that the reserved filter narrows back; `!=` is the one shape
     // it makes SMALLER, because the cut excludes the prefix rather than the
     // value and takes every row sharing it. Go reads the whole index instead.
-    const KNOWN_DIVERGENCES: usize = 73;
+    //
+    // 73 -> 72, `compared` still 9480, and the one that moved is the smallest
+    // part of what the read found. An index stores an `ENUM` as the member's
+    // NUMBER, and the ranger's endpoint conversion had a fast path for a
+    // string literal that already fits the target -- resting on Go's
+    // `ConvertTo` returning such a value unchanged, which is true for
+    // `VARCHAR` and false for `ENUM`, where it resolves the member. So the
+    // point kept its raw text, the key codec wrote text where the index holds
+    // a number, and `b = 'a'` on an `ENUM` index answered ZERO rows. A wrong
+    // answer, and one the corpus barely exercises.
+    //
+    // Beside it, Go's `handleEnumFromBinOp`, which had no counterpart here: a
+    // string comparison against an `ENUM` orders by NAME while the key orders
+    // by NUMBER, so Go stops building intervals for an `ENUM` entirely and
+    // emits one point range per admitted member. `b > 'a'` is
+    // `["b","b"], ["c","c"]`, not `("a",+inf]`. It runs only when the
+    // comparison is a STRING one: `getBaseCmpType` calls an `ENUM` Hybrid, so
+    // `enum <cmp> int` is `ETInt`, and `WrapWithCastAsInt` stamps
+    // `EnumSetAsIntFlag` on its own clone of the column -- which is also what
+    // makes the `conditionChecker` collation gate skip the condition, and is
+    // why `b = 1 AND a > 1` builds the interval `("a" "a","a" +inf]` where
+    // `b = 1 AND a > 'a'` builds two points.
+    //
+    // The 3 that remain in `black_list` all need `mysql.expr_pushdown_blacklist`
+    // and `ADMIN RELOAD`, which this tier does not have at all: with `enum`
+    // blacklisted TiDB drops the enum index path and full-scans.
+    const KNOWN_DIVERGENCES: usize = 72;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

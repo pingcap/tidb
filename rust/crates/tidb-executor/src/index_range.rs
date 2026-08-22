@@ -204,6 +204,19 @@ fn compare_datum_bounds_with_collation(
 
 /// Go `rangePointCmp`.
 fn point_cmp(a: &Point, b: &Point, collation: Collation) -> Ordering {
+    // Go `rangePointEnumCmp`, its first line: two `ENUM` endpoints order by
+    // member NUMBER, which is what the index key stores. Ordering them by
+    // name under the column's collation instead would sort a point set that
+    // `handleEnumFromBinOp` produced out of KEY order whenever the
+    // declaration order and the collation disagree -- `ENUM('c','b','a')`
+    // being the plain case -- and every sweep over the merged endpoints
+    // (union, intersection, range validation) reads that order.
+    if let (Datum::Enum(left, _), Datum::Enum(right, _)) = (&a.value, &b.value) {
+        return match left.value().cmp(&right.value()) {
+            Ordering::Equal => equal_value_cmp(a, b),
+            other => other,
+        };
+    }
     match compare_datum_bounds_with_collation(&a.value, &b.value, collation) {
         Ordering::Equal => equal_value_cmp(a, b),
         other => other,
@@ -319,6 +332,15 @@ fn convert_point_in_place(p: &mut Point, target: &FieldType) {
     // unchanged. Avoid re-validating charset bytes and allocating a second
     // string for every endpoint of a large IN list. Invalid UTF-8 and values
     // that might truncate deliberately fall through to the full conversion.
+    //
+    // `ENUM` and `SET` have `EvalType::String` and are NOT in that "returns
+    // it unchanged" set, whatever their collation says: `ConvertTo` resolves
+    // the member and returns a `Datum::Enum`, which an index key stores as
+    // the member's NUMBER. Skipping the conversion left `Datum::String("a")`
+    // in the point, the key codec wrote it as text, and `b = 'a'` on
+    // `INDEX (b)` over `ENUM('a','b','c')` matched no key at all -- rows
+    // missing, not merely a wider scan. `CHAR` is excluded for its own
+    // reason: `ConvertTo` pads it to `flen`.
     if let (Datum::String(value), tidb_datatype::EvalType::String) = (&p.value, target.eval_type())
     {
         let length_fits = target.flen() == UNSPECIFIED_LENGTH
@@ -327,7 +349,12 @@ fn convert_point_in_place(p: &mut Point, target: &FieldType) {
                 .is_ok_and(|text| text.chars().count() <= target.flen() as usize);
         if length_fits
             && value.collation() == target.collation()
-            && !matches!(target.code(), tidb_datatype::FieldTypeCode::String)
+            && !matches!(
+                target.code(),
+                tidb_datatype::FieldTypeCode::String
+                    | tidb_datatype::FieldTypeCode::Enum
+                    | tidb_datatype::FieldTypeCode::Set
+            )
         {
             return;
         }
@@ -1079,6 +1106,84 @@ fn points_for_condition(
 
 /// The raw endpoints one condition puts on one column, before the
 /// bounds-nothing check above.
+/// Whether an `ENUM` column compared against this constant is the `ETInt`
+/// comparison Go marks with `EnumSetAsIntFlag`.
+///
+/// Go decides it in `getBaseCmpType`, whose second arm is `(lhs == ETInt ||
+/// lft.Hybrid()) && (rhs == ETInt || rft.Hybrid())`: an `ENUM` is Hybrid, so
+/// the pair is `ETInt` exactly when the OTHER side is an integer or another
+/// hybrid. `GetAccurateCmpType` has no arm that revisits that verdict, and
+/// `ETInt` is what makes the comparison builder wrap both sides with
+/// `WrapWithCastAsInt` and stamp the flag. Every other constant kind lands on
+/// `ETDecimal`, `ETReal` or `ETString`, none of which sets it.
+fn enum_compares_as_int(value: &Datum) -> bool {
+    matches!(
+        value,
+        Datum::Int(_)
+            | Datum::UInt(_)
+            | Datum::Bit(_)
+            | Datum::Enum(_, _)
+            | Datum::Set(_, _)
+    )
+}
+
+/// Go `handleEnumFromBinOp`: the comparison's point set over an `ENUM`
+/// column, one point per member that satisfies it.
+///
+/// An `ENUM` orders by MEMBER NUMBER in the index key but compares by NAME
+/// when the other operand is a string, so `b > 'a'` is not an interval over
+/// anything the key stores -- `'b'` and `'c'` may sit either side of `'a'` in
+/// the collation while their numbers say otherwise. Go's answer is to stop
+/// building intervals for an `ENUM` at all: it walks every member, keeps the
+/// ones the comparison admits, and emits each as its own point range. That is
+/// why `a > 'a'` prints `["b","b"], ["c","c"]` rather than `("a",+inf]`.
+///
+/// The walk starts at `i == 0`, the ZERO enum (number 0, empty name) that a
+/// non-strict write leaves behind, which is a real stored value and has to be
+/// offered to the comparison like any other.
+///
+/// Not reached when the comparison is an INT one: Go's `WrapWithCastAsInt`
+/// stamps `EnumSetAsIntFlag` on its own clone of the column, whose
+/// `EvalType()` is then `ETInt`, and this function's guard is that eval type.
+/// There the member NUMBER is what both sides compare, so an ordinary
+/// interval over the numbers is right and is what Go builds.
+fn points_from_enum_bin_op(field_type: &FieldType, value: &Datum, op: BinaryOp) -> Vec<Point> {
+    let collation = field_type.collation();
+    let elems = field_type.elems_snapshot();
+    let mut points = Vec::with_capacity((elems.len() + 1) * 2);
+    if matches!(op, BinaryOp::NullEq) && matches!(value, Datum::Null) {
+        points.push(Point::start(Datum::Null, false));
+        points.push(Point::end(Datum::Null, false));
+    }
+    for index in 0..=elems.len() {
+        let member = if index == 0 {
+            tidb_datatype::MysqlEnum::new("", 0)
+        } else {
+            tidb_datatype::MysqlEnum::new(elems[index - 1].clone(), index as u64)
+        };
+        let point_value = Datum::new_enum(member, collation);
+        let Ok(order) = tidb_expr::compare_datums_with_collation(&point_value, value, collation)
+        else {
+            // Go drops the member whose comparison errored and keeps walking.
+            continue;
+        };
+        let admitted = match op {
+            BinaryOp::Lt => order == Ordering::Less,
+            BinaryOp::Le => order != Ordering::Greater,
+            BinaryOp::Gt => order == Ordering::Greater,
+            BinaryOp::Ge => order != Ordering::Less,
+            BinaryOp::Eq | BinaryOp::NullEq => order == Ordering::Equal,
+            BinaryOp::Ne => order != Ordering::Equal,
+            _ => false,
+        };
+        if admitted {
+            points.push(Point::start(point_value.clone(), false));
+            points.push(Point::end(point_value, false));
+        }
+    }
+    points
+}
+
 /// Go `conditionChecker.isFullLengthColumn`: an index column that stores the
 /// whole value, either because no prefix was declared or because the declared
 /// prefix reaches the column's own `flen`.
@@ -1144,14 +1249,6 @@ fn points_on_column(
             })
         }
         Expr::Binary(op, lhs, rhs) => {
-            if !comparison_collation_allows_range(
-                condition,
-                column,
-                zone,
-                matches!(op, BinaryOp::Eq | BinaryOp::NullEq),
-            ) {
-                return None;
-            }
             let (op, value) = if is_column(lhs, name) {
                 (*op, constant_value(rhs, zone)?)
             } else if is_column(rhs, name) {
@@ -1159,6 +1256,26 @@ fn points_on_column(
             } else {
                 return None;
             };
+            // Go `WrapWithCastAsInt` hands the comparison its own clone of an
+            // `ENUM` column carrying `EnumSetAsIntFlag`, whose `EvalType()`
+            // is `ETInt`. Both gates below read that eval type -- the
+            // collation check in `conditionChecker` runs only for `ETString`,
+            // and `buildFromBinOp`'s enum arm only for `ETString` -- so the
+            // one verdict decides both.
+            let enum_as_int = matches!(
+                column.field_type.code(),
+                tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
+            ) && enum_compares_as_int(&value);
+            if !enum_as_int
+                && !comparison_collation_allows_range(
+                    condition,
+                    column,
+                    zone,
+                    matches!(op, BinaryOp::Eq | BinaryOp::NullEq),
+                )
+            {
+                return None;
+            }
             // Go `conditionChecker.checkScalarFunction`: `if scalar.FuncName.L
             // == ast.NE { return isFullLength, !isFullLength }` -- `!=` is an
             // access condition only over a FULL-LENGTH column.
@@ -1198,6 +1315,16 @@ fn points_on_column(
                     finished: false,
                 });
             };
+            // Go `buildFromBinOp`, at the end of the same fixup run:
+            // `if ft.GetType() == mysql.TypeEnum && ft.EvalType() ==
+            // types.ETString { return handleEnumFromBinOp(...) }`.
+            if column.field_type.code() == tidb_datatype::FieldTypeCode::Enum && !enum_as_int {
+                return Some(ColumnPoints {
+                    points: points_from_enum_bin_op(&column.field_type, &value, op),
+                    eq_or_in,
+                    finished: false,
+                });
+            }
             Some(ColumnPoints {
                 points: points_from_bin_op(op, value)?,
                 eq_or_in,
