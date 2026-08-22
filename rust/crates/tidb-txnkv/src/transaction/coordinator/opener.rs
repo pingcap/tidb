@@ -144,6 +144,11 @@ where
     /// — an embedded store starts one over its own capability
     /// (`TxnSafePointRefresher::start_with_source`), the production path
     /// keeps its loader through `from_process_capabilities`.
+    /// The PD capability this opener routes through.
+    pub fn pd(&self) -> &P {
+        &self.pd
+    }
+
     pub fn from_capabilities(
         opener: crate::SharedReadOpener<C, L>,
         pd: P,

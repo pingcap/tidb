@@ -828,6 +828,51 @@ pub fn lower_ddl_with_context(
 /// Go `SetDirectPlacementOpt` (`ddl/placement_policy.go:530`): folds the
 /// source-ordered options into one settings record, a later option of the
 /// same kind overwriting an earlier one.
+/// Go's `PolicyGetter` over the policies this statement already read.
+///
+/// Bundles resolve a reference BY ID, so the getter is keyed by id. The
+/// policies are collected once from the same snapshot the statement plans
+/// against, rather than re-read per lookup, so a bundle set cannot be built
+/// half from one view of the catalog and half from another.
+struct SnapshotPolicies {
+    policies: Vec<tidb_model::PolicyInfo>,
+}
+
+impl tidb_placement::PolicyGetter for SnapshotPolicies {
+    fn get_policy(
+        &self,
+        policy_id: i64,
+    ) -> Result<tidb_model::PolicyInfo, tidb_placement::PlacementError> {
+        // A reference is stamped from a policy that existed when the
+        // statement resolved it, so a miss here means the catalog and the
+        // reference disagree -- an internal inconsistency, not user error.
+        self.policies
+            .iter()
+            .find(|policy| policy.id == policy_id)
+            .cloned()
+            .ok_or_else(|| {
+                tidb_placement::PlacementError::wrap(
+                    tidb_placement::PlacementErrorKind::InvalidBundleId,
+                    format!("no placement policy with id {policy_id}"),
+                )
+            })
+    }
+}
+
+/// Every stored policy, read from the statement's own snapshot.
+fn load_policies<S: MetaSnapshot>(
+    snapshot: &mut S,
+) -> Result<SnapshotPolicies, DdlPlanError> {
+    let mut policies = Vec::new();
+    for (_, encoded) in snapshot.scan_prefix(&key::policies_kv_prefix())? {
+        policies.push(
+            value::parse_policy_info(&encoded)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        );
+    }
+    Ok(SnapshotPolicies { policies })
+}
+
 /// The stored policy a name refers to, folded as Go folds it.
 ///
 /// Go reads policies out of the infoschema; this reads them from the same
@@ -2139,6 +2184,16 @@ pub struct DdlWrite {
     /// `SHOW WARNINGS`. A change that silently did something other than what
     /// was written would otherwise look like it did exactly what was written.
     pub warning: Option<String>,
+    /// The placement rule bundles PD has to be told about before this change
+    /// becomes visible.
+    ///
+    /// Go sends these inside the DDL job, BEFORE the schema version is
+    /// published, and fails the job when PD refuses
+    /// (`PutRuleBundlesWithDefaultRetry`). The transactional analogue is to
+    /// deliver before the commit and abort the statement on failure: a
+    /// catalog that claims placement PD never accepted is a table whose rows
+    /// live somewhere other than where it says they do.
+    pub placement_bundles: Vec<tidb_placement::Bundle>,
 }
 
 /// The data half of an index change: which table's rows to walk, and what to
@@ -2264,6 +2319,10 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
     use_new_collation: bool,
 ) -> Result<DdlPlan, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
+    // Filled by the arms that change what PD must know about an object's
+    // placement; empty for every other statement, and an empty list is never
+    // sent.
+    let mut placement_bundles: Vec<tidb_placement::Bundle> = Vec::new();
     let schema_version = catalog.schema_version + 1;
     let mut writes = Vec::new();
     let mut created_id = None;
@@ -2673,6 +2732,29 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         name: CiString::new(policy_name),
                     },
                 ));
+            }
+            // Go builds the table's bundles once the ids are assigned and
+            // sends them before the schema version is published
+            // (`ddl/create_table.go:143`). `NewFullTableBundles` covers the
+            // table's own rules AND every partition that names a policy of
+            // its own.
+            if info.placement_policy_ref.is_some()
+                || info.partition.as_ref().is_some_and(|partition| {
+                    partition
+                        .read()
+                        .definitions
+                        .snapshot()
+                        .iter()
+                        .any(|definition| definition.placement_policy_ref.is_some())
+                })
+            {
+                let policies = load_policies(snapshot)?;
+                placement_bundles = tidb_placement::new_full_table_bundles(&policies, &info)
+                    .map_err(|error| {
+                        DdlPlanError::Admission(DdlAdmissionError::new(format!(
+                            "building placement rules: {error}"
+                        )))
+                    })?;
             }
             // Go `createTable` stamps the job transaction's own start timestamp.
             info.update_ts = start_ts;
@@ -4149,6 +4231,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         created_id,
         backfill,
         warning,
+        placement_bundles,
     })))
 }
 

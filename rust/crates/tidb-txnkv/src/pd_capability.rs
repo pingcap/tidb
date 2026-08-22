@@ -61,10 +61,25 @@ pub trait PdCapability: Clone {
 
     /// The current GC safe point — the floor below which no read may start.
     fn gc_safe_point(&self) -> Result<u64, String>;
+
+    /// PD's client address, which is also where it serves its HTTP API.
+    ///
+    /// Placement rules live behind that HTTP API and nowhere else: Go reaches
+    /// them through `pd/client/http`, not through the gRPC surface the rest
+    /// of this trait covers. A capability with no real PD behind it — an
+    /// embedded store — answers `None`, and delivery is then skipped rather
+    /// than attempted against an address that does not exist.
+    fn http_endpoint(&self) -> Option<String> {
+        None
+    }
 }
 
 impl PdCapability for PdClient {
     type TsFuture = PdTimestampFuture;
+
+    fn http_endpoint(&self) -> Option<String> {
+        Some(PdClient::active_endpoint(self))
+    }
 
     fn cluster_id(&self) -> u64 {
         PdClient::cluster_id(self)

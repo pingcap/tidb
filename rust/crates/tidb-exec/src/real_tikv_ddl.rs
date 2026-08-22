@@ -275,6 +275,28 @@ pub fn commit_cluster_ddl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCa
         transaction.finish_without_writes()?;
         return Err(ClusterDdlError::BackfillUnavailable);
     }
+    // Go sends the placement bundles INSIDE the DDL job, before the schema
+    // version is published, and fails the job when PD refuses
+    // (`PutRuleBundlesWithDefaultRetry`). Delivering before the commit is the
+    // transactional analogue: if PD will not take the rules, the catalog must
+    // not claim them. The reverse order would publish a table whose rows live
+    // somewhere other than where it says they do.
+    //
+    // An embedded store answers `None` for the endpoint and has no PD to tell,
+    // so delivery is skipped rather than attempted against an address that
+    // does not exist.
+    if !write.placement_bundles.is_empty() {
+        if let Some(endpoint) = opener.pd().http_endpoint() {
+            if let Err(error) = crate::placement_delivery::put_rule_bundles(
+                &endpoint,
+                &write.placement_bundles,
+                timeout,
+            ) {
+                transaction.finish_without_writes()?;
+                return Err(ClusterDdlError::NotCommitted(error.to_string()));
+            }
+        }
+    }
     let planned_version = write.schema_version;
     match transaction.commit(write.mutations, &call)? {
         OptimisticCommitOutcome::Committed(_) => {
