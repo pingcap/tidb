@@ -1,9 +1,9 @@
 select count(*) from information_schema.inspection_rules;
 count(*)
-15
+16
 select count(*) from information_schema.inspection_rules where type='inspection';
 count(*)
-5
+6
 select count(*) from information_schema.inspection_rules where type='summary';
 count(*)
 10
