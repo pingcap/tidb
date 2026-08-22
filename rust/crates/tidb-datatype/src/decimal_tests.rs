@@ -1645,3 +1645,136 @@ fn from_bin_normalizes_a_non_canonical_negative_zero_that_go_preserves() {
         "Go's Compare returns -1 here"
     );
 }
+
+/// The previous pad-both-sides comparison, kept as the differential
+/// reference for the allocation-free `Ord::cmp`: right-pad both coefficients
+/// to the common storage scale and compare the equal-length digit strings,
+/// reversing under a shared negative sign.
+/// Mirrors `new_with_storage`'s normalization, because `Ord::cmp` only ever
+/// sees constructed values: left-pad to the storage scale, strip excess
+/// leading zeros back down to it, and drop the sign of an all-zero
+/// coefficient.
+fn normalize_parts((negative, digits, scale): (bool, &str, u32)) -> (bool, String, u32) {
+    let mut d = digits.to_string();
+    while (d.len() as u32) < scale {
+        d.insert(0, '0');
+    }
+    let min_len = scale.max(1) as usize;
+    while d.len() > min_len && d.starts_with('0') {
+        d.remove(0);
+    }
+    let is_zero = d.bytes().all(|b| b == b'0');
+    (negative && !is_zero, d, scale)
+}
+
+fn reference_cmp(raw_a: (bool, &str, u32), raw_b: (bool, &str, u32)) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (a_negative, a_digits, a_scale) = normalize_parts(raw_a);
+    let (b_negative, b_digits, b_scale) = normalize_parts(raw_b);
+    if a_negative != b_negative {
+        return if a_negative {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        };
+    }
+    let target = a_scale.max(b_scale);
+    let pad = |digits: &str, scale: u32| -> String {
+        let mut s = digits.to_string();
+        s.push_str(&"0".repeat((target - scale) as usize));
+        s
+    };
+    let a = pad(&a_digits, a_scale);
+    let b = pad(&b_digits, b_scale);
+    let aligned_len = a.len().max(b.len());
+    let a_padded = format!("{a:0>aligned_len$}");
+    let b_padded = format!("{b:0>aligned_len$}");
+    let magnitude = a_padded.cmp(&b_padded);
+    if a_negative {
+        magnitude.reverse()
+    } else {
+        magnitude
+    }
+}
+
+/// Deterministic LCG so a failure reproduces exactly.
+struct Lcg(u64);
+impl Lcg {
+    fn next(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        self.0 >> 11
+    }
+}
+
+#[test]
+fn ord_cmp_matches_the_pad_reference_across_shapes() {
+    use super::Decimal;
+    use std::cmp::Ordering;
+    let mut rng = Lcg(0x5EED_1234_ABCD_0001);
+    // A mix of hand shapes and generated ones: hidden division precision
+    // (storage_scale > scale), excess leading zeros, single-digit zeros,
+    // and long coefficients past the inline SmallVec capacity.
+    let mut cases: Vec<(bool, String, u32, u32)> = vec![
+        (false, "0".to_owned(), 0, 0),
+        (false, "0".to_owned(), 2, 2),
+        (true, "0".to_owned(), 3, 3),
+        (false, "05".to_owned(), 1, 1),
+        (false, "005".to_owned(), 2, 2),
+        (true, "10".to_owned(), 0, 0),
+        (false, "1000".to_owned(), 2, 4),
+        (false, "1".to_owned(), 0, 4),
+        (false, "999".to_owned(), 0, 9),
+        (true, "500".to_owned(), 3, 6),
+        (false, "31415926535897932384626433".to_owned(), 12, 12),
+        (true, "271828182845904523536".to_owned(), 15, 21),
+    ];
+    for _ in 0..2000 {
+        let len = 1 + (rng.next() % 28) as usize;
+        let mut digits = String::with_capacity(len);
+        for i in 0..len {
+            let d = if i == 0 && rng.next() % 3 == 0 {
+                b'0'
+            } else {
+                b'0' + (rng.next() % 10) as u8
+            };
+            digits.push(d as char);
+        }
+        // Keep the constructor invariant storage_scale >= scale while still
+        // covering hidden division precision (storage_scale > scale).
+        let scale = ((rng.next() % (len as u64 + 2)) as u32).min(len as u32);
+        let storage_scale = (scale + (rng.next() % 6) as u32).min(len as u32);
+        let negative = rng.next() % 2 == 0;
+        cases.push((negative, digits, scale, storage_scale));
+    }
+    for (na, da, sa, ssa) in &cases {
+        for (nb, db, sb, ssb) in &cases {
+            let a = Decimal::from_test_parts(*na, da, *sa, *ssa);
+            let b = Decimal::from_test_parts(*nb, db, *sb, *ssb);
+            let expected = reference_cmp((*na, da, *ssa), (*nb, db, *ssb));
+            let got = a.cmp(&b);
+            assert_eq!(
+                got, expected,
+                "cmp({na}{da}|s{sa}/ss{ssa}, {nb}{db}|s{sb}/ss{ssb})"
+            );
+            // Eq/PartialOrd ride on Ord; spot-check consistency too.
+            assert_eq!(got == Ordering::Equal, a == b);
+        }
+    }
+}
+
+#[test]
+fn ord_cmp_keeps_go_documented_equalities() {
+    use super::Decimal;
+    // `1.5` and `1.50` are equal but render differently; zero never carries a
+    // sign, so `-0` and `0` compare equal from either side.
+    let one_half = Decimal::parse_mysql("1.5").0;
+    let one_fifty = Decimal::parse_mysql("1.50").0;
+    assert_eq!(one_half.cmp(&one_fifty), std::cmp::Ordering::Equal);
+    let neg_zero = Decimal::from_test_parts(true, "0", 2, 2);
+    let zero = Decimal::parse_mysql("0.00").0;
+    assert_eq!(neg_zero.cmp(&zero), std::cmp::Ordering::Equal);
+    assert_eq!(zero.cmp(&neg_zero), std::cmp::Ordering::Equal);
+}
