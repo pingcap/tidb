@@ -109,3 +109,43 @@ fn a_pd_rejection_is_reported_with_its_status() {
         other => panic!("expected a rejection carrying PD's status, got {other:?}"),
     }
 }
+
+/// Go `updateExistPlacementPolicy` builds ONE bundle from the altered
+/// settings and clones it per referencing object
+/// (`ddl/placement_policy.go:296-317`). The shape of those bundles is what
+/// this pins: a table's covers its own id AND its partition ids, while a
+/// partition naming the policy directly gets its own bundle.
+///
+/// The distinction is not cosmetic. A partition that names no policy of its
+/// own falls under the TABLE's rules, which is why the table's bundle has to
+/// list the partition ids; a partition that does name one needs a bundle at
+/// the partition rule index to override the table's for its range.
+#[test]
+fn a_table_bundle_covers_its_partitions_and_a_partition_bundle_does_not() {
+    use tidb_placement::{new_bundle, RULE_INDEX_PARTITION, RULE_INDEX_TABLE};
+
+    // A table bundle re-pointed at the table plus two partitions.
+    let mut table_bundle = new_bundle(0);
+    table_bundle.reset(RULE_INDEX_TABLE, &[100, 101, 102]);
+    let table_json = serde_json::to_value(&table_bundle).expect("serialisable");
+    assert_eq!(table_json["group_id"], "TiDB_DDL_100");
+    assert_eq!(
+        table_json["group_index"], RULE_INDEX_TABLE,
+        "a table's rules sit at the table index"
+    );
+
+    // A partition bundle names only itself.
+    let mut partition_bundle = new_bundle(0);
+    partition_bundle.reset(RULE_INDEX_PARTITION, &[101]);
+    let partition_json = serde_json::to_value(&partition_bundle).expect("serialisable");
+    assert_eq!(partition_json["group_id"], "TiDB_DDL_101");
+    assert_eq!(
+        partition_json["group_index"], RULE_INDEX_PARTITION,
+        "a partition's own rules must outrank its table's for its range"
+    );
+    assert!(
+        RULE_INDEX_PARTITION > RULE_INDEX_TABLE,
+        "the partition index has to be the higher one, or a partition could \
+         never override the table policy it sits under"
+    );
+}

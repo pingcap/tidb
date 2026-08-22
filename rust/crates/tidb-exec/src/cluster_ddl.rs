@@ -828,6 +828,64 @@ pub fn lower_ddl_with_context(
 /// Go `SetDirectPlacementOpt` (`ddl/placement_policy.go:530`): folds the
 /// source-ordered options into one settings record, a later option of the
 /// same kind overwriting an earlier one.
+/// Go `updateExistPlacementPolicy`'s bundle rebuild
+/// (`ddl/placement_policy.go:296-317`).
+///
+/// ONE bundle is built from the new settings and then cloned and re-pointed
+/// per referencing object, which is what makes every object share the altered
+/// policy's rules rather than a snapshot of them.
+///
+/// A TABLE's bundle covers its own id AND every partition id, because the
+/// table's rules are what a partition naming no policy of its own falls under
+/// -- that is the same reason Go does not copy an inherited policy down onto
+/// a partition. A partition that DOES name the policy gets its own bundle at
+/// the partition rule index, which overrides the table's for its range.
+///
+/// Go additionally resets the `global` and `meta` RANGE bundles when a range
+/// names the policy. `ALTER RANGE` is not served here, so no range can name
+/// one, and that arm has nothing to walk.
+fn rebuilt_bundles_for_policy(
+    catalog: &ClusterCatalog,
+    policy: &CiString,
+    settings: &tidb_model::PlacementSettings,
+) -> Result<Vec<tidb_placement::Bundle>, DdlPlanError> {
+    let bundle = tidb_placement::new_bundle_from_options(Some(settings)).map_err(|error| {
+        DdlPlanError::Admission(DdlAdmissionError::new(format!(
+            "building placement rules: {error}"
+        )))
+    })?;
+    let names = |reference: &Option<tidb_model::GoShared<tidb_model::PolicyRefInfo>>| {
+        reference
+            .as_ref()
+            .is_some_and(|reference| reference.read().name.lowercase() == policy.lowercase())
+    };
+    let mut bundles = Vec::new();
+    for database in &catalog.databases {
+        for table in &database.tables {
+            let definitions = table
+                .partition
+                .as_ref()
+                .map(|partition| partition.read().definitions.snapshot())
+                .unwrap_or_default();
+            if names(&table.placement_policy_ref) {
+                let mut ids = vec![table.id];
+                ids.extend(definitions.iter().map(|definition| definition.id));
+                let mut copy = bundle.clone_bundle();
+                copy.reset(tidb_placement::RULE_INDEX_TABLE, &ids);
+                bundles.push(copy);
+            }
+            for definition in &definitions {
+                if names(&definition.placement_policy_ref) {
+                    let mut copy = bundle.clone_bundle();
+                    copy.reset(tidb_placement::RULE_INDEX_PARTITION, &[definition.id]);
+                    bundles.push(copy);
+                }
+            }
+        }
+    }
+    Ok(bundles)
+}
+
 /// Go's `PolicyGetter` over the policies this statement already read.
 ///
 /// Bundles resolve a reference BY ID, so the getter is keyed by id. The
@@ -2426,6 +2484,13 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 key::policy_kv_key(found.id),
                 encoded,
             )?);
+            // Go `updateExistPlacementPolicy` (`ddl/placement_policy.go:285`):
+            // altering a policy changes what EVERY referencing object means,
+            // so their bundles are rebuilt and resent, not just the policy
+            // record. Leaving them alone would store new settings that PD
+            // never hears about -- the catalog would describe placement the
+            // cluster is not doing.
+            placement_bundles = rebuilt_bundles_for_policy(&catalog, &found.name, settings)?;
             diff.action_type = ActionType::ACTION_ALTER_PLACEMENT_POLICY;
             diff.schema_id = found.id;
         }
