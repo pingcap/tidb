@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	executil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/executor/join"
@@ -65,7 +64,6 @@ import (
 	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -436,7 +434,7 @@ func readRefreshHistCancelRequest(
 	rows, err := sqlexec.ExecSQL(
 		kctx,
 		sqlExec,
-		`SELECT CANCEL_REQUESTED_AT, CANCEL_REQUESTED_BY
+		`SELECT CANCEL_REQUEST_TIME, CANCEL_REQUESTED_BY
 FROM mysql.tidb_mview_refresh_hist
 WHERE REFRESH_JOB_ID = %?
   AND MVIEW_ID = %?`,
@@ -467,7 +465,7 @@ func readPurgeHistCancelRequest(
 	rows, err := sqlexec.ExecSQL(
 		kctx,
 		sqlExec,
-		`SELECT CANCEL_REQUESTED_AT, CANCEL_REQUESTED_BY
+		`SELECT CANCEL_REQUEST_TIME, CANCEL_REQUESTED_BY
 FROM mysql.tidb_mlog_purge_hist
 WHERE PURGE_JOB_ID = %?
   AND MLOG_ID = %?`,
@@ -498,11 +496,11 @@ func requestRefreshHistCancel(
 	_, err := sctx.GetSQLExecutor().ExecuteInternal(
 		kctx,
 		`UPDATE mysql.tidb_mview_refresh_hist
-SET CANCEL_REQUESTED_AT = NOW(6),
+SET CANCEL_REQUEST_TIME = NOW(6),
 	CANCEL_REQUESTED_BY = %?
 WHERE REFRESH_JOB_ID = %?
   AND REFRESH_STATUS = 'running'
-  AND CANCEL_REQUESTED_AT IS NULL`,
+  AND CANCEL_REQUEST_TIME IS NULL`,
 		requester,
 		refreshJobID,
 	)
@@ -521,11 +519,11 @@ func requestPurgeHistCancel(
 	_, err := sctx.GetSQLExecutor().ExecuteInternal(
 		kctx,
 		`UPDATE mysql.tidb_mlog_purge_hist
-SET CANCEL_REQUESTED_AT = NOW(6),
+SET CANCEL_REQUEST_TIME = NOW(6),
 	CANCEL_REQUESTED_BY = %?
 WHERE PURGE_JOB_ID = %?
   AND PURGE_STATUS = 'running'
-  AND CANCEL_REQUESTED_AT IS NULL`,
+  AND CANCEL_REQUEST_TIME IS NULL`,
 		requester,
 		purgeJobID,
 	)
@@ -544,7 +542,7 @@ func updateRefreshHistHeartbeat(
 	_, err := sqlExec.ExecuteInternal(
 		kctx,
 		`UPDATE mysql.tidb_mview_refresh_hist
-SET LAST_HEARTBEAT_AT = NOW(6)
+SET LAST_HEARTBEAT_TIME = NOW(6)
 WHERE REFRESH_JOB_ID = %?
   AND MVIEW_ID = %?
   AND REFRESH_STATUS = 'running'`,
@@ -569,7 +567,7 @@ func updatePurgeHistHeartbeat(
 	_, err := sqlExec.ExecuteInternal(
 		kctx,
 		`UPDATE mysql.tidb_mlog_purge_hist
-SET LAST_HEARTBEAT_AT = NOW(6)
+SET LAST_HEARTBEAT_TIME = NOW(6)
 WHERE PURGE_JOB_ID = %?
   AND MLOG_ID = %?
   AND PURGE_STATUS = 'running'`,
@@ -2650,7 +2648,6 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 				kctx,
 				e.Ctx().GetSessionVars(),
 				scheduleEvalSctx,
-				purgeSctx,
 				countSQLExec,
 				countSessVars,
 				mlogInfo,
@@ -2744,16 +2741,20 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		}
 	}
 
-	nextTime, shouldUpdateNextTime, err := deriveRuntimeMaterializedScheduleNextTime(
+	purgeScheduleTimeZone, err := mlogInfo.PurgeScheduleTimeZone.GetLocation()
+	if err != nil {
+		return finalizeFailure(err)
+	}
+	nextPurgeUnixSeconds, shouldUpdateNextPurgeUnixSeconds, err := deriveRuntimeMaterializedScheduleNextUnixSeconds(
 		kctx,
 		scheduleEvalSctx,
-		purgeSctx,
 		mlogInfo.PurgeStartWith,
 		mlogInfo.PurgeNext,
 		isInternalSQL,
 		mlogInfo.DefinitionSQLMode,
+		purgeScheduleTimeZone,
 		func() {
-			logRuntimeMaterializedViewLogPurgeNextTimeUpdateNull(schemaName.O, mlogName.O, mlogInfo.PurgeNext)
+			logRuntimeMaterializedViewLogPurgeNextUnixSecondsUpdateNull(schemaName.O, mlogName.O, mlogInfo.PurgeNext)
 		},
 	)
 	if err != nil {
@@ -2768,8 +2769,8 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		sqlExec,
 		mlogID,
 		lastPurgedTSOToPersist,
-		nextTime,
-		shouldUpdateNextTime,
+		nextPurgeUnixSeconds,
+		shouldUpdateNextPurgeUnixSeconds,
 	); err != nil {
 		return finalizeFailure(err)
 	}
@@ -2955,7 +2956,7 @@ func acquireMaterializedViewLogPurgeLock(
 	}
 
 	// Acquire the mutual exclusion lock row for this MLOG_ID. NOWAIT ensures we fail fast if another purge is running.
-	lockSQL := sqlescape.MustEscapeSQL("SELECT LAST_PURGED_TSO, NEXT_TIME FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT", mlogID)
+	lockSQL := sqlescape.MustEscapeSQL("SELECT LAST_PURGED_TSO, NEXT_PURGE_UNIX_SECONDS FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT", mlogID)
 	rows, err := sqlexec.ExecSQL(kctx, sqlExec, lockSQL)
 	if err != nil {
 		if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
@@ -2975,10 +2976,8 @@ func acquireMaterializedViewLogPurgeLock(
 		return 0, false, nil, errors.Errorf("mlog purge lock row does not exist for mlog id %d", mlogID)
 	}
 	if !rows[0].IsNull(1) {
-		lockedNextTime, convErr := rows[0].GetTime(1).GoTime(time.UTC)
-		if convErr != nil {
-			return 0, false, nil, errors.Trace(convErr)
-		}
+		lockedNextUnixSeconds := rows[0].GetInt64(1)
+		lockedNextTime := time.Unix(lockedNextUnixSeconds, 0).UTC()
 		nextTime = &lockedNextTime
 	}
 	if rows[0].IsNull(0) {
@@ -3178,7 +3177,6 @@ func loadMLogPurgeThrottleConfig(
 func deriveMLogPurgeThrottleDeadline(
 	kctx context.Context,
 	evalSctx sessionctx.Context,
-	templateSctx sessionctx.Context,
 	mlogInfo *model.MaterializedViewLogInfo,
 	isInternalSQL bool,
 	schemaName string,
@@ -3197,26 +3195,27 @@ func deriveMLogPurgeThrottleDeadline(
 		adaptiveDeadline = &plannedDeadline
 	}
 	if isInternalSQL {
-		nextTime, shouldUpdateNextTime, err := deriveRuntimeMaterializedScheduleNextTime(
+		purgeScheduleTimeZone, err := mlogInfo.PurgeScheduleTimeZone.GetLocation()
+		if err != nil {
+			return nil, err
+		}
+		nextPurgeUnixSeconds, shouldUpdateNextPurgeUnixSeconds, err := deriveRuntimeMaterializedScheduleNextUnixSeconds(
 			kctx,
 			evalSctx,
-			templateSctx,
 			mlogInfo.PurgeStartWith,
 			mlogInfo.PurgeNext,
 			true,
 			mlogInfo.DefinitionSQLMode,
+			purgeScheduleTimeZone,
 			func() {
-				logRuntimeMaterializedViewLogPurgeNextTimeUpdateNull(schemaName, mlogName, mlogInfo.PurgeNext)
+				logRuntimeMaterializedViewLogPurgeNextUnixSecondsUpdateNull(schemaName, mlogName, mlogInfo.PurgeNext)
 			},
 		)
 		if err != nil {
 			return nil, err
 		}
-		if shouldUpdateNextTime && nextTime != nil {
-			parsedNextTime, parseErr := time.ParseInLocation(types.TimeFSPFormat, *nextTime, time.UTC)
-			if parseErr != nil {
-				return nil, errors.Trace(parseErr)
-			}
+		if shouldUpdateNextPurgeUnixSeconds && nextPurgeUnixSeconds != nil {
+			parsedNextTime := time.Unix(*nextPurgeUnixSeconds, 0).UTC()
 			if adaptiveDeadline == nil || parsedNextTime.Before(*adaptiveDeadline) {
 				return &parsedNextTime, nil
 			}
@@ -3237,7 +3236,6 @@ func tryBuildMLogPurgeDeletePlanBestEffort(
 	kctx context.Context,
 	sessVars *variable.SessionVars,
 	evalSctx sessionctx.Context,
-	templateSctx sessionctx.Context,
 	sqlExec sqlexec.SQLExecutor,
 	countSessVars *variable.SessionVars,
 	mlogInfo *model.MaterializedViewLogInfo,
@@ -3293,7 +3291,6 @@ func tryBuildMLogPurgeDeletePlanBestEffort(
 	throttleDeadline, err := deriveMLogPurgeThrottleDeadline(
 		kctx,
 		evalSctx,
-		templateSctx,
 		mlogInfo,
 		isInternalSQL,
 		schemaName,
@@ -3673,8 +3670,8 @@ func updateMaterializedViewLogPurgeInfoOnSuccess(
 	sqlExec sqlexec.SQLExecutor,
 	mlogID int64,
 	lastPurgedTSO *uint64,
-	nextTime *string,
-	shouldUpdateNextTime bool,
+	nextPurgeUnixSeconds *int64,
+	shouldUpdateNextPurgeUnixSeconds bool,
 ) error {
 	if lastPurgedTSO != nil {
 		// Keep LAST_PURGED_TSO monotonic even if different purge transactions interleave.
@@ -3692,16 +3689,16 @@ WHERE MLOG_ID = %?
 		}
 	}
 
-	if shouldUpdateNextTime {
-		var nextTimeArg any
-		if nextTime != nil {
-			nextTimeArg = *nextTime
+	if shouldUpdateNextPurgeUnixSeconds {
+		var nextPurgeUnixSecondsArg any
+		if nextPurgeUnixSeconds != nil {
+			nextPurgeUnixSecondsArg = *nextPurgeUnixSeconds
 		}
-		updateNextTimeSQL := `UPDATE mysql.tidb_mlog_purge_info
+		updateNextPurgeUnixSecondsSQL := `UPDATE mysql.tidb_mlog_purge_info
 SET
-		NEXT_TIME = %?
+		NEXT_PURGE_UNIX_SECONDS = %?
 WHERE MLOG_ID = %?`
-		_, err := sqlExec.ExecuteInternal(kctx, updateNextTimeSQL, nextTimeArg, mlogID)
+		_, err := sqlExec.ExecuteInternal(kctx, updateNextPurgeUnixSecondsSQL, nextPurgeUnixSecondsArg, mlogID)
 		if err != nil {
 			if infoschema.ErrTableNotExists.Equal(err) {
 				return errors.New("required system table mysql.tidb_mlog_purge_info does not exist")
@@ -3753,11 +3750,11 @@ func insertMLogPurgeHistRunning(
 		BASE_TABLE_SCHEMA,
 		BASE_TABLE_NAME,
 		PURGE_METHOD,
-		PURGE_TIME,
+		PURGE_START_TIME,
 		PURGE_ROWS,
 		PURGE_STATUS,
 		PURGE_CUTOFF_TSO,
-		LAST_HEARTBEAT_AT
+		LAST_HEARTBEAT_TIME
 	) VALUES (
 		%?,
 		%?,
@@ -3816,8 +3813,8 @@ func insertMLogPurgeHistFailed(
 		BASE_TABLE_SCHEMA,
 		BASE_TABLE_NAME,
 		PURGE_METHOD,
-		PURGE_TIME,
-		PURGE_ENDTIME,
+		PURGE_START_TIME,
+		PURGE_END_TIME,
 		PURGE_ROWS,
 		PURGE_DURATION_SEC,
 		PURGE_STATUS,
@@ -3927,7 +3924,7 @@ func finalizeMLogPurgeHist(
 	}
 	updateSQL := `UPDATE mysql.tidb_mlog_purge_hist
 	SET
-		PURGE_ENDTIME = %?,
+		PURGE_END_TIME = %?,
 		PURGE_ROWS = %?,
 		PURGE_DURATION_SEC = %?,
 		PURGE_STATUS = %?,
@@ -4625,23 +4622,27 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		refreshRows = collectFastRefreshMLogScanRows(sessVars)
 	}
 
-	nextTime, shouldUpdateNextTime, err := deriveRuntimeMaterializedScheduleNextTime(
+	refreshScheduleTimeZone, err := tblInfo.MaterializedView.RefreshScheduleTimeZone.GetLocation()
+	if err != nil {
+		return finalizeFailure(err)
+	}
+	nextRefreshUnixSeconds, shouldUpdateNextRefreshUnixSeconds, err := deriveRuntimeMaterializedScheduleNextUnixSeconds(
 		kctx,
 		scheduleEvalSctx,
-		refreshSctx,
 		tblInfo.MaterializedView.RefreshStartWith,
 		tblInfo.MaterializedView.RefreshNext,
 		isInternalSQL,
 		tblInfo.MaterializedView.DefinitionSQLMode,
+		refreshScheduleTimeZone,
 		func() {
-			logRuntimeMaterializedViewRefreshNextTimeUpdateNull(schemaName.O, tblInfo.Name.O, tblInfo.MaterializedView.RefreshNext)
+			logRuntimeMaterializedViewRefreshNextUnixSecondsUpdateNull(schemaName.O, tblInfo.Name.O, tblInfo.MaterializedView.RefreshNext)
 		},
 	)
 	if err != nil {
 		return finalizeFailure(err)
 	}
 
-	lastSuccessEndTime := mviewutil.FormatMViewRefreshInfoEndTime(time.Now())
+	lastSuccessRefreshEndUnixSeconds := time.Now().Unix()
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.persistRefreshInfo, func() error {
 		return persistRefreshSuccess(
 			kctx,
@@ -4650,9 +4651,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			lockedRefreshInfo.lastSuccessReadTSO,
 			lockedRefreshInfo.lastSuccessReadTSONull,
 			refreshReadTSO,
-			lastSuccessEndTime,
-			nextTime,
-			shouldUpdateNextTime,
+			lastSuccessRefreshEndUnixSeconds,
+			nextRefreshUnixSeconds,
+			shouldUpdateNextRefreshUnixSeconds,
 		)
 	}); err != nil {
 		return finalizeFailure(err)
@@ -4864,24 +4865,28 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		if lookupErr != nil {
 			return lookupErr
 		}
-		var nextTime *string
-		var shouldUpdateNextTime bool
+		var nextRefreshUnixSeconds *int64
+		var shouldUpdateNextRefreshUnixSeconds bool
 		if isInternalSQL {
 			scheduleEvalSctx, scheduleErr := e.GetSysSession()
 			if scheduleErr != nil {
 				return scheduleErr
 			}
 			defer e.ReleaseSysSession(releaseCtx, scheduleEvalSctx)
-			nextTime, shouldUpdateNextTime, scheduleErr = deriveRuntimeMaterializedScheduleNextTime(
+			refreshScheduleTimeZone, scheduleErr := tblInfo.MaterializedView.RefreshScheduleTimeZone.GetLocation()
+			if scheduleErr != nil {
+				return scheduleErr
+			}
+			nextRefreshUnixSeconds, shouldUpdateNextRefreshUnixSeconds, scheduleErr = deriveRuntimeMaterializedScheduleNextUnixSeconds(
 				kctx,
 				scheduleEvalSctx,
-				refreshSctx,
 				tblInfo.MaterializedView.RefreshStartWith,
 				tblInfo.MaterializedView.RefreshNext,
 				isInternalSQL,
 				tblInfo.MaterializedView.DefinitionSQLMode,
+				refreshScheduleTimeZone,
 				func() {
-					logRuntimeMaterializedViewRefreshNextTimeUpdateNull(schemaName.O, tblInfo.Name.O, tblInfo.MaterializedView.RefreshNext)
+					logRuntimeMaterializedViewRefreshNextUnixSecondsUpdateNull(schemaName.O, tblInfo.Name.O, tblInfo.MaterializedView.RefreshNext)
 				},
 			)
 			if scheduleErr != nil {
@@ -4902,8 +4907,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 			&expectedOldMViewRevision,
 			expectedLastSuccessReadTSO,
 			expectedLastSuccessReadTSONull,
-			nextTime,
-			shouldUpdateNextTime,
+			nextRefreshUnixSeconds,
+			shouldUpdateNextRefreshUnixSeconds,
 		)
 	}); err != nil {
 		return 0, err
@@ -5232,8 +5237,8 @@ func initRefreshMaterializedViewSession(
 	sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sessVars.SQLMode.HasNoBackslashEscapesMode())
 	sessVars.TimeZone = loc
 	sessVars.StmtCtx.SetTimeZone(loc)
-	sessVars.StmtCtx.SetTypeFlags(refreshTypeFlagsWithSQLMode(sessVars.SQLMode))
-	sessVars.StmtCtx.SetErrLevels(refreshErrLevelsWithSQLMode(sessVars.SQLMode))
+	sessVars.StmtCtx.SetTypeFlags(expression.MaterializedScheduleTypeFlagsWithSQLMode(sessVars.SQLMode))
+	sessVars.StmtCtx.SetErrLevels(expression.MaterializedScheduleErrLevelsWithSQLMode(sessVars.SQLMode))
 
 	return func() {
 		sessVars.SQLMode = origSQLMode
@@ -5243,26 +5248,6 @@ func initRefreshMaterializedViewSession(
 		sessVars.StmtCtx.SetTypeFlags(origTypeFlags)
 		sessVars.StmtCtx.SetErrLevels(origErrLevels)
 	}, nil
-}
-
-func refreshTypeFlagsWithSQLMode(mode mysql.SQLMode) types.Flags {
-	return types.StrictFlags.
-		WithTruncateAsWarning(!mode.HasStrictMode()).
-		WithIgnoreInvalidDateErr(mode.HasAllowInvalidDatesMode()).
-		WithIgnoreZeroInDate(!mode.HasStrictMode() || mode.HasAllowInvalidDatesMode()).
-		WithCastTimeToYearThroughConcat(true)
-}
-
-func refreshErrLevelsWithSQLMode(mode mysql.SQLMode) errctx.LevelMap {
-	return errctx.LevelMap{
-		errctx.ErrGroupTruncate:  errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
-		errctx.ErrGroupBadNull:   errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
-		errctx.ErrGroupNoDefault: errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
-		errctx.ErrGroupDividedByZero: errctx.ResolveErrLevel(
-			!mode.HasErrorForDivisionByZeroMode(),
-			!mode.HasStrictMode(),
-		),
-	}
 }
 
 func validateRefreshMaterializedViewStmt(s *ast.RefreshMaterializedViewStmt, isInternalSQL bool) (ast.RefreshMaterializedViewMode, string, error) {
@@ -5410,15 +5395,15 @@ func checkRefreshMaterializedViewReady(schemaName pmodel.CIStr, tblInfo *model.T
 }
 
 type refreshInfoSnapshot struct {
-	lastSuccessReadTSO     uint64
-	lastSuccessReadTSONull bool
-	lastSuccessEndTime     time.Time
-	lastSuccessEndTimeNull bool
+	lastSuccessReadTSO                   uint64
+	lastSuccessReadTSONull               bool
+	lastSuccessRefreshEndUnixSeconds     int64
+	lastSuccessRefreshEndUnixSecondsNull bool
 }
 
 func (s refreshInfoSnapshot) previousSuccessTime() time.Time {
-	if !s.lastSuccessEndTimeNull && !s.lastSuccessEndTime.IsZero() {
-		return s.lastSuccessEndTime
+	if !s.lastSuccessRefreshEndUnixSecondsNull {
+		return time.Unix(s.lastSuccessRefreshEndUnixSeconds, 0)
 	}
 	if !s.lastSuccessReadTSONull && s.lastSuccessReadTSO > 0 {
 		return time.UnixMilli(oracle.ExtractPhysical(s.lastSuccessReadTSO))
@@ -5450,24 +5435,20 @@ func observeMVRefreshScheduleDuration(duration *time.Duration) {
 	tidbmetrics.MVServiceRefreshScheduleDurationHistogram.Observe(duration.Seconds())
 }
 
-func decodeRefreshInfoSnapshot(row chunk.Row, readTSOIdx int, endTimeIdx int) (refreshInfoSnapshot, error) {
+func decodeRefreshInfoSnapshot(row chunk.Row, readTSOIdx int, endUnixSecondsIdx int) refreshInfoSnapshot {
 	info := refreshInfoSnapshot{
-		lastSuccessReadTSONull: true,
-		lastSuccessEndTimeNull: true,
+		lastSuccessReadTSONull:               true,
+		lastSuccessRefreshEndUnixSecondsNull: true,
 	}
 	if !row.IsNull(readTSOIdx) {
 		info.lastSuccessReadTSO = row.GetUint64(readTSOIdx)
 		info.lastSuccessReadTSONull = false
 	}
-	if !row.IsNull(endTimeIdx) {
-		lastSuccessEndTime, err := row.GetTime(endTimeIdx).GoTime(time.UTC)
-		if err != nil {
-			return info, errors.Trace(err)
-		}
-		info.lastSuccessEndTime = lastSuccessEndTime
-		info.lastSuccessEndTimeNull = false
+	if !row.IsNull(endUnixSecondsIdx) {
+		info.lastSuccessRefreshEndUnixSeconds = row.GetInt64(endUnixSecondsIdx)
+		info.lastSuccessRefreshEndUnixSecondsNull = false
 	}
-	return info, nil
+	return info
 }
 
 func lockRefreshInfoRow(
@@ -5478,7 +5459,7 @@ func lockRefreshInfoRow(
 	lockRS, err := sqlExec.ExecuteInternal(
 		kctx,
 		// Also select LAST_SUCCESS_READ_TSO so FAST refresh can reuse this mutex/metadata load path.
-		"SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_ENDTIME FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT",
+		"SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT",
 		mviewID,
 	)
 	if infoschema.ErrTableNotExists.Equal(err) {
@@ -5502,8 +5483,7 @@ func lockRefreshInfoRow(
 		return refreshInfoSnapshot{}, errors.New("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh_info")
 	}
 
-	info, err := decodeRefreshInfoSnapshot(lockRows[0], 1, 2)
-	return info, errors.Trace(err)
+	return decodeRefreshInfoSnapshot(lockRows[0], 1, 2), nil
 }
 
 func buildMVRefreshAdvisoryLockName(schemaID int64, mviewID int64) string {
@@ -5557,7 +5537,7 @@ func readRefreshInfoSnapshot(
 ) (refreshInfoSnapshot, error) {
 	recheckRS, err := sqlExec.ExecuteInternal(
 		kctx,
-		"SELECT LAST_SUCCESS_READ_TSO, LAST_SUCCESS_ENDTIME FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
+		"SELECT LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
 		mviewID,
 	)
 	if err != nil {
@@ -5580,8 +5560,7 @@ func readRefreshInfoSnapshot(
 	if len(recheckRows) == 0 {
 		return refreshInfoSnapshot{}, errors.New("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh_info")
 	}
-	info, err := decodeRefreshInfoSnapshot(recheckRows[0], 0, 1)
-	return info, errors.Trace(err)
+	return decodeRefreshInfoSnapshot(recheckRows[0], 0, 1), nil
 }
 
 func readMLogPurgeInfoLastPurgedTSO(
@@ -6049,26 +6028,26 @@ func collectMLogScanPlanIDs(plan plannercorebase.PhysicalPlan, mlogTableID int64
 	}
 }
 
-func deriveRuntimeMaterializedScheduleNextTime(
+func deriveRuntimeMaterializedScheduleNextUnixSeconds(
 	kctx context.Context,
 	evalSctx sessionctx.Context,
-	templateSctx sessionctx.Context,
 	startExpr string,
 	nextExpr string,
 	isInternalSQL bool,
 	scheduleSQLMode mysql.SQLMode,
+	scheduleTimeZone *time.Location,
 	logNullUpdate func(),
-) (*string, bool, error) {
+) (*int64, bool, error) {
 	if !isInternalSQL {
 		return nil, false, nil
 	}
-	nextAt, shouldUpdate, err := expression.DeriveMaterializedScheduleNextTimeUTC(
+	nextAt, shouldUpdate, err := expression.DeriveMaterializedScheduleNextTime(
 		kctx,
 		evalSctx,
-		templateSctx,
 		startExpr,
 		nextExpr,
 		scheduleSQLMode,
+		scheduleTimeZone,
 	)
 	if err != nil {
 		return nil, false, err
@@ -6079,11 +6058,11 @@ func deriveRuntimeMaterializedScheduleNextTime(
 	if nextAt == nil {
 		return nil, shouldUpdate, nil
 	}
-	nextAtStr := nextAt.String()
-	return &nextAtStr, shouldUpdate, nil
+	nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt, scheduleTimeZone)
+	return nextUnixSeconds, shouldUpdate, errors.Trace(err)
 }
 
-func logRuntimeMaterializedViewRefreshNextTimeUpdateNull(
+func logRuntimeMaterializedViewRefreshNextUnixSecondsUpdateNull(
 	schemaName string,
 	mvName string,
 	nextExpr string,
@@ -6092,14 +6071,14 @@ func logRuntimeMaterializedViewRefreshNextTimeUpdateNull(
 		return
 	}
 	logutil.BgLogger().Error(
-		"refresh materialized view: automatic refresh schedule disabled because NEXT expression evaluated to NULL, updating NEXT_TIME to NULL",
+		"refresh materialized view: automatic refresh schedule disabled because NEXT expression evaluated to NULL, updating NEXT_REFRESH_UNIX_SECONDS to NULL",
 		zap.String("schemaName", schemaName),
 		zap.String("tableName", mvName),
 		zap.String("refreshNext", nextExpr),
 	)
 }
 
-func logRuntimeMaterializedViewLogPurgeNextTimeUpdateNull(
+func logRuntimeMaterializedViewLogPurgeNextUnixSecondsUpdateNull(
 	schemaName string,
 	mlogName string,
 	nextExpr string,
@@ -6108,7 +6087,7 @@ func logRuntimeMaterializedViewLogPurgeNextTimeUpdateNull(
 		return
 	}
 	logutil.BgLogger().Error(
-		"purge materialized view log: automatic purge schedule disabled because NEXT expression evaluated to NULL, updating NEXT_TIME to NULL",
+		"purge materialized view log: automatic purge schedule disabled because NEXT expression evaluated to NULL, updating NEXT_PURGE_UNIX_SECONDS to NULL",
 		zap.String("schemaName", schemaName),
 		zap.String("tableName", mlogName),
 		zap.String("purgeNext", nextExpr),
@@ -6122,22 +6101,22 @@ func persistRefreshSuccess(
 	lockedReadTSO uint64,
 	lockedReadTSONull bool,
 	refreshReadTSO uint64,
-	lastSuccessEndTime string,
-	nextTime *string,
-	shouldUpdateNextTime bool,
+	lastSuccessRefreshEndUnixSeconds int64,
+	nextRefreshUnixSeconds *int64,
+	shouldUpdateNextRefreshUnixSeconds bool,
 ) error {
 	setClauses := []string{
 		"LAST_SUCCESS_READ_TSO = %?",
-		"LAST_SUCCESS_ENDTIME = %?",
+		"LAST_SUCCESS_REFRESH_END_UNIX_SECONDS = %?",
 	}
-	args := []any{refreshReadTSO, lastSuccessEndTime}
-	if shouldUpdateNextTime {
-		setClauses = append(setClauses, "NEXT_TIME = %?")
-		var nextTimeArg any
-		if nextTime != nil {
-			nextTimeArg = *nextTime
+	args := []any{refreshReadTSO, lastSuccessRefreshEndUnixSeconds}
+	if shouldUpdateNextRefreshUnixSeconds {
+		setClauses = append(setClauses, "NEXT_REFRESH_UNIX_SECONDS = %?")
+		var nextRefreshUnixSecondsArg any
+		if nextRefreshUnixSeconds != nil {
+			nextRefreshUnixSecondsArg = *nextRefreshUnixSeconds
 		}
-		args = append(args, nextTimeArg)
+		args = append(args, nextRefreshUnixSecondsArg)
 	}
 	var lockedReadTSOArg any = lockedReadTSO
 	if lockedReadTSONull {
@@ -6188,7 +6167,7 @@ func markRefreshFailedAlertState(
 	MV_SCHEMA,
 	MV_NAME,
 	REFRESH_FAILED,
-	UPDATED_AT
+	UPDATE_TIME
 ) VALUES (
 	%?,
 	%?,
@@ -6199,7 +6178,7 @@ func markRefreshFailedAlertState(
 MV_SCHEMA = VALUES(MV_SCHEMA),
 MV_NAME = VALUES(MV_NAME),
 REFRESH_FAILED = VALUES(REFRESH_FAILED),
-UPDATED_AT = VALUES(UPDATED_AT)`,
+UPDATE_TIME = VALUES(UPDATE_TIME)`,
 		mviewID,
 		mvSchema,
 		mvName,
@@ -6283,9 +6262,9 @@ func insertRefreshHistRunning(
 	MV_SCHEMA,
 	MV_NAME,
 	REFRESH_METHOD,
-	REFRESH_TIME,
+	REFRESH_START_TIME,
 	REFRESH_STATUS,
-	LAST_HEARTBEAT_AT
+	LAST_HEARTBEAT_TIME
 ) VALUES (
 	%?,
 	%?,
@@ -6348,8 +6327,8 @@ func insertRefreshHistFailed(
 	MV_SCHEMA,
 	MV_NAME,
 	REFRESH_METHOD,
-	REFRESH_TIME,
-	REFRESH_ENDTIME,
+	REFRESH_START_TIME,
+	REFRESH_END_TIME,
 	REFRESH_STATUS,
 	REFRESH_ROWS,
 	REFRESH_DURATION_SEC,
@@ -6548,7 +6527,7 @@ func finalizeRefreshHist(
 	}
 	updateSQL := `UPDATE mysql.tidb_mview_refresh_hist
 SET
-	REFRESH_ENDTIME = %?,
+	REFRESH_END_TIME = %?,
 	REFRESH_STATUS = %?,
 	REFRESH_ROWS = %?,
 	REFRESH_DURATION_SEC = %?,

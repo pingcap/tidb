@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
@@ -943,19 +942,21 @@ func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvS
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer w.sessPool.Put(evalSessCtx)
 	evalSess := sess.NewSession(evalSessCtx)
-	restoreEvalSession := setCreateMaterializedViewScheduleEvalSession(evalSessCtx, sqlMode)
-	defer func() {
-		restoreEvalSession()
-		w.sessPool.Put(evalSessCtx)
-	}()
-
-	nextTime, shouldUpdateNextTime, err := deriveCreateMaterializedViewNextTime(ctx, evalSess, mvSchemaName, mvTblInfo.Name.O, mvTblInfo.MaterializedView)
+	scheduleTimeZone, err := mvTblInfo.MaterializedView.RefreshScheduleTimeZone.GetLocation()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	lastSuccessEndTime := mviewutil.FormatMViewRefreshInfoEndTime(time.Now())
-	return errors.Trace(execCreateMaterializedViewRefreshInfoUpsert(ctx, w.sess, mvTblInfo.ID, readTS, &lastSuccessEndTime, nextTime, shouldUpdateNextTime))
+	restoreEvalSession := setCreateMaterializedViewScheduleEvalSession(evalSessCtx, sqlMode, scheduleTimeZone)
+	defer restoreEvalSession()
+
+	nextRefreshUnixSeconds, shouldUpdateNextRefreshUnixSeconds, err := deriveCreateMaterializedViewNextUnixSeconds(ctx, evalSess, mvSchemaName, mvTblInfo.Name.O, mvTblInfo.MaterializedView)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	lastSuccessRefreshEndUnixSeconds := time.Now().Unix()
+	return errors.Trace(execCreateMaterializedViewRefreshInfoUpsert(ctx, w.sess, mvTblInfo.ID, readTS, &lastSuccessRefreshEndUnixSeconds, nextRefreshUnixSeconds, shouldUpdateNextRefreshUnixSeconds))
 }
 
 func (w *worker) upsertCreateMaterializedViewLogPurgeInfo(jobCtx *jobContext, mlogSchemaName string, mlogTblInfo *model.TableInfo) error {
@@ -971,19 +972,21 @@ func (w *worker) upsertCreateMaterializedViewLogPurgeInfo(jobCtx *jobContext, ml
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer w.sessPool.Put(evalSessCtx)
 	evalSess := sess.NewSession(evalSessCtx)
 	evalSQLMode := mlogTblInfo.MaterializedViewLog.DefinitionSQLMode
-	restoreEvalSession := setCreateMaterializedViewScheduleEvalSession(evalSessCtx, evalSQLMode)
-	defer func() {
-		restoreEvalSession()
-		w.sessPool.Put(evalSessCtx)
-	}()
-
-	nextTime, shouldUpdateNextTime, err := deriveCreateMaterializedViewLogNextTime(ctx, evalSess, mlogSchemaName, mlogTblInfo.Name.O, mlogTblInfo.MaterializedViewLog)
+	scheduleTimeZone, err := mlogTblInfo.MaterializedViewLog.PurgeScheduleTimeZone.GetLocation()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(execCreateMaterializedViewLogPurgeInfoUpsert(ctx, w.sess, mlogTblInfo.ID, nextTime, shouldUpdateNextTime))
+	restoreEvalSession := setCreateMaterializedViewScheduleEvalSession(evalSessCtx, evalSQLMode, scheduleTimeZone)
+	defer restoreEvalSession()
+
+	nextPurgeUnixSeconds, shouldUpdateNextPurgeUnixSeconds, err := deriveCreateMaterializedViewLogNextUnixSeconds(ctx, evalSess, mlogSchemaName, mlogTblInfo.Name.O, mlogTblInfo.MaterializedViewLog)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(execCreateMaterializedViewLogPurgeInfoUpsert(ctx, w.sess, mlogTblInfo.ID, nextPurgeUnixSeconds, shouldUpdateNextPurgeUnixSeconds))
 }
 
 func warmupCreateMaterializedViewRefreshInfoTxn(
@@ -1004,11 +1007,11 @@ func execCreateMaterializedViewRefreshInfoUpsert(
 	ddlSess *sess.Session,
 	mviewID int64,
 	readTS uint64,
-	lastSuccessEndTime *string,
-	nextTime *string,
-	shouldUpdateNextTime bool,
+	lastSuccessRefreshEndUnixSeconds *int64,
+	nextRefreshUnixSeconds *int64,
+	shouldUpdateNextRefreshUnixSeconds bool,
 ) error {
-	upsertSQL := buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID, readTS, lastSuccessEndTime, nextTime, shouldUpdateNextTime)
+	upsertSQL := buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID, readTS, lastSuccessRefreshEndUnixSeconds, nextRefreshUnixSeconds, shouldUpdateNextRefreshUnixSeconds)
 	_, err := ddlSess.Execute(ctx, upsertSQL, "mview-refresh-info-upsert")
 	failpoint.Inject("mockUpsertCreateMaterializedViewRefreshInfoTableNotExists", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1057,78 +1060,93 @@ func (w *worker) deleteCreateMaterializedViewRefreshAlert(jobCtx *jobContext, mv
 	return errors.Trace(err)
 }
 
-// deriveCreateMaterializedViewNextTime computes NEXT_TIME for CREATE MATERIALIZED VIEW post-build upsert.
+// deriveCreateMaterializedViewNextUnixSeconds computes the next refresh Unix
+// seconds for CREATE MATERIALIZED VIEW post-build upsert.
 //
 // Rules:
-//  1. If both START WITH and NEXT are absent, NEXT_TIME is updated to NULL.
-//  2. Otherwise expressions are evaluated in the prepared eval session (UTC timezone + job SQL mode).
+//  1. If both START WITH and NEXT are absent, the persisted schedule is updated to NULL.
+//  2. Otherwise expressions are evaluated in the prepared eval session
+//     (schedule timezone + job SQL mode).
 //  3. START WITH has higher priority unless it is "near now" (START WITH < now + 10s) and NEXT exists.
-//  4. If the chosen expression evaluates to NULL, NEXT_TIME is updated to NULL.
-func deriveCreateMaterializedViewNextTime(
+//  4. If the chosen expression evaluates to NULL, the persisted schedule is updated to NULL.
+func deriveCreateMaterializedViewNextUnixSeconds(
 	ctx context.Context,
 	ddlSess *sess.Session,
 	mvSchemaName string,
 	mvTableName string,
 	mvInfo *model.MaterializedViewInfo,
-) (*string, bool, error) {
+) (*int64, bool, error) {
 	if mvInfo == nil {
 		return nil, false, nil
 	}
-	return deriveCreateMaterializedScheduleNextTime(
+	scheduleTimeZone, err := mvInfo.RefreshScheduleTimeZone.GetLocation()
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+	return deriveCreateMaterializedScheduleNextUnixSeconds(
 		ctx,
 		ddlSess,
 		mvSchemaName,
 		mvTableName,
 		mvInfo.RefreshStartWith,
 		mvInfo.RefreshNext,
-		logCreateMaterializedViewNextTimeUpdateNull,
+		scheduleTimeZone,
+		logCreateMaterializedViewNextUnixSecondsUpdateNull,
 	)
 }
 
-// deriveCreateMaterializedViewLogNextTime computes NEXT_TIME for CREATE MATERIALIZED VIEW LOG upsert.
+// deriveCreateMaterializedViewLogNextUnixSeconds computes the next purge Unix
+// seconds for CREATE MATERIALIZED VIEW LOG upsert.
 //
 // Rules:
-//  1. If both START WITH and NEXT are absent, NEXT_TIME is updated to NULL.
-//  2. Otherwise expressions are evaluated in the prepared eval session (UTC timezone + job SQL mode).
+//  1. If both START WITH and NEXT are absent, the persisted schedule is updated to NULL.
+//  2. Otherwise expressions are evaluated in the prepared eval session
+//     (schedule timezone + job SQL mode).
 //  3. START WITH has higher priority unless it is "near now" (START WITH < now + 10s) and NEXT exists.
-//  4. If the chosen expression evaluates to NULL, NEXT_TIME is updated to NULL.
-func deriveCreateMaterializedViewLogNextTime(
+//  4. If the chosen expression evaluates to NULL, the persisted schedule is updated to NULL.
+func deriveCreateMaterializedViewLogNextUnixSeconds(
 	ctx context.Context,
 	ddlSess *sess.Session,
 	mlogSchemaName string,
 	mlogTableName string,
 	mlogInfo *model.MaterializedViewLogInfo,
-) (*string, bool, error) {
+) (*int64, bool, error) {
 	if mlogInfo == nil {
 		return nil, false, nil
 	}
-	return deriveCreateMaterializedScheduleNextTime(
+	scheduleTimeZone, err := mlogInfo.PurgeScheduleTimeZone.GetLocation()
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+	return deriveCreateMaterializedScheduleNextUnixSeconds(
 		ctx,
 		ddlSess,
 		mlogSchemaName,
 		mlogTableName,
 		mlogInfo.PurgeStartWith,
 		mlogInfo.PurgeNext,
-		logCreateMaterializedViewLogNextTimeUpdateNull,
+		scheduleTimeZone,
+		logCreateMaterializedViewLogNextUnixSecondsUpdateNull,
 	)
 }
 
-func deriveCreateMaterializedScheduleNextTime(
+func deriveCreateMaterializedScheduleNextUnixSeconds(
 	ctx context.Context,
 	ddlSess *sess.Session,
 	schemaName string,
 	tableName string,
 	startExpr string,
 	nextExpr string,
+	scheduleTimeZone *time.Location,
 	logNullUpdate func(schemaName string, tableName string, nullExprClause string, startExpr string, nextExpr string),
-) (*string, bool, error) {
+) (*int64, bool, error) {
 	startExpr = strings.TrimSpace(startExpr)
 	nextExpr = strings.TrimSpace(nextExpr)
 	if startExpr == "" && nextExpr == "" {
 		return nil, true, nil
 	}
 
-	nowTime, err := loadCreateMaterializedViewScheduleNowUTC(ctx, ddlSess)
+	nowTime, err := loadCreateMaterializedViewScheduleNow(ctx, ddlSess)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -1155,12 +1173,12 @@ func deriveCreateMaterializedScheduleNextTime(
 			return nil, true, nil
 		}
 		if nextExpr == "" {
-			s := startAt.String()
-			return &s, true, nil
+			nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(startAt, scheduleTimeZone)
+			return nextUnixSeconds, true, errors.Trace(err)
 		}
 
-		// Evaluate schedule in UTC and compare with a UTC near-now threshold.
-		goNow, err := nowTime.GoTime(time.UTC)
+		// Compare the schedule and current time in the same schedule timezone.
+		goNow, err := nowTime.GoTime(scheduleTimeZone)
 		if err != nil {
 			return nil, true, errors.Trace(err)
 		}
@@ -1174,11 +1192,11 @@ func deriveCreateMaterializedScheduleNextTime(
 				logNullUpdate(schemaName, tableName, "NEXT", startExpr, nextExpr)
 				return nil, true, nil
 			}
-			s := nextAt.String()
-			return &s, true, nil
+			nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt, scheduleTimeZone)
+			return nextUnixSeconds, true, errors.Trace(err)
 		}
-		s := startAt.String()
-		return &s, true, nil
+		nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(startAt, scheduleTimeZone)
+		return nextUnixSeconds, true, errors.Trace(err)
 	}
 
 	// Rule-3: START WITH absent, fallback to NEXT when present.
@@ -1191,13 +1209,13 @@ func deriveCreateMaterializedScheduleNextTime(
 			logNullUpdate(schemaName, tableName, "NEXT", startExpr, nextExpr)
 			return nil, true, nil
 		}
-		s := nextAt.String()
-		return &s, true, nil
+		nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt, scheduleTimeZone)
+		return nextUnixSeconds, true, errors.Trace(err)
 	}
 	return nil, false, nil
 }
 
-func logCreateMaterializedViewNextTimeUpdateNull(
+func logCreateMaterializedViewNextUnixSecondsUpdateNull(
 	mvSchemaName string,
 	mvTableName string,
 	nullExprClause string,
@@ -1206,7 +1224,7 @@ func logCreateMaterializedViewNextTimeUpdateNull(
 ) {
 	if strings.TrimSpace(nextExpr) != "" {
 		logutil.DDLLogger().Error(
-			"create materialized view: automatic refresh schedule disabled because schedule expression evaluated to NULL, updating NEXT_TIME to NULL",
+			"create materialized view: automatic refresh schedule disabled because schedule expression evaluated to NULL, updating NEXT_REFRESH_UNIX_SECONDS to NULL",
 			zap.String("schemaName", mvSchemaName),
 			zap.String("tableName", mvTableName),
 			zap.String("nullExprClause", nullExprClause),
@@ -1216,7 +1234,7 @@ func logCreateMaterializedViewNextTimeUpdateNull(
 		return
 	}
 	logutil.DDLLogger().Warn(
-		"create materialized view: schedule expression evaluated to NULL, updating NEXT_TIME to NULL",
+		"create materialized view: schedule expression evaluated to NULL, updating NEXT_REFRESH_UNIX_SECONDS to NULL",
 		zap.String("schemaName", mvSchemaName),
 		zap.String("tableName", mvTableName),
 		zap.String("nullExprClause", nullExprClause),
@@ -1225,7 +1243,7 @@ func logCreateMaterializedViewNextTimeUpdateNull(
 	)
 }
 
-func logCreateMaterializedViewLogNextTimeUpdateNull(
+func logCreateMaterializedViewLogNextUnixSecondsUpdateNull(
 	mlogSchemaName string,
 	mlogTableName string,
 	nullExprClause string,
@@ -1234,7 +1252,7 @@ func logCreateMaterializedViewLogNextTimeUpdateNull(
 ) {
 	if strings.TrimSpace(nextExpr) != "" {
 		logutil.DDLLogger().Error(
-			"create materialized view log: automatic purge schedule disabled because schedule expression evaluated to NULL, updating NEXT_TIME to NULL",
+			"create materialized view log: automatic purge schedule disabled because schedule expression evaluated to NULL, updating NEXT_PURGE_UNIX_SECONDS to NULL",
 			zap.String("schemaName", mlogSchemaName),
 			zap.String("tableName", mlogTableName),
 			zap.String("nullExprClause", nullExprClause),
@@ -1244,7 +1262,7 @@ func logCreateMaterializedViewLogNextTimeUpdateNull(
 		return
 	}
 	logutil.DDLLogger().Warn(
-		"create materialized view log: purge schedule expression evaluated to NULL, updating NEXT_TIME to NULL",
+		"create materialized view log: purge schedule expression evaluated to NULL, updating NEXT_PURGE_UNIX_SECONDS to NULL",
 		zap.String("schemaName", mlogSchemaName),
 		zap.String("tableName", mlogTableName),
 		zap.String("nullExprClause", nullExprClause),
@@ -1253,7 +1271,11 @@ func logCreateMaterializedViewLogNextTimeUpdateNull(
 	)
 }
 
-func setCreateMaterializedViewScheduleEvalSession(sctx sessionctx.Context, sqlMode mysql.SQLMode) func() {
+func setCreateMaterializedViewScheduleEvalSession(
+	sctx sessionctx.Context,
+	sqlMode mysql.SQLMode,
+	scheduleTimeZone *time.Location,
+) func() {
 	sessVars := sctx.GetSessionVars()
 	originalSQLMode := sessVars.SQLMode
 	originalTypeFlags := sessVars.StmtCtx.TypeFlags()
@@ -1267,11 +1289,11 @@ func setCreateMaterializedViewScheduleEvalSession(sctx sessionctx.Context, sqlMo
 	originalStmtTZ := sessVars.StmtCtx.TimeZone()
 
 	sessVars.SQLMode = sqlMode
-	sessVars.StmtCtx.SetErrLevels(reorgErrLevelsWithSQLMode(sqlMode))
-	sessVars.StmtCtx.SetTypeFlags(reorgTypeFlagsWithSQLMode(sqlMode))
+	sessVars.StmtCtx.SetTypeFlags(expression.MaterializedScheduleTypeFlagsWithSQLMode(sqlMode))
+	sessVars.StmtCtx.SetErrLevels(expression.MaterializedScheduleErrLevelsWithSQLMode(sqlMode))
 
-	sessVars.TimeZone = time.UTC
-	sessVars.StmtCtx.SetTimeZone(time.UTC)
+	sessVars.TimeZone = scheduleTimeZone
+	sessVars.StmtCtx.SetTimeZone(scheduleTimeZone)
 
 	return func() {
 		sessVars.SQLMode = originalSQLMode
@@ -1287,11 +1309,11 @@ func setCreateMaterializedViewScheduleEvalSession(sctx sessionctx.Context, sqlMo
 	}
 }
 
-func loadCreateMaterializedViewScheduleNowUTC(
+func loadCreateMaterializedViewScheduleNow(
 	ctx context.Context,
 	ddlSess *sess.Session,
 ) (types.Time, error) {
-	rows, err := ddlSess.Execute(ctx, "SELECT NOW(6)", "mview-refresh-info-next-time-now-utc")
+	rows, err := ddlSess.Execute(ctx, "SELECT NOW(6)", "mview-refresh-info-next-time-now")
 	if err != nil {
 		return types.ZeroTime, errors.Trace(err)
 	}
@@ -1331,60 +1353,60 @@ func evalCreateMaterializedViewScheduleExprToDatetime(ddlSess *sess.Session, exp
 	return &t, nil
 }
 
-func buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID int64, readTS uint64, lastSuccessEndTime *string, nextTime *string, shouldUpdateNextTime bool) string {
-	var lastSuccessEndTimeArg any
-	if lastSuccessEndTime != nil {
-		lastSuccessEndTimeArg = *lastSuccessEndTime
+func buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID int64, readTS uint64, lastSuccessRefreshEndUnixSeconds *int64, nextRefreshUnixSeconds *int64, shouldUpdateNextRefreshUnixSeconds bool) string {
+	var lastSuccessRefreshEndUnixSecondsArg any
+	if lastSuccessRefreshEndUnixSeconds != nil {
+		lastSuccessRefreshEndUnixSecondsArg = *lastSuccessRefreshEndUnixSeconds
 	}
-	if shouldUpdateNextTime {
-		var nextTimeArg any
-		if nextTime != nil {
-			nextTimeArg = *nextTime
+	if shouldUpdateNextRefreshUnixSeconds {
+		var nextRefreshUnixSecondsArg any
+		if nextRefreshUnixSeconds != nil {
+			nextRefreshUnixSecondsArg = *nextRefreshUnixSeconds
 		}
 		return sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh_info (
 		MVIEW_ID,
 		LAST_SUCCESS_READ_TSO,
-		LAST_SUCCESS_ENDTIME,
-		NEXT_TIME
+		LAST_SUCCESS_REFRESH_END_UNIX_SECONDS,
+		NEXT_REFRESH_UNIX_SECONDS
 	) VALUES (%?, %?, %?, %?)
 	ON DUPLICATE KEY UPDATE
 		LAST_SUCCESS_READ_TSO = VALUES(LAST_SUCCESS_READ_TSO),
-		LAST_SUCCESS_ENDTIME = VALUES(LAST_SUCCESS_ENDTIME),
-		NEXT_TIME = VALUES(NEXT_TIME)`,
+		LAST_SUCCESS_REFRESH_END_UNIX_SECONDS = VALUES(LAST_SUCCESS_REFRESH_END_UNIX_SECONDS),
+		NEXT_REFRESH_UNIX_SECONDS = VALUES(NEXT_REFRESH_UNIX_SECONDS)`,
 			mviewID,
 			readTS,
-			lastSuccessEndTimeArg,
-			nextTimeArg,
+			lastSuccessRefreshEndUnixSecondsArg,
+			nextRefreshUnixSecondsArg,
 		)
 	}
 	return sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh_info (
 		MVIEW_ID,
 		LAST_SUCCESS_READ_TSO,
-		LAST_SUCCESS_ENDTIME
+		LAST_SUCCESS_REFRESH_END_UNIX_SECONDS
 	) VALUES (%?, %?, %?)
 	ON DUPLICATE KEY UPDATE
 		LAST_SUCCESS_READ_TSO = VALUES(LAST_SUCCESS_READ_TSO),
-		LAST_SUCCESS_ENDTIME = VALUES(LAST_SUCCESS_ENDTIME)`,
+		LAST_SUCCESS_REFRESH_END_UNIX_SECONDS = VALUES(LAST_SUCCESS_REFRESH_END_UNIX_SECONDS)`,
 		mviewID,
 		readTS,
-		lastSuccessEndTimeArg,
+		lastSuccessRefreshEndUnixSecondsArg,
 	)
 }
 
-func buildCreateMaterializedViewLogPurgeInfoUpsertSQL(mlogID int64, nextTime *string, shouldUpdateNextTime bool) string {
-	if shouldUpdateNextTime {
-		var nextTimeArg any
-		if nextTime != nil {
-			nextTimeArg = *nextTime
+func buildCreateMaterializedViewLogPurgeInfoUpsertSQL(mlogID int64, nextPurgeUnixSeconds *int64, shouldUpdateNextPurgeUnixSeconds bool) string {
+	if shouldUpdateNextPurgeUnixSeconds {
+		var nextPurgeUnixSecondsArg any
+		if nextPurgeUnixSeconds != nil {
+			nextPurgeUnixSecondsArg = *nextPurgeUnixSeconds
 		}
 		return sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mlog_purge_info (
 			MLOG_ID,
-			NEXT_TIME
+			NEXT_PURGE_UNIX_SECONDS
 		) VALUES (%?, %?)
 		ON DUPLICATE KEY UPDATE
-			NEXT_TIME = VALUES(NEXT_TIME)`,
+			NEXT_PURGE_UNIX_SECONDS = VALUES(NEXT_PURGE_UNIX_SECONDS)`,
 			mlogID,
-			nextTimeArg,
+			nextPurgeUnixSecondsArg,
 		)
 	}
 	return sqlescape.MustEscapeSQL("INSERT IGNORE INTO mysql.tidb_mlog_purge_info (MLOG_ID) VALUES (%?)", mlogID)
@@ -1394,10 +1416,10 @@ func execCreateMaterializedViewLogPurgeInfoUpsert(
 	ctx context.Context,
 	ddlSess *sess.Session,
 	mlogID int64,
-	nextTime *string,
-	shouldUpdateNextTime bool,
+	nextPurgeUnixSeconds *int64,
+	shouldUpdateNextPurgeUnixSeconds bool,
 ) error {
-	upsertSQL := buildCreateMaterializedViewLogPurgeInfoUpsertSQL(mlogID, nextTime, shouldUpdateNextTime)
+	upsertSQL := buildCreateMaterializedViewLogPurgeInfoUpsertSQL(mlogID, nextPurgeUnixSeconds, shouldUpdateNextPurgeUnixSeconds)
 	_, err := ddlSess.Execute(ctx, upsertSQL, "mlog-purge-info-upsert")
 	failpoint.Inject("mockInsertMLogPurgeTableNotExists", func(val failpoint.Value) {
 		if val.(bool) {

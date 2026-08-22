@@ -133,8 +133,8 @@ type Executor interface {
 		expectedOldMViewRevision *uint64,
 		expectedLastSuccessReadTSO uint64,
 		expectedLastSuccessReadTSONull bool,
-		nextTime *string,
-		shouldUpdateNextTime bool,
+		nextRefreshUnixSeconds *int64,
+		shouldUpdateNextRefreshUnixSeconds bool,
 	) error
 	RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.RecoverTableInfo) (err error)
 	RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *model.RecoverSchemaInfo) error
@@ -1170,6 +1170,7 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	var purgeMethod string
 	var purgeStartWith string
 	var purgeNext string
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	logAccumulationAlertRows, err := BuildMLogAccumulationAlertRows(s.AccumulationAlert)
 	if err != nil {
 		return err
@@ -1202,6 +1203,10 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		PurgeNext:                purgeNext,
 		LogAccumulationAlertRows: logAccumulationAlertRows,
 		DefinitionSQLMode:        ctx.GetSessionVars().SQLMode,
+		PurgeScheduleTimeZone: model.TimeZoneLocation{
+			Name:   tzName,
+			Offset: tzOffset,
+		},
 	}
 
 	involvingSchemas := []model.InvolvingSchemaInfo{

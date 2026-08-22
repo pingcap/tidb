@@ -46,7 +46,6 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
-	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"go.uber.org/zap"
 )
 
@@ -1084,6 +1083,9 @@ func onAlterMaterializedViewRefresh(jobCtx *jobContext, job *model.Job, se *sess
 	tblInfo.MaterializedView.RefreshMethod = args.RefreshMethod
 	tblInfo.MaterializedView.RefreshStartWith = args.RefreshStartWith
 	tblInfo.MaterializedView.RefreshNext = args.RefreshNext
+	if args.UpdateRefreshScheduleTimeZone {
+		tblInfo.MaterializedView.RefreshScheduleTimeZone = args.RefreshScheduleTimeZone
+	}
 
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
@@ -1162,6 +1164,9 @@ func onAlterMaterializedViewLogPurge(jobCtx *jobContext, job *model.Job, se *ses
 	tblInfo.MaterializedViewLog.PurgeMethod = args.PurgeMethod
 	tblInfo.MaterializedViewLog.PurgeStartWith = args.PurgeStartWith
 	tblInfo.MaterializedViewLog.PurgeNext = args.PurgeNext
+	if args.UpdatePurgeScheduleTimeZone {
+		tblInfo.MaterializedViewLog.PurgeScheduleTimeZone = args.PurgeScheduleTimeZone
+	}
 
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
@@ -1381,7 +1386,7 @@ func (w *worker) migrateMViewRefreshInfoForOutOfPlaceCutover(
 
 	oldRows, err := w.sess.Execute(
 		ctx,
-		"SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_ENDTIME, NEXT_TIME FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
+		"SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS, NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
 		"mview-refresh-cutover-read-refresh-info",
 		args.OldMViewID,
 	)
@@ -1428,7 +1433,7 @@ func (w *worker) migrateMViewRefreshInfoForOutOfPlaceCutover(
 		return errors.Trace(convertMViewRefreshInfoTableNotExistsErrOnOutOfPlaceCutover(err))
 	}
 	// The table API mutation below relies on the fixed refresh-info schema:
-	// columns are [MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_ENDTIME, NEXT_TIME],
+	// columns are [MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS, NEXT_REFRESH_UNIX_SECONDS],
 	// and MVIEW_ID is the single integer primary-key handle used by kv.IntHandle.
 	// If this system table schema changes, update this function together with
 	// TestBootstrapMaterializedViewSystemTables.
@@ -1448,23 +1453,11 @@ func (w *worker) migrateMViewRefreshInfoForOutOfPlaceCutover(
 	copy(newDatums, oldDatums)
 	newDatums[0] = types.NewIntDatum(args.ShadowTableID)
 	newDatums[1] = types.NewUintDatum(args.BuildReadTSO)
-	lastSuccessEndTime := mviewutil.FormatMViewRefreshInfoEndTime(time.Now())
-	endTimeDatum := types.NewStringDatum(lastSuccessEndTime)
-	newDatums[2], err = table.CastColumnValue(sctx.GetExprCtx(), endTimeDatum, refreshInfoTbl.Meta().Columns[2], false, false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if args.ShouldUpdateNextTime {
+	newDatums[2] = types.NewIntDatum(time.Now().Unix())
+	if args.ShouldUpdateNextRefreshUnixSeconds {
 		newDatums[3].SetNull()
-		if args.NextTime != nil {
-			// NEXT_TIME is stored as a UTC wall-clock DATETIME value, not as a
-			// timezone-aware TIMESTAMP. Casting to the DATETIME column preserves
-			// the string value without applying session timezone conversion.
-			nextTimeDatum := types.NewStringDatum(*args.NextTime)
-			newDatums[3], err = table.CastColumnValue(sctx.GetExprCtx(), nextTimeDatum, refreshInfoTbl.Meta().Columns[3], false, false)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		if args.NextRefreshUnixSeconds != nil {
+			newDatums[3] = types.NewIntDatum(*args.NextRefreshUnixSeconds)
 		}
 	}
 

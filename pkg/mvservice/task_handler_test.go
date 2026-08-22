@@ -49,18 +49,18 @@ import (
 )
 
 const (
-	testSQLFetchMVLogPurge        = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
+	testSQLFetchMVLogPurge        = `SELECT NEXT_PURGE_UNIX_SECONDS, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_PURGE_UNIX_SECONDS IS NOT NULL`
 	testSQLFetchMVLogAccumulation = `SELECT MLOG_ID FROM mysql.tidb_mlog_purge_info`
 	testSQLCountMVLogRows         = `SELECT /*+ read_from_storage(tiflash[%n.%n]) */ COUNT(*) FROM %n.%n`
-	testSQLFetchMVRefresh         = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
+	testSQLFetchMVRefresh         = `SELECT NEXT_REFRESH_UNIX_SECONDS, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
 	testSQLRefreshMV              = `REFRESH MATERIALIZED VIEW %n.%n FAST`
-	testSQLFindMVNextTime         = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
-	testSQLLockMVNextTime         = `SELECT NEXT_TIME FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT`
-	testSQLUpdateMVNextTime       = `UPDATE mysql.tidb_mview_refresh_info SET NEXT_TIME = %? WHERE MVIEW_ID = %?`
+	testSQLFindMVNextTime         = `SELECT NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
+	testSQLLockMVNextTime         = `SELECT NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT`
+	testSQLUpdateMVNextTime       = `UPDATE mysql.tidb_mview_refresh_info SET NEXT_REFRESH_UNIX_SECONDS = %? WHERE MVIEW_ID = %?`
 	testSQLPurgeMVLog             = `PURGE MATERIALIZED VIEW LOG ON %n.%n`
-	testSQLFindPurgeNextTime      = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_TIME IS NOT NULL`
-	testSQLLockPurgeNextTime      = `SELECT NEXT_TIME FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT`
-	testSQLUpdatePurgeNextTime    = `UPDATE mysql.tidb_mlog_purge_info SET NEXT_TIME = %? WHERE MLOG_ID = %?`
+	testSQLFindPurgeNextTime      = `SELECT NEXT_PURGE_UNIX_SECONDS FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_PURGE_UNIX_SECONDS IS NOT NULL`
+	testSQLLockPurgeNextTime      = `SELECT NEXT_PURGE_UNIX_SECONDS FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT`
+	testSQLUpdatePurgeNextTime    = `UPDATE mysql.tidb_mlog_purge_info SET NEXT_PURGE_UNIX_SECONDS = %? WHERE MLOG_ID = %?`
 )
 
 var (
@@ -1872,7 +1872,7 @@ func TestServerHelperLoadAllTiDBMLogPurge(t *testing.T) {
 			types.NewIntDatum(nextPurgeSec2),
 			types.NewIntDatum(0),
 		}).ToRow(),
-		// Invalid row with NULL NEXT_TIME should be ignored.
+		// Invalid row with NULL NEXT_PURGE_UNIX_SECONDS should be ignored.
 		chunk.MutRowFromDatums([]types.Datum{
 			types.NewDatum(nil),
 			types.NewIntDatum(203),
@@ -1977,7 +1977,7 @@ func TestServerHelperLoadAllTiDBMVRefresh(t *testing.T) {
 			types.NewIntDatum(0),
 			types.NewIntDatum(323456789),
 		}).ToRow(),
-		// Invalid row with NULL NEXT_TIME should be ignored.
+		// Invalid row with NULL NEXT_REFRESH_UNIX_SECONDS should be ignored.
 		chunk.MutRowFromDatums([]types.Datum{
 			types.NewDatum(nil),
 			types.NewIntDatum(103),
@@ -2372,8 +2372,8 @@ func TestServerHelperPurgeMVHistoryBeforeTSOReconcilesStaleRunningHistRows(t *te
 }
 
 func TestServerHelperPurgeMVHistoryBeforeTSOUsesStatusIndexHints(t *testing.T) {
-	require.Contains(t, buildMarkRefreshHistoryRunningRowsOrphanedSQL(), "FORCE INDEX (idx_refresh_status)")
-	require.Contains(t, buildMarkLogPurgeHistoryRunningRowsOrphanedSQL(), "FORCE INDEX (idx_purge_status)")
+	require.Contains(t, buildMarkRefreshHistoryRunningRowsOrphanedSQL(), "FORCE INDEX (idx_refresh_status_start_time)")
+	require.Contains(t, buildMarkLogPurgeHistoryRunningRowsOrphanedSQL(), "FORCE INDEX (idx_purge_status_start_time)")
 }
 
 func TestServerHelperRefreshMVDeletedWhenMetaNotFound(t *testing.T) {
@@ -2871,9 +2871,9 @@ func TestServerHelperTryBackoffRefreshManualCancel(t *testing.T) {
 		require.Equal(t, []string{testSQLLockMVNextTime, testSQLUpdateMVNextTime}, se.executedRestrictedSQL)
 		require.Equal(t, []any{int64(101)}, se.executedRestrictedArg[0])
 		require.Len(t, se.executedRestrictedArg[1], 2)
-		gotNext, ok := se.executedRestrictedArg[1][0].(time.Time)
+		gotNext, ok := se.executedRestrictedArg[1][0].(int64)
 		require.True(t, ok)
-		require.True(t, gotNext.Equal(expectedNext))
+		require.Equal(t, expectedNext.Unix(), gotNext)
 		require.Equal(t, int64(101), se.executedRestrictedArg[1][1])
 	})
 
@@ -2904,9 +2904,9 @@ func TestServerHelperTryBackoffRefreshManualCancel(t *testing.T) {
 		require.Equal(t, []string{testSQLLockMVNextTime, testSQLUpdateMVNextTime}, se.executedRestrictedSQL)
 		require.Equal(t, []any{int64(101)}, se.executedRestrictedArg[0])
 		require.Len(t, se.executedRestrictedArg[1], 2)
-		gotNext, ok := se.executedRestrictedArg[1][0].(time.Time)
+		gotNext, ok := se.executedRestrictedArg[1][0].(int64)
 		require.True(t, ok)
-		require.True(t, gotNext.Equal(currentNext))
+		require.Equal(t, currentNext.Unix(), gotNext)
 		require.Equal(t, int64(101), se.executedRestrictedArg[1][1])
 	})
 
@@ -2997,9 +2997,9 @@ func TestServerHelperTryBackoffRefreshManualCancel(t *testing.T) {
 		require.Equal(t, []string{testSQLLockMVNextTime, testSQLUpdateMVNextTime}, se.executedRestrictedSQL)
 		require.Equal(t, []any{int64(101)}, se.executedRestrictedArg[0])
 		require.Len(t, se.executedRestrictedArg[1], 2)
-		gotNext, ok := se.executedRestrictedArg[1][0].(time.Time)
+		gotNext, ok := se.executedRestrictedArg[1][0].(int64)
 		require.True(t, ok)
-		require.True(t, gotNext.Equal(cooldownNext))
+		require.Equal(t, cooldownNext.Unix(), gotNext)
 		require.Equal(t, int64(101), se.executedRestrictedArg[1][1])
 	})
 
@@ -3082,14 +3082,14 @@ func TestBuildResolvedMVRefreshAlertSQL(t *testing.T) {
 		buildDeleteResolvedMVRefreshAlertSQL(ids),
 	)
 	require.Equal(t,
-		"UPDATE mysql.tidb_mview_refresh_alert SET ALERT_LEVEL = NULL, UPDATED_AT = '"+now.Format("2006-01-02 15:04:05")+"' WHERE MVIEW_ID IN (103,104) AND REFRESH_FAILED IS NOT NULL AND ALERT_LEVEL IS NOT NULL",
+		"UPDATE mysql.tidb_mview_refresh_alert SET ALERT_LEVEL = NULL, UPDATE_TIME = '"+now.Format("2006-01-02 15:04:05")+"' WHERE MVIEW_ID IN (103,104) AND REFRESH_FAILED IS NOT NULL AND ALERT_LEVEL IS NOT NULL",
 		buildClearResolvedMVRefreshAlertLevelSQL(now, ids),
 	)
 	require.Equal(t,
 		`UPDATE mysql.tidb_mview_refresh_alert AS a
 JOIN mysql.tidb_mview_refresh_info AS i ON a.MVIEW_ID = i.MVIEW_ID
-SET a.ALERT_LEVEL = NULL, a.UPDATED_AT = NOW(6)
-WHERE i.NEXT_TIME IS NULL AND a.ALERT_LEVEL IS NOT NULL`,
+SET a.ALERT_LEVEL = NULL, a.UPDATE_TIME = NOW(6)
+WHERE i.NEXT_REFRESH_UNIX_SECONDS IS NULL AND a.ALERT_LEVEL IS NOT NULL`,
 		buildClearDisabledMVRefreshAlertLevelSQL(),
 	)
 }
@@ -3136,9 +3136,9 @@ func TestServerHelperTryBackoffPurgeManualCancel(t *testing.T) {
 		require.Equal(t, []string{testSQLLockPurgeNextTime, testSQLUpdatePurgeNextTime}, se.executedRestrictedSQL)
 		require.Equal(t, []any{int64(201)}, se.executedRestrictedArg[0])
 		require.Len(t, se.executedRestrictedArg[1], 2)
-		gotNext, ok := se.executedRestrictedArg[1][0].(time.Time)
+		gotNext, ok := se.executedRestrictedArg[1][0].(int64)
 		require.True(t, ok)
-		require.True(t, gotNext.Equal(expectedNext))
+		require.Equal(t, expectedNext.Unix(), gotNext)
 		require.Equal(t, int64(201), se.executedRestrictedArg[1][1])
 	})
 
@@ -3169,9 +3169,9 @@ func TestServerHelperTryBackoffPurgeManualCancel(t *testing.T) {
 		require.Equal(t, []string{testSQLLockPurgeNextTime, testSQLUpdatePurgeNextTime}, se.executedRestrictedSQL)
 		require.Equal(t, []any{int64(201)}, se.executedRestrictedArg[0])
 		require.Len(t, se.executedRestrictedArg[1], 2)
-		gotNext, ok := se.executedRestrictedArg[1][0].(time.Time)
+		gotNext, ok := se.executedRestrictedArg[1][0].(int64)
 		require.True(t, ok)
-		require.True(t, gotNext.Equal(currentNext))
+		require.Equal(t, currentNext.Unix(), gotNext)
 		require.Equal(t, int64(201), se.executedRestrictedArg[1][1])
 	})
 

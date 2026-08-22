@@ -4194,3 +4194,40 @@ func TestIssue57608(t *testing.T) {
 		))
 	}
 }
+
+func TestMaterializedScheduleRuntimeEvalUsesScheduleSQLMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	evalTK := testkit.NewTestKit(t, store)
+
+	allowInvalidDatesMode, err := mysql.GetSQLMode("ALLOW_INVALID_DATES")
+	require.NoError(t, err)
+	strictMode, err := mysql.GetSQLMode("STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO")
+	require.NoError(t, err)
+
+	nextExpr := "'2026-02-31 00:00:00'"
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMVMaintenance)
+	evalTK.MustExec("set @@session.sql_mode='STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO'")
+	nextAt, shouldUpdate, err := expression.DeriveMaterializedScheduleNextTime(
+		ctx,
+		evalTK.Session(),
+		"",
+		nextExpr,
+		allowInvalidDatesMode,
+		time.UTC,
+	)
+	require.NoError(t, err)
+	require.True(t, shouldUpdate)
+	require.NotNil(t, nextAt)
+
+	evalTK.MustExec("set @@session.sql_mode='ALLOW_INVALID_DATES'")
+	_, _, err = expression.DeriveMaterializedScheduleNextTime(
+		ctx,
+		evalTK.Session(),
+		"",
+		nextExpr,
+		strictMode,
+		time.UTC,
+	)
+	require.Error(t, err)
+	require.True(t, types.ErrWrongValue.Equal(err), "err %v", err)
+}
