@@ -5063,6 +5063,20 @@ fn build_join_with_choice(
                 })
                 .unwrap_or(decision.filter_selectivity)
         };
+        // Go's inner TABLE-scan task (`constructDS2TableScanTask`,
+        // `exhaust_physical_plans.go:857-874`) prices one outer row as
+        // `AvgInnerRowCnt`, divided by the residual selectivity when the scan
+        // carries filters, and caps it at 1.0 only for a max-one-row object.
+        // There is no LOWER bound on it. Its inner INDEX-scan task has an
+        // upper one -- `rowCountUpperBound = TableStats.RowCount /
+        // joinKeyNDV`, applied as `math.Min` (`:1144`) -- and even that is
+        // gated behind `fixcontrol.Fix44855`, which defaults to false.
+        //
+        // `probe_access_rows_floor` computes that same `RowCount / NDV`
+        // quantity and applied it with `.max()`, as a FLOOR. Same formula,
+        // opposite direction, on the path Go bounds least: for TPCC's
+        // `orders` probe (2 of 3 clustered-key columns, so not max-one-row)
+        // it raised a per-outer-row estimate to `300000/1`, the whole table.
         let estimated_access_rows = estimated_outer_rows
             .zip(estimated_source_rows_one)
             .map(|(outer, source)| {
@@ -5071,12 +5085,7 @@ fn build_join_with_choice(
                 } else {
                     source
                 };
-                outer * before_filter.max(access_rows_floor) * outer_selectivity
-            })
-            .or_else(|| {
-                (access_rows_floor > 0.0).then(|| {
-                    estimated_outer_rows.unwrap_or(1.0) * access_rows_floor * outer_selectivity
-                })
+                outer * before_filter * outer_selectivity
             });
         let estimated_index_join_rows = estimated_join_rows.map(|rows| {
             if outer_not_null.is_empty() {

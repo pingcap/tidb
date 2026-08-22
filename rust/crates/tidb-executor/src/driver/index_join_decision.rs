@@ -550,11 +550,32 @@ impl IndexJoinDecision {
         }
     }
 
-    /// Go `indexJoinProbeAccessRowsFloor` from #70176. `AvgInnerRowCnt`
-    /// accounts for every equality at the join, but a dynamic range reads all
-    /// rows matching only the equality-prefix columns this object can use.
-    /// Keep those two estimates separate: this is a floor on storage rows,
-    /// not on the rows that survive the remaining equalities and filters.
+    /// `TableStats.RowCount / NDV(usable join-key prefix)` -- Go's
+    /// `rowCountUpperBound` (`exhaust_physical_plans.go:1123-1141`).
+    ///
+    /// CITATION CORRECTED, AND A DIVERGENCE RECORDED WITH IT. This carried
+    /// the name `indexJoinProbeAccessRowsFloor` and a reference to Go
+    /// "#70176"; no such function, and no `TestIndexJoinInnerRowCountUses
+    /// UsableJoinKeys`, exists anywhere in the Go tree. What does exist is
+    /// the quantity above, and Go uses it in two ways this does not:
+    ///
+    /// * as an UPPER bound -- `rowCount = math.Min(rowCount,
+    ///   rowCountUpperBound)` (`:1144`), never a lower one;
+    /// * on the inner INDEX-scan task only, and even there behind
+    ///   `fixcontrol.Fix44855`, which DEFAULTS TO FALSE. Go's inner
+    ///   TABLE-scan task (`constructDS2TableScanTask`, `:832-874`) bounds
+    ///   `AvgInnerRowCnt / selectivity` in neither direction.
+    ///
+    /// The remaining callers use it as a `> 0.0` switch between estimate
+    /// sources rather than as a bound. Removing it outright is gate-neutral
+    /// except for `index_join_probe_rows_use_only_the_access_paths_join_keys`,
+    /// whose expectation was written from the same missing Go test -- so the
+    /// mechanism is left in place, and settling it needs a plan captured from
+    /// a running Go TiDB rather than another reading of this tree.
+    ///
+    /// The one place it had inverted Go's direction outright -- `.max()` on
+    /// the printed access estimate for a table-scan probe -- is fixed; see
+    /// `driver::from`'s `estimated_access_rows`.
     pub(crate) fn probe_access_rows_floor(
         &self,
         stats: Option<&crate::access_cost::TableStatistics>,

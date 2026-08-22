@@ -1367,11 +1367,21 @@ fn a_join_hint_decides_the_family_before_any_cost_is_compared() {
     }
 }
 
-/// Go `TestIndexJoinInnerRowCountUsesUsableJoinKeys` from #70176. The
-/// clustered primary key can build a range from only `k1`, while the
+/// The clustered primary key can build a range from only `k1`, while the
 /// secondary index can use both equality keys. Costing both paths from the
 /// complete join output incorrectly makes the broad primary-key prefix look
 /// like a one-row probe.
+///
+/// CITATION CORRECTED: this named a Go test
+/// `TestIndexJoinInnerRowCountUsesUsableJoinKeys` "from #70176". No such
+/// test, and no such function, exists anywhere in the Go tree; the
+/// expectation below was not captured from Go. The CONCERN is real and Go
+/// does hold the quantity it turns on -- `rowCountUpperBound`,
+/// `exhaust_physical_plans.go:1123` -- but as an UPPER bound on the inner
+/// INDEX-scan task, behind `fixcontrol.Fix44855`, which defaults to false.
+/// See `IndexJoinDecision::probe_access_rows_floor` for what that means for
+/// the mechanism this guards. Until the same statement is captured from a
+/// running Go TiDB, this test pins Rust's own behaviour, not Go's.
 #[test]
 fn index_join_probe_rows_use_only_the_access_paths_join_keys() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
