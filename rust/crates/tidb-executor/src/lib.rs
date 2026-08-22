@@ -92,6 +92,7 @@ pub mod joiner;
 pub mod keydecoder;
 pub mod kv_table;
 pub mod limit;
+pub mod load_stats;
 pub mod mem_quota;
 pub mod mem_reader;
 pub mod mem_table;

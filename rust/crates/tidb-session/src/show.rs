@@ -1341,6 +1341,11 @@ impl Session {
             tidb_ast::AdminStmt::AnalyzeTable(_) | tidb_ast::AdminStmt::AnalyzeIncremental(_) => {
                 self.analyze_stmt(admin)
             }
+            // `LOAD STATS 'file.json'`: a statistics dump installed into the
+            // same catalog slot `ANALYZE` publishes to. See
+            // `crate::load_stats_arm` for Go's three-layer split and where
+            // each half lives here.
+            tidb_ast::AdminStmt::LoadStats(load) => self.load_stats_stmt(load),
             // `ADMIN RELOAD <blacklist>`: Go's `ReloadExprPushdownBlacklist`
             // and `ReloadOptRuleBlacklist` executors, each of which reads its
             // `mysql.*` table and publishes what the optimizer consults. Both

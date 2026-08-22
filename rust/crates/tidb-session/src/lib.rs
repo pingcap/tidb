@@ -686,6 +686,7 @@ mod dispatch;
 mod explain_arm;
 mod identity;
 pub mod infoschema;
+mod load_stats_arm;
 mod non_prepared_plan_cache;
 mod noop;
 mod prepared_ast;
@@ -1448,6 +1449,8 @@ mod tests_index_key_length;
 mod tests_join_predicate_placement;
 #[cfg(test)]
 mod tests_json;
+#[cfg(test)]
+mod tests_load_stats;
 #[cfg(test)]
 mod tests_mem_quota;
 mod tests_multi_table_dml;
