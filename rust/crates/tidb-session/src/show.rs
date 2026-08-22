@@ -348,7 +348,8 @@ fn show_create_table_text(
         None if index_carries_primary => Vec::new(),
         None => table.common_handle_offsets().to_vec(),
     };
-    if !handle_columns.is_empty() {
+    let primary_emitted_from_handles = !handle_columns.is_empty();
+    if primary_emitted_from_handles {
         let columns = handle_columns
             .iter()
             .map(|offset| escape_name(&table.columns[*offset].name))
@@ -360,12 +361,21 @@ fn show_create_table_text(
     }
 
     for index in table.indexes() {
-        // A cluster-loaded common-handle table retains Go's PRIMARY
-        // `IndexInfo` for range building and statistics. It is still the
-        // clustered key emitted above, not a second non-clustered index.
-        if index.name.eq_ignore_ascii_case("PRIMARY")
-            && index.column_offsets == table.common_handle_offsets()
-        {
+        // The PRIMARY is emitted ONCE, and the block above decided which of
+        // the two places does it: it prints from the handle offsets only when
+        // the index list carries no PRIMARY, and otherwise leaves it to this
+        // loop. So the loop skips the PRIMARY exactly when that block already
+        // printed it -- and no longer on its own separate test.
+        //
+        // The two guards used to be written against each other rather than
+        // against one fact: the block deferred whenever the index list held a
+        // PRIMARY, while this loop skipped whenever the index's columns were
+        // the common handle's. For a cluster-loaded common-handle table BOTH
+        // were true, so neither printed and `SHOW CREATE TABLE` lost the key
+        // altogether. A `pk_is_handle` table whose index list also held a
+        // PRIMARY was the mirror case: neither test fired and it printed
+        // TWICE.
+        if index.name.eq_ignore_ascii_case("PRIMARY") && primary_emitted_from_handles {
             continue;
         }
         let columns = index

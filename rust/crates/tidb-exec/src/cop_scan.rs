@@ -463,6 +463,25 @@ where
                 })
             }
             Some(aggregate) => {
+                // The SAME gate the two arms above state, and for the same
+                // reason: an aggregate computed at the region IS the answer,
+                // so a conjunct left behind is not a weaker pre-filter that
+                // the scan source re-tests -- there are no rows left to test.
+                // `count(*)` reaches this arm, and without the gate
+                // `WHERE u >= 9223372036854775808` over a `BIGINT UNSIGNED`
+                // column answered 5 where every row-returning form of the same
+                // query answered 2: the unsigned literal is one this lowering
+                // refuses, so the Selection stayed home while the COUNT
+                // travelled and counted the whole table.
+                if lowered.len() != request.predicates.len()
+                    || request.limit.is_some()
+                    || request.topn.is_some()
+                    || request.output_offsets.is_some()
+                {
+                    return Err(refuse(
+                        "partial aggregation requires a complete Selection and no competing pushdown",
+                    ));
+                }
                 let message = aggregation_to_pb(aggregate, &columns)
                     .ok_or_else(|| refuse("a pushed aggregate has no bounded lowering"))?;
                 field_types = aggregate.output_types();
