@@ -1965,6 +1965,19 @@ impl KvTable {
         self.pk_handle_offset
     }
 
+    /// Go `tblInfo.PKIsHandle && mysql.HasUnsignedFlag(tblInfo.GetPkColInfo()
+    /// .GetFlag())`, which Go carries on a plan as `UnsignedHandle`.
+    ///
+    /// The handle BITS are the same either way; what differs is how they must
+    /// be read back -- as a value to print, to sort by, or to range over. A
+    /// handle above `i64::MAX` reads as a negative `i64`.
+    #[must_use]
+    pub fn unsigned_pk_handle(&self) -> bool {
+        self.pk_handle_offset
+            .and_then(|offset| self.columns.get(offset))
+            .is_some_and(|column| column.field_type.is_unsigned())
+    }
+
     /// The number of stored rows.
     #[must_use]
     pub fn len(&self) -> usize {

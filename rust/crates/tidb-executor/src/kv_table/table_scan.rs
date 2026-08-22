@@ -255,14 +255,13 @@ impl KvTable {
         // `PARTITION BY HASH (id) PARTITIONS 2` answered each partition in
         // order and the partitions in id order: 2, 4, 1, 3.
         let merge_by_record_key = ordered && physical_count > 1;
+        let unsigned_handle = self.unsigned_pk_handle();
         let mut merge_heap = IndexMergeHeap::new(descending);
         if merge_by_record_key {
             for (position, iterator) in iterators.iter().enumerate() {
                 if iterator.valid() {
-                    merge_heap.push(
-                        cut_row_key_prefix(iterator.key().as_bytes()).to_vec(),
-                        position,
-                    );
+                    merge_heap
+                        .push(record_merge_key(iterator.key().as_bytes(), unsigned_handle), position);
                 }
             }
         }
@@ -270,6 +269,7 @@ impl KvTable {
             iterators,
             next_iterator: 0,
             merge_by_record_key,
+            unsigned_handle,
             merge_heap,
             decoder,
         })
@@ -1484,8 +1484,43 @@ pub struct RowCursor {
     /// Go `needMergeSort` (`executor/distsql.go`): with more than one range
     /// AND an order to keep, the ranges are merged rather than concatenated.
     merge_by_record_key: bool,
+    /// Whether the handle the merge orders by is UNSIGNED; see
+    /// [`record_merge_key`].
+    unsigned_handle: bool,
     merge_heap: IndexMergeHeap,
     decoder: RowDecoder,
+}
+
+/// The bytes a record key sorts by inside the partition merge, in the
+/// HANDLE's own domain order.
+///
+/// `cut_row_key_prefix`, NOT `cut_index_prefix`: a record key is
+/// `t{id}_r{handle}` and is exactly `PREFIX_LEN + ID_LEN` long, which is the
+/// whole of what the index cut removes. Cut that way every record key
+/// compares EMPTY, all keys tie, and the heap falls back to the position --
+/// draining one partition before the next, which is the concatenation this
+/// merge exists to replace. What is left is the 8 encoded handle bytes.
+///
+/// Those bytes carry the SIGNED integer codec, which flips the sign bit so
+/// that byte order is signed order. An UNSIGNED handle above `i64::MAX`
+/// therefore sorts FIRST in key order while its VALUE is the largest, and a
+/// merge that trusted the raw bytes answered `PARTITION BY HASH (id)` with
+/// `2^63, u64::MAX, 1, i64::MAX` for `ORDER BY id`. Flipping the bit back
+/// gives the bytes the unsigned codec would have written, whose order is the
+/// value order.
+///
+/// Go reaches the same order from the other side: its partitioned keep-order
+/// table scan carries `byItems` and merges through `NewSortedSelectResults`,
+/// which compares the ORDER BY expressions' decoded VALUES. Flipping one bit
+/// is that comparison without decoding a row to make it.
+fn record_merge_key(key: &[u8], unsigned_handle: bool) -> Vec<u8> {
+    let mut merge_key = cut_row_key_prefix(key).to_vec();
+    if unsigned_handle {
+        if let Some(high_byte) = merge_key.first_mut() {
+            *high_byte ^= 0x80;
+        }
+    }
+    merge_key
 }
 
 impl RowCursor {
@@ -1513,15 +1548,8 @@ impl RowCursor {
                 .next()
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
             if iterator.valid() {
-                // `cut_row_key_prefix`, NOT `cut_index_prefix`: a record key
-                // is `t{id}_r{handle}` and is exactly `PREFIX_LEN + ID_LEN`
-                // long, which is the whole of what the index cut removes. Cut
-                // that way every record key compares EMPTY, all keys tie, and
-                // the heap falls back to the position -- draining one
-                // partition before the next, which is the concatenation this
-                // merge exists to replace.
                 self.merge_heap.push(
-                    cut_row_key_prefix(iterator.key().as_bytes()).to_vec(),
+                    record_merge_key(iterator.key().as_bytes(), self.unsigned_handle),
                     position,
                 );
             }

@@ -3317,15 +3317,16 @@ fn a_constant_above_i64_max_filters_the_same_on_both_paths() {
 ///
 /// Go copes by splitting a scan's ranges at that boundary
 /// (`SplitRangesAcrossInt64Boundary`, `distsql/request_builder.go:575`) and
-/// reading the two halves in the right order. This tier does not range over
-/// an unsigned handle at all -- `handle_column` returns `None` for one -- so
-/// it full-scans and filters, which is slower than Go and answers the same.
+/// reading the two halves in the right order.
 ///
-/// These are the answers. They are pinned BEFORE any attempt to port the
-/// split, because that port trades a correct slow plan for a fast one whose
-/// failure mode is silently missing or duplicated rows, and the boundary
-/// cases below are exactly where it would break: at `i64::MAX`, one past it,
-/// and at the top of the domain.
+/// These answers were pinned BEFORE that split was ported, while this tier
+/// still refused to range over an unsigned handle and full-scanned instead --
+/// because the port trades a correct slow plan for a fast one whose failure
+/// mode is silently missing or duplicated rows, and the cases below are
+/// exactly where it would break: at `i64::MAX`, one past it, and at the top
+/// of the domain. They are unchanged by the port; what changed is the plan
+/// underneath them, which
+/// [`an_unsigned_row_handle_is_read_through_ranges_like_go`] pins.
 #[test]
 fn an_unsigned_row_handle_answers_correctly_across_the_int64_boundary() {
     let mut session = Session::new();
@@ -3392,5 +3393,215 @@ fn an_unsigned_row_handle_answers_correctly_across_the_int64_boundary() {
             vec!["18446744073709551615".to_owned()],
         ],
         "reading in KEY order would put the two large values first"
+    );
+}
+
+/// The plan the answers above are now reached through, and the three places
+/// the unsigned domain is VISIBLE in it.
+///
+/// Go's ranger materialises an open endpoint in the column's own domain
+/// (`convertPointsInPlace`, `ranger.go:71-78`), so an unsigned handle's open
+/// LOW is `0` rather than `-inf`, and `formatDatum` (`ranger/types.go:371`)
+/// prints a `KindUint64` low bound as the number. Its open HIGH is
+/// `MaxUint64`, which that same function prints as `+inf`.
+///
+/// A point access prints the handle's UNSIGNED reading, because Go's plan
+/// carries `UnsignedHandle` and formats the identical 64 bits with
+/// `strconv.FormatUint` (`physical_batch_point_get.go:206`). Without it
+/// `18446744073709551615` prints as `-1`.
+#[test]
+fn an_unsigned_row_handle_is_read_through_ranges_like_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE uh (id BIGINT UNSIGNED PRIMARY KEY, v INT)")
+        .expect("table");
+    session
+        .run("INSERT INTO uh VALUES (1, 1), (18446744073709551615, 1)")
+        .expect("rows");
+
+    let scan_line = |session: &mut Session, sql: &str| {
+        tests_support::row_text(session.run(sql))
+            .into_iter()
+            .map(|row| row.join(" "))
+            .find(|line| line.contains("Scan") || line.contains("Point_Get"))
+            .unwrap_or_default()
+    };
+
+    // The predicate is CONSUMED by the range, so this is not a full scan with
+    // a filter above it: the range is the whole of the restriction.
+    assert!(
+        scan_line(&mut session, "EXPLAIN SELECT * FROM uh WHERE id >= 9223372036854775808")
+            .contains("range:[9223372036854775808,+inf]"),
+        "an unsigned bound above the signed maximum has to reach the scan as a range"
+    );
+    // The open LOW end is the unsigned domain's `0`, not `-inf`.
+    assert!(
+        scan_line(&mut session, "EXPLAIN SELECT * FROM uh WHERE id < 9223372036854775808")
+            .contains("range:[0,9223372036854775808)"),
+        "an unsigned handle's open low bound is 0"
+    );
+    // ... while the open HIGH end still prints `+inf`, because `MaxUint64` on
+    // the right side is what Go's formatter spells that way.
+    assert!(
+        scan_line(&mut session, "EXPLAIN SELECT * FROM uh WHERE id > 1").contains("range:(1,+inf]"),
+        "an unsigned handle's open high bound prints +inf"
+    );
+    for (sql, expected) in [
+        (
+            "EXPLAIN SELECT * FROM uh WHERE id = 18446744073709551615",
+            "handle:18446744073709551615",
+        ),
+        (
+            "EXPLAIN SELECT * FROM uh WHERE id IN (1, 18446744073709551615)",
+            "handle:[1 18446744073709551615]",
+        ),
+    ] {
+        assert!(
+            scan_line(&mut session, sql).contains(expected),
+            "{sql} must print the handle's unsigned reading, not its signed one"
+        );
+    }
+}
+
+/// The same handle, PARTITIONED: the merge that orders one scan's partitions
+/// has to compare in the handle's own domain too.
+///
+/// A partitioned keep-order table scan reads one key range per partition and
+/// merges them. The merge key is the record key, whose handle is written with
+/// the SIGNED integer codec -- so an unsigned handle above `i64::MAX` sorts
+/// FIRST in key order while its value is the largest. Merging on the raw
+/// bytes answered `ORDER BY id` with `2^63, u64::MAX, 1, i64::MAX`.
+///
+/// Go compares the `byItems`' decoded VALUES instead
+/// (`NewSortedSelectResults`), which is this order.
+#[test]
+fn an_unsigned_row_handle_orders_across_partitions_by_value_not_by_key() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE up (id BIGINT UNSIGNED PRIMARY KEY, v INT) \
+             PARTITION BY HASH (id) PARTITIONS 4",
+        )
+        .expect("table");
+    for value in [
+        "0",
+        "1",
+        "9223372036854775807",
+        "9223372036854775808",
+        "18446744073709551615",
+    ] {
+        session
+            .run(&format!("INSERT INTO up VALUES ({value}, 1)"))
+            .expect("row");
+    }
+    let ascending = vec![
+        vec!["1".to_owned()],
+        vec!["9223372036854775807".to_owned()],
+        vec!["9223372036854775808".to_owned()],
+        vec!["18446744073709551615".to_owned()],
+    ];
+    // A `WHERE` is what puts the scan on the RANGE path, which is the path
+    // that merges; without one the read is a full scan of each partition.
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT id FROM up WHERE id >= 1 ORDER BY id")),
+        ascending
+    );
+    let mut descending = ascending.clone();
+    descending.reverse();
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT id FROM up WHERE id >= 1 ORDER BY id DESC")),
+        descending
+    );
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT count(*) FROM up WHERE id >= 9223372036854775808")),
+        vec![vec!["2".to_owned()]]
+    );
+}
+
+/// A statement that WRITES through an unsigned handle range, which is where a
+/// range that reads the wrong rows stops being recoverable.
+///
+/// `UPDATE`/`DELETE` take the same table path as the reads above, so the
+/// straddling range has to be cut for them too -- and the count they report
+/// is the count of rows they touched.
+#[test]
+fn writes_restricted_by_an_unsigned_handle_range_touch_exactly_those_rows() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE uw (id BIGINT UNSIGNED PRIMARY KEY, v INT)")
+        .expect("table");
+    for value in [
+        "0",
+        "1",
+        "9223372036854775807",
+        "9223372036854775808",
+        "18446744073709551615",
+    ] {
+        session
+            .run(&format!("INSERT INTO uw VALUES ({value}, 1)"))
+            .expect("row");
+    }
+    // Only the two rows at or above the boundary.
+    assert_eq!(
+        session
+            .run("UPDATE uw SET v = 2 WHERE id >= 9223372036854775808")
+            .expect("update"),
+        StmtResult::Affected(2)
+    );
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT id FROM uw WHERE v = 2 ORDER BY id")),
+        vec![
+            vec!["9223372036854775808".to_owned()],
+            vec!["18446744073709551615".to_owned()],
+        ]
+    );
+    // A STRADDLING range: two rows below the boundary and one above it.
+    assert_eq!(
+        session
+            .run("DELETE FROM uw WHERE id BETWEEN 1 AND 9223372036854775808")
+            .expect("delete"),
+        StmtResult::Affected(3)
+    );
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT id FROM uw ORDER BY id")),
+        vec![
+            vec!["0".to_owned()],
+            vec!["18446744073709551615".to_owned()],
+        ]
+    );
+}
+
+/// A NARROW unsigned handle never reaches the boundary, and the split must
+/// leave it alone.
+///
+/// `INT UNSIGNED` tops out at `4294967295`, so no range of it crosses the
+/// point where the key encoding flips sign -- Go's `sort.Search` finds no
+/// bound past `MaxInt64` and returns the ranges untouched. The open high end
+/// is still the DOMAIN's `MaxUint64`, which is why it prints `+inf` rather
+/// than the column's own maximum.
+#[test]
+fn a_narrow_unsigned_row_handle_is_ranged_over_without_a_split() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE ui (id INT UNSIGNED PRIMARY KEY, v INT)")
+        .expect("table");
+    for value in ["0", "1", "4294967295"] {
+        session
+            .run(&format!("INSERT INTO ui VALUES ({value}, 1)"))
+            .expect("row");
+    }
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT id FROM ui WHERE id > 0 ORDER BY id")),
+        vec![vec!["1".to_owned()], vec!["4294967295".to_owned()]]
+    );
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT count(*) FROM ui WHERE id < 4294967295")),
+        vec![vec!["2".to_owned()]]
+    );
+    assert!(
+        tests_support::row_text(session.run("EXPLAIN SELECT id FROM ui WHERE id > 0"))
+            .into_iter()
+            .any(|row| row.join(" ").contains("range:(0,+inf]")),
+        "the open high end is the unsigned DOMAIN's maximum, not the column's"
     );
 }

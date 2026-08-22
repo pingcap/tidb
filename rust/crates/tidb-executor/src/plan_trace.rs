@@ -984,7 +984,11 @@ impl PlanTrace {
         {
             (access, "keep order:false, desc:false".to_owned())
         } else {
-            let printed: Vec<String> = handles.iter().map(handle_text).collect();
+            let unsigned = table.unsigned_pk_handle();
+            let printed: Vec<String> = handles
+                .iter()
+                .map(|handle| handle_text(handle, unsigned))
+                .collect();
             (
                 format!("table:{visible}{}", partition_object(partitions)),
                 format!(
@@ -1089,7 +1093,7 @@ impl PlanTrace {
             Some(access) => (access, String::new()),
             None => {
                 let printed = match handle {
-                    Some(handle) => handle_text(handle),
+                    Some(handle) => handle_text(handle, table.unsigned_pk_handle()),
                     None => "NULL".to_owned(),
                 };
                 (format!("table:{visible}"), format!("handle:{printed}"))
@@ -5081,8 +5085,15 @@ impl Executor for CountExec {
     }
 }
 
-fn handle_text(handle: &TableHandle) -> String {
+/// Go's `handle:` operator-info value.
+///
+/// `unsigned` is the plan's `UnsignedHandle`
+/// (`physical_batch_point_get.go:206`): the same 64 bits, printed as a
+/// `uint64` when the handle column is unsigned, so `18446744073709551615`
+/// prints as itself rather than as the `-1` its signed reading gives.
+fn handle_text(handle: &TableHandle, unsigned: bool) -> String {
     match handle {
+        TableHandle::Int(value) if unsigned => (*value as u64).to_string(),
         TableHandle::Int(value) => value.to_string(),
         // A clustered-index handle is a byte string; Go prints its decoded
         // datums, which needs the handle codec this printer does not carry.

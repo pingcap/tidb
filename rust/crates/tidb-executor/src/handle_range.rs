@@ -87,13 +87,18 @@ use tidb_txnkv::Key;
 ///
 /// * a table with no primary-key handle -- a `_tidb_rowid` table has no
 ///   handle a `WHERE` can name;
-/// * an UNSIGNED handle. The record key encodes a handle with the SIGNED
-///   integer codec, so an unsigned value above `i64::MAX` encodes as a
-///   negative key and a range over it is not the interval its bounds read
-///   like. Go handles this through `points2TableRanges`' unsigned domain;
-///   refusing is a lost optimization on such tables, never a wrong answer,
-///   because the `WHERE` above the source still filters every row;
 /// * a `WHERE` that constrains the handle with nothing the ranger can use.
+///
+/// An UNSIGNED handle is ranged over like any other. Its two extra steps --
+/// materialising an open endpoint in the unsigned domain, and cutting the
+/// ranges where the signed key codec flips sign -- both live at the point of
+/// USE ([`record_key_ranges`], [`column_range`]) rather than here. Go
+/// materialises earlier, inside `points2TableRanges`, so its `path.Ranges`
+/// already carry `0`/`MaxUint64` where this list still carries
+/// `MinNotNull`/`MaxValue`; the bounds those two spellings denote are the
+/// same, every consumer here converts through [`to_table_range_in_domain`]
+/// before reading them, and keeping the sentinels is what leaves the range
+/// text `EXPLAIN` prints for a SIGNED handle untouched.
 pub(crate) fn build_handle_ranges<'a>(
     table: &KvTable,
     where_clause: &'a tidb_ast::Expr,
@@ -134,6 +139,24 @@ pub(crate) fn build_handle_ranges<'a>(
     built
         .ranges
         .retain(|range| range.high.first() != Some(&Datum::Null));
+    // Go materialises the open endpoints here, inside `points2TableRanges`,
+    // and an UNSIGNED handle is where that becomes VISIBLE: its domain
+    // minimum is `0`, and `formatDatum` (`ranger/types.go:371`) prints a
+    // `KindUint64` low bound as the number rather than as `-inf` -- so Go's
+    // `EXPLAIN` says `range:[0,9223372036854775808)` where the sentinel would
+    // say `[-inf,...)`. The high end agrees either way, because `MaxUint64`
+    // on the right prints `+inf` too.
+    //
+    // A SIGNED handle keeps the sentinels: `formatDatum` maps `MinInt64` on
+    // the left and `MaxInt64` on the right to the same `-inf`/`+inf` the
+    // sentinels print, every consumer here converts through
+    // [`to_table_range_in_domain`] before reading a bound, and not rewriting
+    // them leaves this crate's existing range text untouched.
+    if handle_is_unsigned(table) {
+        for range in &mut built.ranges {
+            *range = materialize_open_bounds(range, true);
+        }
+    }
     Some(built)
 }
 
@@ -178,12 +201,6 @@ fn build_common_handle_ranges<'a>(
 /// this tier can range over it.
 fn handle_column(table: &KvTable) -> Option<&crate::kv_table::KvColumn> {
     let column = table.columns.get(table.pk_handle_offset()?)?;
-    // An UNSIGNED handle is deliberately refused here; see
-    // `split_ranges_across_int64_boundary` for what is still missing before
-    // it can be ranged over.
-    if column.field_type.is_unsigned() {
-        return None;
-    }
     // The handle codec is integer; a clustered non-integer key reaches this
     // tier as a common handle, which `pk_handle_offset` already excludes.
     matches!(
@@ -197,6 +214,17 @@ fn handle_column(table: &KvTable) -> Option<&crate::kv_table::KvColumn> {
     .then_some(column)
 }
 
+/// Whether this table's row handle spans the UNSIGNED domain.
+///
+/// Go carries the same bit as `mysql.HasUnsignedFlag(newTp.GetFlag())` inside
+/// `convertPointsInPlace`, and it decides two things: which extremes an open
+/// endpoint becomes ([`to_table_range_in_domain`]), and whether the ranges
+/// have to be cut at the point the key encoding flips sign
+/// ([`split_ranges_across_int64_boundary`]).
+fn handle_is_unsigned(table: &KvTable) -> bool {
+    handle_column(table).is_some_and(|column| column.field_type.is_unsigned())
+}
+
 /// Go `points2TableRanges`' conversion: an open endpoint becomes the handle
 /// domain's own extreme, so every bound is a real integer.
 ///
@@ -204,35 +232,77 @@ fn handle_column(table: &KvTable) -> Option<&crate::kv_table::KvColumn> {
 /// false`). A NULL HIGH bound cannot reach here at all -- the `skipNull` filter
 /// in [`build_handle_ranges`] has already dropped that whole interval -- so the
 /// catch-all high arm below is a total-match requirement, not a rule.
-fn to_table_range(range: &IndexRange) -> (i64, i64, bool, bool) {
+///
+/// `unsigned` is the handle column's own signedness, and it decides which
+/// extremes an open end becomes: Go `convertPointsInPlace` sets `0` and
+/// `MaxUint64` for an unsigned column against `MinInt64` and `MaxInt64` for a
+/// signed one (`ranger.go:71-78`). Getting it wrong is not a lost
+/// optimization: `u64::MAX` encodes as -1, so mapping an unsigned open high to
+/// `i64::MAX` turns `id >= 2^63` into the key interval `[negative, i64::MAX]`,
+/// which spans the whole table -- and hides the boundary from
+/// [`split_ranges_across_int64_boundary`], because a sentinel is not an
+/// integer it can compare.
+fn to_table_range_in_domain(range: &IndexRange, unsigned: bool) -> (i64, i64, bool, bool) {
+    // The domain's extremes, as the handle codec spells them. For an unsigned
+    // handle the maximum is `u64::MAX`, whose signed reading is -1.
+    let (domain_low, domain_high) = if unsigned {
+        (0_i64, u64::MAX as i64)
+    } else {
+        (i64::MIN, i64::MAX)
+    };
     let low = range.low.first();
     let high = range.high.first();
     let (low_value, low_exclusive) = match low {
-        Some(Datum::Null) => (i64::MIN, false),
-        Some(Datum::MinNotNull) | None => (i64::MIN, range.low_exclusive),
+        Some(Datum::Null) => (domain_low, false),
+        Some(Datum::MinNotNull) | None => (domain_low, range.low_exclusive),
         Some(Datum::Int(value)) => (*value, range.low_exclusive),
         Some(Datum::UInt(value)) => (*value as i64, range.low_exclusive),
-        _ => (i64::MIN, range.low_exclusive),
+        _ => (domain_low, range.low_exclusive),
     };
     let (high_value, high_exclusive) = match high {
-        Some(Datum::MaxValue) | None => (i64::MAX, range.high_exclusive),
+        Some(Datum::MaxValue) | None => (domain_high, range.high_exclusive),
         Some(Datum::Int(value)) => (*value, range.high_exclusive),
         Some(Datum::UInt(value)) => (*value as i64, range.high_exclusive),
-        _ => (i64::MAX, range.high_exclusive),
+        _ => (domain_high, range.high_exclusive),
     };
     (low_value, high_value, low_exclusive, high_exclusive)
+}
+
+/// A range whose open ends have been replaced by the handle domain's own
+/// extremes, so every bound is a concrete integer the boundary split can read.
+fn materialize_open_bounds(range: &IndexRange, unsigned: bool) -> IndexRange {
+    let (low, high, low_exclusive, high_exclusive) = to_table_range_in_domain(range, unsigned);
+    let datum = |value: i64| {
+        if unsigned {
+            Datum::UInt(value as u64)
+        } else {
+            Datum::Int(value)
+        }
+    };
+    IndexRange {
+        low: vec![datum(low)],
+        high: vec![datum(high)],
+        low_exclusive,
+        high_exclusive,
+    }
 }
 
 /// One range as the estimator's column range, after step 2's conversion --
 /// which is what puts a real `KindInt64` in the low bound, and so decides
 /// which arm of the estimator runs (see the module doc).
-fn column_range(range: &IndexRange) -> ColumnRange {
-    let (low, high, low_exclude, high_exclude) = to_table_range(range);
+fn column_range(range: &IndexRange, unsigned: bool) -> ColumnRange {
+    // `GetRowCountByColumnRanges` dispatches on the first range's low-bound
+    // KIND, so the bound has to keep the domain's own datum kind: a `KindInt64`
+    // takes the signed pseudo estimator and anything else the unsigned one.
+    // Go reaches the unsigned arm on an unsigned handle for exactly this
+    // reason -- `convertPointsInPlace` casts every endpoint into the column's
+    // type first.
+    let materialized = materialize_open_bounds(range, unsigned);
     ColumnRange {
-        low: Datum::Int(low),
-        high: Datum::Int(high),
-        low_exclude,
-        high_exclude,
+        low: materialized.low[0].clone(),
+        high: materialized.high[0].clone(),
+        low_exclude: materialized.low_exclusive,
+        high_exclude: materialized.high_exclusive,
     }
 }
 
@@ -255,7 +325,11 @@ pub(crate) fn handle_range_row_count(
     let Some(column) = handle_column(table) else {
         return realtime;
     };
-    let column_ranges: Vec<ColumnRange> = ranges.iter().map(column_range).collect();
+    let unsigned = column.field_type.is_unsigned();
+    let column_ranges: Vec<ColumnRange> = ranges
+        .iter()
+        .map(|range| column_range(range, unsigned))
+        .collect();
     get_row_count_by_column_ranges(
         stats.and_then(|stats| stats.columns.get(&column.id)),
         &column_ranges,
@@ -291,9 +365,34 @@ pub(crate) fn record_key_ranges(
         return common_handle_record_key_ranges(table, ranges, zone).map(Some);
     }
     let ids = table.record_physical_ids();
-    let mut handle_ranges = Vec::with_capacity(ranges.len());
-    for range in ranges {
-        let (low, high, low_exclusive, high_exclusive) = to_table_range(range);
+    let unsigned = handle_is_unsigned(table);
+    // Go `points2TableRanges`: replace the open endpoints with the handle
+    // domain's own extremes, so every bound below is a real integer -- and,
+    // for an unsigned handle, one the boundary split can recognise.
+    let materialized: Vec<IndexRange> = ranges
+        .iter()
+        .map(|range| materialize_open_bounds(range, unsigned))
+        .collect();
+    // Go `table_reader.go:295`: `SplitRangesAcrossInt64Boundary(ranges,
+    // e.keepOrder, e.desc, ...)`, whose two halves the reader opens as two
+    // results read one after the other.
+    //
+    // This tier hands the caller ONE list and the caller reads it in order
+    // (reversing it, and each range, for a descending scan), so the halves are
+    // concatenated in ascending VALUE order: signed first. That is Go's
+    // `keepOrder = true, desc = false` answer, and it is the right list for
+    // every caller -- an unordered read may take the ranges in any order, and
+    // a descending read gets descending value order from reversing this one.
+    // Go's other two answers differ only in how many RPCs they cost.
+    let materialized = if unsigned {
+        let (first, second) = split_ranges_across_int64_boundary(materialized, true, false);
+        first.into_iter().chain(second).collect()
+    } else {
+        materialized
+    };
+    let mut handle_ranges = Vec::with_capacity(materialized.len());
+    for range in &materialized {
+        let (low, high, low_exclusive, high_exclusive) = to_table_range_in_domain(range, unsigned);
         // An empty range is not an error: `id > 100 AND id < 100` admits no
         // row, and Go plans a `TableDual` for it. The caller reads nothing.
         let Ok(handle_range) = SignedHandleRange::new(low, high, low_exclusive, high_exclusive)
@@ -344,32 +443,6 @@ fn common_handle_record_key_ranges(
     }
     Ok(key_ranges)
 }
-
-/// WHY THIS IS NOT YET CALLED.
-///
-/// Wiring it was attempted and reverted: enabling an unsigned handle made
-/// `SELECT count(*) FROM uh WHERE id >= 9223372036854775808` answer 5 -- every
-/// row -- where the pinned answer is 2.
-///
-/// The split is not what fails. The obstacle is upstream of it, in the OPEN
-/// bounds. This tier's ranger leaves an open end as `Datum::MaxValue`, and
-/// `to_table_range` maps that to `i64::MAX`; for an unsigned handle the
-/// domain maximum is `u64::MAX`, which encodes as -1. So `id >= 2^63` becomes
-/// the key interval `[negative, i64::MAX]`, which spans the whole table, and
-/// `split_ranges_across_int64_boundary` never sees a bound it recognises --
-/// `MaxValue` is not an integer, so it reports nothing past the boundary and
-/// returns the range untouched.
-///
-/// Go does not hit this because its ranger materialises the column's own
-/// domain for an open end, so the high bound of that range is the unsigned
-/// maximum rather than a sentinel.
-///
-/// Filling it therefore means teaching the handle range builder the column's
-/// signedness and materialising open bounds in the right domain -- 0 and
-/// `u64::MAX` for an unsigned handle -- before this function can do its job.
-/// That is a change to range CONSTRUCTION, not to this split, and it is left
-/// undone rather than half-done because the failure mode is silently reading
-/// the wrong rows.
 
 /// Go `SplitRangesAcrossInt64Boundary`
 /// (`pkg/distsql/request_builder.go:575`): divides an UNSIGNED handle's
