@@ -430,13 +430,21 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
 /// The compare COUNT is unchanged at 294 and MATCHED_FLOOR rose with it, so
 /// this is two more reads agreeing with real TiDB rather than two fewer reads
 /// being examined.
-const KNOWN_CATALOG_DIVERGENCES: usize = 35;
+///
+/// 35 -> 30: the TTL block of `SHOW CREATE TABLE`, which this tier accepted
+/// at `CREATE TABLE` and then printed nothing for. The compare count is
+/// unchanged at 299 and the floor rose by the same five.
+const KNOWN_CATALOG_DIVERGENCES: usize = 30;
 
 /// Exact lower bound for definitions already matching TiDB.
 // 257 -> 259: the partition clause of `SHOW CREATE TABLE` now matches Go's
 // `AppendPartitionInfo`, so two more recorded catalog reads agree. Raising the
 // floor with the count is what keeps a future drop from hiding behind it.
-const MATCHED_FLOOR: usize = 259;
+//
+// 259 -> 264: `SHOW CREATE TABLE` prints a table's TTL back. The compare
+// COUNT is unchanged at 299, so these are five more reads agreeing with real
+// TiDB rather than five fewer reads being examined.
+const MATCHED_FLOOR: usize = 264;
 
 /// Stable identity of the known mismatch set, independent of topic order.
 // Moved with the count above: two recorded catalog reads that used to
@@ -449,7 +457,16 @@ const MATCHED_FLOOR: usize = 259;
 // not merely re-recorded: the first attempt at the hex literal emitted `0x7F`
 // and appeared as a NEW divergence inside a net improvement, which the count
 // alone would have hidden.
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 5_002_280_384_901_804_681;
+//
+// Moved again for the TTL block of `SHOW CREATE TABLE`: five recorded reads
+// that used to diverge on its absence now match. That check earned its keep a
+// second time -- the first attempt restored the interval magnitude with the
+// DEFAULT flags, which carry `RestoreKeyWordUppercase`, and printed
+// `_UTF8MB4'15:20'` where TiDB records `_utf8mb4'15:20'`. It appeared as a
+// new divergence inside a net improvement of four, exactly as the hex literal
+// did. Go restores it with `RestoreStringSingleQuotes |
+// RestoreNameBackQuotes` and nothing else (`getTTLInfoInOptions`).
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 17_378_261_734_299_899_739;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.

@@ -2943,6 +2943,7 @@ dependencies = [
  "tidb-domain",
  "tidb-executor",
  "tidb-metadef",
+ "tidb-model",
  "tidb-mysql",
  "tidb-naming",
  "tidb-parser",

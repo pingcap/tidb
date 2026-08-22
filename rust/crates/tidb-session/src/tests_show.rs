@@ -2030,3 +2030,56 @@ fn show_status_reports_the_negotiated_tls_names() {
     let (_, rows) = query_text(&mut session, "SHOW STATUS LIKE 'Ssl_cipher'");
     assert_eq!(rows[0][1], "");
 }
+
+/// `SHOW CREATE TABLE` prints a table's TTL back, all three clauses.
+///
+/// Go `ShowCreateTable` (`executor/show.go:1510`) writes `TTL`, `TTL_ENABLE`
+/// and `TTL_JOB_INTERVAL` together once the table has a `TTLInfo`, each
+/// behind the `ttl` feature comment so a dumped definition still loads on a
+/// parser that does not know the syntax. The last two are unconditional --
+/// written or not -- which is why a table created with `TTL=` alone prints
+/// `TTL_ENABLE='ON'` and Go's default job interval back.
+///
+/// This tier accepted the option and stored nothing, so a definition did not
+/// round-trip through its own output. The statement is the source corpus's
+/// own: `tests/integrationtest/t/show.test`.
+#[test]
+fn show_create_table_prints_the_ttl_clauses() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t (id int, created_time datetime) \
+             TTL=created_time + INTERVAL 1 HOUR \
+             PARTITION BY RANGE COLUMNS(id) (PARTITION p1 VALUES LESS THAN (100))",
+        )
+        .unwrap();
+    let text = row_text(session.run("SHOW CREATE TABLE t"))[0][1].clone();
+    assert!(
+        text.contains(
+            "COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_time` + INTERVAL 1 HOUR */ \
+             /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */\n\
+             PARTITION BY RANGE COLUMNS(`id`)"
+        ),
+        "the TTL block sits between the collation and the partitioning:\n{text}"
+    );
+
+    // A written TTL_ENABLE and TTL_JOB_INTERVAL replace the defaults.
+    session
+        .run(
+            "CREATE TABLE u (id int, ct datetime) \
+             TTL=ct + INTERVAL 3 DAY TTL_ENABLE='OFF' TTL_JOB_INTERVAL='7h'",
+        )
+        .unwrap();
+    let text = row_text(session.run("SHOW CREATE TABLE u"))[0][1].clone();
+    assert!(
+        text.ends_with(
+            " /*T![ttl] TTL=`ct` + INTERVAL 3 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ \
+             /*T![ttl] TTL_JOB_INTERVAL='7h' */"
+        ),
+        "written values replace the defaults:\n{text}"
+    );
+
+    // A table without a TTL prints none of it.
+    session.run("CREATE TABLE v (id int)").unwrap();
+    assert!(!row_text(session.run("SHOW CREATE TABLE v"))[0][1].contains("ttl"));
+}

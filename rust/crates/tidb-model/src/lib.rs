@@ -126,8 +126,10 @@ pub use schema_diff::{AffectedOption, SchemaDiff};
 pub use schema_state::SchemaState;
 pub use table::{
     find_fk_info_by_name, get_idx_changing_field_type, new_table_affinity_info_with_level,
+    time_unit_type_from_keyword, time_unit_type_keyword,
     SessionInfo, StatsLoadItem, TableAffinityInfo, TableCacheStatusType, TableItemID,
-    TableLockState, TableNameInfo, TempTableType, TiFlashReplicaInfo, DEFAULT_TTL_JOB_INTERVAL,
+    TableLockState, TableNameInfo, TempTableType, TiFlashReplicaInfo, TTLInfo,
+    DEFAULT_TTL_JOB_INTERVAL,
     OLD_DEFAULT_TTL_JOB_INTERVAL,
 };
 pub use table_info::{TableInfo, TABLE_INFO_VERSION5};

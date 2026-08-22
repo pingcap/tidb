@@ -1903,7 +1903,16 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //
     // `executor/rowid` went from 38 matched / 9 diverged / 8 unreachable to
     // 55 matched, 0 diverged, 0 unreachable.
-    const KNOWN_DIVERGENCES: usize = 77;
+    //
+    // 77 -> 76. `SHOW CREATE TABLE` prints a table's TTL back. Go's
+    // `ShowCreateTable` writes `TTL`, `TTL_ENABLE` and `TTL_JOB_INTERVAL`
+    // together once the table has a `TTLInfo`, each behind the `ttl` feature
+    // comment, and the last two unconditionally -- so a table created with
+    // `TTL=` alone prints `TTL_ENABLE='ON'` and the default job interval
+    // back. This tier accepted the option and stored nothing, so a definition
+    // did not round-trip through its own output. Metadata only: there is no
+    // background job here to delete expired rows.
+    const KNOWN_DIVERGENCES: usize = 76;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

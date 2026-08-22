@@ -479,6 +479,63 @@ pub fn resolve_database_charset(
 
 /// Go `checkUnsupportedTableOptions`: reject the two unsupported compatibility
 /// clauses and storage engines outside TiDB's MySQL/MariaDB allowlist.
+/// Go `handleTableOptions`' TTL block: the `TTLInfo` a table's options
+/// describe, or `None` when none of them is a `TTL` definition.
+///
+/// `TTL_ENABLE` and `TTL_JOB_INTERVAL` alone do not make one -- Go keeps them
+/// on an existing `TTLInfo` -- so the `TTL=` clause is what decides. Their
+/// defaults are Go's: `TTL_ENABLE` is ON and the job interval is
+/// `DefaultTTLJobInterval`.
+fn ttl_info_from_options(
+    options: &[tidb_ast::TableOption],
+) -> Result<Option<tidb_model::TTLInfo>, DriverError> {
+    let mut info: Option<tidb_model::TTLInfo> = None;
+    for option in options {
+        if let tidb_ast::TableOption::Ttl {
+            column,
+            value,
+            unit,
+        } = option
+        {
+            let interval_time_unit = tidb_model::time_unit_type_from_keyword(unit)
+                .ok_or_else(|| {
+                    DriverError::unsupported(format!("`{unit}` is not a TTL interval unit"))
+                })?;
+            info = Some(tidb_model::TTLInfo {
+                column_name: tidb_ast::CiString::new(column.clone()),
+                // Go `getTTLInfoInOptions` restores the magnitude with
+                // `RestoreStringSingleQuotes | RestoreNameBackQuotes` and
+                // NOTHING ELSE -- in particular without
+                // `RestoreKeyWordUppercase`, which the default set carries.
+                // The difference shows on a string magnitude, whose CHARSET
+                // INTRODUCER is written as the parser produced it: TiDB
+                // records `INTERVAL _utf8mb4'15:20' HOUR_MINUTE`, and the
+                // default flags would print `_UTF8MB4`.
+                interval_expr_str: value.restore_with_flags(
+                    tidb_ast::RestoreFlags::STRING_SINGLE_QUOTES
+                        | tidb_ast::RestoreFlags::NAME_BACK_QUOTES,
+                ),
+                interval_time_unit,
+                enable: true,
+                job_interval: tidb_model::DEFAULT_TTL_JOB_INTERVAL.to_owned(),
+            });
+        }
+    }
+    let Some(built) = info.as_mut() else {
+        return Ok(None);
+    };
+    for option in options {
+        match option {
+            tidb_ast::TableOption::TtlEnable(enabled) => built.enable = *enabled,
+            tidb_ast::TableOption::TtlJobInterval(interval) => {
+                built.job_interval = interval.clone();
+            }
+            _ => {}
+        }
+    }
+    Ok(info)
+}
+
 pub fn validate_table_options(options: &[tidb_ast::TableOption]) -> Result<(), DriverError> {
     const VALID_ENGINES: &[&str] = &[
         "archive",
@@ -1183,6 +1240,12 @@ pub fn run_create_table_in(
     // form already recorded it; without this the CREATE form set the
     // allocator's step and then printed nothing, so a definition did not
     // round-trip through its own output.
+    // Go `handleTableOptions`: `TTL`, `TTL_ENABLE` and `TTL_JOB_INTERVAL`
+    // become the table's `TTLInfo`, which is what `SHOW CREATE TABLE` prints
+    // back. There is no background job here to delete expired rows, so this
+    // is metadata only -- but without it a definition carrying `TTL=` did not
+    // round-trip through its own output.
+    table.set_ttl_info(ttl_info_from_options(&create.table_options)?);
     for option in &create.table_options {
         if let tidb_ast::TableOption::AutoIdCache(value) = option {
             let cache = value

@@ -882,6 +882,53 @@ pub const DEFAULT_TTL_JOB_INTERVAL: &str = "24h";
 /// Go `OldDefaultTTLJobInterval`.
 pub const OLD_DEFAULT_TTL_JOB_INTERVAL: &str = "1h";
 
+/// Go `ast.TimeUnitType`, in its `iota` order: the integer
+/// [`TTLInfo::interval_time_unit`] stores and `TimeUnitType.String()` prints
+/// back. Index 0 is Go's `TimeUnitInvalid` placeholder and names nothing.
+const TIME_UNIT_TYPES: &[&str] = &[
+    "",
+    "MICROSECOND",
+    "SECOND",
+    "MINUTE",
+    "HOUR",
+    "DAY",
+    "WEEK",
+    "MONTH",
+    "QUARTER",
+    "YEAR",
+    "SECOND_MICROSECOND",
+    "MINUTE_MICROSECOND",
+    "MINUTE_SECOND",
+    "HOUR_MICROSECOND",
+    "HOUR_SECOND",
+    "HOUR_MINUTE",
+    "DAY_MICROSECOND",
+    "DAY_SECOND",
+    "DAY_MINUTE",
+    "DAY_HOUR",
+    "YEAR_MONTH",
+];
+
+/// The `ast.TimeUnitType` a written unit keyword is, case-insensitively.
+/// `None` for a word that is not one, which is Go's `TimeUnitInvalid`.
+#[must_use]
+pub fn time_unit_type_from_keyword(keyword: &str) -> Option<i64> {
+    TIME_UNIT_TYPES
+        .iter()
+        .position(|candidate| !candidate.is_empty() && candidate.eq_ignore_ascii_case(keyword))
+        .map(|index| index as i64)
+}
+
+/// Go `TimeUnitType.String()`.
+#[must_use]
+pub fn time_unit_type_keyword(value: i64) -> Option<&'static str> {
+    usize::try_from(value)
+        .ok()
+        .and_then(|index| TIME_UNIT_TYPES.get(index))
+        .filter(|keyword| !keyword.is_empty())
+        .copied()
+}
+
 /// Go `TTLInfo`: a table's TTL (time-to-live) configuration.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct TTLInfo {

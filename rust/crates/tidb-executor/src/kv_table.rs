@@ -447,6 +447,11 @@ pub struct KvTable {
     /// Go `TableInfo.AutoIDCache`: how many ids one reservation takes. Zero
     /// is Go's "unset"; `SHOW CREATE TABLE` prints it only when set.
     auto_id_cache: i64,
+    /// Go `TableInfo.TTLInfo`: the table's `TTL` configuration, when it set
+    /// one. Only the metadata is kept -- there is no background job here to
+    /// delete expired rows -- but it is what `SHOW CREATE TABLE` prints, and
+    /// a definition has to round-trip through its own output.
+    ttl_info: Option<tidb_model::TTLInfo>,
     /// Go `TableInfo.TableCacheStatusType`. The synchronous local DDL has no
     /// externally visible switching phase, so tables are either enabled or
     /// disabled here; cluster-loaded metadata may still carry the source
@@ -646,6 +651,7 @@ impl KvTable {
     ) -> Self {
         KvTable {
             auto_id_cache: 0,
+            ttl_info: None,
             table_id,
             name: String::new(),
             columns,
@@ -1153,6 +1159,17 @@ impl KvTable {
     #[must_use]
     pub const fn auto_id_cache(&self) -> i64 {
         self.auto_id_cache
+    }
+
+    /// Records the table's `TTL` configuration (Go `TableInfo.TTLInfo`).
+    pub fn set_ttl_info(&mut self, info: Option<tidb_model::TTLInfo>) {
+        self.ttl_info = info;
+    }
+
+    /// The table's `TTL` configuration, when it has one.
+    #[must_use]
+    pub const fn ttl_info(&self) -> Option<&tidb_model::TTLInfo> {
+        self.ttl_info.as_ref()
     }
 
     /// Replaces the table-level comment.

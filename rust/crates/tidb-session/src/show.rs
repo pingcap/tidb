@@ -493,8 +493,46 @@ fn show_create_table_text(
     if table.is_cached() {
         out.push_str(" /* CACHED ON */");
     }
+    out.push_str(&ttl_clause_text(table));
     out.push_str(&partition_clause_text(table));
     Ok(out)
+}
+
+/// Go `ShowCreateTable`'s `TTLInfo` block (`executor/show.go:1510`): three
+/// separately gated clauses, each behind the `ttl` feature comment so a
+/// dumped definition still loads on a parser that does not know the syntax.
+///
+/// The three are always printed together and always all three -- Go writes
+/// `TTL_ENABLE` and `TTL_JOB_INTERVAL` unconditionally once there is a
+/// `TTLInfo`, rather than only when they were written -- which is why a table
+/// created with `TTL=` alone prints `TTL_ENABLE='ON'` and the default job
+/// interval back.
+fn ttl_clause_text(table: &tidb_executor::KvTable) -> String {
+    let Some(info) = table.ttl_info() else {
+        return String::new();
+    };
+    let unit = tidb_model::time_unit_type_keyword(info.interval_time_unit).unwrap_or_default();
+    // Go's "this only happens for a table created in 6.5" fallback, where the
+    // job interval had not been introduced yet.
+    let job_interval = if info.job_interval.is_empty() {
+        tidb_model::OLD_DEFAULT_TTL_JOB_INTERVAL
+    } else {
+        info.job_interval.as_str()
+    };
+    let mut text = format!(
+        " /*T![ttl] TTL=`{}` + INTERVAL {} {} */",
+        info.column_name.original().replace('`', "``"),
+        info.interval_expr_str,
+        unit,
+    );
+    text.push_str(&format!(
+        " /*T![ttl] TTL_ENABLE='{}' */",
+        if info.enable { "ON" } else { "OFF" }
+    ));
+    text.push_str(&format!(
+        " /*T![ttl] TTL_JOB_INTERVAL='{job_interval}' */"
+    ));
+    text
 }
 
 /// Go `ddl.AppendPartitionInfo`: the `PARTITION BY ...` tail, or the empty
