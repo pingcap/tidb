@@ -165,6 +165,23 @@ pub(crate) fn run_cluster_session_node_with_spill(
             None
         }
     };
+    // The other half of being registered: a node the owner can SEE must also
+    // ANSWER. Go's `WaitVersionSynced` waits on every `/tidb/server/info`
+    // entry, so this acknowledger is spawned exactly when the registration
+    // above is -- a node with no reachable etcd registers nowhere, is waited
+    // on by nobody, and correctly spawns no acknowledger either.
+    let schema_pins = Arc::new(super::schema_sync::SchemaPinRegistry::default());
+    let schema_sync_ack = crate::real_tikv_node::connect_schema_notifier(&config).map(|etcd| {
+        super::schema_sync::SchemaSyncAck::spawn(
+            Arc::clone(&catalog),
+            authority.transaction_opener(),
+            Arc::clone(&schema_pins),
+            etcd,
+            server_info.local_server_info().static_info.id,
+            config.schema_lease / 2,
+            CONTROL_PLANE_TIMEOUT,
+        )
+    });
     let factory = ClusterSessionFactory::new(
         Arc::new(RealClusterTransactions::new(
             authority.transaction_opener(),
@@ -208,6 +225,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
     )
     .with_cop_scans(cop_scans)
     .with_server_info(server_info)
+    .with_schema_pins(schema_pins)
     .with_spill_storage(spill_storage);
     let factory = match memory_arbitrator {
         Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
@@ -222,6 +240,9 @@ pub(crate) fn run_cluster_session_node_with_spill(
             // Dropped FIRST: the runner removes this node's published
             // records before the etcd handles below it go away.
             server_info_runner,
+            // Dropped beside it: once the registration is gone nobody waits
+            // on this node, so the acknowledger has nothing left to say.
+            schema_sync_ack,
             factory,
             watcher,
             reloader,
@@ -234,6 +255,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         authority,
         move |(
             server_info_runner,
+            schema_sync_ack,
             factory,
             watcher,
             reloader,

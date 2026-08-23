@@ -299,6 +299,7 @@ fn jitter_below(upper: u32) -> u32 {
 
 mod boot;
 mod ddl;
+pub(crate) mod schema_sync;
 mod statistics;
 mod transactions;
 
@@ -381,6 +382,11 @@ pub struct ClusterSessionFactory {
     spill_storage: Option<Arc<tidb_util::disk::SpillStorage>>,
     /// Process-wide memory admission authority installed before listener bind.
     mem_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+    /// The catalog versions live statements and transactions still read at
+    /// -- the MDL gate the schema-sync acknowledger consults before telling
+    /// a Go DDL owner this node has the new schema. See
+    /// [`schema_sync::SchemaPinRegistry`].
+    schema_pins: Arc<schema_sync::SchemaPinRegistry>,
 }
 
 impl ClusterSessionFactory {
@@ -424,11 +430,20 @@ impl ClusterSessionFactory {
             stats,
             spill_storage: None,
             mem_arbitrator: None,
+            schema_pins: Arc::new(schema_sync::SchemaPinRegistry::default()),
         }
     }
 
     /// Installs the startup-validated physical spill authority.
     #[must_use]
+    /// Replaces the factory's pin registry with the node-owned one the
+    /// schema-sync acknowledger reads.
+    #[must_use]
+    pub(crate) fn with_schema_pins(mut self, pins: Arc<schema_sync::SchemaPinRegistry>) -> Self {
+        self.schema_pins = pins;
+        self
+    }
+
     pub fn with_spill_storage(mut self, spill_storage: Arc<tidb_util::disk::SpillStorage>) -> Self {
         self.spill_storage = Some(spill_storage);
         self
@@ -586,6 +601,9 @@ impl QuerySessionFactory for ClusterSessionFactory {
             savepoints: Vec::new(),
             skipped: built.skipped,
             auto_ids: Arc::clone(&self.auto_ids),
+            schema_pins: Arc::clone(&self.schema_pins),
+            connection_id: context.connection_id,
+            transaction_pin: None,
         })
     }
 }
@@ -653,6 +671,16 @@ pub struct ClusterServerSession {
     /// The node's auto-increment allocators, needed on every catalog rebuild
     /// so the rebuilt tables keep the ranges the old ones had reserved.
     auto_ids: Arc<dyn TableAutoIds>,
+    /// The node's MDL gate; statements and the explicit transaction register
+    /// the catalog version they run on. See [`schema_sync::SchemaPinRegistry`].
+    schema_pins: Arc<schema_sync::SchemaPinRegistry>,
+    /// This connection's id, the registry's key.
+    connection_id: u64,
+    /// Held from `BEGIN` to `COMMIT`/`ROLLBACK` (dropped with the session on
+    /// a disconnect): while it lives, the schema-sync acknowledger reports
+    /// nothing newer than this transaction's catalog to a Go DDL owner --
+    /// Go's metadata lock, at transaction scope.
+    transaction_pin: Option<schema_sync::SchemaPinGuard>,
 }
 
 /// The session layer's next move after a pessimistic statement's lock step.
@@ -740,6 +768,12 @@ impl ClusterServerSession {
         shape: StatementReadShape,
         mut run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
+        // Go's MDL considers a RUNNING statement a user of its schema
+        // version; this hold is what keeps a Go DDL owner from publishing a
+        // drop under a statement mid-flight. Dropped with the scope.
+        let _statement_pin = self
+            .schema_pins
+            .hold(self.connection_id, self.schema_version);
         let savepoint = self.buffer.staged();
         let mut retried: u32 = 0;
         let outcome = loop {
@@ -1123,6 +1157,13 @@ impl ClusterServerSession {
             .map_err(SqlQueryError::unknown)?;
         self.session.current_tso().publish(transaction.start_ts());
         self.explicit = Some(transaction);
+        // The transaction reads this catalog version until it ends; the pin
+        // is what a Go owner's `WaitVersionSynced` waits out (Go
+        // `CheckOldRunningTxn`, at this port's whole-transaction scope).
+        self.transaction_pin = Some(
+            self.schema_pins
+                .hold(self.connection_id, self.schema_version),
+        );
         Ok(())
     }
 
@@ -1184,6 +1225,7 @@ impl ClusterServerSession {
     fn commit_explicit(&mut self) -> Result<(), SqlQueryError> {
         self.savepoints.clear();
         self.session.current_tso().clear();
+        self.transaction_pin = None;
         let Some(transaction) = self.explicit.take() else {
             // No transaction and no statement read: the buffer can only hold
             // what a previous statement already published, so there is nothing
@@ -1253,6 +1295,7 @@ impl ClusterServerSession {
         self.buffer.reset();
         self.savepoints.clear();
         self.session.current_tso().clear();
+        self.transaction_pin = None;
         match self.explicit.take() {
             Some(transaction) => transaction.rollback().map_err(SqlQueryError::unknown),
             None => Ok(()),

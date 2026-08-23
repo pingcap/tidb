@@ -128,6 +128,7 @@ pub mod minmax_deque;
 pub mod mock_global_accessor;
 pub mod multi_statement_transaction;
 pub mod mysql_bootstrap;
+pub mod mdl_info_load;
 pub mod mysql_system_tables;
 pub mod next_io_acc;
 pub mod nextgen_readonly_vars;

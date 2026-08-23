@@ -86,7 +86,12 @@ PLAYGROUND_PID=
 RUST_PID=
 RUNTIME_DIR=
 AUTH_FILE=
-AUTH_USER=sbtest
+# Override with SYSBENCH_AUTH_USER=root SYSBENCH_AUTH_HOST=% to run under the
+# bootstrap superuser: `PrivilegeRegistry::bootstrapped_from` grants
+# ALL PRIVILEGES to exactly `root`@`%`, and rungs past 4 need more than the
+# empty grant set every other account starts with.
+AUTH_USER=${SYSBENCH_AUTH_USER:-sbtest}
+AUTH_HOST=${SYSBENCH_AUTH_HOST:-127.0.0.1}
 AUTH_PASSWORD=${SYSBENCH_AUTH_PASSWORD:-sbtest-native-password}
 SYSBENCH_DB=sbtest
 TABLE_SIZE=${SYSBENCH_TABLE_SIZE:-1000}
@@ -234,7 +239,7 @@ if [[ ! "${AUTH_HASH_HEX}" =~ ^[0-9A-F]{40}$ ]]; then
   exit 1
 fi
 (umask 077; printf '%s\t%s\t%s\t*%s\n' \
-  "${AUTH_USER}" "127.0.0.1" "mysql_native_password" "${AUTH_HASH_HEX}" >"${AUTH_FILE}")
+  "${AUTH_USER}" "${AUTH_HOST}" "mysql_native_password" "${AUTH_HASH_HEX}" >"${AUTH_FILE}")
 chmod 0600 "${AUTH_FILE}"
 unset AUTH_HASH_HEX
 

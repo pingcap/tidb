@@ -385,12 +385,6 @@ where
             .map_err(OptimisticCoordinatorError::Visibility)
     }
 
-    /// Rejects a completed read whose transaction snapshot GC has already
-    /// passed.
-    fn check_visibility(&self) -> Result<(), OptimisticCoordinatorError> {
-        self.check_visibility_at(self.start_ts)
-    }
-
     /// Binds the pessimistic locks a caller already acquired at `start_ts`.
     pub(super) fn set_pessimistic_prewrite(&mut self, plan: PessimisticPrewritePlan) {
         self.pessimistic = Some(plan);

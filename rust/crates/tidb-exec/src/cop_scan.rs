@@ -1042,30 +1042,36 @@ fn aggregation_to_pb(
     aggregate: &PushdownPartialAggregate,
     columns: &[ScanColumnInfo],
 ) -> Option<Aggregation> {
-    let encode_signed = |value: i64| {
-        let mut encoded = Vec::with_capacity(8);
-        tidb_codec::encode_int(&mut encoded, value);
-        encoded
-    };
+    // Go `AggFuncToPBExpr` types BOTH halves of every aggregate leaf: the
+    // `ColumnRef` child carries the scanned column's declared type and the
+    // aggregate expression carries the function's return type (`RetTp`).
+    // TiKV builds its aggregate implementation FROM that return type
+    // (`components/tidb_query_aggr`), so an untyped expression is not
+    // "default-typed" -- it is refused as `Unsupported type: Unspecified`,
+    // which sysbench's `SELECT SUM(k)` hit live against a real region.
     let column_ref = |offset: usize| -> Option<Expr> {
-        (offset < columns.len()).then(|| Expr {
-            tp: Some(ExprType::ColumnRef as i32),
-            val: Some(encode_signed(
-                i64::try_from(offset).expect("scan width fits i64"),
-            )),
-            children: Vec::new(),
+        let column = columns.get(offset)?;
+        let code = tidb_datatype::FieldTypeCode::from_mysql_type(u8::try_from(column.tp).ok()?);
+        let field_type = FieldType::new(code)
+            .with_flags(u32::try_from(column.flag).ok()?)
+            .with_collation_name(tidb_datatype::proto_to_collation(column.collation));
+        tidb_expr::pushdown_catalog::to_pb(
+            &tidb_expr::pushdown_catalog::PbScalar::Column {
+                offset: u32::try_from(offset).ok()?,
+                field_type,
+            },
+            &|offset| scan_column_descriptor(columns, offset),
+        )
+    };
+    let agg = |tp: ExprType, child: Expr, output: &FieldType| -> Option<Expr> {
+        Some(Expr {
+            tp: Some(tp as i32),
+            val: None,
+            children: vec![child],
             sig: Some(ScalarFuncSig::Unspecified as i32),
-            field_type: None,
+            field_type: Some(tidb_expr::pushdown_catalog::field_type_to_pb(output)?),
             has_distinct: Some(false),
         })
-    };
-    let agg = |tp: ExprType, child: Expr| Expr {
-        tp: Some(tp as i32),
-        val: None,
-        children: vec![child],
-        sig: Some(ScalarFuncSig::Unspecified as i32),
-        field_type: None,
-        has_distinct: Some(false),
     };
     let message = |group_by: Vec<Expr>, agg_func: Vec<Expr>, streamed: bool| Aggregation {
         group_by,
@@ -1073,7 +1079,10 @@ fn aggregation_to_pb(
         streamed: Some(streamed),
     };
     match aggregate {
-        PushdownPartialAggregate::Count { input_offset, .. } => {
+        PushdownPartialAggregate::Count {
+            input_offset,
+            output_type,
+        } => {
             let input = match input_offset {
                 Some(offset) => column_ref(*offset)?,
                 None => tidb_expr::pushdown_catalog::to_pb(
@@ -1081,11 +1090,18 @@ fn aggregation_to_pb(
                     &|_| None,
                 )?,
             };
-            Some(message(Vec::new(), vec![agg(ExprType::Count, input)], true))
+            Some(message(
+                Vec::new(),
+                vec![agg(ExprType::Count, input, output_type)?],
+                true,
+            ))
         }
-        PushdownPartialAggregate::Sum { input_offset, .. } => Some(message(
+        PushdownPartialAggregate::Sum {
+            input_offset,
+            output_type,
+        } => Some(message(
             Vec::new(),
-            vec![agg(ExprType::Sum, column_ref(*input_offset)?)],
+            vec![agg(ExprType::Sum, column_ref(*input_offset)?, output_type)?],
             false,
         )),
         PushdownPartialAggregate::GroupBy { input_offset, .. } => {
@@ -1094,10 +1110,11 @@ fn aggregation_to_pb(
         PushdownPartialAggregate::GroupBySum {
             group_offset,
             sum_offset,
+            sum_type,
             ..
         } => Some(message(
             vec![column_ref(*group_offset)?],
-            vec![agg(ExprType::Sum, column_ref(*sum_offset)?)],
+            vec![agg(ExprType::Sum, column_ref(*sum_offset)?, sum_type)?],
             false,
         )),
         PushdownPartialAggregate::Grouped {
