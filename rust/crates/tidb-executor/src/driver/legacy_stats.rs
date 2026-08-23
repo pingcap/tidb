@@ -120,6 +120,15 @@ pub enum LogicalNode {
         child: Box<LogicalNode>,
         /// One entry per output column.
         exprs: Vec<ProjectionExpr>,
+        /// Go's `injectExpr` projection (`rule_join_reorder.go:793`): the
+        /// pass-through-plus-computed wrapper the reorder itself adds so a
+        /// substituted join edge can keep column arguments. Go builds it
+        /// INSIDE `buildJoinEdge`, AFTER `generateJoinOrderNode` costed the
+        /// group leaves, and `calcJoinCumCost` (`rule_join_reorder.go:978`)
+        /// adds only the JOIN's row count on top of the leaf `cumCost`s -- so
+        /// this node's own row count never enters any cumulative cost. The
+        /// stats it derives (the injected column's NDV above all) still do.
+        injected: bool,
     },
     /// A `LogicalAggregation`.
     Aggregation {
@@ -180,18 +189,27 @@ pub struct DerivedNode {
     pub stats: StatsInfo,
     /// Children in source order.
     pub children: Vec<DerivedNode>,
+    /// See [`LogicalNode::Projection`]'s `injected`: a node Go's reorder adds
+    /// AFTER leaf costing, whose own row count therefore never enters
+    /// `baseNodeCumCost` or `calcJoinCumCost`.
+    pub injected: bool,
 }
 
 impl DerivedNode {
     /// Go `baseNodeCumCost` (`rule_join_reorder.go:651-657`): this node's row
-    /// count plus every descendant's.
+    /// count plus every descendant's -- except an `injected` projection, which
+    /// does not exist yet when Go runs either costing walk (its `cumCost`
+    /// contributions are exactly its children's).
     #[must_use]
     pub fn cum_cost(&self) -> f64 {
+        let own = if self.injected {
+            0.0
+        } else {
+            self.stats.row_count()
+        };
         self.children
             .iter()
-            .fold(self.stats.row_count(), |cost, child| {
-                cost + child.cum_cost()
-            })
+            .fold(own, |cost, child| cost + child.cum_cost())
     }
 
     /// Every node's row count, parent before children, depth first.
@@ -289,6 +307,7 @@ fn derive_stats_with_groups(
             DerivedNode {
                 stats: table_stats.scale(*selectivity, ctx.scale_ndv_skew_ratio),
                 children: Vec::new(),
+                injected: false,
             }
         }
         LogicalNode::Selection { child } => {
@@ -301,9 +320,14 @@ fn derive_stats_with_groups(
             DerivedNode {
                 stats,
                 children: vec![child],
+                injected: false,
             }
         }
-        LogicalNode::Projection { child, exprs } => {
+        LogicalNode::Projection {
+            child,
+            exprs,
+            injected,
+        } => {
             let child_groups = requested_groups
                 .iter()
                 .filter_map(|group| {
@@ -352,6 +376,7 @@ fn derive_stats_with_groups(
             DerivedNode {
                 stats,
                 children: vec![child],
+                injected: *injected,
             }
         }
         LogicalNode::Aggregation {
@@ -390,6 +415,7 @@ fn derive_stats_with_groups(
             DerivedNode {
                 stats,
                 children: vec![child],
+                injected: false,
             }
         }
         LogicalNode::Join {
@@ -458,6 +484,7 @@ fn derive_stats_with_groups(
             DerivedNode {
                 stats: StatsInfo::new(count, col_ndvs).with_group_ndvs(group_ndvs),
                 children: vec![left, right],
+                injected: false,
             }
         }
     }

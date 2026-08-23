@@ -301,10 +301,20 @@ fn an_expression_join_key_gets_an_injected_column() {
     let sql = "SELECT t1.a, dt.key_a FROM t1, t5, \
         (SELECT t2.a AS key_a, t2.b * 2 AS doubled_b FROM t2 JOIN t3 ON t2.a = t3.a) dt \
         WHERE t1.b = dt.doubled_b AND dt.key_a = t5.a";
-    let dissolved = plan(sql, &catalog, &ctx(true, 10));
+    // The recording this pins was made by mysql-tester, whose DSN sets
+    // `tidb_hash_join_concurrency = 1` -- the session at which Go builds
+    // this tree at all (`mysqltest_connections` measured a HEAD-built server:
+    // seven of the topic's eight recorded index-join plans are unreachable at
+    // the plain-session 5, where the hash side prices below them). The
+    // sibling test below already runs the same session for the same reason.
+    let recorded_session = |through_proj: bool| {
+        ctx(through_proj, 10)
+            .with_optimizer_cost_env(tidb_planner::candidate_cost::CostEnv::default(), 1.0)
+    };
+    let dissolved = plan(sql, &catalog, &recorded_session(true));
     assert_ne!(
         dissolved,
-        plan(sql, &catalog, &ctx(false, 10)),
+        plan(sql, &catalog, &recorded_session(false)),
         "the expression join key was still declined",
     );
     // The `Projection` Go injects, over `t2` alone, as the BUILD side of the
@@ -328,21 +338,37 @@ fn an_expression_join_key_gets_an_injected_column() {
     // also exposes every reader boundary it can prove; it deliberately keeps
     // the scan below the injected Projection bare instead of claiming a
     // pushdown boundary through that expression.
+    //
+    // THIRD CORRECTION. Two changes, each toward the recording. The session:
+    // this test priced a PLAIN session (`tidb_hash_join_concurrency = 5`)
+    // against a tree TiDB only builds at mysql-tester's 1, so it pinned a
+    // comparison Go itself decides the other way at 5; it now runs the
+    // recording's own session, like the sibling test below. The tree: the
+    // join key's null-rejection now reaches t2's leaf THROUGH the injected
+    // Projection (`derived_projection_pushdown`, Go `breakDownPredicates`),
+    // so the recording's `Selection  not(isnull(mul(t2.b, 2)))` under that
+    // Projection exists here too -- `Selection_6` below. The recording reads
+    // it as `TableReader -> Selection cop[tikv]`; this tier's single-table
+    // residual filter still executes at root over a bare scan (every
+    // standalone `SELECT ... WHERE <unranged filter>` renders the same way),
+    // so the reader boundary under an injected Projection stays that
+    // module-wide residue's, not this family's.
     assert_eq!(
         dissolved,
         vec![
-            "MergeJoin_12".to_owned(),
+            "MergeJoin_13".to_owned(),
             "├─TableReader_2(Build)".to_owned(),
             "│ └─TableFullScan_1".to_owned(),
-            "└─MergeJoin_11(Probe)".to_owned(),
+            "└─MergeJoin_12(Probe)".to_owned(),
             "  ├─TableReader_4(Build)".to_owned(),
             "  │ └─TableFullScan_3".to_owned(),
-            "  └─IndexHashJoin_10(Probe)".to_owned(),
-            "    ├─Projection_6(Build)".to_owned(),
-            "    │ └─TableFullScan_5".to_owned(),
-            "    └─IndexReader_9(Probe)".to_owned(),
-            "      └─Selection_8".to_owned(),
-            "        └─IndexRangeScan_7".to_owned(),
+            "  └─IndexHashJoin_11(Probe)".to_owned(),
+            "    ├─Projection_7(Build)".to_owned(),
+            "    │ └─Selection_6".to_owned(),
+            "    │   └─TableFullScan_5".to_owned(),
+            "    └─IndexReader_10(Probe)".to_owned(),
+            "      └─Selection_9".to_owned(),
+            "        └─IndexRangeScan_8".to_owned(),
         ],
     );
 }
@@ -392,15 +418,107 @@ fn the_index_joins_outer_leaf_is_asked_for_the_order_through_the_derived_table()
         Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
         other => format!("{other:?}"),
     };
+    // `TableFullScan_5`: the scan under `Selection_6` under
+    // `Projection_7(Build)` -- the tree the family's pin asserts whole. The
+    // Selection is the join key's null-rejection, pushed through the wrapper
+    // by `derived_projection_pushdown`, which is also why the scan's number
+    // moved from `_3`.
     let t2 = rows
         .iter()
-        .find(|row| text(&row[0]).contains("TableFullScan_3"))
+        .find(|row| text(&row[0]).contains("TableFullScan_5"))
         .expect("the injected projection's own leaf");
     assert!(
         text(&t2[4]).starts_with("keep order:true"),
         "the leaf under the injected projection: {}",
         text(&t2[4]),
     );
+}
+
+/// THE INJECTED WRAPPER IS PRUNED, AND ITS LEAF TAKES THE COVERING INDEX.
+///
+/// Go's column pruning runs before join reorder, so `injectExpr` republishes
+/// the leaf's PRUNED schema (`Column2Exprs(p.Schema().Columns)`), and the
+/// join key's `not(isnull(...))` -- derived by `LogicalJoin.PredicatePushDown`
+/// -- was substituted through the derived projection into the leaf
+/// (`breakDownPredicates`, `logical_projection.go:647`) before the reorder
+/// dissolved it. `r/planner/core/join_reorder_through_projection.result:1604`
+/// records what the two together produce for `t1.b = dt.doubled_b` at
+/// `tidb_opt_join_reorder_threshold = 0`:
+///
+/// ```text
+/// HashJoin        inner join, equal:[eq(Column, t1.b)]
+/// ├─Projection(Build)   t2.a, t2.b, mul(t2.b, 2)->Column   <- no t2.c
+/// │ └─IndexReader       index:Selection
+/// │   └─Selection       not(isnull(mul(t2.b, 2)))
+/// │     └─IndexFullScan table:t2, index:b(b)               <- COVERING
+/// ```
+///
+/// Publishing `t2.c` -- which nothing above the wrapper reads -- forced a
+/// `TableFullScan` here for as long as the wrapper republished every column,
+/// and was the last recorded divergence class of this topic. Each assertion
+/// names the mechanism whose removal re-opens it: the pruned field list is
+/// `through_proj::used_base_columns`, the Selection BELOW the projection is
+/// `derived_projection_pushdown`'s computed-output substitution, and the
+/// covering walk is the access chooser reading the narrowed demand.
+#[test]
+fn the_injected_wrapper_is_pruned_and_its_leaf_takes_the_covering_index() {
+    let catalog = tables();
+    let sql = "SELECT t1.*, dt.* FROM t1, \
+        (SELECT t2.a AS key_a, t2.b * 2 AS doubled_b FROM t2 JOIN t3 ON t2.a = t3.a) dt \
+        WHERE t1.b = dt.doubled_b";
+    let ctx = ctx(true, 0).with_optimizer_cost_env(
+        tidb_planner::candidate_cost::CostEnv::default(),
+        1.0,
+    );
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let tidb_ast::QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &ctx,
+        crate::explain::ExplainFormat::Row,
+    )
+    .unwrap();
+    let text = |datum: &Datum| match datum {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let find = |needle: &str| {
+        rows.iter()
+            .find(|row| text(&row[0]).contains(needle))
+            .unwrap_or_else(|| panic!("no `{needle}` operator in the plan"))
+    };
+    // The pruned pass-through half: t2.a and t2.b survive, t2.c does not.
+    let projection = rows
+        .iter()
+        .find(|row| text(&row[0]).contains("Projection") && text(&row[4]).contains("mul"))
+        .expect("the injected wrapper's Projection");
+    assert!(
+        text(&projection[4]).contains("t2.a") && text(&projection[4]).contains("t2.b"),
+        "the wrapper's pass-through half: {}",
+        text(&projection[4]),
+    );
+    assert!(
+        !text(&projection[4]).contains("t2.c"),
+        "an unread column survived the pruning: {}",
+        text(&projection[4]),
+    );
+    // The join key's null-rejection, substituted BELOW the projection.
+    let selection = find("Selection_4");
+    assert_eq!(
+        text(&selection[4]),
+        "not(isnull(mul(test.t2.b, 2)))",
+        "the null-rejection under the wrapper",
+    );
+    // The covering walk the pruning makes possible.
+    let scan = find("IndexFullScan_3");
+    assert_eq!(text(&scan[3]), "table:t2, index:b(b)");
 }
 
 /// A `leading` HINT PINS THE ORDER, so the projection is not dissolved.

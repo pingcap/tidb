@@ -157,12 +157,14 @@
 //!    [`super::through_proj::splice_join`] declines a FROM tree whose top join
 //!    is not `JoinType::Cross`, so the projection never dissolves and the
 //!    group is never `{oj_t2, oj_t3, oj_t5}` at all.
-//!  * the same topic's TWO `dt1`/`dt2` statements. Both sides DO reorder here,
-//!    and the greedy solvers pick a different FIRST pair: TiDB's leaves carry
-//!    `Selection cop[tikv]  not(isnull(mul(t1.b, 2)))` under each
-//!    injected-column leaf -- a null-rejection filter this tier does not
-//!    derive -- which lowers those leaves' row counts and so changes the
-//!    `cumCost` sort [`greedy_solve`] starts from.
+//!  * (CLOSED) the same topic's TWO `dt1`/`dt2` statements once picked a
+//!    different FIRST pair here. Two Go mechanisms closed them: the join
+//!    key's `not(isnull(mul(t1.b, 2)))` now reaches the leaf through the
+//!    injected wrapper (`super::derived_projection_pushdown`, Go
+//!    `breakDownPredicates`), lowering its `DataSource` row count to Go's
+//!    8000, and the wrapper's own Projection is `injected` -- Go builds it
+//!    AFTER `generateJoinOrderNode` costed the leaves, so its row count
+//!    never enters the `cumCost` sort [`greedy_solve`] starts from.
 //!
 //! MUTATION PROBES, run against the `join_shape` 5-tuple
 //! `(compared, both_agree, recorded, agreed, extra)`, which is
@@ -358,6 +360,15 @@ struct DerivedRel<'a> {
     /// back to its structural merge preference instead of Go's cost pick
     /// (measured on `planner/core/join_reorder2`: the (sub, t4) top join).
     extended: BTreeMap<usize, JoinType>,
+    /// This relation is `injectExpr`'s wrapper -- the pass-through-plus-
+    /// computed projection [`super::through_proj`] spells around a single
+    /// base table so a substituted join edge stays `col = col`. Go builds
+    /// that projection DURING join construction (`buildJoinEdge`,
+    /// `rule_join_reorder.go:763`), AFTER `generateJoinOrderNode` costed the
+    /// group leaves, so the leaf's `baseNodeCumCost` is the bare
+    /// `DataSource`'s and no cumulative cost ever includes the projection's
+    /// own row count. See [`LogicalNode::Projection`]'s `injected`.
+    injected: bool,
 }
 
 /// What a parent pushed into a relation.
@@ -1233,6 +1244,49 @@ fn leaf_of<'a>(
                 }
             }
             let column_ids = ids.take(names.len());
+            // Go's `injectExpr` wrapper, recognized by the exact shape
+            // `wrap_node` (and Go's `Column2Exprs` + `AppendExpr`) builds: a
+            // single base table republished column-for-column in order with
+            // at least one computed expression appended, and nothing else --
+            // no `WHERE`, no grouping, no outer join. Under
+            // `tidb_opt_join_reorder_through_proj = ON` (the only session
+            // where the dissolve that creates these wrappers runs, and where
+            // Go would have dissolved an identical user-written projection
+            // into this same post-costing shape), its Projection is
+            // transparent to every cumulative cost.
+            let injected = ctx.join_reorder_through_proj()
+                && group_by.is_none()
+                && select.where_clause.is_none()
+                && extended.is_empty()
+                && inner.len() == 1
+                && matches!(inner[0].rel, Rel::Table(_))
+                && {
+                    // A pass-through prefix of the base table's own columns
+                    // (a subset, in schema order -- `Column2Exprs` over the
+                    // PRUNED child schema), then at least one computed
+                    // expression and nothing else.
+                    let base = &inner[0].columns;
+                    let mut position = 0usize;
+                    let mut prefix = 0usize;
+                    for (expr, name) in exprs.iter().zip(&names) {
+                        let Expr::Column(path) = strip(expr) else {
+                            break;
+                        };
+                        let Some(found) = base[position..].iter().position(|column| {
+                            path.last()
+                                .is_some_and(|last| last.eq_ignore_ascii_case(column))
+                                && name.eq_ignore_ascii_case(column)
+                        }) else {
+                            break;
+                        };
+                        position += found + 1;
+                        prefix += 1;
+                    }
+                    prefix < exprs.len()
+                        && exprs[prefix..]
+                            .iter()
+                            .all(|expr| !matches!(strip(expr), Expr::Column(_)))
+                };
             Some(Leaf {
                 node,
                 visible: alias.to_owned(),
@@ -1247,6 +1301,7 @@ fn leaf_of<'a>(
                     inner_edges,
                     inner_filters,
                     extended,
+                    injected,
                 }),
             })
         }
@@ -1397,6 +1452,7 @@ fn emit(
             } else {
                 LogicalNode::Projection {
                     child: Box::new(child),
+                    injected: derived.injected,
                     exprs: (0..derived.exprs.len())
                         .map(|output| ProjectionExpr {
                             output: derived.ids[output],
@@ -2853,6 +2909,7 @@ fn modeled_grouped_select_leaf<'a>(
         // child's count instead of being re-estimated from the key NDV.
         LogicalNode::Projection {
             child: Box::new(child),
+            injected: false,
             exprs: vec![ProjectionExpr {
                 output: *output,
                 inputs: vec![*input],
