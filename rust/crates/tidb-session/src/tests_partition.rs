@@ -915,6 +915,55 @@ fn range_columns_pruning_reads_the_matching_tuple_partition() {
     }
 }
 
+/// TiDB pushes a HAVING conjunct over the grouping key below the aggregation
+/// (Go `LogicalAggregation.PredicatePushDown`,
+/// `pkg/planner/core/operator/logicalop/logical_aggregation.go:106`), so the
+/// ranger intersects the WHERE's disjunction with the HAVING's. Over a
+/// clustered string primary key the intersection here is one value,
+/// `'j9FsMawX5uBro%$p'`, which RANGE COLUMNS pruning maps to `p2` and
+/// `find_best_task.go`'s `convertToPointGet` reads as a `Point_Get` on the
+/// clustered PRIMARY -- the recorded plan of
+/// `planner/core/casetest/partition/partition_pruner`'s col_95 case.
+#[test]
+fn grouped_having_intersection_reads_one_clustered_partition_point() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t95 (`col_95` char(181) COLLATE gbk_bin NOT NULL DEFAULT \
+             'SaMKHTyg+nlID-X3Y', PRIMARY KEY (`col_95`) /*T![clustered_index] CLUSTERED */) \
+             ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin \
+             PARTITION BY RANGE COLUMNS(`col_95`) (\
+             PARTITION `p0` VALUES LESS THAN ('6)nvX^uj0UGxqX'), \
+             PARTITION `p1` VALUES LESS THAN ('BHSluf6'), \
+             PARTITION `p2` VALUES LESS THAN (MAXVALUE))",
+        )
+        .unwrap();
+    session
+        .run(
+            "INSERT INTO t95 VALUES ('58y-j)84-&Y*'), ('WNe(rS5uwmvIvFnHw'), \
+             ('j9FsMawX5uBro%$p'), ('C(#EQm@J')",
+        )
+        .unwrap();
+    let tail = "from t95 where t95.col_95 between 'Dyw=*7nigCMh' and 'Im0*7sZ' or t95.col_95 in \
+                ('58y-j)84-&Y*','WNe(rS5uwmvIvFnHw','j9FsMawX5uBro%$p','C(#EQm@J') group by \
+                t95.col_95 having t95.col_95 between '%^2' and '38ABfC-' or t95.col_95 between \
+                'eKCAE$d2x_hxscj' and 'zcw35^ATEEp1md=L'";
+    let plan =
+        tests_support::row_text(session.run(&format!("EXPLAIN SELECT t95.col_95 as r0 {tail}")));
+    let access = plan.last().expect("a plan has a source row");
+    assert!(
+        access[0].contains("Point_Get"),
+        "the intersection is one clustered key, got {}",
+        access[0]
+    );
+    assert_eq!(
+        access[3], "table:t95, partition:p2, clustered index:PRIMARY(col_95)",
+        "the point resolves its partition and names the clustered PRIMARY"
+    );
+    let rows = tests_support::row_text(session.run(&format!("SELECT t95.col_95 as r0 {tail}")));
+    assert_eq!(rows, vec![vec!["j9FsMawX5uBro%$p".to_owned()]]);
+}
+
 /// HASH pruning must narrow the physical scan, not merely leave the WHERE to
 /// discard rows after all partitions were read. Each partition holds three
 /// rows, so the source `actRows` makes the distinction observable.

@@ -201,12 +201,12 @@ mod tests {
         )
         .expect("the grouped key constrains the clustered index");
         assert_eq!(ranges.ranges.len(), 1, "{:?}", ranges.ranges);
+        // The ranger converts index-range endpoints to SORT KEYS (Go
+        // `convertToSortKey`); a _bin collation's weight string is the value's
+        // own bytes.
         assert_eq!(
             ranges.ranges[0].low,
-            vec![Datum::new_collation_string(
-                b"j9FsMawX5uBro%$p".to_vec(),
-                Collation::Utf8Mb4Bin,
-            )]
+            vec![Datum::Bytes(b"j9FsMawX5uBro%$p".to_vec())]
         );
         assert_eq!(ranges.ranges[0].high, ranges.ranges[0].low);
     }

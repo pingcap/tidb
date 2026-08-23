@@ -2484,7 +2484,45 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //
     // The nine that remain: through_projection 5, and one each of
     // partition_pruner, index_join, stale_txn (MVCC-blocked), and autoid.
-    const KNOWN_DIVERGENCES: usize = 9;
+    const KNOWN_DIVERGENCES: usize = 8;
+    // 9 -> 8: `partition_pruner` fully closed (293 of 294 matched, one
+    // `PlanWithoutProperty` skip). The last statement was the col_95
+    // interval-intersection Point_Get: `... where col_95 between ... or
+    // col_95 in (...) group by col_95 having col_95 between ... or ...`
+    // over `PRIMARY KEY (col_95) CLUSTERED, PARTITION BY RANGE
+    // COLUMNS(col_95)`, recorded as `Point_Get partition:p2, clustered
+    // index:PRIMARY(col_95)` where this tier full-scanned. Three links were
+    // missing, each now ported:
+    //
+    //  * the ranger never saw a clustered STRING primary at all --
+    //    `CREATE TABLE` stores no `KvIndex` for a clustered key (the record
+    //    key is the index), and `build_common_handle_ranges` demanded a
+    //    stored PRIMARY. Go's `TableInfo.Indices` always carries the
+    //    clustered `IndexInfo` and `deriveCommonHandleTablePathStats` ranges
+    //    over it; `handle_range::clustered_primary_metadata` now synthesizes
+    //    the same metadata from the handle offsets.
+    //  * the grouped HAVING never reached the access decision. Go's
+    //    `LogicalAggregation.PredicatePushDown` (`logical_aggregation.go:106`)
+    //    sends a conjunct over grouping columns below the aggregation, so
+    //    the ranger intersects WHERE with HAVING -- here two two-interval
+    //    disjunctions crossing at the single value `'j9FsMawX5uBro%$p'`.
+    //    `driver::agg_predicate_pushdown::for_access` (re-wired; orphaned by
+    //    an earlier merge) hands the access path that combined view while
+    //    the HAVING Selection above the aggregation keeps evaluating.
+    //  * a common-handle single point stayed a `TableRangeScan`: the
+    //    HandleRange arm converted only INTEGER handles. Go's
+    //    `canConvertPointGet` (`find_best_task.go:2202`) takes the clustered
+    //    path through its unique-index arm -- full-width, non-nullable,
+    //    single point -- and `convertToPointGet` resolves the partition.
+    //
+    // Rows moved nowhere (`compared` holds at 9674): the statement was
+    // compared-and-diverged before and matched after. The family is pinned
+    // by `tidb_session::tests_partition::
+    // grouped_having_intersection_reads_one_clustered_partition_point`,
+    // which also asserts the one-row answer through the real read.
+    //
+    // The eight that remain after both merges: through_projection 5, and
+    // one each of index_join, stale_txn (MVCC-blocked), and autoid.
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path
