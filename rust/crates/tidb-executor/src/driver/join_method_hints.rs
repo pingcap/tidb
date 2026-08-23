@@ -303,6 +303,15 @@ impl JoinMethodHints {
             || Self::matches(&self.index_hash, sides)
             || Self::matches(&self.index_merge, sides)
     }
+
+    /// Whether an index-join-family hint names exactly `alias` -- the gate
+    /// for the cast-key lookup (`driver::join_key_cast`). Go enumerates that
+    /// candidate unhinted too and rejects it by cost; every unhinted
+    /// recording of the shape is a hash join, so this tier keeps the
+    /// narrower hint-only surface. NAMED RESIDUE.
+    pub(crate) fn index_family_names_alias(&self, alias: &str) -> bool {
+        self.matches_index_family((Some(alias), None))
+    }
 }
 
 /// Go's `util.ExtractTableAlias` for both children of `join`.

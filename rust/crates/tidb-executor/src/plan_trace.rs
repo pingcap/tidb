@@ -416,6 +416,13 @@ pub(crate) struct PlanTrace {
     /// one frame per SELECT and reused when that source is actually built.
     pre_reserved_query_source_frames: RefCell<Vec<Vec<GoLogicalQuerySourceColumns>>>,
     next_pre_reserved_query_source: RefCell<Option<GoLogicalPlanColumns>>,
+    /// Cast-projection expressions Go's `updateEQCond` materialized in a
+    /// completed join subtree, keyed by the trace-stack slot that subtree's
+    /// root occupies. `BuildKeyInfoPortal` runs at EVERY join's predicate
+    /// pushdown and recurses the join's WHOLE subtree, so an ancestor join
+    /// re-allocates one plan-column id per descendant cast expression --
+    /// which is what [`PlanTrace::join_key_cast_stream`] drains these for.
+    join_cast_frames: RefCell<Vec<(usize, usize)>>,
 }
 
 impl PlanTrace {
@@ -430,6 +437,7 @@ impl PlanTrace {
             next_aggregation_projection: Vec::new(),
             pre_reserved_query_source_frames: RefCell::new(Vec::new()),
             next_pre_reserved_query_source: RefCell::new(None),
+            join_cast_frames: RefCell::new(Vec::new()),
         }
     }
 
@@ -445,6 +453,7 @@ impl PlanTrace {
             next_aggregation_projection: Vec::new(),
             pre_reserved_query_source_frames: RefCell::new(Vec::new()),
             next_pre_reserved_query_source: RefCell::new(None),
+            join_cast_frames: RefCell::new(Vec::new()),
         }
     }
 
@@ -479,6 +488,60 @@ impl PlanTrace {
         for _ in 0..count {
             self.alloc_plan_column_id();
         }
+    }
+
+    /// Go's join-key cast chain at ONE join, on the statement's plan-column
+    /// stream. Three stages, verified id by id against
+    /// `r/planner/core/join_key_type_cast.result` (see
+    /// [`crate::driver::join_key_cast`]'s module doc for the arithmetic):
+    ///
+    /// 1. `updateEQCond` materializes each mismatched equality's two DOUBLE
+    ///    casts into child projections: TWO ids per pair
+    ///    (`LogicalProjection.AppendExpr`).
+    /// 2. `BuildKeyInfoPortal`, called right after, recurses the join's
+    ///    whole subtree; `buildSchemaByExprs` allocates one id per
+    ///    non-column projection expression -- the two casts above, PLUS
+    ///    every cast a descendant join's own stage already materialized
+    ///    (their frames, drained here and re-recorded for the next
+    ///    ancestor).
+    /// 3. `JoinKeyTypeCastRewriter` allocates ONE id per rewritten equality
+    ///    -- the `Column#N` the recorded range text prints -- returned in
+    ///    rewrite order.
+    ///
+    /// NAMED RESIDUE: Go runs stage 3 after EVERY join's stages 1-2 (the
+    /// rule is a separate optimizer pass); this per-join hook interleaves a
+    /// descendant's stage 3 before its ancestor's stage 1, so a statement
+    /// NESTING two rewritten joins would number them differently. Nothing in
+    /// the pinned corpus nests them.
+    pub(crate) fn join_key_cast_stream(
+        &self,
+        double_cast_pairs: usize,
+        rewritten: usize,
+    ) -> Vec<i64> {
+        let depth = self.stack.len().saturating_sub(2);
+        let subtree: usize = {
+            let mut frames = self.join_cast_frames.borrow_mut();
+            let mut sum = 0;
+            frames.retain(|(at, count)| {
+                if *at >= depth {
+                    sum += *count;
+                    false
+                } else {
+                    true
+                }
+            });
+            sum
+        };
+        let own = 2 * double_cast_pairs;
+        if own + subtree == 0 {
+            return Vec::new();
+        }
+        self.reserve_plan_column_ids(own);
+        self.reserve_plan_column_ids(own + subtree);
+        self.join_cast_frames.borrow_mut().push((depth, own + subtree));
+        (0..rewritten)
+            .map(|_| self.alloc_plan_column_id())
+            .collect()
     }
 
     pub(crate) fn query_source_frame_depth(&self) -> usize {

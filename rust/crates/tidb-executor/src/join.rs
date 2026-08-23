@@ -766,6 +766,45 @@ impl IndexLookupSource {
     }
 }
 
+/// Go's `rule_join_key_type_cast.go` rewrite, carried as a COMPUTED probe
+/// key instead of an injected child projection: this driver addresses
+/// columns by offset, so materializing `cast(str AS SIGNED)` as a real
+/// column of one child would shift every offset after it. The value is
+/// computed per outer row instead, and Go's guard `Selection` -- which drops
+/// string values whose integer cast is not their numeric value ('1.5') --
+/// is folded into the computation: a rejected row has no key and matches
+/// nothing, which under the INNER join this rewrite is limited to is exactly
+/// the dropped row. See [`crate::driver::join_key_cast`] for the whole
+/// chain, including the plan-column numbering the recorded `Column#12`
+/// pins.
+#[derive(Clone)]
+pub(crate) struct IndexProbeCast {
+    /// Child-local offset of the STRING column in the OUTER child's row.
+    pub(crate) outer_offset: usize,
+    /// Child-local offset of the probed INT column in the LOOKUP child's
+    /// output row.
+    pub(crate) inner_offset: usize,
+    /// `CAST(str AS SIGNED)` over a one-column row holding the string value.
+    pub(crate) cast: Expression,
+    /// Go's guard equality over the same one-column row.
+    pub(crate) guard: Expression,
+    /// The string column's type: the one-column row's layout.
+    pub(crate) str_type: FieldType,
+}
+
+impl IndexProbeCast {
+    /// The synthetic single-key encoding both sides of this probe share:
+    /// Go's rewritten equality is over the INT domain.
+    fn key_encoding() -> [EquiKey; 1] {
+        [EquiKey {
+            left: 0,
+            right: 0,
+            class: KeyClass::Int,
+            null_safe: false,
+        }]
+    }
+}
+
 pub(crate) struct IndexLookupPlan {
     /// Whether the LOOKED-UP side is this join's left child.
     ///
@@ -793,6 +832,12 @@ pub(crate) struct IndexLookupPlan {
     /// Lookup-result columns the same predicate proves non-NULL, evaluated
     /// after a retained derived aggregation.
     pub(crate) inner_not_null: Vec<usize>,
+    /// Go's join-key type-cast rewrite: the outer key is COMPUTED
+    /// (`cast(str AS SIGNED)` behind a guard) rather than read off a column,
+    /// and the equality it belongs to is NOT in [`JoinExec::keys`] --
+    /// `split_equi` keys only `col = col`. When set, the probe, the inner
+    /// match map and the outer drain all use this one key.
+    pub(crate) probe_cast: Option<IndexProbeCast>,
 }
 
 /// The index strategy's live state: one outer batch and the inner rows its
@@ -1685,6 +1730,7 @@ impl<C: Columns> JoinExec<C> {
             memory,
             index_lookup,
             index_state,
+            ctx,
             ..
         } = self;
         let outer_child = if outer_is_left {
@@ -1710,6 +1756,7 @@ impl<C: Columns> JoinExec<C> {
 
         if state.pending.is_empty() {
             Self::fill_index_task_queue(
+                ctx,
                 outer_child,
                 keys,
                 plan,
@@ -1732,6 +1779,7 @@ impl<C: Columns> JoinExec<C> {
         // Keep N-1 later requests live while this task is materialized and
         // drained, matching Go's N bounded inner-worker slots.
         Self::fill_index_task_queue(
+            ctx,
             outer_child,
             keys,
             plan,
@@ -1745,11 +1793,13 @@ impl<C: Columns> JoinExec<C> {
         let aggregation = plan.aggregation.clone();
         let aggregation_stream_ordered = plan.aggregation_stream_ordered;
         let inner_not_null = plan.inner_not_null.clone();
+        let probe_cast = plan.probe_cast.clone();
         match task.source {
             PendingIndexLookupSource::Prefetched(mut source) => Self::materialize_index_inner(
                 &mut source,
                 state,
                 keys,
+                probe_cast.as_ref(),
                 outer_is_left,
                 aggregation.as_ref(),
                 aggregation_stream_ordered,
@@ -1763,6 +1813,7 @@ impl<C: Columns> JoinExec<C> {
                     &mut plan.source,
                     state,
                     keys,
+                    probe_cast.as_ref(),
                     outer_is_left,
                     aggregation.as_ref(),
                     aggregation_stream_ordered,
@@ -1776,6 +1827,7 @@ impl<C: Columns> JoinExec<C> {
 
     #[allow(clippy::too_many_arguments)]
     fn fill_index_task_queue(
+        ctx: &C,
         outer_child: &mut dyn Executor,
         keys: &[EquiKey],
         plan: &IndexLookupPlan,
@@ -1799,7 +1851,7 @@ impl<C: Columns> JoinExec<C> {
                 }
                 continue;
             }
-            let probes = Self::index_task_probes(keys, plan, &outer, outer_is_left)?;
+            let probes = Self::index_task_probes(ctx, keys, plan, &outer, outer_is_left)?;
             let source = if state.prefetch_disabled {
                 PendingIndexLookupSource::Synchronous(probes)
             } else if let Some(source) =
@@ -1861,11 +1913,40 @@ impl<C: Columns> JoinExec<C> {
     }
 
     fn index_task_probes(
+        ctx: &C,
         keys: &[EquiKey],
         plan: &IndexLookupPlan,
         outer: &[Vec<Datum>],
         outer_is_left: bool,
     ) -> Result<Vec<Vec<Datum>>, ExecError> {
+        if let Some(cast) = &plan.probe_cast {
+            // The computed key: `cast(str AS SIGNED)` behind Go's guard.
+            // Distinct values only, keyed by their INT-domain encoding,
+            // exactly like the column path below.
+            let encoding = IndexProbeCast::key_encoding();
+            let mut probes_by_key = std::collections::BTreeMap::new();
+            for row in outer {
+                let Some(value) = crate::driver::join_key_cast::computed_probe_key(
+                    &cast.cast,
+                    &cast.guard,
+                    &cast.str_type,
+                    &row[cast.outer_offset],
+                    ctx,
+                )?
+                else {
+                    continue;
+                };
+                let probe = vec![value];
+                let encoded =
+                    row_key(&encoding, &probe, |key| key.left).map_err(|_: KeyError| {
+                        ExecError::unsupported("a join key column has no comparable encoding")
+                    })?;
+                if let Some(encoded) = encoded {
+                    probes_by_key.entry(encoded).or_insert(probe);
+                }
+            }
+            return Ok(probes_by_key.into_values().collect());
+        }
         let outer_offset = |key: &EquiKey| if outer_is_left { key.left } else { key.right };
         let probe_encoding: Vec<EquiKey> = plan
             .probe_keys
@@ -1907,6 +1988,7 @@ impl<C: Columns> JoinExec<C> {
         source: &mut IndexLookupSource,
         state: &mut IndexLookupState,
         keys: &[EquiKey],
+        probe_cast: Option<&IndexProbeCast>,
         outer_is_left: bool,
         aggregation: Option<&IndexLookupAggregation>,
         aggregation_stream_ordered: bool,
@@ -1967,10 +2049,23 @@ impl<C: Columns> JoinExec<C> {
             for row_idx in 0..num_rows {
                 let ptr = RowPtr::new(chk_idx as u32, row_idx as u32);
                 let row = state.inner.get_row(ptr);
-                let key = row_key_by(keys, |key| {
-                    let offset = inner_offset(key);
-                    row.get_datum(offset, &materialized_types[offset])
-                })
+                // The cast probe's inner side is the bare INT column, encoded
+                // in the same INT domain as the computed outer key.
+                let key = match probe_cast {
+                    Some(cast) => {
+                        let encoding = IndexProbeCast::key_encoding();
+                        row_key_by(&encoding, |_| {
+                            row.get_datum(
+                                cast.inner_offset,
+                                &materialized_types[cast.inner_offset],
+                            )
+                        })
+                    }
+                    None => row_key_by(keys, |key| {
+                        let offset = inner_offset(key);
+                        row.get_datum(offset, &materialized_types[offset])
+                    }),
+                }
                 .map_err(|_: KeyError| {
                     ExecError::unsupported("a join key column has no comparable encoding")
                 })?;
@@ -1988,6 +2083,10 @@ impl<C: Columns> JoinExec<C> {
         let keys = self.keys.clone();
         let outer_is_left = self.outer_is_left();
         let outer_offset = |key: &EquiKey| if outer_is_left { key.left } else { key.right };
+        let probe_cast = self
+            .index_lookup
+            .as_ref()
+            .and_then(|plan| plan.probe_cast.clone());
         let cap = self.meta.max_chunk_size();
         loop {
             let state = self
@@ -1998,7 +2097,29 @@ impl<C: Columns> JoinExec<C> {
                 return Ok(());
             }
             let outer_row = &state.outer[state.cursor];
-            let key = row_key(&keys, outer_row, outer_offset).map_err(|_: KeyError| {
+            // The cast probe re-computes the same guarded key the probe used,
+            // so the outer row and the inner match map speak one encoding.
+            let key = match &probe_cast {
+                Some(cast) => {
+                    let value = crate::driver::join_key_cast::computed_probe_key(
+                        &cast.cast,
+                        &cast.guard,
+                        &cast.str_type,
+                        &outer_row[cast.outer_offset],
+                        &self.ctx,
+                    )?;
+                    match value {
+                        Some(value) => {
+                            let encoding = IndexProbeCast::key_encoding();
+                            let probe = [value];
+                            row_key(&encoding, &probe, |key| key.left)
+                        }
+                        None => Ok(None),
+                    }
+                }
+                None => row_key(&keys, outer_row, outer_offset),
+            }
+            .map_err(|_: KeyError| {
                 ExecError::unsupported("a join key column has no comparable encoding")
             })?;
             if let Some(positions) = key.and_then(|key| state.matched.get(&key)) {

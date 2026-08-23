@@ -279,6 +279,15 @@ fn push_conjuncts<'a>(expr: &'a Expression, out: &mut Vec<&'a Expression>) {
 /// keyed match order reads FORWARD; only a join with no cross-side
 /// equality at all is Go's v1 cross join with the reversed single-chain
 /// order. See [`BuildTable`]'s doc for the measurements.
+///
+/// One of these joins CAN leave the nested path now: an index-family hint
+/// naming the signed-int side probes that side's handle with the computed
+/// `cast(str AS SIGNED)` key (`driver::join_key_cast`), running
+/// [`crate::join::JoinExec`]'s index strategy. Its emission is outer-major
+/// in outer order -- the same forward order this marker pins for the
+/// nested path -- so the boundary stays order-consistent. The hash
+/// statements themselves still run here: this port carries the rewritten
+/// key on the index plan alone rather than making it a split key.
 pub(crate) fn has_cross_side_equality(conditions: &[Expression], left_width: usize) -> bool {
     fn sides(expr: &Expression, left_width: usize, has: &mut (bool, bool)) {
         match expr {
