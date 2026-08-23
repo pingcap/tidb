@@ -2155,8 +2155,19 @@ fn index_row_count(
         return RowEstimate::default_est(pseudo_index_row_count(index, ranges, realtime));
     };
     let Some(index_stats) = stats.indexes.get(&index.id) else {
-        // A table WITH statistics whose index was never analyzed: Go falls
-        // back to the pseudo rate for that path only, not for the table.
+        // A table WITH statistics whose index was never analyzed: Go's
+        // `GetRowCountByIndexRanges` (`row_count_index.go:57`) first tries
+        // the index columns' OWN histograms
+        // (`getPseudoRowCountWithPartialStats`) and only a path with no
+        // column statistics either falls to the pseudo rate. The clustered
+        // PRIMARY this crate synthesizes ([`crate::handle_range::
+        // clustered_primary_metadata`]) always lands here on an analyzed
+        // table: its key columns are analyzed, its index id is stored
+        // nowhere.
+        if let Some(estimate) = partial_stats_index_row_count(index, table, ranges, stats, realtime)
+        {
+            return estimate;
+        }
         return RowEstimate::default_est(pseudo_index_row_count(index, ranges, realtime));
     };
     let datum_ranges: Vec<IndexRangeDatums> = ranges
@@ -2216,6 +2227,108 @@ pub(crate) fn index_range_row_count(
 /// `colsLen` there is the index's column count for a UNIQUE index and `-1`
 /// otherwise, which is what decides whether a full-length point range is
 /// worth exactly one row; that is the `unique_columns` argument.
+/// Go `getPseudoRowCountWithPartialStats` (`pkg/planner/cardinality/
+/// row_count_column.go:254`): the index has no statistics, but its columns
+/// do, so each range position is estimated as a single-column range and the
+/// per-column selectivities multiply (independence), with the CORRELATED
+/// floor -- the minimum single-column selectivity -- carried as the maximum
+/// estimate.
+///
+/// `None` reproduces the two gates in `GetRowCountByIndexRanges`
+/// (`row_count_index.go:58`): no index column has statistics
+/// (`hasColumnStats`), or some range is the full one
+/// (`ranger.HasFullRange(indexRanges, false)`); both fall to the pseudo rate.
+fn partial_stats_index_row_count(
+    index: &KvIndex,
+    table: &KvTable,
+    ranges: &[IndexRange],
+    stats: &TableStatistics,
+    realtime: f64,
+) -> Option<RowEstimate> {
+    if realtime <= 0.0 {
+        return Some(RowEstimate::default_est(0.0));
+    }
+    let columns: Vec<(Option<&ColumnStats>, tidb_datatype::Collation)> = index
+        .column_offsets
+        .iter()
+        .map(|offset| {
+            let column = table.columns.get(*offset);
+            (
+                column.and_then(|column| stats.columns.get(&column.id)),
+                column.map_or(tidb_datatype::Collation::Binary, |column| {
+                    column.field_type.collation()
+                }),
+            )
+        })
+        .collect();
+    if columns.iter().all(|(stats, _)| stats.is_none()) {
+        return None;
+    }
+    if ranges.iter().any(|range| range.is_full_range(false)) {
+        return None;
+    }
+    // Go: a single-column index is directly the column estimate.
+    if index.column_offsets.len() == 1 {
+        let (column_stats, collation) = &columns[0];
+        let column_ranges: Vec<ColumnRange> = ranges
+            .iter()
+            .map(|range| ColumnRange {
+                low: range.low.first().cloned().unwrap_or(Datum::MinNotNull),
+                high: range.high.first().cloned().unwrap_or(Datum::MaxValue),
+                low_exclude: range.low_exclusive,
+                high_exclude: range.high_exclusive,
+            })
+            .collect();
+        return Some(RowEstimate::default_est(
+            get_row_count_by_column_ranges(
+                *column_stats,
+                &column_ranges,
+                *collation,
+                stats.row_count,
+                stats.modify_count,
+                false,
+                estimator_options(),
+            )
+            .est,
+        ));
+    }
+    let mut total = 0.0;
+    let mut max_count = 0.0;
+    for range in ranges {
+        let mut selectivity = 1.0;
+        let mut corr_selectivity = 1.0f64;
+        for (position, low) in range.low.iter().enumerate() {
+            let last = position == range.low.len() - 1;
+            let column_range = ColumnRange {
+                low: low.clone(),
+                high: range.high.get(position).cloned().unwrap_or(Datum::MaxValue),
+                low_exclude: last && range.low_exclusive,
+                high_exclude: last && range.high_exclusive,
+            };
+            let (column_stats, collation) = columns.get(position)?;
+            // Go: "GetRowCountByColumnRanges handles invalid stats
+            // internally by using pseudo estimation".
+            let count = get_row_count_by_column_ranges(
+                *column_stats,
+                &[column_range],
+                *collation,
+                stats.row_count,
+                stats.modify_count,
+                false,
+                estimator_options(),
+            )
+            .est;
+            let temp_selectivity = count / realtime;
+            selectivity *= temp_selectivity;
+            corr_selectivity = corr_selectivity.min(temp_selectivity);
+        }
+        total += selectivity * realtime;
+        max_count += corr_selectivity * realtime;
+    }
+    total = total.clamp(1.0, realtime);
+    Some(RowEstimate::new(total, total, max_count))
+}
+
 fn pseudo_index_row_count(index: &KvIndex, ranges: &[IndexRange], realtime: f64) -> f64 {
     let pseudo_ranges: Vec<PseudoIndexRange> = ranges
         .iter()

@@ -298,6 +298,7 @@ use tidb_expr::schema::Schema;
 
 pub mod access;
 mod agg_build;
+mod agg_predicate_pushdown;
 mod agg_select;
 mod catalog;
 mod clause_resolve;
@@ -1666,11 +1667,22 @@ fn run_select_traced_with_delivery_choice_inner(
     // here loses both its range predicate (already marked consumed) and its
     // required order, replacing the real `[w_id,w_id]` path with an
     // `IndexFullScan`. Go keeps the task returned for the requested property.
+    // Go `LogicalAggregation.PredicatePushDown`
+    // (`pkg/planner/core/operator/logicalop/logical_aggregation.go:106`,
+    // `splitCondForAggregation` `:631`): a HAVING conjunct whose columns are
+    // all grouping columns descends below the aggregation, so the
+    // `DataSource` builds its ranges and prunes its partitions from the
+    // WHERE *and* that HAVING. The access view is the only thing that
+    // changes here -- the HAVING `Selection` above the aggregation still
+    // evaluates ([`having`]), which filters exactly the groups the pushed
+    // predicate already removed whole.
+    let grouped_access_select = agg_predicate_pushdown::for_access(select);
+    let access_select = grouped_access_select.as_ref().unwrap_or(select);
     let access_path = if aggregation_order.is_some() {
         AccessPathCommit::default()
     } else {
         commit_fast_path_source(
-            select,
+            access_select,
             catalog,
             current_db,
             &scope,

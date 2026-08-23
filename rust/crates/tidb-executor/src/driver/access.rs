@@ -1011,6 +1011,26 @@ pub(crate) fn commit_fast_path_source(
                                 Some(&handle),
                                 None,
                             );
+                        } else if !disable_point_get
+                            && !table.common_handle_offsets().is_empty()
+                            && ranges.len() == 1
+                            && ranges[0].is_point(false)
+                            && ranges[0].low.len() == table.common_handle_offsets().len()
+                        {
+                            // Go converts a COMMON-handle table path the same
+                            // way (`find_best_task.go:2202`: the clustered
+                            // PRIMARY is unique with no prefix, and the one
+                            // range must pin every key column and be a
+                            // non-nullable point, `:2248`). The print names
+                            // the clustered index, not a handle value, and a
+                            // pruned partitioned table names its partition --
+                            // both [`PlanTrace::point_get`]'s own contract.
+                            trace.point_get(
+                                source_table_name(scope, &table.name),
+                                &table,
+                                None,
+                                None,
+                            );
                         } else {
                             trace.table_range_scan(
                                 source_table_name(scope, &table.name),

@@ -172,12 +172,51 @@ pub(crate) fn common_handle_primary(table: &KvTable) -> Option<&KvIndex> {
     })
 }
 
+/// The clustered PRIMARY's index METADATA, whether or not the catalog stores
+/// it as a [`KvIndex`].
+///
+/// Go's `TableInfo.Indices` always carries the clustered primary `IndexInfo`
+/// (`Primary: true`), and `deriveCommonHandleTablePathStats` builds the table
+/// path's ranges from it. This tier's `CREATE TABLE` stores no `KvIndex` for
+/// a clustered key -- the record key itself enforces it, and a stored index
+/// would be physically maintained as a duplicate -- so the same metadata is
+/// synthesized here from the handle offsets. A clustered key part never has a
+/// prefix ([`crate::ddl::index_prefix::clustered_prefix_unsupported`]), so
+/// whole-column parts are the faithful reconstruction. Id `0` collides with
+/// no stored index (the DDL allocates from 1), so a statistics lookup under
+/// it misses and the estimate is the pseudo one -- exactly what Go computes
+/// for an unanalyzed primary.
+///
+/// The tables that DO store a PRIMARY `KvIndex` (test scaffolding injects one
+/// for statistics) keep using it, its id and its declared parts.
+pub(crate) fn clustered_primary_metadata(table: &KvTable) -> Option<std::borrow::Cow<'_, KvIndex>> {
+    if table.common_handle_offsets().is_empty() {
+        return None;
+    }
+    if let Some(index) = common_handle_primary(table) {
+        return Some(std::borrow::Cow::Borrowed(index));
+    }
+    Some(std::borrow::Cow::Owned(KvIndex {
+        id: 0,
+        name: "PRIMARY".to_owned(),
+        comment: String::new(),
+        unique: true,
+        column_offsets: table.common_handle_offsets().to_vec(),
+        prefix_lengths: vec![
+            crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+            table.common_handle_offsets().len()
+        ],
+        visible: true,
+        global: false,
+    }))
+}
+
 fn build_common_handle_ranges<'a>(
     table: &KvTable,
     where_clause: &'a tidb_ast::Expr,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<IndexRanges<'a>> {
-    let index = common_handle_primary(table)?;
+    let index = clustered_primary_metadata(table)?;
     let columns: Vec<crate::index_range::RangeColumn> = index
         .column_offsets
         .iter()
@@ -361,8 +400,8 @@ pub(crate) fn handle_range_row_count(
     stats: Option<&TableStatistics>,
 ) -> f64 {
     let realtime = realtime_row_count(stats);
-    if let Some(index) = common_handle_primary(table) {
-        return crate::access_cost::index_range_row_count(index, table, ranges, stats, realtime);
+    if let Some(index) = clustered_primary_metadata(table) {
+        return crate::access_cost::index_range_row_count(&index, table, ranges, stats, realtime);
     }
     let Some(column) = handle_column(table) else {
         return realtime;
