@@ -204,7 +204,13 @@ fn run_autocommit(
     if !arguments.commit {
         return None;
     }
-    match commit_staged_buffer(opener, buffer, read_ts, TIMEOUT) {
+    match commit_staged_buffer(
+        opener,
+        buffer,
+        read_ts,
+        TIMEOUT,
+        tidb_exec::session_commit_protocol::session_commit_protocol(),
+    ) {
         Ok(None) => {
             println!("commit: nothing staged");
             None
@@ -226,7 +232,11 @@ fn run_explicit_transaction(
     arguments: &Arguments,
     cop_scans: Option<&CopScans>,
 ) -> Option<String> {
-    let transaction = match SessionTransaction::begin(Arc::clone(opener), TIMEOUT) {
+    let transaction = match SessionTransaction::begin(
+        Arc::clone(opener),
+        TIMEOUT,
+        tidb_exec::session_commit_protocol::session_commit_protocol(),
+    ) {
         Ok(transaction) => transaction,
         Err(error) => return Some(error.to_string()),
     };

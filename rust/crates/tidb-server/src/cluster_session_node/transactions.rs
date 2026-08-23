@@ -774,22 +774,40 @@ where
     }
 
     fn begin_autocommit_write(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
-        SessionTransaction::begin(Arc::clone(&self.opener), self.timeout)
-            .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
-            .map_err(|error| error.to_string())
+        SessionTransaction::begin(
+            Arc::clone(&self.opener),
+            self.timeout,
+            tidb_exec::session_commit_protocol::session_commit_protocol(),
+        )
+        .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
+        .map_err(|error| error.to_string())
     }
 
     fn commit(&self, buffer: &MutationBuffer, read_ts: Option<u64>) -> Result<(), SqlQueryError> {
-        commit_staged_buffer(&self.opener, buffer, read_ts, self.timeout)
-            .map(|_| ())
-            .map_err(sql_error)
+        commit_staged_buffer(
+            &self.opener,
+            buffer,
+            read_ts,
+            self.timeout,
+            tidb_exec::session_commit_protocol::session_commit_protocol(),
+        )
+        .map(|_| ())
+        .map_err(sql_error)
     }
 
     fn begin(&self, pessimistic: bool) -> Result<Box<dyn OpenClusterTransaction>, String> {
         let transaction = if pessimistic {
-            SessionTransaction::begin_pessimistic(Arc::clone(&self.opener), self.timeout)
+            SessionTransaction::begin_pessimistic(
+                Arc::clone(&self.opener),
+                self.timeout,
+                tidb_exec::session_commit_protocol::session_commit_protocol(),
+            )
         } else {
-            SessionTransaction::begin(Arc::clone(&self.opener), self.timeout)
+            SessionTransaction::begin(
+                Arc::clone(&self.opener),
+                self.timeout,
+                tidb_exec::session_commit_protocol::session_commit_protocol(),
+            )
         };
         transaction
             .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
