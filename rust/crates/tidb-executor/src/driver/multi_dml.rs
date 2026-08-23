@@ -524,7 +524,7 @@ fn scan_base_table(
         TableEntry::Kv(kv) => kv
             .clone()
             .scan_rows_with_handles(&ctx.session_zone())
-            .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?
+            .map_err(|e| super::dml::kv_read_error("row decode failed", e))?
             .into_iter()
             .map(|(handle, row)| (vec![Some(RowId::Kv(handle))], row))
             .collect(),

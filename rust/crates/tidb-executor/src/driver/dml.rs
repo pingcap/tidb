@@ -2540,7 +2540,12 @@ fn fetch_write_rows(
     read_path: Option<&super::access::WriteReadPath>,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Vec<(crate::kv_table::TableHandle, Vec<Datum>)>, DriverError> {
-    let decode_failed = |e| DriverError::Parse(format!("row decode failed: {e:?}"));
+    // Through `kv_read_error`, not a bare parse error: the fetch reads
+    // storage, and a retryable storage failure (a lock wait or region retry
+    // that exhausted its budget) must keep its transaction-error identity --
+    // rendering it as 1064 told a sysbench client its `UPDATE ... WHERE
+    // id=?` had a SYNTAX error.
+    let decode_failed = |e| kv_read_error("row decode failed", e);
     match read_path {
         Some(super::access::WriteReadPath::Point(pin)) => {
             let Some(handle) = pin.handle.as_ref() else {

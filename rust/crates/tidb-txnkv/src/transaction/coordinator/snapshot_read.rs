@@ -39,7 +39,7 @@ use super::super::region_batches::{group_keys, point_route, RegionKeyBatch};
 use super::super::state::{CoordinatorState, SnapshotReadReceipt};
 use super::{
     alive_retry_delay, recover_region_error_with, wait_with_call, OptimisticCoordinatorError,
-    RealOptimisticTransaction, RecoveryPhase, MAX_LOCK_ATTEMPTS,
+    RealOptimisticTransaction, RecoveryPhase,
 };
 
 /// Pairs one Scan page may return. client-go's `scanBatchSize`.
@@ -113,7 +113,6 @@ where
             "encoded key is empty".to_owned(),
         ));
     }
-    let mut lock_attempts = 0usize;
     loop {
         let route = point_route(runtime, key)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -148,17 +147,30 @@ where
                 )
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
                 resolved_locks.absorb(&recovery);
-                if lock_attempts >= MAX_LOCK_ATTEMPTS {
-                    return Err(OptimisticCoordinatorError::SnapshotGet(
-                        "snapshot lock retry budget exhausted".to_owned(),
-                    ));
-                }
+                // Go `KVSnapshot.get` (client-go `txnkv/txnsnapshot/
+                // snapshot.go`): a still-alive lock's wait is a `BoTxnLockFast`
+                // draw against the SAME backoffer that absorbs the call's
+                // region errors -- `bo.BackoffWithCfgAndMaxSleep(retry.
+                // BoTxnLockFast, int(msBeforeExpired), ...)` -- so the budget
+                // is TIME (20s effective), the per-wait sleep starts at 2ms and
+                // grows exponentially capped by the lock's own remaining TTL,
+                // and there is NO attempt cap. A fixed four-attempt cap here
+                // exhausted in milliseconds under sysbench's hot-row
+                // contention, failing statements Go simply waits out; a lock
+                // already resolved retries immediately with no draw, which is
+                // Go's `msBeforeExpired == 0` arm.
                 if recovery.is_alive() {
-                    wait_with_call(call, alive_retry_delay(recovery.ttl)).map_err(|error| {
-                        OptimisticCoordinatorError::SnapshotGet(error.to_string())
-                    })?;
+                    let delay = forward_backoff
+                        .next_delay(crate::retry::RegionBackoffKind::TxnLockFast)
+                        .map_err(|exhausted| {
+                            OptimisticCoordinatorError::SnapshotGet(format!(
+                                "snapshot lock retry budget exhausted: {exhausted:?}"
+                            ))
+                        })?;
+                    wait_with_call(call, delay.min(alive_retry_delay(recovery.ttl))).map_err(
+                        |error| OptimisticCoordinatorError::SnapshotGet(error.to_string()),
+                    )?;
                 }
-                lock_attempts += 1;
                 continue;
             }
             return Err(OptimisticCoordinatorError::SnapshotGet(format!(
@@ -250,7 +262,13 @@ where
         self.state
             .transition(CoordinatorState::Reading)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-        let mut lock_attempts = 0usize;
+        // Go gives each `KVSnapshot.get` ONE backoffer (`getMaxBackoff`,
+        // 20s) shared by its region errors and lock waits. Region recovery
+        // here draws on `self`'s own budget seam, so the lock half carries
+        // its own 20s TIME budget: the accounting is split where Go's is
+        // shared, but the per-call ceiling and the `BoTxnLockFast` growth
+        // are Go's.
+        let mut lock_backoff = RegionBackoffBudget::campaign_default();
         loop {
             let route = point_route(&self.runtime, key)
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -294,17 +312,20 @@ where
                     // Go `ClientHelper.ResolveLocks`: record before retrying,
                     // or the retry meets the same lock and never terminates.
                     self.resolved_locks.absorb(&recovery);
-                    if lock_attempts >= MAX_LOCK_ATTEMPTS {
-                        return Err(OptimisticCoordinatorError::SnapshotGet(
-                            "snapshot lock retry budget exhausted".to_owned(),
-                        ));
-                    }
+                    // See `snapshot_get`'s lock arm: Go's `BoTxnLockFast`
+                    // time budget, no attempt cap.
                     if recovery.is_alive() {
-                        wait_with_call(call, alive_retry_delay(recovery.ttl)).map_err(|error| {
-                            OptimisticCoordinatorError::SnapshotGet(error.to_string())
-                        })?;
+                        let delay = lock_backoff
+                            .next_delay(crate::retry::RegionBackoffKind::TxnLockFast)
+                            .map_err(|exhausted| {
+                                OptimisticCoordinatorError::SnapshotGet(format!(
+                                    "snapshot lock retry budget exhausted: {exhausted:?}"
+                                ))
+                            })?;
+                        wait_with_call(call, delay.min(alive_retry_delay(recovery.ttl))).map_err(
+                            |error| OptimisticCoordinatorError::SnapshotGet(error.to_string()),
+                        )?;
                     }
-                    lock_attempts += 1;
                     continue;
                 }
                 return Err(OptimisticCoordinatorError::SnapshotGet(format!(
@@ -357,7 +378,9 @@ where
         self.state
             .transition(CoordinatorState::Reading)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-        let mut lock_attempts = 0usize;
+        // Go `KVSnapshot.BatchGet` (`batchGetMaxBackoff`, 20s): the same
+        // time-budgeted `BoTxnLockFast` wait as `snapshot_get`'s lock arm.
+        let mut lock_backoff = RegionBackoffBudget::campaign_default();
         loop {
             let groups = group_keys(&self.runtime, keys)
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -454,11 +477,6 @@ where
                 continue;
             }
             if !locked.is_empty() {
-                if lock_attempts >= MAX_LOCK_ATTEMPTS {
-                    return Err(OptimisticCoordinatorError::SnapshotGet(
-                        "snapshot lock retry budget exhausted".to_owned(),
-                    ));
-                }
                 let context = lock_context.unwrap_or_default();
                 let recovery = resolve_optimistic_locks(
                     &self.runtime,
@@ -471,12 +489,20 @@ where
                 )
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
                 self.resolved_locks.absorb(&recovery);
+                // See `snapshot_get`'s lock arm: Go's `BoTxnLockFast` time
+                // budget, no attempt cap.
                 if recovery.is_alive() {
-                    wait_with_call(call, alive_retry_delay(recovery.ttl)).map_err(|error| {
-                        OptimisticCoordinatorError::SnapshotGet(error.to_string())
-                    })?;
+                    let delay = lock_backoff
+                        .next_delay(crate::retry::RegionBackoffKind::TxnLockFast)
+                        .map_err(|exhausted| {
+                            OptimisticCoordinatorError::SnapshotGet(format!(
+                                "snapshot lock retry budget exhausted: {exhausted:?}"
+                            ))
+                        })?;
+                    wait_with_call(call, delay.min(alive_retry_delay(recovery.ttl))).map_err(
+                        |error| OptimisticCoordinatorError::SnapshotGet(error.to_string()),
+                    )?;
                 }
-                lock_attempts += 1;
                 continue;
             }
             self.check_visibility()?;
@@ -526,7 +552,9 @@ where
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
         let mut pairs = Vec::new();
         let mut cursor = start_key.to_vec();
-        let mut lock_attempts = 0usize;
+        // Go `Scanner.getData` (`scannerNextMaxBackoff`, 20s): the same
+        // time-budgeted `BoTxnLockFast` wait as `snapshot_get`'s lock arm.
+        let mut lock_backoff = RegionBackoffBudget::campaign_default();
         while cursor.as_slice() < end_key {
             let route = point_route(&self.runtime, &cursor)
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -576,12 +604,6 @@ where
                 }
             }
             if !locked.is_empty() {
-                if lock_attempts >= MAX_LOCK_ATTEMPTS {
-                    return Err(OptimisticCoordinatorError::SnapshotGet(
-                        "scan lock retry budget exhausted".to_owned(),
-                    ));
-                }
-                lock_attempts += 1;
                 let recovery = resolve_optimistic_locks(
                     &self.runtime,
                     &locked,
@@ -593,10 +615,19 @@ where
                 )
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
                 self.resolved_locks.absorb(&recovery);
+                // See `snapshot_get`'s lock arm: Go's `BoTxnLockFast` time
+                // budget, no attempt cap.
                 if recovery.is_alive() {
-                    wait_with_call(call, alive_retry_delay(recovery.ttl)).map_err(|error| {
-                        OptimisticCoordinatorError::SnapshotGet(error.to_string())
-                    })?;
+                    let delay = lock_backoff
+                        .next_delay(crate::retry::RegionBackoffKind::TxnLockFast)
+                        .map_err(|exhausted| {
+                            OptimisticCoordinatorError::SnapshotGet(format!(
+                                "scan lock retry budget exhausted: {exhausted:?}"
+                            ))
+                        })?;
+                    wait_with_call(call, delay.min(alive_retry_delay(recovery.ttl))).map_err(
+                        |error| OptimisticCoordinatorError::SnapshotGet(error.to_string()),
+                    )?;
                 }
                 // Redo this page: a locked scan returns no trustworthy pairs.
                 continue;

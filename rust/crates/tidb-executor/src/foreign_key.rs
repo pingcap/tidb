@@ -574,13 +574,13 @@ fn delete_rows(
     };
     let stored = kv
         .scan_rows_with_handles(zone)
-        .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
+        .map_err(|e| crate::driver::kv_read_error("row decode failed", e))?;
     let mut remaining: Vec<&Vec<Datum>> = rows.iter().collect();
     for (handle, row) in stored {
         if let Some(position) = remaining.iter().position(|wanted| ***wanted == row[..]) {
             remaining.swap_remove(position);
             kv.delete_row(&handle, zone)
-                .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?;
+                .map_err(crate::driver::kv_write_error)?;
         }
     }
     Ok(())
@@ -599,13 +599,13 @@ fn rewrite_rows(
     };
     let stored = kv
         .scan_rows_with_handles(&ctx.session_zone())
-        .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
+        .map_err(|e| crate::driver::kv_read_error("row decode failed", e))?;
     let mut remaining: Vec<&(Vec<Datum>, Vec<Datum>)> = rewrites.iter().collect();
     for (handle, row) in stored {
         if let Some(position) = remaining.iter().position(|(old, _)| old[..] == row[..]) {
             let (_, new) = remaining.swap_remove(position);
             kv.update_row(&handle, new, ctx)
-                .map_err(|e| DriverError::Parse(format!("row update failed: {e:?}")))?;
+                .map_err(crate::driver::kv_write_error)?;
         }
     }
     Ok(())
