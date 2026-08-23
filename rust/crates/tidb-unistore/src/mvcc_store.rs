@@ -234,6 +234,18 @@ pub struct PrewriteReq {
     pub assertion_level: i32,
 }
 
+/// What one prewrite publishes in its response, Go's `reqCtx` fields that
+/// `KvPrewrite` copies out (`server.go:419-424`).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct PrewriteOutcome {
+    /// Go `reqCtx.asyncMinCommitTS`: set when async commit stays enabled,
+    /// published as the response's `MinCommitTs`.
+    pub async_min_commit_ts: u64,
+    /// Go `reqCtx.onePCCommitTS`: nonzero means the prewrite already
+    /// committed at this ts, published as `OnePcCommitTs`.
+    pub one_pc_commit_ts: u64,
+}
+
 /// Go `MVCCStore`, optimistic slice: the ported lock skiplist beside the
 /// substituted data engine.
 #[derive(Debug)]
@@ -286,6 +298,14 @@ impl MvccStore {
 
     /// Go `MVCCStore.Prewrite` (`mvcc.go:761`), optimistic arm only.
     pub fn prewrite(&mut self, req: &PrewriteReq) -> Result<(), KvError> {
+        self.prewrite_with_outcome(req).map(|_| ())
+    }
+
+    /// Go `MVCCStore.Prewrite` with the response's own fields — Go carries
+    /// them on the request context (`reqCtx.asyncMinCommitTS`,
+    /// `reqCtx.onePCCommitTS`) and publishes both in `KvPrewrite`
+    /// (`server.go:419-424`).
+    pub fn prewrite_with_outcome(&mut self, req: &PrewriteReq) -> Result<PrewriteOutcome, KvError> {
         // Go `sortPrewrite`.
         let mut mutations = req.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
@@ -298,11 +318,11 @@ impl MvccStore {
     /// Go `prewriteMutations`' head (`mvcc.go:935-956`): async commit and
     /// 1PC draw a `minCommitTS` from PD after the keys are decided — one
     /// past `MaxCommitTs` falls back to sync commit; otherwise it raises
-    /// the request's `MinCommitTs`. 1PC's commit arm (`tryOnePC`) is a
-    /// named narrowing: it needs the dbWriter's atomic commit.
-    fn effective_prewrite_req(&self, req: &PrewriteReq) -> Result<PrewriteReq, KvError> {
+    /// the request's `MinCommitTs`. The drawn ts rides back to the caller:
+    /// 1PC commits at it and async commit publishes it in the response.
+    fn effective_prewrite_req(&self, req: &PrewriteReq) -> Result<(PrewriteReq, u64), KvError> {
         if !(req.use_async_commit || req.try_one_pc) {
-            return Ok(req.clone());
+            return Ok((req.clone(), 0));
         }
         let Some(pd) = &self.pd else {
             return Err(KvError::Unported(
@@ -319,12 +339,48 @@ impl MvccStore {
         if req.use_async_commit && min_commit_ts > req.min_commit_ts {
             req.min_commit_ts = min_commit_ts;
         }
-        if req.try_one_pc {
-            return Err(KvError::Unported(
-                "1PC needs tryOnePC's atomic dbWriter commit (mvcc.go:1073)",
-            ));
+        Ok((req, min_commit_ts))
+    }
+
+    /// Go `tryOnePC` (`mvcc.go:1072`): commit every mutation atomically at
+    /// `minCommitTS` — data plus the primary's extra-txn-status record in
+    /// one dbWriter batch, locks never published. `Ok(None)` falls back to
+    /// two-phase, Go's "1pc transaction fallbacks due to minCommitTS
+    /// exceeds maxCommitTS".
+    fn try_one_pc(
+        &mut self,
+        mutations: &[KvrpcMutation],
+        items: &[Option<(Vec<u8>, DbUserMeta)>],
+        req: &PrewriteReq,
+        min_commit_ts: u64,
+    ) -> Result<Option<u64>, KvError> {
+        if req.max_commit_ts > 0 && min_commit_ts > req.max_commit_ts {
+            return Ok(None);
         }
-        Ok(req)
+        // Go `log.Fatal("1pc commitTS less than startTS")`: a ts the store
+        // itself drew from PD cannot precede the transaction it serves.
+        assert!(
+            min_commit_ts >= req.start_version,
+            "1pc commitTS less than startTS"
+        );
+        for (mutation, item) in mutations.iter().zip(items) {
+            if mutation.op == KvrpcOp::CheckNotExists as i32 {
+                continue;
+            }
+            let lock = build_prewrite_lock(mutation, item.as_ref(), req)?;
+            // Go `writeBatch.Commit` (`write.go:256`), applied per key.
+            let meta = DbUserMeta::new(req.start_version, min_commit_ts);
+            if lock.hdr.op == KvrpcOp::PessimisticLock as i32 as u8 {
+                // Write nothing as if PessimisticRollback is called.
+            } else if lock.hdr.op != KvrpcOp::Lock as i32 as u8 {
+                self.engine.set(&mutation.key, min_commit_ts, &lock.value, meta);
+            } else if mutation.key == lock.primary {
+                let status_key = encode_extra_txn_status_key(&mutation.key, req.start_version);
+                self.engine.set(&status_key, req.start_version, &[], meta);
+            }
+            self.lock_store_delete(&mutation.key);
+        }
+        Ok(Some(min_commit_ts))
     }
 
     /// Go `prewriteOptimistic` (`mvcc.go:791`).
@@ -332,7 +388,7 @@ impl MvccStore {
         &mut self,
         mutations: &[KvrpcMutation],
         req: &PrewriteReq,
-    ) -> Result<(), KvError> {
+    ) -> Result<PrewriteOutcome, KvError> {
         let start_ts = req.start_version;
         // Stage 1 — "Must check the LockStore first."
         for mutation in mutations {
@@ -341,7 +397,7 @@ impl MvccStore {
                 .is_some()
             {
                 // duplicated command
-                return Ok(());
+                return Ok(PrewriteOutcome::default());
             }
             if mutation.key == req.primary_lock {
                 let status = self.check_extra_txn_status(&mutation.key, start_ts);
@@ -349,7 +405,7 @@ impl MvccStore {
                     return Err(KvError::AlreadyRollback);
                 }
                 if status.is_op_lock_committed() {
-                    return Ok(()); // duplicated command
+                    return Ok(PrewriteOutcome::default()); // duplicated command
                 }
             }
         }
@@ -384,9 +440,35 @@ impl MvccStore {
                 }
             }
         }
-        // Stage 3 — Go `prewriteMutations`: build each lock, batch, write.
-        let req = self.effective_prewrite_req(req)?;
-        for (mutation, item) in mutations.iter().zip(&items) {
+        // Stage 3 — Go `prewriteMutations`: the async/1PC head, then build
+        // each lock, batch, write.
+        self.prewrite_mutations(mutations, &items, req)
+    }
+
+    /// Go `prewriteMutations` (`mvcc.go:935`): draw the `minCommitTS`, try
+    /// 1PC's atomic commit, otherwise publish every lock for two-phase.
+    fn prewrite_mutations(
+        &mut self,
+        mutations: &[KvrpcMutation],
+        items: &[Option<(Vec<u8>, DbUserMeta)>],
+        req: &PrewriteReq,
+    ) -> Result<PrewriteOutcome, KvError> {
+        let (req, min_commit_ts) = self.effective_prewrite_req(req)?;
+        // Go `reqCtx.asyncMinCommitTS` (`mvcc.go:947`), published as the
+        // response's MinCommitTs.
+        let async_min_commit_ts = if req.use_async_commit { min_commit_ts } else { 0 };
+        let mut outcome = PrewriteOutcome {
+            async_min_commit_ts,
+            one_pc_commit_ts: 0,
+        };
+        if req.try_one_pc {
+            if let Some(committed) = self.try_one_pc(mutations, items, &req, min_commit_ts)? {
+                outcome.one_pc_commit_ts = committed;
+                // "If 1PC succeeded, exit immediately." (`mvcc.go:962`)
+                return Ok(outcome);
+            }
+        }
+        for (mutation, item) in mutations.iter().zip(items) {
             if mutation.op == KvrpcOp::CheckNotExists as i32 {
                 continue;
             }
@@ -394,7 +476,7 @@ impl MvccStore {
             // Go `writeBatch.Prewrite` (`write.go:252`).
             self.lock_store_put(&mutation.key, &lock.marshal_binary());
         }
-        Ok(())
+        Ok(outcome)
     }
 
     /// Go `checkConflictInLockStore` (`mvcc.go`): a same-ts lock is a
@@ -1637,9 +1719,12 @@ impl MvccStore {
         &mut self,
         mutations: &[KvrpcMutation],
         req: &PrewriteReq,
-    ) -> Result<(), KvError> {
+    ) -> Result<PrewriteOutcome, KvError> {
         use tidb_proto::KvrpcPessimisticAction;
         let start_ts = req.start_version;
+        // Go mutates `req.LockTtl` in place while validating; the local copy
+        // owns that raise.
+        let mut req = req.clone();
         let mut expected_for_update: std::collections::BTreeMap<usize, u64> =
             std::collections::BTreeMap::new();
         for (index, expected) in &req.for_update_ts_constraints {
@@ -1682,10 +1767,13 @@ impl MvccStore {
                 let lock = lock.as_ref().expect("checked above");
                 if lock.hdr.op != KvrpcOp::PessimisticLock as i32 as u8 {
                     // Duplicated command.
-                    return Ok(());
+                    return Ok(PrewriteOutcome::default());
                 }
-                // Go keeps the LARGER ttl; the mutated request field becomes
-                // a local since the batch build reads it through the lock.
+                // Go keeps the LARGER ttl (`mvcc.go:899`), raised in place so
+                // `prewriteMutations` builds every lock with it.
+                if u64::from(lock.hdr.ttl) > req.lock_ttl {
+                    req.lock_ttl = u64::from(lock.hdr.ttl);
+                }
             } else if need_constraint_check {
                 if let Some((_, meta)) = self.engine.get_at(&mutation.key, u64::MAX) {
                     if meta.commit_ts() > start_ts {
@@ -1711,7 +1799,7 @@ impl MvccStore {
                         )));
                     }
                     // Duplicate command.
-                    return Ok(());
+                    return Ok(PrewriteOutcome::default());
                 }
             }
         }
@@ -1723,24 +1811,7 @@ impl MvccStore {
                     .map(|(value, meta)| (value.to_vec(), meta.clone()))
             })
             .collect();
-        let req = &self.effective_prewrite_req(req)?;
-        for (mutation, item) in mutations.iter().zip(&items) {
-            let pessimistic_ttl = {
-                let buf = self.lock_bytes(&mutation.key);
-                if buf.is_empty() {
-                    0
-                } else {
-                    u64::from(decode_lock(&buf).hdr.ttl)
-                }
-            };
-            let mut effective = req.clone();
-            if pessimistic_ttl > effective.lock_ttl {
-                effective.lock_ttl = pessimistic_ttl;
-            }
-            let lock = build_prewrite_lock(mutation, item.as_ref(), &effective)?;
-            self.lock_store_put(&mutation.key, &lock.marshal_binary());
-        }
-        Ok(())
+        self.prewrite_mutations(mutations, &items, &req)
     }
 
     /// Go `MVCCStore.PessimisticRollback` (`mvcc.go:435`): only OUR
@@ -4195,6 +4266,54 @@ mod tests {
         assert!(sec_lock.hdr.use_async_commit);
         assert!(sec_lock.hdr.min_commit_ts > 0);
         assert_eq!(sec_lock.value, sec_val2);
+    }
+
+    /// Go `tryOnePC` (`mvcc.go:1072`): a try-one-PC prewrite commits every
+    /// mutation atomically at the PD-drawn ts — data lands, no lock ever
+    /// stands, and the outcome names the commit ts the response publishes.
+    /// A `MaxCommitTs` under the drawn ts falls back to two-phase
+    /// (`mvcc.go:1074`), publishing locks instead.
+    #[test]
+    fn test_one_pc_prewrite_commits_in_the_prewrite() {
+        let mut store = MvccStore::with_pd(std::sync::Arc::new(crate::tso::Tso::new()));
+        let (pk, val) = (b"onepc-pk".as_slice(), b"onepcVal".as_slice());
+
+        // Full 1PC: the prewrite IS the commit.
+        let outcome = store
+            .prewrite_with_outcome(&PrewriteReq {
+                mutations: vec![put(pk, val)],
+                primary_lock: pk.to_vec(),
+                start_version: 1,
+                lock_ttl: LOCK_TTL,
+                try_one_pc: true,
+                ..PrewriteReq::default()
+            })
+            .expect("the 1PC prewrite lands");
+        assert!(outcome.one_pc_commit_ts > 1, "the drawn ts commits");
+        assert_eq!(outcome.async_min_commit_ts, 0, "1PC alone publishes no async ts");
+        must_unlocked(&store, pk);
+        must_get_val(&store, pk, val, u64::MAX);
+        // A reader at or past the commit sees it; one before does not.
+        must_get_val(&store, pk, val, outcome.one_pc_commit_ts);
+        must_get_none(&store, pk, outcome.one_pc_commit_ts - 1);
+
+        // The fallback arm: a MaxCommitTs the drawn ts exceeds demotes the
+        // request to a plain two-phase prewrite.
+        let (fk, fval) = (b"onepc-fallback".as_slice(), b"fallbackVal".as_slice());
+        let fallback = store
+            .prewrite_with_outcome(&PrewriteReq {
+                mutations: vec![put(fk, fval)],
+                primary_lock: fk.to_vec(),
+                start_version: 5,
+                lock_ttl: LOCK_TTL,
+                try_one_pc: true,
+                max_commit_ts: 6,
+                ..PrewriteReq::default()
+            })
+            .expect("the fallback prewrite lands");
+        assert_eq!(fallback.one_pc_commit_ts, 0, "the store declined 1PC");
+        assert!(!store.lock_bytes(fk).is_empty(), "a lock stands for two-phase");
+        must_get_none(&store, fk, u64::MAX);
     }
 
     // Go's `lockTTL` (`mvcc_test.go:40`).
