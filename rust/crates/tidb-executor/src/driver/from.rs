@@ -5334,6 +5334,12 @@ fn build_join_with_choice(
         // case). Include its Go pseudo selectivity when expanding the access
         // rows; otherwise the range scan is charged with post-filter rows and
         // the Selection is charged a second time.
+        //
+        // The columns the rebuilt range already fixes to a constant are
+        // excluded here for the same reason `decision.filter_selectivity`
+        // excludes them: Go's range CONSUMES those equalities, so its
+        // `countAfterAccess` never divides by their selectivity. See
+        // `IndexJoinDecision::static_key_columns`.
         let effective_filter_selectivity = if decision.filter_selectivity < 1.0 {
             decision.filter_selectivity
         } else {
@@ -5343,7 +5349,7 @@ fn build_join_with_choice(
                 .map(|filters| {
                     crate::driver::index_join_decision::residual_filter_selectivity(
                         filters,
-                        &[],
+                        &decision.static_key_columns(),
                         &decision.columns,
                         &decision.table,
                         &decision.visible,

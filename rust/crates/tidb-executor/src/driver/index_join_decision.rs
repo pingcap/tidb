@@ -555,6 +555,48 @@ impl IndexJoinDecision {
         }
     }
 
+    /// The looked-up object's key columns, in key order.
+    fn key_offsets(&self) -> Vec<usize> {
+        match self.object {
+            crate::access_path::LookupObject::Handle => self
+                .table
+                .pk_handle_offset()
+                .map(|offset| vec![offset])
+                .unwrap_or_default(),
+            crate::access_path::LookupObject::CommonHandle => {
+                self.table.common_handle_offsets().to_vec()
+            }
+            crate::access_path::LookupObject::Index(id) => self
+                .table
+                .indexes()
+                .iter()
+                .find(|index| index.id == id)
+                .map(|index| index.column_offsets.clone())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// The object-key columns a leaf constant fixed, so that the rebuilt
+    /// range encodes them beside the outer key.
+    ///
+    /// Go's `indexJoinPathFindUsefulEQIn` returns such an equality as
+    /// `notKeyEqAndIn`, which becomes an ACCESS condition rather than a
+    /// remained one (`pkg/planner/core/index_join_path.go:176`, `:187`), and
+    /// `constructDS2TableScanTask` receives `chosenRemained` as its filter
+    /// conditions (`pkg/planner/core/exhaust_physical_plans.go:754`, `:756`)
+    /// and derives `countAfterAccess = rowCount / selectivity` from just
+    /// those (`:864`, `:871`). The explicit probe-side `Selection` Go prints
+    /// for the access predicates is appended only afterwards (`:907`,
+    /// `:915`), so the equality never divides the estimate.
+    pub(crate) fn static_key_columns(&self) -> Vec<usize> {
+        self.key_offsets()
+            .into_iter()
+            .zip(&self.probe_parts)
+            .filter(|(_, part)| matches!(part, crate::access_path::LookupProbePart::Constant(_)))
+            .map(|(offset, _)| offset)
+            .collect()
+    }
+
     /// `TableStats.RowCount / NDV(usable join-key prefix)` -- Go's
     /// `rowCountUpperBound` (`exhaust_physical_plans.go:1123-1141`).
     ///
@@ -597,23 +639,7 @@ impl IndexJoinDecision {
         let Some(stats) = stats.filter(|stats| !stats.pseudo && stats.row_count > 0) else {
             return 0.0;
         };
-        let key_offsets = match self.object {
-            crate::access_path::LookupObject::Handle => self
-                .table
-                .pk_handle_offset()
-                .map(|offset| vec![offset])
-                .unwrap_or_default(),
-            crate::access_path::LookupObject::CommonHandle => {
-                self.table.common_handle_offsets().to_vec()
-            }
-            crate::access_path::LookupObject::Index(id) => self
-                .table
-                .indexes()
-                .iter()
-                .find(|index| index.id == id)
-                .map(|index| index.column_offsets.clone())
-                .unwrap_or_default(),
-        };
+        let key_offsets = self.key_offsets();
         let used_column_ids = key_offsets
             .iter()
             .take(self.probe_parts.len())

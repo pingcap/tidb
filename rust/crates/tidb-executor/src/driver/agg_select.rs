@@ -756,7 +756,15 @@ pub(crate) fn run_aggregate_select(
                 &physical_source_names,
             );
         }
-    } else if has_final_projection && state.grouped_hash_output_reordered {
+    // A derived relation's restoring Projection is executable bookkeeping,
+    // not a plan node: every expression in it is a bare column, and Go's
+    // `ProjectionEliminator` removes such a projection whenever its ancestor
+    // chain passed through an aggregation, projection or window -- which the
+    // enclosing SELECT's own projection always supplies for a derived table
+    // (`pkg/planner/core/rule_eliminate_projection.go:157-211`). The same
+    // projection above a TOP-LEVEL select list is the plan root, reached with
+    // `canEliminate` still false, and stays (TPC-H q13).
+    } else if has_final_projection && state.grouped_hash_output_reordered && !derived_output {
         if let Some(trace) = trace.as_deref_mut() {
             trace.grouped_stream_output_projection(
                 traced_select,
@@ -2125,6 +2133,38 @@ fn collect_derived_aliases(node: &tidb_ast::JoinNode, aliases: &mut Vec<String>)
             }
         }
         tidb_ast::JoinNode::Table(_) => {}
+    }
+}
+
+/// Moves the aggregate states into `state_order` and rewires every output
+/// slot that named one, so the physical HashAgg writes Go's
+/// aggregate-functions-first, `FIRST_ROW`-carriers-last layout while the
+/// SELECT's own field order is restored above it.
+fn apply_hash_agg_state_order(state: &mut AggPipelineState, state_order: &[usize]) {
+    state.grouped_hash_output_reordered = true;
+    let old_funcs = std::mem::take(&mut state.agg_funcs);
+    state.agg_funcs = state_order
+        .iter()
+        .map(|index| old_funcs[*index].clone())
+        .collect();
+    let old_names = std::mem::take(&mut state.names);
+    state.names = state_order
+        .iter()
+        .map(|index| old_names[*index].clone())
+        .collect();
+    let old_types = std::mem::take(&mut state.types);
+    state.types = state_order
+        .iter()
+        .map(|index| old_types[*index].clone())
+        .collect();
+    let mut old_to_new = vec![0; state_order.len()];
+    for (new, old) in state_order.iter().copied().enumerate() {
+        old_to_new[old] = new;
+    }
+    for slot in &mut state.slots {
+        if let OutputSlot::Agg(index) = slot {
+            *index = old_to_new[*index];
+        }
     }
 }
 
@@ -3716,7 +3756,6 @@ fn build_aggregation(
             .chain(first_rows.into_iter().map(|(_, index)| index))
             .collect::<Vec<_>>();
         if !state_order.iter().copied().eq(0..state_order.len()) {
-            state.grouped_hash_output_reordered = true;
             state.grouped_hash_internal_columns = group_by.iter().any(|expression| {
                 expression.as_column().is_some_and(|column| {
                     usize::try_from(column.index)
@@ -3725,30 +3764,7 @@ fn build_aggregation(
                         .is_none_or(Option::is_none)
                 })
             });
-            let old_funcs = std::mem::take(&mut state.agg_funcs);
-            state.agg_funcs = state_order
-                .iter()
-                .map(|index| old_funcs[*index].clone())
-                .collect();
-            let old_names = std::mem::take(&mut state.names);
-            state.names = state_order
-                .iter()
-                .map(|index| old_names[*index].clone())
-                .collect();
-            let old_types = std::mem::take(&mut state.types);
-            state.types = state_order
-                .iter()
-                .map(|index| old_types[*index].clone())
-                .collect();
-            let mut old_to_new = vec![0; state_order.len()];
-            for (new, old) in state_order.iter().copied().enumerate() {
-                old_to_new[old] = new;
-            }
-            for slot in &mut state.slots {
-                if let OutputSlot::Agg(index) = slot {
-                    *index = old_to_new[*index];
-                }
-            }
+            apply_hash_agg_state_order(state, &state_order);
         }
     }
     let grouped_input_projection = if !force_stream
@@ -3769,6 +3785,27 @@ fn build_aggregation(
                 has_ungrouped_carrier,
                 state_order,
             } = plan;
+            // Go's physical HashAgg state layout is aggregate-functions
+            // first and FIRST_ROW carriers second even when every argument is
+            // already a column and InjectProjBelowAgg has no Projection to
+            // add. A grouped derived output (TPC-H q13) relies on the final
+            // Projection to restore its written field order.
+            //
+            // The layout belongs to `LogicalAggregation.AggFuncs`, which
+            // `buildAggregation` fills with the written functions before it
+            // appends one FIRST_ROW per child-schema column
+            // (`pkg/planner/core/logical_plan_builder.go:291`, `:367`). It is
+            // therefore decided before, and independently of, whether
+            // `InjectProjBelowAgg` finds a non-column argument to project, so
+            // it must also be applied when a join-reorder restoration already
+            // supplies the projected row (TPCC condition 08).
+            if !grouped_stream_ordered && !state_order.iter().copied().eq(0..state_order.len()) {
+                apply_hash_agg_state_order(state, &state_order);
+                function_positions = state_order
+                    .iter()
+                    .map(|index| function_positions[*index])
+                    .collect();
+            }
             // A join-reorder schema restoration already installed this exact
             // compact projection above the join. Go's `InjectProjBelowAgg`
             // adds a Projection only for arguments that are NOT its child's
@@ -3786,42 +3823,6 @@ fn build_aggregation(
                     })
             {
                 return true;
-            }
-            // Go's physical HashAgg state layout is aggregate-functions
-            // first and FIRST_ROW carriers second even when every argument is
-            // already a column and InjectProjBelowAgg has no Projection to
-            // add. A grouped derived output (TPC-H q13) relies on the final
-            // Projection to restore its written field order.
-            if !grouped_stream_ordered && !state_order.iter().copied().eq(0..state_order.len()) {
-                state.grouped_hash_output_reordered = true;
-                let old_funcs = std::mem::take(&mut state.agg_funcs);
-                state.agg_funcs = state_order
-                    .iter()
-                    .map(|index| old_funcs[*index].clone())
-                    .collect();
-                let old_names = std::mem::take(&mut state.names);
-                state.names = state_order
-                    .iter()
-                    .map(|index| old_names[*index].clone())
-                    .collect();
-                let old_types = std::mem::take(&mut state.types);
-                state.types = state_order
-                    .iter()
-                    .map(|index| old_types[*index].clone())
-                    .collect();
-                let mut old_to_new = vec![0; state_order.len()];
-                for (new, old) in state_order.iter().copied().enumerate() {
-                    old_to_new[old] = new;
-                }
-                for slot in &mut state.slots {
-                    if let OutputSlot::Agg(index) = slot {
-                        *index = old_to_new[*index];
-                    }
-                }
-                function_positions = state_order
-                    .iter()
-                    .map(|index| function_positions[*index])
-                    .collect();
             }
             // Go's post-optimization rule injects a projection for either
             // physical aggregation when an argument/group item is scalar.
