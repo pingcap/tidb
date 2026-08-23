@@ -27,6 +27,15 @@ pub trait ResultSetSink {
     /// Writes one logical packet payload.
     fn write_payload(&mut self, payload: &[u8]) -> Result<(), SinkWriteError>;
 
+    /// Flushes any connection-owned result-set buffering.
+    ///
+    /// In-memory sinks do not need a flush. A socket sink uses this boundary
+    /// after the terminal EOF/OK packet so one result set is sent with a
+    /// single transport flush rather than one flush per MySQL packet.
+    fn flush(&mut self) -> Result<(), SinkWriteError> {
+        Ok(())
+    }
+
     /// Returns the number of complete logical packets written so far.
     fn packets_written(&self) -> usize;
 }
@@ -195,6 +204,7 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         .finish_packet()
         .map_err(|error| tracked_after_pull(error.to_string(), sink, true))?;
     write_payload(sink, &terminal).map_err(|error| tracked(error, true))?;
+    flush_sink(sink).map_err(|error| tracked(error, true))?;
 
     Ok(ResultSetWriteOutcome {
         rows_written: stream.row_count(),
@@ -257,6 +267,14 @@ fn write_payload<W: ResultSetSink>(
             retryable: false,
             bytes_escaped,
         }
+    })
+}
+
+fn flush_sink<W: ResultSetSink>(sink: &mut W) -> Result<(), ResultSetWriteError> {
+    sink.flush().map_err(|error| ResultSetWriteError {
+        message: error.message,
+        retryable: false,
+        bytes_escaped: sink.packets_written() > 0 || error.bytes_escaped,
     })
 }
 

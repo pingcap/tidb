@@ -330,6 +330,15 @@ impl RequestBuilder {
         self
     }
 
+    /// Allows the coprocessor transport to use its unordered response path.
+    ///
+    /// This remains separate from `set_keep_order` so requests that merge
+    /// staged rows keep the source's ordered-response validation by default.
+    pub fn set_allow_unordered_response(&mut self, allow: bool) -> &mut Self {
+        self.request.allow_unordered_response = allow;
+        self
+    }
+
     /// Sets descending range order.
     pub fn set_desc(&mut self, desc: bool) -> &mut Self {
         self.request.desc = desc;

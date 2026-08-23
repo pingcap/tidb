@@ -51,7 +51,7 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use tidb_pd_client::PdClient;
 use tidb_txnkv::rpc::TonicCoprocessorClient;
@@ -108,6 +108,22 @@ pub trait ClusterTransactions: Send + Sync {
     /// get on the clustered handle; see
     /// [`ClusterSnapshot::declare_autocommit_point_get`].
     fn open_max_ts_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String>;
+
+    /// Opens one reusable read-only transaction at `u64::MAX` for the
+    /// connection's repeated clustered-common-handle point gets.  Unlike the
+    /// per-statement snapshot, this keeps the transaction worker alive across
+    /// statements; reads at the max marker still resolve the latest committed
+    /// value on every request, while avoiding an open/finish handshake for
+    /// every YCSB point read.
+    fn begin_max_ts(&self) -> Result<Box<dyn OpenClusterTransaction>, String>;
+
+    /// Opens the writable transaction owned by one autocommit UPDATE/DELETE.
+    ///
+    /// The statement reads and publishes through this same transaction.  The
+    /// open is started before DML planning so its timestamp/worker setup can
+    /// overlap the CPU work, while the transaction itself remains statement
+    /// owned and is handed back to the session at the statement boundary.
+    fn begin_autocommit_write(&self) -> Result<Box<dyn OpenClusterTransaction>, String>;
 
     /// Publishes one autocommit statement's staged writes as its own
     /// transaction **at `read_ts`**, then empties the buffer. An empty buffer
@@ -293,6 +309,10 @@ struct DeferredSnapshot {
     /// Where the open publishes the statement's timestamp, so the publication
     /// can find it after this handle is gone.
     read_ts: StatementReadTs,
+    /// A same-transaction write owner, handed to the session when this
+    /// statement snapshot is dropped.  The slot is shared because the storage
+    /// seam intentionally exposes only `ClusterSnapshot` to the executor.
+    write_handoff: Option<WriteTransactionSlot>,
     /// Behind one `Mutex` because `start_ts` takes `&self` and must answer
     /// with the timestamp of the same transaction the reads use -- and because
     /// the declaration below must be settled against the open atomically.
@@ -306,6 +326,11 @@ struct DeferredState {
     prepared: Option<Box<dyn PendingClusterSnapshot>>,
     /// `None` until the first read waits for the prepared snapshot.
     opened: Option<Box<dyn ClusterSnapshot>>,
+    /// A writable transaction being opened for an UPDATE/DELETE.  Its read
+    /// handle is installed in `opened`; the owner stays here until Drop can
+    /// hand it to the session for commit.
+    prefetched_write: Option<mpsc::Receiver<Result<Box<dyn OpenClusterTransaction>, String>>>,
+    write_transaction: Option<Box<dyn OpenClusterTransaction>>,
     /// Whether the statement declared its whole read is one point get on the
     /// clustered handle, which is what decides WHICH transaction the first
     /// read opens.
@@ -327,6 +352,7 @@ impl fmt::Debug for DeferredSnapshot {
             .field("prepared", &state.prepared.is_some())
             .field("opened", &state.opened.is_some())
             .field("max_ts", &state.max_ts)
+            .field("write_transaction", &state.write_transaction.is_some())
             .finish()
     }
 }
@@ -336,7 +362,33 @@ impl DeferredSnapshot {
         Self {
             transactions,
             read_ts,
+            write_handoff: None,
             state: Mutex::new(DeferredState::default()),
+        }
+    }
+
+    fn new_prefetched_write(
+        transactions: Arc<dyn ClusterTransactions>,
+        read_ts: StatementReadTs,
+        write_handoff: WriteTransactionSlot,
+    ) -> Self {
+        let (reply, answer) = mpsc::sync_channel(1);
+        let opener = Arc::clone(&transactions);
+        let prefetched_write = std::thread::Builder::new()
+            .name("cluster-write-prefetch".to_owned())
+            .spawn(move || {
+                let _ = reply.send(opener.begin_autocommit_write());
+            })
+            .ok()
+            .map(|_| answer);
+        Self {
+            transactions,
+            read_ts,
+            write_handoff: Some(write_handoff),
+            state: Mutex::new(DeferredState {
+                prefetched_write,
+                ..DeferredState::default()
+            }),
         }
     }
 
@@ -374,10 +426,20 @@ impl DeferredSnapshot {
         if guard.opened.is_none() {
             let opened = if guard.max_ts {
                 self.transactions.open_max_ts_snapshot()
+            } else if let Some(prefetched_write) = guard.prefetched_write.take() {
+                let transaction = prefetched_write
+                    .recv()
+                    .unwrap_or_else(|_| {
+                        Err(
+                            "the write transaction prefetch stopped before opening a transaction"
+                                .to_owned(),
+                        )
+                    })
+                    .map_err(StorageError::Backend)?;
+                let snapshot = transaction.snapshot().map_err(StorageError::Backend)?;
+                guard.write_transaction = Some(transaction);
+                Ok(snapshot)
             } else if let Some(prepared) = guard.prepared.take() {
-                // Go `txnFuture.wait` logs a failed oracle future and calls
-                // `store.Begin` without `WithStartTS`, which synchronously
-                // takes one replacement timestamp for the statement.
                 prepared.wait().or_else(|prepared_error| {
                     self.transactions.open_snapshot().map_err(|fallback_error| {
                         format!(
@@ -396,6 +458,34 @@ impl DeferredSnapshot {
             guard.opened = Some(opened);
         }
         use_snapshot(guard.opened.as_mut().expect("just opened").as_mut())
+    }
+}
+
+/// The transaction owner a write statement transfers after its snapshot handle
+/// is unbound.  Keeping this alias here avoids exposing the concrete TiKV
+/// transaction implementation through the storage trait.
+pub(crate) type WriteTransactionSlot = Arc<Mutex<Option<Box<dyn OpenClusterTransaction>>>>;
+
+impl Drop for DeferredSnapshot {
+    fn drop(&mut self) {
+        let Some(handoff) = self.write_handoff.take() else {
+            return;
+        };
+        let mut state = self.state();
+        // An UPDATE/DELETE normally consumes the prefetch in its first read.
+        // Receiving an unopened prefetch here also covers a no-row write, so
+        // the statement still commits/finishes the same transaction rather
+        // than leaking a worker.
+        let transaction = state.write_transaction.take().or_else(|| {
+            state
+                .prefetched_write
+                .take()
+                .and_then(|answer| answer.recv().ok().and_then(Result::ok))
+        });
+        drop(state);
+        if let Some(transaction) = transaction {
+            *handoff.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(transaction);
+        }
     }
 }
 
@@ -463,6 +553,20 @@ pub(crate) fn deferred_snapshot(
     read_ts: StatementReadTs,
 ) -> Box<dyn ClusterSnapshot> {
     Box::new(DeferredSnapshot::new(transactions, read_ts))
+}
+
+/// [`deferred_snapshot`] with a writable transaction opened in parallel with
+/// DML planning.  The statement reads and commits through that one owner.
+pub(crate) fn prefetched_write_snapshot(
+    transactions: Arc<dyn ClusterTransactions>,
+    read_ts: StatementReadTs,
+    write_handoff: WriteTransactionSlot,
+) -> Box<dyn ClusterSnapshot> {
+    Box::new(DeferredSnapshot::new_prefetched_write(
+        transactions,
+        read_ts,
+        write_handoff,
+    ))
 }
 
 /// The production transaction tier: real read-only transactions and the
@@ -661,6 +765,18 @@ where
             Arc::clone(&self.opener),
             self.timeout,
         )))
+    }
+
+    fn begin_max_ts(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        SessionTransaction::begin_read_only_at_max_ts(Arc::clone(&self.opener), self.timeout)
+            .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
+            .map_err(|error| error.to_string())
+    }
+
+    fn begin_autocommit_write(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        SessionTransaction::begin(Arc::clone(&self.opener), self.timeout)
+            .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
+            .map_err(|error| error.to_string())
     }
 
     fn commit(&self, buffer: &MutationBuffer, read_ts: Option<u64>) -> Result<(), SqlQueryError> {

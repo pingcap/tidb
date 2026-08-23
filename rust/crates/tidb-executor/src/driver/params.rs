@@ -42,14 +42,24 @@ pub fn bind_parameters(
     // the parser's canonical form, exactly as Go's stored AST would.
     sql_mode: tidb_parser::SqlMode,
 ) -> Result<String, DriverError> {
-    let mut stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
+    let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
         .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    bind_statement(stmt, values).map(|stmt| stmt.restore())
+}
+
+/// Binds execute-time values into an already parsed prepared statement.
+///
+/// Go keeps the parsed AST on the prepared statement and changes only its
+/// parameter-marker nodes for each execute.  Keeping this seam separate from
+/// [`bind_parameters`] lets the wire front end reuse that parse without
+/// changing the ordinary text-query path.
+pub fn bind_statement(mut stmt: Stmt, values: &[Datum]) -> Result<Stmt, DriverError> {
     let mut bound = 0usize;
     bind_statement_markers(&mut stmt, values, &mut bound)?;
     if bound != values.len() {
         return Err(DriverError::WrongParamCount);
     }
-    Ok(stmt.restore())
+    Ok(stmt)
 }
 
 /// Binds execute-time values into a clone of the AST retained by PREPARE.

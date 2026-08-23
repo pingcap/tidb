@@ -24,6 +24,7 @@ sha1.workspace = true
 sha2.workspace = true
 subtle.workspace = true
 tidb-chunk = { path = "../tidb-chunk" }
+tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-exec = { path = "../tidb-exec" }
@@ -51,7 +52,7 @@ prost.workspace = true
 rcgen.workspace = true
 rustls.workspace = true
 rustls-pemfile.workspace = true
-tidb-ast = { path = "../tidb-ast" }
+tidb-parser = { path = "../tidb-parser" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 

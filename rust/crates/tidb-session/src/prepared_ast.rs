@@ -187,7 +187,7 @@ impl BoundPreparedAst {
         if self.use_cached_point_get {
             return StatementReadShape::AutocommitPointGet;
         }
-        session.statement_read_shape_parsed(
+        session.statement_read_shape_bound(
             self.statement
                 .as_ref()
                 .expect("the ordinary prepared path retains its bound AST"),

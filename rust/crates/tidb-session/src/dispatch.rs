@@ -25,8 +25,45 @@ use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
 use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
 
 use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
-use crate::{infoschema, statement_kind_of, Session, StatementKind, StmtOutput, WarningLevel};
+use crate::{
+    infoschema, privilege, statement_kind_of, Session, StatementKind, StmtOutput, WarningLevel,
+};
 use crate::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
+
+/// Returns the one table privilege needed by the refusal-admitted prepared
+/// fast paths.  Complex statements deliberately fall back to the ordinary
+/// AST privilege collector so authorization cannot be weakened by an
+/// optimization refusal.
+fn fast_table_privilege_target(stmt: &Stmt) -> Option<(&[String], privilege::GlobalPriv)> {
+    match stmt {
+        Stmt::Query(query) => {
+            let tidb_ast::QueryStmt::Select(select) = &**query else {
+                return None;
+            };
+            let join = select.from.as_ref()?;
+            if join.right.is_some() {
+                return None;
+            }
+            let tidb_ast::JoinNode::Table(table) = &join.left else {
+                return None;
+            };
+            Some((table.name.as_slice(), privilege::GlobalPriv::Select))
+        }
+        Stmt::Dml(dml) => match &**dml {
+            DmlStmt::Insert(insert) => {
+                Some((insert.table.as_slice(), privilege::GlobalPriv::Insert))
+            }
+            DmlStmt::Update(update) => match &update.kind {
+                tidb_ast::UpdateKind::Single(table) => {
+                    Some((table.name.as_slice(), privilege::GlobalPriv::Update))
+                }
+                tidb_ast::UpdateKind::Multi { .. } => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
 
 /// Every `information_schema` base table a top-level join tree references.
 ///
@@ -395,6 +432,121 @@ impl Session {
     pub(crate) fn execute_statement(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
         let stmt = self.parse_at_statement_boundary(sql)?;
         self.execute_parsed_statement(sql, stmt, false, None)
+    }
+
+    /// Executes the conservative prepared clustered-handle point-read path.
+    /// A refusal returns `None`, allowing the caller to bind and run the
+    /// complete ordinary prepared statement implementation.
+    pub fn execute_fast_prepared_point_get(
+        &mut self,
+        stmt: &Stmt,
+        params: &[tidb_datatype::Datum],
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        if !self.in_transaction() {
+            self.lock_catalog()?.clear_dirty_content();
+        }
+        if let Some((path, privilege)) = fast_table_privilege_target(stmt) {
+            self.require_fast_table_privilege(path, privilege)?;
+        } else {
+            self.require_statement_table_privileges(stmt)?;
+        }
+        self.refuse_pinned_historical_read()?;
+        let Stmt::Query(query) = stmt else {
+            return Ok(None);
+        };
+        let tidb_ast::QueryStmt::Select(select) = &**query else {
+            return Ok(None);
+        };
+        let current_db = self.current_db.clone();
+        let ctx = self.statement_context(false);
+        let result = self.with_catalog_mut(|catalog| {
+            tidb_executor::run_fast_prepared_point_get(select, params, catalog, &current_db, &ctx)
+        })?;
+        self.drain_eval_warnings(&ctx);
+        Ok(result.map(|(columns, rows)| StmtOutput::Rows { columns, rows }))
+    }
+
+    /// Executes the conservative one-row prepared INSERT path.  A refusal
+    /// returns `None`, allowing the complete bound AST path to answer it.
+    pub fn execute_fast_prepared_insert(
+        &mut self,
+        stmt: &Stmt,
+        params: &[tidb_datatype::Datum],
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        if !self.in_transaction() {
+            self.lock_catalog()?.clear_dirty_content();
+        }
+        if let Some((path, privilege)) = fast_table_privilege_target(stmt) {
+            self.require_fast_table_privilege(path, privilege)?;
+        } else {
+            self.require_statement_table_privileges(stmt)?;
+        }
+        self.refuse_pinned_historical_read()?;
+        let Stmt::Dml(dml) = stmt else {
+            return Ok(None);
+        };
+        let DmlStmt::Insert(insert) = &**dml else {
+            return Ok(None);
+        };
+        let current_db = self.current_db.clone();
+        let ctx = self
+            .statement_context_ignoring(true, insert.ignore)
+            .with_statement_class(tidb_executor::StatementClass::Insert);
+        let result = self.with_catalog_mut(|catalog| {
+            tidb_executor::run_fast_prepared_insert(insert, params, catalog, &current_db, &ctx)
+        })?;
+        self.drain_eval_warnings(&ctx);
+        let Some((affected, _)) = result else {
+            return Ok(None);
+        };
+        self.statement_insert_id = ctx
+            .published_last_insert_id()
+            .unwrap_or_else(|| ctx.given_insert_id());
+        Ok(Some(StmtOutput::Affected(affected)))
+    }
+
+    /// Executes the conservative one-row prepared UPDATE path.  A refusal
+    /// returns `None`, allowing the complete bound AST path to answer it.
+    pub fn execute_fast_prepared_update(
+        &mut self,
+        stmt: &Stmt,
+        params: &[tidb_datatype::Datum],
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        if !self.in_transaction() {
+            self.lock_catalog()?.clear_dirty_content();
+        }
+        if let Some((path, privilege)) = fast_table_privilege_target(stmt) {
+            self.require_fast_table_privilege(path, privilege)?;
+        } else {
+            self.require_statement_table_privileges(stmt)?;
+        }
+        self.refuse_pinned_historical_read()?;
+        let Stmt::Dml(dml) = stmt else {
+            return Ok(None);
+        };
+        let DmlStmt::Update(update) = &**dml else {
+            return Ok(None);
+        };
+        let current_db = self.current_db.clone();
+        let ctx = self
+            .statement_context_ignoring(true, update.ignore)
+            .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
+        let result = self.with_catalog_mut(|catalog| {
+            tidb_executor::run_fast_prepared_update(update, params, catalog, &current_db, &ctx)
+        })?;
+        self.drain_eval_warnings(&ctx);
+        Ok(result.map(StmtOutput::Affected))
+    }
+
+    /// Executes a statement tree already parsed and bound by the prepared
+    /// protocol path.  The surrounding session lifecycle is still applied by
+    /// `run_with_columns_using`; this seam only avoids reparsing the SQL text.
+    pub(crate) fn execute_statement_parsed(
+        &mut self,
+        stmt: Stmt,
+        sql: &str,
+    ) -> Result<StmtOutput, DriverError> {
+        self.execute_prepared_ast(sql, stmt, None)
     }
 
     pub(crate) fn execute_prepared_ast(

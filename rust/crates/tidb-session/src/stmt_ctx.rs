@@ -127,7 +127,7 @@ impl Session {
     /// and create the result's statement handle here. Constructing a complete
     /// `StmtContext` would also snapshot planner, expression, sequence, and
     /// user state that result materialization never reads.
-    pub(crate) fn result_materialization_authority(&self) -> crate::ResultMaterializationAuthority {
+    pub fn result_materialization_authority(&self) -> crate::ResultMaterializationAuthority {
         let quota = self
             .vars
             .get_system("tidb_mem_quota_query")

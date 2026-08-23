@@ -1156,6 +1156,26 @@ impl SessionTransaction {
         })?
     }
 
+    /// Opens a reusable read-only transaction at `u64::MAX`, the latest
+    /// committed marker used by Go for autocommit clustered-common-handle
+    /// point gets.  The transaction has no write budget and is therefore only
+    /// suitable for the connection-local point-read cache; it is deliberately
+    /// separate from [`Self::begin`] so a caller cannot accidentally publish
+    /// through it.
+    pub fn begin_read_only_at_max_ts<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+        timeout: Duration,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        Ok(Self {
+            thread: TransactionThread::open_with(
+                &opener,
+                timeout,
+                TransactionOpen::ReadOnlyAt(u64::MAX),
+                "cluster-point-get-max-ts",
+            )?,
+        })
+    }
+
     /// The one timestamp every statement of this transaction reads at.
     #[must_use]
     pub const fn start_ts(&self) -> u64 {

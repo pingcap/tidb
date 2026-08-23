@@ -99,6 +99,100 @@ pub(crate) fn run_insert_stmt(
     run_insert_traced(insert, catalog, current_db, ctx, None)
 }
 
+/// Executes the narrow one-row prepared INSERT shape used by go-ycsb.
+/// Unsupported shapes return `None` and stay on the complete insert planner.
+pub fn run_fast_prepared_insert(
+    insert: &tidb_ast::InsertStmt,
+    params: &[Datum],
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<(u64, Option<u64>)>, DriverError> {
+    if !insert.ignore
+        || insert.replace
+        || !insert.on_duplicate.is_empty()
+        || insert.source.is_some()
+        || insert.set_syntax
+        || !insert.columns_specified
+        || !insert.partitions.is_empty()
+        || !insert.returning.is_empty()
+        || insert.rows.len() != 1
+    {
+        return Ok(None);
+    }
+    let row_exprs = &insert.rows[0];
+    if row_exprs.len() != params.len() || row_exprs.is_empty()
+        || !row_exprs.iter().enumerate().all(|(position, expr)| {
+            matches!(expr, tidb_ast::Expr::ParamMarker { order, .. } if *order == position)
+        })
+    {
+        return Ok(None);
+    }
+    let (database, table_name) = split_table_path(&insert.table, current_db)?;
+    let (database, table_name) = (database.to_owned(), table_name.to_owned());
+    let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &table_name) else {
+        return Ok(None);
+    };
+    let handles = kv.common_handle_offsets();
+    if kv.visible_column_count() != kv.columns.len()
+        || handles.len() != 1
+        || !kv.indexes().is_empty()
+        || !kv.foreign_keys().is_empty()
+        || kv.auto_increment_offset().is_some()
+        || kv.partition().is_some()
+        || kv.columns.iter().enumerate().any(|(offset, column)| {
+            column.generated.is_some()
+                || column.default_value.is_some()
+                || (offset != handles[0] && column.field_type.flags() & 1 != 0)
+        })
+    {
+        return Ok(None);
+    }
+    let columns = kv.visible_columns().to_vec();
+    if insert.columns.len() != columns.len()
+        || insert
+            .columns
+            .iter()
+            .enumerate()
+            .any(|(offset, name)| !columns[offset].name.eq_ignore_ascii_case(name))
+    {
+        return Ok(None);
+    }
+    let null_level = crate::bad_null::NullLevel::from_is_error(ctx.strict());
+    let mut row = Vec::with_capacity(columns.len());
+    for (offset, column) in columns.iter().enumerate() {
+        let mut value = params[offset].clone();
+        crate::bad_null::handle_bad_null(
+            &mut value,
+            &column.field_type,
+            &column.name,
+            null_level,
+            ctx,
+        )?;
+        row.push(cast_value_for_column(
+            value,
+            &column.field_type,
+            &column.name,
+            0,
+            ctx,
+        )?);
+    }
+    let conflicts = kv
+        .conflicting_handles(&row, ctx)
+        .map_err(|error| DriverError::Parse(format!("conflict lookup failed: {error:?}")))?;
+    if !conflicts.is_empty() {
+        if let Ok(crate::kv_table::KvTableError::DuplicateEntry { value, key }) =
+            kv.duplicate_entry_error(&row, ctx)
+        {
+            let warning = DriverError::DuplicateEntry { value, key }.to_mysql_error();
+            ctx.append_warning_parts(warning.code, &warning.message);
+        }
+        return Ok(Some((0, None)));
+    }
+    kv.insert_row(&row, ctx).map_err(kv_write_error)?;
+    Ok(Some((1, None)))
+}
+
 struct InsertTargetLayout {
     database: String,
     table_name: String,
@@ -1585,13 +1679,98 @@ pub fn run_update_in(
 /// write path real `EXPLAIN ANALYZE UPDATE` runs, rather than re-deriving
 /// it or re-parsing the statement text (which `explain`'s callers do not
 /// keep around).
-pub(crate) fn run_update_stmt(
+pub fn run_update_stmt(
     update: &tidb_ast::UpdateStmt,
     catalog: &mut Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
     run_update_traced(update, catalog, current_db, ctx, None)
+}
+
+/// Prepared counterpart for the narrow clustered common-handle UPDATE used by
+/// go-ycsb. Any shape not admitted here returns `None` for the normal planner.
+pub fn run_fast_prepared_update(
+    update: &tidb_ast::UpdateStmt,
+    params: &[Datum],
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<u64>, DriverError> {
+    if update.ignore || !update.order_by.is_empty() || update.limit.is_some()
+        || !update.returning.is_empty() || update.assignments.is_empty() { return Ok(None); }
+    let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else { return Ok(None) };
+    let (database, name) = single_table_name(table_ref, current_db)?;
+    let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else { return Ok(None) };
+    let handles = kv.common_handle_offsets();
+    if handles.len() != 1 || !kv.indexes().is_empty() || !kv.foreign_keys().is_empty()
+        || kv.visible_columns().iter().any(|column| column.generated.is_some()) { return Ok(None); }
+    let qualifier = table_ref.alias.as_deref().or_else(|| table_ref.name.last().map(String::as_str));
+    let columns = kv.visible_columns().to_vec();
+    let handle_offset = handles[0];
+    let Some(handle_column) = columns.get(handle_offset) else { return Ok(None) };
+    let mut assignment_offsets = Vec::with_capacity(update.assignments.len());
+    for assignment in &update.assignments {
+        let Some(offset) = columns.iter().position(|column| {
+            column.name.eq_ignore_ascii_case(assignment.col.last().map_or("", String::as_str))
+                && assignment_qualifier_matches(&assignment.col, qualifier)
+        }) else { return Ok(None) };
+        if offset == handle_offset { return Ok(None); }
+        assignment_offsets.push(offset);
+    }
+    let Some(key_expr) = point_get_key_expr(update.where_clause.as_ref(), &handle_column.name, qualifier) else { return Ok(None) };
+    let Some(key_value) = prepared_or_literal(key_expr, params)? else { return Ok(None) };
+    let encoded = tidb_codec::encode_key_in_timezone(&ctx.session_zone(), &[key_value])
+        .map_err(|error| DriverError::unsupported(format!("cannot encode common handle: {error:?}")))?;
+    let handle = tidb_txnkv::CommonHandle::new(encoded)
+        .map_err(|error| DriverError::unsupported(format!("cannot encode common handle: {error:?}")))?;
+    let handle = TableHandle::Common(handle.encoded().to_vec());
+    let old_row = match kv.get_row_by_handle(&handle, &ctx.session_zone()).map_err(kv_write_error)? {
+        Some(row) => row, None => return Ok(Some(0)),
+    };
+    let field_types: Vec<FieldType> = columns.iter().map(|column| column.field_type.clone()).collect();
+    let names: Vec<String> = columns.iter().map(|column| column.name.clone()).collect();
+    let mut row = old_row.clone();
+    for (assignment, offset) in update.assignments.iter().zip(assignment_offsets) {
+        let Some(value) = prepared_or_literal(&assignment.value, params)? else { return Ok(None) };
+        row[offset] = cast_value_for_update_assignment(value, &field_types[offset], &names[offset], 0, ctx)?;
+    }
+    let level = crate::bad_null::NullLevel::from_is_error(ctx.strict());
+    for ((value, field_type), name) in row.iter_mut().zip(field_types.iter()).zip(names.iter()) {
+        crate::bad_null::handle_bad_null(value, field_type, name, level, ctx)?;
+    }
+    if row == old_row { return Ok(Some(0)); }
+    kv.update_row(&handle, &row, ctx).map_err(kv_write_error)?;
+    Ok(Some(1))
+}
+
+fn prepared_or_literal(expr: &tidb_ast::Expr, params: &[Datum]) -> Result<Option<Datum>, DriverError> {
+    let tidb_ast::Expr::ParamMarker { order, .. } = expr else { return Ok(None) };
+    params.get(*order).cloned().map(Some).ok_or(DriverError::WrongParamCount)
+}
+
+fn assignment_qualifier_matches(path: &[String], qualifier: Option<&str>) -> bool {
+    path.len() < 2
+        || qualifier.is_some_and(|qualifier| path[path.len() - 2].eq_ignore_ascii_case(qualifier))
+}
+
+fn point_get_key_expr<'a>(
+    predicate: Option<&'a tidb_ast::Expr>,
+    column: &str,
+    qualifier: Option<&str>,
+) -> Option<&'a tidb_ast::Expr> {
+    let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::Eq, left, right) = predicate? else {
+        return None;
+    };
+    if is_key_column(left, column, qualifier) { return Some(right); }
+    if is_key_column(right, column, qualifier) { return Some(left); }
+    None
+}
+
+fn is_key_column(expr: &tidb_ast::Expr, column: &str, qualifier: Option<&str>) -> bool {
+    let tidb_ast::Expr::Column(path) = expr else { return false };
+    path.last().is_some_and(|name| name.eq_ignore_ascii_case(column))
+        && assignment_qualifier_matches(path, qualifier)
 }
 
 /// [`run_update_stmt`], recording the plan it builds into `trace`.

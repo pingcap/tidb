@@ -346,6 +346,7 @@ pub(crate) use agg_select::*;
 pub use catalog::*;
 pub(crate) use clause_resolve::*;
 pub use dml::*;
+pub use dml::run_fast_prepared_update;
 pub(crate) use from::*;
 pub(crate) use grouping::*;
 pub use params::*;
@@ -590,6 +591,390 @@ pub fn plan_select_meta_stmt(
         false,
     )?;
     Ok(columns)
+}
+
+/// The read-free decision shared by SQL execution and EXPLAIN for the narrow
+/// clustered-handle point path.
+pub(crate) struct FastPointGetPlan {
+    pub(crate) visible: String,
+    pub(crate) table: KvTable,
+    pub(crate) handle: Option<TableHandle>,
+    output_offsets: Vec<usize>,
+    output_columns: Vec<(String, FieldType)>,
+}
+
+pub(crate) fn plan_fast_point_get(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<FastPointGetPlan>, DriverError> {
+    if select.with.is_some()
+        || select.distinct
+        || !select.group_by.is_empty()
+        || select.having.is_some()
+        || !select.order_by.is_empty()
+        || !select.windows.is_empty()
+        || select.limit.is_some()
+        || select.lock.is_some()
+        || select.into_outfile.is_some()
+        || select.calc_found_rows
+    {
+        return Ok(None);
+    }
+    let Some(table_ref) = access::single_table_ref(&select.from) else {
+        return Ok(None);
+    };
+    let Some(table) = access::single_kv_table(&select.from, catalog, current_db) else {
+        return Ok(None);
+    };
+    let visible = table_ref
+        .alias
+        .clone()
+        .unwrap_or_else(|| table.name.clone());
+    let columns = table.visible_columns();
+    let point = access::try_point_get(
+        &access::PointPlanStmt::of_select(select),
+        &table,
+        &columns
+            .iter()
+            .map(|column| (column.name.clone(), column.field_type.clone()))
+            .collect::<Vec<_>>(),
+        &ctx.session_zone(),
+    )?;
+    let Some(handle) = point else {
+        return Ok(None);
+    };
+    let mut output_offsets = Vec::new();
+    let mut output_columns = Vec::new();
+    for field in select.fields.fields() {
+        match field {
+            tidb_ast::SelectField::Wildcard(_) => {
+                for (offset, column) in columns.iter().enumerate() {
+                    output_offsets.push(offset);
+                    output_columns.push((column.name.clone(), column.field_type.clone()));
+                }
+            }
+            tidb_ast::SelectField::Expr { expr, alias } => {
+                let tidb_ast::Expr::Column(path) = expr else {
+                    return Ok(None);
+                };
+                let Some(name) = path.last() else {
+                    return Ok(None);
+                };
+                let Some((offset, column)) = columns
+                    .iter()
+                    .enumerate()
+                    .find(|(_, column)| column.name.eq_ignore_ascii_case(name))
+                else {
+                    return Ok(None);
+                };
+                output_offsets.push(offset);
+                output_columns.push((
+                    alias.clone().unwrap_or_else(|| column.name.clone()),
+                    column.field_type.clone(),
+                ));
+            }
+        }
+    }
+    if output_offsets.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(FastPointGetPlan {
+        visible,
+        table,
+        handle: handle.handle,
+        output_offsets,
+        output_columns,
+    }))
+}
+
+/// Executes the narrow point-read shape without rebuilding the general
+/// logical/physical plan.  Go's prepared point-get executor keeps this small
+/// path on the connection and only rebinds the handle for each EXECUTE; the
+/// ordinary Rust driver used to parse, optimize, and construct the complete
+/// executor tree for every YCSB read.
+///
+/// This is deliberately a conservative fast path.  It admits only a single
+/// clustered-handle equality, a projection made solely of base columns, and
+/// no clause whose semantics need an executor stage.  Anything outside that
+/// shape returns `Ok(None)` and remains on the general planner path.
+pub fn run_fast_point_get(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<SelectMeta>, DriverError> {
+    let Some(plan) = plan_fast_point_get(select, catalog, current_db, ctx)? else {
+        return Ok(None);
+    };
+    let FastPointGetPlan {
+        mut table,
+        handle,
+        output_offsets,
+        output_columns,
+        ..
+    } = plan;
+    let Some(handle) = handle else {
+        return Ok(Some((output_columns, Vec::new())));
+    };
+    let row = table
+        .get_row_by_handle(&handle, &ctx.session_zone())
+        .map_err(|error| DriverError::Parse(format!("row decode failed: {error:?}")))?;
+    let rows = row
+        .map(|row| {
+            output_offsets
+                .into_iter()
+                .map(|offset| row.get(offset).cloned().unwrap_or(Datum::Null))
+                .collect::<Vec<_>>()
+        })
+        .into_iter()
+        .collect();
+    Ok(Some((output_columns, rows)))
+}
+
+/// Executes the prepared clustered-handle point-read shape using the retained
+/// AST and execute values directly.  This is the binary-protocol equivalent of
+/// [`run_fast_point_get`]; unlike the literal entry point it recognizes a
+/// `?` marker and therefore avoids cloning the complete prepared AST merely to
+/// install one key value.
+pub fn run_fast_prepared_point_get(
+    select: &tidb_ast::SelectStmt,
+    params: &[Datum],
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<SelectMeta>, DriverError> {
+    if select.with.is_some()
+        || select.distinct
+        || !select.group_by.is_empty()
+        || select.having.is_some()
+        || !select.order_by.is_empty()
+        || !select.windows.is_empty()
+        || select.limit.is_some()
+        || select.lock.is_some()
+        || select.into_outfile.is_some()
+        || select.calc_found_rows
+    {
+        return Ok(None);
+    }
+    let Some(table_ref) = access::single_table_ref(&select.from) else {
+        return Ok(None);
+    };
+    let (database, table_name) = match table_ref.name.as_slice() {
+        [name] if !current_db.is_empty() => (current_db, name.as_str()),
+        [database, name] => (database.as_str(), name.as_str()),
+        _ => return Ok(None),
+    };
+    let Some(TableEntry::Kv(table)) = catalog.get_mut_in(database, table_name) else {
+        return Ok(None);
+    };
+    let columns = table.visible_columns();
+    let point = access::try_prepared_common_handle_point_get_path(
+        select,
+        table,
+        params,
+        &ctx.session_zone(),
+    )?;
+    let Some(handle) = point else {
+        return Ok(None);
+    };
+
+    let mut output_offsets = Vec::new();
+    let mut output_columns = Vec::new();
+    for field in select.fields.fields() {
+        match field {
+            tidb_ast::SelectField::Wildcard(_) => {
+                for (offset, column) in columns.iter().enumerate() {
+                    output_offsets.push(offset);
+                    output_columns.push((column.name.clone(), column.field_type.clone()));
+                }
+            }
+            tidb_ast::SelectField::Expr { expr, alias } => {
+                let tidb_ast::Expr::Column(path) = expr else {
+                    return Ok(None);
+                };
+                let Some(name) = path.last() else {
+                    return Ok(None);
+                };
+                let Some((offset, column)) = columns
+                    .iter()
+                    .enumerate()
+                    .find(|(_, column)| column.name.eq_ignore_ascii_case(name))
+                else {
+                    return Ok(None);
+                };
+                output_offsets.push(offset);
+                output_columns.push((
+                    alias.clone().unwrap_or_else(|| column.name.clone()),
+                    column.field_type.clone(),
+                ));
+            }
+        }
+    }
+    if output_offsets.is_empty() {
+        return Ok(None);
+    }
+    let row = table
+        .get_row_by_handle(&handle, &ctx.session_zone())
+        .map_err(|error| DriverError::Parse(format!("row decode failed: {error:?}")))?;
+    let rows = row
+        .map(|row| {
+            output_offsets
+                .into_iter()
+                .map(|offset| row.get(offset).cloned().unwrap_or(Datum::Null))
+                .collect::<Vec<_>>()
+        })
+        .into_iter()
+        .collect();
+    Ok(Some((output_columns, rows)))
+}
+
+/// The read-free decision shared by SQL execution and EXPLAIN for YCSB E's
+/// one-row clustered-handle range.
+pub(crate) struct FastSingleRowScanPlan {
+    pub(crate) visible: String,
+    pub(crate) ranges: Vec<IndexRange>,
+    pub(crate) pseudo: bool,
+    table: KvTable,
+    output_offsets: Vec<usize>,
+    output_columns: Vec<(String, FieldType)>,
+}
+
+pub(crate) fn plan_fast_single_row_scan(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<FastSingleRowScanPlan>, DriverError> {
+    let Some(limit) = select.limit.as_ref() else {
+        return Ok(None);
+    };
+    if limit.offset.is_some()
+        || !matches!(&limit.count, tidb_ast::Expr::Int(value) if value == "1")
+        || select.with.is_some()
+        || select.distinct
+        || !select.group_by.is_empty()
+        || select.having.is_some()
+        || !select.order_by.is_empty()
+        || !select.windows.is_empty()
+        || select.lock.is_some()
+        || select.into_outfile.is_some()
+        || select.calc_found_rows
+    {
+        return Ok(None);
+    }
+    let Some(where_clause) = select.where_clause.as_ref() else {
+        return Ok(None);
+    };
+    let Some(table_ref) = access::single_table_ref(&select.from) else {
+        return Ok(None);
+    };
+    let Some(table) = access::single_kv_table(&select.from, catalog, current_db) else {
+        return Ok(None);
+    };
+    let visible = table_ref
+        .alias
+        .clone()
+        .unwrap_or_else(|| table.name.clone());
+    if table.common_handle_offsets().len() != 1
+        || table.partition().is_some()
+        || table.has_dirty_content()
+    {
+        return Ok(None);
+    }
+    let built = crate::handle_range::build_handle_ranges(&table, where_clause, &ctx.session_zone())
+        .ok_or_else(|| DriverError::unsupported("the WHERE is not a clustered-handle range"))?;
+    if !built.residual.is_empty() || built.ranges.is_empty() {
+        return Ok(None);
+    }
+
+    let columns = table.visible_columns();
+    let mut output_offsets = Vec::new();
+    let mut output_columns = Vec::new();
+    for field in select.fields.fields() {
+        match field {
+            tidb_ast::SelectField::Wildcard(_) => {
+                for (offset, column) in columns.iter().enumerate() {
+                    output_offsets.push(offset);
+                    output_columns.push((column.name.clone(), column.field_type.clone()));
+                }
+            }
+            tidb_ast::SelectField::Expr { expr, alias } => {
+                let tidb_ast::Expr::Column(path) = expr else {
+                    return Ok(None);
+                };
+                let Some(name) = path.last() else {
+                    return Ok(None);
+                };
+                let Some((offset, column)) = columns
+                    .iter()
+                    .enumerate()
+                    .find(|(_, column)| column.name.eq_ignore_ascii_case(name))
+                else {
+                    return Ok(None);
+                };
+                output_offsets.push(offset);
+                output_columns.push((
+                    alias.clone().unwrap_or_else(|| column.name.clone()),
+                    column.field_type.clone(),
+                ));
+            }
+        }
+    }
+    if output_offsets.is_empty() {
+        return Ok(None);
+    }
+
+    let pseudo = catalog
+        .table_statistics(table.table_id)
+        .is_none_or(|statistics| statistics.pseudo);
+    Ok(Some(FastSingleRowScanPlan {
+        visible,
+        ranges: built.ranges,
+        pseudo,
+        table,
+        output_offsets,
+        output_columns,
+    }))
+}
+
+/// Executes the bounded clustered-key range shape used by YCSB workload E
+/// without constructing a full table-reader/coprocessor DAG for every
+/// prepared execute. The range builder remains the source of truth for key
+/// semantics; this path only changes how the already-proven first row is
+/// fetched. Any residual predicate, secondary index, staged write, or wider
+/// limit falls back to the general planner.
+pub fn run_fast_single_row_scan(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<SelectMeta>, DriverError> {
+    let Some(plan) = plan_fast_single_row_scan(select, catalog, current_db, ctx)? else {
+        return Ok(None);
+    };
+    let FastSingleRowScanPlan {
+        mut table,
+        ranges,
+        output_offsets,
+        output_columns,
+        ..
+    } = plan;
+    let row = table
+        .first_row_in_handle_ranges(None, &ranges, &ctx.session_zone())
+        .map_err(|error| DriverError::Parse(format!("row decode failed: {error:?}")))?;
+    let rows = row
+        .map(|(_, row)| {
+            output_offsets
+                .into_iter()
+                .map(|offset| row.get(offset).cloned().unwrap_or(Datum::Null))
+                .collect::<Vec<_>>()
+        })
+        .into_iter()
+        .collect();
+    Ok(Some((output_columns, rows)))
 }
 
 /// Go `restoreSchemaIfChanged`, for a scope whose leaves the join reorder

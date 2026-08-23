@@ -598,6 +598,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
             stats: Arc::clone(&self.stats),
             statistics,
             explicit: None,
+            point_get_max_ts: None,
             savepoints: Vec::new(),
             skipped: built.skipped,
             auto_ids: Arc::clone(&self.auto_ids),
@@ -649,6 +650,11 @@ pub struct ClusterServerSession {
     /// where a statement prepares a timestamp of its own after planning and
     /// waits for it at its first read.
     explicit: Option<Box<dyn OpenClusterTransaction>>,
+    /// Reusable connection-local max-ts read transaction for clustered
+    /// common-handle point gets. Its per-statement snapshots are dropped after
+    /// each query, while the transaction worker remains available for the next
+    /// point read and avoids an open/finish handshake on every request.
+    point_get_max_ts: Option<Box<dyn OpenClusterTransaction>>,
     /// The transaction's savepoints, oldest first: for each, the name
     /// lowercased and the buffer image taken when it was declared.
     ///
@@ -843,6 +849,9 @@ impl ClusterServerSession {
         run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
         read_ts: &transactions::StatementReadTs,
     ) -> Result<T, SqlQueryError> {
+        let write_transaction = (self.explicit.is_none()
+            && shape == StatementReadShape::AutocommitWrite)
+            .then(|| Arc::new(Mutex::new(None)));
         // Go `handlePessimisticDML`'s statement loop: run, lock the staged
         // keys, and on a lock conflict roll the STATEMENT back and re-execute
         // it reading at the advanced `for_update_ts`. `None` is the first
@@ -866,6 +875,38 @@ impl ClusterServerSession {
                         .map_err(SqlQueryError::unknown)?,
                     None => transaction.snapshot().map_err(SqlQueryError::unknown)?,
                 },
+                None if matches!(
+                    shape,
+                    StatementReadShape::AutocommitPointGet
+                        | StatementReadShape::AutocommitSingleRowRead
+                ) => {
+                    if self.point_get_max_ts.is_none() {
+                        self.point_get_max_ts = Some(
+                            self.transactions
+                                .begin_max_ts()
+                                .map_err(SqlQueryError::unknown)?,
+                        );
+                    }
+                    self.point_get_max_ts
+                        .as_ref()
+                        .expect("max-ts transaction was just opened")
+                        .snapshot()
+                        .map_err(SqlQueryError::unknown)?
+                }
+                // Start the ordinary timestamped snapshot while the session
+                // binds and builds the DML read path. The first read consumes
+                // the prefetched result; publication uses the same owner.
+                None if shape == StatementReadShape::AutocommitWrite => {
+                    transactions::prefetched_write_snapshot(
+                        Arc::clone(&self.transactions),
+                        read_ts.clone(),
+                        Arc::clone(
+                            write_transaction
+                                .as_ref()
+                                .expect("autocommit write created its transaction handoff"),
+                        ),
+                    )
+                }
                 // Binding is still timestamp-free. After the statement's
                 // shape is declared below, preparation starts the ordinary
                 // future; the first read is what waits for and exposes its
@@ -881,12 +922,16 @@ impl ClusterServerSession {
                 drop(stale);
             }
             self.declare_read_shape(shape);
-            self.prepare_snapshot()?;
+            if let Err(error) = self.prepare_snapshot() {
+                Self::rollback_prefetched_write(write_transaction.clone());
+                return Err(error);
+            }
             let outcome = run(&mut self.session);
             let finished = self.finish_snapshot();
             match outcome {
                 Ok(value) => {
                     if let Err(error) = finished {
+                        Self::rollback_prefetched_write(write_transaction.clone());
                         break Err(error);
                     }
                     match self.lock_pessimistic_statement_keys(savepoint, &mut statement_locked) {
@@ -915,13 +960,16 @@ impl ClusterServerSession {
                     }
                     match self
                         .commit_if_session_left_transaction()
-                        .and_then(|()| self.flush_if_autocommit(read_ts.get()))
+                        .and_then(|()| {
+                            self.flush_if_autocommit(read_ts.get(), write_transaction.clone())
+                        })
                     {
                         Ok(()) => break Ok(value),
                         Err(error) => break Err(error),
                     }
                 }
                 Err(error) => {
+                    Self::rollback_prefetched_write(write_transaction.clone());
                     // The statement's own writes go; every earlier
                     // statement's writes in this transaction stay.
                     self.buffer.restore(savepoint.clone());
@@ -930,6 +978,7 @@ impl ClusterServerSession {
             }
         };
         if result.is_err() {
+            Self::rollback_prefetched_write(write_transaction);
             // Go `OnPessimisticStmtEnd(isSuccessful=false)`: the locks a
             // FAILED statement's rounds accumulated go back, or a contender
             // blocks on them for the transaction's remaining lifetime. Best
@@ -1071,7 +1120,10 @@ impl ClusterServerSession {
     /// inheriting the trait default, which is `IsAutoCommitTxn`'s `!InTxn`
     /// half made structural rather than re-asked here.
     fn declare_read_shape(&self, shape: StatementReadShape) {
-        if shape != StatementReadShape::AutocommitPointGet {
+        if !matches!(
+            shape,
+            StatementReadShape::AutocommitPointGet | StatementReadShape::AutocommitSingleRowRead
+        ) {
             return;
         }
         self.slot
@@ -1130,6 +1182,9 @@ impl ClusterServerSession {
     fn begin_if_autocommit_off(&mut self) -> Result<(), SqlQueryError> {
         if self.explicit.is_some() || self.session.is_autocommit() {
             return Ok(());
+        }
+        if let Some(point_get) = self.point_get_max_ts.take() {
+            point_get.rollback().map_err(SqlQueryError::unknown)?;
         }
         self.open_explicit()
     }
@@ -1192,11 +1247,43 @@ impl ClusterServerSession {
     ///
     /// An empty buffer -- every read statement -- publishes nothing and spends
     /// no timestamp, as a Go COMMIT of a transaction that wrote nothing does.
-    fn flush_if_autocommit(&mut self, read_ts: Option<u64>) -> Result<(), SqlQueryError> {
+    fn flush_if_autocommit(
+        &mut self,
+        read_ts: Option<u64>,
+        write_transaction: Option<transactions::WriteTransactionSlot>,
+    ) -> Result<(), SqlQueryError> {
         if self.explicit.is_some() || self.session.in_transaction() {
             return Ok(());
         }
+        if let Some(write_transaction) = write_transaction {
+            let transaction = write_transaction
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .take();
+            if let Some(transaction) = transaction {
+                return match transaction.commit(&self.buffer) {
+                    Ok(()) => Ok(()),
+                    Err(error) => {
+                        self.buffer.reset();
+                        Err(error)
+                    }
+                };
+            }
+        }
         self.commit_autocommit_buffer(read_ts)
+    }
+
+    fn rollback_prefetched_write(write_transaction: Option<transactions::WriteTransactionSlot>) {
+        let Some(write_transaction) = write_transaction else {
+            return;
+        };
+        let transaction = write_transaction
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .take();
+        if let Some(transaction) = transaction {
+            let _ = transaction.rollback();
+        }
     }
 
     /// Publishes one autocommit statement's staged writes as its own
@@ -1692,6 +1779,9 @@ impl QuerySession for ClusterServerSession {
             // timestamp every statement of the new transaction reads at, and
             // that its COMMIT will prewrite at.
             Some(TransactionControl::Begin { .. }) => {
+                if let Some(point_get) = self.point_get_max_ts.take() {
+                    point_get.rollback().map_err(SqlQueryError::unknown)?;
+                }
                 self.discard_explicit()?;
                 // The refresh happens BEFORE the pin: the new transaction
                 // reads the schema as of its own start, not as of the moment
@@ -1783,16 +1873,36 @@ impl QuerySession for ClusterServerSession {
             // A prepared DDL is admitted here and executed at EXECUTE, so a
             // refusal -- an unsupported shape, an unsupported column type --
             // is reported at PREPARE, where Go reports it too.
-            self.schema_route_prepared(&prepared_ast)?;
-            return Ok(
-                PreparedGeneral::new(sql.to_owned(), parameter_count, Vec::new())
-                    .with_prepared_ast(prepared_ast),
-            );
+            self.schema_route(sql)?;
+            // Keep ordinary DML's parsed tree as well.  The MySQL binary
+            // protocol prepares YCSB's INSERT/UPDATE/DELETE once and then
+            // executes that handle thousands of times; throwing this tree
+            // away here would send every execution back through parse and
+            // SQL-text binding, defeating the prepared path's fixed-plan
+            // work.  Routed schema/account/ANALYZE statements still use their
+            // dedicated SQL route at EXECUTE and must not be run through the
+            // ordinary statement driver.
+            let template = self.session.parse_statement(sql).map_err(map_error)?;
+            if !matches!(template, tidb_ast::Stmt::Dml(_)) {
+                return Ok(PreparedGeneral::new(
+                    sql.to_owned(),
+                    parameter_count,
+                    Vec::new(),
+                ));
+            }
+            return Ok(PreparedGeneral::with_template(
+                sql.to_owned(),
+                parameter_count,
+                Vec::new(),
+                template,
+            ));
         }
         // Go reports a query's result columns at PREPARE time, which it gets
         // by planning the statement with every marker bound to NULL. Planning
         // reads the catalog and may read rows, so it takes a snapshot like any
         // other statement.
+        let owned = sql.to_owned();
+        let template = self.session.parse_statement(sql).map_err(map_error)?;
         // The PREPARE probe runs the statement with every marker NULL, which
         // is not the statement the client will execute; it declares nothing,
         // and -- see `probe_statement` -- it opens no transaction either.
@@ -1817,10 +1927,12 @@ impl QuerySession for ClusterServerSession {
                 _ => Ok(Vec::new()),
             }
         })?;
-        Ok(
-            PreparedGeneral::new(sql.to_owned(), parameter_count, result_columns)
-                .with_prepared_ast(prepared_ast),
-        )
+        Ok(PreparedGeneral::with_template(
+            sql.to_owned(),
+            parameter_count,
+            result_columns,
+            template,
+        ))
     }
 
     fn execute_general<'a>(
@@ -1834,8 +1946,12 @@ impl QuerySession for ClusterServerSession {
         // state disagreeing, with every following statement reading at a fresh
         // timestamp and a racing writer never detected. Routed here the state
         // cannot diverge, whoever calls this.
-        if statement.prepared_ast().is_none()
-            && classify_transaction_control(statement.sql()).is_some()
+        // A retained ordinary template cannot be transaction control:
+        // `prepare_general` returns an untemplated handle for BEGIN/COMMIT/
+        // ROLLBACK.  Avoid reparsing the SQL text on every EXECUTE for the
+        // common DML/query case; the untemplated branch still preserves the
+        // transaction-control route.
+        if statement.template().is_none() && classify_transaction_control(statement.sql()).is_some()
         {
             self.control_transaction(statement.sql())?;
             return Ok(GeneralExecuteOutcome::Write(WriteOutcome {
@@ -1843,9 +1959,15 @@ impl QuerySession for ClusterServerSession {
                 last_insert_id: 0,
             }));
         }
-        let route = match statement.prepared_ast() {
-            Some(prepared) => self.schema_route_prepared(prepared)?,
-            None => self.schema_route(statement.sql())?,
+        // `prepare_general` has already routed ordinary parsed DML/query
+        // templates. Re-running `statement_stored_state_change` here would
+        // parse the same SQL text on every EXECUTE (visible in YCSB insert
+        // samples); only routed statements without a retained template need
+        // the SQL route at execute time.
+        let route = if statement.template().is_some() {
+            StatementRoute::Ordinary
+        } else {
+            self.schema_route(statement.sql())?
         };
         match route {
             StatementRoute::Ddl(ddl) => {
@@ -1869,35 +1991,119 @@ impl QuerySession for ClusterServerSession {
             StatementRoute::Ordinary => {}
         }
         let params = crate::pipeline_session::prepared_parameters(values);
-        let (output, result_authority) = match statement.prepared_ast() {
-            Some(prepared) => {
-                let mut bound = prepared
-                    .bind_for_execution(&self.session, &params)
-                    .map_err(map_error)?;
-                let shape = bound.statement_read_shape(&self.session);
-                let mut bound = Some(bound);
-                self.with_statement(shape, move |session| {
-                    let bound = match bound.take() {
-                        Some(bound) => bound,
-                        None => prepared
-                            .bind_for_execution(session, &params)
-                            .map_err(map_error)?,
-                    };
-                    session
-                        .run_bound_prepared_with_result_authority(bound)
-                        .map_err(map_error)
-                })?
-            }
-            None => {
-                let sql = statement.sql().to_owned();
-                let shape = self.session.statement_read_shape(&sql, &params);
-                self.with_statement(shape, move |session| {
-                    session
-                        .run_with_params_and_result_authority(&sql, &params)
-                        .map_err(map_error)
-                })?
-            }
+        let sql = statement.sql().to_owned();
+        let retained = statement.template();
+        // YCSB's prepared point reads are a retained SELECT template whose
+        // only changing value is the clustered key.  Resolve that key directly
+        // from the template and execute values; cloning/binding the complete
+        // AST is deferred to the refusal path.
+        let fast_shape = retained
+            .filter(|_| !self.session.has_session_bindings())
+            .map(|template| {
+                self.session
+                    .fast_prepared_statement_read_shape(template, &params)
+            });
+        let fast = fast_shape == Some(StatementReadShape::AutocommitPointGet);
+        let fast_dml = retained
+            .filter(|_| !self.session.has_session_bindings())
+            .map(|template| match template {
+                tidb_ast::Stmt::Dml(dml) => matches!(
+                    dml.as_ref(),
+                    tidb_ast::DmlStmt::Insert(_) | tidb_ast::DmlStmt::Update(_)
+                ),
+                _ => false,
+            })
+            .unwrap_or(false);
+        let direct = fast || fast_dml;
+        let bound_template = if direct {
+            None
+        } else {
+            retained
+                .map(|template| tidb_executor::bind_statement(template.clone(), &params))
+                .transpose()
+                .map_err(map_error)?
         };
+        let shape = if fast {
+            StatementReadShape::AutocommitPointGet
+        } else if fast_dml {
+            match retained {
+                Some(tidb_ast::Stmt::Dml(dml))
+                    if matches!(dml.as_ref(), tidb_ast::DmlStmt::Update(_)) =>
+                {
+                    StatementReadShape::AutocommitWrite
+                }
+                _ => StatementReadShape::Unknown,
+            }
+        } else {
+            bound_template.as_ref().map_or_else(
+                || self.session.statement_read_shape(&sql, &params),
+                |bound| self.session.statement_read_shape_bound(bound),
+            )
+        };
+        let output = self.with_statement(shape, move |session| {
+            if fast {
+                if let Some(output) = session
+                    .execute_fast_prepared_point_get(
+                        retained.expect("fast prepared point read has a retained template"),
+                        &params,
+                    )
+                    .map_err(map_error)?
+                {
+                    return Ok(output);
+                }
+                // A defensive refusal falls through to the ordinary path. It
+                // is not expected after the pure shape check, but preserves
+                // correctness if the catalog changes between classification
+                // and execution.
+                let bound = tidb_executor::bind_statement(
+                    retained
+                        .expect("fast prepared point read has a retained template")
+                        .clone(),
+                    &params,
+                )
+                .map_err(map_error)?;
+                return session
+                    .run_parsed_bound_owned_with_sql(bound, &sql)
+                    .map_err(map_error);
+            }
+            if fast_dml {
+                let template = retained.expect("fast prepared DML has a retained template");
+                let output = match template {
+                    tidb_ast::Stmt::Dml(dml)
+                        if matches!(dml.as_ref(), tidb_ast::DmlStmt::Insert(_)) =>
+                    {
+                        session
+                            .execute_fast_prepared_insert(template, &params)
+                            .map_err(map_error)?
+                    }
+                    tidb_ast::Stmt::Dml(dml)
+                        if matches!(dml.as_ref(), tidb_ast::DmlStmt::Update(_)) =>
+                    {
+                        session
+                            .execute_fast_prepared_update(template, &params)
+                            .map_err(map_error)?
+                    }
+                    _ => None,
+                };
+                if let Some(output) = output {
+                    return Ok(output);
+                }
+                let bound =
+                    tidb_executor::bind_statement(template.clone(), &params).map_err(map_error)?;
+                return session
+                    .run_parsed_bound_owned_with_sql(bound, &sql)
+                    .map_err(map_error);
+            }
+            if let Some(bound) = bound_template.as_ref().cloned() {
+                session
+                    .run_parsed_bound_owned_with_sql(bound, &sql)
+                    .map_err(map_error)
+            } else {
+                session.run_with_params(&sql, &params).map_err(map_error)
+            }
+        })?;
+        let result_authority = matches!(&output, StmtOutput::Rows { .. })
+            .then(|| self.session.result_materialization_authority());
         Ok(match output {
             StmtOutput::Rows { columns, rows } => {
                 let field_types = columns.iter().map(|(_, field)| field.clone()).collect();

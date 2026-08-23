@@ -168,12 +168,14 @@ pub use driver::{
         build_prepared_point_get_plan, run_prepared_point_get, PreparedPointGetExecution,
         PreparedPointGetPlan,
     },
-    bind_parameters, bind_prepared_statement, parameter_count, parsed_parameter_count,
-    plan_select_meta_stmt, run_delete_in, run_delete_on, run_insert_in, run_insert_on,
-    run_insert_reporting, run_select, run_select_meta_in, run_select_meta_on, run_select_meta_stmt,
-    run_select_on, run_set_opr_stmt, run_update_in, run_update_on, Catalog, DriverError, MemTable,
-    MysqlError, SchemaErrorKind, SelectMeta, TableEntry, TxnErrorKind, VarErrorKind, ViewDef,
-    DEFAULT_DATABASE,
+    bind_parameters, bind_prepared_statement, bind_statement, parameter_count,
+    parsed_parameter_count, plan_select_meta_stmt, run_delete_in, run_delete_on,
+    run_fast_point_get, run_fast_prepared_insert, run_fast_prepared_point_get,
+    run_fast_prepared_update, run_fast_single_row_scan, run_insert_in, run_insert_on,
+    run_insert_reporting, run_select, run_select_meta_in, run_select_meta_on,
+    run_select_meta_stmt, run_select_on, run_set_opr_stmt, run_update_in, run_update_on,
+    Catalog, DriverError, MemTable, MysqlError, SchemaErrorKind, SelectMeta,
+    TableEntry, TxnErrorKind, VarErrorKind, ViewDef, DEFAULT_DATABASE,
 };
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use explain::{

@@ -1118,6 +1118,20 @@ impl Session {
         self.run_bound_prepared_internal(bound, true)
     }
 
+    /// Runs an owned bound statement while reusing the prepared SQL text.
+    /// Binary-protocol callers already have both values, so restoring the AST
+    /// merely to obtain text would add work to every execute.
+    pub fn run_parsed_bound_owned_with_sql(
+        &mut self,
+        bound: tidb_ast::Stmt,
+        sql: &str,
+    ) -> Result<StmtOutput, DriverError> {
+        self.run_with_columns_using(sql, false, move |session| {
+            session.execute_statement_parsed(bound, sql)
+        })
+        .map(|(output, _)| output)
+    }
+
     fn run_bound_prepared_internal(
         &mut self,
         bound: BoundPreparedAst,

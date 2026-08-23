@@ -41,6 +41,17 @@ fn prepared(session: &mut ClusterServerSession, sql: &str) {
     session.execute_general(&statement, &[]).expect("execute");
 }
 
+/// Binary prepared DML must retain its parsed tree.  Dropping it at PREPARE
+/// sends every YCSB UPDATE back through SQL-text parse/bind on EXECUTE.
+#[test]
+fn prepared_dml_retains_the_parse_tree_for_execute() {
+    let (mut session, _) = open_session();
+    let statement = session
+        .prepare_general("UPDATE t SET v = ? WHERE id = ?")
+        .expect("prepare");
+    assert!(statement.template().is_some());
+}
+
 /// Reads through the prepared path, so the snapshot under test is the one an
 /// EXECUTE takes.
 fn prepared_rows(session: &mut ClusterServerSession, sql: &str) -> Vec<Vec<Datum>> {

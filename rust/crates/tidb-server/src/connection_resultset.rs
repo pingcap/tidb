@@ -267,6 +267,7 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         .finish_packet()
         .map_err(|error| binary_failure(error.to_string(), sink, true))?;
     write_binary_payload(sink, &terminal, true)?;
+    flush_binary_payload(sink, true)?;
     Ok(ResultSetWriteOutcome {
         rows_written,
         packets_written: sink.packets_written(),
@@ -302,6 +303,20 @@ fn write_binary_payload<W: ResultSetSink>(
             },
             finish_attempted,
         })
+}
+
+fn flush_binary_payload<W: ResultSetSink>(
+    sink: &mut W,
+    finish_attempted: bool,
+) -> Result<(), BinaryTrackedError> {
+    sink.flush().map_err(|error| BinaryTrackedError {
+        error: ResultSetWriteError {
+            message: error.message,
+            retryable: false,
+            bytes_escaped: sink.packets_written() > 0 || error.bytes_escaped,
+        },
+        finish_attempted,
+    })
 }
 
 #[cfg(test)]

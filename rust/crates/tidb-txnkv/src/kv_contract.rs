@@ -400,6 +400,10 @@ pub struct Request {
     pub memory_tracker: Option<Arc<AtomicI64>>,
     /// Preserve response ordering.
     pub keep_order: bool,
+    /// Permit the coprocessor transport to publish region responses without
+    /// the ordered-response coordinator. This is an explicit opt-in because
+    /// callers that merge staged rows still require record-key order.
+    pub allow_unordered_response: bool,
     /// Descending scan.
     pub desc: bool,
     /// Bypass storage block cache.

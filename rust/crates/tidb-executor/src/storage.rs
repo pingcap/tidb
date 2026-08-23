@@ -256,6 +256,24 @@ pub trait TableStorage: fmt::Debug + Send {
         Ok(Box::new(MaterializedStorageIterator::new(entries)))
     }
 
+    /// Reads the first pair in `[start, upper_bound)`. MVCC backends can
+    /// override this with a native bounded scan; the default preserves the
+    /// iterator semantics for backends without such a primitive.
+    fn first(
+        &mut self,
+        start: Option<&Key>,
+        upper_bound: Option<&Key>,
+    ) -> Result<Option<(Key, Vec<u8>)>, StorageError> {
+        let mut iterator = self.iter(start, upper_bound)?;
+        let result = if iterator.valid() {
+            Some((iterator.key().clone(), iterator.value().to_vec()))
+        } else {
+            None
+        };
+        iterator.close();
+        Ok(result)
+    }
+
     /// Optionally serves a base-table scan remotely, with the predicate, the
     /// row cap and the column projection evaluated at the backend.
     ///

@@ -107,6 +107,18 @@ pub enum StatementReadShape {
     /// The statement's whole read is one point get on the clustered handle,
     /// reading one row once, with no second read of any kind.
     AutocommitPointGet,
+    /// The statement reads at most one row from a clustered table through a
+    /// single table-range request.  It is safe to use the connection-local
+    /// latest-read transaction for this shape: unlike a point get it keeps the
+    /// normal range plan, but the statement has no second read whose snapshot
+    /// it has to agree with.  This is the bounded single-row scan shape used
+    /// by YCSB workload E (`LIMIT 1`).
+    AutocommitSingleRowRead,
+    /// An autocommit UPDATE or DELETE whose first storage read can overlap
+    /// opening its ordinary timestamped snapshot with AST planning.  This is
+    /// not a max-ts claim: the read and any eventual prewrite still use the
+    /// same real `start_ts`, so write-conflict detection is unchanged.
+    AutocommitWrite,
 }
 
 /// Whether `stmt` is a statement whose WHOLE read is one point get on the
@@ -150,14 +162,15 @@ pub enum StatementReadShape {
 /// * "The timestamp is not already spent." The deferred snapshot refuses a
 ///   declaration once it has opened, which is Go's `p.txn != nil` arm.
 ///
-/// # Why an `UPDATE`'s read-before-write cannot reach this answer
+/// # Why an `UPDATE`'s read-before-write cannot reach the max-ts answer
 ///
-/// It is not a `Stmt::Query`, so it is refused on the first line -- the same
-/// place Go refuses it, since an `Update` plan is not in Go's `switch` either.
-/// That matters because at the storage seam an `UPDATE`'s read-before-write
-/// and a `SELECT`'s point get are the SAME `get` on the same key: the
-/// difference lives only in the statement, which is why the declaration is
-/// made from the statement and never inferred from a read.
+/// An UPDATE/DELETE is classified as [`StatementReadShape::AutocommitWrite`]
+/// before this query-only proof. That shape permits only overlapping its
+/// ordinary timestamp allocation with planning; it never selects max-ts. This
+/// matters because at the storage seam an UPDATE's read-before-write and a
+/// SELECT's point get are the SAME `get` on the same key: the difference lives
+/// only in the statement, which is why both declarations are made from the
+/// statement and never inferred from a read.
 #[must_use]
 pub fn statement_read_shape(
     stmt: &tidb_ast::Stmt,
@@ -165,6 +178,16 @@ pub fn statement_read_shape(
     current_db: &str,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> StatementReadShape {
+    if matches!(
+        stmt,
+        tidb_ast::Stmt::Dml(dml)
+            if matches!(
+                dml.as_ref(),
+                tidb_ast::DmlStmt::Update(_) | tidb_ast::DmlStmt::Delete(_)
+            )
+    ) {
+        return StatementReadShape::AutocommitWrite;
+    }
     let tidb_ast::Stmt::Query(query) = stmt else {
         return StatementReadShape::Unknown;
     };
@@ -174,11 +197,24 @@ pub fn statement_read_shape(
     let tidb_ast::QueryStmt::Select(select) = &**query else {
         return StatementReadShape::Unknown;
     };
-    if !select_is_bare_point_read(select) {
+    let single_row_scan = !select_is_bare_point_read(select)
+        && select_is_bare_single_row_read(select)
+        && select
+            .where_clause
+            .as_ref()
+            .is_none_or(|where_clause| where_clause.flags() & tidb_ast::FLAG_HAS_SUBQUERY == 0);
+    if !select_is_bare_point_read(select) && !single_row_scan {
         return StatementReadShape::Unknown;
     }
-    let Some(table) = crate::driver::access::single_kv_table(&select.from, catalog, current_db)
-    else {
+    let Some(table_ref) = crate::driver::access::single_table_ref(&select.from) else {
+        return StatementReadShape::Unknown;
+    };
+    let (database, table_name) = match table_ref.name.as_slice() {
+        [name] if !current_db.is_empty() => (current_db, name.as_str()),
+        [database, name] => (database.as_str(), name.as_str()),
+        _ => return StatementReadShape::Unknown,
+    };
+    let Some(crate::driver::TableEntry::Kv(table)) = catalog.get_in(database, table_name) else {
         return StatementReadShape::Unknown;
     };
     // A partitioned table's point get routes to a partition, which this
@@ -186,9 +222,15 @@ pub fn statement_read_shape(
     if table.partition().is_some() {
         return StatementReadShape::Unknown;
     }
-    let Some(handle_offset) = table.pk_handle_offset() else {
-        return StatementReadShape::Unknown;
-    };
+    if single_row_scan {
+        // The admitted predicate is already a clustered-handle range, so this
+        // path issues one table request even when unrelated secondary indexes
+        // exist. A table without any clustered handle cannot make that claim.
+        if table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty() {
+            return StatementReadShape::Unknown;
+        }
+        return StatementReadShape::AutocommitSingleRowRead;
+    }
     let columns: Vec<(String, FieldType)> = table
         .visible_columns()
         .iter()
@@ -201,20 +243,214 @@ pub fn statement_read_shape(
     // helpers, so a statement this predicate accepts is a statement that arm
     // accepts. It reads nothing: both helpers walk the AST only.
     let mut pairs = Vec::new();
-    if !crate::driver::access::name_value_pairs(where_clause, &mut pairs, zone) || pairs.len() != 1
-    {
+    if !crate::driver::access::name_value_pairs(where_clause, &mut pairs, zone) {
         return StatementReadShape::Unknown;
     }
     if !crate::driver::access::convert_pairs_to_column_domain(&mut pairs, &columns) {
         return StatementReadShape::Unknown;
     }
-    let handle_column = &columns[handle_offset].0;
-    if !pairs[0].column().eq_ignore_ascii_case(handle_column) {
+    if let Some(handle_offset) = table.pk_handle_offset() {
+        if pairs.len() != 1 {
+            return StatementReadShape::Unknown;
+        }
+        let handle_column = &columns[handle_offset].0;
+        if !pairs[0].column().eq_ignore_ascii_case(handle_column) {
+            return StatementReadShape::Unknown;
+        }
+        return match pairs[0].value() {
+            Datum::Int(_) | Datum::UInt(_) => StatementReadShape::AutocommitPointGet,
+            _ => StatementReadShape::Unknown,
+        };
+    }
+
+    // A clustered common handle is a primary-key tuple encoded directly in
+    // the record key.  Go's `IsPointGetWithPKOrUniqueKeyByAutoCommit` admits
+    // this `PointGetPlan` arm as well as the signed-BIGINT handle arm; unlike
+    // a secondary unique index it is still one storage read, so the
+    // MaxUint64 shortcut is safe for a bare point projection.  Require every
+    // handle column exactly once so a duplicate equality or a non-key
+    // residual cannot accidentally claim the shortcut.
+    let common_offsets = table.common_handle_offsets();
+    if common_offsets.is_empty() || pairs.len() != common_offsets.len() {
         return StatementReadShape::Unknown;
     }
-    match pairs[0].value() {
-        Datum::Int(_) | Datum::UInt(_) => StatementReadShape::AutocommitPointGet,
+    let complete = common_offsets.iter().all(|offset| {
+        columns.get(*offset).is_some_and(|(name, _)| {
+            pairs
+                .iter()
+                .filter(|pair| pair.column().eq_ignore_ascii_case(name))
+                .count()
+                == 1
+        })
+    });
+    complete
+        .then_some(StatementReadShape::AutocommitPointGet)
+        .unwrap_or(StatementReadShape::Unknown)
+}
+
+/// Classifies a retained binary-protocol template without cloning it merely
+/// to replace parameter markers.  Only the conservative clustered-handle
+/// shape admitted by the prepared point-get executor is recognized here;
+/// every other prepared statement keeps the ordinary bound-tree classifier.
+#[must_use]
+pub fn prepared_statement_read_shape(
+    stmt: &tidb_ast::Stmt,
+    params: &[Datum],
+    catalog: &crate::driver::Catalog,
+    current_db: &str,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> StatementReadShape {
+    let tidb_ast::Stmt::Query(query) = stmt else {
+        return StatementReadShape::Unknown;
+    };
+    let tidb_ast::QueryStmt::Select(select) = &**query else {
+        return StatementReadShape::Unknown;
+    };
+    if !select_is_bare_point_read(select) {
+        return StatementReadShape::Unknown;
+    }
+    let Some(table_ref) = crate::driver::access::single_table_ref(&select.from) else {
+        return StatementReadShape::Unknown;
+    };
+    let (database, table_name) = match table_ref.name.as_slice() {
+        [name] if !current_db.is_empty() => (current_db, name.as_str()),
+        [database, name] => (database.as_str(), name.as_str()),
+        _ => return StatementReadShape::Unknown,
+    };
+    let Some(crate::driver::TableEntry::Kv(table)) = catalog.get_in(database, table_name) else {
+        return StatementReadShape::Unknown;
+    };
+    if table.partition().is_some() {
+        return StatementReadShape::Unknown;
+    }
+    match crate::driver::access::try_prepared_common_handle_point_get_path(
+        select, table, params, zone,
+    ) {
+        Ok(Some(_)) => StatementReadShape::AutocommitPointGet,
         _ => StatementReadShape::Unknown,
+    }
+}
+
+#[cfg(test)]
+mod common_handle_shape_tests {
+    use super::*;
+
+    // Keep the common-handle guard's value-domain branch exercised without
+    // requiring a storage backend: this is the shape decision made before
+    // the first read, not a transport test.
+    #[test]
+    fn common_handle_point_read_is_admitted() {
+        let mut table = crate::driver::Catalog::default();
+        table.create_database("test");
+        let mut kv = crate::kv_table::KvTable::new(
+            1,
+            vec![
+                crate::kv_table::KvColumn {
+                    name: "k".to_owned(),
+                    id: 1,
+                    field_type: FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+                    default_value: None,
+                    origin_default: None,
+                    generated: None,
+                },
+                crate::kv_table::KvColumn {
+                    name: "v".to_owned(),
+                    id: 2,
+                    field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                    default_value: None,
+                    origin_default: None,
+                    generated: None,
+                },
+            ],
+        );
+        kv.set_name("t");
+        kv.set_common_handle_offsets(vec![0]);
+        table.register_kv_in("test", "t", kv).unwrap();
+        let stmt = tidb_parser::parse("SELECT v FROM t WHERE k = 'x'").unwrap();
+        assert_eq!(
+            statement_read_shape(
+                &stmt,
+                &table,
+                "test",
+                &tidb_datatype::SessionTimeZone::utc(),
+            ),
+            StatementReadShape::AutocommitPointGet
+        );
+    }
+
+    #[test]
+    fn a_single_row_cluster_scan_is_admitted_without_secondary_indexes() {
+        let mut table = crate::driver::Catalog::default();
+        table.create_database("test");
+        let mut kv = crate::kv_table::KvTable::new(
+            1,
+            vec![
+                crate::kv_table::KvColumn {
+                    name: "k".to_owned(),
+                    id: 1,
+                    field_type: FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+                    default_value: None,
+                    origin_default: None,
+                    generated: None,
+                },
+                crate::kv_table::KvColumn {
+                    name: "v".to_owned(),
+                    id: 2,
+                    field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                    default_value: None,
+                    origin_default: None,
+                    generated: None,
+                },
+            ],
+        );
+        kv.set_name("t");
+        kv.set_common_handle_offsets(vec![0]);
+        table.register_kv_in("test", "t", kv).unwrap();
+        let stmt = tidb_parser::parse("SELECT v FROM t WHERE k >= 'x' LIMIT 1").unwrap();
+        assert_eq!(
+            statement_read_shape(
+                &stmt,
+                &table,
+                "test",
+                &tidb_datatype::SessionTimeZone::utc(),
+            ),
+            StatementReadShape::AutocommitSingleRowRead
+        );
+    }
+
+    /// DML gets its own ordinary-snapshot shape so the session can start the
+    /// PD-backed open before the write read path is built.  It must never be
+    /// confused with the max-ts point-get shortcut used by SELECT.
+    #[test]
+    fn update_and_delete_use_the_prefetchable_write_shape() {
+        let catalog = crate::driver::Catalog::default();
+        for sql in [
+            "UPDATE t SET v = 1 WHERE k = 'x'",
+            "DELETE FROM t WHERE k = 'x'",
+        ] {
+            let stmt = tidb_parser::parse(sql).unwrap();
+            assert_eq!(
+                statement_read_shape(
+                    &stmt,
+                    &catalog,
+                    "test",
+                    &tidb_datatype::SessionTimeZone::utc(),
+                ),
+                StatementReadShape::AutocommitWrite,
+                "{sql} should overlap its normal snapshot open with planning"
+            );
+        }
+        let insert = tidb_parser::parse("INSERT INTO t VALUES (1, 2)").unwrap();
+        assert_eq!(
+            statement_read_shape(
+                &insert,
+                &catalog,
+                "test",
+                &tidb_datatype::SessionTimeZone::utc(),
+            ),
+            StatementReadShape::Unknown,
+            "INSERT has no guaranteed first read to prefetch"
+        );
     }
 }
 
@@ -226,6 +462,21 @@ pub fn statement_read_shape(
 /// plain column references and wildcards for the same reason -- a scalar
 /// subquery in it is a second read, and an aggregate is a root `HashAgg`.
 pub(crate) fn select_is_bare_point_read(select: &tidb_ast::SelectStmt) -> bool {
+    select_is_bare_read(select, false)
+}
+
+/// The same root shape as [`select_is_bare_point_read`], with an optional
+/// literal `LIMIT 1` for a one-row range read.
+fn select_is_bare_single_row_read(select: &tidb_ast::SelectStmt) -> bool {
+    let Some(limit) = select.limit.as_ref() else {
+        return false;
+    };
+    limit.offset.is_none()
+        && matches!(&limit.count, tidb_ast::Expr::Int(value) if value == "1")
+        && select_is_bare_read(select, true)
+}
+
+fn select_is_bare_read(select: &tidb_ast::SelectStmt, allow_limit: bool) -> bool {
     use tidb_ast::{SelectField, SelectStatementKind};
 
     select.kind == SelectStatementKind::Select
@@ -238,7 +489,7 @@ pub(crate) fn select_is_bare_point_read(select: &tidb_ast::SelectStmt) -> bool {
         && select.having.is_none()
         && select.windows.is_empty()
         && select.order_by.is_empty()
-        && select.limit.is_none()
+        && (allow_limit || select.limit.is_none())
         // `FOR UPDATE` locks the row, which needs a real timestamp to lock at.
         && select.lock.is_none()
         && select.into_outfile.is_none()

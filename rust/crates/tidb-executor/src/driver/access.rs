@@ -4751,6 +4751,38 @@ pub(crate) fn try_point_get(
         }
     }
 
+    // A clustered common primary key is the record handle itself. Go's
+    // `tryPointGetPlan` accepts it when every handle column is pinned exactly
+    // once; unlike a secondary unique index this remains one storage read.
+    let common_offsets = table.common_handle_offsets();
+    if !common_offsets.is_empty() && common_offsets.len() == pairs.len() {
+        let mut values = Vec::with_capacity(common_offsets.len());
+        for offset in common_offsets {
+            let Some((column_name, _)) = columns.get(*offset) else {
+                values.clear();
+                break;
+            };
+            let Some(pair) = pairs
+                .iter()
+                .find(|pair| pair.column.eq_ignore_ascii_case(column_name))
+            else {
+                values.clear();
+                break;
+            };
+            values.push(pair.value.clone());
+        }
+        if values.len() == common_offsets.len() {
+            let encoded = tidb_codec::encode_key_in_timezone(zone, &values)
+                .map_err(|e| DriverError::Parse(format!("common handle encode failed: {e:?}")))?;
+            let handle = tidb_txnkv::CommonHandle::new(encoded)
+                .map_err(|e| DriverError::Parse(format!("common handle build failed: {e:?}")))?;
+            return Ok(Some(PointGetPin {
+                handle: Some(TableHandle::Common(handle.encoded().to_vec())),
+                index: None,
+            }));
+        }
+    }
+
     // The unique-index path: every column of some unique index is pinned.
     let mut table = table.clone();
     for index in table.plan_indexes().cloned().collect::<Vec<_>>() {
@@ -4811,8 +4843,111 @@ pub(crate) fn try_point_get(
     Ok(None)
 }
 
-/// The row order a committed access path produces, for the `ORDER BY` half of
-/// the `LIMIT` push-down rule.
+/// Prepared clustered-handle point-get admission using the table's borrowed
+/// column metadata.  The ordinary helper above serves the planner's tuple
+/// metadata shape; this variant is the binary YCSB hot path and deliberately
+/// avoids allocating/cloning a `(name, FieldType)` vector for every EXECUTE.
+pub(crate) fn try_prepared_common_handle_point_get_path(
+    select: &tidb_ast::SelectStmt,
+    table: &KvTable,
+    params: &[Datum],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<Option<TableHandle>, DriverError> {
+    if table.plan_indexes().next().is_some() {
+        return Ok(None);
+    }
+    let Some(where_clause) = select.where_clause.as_ref() else {
+        return Ok(None);
+    };
+    let mut pairs = Vec::new();
+    if !prepared_name_value_pairs(where_clause, params, &mut pairs) || pairs.is_empty() {
+        return Ok(None);
+    }
+    let columns = table.visible_columns();
+    for pair in &mut pairs {
+        let Some(column) = columns
+            .iter()
+            .find(|column| column.name.eq_ignore_ascii_case(&pair.column))
+        else {
+            return Ok(None);
+        };
+        let Some(value) = point_get_value(&column.field_type, &pair.value) else {
+            return Ok(None);
+        };
+        pair.value = value;
+    }
+    if let Some(handle_offset) = table.pk_handle_offset() {
+        let handle_column = &columns[handle_offset].name;
+        if pairs.len() != 1 || !pairs[0].column.eq_ignore_ascii_case(handle_column) {
+            return Ok(None);
+        }
+        let handle = match pairs[0].value {
+            Datum::Int(value) => TableHandle::Int(value),
+            Datum::UInt(value) => TableHandle::Int(value as i64),
+            _ => return Ok(None),
+        };
+        return Ok(Some(handle));
+    }
+    let common_offsets = table.common_handle_offsets();
+    if common_offsets.is_empty() || common_offsets.len() != pairs.len() {
+        return Ok(None);
+    }
+    let mut values = Vec::with_capacity(common_offsets.len());
+    for offset in common_offsets {
+        let Some(column) = columns.get(*offset) else {
+            return Ok(None);
+        };
+        let Some(pair) = pairs
+            .iter()
+            .find(|pair| pair.column.eq_ignore_ascii_case(&column.name))
+        else {
+            return Ok(None);
+        };
+        values.push(pair.value.clone());
+    }
+    let encoded = tidb_codec::encode_key_in_timezone(zone, &values)
+        .map_err(|e| DriverError::Parse(format!("common handle encode failed: {e:?}")))?;
+    let handle = tidb_txnkv::CommonHandle::new(encoded)
+        .map_err(|e| DriverError::Parse(format!("common handle build failed: {e:?}")))?;
+    Ok(Some(TableHandle::Common(handle.encoded().to_vec())))
+}
+
+fn prepared_name_value_pairs(
+    expr: &tidb_ast::Expr,
+    params: &[Datum],
+    pairs: &mut Vec<NameValuePair>,
+) -> bool {
+    use tidb_ast::{BinaryOp, Expr};
+    match expr {
+        Expr::Paren(inner) => prepared_name_value_pairs(inner, params, pairs),
+        Expr::Binary(BinaryOp::LogicAnd, lhs, rhs) => {
+            prepared_name_value_pairs(lhs, params, pairs)
+                && prepared_name_value_pairs(rhs, params, pairs)
+        }
+        Expr::Binary(BinaryOp::Eq, lhs, rhs) => {
+            let (column, marker) = match (&**lhs, &**rhs) {
+                (Expr::Column(path), Expr::ParamMarker { order, .. }) => (path, *order),
+                (Expr::ParamMarker { order, .. }, Expr::Column(path)) => (path, *order),
+                _ => return false,
+            };
+            let Some(name) = column.last() else {
+                return false;
+            };
+            let Some(value) = params.get(marker) else {
+                return false;
+            };
+            pairs.push(NameValuePair {
+                column: name.clone(),
+                value: value.clone(),
+            });
+            true
+        }
+        _ => false,
+    }
+}
+
+/// The row order a committed index access path produces, for the `ORDER BY`
+/// half of the `LIMIT` push-down rule.
 pub(crate) struct IndexAccessOrder {
     /// The unfixed key columns as offsets into the source row, in key order.
     column_offsets: Vec<usize>,

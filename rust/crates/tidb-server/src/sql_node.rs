@@ -25,6 +25,7 @@ use tidb_exec::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlErro
 use tidb_exec::real_tikv_analyze::ClusterAnalyzeError;
 use tidb_exec::real_tikv_ddl::ClusterDdlError;
 use tidb_exec::real_tikv_dml::ConfiguredWriteError;
+use tidb_ast::Stmt;
 use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
 use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
 use tidb_protocol::ColumnInfo;
@@ -558,7 +559,9 @@ pub struct PreparedGeneral {
     sql: String,
     parameter_count: usize,
     result_columns: Vec<ColumnInfo>,
-    prepared_ast: Option<PreparedAst>,
+    /// The parser-owned statement retained at COM_STMT_PREPARE.  General
+    /// executes clone and bind this tree instead of reparsing `sql`.
+    template: Option<Stmt>,
 }
 
 impl PreparedGeneral {
@@ -569,17 +572,25 @@ impl PreparedGeneral {
             sql,
             parameter_count,
             result_columns,
-            prepared_ast: None,
+            template: None,
         }
     }
 
-    /// Retains the AST parsed at PREPARE for a session that can execute it
-    /// directly. Generic query-session implementations may continue to keep
-    /// only text and use the compatibility fallback.
+    /// Creates a general statement with the parsed tree retained for binary
+    /// prepared executes.
     #[must_use]
-    pub fn with_prepared_ast(mut self, prepared_ast: PreparedAst) -> Self {
-        self.prepared_ast = Some(prepared_ast);
-        self
+    pub fn with_template(
+        sql: String,
+        parameter_count: usize,
+        result_columns: Vec<ColumnInfo>,
+        template: Stmt,
+    ) -> Self {
+        Self {
+            sql,
+            parameter_count,
+            result_columns,
+            template: Some(template),
+        }
     }
 
     /// The statement text, whose markers an execute binds.
@@ -601,10 +612,11 @@ impl PreparedGeneral {
         &self.result_columns
     }
 
-    /// The source-shaped prepared definition, when this session retained one.
+    /// The parse retained at prepare time, when this statement came through
+    /// the binary prepared protocol.
     #[must_use]
-    pub fn prepared_ast(&self) -> Option<&PreparedAst> {
-        self.prepared_ast.as_ref()
+    pub fn template(&self) -> Option<&Stmt> {
+        self.template.as_ref()
     }
 }
 

@@ -290,6 +290,30 @@ impl KvTable {
         )
     }
 
+    /// Reads only the first row covered by `handle_ranges`, using the
+    /// storage backend's bounded primitive when it has one. This is the
+    /// byte-level counterpart of a `TableRangeScan` with `LIMIT 1`.
+    pub fn first_row_in_handle_ranges(
+        &mut self,
+        keep: Option<&[usize]>,
+        handle_ranges: &[IndexRange],
+        zone: &SessionTimeZone,
+    ) -> Result<Option<(TableHandle, Vec<Datum>)>, KvTableError> {
+        let context = RowDecodeContext::legacy_default(zone);
+        let decoder = self.row_decoder_projected(keep, &context)?;
+        for (low, upper) in self.record_key_ranges(Some(handle_ranges), zone)? {
+            let Some((key, value)) = self
+                .store
+                .first(Some(&low), Some(&upper))
+                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
+            else {
+                continue;
+            };
+            return decoder.decode_record(key.as_bytes(), &value).map(Some);
+        }
+        Ok(None)
+    }
+
     /// The record ranges this scan reads, as the storage seam's half-open
     /// `[start, end)` pairs in ascending key order.
     ///

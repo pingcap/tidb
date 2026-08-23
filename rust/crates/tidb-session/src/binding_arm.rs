@@ -476,6 +476,13 @@ impl Session {
         Some(bound)
     }
 
+    /// Whether this session has any SQL bindings.  Prepared fast paths refuse
+    /// the optimization while bindings exist, because a matching binding can
+    /// replace the statement's access hints before planning.
+    pub fn has_session_bindings(&self) -> bool {
+        !self.session_bindings.is_empty()
+    }
+
     /// Whether `@@last_plan_from_binding` should report a hit, which is the
     /// PRECEDING statement's outcome (Go `PrevFoundInBinding`).
     pub(crate) fn last_plan_from_binding(&self) -> bool {

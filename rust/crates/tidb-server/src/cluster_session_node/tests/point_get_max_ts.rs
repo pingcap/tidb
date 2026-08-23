@@ -87,6 +87,24 @@ fn autocommit_point_get_on_the_primary_key_takes_no_timestamp() {
     assert_eq!(node.live.load(Ordering::Acquire), 0);
 }
 
+/// YCSB workload E issues a clustered-handle range with `LIMIT 1` for every
+/// scan.  It is still a range plan (not a point-get plan), but the bounded
+/// request has one physical read and no second lookup, so it can use the same
+/// reusable latest-read transaction without changing the returned row.
+#[test]
+fn a_bounded_single_row_cluster_scan_takes_no_timestamp() {
+    let (mut session, node) = open_session();
+    seed(&mut session);
+
+    let mut answer = Vec::new();
+    let opens = opens_of(&node, || {
+        answer = rows(&mut session, "SELECT v FROM t WHERE id >= 1 LIMIT 1");
+    });
+    assert_eq!(answer, vec![vec![Datum::Int(10)]]);
+    assert_eq!(opens, FREE);
+    assert_eq!(node.live.load(Ordering::Acquire), 0);
+}
+
 /// The same statement through PREPARE + EXECUTE with a `?` for the handle,
 /// which is the shape a benchmark driver actually sends.
 ///

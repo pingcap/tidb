@@ -90,15 +90,11 @@ fn unsupported_operation_fails_before_preparing_or_sending() {
         Rc::clone(&loader_calls),
     ));
     let error = runtime
-        .select(
-            &transport_request(metadata("a", "z")),
-            SelectInput::default(),
-            QueryResultContext::new(Vec::new(), WarningCollector::new()),
-        )
+        .analyze(&transport_request(metadata("a", "z")), false)
         .err()
         .unwrap()
         .to_string();
-    assert!(error.contains("unsupported direct unary operation Select"));
+    assert!(error.contains("unsupported direct unary operation Analyze"));
     assert!(calls.borrow().is_empty());
     assert!(loader_calls.borrow().is_empty());
 }
