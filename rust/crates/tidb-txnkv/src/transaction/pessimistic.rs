@@ -859,11 +859,29 @@ where
             // Commit is: the lock either exists or it does not, and either way
             // the transaction has not written anything yet.
             PublishedCommand::BeforePublication(error)
-            | PublishedCommand::AfterPublication { error, .. } => Err(
-                PessimisticLockFailure::Transaction(TransactionCause::Transport {
-                    detail: format!("PessimisticLock failed: {error}"),
-                }),
-            ),
+            | PublishedCommand::AfterPublication { error, .. } => {
+                // A lock RPC that ran the CALLER'S DEADLINE out is the lock
+                // wait running out, not a broken connection. Go returns that
+                // as its own statement-scoped error: `handlePessimisticLockError`
+                // (`pkg/executor/adapter.go`) hands the original `lockErr`
+                // back when it cannot retry, so a lock-wait timeout stays
+                // 1205 and the transaction lives. `check_wait_budget` below
+                // already states this rule for the wait it owns; the same
+                // reasoning governs a wait that ends at the RPC's deadline
+                // instead. Escalating it aborted whole transactions under
+                // eight-thread contention on a thousand rows, where Go simply
+                // reports the statement.
+                if call.timeout().is_zero() {
+                    return Err(PessimisticLockFailure::LockWaitTimeout {
+                        key: batch.keys().first().cloned().unwrap_or_default(),
+                    });
+                }
+                Err(PessimisticLockFailure::Transaction(
+                    TransactionCause::Transport {
+                        detail: format!("PessimisticLock failed: {error}"),
+                    },
+                ))
+            }
         }
     }
 

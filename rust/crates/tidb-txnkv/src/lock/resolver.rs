@@ -285,8 +285,18 @@ impl SnapshotLockSet {
     /// stamp would make TiKV skip that lock forever, a sticky stale read.
     pub fn rescope(&mut self, read_ts: u64) {
         if self.classified_at != Some(read_ts) {
+            // Go `KVSnapshot.SetSnapshotTS`
+            // (`txnkv/txnsnapshot/snapshot.go:189-202`) clears exactly ONE of
+            // the two sets -- `s.resolvedLocks = util.TSSet{}`, "remove the
+            // minCommitTS pushed information" -- and deliberately leaves
+            // `committedLocks` standing. That asymmetry is right: `ignore`
+            // carries this reader's pushed-min-commit-ts decisions, which are
+            // relative to the version they were made at, while `access`
+            // records that a transaction COMMITTED at or before the reader --
+            // and since a snapshot timestamp only ever advances here (a
+            // pessimistic retry moves to a newer `for_update_ts`), that fact
+            // stays true at the new version.
             self.ignore.clear();
-            self.access.clear();
             self.classified_at = Some(read_ts);
         }
     }
@@ -552,28 +562,33 @@ where
             ));
         }
     };
-    let primary_lock = match check_response.lock_info.as_ref() {
-        // This field is only ever asked one question below: is the owner's
-        // primary an ASYNC-COMMIT optimistic primary? A pessimistic primary
-        // is the ordinary state of a transaction still in its locking phase,
-        // and it answers that question "no" -- which is exactly what `None`
-        // means to every reader below. Refusing the whole status answer
-        // because of it failed reads with "lock admission failed:
-        // pessimistic lock type 5 is outside bounded recovery" whenever a
-        // read met a live pessimistic transaction.
-        //
-        // Deliberately narrow: ONLY a pessimistic primary becomes `None`.
-        // Any other shape this gate cannot describe -- a transaction-file
-        // lock, an unknown op, a lock missing its identity -- still fails
-        // loudly, because those say something about the protocol that this
-        // port has not been taught, and swallowing them would hide it.
-        Some(primary_lock) => match super::decode_lock_observation(primary_lock) {
-            Ok(admitted) => admitted.into_iter().next(),
-            Err(LockAdmissionError::Pessimistic(_)) => None,
-            Err(error) => return Err(LockRecoveryError::Admission(error)),
-        },
-        None => None,
-    };
+    // Go `getTxnStatus` (`txnkv/txnlock/lock_resolver.go:1080`) stores this
+    // field with a bare `status.primaryLock = cmdResp.LockInfo` -- no
+    // admission, no type gate -- and only ever asks it
+    // `primaryLock.UseAsyncCommit` (`:341,:591`), plus `.Secondaries` and
+    // `.MinCommitTs` once that is true (`:1276,:1335`). So the faithful port
+    // is to take what TiKV returned and read those fields.
+    //
+    // Admitting it through the optimistic-only gate instead failed the whole
+    // status answer with "lock admission failed: pessimistic lock type 5 is
+    // outside bounded recovery" whenever a read met a live pessimistic
+    // transaction -- and a pessimistic primary is simply the ordinary state
+    // of one still in its locking phase, which answers "not an async-commit
+    // primary" and nothing more.
+    let primary_lock = check_response
+        .lock_info
+        .as_ref()
+        .map(|info| OptimisticLock {
+            key: info.key.clone(),
+            primary: info.primary_lock.clone(),
+            txn_id: info.lock_version,
+            ttl_ms: info.lock_ttl,
+            txn_size: info.txn_size,
+            lock_type: info.lock_type,
+            min_commit_ts: info.min_commit_ts,
+            use_async_commit: info.use_async_commit,
+            secondaries: info.secondaries.clone(),
+        });
     if check_response.lock_ttl > 0 {
         let async_commit_primary = primary_lock
             .as_ref()
