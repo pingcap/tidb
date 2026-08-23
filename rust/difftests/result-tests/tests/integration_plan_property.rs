@@ -17,11 +17,12 @@
 //! `tests/integrationtest` records 4,598 `EXPLAIN` statements, and their
 //! recorded text cannot be compared verbatim: this tier's printer
 //! deliberately diverges from Go's in ways that have nothing to do with the
-//! question a plan case asks (no `cop[tikv]` task and no `TableReader`
-//! wrapper, `Sort`+`Limit` instead of `TopN`, build-order operator ids,
-//! always-present `Projection` -- each named in `tidb_executor::explain`'s
-//! module docs). Matching that text would mean rewriting the printer to
-//! describe executors this tier does not have.
+//! question a plan case asks (`Sort`+`Limit` instead of a cop-side `TopN`,
+//! build-order operator ids, always-present `Projection` -- each named in
+//! `tidb_executor::explain`'s module docs; the reader boundary and the
+//! `cop[tikv]` task that used to head this list are recorded now). Matching
+//! that text would mean rewriting the printer to describe executors this
+//! tier does not have.
 //!
 //! What a plan case actually guards is an ACCESS decision. Take
 //! `access_path_selection.result`: the assertion is that `IDX_ab` beats

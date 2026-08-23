@@ -1021,12 +1021,17 @@ fn wrap_node(
             //
             // NAMED RESIDUE (rendering, not choice): the recording reads the
             // pushed null-rejection as `TableReader -> Selection cop[tikv]`
-            // under this wrapper's Projection; this tier's single-table
-            // residual filter executes at root over a bare scan -- for every
-            // standalone `SELECT ... WHERE <unranged filter>`, not only
-            // here -- so the reader boundary belongs to that module-wide
-            // residue. The per-scan recorded comparison never reads it; the
-            // family's unit pin documents it at its THIRD CORRECTION.
+            // under this wrapper's Projection. The reader boundary is now
+            // recorded here too -- `driver::select_rows` closes every
+            // single-table read as Go's cop task under its reader -- and the
+            // null-rejection is the half that stays at ROOT, which is Go's
+            // own `CopTask.RootTaskConds` placement for a condition
+            // `expression.PushDownExprs` refuses: `mul(int, int)` and
+            // `isnull` are absent from `tidb_expr::pushdown_catalog`, so no
+            // source here can promise to evaluate them. What is left of this
+            // residue is the CATALOG's width (named in
+            // `crate::predicate_pushdown`'s module doc), not the boundary;
+            // the family's unit pin documents it at its FOURTH CORRECTION.
             let mut fields: Vec<SelectField> = relation
                 .columns
                 .iter()

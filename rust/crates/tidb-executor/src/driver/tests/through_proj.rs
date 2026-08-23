@@ -348,27 +348,38 @@ fn an_expression_join_key_gets_an_injected_column() {
     // Projection (`derived_projection_pushdown`, Go `breakDownPredicates`),
     // so the recording's `Selection  not(isnull(mul(t2.b, 2)))` under that
     // Projection exists here too -- `Selection_6` below. The recording reads
-    // it as `TableReader -> Selection cop[tikv]`; this tier's single-table
-    // residual filter still executes at root over a bare scan (every
-    // standalone `SELECT ... WHERE <unranged filter>` renders the same way),
-    // so the reader boundary under an injected Projection stays that
-    // module-wide residue's, not this family's.
+    // it as `TableReader -> Selection cop[tikv]`.
+    //
+    // FOURTH CORRECTION. That reader boundary exists here now. Go closes
+    // EVERY base-table read as a cop task capped by a reader
+    // (`convertToTableScan` -> `addPushedDownSelection4PhysicalTableScan` ->
+    // `ConvertToRootTask`), and `driver::select_rows` records the same
+    // boundary for the single-table read below the injected Projection --
+    // `TableReader_6` over `TableFullScan_5`, which is why every id above it
+    // moved by one. The null-rejection itself stays at ROOT, which is Go's
+    // own `CopTask.RootTaskConds` placement for a condition
+    // `expression.PushDownExprs` refuses: `mul(int, int)` and `isnull` are
+    // not in `tidb_expr::pushdown_catalog`, so no source here can promise to
+    // evaluate them and this tier must not print a promise it cannot keep.
+    // What is left of the residue is therefore the CATALOG's width, named in
+    // `predicate_pushdown`'s module doc, not the reader boundary.
     assert_eq!(
         dissolved,
         vec![
-            "MergeJoin_13".to_owned(),
+            "MergeJoin_14".to_owned(),
             "├─TableReader_2(Build)".to_owned(),
             "│ └─TableFullScan_1".to_owned(),
-            "└─MergeJoin_12(Probe)".to_owned(),
+            "└─MergeJoin_13(Probe)".to_owned(),
             "  ├─TableReader_4(Build)".to_owned(),
             "  │ └─TableFullScan_3".to_owned(),
-            "  └─IndexHashJoin_11(Probe)".to_owned(),
-            "    ├─Projection_7(Build)".to_owned(),
-            "    │ └─Selection_6".to_owned(),
-            "    │   └─TableFullScan_5".to_owned(),
-            "    └─IndexReader_10(Probe)".to_owned(),
-            "      └─Selection_9".to_owned(),
-            "        └─IndexRangeScan_8".to_owned(),
+            "  └─IndexHashJoin_12(Probe)".to_owned(),
+            "    ├─Projection_8(Build)".to_owned(),
+            "    │ └─Selection_7".to_owned(),
+            "    │   └─TableReader_6".to_owned(),
+            "    │     └─TableFullScan_5".to_owned(),
+            "    └─IndexReader_11(Probe)".to_owned(),
+            "      └─Selection_10".to_owned(),
+            "        └─IndexRangeScan_9".to_owned(),
         ],
     );
 }
@@ -418,11 +429,11 @@ fn the_index_joins_outer_leaf_is_asked_for_the_order_through_the_derived_table()
         Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
         other => format!("{other:?}"),
     };
-    // `TableFullScan_5`: the scan under `Selection_6` under
-    // `Projection_7(Build)` -- the tree the family's pin asserts whole. The
-    // Selection is the join key's null-rejection, pushed through the wrapper
-    // by `derived_projection_pushdown`, which is also why the scan's number
-    // moved from `_3`.
+    // `TableFullScan_5`: the scan under `TableReader_6` under `Selection_7`
+    // under `Projection_8(Build)` -- the tree the family's pin asserts whole.
+    // The Selection is the join key's null-rejection, pushed through the
+    // wrapper by `derived_projection_pushdown`, which is also why the scan's
+    // number moved from `_3`.
     let t2 = rows
         .iter()
         .find(|row| text(&row[0]).contains("TableFullScan_5"))
@@ -452,6 +463,10 @@ fn the_index_joins_outer_leaf_is_asked_for_the_order_through_the_derived_table()
 /// │   └─Selection       not(isnull(mul(t2.b, 2)))
 /// │     └─IndexFullScan table:t2, index:b(b)               <- COVERING
 /// ```
+///
+/// The leaf's reader boundary exists here now; the null-rejection is the one
+/// piece still ABOVE it rather than inside, for the reason the assertion
+/// below states.
 ///
 /// Publishing `t2.c` -- which nothing above the wrapper reads -- forced a
 /// `TableFullScan` here for as long as the wrapper republished every column,
@@ -510,7 +525,17 @@ fn the_injected_wrapper_is_pruned_and_its_leaf_takes_the_covering_index() {
         text(&projection[4]),
     );
     // The join key's null-rejection, substituted BELOW the projection.
-    let selection = find("Selection_4");
+    //
+    // The recording reads it INSIDE the cop task (`IndexReader
+    // index:Selection` over `Selection cop[tikv]`); this tier now closes the
+    // leaf's cop task -- `IndexReader_4` over `IndexFullScan_3` -- but the
+    // conjunct itself stays at root, because `mul(int, int)` and `isnull`
+    // are not in `tidb_expr::pushdown_catalog`, so no source here can promise
+    // to evaluate it. That is Go's own `CopTask.RootTaskConds` placement for
+    // a condition `expression.PushDownExprs` refuses; what differs from the
+    // recording is which conditions the catalog admits, not where each half
+    // runs.
+    let selection = find("Selection_5");
     assert_eq!(
         text(&selection[4]),
         "not(isnull(mul(test.t2.b, 2)))",

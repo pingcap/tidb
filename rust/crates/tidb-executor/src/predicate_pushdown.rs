@@ -70,6 +70,21 @@
 //! matters: a conjunct that stays above the scan is still applied, so the
 //! result set cannot change. Widening the set is a separate, verifiable step.
 //!
+//! # The subset is what EXPLAIN now shows
+//!
+//! `EXPLAIN` prints this split as Go prints its own: the conjuncts the scan
+//! took are the `Selection cop[tikv]` inside the read's coprocessor task, and
+//! the residual is the root `Selection` above the `TableReader`/`IndexReader`
+//! -- Go's `CopTask.RootTaskConds`
+//! (`pkg/planner/core/find_best_task.go:3205`,
+//! `pkg/planner/core/operator/physicalop/task.go:47`). So the width of the
+//! set above is now VISIBLE: wherever a recorded plan reads `Selection
+//! cop[tikv]` and this tier reads a root `Selection`, the missing piece is a
+//! row of [`tidb_expr::pushdown_catalog`], not the reader boundary. Reading
+//! it the other way -- printing `cop[tikv]` for a conjunct no source
+//! accepted -- would be a claim this tier cannot keep, which is why
+//! `driver::select_rows` gates the boundary on the source's own answer.
+//!
 //! # The staged-buffer obligation
 //!
 //! A pushed conjunct is *removed* from the `Selection` above the scan, so the

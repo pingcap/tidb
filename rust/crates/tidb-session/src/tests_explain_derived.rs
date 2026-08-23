@@ -59,16 +59,20 @@ fn derived_session() -> Session {
 /// └─TableFullScan_5  10000.00  cop[tikv]  table:t  keep order:false, stats:pseudo
 /// ```
 ///
-/// ACCESS AGREES: `table:t` is read by a full table scan off pseudo
-/// statistics on both sides. The extra `Projection` is this tier's, and the
-/// derived table itself contributes no operator here either -- the subquery's
-/// recorded subtree simply stands in the `FROM` position.
+/// The two agree operator for operator now, the derived table contributing
+/// no node of its own: the subquery's recorded subtree simply stands in the
+/// `FROM` position, and that subtree is Go's cop task under its reader. Only
+/// the ids and the child NAME inside `data:` differ, both of which are build
+/// order here and plan order in Go.
 #[test]
 fn a_derived_table_is_its_subquery_s_own_plan() {
     let mut session = derived_session();
     assert_eq!(
         plan(&mut session, "explain select * from (select * from t) x"),
-        vec!["TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo"]
+        vec![
+            "TableReader_2|10000.00|root||data:TableFullScan",
+            "└─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+        ]
     );
     // The rows the same query returns are unchanged by being described: a
     // plan-only trace stops before the drain, but an ordinary run still
@@ -96,7 +100,10 @@ fn a_nested_derived_table_nests_the_subtree() {
             &mut session,
             "explain select * from (select * from (select * from t) y) x"
         ),
-        vec!["TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo"]
+        vec![
+            "TableReader_2|10000.00|root||data:TableFullScan",
+            "└─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+        ]
     );
 }
 

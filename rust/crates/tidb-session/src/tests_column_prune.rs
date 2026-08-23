@@ -174,10 +174,12 @@ fn the_gate_refuses_every_wide_shape_and_they_still_answer_correctly() {
 ///
 /// Pruning is a change to the scan's *schema*, which `EXPLAIN` never prints
 /// for a `TableFullScan`; Go's only visible pruning artefact is a separate
-/// coprocessor `Projection`, which this tier has no `cop[tikv]` task to
-/// carry. So the correct behaviour here is that the plan text does not move
-/// at all -- which is why pruning is applied after the trace records the
-/// scan, and why this test pins both spellings to the same rows.
+/// coprocessor `Projection`, which this tier does not build. So the correct
+/// behaviour here is that the plan text does not move at all -- which is why
+/// pruning is applied after the trace records the scan, and why this test
+/// pins both spellings to the same rows. The captured scan row is matched
+/// whole now, `cop[tikv]` task included: the read is a cop task under its
+/// `TableReader`.
 #[test]
 fn pruning_leaves_the_plan_text_exactly_where_it_was() {
     let mut session = prune_session();
@@ -199,9 +201,9 @@ fn pruning_leaves_the_plan_text_exactly_where_it_was() {
     assert_eq!(
         narrow.last().unwrap(),
         &vec![
-            "  └─TableFullScan_1".to_owned(),
+            "    └─TableFullScan_1".to_owned(),
             "10000.00".to_owned(),
-            "root".to_owned(),
+            "cop[tikv]".to_owned(),
             "table:t".to_owned(),
             "keep order:false, stats:pseudo".to_owned(),
         ]

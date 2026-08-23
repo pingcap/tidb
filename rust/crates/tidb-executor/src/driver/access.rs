@@ -2547,6 +2547,52 @@ pub(crate) fn negotiate_scan_filter(
     }
 }
 
+/// The conjuncts of `where_clause` the scan took, as written, when
+/// `residual` is what it left behind.
+///
+/// Go never has to recover this: `expression.PushDownExprs` hands
+/// `addPushedDownSelection4PhysicalTableScan` the two halves as two slices
+/// (`pkg/planner/core/find_best_task.go:3205`), one becoming the cop
+/// `Selection` and the other `CopTask.RootTaskConds`. This tier's driver
+/// holds the residual as an AST and the pushed half only as built
+/// expressions, so the AST of the pushed half -- which EXPLAIN needs to
+/// PRICE the cop `Selection` (`cardinality.Selectivity` takes the
+/// conditions, not the whole `WHERE`) -- is recovered by subtraction. It is
+/// exact: [`split_scan_predicates`] builds `residual` by cloning conjuncts
+/// out of this very list, in this order.
+///
+/// `None` means nothing was pushed, so there is no cop `Selection` to print.
+pub(crate) fn scan_pushed_conjuncts(
+    where_clause: &tidb_ast::Expr,
+    residual: &tidb_ast::Expr,
+) -> Option<tidb_ast::Expr> {
+    let mut whole = Vec::new();
+    collect_conjuncts(where_clause, &mut whole);
+    let mut left_behind = Vec::new();
+    collect_conjuncts(residual, &mut left_behind);
+    let mut left_behind = left_behind.into_iter().peekable();
+    let mut pushed: Vec<&tidb_ast::Expr> = Vec::new();
+    for conjunct in whole {
+        if left_behind.peek().is_some_and(|next| *next == conjunct) {
+            left_behind.next();
+            continue;
+        }
+        pushed.push(conjunct);
+    }
+    // A residual conjunct this walk never matched means the two lists are not
+    // the ones this function documents, so it claims nothing.
+    if left_behind.next().is_some() {
+        return None;
+    }
+    pushed.into_iter().cloned().reduce(|left, right| {
+        tidb_ast::Expr::Binary(
+            tidb_ast::BinaryOp::LogicAnd,
+            Box::new(left),
+            Box::new(right),
+        )
+    })
+}
+
 /// Offers the source the `LIMIT`'s row cap, when [`scan_limit_cap`] finds one
 /// is sound.
 ///

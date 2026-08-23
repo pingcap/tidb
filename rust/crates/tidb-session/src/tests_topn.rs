@@ -169,9 +169,10 @@ fn an_order_by_without_a_limit_still_builds_a_sort() {
     assert_eq!(
         plan(&mut session, "explain select a from t order by a"),
         vec![
-            "Projection_3|10000.00|root||test.t.a",
-            "└─Sort_2|10000.00|root||test.t.a",
-            "  └─TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo",
+            "Projection_4|10000.00|root||test.t.a",
+            "└─Sort_3|10000.00|root||test.t.a",
+            "  └─TableReader_2|10000.00|root||data:TableFullScan",
+            "    └─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
     assert_eq!(

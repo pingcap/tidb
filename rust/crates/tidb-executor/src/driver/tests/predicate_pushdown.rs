@@ -773,3 +773,205 @@ fn the_scan_takes_string_expression_in() {
     );
     assert!(!negated);
 }
+
+/// WHERE THE SPLIT IS PRINTED: the conjuncts the read evaluates go INSIDE the
+/// coprocessor task, under the reader that finishes it.
+///
+/// Go builds one `CopTask` per base-table read (`convertToTableScan`,
+/// `pkg/planner/core/find_best_task.go:2829`), hangs the coprocessor half of
+/// the filter conditions off the scan as a `PhysicalSelection` inside it
+/// (`addPushedDownSelection4PhysicalTableScan`, `:3198`), and caps it with
+/// the reader (`ConvertToRootTask`,
+/// `pkg/planner/core/operator/physicalop/task_base.go:504`). The recorded
+/// spelling is quoted verbatim by `r/explain_easy.result:477` for a filtered
+/// read --
+///
+/// ```text
+/// TableReader        root                 data:Selection
+/// └─Selection        cop[tikv]            eq(...)
+///   └─TableFullScan  cop[tikv]  table:ta  keep order:false, stats:pseudo
+/// ```
+///
+/// -- and by `r/explain_easy.result:26`, `select * from t1`, for an
+/// unfiltered one:
+///
+/// ```text
+/// TableReader        root                 data:TableFullScan
+/// └─TableFullScan    cop[tikv]  table:t1  keep order:false, stats:pseudo
+/// ```
+///
+/// The boundary is a CLAIM about where work happens, so each case below pairs
+/// the printed task with the reason the scan may be said to do it:
+/// [`negotiate_scan_filter`] handed the conjunct to the source, which
+/// [`crate::predicate_pushdown`] obliges to apply it to every row it emits.
+#[test]
+fn a_single_table_read_ends_in_the_cop_task_go_prints() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE reader_t (a BIGINT, b BIGINT, c VARCHAR(20))",
+        &mut catalog,
+    )
+    .unwrap();
+    let plan = |sql: &str| {
+        let statement = tidb_parser::parse(sql).expect("a select");
+        let Stmt::Query(query) = &statement else {
+            panic!("a select");
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("a select");
+        };
+        let (_, rows) = crate::explain::explain_select_stmt(
+            select,
+            &catalog,
+            "test",
+            &crate::StmtContext::for_query(),
+            crate::explain::ExplainFormat::Row,
+        )
+        .unwrap();
+        rows.iter()
+            .map(|row| {
+                (
+                    datum_text_for_test(&row[0]),
+                    datum_text_for_test(&row[2]),
+                    datum_text_for_test(&row[4]),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    // A conjunct the scan takes whole: it is the cop `Selection`, and the
+    // reader names it.
+    assert_eq!(
+        plan("SELECT * FROM reader_t WHERE a > 5"),
+        vec![
+            (
+                "TableReader_3".to_owned(),
+                "root".to_owned(),
+                "data:Selection".to_owned(),
+            ),
+            (
+                "└─Selection_2".to_owned(),
+                "cop[tikv]".to_owned(),
+                "gt(test.reader_t.a, 5)".to_owned(),
+            ),
+            (
+                "  └─TableFullScan_1".to_owned(),
+                "cop[tikv]".to_owned(),
+                "keep order:false, stats:pseudo".to_owned(),
+            ),
+        ],
+    );
+
+    // No `WHERE` at all: the task holds the scan alone, and the reader names
+    // the scan.
+    assert_eq!(
+        plan("SELECT * FROM reader_t"),
+        vec![
+            (
+                "TableReader_2".to_owned(),
+                "root".to_owned(),
+                "data:TableFullScan".to_owned(),
+            ),
+            (
+                "└─TableFullScan_1".to_owned(),
+                "cop[tikv]".to_owned(),
+                "keep order:false, stats:pseudo".to_owned(),
+            ),
+        ],
+    );
+
+    // A conjunct no source here can promise -- `plus(int, int)` is not in
+    // `tidb_expr::pushdown_catalog`, so the scan never saw it -- is Go's
+    // `CopTask.RootTaskConds`: a root `Selection` ABOVE the reader
+    // (`pkg/planner/core/operator/physicalop/task.go:47`). The task below it
+    // still closes, and the conjunct that DID push keeps its cop
+    // `Selection`, so each half is printed where it runs.
+    assert_eq!(
+        plan("SELECT * FROM reader_t WHERE a > 5 AND b + 1 < 10"),
+        vec![
+            (
+                "Selection_4".to_owned(),
+                "root".to_owned(),
+                "lt(plus(test.reader_t.b, 1), 10)".to_owned(),
+            ),
+            (
+                "└─TableReader_3".to_owned(),
+                "root".to_owned(),
+                "data:Selection".to_owned(),
+            ),
+            (
+                "  └─Selection_2".to_owned(),
+                "cop[tikv]".to_owned(),
+                "gt(test.reader_t.a, 5)".to_owned(),
+            ),
+            (
+                "    └─TableFullScan_1".to_owned(),
+                "cop[tikv]".to_owned(),
+                "keep order:false, stats:pseudo".to_owned(),
+            ),
+        ],
+    );
+
+    // Nothing pushed at all: the whole `WHERE` is root conditions, and the
+    // task below is the bare scan.
+    assert_eq!(
+        plan("SELECT * FROM reader_t WHERE b + 1 < 10"),
+        vec![
+            (
+                "Selection_3".to_owned(),
+                "root".to_owned(),
+                "lt(plus(test.reader_t.b, 1), 10)".to_owned(),
+            ),
+            (
+                "└─TableReader_2".to_owned(),
+                "root".to_owned(),
+                "data:TableFullScan".to_owned(),
+            ),
+            (
+                "  └─TableFullScan_1".to_owned(),
+                "cop[tikv]".to_owned(),
+                "keep order:false, stats:pseudo".to_owned(),
+            ),
+        ],
+    );
+}
+
+/// THE ANSWER DOES NOT MOVE WITH THE BOUNDARY. Printing a conjunct as
+/// `cop[tikv]` says the scan applies it; this checks that the scan really
+/// does, for each split above, by comparing the rows against the same
+/// predicate over a derived table -- whose computed column no scan can filter
+/// on, so nothing is pushed and the whole `WHERE` runs at root.
+#[test]
+fn the_cop_boundary_does_not_change_a_single_row() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE split_t (a BIGINT, b BIGINT)", &mut catalog).unwrap();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_insert_on(
+        "INSERT INTO split_t VALUES (1,1),(6,1),(7,20),(NULL,3),(8,NULL)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    for (pushed, at_root) in [
+        (
+            "SELECT a, b FROM split_t WHERE a > 5 ORDER BY a",
+            "SELECT a, b FROM (SELECT a + 0 AS a, b FROM split_t) s WHERE a > 5 ORDER BY a",
+        ),
+        (
+            "SELECT a, b FROM split_t WHERE a > 5 AND b + 1 < 10 ORDER BY a",
+            "SELECT a, b FROM (SELECT a + 0 AS a, b FROM split_t) s \
+             WHERE a > 5 AND b + 1 < 10 ORDER BY a",
+        ),
+        (
+            "SELECT a, b FROM split_t WHERE a IS NULL OR b IS NULL ORDER BY a",
+            "SELECT a, b FROM (SELECT a + 0 AS a, b FROM split_t) s \
+             WHERE a IS NULL OR b IS NULL ORDER BY a",
+        ),
+    ] {
+        assert_eq!(
+            crate::run_select_on(pushed, &catalog, &ctx).unwrap(),
+            crate::run_select_on(at_root, &catalog, &ctx).unwrap(),
+            "{pushed}",
+        );
+    }
+}
