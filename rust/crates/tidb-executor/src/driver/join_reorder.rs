@@ -138,7 +138,15 @@
 //!    `leading(t1, t2)` pins the inner pair and `leading(t3, t4, t1, t2)` pins
 //!    the LEFT OUTER one, both at `through_sel = 1`. The other two write
 //!    `t1@sel_2` / `t1@sel_3`, which resolve only inside a group that SPANS
-//!    query blocks; see [`leading_prefix`]'s named residue.
+//!    query blocks; see [`leading_prefix`]'s named residue. UPDATE: the topic
+//!    itself has since gone to ZERO recorded divergences without resolving
+//!    those hints -- Go CLEARS an unresolvable `leading` too, and what closed
+//!    the statements was `DerivedRel::extended` giving the `(sub, t4)` join
+//!    above the derived table a row estimate, so the site is PRICED (hash
+//!    beats merge, Go's own pick) instead of falling to the structural merge
+//!    whose child order forced an index probe of `t3`. The hint residue now
+//!    matters only to the `through_sel = 1` copies' exact TREE, which the
+//!    per-leaf comparison cannot see.
 //!  * `r/planner/core/join_reorder_through_projection.result:756`, the
 //!    `oj_t2`/`oj_t3`/`oj_t5` statement at
 //!    `tidb_opt_join_reorder_through_proj = on`. TiDB records
@@ -338,6 +346,18 @@ struct DerivedRel<'a> {
     inner_edges: Vec<JoinEdge>,
     /// The subquery's own single-leaf conjuncts, per inner leaf.
     inner_filters: Vec<Vec<Expr>>,
+    /// Inner leaves a LEFT OUTER join null-extends, keyed by leaf index.
+    ///
+    /// Go reaches a derived table's row count by recursing `optimizeRecursive`
+    /// into the subquery, where `LogicalJoin.DeriveStats` handles
+    /// `LeftOuterJoin` with `count = math.Max(count, leftProfile.RowCount)`
+    /// (`logical_join.go`). [`emit_tree`] reproduces that arm for a leaf in
+    /// this set; without it, a derived table whose `FROM` writes `... left
+    /// join t3 on ...` was declined whole, which left every join ABOVE the
+    /// derived table without a row estimate -- and an unpriced join site falls
+    /// back to its structural merge preference instead of Go's cost pick
+    /// (measured on `planner/core/join_reorder2`: the (sub, t4) top join).
+    extended: BTreeMap<usize, JoinType>,
 }
 
 /// What a parent pushed into a relation.
@@ -1111,12 +1131,16 @@ fn leaf_of<'a>(
             let from = select.from.as_ref()?;
             let mut inner = Vec::new();
             let mut inner_on = Vec::new();
-            // A derived table's own `FROM` is modelled by [`emit_tree`], which
-            // builds INNER joins only, so an outer join inside one is still a
-            // decline here. Go reaches it by recursing `optimizeRecursive`
-            // into the subquery; this module leaves that relation atomic.
+            // A derived table's own `FROM` may hold a LEFT OUTER join: Go
+            // models it by recursing `optimizeRecursive` into the subquery,
+            // where `LogicalJoin.DeriveStats` runs its `LeftOuterJoin` arm.
+            // [`emit_tree`] reproduces that arm for the leaves recorded in
+            // `DerivedRel::extended`, so the walk here accepts the outer
+            // join instead of declining the whole relation. The reorder flag
+            // is unconditional -- this is a ROW MODEL, not a reorder, and Go
+            // derives stats regardless of `tidb_enable_outer_join_reorder`.
             let inner_scope = Scope {
-                outer_join_reorder: false,
+                outer_join_reorder: true,
                 allow_ordered_derived: scope.allow_ordered_derived,
             };
             if !collect(
@@ -1131,21 +1155,80 @@ fn leaf_of<'a>(
             ) {
                 return None;
             }
+            // Which leaves an outer join null-extends. Only the LEFT form is
+            // modelled: `collect` pushes a LEFT join's preserved spine first,
+            // so the extended leaf always sits AFTER its partners and
+            // [`emit_tree`]'s fixed left-deep order joins it as the RIGHT
+            // child -- exactly the orientation `JoinKind::LeftOuter` prices.
+            // A RIGHT join's extended leaf is pushed FIRST and would come out
+            // on the accumulated LEFT of a longer spine, an orientation the
+            // rebuild cannot express; it stays a decline. NAMED RESIDUE.
+            let mut extended = BTreeMap::new();
+            for cond in &inner_on {
+                if let Some(outer) = cond.outer {
+                    if outer.tp != JoinType::Left {
+                        return None;
+                    }
+                    extended.insert(outer.extended, outer.tp);
+                }
+            }
             let inner_where = select
                 .where_clause
                 .as_ref()
                 .map(super::predicate_push_down::extracted_conjuncts)
                 .unwrap_or_default();
-            let mut conjuncts: Vec<&Expr> = inner_on.iter().map(|cond| cond.expr).collect();
-            conjuncts.extend(inner_where.iter());
             let mut inner_edges = Vec::new();
             let mut inner_filters = vec![Vec::new(); inner.len()];
-            for conjunct in &conjuncts {
-                match classify(conjunct, &inner, None)? {
+            for cond in &inner_on {
+                match classify(cond.expr, &inner, None)? {
                     Classified::Edge(edge) => inner_edges.push((edge.left, edge.right)),
-                    Classified::Single(leaf) => inner_filters[leaf].push((*conjunct).clone()),
+                    // An outer `ON`'s single-side condition filters the
+                    // EXTENDED side BEFORE null-extension -- Go's
+                    // `LogicalJoin.PredicatePushDown` pushes it into the
+                    // inner child -- so it is a leaf filter there. On the
+                    // PRESERVED side it filters nothing (every preserved row
+                    // survives); modelling it as a filter would understate
+                    // the row count, so that shape declines fail-closed.
+                    Classified::Single(leaf) => match cond.outer {
+                        Some(outer) if outer.extended != leaf => return None,
+                        _ => inner_filters[leaf].push(cond.expr.clone()),
+                    },
                     // A derived table's own cost model carries equi keys and
-                    // per-leaf filters only; its `otherConds` reach neither.
+                    // per-leaf filters only; an INNER `ON`'s `otherConds`
+                    // reach neither. An OUTER `ON`'s residue decides which
+                    // rows null-extend and cannot be dropped from the model,
+                    // so it declines fail-closed.
+                    Classified::Other(_) | Classified::Subquery | Classified::Foreign => {
+                        if cond.outer.is_some() {
+                            return None;
+                        }
+                    }
+                }
+            }
+            for conjunct in &inner_where {
+                match classify(conjunct, &inner, None)? {
+                    Classified::Edge(edge) => {
+                        // A `WHERE` equality touching a null-EXTENDED leaf
+                        // filters AFTER null-extension; folding it into the
+                        // join graph would model it as an inner join key. Go
+                        // instead null-rejects and SIMPLIFIES the outer join
+                        // (`simplifyOuterJoin`), a rewrite this model does
+                        // not perform -- decline fail-closed.
+                        if extended.contains_key(&edge.left.0)
+                            || extended.contains_key(&edge.right.0)
+                        {
+                            return None;
+                        }
+                        inner_edges.push((edge.left, edge.right));
+                    }
+                    Classified::Single(leaf) => {
+                        // Same boundary: a `WHERE` over the extended side is
+                        // Go's unpushable Selection ABOVE the outer join.
+                        if extended.contains_key(&leaf) {
+                            return None;
+                        }
+                        inner_filters[leaf].push((*conjunct).clone());
+                    }
                     Classified::Other(_) | Classified::Subquery | Classified::Foreign => {}
                 }
             }
@@ -1163,6 +1246,7 @@ fn leaf_of<'a>(
                     inner,
                     inner_edges,
                     inner_filters,
+                    extended,
                 }),
             })
         }
@@ -1247,6 +1331,14 @@ fn emit(
                 inner[leaf].filters.extend(filters.iter().cloned());
             }
             for (left, right) in &derived.inner_edges {
+                // An OUTER join's equality null-rejects NEITHER side of the
+                // OUTPUT: the preserved rows survive unmatched and the
+                // extended side is null-extended. Only inner equalities carry
+                // Go's `not(isnull(...))` derivation.
+                if derived.extended.contains_key(&left.0) || derived.extended.contains_key(&right.0)
+                {
+                    continue;
+                }
                 inner[left.0].not_null.insert(left.1);
                 inner[right.0].not_null.insert(right.1);
             }
@@ -1274,7 +1366,20 @@ fn emit(
             // propagation across the derived query's own inner-join graph so
             // every narrowed base relation contributes the right reorder
             // cost.
-            propagate_demand_constants(&derived.inner, &derived.inner_edges, &mut inner);
+            // Constant propagation runs over INNER equalities only: an outer
+            // edge equates values only in MATCHED rows, so a constant carried
+            // across it would narrow the preserved side's scan for rows that
+            // survive unmatched anyway.
+            let propagatable_edges: Vec<JoinEdge> = derived
+                .inner_edges
+                .iter()
+                .filter(|(left, right)| {
+                    !derived.extended.contains_key(&left.0)
+                        && !derived.extended.contains_key(&right.0)
+                })
+                .copied()
+                .collect();
+            propagate_demand_constants(&derived.inner, &propagatable_edges, &mut inner);
             let child = emit_tree(derived, &inner, default_string_match_selectivity)?;
             let node = if let Some(group_by) = &derived.group_by {
                 let mut group_columns = Vec::new();
@@ -1477,6 +1582,13 @@ fn push_through(
     let expr = strip(derived.exprs.get(output)?);
     if let Expr::Column(path) = expr {
         let (leaf, column) = resolve(path, &derived.inner)?;
+        // A demand on a null-EXTENDED leaf's output sits ABOVE the outer
+        // join in Go (its Selection cannot push through the null-extension);
+        // charging the leaf's scan with it would understate the rows the
+        // outer join floors at. Fail closed.
+        if derived.extended.contains_key(&leaf) {
+            return None;
+        }
         if as_not_null {
             inner[leaf].not_null.insert(column);
         } else {
@@ -1486,6 +1598,9 @@ fn push_through(
     }
     for path in column_paths(expr) {
         let (leaf, column) = resolve(&path, &derived.inner)?;
+        if derived.extended.contains_key(&leaf) {
+            return None;
+        }
         inner[leaf].expression.insert(column);
     }
     Some(())
@@ -1517,6 +1632,12 @@ fn push_filter(derived: &DerivedRel<'_>, filter: &Expr, inner: &mut [Demand]) ->
         }
     }
     if let (true, Some(owner)) = (pass_through, owner) {
+        // Same null-extension boundary as [`push_through`]: a parent filter
+        // over the extended side's output cannot become that leaf's scan
+        // filter.
+        if derived.extended.contains_key(&owner) {
+            return None;
+        }
         let names = &derived.names;
         let exprs = &derived.exprs;
         let visible = &derived.visible;
@@ -1580,12 +1701,29 @@ fn emit_tree(
                 right_keys.push(column_id(&derived.inner[far.0].rel, far.1)?);
             }
         }
+        // `LogicalJoin.DeriveStats`' LeftOuterJoin arm: the extended leaf
+        // joins as the RIGHT child of the node that forms it, and its row
+        // count floors at the preserved side's (`count = math.Max(count,
+        // leftProfile.RowCount)`, applied by `derive_stats` for
+        // `JoinKind::LeftOuter`). A keyless outer pair would price a
+        // cartesian floor Go never builds -- `collect` only accepts an outer
+        // join CARRYING equal conditions -- so it declines fail-closed.
+        let kind = match derived.extended.get(&right) {
+            Some(JoinType::Left) => {
+                if left_keys.is_empty() {
+                    return None;
+                }
+                JoinKind::LeftOuter
+            }
+            Some(_) => return None,
+            None => JoinKind::Inner,
+        };
         node = LogicalNode::Join {
             left: Box::new(node),
             right: Box::new(emit(&leaf.rel, demand, default_string_match_selectivity)?),
             left_keys,
             right_keys,
-            kind: JoinKind::Inner,
+            kind,
         };
         joined.push(right);
     }
@@ -2943,12 +3081,14 @@ pub(crate) fn row_source_for_join_type(
 
 /// Go logical row count for a `FROM` that consists of one derived SELECT.
 ///
-/// The ordinary [`row_source`] can model outer joins at its own root, while
-/// its projection-oriented `Rel::Derived` deliberately accepts only an
-/// all-inner child. Decorrelation commonly produces a grouped SELECT over a
-/// LEFT JOIN inside a single derived relation. Recurse into that SELECT so
-/// its own root estimator can preserve the outer join, then apply the parent
-/// Selection that could not be pushed through the derived output.
+/// The ordinary [`row_source`] can model outer joins at its own root, and
+/// its projection-oriented `Rel::Derived` now models a LEFT-extended child
+/// too (`DerivedRel::extended`) -- but that modelling still declines a
+/// `WHERE` over the extended side, a RIGHT join, and the other clause shapes
+/// [`leaf_of`] names, and decorrelation commonly produces a grouped SELECT
+/// carrying exactly those. Recurse into that SELECT so its own root
+/// estimator can preserve the outer join, then apply the parent Selection
+/// that could not be pushed through the derived output.
 pub(crate) fn sole_derived_rows(
     join: &Join,
     where_clause: Option<&Expr>,

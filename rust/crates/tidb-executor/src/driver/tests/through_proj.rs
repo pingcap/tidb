@@ -369,11 +369,22 @@ fn the_index_joins_outer_leaf_is_asked_for_the_order_through_the_derived_table()
     let tidb_ast::QueryStmt::Select(select) = &**query else {
         panic!("not a SELECT");
     };
+    // The recording this test pins was made by mysql-tester, whose DSN sets
+    // `tidb_hash_join_concurrency = 1` in every connection; `getHashJoins`
+    // stamps that value on the candidate and
+    // `getPlanCostVer24PhysicalHashJoin` divides the probe terms by it, so
+    // at the plain-session 5 the hash alternative is charged what five
+    // workers share and WINS this comparison -- a different session's plan.
+    // The chooser now reads the session value, so the session must say 1.
+    let ctx = ctx(true, 10).with_optimizer_cost_env(
+        tidb_planner::candidate_cost::CostEnv::default(),
+        1.0,
+    );
     let (_, rows) = crate::explain::explain_select_stmt(
         select,
         &catalog,
         "test",
-        &ctx(true, 10),
+        &ctx,
         crate::explain::ExplainFormat::Row,
     )
     .unwrap();

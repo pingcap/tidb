@@ -1456,6 +1456,8 @@ mod tests_index_key_length;
 #[cfg(test)]
 mod tests_join_predicate_placement;
 #[cfg(test)]
+mod tests_join_reorder_cost;
+#[cfg(test)]
 mod tests_json;
 #[cfg(test)]
 mod tests_load_stats;

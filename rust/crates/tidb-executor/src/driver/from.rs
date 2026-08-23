@@ -2107,6 +2107,7 @@ fn hash_join_candidate(
     right: tidb_planner::candidate_cost::Candidate,
     num_join_keys: usize,
     build_is_left: bool,
+    concurrency: f64,
 ) -> tidb_planner::candidate_cost::Candidate {
     // Go prices a PhysicalHashJoin from getCardinality(build/probe), not from
     // the logical join-reorder groups that produced the parent estimate. A
@@ -2149,8 +2150,16 @@ fn hash_join_candidate(
             build_row_size,
             num_build_keys: num_join_keys,
             num_probe_keys: num_join_keys,
-            // A plain TiDB session resolves tidb_hash_join_concurrency to 5.
-            tidb_concurrency: 5.0,
+            // Go's `getHashJoins` stamps the candidate with
+            // `sctx.GetSessionVars().HashJoinConcurrency()`, and
+            // `getPlanCostVer24PhysicalHashJoin` divides the probe filter and
+            // probe hash by it. mysql-tester's DSN pins it to 1 in every
+            // connection the recordings were made from (a plain session
+            // resolves 5), so hardcoding either value prices a DIFFERENT
+            // session than the one being replayed: at 5 a hash join is
+            // charged what five workers share, and the recorded
+            // IndexHashJoin/MergeJoin picks lose to it.
+            tidb_concurrency: concurrency,
         },
         build_filters: Vec::new(),
         probe_filters: Vec::new(),
@@ -4630,6 +4639,7 @@ fn build_join_with_choice(
                             right.clone(),
                             split.keys.len(),
                             build_is_left,
+                            ctx.hash_join_concurrency(),
                         ),
                     ));
                 }
@@ -4720,6 +4730,19 @@ fn build_join_with_choice(
                 }
             }
         });
+    if std::env::var_os("TIDB_DEBUG_JOIN_CANDIDATES").is_some() && !alternatives.is_empty() {
+        for (choice, candidate) in &alternatives {
+            let costed = tidb_planner::candidate_cost::evaluate(
+                candidate,
+                &tidb_planner::candidate_cost::CostEnv::default(),
+                tidb_planner::task_type::TaskType::Root,
+            );
+            eprintln!(
+                "JOIN_CANDIDATE {choice:?} cost={:?} rows={:.2}\n{candidate:#?}",
+                costed.cost, costed.rows
+            );
+        }
+    }
     if std::env::var_os("TIDB_DEBUG_JOIN_CHOICE").is_some() {
         let mode = if trace.as_deref().is_some_and(PlanTrace::is_plan_only) {
             "plan-only"
@@ -5420,6 +5443,7 @@ fn build_join_with_choice(
                 right_delivered.candidate.clone()?,
                 split.keys.len(),
                 build_is_left,
+                ctx.hash_join_concurrency(),
             ),
         };
         Some(fixed_join_receipt(
