@@ -553,8 +553,8 @@ fn exact_select_builds_one_timestamped_table_request_and_decodes_lazily() {
     assert_eq!(request.start_ts, 4_242);
     assert_eq!(request.request_type, RequestType::Dag);
     assert!(
-        request.keep_order,
-        "the production response runtime requires ordered publication"
+        !request.keep_order,
+        "a table reader with no ORDER BY carries Go's `keep order:false`"
     );
     assert_eq!(
         request.cop_paging_admission,

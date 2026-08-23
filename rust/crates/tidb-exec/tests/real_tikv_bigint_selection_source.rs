@@ -236,7 +236,12 @@ fn predicate_only_column_lowers_to_selection_without_leaking_into_result() {
     };
     assert_eq!(request.start_ts, 7_777);
     assert_eq!(request.request_type, RequestType::Dag);
-    assert!(request.keep_order);
+    // Go `SetKeepOrder(false)` for a reader with no ordering contract
+    // (`pkg/distsql/request_builder.go:293`); the coprocessor iterator then
+    // takes its shared unordered response channel rather than per-task
+    // ordered ones (`pkg/store/copr/coprocessor.go:197`), which is what the
+    // `pull_unordered` arm of the direct transport mirrors.
+    assert!(!request.keep_order);
     assert_eq!(request.cop_paging_admission, Ok(()));
     assert_eq!(request.operation, QueryOperation::SelectWithRuntimeStats);
     assert_eq!(request.ranges, [full_table_range()]);
