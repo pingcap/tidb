@@ -2301,7 +2301,11 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // `single_point_handle` conversion). `explain_easy` drops 2 -> 1; its
     // remaining divergence is the decorrelation cost shape, a different
     // family. Both are `PlanProperty`-kind, so `compared` holds at 9670.
-    const KNOWN_DIVERGENCES: usize = 26;
+    //
+    // 26 -> 24: `information_schema.tables` lists the schema's own tables --
+    // Go's `tableIDMap` ported whole, every registered memory table a
+    // `SYSTEM VIEW` row with its real id. `infoschema/v2` fully closed.
+    const KNOWN_DIVERGENCES: usize = 24;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

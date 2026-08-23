@@ -709,8 +709,166 @@ fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
     rows
 }
 
+
+/// Go `tableIDMap` (`pkg/infoschema/tables.go:253`): every
+/// `INFORMATION_SCHEMA` memory table's id offset from
+/// `autoid.InformationSchemaDBID` (`SystemSchemaIDFlag | 1`, `1<<62 | 1`).
+///
+/// Transcribed whole, including the gaps Go's own comments explain (14,
+/// 27-29, 66 removed in issues 9154/28890) and EXCLUDING the one entry that
+/// is not a table at all -- Go maps `CatalogVal` (`"def"`) to offset 9, a
+/// stray in its own map that never registers as a memory table.
+///
+/// This is what `information_schema.tables` reports as `TIDB_TABLE_ID` for
+/// the schema's own tables, and the ids are OBSERVABLE: `infoschema/v2`
+/// filters `where TIDB_TABLE_ID = 4611686018427387967` and expects
+/// `CLUSTER_STATEMENTS_SUMMARY_HISTORY` -- `(1<<62|1) + 62`.
+const INFORMATION_SCHEMA_TABLE_IDS: &[(i64, &str)] = &[
+    (1, "SCHEMATA"),
+    (2, "TABLES"),
+    (3, "COLUMNS"),
+    (4, "COLUMN_STATISTICS"),
+    (5, "STATISTICS"),
+    (6, "CHARACTER_SETS"),
+    (7, "COLLATIONS"),
+    (8, "FILES"),
+    (10, "PROFILING"),
+    (11, "PARTITIONS"),
+    (12, "KEY_COLUMN_USAGE"),
+    (13, "REFERENTIAL_CONSTRAINTS"),
+    (15, "PLUGINS"),
+    (16, "TABLE_CONSTRAINTS"),
+    (17, "TRIGGERS"),
+    (18, "USER_PRIVILEGES"),
+    (19, "SCHEMA_PRIVILEGES"),
+    (20, "TABLE_PRIVILEGES"),
+    (21, "COLUMN_PRIVILEGES"),
+    (22, "ENGINES"),
+    (23, "VIEWS"),
+    (24, "ROUTINES"),
+    (25, "PARAMETERS"),
+    (26, "EVENTS"),
+    (30, "OPTIMIZER_TRACE"),
+    (31, "TABLESPACES"),
+    (32, "COLLATION_CHARACTER_SET_APPLICABILITY"),
+    (33, "PROCESSLIST"),
+    (34, "TIDB_INDEXES"),
+    (35, "SLOW_QUERY"),
+    (36, "TIDB_HOT_REGIONS"),
+    (37, "TIKV_STORE_STATUS"),
+    (38, "ANALYZE_STATUS"),
+    (39, "TIKV_REGION_STATUS"),
+    (40, "TIKV_REGION_PEERS"),
+    (41, "TIDB_SERVERS_INFO"),
+    (42, "CLUSTER_INFO"),
+    (43, "CLUSTER_CONFIG"),
+    (44, "CLUSTER_LOAD"),
+    (45, "TIFLASH_REPLICA"),
+    (46, "CLUSTER_SLOW_QUERY"),
+    (47, "CLUSTER_PROCESSLIST"),
+    (48, "CLUSTER_LOG"),
+    (49, "CLUSTER_HARDWARE"),
+    (50, "CLUSTER_SYSTEMINFO"),
+    (51, "INSPECTION_RESULT"),
+    (52, "METRICS_SUMMARY"),
+    (53, "METRICS_SUMMARY_BY_LABEL"),
+    (54, "METRICS_TABLES"),
+    (55, "INSPECTION_SUMMARY"),
+    (56, "INSPECTION_RULES"),
+    (57, "DDL_JOBS"),
+    (58, "SEQUENCES"),
+    (59, "STATEMENTS_SUMMARY"),
+    (60, "STATEMENTS_SUMMARY_HISTORY"),
+    (61, "CLUSTER_STATEMENTS_SUMMARY"),
+    (62, "CLUSTER_STATEMENTS_SUMMARY_HISTORY"),
+    (63, "TABLE_STORAGE_STATS"),
+    (64, "TIFLASH_TABLES"),
+    (65, "TIFLASH_SEGMENTS"),
+    (67, "CLIENT_ERRORS_SUMMARY_GLOBAL"),
+    (68, "CLIENT_ERRORS_SUMMARY_BY_USER"),
+    (69, "CLIENT_ERRORS_SUMMARY_BY_HOST"),
+    (70, "TIDB_TRX"),
+    (71, "CLUSTER_TIDB_TRX"),
+    (72, "DEADLOCKS"),
+    (73, "CLUSTER_DEADLOCKS"),
+    (74, "DATA_LOCK_WAITS"),
+    (75, "STATEMENTS_SUMMARY_EVICTED"),
+    (76, "CLUSTER_STATEMENTS_SUMMARY_EVICTED"),
+    (77, "ATTRIBUTES"),
+    (78, "TIDB_HOT_REGIONS_HISTORY"),
+    (79, "PLACEMENT_POLICIES"),
+    (80, "TRX_SUMMARY"),
+    (81, "CLUSTER_TRX_SUMMARY"),
+    (82, "VARIABLES_INFO"),
+    (83, "USER_ATTRIBUTES"),
+    (84, "MEMORY_USAGE"),
+    (85, "MEMORY_USAGE_OPS_HISTORY"),
+    (86, "CLUSTER_MEMORY_USAGE"),
+    (87, "CLUSTER_MEMORY_USAGE_OPS_HISTORY"),
+    (88, "RESOURCE_GROUPS"),
+    (89, "RUNAWAY_WATCHES"),
+    (90, "CHECK_CONSTRAINTS"),
+    (91, "TIDB_CHECK_CONSTRAINTS"),
+    (92, "KEYWORDS"),
+    (93, "TIDB_INDEX_USAGE"),
+    (94, "CLUSTER_TIDB_INDEX_USAGE"),
+    (95, "TIFLASH_INDEXES"),
+    (96, "TIDB_PLAN_CACHE"),
+    (97, "CLUSTER_TIDB_PLAN_CACHE"),
+    (98, "TIDB_STATEMENTS_STATS"),
+    (99, "CLUSTER_TIDB_STATEMENTS_STATS"),
+    (100, "KEYSPACE_META"),
+    (101, "SCHEMATA_EXTENSIONS"),
+];
+
+/// Go `autoid.InformationSchemaDBID`.
+const INFORMATION_SCHEMA_DB_ID: i64 = (1 << 62) | 1;
+
+/// The `information_schema.tables` rows for the schema's OWN tables: Go
+/// `infoschema_reader.go`'s `setDataFromOneTable` with `metadef.IsMemDB`
+/// true, so `TABLE_TYPE` is `SYSTEM VIEW`, the storage numbers are zero, and
+/// `TIDB_TABLE_ID` comes from `tableIDMap`. Emitted for EVERY table Go
+/// registers, served here or not -- the id and the name are the table's
+/// METADATA, from Go's own source; only QUERYING an unserved one refuses.
+fn information_schema_tables_rows() -> Vec<Vec<Datum>> {
+    INFORMATION_SCHEMA_TABLE_IDS
+        .iter()
+        .map(|(offset, name)| {
+            let mut row = vec![
+                text(CATALOG),
+                text(INFORMATION_SCHEMA),
+                text(name),
+                text("SYSTEM VIEW"),
+                text("InnoDB"),
+                Datum::Int(10),
+                text("Compact"),
+            ];
+            // TABLE_ROWS through AUTO_INCREMENT: zero, as Go's
+            // `EstimateDataLength` answers for a memory table -- the same
+            // seven cells the base-table row above carries.
+            row.extend(std::iter::repeat_n(Datum::Int(0), 7));
+            // CREATE_TIME, UPDATE_TIME, CHECK_TIME.
+            row.extend(std::iter::repeat_n(Datum::Null, 3));
+            row.push(text("utf8mb4_bin"));
+            row.push(Datum::Null);
+            row.push(text(""));
+            row.push(text(""));
+            row.push(Datum::Int(INFORMATION_SCHEMA_DB_ID + offset));
+            row.push(Datum::Null);
+            row.push(text("NONCLUSTERED"));
+            row.push(Datum::Null);
+            row.push(text("Normal"));
+            row.push(Datum::Null);
+            row.push(text(""));
+            row
+        })
+        .collect()
+}
+
 fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
-    let mut rows = Vec::new();
+    // Go lists information_schema's own tables first -- the schema is first
+    // in `database_names` -- and every one of them, served or not.
+    let mut rows = information_schema_tables_rows();
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
         let table = match catalog.table_in(&schema, &table_name) {
             Some(TableEntry::Kv(table)) => table,

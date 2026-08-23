@@ -287,3 +287,50 @@ fn dropping_the_mysql_schema_is_not_refused_yet() {
     let error = session.run("USE mysql").unwrap_err().to_mysql_error();
     assert_eq!(error.code, 1049);
 }
+
+/// `information_schema.tables` lists the schema's OWN tables -- all of them,
+/// served here or not -- as Go's registry does.
+///
+/// Go registers every memory table with an id from `tableIDMap`
+/// (`pkg/infoschema/tables.go:253`, offsets from `InformationSchemaDBID` =
+/// `1<<62 | 1`) and `setDataFromOneTable` reports it as `SYSTEM VIEW` with
+/// zero storage numbers. The ids are observable -- `infoschema/v2` filters
+/// `where TIDB_TABLE_ID = 4611686018427387967` and expects
+/// `CLUSTER_STATEMENTS_SUMMARY_HISTORY`, which is `(1<<62|1) + 62`. Listing
+/// a table is METADATA from Go's own source; QUERYING an unserved one still
+/// refuses, which keeps the loud 1146 boundary the module doc explains.
+#[test]
+fn information_schema_lists_its_own_tables_with_gos_ids() {
+    let mut session = Session::new();
+
+    assert_eq!(
+        row_text(session.run(
+            "SELECT TABLE_SCHEMA, TABLE_NAME, TIDB_TABLE_ID FROM information_schema.tables \
+             WHERE TIDB_TABLE_ID = 4611686018427387967"
+        )),
+        vec![vec![
+            "INFORMATION_SCHEMA",
+            "CLUSTER_STATEMENTS_SUMMARY_HISTORY",
+            "4611686018427387967"
+        ]]
+    );
+    // The row shape is Go's memory-table one: SYSTEM VIEW, InnoDB, zeroes.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT TABLE_TYPE, ENGINE, TABLE_ROWS FROM information_schema.tables \
+             WHERE TABLE_NAME = 'TABLES' AND TABLE_SCHEMA = 'INFORMATION_SCHEMA'"
+        )),
+        vec![vec!["SYSTEM VIEW", "InnoDB", "0"]]
+    );
+    // Go's own gaps stay gaps: offset 14 was removed in issue 9154, so no id
+    // lands there.
+    assert!(row_text(session.run(
+        "SELECT TABLE_NAME FROM information_schema.tables \
+         WHERE TIDB_TABLE_ID = 4611686018427387919"
+    ))
+    .is_empty());
+    // And an unserved listed table still refuses at the query, not the list.
+    assert!(session
+        .run("SELECT * FROM information_schema.CLUSTER_STATEMENTS_SUMMARY_HISTORY")
+        .is_err());
+}
