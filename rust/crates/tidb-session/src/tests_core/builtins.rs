@@ -166,10 +166,10 @@ fn time_compared_with_strings_and_numbers() {
         row_text(session.run("SELECT id FROM t WHERE created <= 'garbage'")),
         Vec::<Vec<String>>::new()
     );
-    // DOCUMENTED DIVERGENCE (the standing coprocessor-merge one): TiDB
-    // reported ONE 1292 here because its coprocessor merges a batch's
-    // warnings; this tier warns once per row compared.
-    assert_eq!(session.warnings().len(), 3, "one warning per row compared");
+    // Captured (gorun): TiDB reports ONE 1292 for the whole statement -- the
+    // comparison runs in the coprocessor, whose batch warnings are merged
+    // into one before they reach the session's warning buffer.
+    assert_eq!(session.warnings().len(), 1);
     assert_eq!(session.warnings()[0].code, 1292);
     assert_eq!(
         session.warnings()[0].message,

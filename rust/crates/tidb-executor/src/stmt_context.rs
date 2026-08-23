@@ -243,6 +243,20 @@ pub struct StmtContext {
     /// `SHOW WARNINGS` prints in its `Level` column. Without the level here
     /// every executor-tier note would arrive at the session as a `Warning`.
     warnings: Rc<RefCell<Vec<(WarningLevel, u16, String)>>>,
+    /// Warnings raised while a coprocessor-equivalent evaluation ran
+    /// ([`Self::enter_cop_eval`]).
+    ///
+    /// Go's pushed-down predicates evaluate inside TiKV, whose response
+    /// reports each DISTINCT warning once (`EvalWarnings::append_warning`
+    /// keeps the first of every equal `(code, message)` pair), and
+    /// `SelectResult` appends those to the session per response. This tier's
+    /// equivalent boundary is a scan source applying its accepted filter, so
+    /// the same reporting contract lives here: while the cop depth is open,
+    /// warnings accumulate deduplicated in this buffer instead of the row
+    /// buffer, and [`Self::take_warnings`] appends them once.
+    cop_batch_warnings: Rc<RefCell<Vec<(WarningLevel, u16, String)>>>,
+    /// How many coprocessor-equivalent evaluations are open on this thread.
+    cop_eval_depth: Cell<u32>,
     division_by_zero: ErrorLevel,
     /// Go `ErrGroupBadNull`, used by SLEEP's NULL/negative argument alias and
     /// by the same statement-level policy as column NOT NULL failures.
@@ -618,6 +632,8 @@ impl StmtContext {
     ) -> Self {
         Self {
             warnings: Rc::default(),
+            cop_batch_warnings: Rc::default(),
+            cop_eval_depth: Cell::new(0),
             division_by_zero,
             bad_null: if strict {
                 ErrorLevel::Error
@@ -1929,6 +1945,15 @@ impl StmtContext {
     #[must_use]
     pub fn take_warnings(&self) -> Vec<(WarningLevel, u16, String)> {
         let mut warnings = std::mem::take(&mut *self.warnings.borrow_mut());
+        // The coprocessor-equivalent batch next: these are the warnings a
+        // pushed filter raised inside a source, reported TiKV-style (one entry
+        // per DISTINCT message; see the field's doc).
+        for (level, code, message) in self.cop_batch_warnings.take() {
+            if warnings.len() >= MAX_WARNING_COUNT {
+                break;
+            }
+            warnings.push((level, code, message));
+        }
         for warning in self.cop_warnings.take() {
             if warnings.len() >= MAX_WARNING_COUNT {
                 break;
@@ -1939,6 +1964,20 @@ impl StmtContext {
             warnings.push((warning.level, code, warning.message));
         }
         warnings
+    }
+
+    /// Opens one coprocessor-equivalent evaluation: while open, warnings the
+    /// evaluation raises accumulate deduplicated in the cop batch instead of
+    /// the row warning buffer.
+    ///
+    /// The guard is not `Send`: a scan applies its filter on one thread, and
+    /// nesting across sources shares the same statement's batch, which is
+    /// exactly how TiKV's per-response reporting composes with several scans
+    /// in one statement -- each distinct message still appears once.
+    #[must_use]
+    pub fn enter_cop_eval(&self) -> CopEvalGuard<'_> {
+        self.cop_eval_depth.set(self.cop_eval_depth.get() + 1);
+        CopEvalGuard { context: self }
     }
 
     /// Go `StmtCtx.AppendNote`: the level an `IF EXISTS` / `IF NOT EXISTS`
@@ -1956,11 +1995,39 @@ impl StmtContext {
     /// The one push onto the buffer, so its retention limit lives in one
     /// place regardless of which level came through.
     fn append_leveled(&self, level: WarningLevel, code: u16, message: &str) {
+        if self.cop_eval_depth.get() > 0 {
+            let mut batch = self.cop_batch_warnings.borrow_mut();
+            // TiKV's EvalWarnings keeps the FIRST of every equal (code,
+            // message) pair and drops the rest, so a cast that fails once per
+            // row of a whole scan reports once.
+            if batch.len() < MAX_WARNING_COUNT
+                && !batch
+                    .iter()
+                    .any(|(_, seen_code, seen_message)| *seen_code == code && seen_message == message)
+            {
+                batch.push((level, code, message.to_owned()));
+            }
+            return;
+        }
         let mut warnings = self.warnings.borrow_mut();
         if warnings.len() >= MAX_WARNING_COUNT {
             return;
         }
         warnings.push((level, code, message.to_owned()));
+    }
+}
+
+/// The open [`StmtContext::enter_cop_eval`] scope. Closing it returns warning
+/// routing to the statement buffer.
+#[must_use]
+pub struct CopEvalGuard<'a> {
+    context: &'a StmtContext,
+}
+
+impl Drop for CopEvalGuard<'_> {
+    fn drop(&mut self) {
+        let depth = self.context.cop_eval_depth.get();
+        self.context.cop_eval_depth.set(depth.saturating_sub(1));
     }
 }
 

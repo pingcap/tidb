@@ -812,6 +812,10 @@ impl ScanFilterProbe {
         for (column, value) in row.iter().enumerate() {
             self.scratch.append_datum(column, value);
         }
+        // The filter evaluates in the coprocessor's seat, so its warnings
+        // follow TiKV's reporting contract: distinct messages per response,
+        // not one per row (see `StmtContext::enter_cop_eval`).
+        let _cop = self.ctx.enter_cop_eval();
         self.filter.matches(&self.ctx, self.scratch.get_row(0))
     }
 

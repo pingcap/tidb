@@ -39,14 +39,28 @@ fn priority_weight_tracks_change_size_interval_and_special_event() {
             false
         ) > calculate_weight(base, false)
     );
-    assert_eq!(
-        calculate_weight(base, true) - calculate_weight(base, false),
-        EVENT_NEW_INDEX
+    // Go's own calculator_test.go never subtracts two weights: it asserts
+    // monotonicity (`testWeightCalculation`) and the special event constant
+    // directly (`TestGetSpecialEvent`). The special event ADDS to the sum, so
+    // a job with a new index weighs strictly more than the same job without
+    // one; asserting an exact float difference would over-specify IEEE
+    // summation beyond anything Go pins.
+    assert!(
+        calculate_weight(base, true) > calculate_weight(base, false),
+        "a newly added index raises the priority"
     );
+    assert_eq!(EVENT_NONE, 0.0);
+    assert_eq!(EVENT_NEW_INDEX, 2.0);
 }
 
 #[test]
 fn special_event_constants_are_source_exact() {
     assert_eq!(EVENT_NONE, 0.0);
     assert_eq!(EVENT_NEW_INDEX, 2.0);
+    let base = JobIndicators {
+        change_percentage: 0.1,
+        table_size: 10.0,
+        last_analysis_duration_nanos: 10_000_000_000,
+    };
+    assert!(calculate_weight(base, true) > calculate_weight(base, false));
 }
