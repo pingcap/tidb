@@ -1454,21 +1454,25 @@ func TestAutoIncrementIDRetryWhenStatementRowCountChanges(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
-	tk.MustExec("create table src (u int primary key, v int)")
+	tk.MustExec("create table src (k int primary key, id int, u int, v int)")
 	tk.MustExec("create table t (id int auto_increment primary key, u int unique key)")
-	tk.MustExec("insert into src values (1, 0)")
+	tk.MustExec("insert into src values (1, null, 1, 0), (2, null, 2, 0), (3, 100, 3, 0), (4, null, 4, 0)")
 	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("begin optimistic")
-	tk.MustExec("insert into t (u) select u from src")
-	tk.MustExec("insert into t (u) values (2)")
-	tk.MustExec("update src set v = 1 where u = 1")
+	tk.MustExec("insert into t (u) select u from src where k = 1")
+	tk.MustExec("insert into t select id, u from src where k > 1 order by k")
+	tk.MustExec("update src set v = 1 where k = 1")
 
-	// The retry gets a new snapshot after src is changed, so the first history
-	// statement consumes fewer auto IDs than it did originally.
-	tk2.MustExec("delete from src where u = 1")
+	// The first statement produces no rows during retry. The next INSERT ...
+	// SELECT must use its own generated-ID cache and skip its explicit ID.
+	tk2.MustExec("delete from src where k = 1")
 
 	tk.MustExec("commit")
-	tk.MustQuery("select * from t").Check(testkit.Rows("2 2"))
+	tk.MustQuery("select * from t order by u").Check(testkit.Rows(
+		"2 2",
+		"100 3",
+		"101 4",
+	))
 }
 
 func TestAutoRandomIDRetryUsesCurrentExplicitID(t *testing.T) {
