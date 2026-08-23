@@ -613,8 +613,15 @@ fn serve_pessimistic_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: St
                 // `CancelFairLocking`: the failed statement's accumulated
                 // locks go back, so a contender stops blocking on a
                 // statement the client was told failed.
+                // On the store's own deadline, never the statement's: this
+                // runs precisely BECAUSE the statement failed, so its context
+                // is spent and often already at zero. client-go builds its
+                // cleanup backoffer on `c.store.Ctx()` with
+                // `cleanupMaxBackoff` for the same reason -- see the `Commit`
+                // arm below, which cites it.
+                let cleanup_call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
                 let released = transaction
-                    .pessimistic_rollback(&keys, call)
+                    .pessimistic_rollback(&keys, &cleanup_call)
                     .map_err(|cause| StorageError::Backend(cause.to_string()));
                 let _ = reply.send(released);
             }
@@ -785,8 +792,15 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
                     tidb_executor::deadlock_history::record_deadlock(detail);
                 }
                 // Release only what this statement added; earlier statements'
-                // locks survive their successor's failure.
-                if let Err(cause) = transaction.pessimistic_rollback(&added, call) {
+                // locks survive their successor's failure. The release runs on
+                // the store's deadline, not this statement's: a lock attempt
+                // that failed by TIMEOUT leaves `call` at zero, and cleaning up
+                // on a spent context turned every such statement-scoped lock
+                // failure into a transaction abort ("PessimisticRollback
+                // failed: ... timed out after 0ms") under a multi-threaded
+                // workload.
+                let cleanup_call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
+                if let Err(cause) = transaction.pessimistic_rollback(&added, &cleanup_call) {
                     return LockKeysOutcome::TransactionError(transaction_cause_to_sql_error(
                         &cause,
                     ));
