@@ -46,6 +46,15 @@ The Rust TiDB implementation on `hparser-integration` must make the same optimiz
 - [x] (2026-08-16) Fetched `origin/hparser-integration`; `FETCH_HEAD` matched local baseline `644927fc21`, so no integration or gate-invalidating conflict was required.
 - [x] (2026-08-16) Pushed implementation commit `159bbd52e3` to `origin/hparser-integration` by fast-forward with no force.
 
+- [x] (2026-08-23) Re-established the benchmark environment: tiup playground v9.0.0-beta.2.pre-nightly tag `tpccbench` over the preserved 15 GB 100-warehouse dataset; Rust release server from HEAD on :4001 against PD :2379, Go nightly TiDB on :4000.
+- [x] (2026-08-23) Fresh alternating A/B baseline (6 x 180 s rounds, 2 threads): Go median 250.63 QPS, Rust median 53.26 QPS, ratio 0.2125. No 9007 write conflicts remain on HEAD; per-round *_ERR counts are end-of-deadline client cutoffs, symmetric across both servers.
+- [x] (2026-08-23) Isolated the cost structure: plain in-txn reads are near parity (0.635 vs 0.461 ms), but point UPDATEs pay ~2x (1.871 vs 0.711 ms) because each is a snapshot read plus a separate PessimisticLock round trip where Go fuses both through `lockCtx.InitReturnValues` + `doLockKeys` and reads the value back out of `TxnCtx.PessimisticLockCache`.
+- [x] (2026-08-23) Diagnosed multi-region commits: a delivery transaction spans 13 regions / ~250 mutations, declines 1PC and async commit, and paid seven sequential Prewrite round trips (~9 ms) plus sequential secondary Commits where Go admits all batches concurrently (`doBatches`).
+- [x] (2026-08-23) Landed concurrent write rounds in tidb-txnkv (`publish_prewrites` / `publish_commits`, prewrite and secondary-commit loops drain into admitted-before-awaited rounds); delivery-shape commit phase 11.3 -> 7.1 -> 6.7 ms.
+- [x] (2026-08-23) Wired the resolved `@@tidb_enable_async_commit` / `@@tidb_enable_1pc` protocol through the cluster-session path (TransactionThread arms, SessionTransaction constructors, `commit_staged_buffer`, every caller); live server now reports `commit_protocol=OnePc primary_pubs=0` for single-region pessimistic commits.
+- [x] (2026-08-23) Pushed d2aa3c792e and b031e818ac to origin/hparser-integration; tidb-txnkv 541 tests green (one pre-existing lock_resolver_source structure failure belongs to a parallel session's snapshot_read.rs change), tidb-exec 1062 green including the new wiring contract.
+- [x] (2026-08-23) Post-fix alternating A/B: Go median 238.13, Rust median 59.41 QPS, ratio 0.2495 (+17% over baseline). Remaining dominant gap: one extra sequential RPC per point DML (read-then-lock vs Go's fused value-returning lock).
+
 ## Surprises & Discoveries
 
 - Observation: transplanting the three known-good snapshot commits wholesale is incompatible with the current branch because unrelated session, transaction, and server APIs have moved.
@@ -112,6 +121,24 @@ The Rust TiDB implementation on `hparser-integration` must make the same optimiz
   Evidence: after `WHERE fd_r.pk IN (7,9)` was consumed by an access path, the checker could not wake the LEFT JOIN's conditional equality FD; retaining the pre-pushdown semantic SELECT restores Go's Selection-before-check behavior and the full FD regression passes.
 
 ## Decision Log
+
+- Decision: Benchmark-first loop with per-package landings. The TPC-C gap is measured before and after every landing so each package-level commit carries its own throughput receipt.
+  Rationale: AGENTS.md requires verifiable evidence per claim; the alternating A/B median cancels dataset drift between rounds.
+  Date/Author: 2026-08-23, ox-alpha.
+
+- Decision: Port the concurrent region-batch admission as one tidb-txnkv change rather than splitting prewrite from secondary commits.
+  Rationale: Both loops share the PublishedCommand seam and the regroup-retry contract; splitting would leave one loop paying the other's round trips inside the same receipt window.
+  Date/Author: 2026-08-23, ox-alpha.
+
+- Decision: Keep the cluster-session protocol wiring coupled across tidb-exec and tidb-server in one commit.
+  Rationale: The constructor signatures change across the crate boundary; splitting would not compile per commit.
+  Date/Author: 2026-08-23, ox-alpha.
+
+- Decision: Defer the point-DML read+lock fusion (Go's InitReturnValues shape) until the current landings are verified; it requires executor-level access to locked values inside `run()` plus a session-side pessimistic-lock cache, spanning planner, executor, storage, and session layers.
+  Rationale: It remains the largest single remaining lever (~+0.85 ms per point DML, ~12 statements per NEW_ORDER) but its blast radius needs its own verified cycle.
+  Date/Author: 2026-08-23, ox-alpha.
+
+
 
 - Decision: Restore general optimizer and executor behavior instead of special-casing `condition_02`, `condition_04`, `condition_10`, `condition_11`, or `condition_12`.
   Rationale: the Go implementation is the semantic source of truth, and the Sysbench gate requires general behavior. Query-specific plan rewrites would conceal incorrect estimates and physical properties.
