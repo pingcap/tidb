@@ -897,7 +897,10 @@ fn a_prepared_write_executes_the_bound_statement_not_a_reparse() {
         let outcome = session
             .execute_general(
                 &update,
-                &[PreparedValue::SignedLongLong(5), PreparedValue::SignedLongLong(1)],
+                &[
+                    PreparedValue::SignedLongLong(5),
+                    PreparedValue::SignedLongLong(1),
+                ],
             )
             .expect("the bound UPDATE executes");
         let GeneralExecuteOutcome::Write(outcome) = outcome else {
