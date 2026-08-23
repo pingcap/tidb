@@ -173,7 +173,7 @@ SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO
 
 -- (A3) independent internal session (not this transaction) inserts running history
 INSERT INTO mysql.tidb_mview_refresh_hist (
-    MVIEW_ID, REFRESH_JOB_ID, REFRESH_METHOD, REFRESH_TIME, REFRESH_STATUS
+    MVIEW_ID, REFRESH_JOB_ID, REFRESH_METHOD, REFRESH_START_TIME, REFRESH_STATUS
 ) VALUES (
     <mview_id>, <refresh_job_id>, <refresh_method>, NOW(6), 'running'
 );
@@ -213,7 +213,7 @@ COMMIT;
 -- (D) independent internal session finalizes history AFTER refresh commit
 UPDATE mysql.tidb_mview_refresh_hist
    SET REFRESH_STATUS = 'success',
-       REFRESH_ENDTIME = NOW(6),
+       REFRESH_END_TIME = NOW(6),
        REFRESH_READ_TSO = <refresh_read_tso>,
        REFRESH_FAILED_REASON = NULL
  WHERE MVIEW_ID = <mview_id>
@@ -222,7 +222,7 @@ UPDATE mysql.tidb_mview_refresh_hist
 -- (D-failed) if refresh transaction ends as failure, finalize the same row as failed
 UPDATE mysql.tidb_mview_refresh_hist
    SET REFRESH_STATUS = 'failed',
-       REFRESH_ENDTIME = NOW(6),
+       REFRESH_END_TIME = NOW(6),
        REFRESH_READ_TSO = NULL,
        REFRESH_FAILED_REASON = <refresh_error>
  WHERE MVIEW_ID = <mview_id>

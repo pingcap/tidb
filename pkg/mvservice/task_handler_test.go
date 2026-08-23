@@ -2372,8 +2372,8 @@ func TestServerHelperPurgeMVHistoryBeforeTSOReconcilesStaleRunningHistRows(t *te
 }
 
 func TestServerHelperPurgeMVHistoryBeforeTSOUsesStatusIndexHints(t *testing.T) {
-	require.Contains(t, buildMarkRefreshHistoryRunningRowsOrphanedSQL(), "FORCE INDEX (idx_refresh_status)")
-	require.Contains(t, buildMarkLogPurgeHistoryRunningRowsOrphanedSQL(), "FORCE INDEX (idx_purge_status)")
+	require.Contains(t, buildMarkRefreshHistoryRunningRowsOrphanedSQL(), "FORCE INDEX (idx_refresh_status_start_time)")
+	require.Contains(t, buildMarkLogPurgeHistoryRunningRowsOrphanedSQL(), "FORCE INDEX (idx_purge_status_start_time)")
 }
 
 func TestServerHelperRefreshMVDeletedWhenMetaNotFound(t *testing.T) {
@@ -3082,13 +3082,13 @@ func TestBuildResolvedMVRefreshAlertSQL(t *testing.T) {
 		buildDeleteResolvedMVRefreshAlertSQL(ids),
 	)
 	require.Equal(t,
-		"UPDATE mysql.tidb_mview_refresh_alert SET ALERT_LEVEL = NULL, UPDATED_AT = '"+now.Format("2006-01-02 15:04:05")+"' WHERE MVIEW_ID IN (103,104) AND REFRESH_FAILED IS NOT NULL AND ALERT_LEVEL IS NOT NULL",
+		"UPDATE mysql.tidb_mview_refresh_alert SET ALERT_LEVEL = NULL, UPDATE_TIME = '"+now.Format("2006-01-02 15:04:05")+"' WHERE MVIEW_ID IN (103,104) AND REFRESH_FAILED IS NOT NULL AND ALERT_LEVEL IS NOT NULL",
 		buildClearResolvedMVRefreshAlertLevelSQL(now, ids),
 	)
 	require.Equal(t,
 		`UPDATE mysql.tidb_mview_refresh_alert AS a
 JOIN mysql.tidb_mview_refresh_info AS i ON a.MVIEW_ID = i.MVIEW_ID
-SET a.ALERT_LEVEL = NULL, a.UPDATED_AT = NOW(6)
+SET a.ALERT_LEVEL = NULL, a.UPDATE_TIME = NOW(6)
 WHERE i.NEXT_REFRESH_UNIX_SECONDS IS NULL AND a.ALERT_LEVEL IS NOT NULL`,
 		buildClearDisabledMVRefreshAlertLevelSQL(),
 	)

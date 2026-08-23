@@ -107,7 +107,7 @@ Instead, add dedicated cancel-request fields to history tables.
 
 Recommended fields for v1:
 
-- `CANCEL_REQUESTED_AT datetime(6) default null`
+- `CANCEL_REQUEST_TIME datetime(6) default null`
 - `CANCEL_REQUESTED_BY varchar(...) default null`
 
 Potential future optional fields:
@@ -149,7 +149,7 @@ Add nullable cancel-request columns to each history table.
 
 - existing key identifier: `REFRESH_JOB_ID`
 - new field:
-  - `CANCEL_REQUESTED_AT datetime(6) default null`
+  - `CANCEL_REQUEST_TIME datetime(6) default null`
   - `CANCEL_REQUESTED_BY varchar(...) default null`
 
 ### Purge history
@@ -158,7 +158,7 @@ Add nullable cancel-request columns to each history table.
 
 - existing key identifier: `PURGE_JOB_ID`
 - new field:
-  - `CANCEL_REQUESTED_AT datetime(6) default null`
+  - `CANCEL_REQUEST_TIME datetime(6) default null`
   - `CANCEL_REQUESTED_BY varchar(...) default null`
 
 ## Cancel request semantics
@@ -170,7 +170,7 @@ Recommended SQL semantics:
 - update only when:
   - target row exists
   - status is `running`
-  - `CANCEL_REQUESTED_AT is null`
+  - `CANCEL_REQUEST_TIME is null`
 
 This makes the operation naturally idempotent.
 
@@ -178,18 +178,18 @@ Pseudo SQL:
 
 ```sql
 UPDATE mysql.tidb_mview_refresh_hist
-   SET CANCEL_REQUESTED_AT = NOW(6),
+   SET CANCEL_REQUEST_TIME = NOW(6),
        CANCEL_REQUESTED_BY = <current_user>
  WHERE REFRESH_JOB_ID = <job_id>
    AND REFRESH_STATUS = 'running'
-   AND CANCEL_REQUESTED_AT IS NULL;
+   AND CANCEL_REQUEST_TIME IS NULL;
 
 UPDATE mysql.tidb_mlog_purge_hist
-   SET CANCEL_REQUESTED_AT = NOW(6),
+   SET CANCEL_REQUEST_TIME = NOW(6),
        CANCEL_REQUESTED_BY = <current_user>
  WHERE PURGE_JOB_ID = <job_id>
    AND PURGE_STATUS = 'running'
-   AND CANCEL_REQUESTED_AT IS NULL;
+   AND CANCEL_REQUEST_TIME IS NULL;
 ```
 
 The statement should not force success if the target job does not exist or is no longer running.
@@ -224,7 +224,7 @@ Instead:
 
 1. The running refresh/purge owns one local cancelable context.
 2. A watcher goroutine polls the corresponding history row by `job_id`.
-3. Once `CANCEL_REQUESTED_AT is not null`, the watcher:
+3. Once `CANCEL_REQUEST_TIME is not null`, the watcher:
    - records local cancel reason as `manual`
    - triggers the local cancel function
 4. The main execution path observes context cancellation and exits.
@@ -339,7 +339,7 @@ Whichever model is chosen, the important part for v1 is:
 2. Executor creates a local cancelable context for this run.
 3. Executor starts one watcher goroutine bound to `job_id`.
 4. Main execution runs normally.
-5. If watcher sees `CANCEL_REQUESTED_AT is not null`:
+5. If watcher sees `CANCEL_REQUEST_TIME is not null`:
    - record local cancel reason `manual`
    - call local `cancel()`
 6. Main execution exits through normal cancel propagation.
@@ -352,7 +352,7 @@ Whichever model is chosen, the important part for v1 is:
    - refresh job id
    - purge job id
 2. Update matching history row:
-   - set `CANCEL_REQUESTED_AT = NOW(6)`
+   - set `CANCEL_REQUEST_TIME = NOW(6)`
    - only when current row is `running`
 3. Return success/failure according to whether a live running row was found.
 
@@ -389,7 +389,7 @@ can proceed incrementally without repeatedly re-deciding cross-layer behavior.
 
 #### Stage A: system-table groundwork
 
-1. Extend both history tables with `CANCEL_REQUESTED_AT` and `CANCEL_REQUESTED_BY`.
+1. Extend both history tables with `CANCEL_REQUEST_TIME` and `CANCEL_REQUESTED_BY`.
 2. Cover both fresh bootstrap and upgrade.
 3. Do not mix parser/executor behavior changes into this step.
 
@@ -479,7 +479,7 @@ Recommended SQL semantics:
 - update target row only when:
   - matching `JOB_ID` exists
   - status is `running`
-  - `CANCEL_REQUESTED_AT IS NULL`
+  - `CANCEL_REQUEST_TIME IS NULL`
 - if no row matches, return a clear user-visible error rather than silent success
 
 #### Stage G: focused validation
@@ -512,7 +512,7 @@ Main files:
 
 Acceptance criteria:
 
-1. Both history tables contain `CANCEL_REQUESTED_AT` and `CANCEL_REQUESTED_BY`.
+1. Both history tables contain `CANCEL_REQUEST_TIME` and `CANCEL_REQUESTED_BY`.
 2. Fresh bootstrap and upgrade path are covered.
 
 ### Step 2: define cancel sentinel / local cancel reason
