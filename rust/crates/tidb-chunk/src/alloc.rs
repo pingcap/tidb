@@ -1017,4 +1017,117 @@ mod tests {
         assert_eq!(chunk.required_rows(), 17);
         allocator.reset();
     }
+    /// Go `TestAvoidColumnReuse` (`pkg/util/chunk/alloc_test.go`, issue
+    /// #31981): columns flagged `avoidReusing` never enter the pool, and the
+    /// decoder flags every column it hands back.
+    #[test]
+    fn go_test_avoid_column_reuse() {
+        let _guard = CONFIG_TEST_LOCK.lock().expect("config test lock");
+        restore_defaults();
+        let allocator = new_allocator();
+        for _ in 0..(DEFAULT_MAX_FREE_CHUNKS + 10) {
+            let mut chunk = allocator.alloc(&fields(), 5, 10);
+            for index in 0..chunk.num_cols() {
+                chunk.column_mut(index).avoid_reusing = true;
+            }
+        }
+        allocator.reset();
+
+        // No column entered the pool.
+        for type_size in [VAR_ELEM_LEN, 4, 8, 40] {
+            assert_eq!(allocator.cached_columns(type_size), 0);
+        }
+
+        // The decoder sets the avoid-reusing flag on the columns it fills.
+        let mut chk = allocator.alloc(&fields(), 5, 1024);
+        for _ in 0..10 {
+            for index in 0..chk.num_cols() {
+                chk.append_null(index);
+            }
+        }
+        let codec = crate::codec::Codec::new(fields());
+        let buf = codec.encode(&chk);
+
+        let mut decoder = crate::codec::Decoder::new(
+            Chunk::new_with_capacity(&fields(), 0),
+            fields(),
+        );
+        decoder.reset(&buf);
+        decoder.reuse_intermediate_chunk(&mut chk);
+        for index in 0..chk.num_cols() {
+            assert!(chk.column(index).avoid_reusing);
+        }
+        restore_defaults();
+    }
+
+    /// Go `TestColumnAllocatorLimit`: `InitChunkAllocSize` raises, lowers and
+    /// disables both free lists; over-sized variable columns are not cached.
+    #[test]
+    fn go_test_column_allocator_limit() {
+        let _guard = CONFIG_TEST_LOCK.lock().expect("config test lock");
+        let varchar_fields = || vec![FieldType::new(FieldTypeCode::Varchar)];
+        let field_types = fields();
+
+        init_chunk_alloc_size(10, 20);
+        let mut allocator = new_allocator();
+        assert!(allocator.check_reuse_alloc_size());
+        for _ in 0..(DEFAULT_MAX_FREE_CHUNKS + 10) {
+            drop(allocator.alloc(&field_types, 5, 10));
+        }
+        allocator.reset();
+        assert_eq!(allocator.cached_chunks(), 10);
+        for type_size in [VAR_ELEM_LEN, 4, 8, 40] {
+            assert!(allocator.cached_columns(type_size) <= 20);
+        }
+
+        // Reduce capacity.
+        init_chunk_alloc_size(5, 10);
+        allocator = new_allocator();
+        for _ in 0..(DEFAULT_MAX_FREE_CHUNKS + 10) {
+            drop(allocator.alloc(&field_types, 5, 10));
+        }
+        allocator.reset();
+        assert_eq!(allocator.cached_chunks(), 5);
+        for type_size in [VAR_ELEM_LEN, 4, 8, 40] {
+            assert!(allocator.cached_columns(type_size) <= 10);
+        }
+
+        // Increase capacity.
+        init_chunk_alloc_size(50, 100);
+        allocator = new_allocator();
+        for _ in 0..(DEFAULT_MAX_FREE_CHUNKS + 10) {
+            drop(allocator.alloc(&field_types, 5, 10));
+        }
+        allocator.reset();
+        assert_eq!(allocator.cached_chunks(), 50);
+        for type_size in [VAR_ELEM_LEN, 4, 8, 40] {
+            assert!(allocator.cached_columns(type_size) <= 100);
+        }
+
+        // Long characters are not cached: every COLUMN pool ends up empty.
+        // Go keeps the chunk SHELL in `alloc.free` regardless -- only
+        // `columnAlloc.put` refuses over-sized variable columns.
+        allocator = new_allocator();
+        // Go observes the column entering the allocator's registry at
+        // allocation time; this port admits it when the lease drops.
+        let mut rs = allocator.alloc(&varchar_fields(), 1024, 1024);
+        rs.column_mut(0)
+            .data
+            .extend_from_slice(&vec![b'a'; 20_480][..]);
+        drop(rs);
+        allocator.reset();
+        for type_size in [VAR_ELEM_LEN, 4, 8, 40] {
+            assert_eq!(
+                allocator.cached_columns(type_size),
+                0,
+                "type size {type_size}"
+            );
+        }
+        assert_eq!(allocator.cached_chunks(), 1);
+
+        init_chunk_alloc_size(0, 0);
+        let disabled = new_allocator();
+        assert!(!disabled.check_reuse_alloc_size());
+        restore_defaults();
+    }
 }

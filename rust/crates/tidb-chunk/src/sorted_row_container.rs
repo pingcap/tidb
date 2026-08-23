@@ -955,4 +955,117 @@ mod tests {
             .to_string()
             .contains("Query execution was interrupted"));
     }
+
+    /// Go `TestNewSortedRowContainer` (`pkg/util/chunk/row_container_test.go`):
+    /// a fresh sorted container has not spilled.
+    #[test]
+    fn go_test_new_sorted_row_container() {
+        let rows = sorted(1, vec![false], vec![0]);
+        assert!(!rows.already_spilled());
+    }
+
+    /// Go `TestSortedRowContainerSortSpillAction`: the tracker limit admits
+    /// one chunk plus its row pointers; the second add crosses the limit,
+    /// sorts and spills; every sorted row reads back in order; late adds are
+    /// refused.
+    #[test]
+    fn go_test_sorted_row_container_sort_spill_action() {
+        let field_types = fields(1);
+        let sz = 20usize;
+        let mut rc = SortedRowContainer::new(
+            &field_types,
+            sz,
+            vec![false],
+            vec![0],
+            vec![get_compare_func(&field_types[0])],
+            storage(),
+        );
+
+        let mut chk = Chunk::new(&field_types, sz, sz);
+        for i in 0..sz {
+            chk.append_int64(0, i as i64);
+        }
+        let limit = chk.memory_usage() + (8 * chk.num_rows()) as i64 + 1;
+        rc.mem_tracker().set_bytes_limit(limit);
+        let action = rc.action_spill();
+        rc.mem_tracker()
+            .fallback_old_and_set_new_action(action);
+
+        assert!(!rc.already_spilled());
+        rc.add(chk.clone()).expect("add");
+        assert!(!rc.already_spilled(), "one chunk is within the quota");
+        assert_eq!(
+            rc.mem_tracker().bytes_consumed(),
+            chk.memory_usage() + (8 * chk.num_rows()) as i64
+        );
+
+        // The following add is erroneous on purpose: it double-counts the
+        // chunk's memory usage, which is exactly how the quota is crossed.
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = rc.add(chk);
+            tx.send((rc, result)).unwrap();
+        });
+        let (rc, result) = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the triggered sort-and-spill must not deadlock");
+        let mut rc = rc;
+        result.expect("the second add succeeds");
+        assert!(rc.already_spilled());
+
+        // The result has been sorted.
+        for i in 0..sz * 2 {
+            let row = rc.get_sorted_row(i).expect("sorted row");
+            assert_eq!(row.row().get_int64(0), (i / 2) as i64);
+        }
+
+        // Cannot insert records again.
+        assert!(matches!(
+            rc.add(Chunk::new(&fields(1), 1, 1)),
+            Err(DiskError::CannotAddBecauseSorted)
+        ));
+        rc.reset();
+    }
+
+    /// Go `TestPanicDuringSortedRowContainerSpill`: a failure during the
+    /// sorted spill is stored and replayed by reads. Go injects it through
+    /// the `errorDuringSortRowContainer` failpoint; this port uses the same
+    /// hook the spill itself reports through.
+    #[test]
+    fn go_test_panic_during_sorted_row_container_spill() {
+        let field_types = fields(1);
+        let sz = 20usize;
+        let mut rc = SortedRowContainer::new(
+            &field_types,
+            sz,
+            vec![false],
+            vec![0],
+            vec![get_compare_func(&field_types[0])],
+            storage(),
+        );
+
+        let mut chk = Chunk::new(&field_types, sz, sz);
+        for i in 0..sz {
+            chk.append_int64(0, i as i64);
+        }
+        rc.mem_tracker()
+            .set_bytes_limit(chk.memory_usage() + (8 * chk.num_rows()) as i64 + 1);
+        let action = rc.action_spill();
+        rc.mem_tracker()
+            .fallback_old_and_set_new_action(action);
+
+        assert!(!rc.already_spilled());
+        rc.add(chk.clone()).expect("add");
+        assert!(!rc.already_spilled());
+
+        rc.set_sort_error(Some("sort meet error"));
+        rc.add(chk).expect("add");
+        assert!(rc.already_spilled());
+
+        let error = match rc.get_sorted_row(0) {
+            Ok(_) => panic!("sort error must be replayed"),
+            Err(error) => error,
+        };
+        assert_eq!(error.to_string(), "sort meet error");
+    }
 }

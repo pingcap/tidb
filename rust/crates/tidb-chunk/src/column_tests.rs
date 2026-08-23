@@ -1240,3 +1240,448 @@ fn go_test_nulls_column() {
         row = it.next_row();
     }
 }
+
+/// Go `TestPreAllocInt64`: `ResizeInt64(256, true)` pre-allocates 256 NULL
+/// rows and the next append lands at index 256.
+#[test]
+fn go_test_pre_alloc_int64() {
+    let mut col = Column::new_column(&FieldType::new(FieldTypeCode::LongLong), 128);
+    col.resize_int64(256, true);
+    assert_eq!(col.with_int64s_mut(|values| values.len()), 256);
+    for i in 0..256 {
+        assert!(col.is_null(i));
+    }
+    col.append_int64(2333);
+    assert!(!col.is_null(256));
+    assert_eq!(
+        col.with_int64s_mut(|values| (values.len(), values[256])),
+        (257, 2333)
+    );
+}
+
+/// Go `TestPreAllocUint64`.
+#[test]
+fn go_test_pre_alloc_uint64() {
+    let tll = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
+    let mut col = Column::new_column(&tll, 128);
+    col.resize_uint64(256, true);
+    assert_eq!(col.with_uint64s_mut(|values| values.len()), 256);
+    for i in 0..256 {
+        assert!(col.is_null(i));
+    }
+    col.append_uint64(2333);
+    assert!(!col.is_null(256));
+    assert_eq!(
+        col.with_uint64s_mut(|values| (values.len(), values[256])),
+        (257, 2333u64)
+    );
+}
+
+/// Go `TestPreAllocFloat32`.
+#[test]
+fn go_test_pre_alloc_float32() {
+    let mut col = Column::new_fixed_len(4, 128);
+    col.resize_float32(256, true);
+    assert_eq!(col.with_float32s_mut(|values| values.len()), 256);
+    for i in 0..256 {
+        assert!(col.is_null(i));
+    }
+    col.append_float32(2333.0);
+    assert!(!col.is_null(256));
+    assert_eq!(
+        col.with_float32s_mut(|values| (values.len(), values[256])),
+        (257, 2333.0f32)
+    );
+}
+
+/// Go `TestPreAllocFloat64`.
+#[test]
+fn go_test_pre_alloc_float64() {
+    let mut col = Column::new_fixed_len(8, 128);
+    col.resize_float64(256, true);
+    assert_eq!(col.with_float64s_mut(|values| values.len()), 256);
+    for i in 0..256 {
+        assert!(col.is_null(i));
+    }
+    col.append_float64(2333.0);
+    assert!(!col.is_null(256));
+    assert_eq!(
+        col.with_float64s_mut(|values| (values.len(), values[256])),
+        (257, 2333.0f64)
+    );
+}
+
+/// Go `TestPreAllocDecimal`. The final Go assertion reads the decimal column
+/// through an unsafe `float64` reinterpret cast (`len(col.Float64s())`); this
+/// port asserts the same row count through the type-checked decimals view.
+#[test]
+fn go_test_pre_alloc_decimal() {
+    let mut col = Column::new_fixed_len(MYDECIMAL_STRUCT_SIZE as usize, 128);
+    col.resize_decimal(256, true);
+    assert_eq!(col.with_decimals_mut(|values| values.len()), 256);
+    for i in 0..256 {
+        assert!(col.is_null(i));
+    }
+    col.append_my_decimal(&MyDecimal::default());
+    assert!(!col.is_null(256));
+    assert_eq!(col.with_decimals_mut(|values| values.len()), 257);
+}
+
+/// Go `TestPreAllocTime`.
+#[test]
+fn go_test_pre_alloc_time() {
+    let mut col = Column::new_fixed_len(SIZE_TIME as usize, 128);
+    col.resize_time(256, true);
+    assert_eq!(col.with_times_mut(|values| values.len()), 256);
+    for i in 0..256 {
+        assert!(col.is_null(i));
+    }
+    col.append_time(
+        Time::new(
+            tidb_datatype::CoreTime::from_date(0, 0, 0, 0, 0, 0, 0),
+            tidb_datatype::TimeType::DateTime,
+            0,
+        )
+        .expect("the zero datetime is representable"),
+    );
+    assert!(!col.is_null(256));
+    assert_eq!(col.with_times_mut(|values| values.len()), 257);
+}
+
+/// Go `TestNull`: a fully-null resize plus scattered `SetNull(false)` flips,
+/// then the exact `SetNulls`/`SetNull` counts on small resizes.
+#[test]
+fn go_test_null() {
+    let mut col = Column::new_fixed_len(8, 32);
+    col.resize_float64(1024, true);
+    assert_eq!(col.null_count(), 1024);
+
+    // Go draws 512 distinct-ish random indices; the same xorshift generator
+    // keeps the coverage and the reproducibility.
+    let mut rng = Rng(7);
+    let mut not_nulls = std::collections::HashSet::new();
+    for _ in 0..512 {
+        let idx = (rng.next_u64() % 1024) as usize;
+        not_nulls.insert(idx);
+        col.set_null(idx, false);
+    }
+
+    assert_eq!(col.null_count(), 1024 - not_nulls.len());
+    for &idx in &not_nulls {
+        assert!(!col.is_null(idx));
+    }
+
+    col.resize_float64(8, true);
+    col.set_nulls(0, 8, true);
+    col.set_null(7, false);
+    assert_eq!(col.null_count(), 7);
+
+    col.resize_float64(8, true);
+    col.set_nulls(0, 8, true);
+    assert_eq!(col.null_count(), 8);
+
+    col.resize_float64(9, true);
+    col.set_nulls(0, 9, true);
+    col.set_null(8, false);
+    assert_eq!(col.null_count(), 8);
+}
+
+/// Go `TestSetNulls`: ranged null writes accumulate exactly like the tracked
+/// index set.
+#[test]
+fn go_test_set_nulls() {
+    let mut col = Column::new_fixed_len(8, 32);
+    col.resize_float64(1024, true);
+    assert_eq!(col.null_count(), 1024);
+
+    col.set_nulls(0, 1024, false);
+    assert_eq!(col.null_count(), 0);
+
+    let mut rng = Rng(11);
+    let mut null_map = std::collections::HashSet::new();
+    for _ in 0..100 {
+        let begin = (rng.next_u64() % 1024) as usize;
+        let l = (rng.next_u64() % 37) as usize;
+        let end = (begin + l).min(1024);
+        for i in begin..end {
+            null_map.insert(i);
+        }
+        col.set_nulls(begin, end, true);
+
+        assert_eq!(null_map.len(), col.null_count());
+        for &k in &null_map {
+            assert!(col.is_null(k));
+        }
+    }
+}
+
+/// Go `TestResizeReserve`: random resizes land on the exact row count, and
+/// variable-length reserves never create rows.
+#[test]
+fn go_test_resize_reserve() {
+    let mut rng = Rng(13);
+    let mut c_i64s = Column::new_fixed_len(8, 0);
+    assert_eq!(c_i64s.length(), 0);
+    for _ in 0..100 {
+        let n = (rng.next_u64() % 1024) as usize;
+        c_i64s.resize_int64(n, true);
+        assert_eq!(c_i64s.length(), n);
+        assert_eq!(c_i64s.with_int64s_mut(|values| values.len()), n);
+    }
+    c_i64s.resize_int64(0, true);
+    assert_eq!(c_i64s.length(), 0);
+    assert_eq!(c_i64s.with_int64s_mut(|values| values.len()), 0);
+
+    let mut c_strs = Column::new_var_len(0);
+    for _ in 0..100 {
+        let n = (rng.next_u64() % 1024) as usize;
+        c_strs.reserve_string(n);
+        assert_eq!(c_strs.length(), 0);
+    }
+    c_strs.reserve_string(0);
+    assert_eq!(c_strs.length(), 0);
+}
+
+/// Go `TestGetRaw`: raw fixed cells are the native-endian value bytes; raw
+/// var cells are the stored string bytes.
+#[test]
+fn go_test_get_raw() {
+    let fields = vec![FieldType::new(FieldTypeCode::Float)];
+    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    for i in 0..1024i64 {
+        chk.column_mut(0).append_float32(i as f32);
+    }
+    let mut it = crate::iterator::Iterator4Chunk::new(&chk);
+    let mut i = 0i64;
+    let mut row = it.begin();
+    while row != it.end() {
+        let f = i as f32;
+        assert_eq!(row.expect("not end").get_raw(0), &f.to_ne_bytes()[..]);
+        assert_eq!(chk.column(0).get_raw(i as usize), &f.to_ne_bytes()[..]);
+        i += 1;
+        row = it.next_row();
+    }
+
+    let fields = vec![FieldType::new(FieldTypeCode::VarString)];
+    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    for i in 0..1024usize {
+        chk.column_mut(0).append_string(i.to_string().as_str());
+    }
+    let mut it = crate::iterator::Iterator4Chunk::new(&chk);
+    let mut i = 0u64;
+    let mut row = it.begin();
+    while row != it.end() {
+        let expected = i.to_string();
+        assert_eq!(
+            row.expect("not end").get_raw(0),
+            expected.as_bytes()
+        );
+        assert_eq!(
+            chk.column(0).get_raw(i as usize),
+            expected.as_bytes()
+        );
+        i += 1;
+        row = it.next_row();
+    }
+}
+
+/// Go `TestResize`: every fixed-width family resizes to zero values.
+#[test]
+fn go_test_resize() {
+    let mut col = Column::new_column(&FieldType::new(FieldTypeCode::LongLong), 1024);
+    for i in 0..1024i64 {
+        col.append_int64(i);
+    }
+    col.resize_int64(1024, false);
+    for i in 0..1024 {
+        assert_eq!(col.with_int64s_mut(|values| values[i]), 0);
+    }
+
+    let mut col = Column::new_column(&FieldType::new(FieldTypeCode::Float), 1024);
+    for i in 0..1024i64 {
+        col.append_float32(i as f32);
+    }
+    col.resize_float32(1024, false);
+    for i in 0..1024 {
+        assert_eq!(col.with_float32s_mut(|values| values[i]), 0.0);
+    }
+
+    let mut col = Column::new_column(&FieldType::new(FieldTypeCode::Double), 1024);
+    for i in 0..1024i64 {
+        col.append_float64(i as f64);
+    }
+    col.resize_float64(1024, false);
+    for i in 0..1024 {
+        assert_eq!(col.with_float64s_mut(|values| values[i]), 0.0);
+    }
+
+    let mut col = Column::new_column(&FieldType::new(FieldTypeCode::NewDecimal), 1024);
+    for i in 0..1024i64 {
+        col.append_my_decimal(&MyDecimal::from_int(i));
+    }
+    col.resize_decimal(1024, false);
+    for i in 0..1024 {
+        assert_eq!(col.get_my_decimal(i), MyDecimal::default());
+    }
+
+    let mut col = Column::new_column(&FieldType::new(FieldTypeCode::Duration), 1024);
+    for i in 0..1024i64 {
+        col.append_duration(MySqlDuration::from_raw_parts(i, i.min(6)));
+    }
+    col.resize_go_duration(1024, false);
+    for i in 0..1024 {
+        assert_eq!(col.with_go_durations_mut(|values| values[i]), 0);
+    }
+
+    let mut col = Column::new_column(&FieldType::new(FieldTypeCode::Datetime), 1024);
+    let mut rng = Rng(17);
+    for _ in 0..1024 {
+        let t = Time::new(
+            tidb_datatype::CoreTime::from_date(
+                (rng.next_u64() % 2200) as u16,
+                (rng.next_u64() % 10 + 1) as u8,
+                (rng.next_u64() % 20 + 1) as u8,
+                (rng.next_u64() % 12) as u8,
+                (rng.next_u64() % 60) as u8,
+                (rng.next_u64() % 60) as u8,
+                (rng.next_u64() % 1_000_000) as u32,
+            ),
+            tidb_datatype::TimeType::Date,
+            0,
+        )
+        .expect("valid time");
+        col.append_time(t);
+    }
+    col.resize_time(1024, false);
+    for i in 0..1024 {
+        assert_eq!(
+            col.get_time(i),
+            Time::new(
+                tidb_datatype::CoreTime::from_date(0, 0, 0, 0, 0, 0, 0),
+                tidb_datatype::TimeType::DateTime,
+                0,
+            )
+            .expect("zero time")
+        );
+    }
+}
+
+/// Go `TestReserve`: `Reserve` grows the spare capacity of all three buffers
+/// without touching a single stored byte.
+#[test]
+fn go_test_reserve() {
+    let mut col = Column::new_column(&FieldType::new(FieldTypeCode::VarString), 0);
+    assert_eq!(col.data_capacity(), 0);
+    assert!(col.offset_capacity() >= 1);
+    assert_eq!(col.null_bitmap_capacity(), 0);
+    col.reserve(10, 10, 10);
+    assert!(col.data_capacity() >= 10);
+    assert!(col.offset_capacity() - col.offsets.len() >= 10);
+    assert!(col.null_bitmap_capacity() >= (10 + 7) >> 3);
+
+    // Go appends into the raw slices directly; this port writes through the
+    // same raw buffers with the crate's cell primitives.
+    col.data.extend_from_slice(&[12, 24, 35, 56, 78]);
+    for offset in [10i64, 20, 50, 66, 99] {
+        col.offsets.push(offset);
+    }
+    col.null_bitmap
+        .extend_from_slice(&[0b0000_0001, 0, 0b0000_0001, 0, 0b0000_0001]);
+    col.length = 5;
+
+    col.reserve(100, 100, 100);
+    // Go's assertions lean on `slices.Grow` overshoot (`>=105` spare); this
+    // port pins the documented `Grow` guarantee instead: at least the
+    // requested number of spare entries beyond the stored bytes.
+    assert!(col.data_capacity() - col.data.len() >= 100);
+    assert!(col.offset_capacity() - col.offsets.len() >= 100);
+    assert!(
+        col.null_bitmap.capacity() - col.null_bitmap.len() >= 100,
+        "null bitmap spare"
+    );
+
+    let raw = col.data.snapshot();
+    assert_eq!(&raw[..5], &[12, 24, 35, 56, 78]);
+
+    assert_eq!(col.offsets, vec![0, 10, 20, 50, 66, 99]);
+    assert_eq!(col.null_bitmap[0], 0b0000_0001);
+    assert_eq!(col.null_bitmap[1], 0);
+    assert_eq!(col.null_bitmap[2], 0b0000_0001);
+    assert_eq!(col.null_bitmap[3], 0);
+    assert_eq!(col.null_bitmap[4], 0b0000_0001);
+}
+
+/// Go `TestVectorizedNulls`: `MergeNulls` equals the row-wise OR.
+#[test]
+fn go_test_vectorized_nulls() {
+    let mut rng = Rng(19);
+    for _ in 0..256 {
+        let mut cols: Vec<Column> = Vec::with_capacity(4);
+        for _ in 0..4 {
+            let mut c = Column::new_column(&FieldType::new(FieldTypeCode::LongLong), 1024);
+            c.resize_int64(1024, false);
+            for j in 0..1024 {
+                if rng.intn10() < 5 {
+                    c.set_null(j, true);
+                }
+            }
+            cols.push(c);
+        }
+        let (l_col, r_col) = (cols[0].clone(), cols[1].clone());
+        let mut row_result = cols[3].clone();
+        cols[2].set_nulls(0, 1024, false);
+        cols[2].merge_nulls(&[&l_col, &r_col]);
+        for i in 0..1024 {
+            row_result.set_null(i, l_col.is_null(i) || r_col.is_null(i));
+        }
+        for i in 0..1024 {
+            assert_eq!(cols[2].is_null(i), row_result.is_null(i));
+        }
+    }
+}
+
+/// Go `TestResetColumn`: `Reset` retypes the column so that `MergeNulls` and
+/// fixed-width appends work on freshly-reset var/fixed columns.
+#[test]
+fn go_test_reset_column() {
+    use tidb_datatype::EvalType;
+    let mut col0 = Column::new_column(&FieldType::new(FieldTypeCode::VarString), 0);
+    let col1 = Column::new_column(&FieldType::new(FieldTypeCode::LongLong), 0);
+
+    col0.reset_for_eval_type(EvalType::Int);
+    col0.merge_nulls(&[&col1]);
+
+    let mut col = Column::new_column(&FieldType::new(FieldTypeCode::Datetime), 0);
+    col.reset_for_eval_type(EvalType::Duration);
+    col.append_duration(MySqlDuration::default());
+    assert_eq!(
+        col.get_duration(0, 0).nanoseconds().to_ne_bytes().len(),
+        std::mem::size_of::<i64>()
+    );
+}
+
+/// Go `TestColumnResizeInt64`: the null bitmap is truncated/extended bit
+/// exactly, including the partial trailing byte.
+#[test]
+fn go_test_column_resize_int64() {
+    let mut col = Column::new_column(&FieldType::new(FieldTypeCode::LongLong), 2);
+    col.append_uint64(11);
+    col.append_uint64(11);
+
+    col.resize_int64(4, false);
+    assert_eq!(col.null_bitmap, vec![0b1111]);
+    col.append_uint64(11);
+    assert_eq!(col.null_bitmap, vec![0b1111_1]);
+    col.append_null();
+    assert_eq!(col.null_bitmap, vec![0b0111_11]);
+
+    col.resize_uint64(11, false);
+    assert_eq!(col.null_bitmap, vec![0b1111_1111, 0b111]);
+
+    col.resize_uint64(7, true);
+    assert_eq!(col.null_bitmap, vec![0]);
+
+    col.append_uint64(32);
+    col.append_uint64(32);
+    assert_eq!(col.null_bitmap, vec![0b1000_0000, 0b1]);
+}

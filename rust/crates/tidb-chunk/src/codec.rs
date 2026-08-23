@@ -1073,4 +1073,27 @@ mod tests {
             }
         }
     }
+
+    /// Go `TestEstimateTypeWidth` (`pkg/util/chunk/codec_test.go`): the width
+    /// table answers Go's exact numbers for fixed, small, large and unknown
+    /// lengths.
+    #[test]
+    fn go_test_estimate_type_width() {
+        use tidb_datatype::{FieldType, FieldTypeCode};
+        let col_type = FieldType::new(FieldTypeCode::LongLong);
+        assert_eq!(estimate_type_width(&col_type), 8);
+
+        let col_type = FieldType::new(FieldTypeCode::String).with_flen(31);
+        assert_eq!(estimate_type_width(&col_type), 31);
+
+        let col_type = FieldType::new(FieldTypeCode::String).with_flen(999);
+        assert_eq!(estimate_type_width(&col_type), 515);
+
+        let col_type = FieldType::new(FieldTypeCode::String).with_flen(2000);
+        assert_eq!(estimate_type_width(&col_type), 516);
+
+        let col_type = FieldType::new(FieldTypeCode::String);
+        assert_eq!(estimate_type_width(&col_type), 32);
+    }
+
 }

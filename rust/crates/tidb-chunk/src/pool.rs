@@ -300,4 +300,30 @@ mod tests {
             worker.join().expect("pool worker");
         }
     }
+    /// Go `TestPoolGetChunk` (`pkg/util/chunk/pool_test.go`): pooled chunks
+    /// carry the exact element widths and data capacities of a fresh
+    /// `NewChunkWithCapacity`.
+    #[test]
+    fn go_test_pool_get_chunk() {
+        let init_cap = 1024usize;
+        let pool = Pool::new(init_cap);
+        let field_types = fields();
+
+        let chk = pool.get_chunk(&field_types);
+        assert_eq!(chk.num_cols(), field_types.len());
+        assert!(chk.column(0).elem_buf.is_none());
+        assert!(chk.column(1).elem_buf.is_none());
+        for index in 2..6 {
+            assert_eq!(
+                chk.column(index).elem_buffer_len(),
+                get_fixed_len(&field_types[index]) as usize
+            );
+        }
+        for index in 2..6 {
+            assert_eq!(
+                chk.column(index).data_capacity(),
+                init_cap * get_fixed_len(&field_types[index]) as usize
+            );
+        }
+    }
 }
