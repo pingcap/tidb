@@ -1421,6 +1421,56 @@ func TestAutoRandomIDRetryAfterPessimisticStatementRetry(t *testing.T) {
 	tk.MustQuery("select u, v from t order by u").Check(testkit.Rows("1 1", "2 2"))
 }
 
+func TestAutoIncrementIDRetryDoesNotDuplicate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int not null auto_increment primary key, idx int unique key, c int)")
+	tk.MustExec("insert into t values (1, 1, 1)")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into t (id, idx, c) values (10, 11, 12)")
+	tk.MustExec("update t set c = 15 where idx = 1")
+	tk.MustExec("insert into t (idx, c) values (13, 14)")
+
+	// The explicit ID must not enter the generated-ID retry buffer. Otherwise
+	// the generated row reuses ID 10 during replay and fails with a duplicate.
+	tk2.MustExec("update t set c = 100 where idx = 1")
+	tk.MustExec("commit")
+	tk.MustQuery("select id, idx, c from t order by id").Check(testkit.Rows(
+		"1 1 15",
+		"10 11 12",
+		"11 13 14",
+	))
+}
+
+func TestAutoIncrementIDRetryWhenStatementRowCountChanges(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table src (k int primary key, id int, u int, v int)")
+	tk.MustExec("create table t (id int auto_increment primary key, u int unique key)")
+	tk.MustExec("insert into src values (1, null, 1, 0), (2, null, 2, 0), (3, 100, 3, 0), (4, null, 4, 0)")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into t (u) select u from src where k = 1")
+	tk.MustExec("insert into t select id, u from src where k > 1 order by k")
+	tk.MustExec("update src set v = 1 where k = 1")
+
+	// The first statement produces no rows during retry. The next INSERT ...
+	// SELECT must preserve its explicit ID and use distinct generated IDs.
+	// Generated IDs do not need to remain associated with the same statement.
+	tk2.MustExec("delete from src where k = 1")
+
+	tk.MustExec("commit")
+	tk.MustQuery("select u from t order by u").Check(testkit.Rows("2", "3", "4"))
+	tk.MustQuery("select id from t where u = 3").Check(testkit.Rows("100"))
+}
+
 func TestAutoRandomIDRetryUsesCurrentExplicitID(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
