@@ -1130,4 +1130,99 @@ mod tests {
         assert!(!disabled.check_reuse_alloc_size());
         restore_defaults();
     }
+
+    /// Go `TestAllocator` (`pkg/util/chunk/alloc_test.go:27`): the pooled
+    /// allocator hands back chunks whose fixed-length columns carry an
+    /// `elemBuf` and `initCap`-sized data capacity while variable-length ones
+    /// carry neither; recycling keeps that shape, and the CHUNK free list is
+    /// capped at `maxFreeChunks` no matter how many chunks were dropped.
+    #[test]
+    fn go_test_allocator() {
+        let _guard = CONFIG_TEST_LOCK.lock().expect("config test lock");
+        restore_defaults();
+        let allocator = new_allocator();
+
+        let field_types = fields();
+        let init_cap = 5;
+        let max_chunk_size = 100;
+
+        let check = |chunk: &Chunk| {
+            assert_eq!(field_types.len(), chunk.num_cols());
+            // Variable-length columns (varchar, json) have no elemBuf.
+            assert!(chunk.column(0).elem_buf.is_none());
+            assert!(chunk.column(1).elem_buf.is_none());
+            for index in 2..8 {
+                let elem_len = chunk.column(index).elem_buf.as_ref().map_or(0, Vec::len);
+                assert_eq!(chunk.column(index).type_size() as usize, elem_len,
+                    "fixed-length column {index} stores its elem size");
+            }
+            for index in 2..8 {
+                assert_eq!(
+                    chunk.column(index).data_capacity(),
+                    init_cap * chunk.column(index).type_size() as usize
+                );
+            }
+        };
+
+        let chunk = allocator.alloc(&field_types, init_cap, max_chunk_size);
+        check(&chunk);
+
+        // Call Reset and alloc again, check the result.
+        allocator.reset();
+        let chunk = allocator.alloc(&field_types, init_cap, max_chunk_size);
+        check(&chunk);
+
+        // Check the chunk free-list cap: dropping far more chunks than the
+        // limit still caches only `maxFreeChunks` of them.
+        drop(chunk);
+        for _ in 0..(DEFAULT_MAX_FREE_CHUNKS + 10) {
+            drop(allocator.alloc(&field_types, init_cap, max_chunk_size));
+        }
+        allocator.reset();
+        assert_eq!(allocator.cached_chunks(), DEFAULT_MAX_FREE_CHUNKS);
+        restore_defaults();
+    }
+
+    /// Go `TestNoDuplicateColumnReuse` (`pkg/util/chunk/alloc_test.go:122`,
+    /// issue #29554): a chunk whose columns ALIAS each other (`MakeRef`) must
+    /// not enqueue the same owner twice on reset -- otherwise two pool slots
+    /// would hand out columns sharing one set of buffers.
+    #[test]
+    fn go_test_no_duplicate_column_reuse() {
+        let _guard = CONFIG_TEST_LOCK.lock().expect("config test lock");
+        restore_defaults();
+        let allocator = new_allocator();
+        for _ in 0..(DEFAULT_MAX_FREE_CHUNKS + 10) {
+            let mut chunk = allocator.alloc(&fields(), 5, 10);
+            chunk.make_ref(1, 3);
+        }
+        allocator.reset();
+
+        // Drain every per-type free list and make sure no two pooled columns
+        // designate the same buffer storage. Go compares `*Column` pointers;
+        // this port compares the shared-bytes identity of each owner.
+        {
+            let state = lock_state(&allocator.state);
+            for (_, list) in state.columns.pool.iter() {
+                let identities: Vec<*const u8> = list
+                    .free
+                    .iter()
+                    .map(|column| {
+                        // The deref through `SharedBytesRead` yields the
+                        // owner's live buffer, so its address identifies the
+                        // storage exactly as Go's `*Column` does.
+                        let bytes: &[u8] = &column.data.read();
+                        bytes.as_ptr()
+                    })
+                    .collect();
+                let unique: std::collections::HashSet<*const u8> = identities.iter().copied().collect();
+                assert_eq!(
+                    identities.len(),
+                    unique.len(),
+                    "the same column owner entered one free list twice"
+                );
+            }
+        }
+        restore_defaults();
+    }
 }
