@@ -645,11 +645,7 @@ impl PlanTrace {
     ///
     /// `p0` is absent because pruning already dropped it -- the fan-out names
     /// what SURVIVED, never every declared partition.
-    pub(crate) fn partition_union(
-        &mut self,
-        partitions: &[String],
-        estimates: &[ScanEstimate],
-    ) {
+    pub(crate) fn partition_union(&mut self, partitions: &[String], estimates: &[ScanEstimate]) {
         // Only a SCAN fans out. A point get names its own partition from the
         // handle it already has (Go `PointGetPlan.AccessObject`) and is never
         // a union; a `TableDual` reads nothing to divide.
@@ -3060,15 +3056,12 @@ impl PlanTrace {
                     .iter()
                     .all(|child| child.name == "Batch_Point_Get")
         }) {
-            let selectivity =
-                stats_selectivity.unwrap_or_else(|| pseudo_selectivity(predicate));
+            let selectivity = stats_selectivity.unwrap_or_else(|| pseudo_selectivity(predicate));
             let mut union = self.stack.pop().expect("the union was just seen");
             for branch in std::mem::take(&mut union.children) {
                 let mut selection = PlanNode::new(
                     "Selection",
-                    branch
-                        .est_rows
-                        .map(|rows| (rows * selectivity).max(1.0)),
+                    branch.est_rows.map(|rows| (rows * selectivity).max(1.0)),
                     String::new(),
                     info.clone(),
                 );
@@ -3114,6 +3107,30 @@ impl PlanTrace {
             info.push_str(", ");
         }
         // Divergence 4: one phase, and the function as written.
+        //
+        // Go's `buildAggregation` splits a select field that CONTAINS an
+        // aggregate into the pure aggregate function plus a scalar wrapper
+        // evaluated by the projection above (`pkg/planner/core`
+        // `splitAggFuncsAndScalarArgs`), so whenever any written field is a
+        // scalar expression OVER aggregates (TPC-H q17's `SUM(x) / 7.0`), the
+        // physical operator explains the hoisted functions themselves --
+        // the same inventory `grouped_aggregate_info` rebuilds -- and never
+        // the written wrapper as one aggregate function. A field that IS a
+        // bare aggregate keeps the written rendering beside its siblings.
+        let has_scalar_wrapped_aggregate = select.fields.fields().iter().any(|field| match field {
+            tidb_ast::SelectField::Expr { expr, .. } => {
+                expr.has_aggregate_flag() && !matches!(expr, tidb_ast::Expr::Aggregate { .. })
+            }
+            tidb_ast::SelectField::Wildcard(_) => false,
+        });
+        if has_scalar_wrapped_aggregate {
+            self.wrap(
+                "HashAgg",
+                Est::Fixed(1.0),
+                grouped_aggregate_info(select, qualify, false, false),
+            );
+            return;
+        }
         let mut aggregate_index = 0;
         let funcs: Vec<String> = select
             .fields
@@ -3900,7 +3917,11 @@ impl PlanTrace {
         // `IndexLookUp`s that EACH say `limit embedded(...)`. This tier
         // records the plan in one bottom-up pass, so the union is already on
         // the stack here and the embed descends into it.
-        if self.stack.last().is_some_and(|top| top.name == "PartitionUnion") {
+        if self
+            .stack
+            .last()
+            .is_some_and(|top| top.name == "PartitionUnion")
+        {
             let mut union = self.stack.pop().expect("the union was just seen");
             let branches = std::mem::take(&mut union.children);
             let mut embedded = true;
@@ -4009,7 +4030,11 @@ impl PlanTrace {
         // INSIDE every branch -- never one above the union. This tier records
         // the plan bottom-up, so the filter arrives after the fan-out and is
         // distributed into the branches here.
-        if selection.children.first().is_some_and(|child| child.name == "PartitionUnion") {
+        if selection
+            .children
+            .first()
+            .is_some_and(|child| child.name == "PartitionUnion")
+        {
             let mut union = selection.children.pop().expect("the union was just seen");
             let branches = std::mem::take(&mut union.children);
             let mut placed = true;
@@ -5762,7 +5787,7 @@ fn full_join_row_count(
     merge_keys: Option<&[(String, String)]>,
 ) -> Option<f64> {
     use tidb_planner::cardinality::join::{
-        estimate_full_join_row_count, FullJoinRowCountInput, JoinKeyEstimate,
+        FullJoinRowCountInput, JoinKeyEstimate, estimate_full_join_row_count,
     };
     let (left_rows, right_rows) = (left.est_rows?, right.est_rows?);
     let key = |node: &PlanNode, left_side: bool| {
@@ -6018,7 +6043,7 @@ fn index_join_operator(
     text: &IndexJoinText,
     num_keys: usize,
 ) -> &'static str {
-    use tidb_planner::plan_cost_ver2::{hash_build_cost, Ver2Factors};
+    use tidb_planner::plan_cost_ver2::{Ver2Factors, hash_build_cost};
     use tidb_planner::task_type::TaskType;
     let outer = text.estimated_outer_rows.or(outer);
     let inner_rows_one = text.estimated_probe_rows_one.or(inner_rows_one);

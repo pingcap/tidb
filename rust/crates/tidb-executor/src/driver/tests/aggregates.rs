@@ -3611,3 +3611,117 @@ fn aggregates_read_the_arguments_collation() {
         "b,A"
     );
 }
+
+/// TPC-H q17's `SUM(l_extendedprice) / 7.0`: Go's `buildAggregation` splits
+/// every select field that CONTAINS an aggregate into the pure aggregate
+/// function on the Aggregation operator plus a scalar wrapper evaluated by
+/// the projection above it, so the physical HashAgg explains
+/// `funcs:sum(...)->Column#N` -- never the written scalar expression as an
+/// aggregate function. The wrapper lives on the Projection above, exactly as
+/// Go prints for this query in `pkg/planner/core/casetest/tpch`.
+#[test]
+fn tpch_q17_scalar_wrapped_sum_explains_the_physical_aggregate_function() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE part (p_partkey BIGINT PRIMARY KEY, p_brand VARCHAR(16), \
+         p_container VARCHAR(16))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE lineitem (l_partkey BIGINT, l_quantity DECIMAL(15,2), \
+         l_extendedprice DECIMAL(15,2))",
+        &mut catalog,
+    )
+    .unwrap();
+
+    let sql = "SELECT SUM(l_extendedprice) / 7.0 AS avg_yearly FROM lineitem, part \
+         WHERE p_partkey = l_partkey AND p_brand = 'Brand#44' \
+         AND p_container = 'WRAP PKG'";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, plan) = explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &crate::StmtContext::for_query(),
+        ExplainFormat::Brief,
+    )
+    .unwrap();
+    let text = |row: &[Datum], column: usize| match &row[column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+
+    let hash_agg_info = plan
+        .iter()
+        .find(|row| text(row, 0).contains("HashAgg"))
+        .map(|row| text(row, 4))
+        .expect("the plan has a root HashAgg");
+    assert!(
+        !hash_agg_info.contains("div("),
+        "the physical HashAgg must not render the written scalar wrapper: {hash_agg_info}"
+    );
+    assert!(
+        hash_agg_info.starts_with("funcs:"),
+        "a non-grouped HashAgg lists its physical functions without group keys: {hash_agg_info}"
+    );
+    assert!(
+        hash_agg_info.contains("funcs:sum(test.lineitem.l_extendedprice)"),
+        "the hoisted SUM is the only physical aggregate state: {hash_agg_info}"
+    );
+}
+
+#[test]
+fn debug_q14_plan_dump() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE part (p_partkey INT PRIMARY KEY, p_type VARCHAR(25))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE lineitem (l_partkey INT, l_extendedprice DECIMAL(15,2), \
+            l_discount DECIMAL(15,2), l_shipdate DATE)",
+        &mut catalog,
+    )
+    .unwrap();
+
+    let sql = "SELECT 100.00 * \
+        SUM(CASE WHEN p_type LIKE 'PROMO%' \
+            THEN l_extendedprice * (1 - l_discount) ELSE 0 END) / \
+        SUM(l_extendedprice * (1 - l_discount)) AS promo_revenue \
+        FROM lineitem, part WHERE l_partkey = p_partkey \
+        AND l_shipdate >= '1996-12-01' \
+        AND l_shipdate < DATE_ADD('1996-12-01', INTERVAL 1 MONTH)";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let ctx = crate::StmtContext::for_query();
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    for (i, row) in rows.iter().enumerate() {
+        let op = match &row[0] {
+            Datum::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
+            o => format!("{o:?}"),
+        };
+        let info = match &row[4] {
+            Datum::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
+            o => format!("{o:?}"),
+        };
+        println!("ROW{i}: {op} | {info}");
+    }
+}
