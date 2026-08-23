@@ -2687,6 +2687,34 @@ impl KvTable {
         self.delete_row_in(handle, zone, &RowDecodeContext::legacy_default(zone))
     }
 
+    /// [`KvTable::delete_row`] for a row THIS STATEMENT already fetched.
+    ///
+    /// Go `RemoveRecord` derives the record key from the row's own handle and
+    /// removes index entries from the in-memory old row (`tables.DeleteRecord`)
+    /// -- it never re-reads storage for either. The storage-backed form above
+    /// reads because it was called WITHOUT the old row; the DELETE executor
+    /// that just fetched its victims hands them here so one row costs one
+    /// read.
+    pub fn delete_row_with_old(
+        &mut self,
+        handle: &TableHandle,
+        old_row: &[Datum],
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<(), KvTableError> {
+        let zone = ctx.time_zone();
+        let old_physical_id = self.record_physical_id(old_row, ctx)?;
+        let key = Key::from_bytes(encode_row_key_with_handle(
+            old_physical_id,
+            &handle.record_handle(),
+        ));
+        if !self.indexes.is_empty() {
+            self.delete_index_entries(old_row, handle, old_physical_id, &zone)?;
+        }
+        self.store.delete(key).map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        self.dirty_content = true;
+        Ok(())
+    }
+
     fn delete_row_in(
         &mut self,
         handle: &TableHandle,
