@@ -580,6 +580,114 @@ fn pushed_down_conds(
     Some(filtered)
 }
 
+/// Go `MaxMinEliminator.eliminateSingleMaxMin`
+/// (`pkg/planner/core/rule/rule_max_min_eliminate.go`), as the ACCESS view of
+/// the statement: the ungrouped single `MAX(col)`/`MIN(col)` is what
+/// `SELECT ... ORDER BY col [DESC] LIMIT 1` reads, so the path chooser is
+/// handed the statement with exactly that order and limit spliced in. The
+/// select list, `WHERE` and hints stay as written -- the demanded column set
+/// of `max(col)` IS `{col}`, and every non-costing consumer of the statement
+/// reads the original.
+///
+/// The gates are the rule's own, in its order (`eliminateMaxMin` +
+/// `eliminateSingleMaxMin`): no `GROUP BY`, exactly one aggregate which is
+/// `MAX`/`MIN`, a non-`ENUM`/`SET` argument. `checkColCanUseIndex` is NOT
+/// among them -- with a single aggregate Go transforms unconditionally
+/// ("this transformation won't be worse than previous") and lets the cost
+/// model decide, which is exactly what handing the rewritten view to the
+/// chooser does.
+///
+/// Arms of the Go rule this view does not carry, each still costed and
+/// executed as before (the executor-side rewrite in
+/// [`super::agg_select::single_max_min_elimination`] is independent of this
+/// view and keeps its own coverage):
+///
+/// * several `MAX`/`MIN` functions (`splitAggFuncAndCheckIndices` +
+///   `composeAggsByInnerJoin`): the split produces one cartesian join of
+///   single-aggregate blocks, a plan shape this tier does not build;
+/// * a NULLABLE argument: Go inserts `Selection(not(isnull(col)))` between
+///   the `Limit` and the source, and this view has no way to carry that
+///   extra conjunct without desynchronizing the caller's residual-`WHERE`
+///   accounting, so the rewrite fires only for a `NOT NULL` argument;
+/// * a non-column argument (`len(expression.ExtractColumns(f.Args[0])) > 0`
+///   arms): no access path can satisfy an order over an expression, so the
+///   view would change nothing the chooser reads;
+/// * an aggregate over a JOIN: Go's single-aggregate arm rewrites it too
+///   ("we don't need to guarantee that the child of it is a data source"),
+///   but this caller is the SINGLE-TABLE path chooser and a join's leaves
+///   are costed elsewhere, so the eliminated order never reaches them here.
+fn max_min_eliminated_access_select(
+    select: &tidb_ast::SelectStmt,
+    scope: &FromScope,
+    columns: &[(String, FieldType)],
+) -> Option<tidb_ast::SelectStmt> {
+    if !select.group_by.is_empty()
+        || select.distinct
+        || select.having.is_some()
+        || !select.order_by.is_empty()
+        || select.limit.is_some()
+        || crate::window::select_has_window(select)
+    {
+        return None;
+    }
+    let [SelectField::Expr { expr, .. }] = select.fields.fields() else {
+        return None;
+    };
+    let tidb_ast::Expr::Aggregate {
+        name,
+        distinct: false,
+        args,
+    } = expr
+    else {
+        return None;
+    };
+    let desc = if name.eq_ignore_ascii_case("max") {
+        true
+    } else if name.eq_ignore_ascii_case("min") {
+        false
+    } else {
+        return None;
+    };
+    let [argument] = args.as_slice() else {
+        return None;
+    };
+    let tidb_ast::Expr::Column(path) = argument else {
+        return None;
+    };
+    // The argument must be a column of THIS table: unqualified, or qualified
+    // by the sole table's scope name. A correlated outer column must not
+    // resolve here by name accident.
+    let column_name = match path.as_slice() {
+        [name] => name,
+        [qualifier, name] if scope.tables[0].name.eq_ignore_ascii_case(qualifier) => name,
+        _ => return None,
+    };
+    let (_, field_type) = columns
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(column_name))?;
+    // Go `eliminateMaxMin`: "Limit+Sort operators are sorted by value, but
+    // ENUM/SET field types are sorted by name."
+    if matches!(
+        field_type.code(),
+        tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
+    ) {
+        return None;
+    }
+    if !field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL) {
+        return None;
+    }
+    let mut rewritten = select.clone();
+    rewritten.order_by = vec![tidb_ast::OrderItem {
+        expr: argument.clone(),
+        desc,
+    }];
+    rewritten.limit = Some(tidb_ast::Limit {
+        offset: None,
+        count: tidb_ast::Expr::Int("1".to_owned()),
+    });
+    Some(rewritten)
+}
+
 pub(crate) fn commit_fast_path_source(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
@@ -682,6 +790,22 @@ pub(crate) fn commit_fast_path_source(
         current_db,
         ctx,
     )?;
+    // Go's `MaxMinEliminator` (`pkg/planner/core/rule/rule_max_min_eliminate.go`)
+    // runs in LOGICAL optimization, so by the time `findBestTask` costs this
+    // table's paths an ungrouped `MAX(col)`/`MIN(col)` has already become
+    // `Agg -> Limit 1 -> Sort col [desc] -> DataSource`, and the paths are
+    // priced under that sort property with `ExpectedCnt` 1. This tier runs
+    // the same rewrite in the executor pipeline
+    // (`super::agg_select::single_max_min_elimination` builds the
+    // TopN/Limit-over-source shape), but the path choice happens HERE, first
+    // -- so the eliminated ORDER/LIMIT is spliced into the ACCESS view alone.
+    // Only the costing questions read `path_select`'s order and limit
+    // (`costing_limit_cap`, `PushedLimit::satisfied_by`); every point-get,
+    // residual and consumed-`WHERE` decision keeps reading the statement as
+    // written, and no row cap is pushed into the executor from this view, so
+    // a fired rewrite can only change which path is committed.
+    let max_min_access = max_min_eliminated_access_select(path_select, scope, &columns);
+    let path_select = max_min_access.as_ref().unwrap_or(path_select);
     // Go's `PredicateSimplification` plans a `TableDual rows:0` before any path
     // is costed when the `WHERE` is provably contradictory on some column
     // (`b = 1 AND b = 2`), which is index-independent: it reads no row whether
@@ -982,7 +1106,7 @@ pub(crate) fn commit_fast_path_source(
                             crate::handle_range::build_handle_ranges(&table, predicate, zone)?;
                         join_predicates(&built.residual)
                     });
-                    index_order = handle_range_order(&table, &ranges);
+                    index_order = handle_range_order(&table, &columns, &ranges);
                     if let Some(trace) = trace.as_deref_mut() {
                         // Go's `findBestTask` returns a `PhysicalTableDual`
                         // the moment a chosen path has NO ranges
@@ -1119,7 +1243,7 @@ pub(crate) fn commit_fast_path_source(
                 // the handle prefix is discharged by the scan itself and a
                 // `LIMIT` becomes a pushed Limit rather than a TopN. One
                 // unbounded range is trivially a single range.
-                index_order = full_table_handle_order(&table);
+                index_order = full_table_handle_order(&table, &columns);
             }
             None => {}
         }
@@ -1238,7 +1362,7 @@ fn choose_index_merge_union(
         .into_iter()
         .filter(|candidate| !candidate.access_columns.is_empty())
         .collect();
-        let path = crate::access_cost::choose_access_path(candidates, stats, false)?;
+        let path = crate::access_cost::choose_access_path(candidates, stats, false, false)?;
         let (index_id, ranges) = path.index?;
         partials.push((index_id, ranges));
     }
@@ -1297,7 +1421,8 @@ fn choose_index_merge_intersection(
         .into_iter()
         .filter(|candidate| !candidate.access_columns.is_empty())
         .collect();
-        let Some(path) = crate::access_cost::choose_access_path(candidates, stats, false) else {
+        let Some(path) = crate::access_cost::choose_access_path(candidates, stats, false, false)
+        else {
             continue;
         };
         let Some((index_id, ranges)) = path.index else {
@@ -1400,7 +1525,7 @@ fn choose_automatic_index_merge_union(
         })
         .collect();
         paths.push(crate::access_cost::choose_access_path(
-            candidates, stats, false,
+            candidates, stats, false, false,
         )?);
     }
     let index_ids = paths
@@ -2675,9 +2800,117 @@ fn best_single_table_access_path(
             }
         });
     }
+    // Go `findBestTask`'s TWO LEGS under a required sort property with no row
+    // cap (`pkg/planner/core/find_best_task.go`):
+    //
+    //  * the UNENFORCED leg converts only candidates whose walk already
+    //    delivers the order (`convertToIndexScan`/`convertToTableScan` both
+    //    open with `if !prop.IsSortItemEmpty() &&
+    //    !candidate.matchPropResult.Matched() { return invalidTask }`), with
+    //    skyline pruning run under the ordered property;
+    //  * the ENFORCED leg re-enters `findBestTask` with the EMPTY property --
+    //    its own skyline pruning, where `preferRange` retains range paths
+    //    exactly as an orderless statement's would -- and wraps the winner in
+    //    the Sort enforcer (`EnforceProperty`). The Sort's price is the SAME
+    //    `PhysicalSort` `tidb_planner::enforce` builds for a merge join's
+    //    side, through the same `Candidate::Sort` cost node.
+    //
+    // `getTaskPlanCost` then compares the legs' totals; the min below is that
+    // comparison. Collapsing both legs into ONE ordered-property pruning pass
+    // was measured wrong on `expression/vitess_hash`: the ordered-property
+    // `preferRange` refuses to retain a non-matching range path, so full
+    // scans survived into the enforced comparison that Go's empty-property
+    // pruning would have removed.
+    //
+    // A LIMIT cap is the other regime -- Go's `ExpectedCnt` TopN-vs-ordered-
+    // Limit comparison -- and [`PushedLimit`] already carries it, so under a
+    // cap the enumeration is pruned in ONE pass that marks each candidate's
+    // property match (the skyline `matchResult` dimension and the
+    // `preferRange` post-filter read it). A parent-required order
+    // (`required_order`) already FILTERED above, modeling `matchProperty`'s
+    // invalid-task refusal; the parent prices its own enforcer
+    // (`driver::from::enforced_merge_sort`).
+    if !select.order_by.is_empty() && required_order.is_none() {
+        let full = [IndexRange::full()];
+        let delivers = |candidate: &crate::skyline::Candidate<crate::access_cost::AccessPath>| {
+            match &candidate.path.index {
+                Some((index_id, ranges)) => table
+                    .indexes()
+                    .iter()
+                    .find(|index| index.id == *index_id)
+                    .is_some_and(|index| {
+                        satisfied_by(
+                            &crate::driver::leaf_access::leaf_index_order(table, index, columns),
+                            ranges,
+                        )
+                    }),
+                None => satisfied_by(
+                    &crate::driver::leaf_access::leaf_handle_order(table, columns),
+                    candidate.path.table_ranges.as_deref().unwrap_or(&full),
+                ),
+            }
+        };
+        if cap.is_some() {
+            for candidate in &mut paths {
+                candidate.match_property = delivers(candidate);
+            }
+            return crate::access_cost::choose_access_path(paths, stats, true, true)
+                .map(|best| (best, needed));
+        }
+        // The unenforced leg: only matching candidates, under the ordered
+        // property.
+        let mut matching: Vec<_> = paths
+            .iter()
+            .filter(|candidate| delivers(candidate))
+            .cloned()
+            .collect();
+        for candidate in &mut matching {
+            candidate.match_property = true;
+        }
+        let best_matching = crate::access_cost::choose_access_path(matching, stats, false, true);
+        // The enforced leg: every candidate, under the EMPTY property, each
+        // priced as its reader UNDER the Sort enforcer.
+        let by_items: Vec<bool> = select
+            .order_by
+            .iter()
+            .map(|item| !matches!(item.expr, tidb_ast::Expr::Column(_)))
+            .collect();
+        let best_enforced =
+            crate::access_cost::choose_access_path(paths, stats, false, false).map(|mut best| {
+                let child = best.planner_candidate.clone();
+                let costed = tidb_planner::candidate_cost::evaluate(
+                    &child,
+                    &tidb_planner::candidate_cost::CostEnv::default(),
+                    tidb_planner::task_type::TaskType::Root,
+                );
+                let enforced = tidb_planner::candidate_cost::Candidate::Sort {
+                    child: Box::new(child),
+                    rows: costed.rows,
+                    row_size: tidb_planner::candidate_cost::RowSize::Fixed(costed.row_size),
+                    by_items,
+                };
+                best.cost = tidb_planner::candidate_cost::evaluate(
+                    &enforced,
+                    &tidb_planner::candidate_cost::CostEnv::default(),
+                    tidb_planner::task_type::TaskType::Root,
+                )
+                .est_cost();
+                best
+            });
+        let best = match (best_matching, best_enforced) {
+            (Some(matching), Some(enforced)) => Some(if matching.cost <= enforced.cost {
+                matching
+            } else {
+                enforced
+            }),
+            (matching, enforced) => matching.or(enforced),
+        };
+        return best.map(|best| (best, needed));
+    }
     // Go's `prop.ExpectedCnt != math.MaxFloat64`: a row cap on the required
     // property is what disables Fix45132's row-ratio rule inside pruning.
-    crate::access_cost::choose_access_path(paths, stats, cap.is_some()).map(|best| (best, needed))
+    crate::access_cost::choose_access_path(paths, stats, cap.is_some(), false)
+        .map(|best| (best, needed))
 }
 
 /// The partitions a single-table `SELECT`'s `WHERE` proves it has to read,
@@ -3177,7 +3410,7 @@ fn write_index_range_path(
         true,
         None,
     );
-    let best = crate::access_cost::choose_access_path(paths, None, false)?;
+    let best = crate::access_cost::choose_access_path(paths, None, false, false)?;
     match best.index {
         Some((index_id, ranges)) => {
             Some(WriteReadPath::IndexRanges(index_id, ranges, best.estimate))
@@ -4687,26 +4920,56 @@ impl IndexAccessOrder {
 /// A COMMON handle is still refused: its key order matches its datum order
 /// only for the column families the ranger admits, which the range path
 /// proves per statement; the whole-table claim has no such proof.
-fn full_table_handle_order(table: &KvTable) -> Option<IndexAccessOrder> {
+fn full_table_handle_order(
+    table: &KvTable,
+    columns: &[(String, FieldType)],
+) -> Option<IndexAccessOrder> {
     if !table.common_handle_offsets().is_empty() {
         return None;
     }
-    let offset = table.pk_handle_offset()?;
-    table.columns.get(offset)?;
+    if let Some(offset) = table.pk_handle_offset() {
+        table.columns.get(offset)?;
+        return Some(IndexAccessOrder::from_ranges(
+            &[offset],
+            &[IndexRange::full()],
+        ));
+    }
+    // A HEAP table's handle IS `_tidb_rowid`: Go's `matchProperty` makes the
+    // same `path.IsIntHandlePath` claim through `ds.HandleCols`, which
+    // `buildDataSource` built from `NewExtraHandleSchemaCol` for such a
+    // table. The extra handle is the one column the scope appends past the
+    // table's own, so it is found in the scope's list by name; a scope that
+    // does not carry it has no order the statement could name.
+    let offset = extra_handle_scope_offset(columns)?;
     Some(IndexAccessOrder::from_ranges(
         &[offset],
         &[IndexRange::full()],
     ))
 }
 
-fn handle_range_order(table: &KvTable, ranges: &[IndexRange]) -> Option<IndexAccessOrder> {
+/// The scope offset carrying `_tidb_rowid`, when the scope carries it at all.
+fn extra_handle_scope_offset(columns: &[(String, FieldType)]) -> Option<usize> {
+    columns.iter().position(|(name, _)| {
+        name.eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)
+    })
+}
+
+fn handle_range_order(
+    table: &KvTable,
+    columns: &[(String, FieldType)],
+    ranges: &[IndexRange],
+) -> Option<IndexAccessOrder> {
     let [range] = ranges else {
         return None;
     };
-    let handle_columns: Vec<usize> = if table.common_handle_offsets().is_empty() {
-        table.pk_handle_offset().into_iter().collect()
-    } else {
+    let handle_columns: Vec<usize> = if !table.common_handle_offsets().is_empty() {
         table.common_handle_offsets().to_vec()
+    } else if let Some(offset) = table.pk_handle_offset() {
+        vec![offset]
+    } else {
+        // The heap table's `_tidb_rowid` arm of [`full_table_handle_order`],
+        // over a ranger-narrowed walk of the same record keys.
+        extra_handle_scope_offset(columns).into_iter().collect()
     };
     let fixed_prefix = range
         .low

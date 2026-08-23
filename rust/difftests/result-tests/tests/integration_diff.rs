@@ -2484,7 +2484,7 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //
     // The nine that remain: through_projection 5, and one each of
     // partition_pruner, index_join, stale_txn (MVCC-blocked), and autoid.
-    const KNOWN_DIVERGENCES: usize = 8;
+    const KNOWN_DIVERGENCES: usize = 7;
     // 9 -> 8: `partition_pruner` fully closed (293 of 294 matched, one
     // `PlanWithoutProperty` skip). The last statement was the col_95
     // interval-intersection Point_Get: `... where col_95 between ... or
@@ -2523,6 +2523,52 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //
     // The eight that remain after both merges: through_projection 5, and
     // one each of index_join, stale_txn (MVCC-blocked), and autoid.
+    //
+    // 8 -> 7: `executor/autoid` closed (287 of 287 matched). The statement
+    // was `select _tidb_rowid, id from t` over `id bigint unsigned
+    // auto_increment primary key` with clustered index OFF -- a heap table
+    // whose PRIMARY(id) is a plain unique index -- recorded as
+    // `IndexFullScan index:PRIMARY(id)` in UNSIGNED key order (row `124,123`
+    // before `-2,18446744073709551613`) where this tier full-scanned in
+    // signed handle order. The missing link was Go's `handleCoveringColumn`
+    // (`pkg/planner/core/operator/logicalop/logical_datasource.go:759`): a
+    // column with `model.ExtraHandleID` is ALWAYS covered, because every
+    // index entry carries the int handle as its value -- so PRIMARY(id)
+    // covers `_tidb_rowid, id` and the narrow index read wins.
+    //
+    // That one arm shipped alone REGRESSED `access_path_selection` by 2, so
+    // three more Go mechanisms landed with it, measured back to 0 there:
+    //
+    //  * `findBestTask`'s two legs under a required sort with no cap
+    //    (`driver::access::best_single_table_access_path`): matching
+    //    candidates priced raw under the ordered property, every candidate
+    //    priced UNDER the Sort enforcer through the empty property, cheapest
+    //    leg wins -- which is what keeps `select a, b ... order by
+    //    _tidb_rowid` on the ordered `TableFullScan` instead of the covering
+    //    `IndexRangeScan` plus a Sort nobody priced. `_tidb_rowid` resolves
+    //    to the handle order of a heap table's record walk in
+    //    `leaf_handle_order` / `full_table_handle_order` / `enumerate_paths`
+    //    (Go's `path.IsIntHandlePath` arm of `matchProperty` through
+    //    `NewExtraHandleSchemaCol`).
+    //  * the skyline `matchResult` dimension and `preferRange`'s
+    //    `prop.IsSortItemEmpty() || matched` gate went LIVE
+    //    (`crate::skyline`), so the ordered table path is not pruned by an
+    //    unordered range path before the legs are compared.
+    //  * `MaxMinEliminator`'s single-aggregate arm reaches path selection
+    //    (`driver::access::max_min_eliminated_access_select`): `select
+    //    max(_tidb_rowid) from t` is COSTED as `order by _tidb_rowid desc
+    //    limit 1`, exactly the shape `rule_max_min_eliminate.go` hands
+    //    `findBestTask`, so the ordered one-row table walk beats every
+    //    covering `IndexFullScan`. The full-scan penalty rows moved with it
+    //    into `table_scan_path`, computed from the limit-adjusted
+    //    cardinality as Go's `getTableScanPenalty` reads `getCardinality(p)`.
+    //
+    // Rows moved nowhere (`compared` holds at 9674): the autoid statement
+    // was compared-and-diverged before and matched after, and both
+    // `access_path_selection` statements stayed matched.
+    //
+    // The seven that remain: through_projection 5, and one each of
+    // index_join and stale_txn (MVCC-blocked).
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

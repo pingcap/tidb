@@ -242,7 +242,7 @@ pub(crate) fn leaf_index_path(
             None => leaf_handle_order(table, columns).starts_with(wanted),
         });
     }
-    let best = crate::access_cost::choose_access_path(paths, stats, false)?;
+    let best = crate::access_cost::choose_access_path(paths, stats, false, false)?;
     let Some((index_id, ranges)) = best.index else {
         let residual_filters = where_clause.map_or_else(Vec::new, |predicate| {
             crate::handle_range::build_handle_ranges(table, predicate, &ctx.session_zone())
@@ -337,8 +337,16 @@ pub(crate) enum LeafAccessPath {
 /// The same answer [`crate::merge_join_plan::table_scan_order`] gives, read
 /// through the leaf's column list so it can be compared with
 /// [`leaf_index_order`] on one numbering.
+///
+/// A HEAP table's handle is `_tidb_rowid`, and its record walk delivers that
+/// order just as an integer primary key's does -- Go's `matchProperty`
+/// (`pkg/planner/core/find_best_task.go`, the `path.IsIntHandlePath` arm)
+/// makes the same claim through `ds.HandleCols`, which `buildDataSource`
+/// built from `NewExtraHandleSchemaCol` for such a table. The extra handle is
+/// not a column of `table.columns`, so it is found in the leaf's own list by
+/// its name; a leaf that does not carry it has no order to claim.
 pub(crate) fn leaf_handle_order(table: &KvTable, columns: &[(String, FieldType)]) -> Vec<usize> {
-    crate::merge_join_plan::table_scan_order(table)
+    let order: Vec<usize> = crate::merge_join_plan::table_scan_order(table)
         .into_iter()
         .next()
         .unwrap_or_default()
@@ -349,7 +357,18 @@ pub(crate) fn leaf_handle_order(table: &KvTable, columns: &[(String, FieldType)]
                 .iter()
                 .position(|(name, _)| name.eq_ignore_ascii_case(&column.name))
         })
-        .collect()
+        .collect();
+    if !order.is_empty() {
+        return order;
+    }
+    if table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty() {
+        if let Some(at) = columns.iter().position(|(name, _)| {
+            name.eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)
+        }) {
+            return vec![at];
+        }
+    }
+    Vec::new()
 }
 
 /// The order an index walk of `index` delivers, as offsets into the LEAF's
