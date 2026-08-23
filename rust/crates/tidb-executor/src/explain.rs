@@ -41,29 +41,43 @@
 //!
 //! # Divergences from Go's EXPLAIN, each deliberate and named
 //!
-//! 1. **The TABLE path reports task `root`; index paths do not.** Go pushes
-//!    scans, selections, limits and the first aggregate phase into a
-//!    coprocessor task under a `TableReader_N` root operator. A table scan
-//!    here still appears directly under its parent -- `EXPLAIN SELECT id
-//!    FROM t WHERE a > 0` on an unindexed table is `Projection > Selection >
-//!    TableFullScan`, all `root`. The INDEX paths do print Go's shape:
-//!    `IndexReader`/`IndexLookUp` over `IndexRangeScan`/`IndexFullScan`/
-//!    `TableRowIDScan` at `cop[tikv]`. Audited live 2026-08-19; the blanket
-//!    "no `cop[tikv]`, no reader" this said before is true only of the
-//!    table path.
+//! 1. **RESOLVED (was: the TABLE path reports task `root`).** Go finishes
+//!    every base-table read as a coprocessor task under a
+//!    `TableReader`/`IndexReader` root operator, and this tier now records
+//!    the same boundary for a single-table read:
+//!    [`crate::plan_trace::PlanTrace::scan_reader_or_cop_selection`] is
+//!    `convertToTableScan` ->
+//!    `addPushedDownSelection4PhysicalTableScan` -> `ConvertToRootTask`
+//!    (`pkg/planner/core/find_best_task.go:2829`, `:3198`;
+//!    `pkg/planner/core/operator/physicalop/task_base.go:504`). `EXPLAIN
+//!    SELECT id FROM t WHERE a > 0` on an unindexed table is
+//!    `TableReader root data:Selection` over `Selection cop[tikv]` over
+//!    `TableFullScan cop[tikv]`, and a bare `SELECT * FROM t` is
+//!    `TableReader root data:TableFullScan` over the scan.
 //!
-//!    What that no longer means is "nothing is pushed down". Against a
-//!    cluster backend the scan's PREDICATE, row cap, column projection and
-//!    handle ranges do reach the region -- [`crate::remote_scan`] is the
-//!    seam, `tidb_exec::cop_scan` the production coprocessor request -- so
-//!    the task column and the wire have come apart: a `Selection` printed as
-//!    `root` may well have been evaluated at TiKV. The aggregate's first
-//!    phase is the one thing Go pushes that this tier genuinely does not.
-//!    Because the display cannot state the difference, the receipt is
-//!    [`crate::storage::StorageOps`]'s `cop_scans`/`cop_rows`, which is what
-//!    the pushdown tests assert on. Making the plan print `cop[tikv]` is a
-//!    separate change with its own plan-text ratchet accounting, not a
-//!    side effect of a pushdown fix.
+//!    The task column now means what it says, which is why the boundary is
+//!    claimed only where the SOURCE really applies the conjuncts below it
+//!    (`driver::access::negotiate_scan_filter` decides, and
+//!    [`crate::predicate_pushdown`] states the obligation a source takes on
+//!    by accepting them). A conjunct that stays above the reader is Go's own
+//!    `CopTask.RootTaskConds`
+//!    (`pkg/planner/core/operator/physicalop/task.go:47`).
+//!
+//!    Three pieces of Go's cop task are still outside it. (a) The push-down
+//!    CATALOG is narrower than Go's `expression.PushDownExprs`, so a
+//!    conjunct like `b + 1 < 10` becomes a root `Selection` here where Go
+//!    prints a cop one -- widening [`tidb_expr::pushdown_catalog`] is the
+//!    fix, and [`crate::predicate_pushdown`] names it. (b) The cop-side
+//!    `TopN` of item 2. (c) The reader's `data:` label names its child's
+//!    OPERATOR, not Go's `data:TableFullScan_4`, because ids are build order
+//!    here (item 5).
+//!
+//!    Shapes other than the single-table read reach the boundary by their
+//!    own routes and are not covered by that mechanism: a join's leaves get
+//!    their readers from
+//!    [`crate::plan_trace::PlanTrace::join_scan_readers`], an `IndexLookUp`
+//!    is already a root operator over cop children, and a partitioned read
+//!    that fans out to a `PartitionUnion` still prints no reader per branch.
 //! 2. **A cop-side `TopN` is not printed.** Go's optimizer merges an
 //!    `ORDER BY` and the `LIMIT` above it into one `TopN`
 //!    (`rule_topn_push_down`), and this tier does

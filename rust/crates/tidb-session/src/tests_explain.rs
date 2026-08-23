@@ -177,21 +177,35 @@ fn explain_select() {
         ]
     );
 
-    // DIVERGENCE (explain module doc, items 1/3/5): TiDB prints
+    // TiDB prints
     //   TableReader_5 | 10000.00 | root | | data:TableFullScan_4
     //   └─TableFullScan_4 | 10000.00 | cop[tikv] | table:t | keep order:false, stats:pseudo
-    // This tier has no coprocessor, so there is no TableReader and no cop
-    // task. Like Go, it eliminates the identity projection over `SELECT *`.
-    // The scan row's estRows/access/info match exactly.
+    // and so does this tier now: `convertToTableScan` puts every base-table
+    // read in a `CopTask` and `ConvertToRootTask` caps it with the reader
+    // (`pkg/planner/core/find_best_task.go:2953`,
+    // `pkg/planner/core/operator/physicalop/task_base.go:504`). Like Go, it
+    // eliminates the identity projection over `SELECT *`. The only remaining
+    // difference is the CHILD ID inside `data:` -- ids are build order here
+    // and plan-construction order in Go, so this tier prints the child's
+    // NAME alone (as it already does for `data:TopN`, `data:StreamAgg`).
     assert_eq!(
         row_text(session.run("EXPLAIN SELECT * FROM t")),
-        vec![vec![
-            "TableFullScan_1".to_owned(),
-            "10000.00".to_owned(),
-            "root".to_owned(),
-            "table:t".to_owned(),
-            "keep order:false, stats:pseudo".to_owned(),
-        ]]
+        vec![
+            vec![
+                "TableReader_2".to_owned(),
+                "10000.00".to_owned(),
+                "root".to_owned(),
+                String::new(),
+                "data:TableFullScan".to_owned(),
+            ],
+            vec![
+                "└─TableFullScan_1".to_owned(),
+                "10000.00".to_owned(),
+                "cop[tikv]".to_owned(),
+                "table:t".to_owned(),
+                "keep order:false, stats:pseudo".to_owned(),
+            ],
+        ]
     );
 
     // A filter on an INDEXED column that real TiDB nevertheless answers with
@@ -213,18 +227,25 @@ fn explain_select() {
         row_text(session.run("EXPLAIN SELECT * FROM t WHERE b > 'x'")),
         vec![
             vec![
-                "Selection_2".to_owned(),
+                "TableReader_3".to_owned(),
                 "3333.33".to_owned(),
                 "root".to_owned(),
+                String::new(),
+                "data:Selection".to_owned(),
+            ],
+            vec![
+                "└─Selection_2".to_owned(),
+                "3333.33".to_owned(),
+                "cop[tikv]".to_owned(),
                 String::new(),
                 // Go's own function-call rendering, captured:
                 // gt(test.t.b, "x").
                 "gt(test.t.b, \"x\")".to_owned(),
             ],
             vec![
-                "└─TableFullScan_1".to_owned(),
+                "  └─TableFullScan_1".to_owned(),
                 "10000.00".to_owned(),
-                "root".to_owned(),
+                "cop[tikv]".to_owned(),
                 "table:t".to_owned(),
                 "keep order:false, stats:pseudo".to_owned(),
             ],
@@ -277,13 +298,18 @@ fn explain_select() {
     );
 
     // ORDER BY with no LIMIT above it still builds a plain Sort: there is
-    // nothing for the rule to fuse.
+    // nothing for the rule to fuse, so nothing enters the cop task and the
+    // reader caps a bare scan.
     assert_eq!(
         row_text(session.run("EXPLAIN SELECT * FROM t ORDER BY c"))
             .into_iter()
             .map(|row| row[0].clone())
             .collect::<Vec<_>>(),
-        vec!["Sort_2".to_owned(), "└─TableFullScan_1".to_owned()]
+        vec![
+            "Sort_3".to_owned(),
+            "└─TableReader_2".to_owned(),
+            "  └─TableFullScan_1".to_owned(),
+        ]
     );
 
     // GROUP BY. The 8000.00 is Go's stats-less distinctFactor result. The
@@ -395,8 +421,9 @@ fn a_pushed_where_keeps_its_cop_selection_under_the_partial_aggregate() {
 /// (table rows `(1,1),(2,2),(3,3),(4,10)`) is `4` for the
 /// `TableFullScan` (it reads every row), `2` for the `Selection` (only
 /// `v=3` and `v=10` pass `v > 2`), and `2` again for the `TableReader`
-/// root (a pass-through). The local trace omits that pass-through reader, so
-/// its real shape is `Selection` over `TableFullScan`.
+/// root (a pass-through). All three rows are printed here, with the same
+/// three counts: the reader boundary is recorded now, so the pass-through
+/// row exists and carries its child's real count.
 #[test]
 fn explain_analyze_select() {
     let mut session = Session::new();
@@ -410,15 +437,18 @@ fn explain_analyze_select() {
     let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM t WHERE v > 2"));
     // Columns: id, estRows, actRows, task, access object, execution
     // info, operator info, memory, disk.
-    assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0][0], "Selection_2");
-    assert_eq!(rows[0][2], "2"); // actRows: real, not the 3333.33 estimate.
-    assert_eq!(rows[1][0], "└─TableFullScan_1");
-    assert_eq!(rows[1][2], "4");
-    // Every recorded operator here runs in-process, and this tier collects no
-    // runtime timing/memory/disk counters at all.
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0][0], "TableReader_3");
+    assert_eq!(rows[0][2], "2"); // the pass-through reader's own count.
+    assert_eq!(rows[1][0], "└─Selection_2");
+    assert_eq!(rows[1][2], "2"); // actRows: real, not the 3333.33 estimate.
+    assert_eq!(rows[2][0], "  └─TableFullScan_1");
+    assert_eq!(rows[2][2], "4");
+    assert_eq!(rows[0][3], "root");
+    assert_eq!(rows[1][3], "cop[tikv]");
+    assert_eq!(rows[2][3], "cop[tikv]");
+    // This tier collects no runtime timing/memory/disk counters at all.
     for row in &rows {
-        assert_eq!(row[3], "root");
         assert_eq!(row[5], "N/A"); // execution info
         assert_eq!(row[7], "N/A"); // memory
         assert_eq!(row[8], "N/A"); // disk
@@ -598,8 +628,9 @@ fn explain_analyze_grouped_agg_and_distinct_real_act_rows() {
 /// captured: `insert into dst select * from src where a > 1` on
 /// `src = (1),(2),(3)` reports `2` for the `Selection` (the
 /// `WHERE`-matching rows) over the real `3`-row `TableFullScan`, computed
-/// before the insert writes anything. Go's pass-through reader is not part of
-/// this local trace.
+/// before the insert writes anything. The pass-through reader Go prints
+/// between the `Insert` and the cop `Selection` is recorded here too, with
+/// its child's count.
 #[test]
 fn explain_analyze_insert_select_source_real_act_rows() {
     let mut session = Session::new();
@@ -609,13 +640,15 @@ fn explain_analyze_insert_select_source_real_act_rows() {
 
     let rows =
         row_text(session.run("EXPLAIN ANALYZE INSERT INTO dst SELECT * FROM src WHERE a > 1"));
-    assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0][0], "Insert_3");
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows[0][0], "Insert_4");
     assert_eq!(rows[0][2], "0");
-    assert_eq!(rows[1][0], "└─Selection_2");
+    assert_eq!(rows[1][0], "└─TableReader_3");
     assert_eq!(rows[1][2], "2");
-    assert_eq!(rows[2][0], "  └─TableFullScan_1");
-    assert_eq!(rows[2][2], "3");
+    assert_eq!(rows[2][0], "  └─Selection_2");
+    assert_eq!(rows[2][2], "2");
+    assert_eq!(rows[3][0], "    └─TableFullScan_1");
+    assert_eq!(rows[3][2], "3");
 
     assert_eq!(
         row_text(session.run("SELECT a FROM dst ORDER BY a")),
@@ -954,9 +987,19 @@ fn explain_refuses_what_it_cannot_plan() {
 /// surfaces as a second, root-side `Selection`; only the estimate moves
 /// (`3333.33` for the single `>`, `2666.67` for the split).
 ///
-/// The local trace omits Go's pass-through `TableReader`; strict projection
-/// elimination also removes the identity projection. It therefore records
-/// the semantic `Selection` over `TableFullScan` pair.
+/// Strict projection elimination removes the identity projection here, as in
+/// Go. The read is a cop task under its `TableReader`, so the shape matches
+/// the capture for every conjunct this tier's push-down catalog admits.
+///
+/// The middle statement is the one place the two still differ, and the
+/// difference is the CATALOG, not the boundary: Go's coprocessor evaluates
+/// `plus(int, int)` and this tier's `tidb_expr::pushdown_catalog` does not,
+/// so `lt(plus(b, 1), 10)` is `CopTask.RootTaskConds` here -- a root
+/// `Selection` above the reader, which is exactly where Go puts a condition
+/// `expression.PushDownExprs` refuses
+/// (`pkg/planner/core/operator/physicalop/task.go:47`). The estimate is
+/// unaffected: Go's captured `2666.67` is what the two halves compose to,
+/// because Go prices its own two halves the same way.
 #[test]
 fn pushing_a_predicate_into_the_scan_keeps_the_captured_plan_shape() {
     let mut session = Session::new();
@@ -965,25 +1008,37 @@ fn pushing_a_predicate_into_the_scan_keeps_the_captured_plan_shape() {
     for (sql, printed) in [
         ("SELECT a, b FROM t WHERE a > 5", "gt(test.t.a, 5)"),
         (
-            "SELECT a, b FROM t WHERE a > 5 AND b + 1 < 10",
-            "gt(test.t.a, 5), lt(plus(test.t.b, 1), 10)",
-        ),
-        (
             "SELECT a, b FROM t WHERE a > 5 OR b < 10",
             "or(gt(test.t.a, 5), lt(test.t.b, 10))",
         ),
     ] {
         let rows = row_text(session.run(&format!("EXPLAIN {sql}")));
-        assert_eq!(rows.len(), 2, "{sql}");
-        assert_eq!(rows[0][0], "Selection_2", "{sql}");
-        assert_eq!(rows[0][4], printed, "{sql}");
-        assert_eq!(rows[1][0], "\u{2514}\u{2500}TableFullScan_1", "{sql}");
-        assert_eq!(rows[1][1], "10000.00", "{sql}");
-        // No second Selection, and no task column ever leaves `root`.
-        for row in &rows {
-            assert_eq!(row[2], "root", "{sql}");
-        }
+        assert_eq!(rows.len(), 3, "{sql}");
+        assert_eq!(rows[0][0], "TableReader_3", "{sql}");
+        assert_eq!(rows[0][2], "root", "{sql}");
+        assert_eq!(rows[0][4], "data:Selection", "{sql}");
+        assert_eq!(rows[1][0], "\u{2514}\u{2500}Selection_2", "{sql}");
+        assert_eq!(rows[1][2], "cop[tikv]", "{sql}");
+        assert_eq!(rows[1][4], printed, "{sql}");
+        assert_eq!(rows[2][0], "  \u{2514}\u{2500}TableFullScan_1", "{sql}");
+        assert_eq!(rows[2][1], "10000.00", "{sql}");
+        assert_eq!(rows[2][2], "cop[tikv]", "{sql}");
     }
+
+    // The conjunct the catalog cannot lower stays at root, over the same
+    // reader; the conjunct it can keeps its cop `Selection`.
+    let rows = row_text(session.run("EXPLAIN SELECT a, b FROM t WHERE a > 5 AND b + 1 < 10"));
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows[0][0], "Selection_4");
+    assert_eq!(rows[0][2], "root");
+    assert_eq!(rows[0][4], "lt(plus(test.t.b, 1), 10)");
+    assert_eq!(rows[1][0], "\u{2514}\u{2500}TableReader_3");
+    assert_eq!(rows[2][0], "  \u{2514}\u{2500}Selection_2");
+    assert_eq!(rows[2][2], "cop[tikv]");
+    assert_eq!(rows[2][4], "gt(test.t.a, 5)");
+    // Go's captured estimates, both of them.
+    assert_eq!(rows[0][1], "2666.67");
+    assert_eq!(rows[2][1], "3333.33");
 
     // The single `>` keeps Go's captured 3333.33 estimate, which the split
     // must not disturb.
@@ -1009,10 +1064,11 @@ fn a_filtering_scan_still_reports_the_rows_it_read() {
         .run("INSERT INTO t VALUES (1,1),(2,2),(3,3),(4,10)")
         .unwrap();
     let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM t WHERE v > 2"));
-    assert_eq!(rows[0][0], "Selection_2");
-    assert_eq!(rows[0][2], "2", "rows that passed the predicate");
-    assert_eq!(rows[1][0], "\u{2514}\u{2500}TableFullScan_1");
-    assert_eq!(rows[1][2], "4", "rows the scan read, before filtering");
+    assert_eq!(rows[0][0], "TableReader_3");
+    assert_eq!(rows[1][0], "\u{2514}\u{2500}Selection_2");
+    assert_eq!(rows[1][2], "2", "rows that passed the predicate");
+    assert_eq!(rows[2][0], "  \u{2514}\u{2500}TableFullScan_1");
+    assert_eq!(rows[2][2], "4", "rows the scan read, before filtering");
 }
 
 /// `EXPLAIN` of a hash join, against a `pkg/executor` mock-store capture on

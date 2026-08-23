@@ -2163,6 +2163,43 @@ fn run_select_traced_with_delivery_choice_inner(
             }
         }
     }
+    // Go `CopTask.RootTaskConds`: a conjunct the coprocessor cannot run stays
+    // at ROOT, and the task below it still closes -- the conjuncts the read
+    // DOES evaluate become its `Selection cop[tikv]` and the reader caps
+    // them, with the root `Selection` added above by `handleRootTaskConds`
+    // (`pkg/planner/core/find_best_task.go:3205`,
+    // `pkg/planner/core/operator/physicalop/task.go:47`). Closing it here,
+    // before the correlated-subquery Apply and the root `Selection` below,
+    // is what keeps those root operators above the boundary rather than
+    // inside it.
+    let mut cop_selection_printed = false;
+    if let Some(predicate) = &executed_where {
+        if let Some(trace) = trace.as_deref_mut() {
+            let cop_conjuncts = select
+                .where_clause
+                .as_ref()
+                .and_then(|whole| access::scan_pushed_conjuncts(whole, predicate));
+            match &cop_conjuncts {
+                Some(written) => {
+                    cop_selection_printed = trace.cop_selection_reader(
+                        written,
+                        &pushed_where,
+                        &qualify,
+                        access::select_predicate_stats_selectivity(
+                            select,
+                            written,
+                            catalog,
+                            current_db,
+                            &filter_scope,
+                        ),
+                    );
+                }
+                None => {
+                    trace.scan_reader_or_cop_selection();
+                }
+            }
+        }
+    }
     if let Some(predicate) = &executed_where {
         let decorrelated = decorrelate_exists::decorrelate_where(
             source,
@@ -2212,8 +2249,17 @@ fn run_select_traced_with_delivery_choice_inner(
                 .map_err(|e| eval_error_in_clause(e, "where clause"))?;
             refine_comparisons(&mut pred, ctx)
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            // Go prints the conditions of THIS `Selection` and no others. When
+            // the conjuncts the read evaluates already have their own
+            // `Selection` inside the cop task, this one is
+            // `CopTask.RootTaskConds` alone; when they do not, it is still the
+            // one place the whole `WHERE` is reported.
             let explained_where = trace.is_some().then(|| {
-                let mut predicates = pushed_where;
+                let mut predicates = if cop_selection_printed {
+                    Vec::new()
+                } else {
+                    pushed_where
+                };
                 predicates.push(pred.clone());
                 predicates
             });
@@ -2233,7 +2279,19 @@ fn run_select_traced_with_delivery_choice_inner(
                 let stats = physical_source_names
                     .then_some(crate::plan_trace::SELECTIVITY_FACTOR)
                     .or_else(|| {
-                        select_stats_selectivity(select, catalog, current_db, &filter_scope)
+                        // `cardinality.Selectivity(RootTaskConds)` once the
+                        // cop `Selection` has already priced its own half.
+                        if cop_selection_printed {
+                            access::select_predicate_stats_selectivity(
+                                select,
+                                &selection_written,
+                                catalog,
+                                current_db,
+                                &filter_scope,
+                            )
+                        } else {
+                            select_stats_selectivity(select, catalog, current_db, &filter_scope)
+                        }
                     });
                 if let Some(predicate) = &physical_trace_predicate {
                     let column_names =
@@ -2261,12 +2319,34 @@ fn run_select_traced_with_delivery_choice_inner(
         }
     }
 
-    // A covering scan whose access ranges consumed the whole predicate is
-    // already the cop task Go places below IndexReader/TableReader. Record
-    // that boundary before root sorting and projection are added.
-    if reader_ready {
+    // The single-table read's coprocessor task ends here, below every root
+    // operator the rest of this function adds.
+    //
+    // Go builds one for EVERY base-table read, not only for a scan whose
+    // ranges swallowed the predicate: `convertToTableScan` /
+    // `convertToIndexScan` put the scan in a `CopTask`,
+    // `addPushedDownSelection4PhysicalTableScan`
+    // (`pkg/planner/core/find_best_task.go:3198`) hangs the conjuncts the
+    // coprocessor may evaluate off it as a `PhysicalSelection` inside that
+    // task, and `ConvertToRootTask`
+    // (`pkg/planner/core/operator/physicalop/task_base.go:504`) caps it with
+    // the reader -- `TableReader root data:Selection` over
+    // `Selection cop[tikv]` over `TableFullScan cop[tikv]`.
+    //
+    // `executed_where.is_none()` is the honesty condition for claiming that
+    // boundary here: it says no conjunct was left for a root `SelectionExec`
+    // (`negotiate_scan_filter` either found no `WHERE`, or the ranges
+    // consumed it, or the SOURCE accepted every conjunct and applies it to
+    // every row it emits -- see `predicate_pushdown`'s staged-buffer
+    // obligation), so everything the trace holds below this point is work the
+    // read really does. A `WHERE` that DID leave a root conjunct closed its
+    // own task in the `RootTaskConds` block above, before that conjunct's
+    // `Selection` went on; `reader_ready` (a covering scan whose ranges
+    // consumed the predicate) implies `executed_where.is_none()` and is kept
+    // as the name of that case.
+    if reader_ready || executed_where.is_none() {
         if let Some(trace) = trace.as_deref_mut() {
-            trace.scan_reader();
+            trace.scan_reader_or_cop_selection();
         }
     }
 

@@ -1565,46 +1565,151 @@ impl PlanTrace {
             .is_some_and(|node| node.name == "Point_Get")
         {
             true
-        } else if self.scan_reader() {
-            true
         } else {
-            let Some(mut selection) = self.stack.pop() else {
-                return false;
-            };
-            if selection.name != "Selection" || selection.children.len() != 1 {
+            self.scan_reader_or_cop_selection()
+        }
+    }
+
+    /// The cop `Selection` and its reader, for a read whose `WHERE` ALSO left
+    /// conjuncts at root.
+    ///
+    /// Go builds exactly this pair: `expression.PushDownExprs` splits the
+    /// filter conditions, the coprocessor half becomes a `PhysicalSelection`
+    /// inside the cop task and the rest becomes `CopTask.RootTaskConds`,
+    /// whose own `Selection` is added ABOVE the reader by
+    /// `handleRootTaskConds` (`pkg/planner/core/find_best_task.go:3205`,
+    /// `pkg/planner/core/operator/physicalop/task.go:47`). Each half is
+    /// priced by its OWN conditions there, which is why the caller passes
+    /// this half's selectivity rather than the whole `WHERE`'s.
+    ///
+    /// All or nothing: a stack top that is not a bare scan leaves the tree
+    /// untouched and answers `false`, so the caller keeps its single root
+    /// `Selection` over the whole predicate.
+    pub(crate) fn cop_selection_reader(
+        &mut self,
+        predicate: &tidb_ast::Expr,
+        built: &[Expression],
+        qualify: &Qualifier<'_>,
+        stats_selectivity: Option<f64>,
+    ) -> bool {
+        if !self.stack.last().is_some_and(|node| {
+            matches!(
+                node.name,
+                "TableFullScan" | "TableRangeScan" | "IndexFullScan" | "IndexRangeScan"
+            ) && node.children.is_empty()
+        }) {
+            return false;
+        }
+        self.selection(predicate, Some(built), qualify, stats_selectivity);
+        if self.scan_reader_or_cop_selection() {
+            return true;
+        }
+        // Unreachable through the guard above -- the `Selection` just wrapped a
+        // bare scan, which is the shape the reader accepts -- but the caller's
+        // contract is all or nothing, and a half-built boundary would put a
+        // second `Selection` over this one when the caller falls back.
+        if let Some(mut selection) = self.stack.pop() {
+            if let Some(scan) = selection.children.pop() {
+                self.stack.push(scan);
+            }
+        }
+        false
+    }
+
+    /// Runs a coprocessor push-down against a task this recorder may already
+    /// have capped with its reader.
+    ///
+    /// Go grows ONE `CopTask` -- the scan, the pushed `Selection`, then a
+    /// pushed `Limit`/`TopN`/partial aggregate -- and calls
+    /// `ConvertToRootTask` exactly once, when the data source is finished
+    /// (`pkg/planner/core/find_best_task.go`'s `convertToTableScan`). This
+    /// recorder is bottom-up and caps the task as soon as the driver can
+    /// prove the boundary, so a push-down that arrives afterwards lifts the
+    /// cap, adds its operator INSIDE the task, and puts a cap back. A
+    /// push-down that declines leaves the tree exactly as it found it, which
+    /// is what lets every caller keep its own refusal message.
+    fn in_cop_task(&mut self, push: impl FnOnce(&mut Self) -> bool) -> bool {
+        let capped = self.stack.last().is_some_and(|node| {
+            matches!(node.name, "TableReader" | "IndexReader") && node.children.len() == 1
+        });
+        if !capped {
+            return push(self);
+        }
+        let reader = self.stack.pop().expect("the cap was just seen");
+        self.stack.push(reader.children[0].clone());
+        if push(self) {
+            return true;
+        }
+        self.stack.pop();
+        self.stack.push(reader);
+        false
+    }
+
+    /// Closes a single-table read's coprocessor task: a bare scan, or the
+    /// `Selection` the READ ITSELF evaluates over one, moves below its
+    /// `TableReader`/`IndexReader`.
+    ///
+    /// This is Go's own two steps.
+    /// `addPushedDownSelection4PhysicalTableScan`
+    /// (`pkg/planner/core/find_best_task.go:3198`, and its index twin
+    /// `addPushedDownSelection4PhysicalIndexScan` `:2726`) hangs the filter
+    /// conditions the coprocessor may run off the scan as a
+    /// `PhysicalSelection` INSIDE the cop task; `ConvertToRootTask`
+    /// (`pkg/planner/core/operator/physicalop/task_base.go:504`) then caps
+    /// that task with the reader, whose operator info names its child --
+    /// `data:Selection` when the filter is there, `data:TableFullScan` when
+    /// the ranges consumed the whole predicate.
+    ///
+    /// The caller owes the honesty condition: it may only claim this boundary
+    /// when the `Selection` on the stack is one the SOURCE applies to every
+    /// row it emits (`negotiate_scan_filter` said so), never one a root
+    /// `SelectionExec` still runs. A conjunct that stayed at root is Go's
+    /// `CopTask.RootTaskConds` and keeps its own root `Selection` ABOVE the
+    /// reader (`pkg/planner/core/operator/physicalop/task.go:47`).
+    pub(crate) fn scan_reader_or_cop_selection(&mut self) -> bool {
+        if self.scan_reader() {
+            return true;
+        }
+        let Some(mut selection) = self.stack.pop() else {
+            return false;
+        };
+        if selection.name != "Selection" || selection.children.len() != 1 {
+            self.stack.push(selection);
+            return false;
+        }
+        let scan_name = selection.children[0].name;
+        let reader = match scan_name {
+            "TableFullScan" | "TableRangeScan" => "TableReader",
+            "IndexFullScan" | "IndexRangeScan" => "IndexReader",
+            _ => {
                 self.stack.push(selection);
                 return false;
             }
-            let scan_name = selection.children[0].name;
-            let reader = match scan_name {
-                "TableFullScan" | "TableRangeScan" => "TableReader",
-                "IndexFullScan" | "IndexRangeScan" => "IndexReader",
-                _ => {
-                    self.stack.push(selection);
-                    return false;
-                }
-            };
-            selection.task = "cop[tikv]";
-            selection.children[0].task = "cop[tikv]";
-            let estimate = selection.est_rows;
-            let key_ndv_ratio = selection.key_ndv_ratio;
-            let act_rows = selection.act_rows.clone();
-            let mut reader_node = PlanNode::new(
-                reader,
-                estimate,
-                String::new(),
-                if reader == "TableReader" {
-                    "data:Selection".to_owned()
-                } else {
-                    "index:Selection".to_owned()
-                },
-            );
-            reader_node.key_ndv_ratio = key_ndv_ratio;
-            reader_node.act_rows = act_rows;
-            reader_node.children.push(selection);
-            self.stack.push(reader_node);
-            true
+        };
+        if !selection.children[0].children.is_empty() {
+            self.stack.push(selection);
+            return false;
         }
+        selection.task = "cop[tikv]";
+        selection.children[0].task = "cop[tikv]";
+        let estimate = selection.est_rows;
+        let key_ndv_ratio = selection.key_ndv_ratio;
+        let act_rows = selection.act_rows.clone();
+        let mut reader_node = PlanNode::new(
+            reader,
+            estimate,
+            String::new(),
+            if reader == "TableReader" {
+                "data:Selection".to_owned()
+            } else {
+                "index:Selection".to_owned()
+            },
+        );
+        reader_node.key_ndv_ratio = key_ndv_ratio;
+        reader_node.act_rows = act_rows;
+        reader_node.children.push(selection);
+        self.stack.push(reader_node);
+        true
     }
 
     /// Places the two scan children of a merge join behind their root reader
@@ -1721,6 +1826,15 @@ impl PlanTrace {
         qualify: &Qualifier<'_>,
         sum: bool,
     ) -> bool {
+        self.in_cop_task(|trace| trace.partial_stream_agg_inside_cop_task(select, qualify, sum))
+    }
+
+    fn partial_stream_agg_inside_cop_task(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+        sum: bool,
+    ) -> bool {
         let Some(mut top) = self.stack.pop() else {
             return false;
         };
@@ -1824,6 +1938,17 @@ impl PlanTrace {
     /// Moves a one-column grouping stage below the reader. The root HashAgg
     /// still deduplicates keys that different regions emitted.
     pub(crate) fn partial_hash_agg(
+        &mut self,
+        fields: &[tidb_ast::SelectField],
+        qualify: &Qualifier<'_>,
+        logical_rows: Option<f64>,
+    ) -> bool {
+        self.in_cop_task(|trace| {
+            trace.partial_hash_agg_inside_cop_task(fields, qualify, logical_rows)
+        })
+    }
+
+    fn partial_hash_agg_inside_cop_task(
         &mut self,
         fields: &[tidb_ast::SelectField],
         qualify: &Qualifier<'_>,
@@ -4181,6 +4306,19 @@ impl PlanTrace {
         count: u64,
         logical_rows: Option<f64>,
     ) -> bool {
+        self.in_cop_task(|trace| {
+            trace.pushed_topn_lookup_inside_cop_task(order_by, qualify, offset, count, logical_rows)
+        })
+    }
+
+    fn pushed_topn_lookup_inside_cop_task(
+        &mut self,
+        order_by: &[tidb_ast::OrderItem],
+        qualify: &Qualifier<'_>,
+        offset: u64,
+        count: u64,
+        logical_rows: Option<f64>,
+    ) -> bool {
         let Some(top) = self.stack.pop() else {
             return false;
         };
@@ -4245,6 +4383,10 @@ impl PlanTrace {
     /// TiKV and leaves the corresponding reader boundary above it. The root
     /// Limit is recorded separately by [`Self::limit`].
     pub(crate) fn pushed_limit_reader(&mut self, offset: u64, count: u64) -> bool {
+        self.in_cop_task(|trace| trace.pushed_limit_inside_cop_task(offset, count))
+    }
+
+    fn pushed_limit_inside_cop_task(&mut self, offset: u64, count: u64) -> bool {
         let Some(mut input) = self.stack.pop() else {
             return false;
         };
@@ -4304,6 +4446,15 @@ impl PlanTrace {
     /// returns its rows through a TableReader. The root TopN remains above
     /// this reader and applies the SQL offset/count again, as in Go TiDB.
     pub(crate) fn pushed_topn_reader(
+        &mut self,
+        order_by: &[tidb_ast::OrderItem],
+        qualify: &Qualifier<'_>,
+        count: u64,
+    ) -> bool {
+        self.in_cop_task(|trace| trace.pushed_topn_inside_cop_task(order_by, qualify, count))
+    }
+
+    fn pushed_topn_inside_cop_task(
         &mut self,
         order_by: &[tidb_ast::OrderItem],
         qualify: &Qualifier<'_>,
