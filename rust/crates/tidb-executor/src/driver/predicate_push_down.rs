@@ -83,6 +83,20 @@ pub(crate) type Offered<'a> = &'a [Expr];
 #[derive(Default)]
 pub(crate) struct Plan {
     filters: BTreeMap<String, Vec<Expr>>,
+    /// The subset of `filters` that [`propagate_over_outer_join`] DERIVED
+    /// through an outer join's keys, keyed like `filters`.
+    ///
+    /// Kept apart because the two families reach the physical leaf
+    /// differently. In Go both live in `DataSource.pushedDownConds` and the
+    /// ranger consumes either into access ranges; in this tier the leaf's
+    /// access-path chooser prices `RowSource`'s filters, and the join-family
+    /// comparison above it was measured against exactly that pricing.
+    /// Offering EVERY distributed filter to the chooser re-priced inner-join
+    /// leaves and flipped `explain_complex`'s recorded `HashJoin` into an
+    /// index join, so only THIS family -- absent from `RowSource` entirely,
+    /// because `join_reorder` never sees an outer join's derived conditions
+    /// -- is offered for range building (`from.rs`'s `leaf_where`).
+    derived: BTreeMap<String, Vec<Expr>>,
 }
 
 impl Plan {
@@ -95,6 +109,20 @@ impl Plan {
         qualifier
             .as_ref()
             .and_then(|name| self.filters.get(name))
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    /// The outer-join-derived conditions for one leaf; see [`Plan::derived`].
+    pub(crate) fn derived_for(&self, table: &TableRef) -> &[Expr] {
+        let qualifier = table
+            .alias
+            .as_ref()
+            .or_else(|| table.name.last())
+            .map(|name| name.to_ascii_lowercase());
+        qualifier
+            .as_ref()
+            .and_then(|name| self.derived.get(name))
             .map(Vec::as_slice)
             .unwrap_or_default()
     }
@@ -245,6 +273,16 @@ fn distribute_join(
                     &mut right_filters,
                 );
             }
+            let derived_from = right_filters.len();
+            propagate_over_outer_join(
+                &on,
+                inherited,
+                &left_names,
+                &right_names,
+                bindings,
+                &mut right_filters,
+            );
+            record_derived(plan, right, &right_filters[derived_from..]);
         }
         JoinType::Right => {
             for condition in inherited {
@@ -271,12 +309,57 @@ fn distribute_join(
                     &mut right_filters,
                 );
             }
+            let derived_from = left.len();
+            propagate_over_outer_join(
+                &on,
+                inherited,
+                &right_names,
+                &left_names,
+                bindings,
+                &mut left,
+            );
+            record_derived(plan, &join.left, &left[derived_from..]);
         }
     }
     dedup(&mut left);
     dedup(&mut right_filters);
     distribute_node(&join.left, &left, bindings, catalog, current_db, plan);
     distribute_node(right, &right_filters, bindings, catalog, current_db, plan);
+}
+
+/// Records outer-join-derived conditions for the leaf they land on, when the
+/// null-supplying side IS one base-table leaf; see [`Plan::derived`].
+///
+/// A nested inner side keeps its derived conditions as ordinary distributed
+/// filters (they reach the physical Selection through `filters`), it just
+/// does not offer them for range building -- routing through a deeper join
+/// loses the derivation receipt this map is keyed on, and a missing range is
+/// only a plan-shape narrowing, never a wrong row.
+fn record_derived(plan: &mut Plan, node: &JoinNode, derived: &[Expr]) {
+    if derived.is_empty() {
+        return;
+    }
+    let mut relation = node;
+    while let JoinNode::Join(join) = relation {
+        if join.right.is_some() || join.on.is_some() || !join.using.is_empty() || join.natural {
+            return;
+        }
+        relation = &join.left;
+    }
+    let JoinNode::Table(table) = relation else {
+        return;
+    };
+    let Some(qualifier) = table
+        .alias
+        .as_ref()
+        .or_else(|| table.name.last())
+        .map(|name| name.to_ascii_lowercase())
+    else {
+        return;
+    };
+    let entry = plan.derived.entry(qualifier).or_default();
+    entry.extend_from_slice(derived);
+    dedup(entry);
 }
 
 fn distribute_node(
@@ -342,6 +425,297 @@ fn derive_for_sides(
             }
         }
         Side::Left | Side::Right | Side::Foreign => {}
+    }
+}
+
+/// One column as the outer-join propagation solver identifies it: the binding
+/// it resolves to and its spelled name, lowercased -- the identity Go's
+/// `basePropConstSolver.colMapper` keys by `UniqueID`.
+#[derive(Clone, PartialEq, Eq)]
+struct SolverColumn {
+    qualifier: String,
+    column: String,
+}
+
+/// Go `expression.PropConstForOuterJoin`'s `propagateColumnEQ` + `deriveConds`
+/// (`pkg/expression/constant_propagation.go:846-941`), reduced to the part a
+/// leaf-filter plan can carry.
+///
+/// For every ON join key `outerCol = innerCol` (Go `validColEqualCond`: a bare
+/// column equality with one column per side and equal collations), every OTHER
+/// deterministic ON conjunct -- and every WHERE conjunct wholly on the
+/// preserved side (Go's `deriveConds` with `filterConds=true` requires
+/// `ExprFromSchema(cond, s.outerSchema)`) -- has its occurrences of `outerCol`
+/// replaced by `innerCol` (Go `tryToReplaceCond` with `nullAware=true`). Go
+/// appends the derived expression to `joinConds`, where `extractOnCondition`
+/// then sorts a single-sided condition to its child; a derived condition
+/// wholly on the null-supplying side is therefore routed there directly.
+/// Derived conditions that still mix both sides stay AT the join in Go (its
+/// `OtherConditions`); they are implied by conditions the join already
+/// evaluates, so dropping them here changes no rows and no leaf plan.
+///
+/// This is what turns `t1 LEFT JOIN t2 ON t1.a = t2.a AND t1.a != 3` into a
+/// `t2.a != 3` range on the inner scan (`executor/jointest/join`'s recorded
+/// `TableRangeScan table:t2 range:[-inf,3), (3,+inf]`): the inequality is a
+/// preserved-side ON condition -- never a filter, it stays as the printed
+/// `left cond` -- yet through the join key it bounds which inner rows can ever
+/// match. Skipping the derivation is safe for rows but full-scans the inner
+/// side.
+///
+/// The companion derivation in Go's same pass -- `innerCol is not null` from
+/// each key equality -- is [`derive_for_sides`]' existing [`derive_not_null`].
+/// Go's INNER-join solver (`propConstSolver.propagateColumnEQ`, which derives
+/// in both directions) is NOT modeled here; [`super::join_reorder`] carries
+/// its constant-equality subset.
+fn propagate_over_outer_join(
+    on: &[Expr],
+    inherited: &[Expr],
+    outer_names: &BTreeSet<String>,
+    inner_names: &BTreeSet<String>,
+    bindings: &[Binding],
+    inner_filters: &mut Vec<Expr>,
+) {
+    // Go's first loop over joinConds: union each `outerCol = innerCol` key
+    // (`unionSet.Union`) and mark it visited so it is never itself a
+    // replacement source. Same-side equalities do not union and are not
+    // visited -- Go's `colsFromOuterAndInner` returns nil for them.
+    let mut classes: Vec<Vec<SolverColumn>> = Vec::new();
+    let mut visited = vec![false; on.len()];
+    for (index, condition) in on.iter().enumerate() {
+        let Some((left_path, right_path)) = column_equality(condition) else {
+            continue;
+        };
+        let Some(left_column) = solver_column(left_path, bindings) else {
+            continue;
+        };
+        let Some(right_column) = solver_column(right_path, bindings) else {
+            continue;
+        };
+        // Go `validColEqualCond` requires equal collations on the two key
+        // columns; `tryToReplaceCond` additionally requires the same type
+        // byte (`src.RetType.GetType() != tgt.RetType.GetType()`), so a key
+        // whose sides differ in type unions in Go but can never derive --
+        // gating the union here is behavior-equivalent and simpler.
+        let Some((left_type, right_type)) = column_field_type(&left_column, bindings)
+            .zip(column_field_type(&right_column, bindings))
+        else {
+            continue;
+        };
+        if left_type.code() != right_type.code()
+            || left_type.collation_name() != right_type.collation_name()
+        {
+            continue;
+        }
+        let crosses = (outer_names.contains(&left_column.qualifier)
+            && inner_names.contains(&right_column.qualifier))
+            || (outer_names.contains(&right_column.qualifier)
+                && inner_names.contains(&left_column.qualifier));
+        if !crosses {
+            continue;
+        }
+        visited[index] = true;
+        union_columns(&mut classes, left_column, right_column);
+    }
+
+    // Go's two-layer loop over `s.columns`: every (outer, inner) pair in one
+    // equivalence class derives, over the original joinConds
+    // (`deriveConds(..., filterConds=false)`, bounded by `lenJoinConds` so a
+    // derived condition is never re-derived) and over the outer-side filter
+    // conditions (`deriveConds(..., filterConds=true)`).
+    let mut derived = Vec::new();
+    for class in &classes {
+        for outer_column in class {
+            if !outer_names.contains(&outer_column.qualifier) {
+                continue;
+            }
+            for inner_column in class {
+                if !inner_names.contains(&inner_column.qualifier) {
+                    continue;
+                }
+                for (index, condition) in on.iter().enumerate() {
+                    if visited[index] {
+                        continue;
+                    }
+                    try_to_replace_cond(
+                        condition,
+                        outer_column,
+                        inner_column,
+                        bindings,
+                        &mut derived,
+                    );
+                }
+                for condition in inherited {
+                    // Only a filter wholly on the preserved side derives: a
+                    // mixed WHERE predicate reasons about the row AFTER null
+                    // extension, which the inner child never sees.
+                    if expression_side(condition, outer_names, inner_names, bindings) != Side::Left
+                    {
+                        continue;
+                    }
+                    try_to_replace_cond(
+                        condition,
+                        outer_column,
+                        inner_column,
+                        bindings,
+                        &mut derived,
+                    );
+                }
+            }
+        }
+    }
+    // Go appends every derived condition to `joinConds` and lets
+    // `extractOnCondition` route it; only the ones wholly on the inner side
+    // reach a child there, and only those exist as leaf filters here.
+    for condition in derived {
+        if expression_side(&condition, outer_names, inner_names, bindings) == Side::Right {
+            inner_filters.push(condition);
+        }
+    }
+}
+
+/// Resolves one written column path to its solver identity, or `None` when
+/// the path does not resolve to exactly one binding.
+fn solver_column(path: &[String], bindings: &[Binding]) -> Option<SolverColumn> {
+    let binding = resolve_binding(path, bindings)?;
+    let column = path.last()?;
+    Some(SolverColumn {
+        qualifier: binding.qualifier.to_ascii_lowercase(),
+        column: column.to_ascii_lowercase(),
+    })
+}
+
+fn column_field_type<'a>(
+    column: &SolverColumn,
+    bindings: &'a [Binding],
+) -> Option<&'a FieldType> {
+    bindings
+        .iter()
+        .find(|binding| binding.qualifier.eq_ignore_ascii_case(&column.qualifier))?
+        .columns
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(&column.column))
+        .map(|(_, field_type)| field_type)
+}
+
+/// Merges the two columns' equivalence classes -- Go's
+/// `disjointset.SimpleIntSet.Union`, over a handful of join-key columns.
+fn union_columns(classes: &mut Vec<Vec<SolverColumn>>, a: SolverColumn, b: SolverColumn) {
+    let of_a = classes.iter().position(|class| class.contains(&a));
+    let of_b = classes.iter().position(|class| class.contains(&b));
+    match (of_a, of_b) {
+        (Some(i), Some(j)) if i == j => {}
+        (Some(i), Some(j)) => {
+            // Remove the later class first so the earlier index stays valid.
+            let merged = classes.remove(i.max(j));
+            classes[i.min(j)].extend(merged);
+        }
+        (Some(i), None) => classes[i].push(b),
+        (None, Some(j)) => classes[j].push(a),
+        (None, None) => classes.push(vec![a, b]),
+    }
+}
+
+/// Go `expression.tryToReplaceCond` with `nullAware=true`
+/// (`constant_propagation.go:240-301`): replaces every occurrence of
+/// `outer_column` in `condition` with `inner_column` and appends the result to
+/// `derived` -- unless the condition contains a construct whose value could
+/// change under the substitution when the join later NULL-extends the row.
+///
+/// The refusals, each Go's:
+/// * a bare column or constant at the top -- Go replaces only inside a
+///   `*ScalarFunction`;
+/// * `unFoldableFunctions` (RAND, SLEEP, UUID, ... -- `function_traits.go:48`)
+///   and `inequalFunctions` (ISNULL, `:218`) anywhere in the tree; a
+///   non-deterministic subtree poisons the WHOLE condition, which is why the
+///   walk refuses rather than skips;
+/// * with `nullAware` (always true over an outer join): IFNULL, IF, CASE and
+///   `<=>`, whose results depend on the ORIGINAL nullability of the outer
+///   column (Go cites #15782/#17817: `ifnull(t2.b, 'val')` is 'val' for a
+///   NULL-extended row but the inner column is never null-extended);
+/// * an explicit COLLATE anywhere -- Go compares the condition's derived
+///   collation against the target column's and skips the occurrence when they
+///   differ; this tier does not derive expression collations, and refusing is
+///   the safe direction (a derived condition is implied, so a missing one
+///   changes no rows).
+///
+/// [`safe_to_duplicate`] screens subqueries, variables, aggregates and
+/// mutable-effects calls first, matching what Go's expression domain simply
+/// cannot contain at this point.
+fn try_to_replace_cond(
+    condition: &Expr,
+    outer_column: &SolverColumn,
+    inner_column: &SolverColumn,
+    bindings: &[Binding],
+    derived: &mut Vec<Expr>,
+) {
+    if !safe_to_duplicate(condition) {
+        return;
+    }
+    if matches!(
+        strip_parens(condition),
+        Expr::Column(_) | Expr::Int(_) | Expr::Decimal(_) | Expr::Float(_) | Expr::String(_)
+            | Expr::Null | Expr::Bool(_)
+    ) {
+        return;
+    }
+
+    struct Replace<'a> {
+        outer: &'a SolverColumn,
+        inner: &'a SolverColumn,
+        bindings: &'a [Binding],
+        replaced: bool,
+        refused: bool,
+    }
+    impl tidb_ast::Visitor for Replace<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expr) = node.downcast_mut::<Expr>() else {
+                return self.refused;
+            };
+            match expr {
+                Expr::Func { name, .. } => {
+                    let name = name.to_ascii_lowercase();
+                    // nullAware refusals plus the shared unfoldable set;
+                    // mutable effects were screened by `safe_to_duplicate`.
+                    if name == "ifnull"
+                        || name == "if"
+                        || super::through_proj::is_unfoldable(&name)
+                    {
+                        self.refused = true;
+                    }
+                }
+                Expr::Case { .. } => self.refused = true,
+                Expr::Binary(BinaryOp::NullEq, _, _) => self.refused = true,
+                Expr::Is {
+                    target: tidb_ast::IsTarget::Null,
+                    ..
+                } => self.refused = true,
+                Expr::Collate { .. } => self.refused = true,
+                Expr::Column(path) => {
+                    if solver_column(path, self.bindings).as_ref() == Some(self.outer) {
+                        *path = vec![self.inner.qualifier.clone(), self.inner.column.clone()];
+                        self.replaced = true;
+                    }
+                }
+                _ => {}
+            }
+            self.refused
+        }
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            !self.refused
+        }
+    }
+
+    let mut replace = Replace {
+        outer: outer_column,
+        inner: inner_column,
+        bindings,
+        replaced: false,
+        refused: false,
+    };
+    let mut candidate = condition.clone();
+    tidb_ast::Visitable::accept(&mut candidate, &mut replace);
+    if replace.replaced && !replace.refused {
+        derived.push(candidate);
     }
 }
 
