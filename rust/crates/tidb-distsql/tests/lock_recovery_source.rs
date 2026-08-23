@@ -28,7 +28,13 @@ fn delegate_has_one_shared_runtime_and_only_same_task_continuation() {
     assert!(!recovery.contains("SharedReadRuntime::new"));
     assert!(!recovery.contains("RegionCache::new"));
     assert!(!recovery.contains("TonicCoprocessorClient::new"));
-    assert!(recovery.contains("decode_lock_observation(&observation.lock)"));
+    // The decoder is the BLOCKING one deliberately: a coprocessor read meets
+    // pessimistic locks as readily as a point read, and the shared resolver
+    // dispatches on the lock's type rather than the caller's kind. What this
+    // pin is really asserting -- that the delegate decodes the observation's
+    // own lock through the shared decoder instead of rolling its own -- is
+    // unchanged.
+    assert!(recovery.contains("decode_blocking_lock_observation(&observation.lock)"));
     assert!(recovery.contains("observation.caller_start_ts"));
     assert!(recovery.contains("&observation.request_context"));
     assert!(recovery.contains("&observation.call"));

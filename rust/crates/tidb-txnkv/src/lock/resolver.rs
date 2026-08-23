@@ -553,10 +553,25 @@ where
         }
     };
     let primary_lock = match check_response.lock_info.as_ref() {
-        // The returned primary lock uses the same strict protocol gate.
-        Some(primary_lock) => super::decode_lock_observation(primary_lock)?
-            .into_iter()
-            .next(),
+        // This field is only ever asked one question below: is the owner's
+        // primary an ASYNC-COMMIT optimistic primary? A pessimistic primary
+        // is the ordinary state of a transaction still in its locking phase,
+        // and it answers that question "no" -- which is exactly what `None`
+        // means to every reader below. Refusing the whole status answer
+        // because of it failed reads with "lock admission failed:
+        // pessimistic lock type 5 is outside bounded recovery" whenever a
+        // read met a live pessimistic transaction.
+        //
+        // Deliberately narrow: ONLY a pessimistic primary becomes `None`.
+        // Any other shape this gate cannot describe -- a transaction-file
+        // lock, an unknown op, a lock missing its identity -- still fails
+        // loudly, because those say something about the protocol that this
+        // port has not been taught, and swallowing them would hide it.
+        Some(primary_lock) => match super::decode_lock_observation(primary_lock) {
+            Ok(admitted) => admitted.into_iter().next(),
+            Err(LockAdmissionError::Pessimistic(_)) => None,
+            Err(error) => return Err(LockRecoveryError::Admission(error)),
+        },
         None => None,
     };
     if check_response.lock_ttl > 0 {
