@@ -153,8 +153,8 @@
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_join::{
-    equi_keys_equal_chunk_rows, equi_keys_equal_row, exact_int_key_chunk, row_hash, row_hash_chunk,
-    row_key, row_key_by, BuildError, BuildTable, EquiKey, FastBytesMap, KeyClass, KeyError,
+    BuildError, BuildTable, EquiKey, FastBytesMap, KeyClass, KeyError, equi_keys_equal_chunk_rows,
+    equi_keys_equal_row, exact_int_key_chunk, row_hash, row_hash_chunk, row_key, row_key_by,
 };
 use crate::mem_quota::StatementMemory;
 use std::cell::Cell;
@@ -167,9 +167,9 @@ use tidb_chunk::list::RowPtr;
 use tidb_chunk::row::Row;
 use tidb_chunk::row_container::RowContainer;
 use tidb_datatype::{Collation, Datum, Decimal, EvalType, FieldType, MyDecimal};
+use tidb_expr::Columns;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
 use tidb_util::memory::{ArcAction, Tracker};
 
 /// Which side, if any, keeps rows that match nothing.
@@ -593,12 +593,12 @@ impl IndexLookupAggregation {
                             Some(_) => {
                                 return Err(ExecError::unsupported(
                                     "an index lookup decimal SUM received a non-decimal value",
-                                ))
+                                ));
                             }
                             None => {
                                 return Err(ExecError::unsupported(
                                     "an index lookup SUM input offset is absent",
-                                ))
+                                ));
                             }
                         }
                     }
@@ -970,7 +970,8 @@ impl<C: Columns> JoinExec<C> {
     ) -> Self {
         let left_width = left.ret_field_types().len();
         let split = crate::hash_join::split_equi(&conditions, left_width);
-        let cross_side_equality = crate::hash_join::has_cross_side_equality(&conditions, left_width);
+        let cross_side_equality =
+            crate::hash_join::has_cross_side_equality(&conditions, left_width);
         let flattened = conditions
             .iter()
             .flat_map(crate::hash_join::split_conjuncts)
@@ -2801,10 +2802,11 @@ impl<C: Columns> JoinExec<C> {
     /// worker boundary.
     fn fill_parallel_exact_int_probe_window(&mut self) -> Result<(), ExecError> {
         debug_assert!(self.can_parallelize_exact_int_probe());
-        debug_assert!(self
-            .hash
-            .as_ref()
-            .is_some_and(|hash| hash.parallel_probe_pending.is_empty()));
+        debug_assert!(
+            self.hash
+                .as_ref()
+                .is_some_and(|hash| hash.parallel_probe_pending.is_empty())
+        );
 
         let probe_is_left = !self.hash_build_is_left();
         let probe_types = if probe_is_left {
@@ -4143,6 +4145,45 @@ fn merge_key_cmp_row(
     types: &[FieldType],
     desc: bool,
 ) -> Result<Ordering, ExecError> {
+    // Single signed-integer join key: compare the typed i64 directly instead
+    // of materializing the row's cell into a Datum (see merge_rows_cmp).
+    if key_offsets.len() == 1 {
+        let offset = key_offsets[0];
+        let ft = &types[offset];
+        if matches!(
+            ft.code(),
+            tidb_datatype::FieldTypeCode::Tiny
+                | tidb_datatype::FieldTypeCode::Short
+                | tidb_datatype::FieldTypeCode::Int24
+                | tidb_datatype::FieldTypeCode::Long
+                | tidb_datatype::FieldTypeCode::LongLong
+        ) && !ft.is_unsigned()
+        {
+            let Some(Datum::Int(left_value)) = left.first() else {
+                // A NULL cached key matches nothing: under Go's NULL ordering
+                // a NULL group compares Less than every real key, which the
+                // generic arm would have produced from the same datums.
+                let null_cmp = if desc {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                };
+                return Ok(null_cmp);
+            };
+            if right.is_null(offset) {
+                // NULL vs NULL walks Equal (the pair still produces no rows);
+                // a real key vs NULL compares Greater, as the datum order does.
+                let cmp = if left.first() == Some(&Datum::Null) {
+                    Ordering::Equal
+                } else {
+                    Ordering::Greater
+                };
+                return Ok(if desc { cmp.reverse() } else { cmp });
+            }
+            let cmp = left_value.cmp(&right.get_int64(offset));
+            return Ok(if desc { cmp.reverse() } else { cmp });
+        }
+    }
     for (left, &offset) in left.iter().zip(key_offsets) {
         let mut cmp = tidb_expr::compare_datums(left, &right.get_datum(offset, &types[offset]))?;
         if desc {
@@ -4162,6 +4203,35 @@ fn merge_rows_cmp(
     types: &[FieldType],
     desc: bool,
 ) -> Result<Ordering, ExecError> {
+    // The single signed-integer join key (TPC-H q12's l_orderkey = o_orderkey,
+    // every handle equality) is the hot path of an ordered scan merge: typed
+    // i64 column reads skip the per-row Datum materialization (a heap
+    // allocation for string columns) that the generic comparison pays.
+    if key_offsets.len() == 1
+        && !desc
+        && matches!(
+            types[key_offsets[0]].code(),
+            tidb_datatype::FieldTypeCode::Tiny
+                | tidb_datatype::FieldTypeCode::Short
+                | tidb_datatype::FieldTypeCode::Int24
+                | tidb_datatype::FieldTypeCode::Long
+                | tidb_datatype::FieldTypeCode::LongLong
+        )
+        && !types[key_offsets[0]].is_unsigned()
+    {
+        let offset = key_offsets[0];
+        let (ln, rn) = (left.is_null(offset), right.is_null(offset));
+        if ln || rn {
+            return Ok(if ln && rn {
+                Ordering::Equal
+            } else if ln {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            });
+        }
+        return Ok(left.get_int64(offset).cmp(&right.get_int64(offset)));
+    }
     for &offset in key_offsets {
         let mut cmp = tidb_expr::compare_datums(
             &left.get_datum(offset, &types[offset]),
@@ -4184,6 +4254,45 @@ fn merge_row_key_cmp(
     key: &[Datum],
     desc: bool,
 ) -> Result<Ordering, ExecError> {
+    // Single signed-integer join key: compare the typed i64 directly instead
+    // of materializing the row's cell into a Datum (see merge_rows_cmp).
+    if key_offsets.len() == 1 {
+        let offset = key_offsets[0];
+        let ft = &types[offset];
+        if matches!(
+            ft.code(),
+            tidb_datatype::FieldTypeCode::Tiny
+                | tidb_datatype::FieldTypeCode::Short
+                | tidb_datatype::FieldTypeCode::Int24
+                | tidb_datatype::FieldTypeCode::Long
+                | tidb_datatype::FieldTypeCode::LongLong
+        ) && !ft.is_unsigned()
+        {
+            let (row_null, key_null) = (row.is_null(offset), key.first() == Some(&Datum::Null));
+            if row_null || key_null {
+                // The datum order the generic arm reproduces: NULL sorts
+                // first, and NULL against NULL is Equal -- the walk then
+                // still advances both sides, while the condition evaluator
+                // rejects the NULL pair itself.
+                let cmp = match (row_null, key_null) {
+                    (true, true) => Ordering::Equal,
+                    (true, false) => Ordering::Less,
+                    (false, true) => Ordering::Greater,
+                    (false, false) => unreachable!("checked above"),
+                };
+                return Ok(if desc { cmp.reverse() } else { cmp });
+            }
+            let Some(Datum::Int(key_value)) = key.first() else {
+                return Ok(if desc {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                });
+            };
+            let cmp = row.get_int64(offset).cmp(key_value);
+            return Ok(if desc { cmp.reverse() } else { cmp });
+        }
+    }
     for (&offset, key) in key_offsets.iter().zip(key) {
         let mut cmp = tidb_expr::compare_datums(&row.get_datum(offset, &types[offset]), key)?;
         if desc {
