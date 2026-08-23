@@ -267,18 +267,75 @@ fn a_pinned_historical_read_is_refused_rather_than_answered_from_the_present() {
     session.run("SELECT b FROM t").unwrap();
 }
 
-/// `AS OF TIMESTAMP` on a table reference is the per-statement form of the
-/// same historical read, and it is refused at the one door every base-table
-/// read goes through.
+/// `AS OF TIMESTAMP` on a table reference reads the store's history --
+/// the corpus recipe (`executor/stale_txn`, `TestAsOfTimestampSupportTSO`):
+/// the last commit's TSO comes out of `@@tidb_last_txn_info`, reading AS OF
+/// it sees that commit, reading AS OF ts-1 sees the state BEFORE it, and
+/// Go's `CalculateAsOfTsExpr` refusals (`staleread/util.go:56-74`) keep
+/// their 8135 identity. A timestamp older than the retained ring refuses
+/// rather than answering from the present -- the one undetectable wrong
+/// answer this feature must never give.
 #[test]
-fn as_of_timestamp_on_a_table_reference_is_refused() {
+fn as_of_timestamp_reads_the_stores_history() {
     let mut session = Session::new();
     session.run("CREATE TABLE t (a INT PRIMARY KEY)").unwrap();
+    session.run("INSERT INTO t VALUES (1)").unwrap();
+    session.run("INSERT INTO t VALUES (2)").unwrap();
+    session
+        .run("SET @last_commit_ts = json_extract(@@tidb_last_txn_info, '$.commit_ts')")
+        .unwrap();
+    session
+        .run("SET @prev_commit_ts = cast(cast(@last_commit_ts as unsigned) - 1 as char)")
+        .unwrap();
+
+    assert_eq!(
+        session
+            .run("SELECT count(*) FROM t AS OF TIMESTAMP @last_commit_ts")
+            .unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(2)]]),
+        "the last commit's timestamp sees the last commit"
+    );
+    assert_eq!(
+        session
+            .run("SELECT count(*) FROM t AS OF TIMESTAMP @prev_commit_ts")
+            .unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(1)]]),
+        "one tick earlier sees the state before it"
+    );
+    // Go: an integer TSO is accepted directly (`tsoFromDatum`).
+    session
+        .run("SET @int_tso = cast(@last_commit_ts as unsigned)")
+        .unwrap();
+    assert_eq!(
+        session
+            .run("SELECT count(*) FROM t AS OF TIMESTAMP @int_tso")
+            .unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(2)]]),
+    );
+    // Go's 8135 refusals, verbatim causes.
+    for (sql, cause) in [
+        (
+            "SELECT count(*) FROM t AS OF TIMESTAMP 'invalid-date'",
+            "cannot parse AS OF TIMESTAMP expression as datetime or TSO",
+        ),
+        (
+            "SELECT count(*) FROM t AS OF TIMESTAMP NULL",
+            "as of timestamp cannot be NULL",
+        ),
+    ] {
+        let error = session.run(sql).unwrap_err();
+        assert!(
+            format!("{error:?}").contains(cause),
+            "{sql} must refuse with Go's cause, got {error:?}"
+        );
+    }
+    // Valid instant, but older than anything the ring retains: refuse, never
+    // answer from the present.
     let error = session
         .run("SELECT a FROM t AS OF TIMESTAMP '2020-01-01 00:00:00'")
         .unwrap_err();
     assert!(
-        format!("{error:?}").contains("AS OF TIMESTAMP"),
+        format!("{error:?}").contains("retained history"),
         "got {error:?}"
     );
 }
@@ -316,26 +373,48 @@ fn start_transaction_read_only_takes_the_noop_functions_gate() {
     session.run("ROLLBACK").unwrap();
 }
 
-/// `START TRANSACTION READ ONLY AS OF TIMESTAMP` opens the transaction at a
-/// HISTORICAL timestamp; this tier keeps no history, so it refuses rather
-/// than opening an ordinary transaction that reads the present.
-///
-/// Go exempts this spelling from the `READ ONLY` noop gate
-/// (`executeBegin` checks `s.AsOf == nil` first), so the refusal has to come
-/// from somewhere else -- it is the same historical-read refusal a table
-/// reference's `AS OF TIMESTAMP` gets.
+/// `START TRANSACTION READ ONLY AS OF TIMESTAMP` is Go's stale transaction:
+/// its `StartTS` IS the as-of timestamp -- `@@tidb_current_ts` reports it,
+/// which is the exact equality the corpus's last divergence tested -- every
+/// read inside sees the store as of it, and its COMMIT publishes nothing.
+/// The spelling is exempt from the `READ ONLY` noop gate (`executeBegin`
+/// checks `s.AsOf == nil` first), so no noop toggle is needed.
 #[test]
-fn start_transaction_as_of_timestamp_is_refused_not_silently_current() {
+fn start_transaction_as_of_timestamp_pins_the_transaction() {
     let mut session = Session::new();
-    // Even with the noop gate wide open, the historical read still refuses.
+    session.run("CREATE TABLE t (a INT PRIMARY KEY)").unwrap();
+    session.run("INSERT INTO t VALUES (1)").unwrap();
+    session.run("INSERT INTO t VALUES (2)").unwrap();
     session
-        .run("SET @@tidb_enable_noop_functions = 'ON'")
+        .run("SET @last_commit_ts = json_extract(@@tidb_last_txn_info, '$.commit_ts')")
         .unwrap();
+
+    session
+        .run("START TRANSACTION READ ONLY AS OF TIMESTAMP @last_commit_ts")
+        .unwrap();
+    assert!(session.in_transaction());
+    assert_eq!(
+        session
+            .run("SELECT @@tidb_current_ts = CAST(@last_commit_ts AS UNSIGNED) AS ts_matches")
+            .unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(1)]]),
+        "the stale transaction's StartTS is the as-of timestamp"
+    );
+    assert_eq!(
+        session.run("SELECT count(*) FROM t").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(2)]]),
+        "reads inside see the store as of the pin"
+    );
+    session.run("COMMIT").unwrap();
+    assert!(!session.in_transaction());
+
+    // A timestamp older than the retained ring still refuses rather than
+    // silently opening at the present.
     let error = session
         .run("START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-01-01 00:00:00'")
         .unwrap_err();
     assert!(
-        format!("{error:?}").contains("AS OF TIMESTAMP"),
+        format!("{error:?}").contains("retained history"),
         "got {error:?}"
     );
     assert!(!session.in_transaction());

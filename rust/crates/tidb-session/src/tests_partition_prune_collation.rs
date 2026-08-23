@@ -23,7 +23,10 @@ fn partitions(session: &mut Session, sql: &str) -> Vec<String> {
         .into_iter()
         .filter_map(|row| {
             row.iter()
-                .find_map(|cell| cell.split(", ").find_map(|part| part.strip_prefix("partition:")))
+                .find_map(|cell| {
+                    cell.split(", ")
+                        .find_map(|part| part.strip_prefix("partition:"))
+                })
                 .map(str::to_owned)
         })
         .collect()
@@ -76,7 +79,9 @@ fn a_string_in_list_prunes_under_the_columns_own_collation() {
             .unwrap();
         // What makes the connection's collation and the column's disagree,
         // and what the corpus sets before these queries.
-        session.run("SET NAMES utf8mb4 COLLATE utf8mb4_bin").unwrap();
+        session
+            .run("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
+            .unwrap();
         session
             .run(&format!(
                 "CREATE TABLE t (a varchar(255) CHARSET utf8mb4 COLLATE {collation}) \
@@ -85,7 +90,10 @@ fn a_string_in_list_prunes_under_the_columns_own_collation() {
             .unwrap();
 
         assert_eq!(
-            partitions(&mut session, &format!("EXPLAIN SELECT * FROM t WHERE {query}")),
+            partitions(
+                &mut session,
+                &format!("EXPLAIN SELECT * FROM t WHERE {query}")
+            ),
             expected,
             "{collation}: `{query}` prunes under the COLUMN's collation"
         );
@@ -129,25 +137,37 @@ fn an_exact_like_ranges_over_the_sort_key_like_every_other_arm() {
     // a weight under `utf8mb4_general_ci`, which is what makes the printed
     // key `\x00A` rather than the letter.
     assert_eq!(
-        range(&mut session, "EXPLAIN SELECT a FROM t USE INDEX (ia) WHERE a LIKE 'aa'"),
+        range(
+            &mut session,
+            "EXPLAIN SELECT a FROM t USE INDEX (ia) WHERE a LIKE 'aa'"
+        ),
         "[\"\\x00A\\x00A\",\"\\x00A\\x00A\"]"
     );
     // Case 1, the empty pattern: converted, and the key of `''` is empty.
     assert_eq!(
-        range(&mut session, "EXPLAIN SELECT a FROM t USE INDEX (ia) WHERE a LIKE ''"),
+        range(
+            &mut session,
+            "EXPLAIN SELECT a FROM t USE INDEX (ia) WHERE a LIKE ''"
+        ),
         "[\"\",\"\"]"
     );
     // A single space is not the empty pattern, but its KEY is empty --- a PAD
     // SPACE collation trims it. Reached only by converting.
     assert_eq!(
-        range(&mut session, "EXPLAIN SELECT a FROM t USE INDEX (ia) WHERE a LIKE ' '"),
+        range(
+            &mut session,
+            "EXPLAIN SELECT a FROM t USE INDEX (ia) WHERE a LIKE ' '"
+        ),
         "[\"\",\"\"]"
     );
     // Case 4-2, the wildcard, whose bounds this arm converts itself: the
     // prefix is cut to the index's three characters and the upper bound is
     // the incremented key of the cut value, not of the written one.
     assert_eq!(
-        range(&mut session, "EXPLAIN SELECT a FROM t USE INDEX (ia) WHERE a LIKE 'abcdef%'"),
+        range(
+            &mut session,
+            "EXPLAIN SELECT a FROM t USE INDEX (ia) WHERE a LIKE 'abcdef%'"
+        ),
         "[\"\\x00A\\x00B\\x00C\",\"\\x00A\\x00B\\x00D\")"
     );
 }
@@ -178,12 +198,11 @@ fn a_not_equal_is_not_an_access_condition_over_a_prefix_index() {
         .run("INSERT INTO t VALUES ('aa', 1), ('aab', 2), ('aabB', 3), ('A', 4)")
         .unwrap();
 
-    let plan: Vec<String> = row_text(session.run(
-        "EXPLAIN SELECT * FROM t USE INDEX (ia) WHERE a != 'aa'",
-    ))
-    .into_iter()
-    .map(|row| row.join(" | "))
-    .collect();
+    let plan: Vec<String> =
+        row_text(session.run("EXPLAIN SELECT * FROM t USE INDEX (ia) WHERE a != 'aa'"))
+            .into_iter()
+            .map(|row| row.join(" | "))
+            .collect();
     let plan = plan.join("\n");
     assert!(
         plan.contains("IndexFullScan"),

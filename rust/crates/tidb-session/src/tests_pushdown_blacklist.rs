@@ -65,9 +65,9 @@ fn a_fresh_store_has_both_blacklist_tables_and_they_start_empty() {
         .run("INSERT INTO mysql.expr_pushdown_blacklist(name) VALUES ('enum')")
         .unwrap();
     assert_eq!(
-        row_text(session.run(
-            "SELECT store_type FROM mysql.expr_pushdown_blacklist WHERE name = 'enum'"
-        )),
+        row_text(
+            session.run("SELECT store_type FROM mysql.expr_pushdown_blacklist WHERE name = 'enum'")
+        ),
         vec![vec!["tikv,tiflash,tidb"]]
     );
 }
@@ -113,7 +113,9 @@ fn blacklisting_enum_drops_the_enum_index_path_and_keeps_the_rows() {
     );
 
     // And it comes back.
-    session.run("DELETE FROM mysql.expr_pushdown_blacklist").unwrap();
+    session
+        .run("DELETE FROM mysql.expr_pushdown_blacklist")
+        .unwrap();
     session.run("ADMIN RELOAD EXPR_PUSHDOWN_BLACKLIST").unwrap();
     assert_eq!(plan(&mut session, "SELECT * FROM t WHERE b = 'a'"), before);
 }
@@ -212,7 +214,9 @@ fn blacklisting_an_aggregate_function_keeps_the_whole_aggregate_at_the_root() {
     session
         .run("CREATE TABLE t(a int, b int, key ia(a))")
         .unwrap();
-    session.run("INSERT INTO t VALUES (1,1),(2,2),(3,3)").unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,1),(2,2),(3,3)")
+        .unwrap();
 
     let before = plan(&mut session, "SELECT sum(b) FROM t GROUP BY a");
     assert!(

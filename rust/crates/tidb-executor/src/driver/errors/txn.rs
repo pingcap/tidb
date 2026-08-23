@@ -13,11 +13,16 @@
 // limitations under the License.
 
 /// Why a transaction statement failed (Go `kv.ErrWriteConflict` and friends).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TxnErrorKind {
     /// The catalog moved under the transaction, so committing would discard
     /// another session's writes.
     WriteConflict,
+    /// An `AS OF TIMESTAMP` expression Go's `CalculateAsOfTsExpr` would
+    /// refuse -- NULL, unparsable, or a TSO from before 2013-01-01
+    /// (`pkg/sessiontxn/staleread/util.go:41-80`). Renders as `ErrAsOf`
+    /// (8135), "invalid as of timestamp: %s".
+    AsOf(String),
     /// The storage route was stale or temporarily unavailable. The SQL layer
     /// exposes this as `ErrRegionUnavailable` (9005); `pkg/kv` deliberately
     /// excludes that code from automatic transaction replay.

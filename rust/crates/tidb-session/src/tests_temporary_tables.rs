@@ -477,8 +477,10 @@ fn create_binding_over_permanent_tables_is_unaffected() {
         .run("create global temporary table tmp1(a int(11)) on commit delete rows")
         .expect("global");
     session
-        .run("create global binding for select * from t1 where a = 1 \
-              using select * from t1 use index(ka) where a = 1")
+        .run(
+            "create global binding for select * from t1 where a = 1 \
+              using select * from t1 use index(ka) where a = 1",
+        )
         .expect("no temporary table is named");
     // Dropping the table the binding was over and then dropping the binding
     // is Go's own worked example of why an unresolvable name is skipped.
@@ -514,12 +516,18 @@ fn rollback_to_savepoint_takes_back_temporary_rows_of_both_kinds() {
     session
         .run("create temporary table loc (id int primary key, v int)")
         .expect("local");
-    session.run("insert into loc values(1, 101)").expect("write");
+    session
+        .run("insert into loc values(1, 101)")
+        .expect("write");
     session.run("begin").expect("open");
     session.run("savepoint sp0").expect("sp0");
-    session.run("insert into loc values(2, 202)").expect("write");
+    session
+        .run("insert into loc values(2, 202)")
+        .expect("write");
     session.run("savepoint sp1").expect("sp1");
-    session.run("insert into loc values(3, 303)").expect("write");
+    session
+        .run("insert into loc values(3, 303)")
+        .expect("write");
     session.run("rollback to sp1").expect("back to sp1");
     assert_eq!(
         row_text(session.run("select id from loc order by id")),
@@ -748,6 +756,9 @@ fn ttl_on_a_temporary_table_is_8151() {
             &mut session,
             "create temporary table t (a datetime) ttl = a + interval 1 day",
         ),
-        (8151, "Set TTL for temporary table is not allowed".to_owned())
+        (
+            8151,
+            "Set TTL for temporary table is not allowed".to_owned()
+        )
     );
 }

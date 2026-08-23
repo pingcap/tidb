@@ -896,6 +896,15 @@ impl Session {
                 {
                     return Ok(Expr::Int(self.current_tso().value().to_string()));
                 }
+                // `@@tidb_last_txn_info` is Go's `SessionVars.LastTxnInfo`
+                // read: client-go's `TxnInfo` JSON for the last ACTIVATED
+                // transaction, written at the session's commit points and
+                // empty before the first one.
+                if *scope != Some(tidb_ast::SysVarScope::Global)
+                    && name.eq_ignore_ascii_case("tidb_last_txn_info")
+                {
+                    return Ok(Expr::String(self.last_txn_info_value()));
+                }
                 // A no-scope server property uses the same read authority as
                 // an unqualified session read. Most answer their registry
                 // default; `version_comment` is derived from the immutable

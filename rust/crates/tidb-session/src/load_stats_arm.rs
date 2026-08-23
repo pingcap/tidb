@@ -94,8 +94,8 @@ impl Session {
         if data.is_empty() {
             return Ok(Some(StmtOutput::Affected(0)));
         }
-        let json = parse_stats_json(&data)
-            .map_err(|error| DriverError::unsupported(error.to_string()))?;
+        let json =
+            parse_stats_json(&data).map_err(|error| DriverError::unsupported(error.to_string()))?;
         // Go `LoadStatsInfo.Update`'s guard, comment and all: "Check the
         // `jsonTbl` in cases where the stats file with `null`."
         if json.table_name.is_empty() && json.version == 0 {
@@ -117,9 +117,9 @@ impl Session {
             let Some(TableEntry::Kv(table)) = catalog.table_in(&database, &name) else {
                 // Go's `is.TableByName` failure: `ErrTableNotExists` for the
                 // dump's own database/table pair.
-                return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(
-                    format!("{database}.{name}"),
-                )));
+                return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
+                    "{database}.{name}"
+                ))));
             };
             let table = table.clone();
             let partition_definitions: Vec<(i64, String)> = table

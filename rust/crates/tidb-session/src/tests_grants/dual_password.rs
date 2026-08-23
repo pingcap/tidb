@@ -130,9 +130,13 @@ fn retain_validation_errors_match_go() {
     // BY-form auth options"), so this is 1064 at parse time -- the
     // executor's own AuthOpt-nil 3895 arm is defensive, unreachable from
     // SQL text.
-    assert!(session.run("alter user dpu1 retain current password").is_err());
+    assert!(session
+        .run("alter user dpu1 retain current password")
+        .is_err());
 
-    session.run("create user dpemptycur identified by ''").unwrap();
+    session
+        .run("create user dpemptycur identified by ''")
+        .unwrap();
     assert!(matches!(
         session.run("alter user dpemptycur identified by 'new' retain current password"),
         Err(DriverError::SecondPasswordCannotBeEmpty { .. })
@@ -168,7 +172,9 @@ fn set_password_retain_and_per_spec_dual_clauses() {
     );
 
     session
-        .run("create user dpm1 identified by 'p1', dpm2 identified by 'q1', dpm3 identified by 'r1'")
+        .run(
+            "create user dpm1 identified by 'p1', dpm2 identified by 'q1', dpm3 identified by 'r1'",
+        )
         .unwrap();
     session
         .run("alter user dpm1 identified by 'p2', dpm3 identified by 'r2' retain current password")
@@ -186,7 +192,9 @@ fn set_password_retain_and_per_spec_dual_clauses() {
     assert_eq!(has_secondary(&mut session, "dpm3"), "1");
     // The clause applies only to the spec it follows; a spec with neither
     // auth nor clause is a silent no-op (Go composes no fields for it).
-    session.run("alter user dpm1, dpm3 discard old password").unwrap();
+    session
+        .run("alter user dpm1, dpm3 discard old password")
+        .unwrap();
     assert_eq!(has_secondary(&mut session, "dpm1"), "0");
     assert_eq!(has_secondary(&mut session, "dpm3"), "0");
 }
@@ -197,7 +205,9 @@ fn set_password_retain_and_per_spec_dual_clauses() {
 #[test]
 fn dual_password_combines_with_comment_atomically() {
     let (_registry, mut session) = root_session();
-    session.run("create user dpcomm identified by 'p1'").unwrap();
+    session
+        .run("create user dpcomm identified by 'p1'")
+        .unwrap();
     session
         .run(
             "alter user dpcomm identified by 'p2' retain current password comment \
@@ -239,7 +249,16 @@ fn account_statements_keep_the_user_table_rows_written() {
             "select Host, User, plugin, authentication_string, user_attributes, \
              Select_priv, Super_priv, Account_locked from mysql.user order by user"
         )),
-        [["%", "root", "mysql_native_password", "", "NULL", "Y", "Y", "N"]]
+        [[
+            "%",
+            "root",
+            "mysql_native_password",
+            "",
+            "NULL",
+            "Y",
+            "Y",
+            "N"
+        ]]
     );
     session.run("create user mu1 identified by 'pw'").unwrap();
     assert_eq!(
@@ -290,9 +309,10 @@ fn account_statements_keep_the_user_table_rows_written() {
     // `Account_locked` and `Password_expired` to 'Y').
     session.run("create role mr1").unwrap();
     assert_eq!(
-        row_text(session.run(
-            "select Account_locked, Password_expired from mysql.user where user = 'mr1'"
-        )),
+        row_text(
+            session
+                .run("select Account_locked, Password_expired from mysql.user where user = 'mr1'")
+        ),
         [["Y", "Y"]]
     );
     session.run("drop role mr1").unwrap();
@@ -307,13 +327,21 @@ fn account_statements_keep_the_user_table_rows_written() {
 #[test]
 fn dual_password_privilege_gates_match_go() {
     let (registry, mut session) = root_session();
-    session.run("create user dpvictim identified by 'v1'").unwrap();
-    session.run("create user dpaponly identified by 'a1'").unwrap();
+    session
+        .run("create user dpvictim identified by 'v1'")
+        .unwrap();
+    session
+        .run("create user dpaponly identified by 'a1'")
+        .unwrap();
     session
         .run("grant application_password_admin on *.* to dpaponly")
         .unwrap();
-    session.run("create user dpself identified by 's1'").unwrap();
-    session.run("create user dpselfadmin identified by 's1'").unwrap();
+    session
+        .run("create user dpself identified by 's1'")
+        .unwrap();
+    session
+        .run("create user dpselfadmin identified by 's1'")
+        .unwrap();
     session
         .run("grant application_password_admin on *.* to dpselfadmin")
         .unwrap();
@@ -363,7 +391,9 @@ fn dual_password_privilege_gates_match_go() {
 
     // With it: allowed, secondary set; DISCARD via USER() clears it.
     let mut selfadmin = open("dpselfadmin@%");
-    selfadmin.run("set password = 's2' retain current password").unwrap();
+    selfadmin
+        .run("set password = 's2' retain current password")
+        .unwrap();
     assert_eq!(
         one_cell(
             &mut session,
@@ -372,7 +402,9 @@ fn dual_password_privilege_gates_match_go() {
         ),
         "1"
     );
-    selfadmin.run("alter user user() discard old password").unwrap();
+    selfadmin
+        .run("alter user user() discard old password")
+        .unwrap();
     assert_eq!(
         one_cell(
             &mut session,

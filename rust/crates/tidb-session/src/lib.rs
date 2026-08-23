@@ -487,6 +487,12 @@ pub struct Session {
     /// reports. Absent on the in-process tier, whose catalog is not a
     /// cluster's.
     cluster_schema_version: Option<std::sync::Arc<dyn Fn() -> i64 + Send + Sync>>,
+    /// Go `SessionVars.LastTxnInfo` (`pkg/sessionctx/variable/session.go:1467`):
+    /// client-go's `TxnInfo` JSON for the last transaction that ACTIVATED --
+    /// full (with `commit_ts`) after a commit, start-only otherwise, and
+    /// untouched by a statement that never took a timestamp (`SELECT 1`).
+    /// Empty until the first one, as Go's is.
+    last_txn_info: std::cell::RefCell<String>,
     /// Where this session reports the tables its statements bind, for the
     /// node's metadata-lock gate; see [`MdlRelatedTableSink`].
     mdl_related_tables: Option<std::sync::Arc<dyn MdlRelatedTableSink>>,
@@ -651,6 +657,7 @@ impl Default for Session {
             server_info_syncer: None,
             cluster_schema_version: None,
             mdl_related_tables: None,
+            last_txn_info: std::cell::RefCell::new(String::new()),
             published_last_insert_id: Rc::default(),
             retry_auto_ids: Rc::default(),
             row_id_shards: Rc::default(),
@@ -779,6 +786,32 @@ impl Session {
         self.cluster_schema_version
             .as_ref()
             .map_or(0, |source| source())
+    }
+
+    /// Go's commit-side `LastTxnInfo` write: client-go marshals `TxnInfo`
+    /// in its commit callback (`.oracle/client-go/txnkv/transaction/
+    /// txn.go:1078-1092`), field for field. The narrow tier is one node
+    /// committing locally, so the mode is the plain "2pc" and the fallback
+    /// and pipeline fields are their zero values -- the same zeros Go's
+    /// struct marshals for a plain transaction.
+    pub(crate) fn set_last_txn_info_committed(&self, start_ts: u64, commit_ts: u64) {
+        *self.last_txn_info.borrow_mut() = format!(
+            "{{\"txn_scope\":\"global\",\"start_ts\":{start_ts},\"commit_ts\":{commit_ts},\"txn_commit_mode\":\"2pc\",\"async_commit_fallback\":false,\"one_pc_fallback\":false,\"pipelined\":false,\"flush_wait_ms\":0}}"
+        );
+    }
+
+    /// Go `setLastTxnInfoBeforeTxnEnd` (`pkg/session/session.go:1056-1069`):
+    /// a transaction that activated but did not commit -- read-only, rolled
+    /// back, stale -- records the same struct with only scope and start set,
+    /// zeros included, because Go marshals the whole thing.
+    pub(crate) fn set_last_txn_info_started(&self, start_ts: u64) {
+        *self.last_txn_info.borrow_mut() = format!(
+            "{{\"txn_scope\":\"global\",\"start_ts\":{start_ts},\"commit_ts\":0,\"txn_commit_mode\":\"\",\"async_commit_fallback\":false,\"one_pc_fallback\":false,\"pipelined\":false,\"flush_wait_ms\":0}}"
+        );
+    }
+
+    pub(crate) fn last_txn_info_value(&self) -> String {
+        self.last_txn_info.borrow().clone()
     }
 
     /// Binds where this session reports the tables its statements bind --

@@ -50,9 +50,7 @@ fn a_pruned_index_reader_decodes_the_column_the_scope_names() {
 
         // `a = 5` hashes to p0 and `a = 1` to p1, so each clause names one row.
         assert_eq!(
-            row_text(session.run(
-                "SELECT b FROM t PARTITION (p0) USE INDEX (idx1) WHERE b <= 2"
-            )),
+            row_text(session.run("SELECT b FROM t PARTITION (p0) USE INDEX (idx1) WHERE b <= 2")),
             vec![vec!["1"]],
             "{index}: the one output slot is `b`, not the table's first column"
         );
@@ -66,9 +64,7 @@ fn a_pruned_index_reader_decodes_the_column_the_scope_names() {
         // The full-width read was always right; it is the pinned control that
         // says the rows themselves were never in doubt.
         assert_eq!(
-            row_text(session.run(
-                "SELECT * FROM t PARTITION (p0) USE INDEX (idx1) WHERE b <= 2"
-            )),
+            row_text(session.run("SELECT * FROM t PARTITION (p0) USE INDEX (idx1) WHERE b <= 2")),
             vec![vec!["5", "1"]],
             "{index}: the unpruned read was already correct"
         );
@@ -76,15 +72,16 @@ fn a_pruned_index_reader_decodes_the_column_the_scope_names() {
         // column in the `WHERE` puts `a` back in the demand -- the two shapes
         // that hid this for as long as they were the only ones tried.
         assert_eq!(
-            row_text(session.run(
-                "SELECT b, a FROM t PARTITION (p0) USE INDEX (idx1) WHERE b <= 2"
-            )),
+            row_text(
+                session.run("SELECT b, a FROM t PARTITION (p0) USE INDEX (idx1) WHERE b <= 2")
+            ),
             vec![vec!["1", "5"]]
         );
         assert_eq!(
-            row_text(session.run(
-                "SELECT b FROM t PARTITION (p0) USE INDEX (idx1) WHERE b <= 2 AND a > 0"
-            )),
+            row_text(
+                session
+                    .run("SELECT b FROM t PARTITION (p0) USE INDEX (idx1) WHERE b <= 2 AND a > 0")
+            ),
             vec![vec!["1"]]
         );
     }

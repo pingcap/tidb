@@ -385,7 +385,9 @@ fn explain_select() {
 fn a_pushed_where_keeps_its_cop_selection_under_the_partial_aggregate() {
     let mut session = Session::new();
     session.run("CREATE TABLE t (a INT, b INT)").unwrap();
-    session.run("INSERT INTO t VALUES (1,1),(2,1),(3,2),(10,4)").unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,1),(2,1),(3,2),(10,4)")
+        .unwrap();
     let plan = |session: &mut Session, sql: &str| -> Vec<String> {
         row_text(session.run(sql))
             .into_iter()
@@ -393,7 +395,10 @@ fn a_pushed_where_keeps_its_cop_selection_under_the_partial_aggregate() {
             .collect()
     };
     assert_eq!(
-        plan(&mut session, "EXPLAIN SELECT count(*) FROM t WHERE a > '10ab'"),
+        plan(
+            &mut session,
+            "EXPLAIN SELECT count(*) FROM t WHERE a > '10ab'"
+        ),
         [
             "StreamAgg_5|1.00|root||funcs:count(Column#0)->Column#0",
             "└─TableReader_4|1.00|root||data:StreamAgg",

@@ -64,9 +64,17 @@ fn ddl_between_executes_invalidates() {
     session.run("EXECUTE s USING @a").unwrap();
     session.run("CREATE TABLE other (x int)").unwrap();
     session.run("EXECUTE s USING @a").unwrap();
-    assert_eq!(cache_flag(&mut session), "0", "any DDL moves the schema version");
+    assert_eq!(
+        cache_flag(&mut session),
+        "0",
+        "any DDL moves the schema version"
+    );
     session.run("EXECUTE s USING @a").unwrap();
-    assert_eq!(cache_flag(&mut session), "1", "and the next pair hits again");
+    assert_eq!(
+        cache_flag(&mut session),
+        "1",
+        "and the next pair hits again"
+    );
 }
 
 /// `ADMIN RELOAD EXPR_PUSHDOWN_BLACKLIST` is a MISS: Go stamps
@@ -121,9 +129,7 @@ fn a_correlated_apply_plan_never_hits() {
     let mut session = Session::new();
     session.run("CREATE TABLE t1 (a int, b int)").unwrap();
     session.run("CREATE TABLE t2 (a int, b int)").unwrap();
-    session
-        .run("INSERT INTO t1 VALUES (1, 2), (2, 1)")
-        .unwrap();
+    session.run("INSERT INTO t1 VALUES (1, 2), (2, 1)").unwrap();
     session
         .run("INSERT INTO t2 VALUES (0, 1), (2, -1)")
         .unwrap();

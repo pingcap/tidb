@@ -24,6 +24,7 @@
 use std::sync::MutexGuard;
 
 use tidb_ast::{SessionStmt, Stmt};
+use tidb_datatype::Datum;
 use tidb_executor::{Catalog, DriverError};
 
 use crate::{txn_mode_for_begin, PESSIMISTIC_TXN_MODE};
@@ -44,6 +45,13 @@ use crate::{Session, SessionTxnMode, TxnErrorKind};
 pub(crate) struct Transaction {
     pub(crate) working: Catalog,
     base_version: u64,
+    /// The transaction's start timestamp -- Go `TxnCtx.StartTS`, which
+    /// `@@tidb_current_ts` reports. For a stale transaction it IS the as-of
+    /// timestamp, which is the corpus's own assertion.
+    start_ts: u64,
+    /// `Some(ts)` for `START TRANSACTION READ ONLY AS OF TIMESTAMP`: the
+    /// working copy is a historical snapshot and COMMIT publishes nothing.
+    stale_read_ts: Option<u64>,
     /// The mode this transaction opened in, resolved from the `BEGIN` keyword
     /// and `@@tidb_txn_mode` exactly as Go resolves it.
     ///
@@ -89,9 +97,12 @@ impl Transaction {
         mode: SessionTxnMode,
         local_temporary_at_open: Vec<(String, String, tidb_executor::KvTable)>,
     ) -> Self {
+        let start_ts = catalog.allocate_tso();
         Transaction {
             working: catalog.clone(),
             base_version: catalog.version(),
+            start_ts,
+            stale_read_ts: None,
             mode,
             savepoints: Vec::new(),
             local_temporary_at_open,
@@ -275,8 +286,106 @@ impl Session {
     fn open_transaction(&mut self, mode: SessionTxnMode) -> Result<(), DriverError> {
         let local_temporary_at_open = self.local_temporary_tables.clone();
         let txn = Transaction::open(&*self.lock_catalog()?, mode, local_temporary_at_open);
+        // Go publishes `TxnCtx.StartTS` the moment the transaction
+        // activates; `@@tidb_current_ts` reads exactly that.
+        self.current_tso().publish(txn.start_ts);
         self.txn = Some(txn);
         Ok(())
+    }
+
+    /// Go `CalculateAsOfTsExpr` (`pkg/sessiontxn/staleread/util.go:41-86`),
+    /// over this session's own expression engine.
+    ///
+    /// Order is Go's exactly: NULL refuses; a DATETIME interpretation is
+    /// tried first (through `UNIX_TIMESTAMP`, whose session-zone semantics
+    /// are the ported `time.Date`), and only then a raw TSO -- a positive
+    /// integer or a string of digits. A TSO whose physical half is before
+    /// 2013-01-01 refuses with Go's own message.
+    pub(crate) fn resolve_as_of_ts(&mut self, expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
+        const TSO_LOGICAL_BITS: u32 = 18;
+        // 2013-01-01 00:00:00 UTC in milliseconds, Go's `minTSO` bound.
+        const MIN_PHYSICAL_MS: u64 = 1_356_998_400_000;
+        let value = self.eval_value(expr)?;
+        let as_of_error = |cause: &str| DriverError::Txn(TxnErrorKind::AsOf(cause.to_owned()));
+        if matches!(value, Datum::Null) {
+            return Err(as_of_error("as of timestamp cannot be NULL"));
+        }
+        let text = value.sql_string().unwrap_or_default();
+        let unix_call = |text: &str| tidb_ast::Expr::Func {
+            name: "UNIX_TIMESTAMP".to_owned(),
+            args: vec![tidb_ast::Expr::String(text.to_owned())],
+            origin_position: 0,
+        };
+        // Go tries the datetime reading FIRST (util.go:60-67), deliberately
+        // differing from `tidb_snapshot` on compact forms. UNIX_TIMESTAMP
+        // answers NULL (or 0) for a string that is no datetime, which is the
+        // fall-through to the raw-TSO reading.
+        let seconds = match self.eval_value(&unix_call(&text))? {
+            Datum::Int(v) if v > 0 => Some(v as f64),
+            Datum::UInt(v) if v > 0 => Some(v as f64),
+            Datum::Real(v) if v > 0.0 => Some(v),
+            Datum::Decimal(decimal) => {
+                let parsed = decimal.to_string().parse::<f64>().unwrap_or(0.0);
+                (parsed > 0.0).then_some(parsed)
+            }
+            _ => None,
+        };
+        let tso = if let Some(seconds) = seconds {
+            ((seconds * 1000.0) as u64) << TSO_LOGICAL_BITS
+        } else if let Ok(raw) = text.parse::<u64>() {
+            raw
+        } else {
+            return Err(as_of_error(
+                "cannot parse AS OF TIMESTAMP expression as datetime or TSO",
+            ));
+        };
+        if (tso >> TSO_LOGICAL_BITS) <= MIN_PHYSICAL_MS {
+            return Err(as_of_error(
+                "invalid TSO timestamp: TSO is before 2013-01-01",
+            ));
+        }
+        Ok(tso)
+    }
+
+    /// `START TRANSACTION READ ONLY AS OF TIMESTAMP <resolved ts>`: the Go
+    /// stale transaction (`StalenessTxnContextProvider`), whose `StartTS` IS
+    /// the as-of timestamp and whose reads all see the store as of it.
+    pub(crate) fn open_stale_transaction(&mut self, ts: u64) -> Result<(), DriverError> {
+        let snapshot = {
+            let shared = self.lock_catalog()?;
+            shared.state_as_of(ts).ok_or_else(|| {
+                // No retained commit is that old. Go's analogue is the GC
+                // barrier; this tier's ring is its retention, and answering
+                // from the PRESENT under a historical name would be the one
+                // undetectable wrong answer.
+                DriverError::Txn(TxnErrorKind::AsOf(
+                    "the requested timestamp precedes this store's retained history".to_owned(),
+                ))
+            })?
+        };
+        let local_temporary_at_open = self.local_temporary_tables.clone();
+        self.txn = Some(Transaction {
+            base_version: snapshot.version(),
+            working: snapshot,
+            start_ts: ts,
+            stale_read_ts: Some(ts),
+            mode: SessionTxnMode::Optimistic,
+            savepoints: Vec::new(),
+            local_temporary_at_open,
+        });
+        self.current_tso().publish(ts);
+        Ok(())
+    }
+
+    /// Ends the one-statement stale transaction the as-of interception
+    /// opened: nothing to publish (read-only by construction), the
+    /// start-only `LastTxnInfo` record a read-only end leaves, and the
+    /// published timestamp goes with it.
+    pub(crate) fn discard_stale_statement_transaction(&mut self) {
+        if let Some(txn) = self.txn.take() {
+            self.set_last_txn_info_started(txn.start_ts);
+        }
+        self.current_tso().clear();
     }
 
     /// Puts back the ROWS of the local temporary tables that already existed
@@ -352,10 +461,17 @@ impl Session {
                 // from the present under a historical name is undetectable --
                 // the same reason a table reference's `AS OF TIMESTAMP` and a
                 // pinned `tidb_snapshot` are refused.
-                if begin.as_of.is_some() {
-                    return Err(DriverError::unsupported(
-                        "START TRANSACTION ... AS OF TIMESTAMP is not supported yet",
-                    ));
+                if let Some(expr) = &begin.as_of {
+                    // Go `StalenessTxnContextProvider`: the expression
+                    // resolves through `CalculateAsOfTsExpr`'s rules and the
+                    // transaction opens AT that timestamp -- its `StartTS`,
+                    // which `@@tidb_current_ts` reports.
+                    let ts = self.resolve_as_of_ts(&expr.clone())?;
+                    if self.txn.is_some() {
+                        self.commit()?;
+                    }
+                    self.open_stale_transaction(ts)?;
+                    return Ok(Some(true));
                 }
                 // An open transaction is committed first (Go's implicit commit).
                 if self.txn.is_some() {
@@ -380,6 +496,11 @@ impl Session {
                 // A local temporary table's rows are not in that copy -- they
                 // are in the session -- so they are put back by hand.
                 if let Some(txn) = self.txn.take() {
+                    // Go `setLastTxnInfoBeforeTxnEnd`: an activated
+                    // transaction that ends without a commit leaves the
+                    // start-only record.
+                    self.set_last_txn_info_started(txn.start_ts);
+                    self.current_tso().clear();
                     self.restore_local_temporary_rows(txn.local_temporary_at_open);
                 }
                 Ok(Some(false))
@@ -492,11 +613,27 @@ impl Session {
             // COMMIT with no open transaction is a no-op, as in MySQL.
             return Ok(());
         };
+        if txn.stale_read_ts.is_some() {
+            // Go's stale transaction is read-only by construction; its
+            // COMMIT publishes nothing, and `setLastTxnInfoBeforeTxnEnd`
+            // leaves the start-only record (`pkg/session/session.go:1056`).
+            self.set_last_txn_info_started(txn.start_ts);
+            self.current_tso().clear();
+            return Ok(());
+        }
         let mut shared = self.lock_catalog()?;
         if shared.version() != txn.base_version {
             return Err(DriverError::Txn(TxnErrorKind::WriteConflict));
         }
         *shared = txn.working;
+        // The commit is durable in this store the moment the shared catalog
+        // holds it; the history snapshot and Go's `LastTxnInfo` record
+        // both.
+        let commit_ts = shared.allocate_tso();
+        shared.record_commit(commit_ts);
+        drop(shared);
+        self.set_last_txn_info_committed(txn.start_ts, commit_ts);
+        self.current_tso().clear();
         Ok(())
     }
 

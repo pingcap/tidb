@@ -44,7 +44,10 @@ fn partitions(session: &mut Session, sql: &str) -> Vec<String> {
         .into_iter()
         .filter_map(|row| {
             row.iter()
-                .find_map(|cell| cell.split(", ").find_map(|part| part.strip_prefix("partition:")))
+                .find_map(|cell| {
+                    cell.split(", ")
+                        .find_map(|part| part.strip_prefix("partition:"))
+                })
                 .map(str::to_owned)
         })
         .collect()
@@ -163,7 +166,9 @@ fn pruning_every_partition_away_is_a_table_dual() {
              PARTITION p1 VALUES IN (3, 4, 5))",
         )
         .unwrap();
-    session.run("INSERT INTO tlist VALUES (1, 1, 1), (2, 4, 2)").unwrap();
+    session
+        .run("INSERT INTO tlist VALUES (1, 1, 1), (2, 4, 2)")
+        .unwrap();
 
     let plan = plan_lines(
         &mut session,
@@ -309,7 +314,11 @@ fn a_partitioned_join_leaf_fans_out_under_static_pruning() {
         "EXPLAIN FORMAT='brief' SELECT * FROM tx1 INNER JOIN tx2 \
          ON tx1.ID=tx2.ID AND tx1.ltype=tx2.ltype WHERE tx2.rid='1'",
     );
-    assert_eq!(named, vec!["p1", "p2"], "both partitions are named: {plan:?}");
+    assert_eq!(
+        named,
+        vec!["p1", "p2"],
+        "both partitions are named: {plan:?}"
+    );
 
     // The rows are unaffected: the leaf reads the same partitions either way.
     assert_eq!(

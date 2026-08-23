@@ -226,7 +226,10 @@ fn an_ordered_index_dedup_streams_on_both_sides_of_the_reader() {
         "  └─StreamAgg_2|cop[tikv]|group by:test.t2.a, ".to_owned(),
         "    └─IndexFullScan_1|cop[tikv]|keep order:true, stats:pseudo".to_owned(),
     ];
-    assert_eq!(plan(&mut session, "EXPLAIN SELECT DISTINCT a FROM t2"), streamed);
+    assert_eq!(
+        plan(&mut session, "EXPLAIN SELECT DISTINCT a FROM t2"),
+        streamed
+    );
     assert_eq!(
         plan(&mut session, "EXPLAIN SELECT a FROM t2 GROUP BY a"),
         streamed

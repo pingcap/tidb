@@ -2484,6 +2484,20 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //
     // The nine that remain: through_projection 5, and one each of
     // partition_pruner, index_join, stale_txn (MVCC-blocked), and autoid.
+    //
+    // 1 -> 0: `executor/stale_txn` closed, and with it the corpus. The
+    // "MVCC-blocked" assessment was half right: the narrow store keeps no
+    // versions, so it was given a commit history -- TSO-shaped allocation,
+    // a ring of committed snapshots, Go's floor lookup -- and the stale
+    // family ported over it from source: client-go's `TxnInfo` JSON for
+    // `@@tidb_last_txn_info` (txn.go:1054-1092), `CalculateAsOfTsExpr`'s
+    // evaluation order and 8135 identities (staleread/util.go:41-86), and
+    // a stale transaction whose StartTS IS the as-of timestamp, which is
+    // exactly the `@@tidb_current_ts` equality the last divergence tested.
+    // The eight statements that sat OutOfDomain (this tier errored where
+    // TiDB succeeded) entered comparison with the feature and all match:
+    // the topic moved from 30 matched / 1 diverged / 8 out-of-domain to
+    // 39 / 0 / 0.
     // 8 -> 7 at `index_join`'s hinted semi-join statement
     // (`select /*+ TIDB_INLJ(t1) */ * from t1 where t1.a in (select t2.a
     // from t2)`). `TIDB_INLJ(t)` names the INNER side, and Go resolves that
@@ -2613,7 +2627,7 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // The three that remain: one each of index_join, stale_txn
     // (MVCC-blocked), and autoid.
     //
-    const KNOWN_DIVERGENCES: usize = 1;
+    const KNOWN_DIVERGENCES: usize = 0;
     // 9 -> 8: `partition_pruner` fully closed (293 of 294 matched, one
     // `PlanWithoutProperty` skip). The last statement was the col_95
     // interval-intersection Point_Get: `... where col_95 between ... or

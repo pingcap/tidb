@@ -263,7 +263,8 @@ fn the_dump_names_its_own_database_and_table() {
     assert_eq!(est, "30.00");
     assert!(!info.contains("stats:pseudo"), "{info}");
 
-    let missing = r#"{"database_name": "test", "table_name": "no_such_table", "count": 1, "version": 5}"#;
+    let missing =
+        r#"{"database_name": "test", "table_name": "no_such_table", "count": 1, "version": 5}"#;
     let error = session
         .run(&load_stats_sql("missing_table", missing))
         .unwrap_err();

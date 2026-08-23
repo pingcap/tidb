@@ -138,7 +138,37 @@ pub struct Catalog {
     /// `mysql.stats_*` on its own cadence (see `tidb-exec`'s `stats_watch`),
     /// so the two are published independently.
     statistics: HashMap<i64, Arc<crate::access_cost::TableStatistics>>,
+    /// The store's commit history, shared by every clone of this catalog
+    /// (working copies, sessions on the same store): a monotonic TSO-shaped
+    /// allocator plus a bounded ring of committed snapshots, which is what
+    /// serves Go's stale reads on a tier whose store otherwise keeps no
+    /// versions. See [`CommitHistory`].
+    commit_history: Arc<std::sync::Mutex<CommitHistory>>,
 }
+
+/// The narrow store's commit history.
+///
+/// Go's stale reads run against TiKV's real MVCC versions; this tier's
+/// store is the catalog itself, so history is a ring of full snapshots
+/// keyed by a fabricated-but-real-shaped TSO. The TSOs matter as much as
+/// the snapshots: the corpus does arithmetic on them
+/// (`CAST(@ts AS UNSIGNED) - 1`) and Go's `CalculateAsOfTsExpr` validates
+/// the physical half against 2013-01-01, so a small-integer scheme would
+/// fail the very validation ported beside it.
+#[derive(Debug, Default)]
+pub struct CommitHistory {
+    /// The last TSO handed out; allocation is `max(now_ms << 18, last + 1)`,
+    /// strictly increasing like PD's.
+    last_tso: u64,
+    /// `(commit_ts, the catalog as of that commit)`, oldest first, capped at
+    /// [`COMMIT_HISTORY_CAP`].
+    entries: std::collections::VecDeque<(u64, Catalog)>,
+}
+
+/// How many committed snapshots the ring keeps. The corpus needs the last
+/// two; eight leaves room for multi-statement recipes without letting a
+/// DML-heavy replay hold thousands of catalog clones.
+const COMMIT_HISTORY_CAP: usize = 8;
 
 impl Default for Catalog {
     /// A catalog holding `test`, `INFORMATION_SCHEMA` and `mysql`, the three
@@ -220,6 +250,7 @@ impl Default for Catalog {
             version: 0,
             shadowed_by_local_temporary: Vec::new(),
             statistics: HashMap::new(),
+            commit_history: Arc::new(std::sync::Mutex::new(CommitHistory::default())),
         };
         // Go's bootstrap builds the `information_schema` tables into the
         // infoschema itself, so they are ordinary objects to every name
@@ -797,6 +828,54 @@ impl Catalog {
     #[must_use]
     pub fn version(&self) -> u64 {
         self.version
+    }
+
+    /// Hands out the next TSO -- PD's shape (`now_ms << 18`), strictly
+    /// increasing. One allocator per store, shared by every clone.
+    pub fn allocate_tso(&self) -> u64 {
+        let mut history = self
+            .commit_history
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_millis() as u64);
+        let candidate = now_ms << 18;
+        history.last_tso = candidate.max(history.last_tso + 1);
+        history.last_tso
+    }
+
+    /// Records this catalog as the state committed at `commit_ts`.
+    ///
+    /// The snapshot's own history handle still points at the SHARED ring --
+    /// snapshots never read it, and sharing keeps the clone shallow there.
+    pub fn record_commit(&self, commit_ts: u64) {
+        let snapshot = self.clone();
+        let mut history = self
+            .commit_history
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        history.entries.push_back((commit_ts, snapshot));
+        while history.entries.len() > COMMIT_HISTORY_CAP {
+            history.entries.pop_front();
+        }
+    }
+
+    /// The store's state as of `ts`: the newest commit at or below it --
+    /// Go's MVCC floor. `None` when no retained commit is old enough, which
+    /// the caller reports rather than papering over with the present.
+    #[must_use]
+    pub fn state_as_of(&self, ts: u64) -> Option<Catalog> {
+        let history = self
+            .commit_history
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        history
+            .entries
+            .iter()
+            .rev()
+            .find(|(commit_ts, _)| *commit_ts <= ts)
+            .map(|(_, snapshot)| snapshot.clone())
     }
 
     /// Captures only the immutable schema metadata needed by `TIDB_DECODE_KEY`.

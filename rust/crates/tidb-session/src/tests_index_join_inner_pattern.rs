@@ -34,9 +34,15 @@ fn fixture() -> Session {
             ))
             .unwrap();
     }
-    session.run("INSERT INTO t1 VALUES (1,10,'a1'),(2,20,'a2')").unwrap();
-    session.run("INSERT INTO t2 VALUES (1,100,'b1'),(2,200,'b2')").unwrap();
-    session.run("INSERT INTO t3 VALUES (1,1000,'c1'),(2,2000,'c2')").unwrap();
+    session
+        .run("INSERT INTO t1 VALUES (1,10,'a1'),(2,20,'a2')")
+        .unwrap();
+    session
+        .run("INSERT INTO t2 VALUES (1,100,'b1'),(2,200,'b2')")
+        .unwrap();
+    session
+        .run("INSERT INTO t3 VALUES (1,1000,'c1'),(2,2000,'c2')")
+        .unwrap();
     session
 }
 

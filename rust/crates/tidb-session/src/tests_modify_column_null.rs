@@ -37,9 +37,7 @@ fn a_null_becomes_the_current_timestamp_when_the_column_turns_not_null() {
         .unwrap();
 
     assert_eq!(
-        row_text(session.run(
-            "SELECT floor((unix_timestamp() - unix_timestamp(a)) / 2) FROM t"
-        )),
+        row_text(session.run("SELECT floor((unix_timestamp() - unix_timestamp(a)) / 2) FROM t")),
         vec![vec!["0"]],
         "the stored instant is the statement clock, not NULL and not the zero time"
     );

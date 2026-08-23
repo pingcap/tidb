@@ -74,14 +74,29 @@ Closing this takes the corpus to ZERO recorded divergences.
 - [x] (2026-08-23) Contracts read; seams mapped (eval_value, the
   TableRef visitor pattern, both refusal sites, the differ's
   OutOfDomain semantics).
-- [ ] Steps 1-4.
-- [ ] Step 5 receipts.
+- [x] (2026-08-23) Steps 1-4 implemented.
+- [x] (2026-08-23) Step 5: `executor/stale_txn` replays 39 matched / 0
+  diverged / 0 out-of-domain (was 30 / 1 / 8); the full ratchet holds at
+  KNOWN_DIVERGENCES = 0 -- zero of 9,685 compared statements diverge; the
+  two old refusal pins are rewritten as positive pins of the live
+  contract and pass; per-crate gates show only the eight known baseline
+  reds.
 
 ## Surprises & Discoveries
 
 - `OutOfDomain` in the differ means "this tier errored where TiDB
   succeeded" -- not a curated skip list. Feature support alone widens
   the compared set.
+
+## Outcomes & Retrospective
+
+The corpus is at ZERO: 9,685 compared statements, none diverge. The
+last divergence was not a bug in a comparison but a missing FAMILY, and
+the "MVCC-blocked" label had quietly discouraged attempts at it -- the
+unblocking observation was that the block was about the STORE, not the
+contract, and a bounded commit history is enough store for every
+behaviour the family specifies. The ratchet's own bound now enforces
+zero forever: any future divergence is a regression by definition.
 
 ## Decision Log
 

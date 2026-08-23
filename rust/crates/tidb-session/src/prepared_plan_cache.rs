@@ -130,7 +130,9 @@ pub(crate) fn stmt_cacheable(stmt: &mut tidb_ast::Stmt) -> Result<(), String> {
         tidb_ast::Stmt::Query(_) => true,
         tidb_ast::Stmt::Dml(dml) => matches!(
             &**dml,
-            tidb_ast::DmlStmt::Insert(_) | tidb_ast::DmlStmt::Update(_) | tidb_ast::DmlStmt::Delete(_)
+            tidb_ast::DmlStmt::Insert(_)
+                | tidb_ast::DmlStmt::Update(_)
+                | tidb_ast::DmlStmt::Delete(_)
         ),
         _ => false,
     };
@@ -199,8 +201,7 @@ impl Visitor for CacheableChecker {
                 tidb_ast::Expr::Func { name, .. } => {
                     let lowered = name.to_ascii_lowercase();
                     if UNCACHEABLE_FUNCTIONS.contains(&lowered.as_str()) {
-                        return self
-                            .refuse(format!("query has '{lowered}' is un-cacheable"));
+                        return self.refuse(format!("query has '{lowered}' is un-cacheable"));
                     }
                 }
                 _ => {}

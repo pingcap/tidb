@@ -640,14 +640,148 @@ impl Session {
         }
     }
 
+    /// Runs a statement whose table refs carry `AS OF TIMESTAMP`, against
+    /// the store's state as of that timestamp. `Ok(None)` means the
+    /// statement carries no as-of clause and takes its ordinary path.
+    ///
+    /// Go's rules, from `preprocess.go` and `staleread/util.go`: every
+    /// as-of expression in one statement must name the same instant (Go
+    /// errors on a mix; this port refuses it the same way), the resolved
+    /// snapshot serves every read, and the statement's transaction is the
+    /// stale one -- `@@tidb_current_ts` is the as-of timestamp for its
+    /// duration, and `LastTxnInfo` records the start-only shape a read-only
+    /// transaction leaves (`setLastTxnInfoBeforeTxnEnd`).
+    fn execute_as_of_statement(&mut self, stmt: &Stmt) -> Result<Option<StmtOutput>, DriverError> {
+        struct StripAsOf {
+            taken: Vec<tidb_ast::Expr>,
+        }
+        impl tidb_ast::Visitor for StripAsOf {
+            fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+                if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
+                    if let Some(expr) = table_ref.as_of.take() {
+                        self.taken.push(*expr);
+                    }
+                }
+                false
+            }
+            fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+                true
+            }
+        }
+        let mut stripped = stmt.clone();
+        let mut visitor = StripAsOf { taken: Vec::new() };
+        tidb_ast::Visitable::accept(&mut stripped, &mut visitor);
+        if visitor.taken.is_empty() {
+            return Ok(None);
+        }
+        let mut resolved: Option<u64> = None;
+        for expr in &visitor.taken {
+            let ts = self.resolve_as_of_ts(expr)?;
+            match resolved {
+                None => resolved = Some(ts),
+                Some(previous) if previous == ts => {}
+                Some(_) => {
+                    // Go refuses a statement naming two different instants.
+                    return Err(DriverError::Txn(crate::TxnErrorKind::AsOf(
+                        "can not set different time in the as of".to_owned(),
+                    )));
+                }
+            }
+        }
+        let ts = resolved.expect("at least one as-of expression");
+        let output = self.run_statement_as_of(ts, stripped);
+        Some(output).transpose()
+    }
+
+    /// Executes one already-stripped statement against the snapshot at `ts`,
+    /// through the same transaction overlay every in-transaction statement
+    /// uses -- so the read path is the ordinary one, only the catalog is
+    /// historical.
+    fn run_statement_as_of(&mut self, ts: u64, stripped: Stmt) -> Result<StmtOutput, DriverError> {
+        self.open_stale_transaction(ts)?;
+        let outcome = self.execute_parsed_statement_no_as_of(stripped);
+        // The stale statement's transaction ends with the statement: Go's
+        // read-only end leaves the start-only `LastTxnInfo` record and the
+        // published timestamp goes with it.
+        self.discard_stale_statement_transaction();
+        outcome
+    }
+
+    /// [`Self::execute_parsed_statement`] minus the as-of interception, for
+    /// the stale execution itself (its statement is already stripped and its
+    /// transaction already open).
+    fn execute_parsed_statement_no_as_of(&mut self, stmt: Stmt) -> Result<StmtOutput, DriverError> {
+        self.execute_parsed_statement_inner("", stmt, false, None)
+    }
+
     fn execute_parsed_statement(
+        &mut self,
+        sql: &str,
+        stmt: Stmt,
+        prepared: bool,
+        cached_point_get: Option<tidb_executor::PreparedPointGetExecution>,
+    ) -> Result<StmtOutput, DriverError> {
+        self.record_mdl_related_tables(&stmt);
+        // A statement whose table references carry `AS OF TIMESTAMP` runs
+        // against the store's history -- Go's stale statement
+        // (`StalenessTxnContextProvider` for one statement). Intercepted at
+        // this one funnel so text and prepared spellings share the rules.
+        if !self.in_transaction() {
+            if let Some(output) = self.execute_as_of_statement(&stmt)? {
+                return Ok(output);
+            }
+        }
+        // For the autocommit `LastTxnInfo` decision below: a table-reading
+        // SELECT activates a transaction in Go (start-only record); one that
+        // reads no stored table never takes a timestamp and leaves the
+        // record alone (`setLastTxnInfoBeforeTxnEnd`'s `StartTS == 0` skip).
+        let query_reads_stored_table =
+            matches!(stmt, Stmt::Query(_)) && !self.in_transaction() && {
+                let current_db = self.current_database().to_owned();
+                let names = crate::binding::collect_table_names(&stmt);
+                match self.lock_catalog() {
+                    Ok(catalog) => names.iter().any(|(db, table)| {
+                        let db = if db.is_empty() { &current_db } else { db };
+                        catalog.stored_table_id(db, table).is_some()
+                    }),
+                    Err(_) => false,
+                }
+            };
+        let was_autocommit_statement = !self.in_transaction();
+        let output = self.execute_parsed_statement_inner(sql, stmt, prepared, cached_point_get)?;
+        // Go's autocommit statement is its own transaction; its end writes
+        // `LastTxnInfo` exactly as an explicit one's would -- the full
+        // commit record for a statement that published, the start-only one
+        // for a read that activated, and nothing for `SELECT 1`.
+        if was_autocommit_statement && !self.in_transaction() {
+            match &output {
+                StmtOutput::Affected(_) | StmtOutput::Done(_) => {
+                    let (start_ts, commit_ts) = {
+                        let shared = self.lock_catalog()?;
+                        let start_ts = shared.allocate_tso();
+                        let commit_ts = shared.allocate_tso();
+                        shared.record_commit(commit_ts);
+                        (start_ts, commit_ts)
+                    };
+                    self.set_last_txn_info_committed(start_ts, commit_ts);
+                }
+                StmtOutput::Rows { .. } if query_reads_stored_table => {
+                    let start_ts = self.lock_catalog()?.allocate_tso();
+                    self.set_last_txn_info_started(start_ts);
+                }
+                _ => {}
+            }
+        }
+        Ok(output)
+    }
+
+    fn execute_parsed_statement_inner(
         &mut self,
         sql: &str,
         mut stmt: Stmt,
         prepared: bool,
         cached_point_get: Option<tidb_executor::PreparedPointGetExecution>,
     ) -> Result<StmtOutput, DriverError> {
-        self.record_mdl_related_tables(&stmt);
         // Go `SelectInto` with `SelectIntoVars`: the query runs as itself and
         // its one row lands in the named user variables. Intercepted at this
         // one door so text and prepared spellings share the rules: more than

@@ -2010,9 +2010,8 @@ fn a_residual_conjunct_keeps_the_static_per_partition_batch_point_get() {
     // The fast plan's shape first: the plain IN is Go's recorded
     // `PartitionUnion 3.00` over per-partition batch point gets whose
     // estimates come from each partition's own analyzed statistics.
-    let plain = crate::tests_support::row_text(
-        session.run("EXPLAIN SELECT * FROM t WHERE b IN (1,2)"),
-    );
+    let plain =
+        crate::tests_support::row_text(session.run("EXPLAIN SELECT * FROM t WHERE b IN (1,2)"));
     let shape: Vec<(String, String, String)> = plain
         .iter()
         .map(|row| (row[0].clone(), row[1].clone(), row[3].clone()))
@@ -2050,7 +2049,9 @@ fn a_residual_conjunct_keeps_the_static_per_partition_batch_point_get() {
         .skip(1)
         .map(|row| {
             (
-                row[0].trim_start_matches([' ', '│', '├', '└', '─']).to_owned(),
+                row[0]
+                    .trim_start_matches([' ', '│', '├', '└', '─'])
+                    .to_owned(),
                 row[1].clone(),
                 row[3].clone(),
                 row[4].clone(),
@@ -2528,7 +2529,11 @@ fn the_rules_read_back_out_of_go_agree_statement_by_statement() {
             }
             (Err(error), Some(errno)) => {
                 let rendered = error.to_mysql_error();
-                assert_eq!(rendered.code, *errno, "{sql}\n  {why}\n  got: {}", rendered.message);
+                assert_eq!(
+                    rendered.code, *errno,
+                    "{sql}\n  {why}\n  got: {}",
+                    rendered.message
+                );
             }
         }
     }
@@ -2552,9 +2557,8 @@ fn show_create_prints_the_stored_definition_text() {
         .run("CREATE TABLE bt (a int) PARTITION BY RANGE(a) (PARTITION `p``0` VALUES LESS THAN (10))")
         .unwrap();
     assert!(
-        tests_support::show_create(&mut session, "bt").ends_with(
-            "PARTITION BY RANGE (`a`)\n(PARTITION `p``0` VALUES LESS THAN (10))"
-        ),
+        tests_support::show_create(&mut session, "bt")
+            .ends_with("PARTITION BY RANGE (`a`)\n(PARTITION `p``0` VALUES LESS THAN (10))"),
         "{}",
         tests_support::show_create(&mut session, "bt")
     );
@@ -2607,8 +2611,10 @@ fn add_partition_validates_every_added_definition_as_go_does() {
     let mut session = Session::new();
     session.run(base).expect("base table");
     let rendered = session
-        .run("ALTER TABLE ap ADD PARTITION (PARTITION p2 VALUES LESS THAN (30), \
-              PARTITION p3 VALUES LESS THAN (25))")
+        .run(
+            "ALTER TABLE ap ADD PARTITION (PARTITION p2 VALUES LESS THAN (30), \
+              PARTITION p3 VALUES LESS THAN (25))",
+        )
         .expect_err("Go refuses a non-increasing pair")
         .to_mysql_error();
     assert_eq!(rendered.code, 1493);
@@ -2617,8 +2623,10 @@ fn add_partition_validates_every_added_definition_as_go_does() {
     let mut session = Session::new();
     session.run(base).expect("base table");
     let rendered = session
-        .run("ALTER TABLE ap ADD PARTITION (PARTITION p2 VALUES LESS THAN (MAXVALUE), \
-              PARTITION p3 VALUES LESS THAN (40))")
+        .run(
+            "ALTER TABLE ap ADD PARTITION (PARTITION p2 VALUES LESS THAN (MAXVALUE), \
+              PARTITION p3 VALUES LESS THAN (40))",
+        )
         .expect_err("Go refuses MAXVALUE before the last definition")
         .to_mysql_error();
     assert_eq!(rendered.code, 1481);
@@ -2627,16 +2635,20 @@ fn add_partition_validates_every_added_definition_as_go_does() {
     let mut session = Session::new();
     session.run(base).expect("base table");
     session
-        .run("ALTER TABLE ap ADD PARTITION (PARTITION p2 VALUES LESS THAN (30), \
-              PARTITION p3 VALUES LESS THAN (MAXVALUE))")
+        .run(
+            "ALTER TABLE ap ADD PARTITION (PARTITION p2 VALUES LESS THAN (30), \
+              PARTITION p3 VALUES LESS THAN (MAXVALUE))",
+        )
         .expect("a trailing MAXVALUE is accepted");
 
     // The table's own last bound being MAXVALUE is refused before any added
     // definition is read.
     let mut session = Session::new();
     session
-        .run("CREATE TABLE apm (a INT) PARTITION BY RANGE (a) \
-              (PARTITION p0 VALUES LESS THAN (10), PARTITION pm VALUES LESS THAN (MAXVALUE))")
+        .run(
+            "CREATE TABLE apm (a INT) PARTITION BY RANGE (a) \
+              (PARTITION p0 VALUES LESS THAN (10), PARTITION pm VALUES LESS THAN (MAXVALUE))",
+        )
         .expect("base table");
     let rendered = session
         .run("ALTER TABLE apm ADD PARTITION (PARTITION p2 VALUES LESS THAN (30))")
@@ -2664,8 +2676,10 @@ fn add_partition_on_range_columns_checks_the_combined_list() {
     let mut session = Session::new();
     session.run(base).expect("base table");
     let rendered = session
-        .run("ALTER TABLE apc ADD PARTITION (PARTITION p2 VALUES LESS THAN (30, 30), \
-              PARTITION p3 VALUES LESS THAN (25, 25))")
+        .run(
+            "ALTER TABLE apc ADD PARTITION (PARTITION p2 VALUES LESS THAN (30, 30), \
+              PARTITION p3 VALUES LESS THAN (25, 25))",
+        )
         .expect_err("Go refuses a non-increasing added pair")
         .to_mysql_error();
     assert_eq!(rendered.code, 1493);
@@ -2674,8 +2688,10 @@ fn add_partition_on_range_columns_checks_the_combined_list() {
     let mut session = Session::new();
     session.run(base).expect("base table");
     session
-        .run("ALTER TABLE apc ADD PARTITION (PARTITION p2 VALUES LESS THAN (30, 30), \
-              PARTITION p3 VALUES LESS THAN (40, 40))")
+        .run(
+            "ALTER TABLE apc ADD PARTITION (PARTITION p2 VALUES LESS THAN (30, 30), \
+              PARTITION p3 VALUES LESS THAN (40, 40))",
+        )
         .expect("an increasing addition is accepted");
 }
 
@@ -2691,8 +2707,10 @@ fn add_partition_on_range_columns_checks_the_combined_list() {
 fn an_unknown_partition_name_carries_gos_case_per_statement() {
     let mut session = Session::new();
     session
-        .run("CREATE TABLE up (a INT) PARTITION BY RANGE (a) \
-              (PARTITION p0 VALUES LESS THAN (10))")
+        .run(
+            "CREATE TABLE up (a INT) PARTITION BY RANGE (a) \
+              (PARTITION p0 VALUES LESS THAN (10))",
+        )
         .expect("base table");
 
     // TRUNCATE folds the name.
@@ -2737,7 +2755,10 @@ fn an_unknown_partition_name_carries_gos_case_per_statement() {
 fn a_partition_expression_is_stored_the_way_go_spells_it() {
     let cases: &[(&str, &str)] = &[
         // A bare column is back-quoted.
-        ("CREATE TABLE e1 (a INT) PARTITION BY HASH (a) PARTITIONS 2", "HASH (`a`)"),
+        (
+            "CREATE TABLE e1 (a INT) PARTITION BY HASH (a) PARTITIONS 2",
+            "HASH (`a`)",
+        ),
         // A binary operation is BRACKETED by the partition flags, and a
         // symbol operator carries no spaces.
         (
@@ -2771,8 +2792,13 @@ fn a_partition_expression_is_stored_the_way_go_spells_it() {
     ];
     for (create, expected) in cases {
         let mut session = Session::new();
-        session.run(create).unwrap_or_else(|error| panic!("{create}: {error:?}"));
-        let name = create.split_whitespace().nth(2).expect("CREATE TABLE <name>");
+        session
+            .run(create)
+            .unwrap_or_else(|error| panic!("{create}: {error:?}"));
+        let name = create
+            .split_whitespace()
+            .nth(2)
+            .expect("CREATE TABLE <name>");
         let shown = show_create(&mut session, name);
         assert!(
             shown.contains(expected),
@@ -2903,11 +2929,12 @@ fn a_doubly_wrong_partition_clause_reports_gos_first_error() {
     ];
     for (sql, errno, why) in cases {
         let mut session = Session::new();
-        let rendered = session
-            .run(sql)
-            .expect_err(sql)
-            .to_mysql_error();
-        assert_eq!(rendered.code, *errno, "{why}\n  {sql}\n  got: {}", rendered.message);
+        let rendered = session.run(sql).expect_err(sql).to_mysql_error();
+        assert_eq!(
+            rendered.code, *errno,
+            "{why}\n  {sql}\n  got: {}",
+            rendered.message
+        );
     }
 }
 
@@ -2922,8 +2949,10 @@ fn a_doubly_wrong_partition_clause_reports_gos_first_error() {
 fn a_commented_hash_partition_prints_the_full_definition_list() {
     let mut session = Session::new();
     session
-        .run("CREATE TABLE hc (a INT) PARTITION BY HASH (a) \
-              (PARTITION p0 COMMENT 'first', PARTITION p1)")
+        .run(
+            "CREATE TABLE hc (a INT) PARTITION BY HASH (a) \
+              (PARTITION p0 COMMENT 'first', PARTITION p1)",
+        )
         .expect("hash table with a commented partition");
     let shown = show_create(&mut session, "hc");
     assert!(
@@ -3045,7 +3074,9 @@ fn a_placement_policy_reference_is_enforced_at_both_ends() {
     assert_eq!(rendered.code, 8241);
 
     // Once the reference is gone, the drop succeeds.
-    session.run("DROP TABLE t2").expect("drop the referencing table");
+    session
+        .run("DROP TABLE t2")
+        .expect("drop the referencing table");
     session
         .run("DROP PLACEMENT POLICY pp")
         .expect("an unreferenced policy drops");
@@ -3062,9 +3093,11 @@ fn a_partition_level_placement_policy_counts_as_a_reference() {
         .run("CREATE PLACEMENT POLICY pq FOLLOWERS=1")
         .expect("policy");
     session
-        .run("CREATE TABLE t3 (a INT) PARTITION BY RANGE (a) \
+        .run(
+            "CREATE TABLE t3 (a INT) PARTITION BY RANGE (a) \
               (PARTITION p0 VALUES LESS THAN (10) PLACEMENT POLICY = pq, \
-               PARTITION p1 VALUES LESS THAN (20))")
+               PARTITION p1 VALUES LESS THAN (20))",
+        )
         .expect("a partition naming a policy");
     let rendered = session
         .run("DROP PLACEMENT POLICY pq")
@@ -3092,17 +3125,21 @@ fn a_resolved_policy_reference_carries_the_policy_id() {
     // An unknown policy named by a PARTITION is refused, not stored with a
     // dangling reference.
     let rendered = session
-        .run("CREATE TABLE tr (a INT) PARTITION BY RANGE (a) \
-              (PARTITION p0 VALUES LESS THAN (10) PLACEMENT POLICY = nosuch)")
+        .run(
+            "CREATE TABLE tr (a INT) PARTITION BY RANGE (a) \
+              (PARTITION p0 VALUES LESS THAN (10) PLACEMENT POLICY = nosuch)",
+        )
         .expect_err("an unknown policy on a partition is refused")
         .to_mysql_error();
     assert_eq!(rendered.code, 8239);
 
     // A resolved one is recorded, and holds the policy down.
     session
-        .run("CREATE TABLE tr2 (a INT) PARTITION BY RANGE (a) \
+        .run(
+            "CREATE TABLE tr2 (a INT) PARTITION BY RANGE (a) \
               (PARTITION p0 VALUES LESS THAN (10) PLACEMENT POLICY = pr, \
-               PARTITION p1 VALUES LESS THAN (20))")
+               PARTITION p1 VALUES LESS THAN (20))",
+        )
         .expect("a partition naming a real policy");
     let rendered = session
         .run("DROP PLACEMENT POLICY pr")
@@ -3128,9 +3165,11 @@ fn a_partition_policy_prints_as_gos_feature_gated_comment() {
         .run("CREATE PLACEMENT POLICY ps FOLLOWERS=2")
         .expect("policy");
     session
-        .run("CREATE TABLE tp (a INT) PARTITION BY RANGE (a) \
+        .run(
+            "CREATE TABLE tp (a INT) PARTITION BY RANGE (a) \
               (PARTITION p0 VALUES LESS THAN (10) COMMENT 'c' PLACEMENT POLICY = ps, \
-               PARTITION p1 VALUES LESS THAN (20))")
+               PARTITION p1 VALUES LESS THAN (20))",
+        )
         .expect("a partition naming a policy");
     let shown = show_create(&mut session, "tp");
     assert!(
@@ -3151,8 +3190,10 @@ fn a_partition_policy_prints_as_gos_feature_gated_comment() {
         .run("CREATE PLACEMENT POLICY ph FOLLOWERS=1")
         .expect("policy");
     session
-        .run("CREATE TABLE th (a INT) PARTITION BY HASH (a) \
-              (PARTITION p0 PLACEMENT POLICY = ph, PARTITION p1)")
+        .run(
+            "CREATE TABLE th (a INT) PARTITION BY HASH (a) \
+              (PARTITION p0 PLACEMENT POLICY = ph, PARTITION p1)",
+        )
         .expect("hash table with a policy on one partition");
     let shown = show_create(&mut session, "th");
     assert!(
@@ -3230,9 +3271,7 @@ fn a_table_policy_prints_in_show_create_table() {
     );
 
     // A table naming no policy prints no clause at all.
-    session
-        .run("CREATE TABLE tn (a INT)")
-        .expect("plain table");
+    session.run("CREATE TABLE tn (a INT)").expect("plain table");
     let shown = show_create(&mut session, "tn");
     assert!(
         !shown.contains("PLACEMENT POLICY"),
@@ -3291,10 +3330,14 @@ fn alter_table_can_set_a_placement_policy() {
 fn truncate_empties_a_partitioned_table() {
     let mut session = Session::new();
     session
-        .run("CREATE TABLE tt (a INT) PARTITION BY RANGE (a) \
-              (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))")
+        .run(
+            "CREATE TABLE tt (a INT) PARTITION BY RANGE (a) \
+              (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+        )
         .expect("partitioned table");
-    session.run("INSERT INTO tt VALUES (1),(2),(11),(12)").expect("rows");
+    session
+        .run("INSERT INTO tt VALUES (1),(2),(11),(12)")
+        .expect("rows");
     assert_eq!(
         tests_support::row_text(session.run("SELECT count(*) FROM tt")),
         vec![vec!["4".to_owned()]]
@@ -3327,13 +3370,17 @@ fn truncate_empties_a_partitioned_table() {
 fn unserved_partition_management_is_refused_not_ignored() {
     let mut session = Session::new();
     session
-        .run("CREATE TABLE pm (a INT) PARTITION BY RANGE (a) \
-              (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))")
+        .run(
+            "CREATE TABLE pm (a INT) PARTITION BY RANGE (a) \
+              (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+        )
         .expect("range table");
     session
         .run("CREATE TABLE pmh (a INT) PARTITION BY HASH (a) PARTITIONS 4")
         .expect("hash table");
-    session.run("CREATE TABLE plain (a INT)").expect("plain table");
+    session
+        .run("CREATE TABLE plain (a INT)")
+        .expect("plain table");
 
     let unserved = [
         "ALTER TABLE pm REORGANIZE PARTITION p0, p1 INTO \
@@ -3365,11 +3412,15 @@ fn unserved_partition_management_is_refused_not_ignored() {
 fn information_schema_partitions_reports_gos_rows() {
     let mut session = Session::new();
     session
-        .run("CREATE TABLE ip (a INT) PARTITION BY RANGE (a) \
+        .run(
+            "CREATE TABLE ip (a INT) PARTITION BY RANGE (a) \
               (PARTITION p0 VALUES LESS THAN (10) COMMENT 'first', \
-               PARTITION p1 VALUES LESS THAN (MAXVALUE))")
+               PARTITION p1 VALUES LESS THAN (MAXVALUE))",
+        )
         .expect("range table");
-    session.run("CREATE TABLE plainp (a INT)").expect("plain table");
+    session
+        .run("CREATE TABLE plainp (a INT)")
+        .expect("plain table");
 
     let rows = tests_support::row_text(session.run(
         "SELECT partition_name, partition_ordinal_position, partition_method, \
@@ -3381,12 +3432,20 @@ fn information_schema_partitions_reports_gos_rows() {
         rows,
         vec![
             vec![
-                "p0".to_owned(), "1".to_owned(), "RANGE".to_owned(),
-                "`a`".to_owned(), "10".to_owned(), "first".to_owned()
+                "p0".to_owned(),
+                "1".to_owned(),
+                "RANGE".to_owned(),
+                "`a`".to_owned(),
+                "10".to_owned(),
+                "first".to_owned()
             ],
             vec![
-                "p1".to_owned(), "2".to_owned(), "RANGE".to_owned(),
-                "`a`".to_owned(), "MAXVALUE".to_owned(), "NULL".to_owned()
+                "p1".to_owned(),
+                "2".to_owned(),
+                "RANGE".to_owned(),
+                "`a`".to_owned(),
+                "MAXVALUE".to_owned(),
+                "NULL".to_owned()
             ],
         ],
         "the ordinal is ONE-based and the description is the stored bound"
@@ -3410,8 +3469,10 @@ fn information_schema_partitions_reports_gos_rows() {
 fn information_schema_partitions_names_the_columns_forms_as_go_does() {
     let mut session = Session::new();
     session
-        .run("CREATE TABLE rc (a INT, b INT) PARTITION BY RANGE COLUMNS (a, b) \
-              (PARTITION p0 VALUES LESS THAN (10, 10))")
+        .run(
+            "CREATE TABLE rc (a INT, b INT) PARTITION BY RANGE COLUMNS (a, b) \
+              (PARTITION p0 VALUES LESS THAN (10, 10))",
+        )
         .expect("range columns table");
     let rows = tests_support::row_text(session.run(
         "SELECT partition_method, partition_expression \
@@ -3448,9 +3509,9 @@ fn show_table_status_reports_partitioned_like_information_schema_does() {
 
     // And the two surfaces agree, which is the property Go gets for free by
     // reading one from the other.
-    let from_infoschema = tests_support::row_text(session.run(
-        "SELECT create_options FROM information_schema.tables WHERE table_name = 'sp'",
-    ));
+    let from_infoschema = tests_support::row_text(
+        session.run("SELECT create_options FROM information_schema.tables WHERE table_name = 'sp'"),
+    );
     assert_eq!(from_infoschema, vec![vec!["partitioned".to_owned()]]);
 
     let status = tests_support::row_text(session.run("SHOW TABLE STATUS LIKE 'sq'"));
@@ -3489,9 +3550,9 @@ fn a_constant_above_i64_max_filters_the_same_on_both_paths() {
         "the index path filters"
     );
     assert_eq!(
-        tests_support::row_text(session.run(
-            "SELECT count(*) FROM ix IGNORE INDEX (ku) WHERE u >= 9223372036854775808"
-        )),
+        tests_support::row_text(
+            session.run("SELECT count(*) FROM ix IGNORE INDEX (ku) WHERE u >= 9223372036854775808")
+        ),
         expected,
         "and so does the scan path -- returning every row here means the \
          predicate was dropped, not evaluated"
@@ -3506,9 +3567,9 @@ fn a_constant_above_i64_max_filters_the_same_on_both_paths() {
         one
     );
     assert_eq!(
-        tests_support::row_text(session.run(
-            "SELECT count(*) FROM ix IGNORE INDEX (ke) WHERE e = 18446744073709551615"
-        )),
+        tests_support::row_text(
+            session.run("SELECT count(*) FROM ix IGNORE INDEX (ke) WHERE e = 18446744073709551615")
+        ),
         one
     );
 }
@@ -3558,12 +3619,18 @@ fn an_unsigned_row_handle_answers_correctly_across_the_int64_boundary() {
     assert_eq!(count(&mut session, "SELECT count(*) FROM uh"), "5");
     // The two values at or above the boundary.
     assert_eq!(
-        count(&mut session, "SELECT count(*) FROM uh WHERE id >= 9223372036854775808"),
+        count(
+            &mut session,
+            "SELECT count(*) FROM uh WHERE id >= 9223372036854775808"
+        ),
         "2"
     );
     // ... and the three below it.
     assert_eq!(
-        count(&mut session, "SELECT count(*) FROM uh WHERE id < 9223372036854775808"),
+        count(
+            &mut session,
+            "SELECT count(*) FROM uh WHERE id < 9223372036854775808"
+        ),
         "3"
     );
     // A range that STRADDLES the boundary is the case Go has to split.
@@ -3576,11 +3643,17 @@ fn an_unsigned_row_handle_answers_correctly_across_the_int64_boundary() {
     );
     // Exactly at the boundary, both sides.
     assert_eq!(
-        count(&mut session, "SELECT count(*) FROM uh WHERE id = 9223372036854775807"),
+        count(
+            &mut session,
+            "SELECT count(*) FROM uh WHERE id = 9223372036854775807"
+        ),
         "1"
     );
     assert_eq!(
-        count(&mut session, "SELECT count(*) FROM uh WHERE id = 9223372036854775808"),
+        count(
+            &mut session,
+            "SELECT count(*) FROM uh WHERE id = 9223372036854775808"
+        ),
         "1"
     );
 
@@ -3632,14 +3705,20 @@ fn an_unsigned_row_handle_is_read_through_ranges_like_go() {
     // The predicate is CONSUMED by the range, so this is not a full scan with
     // a filter above it: the range is the whole of the restriction.
     assert!(
-        scan_line(&mut session, "EXPLAIN SELECT * FROM uh WHERE id >= 9223372036854775808")
-            .contains("range:[9223372036854775808,+inf]"),
+        scan_line(
+            &mut session,
+            "EXPLAIN SELECT * FROM uh WHERE id >= 9223372036854775808"
+        )
+        .contains("range:[9223372036854775808,+inf]"),
         "an unsigned bound above the signed maximum has to reach the scan as a range"
     );
     // The open LOW end is the unsigned domain's `0`, not `-inf`.
     assert!(
-        scan_line(&mut session, "EXPLAIN SELECT * FROM uh WHERE id < 9223372036854775808")
-            .contains("range:[0,9223372036854775808)"),
+        scan_line(
+            &mut session,
+            "EXPLAIN SELECT * FROM uh WHERE id < 9223372036854775808"
+        )
+        .contains("range:[0,9223372036854775808)"),
         "an unsigned handle's open low bound is 0"
     );
     // ... while the open HIGH end still prints `+inf`, because `MaxUint64` on
@@ -3715,7 +3794,9 @@ fn an_unsigned_row_handle_orders_across_partitions_by_value_not_by_key() {
         descending
     );
     assert_eq!(
-        tests_support::row_text(session.run("SELECT count(*) FROM up WHERE id >= 9223372036854775808")),
+        tests_support::row_text(
+            session.run("SELECT count(*) FROM up WHERE id >= 9223372036854775808")
+        ),
         vec![vec!["2".to_owned()]]
     );
 }
@@ -3964,14 +4045,23 @@ fn every_unsigned_handle_predicate_reads_the_same_rows_ranged_as_filtered() {
 
     let mut mismatches = Vec::new();
     for predicate in &predicates {
-        let ranged = read(&mut session, &format!("SELECT id FROM uh WHERE {predicate}"));
-        let filtered = read(&mut session, &format!("SELECT id FROM uf WHERE {predicate}"));
+        let ranged = read(
+            &mut session,
+            &format!("SELECT id FROM uh WHERE {predicate}"),
+        );
+        let filtered = read(
+            &mut session,
+            &format!("SELECT id FROM uf WHERE {predicate}"),
+        );
         if ranged != filtered {
             mismatches.push(format!(
                 "  {predicate}\n    range : {ranged:?}\n    filter: {filtered:?}"
             ));
         }
-        let partitioned = read(&mut session, &format!("SELECT id FROM up WHERE {predicate}"));
+        let partitioned = read(
+            &mut session,
+            &format!("SELECT id FROM up WHERE {predicate}"),
+        );
         if partitioned != filtered {
             mismatches.push(format!(
                 "  {predicate}\n    parts : {partitioned:?}\n    filter: {filtered:?}"
@@ -4038,12 +4128,11 @@ fn a_partitioned_index_lookup_answers_partition_by_partition_in_handle_order() {
         )
         .expect("rows");
     // The read has to be the DOUBLE READ under test, not a table scan.
-    let plan: Vec<String> = tests_support::row_text(
-        session.run("EXPLAIN SELECT * FROM tp USE INDEX(b) WHERE b <= 10"),
-    )
-    .into_iter()
-    .map(|row| row.join(" "))
-    .collect();
+    let plan: Vec<String> =
+        tests_support::row_text(session.run("EXPLAIN SELECT * FROM tp USE INDEX(b) WHERE b <= 10"))
+            .into_iter()
+            .map(|row| row.join(" "))
+            .collect();
     assert!(
         plan.iter().any(|line| line.contains("IndexLookUp")),
         "USE INDEX(b) under SELECT * must plan a double read: {plan:?}"

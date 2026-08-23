@@ -2130,9 +2130,9 @@ fn match_against_rewrites_to_ilike_under_the_gate() {
         vec![vec!["2"], vec!["3"], vec!["4"], vec!["5"]]
     );
     // Only excluded terms: MySQL boolean mode answers the empty set.
-    assert!(row_text(session.run(
-        "SELECT id FROM articles WHERE MATCH(title) AGAINST('-MySQL' IN BOOLEAN MODE)"
-    ))
+    assert!(row_text(
+        session.run("SELECT id FROM articles WHERE MATCH(title) AGAINST('-MySQL' IN BOOLEAN MODE)")
+    )
     .is_empty());
     // A non-string matched column refuses BEFORE the NULL fast path -- Go's
     // "Doesn't support match search on a non-string column" precedes it.

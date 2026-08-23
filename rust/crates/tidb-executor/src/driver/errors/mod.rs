@@ -204,6 +204,10 @@ impl DriverError {
                 "Write conflict, please retry the transaction".to_owned(),
             )
         }
+        DriverError::Txn(crate::TxnErrorKind::AsOf(cause)) => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrAsOf,
+            format!("invalid as of timestamp: {cause}"),
+        ),
         DriverError::Txn(crate::TxnErrorKind::RegionUnavailable) => MysqlError::new(
             ER_REGION_UNAVAILABLE,
             *b"HY000",

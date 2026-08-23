@@ -617,13 +617,32 @@ fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
                 Datum::Bytes(schema.clone().into_bytes()),
                 Datum::Bytes(table_name.clone().into_bytes()),
                 // Every partition column is NULL for an unpartitioned table.
-                Datum::Null, Datum::Null, Datum::Null, Datum::Null, Datum::Null,
-                Datum::Null, Datum::Null, Datum::Null, Datum::Null,
-                Datum::Int(0), Datum::Int(0), Datum::Int(0),
-                Datum::Null, Datum::Int(0), Datum::Null,
-                Datum::Null, Datum::Null, Datum::Null, Datum::Null,
-                Datum::Null, Datum::Null, Datum::Null, Datum::Null,
-                Datum::Null, Datum::Null, Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Int(0),
+                Datum::Int(0),
+                Datum::Int(0),
+                Datum::Null,
+                Datum::Int(0),
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
             ]);
             continue;
         };
@@ -637,9 +656,7 @@ fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
             tidb_executor::PartitionKind::ListColumns { .. } => {
                 ("LIST COLUMNS".to_owned(), partition.expr_text.clone())
             }
-            tidb_executor::PartitionKind::Key => {
-                ("KEY".to_owned(), partition.expr_text.clone())
-            }
+            tidb_executor::PartitionKind::Key => ("KEY".to_owned(), partition.expr_text.clone()),
             other => (other.sql().to_owned(), partition.expr_text.clone()),
         };
         for (ordinal, definition) in partition.definitions.iter().enumerate() {
@@ -695,20 +712,28 @@ fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
                 Datum::Bytes(expression.clone().into_bytes()),
                 Datum::Null,
                 description,
-                Datum::Int(0), Datum::Int(0), Datum::Int(0),
-                Datum::Null, Datum::Int(0), Datum::Null,
-                Datum::Null, Datum::Null, Datum::Null, Datum::Null,
+                Datum::Int(0),
+                Datum::Int(0),
+                Datum::Int(0),
+                Datum::Null,
+                Datum::Int(0),
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
+                Datum::Null,
                 comment,
-                Datum::Null, Datum::Null,
+                Datum::Null,
+                Datum::Null,
                 Datum::Int(definition.id),
                 policy,
-                Datum::Null, Datum::Null,
+                Datum::Null,
+                Datum::Null,
             ]);
         }
     }
     rows
 }
-
 
 /// Go `tableIDMap` (`pkg/infoschema/tables.go:253`): every
 /// `INFORMATION_SCHEMA` memory table's id offset from

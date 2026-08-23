@@ -266,9 +266,7 @@ impl Session {
         // nothing, and recorded back onto the session's copy of the handle.
         let cache_enabled = self.prepared_plan_cache_enabled();
         let key = cache_enabled.then(|| self.prepared_plan_key());
-        let hit = prepared.cacheable.is_ok()
-            && key.is_some()
-            && prepared.last_plan_key == key;
+        let hit = prepared.cacheable.is_ok() && key.is_some() && prepared.last_plan_key == key;
         // Go builds the prepared statement's own plan and runs it as this
         // statement's body, so the inner statement goes through the same
         // dispatch every other statement does -- including DDL's implicit

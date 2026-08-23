@@ -38,7 +38,10 @@ fn one(session: &mut Session, sql: &str) -> String {
 #[test]
 fn a_noop_gated_variable_refuses_to_off_and_a_hint_takes_that_value() {
     let mut session = Session::new();
-    assert_eq!(one(&mut session, "SELECT @@tidb_enable_noop_functions"), "OFF");
+    assert_eq!(
+        one(&mut session, "SELECT @@tidb_enable_noop_functions"),
+        "OFF"
+    );
 
     // The plain SET is the branch that keeps the error.
     let error = session

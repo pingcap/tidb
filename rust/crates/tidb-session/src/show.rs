@@ -566,9 +566,7 @@ fn ttl_clause_text(table: &tidb_executor::KvTable) -> String {
         " /*T![ttl] TTL_ENABLE='{}' */",
         if info.enable { "ON" } else { "OFF" }
     ));
-    text.push_str(&format!(
-        " /*T![ttl] TTL_JOB_INTERVAL='{job_interval}' */"
-    ));
+    text.push_str(&format!(" /*T![ttl] TTL_JOB_INTERVAL='{job_interval}' */"));
     text
 }
 
@@ -606,7 +604,6 @@ fn hash_definitions_are_default(definitions: &[tidb_executor::PartitionDef]) -> 
             && definition.placement_policy.is_none()
     })
 }
-
 
 fn partition_clause_text(table: &tidb_executor::KvTable) -> String {
     let Some(partition) = table.partition() else {

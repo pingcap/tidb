@@ -125,11 +125,13 @@ fn a_derived_left_outer_join_is_modelled_and_the_join_above_hashes() {
     // The rows are the recording's semantics: t1.id=1 matches everywhere and
     // t2's id=2 row null-extends through t3, surviving the OR filter only
     // when a side matches.
-    let rows = row_text(session.run(&format!("select sub.id, sub.n3, t4.name from \
+    let rows = row_text(session.run(&format!(
+        "select sub.id, sub.n3, t4.name from \
         (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 \
          from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id \
          where t2.name like 'test2' or t3.name like 'test3') sub \
-        inner join t4 on sub.id=t4.id order by sub.id")));
+        inner join t4 on sub.id=t4.id order by sub.id"
+    )));
     assert_eq!(
         rows,
         vec![
@@ -189,18 +191,14 @@ fn hash_join_pricing_reads_the_sessions_concurrency() {
     let sql = "explain select t1.a, dt.key_a from t1, t5, \
         (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt \
         where t1.b = dt.doubled_b and dt.key_a = t5.a";
-    session
-        .run("set tidb_hash_join_concurrency = 1")
-        .unwrap();
+    session.run("set tidb_hash_join_concurrency = 1").unwrap();
     let recorded = plan(&mut session, sql).join("\n");
     assert!(
         recorded.contains("IndexRangeScan")
             && recorded.contains("range: decided by [eq(test.t1.b, Column)]"),
         "at the recorded concurrency the index join probes t1 by the injected column:\n{recorded}"
     );
-    session
-        .run("set tidb_hash_join_concurrency = 5")
-        .unwrap();
+    session.run("set tidb_hash_join_concurrency = 5").unwrap();
     let plain = plan(&mut session, sql).join("\n");
     assert_ne!(
         recorded, plain,
@@ -231,9 +229,7 @@ fn hash_join_pricing_reads_the_sessions_concurrency() {
 #[test]
 fn a_computed_projection_delivers_a_priced_receipt_and_t1_is_read_whole() {
     let mut session = through_projection_session();
-    session
-        .run("set tidb_hash_join_concurrency = 1")
-        .unwrap();
+    session.run("set tidb_hash_join_concurrency = 1").unwrap();
     let sql = "select t1.*, dt.* from t1, \
         (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt \
         where t1.b = dt.doubled_b";
