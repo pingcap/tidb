@@ -88,25 +88,25 @@ pub use parallel::HashAggContext;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{BuildHasherDefault, Hasher};
-use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
 use tidb_codec::{
-    encode_bytes, encode_compact_bytes, encode_uvarint, encode_varint, NIL_FLAG, UVARINT_FLAG,
-    VARINT_FLAG,
+    NIL_FLAG, UVARINT_FLAG, VARINT_FLAG, encode_bytes, encode_compact_bytes, encode_uvarint,
+    encode_varint,
 };
 use tidb_datatype::{
-    BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, EvalType, FieldType, TimeType,
-    MAX_DECIMAL_SCALE, UNSPECIFIED_LENGTH,
+    BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, EvalType, FieldType, MAX_DECIMAL_SCALE,
+    TimeType, UNSPECIFIED_LENGTH,
 };
+use tidb_expr::Columns;
 use tidb_expr::compare_datums;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
 use tidb_util::disk;
 use tidb_util::memory::{ActionOnExceed, ArcAction, Tracker};
-use tidb_util::selection::{select, Selectable};
+use tidb_util::selection::{Selectable, select};
 use tidb_util::set::MemorySet;
 
 struct DatumSelection<'a>(&'a mut [Datum]);
@@ -474,6 +474,15 @@ enum Partial {
     /// sums an integer or decimal argument exactly, in the decimal domain --
     /// `SUM` over a BIGINT column is a DECIMAL in MySQL.
     SumDecimal(Option<Decimal>),
+    /// Fixed-scale decimal SUM accumulator. The common DECIMAL(15,2) fold
+    /// (TPC-H's revenue sums) keeps only the signed i128 coefficient until
+    /// finalization: one checked add per row instead of a `Decimal` build
+    /// plus its digit parse. A differing-scale or overflowing input falls
+    /// back to [`Partial::SumDecimal`] via [`Partial::materialize_sum_fast`].
+    SumDecimalFast {
+        sum: i128,
+        scale: u32,
+    },
     SumReal(Option<f64>),
     /// `None` until the first row is seen.
     FirstRow(Option<Datum>),
@@ -805,7 +814,7 @@ fn group_concat_bytes(value: &Datum) -> Result<Vec<u8>, ExecError> {
         _ => {
             return Err(ExecError::unsupported(
                 "GROUP_CONCAT over this datum kind is not yet supported",
-            ))
+            ));
         }
     })
 }
@@ -1118,13 +1127,13 @@ impl Partial {
             // Go appends the converted value for EVERY row, so a NULL input
             // lands in the array as JSON `null` rather than being skipped.
             (Partial::JsonArrayAgg(..), None) => {
-                return Err(ExecError::unsupported("JSON_ARRAYAGG requires an argument"))
+                return Err(ExecError::unsupported("JSON_ARRAYAGG requires an argument"));
             }
             (Partial::JsonArrayAgg(entries, value_type), Some(input)) => {
                 entries.push(json_value(&input, value_type)?)
             }
             (Partial::JsonObjectAgg(..), None | Some(Datum::Null)) => {
-                return Err(ExecError::JsonDocumentNullKey)
+                return Err(ExecError::JsonDocumentNullKey);
             }
             // A BINARY-charset key (Go: `e.args[0].GetType(sctx).GetCharset()
             // == charset.CharsetBin`) fails the statement with 3144 before
@@ -1136,7 +1145,7 @@ impl Partial {
             (Partial::JsonObjectAgg(_, _, true), Some(_)) => {
                 return Err(ExecError::InvalidJsonCharset {
                     charset: "binary".to_owned(),
-                })
+                });
             }
             (Partial::JsonObjectAgg(entries, value_type, false), Some(key)) => {
                 let value = extra.first().cloned().unwrap_or(Datum::Null);
@@ -1148,7 +1157,7 @@ impl Partial {
             (Partial::ApproxCountDistinct(_), None) => {
                 return Err(ExecError::unsupported(
                     "APPROX_COUNT_DISTINCT requires an argument",
-                ))
+                ));
             }
             (Partial::ApproxCountDistinct(_), Some(Datum::Null)) => {}
             // The caller (the group-fold loop below) has already encoded the
@@ -1160,12 +1169,12 @@ impl Partial {
             (Partial::ApproxCountDistinct(_), Some(_)) => {
                 return Err(ExecError::unsupported(
                     "APPROX_COUNT_DISTINCT requires a pre-encoded argument tuple",
-                ))
+                ));
             }
             (Partial::ApproxPercentile { .. }, None) => {
                 return Err(ExecError::unsupported(
                     "APPROX_PERCENTILE requires an argument",
-                ))
+                ));
             }
             (Partial::ApproxPercentile { .. }, Some(Datum::Null)) => {}
             (Partial::ApproxPercentile { values, .. }, Some(input)) => values.push(input),
@@ -1182,10 +1191,55 @@ impl Partial {
             (Partial::FinalCount(_), Some(_)) => {
                 return Err(ExecError::unsupported(
                     "final COUNT requires integer partial results",
-                ))
+                ));
+            }
+            (this @ Partial::SumDecimalFast { .. }, None | Some(Datum::Null)) => {
+                // A NULL input contributes nothing to the accumulator.
+                let _ = this;
+            }
+            (state @ Partial::SumDecimalFast { .. }, Some(input)) => {
+                // Fold by coefficient when the input's scale matches; any
+                // other shape materializes the exact Decimal state and this
+                // row replays through the ordinary SumDecimal fold.
+                let (current_sum, current_scale) = match state {
+                    Partial::SumDecimalFast { sum, scale } => (*sum, *scale),
+                    _ => unreachable!("matched arm"),
+                };
+                let coefficient = match input {
+                    Datum::Int(ref v) => Some((i128::from(*v), 0u32)),
+                    Datum::UInt(ref v) => i128::try_from(*v).ok().map(|unsigned| (unsigned, 0u32)),
+                    Datum::Decimal(ref d) => d.coefficient_i128(),
+                    _ => None,
+                };
+                let folded = coefficient.and_then(|(addend, addend_scale)| {
+                    if addend_scale == current_scale {
+                        current_sum.checked_add(addend)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(total) = folded {
+                    match state {
+                        Partial::SumDecimalFast { sum, .. } => *sum = total,
+                        _ => {}
+                    }
+                } else {
+                    let materialized = Decimal::from_scaled_i128(current_sum, current_scale);
+                    let replayed = match input {
+                        Datum::Int(ref v) => Decimal::from_int(*v).add(&materialized),
+                        Datum::UInt(ref v) => Decimal::from_uint(*v).add(&materialized),
+                        Datum::Decimal(ref d) => d.add(&materialized),
+                        ref other => {
+                            return Err(ExecError::unsupported(format!(
+                                "SUM over {other:?} is not supported"
+                            )));
+                        }
+                    };
+                    *state = Partial::SumDecimal(Some(replayed));
+                }
             }
             (Partial::SumDecimal(_) | Partial::SumReal(_), None) => {
-                return Err(ExecError::unsupported("SUM requires an argument"))
+                return Err(ExecError::unsupported("SUM requires an argument"));
             }
             (Partial::SumDecimal(_) | Partial::SumReal(_), Some(Datum::Null)) => {}
             (this @ Partial::SumDecimal(None), Some(input))
@@ -1203,7 +1257,7 @@ impl Partial {
                     _ => {
                         return Err(ExecError::unsupported(
                             "SUM over this datum kind is not yet supported",
-                        ))
+                        ));
                     }
                 };
                 *acc = Some(match acc.take() {
@@ -1217,7 +1271,7 @@ impl Partial {
             // Go `builtinGroupConcat`: a NULL input contributes nothing at
             // all, and every other value is stringified before it is joined.
             (Partial::GroupConcat { .. }, None) => {
-                return Err(ExecError::unsupported("GROUP_CONCAT requires an argument"))
+                return Err(ExecError::unsupported("GROUP_CONCAT requires an argument"));
             }
             (Partial::GroupConcat { .. }, Some(Datum::Null)) => {}
             (Partial::GroupConcat { values, .. }, Some(input)) => {
@@ -1229,7 +1283,7 @@ impl Partial {
                 }
             }
             (Partial::MaxMin { .. }, None) => {
-                return Err(ExecError::unsupported("MIN/MAX requires an argument"))
+                return Err(ExecError::unsupported("MIN/MAX requires an argument"));
             }
             (Partial::MaxMin { .. }, Some(Datum::Null)) => {}
             (Partial::MaxMin { value, is_max }, Some(input)) => match value {
@@ -1279,7 +1333,7 @@ impl Partial {
                     _ => {
                         return Err(ExecError::unsupported(
                             "AVG over this datum kind is not yet supported",
-                        ))
+                        ));
                     }
                 };
                 *sum = sum.add(&addend);
@@ -1294,7 +1348,7 @@ impl Partial {
             (Partial::Bit { .. }, None) => {
                 return Err(ExecError::unsupported(
                     "BIT_AND/BIT_OR/BIT_XOR requires an argument",
-                ))
+                ));
             }
             (Partial::Bit { .. }, Some(Datum::Null)) => {}
             (Partial::Bit { acc, op }, Some(input)) => {
@@ -1308,7 +1362,7 @@ impl Partial {
             (Partial::Variance { .. }, None) => {
                 return Err(ExecError::unsupported(
                     "the variance/stddev family requires an argument",
-                ))
+                ));
             }
             (Partial::Variance { .. }, Some(Datum::Null)) => {}
             (
@@ -1459,6 +1513,9 @@ impl Partial {
             }
             Partial::SumDecimal(None) | Partial::SumReal(None) => Datum::Null,
             Partial::SumDecimal(Some(v)) => Datum::Decimal(v.clone()),
+            Partial::SumDecimalFast { sum, scale } => {
+                Datum::Decimal(Decimal::from_scaled_i128(*sum, *scale))
+            }
             Partial::SumReal(Some(v)) => Datum::Real(*v),
             Partial::FirstRow(v) => v.clone().unwrap_or(Datum::Null),
             Partial::MaxMin { value, .. } => value.clone().unwrap_or(Datum::Null),
@@ -1821,10 +1878,12 @@ impl<C: Columns> GroupedStreamAggExec<C> {
     ) -> Self {
         debug_assert!(!group_by.is_empty());
         debug_assert_eq!(agg_funcs.len(), output_positions.len());
-        debug_assert!(output_positions
-            .iter()
-            .copied()
-            .all(|position| position < agg_funcs.len()));
+        debug_assert!(
+            output_positions
+                .iter()
+                .copied()
+                .all(|position| position < agg_funcs.len())
+        );
         debug_assert!((0..agg_funcs.len()).all(|position| output_positions.contains(&position)));
         let child_chunk = child.new_chunk();
         let states = agg_funcs.iter().map(AggState::new).collect();
@@ -3001,8 +3060,8 @@ fn eval_agg_input<C: Columns>(
 mod tests {
     use super::*;
     use tidb_datatype::{FieldType, FieldTypeCode};
-    use tidb_expr::column::Column;
     use tidb_expr::NoColumns;
+    use tidb_expr::column::Column;
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::LongLong)
