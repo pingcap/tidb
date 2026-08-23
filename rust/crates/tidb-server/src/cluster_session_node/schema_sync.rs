@@ -53,18 +53,43 @@ const DDL_ALL_SCHEMA_VERSIONS_BY_JOB: &str = "/tidb/ddl/all_schema_by_job_versio
 /// keepalive.
 const SESSION_TTL_SECONDS: i64 = 90;
 
-/// The catalog versions live local work still reads at.
+/// The tables live local work still reads at older schema versions.
 ///
-/// A statement holds its session's version for its own duration; an explicit
-/// transaction holds it from `BEGIN` to `COMMIT`/`ROLLBACK`. The oldest held
-/// version is the MDL gate: a job may be acknowledged only when nothing
-/// local still runs on a schema older than the job's.
+/// Go's shape, ported from `RemoveLockDDLJobs`
+/// (`pkg/sessionctx/variable/session.go:3935-3962`) and the recording in
+/// `pkg/planner/core/preprocess.go:2243-2270`: each open transaction carries
+/// a map `table id -> the domain schema version at the table's FIRST use in
+/// this transaction` (`GetRelatedTableForMDL`), and a DDL job is blocked iff
+/// some live map holds one of the job's tables at a version below the
+/// job's. The map lives exactly as long as the transaction
+/// (`TransactionContext.Cleanup` drops it, `session.go:451`).
+///
+/// One divergence, deliberately conservative: Go records tables while the
+/// PLANNER resolves them, so a view's underlying tables are recorded too.
+/// This port records from the parsed statement's names, which see the view,
+/// not its bases -- so a name that does not resolve to a stored table marks
+/// the connection `unresolved`, and an unresolved connection blocks every
+/// job below its pinned version, the whole-transaction rule this replaces.
+/// Blocking longer than Go is a slow ack; blocking shorter would let a DDL
+/// publish under a transaction still reading the old schema.
 #[derive(Debug, Default)]
 pub struct SchemaPinRegistry {
-    /// connection id -> (pinned version, nesting count). A statement inside
-    /// an explicit transaction nests; both pin the SAME version because the
-    /// session's catalog cannot move while the transaction is open.
-    pins: Mutex<HashMap<u64, (i64, u32)>>,
+    pins: Mutex<HashMap<u64, ConnPins>>,
+}
+
+/// One connection's live work.
+#[derive(Debug, Default)]
+struct ConnPins {
+    /// Nesting count: a statement inside an explicit transaction holds too.
+    count: u32,
+    /// The catalog version of the OUTERMOST live hold -- the fallback bound
+    /// when `unresolved` is set.
+    version: i64,
+    /// Go `GetRelatedTableForMDL`: table id -> version at first use.
+    tables: HashMap<i64, i64>,
+    /// A statement referenced a name this node could not resolve to a stored
+    /// table id; block conservatively below `version`.
+    unresolved: bool,
 }
 
 impl SchemaPinRegistry {
@@ -73,12 +98,17 @@ impl SchemaPinRegistry {
     pub fn hold(self: &Arc<Self>, connection_id: u64, version: i64) -> SchemaPinGuard {
         {
             let mut pins = self.pins.lock().expect("schema pin registry poisoned");
-            let entry = pins.entry(connection_id).or_insert((version, 0));
-            // Nested holds keep the OLDER version: an explicit transaction's
-            // pin must not be masked by a statement re-pinning after a
-            // rebuild that cannot have happened while it was open.
-            entry.0 = entry.0.min(version);
-            entry.1 += 1;
+            let entry = pins.entry(connection_id).or_default();
+            if entry.count == 0 {
+                entry.version = version;
+            } else {
+                // Nested holds keep the OLDER bound: an explicit
+                // transaction's pin must not be masked by a statement
+                // re-pinning after a rebuild that cannot have happened while
+                // it was open.
+                entry.version = entry.version.min(version);
+            }
+            entry.count += 1;
         }
         SchemaPinGuard {
             registry: Arc::clone(self),
@@ -86,22 +116,49 @@ impl SchemaPinRegistry {
         }
     }
 
-    /// The oldest version any live work still reads at, if any.
+    /// Go `preprocess.go:2270`'s store: the table was bound at `version`;
+    /// first use wins, exactly as Go only stores on a `Load` miss.
+    pub fn record_table_use(&self, connection_id: u64, table_id: i64, version: i64) {
+        let mut pins = self.pins.lock().expect("schema pin registry poisoned");
+        if let Some(entry) = pins.get_mut(&connection_id) {
+            entry.tables.entry(table_id).or_insert(version);
+        }
+    }
+
+    /// A statement referenced a name that resolves to no stored table; the
+    /// connection falls back to the whole-transaction rule.
+    pub fn record_unresolved(&self, connection_id: u64) {
+        let mut pins = self.pins.lock().expect("schema pin registry poisoned");
+        if let Some(entry) = pins.get_mut(&connection_id) {
+            entry.unresolved = true;
+        }
+    }
+
+    /// Go `RemoveLockDDLJobs`'s per-session test, over every live
+    /// connection: blocked iff some connection used one of the job's tables
+    /// at a version below the job's -- or is `unresolved` below it.
     #[must_use]
-    pub fn oldest_pinned(&self) -> Option<i64> {
-        self.pins
-            .lock()
-            .expect("schema pin registry poisoned")
-            .values()
-            .map(|(version, _)| *version)
-            .min()
+    pub fn blocks(&self, job_version: i64, job_table_ids: &[i64]) -> bool {
+        let pins = self.pins.lock().expect("schema pin registry poisoned");
+        pins.values().any(|entry| {
+            entry.count > 0
+                && ((entry.unresolved && entry.version < job_version)
+                    || job_table_ids.iter().any(|table| {
+                        entry
+                            .tables
+                            .get(table)
+                            .is_some_and(|&used| used < job_version)
+                    }))
+        })
     }
 
     fn release(&self, connection_id: u64) {
         let mut pins = self.pins.lock().expect("schema pin registry poisoned");
         if let Some(entry) = pins.get_mut(&connection_id) {
-            entry.1 = entry.1.saturating_sub(1);
-            if entry.1 == 0 {
+            entry.count = entry.count.saturating_sub(1);
+            if entry.count == 0 {
+                // Go `TransactionContext.Cleanup` (`session.go:451`): the
+                // related-table map dies with the transaction.
                 pins.remove(&connection_id);
             }
         }
@@ -128,24 +185,58 @@ impl Drop for SchemaPinGuard {
 /// per (job, version).
 fn acks_due(
     loaded_version: i64,
-    oldest_pin: Option<i64>,
+    pins: &SchemaPinRegistry,
     jobs: &[MdlJob],
     acked: &BTreeMap<i64, i64>,
 ) -> Vec<MdlJob> {
     jobs.iter()
-        .copied()
         .filter(|job| {
             // Go reads `... where version <= domainSchemaVer`: a job whose
             // version this node has not loaded yet cannot be acknowledged.
             job.version <= loaded_version
-                // Go `CheckOldRunningTxn`: live work on an older schema
-                // holds the job back. `>=` because work AT the job's version
-                // already sees the new schema.
-                && oldest_pin.is_none_or(|pin| pin >= job.version)
+                // Go `RemoveLockDDLJobs`: live work that used one of the
+                // job's tables on an older schema holds the job back.
+                && !pins.blocks(job.version, &job.table_ids)
                 // Go's `jobCache`: one ack per (job, version).
                 && acked.get(&job.job_id).is_none_or(|&sent| sent < job.version)
         })
+        .cloned()
         .collect()
+}
+
+/// The session-facing half of the registry: one connection's recorder,
+/// handed to the driver session as its [`tidb_session::MdlRelatedTableSink`].
+///
+/// Recording lands only while the connection holds a pin (a live statement
+/// or an open transaction) -- `record_table_use` is a no-op for an idle
+/// connection, exactly as Go's map lives on the `TransactionContext` and a
+/// session without one blocks nothing.
+#[derive(Debug)]
+pub struct ConnectionMdlSink {
+    registry: Arc<SchemaPinRegistry>,
+    connection_id: u64,
+}
+
+impl ConnectionMdlSink {
+    /// Binds one connection's recorder to the node's registry.
+    #[must_use]
+    pub fn new(registry: Arc<SchemaPinRegistry>, connection_id: u64) -> Self {
+        Self {
+            registry,
+            connection_id,
+        }
+    }
+}
+
+impl tidb_session::MdlRelatedTableSink for ConnectionMdlSink {
+    fn record_table(&self, table_id: i64, version: i64) {
+        self.registry
+            .record_table_use(self.connection_id, table_id, version);
+    }
+
+    fn record_unresolved(&self) {
+        self.registry.record_unresolved(self.connection_id);
+    }
 }
 
 /// The background acknowledger; dropping it stops the thread.
@@ -279,8 +370,7 @@ fn run_ack_loop<C, L, P>(
                     // cache entry with it keeps the cache from growing for
                     // the process's life.
                     acked.retain(|job_id, _| jobs.iter().any(|job| job.job_id == *job_id));
-                    let oldest_pin = pins.oldest_pinned();
-                    let due = acks_due(loaded, oldest_pin, &jobs, &acked);
+                    let due = acks_due(loaded, pins, &jobs, &acked);
                     owed = jobs.iter().any(|job| {
                         acked
                             .get(&job.job_id)
@@ -326,60 +416,108 @@ fn emit_warning(event: &str, error: &impl std::fmt::Display) {
 mod tests {
     use super::*;
 
-    const fn job(job_id: i64, version: i64) -> MdlJob {
-        MdlJob { job_id, version }
+    fn job(job_id: i64, version: i64, table_ids: &[i64]) -> MdlJob {
+        MdlJob {
+            job_id,
+            version,
+            table_ids: table_ids.to_vec(),
+        }
     }
 
     /// Go reads `... where version <= domainSchemaVer`: a job ahead of the
     /// loaded catalog is not acknowledged yet.
     #[test]
     fn a_job_ahead_of_the_loaded_version_waits() {
-        let due = acks_due(5, None, &[job(1, 6), job(2, 5)], &BTreeMap::new());
-        assert_eq!(due, vec![job(2, 5)]);
+        let pins = Arc::new(SchemaPinRegistry::default());
+        let due = acks_due(
+            5,
+            &pins,
+            &[job(1, 6, &[100]), job(2, 5, &[100])],
+            &BTreeMap::new(),
+        );
+        assert_eq!(due, vec![job(2, 5, &[100])]);
     }
 
-    /// Go `CheckOldRunningTxn`: live work on an older schema holds the job
-    /// back; work AT the job's version does not.
+    /// Go `RemoveLockDDLJobs` (`pkg/sessionctx/variable/session.go:3944`):
+    /// a job is blocked iff live work USED one of the job's tables at a
+    /// version below the job's -- a transaction on an unrelated table does
+    /// not hold it, which is the whole point of the per-table check.
     #[test]
-    fn an_older_pin_holds_the_ack_back() {
-        let jobs = [job(1, 5)];
-        assert!(acks_due(5, Some(4), &jobs, &BTreeMap::new()).is_empty());
+    fn only_work_on_the_jobs_own_tables_holds_it_back() {
+        let pins = Arc::new(SchemaPinRegistry::default());
+        let txn = pins.hold(7, 4);
+        pins.record_table_use(7, 100, 4);
+
+        let unrelated = [job(1, 5, &[200])];
         assert_eq!(
-            acks_due(5, Some(5), &jobs, &BTreeMap::new()),
-            vec![job(1, 5)]
+            acks_due(5, &pins, &unrelated, &BTreeMap::new()),
+            unrelated.to_vec(),
+            "a transaction on table 100 must not hold a DDL on table 200"
         );
-        assert_eq!(acks_due(5, None, &jobs, &BTreeMap::new()), vec![job(1, 5)]);
+
+        let related = [job(2, 5, &[100, 300])];
+        assert!(
+            acks_due(5, &pins, &related, &BTreeMap::new()).is_empty(),
+            "the same transaction must hold a DDL on table 100"
+        );
+
+        // Work AT the job's version already sees the new schema (Go's
+        // `value.(int64) < jobMDL.Ver` is strict).
+        pins.record_table_use(7, 300, 5);
+        let at_version = [job(3, 5, &[300])];
+        assert_eq!(
+            acks_due(5, &pins, &at_version, &BTreeMap::new()),
+            at_version.to_vec()
+        );
+
+        drop(txn);
+        assert!(
+            acks_due(5, &pins, &related, &BTreeMap::new()) == related.to_vec(),
+            "the map dies with the transaction (Go TxnCtx.Cleanup)"
+        );
+    }
+
+    /// Go records at FIRST use only (`preprocess.go:2247`: store on a Load
+    /// miss), so a later re-bind at a newer version must not weaken the pin.
+    #[test]
+    fn first_use_wins_and_release_clears() {
+        let pins = Arc::new(SchemaPinRegistry::default());
+        let txn = pins.hold(7, 3);
+        pins.record_table_use(7, 100, 3);
+        pins.record_table_use(7, 100, 9);
+        assert!(pins.blocks(5, &[100]), "first use at 3 still blocks 5");
+        let statement = pins.hold(7, 3);
+        drop(statement);
+        assert!(pins.blocks(5, &[100]), "the transaction still holds");
+        drop(txn);
+        assert!(!pins.blocks(5, &[100]));
+    }
+
+    /// A name this node cannot resolve to a stored table (Go's planner sees
+    /// through views; this port's statement names do not) falls back to the
+    /// whole-transaction rule: block everything below the pinned version.
+    #[test]
+    fn an_unresolved_name_blocks_conservatively() {
+        let pins = Arc::new(SchemaPinRegistry::default());
+        let txn = pins.hold(7, 4);
+        pins.record_unresolved(7);
+        assert!(pins.blocks(5, &[999]), "unresolved blocks any table");
+        assert!(!pins.blocks(4, &[999]), "but not a job at its own version");
+        drop(txn);
+        assert!(!pins.blocks(5, &[999]));
     }
 
     /// Go's `jobCache`: one ack per (job, version), but a job re-published
     /// at a HIGHER version is acknowledged again.
     #[test]
     fn an_acknowledged_job_is_not_resent_until_its_version_moves() {
+        let pins = Arc::new(SchemaPinRegistry::default());
         let mut acked = BTreeMap::new();
         acked.insert(1, 5_i64);
-        assert!(acks_due(5, None, &[job(1, 5)], &acked).is_empty());
-        assert_eq!(acks_due(6, None, &[job(1, 6)], &acked), vec![job(1, 6)]);
-    }
-
-    /// The registry reports the OLDEST held version, nested holds keep one
-    /// entry per connection, and dropping every guard clears it.
-    #[test]
-    fn the_pin_registry_tracks_the_oldest_live_version() {
-        let pins = Arc::new(SchemaPinRegistry::default());
-        assert_eq!(pins.oldest_pinned(), None);
-        let transaction = pins.hold(7, 10);
-        let statement = pins.hold(7, 10);
-        let other = pins.hold(8, 12);
-        assert_eq!(pins.oldest_pinned(), Some(10));
-        drop(statement);
+        assert!(acks_due(5, &pins, &[job(1, 5, &[1])], &acked).is_empty());
         assert_eq!(
-            pins.oldest_pinned(),
-            Some(10),
-            "the transaction still holds"
+            acks_due(6, &pins, &[job(1, 6, &[1])], &acked),
+            vec![job(1, 6, &[1])]
         );
-        drop(transaction);
-        assert_eq!(pins.oldest_pinned(), Some(12));
-        drop(other);
-        assert_eq!(pins.oldest_pinned(), None);
     }
 }

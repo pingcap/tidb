@@ -595,6 +595,51 @@ impl Session {
         Ok(StmtOutput::Rows { columns, rows })
     }
 
+    /// Go `preprocess.go:2243-2270`: as a statement's tables are bound, each
+    /// is recorded on the transaction as `table id -> the LATEST domain
+    /// schema version` at first use, and the metadata-lock gate blocks a DDL
+    /// job while some live map holds one of its tables below the job's
+    /// version (`RemoveLockDDLJobs`). Go records at planner resolution; this
+    /// port records at the same statement funnel from the parsed names,
+    /// which is why a name that resolves to no stored table (a view -- Go
+    /// would record its BASE tables) reports `record_unresolved` and the
+    /// gate falls back to blocking conservatively.
+    ///
+    /// Go's exemption is kept verbatim: a READ-ONLY statement under
+    /// autocommit records nothing (`IsAutoCommitTxn && IsReadOnly` returns
+    /// before the store), so the hot point-read path pays nothing here
+    /// either.
+    fn record_mdl_related_tables(&mut self, stmt: &Stmt) {
+        let Some(sink) = self.mdl_related_tables.clone() else {
+            return;
+        };
+        // `SELECT ... FOR UPDATE` is not read-only in Go, but this tier does
+        // not take its row locks yet either (a named gap); classifying every
+        // Query as read-only here is exact for the statements this node
+        // actually serves, and errs toward recording MORE once it isn't.
+        let read_only = matches!(stmt, Stmt::Query(_));
+        if read_only && !self.in_transaction() && self.is_autocommit() {
+            return;
+        }
+        let version = self.cluster_schema_version_now();
+        let current_db = self.current_database().to_owned();
+        let names = crate::binding::collect_table_names(stmt);
+        let catalog = match self.lock_catalog() {
+            Ok(catalog) => catalog,
+            Err(_) => {
+                sink.record_unresolved();
+                return;
+            }
+        };
+        for (db, table) in &names {
+            let db = if db.is_empty() { &current_db } else { db };
+            match catalog.stored_table_id(db, table) {
+                Some(table_id) => sink.record_table(table_id, version),
+                None => sink.record_unresolved(),
+            }
+        }
+    }
+
     fn execute_parsed_statement(
         &mut self,
         sql: &str,
@@ -602,6 +647,7 @@ impl Session {
         prepared: bool,
         cached_point_get: Option<tidb_executor::PreparedPointGetExecution>,
     ) -> Result<StmtOutput, DriverError> {
+        self.record_mdl_related_tables(&stmt);
         // Go `SelectInto` with `SelectIntoVars`: the query runs as itself and
         // its one row lands in the named user variables. Intercepted at this
         // one door so text and prepared spellings share the rules: more than
@@ -779,8 +825,7 @@ impl Session {
                 let Ok(guard) = catalog.lock() else {
                     return false;
                 };
-                let Some(tidb_executor::TableEntry::Kv(kv)) =
-                    guard.table_in(&current_db, &name)
+                let Some(tidb_executor::TableEntry::Kv(kv)) = guard.table_in(&current_db, &name)
                 else {
                     return false;
                 };
@@ -903,12 +948,7 @@ impl Session {
                 let current_db = self.current_db.clone();
                 let ctx = self.statement_context(false);
                 let fast_range = self.with_catalog_mut(|catalog| {
-                    tidb_executor::run_fast_single_row_scan(
-                        select,
-                        catalog,
-                        &current_db,
-                        &ctx,
-                    )
+                    tidb_executor::run_fast_single_row_scan(select, catalog, &current_db, &ctx)
                 })?;
                 if let Some((columns, rows)) = fast_range {
                     self.drain_eval_warnings(&ctx);

@@ -491,7 +491,8 @@ impl Catalog {
     /// Go `infoschema.PolicyByName`: the policy a name refers to, folded.
     #[must_use]
     pub fn policy(&self, name: &str) -> Option<&tidb_model::PolicyInfo> {
-        self.policies.get(&tidb_ast::CiString::new(name).lowercase().to_owned())
+        self.policies
+            .get(&tidb_ast::CiString::new(name).lowercase().to_owned())
     }
 
     /// Every policy, for `information_schema` and `SHOW` surfaces.
@@ -713,6 +714,19 @@ impl Catalog {
     }
 
     /// Resolves a table in `database`.
+    /// The CLUSTER table id behind a stored table's name, or `None` for a
+    /// name that is no stored table here (a view, a CTE, a memory table, an
+    /// unknown name). The id is the one TiKV keys carry and the one Go's
+    /// `mysql.tidb_mdl_info.table_ids` names, which is what the metadata-lock
+    /// gate matches on.
+    #[must_use]
+    pub fn stored_table_id(&self, database: &str, name: &str) -> Option<i64> {
+        match self.get_in(database, name)? {
+            TableEntry::Kv(table) => Some(table.table_id),
+            _ => None,
+        }
+    }
+
     pub(crate) fn get_in(&self, database: &str, name: &str) -> Option<&TableEntry> {
         self.databases
             .get(&database.to_lowercase())?
@@ -988,7 +1002,10 @@ impl Catalog {
         let schema = self.databases.get_mut(&folded_database).ok_or_else(|| {
             DriverError::Schema(crate::SchemaErrorKind::UnknownDatabase(database.to_owned()))
         })?;
-        if let Some(displaced) = schema.tables.insert(folded_name.clone(), TableEntry::Kv(table)) {
+        if let Some(displaced) = schema
+            .tables
+            .insert(folded_name.clone(), TableEntry::Kv(table))
+        {
             self.shadowed_by_local_temporary
                 .push((folded_database, folded_name, displaced));
         }

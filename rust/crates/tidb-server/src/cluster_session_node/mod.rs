@@ -543,6 +543,15 @@ impl QuerySessionFactory for ClusterSessionFactory {
         session.set_cluster_schema_version_source(Arc::new(move || {
             catalog_versions.load().schema_version
         }));
+        // Go `preprocess.go:2270` writes each bound table into the
+        // transaction's `GetRelatedTableForMDL` map; here the driver session
+        // reports it into the node's pin registry, which is what the
+        // schema-sync acknowledger's per-table gate reads
+        // (`RemoveLockDDLJobs`'s check, in `schema_sync.rs`).
+        session.set_mdl_related_table_sink(Arc::new(schema_sync::ConnectionMdlSink::new(
+            Arc::clone(&self.schema_pins),
+            context.connection_id,
+        )));
         session.set_server_start_timestamp(crate::real_tikv_node::server_start_unix_timestamp());
         if let Some(spill_storage) = self.spill_storage.as_ref() {
             session.set_spill_storage(Arc::clone(spill_storage));

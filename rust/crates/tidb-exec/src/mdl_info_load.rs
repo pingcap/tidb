@@ -40,12 +40,24 @@ use tidb_txnkv::transaction::{
 use crate::cluster_catalog::ClusterCatalog;
 
 /// One running DDL job the owner is waiting on.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MdlJob {
     /// Go `mysql.tidb_mdl_info.job_id`.
     pub job_id: i64,
     /// The schema version the job published — what the ack must report.
     pub version: i64,
+    /// The tables the job changes — `mysql.tidb_mdl_info.table_ids`,
+    /// comma-joined int64s, decoded exactly as Go `util.Str2Int64Map`
+    /// (`pkg/util/util.go:68-76`): split on `,`, `ParseInt` each piece, and
+    /// an unparsable piece contributes 0 rather than failing the row.
+    pub table_ids: Vec<i64>,
+}
+
+/// Go `util.Str2Int64Map`'s decode, list-shaped.
+fn str_to_int64s(text: &str) -> Vec<i64> {
+    text.split(',')
+        .map(|piece| piece.parse::<i64>().unwrap_or(0))
+        .collect()
 }
 
 /// Reads every `mysql.tidb_mdl_info` row at one fresh timestamp.
@@ -60,7 +72,11 @@ pub fn load_mdl_jobs<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapabil
     timeout: Duration,
     catalog: &ClusterCatalog,
 ) -> Result<Vec<MdlJob>, SystemTableError> {
-    let view = match SystemTableView::locate(catalog, "tidb_mdl_info", &["job_id", "version"]) {
+    let view = match SystemTableView::locate(
+        catalog,
+        "tidb_mdl_info",
+        &["job_id", "version", "table_ids"],
+    ) {
         Ok(view) => view,
         Err(SystemTableError::Missing { .. }) => return Ok(Vec::new()),
         Err(error) => return Err(error),
@@ -85,7 +101,16 @@ pub fn load_mdl_jobs<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapabil
             // read it, never acking a version this node did not see.
             continue;
         };
-        jobs.push(MdlJob { job_id, version });
+        // Decoded exactly as Go: `Str2Int64Map` on the stored text, where an
+        // empty string yields `{0}` (ParseInt("") errors into 0), and table
+        // id 0 matches no real table -- so a job with no listed tables gates
+        // on nothing, which is Go's behaviour verbatim.
+        let table_ids = str_to_int64s(&row.text("table_ids")?.unwrap_or_default());
+        jobs.push(MdlJob {
+            job_id,
+            version,
+            table_ids,
+        });
     }
     Ok(jobs)
 }

@@ -331,6 +331,21 @@ impl DomainMap {
 /// mirrors that with a shared, mutex-guarded catalog; the statement-level lock
 /// stands in for Go's schema-version/lease machinery, which is a separate
 /// tier (documented deferral).
+/// The node-side sink for Go's `GetRelatedTableForMDL` map: which stored
+/// tables this session's live statement or transaction has bound, and at
+/// which cluster schema version each was FIRST bound.
+///
+/// Go records into the transaction context and the session manager reads it
+/// (`RemoveLockDDLJobs`); here the record crosses a crate boundary, so it is
+/// a trait the node implements over its pin registry.
+pub trait MdlRelatedTableSink: Send + Sync {
+    /// One stored table, bound at `version`; first use wins.
+    fn record_table(&self, table_id: i64, version: i64);
+    /// A referenced name resolved to no stored table (a view, an unknown
+    /// name); the gate falls back to blocking conservatively.
+    fn record_unresolved(&self);
+}
+
 pub struct Session {
     catalog: SharedCatalog,
     /// Go `infosync.ServerInfo.StartTimestamp`: when the hosting server
@@ -472,6 +487,9 @@ pub struct Session {
     /// reports. Absent on the in-process tier, whose catalog is not a
     /// cluster's.
     cluster_schema_version: Option<std::sync::Arc<dyn Fn() -> i64 + Send + Sync>>,
+    /// Where this session reports the tables its statements bind, for the
+    /// node's metadata-lock gate; see [`MdlRelatedTableSink`].
+    mdl_related_tables: Option<std::sync::Arc<dyn MdlRelatedTableSink>>,
     /// Go `StmtCtx.LastInsertID`/`LastInsertIDSet`: the id the RUNNING
     /// statement publishes. The session owns the cell and lends it to every
     /// [`tidb_executor::StmtContext`] the statement builds, so an allocating
@@ -632,6 +650,7 @@ impl Default for Session {
             current_tso: tidb_executor::CurrentTso::default(),
             server_info_syncer: None,
             cluster_schema_version: None,
+            mdl_related_tables: None,
             published_last_insert_id: Rc::default(),
             retry_auto_ids: Rc::default(),
             row_id_shards: Rc::default(),
@@ -749,6 +768,27 @@ impl Session {
         syncer: std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>,
     ) {
         self.server_info_syncer = Some(syncer);
+    }
+
+    /// The node's followed cluster schema version, or 0 for a tier with no
+    /// cluster to follow -- the same source `ADMIN SHOW DDL` reports. This is
+    /// Go's `domainSchemaVer` in `preprocess.go:2264` (the LATEST domain
+    /// version, not the transaction's pinned one), which is the version the
+    /// metadata-lock recording stamps a table's first use with.
+    pub(crate) fn cluster_schema_version_now(&self) -> i64 {
+        self.cluster_schema_version
+            .as_ref()
+            .map_or(0, |source| source())
+    }
+
+    /// Binds where this session reports the tables its statements bind --
+    /// Go `GetRelatedTableForMDL()` (`pkg/sessionctx/variable/session.go`),
+    /// filled by the planner at table resolution
+    /// (`pkg/planner/core/preprocess.go:2243-2270`) and read by the node's
+    /// metadata-lock gate (`RemoveLockDDLJobs`). A session with no sink is a
+    /// tier with no cluster DDL owner to gate.
+    pub fn set_mdl_related_table_sink(&mut self, sink: std::sync::Arc<dyn MdlRelatedTableSink>) {
+        self.mdl_related_tables = Some(sink);
     }
 
     /// Binds the node's cluster schema version, which `ADMIN SHOW DDL`
@@ -1450,14 +1490,18 @@ mod tests_derived_agg_pruning;
 #[cfg(test)]
 mod tests_dml_lock_keys;
 #[cfg(test)]
+mod tests_enum_index_range;
+#[cfg(test)]
 mod tests_eval_bool;
 #[cfg(test)]
 mod tests_explain;
-mod tests_extra_handle_access;
 #[cfg(test)]
 mod tests_explain_derived;
 mod tests_explain_merge_join;
 mod tests_expression_indexes;
+#[cfg(test)]
+mod tests_extra_handle;
+mod tests_extra_handle_access;
 #[cfg(test)]
 mod tests_fix_control;
 #[cfg(test)]
@@ -1473,6 +1517,8 @@ mod tests_harvested_relation_engine;
 mod tests_in_list_full_evaluation;
 #[cfg(test)]
 mod tests_index_hints;
+#[cfg(test)]
+mod tests_index_join_inner_pattern;
 mod tests_index_key_length;
 #[cfg(test)]
 mod tests_join_key_cast;
@@ -1486,6 +1532,8 @@ mod tests_json;
 mod tests_load_stats;
 #[cfg(test)]
 mod tests_mem_quota;
+#[cfg(test)]
+mod tests_modify_column_null;
 mod tests_multi_table_dml;
 #[cfg(test)]
 mod tests_non_prepared_plan_cache;
@@ -1494,29 +1542,19 @@ mod tests_outer_join_elimination;
 #[cfg(test)]
 mod tests_partition;
 #[cfg(test)]
-mod tests_extra_handle;
-#[cfg(test)]
-mod tests_index_join_inner_pattern;
-#[cfg(test)]
-mod tests_modify_column_null;
+mod tests_partition_processor;
 #[cfg(test)]
 mod tests_partition_projection;
 #[cfg(test)]
-mod tests_session_var_hooks;
-#[cfg(test)]
-mod tests_partition_processor;
-#[cfg(test)]
 mod tests_partition_prune_collation;
-#[cfg(test)]
-mod tests_enum_index_range;
-#[cfg(test)]
-mod tests_pushdown_blacklist;
-#[cfg(test)]
-mod tests_prepared_plan_cache;
 #[cfg(test)]
 mod tests_planner_core_rewriter;
 #[cfg(test)]
+mod tests_prepared_plan_cache;
+#[cfg(test)]
 mod tests_prepared_statements;
+#[cfg(test)]
+mod tests_pushdown_blacklist;
 #[cfg(test)]
 mod tests_read_cast;
 #[cfg(test)]
@@ -1524,6 +1562,8 @@ mod tests_recursive_cte;
 #[cfg(test)]
 mod tests_savepoint;
 mod tests_sequence;
+#[cfg(test)]
+mod tests_session_var_hooks;
 mod tests_show;
 mod tests_show_admin;
 #[cfg(test)]
@@ -1538,13 +1578,13 @@ mod tests_sysbench_access;
 #[cfg(test)]
 mod tests_system_schemas;
 #[cfg(test)]
+mod tests_temporary_tables;
+#[cfg(test)]
 mod tests_tidb_decode_key;
 #[cfg(test)]
 mod tests_timestamp_range;
 #[cfg(test)]
 mod tests_timezone_storage;
-#[cfg(test)]
-mod tests_temporary_tables;
 #[cfg(test)]
 mod tests_topn;
 #[cfg(test)]

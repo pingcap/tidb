@@ -96,6 +96,22 @@ whose old schema no live local work still uses — PUT the ack key.
   conservative (acks later, never earlier), needs no table-id plumbing, and
   the table-scoped refinement can land behind the same registry. Date/Author:
   2026-08-23 / session c4d12b28.
+- Decision: SUPERSEDED same day -- the gate is now Go's per-table check.
+  `RemoveLockDDLJobs` (`session.go:3935-3962`) blocks a job only while live
+  work holds one of the JOB'S tables at a version below the job's, recorded
+  at statement bind (`preprocess.go:2243-2270`, first use wins, read-only
+  autocommit exempt) and dropped with the transaction (`TxnCtx.Cleanup`).
+  Ported end to end: `tidb_mdl_info.table_ids` decoded exactly as
+  `util.Str2Int64Map` (empty string -> {0}, matching no table); the driver
+  session records bound tables through a sink at its one statement funnel;
+  the registry keeps `table id -> first-use version` per connection. One
+  conservative divergence kept: Go's planner sees through views to base
+  tables, our statement names do not, so an unresolvable name marks the
+  connection `unresolved` and it blocks under the old whole-transaction
+  rule -- later than Go, never earlier. Receipt: the rung-8 DDL that took
+  39s under the whole-transaction gate now lands in 0-5s, Go's own pace,
+  across two full clean ladders. Date/Author: 2026-08-23 / session
+  c4d12b28.
 - Decision: the leased `/tidb/ddl/all_schema_versions/<id>` key is kept
   CURRENT on every reload, where Go updates it only when MDL is off.
   Rationale: the key is read only by MDL-off owners; keeping it fresh serves
@@ -128,12 +144,11 @@ exist — the Go owner's wait set. Registering while mute is strictly
 worse than not registering at all. Before porting the visible half of
 any cluster protocol, ask what OTHER nodes will now expect of this one.
 
-Known follow-ups: the MDL gate is whole-transaction rather than Go's
-per-table `CheckOldRunningTxn`, so a long transaction delays unrelated
-DDL more than Go would (conservative, never wrong -- measured at 39s for
-one DDL under eight-thread load); and the ladder's performance columns
-show the Rust node still 2-4x behind Go per statement, which is a
-separate optimization unit, not a correctness one.
+Known follow-ups: the ladder's performance columns show the Rust node
+still 2-4x behind Go per statement, a separate optimization unit, not a
+correctness one. (The earlier follow-up here -- the whole-transaction MDL
+gate and its measured 39s DDL stall -- is closed: the gate is per-table
+now, see the Decision Log.)
 
 ## The last rung-8 divergence: FOUND AND FIXED
 
