@@ -2305,6 +2305,28 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // 26 -> 24: `information_schema.tables` lists the schema's own tables --
     // Go's `tableIDMap` ported whole, every registered memory table a
     // `SYSTEM VIEW` row with its real id. `infoschema/v2` fully closed.
+    // 30 -> 29: `executor/jointest/join` fully closed (828 matched / 0). The
+    // one statement was `TIDB_SMJ(t2) ... left outer join t2 on t1.a=t2.a
+    // and t1.a!=3`, whose inner side TiDB reads as `TableRangeScan
+    // range:[-inf,3), (3,+inf]` while this tier full-scanned it. The
+    // mechanism is Go `expression.PropConstForOuterJoin`'s
+    // `propagateColumnEQ`/`deriveConds` (constant_propagation.go:846-941):
+    // a preserved-side ON condition -- never a filter, it stays at the join
+    // as the printed left cond -- has its outer column replaced by the inner
+    // one through the `t1.a = t2.a` key, and the derived `ne(t2.a, 3)` is
+    // routed to the inner child where the ranger consumes it. Ported as
+    // `tidb_executor::driver::predicate_push_down::propagate_over_outer_join`
+    // (join keys into a union-find, `tryToReplaceCond`'s nullAware refusals
+    // -- IFNULL/IF/CASE/`<=>`/ISNULL and the unfoldables -- verbatim), with
+    // the derived family offered to the leaf's access-path chooser so it can
+    // range instead of re-filtering. Only the DERIVED family is offered: an
+    // earlier draft offered every distributed filter and re-priced
+    // inner-join leaves, flipping `explain_complex`'s recorded `HashJoin`
+    // into an index join -- see `Plan::derived`'s own doc. Rows moved
+    // nowhere (`compared` holds at 9670); the family is pinned by
+    // `tidb_session::tests_join_predicate_placement`'s
+    // `an_outer_join_on_condition_derives_the_inner_range_through_the_key`
+    // and its four siblings.
     const KNOWN_DIVERGENCES: usize = 24;
     //
     //

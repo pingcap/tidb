@@ -1375,6 +1375,177 @@ fn a_repeated_join_conjunct_is_deduplicated_at_the_leaf() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// PropConstForOuterJoin -- pkg/expression/constant_propagation.go:987
+// ---------------------------------------------------------------------------
+//
+// `propagateColumnEQ` (:886) collects each ON join key `outerCol = innerCol`
+// into a union-find, then `deriveConds` (:846) walks every OTHER join
+// condition -- and every filter condition wholly on the preserved side --
+// replacing the outer column with the inner one (`tryToReplaceCond`, :240,
+// with nullAware=true). The derived condition lands in `joinConds`, where
+// `extractOnCondition` routes a single-sided condition to the inner child and
+// the ranger turns it into an access range. The tests below pin both halves:
+// the inner scan's range, and the rows -- a derived condition is IMPLIED by
+// what the join already evaluates, so it must never delete a row.
+
+/// The recorded `executor/jointest/join` fixture: two five-row tables whose
+/// handles never coincide, so every left row must NULL-extend.
+fn disjoint_handle_session() -> Session {
+    let mut session = Session::new();
+    session
+        .run("create table t1(a bigint primary key, b bigint)")
+        .unwrap();
+    session
+        .run("create table t2(a bigint primary key, b bigint)")
+        .unwrap();
+    session
+        .run("insert into t1 values(1, 100), (2, 100), (3, 100), (4, 100), (5, 100)")
+        .unwrap();
+    session
+        .run("insert into t2 select a*100, b*100 from t1")
+        .unwrap();
+    session
+}
+
+/// The `operator info` of the scan reading `table`, joined over every plan row
+/// naming it.
+fn scan_info(session: &mut Session, sql: &str, table: &str) -> String {
+    let plan = match session.run(&format!("EXPLAIN {sql}")).unwrap() {
+        StmtResult::Rows(rows) => rows,
+        other => panic!("expected rows from EXPLAIN, got {other:?}"),
+    };
+    let marker = format!("table:{table}");
+    plan.iter()
+        .filter(|row| cell_text(&row[3]).contains(&marker))
+        .map(|row| cell_text(&row[4]))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+/// `select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and
+/// t1.a!=3 order by t1.a` -- the recorded statement. `ne(t1.a, 3)` is an ON
+/// condition on the PRESERVED side: never a filter (it stays at the join as
+/// the printed left/other cond), yet through `t1.a = t2.a` it bounds which
+/// inner rows can match, and TiDB's recording reads
+/// `TableRangeScan table:t2 range:[-inf,3), (3,+inf]`.
+#[test]
+fn an_outer_join_on_condition_derives_the_inner_range_through_the_key() {
+    let mut session = disjoint_handle_session();
+    let sql = "select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 \
+               on t1.a=t2.a and t1.a!=3 order by t1.a";
+    let info = scan_info(&mut session, sql, "t2");
+    assert!(
+        info.contains("range:[-inf,3), (3,+inf]"),
+        "t2 must be read through the derived `ne(t2.a, 3)` range: {info}"
+    );
+    // No t1.a equals any t2.a, so all five left rows NULL-extend -- including
+    // a = 3, whose LEFT-side inequality is an ON condition, not a filter. A
+    // derivation that leaked to the preserved side would delete rows here.
+    assert_eq!(
+        rows(&mut session, sql),
+        [
+            ["1", "100", "NULL", "NULL"],
+            ["2", "100", "NULL", "NULL"],
+            ["3", "100", "NULL", "NULL"],
+            ["4", "100", "NULL", "NULL"],
+            ["5", "100", "NULL", "NULL"],
+        ]
+    );
+}
+
+/// The RIGHT-join mirror: the preserved side is `t2`, so its ON inequality
+/// derives through the key onto `t1` -- `deriveConds` with the outer/inner
+/// schemas swapped by `LogicalJoin.PredicatePushDown`'s RightOuterJoin arm.
+#[test]
+fn a_right_join_derives_the_range_onto_its_left_side() {
+    let mut session = disjoint_handle_session();
+    let sql = "select * from t1 right join t2 on t1.a=t2.a and t2.a!=300";
+    let info = scan_info(&mut session, sql, "t1");
+    assert!(
+        info.contains("range:[-inf,300), (300,+inf]"),
+        "t1 must be read through the derived `ne(t1.a, 300)` range: {info}"
+    );
+    assert_eq!(rows(&mut session, sql).len(), 5, "all five t2 rows survive");
+}
+
+/// `deriveConds` with `filterConds=true`: a WHERE conjunct wholly on the
+/// preserved side derives through the key too (`constant_propagation.go:938`,
+/// only when `ExprFromSchema(cond, s.outerSchema)`), narrowing the inner scan
+/// while the WHERE itself narrows the preserved side.
+#[test]
+fn a_preserved_side_where_conjunct_derives_through_the_key() {
+    let mut session = disjoint_handle_session();
+    let sql = "select * from t1 left join t2 on t1.a=t2.a where t1.a!=3";
+    let info = scan_info(&mut session, sql, "t2");
+    assert!(
+        info.contains("range:[-inf,3), (3,+inf]"),
+        "t2 must be read through the derived `ne(t2.a, 3)` range: {info}"
+    );
+    assert_eq!(
+        rows(&mut session, sql),
+        [
+            ["1", "100", "NULL", "NULL"],
+            ["2", "100", "NULL", "NULL"],
+            ["4", "100", "NULL", "NULL"],
+            ["5", "100", "NULL", "NULL"],
+        ]
+    );
+}
+
+/// A derived condition over a NULLABLE key: `on t1.e = t2.e and t1.e > 1`
+/// derives `gt(t2.e, 1)` beside the `not(isnull(t2.e))` the equality itself
+/// derives, and the rows are exactly the equality's matches above 1.
+#[test]
+fn a_nullable_key_condition_derives_beside_the_not_null() {
+    let mut session = signed_table_session();
+    let sql = "select * from t t1 left join t t2 on t1.e = t2.e and t1.e > 1";
+    let (_, right) = conditions_by_side(&mut session, sql);
+    assert!(
+        right.iter().any(|condition| condition == "gt(test.t.e, 1)"),
+        "t2 must receive the derived gt: {right:?}"
+    );
+    check(
+        &mut session,
+        sql,
+        &[
+            (Some(1), None),
+            (Some(2), None),
+            (Some(3), Some(3)),
+            (Some(4), None),
+            (Some(5), Some(5)),
+        ],
+    );
+}
+
+/// Go's `tryToReplaceCond` refuses null-sensitive wrappers under an outer
+/// join (`nullAware`: IFNULL/IF/CASE/`<=>`, citing #15782/#17817) and the
+/// `inequalFunctions` ISNULL: their value on the NULL-EXTENDED row can differ
+/// from their value on the inner column, so no `ifnull` may be copied below
+/// the join.
+#[test]
+fn null_sensitive_wrappers_are_not_derived_below_an_outer_join() {
+    let mut session = signed_table_session();
+    let sql = "select * from t t1 left join t t2 on t1.e = t2.e and ifnull(t1.e, 3) = 3";
+    let below = conditions_below_join(&mut session, sql);
+    assert!(
+        below.iter().all(|(_, info)| !info.contains("ifnull")),
+        "IFNULL must stay at the join: {below:?}"
+    );
+    // Only e = 3 passes the wrapper AND equal-matches; NULLs match nothing.
+    check(
+        &mut session,
+        sql,
+        &[
+            (Some(1), None),
+            (Some(2), None),
+            (Some(3), Some(3)),
+            (Some(4), None),
+            (Some(5), None),
+        ],
+    );
+}
+
 /// The join operator's full `operator info` cell.
 fn join_info(session: &mut Session, sql: &str) -> String {
     let plan = match session.run(&format!("EXPLAIN {sql}")).unwrap() {

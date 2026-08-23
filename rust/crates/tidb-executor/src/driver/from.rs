@@ -900,17 +900,41 @@ pub(crate) fn build_from(
             // `RowSource` has already classified predicates that reference
             // only this leaf. Keep them as one local WHERE for range costing;
             // the written predicates still remain above the join.
-            let leaf_where = demand.rows.and_then(|rows| {
-                rows.filters_for(&visible)?
-                    .iter()
-                    .cloned()
-                    .reduce(|left, right| {
-                        tidb_ast::Expr::Binary(
-                            tidb_ast::BinaryOp::LogicAnd,
-                            Box::new(left),
-                            Box::new(right),
-                        )
-                    })
+            //
+            // Go's `DataSource.pushedDownConds` holds BOTH families this
+            // tier keeps apart: the `WHERE` conjuncts `rule_predicate_push_
+            // down` sent to this child (RowSource's filters) and what
+            // `expression.PropConstForOuterJoin` derived through the join
+            // keys. The ranger builds access ranges from one merged list, so
+            // the derived family must reach the path chooser too: offering
+            // only the first left a derived `ne(t2.a, 3)` as a cop Selection
+            // where TiDB's recorded plan reads `TableRangeScan
+            // range:[-inf,3), (3,+inf]` (`executor/jointest/join`). Only the
+            // DERIVED family joins the offer -- see [`Plan::derived`] for
+            // why the routed family must not re-price inner-join leaves.
+            // The receipt recorded below covers the merged list, and
+            // [`apply_pushed_leaf_filters`] re-applies only what the
+            // committed path reports as residual.
+            let mut leaf_filters: Vec<tidb_ast::Expr> = demand
+                .rows
+                .and_then(|rows| rows.filters_for(&visible))
+                .map(<[tidb_ast::Expr]>::to_vec)
+                .unwrap_or_default();
+            if demand.rows.is_some() {
+                if let Some(pushdown) = demand.pushdown {
+                    for filter in pushdown.derived_for(table_ref) {
+                        if !leaf_filters.contains(filter) {
+                            leaf_filters.push(filter.clone());
+                        }
+                    }
+                }
+            }
+            let leaf_where = leaf_filters.iter().cloned().reduce(|left, right| {
+                tidb_ast::Expr::Binary(
+                    tidb_ast::BinaryOp::LogicAnd,
+                    Box::new(left),
+                    Box::new(right),
+                )
             });
             let mut exec: Box<dyn Executor> = match entry {
                 TableEntry::Mem(mem) => Box::new(MemTableSourceExec::new(
@@ -2983,6 +3007,12 @@ fn apply_pushed_leaf_filters(
         .rows
         .and_then(|rows| rows.filters_for(visible))
         .unwrap_or_default();
+    // The outer-join-derived family the leaf build also offered to its path
+    // chooser; consumed members must not become a second Selection here.
+    let derived_filters = demand
+        .pushdown
+        .map(|pushdown| pushdown.derived_for(table))
+        .unwrap_or_default();
     let filters = all_filters
         .iter()
         .filter(|filter| {
@@ -2991,8 +3021,17 @@ fn apply_pushed_leaf_filters(
             // child still needs to execute it below the sibling semi join.
             // Keep such pending filters in the physical Selection instead of
             // treating the logical consumption receipt as execution.
+            //
+            // The receipt covers the OFFERED list -- RowSource's filters
+            // plus the outer-join-derived family (the leaf build unions the
+            // two into `leaf_where`) -- so for an offered filter the
+            // residuals alone say whether a Selection is still needed.
+            // Keeping a derived filter unconditionally would re-run a
+            // condition the committed path already turned into ranges; a
+            // filter that was never offered at all still keeps its
+            // Selection, receipt or no receipt.
             prebuilt_pending_filters.is_some_and(|pending| pending.contains(filter))
-                || !original_filters.contains(filter)
+                || (!original_filters.contains(filter) && !derived_filters.contains(filter))
                 || path_receipt
                     .as_ref()
                     .is_none_or(|(residuals, _)| residuals.contains(filter))
