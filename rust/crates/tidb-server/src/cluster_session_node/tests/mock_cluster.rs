@@ -387,7 +387,7 @@ impl ClusterTransactions for MockTransactions {
         Ok(())
     }
 
-    fn begin(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
+    fn begin(&self, _pessimistic: bool) -> Result<Box<dyn OpenClusterTransaction>, String> {
         self.0.begun.fetch_add(1, Ordering::AcqRel);
         Ok(Box::new(MockSessionTransaction {
             start_ts: self.0.timestamp(),

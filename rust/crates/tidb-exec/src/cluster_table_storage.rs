@@ -72,14 +72,18 @@ use tidb_pd_client::PdClient;
 use tidb_txnkv::pd_capability::{CapabilityTimestampSource, TimestampFutureWait};
 use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext};
 use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, OptimisticCoordinatorError, OptimisticMutation,
-    RealOptimisticTransaction, RealOptimisticTransactionOpener, StorePdCapability,
+    LockKeepAlive, LockWaitTime, OptimisticCommitOutcome, OptimisticCoordinatorError,
+    OptimisticMutation, PessimisticLockFailure, RealOptimisticTransaction,
+    RealOptimisticTransactionOpener, RealPessimisticTransaction, StorePdCapability,
     StoreWriteClient, StoreWriteLoader, MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 use tidb_txnkv::Key;
 use tidb_txnkv::PdRegionLoader;
 
-use crate::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
+use crate::pessimistic_lock_error::{
+    commit_outcome_to_sql_error, is_retryable_statement_failure, lock_failure_to_sql_error,
+    transaction_cause_to_sql_error, LockSqlError,
+};
 use crate::pinned_thread_pool::PinnedThreadPool;
 
 /// One request the transaction's own thread serves, with the channel its answer
@@ -87,10 +91,18 @@ use crate::pinned_thread_pool::PinnedThreadPool;
 enum TransactionRequest {
     Get {
         key: Vec<u8>,
+        /// `Some` reads at this statement timestamp instead of the
+        /// transaction's `start_ts` -- a pessimistic statement retried after
+        /// a lock conflict reads at its advanced `for_update_ts` (Go rebuilds
+        /// the retried executor at `forUpdateTS`). `None` is every ordinary
+        /// read.
+        read_ts: Option<u64>,
         reply: Sender<Result<Option<Vec<u8>>, StorageError>>,
     },
     BatchGet {
         keys: Vec<Vec<u8>>,
+        /// See [`TransactionRequest::Get::read_ts`].
+        read_ts: Option<u64>,
         reply: Sender<Result<SnapshotPairs, StorageError>>,
     },
     Scan {
@@ -99,7 +111,17 @@ enum TransactionRequest {
         /// At most this many pairs, so an incremental cursor pays for the
         /// batch it consumes rather than for its whole range.
         limit: Option<usize>,
+        /// See [`TransactionRequest::Get::read_ts`].
+        read_ts: Option<u64>,
         reply: Sender<Result<SnapshotPairs, StorageError>>,
+    },
+    /// Acquires pessimistic locks on `keys` at the transaction's current
+    /// `for_update_ts` -- Go's `KVTxn.LockKeys` for one DML statement's
+    /// written keys. Served only by a pessimistic transaction; the
+    /// optimistic worker refuses it.
+    LockKeys {
+        keys: Vec<Vec<u8>>,
+        reply: Sender<LockKeysOutcome>,
     },
     /// Publishes `mutations` at the transaction's original `start_ts` and ends
     /// the thread, whatever the outcome.
@@ -177,6 +199,9 @@ impl Drop for PreparedTransactionThread {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TransactionOpen {
     Writable,
+    /// An explicit pessimistic transaction: the same writable budget, plus
+    /// the statement-lock protocol its worker serves.
+    WritablePessimistic,
     ReadOnly,
     ReadOnlyAt(u64),
 }
@@ -233,9 +258,32 @@ impl TransactionThread {
             .run(
                 name,
                 Box::new(move || {
+                    if open == TransactionOpen::WritablePessimistic {
+                        let transaction = match opener.begin_pessimistic(
+                            MAX_OPTIMISTIC_MUTATIONS,
+                            MAX_OPTIMISTIC_TRANSACTION_BYTES,
+                        ) {
+                            Ok(transaction) => {
+                                if opened.send(Ok(transaction.start_ts())).is_err() {
+                                    let _ = transaction.into_two_pc().finish_without_writes();
+                                    return;
+                                }
+                                transaction
+                            }
+                            Err(error) => {
+                                let _ = opened.send(Err(error));
+                                return;
+                            }
+                        };
+                        serve_pessimistic_transaction(transaction, &opener, &incoming, timeout);
+                        return;
+                    }
                     let begun = match open {
                         TransactionOpen::Writable => {
                             opener.begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+                        }
+                        TransactionOpen::WritablePessimistic => {
+                            unreachable!("the pessimistic arm above returned")
                         }
                         TransactionOpen::ReadOnly => opener.begin_read_only(),
                         TransactionOpen::ReadOnlyAt(start_ts) => {
@@ -363,16 +411,26 @@ fn serve_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapabil
         let call = UnaryCallContext::with_timeout(timeout);
         let call = &call;
         match request {
-            TransactionRequest::Get { key, reply } => {
+            TransactionRequest::Get {
+                key,
+                read_ts,
+                reply,
+            } => {
+                let read_ts = read_ts.unwrap_or_else(|| transaction.start_ts());
                 let answer = transaction
-                    .snapshot_get(&key, call)
+                    .snapshot_get_at(&key, read_ts, call)
                     .map(|result| result.value)
                     .map_err(classify);
                 let _ = reply.send(answer);
             }
-            TransactionRequest::BatchGet { keys, reply } => {
+            TransactionRequest::BatchGet {
+                keys,
+                read_ts,
+                reply,
+            } => {
+                let read_ts = read_ts.unwrap_or_else(|| transaction.start_ts());
                 let answer = transaction
-                    .snapshot_batch_get(&keys, call)
+                    .snapshot_batch_get_at(&keys, read_ts, call)
                     .map_err(classify);
                 let _ = reply.send(answer);
             }
@@ -380,12 +438,24 @@ fn serve_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapabil
                 start,
                 end,
                 limit,
+                read_ts,
                 reply,
             } => {
+                let read_ts = read_ts.unwrap_or_else(|| transaction.start_ts());
                 let answer = transaction
-                    .snapshot_scan(&start, &end, limit, call)
+                    .snapshot_scan_at(&start, &end, limit, read_ts, call)
                     .map_err(classify);
                 let _ = reply.send(answer);
+            }
+            TransactionRequest::LockKeys { reply, .. } => {
+                // Fail closed: an optimistic transaction detects conflicts at
+                // COMMIT and has no locks to grant. Reaching this arm is a
+                // session-layer wiring fault, not a client-visible condition.
+                let _ = reply.send(LockKeysOutcome::TransactionError(LockSqlError {
+                    code: 1105,
+                    state: *b"HY000",
+                    message: "a pessimistic lock requires a pessimistic transaction".to_owned(),
+                }));
             }
             TransactionRequest::Commit { mutations, reply } => {
                 // The coordinator re-enters the write phase from the read
@@ -419,6 +489,310 @@ fn serve_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapabil
         }
     }
     let _ = transaction.finish_without_writes();
+}
+
+/// What one statement's lock acquisition came to -- the session layer's
+/// half of Go's `handlePessimisticDML` protocol.
+#[derive(Debug)]
+pub enum LockKeysOutcome {
+    /// Every key is locked at `for_update_ts`; the statement stands.
+    Locked {
+        /// The statement timestamp the locks carry.
+        for_update_ts: u64,
+    },
+    /// The locks are HELD, but a newer committed version beat the statement
+    /// (fair locking's `locked_with_conflict`, or a write conflict during
+    /// acquisition). The statement's effects must be rolled back and the
+    /// statement RE-EXECUTED reading at this advanced `for_update_ts` --
+    /// Go's `handlePessimisticLockError` -> `UpdateForUpdateTS` -> rebuild.
+    RetryStatement {
+        /// The advanced statement timestamp the retry reads at.
+        for_update_ts: u64,
+    },
+    /// The statement fails with this error and its locks are released; the
+    /// transaction stays open (Go's statement-scoped 1205/1213 family).
+    StatementError(LockSqlError),
+    /// The transaction itself is no longer usable.
+    TransactionError(LockSqlError),
+}
+
+/// Serves one pessimistic explicit transaction on its own thread: the same
+/// read/commit/finish protocol as [`serve_transaction`], plus
+/// [`TransactionRequest::LockKeys`], the statement-lock step Go's
+/// `handlePessimisticDML` runs after each DML.
+fn serve_pessimistic_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    mut transaction: RealPessimisticTransaction<C, L, CapabilityTimestampSource<P>>,
+    opener: &Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    incoming: &Receiver<TransactionRequest>,
+    timeout: Duration,
+) {
+    // Refreshes the primary lock's TTL from the first lock on; `None` until
+    // one exists. Ending the transaction drops it, which stops the heartbeat.
+    let mut keep_alive: Option<LockKeepAlive> = None;
+    while let Ok(request) = incoming.recv() {
+        let call = UnaryCallContext::with_timeout(timeout);
+        let call = &call;
+        match request {
+            TransactionRequest::Get {
+                key,
+                read_ts,
+                reply,
+            } => {
+                let read_ts = read_ts.unwrap_or_else(|| transaction.start_ts());
+                let answer = transaction
+                    .snapshot()
+                    .snapshot_get_at(&key, read_ts, call)
+                    .map(|result| result.value)
+                    .map_err(classify);
+                let _ = reply.send(answer);
+            }
+            TransactionRequest::BatchGet {
+                keys,
+                read_ts,
+                reply,
+            } => {
+                let read_ts = read_ts.unwrap_or_else(|| transaction.start_ts());
+                let answer = transaction
+                    .snapshot()
+                    .snapshot_batch_get_at(&keys, read_ts, call)
+                    .map_err(classify);
+                let _ = reply.send(answer);
+            }
+            TransactionRequest::Scan {
+                start,
+                end,
+                limit,
+                read_ts,
+                reply,
+            } => {
+                let read_ts = read_ts.unwrap_or_else(|| transaction.start_ts());
+                let answer = transaction
+                    .snapshot()
+                    .snapshot_scan_at(&start, &end, limit, read_ts, call)
+                    .map_err(classify);
+                let _ = reply.send(answer);
+            }
+            TransactionRequest::LockKeys { keys, reply } => {
+                let outcome =
+                    acquire_statement_locks(&mut transaction, opener, &mut keep_alive, &keys, call);
+                let fatal = matches!(outcome, LockKeysOutcome::TransactionError(_));
+                let _ = reply.send(outcome);
+                if fatal {
+                    // The transaction is unusable; release what it holds and
+                    // end truthfully, exactly as the Finish arm would.
+                    let held = transaction.locked_keys();
+                    let end_call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
+                    let _ = transaction.pessimistic_rollback(&held, &end_call);
+                    let _ = transaction.into_two_pc().finish_without_writes();
+                    return;
+                }
+            }
+            TransactionRequest::Commit { mutations, reply } => {
+                let end_call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
+                let _ = reply.send(
+                    transaction
+                        .commit(mutations, &end_call)
+                        .map_err(|error| error.to_string()),
+                );
+                return;
+            }
+            TransactionRequest::Finish { reply } => {
+                // A pessimistic transaction that publishes nothing still owes
+                // its locks back -- `into_two_pc` documents exactly this
+                // order.
+                let held = transaction.locked_keys();
+                let end_call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
+                let rolled_back = transaction
+                    .pessimistic_rollback(&held, &end_call)
+                    .map_err(|cause| StorageError::Backend(cause.to_string()));
+                let finished = transaction
+                    .into_two_pc()
+                    .finish_without_writes()
+                    .map(|_| ())
+                    .map_err(|error| StorageError::Backend(error.to_string()));
+                let _ = reply.send(rolled_back.and(finished));
+                return;
+            }
+            TransactionRequest::FinishDetached => {
+                let held = transaction.locked_keys();
+                let end_call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
+                let _ = transaction.pessimistic_rollback(&held, &end_call);
+                let _ = transaction.into_two_pc().finish_without_writes();
+                return;
+            }
+        }
+    }
+    let held = transaction.locked_keys();
+    let end_call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
+    let _ = transaction.pessimistic_rollback(&held, &end_call);
+    let _ = transaction.into_two_pc().finish_without_writes();
+}
+
+/// The keys one statement's staged writes owe pessimistic locks -- Go
+/// `LazyTxn.KeysNeedToLock` over the statement's staging delta, filtered by
+/// `KeyNeedToLock` (`pkg/session/txn.go`).
+///
+/// The delta is every buffer entry `after` holds that `before` did not, or
+/// holds with a different value: exactly what this statement staged. The
+/// filter is Go's, reduced to the flags this buffer carries (none):
+///
+/// * a non-table key always locks (Go's meta arm);
+/// * a DELETE locks only RECORD keys (`len(v) == 0` ->
+///   `tablecodec.IsRecordKey`);
+/// * a record-key put locks;
+/// * an index-key put locks only when the entry is UNIQUE
+///   (`tablecodec.IndexKVIsUnique`); this tier's non-unique entry value is
+///   the single byte `'0'` ([`tidb_codec::table_key::non_unique_index_value`])
+///   while a unique entry carries the row's handle, so the length is the
+///   same discriminator Go reads.
+#[must_use]
+pub fn pessimistic_lock_delta(
+    before: &[(Key, Option<Vec<u8>>)],
+    after: &[(Key, Option<Vec<u8>>)],
+) -> Vec<Vec<u8>> {
+    use std::collections::BTreeMap;
+    let before: BTreeMap<&Key, &Option<Vec<u8>>> =
+        before.iter().map(|(key, value)| (key, value)).collect();
+    after
+        .iter()
+        .filter(|(key, value)| before.get(key) != Some(&value))
+        .filter(|(key, value)| statement_key_needs_lock(key.as_bytes(), value.as_deref()))
+        .map(|(key, _)| key.as_bytes().to_vec())
+        .collect()
+}
+
+/// Go `KeyNeedToLock` (`pkg/session/txn.go`), reduced as
+/// [`pessimistic_lock_delta`]'s doc describes.
+fn statement_key_needs_lock(key: &[u8], value: Option<&[u8]>) -> bool {
+    let is_record = match tidb_codec::table_key::decode_key_head(key) {
+        Ok(tidb_codec::table_key::KeyHead::Record { .. }) => true,
+        Ok(tidb_codec::table_key::KeyHead::Index { .. }) => false,
+        // Not a table key: Go's "meta key always need to lock".
+        Err(_) => return true,
+    };
+    match value {
+        None => is_record,
+        Some(_) if is_record => true,
+        Some(value) => value.len() != 1,
+    }
+}
+
+/// Go `handlePessimisticDML`'s lock half for one statement's keys: acquire at
+/// the current `for_update_ts` with the session lock-wait timeout, and turn
+/// every outcome into the session layer's next move.
+///
+/// The internal retry is only for a RETRYABLE DEADLOCK, mirroring
+/// `multi_statement_transaction::lock_keys`; a write conflict or a
+/// fair-locking grant-with-conflict is NOT retried here, because its remedy
+/// is re-executing the statement at the advanced `for_update_ts`, which only
+/// the session layer can do.
+fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    transaction: &mut RealPessimisticTransaction<C, L, CapabilityTimestampSource<P>>,
+    opener: &Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    keep_alive: &mut Option<LockKeepAlive>,
+    keys: &[Vec<u8>],
+    call: &UnaryCallContext,
+) -> LockKeysOutcome {
+    use std::collections::BTreeSet;
+    let held: BTreeSet<Vec<u8>> = transaction.locked_keys().into_iter().collect();
+    let added: Vec<Vec<u8>> = keys
+        .iter()
+        .filter(|key| !held.contains(*key))
+        .cloned()
+        .collect();
+    /// Bound on deadlock-retryable re-acquisitions, the narrow driver's own.
+    const MAX_LOCK_RETRIES: usize = 8;
+    let mut attempt = 0usize;
+    loop {
+        // No absence presumption: DML locks target rows that exist (the
+        // rewritten set); INSERT keeps its NotExist assertion at Prewrite.
+        match transaction.acquire_locks(
+            keys,
+            &BTreeSet::new(),
+            LockWaitTime::session_lock_wait_timeout(),
+            call,
+        ) {
+            Ok(acquired) => {
+                if keep_alive.is_none() {
+                    match opener
+                        .start_lock_keep_alive(acquired.primary_key.clone(), transaction.start_ts())
+                    {
+                        Ok(alive) => *keep_alive = Some(alive),
+                        Err(error) => {
+                            return LockKeysOutcome::TransactionError(LockSqlError {
+                                code: 1105,
+                                state: *b"HY000",
+                                message: format!(
+                                    "cannot keep the transaction's primary lock alive: {error}"
+                                ),
+                            });
+                        }
+                    }
+                }
+                if acquired.locked_with_conflict.is_empty() {
+                    return LockKeysOutcome::Locked {
+                        for_update_ts: acquired.for_update_ts,
+                    };
+                }
+                // Fair locking granted the locks despite a newer committed
+                // version. The locks STAY -- that is the point -- but the
+                // statement must be recomputed at a timestamp that sees it.
+                return match transaction.advance_for_update_ts() {
+                    Ok(for_update_ts) => LockKeysOutcome::RetryStatement { for_update_ts },
+                    Err(failure) => {
+                        LockKeysOutcome::TransactionError(lock_failure_to_sql_error(&failure))
+                    }
+                };
+            }
+            Err(failure) => {
+                if let PessimisticLockFailure::Deadlock(detail) = &failure {
+                    tidb_executor::deadlock_history::record_deadlock(detail);
+                }
+                // Release only what this statement added; earlier statements'
+                // locks survive their successor's failure.
+                if let Err(cause) = transaction.pessimistic_rollback(&added, call) {
+                    return LockKeysOutcome::TransactionError(transaction_cause_to_sql_error(
+                        &cause,
+                    ));
+                }
+                if !is_retryable_statement_failure(&failure) {
+                    let error = lock_failure_to_sql_error(&failure);
+                    return if failure.is_statement_scoped() {
+                        LockKeysOutcome::StatementError(error)
+                    } else {
+                        LockKeysOutcome::TransactionError(error)
+                    };
+                }
+                match &failure {
+                    PessimisticLockFailure::Deadlock(detail) if detail.is_retryable => {
+                        if attempt >= MAX_LOCK_RETRIES {
+                            return LockKeysOutcome::StatementError(lock_failure_to_sql_error(
+                                &failure,
+                            ));
+                        }
+                        std::thread::sleep(Duration::from_millis(5));
+                        if let Err(advance) = transaction.advance_for_update_ts() {
+                            return LockKeysOutcome::TransactionError(lock_failure_to_sql_error(
+                                &advance,
+                            ));
+                        }
+                        attempt += 1;
+                        continue;
+                    }
+                    // A write conflict's remedy is the statement retry at a
+                    // newer `for_update_ts`.
+                    _ => {
+                        return match transaction.advance_for_update_ts() {
+                            Ok(for_update_ts) => LockKeysOutcome::RetryStatement { for_update_ts },
+                            Err(advance) => LockKeysOutcome::TransactionError(
+                                lock_failure_to_sql_error(&advance),
+                            ),
+                        };
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// One statement's read snapshot: a real read-only transaction at one PD
@@ -530,6 +904,7 @@ impl ClusterSnapshot for StatementSnapshot {
         let bytes = key.as_bytes().to_vec();
         ask(&self.thread.sender()?, |reply| TransactionRequest::Get {
             key: bytes,
+            read_ts: None,
             reply,
         })
     }
@@ -537,7 +912,11 @@ impl ClusterSnapshot for StatementSnapshot {
     fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
         let keys = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
         ask(&self.thread.sender()?, |reply| {
-            TransactionRequest::BatchGet { keys, reply }
+            TransactionRequest::BatchGet {
+                keys,
+                read_ts: None,
+                reply,
+            }
         })
     }
 
@@ -553,6 +932,7 @@ impl ClusterSnapshot for StatementSnapshot {
             start,
             end,
             limit,
+            read_ts: None,
             reply,
         })
     }
@@ -644,6 +1024,10 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
 /// read.
 pub struct SessionTransaction {
     thread: TransactionThread,
+    /// Whether the worker hosts a pessimistic transaction -- decided by the
+    /// session's `tidb_txn_mode` at `BEGIN`, Go's `DefTiDBTxnMode`
+    /// (pessimistic) being the default.
+    pessimistic: bool,
 }
 
 impl fmt::Debug for SessionTransaction {
@@ -668,6 +1052,48 @@ impl SessionTransaction {
     ) -> Result<Self, OptimisticCoordinatorError> {
         Ok(Self {
             thread: TransactionThread::open(&opener, timeout, true, "cluster-session-transaction")?,
+            pessimistic: false,
+        })
+    }
+
+    /// Opens the pessimistic transaction `BEGIN` holds under Go's default
+    /// `tidb_txn_mode = 'pessimistic'`: the same one-timestamp transaction,
+    /// whose worker additionally serves the statement-lock protocol
+    /// ([`Self::lock_keys`]) and commits with pessimistic constraints.
+    pub fn begin_pessimistic<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+        timeout: Duration,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        Ok(Self {
+            thread: TransactionThread::open_with(
+                &opener,
+                timeout,
+                TransactionOpen::WritablePessimistic,
+                "cluster-session-pessimistic",
+            )?,
+            pessimistic: true,
+        })
+    }
+
+    /// Whether this transaction locks per statement and commits with
+    /// pessimistic constraints.
+    #[must_use]
+    pub const fn is_pessimistic(&self) -> bool {
+        self.pessimistic
+    }
+
+    /// Acquires pessimistic locks on one statement's written keys at the
+    /// transaction's current `for_update_ts` -- Go `handlePessimisticDML`'s
+    /// lock step. The outcome tells the session layer whether the statement
+    /// stands, must be re-executed at an advanced timestamp, or failed.
+    pub fn lock_keys(&self, keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, StorageError> {
+        let requests = self.thread.sender()?;
+        let (reply, answer) = mpsc::channel();
+        requests
+            .send(TransactionRequest::LockKeys { keys, reply })
+            .map_err(|_| StorageError::Backend("the transaction thread is gone".to_owned()))?;
+        answer.recv().map_err(|_| {
+            StorageError::Backend("the transaction thread stopped mid-lock".to_owned())
         })
     }
 
@@ -685,6 +1111,18 @@ impl SessionTransaction {
         Ok(Box::new(SessionSnapshot {
             requests: self.thread.sender()?,
             start_ts: self.thread.start_ts,
+            read_ts: None,
+        }))
+    }
+
+    /// A read handle whose reads happen at `read_ts` instead of `start_ts`:
+    /// the retried pessimistic statement's view (Go rebuilds the retried
+    /// executor reading at `forUpdateTS`).
+    pub fn snapshot_at(&self, read_ts: u64) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
+        Ok(Box::new(SessionSnapshot {
+            requests: self.thread.sender()?,
+            start_ts: self.thread.start_ts,
+            read_ts: Some(read_ts),
         }))
     }
 
@@ -755,6 +1193,10 @@ struct SessionSnapshot {
     /// The timestamp the transaction opened at, which every statement of it
     /// reads at; a remote scan has to name it.
     start_ts: u64,
+    /// `Some` overrides the read timestamp for this statement -- the
+    /// pessimistic retry's advanced `for_update_ts`. `None` reads at
+    /// `start_ts`.
+    read_ts: Option<u64>,
 }
 
 impl fmt::Debug for SessionSnapshot {
@@ -769,16 +1211,20 @@ impl fmt::Debug for SessionSnapshot {
 impl ClusterSnapshot for SessionSnapshot {
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
         let bytes = key.as_bytes().to_vec();
+        let read_ts = self.read_ts;
         ask(&self.requests, |reply| TransactionRequest::Get {
             key: bytes,
+            read_ts,
             reply,
         })
     }
 
     fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
         let keys = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
+        let read_ts = self.read_ts;
         ask(&self.requests, |reply| TransactionRequest::BatchGet {
             keys,
+            read_ts,
             reply,
         })
     }
@@ -791,10 +1237,12 @@ impl ClusterSnapshot for SessionSnapshot {
     ) -> Result<SnapshotPairs, StorageError> {
         let start = start.as_bytes().to_vec();
         let end = end.as_bytes().to_vec();
+        let read_ts = self.read_ts;
         ask(&self.requests, |reply| TransactionRequest::Scan {
             start,
             end,
             limit,
+            read_ts,
             reply,
         })
     }

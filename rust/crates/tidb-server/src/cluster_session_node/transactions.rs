@@ -18,6 +18,22 @@
 //! it is one of the independent seams that accreted there; see that module's
 //! doc comment for the statement lifecycle this seam is exercised by.
 //!
+//! # The pessimistic explicit transaction
+//!
+//! `BEGIN` under Go's default `tidb_txn_mode = 'pessimistic'` (and `BEGIN
+//! PESSIMISTIC` outright) opens [`SessionTransaction::begin_pessimistic`]:
+//! after each DML statement the session locks the statement's staged keys
+//! (`OpenClusterTransaction::lock_staged_keys`, Go `handlePessimisticDML`'s
+//! lock step over `KeysNeedToLock`), a conflict rolls the STATEMENT back and
+//! re-executes it reading at the advanced `for_update_ts`
+//! ([`OpenClusterTransaction::snapshot_at`]), and `COMMIT` prewrites with
+//! pessimistic constraints on the held locks. `BEGIN OPTIMISTIC` keeps the
+//! old contract -- no locks, the loser's `COMMIT` reports 9007 -- exactly as
+//! Go keeps it. Both are pinned by
+//! `tests::unistore_cop::racing_pessimistic_updates_both_commit_with_serial_effect`
+//! and its optimistic sibling; sysbench's parallel `oltp_read_write` was the
+//! workload that demanded the wiring.
+//!
 //! # Named gap: `SELECT ... FOR UPDATE` does not lock yet
 //!
 //! Go's `SelectLockExec` sits above the reader and pessimistically locks each
@@ -26,21 +42,10 @@
 //! This tier currently drops the lock clause: the read is served from the
 //! ordinary snapshot, no key is locked, and a contender neither waits nor
 //! re-reads (measured 2026-08-17: the contender returned immediately with
-//! the pre-commit value).
-//!
-//! CORRECTION (measured 2026-08-18, against the running node): the missing
-//! piece is NOT only an executor-level lock step. The transaction a `BEGIN`
-//! holds open here is OPTIMISTIC end to end, so there is no pessimistic
-//! transaction for such a step to lock in. A plain `UPDATE` inside an
-//! explicit transaction does not block a second connection's `UPDATE`
-//! either: the contender commits immediately and the first transaction then
-//! fails at `COMMIT` with `WriteConflict { reason: Optimistic }`, where Go
-//! blocks the contender and lets the first transaction win. The pessimistic
-//! machinery (`RealPessimisticTransaction::acquire_locks` with
-//! `LockWaitTime`) does exist below this seam and is what `GET_LOCK` and
-//! AUTOCOMMIT locking DML run through — but wiring the explicit transaction
-//! onto it is the actual unit of work, and the `FOR UPDATE` lock step rides
-//! on top of that rather than standing alone.
+//! the pre-commit value). The pessimistic transaction it needs to lock in
+//! exists now; the remaining work is the executor-level lock step over the
+//! rows a locking READ produces, which stages no mutation for
+//! `lock_staged_keys` to see.
 //!
 //! `LOCK IN SHARE MODE` is Go's own documented no-op and stays one.
 
@@ -54,8 +59,8 @@ use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoa
 use tidb_txnkv::PdRegionLoader;
 
 use tidb_exec::cluster_table_storage::{
-    commit_staged_buffer, MaxTsSnapshot, PreparedStatementSnapshot, SessionTransaction,
-    StatementSnapshot,
+    commit_staged_buffer, LockKeysOutcome, MaxTsSnapshot, PreparedStatementSnapshot,
+    SessionTransaction, StatementSnapshot,
 };
 use tidb_exec::pessimistic_lock_error::LockSqlError;
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
@@ -120,8 +125,11 @@ pub trait ClusterTransactions: Send + Sync {
     fn commit(&self, buffer: &MutationBuffer, read_ts: Option<u64>) -> Result<(), SqlQueryError>;
 
     /// Opens the one transaction an explicit `BEGIN` holds until `COMMIT` or
-    /// `ROLLBACK`.
-    fn begin(&self) -> Result<Box<dyn OpenClusterTransaction>, String>;
+    /// `ROLLBACK`. `pessimistic` is the session's `tidb_txn_mode` verdict at
+    /// `BEGIN` -- Go's default is pessimistic (`DefTiDBTxnMode`), and the
+    /// pessimistic transaction locks per statement instead of first learning
+    /// of a conflict at `COMMIT`.
+    fn begin(&self, pessimistic: bool) -> Result<Box<dyn OpenClusterTransaction>, String>;
 
     /// Acquires the TiKV pessimistic key backing one advisory lock.
     fn acquire_advisory_lock(
@@ -191,6 +199,27 @@ pub trait OpenClusterTransaction: Send {
 
     /// Ends the transaction without publishing anything.
     fn rollback(self: Box<Self>) -> Result<(), String>;
+
+    /// Whether this transaction locks per statement (Go's pessimistic mode).
+    /// The default is the optimistic answer, which every mock and the
+    /// optimistic transaction share.
+    fn is_pessimistic(&self) -> bool {
+        false
+    }
+
+    /// A read handle at an explicit statement timestamp -- the pessimistic
+    /// retry's advanced `for_update_ts`. Only a pessimistic transaction can
+    /// serve one.
+    fn snapshot_at(&self, _read_ts: u64) -> Result<Box<dyn ClusterSnapshot>, String> {
+        Err("only a pessimistic transaction reads at a statement timestamp".to_owned())
+    }
+
+    /// Acquires pessimistic locks on one statement's written keys -- Go
+    /// `handlePessimisticDML`'s lock step -- and reports the session layer's
+    /// next move.
+    fn lock_staged_keys(&self, _keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, String> {
+        Err("only a pessimistic transaction locks statement keys".to_owned())
+    }
 }
 
 /// The timestamp one autocommit statement is at: written when the first read
@@ -632,8 +661,13 @@ where
             .map_err(sql_error)
     }
 
-    fn begin(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
-        SessionTransaction::begin(Arc::clone(&self.opener), self.timeout)
+    fn begin(&self, pessimistic: bool) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        let transaction = if pessimistic {
+            SessionTransaction::begin_pessimistic(Arc::clone(&self.opener), self.timeout)
+        } else {
+            SessionTransaction::begin(Arc::clone(&self.opener), self.timeout)
+        };
+        transaction
             .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
             .map_err(|error| error.to_string())
     }
@@ -675,6 +709,18 @@ impl OpenClusterTransaction for SessionTransaction {
 
     fn rollback(self: Box<Self>) -> Result<(), String> {
         SessionTransaction::rollback(*self)
+    }
+
+    fn is_pessimistic(&self) -> bool {
+        SessionTransaction::is_pessimistic(self)
+    }
+
+    fn snapshot_at(&self, read_ts: u64) -> Result<Box<dyn ClusterSnapshot>, String> {
+        SessionTransaction::snapshot_at(self, read_ts).map_err(|error| error.to_string())
+    }
+
+    fn lock_staged_keys(&self, keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, String> {
+        SessionTransaction::lock_keys(self, keys).map_err(|error| error.to_string())
     }
 }
 
@@ -743,7 +789,7 @@ mod tests {
             panic!("unused in batch-get forwarding test")
         }
 
-        fn begin(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        fn begin(&self, _pessimistic: bool) -> Result<Box<dyn OpenClusterTransaction>, String> {
             panic!("unused in batch-get forwarding test")
         }
 

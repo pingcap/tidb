@@ -245,10 +245,13 @@ where
     /// A pessimistic statement advances its `for_update_ts` after a write
     /// conflict while retaining the transaction's original start timestamp for
     /// Prewrite. Its retry must therefore read the new statement timestamp,
-    /// not the stale transaction snapshot. This is deliberately point-only:
-    /// the configured DML path has only point rewrites, while range reads keep
-    /// their transaction-snapshot contract.
-    pub(crate) fn snapshot_get_at(
+    /// not the stale transaction snapshot -- Go rebuilds the retried
+    /// statement's executor reading at `forUpdateTS`
+    /// (`pkg/executor/adapter.go` `handlePessimisticLockError` ->
+    /// `UpdateForUpdateTS`), and that applies to every read the retried
+    /// statement performs, which is why [`Self::snapshot_batch_get_at`] and
+    /// [`Self::snapshot_scan_at`] exist beside this.
+    pub fn snapshot_get_at(
         &mut self,
         key: &[u8],
         read_ts: u64,
@@ -367,6 +370,18 @@ where
         keys: &[Vec<u8>],
         call: &UnaryCallContext,
     ) -> Result<SnapshotScanPairs, OptimisticCoordinatorError> {
+        self.snapshot_batch_get_at(keys, self.start_ts, call)
+    }
+
+    /// [`Self::snapshot_batch_get`] at an explicit statement timestamp; see
+    /// [`Self::snapshot_get_at`] for the pessimistic-retry contract that
+    /// needs one.
+    pub fn snapshot_batch_get_at(
+        &mut self,
+        keys: &[Vec<u8>],
+        read_ts: u64,
+        call: &UnaryCallContext,
+    ) -> Result<SnapshotScanPairs, OptimisticCoordinatorError> {
         if keys.is_empty() {
             return Ok(Vec::new());
         }
@@ -395,7 +410,7 @@ where
                 self.resolved_locks.stamp(&mut context);
                 let request = KvrpcBatchGetRequest {
                     keys: batch.keys().to_vec(),
-                    version: self.start_ts,
+                    version: read_ts,
                     need_commit_ts: true,
                     ..KvrpcBatchGetRequest::default()
                 };
@@ -481,7 +496,7 @@ where
                 let recovery = resolve_optimistic_locks(
                     &self.runtime,
                     &locked,
-                    self.start_ts,
+                    read_ts,
                     &context,
                     call,
                     &self.timestamps,
@@ -534,6 +549,20 @@ where
         limit: Option<usize>,
         call: &UnaryCallContext,
     ) -> Result<SnapshotScanPairs, OptimisticCoordinatorError> {
+        self.snapshot_scan_at(start_key, end_key, limit, self.start_ts, call)
+    }
+
+    /// [`Self::snapshot_scan`] at an explicit statement timestamp; see
+    /// [`Self::snapshot_get_at`] for the pessimistic-retry contract that
+    /// needs one.
+    pub fn snapshot_scan_at(
+        &mut self,
+        start_key: &[u8],
+        end_key: &[u8],
+        limit: Option<usize>,
+        read_ts: u64,
+        call: &UnaryCallContext,
+    ) -> Result<SnapshotScanPairs, OptimisticCoordinatorError> {
         if limit == Some(0) {
             return Ok(Vec::new());
         }
@@ -580,7 +609,7 @@ where
                 start_key: cursor.clone(),
                 end_key: page_end.clone(),
                 limit: page_limit,
-                version: self.start_ts,
+                version: read_ts,
                 ..KvrpcScanRequest::default()
             };
             let response = self.begin_scan(&route, &context, &request, call)?;
@@ -607,7 +636,7 @@ where
                 let recovery = resolve_optimistic_locks(
                     &self.runtime,
                     &locked,
-                    self.start_ts,
+                    read_ts,
                     &context,
                     call,
                     &self.timestamps,

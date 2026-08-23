@@ -26,6 +26,7 @@ use tidb_datatype::Datum;
 
 use super::node_fixture::{rows, session_context, ABC_HASH};
 use crate::configured_user_store::ConfiguredUserStore;
+use crate::sql_node::QuerySession;
 use crate::unistore_node::{unistore_cluster_session_stack, UnistoreClusterStack};
 use crate::QuerySessionFactory;
 
@@ -1257,4 +1258,175 @@ fn concurrent_creates_both_succeed_like_gos_ddl_queue() {
             );
         }
     }
+}
+
+/// Two explicit transactions racing an `UPDATE` of the same row both commit,
+/// and the row carries BOTH increments -- Go's default `tidb_txn_mode =
+/// 'pessimistic'` semantics, sysbench `oltp_read_write`'s exact shape.
+///
+/// The pessimistic wiring is what each half proves. The loser's `UPDATE`
+/// blocks on the winner's row lock instead of proceeding on a stale
+/// snapshot; when the lock releases, fair locking grants it WITH a conflict
+/// and the statement is re-executed reading at the advanced `for_update_ts`
+/// (Go `handlePessimisticDML` -> `UpdateForUpdateTS`), so its `v + 1`
+/// computes from the winner's committed value. Before the wiring, `BEGIN`
+/// held an optimistic transaction end to end: neither `UPDATE` blocked, both
+/// computed from the same snapshot, and whichever `COMMIT` ran second failed
+/// with 9007 -- this test then fails on the error, and would fail on
+/// `v == 2` even if both were let through.
+#[test]
+fn racing_pessimistic_updates_both_commit_with_serial_effect() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut first = factory
+        .open_session(session_context(80))
+        .expect("session opens");
+    rows(
+        &mut first,
+        "CREATE TABLE test.race_rw (id int primary key, v int)",
+    );
+    rows(&mut first, "INSERT INTO test.race_rw VALUES (1, 0)");
+
+    assert_eq!(
+        first.control_transaction("BEGIN").expect("begin"),
+        Some(true)
+    );
+    rows(&mut first, "UPDATE test.race_rw SET v = v + 1 WHERE id = 1");
+
+    let second = std::thread::scope(|scope| {
+        let contender = scope.spawn(|| {
+            let mut second = factory
+                .open_session(session_context(81))
+                .expect("session opens");
+            assert_eq!(
+                second.control_transaction("BEGIN").expect("begin"),
+                Some(true)
+            );
+            // Blocks on the first transaction's pessimistic row lock until
+            // that transaction commits.
+            rows(
+                &mut second,
+                "UPDATE test.race_rw SET v = v + 1 WHERE id = 1",
+            );
+            second.control_transaction("COMMIT").expect("commit");
+        });
+        // Give the contender time to reach the lock wait, so the interesting
+        // interleaving -- blocked UPDATE, then the winner's COMMIT -- is the
+        // one exercised. The assertions hold under any interleaving.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        first.control_transaction("COMMIT").expect("commit");
+        contender.join()
+    });
+    second.expect("the contending transaction commits after waiting the lock out");
+
+    assert_eq!(
+        displayed(rows(&mut first, "SELECT v FROM test.race_rw WHERE id = 1")),
+        [["2"]],
+        "both increments landed: the loser re-read the winner's commit"
+    );
+}
+
+/// `BEGIN OPTIMISTIC` keeps Go's optimistic contract: neither `UPDATE`
+/// blocks or locks, and the transaction that commits second fails at
+/// `COMMIT` with the 9007 write conflict -- which is also the receipt that
+/// [`racing_pessimistic_updates_both_commit_with_serial_effect`] tests the
+/// WIRING and not some property both modes share: this test IS the
+/// pre-wiring behavior, kept reachable by the keyword exactly as Go keeps
+/// it.
+#[test]
+fn racing_optimistic_updates_still_conflict_at_commit() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut first = factory
+        .open_session(session_context(84))
+        .expect("session opens");
+    rows(
+        &mut first,
+        "CREATE TABLE test.race_opt (id int primary key, v int)",
+    );
+    rows(&mut first, "INSERT INTO test.race_opt VALUES (1, 0)");
+
+    first
+        .control_transaction("BEGIN OPTIMISTIC")
+        .expect("begin");
+    rows(
+        &mut first,
+        "UPDATE test.race_opt SET v = v + 1 WHERE id = 1",
+    );
+
+    // The contender's whole transaction runs and commits while the first is
+    // still open: optimistically nothing blocks it.
+    let mut second = factory
+        .open_session(session_context(85))
+        .expect("session opens");
+    second
+        .control_transaction("BEGIN OPTIMISTIC")
+        .expect("begin");
+    rows(
+        &mut second,
+        "UPDATE test.race_opt SET v = v + 1 WHERE id = 1",
+    );
+    second.control_transaction("COMMIT").expect("commit");
+
+    // The first transaction's prewrite now finds the newer commit: 9007.
+    let refused = first
+        .control_transaction("COMMIT")
+        .expect_err("an optimistic loser reports the conflict at COMMIT");
+    assert_eq!(
+        refused.code, 9007,
+        "the loser's error keeps Go's write-conflict identity: {}",
+        refused.message
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut second,
+            "SELECT v FROM test.race_opt WHERE id = 1"
+        )),
+        [["1"]],
+        "only the winner's increment landed"
+    );
+}
+
+/// `BEGIN` inside an open transaction implicitly COMMITS it -- Go's
+/// documented `BEGIN` semantics -- and the staged writes are PUBLISHED, not
+/// discarded. sysbench relies on this shape: an ignorable statement error
+/// (1213) makes it abandon the transaction and simply issue the next
+/// `BEGIN`. Before the fix the wrapper discarded the abandoned buffer, and
+/// -- when a statistics republish had refreshed the catalog first -- the
+/// implicit commit failed with a phantom 9007 "Write conflict" at `BEGIN`.
+#[test]
+fn begin_inside_a_transaction_implicitly_commits_it() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut session = factory
+        .open_session(session_context(88))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.implicit_commit (id int primary key, v int)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.implicit_commit VALUES (1, 0)",
+    );
+
+    session.control_transaction("BEGIN").expect("begin");
+    rows(
+        &mut session,
+        "UPDATE test.implicit_commit SET v = 7 WHERE id = 1",
+    );
+    // No COMMIT: the next BEGIN carries it implicitly.
+    session
+        .control_transaction("BEGIN")
+        .expect("BEGIN with an open transaction implicitly commits, never conflicts");
+    session.control_transaction("COMMIT").expect("commit");
+
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT v FROM test.implicit_commit WHERE id = 1"
+        )),
+        [["7"]],
+        "the abandoned transaction's write was committed, not discarded"
+    );
 }

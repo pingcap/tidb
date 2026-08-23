@@ -188,6 +188,8 @@ use tidb_session::{
     GlobalSysvars, PreparedAst, Session, StmtKind, StmtOutput, StmtResult, StoredStateChange,
 };
 
+use tidb_exec::cluster_table_storage::LockKeysOutcome;
+
 use crate::cluster_account_seam::ClusterAccountWriter;
 use crate::cluster_analyze_seam::ClusterAnalyze;
 use crate::cluster_session::{cluster_session_catalog, SkippedTable, TableAutoIds};
@@ -653,6 +655,17 @@ pub struct ClusterServerSession {
     auto_ids: Arc<dyn TableAutoIds>,
 }
 
+/// The session layer's next move after a pessimistic statement's lock step.
+enum PessimisticStep {
+    /// The statement stands; its keys are locked.
+    Done,
+    /// Re-execute the statement reading at this advanced `for_update_ts`.
+    Retry {
+        /// The statement timestamp the replay reads at.
+        for_update_ts: u64,
+    },
+}
+
 impl ClusterServerSession {
     /// The tables this connection's catalog left out, with their reasons.
     #[must_use]
@@ -775,44 +788,113 @@ impl ClusterServerSession {
         // back by its publication after the read handle is gone. Autocommit
         // publishes THERE, not at a fresh one: see `StatementReadTs`.
         let read_ts = transactions::StatementReadTs::new(self.session.current_tso());
-        let snapshot = match self.explicit.as_ref() {
-            // The transaction's timestamp is already spent; its per-statement
-            // read handle costs nothing, so there is nothing to defer.
-            Some(transaction) => transaction.snapshot().map_err(SqlQueryError::unknown)?,
-            // Binding is still timestamp-free. After the statement's shape is
-            // declared below, preparation starts the ordinary future; the
-            // first read is what waits for and exposes its snapshot.
-            None => {
-                transactions::deferred_snapshot(Arc::clone(&self.transactions), read_ts.clone())
+        // Go `handlePessimisticDML`'s statement loop: run, lock the staged
+        // keys, and on a lock conflict roll the STATEMENT back and re-execute
+        // it reading at the advanced `for_update_ts`. `None` is the first
+        // attempt, reading at the transaction's own snapshot.
+        let mut retry_read_ts: Option<u64> = None;
+        let result = loop {
+            let snapshot = match self.explicit.as_ref() {
+                // The transaction's timestamp is already spent; its
+                // per-statement read handle costs nothing, so there is
+                // nothing to defer.
+                Some(transaction) => match retry_read_ts {
+                    Some(for_update_ts) => transaction
+                        .snapshot_at(for_update_ts)
+                        .map_err(SqlQueryError::unknown)?,
+                    None => transaction.snapshot().map_err(SqlQueryError::unknown)?,
+                },
+                // Binding is still timestamp-free. After the statement's
+                // shape is declared below, preparation starts the ordinary
+                // future; the first read is what waits for and exposes its
+                // snapshot.
+                None => {
+                    transactions::deferred_snapshot(Arc::clone(&self.transactions), read_ts.clone())
+                }
+            };
+            if let Some(stale) = self.bind(snapshot) {
+                // A previous statement that did not unbind would otherwise
+                // leave its read transaction open for the rest of the
+                // connection.
+                drop(stale);
+            }
+            self.declare_read_shape(shape);
+            self.prepare_snapshot()?;
+            let outcome = run(&mut self.session);
+            let finished = self.finish_snapshot();
+            match outcome {
+                Ok(value) => {
+                    finished?;
+                    match self.lock_pessimistic_statement_keys(&savepoint)? {
+                        PessimisticStep::Done => {}
+                        PessimisticStep::Retry { for_update_ts } => {
+                            // The statement's writes go back; its locks STAY
+                            // (fair locking's whole point), and the replay
+                            // reads at the timestamp that sees the version
+                            // that beat it.
+                            self.buffer.restore(savepoint.clone());
+                            retry_read_ts = Some(for_update_ts);
+                            continue;
+                        }
+                    }
+                    self.commit_if_session_left_transaction()?;
+                    self.flush_if_autocommit(read_ts.get())?;
+                    break Ok(value);
+                }
+                Err(error) => {
+                    // The statement's own writes go; every earlier
+                    // statement's writes in this transaction stay.
+                    self.buffer.restore(savepoint.clone());
+                    break Err(error);
+                }
             }
         };
-        if let Some(stale) = self.bind(snapshot) {
-            // A previous statement that did not unbind would otherwise leave
-            // its read transaction open for the rest of the connection.
-            drop(stale);
-        }
-        self.declare_read_shape(shape);
-        self.prepare_snapshot()?;
-        let outcome = run(&mut self.session);
-        let finished = self.finish_snapshot();
-        let result = (|| match outcome {
-            Ok(value) => {
-                finished?;
-                self.commit_if_session_left_transaction()?;
-                self.flush_if_autocommit(read_ts.get())?;
-                Ok(value)
-            }
-            Err(error) => {
-                // The statement's own writes go; every earlier statement's
-                // writes in this transaction stay.
-                self.buffer.restore(savepoint);
-                Err(error)
-            }
-        })();
         if autocommit {
             self.session.current_tso().clear();
         }
         result
+    }
+
+    /// Go `handlePessimisticDML`'s lock step for the statement that just ran:
+    /// what the transaction says about the keys it staged.
+    fn lock_pessimistic_statement_keys(
+        &mut self,
+        savepoint: &BufferImage,
+    ) -> Result<PessimisticStep, SqlQueryError> {
+        let Some(transaction) = self.explicit.as_ref() else {
+            return Ok(PessimisticStep::Done);
+        };
+        if !transaction.is_pessimistic() {
+            return Ok(PessimisticStep::Done);
+        }
+        let keys = tidb_exec::cluster_table_storage::pessimistic_lock_delta(
+            savepoint,
+            &self.buffer.staged(),
+        );
+        if keys.is_empty() {
+            return Ok(PessimisticStep::Done);
+        }
+        match transaction
+            .lock_staged_keys(keys)
+            .map_err(SqlQueryError::unknown)?
+        {
+            LockKeysOutcome::Locked { .. } => Ok(PessimisticStep::Done),
+            LockKeysOutcome::RetryStatement { for_update_ts } => {
+                Ok(PessimisticStep::Retry { for_update_ts })
+            }
+            LockKeysOutcome::StatementError(error) => {
+                // Statement-scoped, Go's 1205/1213 family: this statement's
+                // writes go, the transaction stays open.
+                self.buffer.restore(savepoint.clone());
+                Err(transactions::sql_error(error))
+            }
+            LockKeysOutcome::TransactionError(error) => {
+                // The transaction worker has ended itself; later statements
+                // and `ROLLBACK` report the dead thread on their own.
+                self.buffer.restore(savepoint.clone());
+                Err(transactions::sql_error(error))
+            }
+        }
     }
 
     /// Whether the statement that just failed is one Go would have retried
@@ -952,7 +1034,26 @@ impl ClusterServerSession {
     }
 
     fn open_explicit(&mut self) -> Result<(), SqlQueryError> {
-        let transaction = self.transactions.begin().map_err(SqlQueryError::unknown)?;
+        // Go `newProviderWithRequest`: `BEGIN <mode>` wins, a bare `BEGIN`
+        // falls back to `@@tidb_txn_mode` -- whose default is PESSIMISTIC
+        // (`vardef.DefTiDBTxnMode`). The session resolved the keyword half at
+        // `BEGIN`; the variable half covers `SET autocommit = 0`, which
+        // carries no keyword.
+        let pessimistic = match self.session.txn_mode() {
+            Some(mode) => mode.is_pessimistic(),
+            None => tidb_planner::txn_mode::txn_mode_variable(
+                &self
+                    .session
+                    .vars()
+                    .get_system("tidb_txn_mode")
+                    .unwrap_or_default(),
+            )
+            .is_pessimistic(),
+        };
+        let transaction = self
+            .transactions
+            .begin(pessimistic)
+            .map_err(SqlQueryError::unknown)?;
         self.session.current_tso().publish(transaction.start_ts());
         self.explicit = Some(transaction);
         Ok(())
@@ -1443,6 +1544,23 @@ impl QuerySession for ClusterServerSession {
                 "{feature} is not supported yet"
             )));
         }
+        // Go's `BEGIN` inside an open transaction implicitly COMMITS it --
+        // and the commit must run BEFORE the schema refresh below, in Go's
+        // own order. The refresh replaces the session's shared catalog, and
+        // the driver session's commit checks that the catalog it opened on
+        // is the one it is committing into; refreshing first turned every
+        // implicit commit after a mid-run statistics republish into a
+        // phantom "Write conflict" at `BEGIN` (sysbench abandons a
+        // transaction on an ignorable 1213 and just issues the next BEGIN,
+        // which is exactly this shape).
+        if matches!(control, Some(TransactionControl::Begin { .. }))
+            && self.session.in_transaction()
+        {
+            self.session
+                .control_transaction("COMMIT")
+                .map_err(map_error)?;
+            self.commit_explicit()?;
+        }
         // The refresh happens BEFORE the driver session pins its own schema
         // view for the transaction: Go activates a transaction with the
         // LATEST schema at start (`domain.GetSnapshotInfoSchema(startTS)`),
@@ -1468,15 +1586,7 @@ impl QuerySession for ClusterServerSession {
                 // The refresh happens BEFORE the pin: the new transaction
                 // reads the schema as of its own start, not as of the moment
                 // this connection was opened.
-                eprintln!(
-                    "{{\"event\":\"debug_begin_refresh\",\"before\":{}}}",
-                    self.schema_version
-                );
                 self.rebuild_catalog_now();
-                eprintln!(
-                    "{{\"event\":\"debug_begin_refresh\",\"after\":{}}}",
-                    self.schema_version
-                );
                 self.open_explicit()?;
             }
             Some(

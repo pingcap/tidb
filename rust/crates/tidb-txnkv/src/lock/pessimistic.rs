@@ -222,6 +222,20 @@ fn classify_determined_pessimistic_status(
     {
         return Ok(ResolvedTxnStatus::RolledBack);
     }
+    // Go `lock_resolver.go`'s `Action_LockNotExistDoNothing` arm: the owner's
+    // primary lock no longer exists and no commit record was found -- the
+    // owner already rolled its statement's locks back (a pessimistic
+    // statement retry does exactly that), so the blocked key's leftover lock
+    // is stale and is simply removed (`resolvePessimisticLock`); nothing is
+    // written for the primary, which is what "do nothing" promises. Two
+    // pessimistic transactions retrying against each other reach this arm
+    // routinely; treating it as undetermined aborted statements Go quietly
+    // cleans up after.
+    if response.commit_version == 0
+        && response.action == KvrpcTxnAction::LockNotExistDoNothing as i32
+    {
+        return Ok(ResolvedTxnStatus::RolledBack);
+    }
     classify_determined_status(response)
 }
 
