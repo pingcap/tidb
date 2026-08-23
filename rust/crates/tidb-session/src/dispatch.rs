@@ -584,7 +584,9 @@ impl Session {
         // Only an allocating INSERT sets it; every other statement reports 0.
         self.statement_insert_id = 0;
         // The Apply channel describes THIS statement's plan.
-        self.planned_apply.set(false);
+        self
+            .planned_apply
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         // Go's `matchAgainstToLike` rewrites a direct-boolean-context
         // `MATCH ... AGAINST` into ILIKE predicates inside the expression
         // rewriter, so every query block gets it -- subqueries, EXPLAIN
@@ -668,7 +670,11 @@ impl Session {
         // which is what makes `tidb_shard_allocate_step` count rows rather
         // than statements.
         if !self.in_transaction() {
-            self.row_id_shards.borrow_mut().end_run();
+            self
+                .row_id_shards
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .end_run();
         }
         // Go sets the `InSelectStmt`/`In*Stmt` bits here, before execution,
         // so a statement that FAILS still classifies itself for the next

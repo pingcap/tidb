@@ -282,7 +282,7 @@ impl Session {
         // Apply is refused outright -- neither stored nor reported -- because
         // a per-outer-row executor cannot be reused across parameter sets.
         // The driver reports it through the statement context's channel.
-        if self.planned_apply.get() {
+        if self.planned_apply.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(output);
         }
         if hit {

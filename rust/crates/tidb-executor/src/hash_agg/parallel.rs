@@ -140,7 +140,7 @@ impl HashAggContext for crate::StmtContext {
     /// through `Arc` + `Mutex`/atomics (the transcreation of Go sharing one
     /// `sessionctx.Context` with every worker goroutine), so worker threads
     /// may evaluate expressions through `&StmtContext`.
-    const PARALLEL_WORKERS_MAY_EVAL: bool = false;
+    const PARALLEL_WORKERS_MAY_EVAL: bool = true;
 
     fn run_parallel_pipeline_bridge(
         exec: &mut HashAggExec<Self>,
