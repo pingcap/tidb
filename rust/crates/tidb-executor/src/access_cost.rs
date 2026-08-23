@@ -1105,10 +1105,23 @@ pub(crate) fn enumerate_paths(
         crate::handle_range::build_handle_ranges(table, clause, &resolver.time_zone())
     });
     let handle_ranges = handle.as_ref().map(|built| built.ranges.clone());
-    let table_order: Vec<usize> = if table.common_handle_offsets().is_empty() {
-        table.pk_handle_offset().into_iter().collect()
-    } else {
+    let table_order: Vec<usize> = if !table.common_handle_offsets().is_empty() {
         table.common_handle_offsets().to_vec()
+    } else if let Some(offset) = table.pk_handle_offset() {
+        vec![offset]
+    } else {
+        // A HEAP table's handle IS `_tidb_rowid` -- Go's `matchProperty`
+        // makes the `path.IsIntHandlePath` claim through `ds.HandleCols`,
+        // which `buildDataSource` built from `NewExtraHandleSchemaCol` for
+        // such a table. The extra handle is not one of `table.columns`; it is
+        // the column the scope appends past them, found here by its name.
+        columns
+            .iter()
+            .position(|(name, _)| {
+                name.eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)
+            })
+            .into_iter()
+            .collect()
     };
     let full_range = [IndexRange::full()];
     let table_ranges_for_order = handle_ranges.as_deref().unwrap_or(&full_range);
@@ -1130,16 +1143,9 @@ pub(crate) fn enumerate_paths(
         // Go's `hasFullRangeScan`: only a table path the ranger narrowed
         // NOTHING on is penalized -- with a handle bound the path carries its
         // own ranges, and the range is the evidence the penalty demands.
-        if handle_ranges.is_none() {
-            table_scan_penalty_rows(
-                stats,
-                realtime.max(MIN_NUM_ROWS),
-                index_force || hints.has_forced_path(),
-                partition_scan,
-            )
-        } else {
-            0.0
-        },
+        handle_ranges
+            .is_none()
+            .then_some((index_force || hints.has_forced_path(), partition_scan)),
     );
     // Go's `getTableCandidate`: a table path is always a single scan, and it
     // is the full range exactly when the ranger built nothing. Its access
@@ -1182,6 +1188,7 @@ pub(crate) fn enumerate_paths(
             index_filter_count: 0,
             table_filter_count: 0,
             forced: false,
+            match_property: false,
             path: table_scan,
         });
     }
@@ -1333,6 +1340,7 @@ pub(crate) fn enumerate_paths(
             index_filter_count,
             table_filter_count,
             forced,
+            match_property: false,
             path,
         });
     }
@@ -1589,6 +1597,7 @@ fn full_scan_candidate(
         index_filter_count,
         table_filter_count,
         forced,
+        match_property: false,
         path,
     })
 }
@@ -1745,10 +1754,16 @@ fn table_scan_path(
     ranges: Option<&[IndexRange]>,
     limit: Option<&PushedLimit<'_>>,
     limit_matches_order: bool,
-    // Go `getTableScanPenalty`'s answer, computed by the caller because the
-    // hint and partition facts it reads are the caller's. Always `0.0` for a
-    // NARROWED table path -- Go gates the penalty on `hasFullRangeScan`.
-    penalty_rows: f64,
+    // Go `getTableScanPenalty`'s INPUT facts -- `(hasIndexForce,
+    // hasPartitionScan)` -- supplied by the caller because the hint and
+    // partition facts are the caller's; `None` for a NARROWED table path,
+    // which Go gates out on `hasFullRangeScan`. The penalty ROWS are
+    // computed HERE, after the limit adjustment, because Go computes them in
+    // the cost function from `getCardinality(p)` -- the row count
+    // `ScaleByExpectCnt` has already shrunk under a limit-with-order
+    // property. Feeding the unscaled realtime count instead priced a
+    // `MAX(handle)`'s one-row ordered scan as if it read the whole table.
+    full_range_penalty: Option<(bool, bool)>,
 ) -> AccessPath {
     // Cost model v2 prices two physical schemas here. The TiKV table scan
     // reads every stored column plus the hidden row ID on a nonclustered
@@ -1794,6 +1809,9 @@ fn table_scan_path(
     // Go costs the scan at the rows it READS and the reader's net transfer at
     // the rows that leave the cop task, which is after the pushed Selection.
     let scan_rows = physical_count.max(MIN_NUM_ROWS);
+    let penalty_rows = full_range_penalty.map_or(0.0, |(index_force, partition_scan)| {
+        table_scan_penalty_rows(stats, scan_rows, index_force, partition_scan)
+    });
     let scanned = scan_cost(scan_rows + penalty_rows, scan_row_size.max(MIN_ROW_SIZE));
     let output_rows = limit.map_or(after_filter, |limit| after_filter.min(limit.cap));
     let transferred = net_cost(output_rows, output_row_size.max(MIN_ROW_SIZE));
@@ -2150,6 +2168,15 @@ pub(crate) fn index_is_covering(table: &KvTable, index_id: i64, needed_columns: 
 
 fn is_covering(index: &KvIndex, table: &KvTable, needed_columns: &[usize]) -> bool {
     needed_columns.iter().all(|offset| {
+        // Go `handleCoveringColumn` (`pkg/planner/core/operator/logicalop/
+        // logical_datasource.go:759`): a column with `model.ExtraHandleID`
+        // is ALWAYS `stateCoveredByIntHandle` -- every index entry carries
+        // the int handle as its value, so `_tidb_rowid` never costs a row
+        // lookup. The extra handle is the one column a scope appends PAST
+        // the table's own columns, so its offset identifies it.
+        if *offset >= table.columns.len() {
+            return true;
+        }
         let flen = table
             .columns
             .get(*offset)
@@ -3332,6 +3359,11 @@ pub(crate) fn choose_access_path(
     candidates: Vec<Candidate<AccessPath>>,
     stats: Option<&TableStatistics>,
     has_limit: bool,
+    // Go `!prop.IsSortItemEmpty()`: the caller re-entered path selection
+    // carrying an order, and marked each candidate's `match_property`. A
+    // caller that instead FILTERED the enumeration to matching paths passes
+    // `false`, which reads as Go's `matched()` being true for every survivor.
+    has_sort_property: bool,
 ) -> Option<AccessPath> {
     let context = PruningContext {
         table_pseudo: is_pseudo(stats),
@@ -3340,6 +3372,7 @@ pub(crate) fn choose_access_path(
         // moves `tidb_opt_prefer_range_scan` off its default.
         prefer_range: true,
         has_limit,
+        has_sort_property,
     };
     let mut best: Option<AccessPath> = None;
     for candidate in skyline_pruning(candidates, &context) {
@@ -4308,7 +4341,7 @@ mod tests {
         // covering the whole table does not.
         //
         // Measured against the scan WITHOUT Go's table-scan penalty
-        // (`table_scan_penalty_rows`, passed as `0.0` here), and deliberately
+        // (`table_scan_penalty_rows`, passed as `None` here), and deliberately
         // so: the penalty prices the RISK of a full scan under statistics
         // nobody trusts, not the double read, and it moves the crossover only
         // ever in the index path's favour. Excluding it is what keeps this
@@ -4325,7 +4358,7 @@ mod tests {
             None,
             None,
             false,
-            0.0,
+            None,
         );
         assert!(
             non_covering.cost < scan.cost,
@@ -4388,7 +4421,7 @@ mod tests {
             None,
             None,
             false,
-            table_scan_penalty_rows(None, realtime, false, false),
+            Some((false, false)),
         );
         assert!(penalized.cost > scan.cost);
         assert!(whole_table.cost > penalized.cost);

@@ -1435,6 +1435,7 @@ mod tests_dml_lock_keys;
 mod tests_eval_bool;
 #[cfg(test)]
 mod tests_explain;
+mod tests_extra_handle_access;
 #[cfg(test)]
 mod tests_explain_derived;
 mod tests_explain_merge_join;

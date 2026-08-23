@@ -73,6 +73,19 @@
 //! * Fix45132's 1000x `CountAfterAccess` rule.
 //! * the `preferRange` post-filter, whose master switch
 //!   `tidb_opt_prefer_range_scan` defaults ON (`vardef.DefOptPreferRangeScan`).
+//! * `matchResult` (`matchProperty`) -- `compareBool` over
+//!   [`Candidate::match_property`]. The statement's own `ORDER BY` re-enters
+//!   path selection (`crate::driver::access::best_single_table_access_path`
+//!   marks each candidate and prices the non-matching ones under the Sort
+//!   enforcer), and the dimension exists in Go precisely so a non-matching
+//!   path cannot DOMINATE a matching one there -- without it the covering
+//!   `IndexRangeScan` skyline-pruned the ordered table scan before the
+//!   enforcer's price was ever compared. Its two other regimes are exact:
+//!   under an EMPTY property Go's `matchProperty` answers `PropNotMatched`
+//!   for every path, and every constructor leaves the field `false`, so
+//!   `compareBool(false, false)` is 0; a join leaf's required order is
+//!   applied as a FILTER over the enumeration before pruning, so every
+//!   survivor compares `compareBool(true, true)` = 0 just the same.
 //!
 //! # How much `riskResult` can actually change
 //!
@@ -116,26 +129,6 @@
 //!
 //! EXCLUDED, each with its wrong-plan direction:
 //!
-//! * `matchResult` (`matchProperty`) is held at 0. This is EXACT, not an
-//!   approximation, and it stays exact under BOTH calls this tier makes.
-//!
-//!   Under an EMPTY physical property -- the statement's own `ORDER BY` is a
-//!   `Sort` above the read -- `matchProperty` returns `PropNotMatched` for
-//!   every path, so Go's own `compareBool(false, false)` is 0 too.
-//!
-//!   Under a NON-EMPTY one -- a join leaf required to produce an order, which
-//!   [`crate::driver::access::leaf_index_path`] now asks for -- every
-//!   candidate that reaches here has ALREADY matched: that caller applies
-//!   `matchProperty` as a filter over the enumeration before pruning, so
-//!   `compareBool(true, true)` is 0 for every pair. The dimension exists in Go
-//!   to stop a non-matching path DOMINATING a matching one; a candidate list
-//!   with no non-matching path in it cannot have that happen. See that
-//!   function's own doc for why removing them up front is the same answer.
-//!
-//!   What remains upstream is an ENUMERATION gap, not a pruning one: the
-//!   STATEMENT's own `ORDER BY` still does not re-enter path selection, so an
-//!   index that would have satisfied it without a sort is not considered
-//!   there. That costs a sort, it does not mis-prune.
 //! * `getPseudoRowCountWithPartialStats` -- the one estimator branch that can
 //!   report a `MaxEst` above its `Est` while the index itself is UNANALYZED
 //!   (`row_count_index.go`'s `IndexStatsIsInvalid` arm, when the index's
@@ -271,6 +264,14 @@ pub(crate) struct Candidate<T> {
     /// candidates unconditionally; otherwise a forced whole-index scan could
     /// disappear after hint filtering had already removed the table path.
     pub(crate) forced: bool,
+    /// Go `candidatePath.matchPropResult.Matched()`: whether this path's own
+    /// walk already delivers the required sort property. Under an EMPTY
+    /// property Go's `matchProperty` answers `PropNotMatched` for every path,
+    /// so `false` for every candidate is that call's exact value; the
+    /// single-table chooser sets it per candidate when the statement's own
+    /// `ORDER BY` re-enters path selection
+    /// (`crate::driver::access::best_single_table_access_path`).
+    pub(crate) match_property: bool,
 }
 
 /// Go `compareIndexBack`.
@@ -424,6 +425,13 @@ pub(crate) struct PruningContext {
     /// `prop.ExpectedCnt != math.MaxFloat64`, which disables Fix45132's rule
     /// because a `LIMIT` changes what "rows after access" means.
     pub(crate) has_limit: bool,
+    /// Whether the required property carries a SORT, Go's
+    /// `!prop.IsSortItemEmpty()`. The `preferRange` post-filter reads it:
+    /// under an ordered property a range path counts as "preferred" only when
+    /// it also MATCHES the order (`prop.IsSortItemEmpty() ||
+    /// c.matchPropResult.Matched()`), so an unordered range scan cannot
+    /// evict the ordered full scan the property will choose.
+    pub(crate) has_sort_property: bool,
 }
 
 /// Go `fixcontrol.Fix45132`'s default threshold: one path's access row count
@@ -444,8 +452,11 @@ pub(crate) fn compare_candidates<T>(
         context.table_pseudo || lhs.pseudo,
         context.table_pseudo || rhs.pseudo,
     );
+    // Go: `compareBool(lhs.matchPropResult.Matched(), rhs.matchPropResult
+    // .Matched())`. Every caller that carries no required order leaves both
+    // sides `false`, which keeps this at Go's own 0 for an empty property.
+    let match_result = compare_bool(lhs.match_property, rhs.match_property);
     // EXCLUDED, held at Go's own value for this call: see the module doc.
-    let match_result = 0;
     let global_result = 0;
 
     let risk_result = compare_risk_ratio(lhs, rhs);
@@ -573,9 +584,11 @@ pub(crate) fn skyline_pruning<T>(
             }
             let index_filters = candidate.eq_or_in_count > 0
                 || candidate.table_filter_count < candidate.index_filter_count;
-            // `prop.IsSortItemEmpty()` is true for this tier's only
-            // invocation, so the property half of Go's condition holds.
-            (candidate.single_scan || index_filters) && !candidate.full_range
+            // Go: `(c.path.IsSingleScan || indexFilters) &&
+            // (prop.IsSortItemEmpty() || c.matchPropResult.Matched())`.
+            (candidate.single_scan || index_filters)
+                && (!context.has_sort_property || candidate.match_property)
+                && !candidate.full_range
         };
         if survivors.iter().any(preferred) {
             survivors.retain(preferred);
@@ -614,6 +627,7 @@ mod tests {
             index_filter_count: 0,
             table_filter_count: 0,
             forced: false,
+            match_property: false,
         }
     }
 
@@ -649,6 +663,7 @@ mod tests {
             row_count: 2000.0,
             prefer_range: true,
             has_limit: false,
+            has_sort_property: false,
         }
     }
 
