@@ -366,7 +366,18 @@ where
         // A refused `topn` or cap is different -- the contract names those
         // best-effort and the caller retains the local stage either way.
         if let Some(index) = request.index.as_ref() {
-            return self.open_index_aggregate(request, index, refuse);
+            if request.aggregate.is_some() {
+                return self.open_index_aggregate(request, index, refuse);
+            }
+            // An AGGREGATE-LESS index request lowers through the general
+            // path below, whose `TiKvIndexScanSpec` branch already builds
+            // the IndexScan DAG with its declared direction (`spec.desc`).
+            // Routing every index request here used to refuse exactly that
+            // shape by name ("a bare index scan is not lowered"), so a
+            // descending keep-order lookup fell back to a local cursor that
+            // materialized the whole bounded range before reversing -- an
+            // `ORDER BY indexed_col DESC LIMIT n` read every index entry to
+            // answer n rows.
         }
         if request.output_offsets.is_some() {
             return Err(refuse(
@@ -1181,7 +1192,7 @@ fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
             i32::try_from(column.field_type.flen()).ok()?,
             i32::try_from(column.field_type.decimal()).ok()?,
         ),
-        FieldTypeCode::Date | FieldTypeCode::Datetime => (
+        FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => (
             i32::from(code.mysql_type()),
             i32::try_from(column.field_type.flen()).ok()?,
             i32::try_from(column.field_type.decimal()).ok()?,

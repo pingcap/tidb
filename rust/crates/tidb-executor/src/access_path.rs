@@ -1891,7 +1891,21 @@ impl Executor for IndexRangeSourceExec {
         self.partial_remote = None;
         self.partial_rows = None;
         self.partial_done = false;
-        self.remote_index = if self.covering || (!self.index_filter && self.top_n.is_none()) {
+        // A DESCENDING lookup must not ride the local cursor on cluster
+        // storage: [`TableStorage::iter_reverse`]'s fallback materializes the
+        // WHOLE bounded range forward before reversing, so a keep-order
+        // `ORDER BY ... DESC LIMIT n` read every index entry to answer n.
+        // The remote stream already walks high-to-low
+        // ([`crate::remote_scan::PushdownIndexScan`]'s `desc`), so a clean,
+        // unpartitioned table serves the same handles through one bounded
+        // coprocessor request and the caller's cap stops it after n. Every
+        // refusal below is `None`, which lands back on the exact local path
+        // this used to take.
+        let remote_eligible = match (self.covering, self.index_filter, self.top_n.is_some()) {
+            (true, _, _) => false,
+            (false, filter, topn) => filter || topn || self.descending,
+        };
+        self.remote_index = if !remote_eligible {
             None
         } else {
             self.table
