@@ -452,6 +452,11 @@ pub(crate) fn handle_range_row_count(
 /// the result ascending, because the ids are allocated as one ascending block
 /// and every handle of a partition sorts inside it.
 ///
+/// `keep_order` is the reader's required order (`TableReaderExecutor
+/// .keepOrder`, plus the descending walk this tier models by reversing the
+/// one list): an ordered caller receives the halves in ascending VALUE order,
+/// while an unordered caller receives Go's merged wire order.
+///
 /// `None` means a bound this tier cannot encode, and the caller falls back to
 /// the whole record range -- reading a superset is always correct, because
 /// the `WHERE` above the source filters every row it returns.
@@ -459,7 +464,8 @@ pub(crate) fn record_key_ranges(
     table: &KvTable,
     ranges: &[IndexRange],
     zone: &tidb_datatype::SessionTimeZone,
- ) -> Result<Option<Vec<(Key, Key)>>, tidb_codec::CodecError> {
+    keep_order: bool,
+) -> Result<Option<Vec<(Key, Key)>>, tidb_codec::CodecError> {
     // DDL does not materialize the clustered PRIMARY as a secondary index.
     // The table path still carries the common-handle column offsets, and Go's
     // `CommonHandleRangesToKVRanges` uses those record keys directly.
@@ -476,21 +482,29 @@ pub(crate) fn record_key_ranges(
         .map(|range| materialize_open_bounds(range, unsigned))
         .collect();
     // Go `table_reader.go:295`: `SplitRangesAcrossInt64Boundary(ranges,
-    // e.keepOrder, e.desc, ...)`, whose two halves the reader opens as two
-    // results read one after the other.
+    // e.keepOrder, e.desc, ...)`. An ORDERED read opens the halves as two
+    // results consumed one after the other, and `keepOrder = true, desc =
+    // false` answers signed-first; this tier hands such a caller ONE list in
+    // exactly that VALUE order, and its descending callers reverse the list
+    // (and each range), which yields Go's `desc = true` answer -- the
+    // unsigned half first.
     //
-    // This tier hands the caller ONE list and the caller reads it in order
-    // (reversing it, and each range, for a descending scan), so the halves are
-    // concatenated in ascending VALUE order: signed first. That is Go's
-    // `keepOrder = true, desc = false` answer, and it is the right list for
-    // every caller -- an unordered read may take the ranges in any order, and
-    // a descending read gets descending value order from reversing this one.
-    // Go's other two answers differ only in how many RPCs they cost.
-    let materialized = if unsigned {
+    // An UNORDERED read differs ON THE WIRE: Go merges both halves into ONE
+    // request, `append(unsignedRanges, signedRanges...)`, because values
+    // above `MaxInt64` encode NEGATIVE record keys and therefore sort before
+    // every ordinary handle. That list ascends in encoded-key order -- the
+    // only shape an unordered request may hand the coprocessor transport,
+    // whose task builder consumes ranges in list order.
+    let materialized = if !unsigned {
+        materialized
+    } else if keep_order {
         let (first, second) = split_ranges_across_int64_boundary(materialized, true, false);
         first.into_iter().chain(second).collect()
     } else {
-        materialized
+        let (mut merged, second) =
+            split_ranges_across_int64_boundary(materialized, false, false);
+        merged.extend(second);
+        merged
     };
     let mut handle_ranges = Vec::with_capacity(materialized.len());
     for range in &materialized {

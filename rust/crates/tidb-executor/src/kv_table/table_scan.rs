@@ -223,7 +223,9 @@ impl KvTable {
         // `physical_ids.len() > 1`.
         let physical_count = self.record_physical_ids().len();
         let mut iterators = Vec::new();
-        for (low, upper) in self.record_key_ranges(handle_ranges, zone)? {
+        for (low, upper) in
+            self.record_key_ranges(handle_ranges, zone, ordered || descending)?
+        {
             iterators.push(
                 if descending {
                     self.store.iter_reverse(Some(&upper), Some(&low))
@@ -301,7 +303,7 @@ impl KvTable {
     ) -> Result<Option<(TableHandle, Vec<Datum>)>, KvTableError> {
         let context = RowDecodeContext::legacy_default(zone);
         let decoder = self.row_decoder_projected(keep, &context)?;
-        for (low, upper) in self.record_key_ranges(Some(handle_ranges), zone)? {
+        for (low, upper) in self.record_key_ranges(Some(handle_ranges), zone, false)? {
             let Some((key, value)) = self
                 .store
                 .first(Some(&low), Some(&upper))
@@ -320,11 +322,14 @@ impl KvTable {
     /// With no handle ranges this is the ONE range the whole relation lives
     /// in ([`KvTable::record_key_range`]). With them it is the intervals
     /// [`crate::handle_range::record_key_ranges`] encodes, which is what
-    /// makes a `TableRangeScan` read less than the table.
+    /// makes a `TableRangeScan` read less than the table. `keep_order`
+    /// selects Go's ordered-read half order versus his merged unordered wire
+    /// order, exactly as [`crate::handle_range::record_key_ranges`] documents.
     fn record_key_ranges(
         &self,
         handle_ranges: Option<&[IndexRange]>,
         zone: &SessionTimeZone,
+        keep_order: bool,
     ) -> Result<Vec<(Key, Key)>, KvTableError> {
         let full_common_handle = [IndexRange {
             low: vec![Datum::MinNotNull],
@@ -359,7 +364,9 @@ impl KvTable {
             handle_ranges
         };
         let encoded = match handle_ranges {
-            Some(ranges) => crate::handle_range::record_key_ranges(self, ranges, zone)
+            Some(ranges) => {
+                crate::handle_range::record_key_ranges(self, ranges, zone, keep_order)
+            }
                 .map_err(|error| KvTableError::Encode(format!("{error:?}")))?,
             None => None,
         };
@@ -430,7 +437,8 @@ impl KvTable {
         if self.partition.is_some() {
             return Ok(None);
         }
-        let ranges = self.record_key_ranges(handle_ranges, context.zone())?;
+        let ranges =
+            self.record_key_ranges(handle_ranges, context.zone(), keep_order || descending)?;
         // No range at all is a read of NOTHING -- `id > 100 AND id < 100`, or a
         // bound that is NULL -- and a coprocessor request has no way to say
         // that: its `Ranges` list is what the transport turns into region
@@ -731,7 +739,7 @@ impl KvTable {
         if self.has_dirty_content() || self.partition.is_some() {
             return Ok(None);
         }
-        let ranges = self.record_key_ranges(handle_ranges, zone)?;
+        let ranges = self.record_key_ranges(handle_ranges, zone, false)?;
         if ranges.is_empty() {
             return Ok(None);
         }
