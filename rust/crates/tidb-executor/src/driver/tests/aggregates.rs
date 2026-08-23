@@ -276,24 +276,121 @@ fn tpch_q13_restores_grouped_derived_hash_agg_output() {
     );
 }
 
-/// Go `InjectProjBelowAgg` extracts every scalar aggregate argument, including
-/// TPC-H q14's `SUM(CASE ...)`, into a physical Projection below HashAgg.
+/// `tests/integrationtest/`, whose `s.zip` carries the TPC-H SF50 statistics
+/// dumps the tpch recording loads. `run-tests.sh` unzips it before starting
+/// mysql-tester; this does the same, installing `s/` with one `rename` so
+/// parallel test binaries never read a half-written extraction.
+fn integrationtest_stats_dir() -> std::path::PathBuf {
+    let dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/integrationtest");
+    let installed = dir.join("s");
+    if !installed.exists() {
+        let scratch = dir.join(format!(".s_unzip_agg_{}", std::process::id()));
+        let status = std::process::Command::new("unzip")
+            .arg("-qq")
+            .arg(dir.join("s.zip"))
+            .arg("-d")
+            .arg(&scratch)
+            .status()
+            .expect("unzip tests/integrationtest/s.zip");
+        assert!(status.success(), "unzip tests/integrationtest/s.zip");
+        // A losing rename means another process installed `s/` meanwhile;
+        // its copy is the same archive, so ours just goes.
+        let _ = std::fs::rename(scratch.join("s"), &installed);
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+    installed.join("tpch_stats")
+}
+
+/// Installs one `s/tpch_stats/<table>.json` dump onto `catalog`, the way the
+/// recording's `load stats 's/tpch_stats/<table>.json'` does. The dump names
+/// database `tpch50` while this fixture builds the tables in `test`;
+/// `table_statistics_from_json` matches COLUMNS by lowercased name and never
+/// reads the database, so the histograms land unchanged.
+fn load_tpch_stats(catalog: &mut Catalog, table: &str) {
+    let path = integrationtest_stats_dir().join(format!("{table}.json"));
+    let data = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+    let json = crate::load_stats::parse_stats_json(&data).expect("parse the recorded dump");
+    let Some(TableEntry::Kv(kv)) = catalog.table_in("test", table) else {
+        panic!("{table} must exist before its statistics load");
+    };
+    let kv = kv.clone();
+    let statistics =
+        crate::load_stats::table_statistics_from_json(&kv, &json).expect("install the dump");
+    catalog.set_table_statistics(kv.table_id, std::sync::Arc::new(statistics));
+}
+
+/// TPC-H q14, planned exactly as Go records it in
+/// `tests/integrationtest/r/tpch.result` (the `explain format = 'plan_tree'`
+/// block under "Q14 Promotion Effect Query").
+///
+/// Two contracts meet in this one statement.
+///
+/// `InjectProjBelowAgg` extracts every scalar aggregate argument -- here
+/// `SUM(CASE WHEN p_type LIKE 'PROMO%' ...)` -- into a physical Projection
+/// below the HashAgg, which is the third row of the recorded tree.
+///
+/// The join BUILD SIDE is the other, and it is decided by cost, not by row
+/// count. `getHashJoins` (`pkg/planner/core/exhaust_physical_plans.go:176`)
+/// enumerates both orientations of an inner join, and
+/// `getPlanCostVer24PhysicalHashJoin` (`pkg/planner/core/plan_cost_ver2.go:776`)
+/// prices each as `build-hash + build-filter + (probe-filter + probe-hash) /
+/// p.Concurrency`. `hashBuildCostVer2` (same file, line 1167) charges the
+/// build side `buildRows * buildRowSize * memFactor` -- and ROW SIZE is what
+/// decides q14. `getAvgRowSize` (`pkg/planner/core/task.go:198`) reaches
+/// `GetAvgRowSizeDataInDiskByRows` (`pkg/planner/cardinality/row_size.go:96`),
+/// which sums `chunk.GetFixedLen` widths plus 8 bytes per column: `part`
+/// carries `p_partkey` + `p_type` at 8 + (21.6 - log2 21.6) + 16 = 41.17,
+/// while filtered `lineitem` carries `l_partkey`, two DECIMALs at
+/// `MyDecimalStructSize` = 40 each and `l_shipdate`, at 8 + 40 + 40 + 8 + 32
+/// = 128. Building `part` therefore costs 10,000,000 * 41.17 * 0.2 =
+/// 82,340,000 in hash memory against filtered `lineitem`'s 3,831,625.78 *
+/// 128 * 0.2 = 98,089,620: the ten-million-row side is the CHEAPER build.
+///
+/// That comparison only holds at the session the recording was made from.
+/// mysql-tester's DSN sets `tidb_hash_join_concurrency = 1` (see
+/// `difftests/result-tests/tests/mysqltest_connections.rs`), and at 1 the two
+/// orientations' CPU terms cancel exactly -- `buildRows * 2 * cpuFactor +
+/// probeRows * 2 * cpuFactor` is symmetric -- leaving the memory term alone
+/// to decide, by 15,749,620 out of 8.9e9. At the plain-session 5 the probe
+/// terms are divided instead, the 10,000,000-row probe becomes nearly free,
+/// and the filtered `lineitem` build wins: a real plan, for a session no
+/// recording contains.
 #[test]
-fn scalar_case_aggregate_argument_is_projected_below_hash_agg() {
+fn tpch_q14_matches_recorded_hash_join_plan() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
+    // TPC-H's own DDL, from `tests/integrationtest/t/tpch.test`. The NOT NULL
+    // columns matter: `deriveNotNullExpr`
+    // (`pkg/planner/core/operator/logicalop/logical_join.go`) synthesises
+    // `not(isnull(col))` only for a NULLABLE join key, so a relaxed fixture
+    // would grow cop `Selection`s the recording does not have.
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
-        "CREATE TABLE part (p_partkey INT PRIMARY KEY, p_type VARCHAR(25))",
+        "CREATE TABLE part ( P_PARTKEY INTEGER NOT NULL, P_NAME VARCHAR(55) NOT NULL, \
+         P_MFGR CHAR(25) NOT NULL, P_BRAND CHAR(10) NOT NULL, P_TYPE VARCHAR(25) NOT NULL, \
+         P_SIZE INTEGER NOT NULL, P_CONTAINER CHAR(10) NOT NULL, \
+         P_RETAILPRICE DECIMAL(15,2) NOT NULL, P_COMMENT VARCHAR(23) NOT NULL, \
+         PRIMARY KEY (P_PARTKEY))",
         &mut catalog,
     )
     .unwrap();
     crate::run_create_table_on(
-        "CREATE TABLE lineitem (l_partkey INT, l_extendedprice DECIMAL(15,2), \
-            l_discount DECIMAL(15,2), l_shipdate DATE)",
+        "CREATE TABLE lineitem ( L_ORDERKEY INTEGER NOT NULL, L_PARTKEY INTEGER NOT NULL, \
+         L_SUPPKEY INTEGER NOT NULL, L_LINENUMBER INTEGER NOT NULL, \
+         L_QUANTITY DECIMAL(15,2) NOT NULL, L_EXTENDEDPRICE DECIMAL(15,2) NOT NULL, \
+         L_DISCOUNT DECIMAL(15,2) NOT NULL, L_TAX DECIMAL(15,2) NOT NULL, \
+         L_RETURNFLAG CHAR(1) NOT NULL, L_LINESTATUS CHAR(1) NOT NULL, \
+         L_SHIPDATE DATE NOT NULL, L_COMMITDATE DATE NOT NULL, \
+         L_RECEIPTDATE DATE NOT NULL, L_SHIPINSTRUCT CHAR(25) NOT NULL, \
+         L_SHIPMODE CHAR(10) NOT NULL, L_COMMENT VARCHAR(44) NOT NULL, \
+         PRIMARY KEY (L_ORDERKEY,L_LINENUMBER))",
         &mut catalog,
     )
     .unwrap();
+    load_tpch_stats(&mut catalog, "part");
+    load_tpch_stats(&mut catalog, "lineitem");
 
     let sql = "SELECT 100.00 * \
         SUM(CASE WHEN p_type LIKE 'PROMO%' \
@@ -309,55 +406,99 @@ fn scalar_case_aggregate_argument_is_projected_below_hash_agg() {
     let QueryStmt::Select(select) = &**query else {
         panic!("not a SELECT");
     };
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query()
+        .with_optimizer_cost_env(tidb_planner::candidate_cost::CostEnv::default(), 1.0);
     let (_, rows) =
         explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
-    let operators = rows
-        .iter()
-        .map(|row| match &row[0] {
-            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes)
-                .trim_start_matches(&[' ', '│', '├', '└', '─'][..])
-                .to_owned(),
-            other => panic!("operator is not text: {other:?}"),
-        })
-        .collect::<Vec<_>>();
-    let cell = |row: usize, column: usize| match &rows[row][column] {
+
+    // `plan_tree` redacts produced column ids (`pkg/expression/column.go`:
+    // show "Column" instead of "Column#<number>"), so the produced ids are
+    // stripped the same way. estRows is not compared: `plan_tree` prints none.
+    fn strip_column_ids(info: &str) -> String {
+        let mut stripped = String::with_capacity(info.len());
+        let mut rest = info;
+        while let Some(at) = rest.find("Column#") {
+            stripped.push_str(&rest[..at]);
+            stripped.push_str("Column");
+            rest = &rest[at + "Column#".len()..];
+            let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+            rest = &rest[digits..];
+        }
+        stripped.push_str(rest);
+        stripped
+    }
+    let text = |row: &[Datum], column: usize| match &row[column] {
         Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
         other => panic!("EXPLAIN cell is not text: {other:?}"),
     };
 
-    assert_eq!(
-        &operators[..3],
-        ["Projection", "HashAgg", "Projection"],
-        "Go InjectProjBelowAgg must extract q14's scalar CASE argument: {rows:#?}",
-    );
-    assert!(
-        cell(1, 4).contains("funcs:sum(Column#"),
-        "HashAgg must consume the projected scalar columns: {rows:#?}",
-    );
-    assert!(
-        cell(2, 4).contains("case("),
-        "the injected Projection must evaluate the CASE expression: {rows:#?}",
-    );
-    let selection = rows
+    // Go's recorded q14 tree, `tests/integrationtest/r/tpch.result`, with
+    // `tpch50.` rewritten to this fixture's `test.` schema. Columns are
+    // id / task / access object / operator info.
+    const RECORDED_Q14_PLAN_TREE: &[(&str, &str, &str, &str)] = &[
+    ("Projection", "root", "", "div(mul(100.00, Column), Column)->Column"),
+    ("└─HashAgg", "root", "", "funcs:sum(Column)->Column, funcs:sum(Column)->Column"),
+    ("  └─Projection", "root", "", "case(like(test.part.p_type, PROMO%, 92), mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount)), 0.0000)->Column, mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount))->Column"),
+    ("    └─HashJoin", "root", "", "inner join, equal:[eq(test.lineitem.l_partkey, test.part.p_partkey)]"),
+    ("      ├─TableReader(Build)", "root", "", "data:TableFullScan"),
+    ("      │ └─TableFullScan", "cop[tikv]", "table:part", "keep order:false"),
+    ("      └─TableReader(Probe)", "root", "", "data:Selection"),
+    ("        └─Selection", "cop[tikv]", "", "ge(test.lineitem.l_shipdate, 1996-12-01 00:00:00.000000), lt(test.lineitem.l_shipdate, 1997-01-01 00:00:00.000000)"),
+    ("          └─TableFullScan", "cop[tikv]", "table:lineitem", "keep order:false"),
+    ];
+
+    let produced = rows
         .iter()
-        .position(|row| match &row[4] {
-            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).contains("l_shipdate"),
-            _ => false,
+        .map(|row| {
+            (
+                strip_column_ids(&text(row, 0)),
+                text(row, 2),
+                text(row, 3),
+                strip_column_ids(&text(row, 4)),
+            )
         })
-        .expect("q14 has a lineitem date Selection");
-    assert!(
-        !cell(selection, 4).contains("and("),
-        "Go PhysicalSelection prints split CNF conditions: {rows:#?}",
-    );
-    let hash_join = operators
+        .collect::<Vec<_>>();
+    let recorded = RECORDED_Q14_PLAN_TREE
         .iter()
-        .position(|operator| operator == "HashJoin")
-        .expect("q14 has a HashJoin");
-    assert!(
-        operators[hash_join + 1] == "Selection(Build)"
-            || cell(hash_join + 1, 4) == "data:Selection",
-        "Go builds q14's hash table from the smaller filtered lineitem side: {rows:#?}",
+        .map(|(id, task, access, info)| {
+            (
+                (*id).to_owned(),
+                (*task).to_owned(),
+                (*access).to_owned(),
+                (*info).to_owned(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        produced, recorded,
+        "q14 must plan exactly as Go records it in tests/integrationtest/r/tpch.result",
+    );
+
+    // The concurrency is the seam, and it is load-bearing here: at the
+    // plain-session 5 the probe terms are shared by five workers, the
+    // 10,000,000-row `part` probe becomes nearly free, and the filtered
+    // `lineitem` side prices below it. Reading q14 at 5 and comparing it to a
+    // recording made at 1 is what makes the build side look wrong.
+    let plain_session = crate::StmtContext::for_query()
+        .with_optimizer_cost_env(tidb_planner::candidate_cost::CostEnv::default(), 5.0);
+    let (_, at_five) = explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &plain_session,
+        ExplainFormat::Brief,
+    )
+    .unwrap();
+    assert_eq!(
+        (
+            text(&at_five[4], 0)
+                .trim_start_matches(&[' ', '│', '├', '└', '─'][..])
+                .to_owned(),
+            text(&at_five[4], 4)
+        ),
+        ("TableReader(Build)".to_owned(), "data:Selection".to_owned()),
+        "at concurrency 5 the filtered lineitem side is the cheaper build; \
+         if this stops flipping the chooser stopped reading the session: {at_five:#?}",
     );
 }
 
