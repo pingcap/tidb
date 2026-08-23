@@ -7,23 +7,49 @@
 
 use super::*;
 
-/// Go TPC-H q2 pushes the selective `part` predicates below join search, uses
-/// that filtered table to drive the clustered `(ps_partkey, ps_suppkey)`
-/// prefix, and retains the grouped key needed by the outer scalar comparison.
+/// TPC-H q2's correlated `min(ps_supplycost)`, decorrelated and planned exactly
+/// as Go records it in `tests/integrationtest/r/tpch.result`.
+///
+/// Go's greedy join reorder is what fixes this shape. With five inner-join
+/// nodes and `DefTiDBOptJoinReorderThreshold = 0`
+/// (`pkg/sessionctx/vardef/tidb_vars.go`), `rule_join_reorder.go`'s
+/// `useGreedy := !allInnerJoin || joinGroupNum > threshold` selects the greedy
+/// solver, which sorts the group by `cumCost` and starts from the cheapest node
+/// (`rule_join_reorder_greedy.go`'s `constructConnectedJoinTree` takes
+/// `s.curJoinGroup[0]`). `region` after `r_name = 'ASIA'` is that node, and the
+/// join graph then forces `region -> nation -> supplier -> partsupp -> part`:
+/// `part` connects only through `partsupp`, so it is attached last, to the
+/// four-way join result rather than to the `partsupp` table. An index join
+/// needs a `DataSource` on the inner side to accept
+/// `property.IndexJoinRuntimeProp` (`exhaust_physical_plans.go`'s
+/// `enumerateIndexJoinByOuterIdx`), so no `IndexHashJoin` and no `partsupp`
+/// `TableRangeScan` is reachable here -- upstream's own comment above this
+/// query in `tests/integrationtest/t/tpch.test` reads
+/// "Planner enhancement: join reorder." The `part`-driven
+/// `IndexHashJoin` into `partsupp` does exist in that recording, but for q16
+/// (`tpch.result:939`), whose join graph makes the two adjacent.
+///
+/// The fixture keeps TPC-H's `NOT NULL` columns because
+/// `logicalop.deriveNotNullExpr` only synthesises `not(isnull(col))` for a
+/// nullable column (`logical_join.go`'s
+/// `!mysql.HasNotNullFlag(childCol.RetType.GetFlag())`); a nullable fixture
+/// would add cop `Selection`s the recording does not have.
 #[test]
-fn tpch_q2_correlated_min_uses_filtered_index_hash_join() {
+fn tpch_q2_correlated_min_matches_recorded_hash_join_plan() {
     let mut catalog = Catalog::default();
     for table in [
         "CREATE TABLE part (p_partkey BIGINT PRIMARY KEY CLUSTERED, \
-         p_mfgr VARCHAR(32), p_type VARCHAR(32), p_size BIGINT)",
+         p_mfgr VARCHAR(32) NOT NULL, p_type VARCHAR(32) NOT NULL, p_size BIGINT NOT NULL)",
         "CREATE TABLE supplier (s_suppkey BIGINT PRIMARY KEY CLUSTERED, \
-         s_name VARCHAR(32), s_address VARCHAR(64), s_nationkey BIGINT, \
-         s_phone VARCHAR(32), s_acctbal DECIMAL(15,2), s_comment VARCHAR(128))",
+         s_name VARCHAR(32) NOT NULL, s_address VARCHAR(64) NOT NULL, \
+         s_nationkey BIGINT NOT NULL, s_phone VARCHAR(32) NOT NULL, \
+         s_acctbal DECIMAL(15,2) NOT NULL, s_comment VARCHAR(128) NOT NULL)",
         "CREATE TABLE partsupp (ps_partkey BIGINT NOT NULL, ps_suppkey BIGINT NOT NULL, \
-         ps_supplycost DECIMAL(15,2), PRIMARY KEY (ps_partkey, ps_suppkey) CLUSTERED)",
+         ps_supplycost DECIMAL(15,2) NOT NULL, PRIMARY KEY (ps_partkey, ps_suppkey) CLUSTERED)",
         "CREATE TABLE nation (n_nationkey BIGINT PRIMARY KEY CLUSTERED, \
-         n_name VARCHAR(32), n_regionkey BIGINT)",
-        "CREATE TABLE region (r_regionkey BIGINT PRIMARY KEY CLUSTERED, r_name VARCHAR(32))",
+         n_name VARCHAR(32) NOT NULL, n_regionkey BIGINT NOT NULL)",
+        "CREATE TABLE region (r_regionkey BIGINT PRIMARY KEY CLUSTERED, \
+         r_name VARCHAR(32) NOT NULL)",
     ] {
         crate::run_create_table_on(table, &mut catalog).unwrap();
     }
@@ -99,68 +125,96 @@ fn tpch_q2_correlated_min_uses_filtered_index_hash_join() {
         crate::explain::ExplainFormat::Brief,
     )
     .expect("q2 must remain explainable after scalar-MIN decorrelation");
+    // Go redacts column ids under `explain format = 'plan_tree'`
+    // (`pkg/expression/column.go`: "show \"Column\" instead of
+    // \"Column#<number>\""), so the produced ids are stripped the same way
+    // before comparing. estRows is not compared: `plan_tree` does not print it,
+    // and this fixture is scaled to SF1 while the recording is tpch50.
+    fn strip_column_ids(info: &str) -> String {
+        let mut stripped = String::with_capacity(info.len());
+        let mut rest = info;
+        while let Some(at) = rest.find("Column#") {
+            stripped.push_str(&rest[..at]);
+            stripped.push_str("Column");
+            rest = &rest[at + "Column#".len()..];
+            let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+            rest = &rest[digits..];
+        }
+        stripped.push_str(rest);
+        stripped
+    }
     let text = |row: &[Datum], column: usize| match &row[column] {
         Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
         other => format!("{other:?}"),
     };
 
-    let mut missing = Vec::new();
-    if !plan.iter().any(|row| {
-        text(row, 0).contains("Selection")
-            && text(row, 2) == "cop[tikv]"
-            && text(row, 4).contains("part.p_size")
-            && text(row, 4).contains("part.p_type")
-    }) {
-        missing.push("part predicates below its TableReader");
-    }
-    if plan.iter().any(|row| {
-        text(row, 0).contains("Selection")
-            && text(row, 2) == "root"
-            && text(row, 4).contains("part.p_size")
-            && text(row, 4).contains("part.p_type")
-    }) {
-        missing.push("part predicates retained above join search");
-    }
-    if !plan.iter().any(|row| {
-        text(row, 0).contains("IndexHashJoin")
-            && text(row, 4).contains("part.p_partkey")
-            && text(row, 4).contains("partsupp.ps_partkey")
-    }) {
-        missing.push("filtered part driving an IndexHashJoin into partsupp");
-    }
-    if !plan.iter().any(|row| {
-        text(row, 0).contains("TableRangeScan")
-            && text(row, 3) == "table:partsupp"
-            && text(row, 4).contains("range: decided by")
-            && text(row, 4).contains("ps_partkey")
-    }) {
-        missing.push("partsupp clustered-prefix dynamic range");
-    }
-    let min_aggregate = plan.iter().find(|row| {
-        text(row, 0).contains("HashAgg")
-            && text(row, 4).contains("group by:test.partsupp.ps_partkey")
-            && text(row, 4).contains("funcs:min(test.partsupp.ps_supplycost)")
-    });
-    if min_aggregate.is_none_or(|row| !text(row, 4).contains("funcs:firstrow(")) {
-        missing.push("FIRST_ROW carrier for the grouped MIN key");
-    }
-    if !plan.iter().any(|row| {
-        text(row, 0).contains("Selection") && text(row, 4).contains("not(isnull(Column#")
-    }) {
-        missing.push("null rejection above the scalar MIN output");
-    }
-    let readable_plan = plan
+    // Go's recorded q2 tree, `tests/integrationtest/r/tpch.result`, with
+    // `tpch50.` rewritten to this fixture's `test.` schema. Columns are
+    // id / task / access object / operator info.
+    const RECORDED_Q2_PLAN_TREE: &[(&str, &str, &str, &str)] = &[
+    ("Projection", "root", "", "test.supplier.s_acctbal, test.supplier.s_name, test.nation.n_name, test.part.p_partkey, test.part.p_mfgr, test.supplier.s_address, test.supplier.s_phone, test.supplier.s_comment"),
+    ("└─TopN", "root", "", "test.supplier.s_acctbal:desc, test.nation.n_name, test.supplier.s_name, test.part.p_partkey, offset:0, count:100"),
+    ("  └─Projection", "root", "", "test.part.p_partkey, test.part.p_mfgr, test.supplier.s_name, test.supplier.s_address, test.supplier.s_phone, test.supplier.s_acctbal, test.supplier.s_comment, test.nation.n_name"),
+    ("    └─HashJoin", "root", "", "inner join, equal:[eq(test.part.p_partkey, test.partsupp.ps_partkey) eq(test.partsupp.ps_supplycost, Column)]"),
+    ("      ├─HashJoin(Build)", "root", "", "inner join, equal:[eq(test.partsupp.ps_partkey, test.part.p_partkey)]"),
+    ("      │ ├─TableReader(Build)", "root", "", "data:Selection"),
+    ("      │ │ └─Selection", "cop[tikv]", "", "eq(test.part.p_size, 30), like(test.part.p_type, \"%STEEL\", 92)"),
+    ("      │ │   └─TableFullScan", "cop[tikv]", "table:part", "keep order:false"),
+    ("      │ └─HashJoin(Probe)", "root", "", "inner join, equal:[eq(test.supplier.s_suppkey, test.partsupp.ps_suppkey)]"),
+    ("      │   ├─HashJoin(Build)", "root", "", "inner join, equal:[eq(test.nation.n_nationkey, test.supplier.s_nationkey)]"),
+    ("      │   │ ├─HashJoin(Build)", "root", "", "inner join, equal:[eq(test.region.r_regionkey, test.nation.n_regionkey)]"),
+    ("      │   │ │ ├─TableReader(Build)", "root", "", "data:Selection"),
+    ("      │   │ │ │ └─Selection", "cop[tikv]", "", "eq(test.region.r_name, \"ASIA\")"),
+    ("      │   │ │ │   └─TableFullScan", "cop[tikv]", "table:region", "keep order:false"),
+    ("      │   │ │ └─TableReader(Probe)", "root", "", "data:TableFullScan"),
+    ("      │   │ │   └─TableFullScan", "cop[tikv]", "table:nation", "keep order:false"),
+    ("      │   │ └─TableReader(Probe)", "root", "", "data:TableFullScan"),
+    ("      │   │   └─TableFullScan", "cop[tikv]", "table:supplier", "keep order:false"),
+    ("      │   └─TableReader(Probe)", "root", "", "data:TableFullScan"),
+    ("      │     └─TableFullScan", "cop[tikv]", "table:partsupp", "keep order:false"),
+    ("      └─Selection(Probe)", "root", "", "not(isnull(Column))"),
+    ("        └─HashAgg", "root", "", "group by:test.partsupp.ps_partkey, funcs:min(test.partsupp.ps_supplycost)->Column, funcs:firstrow(test.partsupp.ps_partkey)->test.partsupp.ps_partkey"),
+    ("          └─HashJoin", "root", "", "inner join, equal:[eq(test.supplier.s_suppkey, test.partsupp.ps_suppkey)]"),
+    ("            ├─HashJoin(Build)", "root", "", "inner join, equal:[eq(test.nation.n_nationkey, test.supplier.s_nationkey)]"),
+    ("            │ ├─HashJoin(Build)", "root", "", "inner join, equal:[eq(test.region.r_regionkey, test.nation.n_regionkey)]"),
+    ("            │ │ ├─TableReader(Build)", "root", "", "data:Selection"),
+    ("            │ │ │ └─Selection", "cop[tikv]", "", "eq(test.region.r_name, \"ASIA\")"),
+    ("            │ │ │   └─TableFullScan", "cop[tikv]", "table:region", "keep order:false"),
+    ("            │ │ └─TableReader(Probe)", "root", "", "data:TableFullScan"),
+    ("            │ │   └─TableFullScan", "cop[tikv]", "table:nation", "keep order:false"),
+    ("            │ └─TableReader(Probe)", "root", "", "data:TableFullScan"),
+    ("            │   └─TableFullScan", "cop[tikv]", "table:supplier", "keep order:false"),
+    ("            └─TableReader(Probe)", "root", "", "data:TableFullScan"),
+    ("              └─TableFullScan", "cop[tikv]", "table:partsupp", "keep order:false"),
+    ];
+
+    let produced = plan
         .iter()
         .map(|row| {
-            (0..row.len())
-                .map(|column| text(row, column))
-                .collect::<Vec<_>>()
+            (
+                strip_column_ids(&text(row, 0)),
+                text(row, 2),
+                text(row, 3),
+                strip_column_ids(&text(row, 4)),
+            )
         })
         .collect::<Vec<_>>();
-    assert!(
-        missing.is_empty(),
-        "Go q2 physical contracts missing {missing:?}: {readable_plan:#?}",
+    let recorded = RECORDED_Q2_PLAN_TREE
+        .iter()
+        .map(|(id, task, access, info)| {
+            (
+                (*id).to_owned(),
+                (*task).to_owned(),
+                (*access).to_owned(),
+                (*info).to_owned(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        produced, recorded,
+        "q2 must plan exactly as Go records it in tests/integrationtest/r/tpch.result",
     );
+
     let rows = run_select_on(sql, &catalog, &ctx)
         .expect("the composite dynamic lookup must execute, not only explain");
     assert_eq!(
