@@ -93,9 +93,13 @@ pub enum ClusterDdlError {
     ///
     /// This node runs no owner election: `SchemaVersionKey` and `NextGlobalID`
     /// are in every catalog change's write set, so a competing DDL turns this
-    /// transaction into a definite write conflict. Failing here is the point —
-    /// retrying silently could publish a schema version whose diff describes a
-    /// catalog that no longer exists.
+    /// transaction into a definite write conflict. The commit paths RETRY it
+    /// from a fresh snapshot -- re-read, re-plan, re-commit, which is Go's
+    /// `kv.RunInNewTxn(retryable=true)` running every DDL meta write -- so a
+    /// client sees this error only after `kv.MaxRetryCnt` (100) attempts all
+    /// lost their race. Re-planning is what keeps the retry sound: the
+    /// version a fresh attempt publishes describes the catalog that now
+    /// exists, never the one that no longer does.
     ConcurrentSchemaChange {
         /// The version this statement planned to produce.
         planned_version: i64,
@@ -247,6 +251,39 @@ pub fn commit_cluster_ddl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCa
     timeout: Duration,
     notifier: Option<&dyn SchemaVersionNotifier>,
 ) -> Result<ClusterDdlReport, ClusterDdlError> {
+    // Go `kv.RunInNewTxn(..., retryable=true, ...)` (`pkg/kv/txn.go`), which
+    // is how every DDL meta write runs there (`pkg/ddl/ddl.go`): a write
+    // conflict rolls the attempt back, backs off with full jitter
+    // (`kv.BackOff`), and re-runs with a FRESH transaction -- up to
+    // `kv.MaxRetryCnt` (100) attempts. A fresh attempt re-reads the catalog
+    // and RE-PLANS, so the version it publishes describes the catalog that
+    // now exists; that is what makes the retry safe where re-committing the
+    // stale plan would not be. Two sessions creating `sbtest1`/`sbtest2`
+    // concurrently (sysbench's parallel `prepare`) is the canonical shape:
+    // Go serializes them through the DDL job queue and both succeed, so a
+    // client must never see the conflict. `Undetermined` is NOT retried --
+    // Go's `IsTxnRetryableError` is false there, and re-running a change
+    // that may have committed could apply it twice.
+    let mut attempt: u32 = 0;
+    loop {
+        match commit_cluster_ddl_once(opener, statement, timeout, notifier) {
+            Err(ClusterDdlError::ConcurrentSchemaChange { .. })
+                if attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT =>
+            {
+                std::thread::sleep(tidb_txnkv::retry_backoff_delay(attempt));
+                attempt += 1;
+            }
+            outcome => return outcome,
+        }
+    }
+}
+
+fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    statement: &DdlStatement,
+    timeout: Duration,
+    notifier: Option<&dyn SchemaVersionNotifier>,
+) -> Result<ClusterDdlReport, ClusterDdlError> {
     let call = UnaryCallContext::with_timeout(timeout);
     // How many mutations a change needs is only known after the catalog has
     // been read — a DROP DATABASE deletes one key per stored table — so the
@@ -366,6 +403,40 @@ pub trait IndexBackfiller {
 /// indexed", and it is the one thing to fix before this tier serves a second
 /// writer.
 pub fn commit_cluster_ddl_with_backfill<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    statement: &DdlStatement,
+    timeout: Duration,
+    notifier: Option<&dyn SchemaVersionNotifier>,
+    backfiller: &dyn IndexBackfiller,
+) -> Result<ClusterDdlReport, ClusterDdlError> {
+    // The same `kv.RunInNewTxn(retryable=true)` loop as [`commit_cluster_ddl`]
+    // -- see its doc. A retried attempt re-stages the backfill from the fresh
+    // snapshot too, exactly as Go re-runs the whole job.
+    let mut attempt: u32 = 0;
+    loop {
+        match commit_cluster_ddl_with_backfill_once(
+            Arc::clone(&opener),
+            statement,
+            timeout,
+            notifier,
+            backfiller,
+        ) {
+            Err(ClusterDdlError::ConcurrentSchemaChange { .. })
+                if attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT =>
+            {
+                std::thread::sleep(tidb_txnkv::retry_backoff_delay(attempt));
+                attempt += 1;
+            }
+            outcome => return outcome,
+        }
+    }
+}
+
+fn commit_cluster_ddl_with_backfill_once<
     C: StoreWriteClient,
     L: StoreWriteLoader,
     P: StorePdCapability,

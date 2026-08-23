@@ -1199,3 +1199,62 @@ fn a_key_partitioned_table_answers_an_ordered_read_in_order() {
         "the merge orders across every KEY partition"
     );
 }
+
+/// Two sessions racing their `CREATE TABLE`s both succeed -- sysbench's
+/// parallel `prepare` (`--threads=4 --tables=2`) is exactly this shape, and
+/// it was the workload that found the gap: `sbtest2` never existed and every
+/// later statement on it failed.
+///
+/// Every catalog change writes `SchemaVersionKey`, so concurrent DDL is a
+/// GUARANTEED optimistic write conflict. Go runs each DDL meta write under
+/// `kv.RunInNewTxn(retryable=true)` (`pkg/ddl/ddl.go`), which rolls the
+/// loser back and re-runs it from a fresh snapshot -- re-read, re-plan,
+/// re-commit -- so no client ever sees the conflict. Before
+/// `commit_cluster_ddl` carried that loop, the loser here surfaced error
+/// 1105 ("... refuses to interleave: ... WriteConflict").
+#[test]
+fn concurrent_creates_both_succeed_like_gos_ddl_queue() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let barrier = std::sync::Barrier::new(2);
+    std::thread::scope(|scope| {
+        for worker in 0u64..2 {
+            let barrier = &barrier;
+            scope.spawn(move || {
+                let mut session = factory
+                    .open_session(session_context(70 + worker))
+                    .expect("session opens");
+                barrier.wait();
+                for table in 0..4 {
+                    rows(
+                        &mut session,
+                        &format!(
+                            "CREATE TABLE test.race_{worker}_{table} (id int primary key, v int)"
+                        ),
+                    );
+                }
+            });
+        }
+    });
+    // Every one of the eight racing tables exists and serves reads and
+    // writes: the retry made both sessions' schedules land, in some order.
+    let mut session = factory
+        .open_session(session_context(79))
+        .expect("session opens");
+    for worker in 0..2 {
+        for table in 0..4 {
+            rows(
+                &mut session,
+                &format!("INSERT INTO test.race_{worker}_{table} VALUES (1, 10)"),
+            );
+            assert_eq!(
+                displayed(rows(
+                    &mut session,
+                    &format!("SELECT v FROM test.race_{worker}_{table} WHERE id = 1"),
+                )),
+                [["10"]],
+                "table race_{worker}_{table} must exist and answer"
+            );
+        }
+    }
+}
