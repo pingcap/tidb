@@ -3664,6 +3664,16 @@ fn build_join_with_choice(
                     .iter()
                     .map(|(left, _)| enforced_merge_key_name(left, current_db))
                     .collect::<Vec<_>>();
+                // During the cost-only first pass this tier plans the children
+                // into a discarded plan-only trace; the enforced sort belongs
+                // THERE, not on the real trace. Recording it on the real one
+                // left two orphan root Sorts above the finished MergeJoin once
+                // the traced rebuild re-recorded them inside their subtrees.
+                let sort_trace = if suppress_initial_trace {
+                    left_plan_only_trace.as_mut()
+                } else {
+                    trace.as_deref_mut()
+                };
                 left_exec = enforced_merge_sort(
                     left_exec,
                     &keys,
@@ -3671,7 +3681,7 @@ fn build_join_with_choice(
                     &names,
                     &mut left_delivered,
                     ctx,
-                    trace.as_deref_mut(),
+                    sort_trace,
                 );
             }
         }
@@ -3740,6 +3750,12 @@ fn build_join_with_choice(
                     .iter()
                     .map(|(_, right)| enforced_merge_key_name(right, current_db))
                     .collect::<Vec<_>>();
+                // Same suppression as the left side above.
+                let sort_trace = if suppress_initial_trace {
+                    right_plan_only_trace.as_mut()
+                } else {
+                    trace.as_deref_mut()
+                };
                 right_exec = enforced_merge_sort(
                     right_exec,
                     &keys,
@@ -3747,7 +3763,7 @@ fn build_join_with_choice(
                     &names,
                     &mut right_delivered,
                     ctx,
-                    trace.as_deref_mut(),
+                    sort_trace,
                 );
             }
         }
