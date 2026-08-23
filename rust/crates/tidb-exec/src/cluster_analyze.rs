@@ -282,6 +282,16 @@ fn cluster_analyze_plan(table: &TableInfo) -> Result<AnalyzePlan, AnalyzeError> 
         if column.state != SchemaState::PUBLIC || column.hidden {
             continue;
         }
+        // A VIRTUAL generated column has no bytes in the stored row to
+        // sample -- its value lives only in the writer's evaluation, which
+        // this scan cannot reproduce. Go gives it no histogram either
+        // (`analyze_col.go` :755-758); the difference is that Go keeps going
+        // and so does this plan now, rather than refusing every ANALYZE of
+        // any table that carries one. A STORED generated column stays a
+        // normal column: its value IS in the row.
+        if column.is_virtual_generated() {
+            continue;
+        }
         if column.is_generated() {
             return Err(AnalyzeError::unsupported(format!(
                 "this node does not analyze `{}`.`{}`: a generated column's value is an \
@@ -330,6 +340,22 @@ fn cluster_analyze_plan(table: &TableInfo) -> Result<AnalyzePlan, AnalyzeError> 
                 index.name.original(),
                 table.name.original()
             )));
+        }
+        // An index whose key parts are virtual generated columns (or
+        // prefixes) reads values the stored row does not carry, so sampling
+        // rows cannot build its histogram; Go answers those through a
+        // separate pushed-down index job this tier has no peer of
+        // (`analyze_col.go`'s `specialIndexes`). Skipping the INDEX leaves
+        // its slot to the planner's fallback estimates instead of failing
+        // the whole statement, which is the same trade the column skip
+        // above makes.
+        let covers_unsampled_part = index.columns.iter_deref().any(|index_column| {
+            let index_column = index_column.read();
+            index_column.length != UNSPECIFIED_LENGTH
+                || !by_offset.contains_key(&index_column.offset)
+        });
+        if covers_unsampled_part {
+            continue;
         }
         let mut column_positions = Vec::with_capacity(index.columns.len());
         for index_column in index.columns.iter_deref() {
