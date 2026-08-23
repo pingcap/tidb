@@ -1196,6 +1196,9 @@ fn choose_index_merge_union(
             false,
             partition_scan,
             true,
+            // A branch enumeration builds one IndexMerge PARTIAL, which Go's
+            // heuristic never runs through -- see `enumerate_paths`.
+            false,
             None,
         )
         .into_iter()
@@ -1253,6 +1256,8 @@ fn choose_index_merge_intersection(
             false,
             partition_scan,
             true,
+            // An IndexMerge partial; the heuristic never runs through one.
+            false,
             None,
         )
         .into_iter()
@@ -1347,6 +1352,8 @@ fn choose_automatic_index_merge_union(
             false,
             input.partition_scan,
             input.hints.has_forced_path(),
+            // An IndexMerge partial; the heuristic never runs through one.
+            false,
             None,
         )
         .into_iter()
@@ -2526,6 +2533,9 @@ fn best_single_table_access_path(
         !select.order_by.is_empty(),
         partition_scan,
         demand.statement_forces_an_index(),
+        // This IS a whole `DataSource`'s path selection, so Go's heuristic
+        // point-range pruning applies before skyline and cost.
+        true,
         source_rows,
     );
     // Go's `prop.ExpectedCnt != math.MaxFloat64`: a row cap on the required
@@ -3004,6 +3014,9 @@ fn write_index_range_path(
         // An `UPDATE`/`DELETE` carries no `FROM`-clause index hint in the
         // grammar this tier accepts, so no path of it is `path.Forced`.
         false,
+        // Go's write plan falls through to the ordinary `DataSource`, so its
+        // `DeriveStats` -- heuristic included -- runs exactly as a read's.
+        true,
         None,
     );
     let best = crate::access_cost::choose_access_path(paths, None, false)?;

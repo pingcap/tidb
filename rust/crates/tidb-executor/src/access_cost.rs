@@ -1076,6 +1076,17 @@ pub(crate) fn enumerate_paths(
     // carries a `USE`/`FORCE INDEX`. STATEMENT-wide, not this table's -- see
     // [`crate::driver::leaf_demand::LeafDemand::forces_index`].
     index_force: bool,
+    // Whether to run Go's `derivePathStatsAndTryHeuristics` point-range
+    // selection over the enumeration (see [`heuristic_point_path`]). True for
+    // the callers that model a whole `DataSource`'s path selection -- the
+    // single-table read, the write's read, and a join leaf -- because Go runs
+    // the heuristic once per `DataSource` in `DeriveStats`, BEFORE skyline
+    // pruning or any cost. False for the per-branch IndexMerge enumerations:
+    // those model `generateIndexMergePath`'s PARTIAL construction, which in
+    // Go runs after the heuristic and never through it, and a heuristic that
+    // fired inside a branch could hand back the table path where the branch
+    // needs an index partial.
+    try_heuristics: bool,
     // The already-derived logical DataSource row count, when the caller owns
     // that derivation. Go stores this on `DataSource.StatsInfo()` and every
     // physical path reads the same value; accepting it here avoids running
@@ -1322,7 +1333,168 @@ pub(crate) fn enumerate_paths(
             path,
         });
     }
+    // Go binds `derivePathStats` and `tryHeuristics` into one pass: a path
+    // matching a heuristic rule PRUNES every other path before skyline
+    // pruning or the cost model sees them (`ds.PossibleAccessPaths[:1]`).
+    if try_heuristics {
+        if let Some(position) = heuristic_point_path(table, &candidates) {
+            let selected = candidates.swap_remove(position);
+            return vec![selected];
+        }
+    }
     candidates
+}
+
+/// How many ranges a candidate reads -- Go's `len(path.Ranges)`, where a path
+/// the ranger never narrowed carries `ranger.FullRange()`, ONE range.
+fn candidate_range_count(candidate: &Candidate<AccessPath>) -> usize {
+    match &candidate.path.index {
+        Some((_, ranges)) => ranges.len(),
+        None => candidate.path.table_ranges.as_ref().map_or(1, Vec::len),
+    }
+}
+
+/// Go `AccessPath.OnlyPointRange`: every range is a point. The INT-handle
+/// table path asks `IsPointNullable` -- an integer handle cannot be NULL, so
+/// the tolerance is free -- while every other path asks `IsPointNonNullable`
+/// (a unique index admits duplicate NULL rows, so a NULL point pins nothing)
+/// and additionally requires the point to pin EVERY declared column
+/// (`len(ran.HighVal) != len(path.Index.Columns)`). A COMMON-HANDLE table
+/// path takes the second arm too: its `path.Index` is the clustered PRIMARY,
+/// so `o_w_id = 1` over `PRIMARY KEY (o_w_id, o_d_id, o_id)` is a PREFIX, not
+/// a point, and must not fire the heuristic.
+fn candidate_only_point_range(table: &KvTable, candidate: &Candidate<AccessPath>) -> bool {
+    match &candidate.path.index {
+        Some((_, ranges)) => ranges
+            .iter()
+            .all(|range| range.is_point(false) && range.low.len() == candidate.index_width),
+        None => {
+            let common_handle_width = table.common_handle_offsets().len();
+            candidate.path.table_ranges.as_ref().is_some_and(|ranges| {
+                ranges.iter().all(|range| {
+                    if common_handle_width == 0 {
+                        range.is_point(true)
+                    } else {
+                        range.is_point(false) && range.low.len() == common_handle_width
+                    }
+                })
+            })
+        }
+    }
+}
+
+/// Go `derivePathStatsAndTryHeuristics` (`pkg/planner/core/stats.go`), the
+/// heuristic half: which candidate -- if any -- is selected OUTRIGHT, before
+/// skyline pruning and before any cost, with every other path pruned.
+///
+/// The rules, in Go's own order over the hint-filtered path list (table path
+/// first, then the indexes as the table declares them):
+///
+/// 1. A path with NO ranges wins immediately: the conditions are
+///    contradictory, and no other path could do better than reading nothing.
+/// 2. The FIRST path with only point ranges that is the table path or a
+///    unique index AND is a single scan wins immediately. This -- not the
+///    cost model -- is why `WHERE i = 1 AND j = 1` over `t (i int key, j
+///    int, unique key (i, j))` reads `Point_Get table:t handle:1` with the
+///    `j` conjunct as a root filter: the int-handle path is iterated first,
+///    its `[1,1]` is a point, a table path is always a single scan, and the
+///    unique `(i, j)` index is never even examined.
+/// 3. Point-range unique indexes that need a row lookup are collected, and
+///    the best of them (`uniqueBest`: fewest ranges, then fewest table
+///    filters -- most likely to fetch zero index rows) is selected UNLESS a
+///    single-scan path whose access columns strictly dominate some unique
+///    index's (`refinedBest`, e.g. `idx_b_c` over unique `idx_b` when both
+///    `b` and `c` are constrained) reads fewer than twice `uniqueBest`'s
+///    ranges -- twice, because the unique double scan pays one index point
+///    and one row lookup per range.
+///
+/// Go appends an EXPLAIN note here ("handle of t is selected since the path
+/// only has point ranges"). NOT MODELLED: this tier has no note channel from
+/// path selection; the direction is a missing informational warning, never a
+/// different plan.
+///
+/// Access-column dominance reuses [`crate::skyline::compare_col_sets`], the
+/// same `util.CompareCol2Len` collapse skyline pruning runs on (Go calls the
+/// full `CompareCol2Len` with `GetCol2LenFromAccessConds` here; see
+/// [`crate::skyline::ColSet`] for what dropping the lengths costs).
+fn heuristic_point_path(table: &KvTable, candidates: &[Candidate<AccessPath>]) -> Option<usize> {
+    let mut selected: Option<usize> = None;
+    let mut unique_with_double_scan: Vec<usize> = Vec::new();
+    let mut single_scan_paths: Vec<usize> = Vec::new();
+    for (position, candidate) in candidates.iter().enumerate() {
+        // Go: `if len(path.Ranges) == 0 { selected = path; break }`.
+        if candidate.empty_range {
+            selected = Some(position);
+            break;
+        }
+        if candidate_only_point_range(table, candidate) {
+            let unique_index = candidate.path.index.as_ref().is_some_and(|(index_id, _)| {
+                table
+                    .plan_indexes()
+                    .find(|index| index.id == *index_id)
+                    .is_some_and(|index| index.unique)
+            });
+            if candidate.path.index.is_none() || unique_index {
+                if candidate.single_scan {
+                    selected = Some(position);
+                    break;
+                }
+                unique_with_double_scan.push(position);
+            }
+        } else if candidate.single_scan {
+            single_scan_paths.push(position);
+        }
+    }
+    if selected.is_none() && !unique_with_double_scan.is_empty() {
+        let mut unique_best: Option<usize> = None;
+        for &position in &unique_with_double_scan {
+            let better = unique_best.is_none_or(|best| {
+                let (candidate_ranges, best_ranges) = (
+                    candidate_range_count(&candidates[position]),
+                    candidate_range_count(&candidates[best]),
+                );
+                candidate_ranges < best_ranges
+                    || (candidate_ranges == best_ranges
+                        && candidates[position].table_filter_count
+                            < candidates[best].table_filter_count)
+            });
+            if better {
+                unique_best = Some(position);
+            }
+        }
+        let mut refined_best: Option<usize> = None;
+        for &position in &single_scan_paths {
+            let dominates_a_unique = unique_with_double_scan.iter().any(|&unique| {
+                let (result, comparable) = crate::skyline::compare_col_sets(
+                    &candidates[position].access_columns,
+                    &candidates[unique].access_columns,
+                );
+                comparable && result == 1
+            });
+            if dominates_a_unique
+                && refined_best.is_none_or(|best| {
+                    candidate_range_count(&candidates[position])
+                        < candidate_range_count(&candidates[best])
+                })
+            {
+                refined_best = Some(position);
+            }
+        }
+        // Go: `refinedBest` wins only while its scan count stays under twice
+        // `uniqueBest`'s -- each unique range is one index point plus one row
+        // lookup, so at 2x the refined single scan stops being cheaper.
+        selected = match (refined_best, unique_best) {
+            (Some(refined), Some(unique))
+                if candidate_range_count(&candidates[refined])
+                    < 2 * candidate_range_count(&candidates[unique]) =>
+            {
+                Some(refined)
+            }
+            (Some(refined), None) => Some(refined),
+            (_, unique_best) => unique_best,
+        };
+    }
+    selected
 }
 
 /// The candidate for reading the WHOLE of an index: Go's access path over
@@ -3748,6 +3920,9 @@ mod tests {
                 sort_property,
                 false,
                 false,
+                // The subject is the ENUMERATION; no `WHERE` means no point
+                // ranges, so the heuristic could not fire anyway.
+                false,
                 None,
             )
             .into_iter()
@@ -3756,6 +3931,180 @@ mod tests {
         };
         assert_eq!(enumerate(false), Vec::<i64>::new());
         assert_eq!(enumerate(true), vec![index_id]);
+    }
+
+    /// A `WHERE` for the heuristic tests, parsed rather than hand-built so
+    /// the ranges under test are the detacher's own.
+    fn parse_where(expression: &str) -> tidb_ast::Expr {
+        let statement = tidb_parser::parse(&format!("SELECT * FROM t WHERE {expression}"))
+            .expect("the predicate parses");
+        let tidb_ast::Stmt::Query(query) = statement else {
+            panic!("expected query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &*query else {
+            panic!("expected select")
+        };
+        select.where_clause.clone().expect("expected WHERE")
+    }
+
+    /// The heuristic-selected path of an enumeration, as `path.index` ids
+    /// (`None` = the table path), plus how many candidates survived -- so a
+    /// test can tell "the heuristic fired and pruned" from "the cost model
+    /// would have picked the same path anyway".
+    fn heuristic_enumeration(
+        table: &KvTable,
+        needed: &[usize],
+        predicate: &str,
+    ) -> Vec<Option<i64>> {
+        let columns: Vec<(String, FieldType)> = table
+            .columns
+            .iter()
+            .map(|column| (column.name.clone(), column.field_type.clone()))
+            .collect();
+        let where_clause = parse_where(predicate);
+        let hints = crate::index_hints::AvailablePaths::unrestricted();
+        enumerate_paths(
+            table,
+            &columns,
+            Some(&where_clause),
+            needed,
+            &NamedColumnResolver { table },
+            None,
+            None,
+            &hints,
+            false,
+            false,
+            false,
+            true,
+            None,
+        )
+        .into_iter()
+        .map(|candidate| candidate.path.index.map(|(id, _)| id))
+        .collect()
+    }
+
+    /// Go's `uniqueBest`-vs-`refinedBest` arbitration, on the example
+    /// `derivePathStatsAndTryHeuristics`'s own comment carries:
+    ///
+    /// ```text
+    /// create table t(a int, b int, c int, unique index idx_b(b), index idx_b_c(b, c));
+    /// select b, c from t where b = 5 and c > 10;
+    /// ```
+    ///
+    /// "In the case, `uniqueBest` is `idx_b`. However, `idx_b_c` is better
+    /// than `idx_b`" -- the covering single scan whose access columns
+    /// strictly dominate the unique index's is the refined path, and with
+    /// one range against one it stays under the 2x bound and wins.
+    #[test]
+    fn a_dominating_single_scan_refines_the_unique_double_scan_like_go() {
+        let mut table = KvTable::with_storage(
+            78,
+            vec![
+                long_column("a", 1),
+                long_column("b", 2),
+                long_column("c", 3),
+            ],
+            Box::new(MemTableStorage::new()),
+        );
+        let context = crate::StmtContext::for_query();
+        for (id, name, unique, offsets) in [
+            (1, "idx_b", true, vec![1]),
+            (2, "idx_b_c", false, vec![1, 2]),
+        ] {
+            table
+                .create_index_with_context(
+                    KvIndex {
+                        id,
+                        name: name.to_owned(),
+                        comment: String::new(),
+                        unique,
+                        column_offsets: offsets.clone(),
+                        prefix_lengths: vec![
+                            crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                            offsets.len()
+                        ],
+                        visible: true,
+                        global: false,
+                    },
+                    &context,
+                )
+                .unwrap();
+        }
+        // `SELECT b, c`: `idx_b_c` covers, unique `idx_b` needs a row lookup.
+        assert_eq!(
+            heuristic_enumeration(&table, &[1, 2], "b = 5 and c > 10"),
+            vec![Some(2)]
+        );
+    }
+
+    /// Go's 2x range bound, on the second example the same comment carries:
+    ///
+    /// ```text
+    /// create table t(a int, b int, c int, d int, unique index idx_a(a),
+    ///     unique index idx_b_c(b, c), unique index idx_b_c_a_d(b, c, a, d));
+    /// select a, b, c from t where a = 1 and b = 2 and c in (1, 2, 3, 4, 5);
+    /// ```
+    ///
+    /// "`idx_b_c_a_d` needs to access five points while `idx_a` only needs
+    /// one point access and one table access" -- the refined path's five
+    /// ranges are NOT under twice `uniqueBest`'s one, so the unique point
+    /// wins even though the refined path covers.
+    #[test]
+    fn the_refined_path_loses_at_twice_the_unique_points_like_go() {
+        let mut table = KvTable::with_storage(
+            79,
+            vec![
+                long_column("a", 1),
+                long_column("b", 2),
+                long_column("c", 3),
+                long_column("d", 4),
+            ],
+            Box::new(MemTableStorage::new()),
+        );
+        let context = crate::StmtContext::for_query();
+        for (id, name, offsets) in [
+            (1, "idx_a", vec![0]),
+            (2, "idx_b_c", vec![1, 2]),
+            (3, "idx_b_c_a_d", vec![1, 2, 0, 3]),
+        ] {
+            table
+                .create_index_with_context(
+                    KvIndex {
+                        id,
+                        name: name.to_owned(),
+                        comment: String::new(),
+                        unique: true,
+                        column_offsets: offsets.clone(),
+                        prefix_lengths: vec![
+                            crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                            offsets.len()
+                        ],
+                        visible: true,
+                        global: false,
+                    },
+                    &context,
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            heuristic_enumeration(
+                &table,
+                &[0, 1, 2],
+                "a = 1 and b = 2 and c in (1, 2, 3, 4, 5)"
+            ),
+            vec![Some(1)]
+        );
+    }
+
+    /// A point on a NON-unique index matches no heuristic arm -- Go's
+    /// `else if path.IsSingleScan` collects only non-point single scans, and
+    /// the point branch demands the table path or a unique index -- so the
+    /// enumeration keeps every candidate and the choice stays with skyline
+    /// pruning and the cost model.
+    #[test]
+    fn a_non_unique_point_does_not_fire_the_heuristic() {
+        let table = table_with_index();
+        assert!(heuristic_enumeration(&table, &[0, 1, 2], "b = 42").len() > 1);
     }
 
     /// What actually decides a double read is the TABLE SIDE, not the request

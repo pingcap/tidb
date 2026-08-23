@@ -766,6 +766,109 @@ fn fast_point_writes_remove_only_the_consumed_selection_like_go() {
     );
 }
 
+/// A handle point BESIDE an extra conjunct reads the bare handle plan, and
+/// the unique index that also matches is never chosen: Go's
+/// `derivePathStatsAndTryHeuristics` selects the FIRST only-point-range path
+/// that is (the table path or a unique index) and a single scan, walking the
+/// table path first -- so `[1,1]` on the int handle wins outright and the
+/// unique `(i, j)` point is never examined, let alone costed. The recorded
+/// capture (`tests/integrationtest/r/explain_easy.result`, in-transaction so
+/// its point get also carries `, lock`):
+///
+/// ```text
+/// Update
+/// └─Selection      eq(explain_easy.t.j, 1)
+///   └─Point_Get    table:t    handle:1, lock
+/// ```
+///
+/// The fast plan REFUSES this statement (a handle pair plus an extra
+/// conjunct, `tryPointGetPlan`'s `else if handlePair.value.Kind() !=
+/// KindNull` -- ported in `try_point_get`), so reaching the same tree PROVES
+/// the ordinary chooser picked the table path: before
+/// `access_cost::heuristic_point_path` this statement read the unique index
+/// (`IndexRangeScan index:i(i, j) range:[1 1,1 1]`).
+#[test]
+fn a_handle_point_with_an_extra_conjunct_wins_over_the_unique_index_like_go() {
+    use crate::explain::{explain_update_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE heuristic_pin (i INT PRIMARY KEY, j INT, UNIQUE KEY ij (i, j))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO heuristic_pin VALUES (1, 1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let stmt = tidb_parser::parse("UPDATE heuristic_pin SET j = -j WHERE i = 1 AND j = 1").unwrap();
+    let Stmt::Dml(dml) = &stmt else {
+        panic!("not DML");
+    };
+    let tidb_ast::DmlStmt::Update(update) = &**dml else {
+        panic!("not an UPDATE");
+    };
+    let (_, rows) =
+        explain_update_stmt(update, &mut catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |datum: &Datum| match datum {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let plan: Vec<Vec<String>> = rows
+        .iter()
+        .map(|row| row.iter().map(cell).collect())
+        .collect();
+    // The recorded tree, operator by operator: no reader, no index, and the
+    // unconsumed `j` conjunct as the root filter above the point read. The
+    // `, lock` marker is the recording's explicit transaction, which this
+    // autocommit statement does not carry.
+    assert_eq!(plan.len(), 3, "{plan:?}");
+    assert_eq!(plan[0][0], "Update");
+    assert!(plan[1][0].contains("Selection"), "{:?}", plan[1]);
+    assert!(plan[1][4].contains("eq("), "{:?}", plan[1]);
+    assert_eq!(
+        &plan[2][..5],
+        [
+            "  └─Point_Get".to_owned(),
+            "1.00".to_owned(),
+            "root".to_owned(),
+            "table:heuristic_pin".to_owned(),
+            "handle:1".to_owned(),
+        ],
+        "{plan:?}"
+    );
+
+    // The filter above the point read still decides the write: the pinned
+    // row's `j` is 1, so the guarded miss writes nothing and the match
+    // negates it.
+    assert_eq!(
+        run_update_on(
+            "UPDATE heuristic_pin SET j = -j WHERE i = 1 AND j = 2",
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        run_update_on(
+            "UPDATE heuristic_pin SET j = -j WHERE i = 1 AND j = 1",
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        run_select_on("SELECT j FROM heuristic_pin WHERE i = 1", &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(-1)]]
+    );
+}
+
 /// A handle range that represents the complete predicate is an access
 /// condition, not a residual Selection. Go pushes a simple column projection
 /// into TiKV and returns it through a TableReader.

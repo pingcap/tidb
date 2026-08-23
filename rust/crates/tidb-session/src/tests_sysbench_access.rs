@@ -487,31 +487,42 @@ fn the_sysbench_write_shapes_read_a_handle_range() {
             "1.00",
             "handle:500",
         ),
-        // The point plan is decided from equalities alone (Go's
+        // The FAST plan is decided from equalities alone (Go's
         // `getNameValuePairs` accepts `AND` of `column = constant` and
-        // nothing else), so a range that is a single point by any OTHER
-        // spelling is still a range -- in Go as much as here.
+        // nothing else), so this spelling refuses it -- but the ordinary
+        // path it falls back to converts a single-point handle range to a
+        // `Point_Get` anyway (`find_best_task.go`'s `convertToPointGet`,
+        // whose own comment names exactly this over-optimized family:
+        // "`a>=1(?) and a<=1(?)` --> `a=1` --> PointGet(a=1)", which is why
+        // such plans are barred from the plan cache there).
         (
             "UPDATE sbtest1 SET c = 'x' WHERE id BETWEEN 500 AND 500",
-            "TableRangeScan",
+            "Point_Get",
             "1.00",
-            "range:[500,500]",
+            "handle:500",
         ),
-        // `ORDER BY`, and a `LIMIT` that can remove the row, are Go's own
-        // refusals in `tryPointGetPlan`; the write falls back to the ranger.
-        // (A write's `LIMIT` is a row count with no offset -- the grammar
-        // admits nothing else -- so `count == 0` is the whole of that half.)
+        // `ORDER BY` is `tryPointGetPlan`'s own refusal, and the ordinary
+        // path again reads the point: Go builds the `Sort` above the read
+        // (`buildUpdate`: `if update.Order != nil`), and a `Sort` demands no
+        // order OF ITS CHILD, so `convertToPointGet`'s property check passes
+        // and the SOURCE row is the point read either way.
         (
             "UPDATE sbtest1 SET c = 'x' WHERE id = 500 ORDER BY k",
-            "TableRangeScan",
+            "Point_Get",
             "1.00",
-            "range:[500,500]",
+            "handle:500",
         ),
+        // `LIMIT 0` never reaches path selection at all: Go's `buildLimit`
+        // (`logical_plan_builder.go`, `if offset+count == 0`) replaces the
+        // whole read subtree with `LogicalTableDual{RowCount: 0}` at logical
+        // build, so the write's child is a dual that reads nothing. (A
+        // write's `LIMIT` is a row count with no offset -- the grammar
+        // admits nothing else -- so `count == 0` is the whole of that half.)
         (
             "UPDATE sbtest1 SET c = 'x' WHERE id = 500 LIMIT 0",
-            "TableRangeScan",
-            "1.00",
-            "range:[500,500]",
+            "TableDual",
+            "0.00",
+            "rows:0",
         ),
         // A write whose `WHERE` bounds no handle but names a secondary index
         // reads through that index, exactly as the `SELECT` form does: Go plans

@@ -1819,6 +1819,17 @@ pub(crate) fn run_update_traced(
         ),
         _ => false,
     };
+    // Go `buildLimit` (`pkg/planner/core/logical_plan_builder.go`): `LIMIT 0`
+    // replaces the whole read subtree with `LogicalTableDual{RowCount: 0}` at
+    // logical build, before any access path exists -- the write reads NOTHING
+    // and its plan is `Update -> TableDual`, never a capped scan.
+    if row_limit == Some(0) {
+        if let Some(trace) = trace.as_deref_mut() {
+            trace.zero_limit_table_dual();
+            trace.write("Update", true);
+        }
+        return Ok(0);
+    }
     if let Some(trace) = trace.as_deref_mut() {
         trace_dml_source(
             trace,
@@ -2350,6 +2361,14 @@ pub(crate) fn run_delete_traced(
         ),
         _ => false,
     };
+    // Go `buildLimit`'s zero short-circuit; see the `Update` twin above.
+    if row_limit == Some(0) {
+        if let Some(trace) = trace.as_deref_mut() {
+            trace.zero_limit_table_dual();
+            trace.write("Delete", true);
+        }
+        return Ok(0);
+    }
     if let Some(trace) = trace.as_deref_mut() {
         trace_dml_source(
             trace,
@@ -2650,9 +2669,34 @@ fn trace_dml_source(
     // because the write reads by key and runs no scan at all.
     match read_path {
         Some(super::access::WriteReadPath::Ranges(ranges, range_estimate)) => {
-            trace.table_range_scan(&visible, ranges, *range_estimate);
-            if predicate_consumed {
-                trace.scan_reader();
+            // Go's `isPointGetPath` converts a table path whose one range is
+            // a single non-null point on the integer handle to a `Point_Get`
+            // (`find_best_task.go`'s `convertToPointGet`) -- the write plan
+            // reaches it through the same ordinary `DataSource` as a read, so
+            // `UPDATE t SET ... WHERE i = 1 AND j = 1` prints `Point_Get`
+            // with the `j` conjunct as its root filter, exactly as the read
+            // side's HandleRange arm does.
+            let point = (!ctx
+                .optimizer_fix_control()
+                .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false))
+            .then(|| {
+                let Some(super::catalog::TableEntry::Kv(table)) = catalog.get_in(database, name)
+                else {
+                    return None;
+                };
+                table.pk_handle_offset()?;
+                super::access::single_point_handle(ranges).map(|handle| (table, handle))
+            })
+            .flatten();
+            if let Some((table, handle)) = point {
+                // A `Point_Get` is a root task: no `TableReader` wraps it,
+                // whether or not the ranger consumed the whole `WHERE`.
+                trace.point_get(&visible, table, Some(&handle), None);
+            } else {
+                trace.table_range_scan(&visible, ranges, *range_estimate);
+                if predicate_consumed {
+                    trace.scan_reader();
+                }
             }
         }
         Some(super::access::WriteReadPath::IndexRanges(index_id, ranges, range_estimate)) => {

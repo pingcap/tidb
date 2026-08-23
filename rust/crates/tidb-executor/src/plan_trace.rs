@@ -970,6 +970,16 @@ impl PlanTrace {
         self.mark_top_access_consumed();
     }
 
+    /// Go `buildLimit`'s zero short-circuit
+    /// (`pkg/planner/core/logical_plan_builder.go`: `if offset+count == 0`
+    /// builds `LogicalTableDual{RowCount: 0}`): a `LIMIT 0` replaces the
+    /// whole read subtree -- source, filter and sort alike -- at LOGICAL
+    /// build, before any access path exists. The write's child is a dual
+    /// that reads nothing, not a capped scan.
+    pub(crate) fn zero_limit_table_dual(&mut self) {
+        self.push(Self::dual_node(0));
+    }
+
     fn dual_node(rows: u32) -> PlanNode {
         PlanNode::new(
             "TableDual",

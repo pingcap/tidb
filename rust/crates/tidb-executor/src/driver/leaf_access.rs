@@ -202,6 +202,10 @@ pub(crate) fn leaf_index_path(
         false,
         false,
         demand.statement_forces_an_index(),
+        // A join leaf is a whole `DataSource` in Go, so `DeriveStats` runs
+        // the heuristic there too -- BEFORE the required-order filter below,
+        // exactly as Go's pruning precedes `findBestTask`'s property checks.
+        true,
         None,
     );
     if let Some(wanted) = wanted {
