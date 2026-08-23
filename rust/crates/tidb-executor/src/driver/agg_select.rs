@@ -354,10 +354,12 @@ pub(super) fn distinct_can_be_eliminated(
     else {
         return false;
     };
-    let [tidb_ast::SelectField::Expr {
-        expr: tidb_ast::Expr::Column(path),
-        ..
-    }] = select.fields.fields()
+    let [
+        tidb_ast::SelectField::Expr {
+            expr: tidb_ast::Expr::Column(path),
+            ..
+        },
+    ] = select.fields.fields()
     else {
         return false;
     };
@@ -1276,7 +1278,9 @@ fn lower_select_fields(
                 .position(|have| have.eq_ignore_ascii_case(&hoisted_as))
             {
                 state.slots.push(OutputSlot::Agg(index));
-                state.slot_names.push(Some(alias.clone().unwrap_or(display)));
+                state
+                    .slot_names
+                    .push(Some(alias.clone().unwrap_or(display)));
                 continue;
             }
         }
@@ -1804,6 +1808,11 @@ fn integer_decimal_precision(field_type: &FieldType) -> Option<i64> {
 #[derive(Clone, Copy)]
 enum GlobalStreamAggPlan {
     Count,
+    /// A global SUM over a DECIMAL argument chosen as a STREAM aggregate by
+    /// Go's cost model when the estimated input is small (TPC-H q6/q17 over
+    /// pseudo statistics answer `StreamAgg` where analyzed plans answer
+    /// `HashAgg`). The final stage folds TiKV's partial sum serially.
+    DecimalSum,
     /// A global COUNT above a join/derived source whose Go ver2 cost is lower
     /// as a serial StreamAgg than as a concurrent HashAgg.
     CountComplex,
@@ -3412,6 +3421,39 @@ fn build_aggregation(
             ..
         })
     );
+    // A global DECIMAL SUM enumerates Go's StreamAgg candidate whenever the
+    // estimated input makes its serial fold cheaper than the concurrent hash
+    // table (`getStreamAggs` always applies for an EMPTY group-by). Over
+    // pseudo statistics the estimates collapse to a couple of rows and STREAM
+    // wins; over analyzed millions HASH wins -- both observed on Go nightly.
+    let global_decimal_sum_shape = state.agg_funcs.len() == 1
+        && matches!(state.agg_funcs[0].kind, AggKind::Sum)
+        && !state.agg_funcs[0].distinct
+        && state.agg_funcs[0].extra_args.is_empty()
+        && state.agg_funcs[0].order_by.is_empty()
+        && state.agg_funcs[0]
+            .arg
+            .as_ref()
+            .and_then(|argument| argument.static_type())
+            .is_some_and(|field_type| {
+                field_type.code() == tidb_datatype::FieldTypeCode::NewDecimal
+            });
+    // Go costs the AGGREGATION's input -- the filtered child -- so prefer the
+    // access path's post-predicate estimate when one exists.
+    let global_decimal_sum_input_rows = input_candidate
+        .as_ref()
+        .map(|candidate| {
+            tidb_planner::candidate_cost::evaluate(
+                candidate,
+                &tidb_planner::candidate_cost::CostEnv::default(),
+                tidb_planner::task_type::TaskType::Root,
+            )
+            .rows
+        })
+        .or(joined_logical_rows)
+        .or(logical_rows);
+    let global_decimal_sum_preferred = global_decimal_sum_shape
+        && global_decimal_sum_input_rows.is_some_and(prefer_stream_agg_for_global_count);
     let stream_plan = if !force_stream
         && !select.rollup
         && select.from.is_some()
@@ -3419,6 +3461,7 @@ fn build_aggregation(
         && !has_pre_agg_applies
         && (complex_stream_agg
             || semi_join_stream_preferred
+            || global_decimal_sum_preferred
             || (!complex_global_count
                 && !semi_join_source
                 && scan_consumed_where
@@ -3485,6 +3528,22 @@ fn build_aggregation(
                 PushdownPartialAggregate::Sum {
                     input_offset,
                     output_type,
+                }
+            }
+            // A decimal SUM streams TiKV's partial over its WHOLE argument
+            // expression (`funcs:sum(mul(...))` on the cop line), so it needs
+            // the expression-capable Global descriptor rather than a single
+            // input column.
+            GlobalStreamAggPlan::DecimalSum => {
+                match global_hash_partial_plan(
+                    select,
+                    state,
+                    &group_by,
+                    has_pre_agg_applies,
+                    executed_where.is_none(),
+                ) {
+                    Some((functions, _sources)) => PushdownPartialAggregate::Global { functions },
+                    None => return false,
                 }
             }
         };
@@ -4151,6 +4210,18 @@ fn build_aggregation(
                 ctx.clone(),
             ))
         }
+    } else if partial_global_hash
+        && stream_plan.is_some_and(|plan| matches!(plan, GlobalStreamAggPlan::DecimalSum))
+    {
+        // Go's `StreamAgg` root over TiKV's partial SUM: a serial one-group
+        // fold, no hash table. The partial rewiring above already pointed
+        // every function's argument at its partial-result column.
+        Box::new(StreamAggExec::new(
+            ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
+            std::mem::take(&mut state.agg_funcs),
+            source,
+            ctx.clone(),
+        ))
     } else if partial_global_hash {
         Box::new(HashAggExec::new(
             ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
@@ -4259,12 +4330,19 @@ fn build_aggregation(
                     trace.refuse("partial global HashAgg child is not a supported scan");
                 }
                 trace.final_grouped_hash_agg(traced_select, &qualify);
+                if stream_plan.is_some_and(|plan| matches!(plan, GlobalStreamAggPlan::DecimalSum)) {
+                    trace.rename_partial_hash_agg_to_stream();
+                }
             } else if let Some(stream_plan) = stream_plan {
                 if partial_stream_agg {
                     if !trace.partial_stream_agg(
                         traced_select,
                         &qualify,
-                        matches!(stream_plan, GlobalStreamAggPlan::IntegerSum { .. }),
+                        matches!(
+                            stream_plan,
+                            GlobalStreamAggPlan::IntegerSum { .. }
+                                | GlobalStreamAggPlan::DecimalSum
+                        ),
                     ) {
                         trace.refuse("partial StreamAgg child is not a bare table/index scan");
                     }
