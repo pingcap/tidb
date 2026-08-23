@@ -2484,7 +2484,26 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //
     // The nine that remain: through_projection 5, and one each of
     // partition_pruner, index_join, stale_txn (MVCC-blocked), and autoid.
-    const KNOWN_DIVERGENCES: usize = 8;
+    // 8 -> 7 at `index_join`'s hinted semi-join statement
+    // (`select /*+ TIDB_INLJ(t1) */ * from t1 where t1.a in (select t2.a
+    // from t2)`). `TIDB_INLJ(t)` names the INNER side, and Go resolves that
+    // FORCE preference (`PreferLeftAsINLJInner` /
+    // `PreferRightAsINLJInner`) in `findBestTask` once the inner side has
+    // physicalized -- see the enumeration note in
+    // `exhaust_physical_plans.go:1285`, which explains why the force arm
+    // moved out of `tryToEnumerateIndexJoin`. This tier let the hint force
+    // the index FAMILY but never the SIDE, so both decisions survived and
+    // cost picked t2 as the probed side: `t1` was read whole while `t2`
+    // was probed per outer row, the mirror image of the recording. The
+    // decision list now RETAINS only the decisions whose looked-up side is
+    // the aliased one, and falls back to all of them when the hint names
+    // no viable side -- Go's give-up-and-warn arm. The dedup above the
+    // outer side still prints a root `HashAgg` where Go prints a cop-split
+    // `StreamAgg` over `keep order:true`; that is the general
+    // ordered-index aggregate shape (visible in a bare `SELECT DISTINCT`
+    // too), NAMED RESIDUE for the aggregate family, and invisible to this
+    // differ, which compares access rows.
+    const KNOWN_DIVERGENCES: usize = 7;
     // 9 -> 8: `partition_pruner` fully closed (293 of 294 matched, one
     // `PlanWithoutProperty` skip). The last statement was the col_95
     // interval-intersection Point_Get: `... where col_95 between ... or

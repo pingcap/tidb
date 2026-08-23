@@ -4415,6 +4415,26 @@ fn build_join_with_choice(
                 )
             })
             .collect::<Vec<crate::driver::index_join_decision::IndexJoinDecision>>();
+            // Go's FORCE preference (`PreferLeftAsINLJInner` /
+            // `PreferRightAsINLJInner`, resolved in `findBestTask` once the
+            // inner side has physicalized — `exhaust_physical_plans.go`'s
+            // enumeration note): `TIDB_INLJ(t)` names the INNER side, so
+            // when the index-family hint names a side's alias, only the
+            // decisions probing THAT side survive. An empty result falls
+            // back to every decision, which is Go's give-up-and-warn arm.
+            if let Some(hints) = demand.join_hints {
+                let names_inner = |decision: &crate::driver::index_join_decision::IndexJoinDecision| {
+                    let alias = if decision.lookup_is_left {
+                        hint_left.as_deref()
+                    } else {
+                        hint_right.as_deref()
+                    };
+                    alias.is_some_and(|alias| hints.index_family_names_alias(alias))
+                };
+                if decisions.iter().any(&names_inner) {
+                    decisions.retain(&names_inner);
+                }
+            }
             // Go's `rule_join_key_type_cast` rewrite makes the INT side of a
             // mismatched equality probeable by `cast(str AS SIGNED)`. The
             // split keys hold no such equality, so it arrives here as its
