@@ -404,6 +404,7 @@ pub(crate) fn try_fast_point_select(
                     &partitions,
                     &index,
                     ctx.static_partition_prune(),
+                    &batch_point_branch_estimates(catalog, &table, &partitions, plan_rows),
                 ),
                 None => trace.push_fast_batch_point_get(
                     source_table_name(&scope, &table.name),
@@ -821,6 +822,7 @@ pub(crate) fn commit_fast_path_source(
                     &partitions,
                     &index,
                     ctx.static_partition_prune(),
+                    &batch_point_branch_estimates(catalog, &table, &partitions, plan_rows),
                 ),
                 None => trace.batch_point_get(
                     source_table_name(scope, &table.name),
@@ -1072,6 +1074,7 @@ pub(crate) fn commit_fast_path_source(
                 let index_point_allowed = index_residual.is_empty();
                 commit_index_range_source(
                     &table,
+                    catalog,
                     scope,
                     &columns,
                     index_id,
@@ -1986,6 +1989,9 @@ pub(crate) fn single_point_handle(ranges: &[IndexRange]) -> Option<TableHandle> 
 #[allow(clippy::too_many_arguments)]
 fn commit_index_range_source(
     table: &KvTable,
+    // For the per-partition statistics a fanned-out batch point get is
+    // estimated from; the scan estimate itself arrives precomputed.
+    catalog: &Catalog,
     scope: &FromScope,
     columns: &[(String, FieldType)],
     index_id: i64,
@@ -2118,6 +2124,23 @@ fn commit_index_range_source(
         // A path the ranger narrowed nothing on reads the whole index, which
         // Go names `IndexFullScan` and prints without a `range:`.
         let fast_point_trace = point_ranges && fast_point_allowed && index_point_allowed;
+        // Go's NORMAL planner converts a multi-point path on a unique index
+        // into a `Batch_Point_Get` even when conjuncts REMAIN:
+        // `findBestTask`'s `canConvertPointGet` never asks whether the WHERE
+        // was consumed, and `convertToBatchPointGet` moves the leftover
+        // `IndexFilters`/`TableFilters` into a ROOT `Selection` above the
+        // batch read (`pkg/planner/core/find_best_task.go`). For a
+        // partitioned table with several point ranges that conversion
+        // additionally requires static pruning (dynamic refuses
+        // `len(path.Ranges) > 1`) and hash/key partitioning over one plain
+        // column (`getHashOrKeyPartitionColumnName`).
+        let residual_batch_point = point_ranges
+            && fast_point_allowed
+            && !index_point_allowed
+            && ranges.len() > 1
+            && ctx.static_partition_prune()
+            && hash_or_key_partition_column(table)
+            && !point_partitions.is_empty();
         if fast_point_trace && ranges.len() == 1 {
             trace.index_point_get(
                 source_table_name(scope, &table.name),
@@ -2129,7 +2152,7 @@ fn commit_index_range_source(
                     index_columns.join(", ")
                 ),
             );
-        } else if fast_point_trace && ctx.static_partition_prune() {
+        } else if fast_point_trace && ctx.static_partition_prune() || residual_batch_point {
             trace.index_batch_point_get(
                 source_table_name(scope, &table.name),
                 ranges.len(),
@@ -2141,6 +2164,7 @@ fn commit_index_range_source(
                     index_columns.join(", ")
                 ),
                 true,
+                &batch_point_branch_estimates(catalog, table, &point_partitions, ranges.len()),
             );
         } else if ranges.len() == 1 && ranges[0].is_full() {
             trace.index_full_scan(
@@ -2162,6 +2186,7 @@ fn commit_index_range_source(
         trace.set_scan_act_rows(exec.produced_rows());
         if !covering
             && !fast_point_trace
+            && !residual_batch_point
             && !trace.index_lookup(source_table_name(scope, &table.name), estimate)
         {
             trace.refuse("a non-covering index path did not produce an index scan");
@@ -2196,6 +2221,60 @@ fn index_range_partition_names(
         .into_iter()
         .filter_map(|ordinal| partition.definitions.get(ordinal))
         .map(|definition| definition.name.clone())
+        .collect()
+}
+
+/// Go `getHashOrKeyPartitionColumnName`
+/// (`pkg/planner/core/point_get_plan.go:1440`): a partitioned
+/// `Batch_Point_Get` over SEVERAL ranges exists only when the table is HASH
+/// partitioned over a bare column or KEY partitioned over exactly one column
+/// -- the only routings `BatchPointGetExec::initialize`'s `getPhysID` can
+/// evaluate per handle.
+fn hash_or_key_partition_column(table: &KvTable) -> bool {
+    table.partition().is_some_and(|partition| match partition.kind {
+        crate::partition_routing::PartitionKind::Hash => {
+            matches!(partition.expr, Expression::Column(_))
+        }
+        crate::partition_routing::PartitionKind::Key => partition.dependencies.len() == 1,
+        _ => false,
+    })
+}
+
+/// The estimate each partition branch of a fanned-out batch point get
+/// carries, in the order `partitions` names them.
+///
+/// Go's static prune gives every partition its own `DataSource` whose
+/// `CountAfterAccess` comes from THAT partition's statistics:
+/// `getIndexRowCountForStatsV2` counts exactly one row per full-length
+/// non-null point range on a unique index and clamps the sum into
+/// `[1, realtimeRowCount]` (`pkg/planner/cardinality/row_count_index.go`),
+/// and `convertToBatchPointGet`'s `min(CountAfterAccess, len(ranges))` cap
+/// is already inside that clamp. A partition without analyzed statistics
+/// keeps the range count -- the pseudo estimator has no row count to clamp
+/// with.
+fn batch_point_branch_estimates(
+    catalog: &Catalog,
+    table: &KvTable,
+    partitions: &[String],
+    point_count: usize,
+) -> Vec<f64> {
+    let Some(partition) = table.partition() else {
+        return Vec::new();
+    };
+    partitions
+        .iter()
+        .map(|name| {
+            partition
+                .definitions
+                .iter()
+                .find(|definition| definition.name == *name)
+                .and_then(|definition| catalog.table_statistics(definition.id))
+                .filter(|stats| !stats.pseudo)
+                .map_or(point_count as f64, |stats| {
+                    let rows = crate::access_cost::realtime_row_count(Some(stats.as_ref()));
+                    (point_count as f64).min(rows).max(1.0)
+                })
+        })
         .collect()
 }
 
@@ -2853,8 +2932,29 @@ pub(crate) fn select_predicate_stats_selectivity(
     current_db: &str,
     scope: &FromScope,
 ) -> Option<f64> {
+    select_predicate_stats_selectivity_in_session(select, predicate, catalog, current_db, scope, 0.0)
+}
+
+/// [`select_predicate_stats_selectivity`] with the session's raw
+/// `tidb_default_string_match_selectivity`, which Go's `Selectivity` reads
+/// for every string-match conjunct it cannot cover with statistics
+/// (`pkg/planner/cardinality/selectivity.go`: `GetStrMatchDefaultSelectivity`).
+pub(crate) fn select_predicate_stats_selectivity_in_session(
+    select: &tidb_ast::SelectStmt,
+    predicate: &tidb_ast::Expr,
+    catalog: &Catalog,
+    current_db: &str,
+    scope: &FromScope,
+    default_string_match_selectivity: f64,
+) -> Option<f64> {
     let table = pruned_single_kv_table(select, catalog, current_db, &scope.zone)?;
-    stats_selectivity(catalog, &table, scope, Some(predicate))
+    stats_selectivity_with_default_string_match_selectivity(
+        catalog,
+        &table,
+        scope,
+        Some(predicate),
+        default_string_match_selectivity,
+    )
 }
 
 /// The loaded-statistics row count for a single-table predicate.
