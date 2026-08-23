@@ -768,6 +768,28 @@ pub(crate) fn build_from(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    trace: Option<&mut PlanTrace>,
+    demand: crate::driver::leaf_demand::FromDemand<'_>,
+    required: &tidb_planner::physical_property::PhysicalProperty,
+) -> Result<(Box<dyn Executor>, FromScope, Delivered), DriverError> {
+    // A multi-table FROM recurses build_from -> build_join -> build_from per
+    // JOIN NODE without passing `run_select_traced`'s per-SELECT checkpoint,
+    // and a debug build's frames here run to hundreds of KB -- TPC-H q2's
+    // five-table FROM overflowed the default 8 MB thread stack between
+    // checkpoints (SIGABRT in `driver::tests::subqueries`). Go's goroutine
+    // stack grows at every frame; this is that semantics per join level,
+    // with the red zone sized for one build_from + build_join_with_choice +
+    // build_join round.
+    stacker::maybe_grow(2 * 1024 * 1024, 16 * 1024 * 1024, move || {
+        build_from_inner(node, catalog, current_db, ctx, trace, demand, required)
+    })
+}
+
+fn build_from_inner(
+    node: &JoinNode,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
     demand: crate::driver::leaf_demand::FromDemand<'_>,
     required: &tidb_planner::physical_property::PhysicalProperty,
