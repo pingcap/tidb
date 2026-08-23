@@ -176,3 +176,61 @@ pub fn get_min_inner_txn_start_ts(
 ) -> u64 {
     timestamps.get_min_start_ts(now, lower_limit, current_min)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    /// Go `oracle.GoTimeToTS`: physical milliseconds in the high bits.
+    fn go_time_to_ts(unix_millis: u64) -> u64 {
+        unix_millis << 18
+    }
+
+    /// Go `oracle.GoTimeToLowerLimitStartTS`.
+    fn go_time_to_lower_limit_start_ts(now_unix_millis: u64, max_txn_time_use_ms: u64) -> u64 {
+        go_time_to_ts(now_unix_millis - max_txn_time_use_ms)
+    }
+
+    /// Go `TestInnerTxnStartTsBox` (`txn_test.go:72`): store and delete track
+    /// membership; the minimum scan returns the smallest tracked timestamp
+    /// strictly above the lower limit.
+    #[test]
+    fn go_test_inner_txn_start_ts_box() {
+        // case1: store and delete
+        let box_ = InnerTxnStartTsBox::new();
+        box_.store_inner_txn_ts(5);
+        assert!(box_.contains(5));
+
+        box_.delete_inner_txn_ts(5);
+        assert!(!box_.contains(5));
+
+        // case2: GetMinInnerTxnStartTS. The source times are 2022-03-08/10
+        // UTC; expressed here as their Unix milliseconds.
+        let ts0 = go_time_to_ts(1_646_740_201_000); // 2022-03-08 12:10:01 UTC
+        let ts1 = go_time_to_ts(1_646_920_201_000); // 2022-03-10 12:10:01 UTC
+        let ts2 = go_time_to_ts(1_646_922_243_000); // 2022-03-10 12:14:03 UTC
+        let ts3 = go_time_to_ts(1_646_922_245_000); // 2022-03-10 12:14:05 UTC
+        let now_millis = 1_646_922_900_000u64; // 2022-03-10 12:15:00 UTC
+        let low_limit = go_time_to_lower_limit_start_ts(now_millis, 24 * 60 * 60 * 1000);
+        let min_start_ts = go_time_to_ts(now_millis);
+
+        box_.store_inner_txn_ts(ts0);
+        box_.store_inner_txn_ts(ts1);
+        box_.store_inner_txn_ts(ts2);
+        box_.store_inner_txn_ts(ts3);
+
+        let now = UNIX_EPOCH + Duration::from_millis(now_millis);
+        let new_min_start_ts = get_min_inner_txn_start_ts(&box_, now, low_limit, min_start_ts);
+        assert_eq!(new_min_start_ts, ts1);
+
+        box_.delete_inner_txn_ts(ts0);
+        box_.delete_inner_txn_ts(ts1);
+        box_.delete_inner_txn_ts(ts2);
+        box_.delete_inner_txn_ts(ts3);
+        assert!(!box_.contains(ts0));
+        assert!(!box_.contains(ts1));
+        assert!(!box_.contains(ts2));
+        assert!(!box_.contains(ts3));
+    }
+}

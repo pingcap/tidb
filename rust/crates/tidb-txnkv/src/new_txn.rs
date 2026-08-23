@@ -232,3 +232,150 @@ pub fn retry_backoff_delay(attempt: u32) -> Duration {
         });
     Duration::from_millis(entropy % upper)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go `mustBackOff` (`txn_test.go:35`): the sampled delay never exceeds
+    /// the attempt's exponential bound, capped at 100ms.
+    #[test]
+    fn go_test_back_off() {
+        assert!(retry_backoff_delay(1) <= Duration::from_millis(2));
+        assert!(retry_backoff_delay(2) <= Duration::from_millis(4));
+        assert!(retry_backoff_delay(3) <= Duration::from_millis(8));
+        assert!(retry_backoff_delay(100_000) <= Duration::from_millis(100));
+        // The bounds themselves follow the source sequence.
+        assert_eq!(retry_backoff_upper_bound_ms(1), 2);
+        assert_eq!(retry_backoff_upper_bound_ms(2), 4);
+        assert_eq!(retry_backoff_upper_bound_ms(3), 8);
+        assert_eq!(retry_backoff_upper_bound_ms(100_000), 100);
+    }
+
+    /// The mock error of Go's `interface_mock_test.go`: one flavor that the
+    /// retry loop classifies as retryable, one that it must not.
+    #[derive(Debug, Eq, PartialEq)]
+    enum MockTxnError {
+        Retryable,
+        Fatal(&'static str),
+    }
+
+    impl std::fmt::Display for MockTxnError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::Retryable => write!(f, "retryable"),
+                Self::Fatal(text) => write!(f, "{text}"),
+            }
+        }
+    }
+
+    impl Error for MockTxnError {}
+
+    impl NewTxnError for MockTxnError {
+        fn is_retryable(&self) -> bool {
+            matches!(self, Self::Retryable)
+        }
+    }
+
+    /// Go `mockStorage`/`mockTxn`: a storage whose every COMMIT fails
+    /// retryably, so a successful callback still exhausts the retry budget.
+    #[derive(Default)]
+    struct MustFailCommitStorage {
+        attempts: std::cell::Cell<u32>,
+    }
+
+    struct MustFailTxn;
+
+    impl TxnResourceGroup for MustFailTxn {
+        fn set_resource_group_name(&mut self, _name: &str) {}
+    }
+
+    impl NewTxnTransaction for MustFailTxn {
+        type Error = MockTxnError;
+        fn start_ts(&self) -> u64 {
+            1
+        }
+        fn set_option(&mut self, _option: OptionKey, _value: TxnOptionValue) {}
+        fn rollback(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        fn commit(&mut self) -> Result<(), Self::Error> {
+            Err(MockTxnError::Retryable)
+        }
+    }
+
+    impl NewTxnStorage for MustFailCommitStorage {
+        type Transaction = MustFailTxn;
+        type Error = MockTxnError;
+        fn begin(&mut self) -> Result<Self::Transaction, Self::Error> {
+            self.attempts.set(self.attempts.get() + 1);
+            Ok(MustFailTxn)
+        }
+    }
+
+    /// A storage whose callback errors are surfaced verbatim.
+    #[derive(Default)]
+    struct CallbackErrorStorage;
+
+    impl NewTxnStorage for CallbackErrorStorage {
+        type Transaction = MustFailTxn;
+        type Error = MockTxnError;
+        fn begin(&mut self) -> Result<Self::Transaction, Self::Error> {
+            Ok(MustFailTxn)
+        }
+    }
+
+    /// Go `TestRetryExceedCountError` (`txn_test.go:39`): exhausting the
+    /// retry budget surfaces an error whatever the callback returned.
+    #[test]
+    fn go_test_retry_exceed_count_error() {
+        let context = RunInNewTxnContext::default();
+        let mut no_sleep = |_: u32| {};
+
+        // Every commit fails retryably: the loop runs out and reports.
+        let mut storage = MustFailCommitStorage::default();
+        let error = run_in_new_txn_with(
+            &context,
+            &mut storage,
+            true,
+            5,
+            &GLOBAL_INNER_TXN_START_TS,
+            |_txn: &mut MustFailTxn| Ok(()),
+            &mut no_sleep,
+        );
+        assert!(error.is_err(), "exhausted retries must report");
+        assert_eq!(storage.attempts.get(), 5);
+
+        // A retryable callback error is retried until the budget runs out.
+        let mut storage = CallbackErrorStorage;
+        let error = run_in_new_txn_with(
+            &context,
+            &mut storage,
+            true,
+            5,
+            &GLOBAL_INNER_TXN_START_TS,
+            |(_txn): &mut MustFailTxn| Err::<(), MockTxnError>(MockTxnError::Retryable),
+            &mut no_sleep,
+        );
+        assert!(error.is_err());
+
+        // "do not retry": a non-retryable callback error returns AT ONCE.
+        let attempts = std::cell::Cell::new(0u32);
+        let mut storage = CallbackErrorStorage;
+        let error = run_in_new_txn_with(
+            &context,
+            &mut storage,
+            true,
+            5,
+            &GLOBAL_INNER_TXN_START_TS,
+            |txn: &mut MustFailTxn| {
+                attempts.set(attempts.get() + 1);
+                txn.rollback().ok();
+                Err::<(), MockTxnError>(MockTxnError::Fatal("do not retry"))
+            },
+            &mut no_sleep,
+        );
+        assert!(error.is_err());
+        assert_eq!(attempts.get(), 1);
+    }
+}
