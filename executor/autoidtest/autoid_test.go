@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -26,7 +25,6 @@ import (
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/stretchr/testify/require"
@@ -551,37 +549,10 @@ func testInsertWithAutoidSchema(t *testing.T, tk *testkit.TestKit) {
 			`select last_insert_id()`,
 			testkit.Rows(`104`),
 		},
-		// last test : auto increment allocation can find in retryInfo.
-		{
-			`retry : insert into t8 values (null, 16), (null, 17)`,
-			`select * from t8 where id = 1000`,
-			testkit.Rows(`1000 16`),
-		},
-		{
-			`;`,
-			`select * from t8 where id = 1001`,
-			testkit.Rows(`1001 17`),
-		},
-		{
-			`;`,
-			`select last_insert_id()`,
-			// this insert doesn't has the last_insert_id, should be same as the last insert case.
-			testkit.Rows(`104`),
-		},
 	}
 
 	for _, tt := range tests {
-		if strings.HasPrefix(tt.insert, "retry : ") {
-			// it's the last retry insert case, change the sessionVars.
-			retryInfo := &variable.RetryInfo{Retrying: true}
-			retryInfo.AddAutoIncrementID(1000)
-			retryInfo.AddAutoIncrementID(1001)
-			tk.Session().GetSessionVars().RetryInfo = retryInfo
-			tk.MustExec(tt.insert[8:])
-			tk.Session().GetSessionVars().RetryInfo = &variable.RetryInfo{}
-		} else {
-			tk.MustExec(tt.insert)
-		}
+		tk.MustExec(tt.insert)
 		if tt.query == "set session sql_mode = `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,NO_AUTO_VALUE_ON_ZERO`" ||
 			tt.query == "set session sql_mode = `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION`" {
 			tk.MustExec(tt.query)

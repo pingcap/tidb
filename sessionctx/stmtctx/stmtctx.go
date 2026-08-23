@@ -139,6 +139,28 @@ func (rf *ReferenceCount) UnFreeze() {
 	atomic.StoreInt32((*int32)(rf), ReferenceCountNoReference)
 }
 
+type retryAutoIDs struct {
+	currentOffset int
+	autoIDs       []int64
+}
+
+func (r *retryAutoIDs) resetOffset() {
+	r.currentOffset = 0
+}
+
+func (r *retryAutoIDs) add(id int64) {
+	r.autoIDs = append(r.autoIDs, id)
+}
+
+func (r *retryAutoIDs) getCurrent() (int64, bool) {
+	if r.currentOffset >= len(r.autoIDs) {
+		return 0, false
+	}
+	id := r.autoIDs[r.currentOffset]
+	r.currentOffset++
+	return id, true
+}
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -227,6 +249,9 @@ type StatementContext struct {
 	LastInsertID uint64
 	// InsertID is the given insert ID of an auto_increment column.
 	InsertID uint64
+
+	autoIncrementIDs retryAutoIDs
+	autoRandomIDs    retryAutoIDs
 
 	BaseRowID int64
 	MaxRowID  int64
@@ -941,11 +966,33 @@ func (sc *StatementContext) resetMuForRetry() {
 // ResetForRetry resets the changed states during execution.
 func (sc *StatementContext) ResetForRetry() {
 	sc.resetMuForRetry()
+	sc.autoIncrementIDs.resetOffset()
+	sc.autoRandomIDs.resetOffset()
 	sc.MaxRowID = 0
 	sc.BaseRowID = 0
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
 	sc.TaskID = AllocateTaskID()
+}
+
+// AddAutoIncrementID adds an automatically generated AUTO_INCREMENT ID for statement retry.
+func (sc *StatementContext) AddAutoIncrementID(id int64) {
+	sc.autoIncrementIDs.add(id)
+}
+
+// GetCurrAutoIncrementID gets the next AUTO_INCREMENT ID for statement retry.
+func (sc *StatementContext) GetCurrAutoIncrementID() (int64, bool) {
+	return sc.autoIncrementIDs.getCurrent()
+}
+
+// AddAutoRandomID adds an automatically generated AUTO_RANDOM ID for statement retry.
+func (sc *StatementContext) AddAutoRandomID(id int64) {
+	sc.autoRandomIDs.add(id)
+}
+
+// GetCurrAutoRandomID gets the next AUTO_RANDOM ID for statement retry.
+func (sc *StatementContext) GetCurrAutoRandomID() (int64, bool) {
+	return sc.autoRandomIDs.getCurrent()
 }
 
 // MergeExecDetails merges a single region execution details into self, used to print

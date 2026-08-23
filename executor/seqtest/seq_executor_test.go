@@ -1436,8 +1436,7 @@ func TestAutoIncrementIDRetryDoesNotDuplicate(t *testing.T) {
 	tk.MustExec("update t set c = 15 where idx = 1")
 	tk.MustExec("insert into t (idx, c) values (13, 14)")
 
-	// The explicit statement, the UPDATE's nil cache row, and the generated
-	// statement must retain separate cache positions during a real
+	// Each statement must retain only its own generated IDs during a real
 	// write-conflict replay.
 	tk2.MustExec("update t set c = 100 where idx = 1")
 	tk.MustExec("commit")

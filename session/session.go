@@ -1276,7 +1276,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		if err = s.PrepareTxnCtx(ctx); err != nil {
 			return err
 		}
-		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
 			st := sr.st
 			s.sessionVars.StmtCtx = sr.stmtCtx
@@ -1287,7 +1286,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			if err != nil {
 				return err
 			}
-			s.sessionVars.RetryInfo.BeginRetryStmt(i)
 
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
@@ -2417,9 +2415,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		// About `stmt-count-limit`, see more in https://docs.pingcap.com/tidb/stable/tidb-configuration-file#stmt-count-limit
 		if err := checkStmtLimit(ctx, se, false); err != nil {
 			return nil, err
-		}
-		if !sessVars.RetryInfo.Retrying {
-			sessVars.RetryInfo.BeginStmt()
 		}
 	}
 
