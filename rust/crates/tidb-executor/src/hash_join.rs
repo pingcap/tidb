@@ -788,16 +788,19 @@ pub(crate) fn equi_keys_equal_row(
             }
             KeyClass::Decimal | KeyClass::Str(_) => {
                 let row_datum = row.get_datum(row_at, field_type);
-                let (left, right) = if datums_are_left {
+                let (left_datum, right_datum) = if datums_are_left {
                     (datum, &row_datum)
                 } else {
                     (&row_datum, datum)
                 };
-                equi_keys_equal(
-                    std::slice::from_ref(key),
-                    std::slice::from_ref(left),
-                    std::slice::from_ref(right),
-                )?
+                // Compare the two EXTRACTED datums directly. `equi_keys_equal`
+                // would re-index its slices by the KEY OFFSETS -- positions in
+                // a complete child row -- and these single-datum views have no
+                // such positions: indexing `from_ref(x)[key.left]` panicked
+                // for every key past offset 0 (e.g. `m1.b = m2.b` over
+                // `(a int, b varchar(32))`, where the varchar key sits at
+                // offset 1 of each child).
+                key_part(key.class, left_datum)? == key_part(key.class, right_datum)?
             }
         };
         if !equal {

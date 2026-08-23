@@ -3175,28 +3175,43 @@ impl PlanTrace {
             keys.sort();
             info.push_str(&keys.join(", "));
             info.push_str(", ");
-        }
-        // Divergence 4: one phase, and the function as written.
+        }        // Go's `BasePhysicalAgg.explainInfo` (`base_physical_agg.go:868-897`)
+        // renders ONE `funcs:` entry per AGGREGATE FUNCTION -- never a bare
+        // column. A selected group column is not an aggregate function of the
+        // logical plan, but a final/one-phase aggregation that must CARRY it
+        // for its parents holds a real FIRST_ROW function for it (Go appends
+        // those carriers after the written aggregates: recorded in
+        // `tests/integrationtest/r/agg_predicate_pushdown.result:26-30`,
+        // `group by:a, b, c, funcs:avg(...), funcs:firstrow(a)->a,
+        // funcs:firstrow(b)->b`), and `ExplainAggFunc` spells it
+        // `firstrow(col)`. The carrier's output column is the group column
+        // itself, so the spelling is `firstrow(col)->col`.
         let mut aggregate_index = 0;
-        let funcs: Vec<String> = select
-            .fields
-            .fields()
-            .iter()
-            .filter_map(|field| match field {
+        let mut aggregates: Vec<String> = Vec::new();
+        let mut carriers: Vec<String> = Vec::new();
+        for field in select.fields.fields() {
+            match field {
                 tidb_ast::SelectField::Expr {
                     expr: expr @ tidb_ast::Expr::Aggregate { .. },
                     ..
                 } => {
-                    let rendered = format!("{}->Column#{aggregate_index}", qualify.expr(expr));
+                    aggregates.push(format!(
+                        "funcs:{}->Column#{aggregate_index}",
+                        qualify.expr(expr)
+                    ));
                     aggregate_index += 1;
-                    Some(rendered)
                 }
-                tidb_ast::SelectField::Expr { expr, .. } => Some(qualify.expr(expr)),
-                tidb_ast::SelectField::Wildcard(_) => None,
-            })
-            .collect();
-        info.push_str("funcs:");
-        info.push_str(&funcs.join(", "));
+                tidb_ast::SelectField::Expr { expr, .. } => {
+                    let qualified = qualify.expr(expr);
+                    carriers.push(format!("funcs:firstrow({qualified})->{qualified}"));
+                }
+                tidb_ast::SelectField::Wildcard(_) => {}
+            }
+        }
+        aggregates.extend(carriers);
+        // Every function entry carries its own `funcs:` tag, exactly as Go's
+        // builder writes `funcs:` before each (`base_physical_agg.go:879-890`).
+        info.push_str(&aggregates.join(", "));
         let est = if select.group_by.is_empty() {
             // A whole-table aggregate collapses to one row.
             Est::Fixed(1.0)

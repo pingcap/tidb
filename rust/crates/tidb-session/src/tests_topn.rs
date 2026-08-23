@@ -208,6 +208,13 @@ fn test_issue_54206() {
 /// which attaches the `TopN` on top rather than pushing it through. Captured
 /// shape: `Projection_7|2.00|root|| ...` over `TopN_10|2.00|root||test.t.a,
 /// offset:0, count:2` over the two-phase `HashAgg`.
+///
+/// The aggregate funcs render as Go prints them everywhere an aggregation's
+/// output is schema-anchored -- `funcs:firstrow(test.t.a)->test.t.a` for the
+/// selected column (Go keeps the firstrow aggregate and names its output
+/// column; recorded in
+/// `tests/integrationtest/r/agg_predicate_pushdown.result:159`) and
+/// `funcs:count(1)->Column#N` for the synthetic COUNT column.
 #[test]
 fn a_group_by_pipeline_fuses_above_the_aggregate() {
     let mut session = topn_session();
@@ -218,7 +225,7 @@ fn a_group_by_pipeline_fuses_above_the_aggregate() {
         ),
         vec![
             "TopN_3|2.00|root||test.t.a, offset:0, count:2",
-            "└─HashAgg_2|8000.00|root||group by:test.t.a, funcs:test.t.a, count(1)->Column#0",
+            "└─HashAgg_2|8000.00|root||group by:test.t.a, funcs:count(1)->Column#0, funcs:firstrow(test.t.a)->test.t.a",
             "  └─TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo",
         ]
     );

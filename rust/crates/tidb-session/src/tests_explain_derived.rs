@@ -147,10 +147,13 @@ fn a_derived_table_over_no_table_reaches_table_dual() {
 /// key that Go's capture shows.
 ///
 /// The root JOIN METHOD and estimate agree, and the derived wildcards leave
-/// no identity Projection in either plan. This tier still carries the
-/// null-rejection inside the join estimate instead of printing Go's two
-/// coprocessor Selections, so its reader children point directly at the full
-/// scans. Both read the same rows, asserted below rather than inferred.
+/// no identity Projection in either plan. Go's `DeriveNotNullConds`
+/// (`pkg/planner/core/operator/logicalop/logical_join.go`, the inner-join arm
+/// that derives `not(isnull(key))` per join key) puts one coprocessor
+/// `Selection` inside each reader and points the readers at them
+/// (`data:Selection`); the merged aliases resolve to the base table's own
+/// name, which is why the equality reads `eq(test.t.a, test.t.b)` -- the same
+/// shape the capture above shows.
 #[test]
 fn two_derived_tables_join_without_a_base_table() {
     let mut session = derived_session();
@@ -160,11 +163,13 @@ fn two_derived_tables_join_without_a_base_table() {
             "explain select * from (select * from t) x, (select * from t) y where x.a = y.b"
         ),
         vec![
-            "HashJoin_5|12487.50|root||inner join, equal:[eq(test.x.a, test.y.b)]",
-            "├─TableReader_2(Build)|10000.00|root||data:TableFullScan",
-            "│ └─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
-            "└─TableReader_4(Probe)|10000.00|root||data:TableFullScan",
-            "  └─TableFullScan_3|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+            "HashJoin_7|12487.50|root||inner join, equal:[eq(test.t.a, test.t.b)]",
+            "├─TableReader_3(Build)|9990.00|root||data:Selection",
+            "│ └─Selection_2|9990.00|cop[tikv]||not(isnull(test.t.b))",
+            "│   └─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+            "└─TableReader_6(Probe)|9990.00|root||data:Selection",
+            "  └─Selection_5|9990.00|cop[tikv]||not(isnull(test.t.a))",
+            "    └─TableFullScan_4|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
     // Go's captured rows for the same join, verbatim: 1|1|1|1|1|1 and so on.
@@ -211,8 +216,18 @@ fn two_derived_tables_join_without_a_base_table() {
 ///     └─Limit_25        2.00  cop[tikv]            offset:0, count:2
 ///       └─IndexFullScan_24 2.00 cop[tikv] table:t, index:ia(a) keep order:true, desc, stats:pseudo
 ///
-/// This tier now has the same physical property flow and plan shape. The rows
-/// and their order agree with Go's `3;2` as well.
+/// This tier now has the same physical property flow and plan shape. The
+/// operator-info spelling is Go's `PhysicalIndexScan.OperatorInfo`
+/// (`pkg/planner/core/operator/physicalop/physical_index_scan.go:296-311`):
+/// `keep order:true`, then `, desc`, then `, stats:pseudo`. The scan's own
+/// estimate is Go's limit-adjusted row count
+/// (`cardinality.AdjustRowCountForIndexScanByLimit`,
+/// `pkg/planner/cardinality/cross_estimation.go:93-124`; with pseudo stats and
+/// no filters it is exactly the LIMIT count, and the ordering-risk ratio does
+/// not apply because the path has no index/table filters), which is also what
+/// both captures above show.
+///
+/// The rows and their order agree with Go's `3;2` as well.
 #[test]
 fn a_derived_table_keeps_its_own_order_by_limit() {
     let mut session = derived_session();
@@ -226,7 +241,7 @@ fn a_derived_table_keeps_its_own_order_by_limit() {
             "└─Limit_4|2.00|root||offset:0, count:2",
             "  └─IndexReader_3|2.00|root||index:Limit",
             "    └─Limit_2|2.00|cop[tikv]||offset:0, count:2",
-            "      └─IndexFullScan_1|10000.00|cop[tikv]|table:t, index:ia(a)|keep order:true, stats:pseudo, desc",
+            "      └─IndexFullScan_1|2.00|cop[tikv]|table:t, index:ia(a)|keep order:true, desc, stats:pseudo",
         ]
     );
     assert_eq!(
