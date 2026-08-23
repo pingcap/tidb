@@ -921,6 +921,14 @@ mod tests {
             panic!("unused in batch-get forwarding test")
         }
 
+        fn begin_max_ts(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
+            panic!("unused in batch-get forwarding test")
+        }
+
+        fn begin_autocommit_write(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
+            panic!("unused in batch-get forwarding test")
+        }
+
         fn acquire_advisory_lock(
             &self,
             _name: &str,
