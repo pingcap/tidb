@@ -418,6 +418,7 @@ pub(crate) fn pruned_scope(scope: &FromScope, keep: &[usize]) -> FromScope {
                 .collect(),
             offset: 0,
             func_deps: remap_func_deps(&table.func_deps, keep, true),
+            physical: table.physical.clone(),
         }],
         plan_columns: scope.plan_columns.clone(),
         constant_context: scope.constant_context.clone(),
@@ -481,6 +482,7 @@ pub(crate) fn projected_scope(scope: &FromScope, keep: &[usize]) -> Option<FromS
                     .collect(),
                 offset: next_offset,
                 func_deps: remap_func_deps(&table.func_deps, &local, true),
+                physical: table.physical.clone(),
             };
             next_offset += projected.columns.len();
             projected

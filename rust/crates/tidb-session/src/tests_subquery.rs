@@ -932,8 +932,12 @@ fn a_predicate_aggregate_pulls_above_the_join_when_the_outer_has_a_key() {
         .iter()
         .find(|row| row[0].contains("HashAgg") && row[2] == "root")
         .unwrap_or_else(|| panic!("the aggregate is pulled above the join: {plan:?}"));
+    // The OUTER key, printed as Go prints every column -- by its BASE table,
+    // never by the query's alias. The recording is explicit:
+    // `group by:agg_predicate_pushdown.t.id` for `FROM t t1`
+    // (`tests/integrationtest/r/agg_predicate_pushdown.result:160`).
     assert!(
-        agg[4].contains("group by:test.t1.id"),
+        agg[4].contains("group by:test.t.id"),
         "the pulled aggregate groups by the OUTER key: {agg:?}"
     );
     assert!(

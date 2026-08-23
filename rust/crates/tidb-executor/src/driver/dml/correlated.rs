@@ -65,6 +65,7 @@ impl DmlExpression {
                 columns: vec![(format!("__apply_{index}"), value_type)],
                 offset: index,
                 func_deps: Default::default(),
+                physical: None,
             });
         }
         let expression =

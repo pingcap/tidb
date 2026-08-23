@@ -42,8 +42,7 @@ use std::collections::{BTreeMap, BinaryHeap, HashSet};
 use tidb_chunk::chunk::Chunk;
 use tidb_codec::table_key::{
     cut_index_prefix, cut_row_key_prefix, decode_table_id, encode_index_seek_key,
-    encode_row_key_with_handle,
-    get_table_handle_key_range, RecordHandle,
+    encode_row_key_with_handle, get_table_handle_key_range, RecordHandle,
 };
 use tidb_codec::Encoder;
 use tidb_datatype::{Datum, Decimal, FieldType, SessionTimeZone};
@@ -260,8 +259,10 @@ impl KvTable {
         if merge_by_record_key {
             for (position, iterator) in iterators.iter().enumerate() {
                 if iterator.valid() {
-                    merge_heap
-                        .push(record_merge_key(iterator.key().as_bytes(), unsigned_handle), position);
+                    merge_heap.push(
+                        record_merge_key(iterator.key().as_bytes(), unsigned_handle),
+                        position,
+                    );
                 }
             }
         }
@@ -862,12 +863,16 @@ impl KvTable {
                 }
                 for function in functions {
                     if let Some(input) = function.input.as_mut() {
-                        crate::predicate_pushdown::remap_expression(input, &index_keep)
-                            .ok_or_else(|| {
-                                KvTableError::Storage(
-                                    "global aggregate input is not covered by index".to_owned(),
-                                )
-                            })?;
+                        // An argument naming a column the index does not
+                        // carry (sysbench's checksum sums the handle under
+                        // `USE INDEX`) is not THIS cursor's shape -- Go
+                        // answers it through a lookup that reads the row --
+                        // so the scan falls back to the local path instead
+                        // of failing a statement Go accepts.
+                        if crate::predicate_pushdown::remap_expression(input, &index_keep).is_none()
+                        {
+                            return Ok(None);
+                        }
                     }
                 }
             }
@@ -1157,7 +1162,8 @@ impl KvTable {
         context: &RowDecodeContext,
     ) -> Result<Vec<(i64, TableHandle, Vec<Datum>)>, KvTableError> {
         let decoder = self.row_decoder_projected(None, context)?;
-        let mut cursor = self.row_cursor_with_decoder(decoder, None, false, false, context.zone())?;
+        let mut cursor =
+            self.row_cursor_with_decoder(decoder, None, false, false, context.zone())?;
         let mut rows = Vec::new();
         while let Some(entry) = cursor.next_physical_row()? {
             rows.push(entry);
@@ -1201,7 +1207,8 @@ impl KvTable {
         context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
         let decoder = self.row_decoder_recomputed(context)?;
-        let mut cursor = self.row_cursor_with_decoder(decoder, None, false, false, context.zone())?;
+        let mut cursor =
+            self.row_cursor_with_decoder(decoder, None, false, false, context.zone())?;
         let mut rows = Vec::new();
         while let Some(entry) = cursor.next_row()? {
             rows.push(entry);
@@ -2057,7 +2064,11 @@ impl IndexRangeCursor {
                     position,
                 );
             }
-            let partition = self.partition_of_iterator.get(position).copied().unwrap_or(0);
+            let partition = self
+                .partition_of_iterator
+                .get(position)
+                .copied()
+                .unwrap_or(0);
             return Ok(Some((handle, partition)));
         }
         while self.next_iterator < self.iterators.len() {
@@ -2571,17 +2582,17 @@ impl TableScanExec {
                                 })?;
                                 *sum = Some(sum.unwrap_or(0.0) + addend.value);
                             }
-                            (PartialValue::Extreme {
+                            (
+                                PartialValue::Extreme {
                                     value,
                                     is_max,
                                     collation,
-                                }, Some(candidate)) => {
+                                },
+                                Some(candidate),
+                            ) => {
                                 let replace = value.as_ref().is_none_or(|current| {
                                     crate::remote_scan::extreme_replaces(
-                                        &candidate,
-                                        current,
-                                        *is_max,
-                                        *collation,
+                                        &candidate, current, *is_max, *collation,
                                     )
                                 });
                                 if replace {
@@ -2772,17 +2783,17 @@ impl TableScanExec {
                             (PartialValue::Sum(_), Some(Datum::Null))
                             | (PartialValue::Extreme { .. }, Some(Datum::Null)) => {}
                             (PartialValue::Sum(sum), Some(input)) => sum.accumulate(&input)?,
-                            (PartialValue::Extreme {
+                            (
+                                PartialValue::Extreme {
                                     value,
                                     is_max,
                                     collation,
-                                }, Some(candidate)) => {
+                                },
+                                Some(candidate),
+                            ) => {
                                 let replace = value.as_ref().is_none_or(|current| {
                                     crate::remote_scan::extreme_replaces(
-                                        &candidate,
-                                        current,
-                                        *is_max,
-                                        *collation,
+                                        &candidate, current, *is_max, *collation,
                                     )
                                 });
                                 if replace {

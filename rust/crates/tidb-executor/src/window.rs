@@ -1268,6 +1268,7 @@ pub(crate) fn compute_windows(
         columns,
         offset,
         func_deps: Default::default(),
+        physical: None,
     });
     Ok((out_rows, out_scope))
 }

@@ -1324,6 +1324,8 @@ fn build_from_inner(
                     // An alias replaces the whole path, so `db.t.col` no
                     // longer names the table once it is aliased.
                     database: table_ref.alias.is_none().then(|| database.to_owned()),
+                    // ... but Go still PRINTS the base table, so keep it.
+                    physical: table_ref.alias.is_some().then(|| name.to_owned()),
                     func_deps: table_func_deps(entry, &columns),
                     columns,
                     offset: 0,
@@ -1770,6 +1772,7 @@ pub(crate) fn build_derived_source(
             columns,
             offset: 0,
             func_deps: Default::default(),
+            physical: None,
         }],
         ..FromScope::for_statement(ctx)
     };
@@ -2622,6 +2625,7 @@ pub(crate) fn build_lateral_join(
         columns: columns.clone(),
         offset: left_width,
         func_deps: Default::default(),
+        physical: None,
     });
 
     let inner_width = columns.len();
@@ -3890,6 +3894,7 @@ fn build_join_with_choice(
         scope.tables.push(FromTable {
             name: table.name,
             database: table.database,
+            physical: table.physical,
             columns: table.columns,
             offset: table.offset + left_width,
             func_deps: table.func_deps,
@@ -6104,6 +6109,7 @@ mod join_schema_tests {
                     .collect(),
                 offset,
                 func_deps: crate::driver::funcdep::TableFuncDeps::default(),
+                physical: None,
             });
             offset += columns.len();
         }

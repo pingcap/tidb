@@ -191,6 +191,7 @@ impl MultiSource {
                     columns: table.columns.clone(),
                     offset: table.offset,
                     func_deps: Default::default(),
+                    physical: None,
                 })
                 .collect(),
             coalesced: self.coalesced.clone(),
@@ -662,6 +663,7 @@ fn join_sources(
             columns: table.columns.clone(),
             offset: table.offset,
             func_deps: Default::default(),
+            physical: None,
         });
     }
     let mut coalesced_conditions = Vec::new();

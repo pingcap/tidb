@@ -506,6 +506,7 @@ pub(crate) fn append_correlated_apply(
         columns: vec![(format!("__apply_{appended}"), value_type)],
         offset: appended,
         func_deps: Default::default(),
+        physical: None,
     });
     let columns = applied
         .column_list()
@@ -3256,6 +3257,19 @@ pub(crate) fn datum_to_literal(value: &Datum) -> Result<tidb_ast::Expr, DriverEr
 #[derive(Clone, Debug)]
 pub(crate) struct FromTable {
     pub(crate) name: String,
+    /// The PHYSICAL table behind `name`, when `name` is an alias.
+    ///
+    /// Resolution and PRINTING want different identities, and conflating them
+    /// printed aliases where Go never does. An alias replaces the whole path
+    /// for resolution (`db.t.col` stops naming an aliased `t`), but Go's
+    /// `Column` carries `OrigName`/`OrigTblName` -- the base table -- and
+    /// every `ExplainInfo` prints THAT: TPC-H q7's `nation n1, nation n2`
+    /// records as `tpch50.nation.n_name` for both sides
+    /// (`tests/integrationtest/r/tpch.result:419`), while the access object
+    /// still shows `table:n1`. `None` when the visible name IS the table's
+    /// own name, or when the relation has no single base table (a derived
+    /// table, a synthetic scope).
+    pub(crate) physical: Option<String>,
     /// The schema the table lives in, when a `db.t.column` reference may name
     /// it. `None` for a source that cannot be schema-qualified: an aliased
     /// table (MySQL's alias replaces the whole path) or a synthetic scope.

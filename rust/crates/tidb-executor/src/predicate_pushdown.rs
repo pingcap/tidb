@@ -1348,6 +1348,7 @@ mod tests_push_down_verdict {
                 ],
                 offset: 0,
                 func_deps: Default::default(),
+                physical: None,
             }],
             ..FromScope::default()
         }

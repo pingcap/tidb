@@ -5041,6 +5041,7 @@ impl PlanTrace {
                 columns,
                 offset: 0,
                 func_deps: Default::default(),
+                physical: None,
             }],
             ..FromScope::default()
         }
@@ -6229,7 +6230,7 @@ impl Qualifier<'_> {
                 Some(format!(
                     "{}.{}.{}",
                     database.to_lowercase(),
-                    table.name.to_lowercase(),
+                    Self::printed_relation(table).to_lowercase(),
                     name.to_lowercase()
                 ))
             })
@@ -6289,6 +6290,14 @@ impl Qualifier<'_> {
 
     /// `db.table.column`, resolving an unqualified name against the scope --
     /// the qualification Go's explain always prints in full.
+    /// The name a scope relation PRINTS under: Go's `OrigTblName`, which is
+    /// the base table even when the query aliased it (`nation n1` prints
+    /// `tpch50.nation.n_name`). The access object keeps the alias; only the
+    /// column path uses this.
+    fn printed_relation(table: &FromTable) -> &str {
+        table.physical.as_deref().unwrap_or(&table.name)
+    }
+
     fn column(&self, path: &[String]) -> String {
         fn physical_column<'a>(table: &'a FromTable, name: &str) -> Option<&'a str> {
             table
@@ -6309,7 +6318,7 @@ impl Qualifier<'_> {
                     Some(table) => format!(
                         "{}.{}.{}",
                         self.db.to_lowercase(),
-                        table.name.to_lowercase(),
+                        Self::printed_relation(table).to_lowercase(),
                         physical_column(table, name)
                             .expect("owner has the column")
                             .to_lowercase()
@@ -6327,7 +6336,7 @@ impl Qualifier<'_> {
                         format!(
                             "{}.{}.{}",
                             self.db.to_lowercase(),
-                            table.name.to_lowercase(),
+                            Self::printed_relation(table).to_lowercase(),
                             column.to_lowercase()
                         )
                     })

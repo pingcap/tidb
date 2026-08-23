@@ -946,6 +946,7 @@ fn hoist_pre_agg_subqueries(
             columns: vec![(format!("__apply_{offset}"), value_type.clone())],
             offset,
             func_deps: Default::default(),
+            physical: None,
         });
     }
     state.pre_agg_applies = hoister.found;
@@ -1080,6 +1081,7 @@ fn build_pre_agg_applies(
             columns: vec![(format!("__apply_{offset}"), value_type)],
             offset,
             func_deps: Default::default(),
+            physical: None,
         });
         let columns: Vec<Column> = scope
             .column_list()
@@ -4414,6 +4416,7 @@ fn build_apply_chain(
                     .collect(),
                 offset: 0,
                 func_deps: Default::default(),
+                physical: None,
             }],
             ..FromScope::for_statement(ctx)
         };
@@ -4535,6 +4538,7 @@ fn build_window_stage(
                     .collect(),
                 offset: 0,
                 func_deps: Default::default(),
+                physical: None,
             }],
             ..FromScope::for_statement(ctx)
         };

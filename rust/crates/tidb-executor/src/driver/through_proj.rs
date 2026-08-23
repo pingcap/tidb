@@ -512,6 +512,7 @@ pub(crate) fn push_aggregation_inputs_through_projection(
                 .collect(),
             offset: 0,
             func_deps: Default::default(),
+            physical: None,
         }],
         ..FromScope::for_statement(ctx)
     };

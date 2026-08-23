@@ -45,6 +45,7 @@ fn the_scan_takes_comparisons_against_constants_and_nothing_else() {
             ],
             offset: 0,
             func_deps: Default::default(),
+            physical: None,
         }],
         ..FromScope::default()
     };
@@ -164,6 +165,7 @@ fn tpch_q6_scan_descriptions_keep_go_comparison_types() {
             ],
             offset: 0,
             func_deps: Default::default(),
+            physical: None,
         }],
         ..FromScope::default()
     };
@@ -575,6 +577,7 @@ fn the_scan_keeps_the_refined_expression_it_executes() {
             columns: vec![("a".to_owned(), FieldType::new(FieldTypeCode::Long))],
             offset: 0,
             func_deps: Default::default(),
+            physical: None,
         }],
         ..FromScope::default()
     };
@@ -616,6 +619,7 @@ fn the_scan_takes_the_composed_predicates_tikv_evaluates() {
             ],
             offset: 0,
             func_deps: Default::default(),
+            physical: None,
         }],
         ..FromScope::default()
     };
@@ -725,6 +729,7 @@ fn the_scan_takes_string_expression_in() {
             )],
             offset: 0,
             func_deps: Default::default(),
+            physical: None,
         }],
         ..FromScope::default()
     };
