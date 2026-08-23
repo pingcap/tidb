@@ -2938,14 +2938,13 @@ fn best_single_table_access_path(
     // scans survived into the enforced comparison that Go's empty-property
     // pruning would have removed.
     //
-    // A LIMIT cap is the other regime -- Go's `ExpectedCnt` TopN-vs-ordered-
-    // Limit comparison -- and [`PushedLimit`] already carries it, so under a
-    // cap the enumeration is pruned in ONE pass that marks each candidate's
-    // property match (the skyline `matchResult` dimension and the
-    // `preferRange` post-filter read it). A parent-required order
-    // (`required_order`) already FILTERED above, modeling `matchProperty`'s
-    // invalid-task refusal; the parent prices its own enforcer
-    // (`driver::from::enforced_merge_sort`).
+    // An ORDER BY with a LIMIT cap is Go's LogicalTopN exhaustion, which is
+    // TWO families compared by cost (`getPhysLimits` over `getPhysTopN`,
+    // `pkg/planner/core/operator/physicalop/physical_limit.go` and
+    // `physical_topn.go`); the capped branch below builds both. A
+    // parent-required order (`required_order`) already FILTERED above,
+    // modeling `matchProperty`'s invalid-task refusal; the parent prices its
+    // own enforcer (`driver::from::enforced_merge_sort`).
     if !select.order_by.is_empty() && required_order.is_none() {
         let full = [IndexRange::full()];
         let delivers = |candidate: &crate::skyline::Candidate<crate::access_cost::AccessPath>| {
@@ -2967,11 +2966,90 @@ fn best_single_table_access_path(
             }
         };
         if cap.is_some() {
-            for candidate in &mut paths {
-                candidate.match_property = delivers(candidate);
+            // The LIMIT family: the source is planned under the ORDERED
+            // property whose ExpectedCnt is offset+count, where findBestTask
+            // converts only candidates whose walk already delivers that
+            // order (a non-matching scan is invalidTask there) and prices
+            // the survivors under the cap.
+            let mut matching: Vec<_> = paths
+                .iter()
+                .filter(|candidate| delivers(candidate))
+                .cloned()
+                .collect();
+            for candidate in &mut matching {
+                candidate.match_property = true;
             }
-            return crate::access_cost::choose_access_path(paths, stats, true, true)
-                .map(|best| (best, needed));
+            let best_limit =
+                crate::access_cost::choose_access_path(matching, stats, true, true);
+            // The TOPN family plans the same source under the EMPTY property
+            // with ExpectedCnt = MaxFloat64: no order to match, no cap to
+            // price under. A scan that does not walk in the requested order
+            // cannot stop at `limit` rows -- the TopN above it consumes every
+            // row before keeping count+offset -- so re-enumerate WITHOUT the
+            // cap rather than reuse the capped estimates, then price
+            // `PhysicalTopN` itself on top of the winner.
+            let uncapped = crate::access_cost::enumerate_paths(
+                table,
+                columns,
+                select.where_clause.as_ref(),
+                &needed,
+                &resolver,
+                None,
+                stats,
+                hints,
+                false,
+                partition_scan,
+                demand.statement_forces_an_index(),
+                true,
+                source_rows,
+            );
+            let (limit_count, limit_offset) = match select.limit.as_ref() {
+                Some(limit) => (
+                    eval_limit_bound(&limit.count).unwrap_or(0),
+                    limit
+                        .offset
+                        .as_ref()
+                        .and_then(|expr| eval_limit_bound(expr).ok())
+                        .unwrap_or(0),
+                ),
+                None => (0, 0),
+            };
+            let best_topn =
+                crate::access_cost::choose_access_path(uncapped, stats, false, false)
+                    .map(|mut best| {
+                        let child = best.planner_candidate.clone();
+                        let env = tidb_planner::candidate_cost::CostEnv::default();
+                        let costed = tidb_planner::candidate_cost::evaluate(
+                            &child,
+                            &env,
+                            tidb_planner::task_type::TaskType::Root,
+                        );
+                        let by_items: Vec<bool> = select
+                            .order_by
+                            .iter()
+                            .map(|item| !matches!(item.expr, tidb_ast::Expr::Column(_)))
+                            .collect();
+                        let topn = tidb_planner::plan_cost_ver2::top_n_cost(
+                            None,
+                            costed.rows,
+                            (limit_count, limit_offset),
+                            tidb_planner::plan_cost_ver2::MIN_ROW_SIZE,
+                            &by_items,
+                            (&env.factors.tidb_cpu, &env.factors.tidb_mem, 1.0),
+                            &costed.cost,
+                        );
+                        best.cost = topn.value();
+                        best
+                    });
+            let best = match (best_limit, best_topn) {
+                (Some(limit), Some(topn)) => Some(if limit.cost <= topn.cost {
+                    limit
+                } else {
+                    topn
+                }),
+                (found, other) => found.or(other),
+            };
+            return best.map(|best| (best, needed));
         }
         // The unenforced leg: only matching candidates, under the ordered
         // property.
