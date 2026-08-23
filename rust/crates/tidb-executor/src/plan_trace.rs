@@ -1945,7 +1945,7 @@ impl PlanTrace {
         streamed: bool,
     ) -> bool {
         self.in_cop_task(|trace| {
-            trace.partial_hash_agg_inside_cop_task(fields, qualify, logical_rows)
+            trace.partial_hash_agg_inside_cop_task(fields, qualify, logical_rows, streamed)
         })
     }
 
@@ -1954,6 +1954,7 @@ impl PlanTrace {
         fields: &[tidb_ast::SelectField],
         qualify: &Qualifier<'_>,
         logical_rows: Option<f64>,
+        streamed: bool,
     ) -> bool {
         let Some(mut scan) = self.stack.pop() else {
             return false;
