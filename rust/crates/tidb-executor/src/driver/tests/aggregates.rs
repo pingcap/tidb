@@ -3801,21 +3801,23 @@ fn tpch_q17_scalar_wrapped_sum_explains_the_physical_aggregate_function() {
         other => format!("{other:?}"),
     };
 
-    let hash_agg_info = plan
+    // The fixture's tables carry no statistics, so Go's cost model picks the
+    // serial STREAM fold for this global aggregate (verified against nightly:
+    // `StreamAgg funcs:sum(...)->Column#?` over the join).
+    let agg_info = plan
         .iter()
-        .find(|row| text(row, 0).contains("HashAgg"))
+        .find(|row| {
+            let operator = text(row, 0);
+            operator.contains("StreamAgg") || operator.contains("HashAgg")
+        })
         .map(|row| text(row, 4))
-        .expect("the plan has a root HashAgg");
+        .expect("the plan has a root aggregate");
     assert!(
-        !hash_agg_info.contains("div("),
-        "the physical HashAgg must not render the written scalar wrapper: {hash_agg_info}"
+        !agg_info.contains("div("),
+        "the physical aggregate must not render the written scalar wrapper: {agg_info}"
     );
     assert!(
-        hash_agg_info.starts_with("funcs:"),
-        "a non-grouped HashAgg lists its physical functions without group keys: {hash_agg_info}"
-    );
-    assert!(
-        hash_agg_info.contains("funcs:sum(test.lineitem.l_extendedprice)"),
-        "the hoisted SUM is the only physical aggregate state: {hash_agg_info}"
+        agg_info.starts_with("funcs:sum(test.lineitem.l_extendedprice)"),
+        "the hoisted SUM is the only physical aggregate state: {agg_info}"
     );
 }
