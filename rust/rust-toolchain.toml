@@ -1,3 +1,19 @@
+# Pinned NIGHTLY, for one reason: the parallel compiler frontend
+# (`-Zthreads`), which is nightly-only and is configured in
+# `.cargo/config.toml`. Measured on this workspace (12-core arm64, cold
+# builds into an empty target dir, 2026-08-23):
+#
+#   cargo check -p tidb-server      stable 1.97  30s -> nightly -Zthreads=8  21s
+#   cargo build --release           stable 1.97  81s -> nightly -Zthreads=8  69s
+#
+# Nightly on its OWN is not faster (31s vs 30s on the same check); every
+# gain here comes from the parallel frontend, which is why the flag and the
+# channel have to move together.
+#
+# The DATE is pinned deliberately. A floating `nightly` would rebuild the
+# world on any morning the channel moved and could break the tree with a
+# compiler regression, which is presumably why this file pinned 1.97 before.
+# Bump it on purpose, with the gate green, never incidentally.
 [toolchain]
-channel = "1.97"
+channel = "nightly-2026-08-22"
 components = ["rustfmt", "clippy"]

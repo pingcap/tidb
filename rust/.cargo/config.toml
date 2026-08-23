@@ -1,2 +1,11 @@
 [build]
 jobs = 12
+# The parallel compiler frontend: type-checking and borrow-checking a crate
+# across threads, rather than one crate at a time on one core. Nightly-only,
+# which is what `rust-toolchain.toml` pins the channel for; see that file for
+# the measurements.
+#
+# 8, not 12: the frontend scales sublinearly and `jobs = 12` already runs 12
+# crates at once, so a higher per-crate thread count mostly oversubscribes a
+# machine that is often also running a TiUP cluster and a sysbench workload.
+rustflags = ["-Zthreads=8"]

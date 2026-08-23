@@ -25,7 +25,7 @@ use tidb_proto::{
 
 use crate::region::{
     ReadPolicy, RegionAttempt, RegionBackoffBudget, RegionBackoffKind, RegionErrorDisposition,
-    RegionLoader, RegionRecoveryError, RegionRecoveryLoader, RequestSelection,
+    RegionRecoveryError, RegionRecoveryLoader, RequestSelection,
 };
 use crate::rpc::TonicCoprocessorClient;
 use crate::{DirectUnaryClientError, SharedReadRuntime, UnaryCallContext};
