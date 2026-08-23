@@ -113,6 +113,9 @@ where
             "encoded key is empty".to_owned(),
         ));
     }
+    // Go scopes the resolved/committed lock sets per KVSnapshot; a read at a
+    // new timestamp is a new snapshot.
+    resolved_locks.rescope(start_ts);
     loop {
         let route = point_route(runtime, key)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -160,16 +163,21 @@ where
                 // already resolved retries immediately with no draw, which is
                 // Go's `msBeforeExpired == 0` arm.
                 if recovery.is_alive() {
+                    // client-go's `BackoffWithCfgAndMaxSleep`: the TTL cap
+                    // bounds the CHARGED sleep too; see the sibling arms.
                     let delay = forward_backoff
-                        .next_delay(crate::retry::RegionBackoffKind::TxnLockFast)
+                        .next_delay_capped(
+                            crate::retry::RegionBackoffKind::TxnLockFast,
+                            alive_retry_delay(recovery.ttl),
+                        )
                         .map_err(|exhausted| {
                             OptimisticCoordinatorError::SnapshotGet(format!(
                                 "snapshot lock retry budget exhausted: {exhausted:?}"
                             ))
                         })?;
-                    wait_with_call(call, delay.min(alive_retry_delay(recovery.ttl))).map_err(
-                        |error| OptimisticCoordinatorError::SnapshotGet(error.to_string()),
-                    )?;
+                    wait_with_call(call, delay).map_err(|error| {
+                        OptimisticCoordinatorError::SnapshotGet(error.to_string())
+                    })?;
                 }
                 continue;
             }
@@ -265,6 +273,7 @@ where
         self.state
             .transition(CoordinatorState::Reading)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        self.resolved_locks.rescope(read_ts);
         // Go gives each `KVSnapshot.get` ONE backoffer (`getMaxBackoff`,
         // 20s) shared by its region errors and lock waits. Region recovery
         // here draws on `self`'s own budget seam, so the lock half carries
@@ -318,16 +327,22 @@ where
                     // See `snapshot_get`'s lock arm: Go's `BoTxnLockFast`
                     // time budget, no attempt cap.
                     if recovery.is_alive() {
+                        // client-go's `BackoffWithCfgAndMaxSleep`: the TTL
+                        // cap bounds the CHARGED sleep too; see the sibling
+                        // arms.
                         let delay = lock_backoff
-                            .next_delay(crate::retry::RegionBackoffKind::TxnLockFast)
+                            .next_delay_capped(
+                                crate::retry::RegionBackoffKind::TxnLockFast,
+                                alive_retry_delay(recovery.ttl),
+                            )
                             .map_err(|exhausted| {
                                 OptimisticCoordinatorError::SnapshotGet(format!(
                                     "snapshot lock retry budget exhausted: {exhausted:?}"
                                 ))
                             })?;
-                        wait_with_call(call, delay.min(alive_retry_delay(recovery.ttl))).map_err(
-                            |error| OptimisticCoordinatorError::SnapshotGet(error.to_string()),
-                        )?;
+                        wait_with_call(call, delay).map_err(|error| {
+                            OptimisticCoordinatorError::SnapshotGet(error.to_string())
+                        })?;
                     }
                     continue;
                 }
@@ -393,6 +408,7 @@ where
         self.state
             .transition(CoordinatorState::Reading)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        self.resolved_locks.rescope(read_ts);
         // Go `KVSnapshot.BatchGet` (`batchGetMaxBackoff`, 20s): the same
         // time-budgeted `BoTxnLockFast` wait as `snapshot_get`'s lock arm.
         let mut lock_backoff = RegionBackoffBudget::campaign_default();
@@ -507,20 +523,28 @@ where
                 // See `snapshot_get`'s lock arm: Go's `BoTxnLockFast` time
                 // budget, no attempt cap.
                 if recovery.is_alive() {
+                    // client-go's `BackoffWithCfgAndMaxSleep`: the TTL cap
+                    // bounds the CHARGED sleep too, so the 20s budget measures
+                    // real waiting -- charging the unclamped exponential
+                    // exhausted it after under a second against short-TTL
+                    // locks.
                     let delay = lock_backoff
-                        .next_delay(crate::retry::RegionBackoffKind::TxnLockFast)
+                        .next_delay_capped(
+                            crate::retry::RegionBackoffKind::TxnLockFast,
+                            alive_retry_delay(recovery.ttl),
+                        )
                         .map_err(|exhausted| {
                             OptimisticCoordinatorError::SnapshotGet(format!(
                                 "snapshot lock retry budget exhausted: {exhausted:?}"
                             ))
                         })?;
-                    wait_with_call(call, delay.min(alive_retry_delay(recovery.ttl))).map_err(
-                        |error| OptimisticCoordinatorError::SnapshotGet(error.to_string()),
-                    )?;
+                    wait_with_call(call, delay).map_err(|error| {
+                        OptimisticCoordinatorError::SnapshotGet(error.to_string())
+                    })?;
                 }
                 continue;
             }
-            self.check_visibility()?;
+            self.check_visibility_at(read_ts)?;
             self.snapshot_reads.extend(successful_reads);
             return Ok(values);
         }
@@ -581,6 +605,7 @@ where
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
         let mut pairs = Vec::new();
         let mut cursor = start_key.to_vec();
+        self.resolved_locks.rescope(read_ts);
         // Go `Scanner.getData` (`scannerNextMaxBackoff`, 20s): the same
         // time-budgeted `BoTxnLockFast` wait as `snapshot_get`'s lock arm.
         let mut lock_backoff = RegionBackoffBudget::campaign_default();
@@ -647,16 +672,24 @@ where
                 // See `snapshot_get`'s lock arm: Go's `BoTxnLockFast` time
                 // budget, no attempt cap.
                 if recovery.is_alive() {
+                    // client-go's `BackoffWithCfgAndMaxSleep`: the TTL cap
+                    // bounds the CHARGED sleep too, so the 20s budget measures
+                    // real waiting -- charging the unclamped exponential
+                    // exhausted it after under a second against short-TTL
+                    // locks.
                     let delay = lock_backoff
-                        .next_delay(crate::retry::RegionBackoffKind::TxnLockFast)
+                        .next_delay_capped(
+                            crate::retry::RegionBackoffKind::TxnLockFast,
+                            alive_retry_delay(recovery.ttl),
+                        )
                         .map_err(|exhausted| {
                             OptimisticCoordinatorError::SnapshotGet(format!(
                                 "scan lock retry budget exhausted: {exhausted:?}"
                             ))
                         })?;
-                    wait_with_call(call, delay.min(alive_retry_delay(recovery.ttl))).map_err(
-                        |error| OptimisticCoordinatorError::SnapshotGet(error.to_string()),
-                    )?;
+                    wait_with_call(call, delay).map_err(|error| {
+                        OptimisticCoordinatorError::SnapshotGet(error.to_string())
+                    })?;
                 }
                 // Redo this page: a locked scan returns no trustworthy pairs.
                 continue;
@@ -664,7 +697,7 @@ where
             // Per page, as client-go checks per `scan.Next` batch: a long scan
             // must not spend its whole range on the strength of one check made
             // before the first page.
-            self.check_visibility()?;
+            self.check_visibility_at(read_ts)?;
             let page_len = response.response.pairs.len();
             let last_key = response
                 .response

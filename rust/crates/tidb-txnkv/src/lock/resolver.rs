@@ -267,11 +267,32 @@ pub struct SnapshotLockSet {
     ignore: std::collections::BTreeSet<u64>,
     /// Go `committedLocks` -> `Context.committed_locks`.
     access: std::collections::BTreeSet<u64>,
+    /// The read timestamp the classifications were made against. Go scopes
+    /// `resolvedLocks`/`committedLocks` to ONE `KVSnapshot`, and a snapshot
+    /// has one version -- a pessimistic retry reads through a FRESH snapshot
+    /// at `for_update_ts`, so no classification survives a version change.
+    /// `None` is a set nothing has classified yet.
+    classified_at: Option<u64>,
 }
 
 impl SnapshotLockSet {
+    /// Go's per-`KVSnapshot` scoping: entering a read at a DIFFERENT
+    /// timestamp discards every earlier classification, because ignore/access
+    /// verdicts are relative to the version they were decided at. A lock
+    /// bypassed as "committed after my snapshot" at `start_ts` may be exactly
+    /// the committed value a `for_update_ts` retry exists to observe; a stale
+    /// stamp would make TiKV skip that lock forever, a sticky stale read.
+    pub fn rescope(&mut self, read_ts: u64) {
+        if self.classified_at != Some(read_ts) {
+            self.ignore.clear();
+            self.access.clear();
+            self.classified_at = Some(read_ts);
+        }
+    }
+
     /// Go `ClientHelper.ResolveLocks`: whatever the resolver classified is put
-    /// into the reader's sets and stays there for the reader's life.
+    /// into the reader's sets and stays there for the SNAPSHOT's life (see
+    /// [`Self::rescope`] for the version boundary).
     pub fn absorb(&mut self, result: &LockRecoveryResult) {
         self.ignore.extend(result.ignore_locks.iter().copied());
         self.access.extend(result.access_locks.iter().copied());

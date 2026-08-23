@@ -136,11 +136,55 @@ statement lifecycle onto it.
 
 ## Decision Log
 
-- Lock scope is `KeyNeedToLock` verbatim minus flags (created rows lock
-  too; the narrow driver's plan-level rewritten-rows filter is ITS shape,
-  not the buffer-level contract). Safe against prewrite because the wide
-  commit's mutations are unasserted; duplicates stay read-detected.
-- Autocommit DML keeps its existing replay loop (already Go-shaped for the
-  single-statement case); only explicit transactions change.
-- `SELECT ... FOR UPDATE` row locking rides on this wiring later; it is
-  NOT in this unit and stays a named gap until then.
+- Decision: Lock scope is `KeyNeedToLock` verbatim minus flags (created
+  rows lock too; the narrow driver's plan-level rewritten-rows filter is
+  ITS shape, not the buffer-level contract). Rationale: safe against
+  prewrite because the wide commit's mutations are unasserted; duplicates
+  stay read-detected. Date/Author: 2026-08-22 / session c4d12b28.
+- Decision: Autocommit DML keeps its existing replay loop (already
+  Go-shaped for the single-statement case); only explicit transactions
+  change. Rationale: the replay loop is the same
+  `handlePessimisticDML` contract collapsed to one statement; rewiring it
+  would churn a verified path for no behavioral gain. Date/Author:
+  2026-08-22 / session c4d12b28.
+- Decision: `SELECT ... FOR UPDATE` row locking rides on this wiring
+  later; it is NOT in this unit and stays a named gap until then.
+  Rationale: it needs plan-level lock-row extraction the wide driver does
+  not have yet, and the gap is already named in
+  `cluster_session_node/transactions.rs`. Date/Author: 2026-08-22 /
+  session c4d12b28.
+- Decision: The post-review hardening pass (statement-lock release on
+  failure, the 256-retry cap, buffer-scope classifiers from
+  `tidb_tablecodec`, statement-ts snapshot gating) lands as one follow-up
+  commit on this plan rather than a new ExecPlan. Rationale: every item is
+  a Go-fidelity correction to THIS unit's seams, found by the complete
+  review of the day's four commits. Date/Author: 2026-08-22 / session
+  c4d12b28.
+
+## Outcomes & Retrospective
+
+Shipped and pushed. `BEGIN`'s mode now resolves from the session, the
+pessimistic worker serves lock/read-at/commit, and the statement loop
+locks each statement's staging delta with Go's retry-at-`for_update_ts`
+contract. The full stock-sysbench battery (8 workloads, both protocols, 4
+threads) runs clean against `--store unistore --cluster-session`; the
+racing-updates receipts pin both the pessimistic serialization and the
+optimistic 9007 contract.
+
+What the review then corrected (Go as oracle): the lock-wait backoff now
+charges what it sleeps and clamps to the lock's remaining TTL
+(`next_delay_capped`); `resolved_locks` rescope on every read-ts change
+(Go's per-`KVSnapshot` scoping); visibility checks run at the statement's
+read ts; `snapshot_at` refuses optimistic transactions; the buffer-delta
+classifier uses the ported `tablecodec` key shapes instead of value
+length; a failed statement releases the locks its rounds accumulated
+(`OnPessimisticStmtEnd(false)`); the retry cap is Go's 256 with Go's
+message; autocommit teardown clears the published TSO on EVERY exit.
+
+Retrospective: the differential battery found the wiring gaps, but only
+the line-level review against Go found the budget/scoping bugs — neither
+substitutes for the other. Known debt, tracked by task chips: the
+per-statement full-buffer clone is quadratic for bulk transactions (Go
+stages per statement); `LockKeys` re-sends already-held keys (Go skips
+via membuffer flags unless `for_update_ts` advanced); the rare 1062
+remains under watch.

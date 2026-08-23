@@ -278,3 +278,62 @@ where
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn response(action: KvrpcTxnAction, commit_version: u64) -> KvrpcCheckTxnStatusResponse {
+        KvrpcCheckTxnStatusResponse {
+            action: action as i32,
+            commit_version,
+            ..KvrpcCheckTxnStatusResponse::default()
+        }
+    }
+
+    /// Go `lock_resolver.go`'s `Action_LockNotExistDoNothing` arm: the owner
+    /// already rolled its statement's locks back (a pessimistic retry does
+    /// exactly that), so the blocked key's leftover lock is stale and the
+    /// verdict is a determined rollback -- never "undetermined", which
+    /// aborted with 1105 statements Go quietly cleans up after.
+    #[test]
+    fn lock_not_exist_do_nothing_is_a_determined_rollback() {
+        assert_eq!(
+            classify_determined_pessimistic_status(&response(
+                KvrpcTxnAction::LockNotExistDoNothing,
+                0
+            ))
+            .unwrap(),
+            ResolvedTxnStatus::RolledBack
+        );
+    }
+
+    /// TiKV answers a `resolving_pessimistic_lock` query for an expired owner
+    /// with `TTLExpirePessimisticRollback`; that too is a determined rollback
+    /// on this path.
+    #[test]
+    fn ttl_expire_pessimistic_rollback_is_a_determined_rollback() {
+        assert_eq!(
+            classify_determined_pessimistic_status(&response(
+                KvrpcTxnAction::TtlExpirePessimisticRollback,
+                0
+            ))
+            .unwrap(),
+            ResolvedTxnStatus::RolledBack
+        );
+    }
+
+    /// A commit record still wins over either action: the optimistic
+    /// classifier's committed arm stays reachable through the delegation.
+    #[test]
+    fn commit_record_still_classifies_as_committed() {
+        assert_eq!(
+            classify_determined_pessimistic_status(&response(
+                KvrpcTxnAction::NoAction,
+                42
+            ))
+            .unwrap(),
+            ResolvedTxnStatus::Committed(42)
+        );
+    }
+}

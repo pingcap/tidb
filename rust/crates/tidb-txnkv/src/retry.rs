@@ -159,6 +159,25 @@ impl RegionBackoffBudget {
         &mut self,
         kind: RegionBackoffKind,
     ) -> Result<Duration, RegionBackoffExhausted> {
+        self.next_delay_capped(kind, Duration::MAX)
+    }
+
+    /// [`Self::next_delay`] with client-go's `BackoffWithCfgAndMaxSleep`
+    /// clamp: the delay actually RESERVED — charged against the budget and
+    /// meant to be slept verbatim — is `min(computed, max_sleep)`.
+    ///
+    /// The clamp is applied BEFORE the budget accounting, because in
+    /// client-go `realSleep` (the clamped value) is what `totalSleep`
+    /// accumulates; charging the unclamped exponential while sleeping the
+    /// clamp would exhaust a 20-second budget after well under a second of
+    /// real waiting against short-TTL locks. The attempt counter still
+    /// advances on the UNclamped schedule, exactly as client-go's per-config
+    /// backoff state grows independently of the clamp.
+    pub fn next_delay_capped(
+        &mut self,
+        kind: RegionBackoffKind,
+        max_sleep: Duration,
+    ) -> Result<Duration, RegionBackoffExhausted> {
         let effective_exhausted = self.effective_sleep_ms() >= self.max_sleep_ms;
         let excluded_exhausted = kind.is_sleep_excluded()
             && self.excluded_sleep_ms >= 600_000
@@ -185,7 +204,7 @@ impl RegionBackoffBudget {
         } else {
             exponential
         };
-        let delay_ms = computed;
+        let delay_ms = computed.min(duration_ms(max_sleep));
 
         self.attempts[index] = attempt.saturating_add(1);
         self.total_sleep_ms = self.total_sleep_ms.saturating_add(delay_ms);

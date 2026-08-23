@@ -290,6 +290,54 @@ fn dml_positional_order_by_resolves_to_column() {
 /// UPDATE and DELETE over both table backings, including MySQL's
 /// affected-row rule: an UPDATE counts CHANGED rows, so a row whose new
 /// values equal its old ones is touched but not affected.
+/// Go resolves the whole plan before `buildLimit`'s zero short-circuit
+/// (`pkg/planner/core/logical_plan_builder.go`), so `LIMIT 0` still reports a
+/// bad `ORDER BY` column or a partition selection on an unpartitioned table
+/// instead of silently touching nothing.
+#[test]
+fn limit_zero_dml_still_validates_the_statement() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE lz (a BIGINT, b BIGINT)", &mut catalog).unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on("INSERT INTO lz VALUES (1, 10), (2, 20)", &mut catalog, &ctx).unwrap();
+
+    assert_eq!(
+        run_update_on("UPDATE lz SET b = 1 LIMIT 0", &mut catalog, &ctx).unwrap(),
+        0
+    );
+    assert_eq!(
+        run_delete_on("DELETE FROM lz LIMIT 0", &mut catalog, &ctx).unwrap(),
+        0
+    );
+
+    assert!(
+        run_update_on("UPDATE lz SET b = 1 ORDER BY nope LIMIT 0", &mut catalog, &ctx).is_err(),
+        "an unresolvable ORDER BY column must error under LIMIT 0"
+    );
+    assert!(
+        run_delete_on("DELETE FROM lz ORDER BY nope LIMIT 0", &mut catalog, &ctx).is_err(),
+        "an unresolvable ORDER BY column must error under LIMIT 0"
+    );
+
+    assert!(
+        run_update_on("UPDATE lz PARTITION (p0) SET b = 1 LIMIT 0", &mut catalog, &ctx).is_err(),
+        "a partition selection on an unpartitioned table must error under LIMIT 0"
+    );
+    assert!(
+        run_delete_on("DELETE FROM lz PARTITION (p0) LIMIT 0", &mut catalog, &ctx).is_err(),
+        "a partition selection on an unpartitioned table must error under LIMIT 0"
+    );
+
+    // Nothing above modified anything.
+    assert_eq!(
+        run_select_on("SELECT a, b FROM lz", &catalog, &ctx).unwrap(),
+        vec![
+            vec![Datum::Int(1), Datum::Int(10)],
+            vec![Datum::Int(2), Datum::Int(20)],
+        ],
+    );
+}
+
 #[test]
 fn update_and_delete_rows() {
     for kv in [false, true] {

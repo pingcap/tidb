@@ -220,6 +220,14 @@ pub trait OpenClusterTransaction: Send {
     fn lock_staged_keys(&self, _keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, String> {
         Err("only a pessimistic transaction locks statement keys".to_owned())
     }
+
+    /// Releases the locks a FAILED statement accumulated across its retry
+    /// rounds -- Go `OnPessimisticStmtEnd(isSuccessful=false)` ->
+    /// `CancelFairLocking`. The optimistic default holds no locks and
+    /// releases nothing.
+    fn release_statement_locks(&self, _keys: Vec<Vec<u8>>) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// The timestamp one autocommit statement is at: written when the first read
@@ -721,6 +729,10 @@ impl OpenClusterTransaction for SessionTransaction {
 
     fn lock_staged_keys(&self, keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, String> {
         SessionTransaction::lock_keys(self, keys).map_err(|error| error.to_string())
+    }
+
+    fn release_statement_locks(&self, keys: Vec<Vec<u8>>) -> Result<(), String> {
+        SessionTransaction::release_keys(self, keys).map_err(|error| error.to_string())
     }
 }
 

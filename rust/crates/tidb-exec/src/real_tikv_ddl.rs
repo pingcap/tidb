@@ -322,6 +322,7 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
     // An embedded store answers `None` for the endpoint and has no PD to tell,
     // so delivery is skipped rather than attempted against an address that
     // does not exist.
+    let mut delivered_endpoint = None;
     if !write.placement_bundles.is_empty() {
         if let Some(endpoint) = opener.pd().http_endpoint() {
             if let Err(error) = crate::placement_delivery::put_rule_bundles(
@@ -332,9 +333,42 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
                 transaction.finish_without_writes()?;
                 return Err(ClusterDdlError::NotCommitted(error.to_string()));
             }
+            delivered_endpoint = Some(endpoint);
         }
     }
     let planned_version = write.schema_version;
+    // The bundles above are keyed by ids THIS attempt allocated. In Go the ids
+    // a bundle carries are already durable when the job worker delivers it --
+    // job submission committed them under `lockGlobalIDKey`
+    // (`pkg/ddl/jobsubmit/submit.go`) -- so a retried job re-delivers the SAME
+    // groups. Here a rolled-back attempt's ids die with it, and the retry
+    // re-plans with fresh ones; the delivered bundles must go back too, or PD
+    // keeps rules for ids the catalog never published and some later object
+    // inherits them.
+    let withdraw_bundles = |cause: ClusterDdlError| -> ClusterDdlError {
+        let Some(endpoint) = delivered_endpoint.as_ref() else {
+            return cause;
+        };
+        // Go deletes a group the same way it sets one: an empty bundle under
+        // `partial=true` replaces the group with nothing (`placement.NewBundle`
+        // in the drop paths).
+        let empty: Vec<tidb_placement::Bundle> = write
+            .placement_bundles
+            .iter()
+            .map(|bundle| tidb_placement::Bundle {
+                id: bundle.id.clone(),
+                ..tidb_placement::Bundle::default()
+            })
+            .collect();
+        match crate::placement_delivery::put_rule_bundles(endpoint, &empty, timeout) {
+            Ok(()) => cause,
+            // A retry after a failed withdrawal would leave the stale groups
+            // behind, so the conflict stops being retryable.
+            Err(error) => ClusterDdlError::NotCommitted(format!(
+                "{cause}; and withdrawing the attempt's placement bundles failed: {error}"
+            )),
+        }
+    };
     match transaction.commit(write.mutations, &call)? {
         OptimisticCommitOutcome::Committed(_) => {
             notify_schema_version(notifier, planned_version);
@@ -345,11 +379,14 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
             })
         }
         OptimisticCommitOutcome::RolledBack(rolled_back) => {
-            Err(classify(planned_version, &rolled_back.cause))
+            Err(withdraw_bundles(classify(planned_version, &rolled_back.cause)))
         }
-        OptimisticCommitOutcome::CleanupFailed(cleanup_failed) => {
-            Err(classify(planned_version, &cleanup_failed.cause))
-        }
+        OptimisticCommitOutcome::CleanupFailed(cleanup_failed) => Err(withdraw_bundles(
+            classify(planned_version, &cleanup_failed.cause),
+        )),
+        // An undetermined commit may have PUBLISHED the catalog that claims
+        // these bundles; withdrawing them here could strip a live table's
+        // placement, so they stay.
         OptimisticCommitOutcome::Undetermined(undetermined) => Err(ClusterDdlError::Undetermined(
             format!("{:?}", undetermined.cause),
         )),

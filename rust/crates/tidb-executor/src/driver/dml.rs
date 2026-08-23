@@ -1824,6 +1824,42 @@ pub(crate) fn run_update_traced(
     // logical build, before any access path exists -- the write reads NOTHING
     // and its plan is `Update -> TableDual`, never a capped scan.
     if row_limit == Some(0) {
+        // Go builds the whole logical plan before `buildLimit` swaps the read
+        // subtree for a `TableDual`: an unupdatable target, an unknown
+        // partition, or an unresolvable `ORDER BY` column still errors under
+        // `LIMIT 0`.
+        match catalog.get_in(&database, &name) {
+            Some(TableEntry::Cte(_) | TableEntry::View(_)) => {
+                return Err(DriverError::TableNotUpdatable(name.clone()))
+            }
+            Some(TableEntry::Sequence(_)) => {
+                return Err(DriverError::unsupported(
+                    "UPDATE of a sequence is not a statement TiDB accepts",
+                ))
+            }
+            Some(TableEntry::Kv(kv)) if !table_ref.partitions.is_empty() => {
+                let Some(spec) = kv.partition() else {
+                    return Err(DriverError::UnknownPartition {
+                        partition: table_ref.partitions[0].clone(),
+                        table: name.clone(),
+                    });
+                };
+                crate::partition_pruning::ids_for_selected_partitions(spec, &table_ref.partitions)
+                    .map_err(|partition| DriverError::UnknownPartition {
+                        partition,
+                        table: name.clone(),
+                    })?;
+            }
+            _ => {}
+        }
+        order_rows_for_dml(
+            &mut [] as &mut [(crate::kv_table::TableHandle, Vec<Datum>)],
+            &update.order_by,
+            &field_types,
+            &resolver,
+            &column_names,
+            ctx,
+        )?;
         if let Some(trace) = trace.as_deref_mut() {
             trace.zero_limit_table_dual();
             trace.write("Update", true);
@@ -2363,6 +2399,39 @@ pub(crate) fn run_delete_traced(
     };
     // Go `buildLimit`'s zero short-circuit; see the `Update` twin above.
     if row_limit == Some(0) {
+        // As in UPDATE: Go resolves the whole plan before `buildLimit`'s zero
+        // short-circuit, so the target's writability, the partition list, and
+        // the `ORDER BY` columns are checked even when nothing is read.
+        match catalog.get_in(&database, &name) {
+            Some(TableEntry::Cte(_) | TableEntry::View(_)) => {
+                return Err(DriverError::DeleteViewUnsupported(name.clone()))
+            }
+            Some(TableEntry::Sequence(_)) => {
+                return Err(DriverError::DeleteSequenceUnsupported(name.clone()))
+            }
+            Some(TableEntry::Kv(kv)) if !table_ref.partitions.is_empty() => {
+                let Some(spec) = kv.partition() else {
+                    return Err(DriverError::UnknownPartition {
+                        partition: table_ref.partitions[0].clone(),
+                        table: name.clone(),
+                    });
+                };
+                crate::partition_pruning::ids_for_selected_partitions(spec, &table_ref.partitions)
+                    .map_err(|partition| DriverError::UnknownPartition {
+                        partition,
+                        table: name.clone(),
+                    })?;
+            }
+            _ => {}
+        }
+        order_rows_for_dml(
+            &mut [] as &mut [(crate::kv_table::TableHandle, Vec<Datum>)],
+            &delete.order_by,
+            &field_types,
+            &resolver,
+            &column_names,
+            ctx,
+        )?;
         if let Some(trace) = trace.as_deref_mut() {
             trace.zero_limit_table_dual();
             trace.write("Delete", true);
@@ -2689,14 +2758,26 @@ fn trace_dml_source(
                 else {
                     return None;
                 };
-                table.pk_handle_offset()?;
-                super::access::single_point_handle(ranges).map(|handle| (table, handle))
+                if table.pk_handle_offset().is_some() {
+                    return super::access::single_point_handle(ranges)
+                        .map(|handle| (table, Some(handle)));
+                }
+                // Go converts a COMMON-handle table path the same way
+                // (`find_best_task.go:2202`); the write reaches it through
+                // the same ordinary `DataSource` as a read, so this is the
+                // read side's HandleRange arm mirrored -- one range pinning
+                // every clustered key column as a non-nullable point.
+                (!table.common_handle_offsets().is_empty()
+                    && ranges.len() == 1
+                    && ranges[0].is_point(false)
+                    && ranges[0].low.len() == table.common_handle_offsets().len())
+                .then_some((table, None))
             })
             .flatten();
             if let Some((table, handle)) = point {
                 // A `Point_Get` is a root task: no `TableReader` wraps it,
                 // whether or not the ranger consumed the whole `WHERE`.
-                trace.point_get(&visible, table, Some(&handle), None);
+                trace.point_get(&visible, table, handle.as_ref(), None);
             } else {
                 trace.table_range_scan(&visible, ranges, *range_estimate);
                 if predicate_consumed {

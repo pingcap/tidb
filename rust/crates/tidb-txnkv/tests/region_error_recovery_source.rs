@@ -1235,3 +1235,27 @@ fn adjacent_multi_populated_fields_preserve_pinned_handler_precedence() {
         assert_eq!(cache.is_empty(), invalidated);
     }
 }
+
+/// client-go `BackoffWithCfgAndMaxSleep`: the delay charged against the
+/// budget is the CLAMPED sleep (`realSleep`), so waiting on short-TTL locks
+/// cannot burn the 20-second budget on exponential paper time; the attempt
+/// counter still advances on the unclamped schedule.
+#[test]
+fn capped_delay_charges_what_it_sleeps() {
+    let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 1);
+    for _ in 0..10 {
+        let delay = budget
+            .next_delay_capped(RegionBackoffKind::TxnLockFast, Duration::from_millis(10))
+            .unwrap();
+        assert!(delay <= Duration::from_millis(10), "clamp violated: {delay:?}");
+    }
+    // Ten clamped waits cost at most 100ms of the 20s budget, where the
+    // unclamped TxnLockFast schedule would have charged multiple seconds.
+    assert!(budget.total_sleep() <= Duration::from_millis(100));
+    assert!(budget.remaining() >= Duration::from_millis(19_900));
+
+    // Uncapped delegation is unchanged: the same kind's eleventh attempt
+    // reserves the full exponential value.
+    let uncapped = budget.next_delay(RegionBackoffKind::TxnLockFast).unwrap();
+    assert!(uncapped > Duration::from_millis(10));
+}

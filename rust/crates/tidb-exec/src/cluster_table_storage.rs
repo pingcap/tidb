@@ -123,6 +123,15 @@ enum TransactionRequest {
         keys: Vec<Vec<u8>>,
         reply: Sender<LockKeysOutcome>,
     },
+    /// Releases the locks a FAILED statement accumulated across its retry
+    /// rounds -- Go `OnPessimisticStmtEnd(isSuccessful=false)` ->
+    /// `CancelFairLocking` (`pkg/sessiontxn/isolation/base.go`), which
+    /// pessimistically rolls back the statement's keys so a contender does
+    /// not block on a statement the client was told failed.
+    ReleaseKeys {
+        keys: Vec<Vec<u8>>,
+        reply: Sender<Result<(), StorageError>>,
+    },
     /// Publishes `mutations` at the transaction's original `start_ts` and ends
     /// the thread, whatever the outcome.
     Commit {
@@ -457,6 +466,10 @@ fn serve_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapabil
                     message: "a pessimistic lock requires a pessimistic transaction".to_owned(),
                 }));
             }
+            TransactionRequest::ReleaseKeys { reply, .. } => {
+                // An optimistic transaction holds no locks; nothing to free.
+                let _ = reply.send(Ok(()));
+            }
             TransactionRequest::Commit { mutations, reply } => {
                 // The coordinator re-enters the write phase from the read
                 // phase, so this prewrite carries the transaction's original
@@ -499,6 +512,11 @@ pub enum LockKeysOutcome {
     Locked {
         /// The statement timestamp the locks carry.
         for_update_ts: u64,
+        /// The keys THIS call newly locked (already-held keys excluded), so
+        /// the session can release exactly a failed statement's accumulation
+        /// -- Go `OnPessimisticStmtEnd(isSuccessful=false)` ->
+        /// `CancelFairLocking`.
+        newly_locked: Vec<Vec<u8>>,
     },
     /// The locks are HELD, but a newer committed version beat the statement
     /// (fair locking's `locked_with_conflict`, or a write conflict during
@@ -508,6 +526,9 @@ pub enum LockKeysOutcome {
     RetryStatement {
         /// The advanced statement timestamp the retry reads at.
         for_update_ts: u64,
+        /// The keys THIS call newly locked and RETAINED across the retry
+        /// (fair locking's whole point); see [`LockKeysOutcome::Locked`].
+        newly_locked: Vec<Vec<u8>>,
     },
     /// The statement fails with this error and its locks are released; the
     /// transaction stays open (Go's statement-scoped 1205/1213 family).
@@ -587,6 +608,16 @@ fn serve_pessimistic_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: St
                     return;
                 }
             }
+            TransactionRequest::ReleaseKeys { keys, reply } => {
+                // Go `OnPessimisticStmtEnd(isSuccessful=false)` ->
+                // `CancelFairLocking`: the failed statement's accumulated
+                // locks go back, so a contender stops blocking on a
+                // statement the client was told failed.
+                let released = transaction
+                    .pessimistic_rollback(&keys, call)
+                    .map_err(|cause| StorageError::Backend(cause.to_string()));
+                let _ = reply.send(released);
+            }
             TransactionRequest::Commit { mutations, reply } => {
                 let end_call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
                 let _ = reply.send(
@@ -640,11 +671,12 @@ fn serve_pessimistic_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: St
 /// * a DELETE locks only RECORD keys (`len(v) == 0` ->
 ///   `tablecodec.IsRecordKey`);
 /// * a record-key put locks;
-/// * an index-key put locks only when the entry is UNIQUE
-///   (`tablecodec.IndexKVIsUnique`); this tier's non-unique entry value is
-///   the single byte `'0'` ([`tidb_codec::table_key::non_unique_index_value`])
-///   while a unique entry carries the row's handle, so the length is the
-///   same discriminator Go reads.
+/// * an index-key put locks only when the entry is UNIQUE, decided by the
+///   SAME ported classifier Go reads (`tablecodec.IndexKVIsUnique` ->
+///   [`tidb_tablecodec::index_kv_is_unique`]) -- a value-length
+///   shortcut is NOT equivalent, because this tier's own writer already
+///   emits multi-byte NON-unique entries (restored collation data, the v1
+///   versioned encoding), which a length test would over-lock.
 #[must_use]
 pub fn pessimistic_lock_delta(
     before: &[(Key, Option<Vec<u8>>)],
@@ -662,18 +694,20 @@ pub fn pessimistic_lock_delta(
 }
 
 /// Go `KeyNeedToLock` (`pkg/session/txn.go`), reduced as
-/// [`pessimistic_lock_delta`]'s doc describes.
+/// [`pessimistic_lock_delta`]'s doc describes, over the same ported
+/// classifiers Go reads (`tablecodec.IsRecordKey` / `IsIndexKey` /
+/// `IndexKVIsUnique`).
 fn statement_key_needs_lock(key: &[u8], value: Option<&[u8]>) -> bool {
-    let is_record = match tidb_codec::table_key::decode_key_head(key) {
-        Ok(tidb_codec::table_key::KeyHead::Record { .. }) => true,
-        Ok(tidb_codec::table_key::KeyHead::Index { .. }) => false,
-        // Not a table key: Go's "meta key always need to lock".
-        Err(_) => return true,
-    };
+    if !tidb_tablecodec::is_record_key(key)
+        && !tidb_tablecodec::is_index_key(key)
+    {
+        // Go's "meta key always need to lock".
+        return true;
+    }
     match value {
-        None => is_record,
-        Some(_) if is_record => true,
-        Some(value) => value.len() != 1,
+        None => tidb_tablecodec::is_record_key(key),
+        Some(_) if tidb_tablecodec::is_record_key(key) => true,
+        Some(value) => tidb_tablecodec::index_kv_is_unique(value),
     }
 }
 
@@ -732,13 +766,17 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
                 if acquired.locked_with_conflict.is_empty() {
                     return LockKeysOutcome::Locked {
                         for_update_ts: acquired.for_update_ts,
+                        newly_locked: added,
                     };
                 }
                 // Fair locking granted the locks despite a newer committed
                 // version. The locks STAY -- that is the point -- but the
                 // statement must be recomputed at a timestamp that sees it.
                 return match transaction.advance_for_update_ts() {
-                    Ok(for_update_ts) => LockKeysOutcome::RetryStatement { for_update_ts },
+                    Ok(for_update_ts) => LockKeysOutcome::RetryStatement {
+                        for_update_ts,
+                        newly_locked: added,
+                    },
                     Err(failure) => {
                         LockKeysOutcome::TransactionError(lock_failure_to_sql_error(&failure))
                     }
@@ -780,10 +818,14 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
                         continue;
                     }
                     // A write conflict's remedy is the statement retry at a
-                    // newer `for_update_ts`.
+                    // newer `for_update_ts`. This arm rolled its additions
+                    // back above, so the retry carries no new locks.
                     _ => {
                         return match transaction.advance_for_update_ts() {
-                            Ok(for_update_ts) => LockKeysOutcome::RetryStatement { for_update_ts },
+                            Ok(for_update_ts) => LockKeysOutcome::RetryStatement {
+                                for_update_ts,
+                                newly_locked: Vec::new(),
+                            },
                             Err(advance) => LockKeysOutcome::TransactionError(
                                 lock_failure_to_sql_error(&advance),
                             ),
@@ -1097,6 +1139,25 @@ impl SessionTransaction {
         })
     }
 
+    /// Releases the locks a FAILED statement accumulated across its retry
+    /// rounds -- Go `OnPessimisticStmtEnd(isSuccessful=false)` ->
+    /// `CancelFairLocking` (`pkg/sessiontxn/isolation/base.go`): a contender
+    /// must not keep blocking on keys a statement the client was told failed
+    /// had fair-locked. An empty key set releases nothing.
+    pub fn release_keys(&self, keys: Vec<Vec<u8>>) -> Result<(), StorageError> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+        let requests = self.thread.sender()?;
+        let (reply, answer) = mpsc::channel();
+        requests
+            .send(TransactionRequest::ReleaseKeys { keys, reply })
+            .map_err(|_| StorageError::Backend("the transaction thread is gone".to_owned()))?;
+        answer.recv().map_err(|_| {
+            StorageError::Backend("the transaction thread stopped mid-release".to_owned())
+        })?
+    }
+
     /// The one timestamp every statement of this transaction reads at.
     #[must_use]
     pub const fn start_ts(&self) -> u64 {
@@ -1118,7 +1179,16 @@ impl SessionTransaction {
     /// A read handle whose reads happen at `read_ts` instead of `start_ts`:
     /// the retried pessimistic statement's view (Go rebuilds the retried
     /// executor reading at `forUpdateTS`).
+    ///
+    /// Refused for an optimistic transaction: only the pessimistic statement
+    /// retry may read past `start_ts`, and an optimistic caller reaching here
+    /// would silently break snapshot isolation with mixed-timestamp reads.
     pub fn snapshot_at(&self, read_ts: u64) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
+        if !self.pessimistic {
+            return Err(StorageError::Backend(
+                "only a pessimistic transaction reads at a statement timestamp".to_owned(),
+            ));
+        }
         Ok(Box::new(SessionSnapshot {
             requests: self.thread.sender()?,
             start_ts: self.thread.start_ts,

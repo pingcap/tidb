@@ -788,11 +788,39 @@ impl ClusterServerSession {
         // back by its publication after the read handle is gone. Autocommit
         // publishes THERE, not at a fresh one: see `StatementReadTs`.
         let read_ts = transactions::StatementReadTs::new(self.session.current_tso());
+        let result = self.attempt_statement_inner(shape, &savepoint, run, &read_ts);
+        // The TSO clear is statement TEARDOWN, not a success step: every exit
+        // of the attempt -- including the `?`s inside the loop -- must leave
+        // no failed statement's timestamp published, or `SET @x =
+        // @@tidb_current_ts` after a failed autocommit statement reads a
+        // timestamp of a transaction that is not open.
+        if autocommit {
+            self.session.current_tso().clear();
+        }
+        result
+    }
+
+    /// The pessimistic statement loop of [`Self::attempt_statement`]; split
+    /// out so the caller can run teardown on EVERY exit, `?`s included.
+    fn attempt_statement_inner<T>(
+        &mut self,
+        shape: StatementReadShape,
+        savepoint: &BufferImage,
+        run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
+        read_ts: &transactions::StatementReadTs,
+    ) -> Result<T, SqlQueryError> {
         // Go `handlePessimisticDML`'s statement loop: run, lock the staged
         // keys, and on a lock conflict roll the STATEMENT back and re-execute
         // it reading at the advanced `for_update_ts`. `None` is the first
         // attempt, reading at the transaction's own snapshot.
         let mut retry_read_ts: Option<u64> = None;
+        // The keys THIS statement's rounds fair-locked and retained; released
+        // if the statement ultimately fails (Go `OnPessimisticStmtEnd`).
+        let mut statement_locked: Vec<Vec<u8>> = Vec::new();
+        // Go `PessimisticTxn.MaxRetryCount` (`pkg/config/config.go`, default
+        // 256): the safety valve on the statement retry, with Go's own error.
+        let mut retries: u32 = 0;
+        const MAX_PESSIMISTIC_STATEMENT_RETRIES: u32 = 256;
         let result = loop {
             let snapshot = match self.explicit.as_ref() {
                 // The transaction's timestamp is already spent; its
@@ -824,10 +852,23 @@ impl ClusterServerSession {
             let finished = self.finish_snapshot();
             match outcome {
                 Ok(value) => {
-                    finished?;
-                    match self.lock_pessimistic_statement_keys(&savepoint)? {
-                        PessimisticStep::Done => {}
-                        PessimisticStep::Retry { for_update_ts } => {
+                    if let Err(error) = finished {
+                        break Err(error);
+                    }
+                    match self.lock_pessimistic_statement_keys(savepoint, &mut statement_locked) {
+                        Ok(PessimisticStep::Done) => {}
+                        Ok(PessimisticStep::Retry { for_update_ts }) => {
+                            if retries >= MAX_PESSIMISTIC_STATEMENT_RETRIES {
+                                // Go `handlePessimisticLockError`
+                                // (`pkg/executor/adapter.go`): the retry
+                                // budget is the transaction config's, and the
+                                // message is Go's own.
+                                self.buffer.restore(savepoint.clone());
+                                break Err(SqlQueryError::unknown(
+                                    "pessimistic lock retry limit reached",
+                                ));
+                            }
+                            retries += 1;
                             // The statement's writes go back; its locks STAY
                             // (fair locking's whole point), and the replay
                             // reads at the timestamp that sees the version
@@ -836,10 +877,15 @@ impl ClusterServerSession {
                             retry_read_ts = Some(for_update_ts);
                             continue;
                         }
+                        Err(error) => break Err(error),
                     }
-                    self.commit_if_session_left_transaction()?;
-                    self.flush_if_autocommit(read_ts.get())?;
-                    break Ok(value);
+                    match self
+                        .commit_if_session_left_transaction()
+                        .and_then(|()| self.flush_if_autocommit(read_ts.get()))
+                    {
+                        Ok(()) => break Ok(value),
+                        Err(error) => break Err(error),
+                    }
                 }
                 Err(error) => {
                     // The statement's own writes go; every earlier
@@ -849,8 +895,15 @@ impl ClusterServerSession {
                 }
             }
         };
-        if autocommit {
-            self.session.current_tso().clear();
+        if result.is_err() {
+            // Go `OnPessimisticStmtEnd(isSuccessful=false)`: the locks a
+            // FAILED statement's rounds accumulated go back, or a contender
+            // blocks on them for the transaction's remaining lifetime. Best
+            // effort -- a dead transaction thread has already released
+            // everything by rolling the whole transaction back.
+            if let Some(transaction) = self.explicit.as_ref() {
+                let _ = transaction.release_statement_locks(std::mem::take(&mut statement_locked));
+            }
         }
         result
     }
@@ -860,6 +913,7 @@ impl ClusterServerSession {
     fn lock_pessimistic_statement_keys(
         &mut self,
         savepoint: &BufferImage,
+        statement_locked: &mut Vec<Vec<u8>>,
     ) -> Result<PessimisticStep, SqlQueryError> {
         let Some(transaction) = self.explicit.as_ref() else {
             return Ok(PessimisticStep::Done);
@@ -874,12 +928,25 @@ impl ClusterServerSession {
         if keys.is_empty() {
             return Ok(PessimisticStep::Done);
         }
-        match transaction
-            .lock_staged_keys(keys)
-            .map_err(SqlQueryError::unknown)?
-        {
-            LockKeysOutcome::Locked { .. } => Ok(PessimisticStep::Done),
-            LockKeysOutcome::RetryStatement { for_update_ts } => {
+        // Every error exit rolls the STATEMENT back -- Go's `StmtRollback`
+        // runs on any statement error, transport failures included.
+        let outcome = match transaction.lock_staged_keys(keys) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                self.buffer.restore(savepoint.clone());
+                return Err(SqlQueryError::unknown(error));
+            }
+        };
+        match outcome {
+            LockKeysOutcome::Locked { newly_locked, .. } => {
+                statement_locked.extend(newly_locked);
+                Ok(PessimisticStep::Done)
+            }
+            LockKeysOutcome::RetryStatement {
+                for_update_ts,
+                newly_locked,
+            } => {
+                statement_locked.extend(newly_locked);
                 Ok(PessimisticStep::Retry { for_update_ts })
             }
             LockKeysOutcome::StatementError(error) => {
