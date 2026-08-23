@@ -104,4 +104,32 @@ whose old schema no live local work still uses — PUT the ack key.
 
 ## Outcomes & Retrospective
 
-(to fill at completion)
+Shipped in `b0580298c4`. The node now acknowledges schema versions to a
+Go DDL owner, and the full sysbench ladder against a real TiUP cluster
+(PD + TiKV + a Go tidb-server on the same store) runs rung 0 through
+rung 7 with **32 OK and zero failures**: the Go control DDL that used to
+hang 17 minutes passes, all eight workloads run in both protocols, and
+the post-run checksum from the Rust node equals the Go node's byte for
+byte (`1000 500500 506087 1 1000`). Nine `schema_sync_acked` receipts,
+no ack failures.
+
+Two aggregate-pushdown gaps surfaced only because the acknowledger
+unblocked the rungs past it -- the wait had been masking them. Both were
+Go-fidelity bugs in typing and in refusal handling, not in the new code:
+untyped aggregate leaves (Go types both halves in `AggFuncToPBExpr`) and
+a 1105 where Go simply declines to push down. That is the pattern worth
+keeping: each blocking bug removed reveals the next one, so a ladder is
+worth more than a single pass/fail.
+
+Retrospective: the root cause was a *partial* port. Server-info
+registration landed alone for `information_schema.TIDB_SERVERS_INFO`,
+and it silently opted this node into a protocol whose other half did not
+exist — the Go owner's wait set. Registering while mute is strictly
+worse than not registering at all. Before porting the visible half of
+any cluster protocol, ask what OTHER nodes will now expect of this one.
+
+Known follow-ups: the MDL gate is whole-transaction rather than Go's
+per-table `CheckOldRunningTxn`, so a long transaction delays unrelated
+DDL more than Go would (conservative, never wrong); and the ladder's
+performance columns show the Rust node still 2-4x behind Go per
+statement, which is a separate optimization unit, not a correctness one.
