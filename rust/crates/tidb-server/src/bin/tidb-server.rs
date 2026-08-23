@@ -16,6 +16,13 @@
 
 use std::process::ExitCode;
 
+// Go's runtime owns its own allocator; the Rust node's statement path is
+// allocation-heavy (parse/plan/stage churn dominates its CPU profile), so the
+// binary runs on jemalloc like production TiKV instead of glibc malloc.
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use tidb_server::{run_configured_node, NodeConfig, NodeConfigError};
 
 fn runtime_exit_code<E: std::fmt::Display>(result: Result<(), E>) -> ExitCode {

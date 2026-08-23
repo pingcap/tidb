@@ -14,6 +14,7 @@ workspace = true
 
 [dependencies]
 base64.workspace = true
+tikv-jemallocator = { version = "0.7", optional = true }
 ctrlc.workspace = true
 signal-hook.workspace = true
 rcgen.workspace = true
@@ -67,3 +68,6 @@ path = "tests/auth_session_source.rs"
 [[test]]
 name = "configured_user_store_source"
 path = "tests/configured_user_store_source.rs"
+
+[features]
+jemalloc = ["dep:tikv-jemallocator"]
