@@ -65,8 +65,8 @@ func setRefreshAlertCleanupOwnerForTest(svc *MVService, ownerHash uint32) {
 	})
 }
 
-func addMVRefreshAlertTasksForTest(svc *MVService, tasks ...*mv) {
-	pending := make(map[int64]*mv, len(tasks))
+func addMVRefreshAlertTasksForTest(svc *MVService, tasks ...*mviewTask) {
+	pending := make(map[int64]*mviewTask, len(tasks))
 	for _, task := range tasks {
 		if task == nil {
 			continue
@@ -76,14 +76,14 @@ func addMVRefreshAlertTasksForTest(svc *MVService, tasks ...*mv) {
 		}
 		pending[task.ID] = task
 	}
-	svc.buildMVRefreshAlertTasks(pending)
+	svc.buildMViewRefreshAlertTasks(pending)
 }
 
-func addMVRefreshExecutionTasksForTest(svc *MVService, tasks ...*mv) {
-	svc.mvRefreshMu.Lock()
-	defer svc.mvRefreshMu.Unlock()
-	if svc.mvRefreshMu.pending == nil {
-		svc.mvRefreshMu.pending = make(map[int64]mvItem, len(tasks))
+func addMVRefreshExecutionTasksForTest(svc *MVService, tasks ...*mviewTask) {
+	svc.mviewRefreshMu.Lock()
+	defer svc.mviewRefreshMu.Unlock()
+	if svc.mviewRefreshMu.pending == nil {
+		svc.mviewRefreshMu.pending = make(map[int64]mviewTaskItem, len(tasks))
 	}
 	for _, task := range tasks {
 		if task == nil {
@@ -92,7 +92,7 @@ func addMVRefreshExecutionTasksForTest(svc *MVService, tasks ...*mv) {
 		if task.orderTs == 0 && !task.nextRefresh.IsZero() {
 			task.orderTs = task.nextRefresh.UnixMilli()
 		}
-		svc.mvRefreshMu.pending[task.ID] = svc.mvRefreshMu.prio.Push(task)
+		svc.mviewRefreshMu.pending[task.ID] = svc.mviewRefreshMu.prio.Push(task)
 	}
 }
 

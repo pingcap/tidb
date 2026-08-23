@@ -259,7 +259,8 @@ Persistence / restore:
 
 Runtime observability:
 
-- MVService periodically scans every MLog tracked by `mysql.tidb_mlog_purge_info`;
+- The materialized view service periodically scans every materialized view log tracked by
+  `mysql.tidb_mlog_purge_info`;
 - for each MLog with alerting enabled, it checks the current physical MLog row count;
 - if the count is greater than the effective threshold, the MLog is reported into metric `tidb_mv_service_task_status{component="service", type="mvlog_accumulation"}`.
 

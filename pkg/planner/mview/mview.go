@@ -376,7 +376,7 @@ type buildLocalResult struct {
 	sctx     planctx.PlanContext
 
 	mvDBName     pmodel.CIStr
-	mv           *model.TableInfo
+	mviewTable           *model.TableInfo
 	baseTableID  int64
 	mlogTableID  int64
 	baseTable    *model.TableInfo
@@ -516,7 +516,7 @@ func buildLocal(
 		MVSelect:          mvSel,
 		sctx:              sctx,
 		mvDBName:          mvDBName,
-		mv:                mv,
+		mviewTable:                mv,
 		baseTableID:       baseTableID,
 		mlogTableID:       mlogTableID,
 		baseTable:         baseTable,
@@ -566,7 +566,7 @@ func buildFromLocal(
 		local.mvDBName,
 		local.mlogTable,
 		local.MVSelect,
-		local.mv.Columns,
+		local.mviewTable.Columns,
 		local.groupKeyOffs,
 		local.aggCols,
 		opt,
@@ -583,7 +583,7 @@ func buildFromLocal(
 			local.mvDBName,
 			local.baseTable,
 			local.MVSelect,
-			local.mv.Columns,
+			local.mviewTable.Columns,
 			local.groupKeySet,
 			local.groupKeyOffs,
 			local.aggCols,
@@ -606,8 +606,8 @@ func buildFromLocal(
 
 	mergeSel, deltaColumns, rowIDHandleOffset, err := buildMergeSourceSelect(
 		local.mvDBName,
-		local.mv,
-		local.mv.Columns,
+		local.mviewTable,
+		local.mviewTable.Columns,
 		local.groupKeySet,
 		local.groupKeyOffs,
 		deltaSel,
@@ -617,7 +617,7 @@ func buildFromLocal(
 		return nil, err
 	}
 
-	expectedLen := len(local.mv.Columns) + len(deltaColumns)
+	expectedLen := len(local.mviewTable.Columns) + len(deltaColumns)
 	mvColumnOffsetBase := len(deltaColumns)
 	if rowIDHandleOffset >= 0 {
 		expectedLen++
@@ -688,13 +688,13 @@ func buildFromLocal(
 	if err := validateAggDependencies(
 		outAggInfos,
 		mvColumnOffsetBase,
-		len(local.mv.Columns),
+		len(local.mviewTable.Columns),
 		expectedLen,
 	); err != nil {
 		return nil, err
 	}
 
-	mvTablePKCols, err := buildMVTablePKHandleCols(local.mv, mvColumnOffsetBase, rowIDHandleOffset)
+	mvTablePKCols, err := buildMVTablePKHandleCols(local.mviewTable, mvColumnOffsetBase, rowIDHandleOffset)
 	if err != nil {
 		return nil, err
 	}
@@ -709,10 +709,10 @@ func buildFromLocal(
 		FullUpdateLookupTemplateSelect: fullUpdateSel,
 		FullUpdateLookupColumnCount:    fullUpdateColumnCount,
 		FullUpdateLookupMVOffsets:      append([]int(nil), fullUpdateMVOffsets...),
-		MVTableID:                      local.mv.ID,
+		MVTableID:                      local.mviewTable.ID,
 		BaseTableID:                    local.baseTableID,
 		MLogTableID:                    local.mlogTableID,
-		MVColumnCount:                  len(local.mv.Columns),
+		MVColumnCount:                  len(local.mviewTable.Columns),
 		DeltaColumnCount:               len(deltaColumns),
 		MVTablePKCols:                  mvTablePKCols,
 		GroupKeyMVOffsets:              append([]int(nil), local.groupKeyOffs...),

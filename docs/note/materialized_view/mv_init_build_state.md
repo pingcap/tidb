@@ -43,20 +43,20 @@ Introduce an explicit MV initial-build state in `TableInfo.MaterializedView`.
 Suggested shape:
 
 ```go
-type MVInitBuildState byte
+type MViewInitBuildState byte
 
 const (
-    // MVInitBuildReady is zero for backward compatibility:
+    // MViewInitBuildReady is zero for backward compatibility:
     // existing clusters have persisted MV metadata without this field,
     // and their MVs are already built — they default to Ready.
-    MVInitBuildReady MVInitBuildState = iota
-    MVInitBuildDeferred
-    MVInitBuildBuilding
+    MViewInitBuildReady MViewInitBuildState = iota
+    MViewInitBuildDeferred
+    MViewInitBuildBuilding
 )
 
 type MaterializedViewInfo struct {
     ...
-    InitBuildState MVInitBuildState `json:"init_build_state,omitempty"`
+    InitBuildState MViewInitBuildState `json:"init_build_state,omitempty"`
 }
 ```
 

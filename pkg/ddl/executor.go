@@ -2080,15 +2080,15 @@ func checkAlterTableBaseTableMLogColumnConstraints(
 		return nil
 	}
 
-	mlogTbl, ok := is.TableByID(ctx, tblInfo.MaterializedViewBase.MLogID)
-	if !ok || mlogTbl.Meta().MaterializedViewLog == nil {
+	mlogTable, ok := is.TableByID(ctx, tblInfo.MaterializedViewBase.MLogID)
+	if !ok || mlogTable.Meta().MaterializedViewLog == nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 			fmt.Sprintf("%s on base table with invalid materialized view log metadata", op),
 		)
 	}
 
-	mlogCols := make(map[string]struct{}, len(mlogTbl.Meta().MaterializedViewLog.Columns))
-	for _, col := range mlogTbl.Meta().MaterializedViewLog.Columns {
+	mlogCols := make(map[string]struct{}, len(mlogTable.Meta().MaterializedViewLog.Columns))
+	for _, col := range mlogTable.Meta().MaterializedViewLog.Columns {
 		mlogCols[col.L] = struct{}{}
 	}
 
@@ -2234,17 +2234,17 @@ func checkBaseTableDependentMViewMinMaxIndexConstraintsWithEffectiveTable(
 	if baseTableInfo.MaterializedViewBase == nil || len(baseTableInfo.MaterializedViewBase.MViewIDs) == 0 {
 		return nil
 	}
-	mlogTbl, ok := is.TableByID(ctx, baseTableInfo.MaterializedViewBase.MLogID)
-	if !ok || mlogTbl.Meta().MaterializedViewLog == nil {
+	mlogTable, ok := is.TableByID(ctx, baseTableInfo.MaterializedViewBase.MLogID)
+	if !ok || mlogTable.Meta().MaterializedViewLog == nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 			fmt.Sprintf("%s on base table with invalid materialized view log metadata", op),
 		)
 	}
 	baseTableName := &ast.TableName{Schema: schemaName, Name: baseTableInfo.Name}
 
-	for _, mvID := range baseTableInfo.MaterializedViewBase.MViewIDs {
-		mvTbl, ok := is.TableByID(ctx, mvID)
-		if !ok || mvTbl.Meta().MaterializedView == nil {
+	for _, mviewID := range baseTableInfo.MaterializedViewBase.MViewIDs {
+		mviewTable, ok := is.TableByID(ctx, mviewID)
+		if !ok || mviewTable.Meta().MaterializedView == nil {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				fmt.Sprintf("%s on base table with invalid dependent materialized view metadata", op),
 			)
@@ -2253,12 +2253,12 @@ func checkBaseTableDependentMViewMinMaxIndexConstraintsWithEffectiveTable(
 			sctx,
 			baseTableName,
 			baseTableInfo,
-			mlogTbl.Meta().MaterializedViewLog.Columns,
-			mvTbl.Meta().MaterializedView.SQLContent,
+			mlogTable.Meta().MaterializedViewLog.Columns,
+			mviewTable.Meta().MaterializedView.SQLContent,
 		)
 		if err != nil {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
-				fmt.Sprintf("%s on base table with invalid dependent materialized view %s metadata", op, mvTbl.Meta().Name.O),
+				fmt.Sprintf("%s on base table with invalid dependent materialized view %s metadata", op, mviewTable.Meta().Name.O),
 			)
 		}
 		if !queryAnalysis.HasMinOrMax {
@@ -2272,7 +2272,7 @@ func checkBaseTableDependentMViewMinMaxIndexConstraintsWithEffectiveTable(
 				"%s on base table index %s required by materialized view %s for MIN/MAX fast refresh",
 				op,
 				indexNameForErr.O,
-				mvTbl.Meta().Name.O,
+				mviewTable.Meta().Name.O,
 			),
 		)
 	}

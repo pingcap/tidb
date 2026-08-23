@@ -3883,7 +3883,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	}
 
 	if !intest.InTest {
-		// Don't start MVService in test
+		// Don't start the materialized view service in test.
 		err = dom.StartMVService()
 		if err != nil {
 			return nil, err

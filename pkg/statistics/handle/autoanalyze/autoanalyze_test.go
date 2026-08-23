@@ -80,13 +80,13 @@ func TestShouldSkipAutoAnalyzeTableNotReadyMV(t *testing.T) {
 	require.True(t, autoanalyze.ShouldSkipAutoAnalyzeTableForTest(&metamodel.TableInfo{
 		Name: model.NewCIStr("mv_not_ready"),
 		MaterializedView: &metamodel.MaterializedViewInfo{
-			InitBuildState: metamodel.MVInitBuildBuilding,
+			InitBuildState: metamodel.MViewInitBuildBuilding,
 		},
 	}))
 	require.False(t, autoanalyze.ShouldSkipAutoAnalyzeTableForTest(&metamodel.TableInfo{
 		Name: model.NewCIStr("mv_ready"),
 		MaterializedView: &metamodel.MaterializedViewInfo{
-			InitBuildState: metamodel.MVInitBuildReady,
+			InitBuildState: metamodel.MViewInitBuildReady,
 		},
 	}))
 	require.False(t, autoanalyze.ShouldSkipAutoAnalyzeTableForTest(&metamodel.TableInfo{

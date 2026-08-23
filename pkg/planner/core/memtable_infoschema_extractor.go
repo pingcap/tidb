@@ -1112,11 +1112,11 @@ func (e *InfoSchemaTiDBMLogsExtractor) ListSchemasAndTablesByBase(
 		if _, ok := seenMLogIDs[baseInfo.MLogID]; ok {
 			continue
 		}
-		mlogTbl, ok := is.TableByID(ctx, baseInfo.MLogID)
+		mlogTable, ok := is.TableByID(ctx, baseInfo.MLogID)
 		if !ok {
 			continue
 		}
-		mlogMeta := mlogTbl.Meta()
+		mlogMeta := mlogTable.Meta()
 		if mlogMeta.MaterializedViewLog == nil {
 			continue
 		}

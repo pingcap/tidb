@@ -454,7 +454,7 @@ func requireRefreshInfoSnapshotMatchesLatestSuccessHist(t *testing.T, tk *testki
 	t.Helper()
 
 	histRows := tk.MustQuery(fmt.Sprintf(
-		"select REFRESH_READ_TSO, REFRESH_COMMIT_TSO from mysql.tidb_mview_refresh_hist where MV_SCHEMA = '%s' and MV_NAME = '%s' and REFRESH_STATUS = 'success' order by REFRESH_JOB_ID desc limit 1",
+		"select REFRESH_READ_TSO, REFRESH_COMMIT_TSO from mysql.tidb_mview_refresh_hist where MVIEW_SCHEMA = '%s' and MVIEW_NAME = '%s' and REFRESH_STATUS = 'success' order by REFRESH_JOB_ID desc limit 1",
 		schema,
 		view,
 	)).Rows()
@@ -488,7 +488,7 @@ func requireRefreshInfoSnapshotMatchesHistAtCommitTSO(
 	t.Helper()
 
 	histRows := tk.MustQuery(fmt.Sprintf(
-		"select REFRESH_READ_TSO from mysql.tidb_mview_refresh_hist where MV_SCHEMA = '%s' and MV_NAME = '%s' and REFRESH_STATUS = 'success' and REFRESH_COMMIT_TSO = %d",
+		"select REFRESH_READ_TSO from mysql.tidb_mview_refresh_hist where MVIEW_SCHEMA = '%s' and MVIEW_NAME = '%s' and REFRESH_STATUS = 'success' and REFRESH_COMMIT_TSO = %d",
 		schema,
 		view,
 		refreshCommitTSO,
@@ -550,9 +550,9 @@ func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
-	tk.MustQuery(fmt.Sprintf("select MV_SCHEMA, MV_NAME from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
+	tk.MustQuery(fmt.Sprintf("select MVIEW_SCHEMA, MVIEW_NAME from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("test mv"))
-	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MV_SCHEMA = 'TEST' and MV_NAME = 'MV' and MVIEW_ID = %d", mviewID)).
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_SCHEMA = 'TEST' and MVIEW_NAME = 'MV' and MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf(
 		"select REFRESH_STATUS, REFRESH_METHOD = 'complete delta apply manual', REFRESH_END_TIME is not null, REFRESH_ROWS is null, "+
@@ -713,7 +713,7 @@ func TestMaterializedViewRefreshCompleteOutOfPlacePreservesPreviousCommitTSOSnap
 	makeMaterializedViewRefreshResultStale(t, tk)
 	tk.MustExec("refresh materialized view mv_refresh_result fast")
 
-	previousRefreshRows := tk.MustQuery("select REFRESH_COMMIT_TSO from mysql.tidb_mview_refresh_hist where MV_SCHEMA = 'test' and MV_NAME = 'mv_refresh_result' and REFRESH_STATUS = 'success' order by REFRESH_JOB_ID desc limit 1").Rows()
+	previousRefreshRows := tk.MustQuery("select REFRESH_COMMIT_TSO from mysql.tidb_mview_refresh_hist where MVIEW_SCHEMA = 'test' and MVIEW_NAME = 'mv_refresh_result' and REFRESH_STATUS = 'success' order by REFRESH_JOB_ID desc limit 1").Rows()
 	require.Len(t, previousRefreshRows, 1)
 	previousRefreshCommitTSO, err := strconv.ParseUint(fmt.Sprintf("%v", previousRefreshRows[0][0]), 10, 64)
 	require.NoError(t, err)
@@ -3242,7 +3242,7 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverBasic(t *testing.T) {
 	require.NoError(t, err)
 	oldMViewID := mvTable.Meta().ID
 	tk.MustExec(fmt.Sprintf(
-		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MV_SCHEMA, MV_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
 		oldMViewID,
 	))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where MVIEW_ID = %d", oldMViewID)).
