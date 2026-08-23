@@ -20,8 +20,8 @@
 //! `checkAsyncCommit` / `checkOnePC` admission checks from `2pc.go`.
 
 use tidb_proto::{
-    KvrpcAssertionLevel, KvrpcForUpdateTsConstraint, KvrpcKeyError, KvrpcPessimisticAction,
-    KvrpcPrewriteRequest, KvrpcPrewriteResponse,
+    KvrpcAssertionLevel, KvrpcContext, KvrpcForUpdateTsConstraint, KvrpcKeyError,
+    KvrpcPessimisticAction, KvrpcPrewriteRequest, KvrpcPrewriteResponse,
 };
 
 use crate::lock::{
@@ -32,7 +32,7 @@ use crate::lock::{
 use crate::region::RegionRecoveryLoader;
 use crate::rpc::UnaryCallContext;
 
-use super::super::command_client::{PublishedCommand, TransactionCommandClient};
+use super::super::command_client::TransactionCommandClient;
 use super::super::mutation::OptimisticMutation;
 use super::super::region_batches::RegionMutationBatch;
 use super::super::state::TransactionCause;
@@ -100,8 +100,13 @@ where
         (ASYNC_COMMIT_SAFE_WINDOW_MS << TSO_LOGICAL_BITS).saturating_add(current_ts)
     }
 
+    /// Builds one region's Prewrite request and context without publishing it.
+    ///
+    /// Split from the former single-batch publisher so a whole round of region
+    /// batches can be admitted before any response is awaited — Go
+    /// `twoPhaseCommitter.prewriteRegions` admits every batch concurrently.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn prewrite_batch(
+    pub(super) fn build_prewrite_request(
         &self,
         batch: &RegionMutationBatch,
         primary_key: &[u8],
@@ -109,8 +114,7 @@ where
         lock_ttl_ms: u64,
         is_retry: bool,
         protocol: &AttemptedProtocol,
-        call: &UnaryCallContext,
-    ) -> PublishedCommand<KvrpcPrewriteResponse> {
+    ) -> (KvrpcPrewriteRequest, KvrpcContext) {
         let mut request = KvrpcPrewriteRequest {
             mutations: batch
                 .mutations()
@@ -168,12 +172,7 @@ where
         request.context = None;
         let mut context = self.write_context(batch.context());
         context.is_retry_request = is_retry;
-        match self.runtime.client().try_borrow_mut() {
-            Ok(mut client) => client.publish_prewrite(batch.address(), &request, &context, call),
-            Err(_) => PublishedCommand::BeforePublication(
-                "TiKV client is already borrowed while publishing Prewrite".to_owned(),
-            ),
-        }
+        (request, context)
     }
 
     pub(super) fn handle_prewrite_key_errors(

@@ -78,6 +78,37 @@ pub struct TransactionBatchGetRequest<'a> {
     pub context: KvrpcContext,
 }
 
+/// One region-routed Prewrite submitted as part of a concurrent write round.
+///
+/// Go `twoPhaseCommitter.prewriteRegions` (`2pc.go`) admits every region
+/// batch's Prewrite before waiting on any of them, so a multi-region commit
+/// costs one round trip instead of one per region. The address is borrowed
+/// from the caller's region batch; the request and context are owned for the
+/// same reason as [`TransactionBatchGetRequest`].
+pub struct TransactionPrewriteRequest<'a> {
+    /// Physical TiKV leader address selected by the region cache.
+    pub address: &'a str,
+    /// Region-scoped Prewrite request.
+    pub request: KvrpcPrewriteRequest,
+    /// Region context stamped with the transaction's resolved locks.
+    pub context: KvrpcContext,
+}
+
+/// One region-routed Commit submitted as part of a concurrent write round.
+///
+/// Go `twoPhaseCommitter.commitRegions` (`2pc.go`) admits every secondary
+/// region's Commit before waiting on any of them, exactly as its prewrite
+/// does. The address is borrowed from the caller's region batch; the request
+/// and context are owned for the same reason as [`TransactionPrewriteRequest`].
+pub struct TransactionCommitRequest<'a> {
+    /// Physical TiKV leader address selected by the region cache.
+    pub address: &'a str,
+    /// Region-scoped Commit request.
+    pub request: KvrpcCommitRequest,
+    /// Region context stamped with the transaction's resolved locks.
+    pub context: KvrpcContext,
+}
+
 /// Typed transaction commands required from the sole shared TiKV client.
 ///
 /// Every method publishes one command on an already-selected route and
@@ -144,6 +175,24 @@ pub trait TransactionCommandClient {
         call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcPrewriteResponse>;
 
+    /// Publishes a round of region-routed Prewrites before waiting for any
+    /// response, mirroring Go `twoPhaseCommitter.prewriteRegions` admitting
+    /// every batch before the first completion is awaited. Implementations may
+    /// override this to retain all in-flight requests on the shared transport;
+    /// the default preserves sequential publication for alternate clients.
+    fn publish_prewrites(
+        &mut self,
+        requests: &[TransactionPrewriteRequest<'_>],
+        call: &UnaryCallContext,
+    ) -> Vec<PublishedCommand<KvrpcPrewriteResponse>> {
+        requests
+            .iter()
+            .map(|request| {
+                self.publish_prewrite(request.address, &request.request, &request.context, call)
+            })
+            .collect()
+    }
+
     /// Publishes one primary or secondary Commit for a region-grouped batch.
     fn publish_commit(
         &mut self,
@@ -152,6 +201,26 @@ pub trait TransactionCommandClient {
         context: &KvrpcContext,
         call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcCommitResponse>;
+
+    /// Publishes a round of region-routed Commits before waiting for any
+    /// response, mirroring Go `twoPhaseCommitter.commitRegions` admitting
+    /// every secondary batch concurrently. Implementations may override this
+    /// to retain all in-flight requests on the shared transport; the default
+    /// preserves sequential publication for alternate clients. The primary
+    /// commit is NOT part of a round: Go commits the primary alone first
+    /// (`commitTxn` -> `commitPrimary`), then fans the secondaries out.
+    fn publish_commits(
+        &mut self,
+        requests: &[TransactionCommitRequest<'_>],
+        call: &UnaryCallContext,
+    ) -> Vec<PublishedCommand<KvrpcCommitResponse>> {
+        requests
+            .iter()
+            .map(|request| {
+                self.publish_commit(request.address, &request.request, &request.context, call)
+            })
+            .collect()
+    }
 
     /// Publishes one BatchRollback cleaning possibly-prewritten keys.
     fn publish_batch_rollback(
@@ -302,6 +371,59 @@ impl TransactionCommandClient for TonicCoprocessorClient {
         )
     }
 
+    fn publish_prewrites(
+        &mut self,
+        requests: &[TransactionPrewriteRequest<'_>],
+        call: &UnaryCallContext,
+    ) -> Vec<PublishedCommand<KvrpcPrewriteResponse>> {
+        let mut results = std::iter::repeat_with(|| None)
+            .take(requests.len())
+            .collect::<Vec<Option<PublishedCommand<KvrpcPrewriteResponse>>>>();
+        let mut pending = Vec::with_capacity(requests.len());
+
+        // Admission is synchronous only up to the transport publication
+        // receipt. Keeping each pending completion alive lets the worker
+        // overlap the region batches, which is what makes a multi-region
+        // commit cost one round trip instead of one per region.
+        for (index, request) in requests.iter().enumerate() {
+            match self.begin_transaction_prewrite(
+                request.address,
+                None,
+                &request.request,
+                &request.context,
+                call,
+            ) {
+                Ok(pending_request) => pending.push((index, pending_request)),
+                Err(error) => {
+                    results[index] = Some(PublishedCommand::BeforePublication(error.to_string()));
+                }
+            }
+        }
+
+        for (index, mut pending_request) in pending {
+            let publication = pending_request
+                .publication()
+                .expect("Stage A binds a nonzero publication before pending escapes")
+                .clone();
+            results[index] = Some(match pending_request.complete(call) {
+                Ok(Ok(response)) => PublishedCommand::Response(response),
+                Ok(Err(error)) => PublishedCommand::AfterPublication {
+                    publication,
+                    error: error.to_string(),
+                },
+                Err(error) => PublishedCommand::AfterPublication {
+                    publication,
+                    error: error.to_string(),
+                },
+            });
+        }
+
+        results
+            .into_iter()
+            .map(|result| result.expect("every admitted Prewrite has a completion result"))
+            .collect()
+    }
+
     fn publish_commit(
         &mut self,
         address: &str,
@@ -314,6 +436,60 @@ impl TransactionCommandClient for TonicCoprocessorClient {
                 .map_err(|error| error.to_string()),
             call,
         )
+    }
+
+    fn publish_commits(
+        &mut self,
+        requests: &[TransactionCommitRequest<'_>],
+        call: &UnaryCallContext,
+    ) -> Vec<PublishedCommand<KvrpcCommitResponse>> {
+        let mut results = std::iter::repeat_with(|| None)
+            .take(requests.len())
+            .collect::<Vec<Option<PublishedCommand<KvrpcCommitResponse>>>>();
+        let mut pending = Vec::with_capacity(requests.len());
+
+        // Admission is synchronous only up to the transport publication
+        // receipt. Keeping each pending completion alive lets the worker
+        // overlap the region batches, which is what makes a multi-region
+        // secondary-commit phase cost one round trip instead of one per
+        // region — Go `commitRegions`.
+        for (index, request) in requests.iter().enumerate() {
+            match self.begin_transaction_commit(
+                request.address,
+                None,
+                &request.request,
+                &request.context,
+                call,
+            ) {
+                Ok(pending_request) => pending.push((index, pending_request)),
+                Err(error) => {
+                    results[index] = Some(PublishedCommand::BeforePublication(error.to_string()));
+                }
+            }
+        }
+
+        for (index, mut pending_request) in pending {
+            let publication = pending_request
+                .publication()
+                .expect("Stage A binds a nonzero publication before pending escapes")
+                .clone();
+            results[index] = Some(match pending_request.complete(call) {
+                Ok(Ok(response)) => PublishedCommand::Response(response),
+                Ok(Err(error)) => PublishedCommand::AfterPublication {
+                    publication,
+                    error: error.to_string(),
+                },
+                Err(error) => PublishedCommand::AfterPublication {
+                    publication,
+                    error: error.to_string(),
+                },
+            });
+        }
+
+        results
+            .into_iter()
+            .map(|result| result.expect("every admitted Commit has a completion result"))
+            .collect()
     }
 
     fn publish_batch_rollback(
