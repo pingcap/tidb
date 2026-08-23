@@ -520,14 +520,41 @@ pub(crate) fn aggregation_order(
     current_db: &str,
     offered: Offered<'_>,
 ) -> Option<AggregationOrder> {
-    if select.rollup || select.group_by.is_empty() {
+    if select.rollup || (select.group_by.is_empty() && !select.distinct) {
         return None;
     }
     let source = join_properties(from, catalog, current_db, offered, Phase::Promise)?;
-    let group_offsets: Vec<usize> = select
-        .group_by
+    // Go builds `DISTINCT` as a LogicalAggregation of its own --
+    // `PlanBuilder.buildDistinct`
+    // (`pkg/planner/core/logical_plan_builder.go:1966`) sets
+    // `GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length])`
+    // and one `FIRST_ROW` per column -- so it reaches `getStreamAggs` with
+    // exactly the same shape a written `GROUP BY` does, and asks its child
+    // for the same order. The items are the PROJECTION's output columns, so
+    // a computed field has no source column to order by; refusing here is
+    // what the candidate orders do for it anyway --
+    // `getStreamAggs` only ever matches against
+    // `la.PossibleProperties.Orders`
+    // (`pkg/planner/core/operator/physicalop/physical_stream_agg.go:121`),
+    // and `DataSource.PreparePossibleProperties`
+    // (`pkg/planner/core/operator/logicalop/logical_datasource.go:343`)
+    // fills those with index-prefix COLUMNS only.
+    let group_items: Vec<&Expr> = if select.group_by.is_empty() {
+        select
+            .fields
+            .fields()
+            .iter()
+            .map(|field| match field {
+                tidb_ast::SelectField::Expr { expr, .. } => Some(expr),
+                tidb_ast::SelectField::Wildcard(_) => None,
+            })
+            .collect::<Option<_>>()?
+    } else {
+        select.group_by.iter().map(|item| &item.expr).collect()
+    };
+    let group_offsets: Vec<usize> = group_items
         .iter()
-        .map(|item| match &item.expr {
+        .map(|expr| match expr {
             Expr::Column(path) => source.offset_of(path),
             _ => None,
         })

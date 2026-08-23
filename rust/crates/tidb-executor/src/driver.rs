@@ -932,8 +932,16 @@ fn run_select_traced_with_delivery_choice_inner(
     // rebuilds the child under each candidate's property, and keeps the first
     // candidate on an exact tie. Build both plans without executing or tracing
     // them, then rebuild only the cheaper one into the caller's real output.
+    // `DISTINCT` is enumerated with them: Go's `buildDistinct`
+    // (`pkg/planner/core/logical_plan_builder.go:1966`) builds a
+    // LogicalAggregation whose `GroupByItems` are the projection's columns,
+    // and `ExhaustPhysicalPlans4LogicalAggregation`
+    // (`pkg/planner/core/operator/physicalop/base_physical_agg.go:935`) costs
+    // `getStreamAggs` beside `getHashAggs` for it exactly as for a written
+    // `GROUP BY` -- `aggs := append(hashAggs, streamAggs...)` (`:946`) hands
+    // BOTH families to the coster and keeps neither by preference.
     if aggregation_choice == AggregationChoice::Auto
-        && !select.group_by.is_empty()
+        && (!select.group_by.is_empty() || select.distinct)
         && required.is_sort_item_empty()
     {
         // Go's logical statistics collection runs once before physical
@@ -1353,6 +1361,7 @@ fn run_select_traced_with_delivery_choice_inner(
             aggregation_order = (aggregation_choice != AggregationChoice::Hash
                 && !physical_source_names
                 && !decorrelate_exists::has_top_level_exists(select.where_clause.as_ref())
+                && !distinct_eliminated
                 && !agg_select::aggregation_can_be_eliminated(select, catalog, current_db))
             .then(|| {
                 merge_decision::aggregation_order(
@@ -2695,6 +2704,11 @@ fn run_select_traced_with_delivery_choice_inner(
     //
     // Whether the `LIMIT` below was already consumed by a fused `TopN`.
     let mut fused_topn = false;
+    // Whether an ORDER BY operator was installed BELOW the DISTINCT
+    // aggregation. It replaces the source's own order with the written one,
+    // so the group keys are no longer adjacent and only a hash dedup is
+    // correct there.
+    let mut source_reordered = false;
     if !select.order_by.is_empty() && !order_satisfied {
         let mut by_items = Vec::with_capacity(select.order_by.len());
         for item in &select.order_by {
@@ -2845,6 +2859,7 @@ fn run_select_traced_with_delivery_choice_inner(
                 ctx.statement_memory(),
             ));
             fused_topn = true;
+            source_reordered = true;
             if let Some(trace) = trace.as_deref_mut() {
                 if !index_topn_ready {
                     trace.topn(&traced_select.order_by, &qualify, offset, count);
@@ -2859,6 +2874,7 @@ fn run_select_traced_with_delivery_choice_inner(
                 ctx.clone(),
                 ctx.statement_memory(),
             ));
+            source_reordered = true;
             if let Some(trace) = trace.as_deref_mut() {
                 trace.sort(&traced_select.order_by, &qualify);
                 source = trace.meter(source);
@@ -2910,6 +2926,17 @@ fn run_select_traced_with_delivery_choice_inner(
     let direct_distinct_input = direct_distinct_candidate
         .filter(|_| select.order_by.is_empty() || deferred_distinct_sort.is_some());
 
+    // Go's `buildDistinct` aggregation is enumerated by `getStreamAggs`
+    // (`pkg/planner/core/operator/physicalop/physical_stream_agg.go:89`) too,
+    // and a StreamAgg is admissible exactly when a child property delivers
+    // the group keys in order -- which is what `grouped_stream_ordered`
+    // records after the committed source actually delivered it. The choice
+    // between the two families is then costed in
+    // `run_select_traced_with_delivery_choice_inner`; this flag only says
+    // which family THIS branch is building.
+    let distinct_streamed =
+        select.distinct && !distinct_eliminated && grouped_stream_ordered && !source_reordered;
+
     let partial_distinct = direct_distinct_input.as_ref().is_some_and(|input| {
         let Some(input_offset) = input
             .as_column()
@@ -2917,12 +2944,27 @@ fn run_select_traced_with_delivery_choice_inner(
         else {
             return false;
         };
-        let aggregate = PushdownPartialAggregate::GroupBy {
-            input_offset,
-            output_type: out_schema.columns[0]
-                .ret_type
-                .clone()
-                .expect("distinct output has a type"),
+        let output_type = out_schema.columns[0]
+            .ret_type
+            .clone()
+            .expect("distinct output has a type");
+        // Both spellings are the same cop stage -- one group key, no
+        // aggregate function -- but only the general `Grouped` form carries
+        // the streamed flag TiKV needs, and only it is offered by an index
+        // source. Keep the older single-key form for the unordered HashAgg
+        // so its accepted shapes are unchanged.
+        let aggregate = if distinct_streamed {
+            PushdownPartialAggregate::Grouped {
+                group_offsets: vec![input_offset],
+                group_types: vec![output_type],
+                functions: Vec::new(),
+                streamed: true,
+            }
+        } else {
+            PushdownPartialAggregate::GroupBy {
+                input_offset,
+                output_type,
+            }
         };
         source
             .table_access()
@@ -2981,29 +3023,44 @@ fn run_select_traced_with_delivery_choice_inner(
         } else {
             input.clone()
         };
-        let aggregate = HashAggExec::new(
-            ExecutorMeta::new(out_schema.clone(), 5, INIT_CAP, MAX_CHUNK_SIZE),
-            vec![input.clone()],
-            vec![AggFunc::new(AggKind::FirstRow, Some(input.clone()))],
-            source,
-            ctx.clone(),
-            ctx.statement_memory(),
-        );
-        let mut aggregate: Box<dyn Executor> = Box::new(aggregate);
+        let meta = ExecutorMeta::new(out_schema.clone(), 5, INIT_CAP, MAX_CHUNK_SIZE);
+        let group_by = vec![input.clone()];
+        let agg_funcs = vec![AggFunc::new(AggKind::FirstRow, Some(input.clone()))];
+        let mut aggregate: Box<dyn Executor> = if distinct_streamed {
+            let output_positions = (0..agg_funcs.len()).collect();
+            Box::new(crate::hash_agg::GroupedStreamAggExec::new(
+                meta,
+                group_by,
+                agg_funcs,
+                output_positions,
+                source,
+                ctx.clone(),
+            ))
+        } else {
+            Box::new(HashAggExec::new(
+                meta,
+                group_by,
+                agg_funcs,
+                source,
+                ctx.clone(),
+                ctx.statement_memory(),
+            ))
+        };
         if let Some(trace) = trace.as_deref_mut() {
             if partial_distinct {
                 if !trace.partial_hash_agg(
                     traced_select.fields.fields(),
                     &qualify,
                     distinct_logical_rows,
+                    distinct_streamed,
                 ) {
-                    trace.refuse("partial HashAgg child is not a bare table scan");
+                    trace.refuse("partial DISTINCT aggregate child is not a bare scan");
                 }
             } else {
                 trace.scan_reader();
             }
             if partial_distinct {
-                trace.final_distinct(traced_select.fields.fields(), &qualify);
+                trace.final_distinct(traced_select.fields.fields(), &qualify, distinct_streamed);
             } else if physical_source_names {
                 let column_names =
                     physical_source_column_names(select, &current_scope, catalog, current_db);
@@ -3011,6 +3068,7 @@ fn run_select_traced_with_delivery_choice_inner(
                     std::slice::from_ref(&input),
                     &column_names,
                     distinct_logical_rows,
+                    distinct_streamed,
                 ) {
                     trace.refuse("a projection-eliminated DISTINCT is not printable yet");
                 }
@@ -3019,6 +3077,7 @@ fn run_select_traced_with_delivery_choice_inner(
                     traced_select.fields.fields(),
                     &qualify,
                     distinct_logical_rows,
+                    distinct_streamed,
                 );
             }
             aggregate = trace.meter(aggregate);
@@ -3061,12 +3120,13 @@ fn run_select_traced_with_delivery_choice_inner(
     // exactly a deduplication. It sits above the projection and below LIMIT.
     if select.distinct && !distinct_eliminated && direct_distinct_input.is_none() {
         let all: Vec<usize> = (0..out_schema.columns.len()).collect();
-        root = Box::new(distinct_over(root, &out_schema, &all, ctx));
+        root = distinct_over(root, &out_schema, &all, ctx, distinct_streamed);
         if let Some(trace) = trace.as_deref_mut() {
             trace.distinct(
                 traced_select.fields.fields(),
                 &qualify,
                 distinct_logical_rows,
+                distinct_streamed,
             );
             root = trace.meter(root);
         }
@@ -3335,7 +3395,8 @@ fn distinct_over(
     schema: &Schema,
     key_indices: &[usize],
     ctx: &crate::StmtContext,
-) -> HashAggExec<crate::StmtContext> {
+    streamed: bool,
+) -> Box<dyn Executor> {
     let group_by: Vec<Expression> = key_indices
         .iter()
         .map(|index| Expression::Column(schema.columns[*index].clone()))
@@ -3345,14 +3406,27 @@ fn distinct_over(
         .iter()
         .map(|column| AggFunc::new(AggKind::FirstRow, Some(Expression::Column(column.clone()))))
         .collect();
-    HashAggExec::new(
-        ExecutorMeta::new(schema.clone(), 5, INIT_CAP, MAX_CHUNK_SIZE),
-        group_by,
-        agg_funcs,
-        child,
-        ctx.clone(),
-        ctx.statement_memory(),
-    )
+    let meta = ExecutorMeta::new(schema.clone(), 5, INIT_CAP, MAX_CHUNK_SIZE);
+    if streamed {
+        let output_positions = (0..agg_funcs.len()).collect();
+        Box::new(crate::hash_agg::GroupedStreamAggExec::new(
+            meta,
+            group_by,
+            agg_funcs,
+            output_positions,
+            child,
+            ctx.clone(),
+        ))
+    } else {
+        Box::new(HashAggExec::new(
+            meta,
+            group_by,
+            agg_funcs,
+            child,
+            ctx.clone(),
+            ctx.statement_memory(),
+        ))
+    }
 }
 
 /// Evaluates a `LIMIT` bound, which must be a non-negative integer literal.
