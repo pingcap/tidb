@@ -2413,7 +2413,47 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // `ret = max(ret, 1.0/realtimeCount)`). The topic's remaining two are
     // other families: an ORDER BY tie order and an interval-intersection
     // Point_Get.
-    const KNOWN_DIVERGENCES: usize = 13;
+    //
+    // 13 -> 11 at the DECORRELATION family -- both statements hinge on
+    // `rule_decorrelate.go` producing a join shape this tier kept as an
+    // Apply or took through the wrong arm. Nothing entered or left the
+    // comparison (`compared` reads 9674, where it already stood): in each
+    // topic one statement moved from diverged to matched.
+    //
+    //  * `agg_predicate_pushdown` closed (17 of 17 matched): the scalar
+    //    `MAX` in `t1.id = (select max(t0.id) ... where t0.tran_id =
+    //    t1.tran_id)` took the GROUP-BELOW arm here, so an index join probed
+    //    `t1` by the aggregate (`TableRangeScan decided by [Column]`) where
+    //    TiDB full-scans both sides under a pulled-up HashAgg. Go's
+    //    `CanPullUpAgg` (`logical_apply.go`) asks only that the Apply carry
+    //    no join condition and the OUTER have a non-null PK/UK -- it never
+    //    asks whether the correlation covers that key, which is exactly the
+    //    extra question `correlated_agg_decorrelate::pull_up_group_key` was
+    //    asking. The subset test is gone and the arm expands `SELECT *`
+    //    before choosing (Go unfolds the wildcard long before the rule), so
+    //    the pull-up groups the left join by `t1.id` as Go does.
+    //
+    //  * `explain_easy` closed its decorrelation entry (175 of 190 matched):
+    //    `(select count(1) k ... having k != 0)` in the SELECT list kept its
+    //    Apply, and the printed source read `t1` through the covering
+    //    `IndexFullScan(c2)` where TiDB's decorrelated MergeJoin reads both
+    //    sides as `TableFullScan keep order:true`. The mechanism is Go's
+    //    HAVING branch of the grouped-below arm (`rule_decorrelate.go`'s
+    //    `havingConds`): the HAVING rides the Apply as a join condition,
+    //    COUNT's non-NULL empty-input default (`aggDefaultValueMap`) forces
+    //    those conditions OFF the join again, and the scalar becomes
+    //    `IF(having over IFNULL(count, 0), IFNULL(count, 0), NULL)` above
+    //    the left join -- `correlated_agg_decorrelate::
+    //    rewrite_count_having_fields`, receipts in `tidb_session::
+    //    tests_decorrelate_count_having`. The aggregate itself still prints
+    //    as a StreamAgg where Go's `rule_aggregation_elimination` collapses
+    //    the unique-keyed group to a `Projection(1->)`; the scans, which are
+    //    what this reader compares, agree.
+    //
+    // The thirteen that remain: through_projection 5, partition_pruner 3,
+    // join_key_type_cast 2, and one each of index_join, stale_txn
+    // (MVCC-blocked), and autoid.
+    const KNOWN_DIVERGENCES: usize = 11;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path
