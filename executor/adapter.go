@@ -1074,7 +1074,6 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	// Rollback the statement change before retry it.
 	a.Ctx.StmtRollback()
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
-	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
 
 	failpoint.Inject("assertTxnManagerAfterPessimisticLockErrorRetry", func() {
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerAfterPessimisticLockErrorRetry", true)
