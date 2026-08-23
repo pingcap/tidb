@@ -26,6 +26,52 @@ use std::rc::Rc;
 
 use crate::{DriverError, Session, StatementKind, StmtOutput};
 
+/// The statement context's SESSION-VARIABLE half, parsed once per
+/// variable-table generation instead of once per statement.
+///
+/// Go's analogue is `SessionVars` itself: every one of these is a typed
+/// field there (`AllowWriteRowID`, `CTEMaxRecursionDepth`,
+/// `SQLMode`...), maintained by each variable's `SetSession` hook, so a
+/// Go statement reads fields where this port was doing twenty-six
+/// by-name string lookups and parses -- measured as the heaviest
+/// user-code frame on both the read and write paths once the metadata
+/// clones were gone. GLOBAL-scope reads (`tidb_mem_oom_action`,
+/// `tidb_enable_tmp_storage_on_oom`, the password-validation set) stay
+/// LIVE in the builder: a peer's `SET GLOBAL` moves them without this
+/// session's generation changing, so caching them here would be wrong.
+pub(crate) struct StatementVarSnapshot {
+    generation: u64,
+    version: Option<String>,
+    connection_charset: String,
+    connection_collation: String,
+    allow_write_row_id: bool,
+    sysdate_is_now: bool,
+    mode_upper: String,
+    allow_auto_random_explicit_insert: bool,
+    shard_allocate_step: u64,
+    like_default_escape: u8,
+    week_format: i64,
+    div_scale: u32,
+    cte_depth: i64,
+    join_reorder_threshold: i32,
+    default_string_match_selectivity: f64,
+    advanced_join_reorder: bool,
+    ordering_index_selectivity_ratio: f64,
+    join_reorder_through_proj: bool,
+    join_reorder_through_sel: bool,
+    outer_join_reorder: bool,
+    index_merge: bool,
+    static_partition_prune: bool,
+    new_only_full_group_by_check: bool,
+    mem_quota: i64,
+    max_allowed_packet: u64,
+    group_concat_max_len: u64,
+    apply_cache_capacity: i64,
+    block_encryption_mode: tidb_executor::BlockEncryptionMode,
+    arbitrator_wait_averse: Option<bool>,
+    arbitrator_reserved: i64,
+}
+
 impl Session {
     fn optimizer_cost_env(
         &self,
@@ -454,6 +500,169 @@ impl Session {
     /// [`Self::statement_context`] for a DML statement that carries the
     /// `IGNORE` modifier, which Go's `ResetContextOfStmt` reads off the AST
     /// and folds into every value-level error level.
+    /// The cached [`StatementVarSnapshot`], re-derived only when a `SET`
+    /// moved the variable table; see the struct's own doc for why the
+    /// GLOBAL-scope reads are NOT in it.
+    fn statement_var_snapshot(&self) -> std::rc::Rc<StatementVarSnapshot> {
+        let generation = self.vars.generation();
+        if let Some(cached) = self.statement_var_cache.borrow().as_ref() {
+            if cached.generation == generation {
+                return std::rc::Rc::clone(cached);
+            }
+        }
+        let mode_upper = self
+            .vars
+            .get_system("sql_mode")
+            .unwrap_or_default()
+            .to_ascii_uppercase();
+        let has = |flag: &str| mode_upper.split(',').any(|part| part.trim() == flag);
+        let on = |name: &str| {
+            self.vars
+                .get_system(name)
+                .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1")
+        };
+        let not_off = |name: &str| {
+            !matches!(
+                self.vars.get_system(name).as_deref(),
+                Ok("OFF" | "off" | "0")
+            )
+        };
+        let snapshot = std::rc::Rc::new(StatementVarSnapshot {
+            generation,
+            version: self.vars.get_system("version").ok(),
+            connection_charset: self
+                .vars
+                .get_system("character_set_connection")
+                .unwrap_or_else(|_| "utf8mb4".to_owned()),
+            connection_collation: self
+                .vars
+                .get_system("collation_connection")
+                .unwrap_or_else(|_| "utf8mb4_bin".to_owned()),
+            allow_write_row_id: on(tidb_vardef::tidb_vars::TIDB_OPT_WRITE_ROW_ID),
+            sysdate_is_now: on(tidb_vardef::tidb_vars::TIDB_SYSDATE_IS_NOW),
+            allow_auto_random_explicit_insert: on(
+                tidb_vardef::tidb_vars::TIDB_ALLOW_AUTO_RAND_EXPLICIT_INSERT,
+            ),
+            shard_allocate_step: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_SHARD_ALLOCATE_STEP)
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(i64::MAX as u64),
+            like_default_escape: if has("NO_BACKSLASH_ESCAPES")
+                && not_off(tidb_vardef::tidb_vars::TIDB_ENABLE_NO_BACKSLASH_ESCAPES_IN_LIKE)
+            {
+                0
+            } else {
+                b'\\'
+            },
+            week_format: self
+                .vars
+                .get_system("default_week_format")
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(0),
+            div_scale: self
+                .vars
+                .get_system("div_precision_increment")
+                .ok()
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|value| *value > 0)
+                .unwrap_or(4),
+            cte_depth: self
+                .vars
+                .get_system("cte_max_recursion_depth")
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(1000),
+            join_reorder_threshold: self
+                .vars
+                .get_system("tidb_opt_join_reorder_threshold")
+                .ok()
+                .and_then(|value| value.parse::<i32>().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD as i32),
+            default_string_match_selectivity: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_DEFAULT_STR_MATCH_SELECTIVITY)
+                .ok()
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or(0.0),
+            advanced_join_reorder: not_off(
+                tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER,
+            ),
+            ordering_index_selectivity_ratio: self
+                .vars
+                .get_system("tidb_opt_ordering_index_selectivity_ratio")
+                .ok()
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or(0.01),
+            join_reorder_through_proj: on(
+                tidb_vardef::tidb_vars::TIDB_OPT_JOIN_REORDER_THROUGH_PROJ,
+            ),
+            join_reorder_through_sel: on(tidb_vardef::tidb_vars::TIDB_OPT_JOIN_REORDER_THROUGH_SEL),
+            outer_join_reorder: not_off(
+                tidb_vardef::tidb_vars::TIDB_OPTIMIZER_ENABLE_OUTER_JOIN_REORDER,
+            ),
+            index_merge: not_off("tidb_enable_index_merge"),
+            static_partition_prune: self
+                .vars
+                .get_system("tidb_partition_prune_mode")
+                .is_ok_and(|value| value.eq_ignore_ascii_case("static")),
+            new_only_full_group_by_check: on(
+                tidb_vardef::tidb_vars::TIDB_OPTIMIZER_ENABLE_NEW_ONLY_FULL_GROUP_BY_CHECK,
+            ),
+            mem_quota: self
+                .vars
+                .get_system("tidb_mem_quota_query")
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY),
+            max_allowed_packet: self
+                .vars
+                .get_system("max_allowed_packet")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(64 << 20),
+            group_concat_max_len: self
+                .vars
+                .get_system("group_concat_max_len")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(1024),
+            apply_cache_capacity: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_APPLY_CACHE)
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE),
+            block_encryption_mode: self
+                .vars
+                .get_system("block_encryption_mode")
+                .ok()
+                .and_then(|value| tidb_executor::BlockEncryptionMode::parse(&value))
+                .unwrap_or_default(),
+            arbitrator_wait_averse: match self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_WAIT_AVERSE)
+                .unwrap_or_default()
+                .as_str()
+            {
+                "nolimit" => None,
+                "1" => Some(true),
+                _ => Some(false),
+            },
+            arbitrator_reserved: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_QUERY_RESERVED)
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or_default(),
+            mode_upper,
+        });
+        *self.statement_var_cache.borrow_mut() = Some(std::rc::Rc::clone(&snapshot));
+        snapshot
+    }
+
     pub(crate) fn statement_context_ignoring(
         &self,
         is_dml: bool,
@@ -466,209 +675,48 @@ impl Session {
         } else {
             Some(self.current_db.clone())
         };
-        let version = self.vars.get_system("version").ok();
+        // The session-variable half, parsed once per variable-table
+        // generation; see [`StatementVarSnapshot`].
+        let snapshot = self.statement_var_snapshot();
+        let version = snapshot.version.clone();
         let tidb_info = Some(self.vars.tidb_info());
-        let connection_charset = self
-            .vars
-            .get_system("character_set_connection")
-            .unwrap_or_else(|_| "utf8mb4".to_owned());
-        let connection_collation = self
-            .vars
-            .get_system("collation_connection")
-            .unwrap_or_else(|_| "utf8mb4_bin".to_owned());
+        let connection_charset = snapshot.connection_charset.clone();
+        let connection_collation = snapshot.connection_collation.clone();
         let zone = self.session_time_zone();
         let clock = self.statement_clock(&zone);
-        // Go `SessionVars.AllowWriteRowID`, set by `tidb_opt_write_row_id`.
-        let allow_write_row_id = self
-            .vars
-            .get_system(tidb_vardef::tidb_vars::TIDB_OPT_WRITE_ROW_ID)
-            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
-        let sysdate_is_now = self
-            .vars
-            .get_system(tidb_vardef::tidb_vars::TIDB_SYSDATE_IS_NOW)
-            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
-        let mode = self
-            .vars
-            .get_system("sql_mode")
-            .unwrap_or_default()
-            .to_ascii_uppercase();
-        let has = |flag: &str| mode.split(',').any(|part| part.trim() == flag);
-        let allow_auto_random_explicit_insert = self
-            .vars
-            .get_system(tidb_vardef::tidb_vars::TIDB_ALLOW_AUTO_RAND_EXPLICIT_INSERT)
-            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
-        let shard_allocate_step = self
-            .vars
-            .get_system(tidb_vardef::tidb_vars::TIDB_SHARD_ALLOCATE_STEP)
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(i64::MAX as u64);
-        // Go `expression_rewriter` uses no implicit escape when BOTH
-        // `NO_BACKSLASH_ESCAPES` and this session switch are active. Capture
-        // the choice with the rest of the statement state so every planner
-        // rewrite sees one stable answer.
-        let like_default_escape = if has("NO_BACKSLASH_ESCAPES")
-            && !matches!(
-                self.vars
-                    .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_NO_BACKSLASH_ESCAPES_IN_LIKE)
-                    .as_deref(),
-                Ok("OFF" | "off" | "0")
-            ) {
-            0
-        } else {
-            b'\\'
+        let allow_write_row_id = snapshot.allow_write_row_id;
+        let sysdate_is_now = snapshot.sysdate_is_now;
+        let has = |flag: &str| {
+            snapshot
+                .mode_upper
+                .split(',')
+                .any(|part| part.trim() == flag)
         };
-        // Go `GetDefaultWeekFormatMode` treats an unset or empty value as
-        // "0"; `GetDivPrecisionIncrement` falls back to the default of 4.
-        let week_format = self
-            .vars
-            .get_system("default_week_format")
-            .ok()
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(0);
-        let div_scale = self
-            .vars
-            .get_system("div_precision_increment")
-            .ok()
-            .and_then(|value| value.parse::<u32>().ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(4);
-        // Go `SessionVars.CTEMaxRecursionDepth`, the `WITH RECURSIVE` round
-        // bound; the registry default is 1000.
-        let cte_depth = self
-            .vars
-            .get_system("cte_max_recursion_depth")
-            .ok()
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(1000);
-        // Go `SessionVars.TiDBOptJoinReorderThreshold`: how large a join group
-        // the DP reorder solver may enumerate. The shipped default is `0`, so
-        // a session that never writes it never reorders.
-        let join_reorder_threshold = self
-            .vars
-            .get_system("tidb_opt_join_reorder_threshold")
-            .ok()
-            .and_then(|value| value.parse::<i32>().ok())
-            .unwrap_or(tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD as i32);
-        let default_string_match_selectivity = self
-            .vars
-            .get_system(tidb_vardef::tidb_vars::TIDB_DEFAULT_STR_MATCH_SELECTIVITY)
-            .ok()
-            .and_then(|value| value.parse::<f64>().ok())
-            .unwrap_or(0.0);
-        // Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`. Only an explicit
-        // OFF selects the legacy framework; unreadable state keeps the shipped
-        // ON default.
-        let advanced_join_reorder = !matches!(
-            self.vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER)
-                .as_deref(),
-            Ok("OFF" | "off" | "0")
-        );
-        let ordering_index_selectivity_ratio = self
-            .vars
-            .get_system("tidb_opt_ordering_index_selectivity_ratio")
-            .ok()
-            .and_then(|value| value.parse::<f64>().ok())
-            .unwrap_or(0.01);
-        // Go `SessionVars.TiDBOptJoinReorderThroughProj`: whether the join
-        // group may absorb the relations under a `Projection`. Shipped `OFF`.
-        let join_reorder_through_proj = matches!(
-            self.vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_JOIN_REORDER_THROUGH_PROJ)
-                .as_deref(),
-            Ok("ON" | "on" | "1")
-        );
-        // Go `SessionVars.TiDBOptJoinReorderThroughSel`: whether the join
-        // group may absorb the relations under a `Selection`. Shipped `OFF`.
-        let join_reorder_through_sel = matches!(
-            self.vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_JOIN_REORDER_THROUGH_SEL)
-                .as_deref(),
-            Ok("ON" | "on" | "1")
-        );
-        // Go `SessionVars.EnableOuterJoinReorder`: whether an outer join
-        // carrying equal conditions may join the reorder group. Shipped `ON`
-        // (`vardef.DefTiDBEnableOuterJoinReorder = true`), so an unreadable
-        // value keeps the reorder enabled rather than silently disabling it.
-        let outer_join_reorder = !matches!(
-            self.vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_OPTIMIZER_ENABLE_OUTER_JOIN_REORDER)
-                .as_deref(),
-            Ok("OFF" | "off" | "0")
-        );
-        // Go `SessionVars.GetEnableIndexMerge`: the session switch controls
-        // automatic candidates; `USE_INDEX_MERGE` is still explicit and
-        // `NO_INDEX_MERGE` still wins when the statement is planned.
-        let index_merge = !matches!(
-            self.vars.get_system("tidb_enable_index_merge").as_deref(),
-            Ok("OFF" | "off" | "0")
-        );
-        // Go `SessionVars.PartitionPruneMode`: `static` makes the planner
-        // fan a partitioned `DataSource` out into one child per surviving
-        // partition under a `PartitionUnion`, which is a PRINTED shape rather
-        // than a different set of rows. An unreadable value reads as the
-        // shipped `dynamic`.
-        let static_partition_prune = self
-            .vars
-            .get_system("tidb_partition_prune_mode")
-            .is_ok_and(|value| value.eq_ignore_ascii_case("static"));
-        // Go `SessionVars.OptimizerEnableNewOnlyFullGroupByCheck`: the
-        // functional-dependency ONLY_FULL_GROUP_BY checker, OFF by default
-        // (`DefTiDBOptimizerEnableNewOFGB`).
-        let new_only_full_group_by_check = matches!(
-            self.vars
-                .get_system(
-                    tidb_vardef::tidb_vars::TIDB_OPTIMIZER_ENABLE_NEW_ONLY_FULL_GROUP_BY_CHECK
-                )
-                .as_deref(),
-            Ok("ON" | "on" | "1")
-        );
-        // Go `ResetContextOfStmt`: the statement's memory budget is
-        // `@@tidb_mem_quota_query` under the action `@@tidb_mem_oom_action`
-        // selects. An unreadable quota falls back to the shipped 1GiB rather
-        // than to "unlimited", so a registry hiccup cannot silently remove
-        // the protection.
-        let mem_quota = self
-            .vars
-            .get_system("tidb_mem_quota_query")
-            .ok()
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY);
-        // `tidb_mem_oom_action` has GLOBAL scope only, so its live value is
-        // the shared table's, not any session copy -- `get_system` would only
-        // ever hand back the registry default.
-        // Go `SessionVars.MaxAllowedPacket`: the SESSION copy, not the live
-        // global. A SESSION write is ErrReadOnly, so only a new connection
-        // picks up a `SET GLOBAL` -- captured: after
-        // `set global max_allowed_packet = 1024`, the SAME session still
-        // reports 67108864 and still sizes `SPACE(2000)` against it.
-        let max_allowed_packet = self
-            .vars
-            .get_system("max_allowed_packet")
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(64 << 20);
-        // Go `SessionVars.GroupConcatMaxLen`, the SESSION copy the aggregate
-        // builder reads. Default `DefGroupConcatMaxLen` = 1024.
-        let group_concat_max_len = self
-            .vars
-            .get_system("group_concat_max_len")
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(1024);
-        let apply_cache_capacity = self
-            .vars
-            .get_system(tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_APPLY_CACHE)
-            .ok()
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE);
-        let block_encryption_mode = self
-            .vars
-            .get_system("block_encryption_mode")
-            .ok()
-            .and_then(|value| tidb_executor::BlockEncryptionMode::parse(&value))
-            .unwrap_or_default();
+        let allow_auto_random_explicit_insert = snapshot.allow_auto_random_explicit_insert;
+        let shard_allocate_step = snapshot.shard_allocate_step;
+        let like_default_escape = snapshot.like_default_escape;
+        let week_format = snapshot.week_format;
+        let div_scale = snapshot.div_scale;
+        let cte_depth = snapshot.cte_depth;
+        let join_reorder_threshold = snapshot.join_reorder_threshold;
+        let default_string_match_selectivity = snapshot.default_string_match_selectivity;
+        let advanced_join_reorder = snapshot.advanced_join_reorder;
+        let ordering_index_selectivity_ratio = snapshot.ordering_index_selectivity_ratio;
+        let join_reorder_through_proj = snapshot.join_reorder_through_proj;
+        let join_reorder_through_sel = snapshot.join_reorder_through_sel;
+        let outer_join_reorder = snapshot.outer_join_reorder;
+        let index_merge = snapshot.index_merge;
+        let static_partition_prune = snapshot.static_partition_prune;
+        let new_only_full_group_by_check = snapshot.new_only_full_group_by_check;
+        let mem_quota = snapshot.mem_quota;
+        let max_allowed_packet = snapshot.max_allowed_packet;
+        let group_concat_max_len = snapshot.group_concat_max_len;
+        let apply_cache_capacity = snapshot.apply_cache_capacity;
+        let block_encryption_mode = snapshot.block_encryption_mode;
+        let arbitrator_wait_averse = snapshot.arbitrator_wait_averse;
+        let arbitrator_reserved = snapshot.arbitrator_reserved;
+        // GLOBAL-scope reads stay LIVE: a peer's `SET GLOBAL` moves them
+        // without this session's generation changing.
         let password_validation_globals = tidb_util::password_validation::VALIDATE_PASSWORD_SYSVARS
             .into_iter()
             .map(|name| {
@@ -678,12 +726,6 @@ impl Session {
                 )
             })
             .collect::<HashMap<_, _>>();
-        // `@@tidb_enable_tmp_storage_on_oom` (Go `vardef.EnableTmpStorageOnOOM`,
-        // shipped default ON). GLOBAL scope only, exactly like
-        // `tidb_mem_oom_action` above -- captured: a session `SET` is refused
-        // with `[variable:1229] ... should be set with SET GLOBAL`. Only an
-        // explicit OFF turns spilling off, so an unreadable value keeps the
-        // default of spilling rather than failing the statement.
         let tmp_storage_on_oom = {
             let value = self
                 .vars
@@ -699,26 +741,6 @@ impl Session {
                 .get_global("tidb_mem_oom_action")
                 .unwrap_or_default(),
         );
-        // The two session variables are read at the same statement boundary
-        // as Go's `InitMemArbitrator`: `nolimit` opts out entirely, `1`
-        // requests cancellation rather than waiting, and a positive reserved
-        // value starts directly in a root pool.
-        let arbitrator_wait_averse = match self
-            .vars
-            .get_system(tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_WAIT_AVERSE)
-            .unwrap_or_default()
-            .as_str()
-        {
-            "nolimit" => None,
-            "1" => Some(true),
-            _ => Some(false),
-        };
-        let arbitrator_reserved = self
-            .vars
-            .get_system(tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_QUERY_RESERVED)
-            .ok()
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or_default();
         self.session_memory
             .configure(mem_quota, oom_action, tmp_storage_on_oom);
         // The SAME three bits on both branches: a query reads them for
@@ -784,7 +806,7 @@ impl Session {
                 .with_block_encryption_mode(block_encryption_mode)
                 .with_sequences(self.sequence_snapshot())
                 .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
-                .with_sql_mode(scanner_sql_mode_of(&mode))
+                .with_sql_mode(scanner_sql_mode_of(&snapshot.mode_upper))
                 .with_no_unsigned_subtraction(has("NO_UNSIGNED_SUBTRACTION"))
                 .with_like_default_escape(like_default_escape)
                 .with_default_string_match_selectivity(default_string_match_selectivity)
@@ -832,7 +854,7 @@ impl Session {
         .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
         .with_sysdate_is_now(sysdate_is_now)
         .with_clock(clock, zone)
-        .with_sql_mode(scanner_sql_mode_of(&mode))
+        .with_sql_mode(scanner_sql_mode_of(&snapshot.mode_upper))
         .with_no_unsigned_subtraction(has("NO_UNSIGNED_SUBTRACTION"))
         .with_like_default_escape(like_default_escape)
         .with_default_string_match_selectivity(default_string_match_selectivity)

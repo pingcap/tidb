@@ -495,6 +495,8 @@ pub struct Session {
     /// without a hook per variable. Measured before the cache: the two were
     /// the hottest user-code frames under sysbench, ahead of the parser.
     scanner_sql_mode_cache: std::cell::Cell<Option<(u64, tidb_parser::SqlMode)>>,
+    statement_var_cache:
+        std::cell::RefCell<Option<std::rc::Rc<crate::stmt_ctx::StatementVarSnapshot>>>,
     cost_env_cache: std::cell::RefCell<Option<(u64, tidb_planner::candidate_cost::CostEnv, f64)>>,
     /// Go `SessionVars.LastTxnInfo` (`pkg/sessionctx/variable/session.go:1467`):
     /// client-go's `TxnInfo` JSON for the last transaction that ACTIVATED --
@@ -667,6 +669,7 @@ impl Default for Session {
             cluster_schema_version: None,
             mdl_related_tables: None,
             scanner_sql_mode_cache: std::cell::Cell::new(None),
+            statement_var_cache: std::cell::RefCell::new(None),
             cost_env_cache: std::cell::RefCell::new(None),
             last_txn_info: std::cell::RefCell::new(String::new()),
             published_last_insert_id: Rc::default(),
