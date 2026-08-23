@@ -84,6 +84,7 @@ RUST_LOG_FILE="${OUT_DIR}/rust-node.log"
 LADDER_LOG="${OUT_DIR}/ladder.log"
 PLAYGROUND_PID=
 RUST_PID=
+MDL_LOAD_PID=
 RUNTIME_DIR=
 AUTH_FILE=
 # Override with SYSBENCH_AUTH_USER=root SYSBENCH_AUTH_HOST=% to run under the
@@ -103,6 +104,14 @@ RUN_TIME=${SYSBENCH_RUN_TIME:-10}
 # SYSBENCH_SAMPLES=1 for a smoke run; a 1-sample table is explicitly labeled
 # inadmissible for trend claims.
 RUN_SAMPLES=${SYSBENCH_SAMPLES:-3}
+# Rung 8's concurrency probe: how many sysbench threads hold the metadata-lock
+# gate while Go issues DDL, and how long one such DDL may take before the gate
+# counts as starved. Go's own owner re-checks every second, so a healthy node
+# acknowledges within a few; the budget is deliberately far above that so only
+# a real stall trips it.
+MDL_THREADS=${SYSBENCH_MDL_THREADS:-8}
+MDL_LOAD_SECONDS=${SYSBENCH_MDL_SECONDS:-45}
+MDL_DDL_BUDGET=${SYSBENCH_MDL_DDL_BUDGET:-20}
 if [[ ! "${RUN_SAMPLES}" =~ ^[1-9][0-9]*$ ]]; then
   echo "SYSBENCH_SAMPLES must be a positive integer" >&2
   exit 1
@@ -133,6 +142,12 @@ cleanup() {
   local cleanup_failed=false
   trap - EXIT INT TERM
 
+  # Rung 8's background workload outlives an early exit otherwise, and it
+  # holds connections the node shutdown below would then wait on.
+  if [[ -n "${MDL_LOAD_PID}" ]] && kill -0 "${MDL_LOAD_PID}" 2>/dev/null; then
+    kill "${MDL_LOAD_PID}" 2>/dev/null || true
+    wait "${MDL_LOAD_PID}" 2>/dev/null || true
+  fi
   if [[ -n "${RUST_PID}" ]] && kill -0 "${RUST_PID}" 2>/dev/null; then
     kill "${RUST_PID}" 2>/dev/null || true
     wait "${RUST_PID}" 2>/dev/null || true
@@ -710,5 +725,66 @@ sleep 3
 go_admin_check "go-admin-check-table-after-drop-index"
 
 note "rung 7 totals: ${hand_pass} accepted, ${hand_fail} refused"
+
+# The metadata-lock gate under CONCURRENCY. The Rust node acknowledges a Go
+# owner's schema versions only while no local session still reads an older
+# catalog (`cluster_session_node/schema_sync.rs`, Go's `CheckOldRunningTxn`).
+# That gate is whole-transaction scoped, so the question this rung answers is
+# whether a CONTINUOUS multi-threaded workload against the Rust node can hold
+# the gate shut and starve the acknowledgement -- which would re-block every
+# DDL issued through Go, the exact 17-minute hang this machinery fixed. A
+# single-threaded ladder cannot see it: one session always has gaps.
+step "rung 8: Go DDL completes while ${MDL_THREADS} threads run against the Rust node"
+MDL_LOAD_LOG="${OUT_DIR}/rung8-load.log"
+sysbench "${SYSBENCH_CONN[@]}" --db-ps-mode=auto --threads="${MDL_THREADS}" \
+  --time="${MDL_LOAD_SECONDS}" oltp_read_write run >"${MDL_LOAD_LOG}" 2>&1 &
+MDL_LOAD_PID=$!
+# Let the workload actually establish its transactions before the DDL asks
+# the owner to wait for this node.
+sleep 3
+mdl_pass=0
+mdl_fail=0
+mdl_ddl() {
+  local name=$1 sql=$2 started elapsed
+  started=$(date +%s)
+  if "${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${GO_SQL_PORT}" -uroot \
+    "${MYSQL_PLUGIN_ARGS[@]}" --connect-timeout=5 \
+    -e "${sql}" >>"${LADDER_LOG}" 2>&1; then
+    elapsed=$(( $(date +%s) - started ))
+    if [[ "${elapsed}" -le "${MDL_DDL_BUDGET}" ]]; then
+      note "OK   rung 8 ${name}: Go DDL committed in ${elapsed}s under load"
+      mdl_pass=$((mdl_pass + 1))
+    else
+      note "FAIL rung 8 ${name}: Go DDL took ${elapsed}s, over the ${MDL_DDL_BUDGET}s budget"
+      mdl_fail=$((mdl_fail + 1))
+    fi
+  else
+    elapsed=$(( $(date +%s) - started ))
+    note "FAIL rung 8 ${name}: Go DDL failed after ${elapsed}s"
+    mdl_fail=$((mdl_fail + 1))
+  fi
+}
+# Each shape asks a different question of the gate: a table the workload does
+# NOT touch (Go would never block on it), and one it hammers continuously
+# (where a whole-transaction gate is at its most conservative).
+mdl_ddl "create-unrelated-table" \
+  "CREATE TABLE ${SYSBENCH_DB}.mdl_probe (id INT PRIMARY KEY, v INT)"
+mdl_ddl "add-column-unrelated" \
+  "ALTER TABLE ${SYSBENCH_DB}.mdl_probe ADD COLUMN w INT"
+mdl_ddl "add-column-to-hot-table" \
+  "ALTER TABLE ${SYSBENCH_DB}.sbtest1 ADD COLUMN mdl_marker INT"
+mdl_ddl "drop-column-from-hot-table" \
+  "ALTER TABLE ${SYSBENCH_DB}.sbtest1 DROP COLUMN mdl_marker"
+mdl_ddl "drop-unrelated-table" "DROP TABLE ${SYSBENCH_DB}.mdl_probe"
+if wait "${MDL_LOAD_PID}"; then
+  note "OK   rung 8 load: the workload ran clean across the DDLs"
+  mdl_pass=$((mdl_pass + 1))
+else
+  note "FAIL rung 8 load: the workload errored while the DDLs ran"
+  tail -8 "${MDL_LOAD_LOG}" | tee -a "${LADDER_LOG}"
+  mdl_fail=$((mdl_fail + 1))
+fi
+MDL_LOAD_PID=
+note "rung 8 totals: ${mdl_pass} passed, ${mdl_fail} failed"
 
 note "sysbench ladder finished; artifacts under ${OUT_DIR}"

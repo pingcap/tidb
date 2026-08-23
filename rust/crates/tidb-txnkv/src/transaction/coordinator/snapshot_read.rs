@@ -26,7 +26,7 @@ use tidb_proto::{
 
 use crate::gc_state::GcStateCache;
 use crate::lock::{
-    decode_lock_observation, resolve_optimistic_locks, LockRecoveryClient, TimestampSource,
+    decode_blocking_lock_observation, resolve_blocking_locks, LockRecoveryClient, TimestampSource,
 };
 use crate::region::{RegionBackoffBudget, RegionRecoveryLoader};
 use crate::rpc::{TransactionBatchPublication, TransactionBatchResponse, UnaryCallContext};
@@ -143,9 +143,9 @@ where
         }
         if let Some(key_error) = response.response.error.as_ref() {
             if let Some(lock_info) = key_error.locked.as_ref() {
-                let locks = decode_lock_observation(lock_info)
+                let locks = decode_blocking_lock_observation(lock_info)
                     .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-                let recovery = resolve_optimistic_locks(
+                let recovery = resolve_blocking_locks(
                     runtime, &locks, start_ts, &context, call, timestamps, true,
                 )
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -308,10 +308,10 @@ where
             }
             if let Some(key_error) = response.response.error.as_ref() {
                 if let Some(lock_info) = key_error.locked.as_ref() {
-                    let locks = decode_lock_observation(lock_info).map_err(|error| {
+                    let locks = decode_blocking_lock_observation(lock_info).map_err(|error| {
                         OptimisticCoordinatorError::SnapshotGet(error.to_string())
                     })?;
-                    let recovery = resolve_optimistic_locks(
+                    let recovery = resolve_blocking_locks(
                         &self.runtime,
                         &locks,
                         read_ts,
@@ -467,9 +467,9 @@ where
                 }
                 if let Some(key_error) = response.response.error.as_ref() {
                     if let Some(lock_info) = key_error.locked.as_ref() {
-                        locked.extend(decode_lock_observation(lock_info).map_err(|error| {
-                            OptimisticCoordinatorError::SnapshotGet(error.to_string())
-                        })?);
+                        locked.extend(decode_blocking_lock_observation(lock_info).map_err(
+                            |error| OptimisticCoordinatorError::SnapshotGet(error.to_string()),
+                        )?);
                         lock_context = Some(request.context.clone());
                         continue;
                     }
@@ -481,9 +481,9 @@ where
                 for pair in response.response.pairs {
                     if let Some(key_error) = pair.error.as_ref() {
                         if let Some(lock_info) = key_error.locked.as_ref() {
-                            locked.extend(decode_lock_observation(lock_info).map_err(|error| {
-                                OptimisticCoordinatorError::SnapshotGet(error.to_string())
-                            })?);
+                            locked.extend(decode_blocking_lock_observation(lock_info).map_err(
+                                |error| OptimisticCoordinatorError::SnapshotGet(error.to_string()),
+                            )?);
                             lock_context = Some(request.context.clone());
                             batch_has_locks = true;
                             continue;
@@ -509,7 +509,7 @@ where
             }
             if !locked.is_empty() {
                 let context = lock_context.unwrap_or_default();
-                let recovery = resolve_optimistic_locks(
+                let recovery = resolve_blocking_locks(
                     &self.runtime,
                     &locked,
                     read_ts,
@@ -658,7 +658,7 @@ where
                 }
             }
             if !locked.is_empty() {
-                let recovery = resolve_optimistic_locks(
+                let recovery = resolve_blocking_locks(
                     &self.runtime,
                     &locked,
                     read_ts,
@@ -765,7 +765,7 @@ where
 /// recover from, so it fails the scan instead of being retried forever.
 fn collect_scan_lock(
     key_error: &KvrpcKeyError,
-    locked: &mut Vec<crate::lock::OptimisticLock>,
+    locked: &mut Vec<crate::lock::BlockingLock>,
 ) -> Result<(), OptimisticCoordinatorError> {
     let Some(lock_info) = key_error.locked.as_ref() else {
         return Err(OptimisticCoordinatorError::SnapshotGet(format!(
@@ -773,7 +773,7 @@ fn collect_scan_lock(
         )));
     };
     locked.extend(
-        decode_lock_observation(lock_info)
+        decode_blocking_lock_observation(lock_info)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?,
     );
     Ok(())

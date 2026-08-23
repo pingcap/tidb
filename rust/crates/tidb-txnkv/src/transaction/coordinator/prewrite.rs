@@ -249,6 +249,8 @@ where
             context,
             call,
             &self.timestamps,
+            // Prewrite is a write: it waits locks out.
+            false,
         )
         .map_err(|error| prewrite_lock_recovery_cause(eligible_locks[0].key(), error))?
         {

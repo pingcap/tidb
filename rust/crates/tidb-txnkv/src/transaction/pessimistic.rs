@@ -894,6 +894,8 @@ where
             batch.context(),
             call,
             self.two_pc.timestamps(),
+            // A lock blocking a WRITE is waited out, never stepped over.
+            false,
         )
         .map_err(|error| {
             PessimisticLockFailure::Transaction(TransactionCause::Lock {

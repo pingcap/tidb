@@ -39,7 +39,7 @@ use lock::{
 };
 use region::{
     Peer, PeerRole, RegionCache, RegionEpoch, RegionLoadError, RegionLoader, RegionLocation,
-    RegionVerId, Store,
+    RegionMetadata, RegionRecoveryLoader, RegionVerId, Store,
 };
 use tidb_proto::{
     kvrpcpb, KvrpcCheckSecondaryLocksRequest, KvrpcCheckSecondaryLocksResponse,
@@ -63,6 +63,23 @@ impl RegionLoader for StaticLoader {
             .find(|location| location.contains_key(key))
             .cloned()
             .ok_or_else(|| RegionLoadError::new("test", "missing test region"))
+    }
+}
+
+// The lock path recovers region errors the way client-go's `store.SendReq`
+// does for every `lock_resolver.go` RPC, so its loader must be able to
+// hydrate. These cases script no region error, so the hydration path is
+// unreachable and says so rather than inventing a topology.
+impl RegionRecoveryLoader for StaticLoader {
+    fn hydrate_region(
+        &mut self,
+        _metadata: &RegionMetadata,
+        _leader_store_id: u64,
+    ) -> Result<RegionLocation, RegionLoadError> {
+        Err(RegionLoadError::new(
+            "unexpected-hydration",
+            "these lock-resolver cases never return a region error",
+        ))
     }
 }
 
@@ -791,6 +808,8 @@ fn a_primary_mismatch_pessimistic_lock_is_rolled_back_not_raised() {
         &KvrpcContext::default(),
         &call(),
         &FixedTimestampSource::new(1_100 << 18),
+        // A blocking WRITE waits locks out; it never steps over them.
+        false,
     )
     .expect("a stale pessimistic lock is cleanable");
 
@@ -945,6 +964,8 @@ fn an_expired_pessimistic_blocker_is_rolled_back_at_its_own_for_update_ts() {
         &KvrpcContext::default(),
         &call(),
         &FixedTimestampSource::new(1_100 << 18),
+        // A blocking WRITE waits locks out; it never steps over them.
+        false,
     )
     .unwrap();
 
@@ -986,6 +1007,8 @@ fn a_live_pessimistic_blocker_reports_its_remaining_ttl() {
         &KvrpcContext::default(),
         &call(),
         &AdvancingTimestampSource::new([1_100 << 18, 1_200 << 18]),
+        // A blocking WRITE waits locks out; it never steps over them.
+        false,
     )
     .unwrap();
 
@@ -1014,6 +1037,8 @@ fn a_freshly_refreshed_blocker_is_assumed_alive_without_a_status_rpc() {
         &KvrpcContext::default(),
         &call(),
         &FixedTimestampSource::new(1_100 << 18),
+        // A blocking WRITE waits locks out; it never steps over them.
+        false,
     )
     .unwrap();
 
@@ -1053,6 +1078,8 @@ fn a_mixed_blocker_set_uses_each_locks_own_cleanup_protocol() {
         &KvrpcContext::default(),
         &call(),
         &AdvancingTimestampSource::new([1_100 << 18, 1_100 << 18]),
+        // A blocking WRITE waits locks out; it never steps over them.
+        false,
     )
     .unwrap();
 
@@ -1100,6 +1127,8 @@ fn a_primary_pessimistic_blocker_is_cleaned_by_the_status_query_alone() {
         &KvrpcContext::default(),
         &call(),
         &FixedTimestampSource::new(1_100 << 18),
+        // A blocking WRITE waits locks out; it never steps over them.
+        false,
     )
     .unwrap();
 

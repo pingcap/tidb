@@ -1649,12 +1649,26 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         }
         self.record_attempt_result(logical_task_id, &selected, dispatch_duration)?;
         cache_operation(&self.shared_runtime, |region_cache| {
-            region_cache
-                .on_route_success(&selected)
-                .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?;
-            region_cache
-                .promote_successful_request(&selected)
-                .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?;
+            // Success BOOKKEEPING, over a route the cache may already have
+            // replaced: under concurrency another caller can meet the same
+            // split and refresh the region between this request's dispatch
+            // and its reply. There is then nothing left to promote, and
+            // client-go's `onSendSuccess` cannot fail a request either --
+            // while the response in hand is valid and already decoded.
+            // Failing here threw away a GOOD coprocessor answer and killed
+            // the statement with 1105 whenever TiKV split under load.
+            match region_cache.on_route_success(&selected) {
+                Ok(_) | Err(RegionRecoveryError::StaleObservation(_)) => {}
+                Err(error) => {
+                    return Err(DirectUnaryTransportError::RegionRecovery(error.to_string()))
+                }
+            }
+            match region_cache.promote_successful_request(&selected) {
+                Ok(_) | Err(RegionRecoveryError::StaleObservation(_)) => {}
+                Err(error) => {
+                    return Err(DirectUnaryTransportError::RegionRecovery(error.to_string()))
+                }
+            }
             Ok::<_, DirectUnaryTransportError>(())
         })??;
         if let Some(lock) = locked {

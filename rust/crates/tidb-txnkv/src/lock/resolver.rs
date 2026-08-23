@@ -24,7 +24,8 @@ use tidb_proto::{
 };
 
 use crate::region::{
-    ReadPolicy, RegionBackoffBudget, RegionBackoffKind, RegionLoader, RequestSelection,
+    ReadPolicy, RegionAttempt, RegionBackoffBudget, RegionBackoffKind, RegionErrorDisposition,
+    RegionLoader, RegionRecoveryError, RegionRecoveryLoader, RequestSelection,
 };
 use crate::rpc::TonicCoprocessorClient;
 use crate::{DirectUnaryClientError, SharedReadRuntime, UnaryCallContext};
@@ -421,7 +422,7 @@ pub fn resolve_optimistic_locks<C, L, T>(
 ) -> Result<LockRecoveryResult, LockRecoveryError>
 where
     C: LockRecoveryClient,
-    L: RegionLoader,
+    L: RegionRecoveryLoader,
     T: TimestampSource + ?Sized,
 {
     let mut result = LockRecoveryResult {
@@ -517,7 +518,7 @@ fn resolve_one_optimistic_lock<C, L, T>(
 ) -> Result<OneLockOutcome, LockRecoveryError>
 where
     C: LockRecoveryClient,
-    L: RegionLoader,
+    L: RegionRecoveryLoader,
     T: TimestampSource + ?Sized,
 {
     let check_response = match query_txn_status(
@@ -661,7 +662,7 @@ pub(super) fn query_txn_status<C, L, T>(
 ) -> Result<LockStatus, LockRecoveryError>
 where
     C: LockRecoveryClient,
-    L: RegionLoader,
+    L: RegionRecoveryLoader,
     T: TimestampSource + ?Sized,
 {
     check_cancelled(call)?;
@@ -681,7 +682,8 @@ where
     let mut backoff = RegionBackoffBudget::new(GET_TXN_STATUS_MAX_BACKOFF);
     loop {
         check_cancelled(call)?;
-        let (primary_address, primary_context) = route_key(runtime, query.primary, base_context)?;
+        let (primary_address, primary_context, primary_attempt) =
+            route_key_attempt(runtime, query.primary, base_context)?;
         check_cancelled(call)?;
         let request = KvrpcCheckTxnStatusRequest {
             primary_key: query.primary.to_vec(),
@@ -705,7 +707,10 @@ where
         // acting on a simultaneous CheckTxnStatus result.
         check_cancelled(call)?;
         if let Some(error) = response.region_error.as_ref() {
-            return Err(LockRecoveryError::RegionError(format!("{error:?}")));
+            // Go `getTxnStatus`: BoRegionMiss and go round again against the
+            // refreshed route, rather than failing the caller's statement.
+            recover_lock_region_error(runtime, error, &primary_attempt, &mut backoff, call)?;
+            continue;
         }
         let Some(key_error) = response.error.as_ref() else {
             return Ok(LockStatus::Answered(response));
@@ -889,39 +894,54 @@ fn resolve_async_commit_lock<C, L>(
 ) -> Result<ResolvedTxnStatus, LockRecoveryError>
 where
     C: LockRecoveryClient,
-    L: RegionLoader,
+    L: RegionRecoveryLoader,
 {
     let mut data = AsyncResolveData {
         commit_ts: primary_lock.min_commit_ts,
         keys: Vec::new(),
         missing_lock: false,
     };
-    for group in group_keys_by_region(runtime, &primary_lock.secondaries, base_context)? {
-        check_cancelled(call)?;
-        let request = KvrpcCheckSecondaryLocksRequest {
-            keys: group.keys.clone(),
-            start_version: lock.txn_id,
-            ..KvrpcCheckSecondaryLocksRequest::default()
+    // Go `checkAllSecondaries`: a region error backs off `BoRegionMiss` and
+    // re-runs the whole grouping, because a split has changed WHICH region
+    // each secondary belongs to -- regrouping is the point, not just
+    // re-sending. `data` is rebuilt with it so no batch is counted twice.
+    let mut backoff = RegionBackoffBudget::new(GET_TXN_STATUS_MAX_BACKOFF);
+    'regroup: loop {
+        data = AsyncResolveData {
+            commit_ts: primary_lock.min_commit_ts,
+            keys: Vec::new(),
+            missing_lock: false,
         };
-        let response = runtime
-            .client()
-            .try_borrow_mut()
-            .map_err(|_| LockRecoveryError::ClientLifecycle)?
-            .check_secondary_locks_for_lock(&group.address, &request, &group.context, call)
-            .map_err(map_rpc_error)?;
-        check_cancelled(call)?;
-        if let Some(error) = response.region_error.as_ref() {
-            return Err(LockRecoveryError::RegionError(format!("{error:?}")));
+        for group in group_keys_by_region(runtime, &primary_lock.secondaries, base_context)? {
+            check_cancelled(call)?;
+            let request = KvrpcCheckSecondaryLocksRequest {
+                keys: group.keys.clone(),
+                start_version: lock.txn_id,
+                ..KvrpcCheckSecondaryLocksRequest::default()
+            };
+            let response = runtime
+                .client()
+                .try_borrow_mut()
+                .map_err(|_| LockRecoveryError::ClientLifecycle)?
+                .check_secondary_locks_for_lock(&group.address, &request, &group.context, call)
+                .map_err(map_rpc_error)?;
+            check_cancelled(call)?;
+            if let Some(error) = response.region_error.as_ref() {
+                recover_lock_region_error(runtime, error, &group.attempt, &mut backoff, call)?;
+                continue 'regroup;
+            }
+            if let Some(error) = response.error.as_ref() {
+                return Err(LockRecoveryError::KeyError(format!("{error:?}")));
+            }
+            data.add_keys(
+                &response.locks,
+                group.keys.len(),
+                lock.txn_id,
+                response.commit_ts,
+            )?;
         }
-        if let Some(error) = response.error.as_ref() {
-            return Err(LockRecoveryError::KeyError(format!("{error:?}")));
-        }
-        data.add_keys(
-            &response.locks,
-            group.keys.len(),
-            lock.txn_id,
-            response.commit_ts,
-        )?;
+        // Every group answered without a split moving the keys.
+        break;
     }
     // The primary is resolved with the same fate as every secondary; it is
     // deliberately last, so a failure cannot leave secondaries resolved against
@@ -941,6 +961,9 @@ where
 /// One region's share of a keyed recovery command.
 struct RegionKeyGroup {
     address: String,
+    /// The route this group was sent on, kept so a region error the send
+    /// comes back with can be applied to the cache before the retry.
+    attempt: RegionAttempt,
     context: KvrpcContext,
     keys: Vec<Vec<u8>>,
 }
@@ -953,11 +976,11 @@ fn group_keys_by_region<C, L>(
     base_context: &KvrpcContext,
 ) -> Result<Vec<RegionKeyGroup>, LockRecoveryError>
 where
-    L: RegionLoader,
+    L: RegionRecoveryLoader,
 {
     let mut groups: Vec<RegionKeyGroup> = Vec::new();
     for key in keys {
-        let (address, context) = route_key(runtime, key, base_context)?;
+        let (address, context, attempt) = route_key_attempt(runtime, key, base_context)?;
         match groups
             .iter_mut()
             .find(|group| group.address == address && group.context.region_id == context.region_id)
@@ -965,6 +988,7 @@ where
             Some(group) => group.keys.push(key.clone()),
             None => groups.push(RegionKeyGroup {
                 address,
+                attempt,
                 context,
                 keys: vec![key.clone()],
             }),
@@ -982,7 +1006,7 @@ fn resolve_secondary<C, L>(
 ) -> Result<(), LockRecoveryError>
 where
     C: LockRecoveryClient,
-    L: RegionLoader,
+    L: RegionRecoveryLoader,
 {
     resolve_key(runtime, lock.txn_id, &lock.key, status, base_context, call)
 }
@@ -997,37 +1021,44 @@ fn resolve_key<C, L>(
 ) -> Result<(), LockRecoveryError>
 where
     C: LockRecoveryClient,
-    L: RegionLoader,
+    L: RegionRecoveryLoader,
 {
-    check_cancelled(call)?;
-    let (address, context) = route_key(runtime, key, base_context)?;
-    check_cancelled(call)?;
-    let request = KvrpcResolveLockRequest {
-        start_version: txn_id,
-        commit_version: match status {
-            ResolvedTxnStatus::Committed(commit_ts) => commit_ts,
-            ResolvedTxnStatus::RolledBack => 0,
-        },
-        keys: vec![key.to_vec()],
-        is_async: false,
-        is_txn_file: false,
-        ..KvrpcResolveLockRequest::default()
-    };
-    let response = runtime
-        .client()
-        .try_borrow_mut()
-        .map_err(|_| LockRecoveryError::ClientLifecycle)?
-        .resolve_lock_for_read(&address, &request, &context, call)
-        .map_err(map_rpc_error)?;
-    // Do not inspect or publish a ResolveLock result after caller cancellation.
-    check_cancelled(call)?;
-    if let Some(error) = response.region_error.as_ref() {
-        return Err(LockRecoveryError::RegionError(format!("{error:?}")));
+    // Go `resolveLock` wraps exactly this send in `for { ... }`, retrying a
+    // region error after `BoRegionMiss`; the budget is the same
+    // resolve-lock budget its backoffer carries.
+    let mut backoff = RegionBackoffBudget::new(GET_TXN_STATUS_MAX_BACKOFF);
+    loop {
+        check_cancelled(call)?;
+        let (address, context, attempt) = route_key_attempt(runtime, key, base_context)?;
+        check_cancelled(call)?;
+        let request = KvrpcResolveLockRequest {
+            start_version: txn_id,
+            commit_version: match status {
+                ResolvedTxnStatus::Committed(commit_ts) => commit_ts,
+                ResolvedTxnStatus::RolledBack => 0,
+            },
+            keys: vec![key.to_vec()],
+            is_async: false,
+            is_txn_file: false,
+            ..KvrpcResolveLockRequest::default()
+        };
+        let response = runtime
+            .client()
+            .try_borrow_mut()
+            .map_err(|_| LockRecoveryError::ClientLifecycle)?
+            .resolve_lock_for_read(&address, &request, &context, call)
+            .map_err(map_rpc_error)?;
+        // Do not inspect or publish a ResolveLock result after caller cancellation.
+        check_cancelled(call)?;
+        if let Some(error) = response.region_error.as_ref() {
+            recover_lock_region_error(runtime, error, &attempt, &mut backoff, call)?;
+            continue;
+        }
+        if let Some(error) = response.error.as_ref() {
+            return Err(LockRecoveryError::KeyError(format!("{error:?}")));
+        }
+        return Ok(());
     }
-    if let Some(error) = response.error.as_ref() {
-        return Err(LockRecoveryError::KeyError(format!("{error:?}")));
-    }
-    Ok(())
 }
 
 pub(super) fn map_rpc_error(error: DirectUnaryClientError) -> LockRecoveryError {
@@ -1052,7 +1083,21 @@ pub(super) fn route_key<C, L>(
     base_context: &KvrpcContext,
 ) -> Result<(String, KvrpcContext), LockRecoveryError>
 where
-    L: RegionLoader,
+    L: RegionRecoveryLoader,
+{
+    let (address, context, _) = route_key_attempt(runtime, key, base_context)?;
+    Ok((address, context))
+}
+
+/// [`route_key`] keeping the attempt, which is what the region cache needs to
+/// recover a region error the routed RPC comes back with.
+pub(super) fn route_key_attempt<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    key: &[u8],
+    base_context: &KvrpcContext,
+) -> Result<(String, KvrpcContext, RegionAttempt), LockRecoveryError>
+where
+    L: RegionRecoveryLoader,
 {
     let region = runtime
         .locate_key(key)
@@ -1090,7 +1135,55 @@ where
     context.replica_read = false;
     context.stale_read = false;
     context.cluster_id = runtime.cluster_id();
-    Ok((selected.attempt.address, context))
+    Ok((selected.attempt.address.clone(), context, selected.attempt))
+}
+
+/// Applies one region error met by a LOCK-path RPC to the cache and reserves
+/// the caller's next retry delay -- client-go's
+/// `bo.Backoff(retry.BoRegionMiss, ...)` followed by `continue`, which is
+/// what `getTxnStatus`, `resolveLock` and `checkSecondaries` each do
+/// (`lock_resolver.go`). Their RPCs go through `store.SendReq`, whose
+/// `RegionRequestSender` refreshes the cache before the retry re-locates; this
+/// port calls the client directly, so the refresh has to be asked for here.
+/// Without it a region SPLIT during a locking workload aborted the
+/// transaction with 1105 instead of being retried.
+pub(super) fn recover_lock_region_error<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    error: &tidb_proto::RegionError,
+    attempt: &RegionAttempt,
+    backoff: &mut RegionBackoffBudget,
+    call: &UnaryCallContext,
+) -> Result<(), LockRecoveryError>
+where
+    L: RegionRecoveryLoader,
+{
+    let recovered = runtime
+        .with_region_cache(|cache| cache.on_region_error(error, attempt.clone(), backoff))
+        .map_err(|_| LockRecoveryError::RegionCacheLifecycle)?;
+    let delay = match recovered {
+        // A stale observation means a concurrent caller already refreshed
+        // this route; re-locating is enough. See the coordinator's
+        // `disposition_for_recovery_outcome` for the same rule.
+        Err(RegionRecoveryError::StaleObservation(_)) => backoff
+            .next_delay(RegionBackoffKind::RegionMiss)
+            .map_err(|_| LockRecoveryError::RegionError(format!("{error:?}")))?,
+        Err(other) => return Err(LockRecoveryError::RegionError(other.to_string())),
+        Ok(RegionErrorDisposition::RetryRoute { delay, .. })
+        | Ok(RegionErrorDisposition::RetrySelector { delay, .. })
+        | Ok(RegionErrorDisposition::RebuildRanges { delay, .. }) => delay,
+        // Non-retryable and terminal answers keep their identity: Go returns
+        // these to the lock caller rather than spinning on them.
+        Ok(RegionErrorDisposition::ReturnRegionError) | Ok(RegionErrorDisposition::Terminal(_)) => {
+            return Err(LockRecoveryError::RegionError(format!("{error:?}")))
+        }
+    };
+    if delay > call.timeout() {
+        return Err(LockRecoveryError::StatusRetryDeadlineExceeded);
+    }
+    if call.cancellation().wait_timeout(delay) {
+        return Err(LockRecoveryError::CallerCancelled);
+    }
+    check_cancelled(call)
 }
 
 #[cfg(test)]

@@ -45,7 +45,8 @@ use tidb_proto::{KvrpcContext, KvrpcKeyError};
 use crate::gc_state::{GcStateCache, VisibilityError};
 use crate::lock::{LockRecoveryClient, TimestampSource};
 use crate::region::{
-    RegionBackoffBudget, RegionErrorDisposition, RegionRecoveryLoader, RegionTerminalError,
+    RegionBackoffBudget, RegionErrorDisposition, RegionRebuildAction, RegionRecoveryError,
+    RegionRecoveryLoader, RegionTerminalError,
 };
 use crate::rpc::{TonicCoprocessorClient, TransactionBatchPublication, UnaryCallContext};
 use crate::{PdRegionLoader, SharedReadRuntime};
@@ -469,15 +470,13 @@ pub(super) fn recover_region_error_with<C, L>(
 where
     L: RegionRecoveryLoader,
 {
-    let disposition = runtime
+    let outcome = runtime
         .region_cache_handle()
         .on_region_error(error, attempt.clone(), backoff)
         .map_err(|error| TransactionCause::Region {
             detail: format!("RegionCache recovery lifecycle failed: {error}"),
-        })?
-        .map_err(|error| TransactionCause::Region {
-            detail: format!("RegionCache rejected region error: {error}"),
         })?;
+    let disposition = disposition_for_recovery_outcome(outcome, backoff)?;
     let delay = match disposition {
         RegionErrorDisposition::RetryRoute { delay, .. }
         | RegionErrorDisposition::RetrySelector { delay, .. }
@@ -492,6 +491,48 @@ where
         }
     };
     wait_with_call(call, delay)
+}
+
+/// Turns one cache recovery answer into the disposition the caller acts on.
+///
+/// Split out from [`recover_region_error_with`] so the staleness rule below
+/// is testable without a runtime, a loader, or a live region.
+pub(super) fn disposition_for_recovery_outcome(
+    outcome: Result<RegionErrorDisposition, RegionRecoveryError>,
+    backoff: &mut RegionBackoffBudget,
+) -> Result<RegionErrorDisposition, TransactionCause> {
+    match outcome {
+        Ok(disposition) => Ok(disposition),
+        // The cache has already moved past the route this response describes
+        // -- a CONCURRENT caller met the same split and refreshed it first.
+        // That is the ordinary shape under a multi-threaded workload, and in
+        // client-go it aborts nothing: the region is simply no longer cached
+        // for this caller, so it re-resolves through the outer `BoRegionMiss`
+        // loop and re-splits its keys against the new regions
+        // (`RegionErrorDisposition::ReturnRegionError`'s own doc says stale
+        // topology takes this path). Failing the transaction here killed
+        // sysbench's INSERT the moment TiKV split a region under eight
+        // threads. The budget still bounds it: a stale observation that never
+        // resolves exhausts `RegionMiss` and fails.
+        Err(RegionRecoveryError::StaleObservation(_)) => {
+            Ok(RegionErrorDisposition::RebuildRanges {
+                delay: backoff
+                    .next_delay(crate::region::RegionBackoffKind::RegionMiss)
+                    .map_err(|exhausted| {
+                        terminal_region_cause(RegionTerminalError::BackoffExhausted {
+                            kind: exhausted.kind,
+                            max_sleep: exhausted.max_sleep,
+                        })
+                    })?,
+                action: RegionRebuildAction::CacheReady,
+            })
+        }
+        // Every other recovery failure is a malformed payload or a loader
+        // fault, which no retry fixes.
+        Err(error) => Err(TransactionCause::Region {
+            detail: format!("RegionCache rejected region error: {error}"),
+        }),
+    }
 }
 
 fn terminal_region_cause(terminal: RegionTerminalError) -> TransactionCause {
@@ -760,5 +801,62 @@ mod tests {
             TransactionCause::Region { detail }
                 if detail.contains("FlashbackInProgress") && detail.contains("42")
         ));
+    }
+
+    /// A response whose route a CONCURRENT caller already refreshed is the
+    /// ordinary shape under a multi-threaded workload -- TiKV splits a region
+    /// and several in-flight requests meet it at once. client-go aborts
+    /// nothing there: the region is no longer cached for this caller, so it
+    /// re-resolves and re-splits its keys through the outer `BoRegionMiss`
+    /// loop. Sysbench's INSERT died with 1105 under eight threads while this
+    /// was fatal.
+    #[test]
+    fn a_stale_observation_rebuilds_ranges_instead_of_killing_the_transaction() {
+        let stale = |region: u64| {
+            Err(RegionRecoveryError::StaleObservation(
+                crate::region::RegionAttempt {
+                    region: crate::region::RegionVerId::new(region, 1, 71),
+                    peer_id: 11,
+                    store_id: 101,
+                    address: "store-101".to_owned(),
+                    store_epoch: 7,
+                },
+            ))
+        };
+        let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 1);
+        let disposition = disposition_for_recovery_outcome(stale(152), &mut budget)
+            .expect("a stale observation is retried, not fatal");
+        assert!(matches!(
+            disposition,
+            RegionErrorDisposition::RebuildRanges {
+                action: RegionRebuildAction::CacheReady,
+                ..
+            }
+        ));
+        assert!(
+            budget.total_sleep() > Duration::ZERO,
+            "the retry pays backoff"
+        );
+
+        // The budget still bounds it: a staleness that never resolves stops.
+        let mut spent = RegionBackoffBudget::with_jitter_seed(Duration::from_millis(1), 1);
+        let mut exhausted = None;
+        for _ in 0..64 {
+            if let Err(cause) = disposition_for_recovery_outcome(stale(152), &mut spent) {
+                exhausted = Some(cause);
+                break;
+            }
+        }
+        assert!(
+            matches!(exhausted, Some(TransactionCause::BackoffExhausted { .. })),
+            "an unresolving staleness must exhaust its budget, not spin"
+        );
+
+        // A malformed payload is NOT a staleness and stays fatal.
+        let malformed = disposition_for_recovery_outcome(
+            Err(RegionRecoveryError::MissingRegionEpoch { region_id: 152 }),
+            &mut RegionBackoffBudget::campaign_default(),
+        );
+        assert!(matches!(malformed, Err(TransactionCause::Region { .. })));
     }
 }

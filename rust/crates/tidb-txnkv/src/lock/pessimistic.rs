@@ -28,7 +28,7 @@ use tidb_proto::{
     KvrpcCheckTxnStatusResponse, KvrpcContext, KvrpcPessimisticRollbackRequest, KvrpcTxnAction,
 };
 
-use crate::region::RegionLoader;
+use crate::region::RegionRecoveryLoader;
 use crate::{SharedReadRuntime, UnaryCallContext};
 
 use super::model::{BlockingLock, PessimisticLock};
@@ -78,10 +78,11 @@ pub fn resolve_blocking_locks<C, L, T>(
     base_context: &KvrpcContext,
     call: &UnaryCallContext,
     timestamp_source: &T,
+    for_read: bool,
 ) -> Result<LockRecoveryResult, LockRecoveryError>
 where
     C: LockRecoveryClient,
-    L: RegionLoader,
+    L: RegionRecoveryLoader,
     T: TimestampSource + ?Sized,
 {
     let mut result = LockRecoveryResult {
@@ -109,9 +110,10 @@ where
                 base_context,
                 call,
                 timestamp_source,
-                // Go `ResolveLocks` (not `ResolveLocksForRead`): a lock
-                // blocking a write is waited out, never stepped over.
-                false,
+                // Go picks `ResolveLocksForRead` or `ResolveLocks` by the
+                // CALLER, not by the lock: a reader may step over a lock it
+                // has classified, a writer must wait it out.
+                for_read,
             )?,
             BlockingLock::Pessimistic(lock) => resolve_one_pessimistic_lock(
                 runtime,
@@ -144,7 +146,7 @@ fn resolve_one_pessimistic_lock<C, L, T>(
 ) -> Result<LockRecoveryResult, LockRecoveryError>
 where
     C: LockRecoveryClient,
-    L: RegionLoader,
+    L: RegionRecoveryLoader,
     T: TimestampSource + ?Sized,
 {
     let response = match query_txn_status(
@@ -247,7 +249,7 @@ fn pessimistic_rollback_lock<C, L>(
 ) -> Result<(), LockRecoveryError>
 where
     C: LockRecoveryClient,
-    L: RegionLoader,
+    L: RegionRecoveryLoader,
 {
     let (address, context) = route_key(runtime, &lock.key, base_context)?;
     check_cancelled(call)?;
