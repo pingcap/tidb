@@ -55,6 +55,11 @@ The Rust TiDB implementation on `hparser-integration` must make the same optimiz
 - [x] (2026-08-23) Pushed d2aa3c792e and b031e818ac to origin/hparser-integration; tidb-txnkv 541 tests green (one pre-existing lock_resolver_source structure failure belongs to a parallel session's snapshot_read.rs change), tidb-exec 1062 green including the new wiring contract.
 - [x] (2026-08-23) Post-fix alternating A/B: Go median 238.13, Rust median 59.41 QPS, ratio 0.2495 (+17% over baseline). Remaining dominant gap: one extra sequential RPC per point DML (read-then-lock vs Go's fused value-returning lock).
 
+- [x] (2026-08-23) Landed the parallel session's prepared-DML fix review receipt plus a complementary regression (`a_prepared_update_the_fast_planner_declines_binds_its_parameters`): composite-key prepared UPDATEs declined by `run_fast_prepared_update` must execute their BOUND tree; the fallback reparsed raw `?` text and answered 1105 on every payment/new-order district update.
+- [x] (2026-08-23) Switched the node's global allocator to tikv-jemallocator behind the `jemalloc` feature: per-statement marginal cost 1.19 -> 0.92 ms (-23%), delivery range UPDATE 5.3 -> 3.0 ms, delivery-shape COMMIT 6.7 -> 3.9 ms.
+- [x] (2026-08-23) Final alternating A/B (6 x 180 s): Go median 239.57, Rust median 83.61 QPS, ratio 0.3490 — Rust throughput +57% across the session at constant Go throughput. Zero rewriter errors, zero unexpected conflicts; residual *_ERR counts remain end-of-deadline cutoffs on both sides.
+- [ ] Next lever (measured, not yet landed): fuse each point DML's snapshot read into its PessimisticLock via `return_values` + a per-statement lock-value cache (Go `InitReturnValues` / `SetPessimisticLockCache`) — needs executor access to locked values inside `run()` and spans planner/executor/storage/session. Second lever: concurrent region admission for multi-batch pessimistic lock acquisition (same doBatches shape already landed for prewrite/secondary-commit). Third: statement-CPU cost (parse/plan/stage) is now the dominant residual; profile-guided allocation trimming above jemalloc.
+
 ## Surprises & Discoveries
 
 - Observation: transplanting the three known-good snapshot commits wholesale is incompatible with the current branch because unrelated session, transaction, and server APIs have moved.
