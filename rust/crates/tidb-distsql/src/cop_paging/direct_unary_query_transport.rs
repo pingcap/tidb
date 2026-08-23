@@ -22,7 +22,7 @@
 //! backoff budgets, cancellation-aware sleep, and ordered replacement of
 //! unconsumed work.
 
-use std::cell::{RefCell, RefMut};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -481,7 +481,7 @@ fn record_physical_dispatch(
 }
 
 type AsyncBegin<C> = fn(
-    &RefCell<C>,
+    &std::sync::Mutex<C>,
     &LeaderRequest,
     &DirectUnaryRequest,
     &UnaryCallContext,
@@ -491,7 +491,7 @@ type AsyncBegin<C> = fn(
 >;
 
 fn begin_async_request<C>(
-    client: &RefCell<C>,
+    client: &std::sync::Mutex<C>,
     selected: &LeaderRequest,
     request: &DirectUnaryRequest,
     call: &UnaryCallContext,
@@ -983,9 +983,11 @@ impl<C, L> Drop for DirectUnaryQueryResponse<C, L> {
     }
 }
 
-fn try_borrow_client<C>(client: &RefCell<C>) -> Result<RefMut<'_, C>, DirectUnaryTransportError> {
+fn try_borrow_client<C>(
+    client: &std::sync::Mutex<C>,
+) -> Result<std::sync::MutexGuard<'_, C>, DirectUnaryTransportError> {
     client
-        .try_borrow_mut()
+        .try_lock()
         .map_err(|_| DirectUnaryTransportError::ClientLifecycle)
 }
 
@@ -2129,14 +2131,14 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> QueryResponse
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
+    use std::sync::Mutex;
 
     use super::{try_borrow_client, DirectUnaryTransportError};
 
     #[test]
     fn shared_client_borrow_conflict_is_a_typed_lifecycle_error() {
-        let client = RefCell::new(());
-        let active_dispatch = client.borrow_mut();
+        let client = Mutex::new(());
+        let active_dispatch = client.lock().unwrap();
 
         let error = match try_borrow_client(&client) {
             Ok(_) => panic!("a second mutable client owner must be rejected"),

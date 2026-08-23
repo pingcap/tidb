@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::rc::Rc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -43,7 +41,7 @@ impl fmt::Display for AdvisoryLockError {
 impl std::error::Error for AdvisoryLockError {}
 
 /// One acquired backend lock. Dropping it must release the physical lock.
-pub trait AdvisoryLockLease {
+pub trait AdvisoryLockLease: Send {
     /// Releases the physical lock now.
     fn release(self: Box<Self>);
 }
@@ -153,11 +151,14 @@ struct AdvisoryLockSessionState {
 
 /// One SQL session's advisory-lock ownership and reference counts.
 #[derive(Clone)]
-pub struct AdvisoryLockSession(Rc<RefCell<AdvisoryLockSessionState>>);
+pub struct AdvisoryLockSession(Arc<Mutex<AdvisoryLockSessionState>>);
 
 impl fmt::Debug for AdvisoryLockSession {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let state = self.0.borrow();
+        let state = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         formatter
             .debug_struct("AdvisoryLockSession")
             .field("owner", &state.owner)
@@ -176,7 +177,7 @@ impl AdvisoryLockSession {
     /// Creates session ownership over `service`.
     #[must_use]
     pub fn new(service: Arc<dyn AdvisoryLockService>) -> Self {
-        Self(Rc::new(RefCell::new(AdvisoryLockSessionState {
+        Self(Arc::new(Mutex::new(AdvisoryLockSessionState {
             service,
             owner: 0,
             held: HashMap::new(),
@@ -186,12 +187,18 @@ impl AdvisoryLockSession {
     /// Sets the connection identifier reported by `IS_USED_LOCK` for locks
     /// owned by this session.
     pub fn set_owner(&self, owner: u64) {
-        self.0.borrow_mut().owner = owner;
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .owner = owner;
     }
 
     /// Acquires or reference-increments `name`.
     pub fn acquire(&self, name: &str, timeout: Duration) -> Result<(), AdvisoryLockError> {
-        let mut state = self.0.borrow_mut();
+        let mut state = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(held) = state.held.get_mut(name) {
             held.references = held.references.saturating_add(1);
             return Ok(());
@@ -212,7 +219,10 @@ impl AdvisoryLockSession {
     /// Returns the source-visible owner: this connection's id, `1` for a
     /// different owner, or `None` when the name is free.
     pub fn owner(&self, name: &str) -> Option<u64> {
-        let state = self.0.borrow();
+        let state = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(held) = state.held.get(name) {
             return Some(held.owner);
         }
@@ -223,7 +233,10 @@ impl AdvisoryLockSession {
     #[must_use]
     pub fn release(&self, name: &str) -> bool {
         let lease = {
-            let mut state = self.0.borrow_mut();
+            let mut state = self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let Some(held) = state.held.get_mut(name) else {
                 return false;
             };
@@ -241,7 +254,13 @@ impl AdvisoryLockSession {
 
     /// Releases every unique lock and returns the total reference count.
     pub fn release_all(&self) -> usize {
-        let held = std::mem::take(&mut self.0.borrow_mut().held);
+        let held = std::mem::take(
+            &mut self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .held,
+        );
         let count = held.values().map(|lock| lock.references).sum();
         for lock in held.into_values() {
             lock.lease.release();

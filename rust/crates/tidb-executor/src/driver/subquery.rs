@@ -283,9 +283,8 @@ pub(crate) fn expand_unqualified_wildcards(
     select: &mut tidb_ast::SelectStmt,
     scope: &FromScope,
 ) -> bool {
-    let unqualified = |field: &SelectField| {
-        matches!(field, SelectField::Wildcard(path) if path.last().is_none())
-    };
+    let unqualified =
+        |field: &SelectField| matches!(field, SelectField::Wildcard(path) if path.last().is_none());
     if !select.fields.fields().iter().any(unqualified) {
         return true;
     }

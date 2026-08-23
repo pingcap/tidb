@@ -292,7 +292,8 @@ impl Session {
                     // silently dropping nothing.
                     tidb_ast::BindingValue::UserVar(name) => self
                         .user_vars
-                        .borrow()
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .get(&name.to_ascii_lowercase())
                         .and_then(crate::datum_text)
                         .ok_or_else(|| DriverError::unsupported("sql digest is null")),

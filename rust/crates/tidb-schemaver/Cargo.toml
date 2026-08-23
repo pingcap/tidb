@@ -1,0 +1,18 @@
+[package]
+name = "tidb-schemaver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/ddl/schemaver: the etcd and in-memory schema-version syncers between a DDL owner and its followers."
+
+[lints]
+workspace = true
+
+[dependencies]
+# `EtcdOps` is this tier's etcd seam; `ServerInfo`/`join_host_port` stand in
+# for Go's `infosync`/`disttaskutil` imports of the MDL wait path.
+tidb-domain = { path = "../tidb-domain" }
+# Go `variable.EnableMDL`.
+tidb-vardef = { path = "../tidb-vardef" }

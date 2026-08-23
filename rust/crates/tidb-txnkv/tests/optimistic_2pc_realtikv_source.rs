@@ -110,7 +110,7 @@ fn prewrite_real_lock(
     let call = UnaryCallContext::with_timeout(RPC_TIMEOUT);
     let mut pending = runtime
         .client()
-        .try_borrow_mut()
+        .try_lock()
         .expect("fixture client is not borrowed")
         .begin_transaction_prewrite(&address, None, &request, &context, &call)
         .expect("publish real lock fixture");
@@ -135,7 +135,7 @@ fn commit_real_lock(runtime: &RealRuntime, key: &[u8], start_ts: u64, commit_ts:
     let call = UnaryCallContext::with_timeout(RPC_TIMEOUT);
     let mut pending = runtime
         .client()
-        .try_borrow_mut()
+        .try_lock()
         .expect("fixture client is not borrowed")
         .begin_transaction_commit(&address, None, &request, &context, &call)
         .expect("publish real fixture Commit");

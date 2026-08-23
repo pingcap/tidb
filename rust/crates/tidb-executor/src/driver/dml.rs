@@ -254,9 +254,9 @@ fn resolve_insert_target(
     // key.
     let extra_handle_offset = ((insert.set_syntax || insert.columns_specified)
         && crate::driver::from::extra_handle_column(table).is_some()
-        && named_columns.iter().any(|name| {
-            name.eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)
-        }))
+        && named_columns
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)))
     .then(|| {
         column_list.push((
             crate::driver::leaf_demand::EXTRA_HANDLE_NAME.to_owned(),
@@ -1130,7 +1130,6 @@ pub(crate) fn run_insert_traced(
     }
     Ok((inserted, first_allocated))
 }
-
 
 /// Go `adjustImplicitRowID`'s reading of a written `_tidb_rowid`: the handle
 /// the statement asked for, or `None` for "allocate one".
@@ -3079,9 +3078,12 @@ fn dml_row_is_selected_with_handle(
         }
         None => std::borrow::Cow::Borrowed(row),
     };
-    Ok(datum_is_true(
-        &predicate.eval(evaluated.as_ref(), catalog, current_db, ctx)?,
-    ))
+    Ok(datum_is_true(&predicate.eval(
+        evaluated.as_ref(),
+        catalog,
+        current_db,
+        ctx,
+    )?))
 }
 
 /// A one-row chunk holding `row`, so an expression can be evaluated over it.

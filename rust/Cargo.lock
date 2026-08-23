@@ -2893,6 +2893,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-schemaver"
+version = "0.0.0"
+dependencies = [
+ "tidb-domain",
+ "tidb-vardef",
+]
+
+[[package]]
 name = "tidb-server"
 version = "0.0.0"
 dependencies = [

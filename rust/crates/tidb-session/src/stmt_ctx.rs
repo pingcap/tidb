@@ -22,7 +22,7 @@
 //! expression never reaches back into the session for anything.
 
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::{DriverError, Session, StatementKind, StmtOutput};
 
@@ -344,7 +344,7 @@ impl Session {
     /// is deliberate and matches Go, where `NEXTVAL` allocates in its own meta
     /// transaction -- see `with_statement_stage`'s note about a storage whose
     /// clone shares a handle rather than copying by value.
-    fn sequence_snapshot(&self) -> Rc<tidb_executor::SequenceSnapshot> {
+    fn sequence_snapshot(&self) -> Arc<tidb_executor::SequenceSnapshot> {
         let by_name = match &self.txn {
             Some(txn) => txn.working.sequence_allocators(),
             None => match self.catalog.lock() {
@@ -354,32 +354,42 @@ impl Session {
                 Err(_) => HashMap::new(),
             },
         };
-        Rc::new(tidb_executor::SequenceSnapshot::new(
+        Arc::new(tidb_executor::SequenceSnapshot::new(
             by_name,
             &self.current_db,
-            Rc::clone(&self.sequence_last_values),
+            Arc::clone(&self.sequence_last_values),
         ))
     }
 
-    fn tidb_decode_key_snapshot(&self) -> Rc<tidb_executor::TidbDecodeKeySnapshot> {
+    fn tidb_decode_key_snapshot(&self) -> Arc<tidb_executor::TidbDecodeKeySnapshot> {
         if self.skip_tidb_decode_key_snapshot.get() {
-            return Rc::default();
+            return Arc::default();
         }
         let Ok(catalog) = self.catalog.lock() else {
-            return Rc::default();
+            return Arc::default();
         };
         // Keyed on the METADATA counter, not the mutation counter: Go's
         // row-decode metadata is cached per infoschema version, which DDL
         // moves and DML never does. Keying on `version()` here would rebuild
         // this snapshot on every write statement.
         let version = catalog.metadata_version();
-        if let Some((cached_version, snapshot)) = self.tidb_decode_key_cache.borrow().as_ref() {
-            if *cached_version == version {
-                return Rc::clone(snapshot);
+        {
+            let cache = self
+                .tidb_decode_key_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some((cached_version, snapshot)) = cache.as_ref() {
+                if *cached_version == version {
+                    return Arc::clone(snapshot);
+                }
             }
         }
-        let snapshot = Rc::new(catalog.tidb_decode_key_snapshot());
-        *self.tidb_decode_key_cache.borrow_mut() = Some((version, Rc::clone(&snapshot)));
+        let snapshot = Arc::new(catalog.tidb_decode_key_snapshot());
+        *self
+            .tidb_decode_key_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some((version, Arc::clone(&snapshot)));
         snapshot
     }
 
@@ -775,7 +785,7 @@ impl Session {
                 .with_outer_join_reorder(outer_join_reorder)
                 .with_index_merge(index_merge)
                 .with_pushdown_blacklists(self.pushdown_blacklists.snapshot())
-                .with_planned_apply_channel(Rc::clone(&self.planned_apply))
+                .with_planned_apply_channel(Arc::clone(&self.planned_apply))
                 .with_allow_write_row_id(allow_write_row_id)
                 .with_static_partition_prune(static_partition_prune)
                 .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
@@ -794,12 +804,12 @@ impl Session {
                     self.session_memory
                         .statement_with_arbitration(arbitrator_wait_averse, arbitrator_reserved),
                 )
-                .with_rand_session(Rc::clone(&self.rand))
-                .with_last_insert_id_channel(Rc::clone(&self.published_last_insert_id))
-                .with_retry_auto_ids(Rc::clone(&self.retry_auto_ids))
-                .with_row_id_shards(Rc::clone(&self.row_id_shards))
+                .with_rand_session(Arc::clone(&self.rand))
+                .with_last_insert_id_channel(Arc::clone(&self.published_last_insert_id))
+                .with_retry_auto_ids(Arc::clone(&self.retry_auto_ids))
+                .with_row_id_shards(Arc::clone(&self.row_id_shards))
                 .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
-                .with_user_vars(Rc::clone(&self.user_vars))
+                .with_user_vars(Arc::clone(&self.user_vars))
                 .with_previous_statement(self.last_insert_id, self.prev_row_count)
                 .with_last_found_rows(self.last_found_rows)
                 .with_current_tso(self.current_tso())
@@ -825,7 +835,7 @@ impl Session {
             ignore_err,
         )
         .with_date_modes(date_modes)
-        .with_planned_apply_channel(Rc::clone(&self.planned_apply))
+        .with_planned_apply_channel(Arc::clone(&self.planned_apply))
         .with_allow_write_row_id(allow_write_row_id)
         .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
         .with_new_only_full_group_by_check(new_only_full_group_by_check)
@@ -840,12 +850,12 @@ impl Session {
             self.session_memory
                 .statement_with_arbitration(arbitrator_wait_averse, arbitrator_reserved),
         )
-        .with_rand_session(Rc::clone(&self.rand))
-        .with_last_insert_id_channel(Rc::clone(&self.published_last_insert_id))
-        .with_retry_auto_ids(Rc::clone(&self.retry_auto_ids))
-        .with_row_id_shards(Rc::clone(&self.row_id_shards))
+        .with_rand_session(Arc::clone(&self.rand))
+        .with_last_insert_id_channel(Arc::clone(&self.published_last_insert_id))
+        .with_retry_auto_ids(Arc::clone(&self.retry_auto_ids))
+        .with_row_id_shards(Arc::clone(&self.row_id_shards))
         .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
-        .with_user_vars(Rc::clone(&self.user_vars))
+        .with_user_vars(Arc::clone(&self.user_vars))
         .with_previous_statement(self.last_insert_id, self.prev_row_count)
         .with_last_found_rows(self.last_found_rows)
         .with_current_tso(self.current_tso())
@@ -984,7 +994,11 @@ impl Session {
         // The publication outlives a failing statement, exactly as Go's
         // `StmtCtx.LastInsertID` does: `SELECT LAST_INSERT_ID(17), bad()`
         // fails and still moves the id (captured).
-        if let Some(published) = self.published_last_insert_id.get() {
+        if let Some(published) = (*self
+            .published_last_insert_id
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+        {
             self.last_insert_id = published;
         }
         if let Ok(StmtOutput::Rows { rows, .. }) = result {

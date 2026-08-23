@@ -14,9 +14,9 @@
 
 //! The per-statement evaluation context, which is Go's `StatementContext`.
 
-use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tidb_datatype::Datum;
 use tidb_distsql::{WarningCollector, WarningLevel};
@@ -27,7 +27,6 @@ use crate::error_context::{ErrGroup, Level, LevelMap};
 use crate::mem_quota::{OomAction, StatementMemory};
 use crate::statement_pushdown::{push_down_flags, PushDownFlagsInput, StatementKind};
 use crate::DriverError;
-use std::sync::Arc;
 use tidb_util::disk::SpillStorage;
 
 /// Which of Go's mutually exclusive `StatementContext` statement-kind
@@ -242,7 +241,7 @@ pub struct StmtContext {
     /// `IF EXISTS` that swallowed an error files it as a `Note`, which
     /// `SHOW WARNINGS` prints in its `Level` column. Without the level here
     /// every executor-tier note would arrive at the session as a `Warning`.
-    warnings: Rc<RefCell<Vec<(WarningLevel, u16, String)>>>,
+    warnings: Arc<Mutex<Vec<(WarningLevel, u16, String)>>>,
     /// Warnings raised while a coprocessor-equivalent evaluation ran
     /// ([`Self::enter_cop_eval`]).
     ///
@@ -254,9 +253,10 @@ pub struct StmtContext {
     /// the same reporting contract lives here: while the cop depth is open,
     /// warnings accumulate deduplicated in this buffer instead of the row
     /// buffer, and [`Self::take_warnings`] appends them once.
-    cop_batch_warnings: Rc<RefCell<Vec<(WarningLevel, u16, String)>>>,
+    cop_batch_warnings: Arc<Mutex<Vec<(WarningLevel, u16, String)>>>,
     /// How many coprocessor-equivalent evaluations are open on this thread.
-    cop_eval_depth: Cell<u32>,
+    /// An atomic so parallel agg workers sharing the context stay `Sync`.
+    cop_eval_depth: Arc<AtomicU32>,
     division_by_zero: ErrorLevel,
     /// Go `ErrGroupBadNull`, used by SLEEP's NULL/negative argument alias and
     /// by the same statement-level policy as column NOT NULL failures.
@@ -292,12 +292,12 @@ pub struct StmtContext {
     login_user: Option<String>,
     /// The small set of GLOBAL system-variable values expression builtins
     /// read during this statement.
-    global_sysvars: Rc<HashMap<String, String>>,
+    global_sysvars: Arc<HashMap<String, String>>,
     /// The already-rendered `CURRENT_ROLE()` text; see `Columns::current_role`.
     current_role: Option<String>,
     connection_id: Option<u64>,
     /// Statement-version catalog metadata used by `TIDB_DECODE_KEY`.
-    tidb_decode_key_snapshot: Option<Rc<crate::TidbDecodeKeySnapshot>>,
+    tidb_decode_key_snapshot: Option<Arc<crate::TidbDecodeKeySnapshot>>,
     /// Go session advisory-lock map and its shared physical lock authority.
     advisory_locks: crate::advisory_lock_state::AdvisoryLockSession,
     /// Go `StatementContext`'s fixed statement time as
@@ -314,7 +314,7 @@ pub struct StmtContext {
     /// advances, shared across every statement of one session. `None` is a
     /// context with no session behind it (a test, a DEFAULT expression
     /// folded at DDL time), where `RAND()` is unsupported rather than wrong.
-    rand_session: Option<Rc<MysqlRng>>,
+    rand_session: Option<Arc<MysqlRng>>,
     /// Go `SessionVars.userVars`: the session's user variables, keyed
     /// lowercased. The SESSION owns the map and lends it here, because `@x :=
     /// expr` writes it MID-STATEMENT, once per row, and a later select-list
@@ -322,12 +322,12 @@ pub struct StmtContext {
     /// cannot be a value copied in and out at the statement boundary. `None`
     /// is a context with no session behind it, where a user variable reads as
     /// NULL (Go's own answer for an unset one) and an assignment is dropped.
-    user_vars: Option<Rc<RefCell<HashMap<String, Datum>>>>,
+    user_vars: Option<Arc<Mutex<HashMap<String, Datum>>>>,
     /// Go `builtinRandSig`'s per-call `*mathutil.MysqlRng`: one generator per
     /// constant `RAND(N)` occurrence, created fresh for each STATEMENT (Go
     /// builds a new `builtinFunc` per plan) and advanced once per row by the
     /// evaluator, keyed by the call site's stable identity.
-    rand_seeded: Rc<RefCell<HashMap<usize, MysqlRng>>>,
+    rand_seeded: Arc<Mutex<HashMap<usize, MysqlRng>>>,
     /// Go `StatementContext.LastInsertID`/`LastInsertIDSet`: the id this
     /// statement publishes as `LAST_INSERT_ID()`.
     ///
@@ -337,7 +337,7 @@ pub struct StmtContext {
     /// statement that ends in an error still publishes. Returning it would
     /// make the failing case unreachable and force a second, error-shaped
     /// channel for exactly that case.
-    last_insert_id: Rc<Cell<Option<u64>>>,
+    last_insert_id: Arc<Mutex<Option<u64>>>,
     /// Go `StmtCtx.PrevLastInsertID`: what the PRECEDING statement published,
     /// which is the value `LAST_INSERT_ID()` and `@@last_insert_id` report.
     /// It is a plain copy rather than a handle because a statement cannot
@@ -357,15 +357,15 @@ pub struct StmtContext {
     current_tso: CurrentTso,
     /// Go `StmtCtx.InsertID`: the explicit value a row gave the
     /// `AUTO_INCREMENT` column, which the OK packet falls back to.
-    given_insert_id: Rc<Cell<u64>>,
+    given_insert_id: Arc<AtomicU64>,
     /// The ids a previous attempt at this same statement already assigned; see
     /// [`RetryAutoIds`]. It is a session-lived handle rather than statement
     /// state because the retry loop that rewinds it sits ABOVE the statement:
     /// each attempt builds its own context, and the ids are the one thing that
     /// must cross between them. Timestamps must not -- a replay re-reads at a
     /// new one, which is what keeps the lost update closed.
-    retry_auto_ids: Rc<RefCell<RetryAutoIds>>,
-    row_id_shards: Rc<RefCell<RowIdShardGenerator>>,
+    retry_auto_ids: Arc<Mutex<RetryAutoIds>>,
+    row_id_shards: Arc<Mutex<RowIdShardGenerator>>,
     /// Go `table.getIncrementAndOffset`'s inputs: `@@auto_increment_increment`
     /// and `@@auto_increment_offset`, which put the allocated ids on an
     /// arithmetic progression. See [`StmtContext::auto_increment_step`].
@@ -466,7 +466,7 @@ pub struct StmtContext {
     /// refuses to cache any plan containing one. A channel because the
     /// prepared-statement layer that reads it is outside the driver that
     /// knows.
-    planned_apply: Rc<std::cell::Cell<bool>>,
+    planned_apply: Arc<AtomicBool>,
     /// Go `SessionVars.AllowWriteRowID` (`tidb_opt_write_row_id`): whether an
     /// `INSERT`/`REPLACE`/`UPDATE` may name `_tidb_rowid` and write it.
     allow_write_row_id: bool,
@@ -491,7 +491,7 @@ pub struct StmtContext {
     /// consuming a value through the snapshot moves the SAME counter the
     /// catalog holds. That is what keeps a `NEXTVAL` from being undone by a
     /// rollback or by a staged catalog swap.
-    sequences: Rc<SequenceSnapshot>,
+    sequences: Arc<SequenceSnapshot>,
     /// Go `SessionVars.MemTracker` + `StmtCtx.MemTracker`: this statement's
     /// memory budget, which `tidb_mem_quota_query` is the limit of.
     ///
@@ -545,7 +545,7 @@ pub struct StmtContext {
     /// this statement. Go records the corresponding table IDs while building
     /// those readers; `SLEEP` needs only the empty/non-empty distinction when
     /// deciding whether a handled kill may reset the statement killer.
-    has_physical_table_reader: Rc<Cell<bool>>,
+    has_physical_table_reader: Arc<AtomicBool>,
     /// The warnings TiKV reported for THIS statement's coprocessor requests.
     ///
     /// It is an `Arc` sink rather than the `Rc` buffer beside it because a
@@ -569,7 +569,7 @@ pub struct SequenceSnapshot {
     /// Go `SessionVars.SequenceState`: the last value THIS SESSION took from
     /// each sequence. Shared with the session, so a `NEXTVAL` in one statement
     /// is visible to a `LASTVAL` in the next.
-    last_values: Rc<RefCell<HashMap<String, i64>>>,
+    last_values: Arc<Mutex<HashMap<String, i64>>>,
 }
 
 impl SequenceSnapshot {
@@ -579,7 +579,7 @@ impl SequenceSnapshot {
     pub fn new(
         by_name: HashMap<String, crate::sequence::SequenceAllocator>,
         current_db: &str,
-        last_values: Rc<RefCell<HashMap<String, i64>>>,
+        last_values: Arc<Mutex<HashMap<String, i64>>>,
     ) -> Self {
         SequenceSnapshot {
             by_name,
@@ -640,9 +640,9 @@ impl StmtContext {
         ignore_err: bool,
     ) -> Self {
         Self {
-            warnings: Rc::default(),
-            cop_batch_warnings: Rc::default(),
-            cop_eval_depth: Cell::new(0),
+            warnings: Arc::default(),
+            cop_batch_warnings: Arc::default(),
+            cop_eval_depth: Arc::new(AtomicU32::new(0)),
             division_by_zero,
             bad_null: if strict {
                 ErrorLevel::Error
@@ -660,7 +660,7 @@ impl StmtContext {
             current_user: None,
             current_role: None,
             login_user: None,
-            global_sysvars: Rc::default(),
+            global_sysvars: Arc::default(),
             connection_id: None,
             tidb_decode_key_snapshot: None,
             advisory_locks: crate::advisory_lock_state::AdvisoryLockSession::default(),
@@ -671,15 +671,15 @@ impl StmtContext {
             connection_collation: "utf8mb4_bin".to_owned(),
             rand_session: None,
             user_vars: None,
-            rand_seeded: Rc::default(),
-            last_insert_id: Rc::default(),
+            rand_seeded: Arc::default(),
+            last_insert_id: Arc::default(),
             prev_last_insert_id: 0,
             prev_row_count: 0,
             last_found_rows: None,
             current_tso: CurrentTso::default(),
-            given_insert_id: Rc::default(),
-            retry_auto_ids: Rc::default(),
-            row_id_shards: Rc::default(),
+            given_insert_id: Arc::default(),
+            retry_auto_ids: Arc::default(),
+            row_id_shards: Arc::default(),
             auto_increment_step: (1, 1),
             auto_increment_zero_is_explicit: false,
             allow_auto_random_explicit_insert: false,
@@ -707,13 +707,13 @@ impl StmtContext {
             outer_join_reorder: true,
             // Go `vardef.DefTiDBEnableIndexMerge = true`.
             index_merge: true,
-            planned_apply: Rc::default(),
+            planned_apply: Arc::default(),
             allow_write_row_id: false,
             expr_pushdown_blacklist: std::sync::Arc::default(),
             disabled_logical_rules: std::sync::Arc::default(),
             // Go's shipped `tidb_partition_prune_mode` is `dynamic`.
             static_partition_prune: false,
-            sequences: Rc::default(),
+            sequences: Arc::default(),
             memory: StatementMemory::default(),
             sql_mode: tidb_parser::SqlMode::default(),
             no_unsigned_subtraction: false,
@@ -726,7 +726,7 @@ impl StmtContext {
             group_concat_max_len: 1024,
             apply_cache_capacity: tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE,
             statement_class: StatementClass::Other,
-            has_physical_table_reader: Rc::default(),
+            has_physical_table_reader: Arc::default(),
             cop_warnings: WarningCollector::new(),
         }
     }
@@ -767,7 +767,7 @@ impl StmtContext {
     /// Records the same physical-reader fact Go records by appending to
     /// `StmtCtx.TableIDs` in `executorBuilder`.
     pub(crate) fn mark_physical_table_reader(&self) {
-        self.has_physical_table_reader.set(true);
+        self.has_physical_table_reader.store(true, Ordering::Relaxed);
     }
 
     /// The sink a coprocessor request must be given so the warnings TiKV
@@ -1079,7 +1079,7 @@ impl StmtContext {
     /// `NEXTVAL` reports that it needs a session rather than silently
     /// answering NULL.
     #[must_use]
-    pub fn with_sequences(mut self, sequences: Rc<SequenceSnapshot>) -> Self {
+    pub fn with_sequences(mut self, sequences: Arc<SequenceSnapshot>) -> Self {
         self.sequences = sequences;
         self
     }
@@ -1250,7 +1250,7 @@ impl StmtContext {
 
     /// Installs the channel [`Self::report_planned_apply`] writes.
     #[must_use]
-    pub fn with_planned_apply_channel(mut self, channel: Rc<std::cell::Cell<bool>>) -> Self {
+    pub fn with_planned_apply_channel(mut self, channel: Arc<AtomicBool>) -> Self {
         self.planned_apply = channel;
         self
     }
@@ -1258,7 +1258,7 @@ impl StmtContext {
     /// Records that this statement's plan contains an Apply (Go
     /// `PhysicalApply`), which `isPhysicalPlanCacheable` refuses to cache.
     pub fn report_planned_apply(&self) {
-        self.planned_apply.set(true);
+        self.planned_apply.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Installs the two published blacklists. See
@@ -1448,7 +1448,7 @@ impl StmtContext {
     /// expression builtins.
     #[must_use]
     pub fn with_global_sysvars(mut self, values: HashMap<String, String>) -> Self {
-        self.global_sysvars = Rc::new(values);
+        self.global_sysvars = Arc::new(values);
         self
     }
 
@@ -1473,7 +1473,7 @@ impl StmtContext {
     #[must_use]
     pub fn with_tidb_decode_key_snapshot(
         mut self,
-        snapshot: Rc<crate::TidbDecodeKeySnapshot>,
+        snapshot: Arc<crate::TidbDecodeKeySnapshot>,
     ) -> Self {
         self.tidb_decode_key_snapshot = Some(snapshot);
         self
@@ -1484,7 +1484,7 @@ impl StmtContext {
     /// lifetime (shared across statements, unlike constant `RAND(N)`'s
     /// per-statement generators).
     #[must_use]
-    pub fn with_rand_session(mut self, rand_session: Rc<MysqlRng>) -> Self {
+    pub fn with_rand_session(mut self, rand_session: Arc<MysqlRng>) -> Self {
         self.rand_session = Some(rand_session);
         self
     }
@@ -1493,7 +1493,7 @@ impl StmtContext {
     /// expr` writes THROUGH -- see the field's own doc for why this is a
     /// shared handle rather than a copy.
     #[must_use]
-    pub fn with_user_vars(mut self, user_vars: Rc<RefCell<HashMap<String, Datum>>>) -> Self {
+    pub fn with_user_vars(mut self, user_vars: Arc<Mutex<HashMap<String, Datum>>>) -> Self {
         self.user_vars = Some(user_vars);
         self
     }
@@ -1744,7 +1744,8 @@ impl StmtContext {
     pub fn append_warning_once_parts(&self, code: u16, message: &str) {
         if self
             .warnings
-            .borrow()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
             .any(|(_, warning_code, warning_message)| {
                 *warning_code == code && warning_message == message
@@ -1759,15 +1760,22 @@ impl StmtContext {
     /// reports after this statement. The first publication of a statement
     /// wins, as Go's statement-scoped `e.lastInsertID` does.
     pub fn publish_last_insert_id(&self, id: u64) {
-        if self.last_insert_id.get().is_none() {
-            self.last_insert_id.set(Some(id));
+        let mut published = self
+            .last_insert_id
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if published.is_none() {
+            *published = Some(id);
         }
     }
 
     /// The id this statement published, if any.
     #[must_use]
     pub fn published_last_insert_id(&self) -> Option<u64> {
-        self.last_insert_id.get()
+        *self
+            .last_insert_id
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Attaches the session's own publication cell so `LAST_INSERT_ID(expr)`
@@ -1775,7 +1783,7 @@ impl StmtContext {
     /// after the statement. Without it each context would own a private cell
     /// and only the branches that bother to read theirs back would publish.
     #[must_use]
-    pub fn with_last_insert_id_channel(mut self, channel: Rc<Cell<Option<u64>>>) -> Self {
+    pub fn with_last_insert_id_channel(mut self, channel: Arc<Mutex<Option<u64>>>) -> Self {
         self.last_insert_id = channel;
         self
     }
@@ -1785,7 +1793,7 @@ impl StmtContext {
     /// A context without one never reuses and never records, which is the
     /// right behaviour for every caller that cannot retry at all.
     #[must_use]
-    pub fn with_retry_auto_ids(mut self, channel: Rc<RefCell<RetryAutoIds>>) -> Self {
+    pub fn with_retry_auto_ids(mut self, channel: Arc<Mutex<RetryAutoIds>>) -> Self {
         self.retry_auto_ids = channel;
         self
     }
@@ -1794,19 +1802,25 @@ impl StmtContext {
     /// AUTO_INCREMENT row, or `None` if there was no previous attempt or it
     /// did not reach this row. See [`RetryAutoIds::reuse`].
     pub fn reuse_auto_increment_id(&self) -> Option<u64> {
-        self.retry_auto_ids.borrow_mut().reuse()
+        self.retry_auto_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .reuse()
     }
 
     /// Records the id a row was given, reused or freshly allocated, so a
     /// replay of this statement writes the same one.
     pub fn record_auto_increment_id(&self, id: u64) {
-        self.retry_auto_ids.borrow_mut().record(id);
+        self.retry_auto_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record(id);
     }
 
     /// Attaches the session's row-ID shard generator. Its retained shard is
     /// shared by every statement in the connection, as in Go SessionVars.
     #[must_use]
-    pub fn with_row_id_shards(mut self, shards: Rc<RefCell<RowIdShardGenerator>>) -> Self {
+    pub fn with_row_id_shards(mut self, shards: Arc<Mutex<RowIdShardGenerator>>) -> Self {
         self.row_id_shards = shards;
         self
     }
@@ -1822,12 +1836,18 @@ impl StmtContext {
     /// The complete AUTO_RANDOM id assigned to this row by the previous
     /// retry attempt, if that attempt reached the row.
     pub fn reuse_auto_random_id(&self) -> Option<u64> {
-        self.retry_auto_ids.borrow_mut().reuse_random()
+        self.retry_auto_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .reuse_random()
     }
 
     /// Records one complete AUTO_RANDOM id for a possible statement replay.
     pub fn record_auto_random_id(&self, id: u64) {
-        self.retry_auto_ids.borrow_mut().record_random(id);
+        self.retry_auto_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record_random(id);
     }
 
     /// Go `GetRowIDShardGenerator().GetCurrentShard(count)`: the shard
@@ -1835,7 +1855,8 @@ impl StmtContext {
     /// `SHARD_ROW_ID_BITS` and `AUTO_RANDOM`, as Go's does.
     pub fn next_row_id_shard(&self, count: u64) -> u64 {
         self.row_id_shards
-            .borrow_mut()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .next(self.shard_allocate_step, count)
     }
 
@@ -1877,7 +1898,7 @@ impl StmtContext {
     /// `AUTO_INCREMENT` column. Go overwrites it per row, so the LAST such
     /// value of the statement is the one that survives.
     pub fn record_given_insert_id(&self, id: u64) {
-        self.given_insert_id.set(id);
+        self.given_insert_id.store(id, Ordering::Relaxed);
     }
 
     /// The explicit auto-increment value this statement last saw, or 0.
@@ -1890,7 +1911,7 @@ impl StmtContext {
     /// move (captured).
     #[must_use]
     pub fn given_insert_id(&self) -> u64 {
-        self.given_insert_id.get()
+        self.given_insert_id.load(Ordering::Relaxed)
     }
 
     /// Declares `@@auto_increment_increment` and `@@auto_increment_offset`.
@@ -1943,7 +1964,10 @@ impl StmtContext {
     /// `warnCnt` bookmark in `doDupRowUpdate` (`pkg/executor/insert.go:479`).
     #[must_use]
     pub fn warning_count(&self) -> usize {
-        self.warnings.borrow().len()
+        self.warnings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
     }
 
     /// Go `StmtCtx.TruncateWarnings(warnCnt)` + `AppendWarnings`: rewrites
@@ -1958,7 +1982,10 @@ impl StmtContext {
         bookmark: usize,
         rewrite: impl Fn(u16, &str) -> Option<String>,
     ) {
-        let mut warnings = self.warnings.borrow_mut();
+        let mut warnings = self
+            .warnings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for (_, code, message) in warnings.iter_mut().skip(bookmark) {
             if let Some(replacement) = rewrite(*code, message) {
                 *message = replacement;
@@ -1970,11 +1997,21 @@ impl StmtContext {
     /// coprocessor's after them (see the note above).
     #[must_use]
     pub fn take_warnings(&self) -> Vec<(WarningLevel, u16, String)> {
-        let mut warnings = std::mem::take(&mut *self.warnings.borrow_mut());
+        let mut warnings = std::mem::take(
+            &mut *self
+                .warnings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
         // The coprocessor-equivalent batch next: these are the warnings a
         // pushed filter raised inside a source, reported TiKV-style (one entry
         // per DISTINCT message; see the field's doc).
-        for (level, code, message) in self.cop_batch_warnings.take() {
+        for (level, code, message) in std::mem::take(
+            &mut *self
+                .cop_batch_warnings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        ) {
             if warnings.len() >= MAX_WARNING_COUNT {
                 break;
             }
@@ -2002,7 +2039,7 @@ impl StmtContext {
     /// in one statement -- each distinct message still appears once.
     #[must_use]
     pub fn enter_cop_eval(&self) -> CopEvalGuard<'_> {
-        self.cop_eval_depth.set(self.cop_eval_depth.get() + 1);
+        self.cop_eval_depth.fetch_add(1, Ordering::Relaxed);
         CopEvalGuard { context: self }
     }
 
@@ -2021,8 +2058,11 @@ impl StmtContext {
     /// The one push onto the buffer, so its retention limit lives in one
     /// place regardless of which level came through.
     fn append_leveled(&self, level: WarningLevel, code: u16, message: &str) {
-        if self.cop_eval_depth.get() > 0 {
-            let mut batch = self.cop_batch_warnings.borrow_mut();
+        if self.cop_eval_depth.load(Ordering::Relaxed) > 0 {
+            let mut batch = self
+                .cop_batch_warnings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             // TiKV's EvalWarnings keeps the FIRST of every equal (code,
             // message) pair and drops the rest, so a cast that fails once per
             // row of a whole scan reports once.
@@ -2035,7 +2075,10 @@ impl StmtContext {
             }
             return;
         }
-        let mut warnings = self.warnings.borrow_mut();
+        let mut warnings = self
+            .warnings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if warnings.len() >= MAX_WARNING_COUNT {
             return;
         }
@@ -2052,8 +2095,9 @@ pub struct CopEvalGuard<'a> {
 
 impl Drop for CopEvalGuard<'_> {
     fn drop(&mut self) {
-        let depth = self.context.cop_eval_depth.get();
-        self.context.cop_eval_depth.set(depth.saturating_sub(1));
+        self.context
+            .cop_eval_depth
+            .fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -2173,14 +2217,19 @@ impl Columns for StmtContext {
     /// unset one is NULL rather than an error.
     fn get_uservar(&self, name: &str) -> Option<Datum> {
         let vars = self.user_vars.as_ref()?;
-        vars.borrow().get(&name.to_ascii_lowercase()).cloned()
+        vars.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&name.to_ascii_lowercase())
+            .cloned()
     }
 
     /// Go `SessionVars.SetUserVarVal`. A NULL value never reaches here -- the
     /// evaluator keeps Go's rule that `@x := NULL` leaves the variable alone.
     fn set_uservar(&self, name: &str, value: Datum) {
         if let Some(vars) = self.user_vars.as_ref() {
-            vars.borrow_mut().insert(name.to_ascii_lowercase(), value);
+            vars.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(name.to_ascii_lowercase(), value);
         }
     }
 
@@ -2191,7 +2240,8 @@ impl Columns for StmtContext {
     fn rand_seeded_next(&self, key: usize, seed: i64) -> Option<f64> {
         Some(
             self.rand_seeded
-                .borrow_mut()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .entry(key)
                 .or_insert_with(|| MysqlRng::new_with_seed(seed))
                 .gen(),
@@ -2262,7 +2312,7 @@ impl Columns for StmtContext {
         let killed = self.memory.sleep_for(duration);
         if killed
             && self.statement_class == StatementClass::Select
-            && !self.has_physical_table_reader.get()
+            && !self.has_physical_table_reader.load(Ordering::Relaxed)
         {
             self.memory.reset_kill_signal();
         }
@@ -2282,7 +2332,10 @@ impl Columns for StmtContext {
     }
 
     fn truncate_warnings(&self, bookmark: usize) {
-        self.warnings.borrow_mut().truncate(bookmark);
+        self.warnings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .truncate(bookmark);
     }
 
     /// The same three mode bits the WRITE path reads from
@@ -2305,7 +2358,10 @@ impl Columns for StmtContext {
     /// unconditionally -- the last such call of a statement wins, unlike the
     /// insert path's single first-row publication.
     fn set_last_insert_id(&self, value: u64) {
-        self.last_insert_id.set(Some(value));
+        *self
+            .last_insert_id
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(value);
     }
 
     fn sequence_nextval(&self, path: &[String]) -> Result<Datum, tidb_expr::EvalError> {
@@ -2315,7 +2371,11 @@ impl Columns for StmtContext {
         })?;
         // Go records the value in the SESSION's sequence state, which is what
         // `LASTVAL` reads back.
-        self.sequences.last_values.borrow_mut().insert(key, value);
+        self.sequences
+            .last_values
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key, value);
         Ok(Datum::Int(value))
     }
 
@@ -2324,7 +2384,8 @@ impl Columns for StmtContext {
         Ok(self
             .sequences
             .last_values
-            .borrow()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&key)
             .copied()
             .map_or(Datum::Null, Datum::Int))
@@ -2502,8 +2563,8 @@ mod tests {
 
     #[test]
     fn rand_next_advances_the_attached_session_generator() {
-        let rng = Rc::new(MysqlRng::new_with_seed(1));
-        let ctx = StmtContext::for_query().with_rand_session(Rc::clone(&rng));
+        let rng = Arc::new(MysqlRng::new_with_seed(1));
+        let ctx = StmtContext::for_query().with_rand_session(Arc::clone(&rng));
         // Matches `MysqlRng::new_with_seed(1)`'s own pinned sequence
         // (`tidb-util::mathutil`'s source seed vectors), read through the
         // `Columns` seam instead of the generator directly.

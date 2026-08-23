@@ -1443,6 +1443,21 @@ fn run_select_traced_with_delivery_choice_inner(
     parent_duplicate_agnostic: bool,
     aggregation_choice: AggregationChoice,
 ) -> Result<SelectMeta, DriverError> {
+    // Go resolves a positional ORDER BY item (`ORDER BY 1`) to its projected
+    // expression before any optimizer rule runs -- the parser builds it as an
+    // `ast.PositionExpr` and `positionToScalarFunc` rewrites it onto the
+    // built plan's schema. Resolving it here gives every later stage the
+    // resolved form Go's rules see: the grouped partial-aggregate plans'
+    // order/group match, ordering negotiation, and EXPLAIN's by-item text all
+    // then treat `ORDER BY 1` exactly like the equivalent named column.
+    let positional;
+    let select = match resolve_positional_order_by(select) {
+        Some(resolved) => {
+            positional = resolved;
+            &positional
+        }
+        None => select,
+    };
     // Go enumerates HashAgg before StreamAgg for an empty required property,
     // rebuilds the child under each candidate's property, and keeps the first
     // candidate on an exact tie. Build both plans without executing or tracing

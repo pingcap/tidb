@@ -200,7 +200,7 @@ fn hold_real_pessimistic_lock(runtime: &RealRuntime, key: &[u8], start_ts: u64, 
     let call = call();
     let mut pending = runtime
         .client()
-        .try_borrow_mut()
+        .try_lock()
         .expect("fixture client is not borrowed")
         .begin_transaction_pessimistic_lock(&address, None, &request, &context, &call)
         .expect("publish the real pessimistic lock fixture");
@@ -248,7 +248,7 @@ fn commit_real_pessimistic_txn(
     let call = call();
     let mut pending = runtime
         .client()
-        .try_borrow_mut()
+        .try_lock()
         .expect("fixture client is not borrowed")
         .begin_transaction_prewrite(&address, None, &prewrite, &context, &call)
         .expect("publish the fixture owner's Prewrite");
@@ -275,7 +275,7 @@ fn commit_real_pessimistic_txn(
     };
     let mut pending = runtime
         .client()
-        .try_borrow_mut()
+        .try_lock()
         .expect("fixture client is not borrowed")
         .begin_transaction_commit(&address, None, &commit, &context, &call)
         .expect("publish the fixture owner's Commit");
@@ -543,7 +543,7 @@ fn hold_orphan_secondary_lock(runtime: &RealRuntime, start_ts: u64, ttl_ms: u64)
     let call = call();
     let mut pending = runtime
         .client()
-        .try_borrow_mut()
+        .try_lock()
         .expect("fixture client is not borrowed")
         .begin_transaction_prewrite(&address, None, &request, &context, &call)
         .expect("publish the orphan secondary prewrite");

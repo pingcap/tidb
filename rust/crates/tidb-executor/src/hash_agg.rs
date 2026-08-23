@@ -52,9 +52,11 @@
 //! `APPROX_PERCENTILE` ranks the group's values -- see each [`AggKind`]
 //! variant for the exact Go rule and its captured edges.
 //!
-//! The general parallel partial/final worker pipeline remains deferred;
-//! computed/multi-column keys, DISTINCT, order-sensitive aggregates and
-//! spill rounds stay on the complete serial path.
+//! The Go parallel partial/final worker pipeline is transcreated in
+//! [`parallel`] for the exactly-mergeable aggregate shapes; DISTINCT,
+//! order-sensitive/float-domain aggregates, computed keys that cannot share
+//! evaluation across threads, and spill rounds stay on the complete serial
+//! path.
 //!
 //! `APPROX_COUNT_DISTINCT` ports Go's `BJKST` sketch
 //! (`func_count_distinct.go`'s `partialResult4ApproxCountDistinct`, see
@@ -72,12 +74,17 @@
 
 use crate::agg_spill::AggSpillDiskAction;
 
+mod parallel;
 mod spill;
+
 use crate::approx_count_distinct::ApproxCountDistinctSketch;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_join::FastBytesMap;
 use crate::mem_quota::StatementMemory;
 use spill::new_group_bytes;
+
+#[doc(inline)]
+pub use parallel::HashAggContext;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{BuildHasherDefault, Hasher};
@@ -1965,7 +1972,9 @@ impl<C: Columns> Executor for GroupedStreamAggExec<C> {
 /// aggregation come out in a different ORDER than the same aggregation
 /// unspilled (rounds, then first-seen within a round). A `GROUP BY` without an
 /// `ORDER BY` guarantees no order in either engine.
-pub struct HashAggExec<C: Columns> {
+/// The `HashAggContext` bound carries the parallel-pipeline capability
+/// declaration every context must make (see [`hash_agg::parallel`]).
+pub struct HashAggExec<C: HashAggContext> {
     meta: ExecutorMeta,
     group_by: Vec<Expression>,
     /// Present when every GROUP BY expression is a resolved integer column.
@@ -2037,9 +2046,20 @@ pub struct HashAggExec<C: Columns> {
     parallel_output_cursor: usize,
     parallel_output_active: bool,
     parallel_agg_windows: usize,
+    /// The parallel partial/final worker pipeline is engaged for this Open
+    /// (Go `parallelExecValid`). Decided once per Open; `execute` never
+    /// re-decides mid-run.
+    pipeline_mode: bool,
+    /// Resolved worker counts for the current Open (diagnostics).
+    pipeline_partial_concurrency: usize,
+    pipeline_final_concurrency: usize,
+    /// Test/diagnostic override standing in for SET concurrency variables.
+    pipeline_concurrency_override: Option<(usize, usize)>,
+    /// Diagnostics shared with the pipeline's workers while it runs.
+    pipeline_stats: Option<Arc<parallel::PipelineStats>>,
 }
 
-impl<C: Columns> HashAggExec<C> {
+impl<C: HashAggContext> HashAggExec<C> {
     /// Builds a hash aggregation of `agg_funcs` over `child`, grouped by
     /// `group_by` (empty for a global aggregate).
     ///
@@ -2104,6 +2124,11 @@ impl<C: Columns> HashAggExec<C> {
             parallel_output_cursor: 0,
             parallel_output_active: false,
             parallel_agg_windows: 0,
+            pipeline_mode: false,
+            pipeline_partial_concurrency: 1,
+            pipeline_final_concurrency: 1,
+            pipeline_concurrency_override: None,
+            pipeline_stats: None,
         }
     }
 
@@ -2672,7 +2697,7 @@ impl<C: Columns> HashAggExec<C> {
     }
 }
 
-impl<C: Columns> Executor for HashAggExec<C> {
+impl<C: HashAggContext> Executor for HashAggExec<C> {
     /// Go `aggExecutorTreeInputEmpty`'s one true answer: the walk exists to
     /// find an aggregation and read its `IsChildReturnEmpty`.
     fn agg_tree_input_empty(&self) -> bool {
@@ -2706,11 +2731,40 @@ impl<C: Columns> Executor for HashAggExec<C> {
         self.parallel_output_cursor = 0;
         self.parallel_output_active = false;
         self.parallel_agg_windows = 0;
+        self.pipeline_mode = false;
+        #[cfg(test)]
+        {
+            self.pipeline_concurrency_override = None;
+        }
+        self.pipeline_stats = None;
         self.in_spill_mode.store(false, SeqCst);
         // Go `HashAggExec.Open` -> `e.memTracker.Reset()`: an aggregation
         // re-opened by an Apply's inner side must not keep charging for the
         // groups it has just dropped.
         self.tracker.replace_bytes_used(0);
+        let pipeline_counts = self.pipeline_eligibility();
+        if let Some((partial_concurrency, final_concurrency)) = pipeline_counts {
+            // The bounded integer fast path keeps its historical priority
+            // (and its Open-time spill registration) over the pipeline.
+            if <C as HashAggContext>::PARALLEL_WORKERS_MAY_EVAL
+                && self.parallel_int_agg_specs().is_none()
+            {
+                // Go `initForParallelExec`: worker counts resolved from the
+                // session variables; the pipeline takes this aggregation over.
+                // The parallel spill helper is not ported yet (see
+                // `hash_agg::parallel`'s module docs): NO soft-limit action is
+                // registered in this mode, so a quota overrun surfaces as the
+                // 8175 cancellation instead of a spill.
+                self.pipeline_stats = Some(Arc::new(parallel::PipelineStats::new(
+                    partial_concurrency,
+                    final_concurrency,
+                )));
+                self.pipeline_mode = true;
+                self.pipeline_partial_concurrency = partial_concurrency;
+                self.pipeline_final_concurrency = final_concurrency;
+                return Ok(());
+            }
+        }
         // Go `initForUnparallelExec`: a FRESH action per Open (so `spillTimes`
         // starts over), registered on the SOFT-limit slot, and only when
         // `tidb_enable_tmp_storage_on_oom` is on -- with it off an overrun goes
@@ -2771,7 +2825,9 @@ impl<C: Columns> Executor for HashAggExec<C> {
             }
             self.execute()?;
             // No group-by and no data: one empty group, so a global COUNT is 0.
-            if self.group_count == 0 && self.group_by.is_empty() {
+            // (The pipeline synthesizes its own defaults row; its output is
+            // already staged in `parallel_output`.)
+            if self.group_count == 0 && self.group_by.is_empty() && !self.pipeline_mode {
                 self.ordered
                     .extend(self.agg_funcs.iter().map(AggState::new));
                 self.group_count = 1;
@@ -2788,6 +2844,8 @@ impl<C: Columns> Executor for HashAggExec<C> {
         self.parallel_output_width = 0;
         self.parallel_output_cursor = 0;
         self.parallel_output_active = false;
+        self.pipeline_mode = false;
+        self.pipeline_stats = None;
         if let Some(in_disk) = &mut self.data_in_disk {
             in_disk.close();
         }

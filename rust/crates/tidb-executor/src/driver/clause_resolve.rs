@@ -53,6 +53,50 @@ pub(crate) fn substitute_output_aliases(
     substitute_output_aliases_where(expr, fields, top_level, &|_| false)
 }
 
+/// Go resolves a positional `ORDER BY` item before any optimizer rule runs:
+/// the parser builds a bare integer item as an `ast.PositionExpr` and
+/// `positionToScalarFunc` (`expression_rewriter.go:1935`) rewrites it to the
+/// projected column of the built plan. Go's planner therefore never sees a
+/// literal sort key -- every rule downstream (aggregate pushdown included)
+/// compares resolved columns. The driver keeps clauses as written until each
+/// consumer resolves them, which is why a positional item still looked like a
+/// literal to the grouped partial-aggregate plans' order/group match.
+///
+/// This is that one early resolution: every positional ORDER BY item becomes
+/// its projected expression, so a positional sort is planned exactly like the
+/// equivalent named-column sort. Items that name no field keep their written
+/// form; the ORDER BY stage's own resolution reports them where it did
+/// before.
+pub(crate) fn resolve_positional_order_by(
+    select: &tidb_ast::SelectStmt,
+) -> Option<tidb_ast::SelectStmt> {
+    let positional = select
+        .order_by
+        .iter()
+        .any(|item| is_positional_field(&item.expr));
+    if !positional {
+        return None;
+    }
+    let mut resolved = select.clone();
+    for item in &mut resolved.order_by {
+        if !is_positional_field(&item.expr) {
+            continue;
+        }
+        // A position naming a BARE-LITERAL field (`SELECT 42 ORDER BY 1`)
+        // resolves to another bare integer -- and unlike Go, whose resolved
+        // form is a dedicated `PositionExpr` node consumed exactly once, a
+        // second top-level resolution here would read that integer back as a
+        // NEW position. Such an item keeps its written form; the ORDER BY
+        // stage's own substitution handles it as it did before.
+        if let Ok(expr) = substitute_output_aliases(&item.expr, select.fields.fields(), true) {
+            if positional_field_index(&expr).is_none() {
+                item.expr = expr;
+            }
+        }
+    }
+    Some(resolved)
+}
+
 /// [`substitute_output_aliases`], with the names that already resolve where
 /// the caller is standing held back.
 ///

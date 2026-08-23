@@ -27,9 +27,7 @@
 //! here for dispatch, once in the driver's runner) -- a wiring simplification
 //! to remove when the driver's runners take parsed statements.
 
-use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -355,7 +353,7 @@ pub struct Session {
     /// session with no registered server provider.
     server_start_timestamp: Option<i64>,
     /// Metadata snapshot cache keyed by the catalog mutation version.
-    tidb_decode_key_cache: RefCell<Option<(u64, Rc<tidb_executor::TidbDecodeKeySnapshot>)>>,
+    tidb_decode_key_cache: std::sync::Mutex<Option<(u64, Arc<tidb_executor::TidbDecodeKeySnapshot>)>>,
     /// Suppresses the metadata snapshot while a narrow fast path builds a
     /// statement context that cannot evaluate `TIDB_DECODE_KEY`.
     skip_tidb_decode_key_snapshot: Cell<bool>,
@@ -511,17 +509,17 @@ pub struct Session {
     /// statement publishes. The session owns the cell and lends it to every
     /// [`tidb_executor::StmtContext`] the statement builds, so an allocating
     /// INSERT and `LAST_INSERT_ID(expr)` write one place, not two.
-    published_last_insert_id: Rc<Cell<Option<u64>>>,
+    published_last_insert_id: Arc<std::sync::Mutex<Option<u64>>>,
     /// Go `SessionVars.RetryInfo`'s auto-increment half: the ids the statement
     /// running now has assigned, kept across a write-conflict replay so the
     /// replay writes the ids the losing attempt picked. It lives on the
     /// session because the retry loop is above the statement -- each attempt
     /// builds its own `StmtContext`, and this is the one thing that has to
     /// cross between them. See `tidb_executor::RetryAutoIds`.
-    retry_auto_ids: Rc<RefCell<tidb_executor::RetryAutoIds>>,
+    retry_auto_ids: Arc<std::sync::Mutex<tidb_executor::RetryAutoIds>>,
     /// Go `SessionVars.RowIDShardGenerator`: retains one random shard for
     /// `@@tidb_shard_allocate_step` generated IDs across statement contexts.
-    row_id_shards: Rc<RefCell<tidb_executor::RowIdShardGenerator>>,
+    row_id_shards: Arc<std::sync::Mutex<tidb_executor::RowIdShardGenerator>>,
     /// The session's non-prepared plan cache
     /// (`tidb_enable_non_prepared_plan_cache`). See
     /// [`non_prepared_plan_cache`] for what it does and does not store.
@@ -541,13 +539,13 @@ pub struct Session {
     /// The session owns the map and lends the handle to every statement
     /// context, because `@x := expr` writes it from INSIDE expression
     /// evaluation -- once per row, visible to the next select-list item.
-    user_vars: Rc<RefCell<HashMap<String, Datum>>>,
+    user_vars: Arc<std::sync::Mutex<HashMap<String, Datum>>>,
     /// Go `SessionVars.SequenceState`: the last value THIS SESSION took from
     /// each sequence, keyed by lowercase `db.name`, which is what `LASTVAL`
     /// reports. It is SESSION state, not the sequence's stored counter -- a
     /// fresh session reads `NULL` from a sequence other sessions have advanced
     /// (captured: `lastval` before any `nextval` is `<nil>`).
-    sequence_last_values: Rc<RefCell<HashMap<String, i64>>>,
+    sequence_last_values: Arc<std::sync::Mutex<HashMap<String, i64>>>,
     /// Go `SessionVars.CurrentDB`: the schema an unqualified name resolves in.
     /// Empty means no database is selected, which is Go's `ErrNoDB` case.
     current_db: String,
@@ -593,7 +591,7 @@ pub struct Session {
     /// Go `SessionVars.Rng`: the generator unseeded `RAND()` advances, shared
     /// across every statement of this session (unlike constant `RAND(N)`,
     /// which owns a fresh per-statement generator -- see `StmtContext`).
-    rand: Rc<MysqlRng>,
+    rand: Arc<MysqlRng>,
     /// Go `SessionVars.PreparedStmtNameToID` / `PreparedStmts`: the SQL-level
     /// prepared statements this session holds. Per-session and not shared: a
     /// peer over the same catalog holds its own.
@@ -613,7 +611,7 @@ pub struct Session {
     /// The channel `StmtContext::report_planned_apply` writes: whether the
     /// statement now running planned an Apply. Read by the prepared plan
     /// cache (Go's `PhysicalApply` refusal) and cleared per statement.
-    planned_apply: Rc<std::cell::Cell<bool>>,
+    planned_apply: Arc<std::sync::atomic::AtomicBool>,
     /// Go `SessionVars.FoundInBinding`: whether the statement RUNNING now
     /// took its hints from a binding.
     found_in_binding: bool,
@@ -637,7 +635,7 @@ impl Default for Session {
         let mut session = Session {
             catalog: SharedCatalog::default(),
             server_start_timestamp: None,
-            tidb_decode_key_cache: RefCell::new(None),
+            tidb_decode_key_cache: std::sync::Mutex::new(None),
             skip_tidb_decode_key_snapshot: Cell::new(false),
             session_memory: tidb_executor::SessionMemory::new(
                 tidb_util::memory::DEF_MEM_QUOTA_QUERY,
@@ -672,14 +670,14 @@ impl Default for Session {
             statement_var_cache: std::cell::RefCell::new(None),
             cost_env_cache: std::cell::RefCell::new(None),
             last_txn_info: std::cell::RefCell::new(String::new()),
-            published_last_insert_id: Rc::default(),
-            retry_auto_ids: Rc::default(),
-            row_id_shards: Rc::default(),
+            published_last_insert_id: Arc::default(),
+            retry_auto_ids: Arc::default(),
+            row_id_shards: Arc::default(),
             non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache::default(),
             found_in_plan_cache: false,
             prev_found_in_plan_cache: false,
-            user_vars: Rc::default(),
-            sequence_last_values: Rc::default(),
+            user_vars: Arc::default(),
+            sequence_last_values: Arc::default(),
             current_db: DEFAULT_DATABASE.to_owned(),
             process: None,
             has_process_priv: false,
@@ -692,7 +690,7 @@ impl Default for Session {
             prepared_statements: prepared_statements::PreparedStore::default(),
             session_bindings: binding::SessionBindings::default(),
             pushdown_blacklists: blacklist::PushdownBlacklists::default(),
-            planned_apply: Rc::default(),
+            planned_apply: Arc::default(),
             found_in_binding: false,
             prev_found_in_binding: false,
         };
@@ -713,8 +711,8 @@ impl Drop for Session {
 /// Go `mathutil.NewWithTime()`: seeds a session's unseeded-`RAND()` generator
 /// from the wall clock, which is what makes two sessions' `RAND()` sequences
 /// differ without either being told to.
-fn new_time_seeded_rand() -> Rc<MysqlRng> {
-    Rc::new(MysqlRng::new_with_time())
+fn new_time_seeded_rand() -> Arc<MysqlRng> {
+    Arc::new(MysqlRng::new_with_time())
 }
 
 pub use tidb_executor::TxnErrorKind;
@@ -1070,7 +1068,7 @@ impl Session {
     /// clears when the statement is finally over. See
     /// `tidb_executor::RetryAutoIds`.
     #[must_use]
-    pub fn retry_auto_ids(&self) -> &Rc<RefCell<tidb_executor::RetryAutoIds>> {
+    pub fn retry_auto_ids(&self) -> &Arc<std::sync::Mutex<tidb_executor::RetryAutoIds>> {
         &self.retry_auto_ids
     }
 
@@ -1392,7 +1390,10 @@ impl Session {
         // publication into the `Prev*` fields the next statement reads, so
         // the promotion happens at the boundary, once, for every statement.
         self.statement_kind = StatementKind::Other;
-        self.published_last_insert_id.set(None);
+        *self
+            .published_last_insert_id
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         // Go promotes `FoundInPlanCache` into `PrevFoundInPlanCache` in
         // `ResetContextOfStmt`, at the same boundary as the other `Prev*`
         // fields above -- which is why `select @@last_plan_from_cache`
@@ -1596,6 +1597,8 @@ mod tests_partition_projection;
 mod tests_partition_prune_collation;
 #[cfg(test)]
 mod tests_planner_core_rewriter;
+#[cfg(test)]
+mod tests_positional_orderby;
 #[cfg(test)]
 mod tests_prepared_plan_cache;
 #[cfg(test)]

@@ -137,7 +137,7 @@ where
                 keys: batch.keys().to_vec(),
                 ..KvrpcBatchRollbackRequest::default()
             };
-            let published = match self.runtime.client().try_borrow_mut() {
+            let published = match self.runtime.client().try_lock() {
                 Ok(mut client) => client.publish_batch_rollback(
                     batch.address(),
                     &request,
