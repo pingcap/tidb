@@ -38,7 +38,7 @@ use crate::mysql_connection::{
     serve_mysql_connection_with_tls_and_version_info, MysqlConnectionError, MysqlConnectionRuntime,
 };
 use crate::mysql_tls::{resolve_server_tls, MysqlServerTls};
-use crate::node_config::NodeConfig;
+use crate::node_config::{NodeConfig, MAX_CONNECTION_WORKERS};
 use crate::resultset_source::ResultSetSource;
 use crate::wire_status::WireStatus;
 use tidb_session::process::ProcessKillTarget;
@@ -1202,6 +1202,9 @@ struct WorkerPool {
     work_senders: Vec<mpsc::Sender<ConnectionWork>>,
     available_workers: mpsc::Receiver<usize>,
     available_sender: mpsc::SyncSender<usize>,
+    /// A live clone so the accept loop can hand dedicated (per-connection)
+    /// threads the same terminal guard the warm pool uses to report panics.
+    terminal_sender: mpsc::Sender<WorkerTerminal>,
     terminal_workers: mpsc::Receiver<WorkerTerminal>,
 }
 
@@ -1248,6 +1251,23 @@ impl Drop for WorkerTerminalGuard {
     }
 }
 
+/// Surfaces a PANICKED serving thread to the accept loop so admission stops,
+/// draining everything else. A dedicated thread reporting `Returned` is just
+/// its one client disconnecting -- exactly how Go's per-connection goroutines
+/// end, thousands of times over a server's life -- so only an actual panic
+/// stops admission here.
+fn poll_terminal(terminal: &mpsc::Receiver<WorkerTerminal>) -> Result<(), SqlNodeError> {
+    while let Ok(worker) = terminal.try_recv() {
+        if worker.kind == WorkerTerminalKind::Panicked {
+            return Err(SqlNodeError::WorkerTerminated {
+                index: worker.index,
+                panicked: true,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Go's `ErrConCount` reply: a client arriving when every worker is busy is
 /// told `1040 Too many connections` and closed, rather than left waiting in
 /// the listen backlog.
@@ -1283,35 +1303,6 @@ fn refuse_over_capacity(stream: &TcpStream) {
         false,
     );
     let _ = stream.shutdown(Shutdown::Both);
-}
-
-fn acquire_worker(
-    available: &mpsc::Receiver<usize>,
-    terminal: &mpsc::Receiver<WorkerTerminal>,
-    shutdown: &ShutdownHandle,
-) -> Result<Option<usize>, SqlNodeError> {
-    loop {
-        if shutdown.is_shutdown_requested() {
-            return Ok(None);
-        }
-        match terminal.try_recv() {
-            Ok(worker) => {
-                return Err(SqlNodeError::WorkerTerminated {
-                    index: worker.index,
-                    panicked: worker.kind == WorkerTerminalKind::Panicked,
-                })
-            }
-            Err(mpsc::TryRecvError::Empty) => {}
-            Err(mpsc::TryRecvError::Disconnected) => return Err(SqlNodeError::WorkerQueueClosed),
-        }
-        match available.recv_timeout(ACCEPT_POLL_INTERVAL) {
-            Ok(worker) => return Ok(Some(worker)),
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err(SqlNodeError::WorkerQueueClosed);
-            }
-        }
-    }
 }
 
 #[derive(Default)]
@@ -1423,7 +1414,10 @@ impl ActiveSockets {
     }
 }
 
-/// A loopback SQL node with fixed workers and a bounded accepted-socket queue.
+/// A loopback SQL node serving accepted connections on a warm worker pool
+/// that grows with one dedicated thread per connection past its size --
+/// Go's `go s.onConn(clientConn)` per accept -- under a bounded
+/// accepted-socket queue.
 pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     listener: TcpListener,
     factory: Arc<F>,
@@ -1434,6 +1428,10 @@ pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     /// Server TLS material, or `None` for a plaintext-only MySQL port. This is
     /// the only thing that lets a connection advertise `CLIENT_SSL`.
     tls: Option<MysqlServerTls>,
+    /// Go's `Instance.MaxConnections`: the simultaneous-connection limit,
+    /// where zero means unlimited (`server.go`'s `checkConnectionCount`).
+    /// It also bounds the warm pool; demand past it spawns one dedicated
+    /// thread per connection.
     worker_count: usize,
     shutdown: ShutdownHandle,
     shutdown_grace: Duration,
@@ -1543,14 +1541,21 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         P: FnMut(&TcpStream, Duration) -> Result<(), SqlNodeError>,
     {
         let active_sockets = Arc::new(ActiveSockets::default());
+        // Go pre-spawns nothing: `go s.onConn(clientConn)` runs one goroutine
+        // per accepted connection. The warm pool keeps a bounded set of
+        // threads for the common small fan-out (and for the deterministic
+        // lifecycle proofs); demand past it is served by spawning exactly
+        // what Go would -- a thread per connection.
+        let warm_workers = self.worker_count.min(MAX_CONNECTION_WORKERS);
         let WorkerPool {
-            workers,
+            mut workers,
             work_senders: worker_senders,
             available_workers,
             available_sender,
+            terminal_sender,
             terminal_workers,
         } = spawn_workers(
-            self.worker_count,
+            warm_workers,
             &self.factory,
             &self.users,
             &self.tracker,
@@ -1562,10 +1567,21 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         )?;
 
         let mut accepted = 0_usize;
+        let mut dedicated_workers: Vec<WorkerHandle> = Vec::new();
+        let mut next_worker_index = warm_workers;
+        let connection_config = WorkerConnectionConfig {
+            max_allowed_packet: self.max_allowed_packet,
+            version_info: self.version_info.clone(),
+            tls: self.tls.clone(),
+        };
         let accept_result = (|| loop {
             if limit == Some(accepted) || self.shutdown.is_shutdown_requested() {
                 break Ok(());
             }
+            // A panicked or returned worker must stop admission promptly, so
+            // the terminal channel is polled on every iteration -- not only
+            // while the loop idles inside accept.
+            poll_terminal(&terminal_workers)?;
             // Go ACCEPTS first and checks capacity after
             // (`server.go`'s `onConn` -> `checkConnectionCount`):
             //
@@ -1585,60 +1601,33 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             let (stream, peer_addr) = match self.listener.accept() {
                 Ok(connection) => connection,
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    // The terminal-worker check `acquire_worker` performed on
-                    // every poll still has to happen while the loop idles, or
-                    // a panicked worker goes unnoticed until a client arrives.
-                    match terminal_workers.try_recv() {
-                        Ok(worker) => {
-                            break Err(SqlNodeError::WorkerTerminated {
-                                index: worker.index,
-                                panicked: worker.kind == WorkerTerminalKind::Panicked,
-                            })
-                        }
-                        Err(mpsc::TryRecvError::Empty) => {}
-                        Err(mpsc::TryRecvError::Disconnected) => {
-                            break Err(SqlNodeError::WorkerQueueClosed)
-                        }
-                    }
                     std::thread::sleep(ACCEPT_POLL_INTERVAL);
                     continue;
                 }
                 Err(error) => break Err(SqlNodeError::Listener(error)),
             };
-            // Go's capacity test is a COUNT, not a token: `conns :=
-            // s.ConnectionCount(); if conns >= int(...MaxConnections)`. That
-            // distinction is the whole of this arm.
+            // Go's capacity test is a COUNT against the configured limit, and
+            // a zero limit is UNLIMITED (`server.go`'s `checkConnectionCount`):
             //
-            // Claiming the worker with `try_recv` and refusing on an empty
-            // channel looks equivalent and is not: the pool is filled by the
-            // worker threads as they come up and refilled as they finish, so
-            // an empty channel also means "momentarily between hands", not
-            // only "at capacity". A client arriving in that window was refused
-            // with 1040 while a slot was free -- and, measured, three clients
-            // that had to be live at once for a barrier deadlocked when one of
-            // them was spuriously turned away.
+            //     // When the value of Instance.MaxConnections is 0, the number
+            //     // of connections is unlimited.
+            //     if int(s.cfg.Instance.MaxConnections) == 0 { return nil }
+            //     conns := s.ConnectionCount()
+            //     if conns >= int(s.cfg.Instance.MaxConnections) { ... }
             //
-            // The count says exactly what Go's says, so the acquisition below
-            // may go back to WAITING for the worker whose slot this connection
-            // already owns.
-            if self.tracker.active() >= self.worker_count {
+            // The count says exactly what Go's says, and every admitted client
+            // under the limit is guaranteed a serving thread because the
+            // dispatch below grows past the warm pool on demand.
+            if self.worker_count != 0 && self.tracker.active() >= self.worker_count {
                 refuse_over_capacity(&stream);
                 continue;
             }
-            let Some(worker_index) =
-                acquire_worker(&available_workers, &terminal_workers, &self.shutdown)?
-            else {
-                break Ok(());
-            };
             prepare_stream(&stream, self.connection_timeout)?;
             let connection_key = u64::try_from(accepted)
                 .ok()
                 .and_then(|value| value.checked_add(1))
                 .expect("accepted connection count fits u64");
             let cancellation = ConnectionCancellation::default();
-            eprintln!(
-                    "{{\"event\":\"connection_dispatch\",\"connection_key\":{connection_key},\"worker_index\":{worker_index}}}"
-                );
             active_sockets.register(
                 connection_key,
                 stream.try_clone().map_err(SqlNodeError::Listener)?,
@@ -1646,22 +1635,65 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             )?;
             let registration =
                 ActiveSocketRegistration::new(connection_key, Arc::clone(&active_sockets));
-            if worker_senders[worker_index]
-                .send(ConnectionWork {
-                    stream,
-                    peer_addr,
-                    cancellation,
-                    registration,
-                })
-                .is_err()
-            {
-                break Err(SqlNodeError::WorkerQueueClosed);
+            // Fast path: an idle warm-pool thread. An empty channel also means
+            // "momentarily between hands", but that no longer refuses (or
+            // waits for) anything: Go serves each accepted connection on its
+            // own goroutine (`go s.onConn(clientConn)`), so a pool-less moment
+            // simply grows by one dedicated thread for this socket.
+            match available_workers.try_recv() {
+                Ok(worker_index) => {
+                    eprintln!(
+                        "{{\"event\":\"connection_dispatch\",\"connection_key\":{connection_key},\"worker_index\":{worker_index}}}"
+                    );
+                    if worker_senders[worker_index]
+                        .send(ConnectionWork {
+                            stream,
+                            peer_addr,
+                            cancellation,
+                            registration,
+                        })
+                        .is_err()
+                    {
+                        break Err(SqlNodeError::WorkerQueueClosed);
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    eprintln!(
+                        "{{\"event\":\"connection_dispatch_dedicated\",\"connection_key\":{connection_key},\"worker_index\":{next_worker_index}}}"
+                    );
+                    let index = next_worker_index;
+                    next_worker_index += 1;
+                    let job = dedicated_connection_job(
+                        index,
+                        stream,
+                        peer_addr,
+                        cancellation,
+                        registration,
+                        Arc::clone(&self.factory),
+                        Arc::clone(&self.users),
+                        Arc::clone(&self.tracker),
+                        connection_config.clone(),
+                        terminal_sender.clone(),
+                    );
+                    match std::thread::Builder::new()
+                        .name(format!("tidb-sql-connection-{index}"))
+                        .spawn(job)
+                    {
+                        Ok(join) => dedicated_workers.push(WorkerHandle { index, join }),
+                        Err(error) => break Err(SqlNodeError::WorkerSpawn(error)),
+                    }
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    break Err(SqlNodeError::WorkerQueueClosed)
+                }
             }
             accepted += 1;
         })();
 
         drop(worker_senders);
         drop(available_sender);
+        drop(terminal_sender);
+        workers.append(&mut dedicated_workers);
         let drain_result =
             drain_workers(workers, &active_sockets, self.shutdown_grace, &self.tracker);
         combine_node_results(accept_result, drain_result)
@@ -1692,6 +1724,75 @@ fn run_worker<S>(
             return;
         }
     }
+}
+
+/// Serves one accepted connection to completion. Shared verbatim by the warm
+/// pool and the dedicated per-connection threads so both paths run the same
+/// handshake/query loop Go runs inside every `onConn` goroutine.
+fn serve_connection_work<F: QuerySessionFactory>(
+    work: ConnectionWork,
+    factory: &Arc<F>,
+    users: &Arc<ConfiguredUserStore>,
+    tracker: &Arc<ConnectionTracker>,
+    connection: &WorkerConnectionConfig,
+) {
+    let ConnectionWork {
+        stream,
+        peer_addr,
+        cancellation,
+        registration: _registration,
+    } = work;
+    if let Err(error) = serve_mysql_connection_with_tls_and_version_info(
+        stream,
+        peer_addr,
+        cancellation,
+        factory.as_ref(),
+        users.as_ref(),
+        tracker,
+        MysqlConnectionRuntime {
+            max_allowed_packet: connection.max_allowed_packet,
+            tls: connection.tls.as_ref(),
+            version_info: &connection.version_info,
+        },
+    ) {
+        let message = error.to_string();
+        eprintln!("{{\"event\":\"connection_error\",\"error\":{message:?}}}");
+    }
+}
+
+/// Builds the job for a dedicated thread that serves exactly ONE accepted
+/// socket, the direct analogue of Go's per-connection goroutine
+/// (`server.go`: `go s.onConn(clientConn)`). The terminal guard reports a
+/// panic through the same channel the warm pool uses, so admission still
+/// stops when a serving thread dies unexpectedly.
+#[allow(clippy::too_many_arguments)]
+fn dedicated_connection_job<F: QuerySessionFactory>(
+    index: usize,
+    stream: TcpStream,
+    peer_addr: SocketAddr,
+    cancellation: ConnectionCancellation,
+    registration: ActiveSocketRegistration,
+    factory: Arc<F>,
+    users: Arc<ConfiguredUserStore>,
+    tracker: Arc<ConnectionTracker>,
+    connection: WorkerConnectionConfig,
+    terminal: mpsc::Sender<WorkerTerminal>,
+) -> WorkerJob {
+    Box::new(move || {
+        let _terminal = WorkerTerminalGuard { index, terminal };
+        serve_connection_work(
+            ConnectionWork {
+                stream,
+                peer_addr,
+                cancellation,
+                registration,
+            },
+            &factory,
+            &users,
+            &tracker,
+            &connection,
+        );
+    })
 }
 
 fn spawn_workers<F: QuerySessionFactory>(
@@ -1739,28 +1840,13 @@ where
                 worker_available,
                 worker_terminal,
                 move |work| {
-                    let ConnectionWork {
-                        stream,
-                        peer_addr,
-                        cancellation,
-                        registration: _registration,
-                    } = work;
-                    if let Err(error) = serve_mysql_connection_with_tls_and_version_info(
-                        stream,
-                        peer_addr,
-                        cancellation,
-                        factory.as_ref(),
-                        users.as_ref(),
+                    serve_connection_work(
+                        work,
+                        &factory,
+                        &users,
                         &worker_tracker,
-                        MysqlConnectionRuntime {
-                            max_allowed_packet: worker_connection.max_allowed_packet,
-                            tls: worker_connection.tls.as_ref(),
-                            version_info: &worker_connection.version_info,
-                        },
-                    ) {
-                        let message = error.to_string();
-                        eprintln!("{{\"event\":\"connection_error\",\"error\":{message:?}}}");
-                    }
+                        &worker_connection,
+                    );
                 },
             );
         });
@@ -1787,12 +1873,15 @@ where
             join: worker,
         });
     }
-    drop(terminal_sender);
+    // The original terminal sender moves into the returned pool: the accept
+    // loop clones it for every dedicated (per-connection) thread so those
+    // report panics through the same channel as the warm pool.
     Ok(WorkerPool {
         workers,
         work_senders,
         available_workers: available_receiver,
         available_sender,
+        terminal_sender,
         terminal_workers: terminal_receiver,
     })
 }
@@ -2169,8 +2258,8 @@ mod tests {
     }
 
     #[test]
-    fn worker_panic_before_availability_stops_admission() {
-        let (_available_tx, available_rx) = mpsc::sync_channel(1);
+    fn worker_panic_surfaces_through_terminal_poll_and_stops_admission() {
+        let (_available_tx, _available_rx) = mpsc::sync_channel::<usize>(1);
         let (terminal_tx, terminal_rx) = mpsc::channel();
         let worker = std::thread::spawn(move || {
             let _terminal = WorkerTerminalGuard {
@@ -2179,14 +2268,38 @@ mod tests {
             };
             panic!("injected pre-availability worker panic");
         });
-
+        // The panicked guard's terminal surfaces through the same poll the
+        // accept loop runs every iteration; poll with a deadline because the
+        // guard only sends while the panic unwinds.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let surfaced = loop {
+            match poll_terminal(&terminal_rx) {
+                Err(error @ SqlNodeError::WorkerTerminated { .. }) => break error,
+                _ if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
+                _ => panic!("the panicked worker never surfaced through the terminal poll"),
+            }
+        };
         assert!(matches!(
-            acquire_worker(&available_rx, &terminal_rx, &ShutdownHandle::default()),
-            Err(SqlNodeError::WorkerTerminated {
+            surfaced,
+            SqlNodeError::WorkerTerminated {
                 index: 3,
                 panicked: true,
-            })
+            }
         ));
+        // A dedicated thread whose client simply disconnected reports
+        // `Returned`; that is normal goroutine completion and must not stop
+        // admission.
+        let (returned_tx, returned_rx) = mpsc::channel();
+        returned_tx
+            .send(WorkerTerminal {
+                index: 4,
+                kind: WorkerTerminalKind::Returned,
+            })
+            .unwrap();
+        drop(returned_tx);
+        assert!(poll_terminal(&returned_rx).is_ok());
+        // An empty channel keeps the accept loop admitting.
+        assert!(poll_terminal(&terminal_rx).is_ok());
         assert!(worker.join().is_err());
     }
 
@@ -2262,18 +2375,30 @@ mod tests {
 
     #[test]
     fn repeated_shutdown_signals_are_idempotent_and_stop_admission() {
-        let shutdown = ShutdownHandle::default();
+        let users = ConfiguredUserStore::parse(
+            "root\t127.0.0.1\tmysql_native_password\t*0000000000000000000000000000000000000000\n",
+        )
+        .unwrap();
+        let node =
+            ConcurrentSqlNode::bind(&test_config(), Arc::new(UnusedFactory), Arc::new(users))
+                .unwrap();
+        let shutdown = node.shutdown_handle();
         shutdown.shutdown();
         shutdown.shutdown();
         shutdown.shutdown();
-        let (available_tx, available_rx) = mpsc::sync_channel(1);
-        available_tx.send(0).unwrap();
-        let (_terminal_tx, terminal_rx) = mpsc::channel();
+        assert!(shutdown.is_shutdown_requested());
 
-        assert!(matches!(
-            acquire_worker(&available_rx, &terminal_rx, &shutdown),
-            Ok(None)
-        ));
+        // Admission stops before any accept: the bounded loop drains and
+        // returns without ever handing a socket to a worker.
+        let tracker = node.tracker();
+        let server = std::thread::spawn(move || node.serve_connections(1).unwrap());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !server.is_finished() {
+            assert!(Instant::now() < deadline, "shutdown did not stop admission");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        server.join().unwrap();
+        assert_eq!(tracker.accepted(), 0);
     }
 
     #[test]
