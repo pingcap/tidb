@@ -2392,7 +2392,28 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // measured at 15 -> 21 (join_key_type_cast +3,
     // executor/jointest/join +4) and reverted; why v2's chain walk shows
     // forward order is documented as OPEN at `BuildTable`'s doc.
-    const KNOWN_DIVERGENCES: usize = 14;
+    //
+    // 14 -> 13: `partition_pruner` 3 -> 2. The closed statement is
+    // `explain ... select * from t where b in (1,2) and a like '%a%'` over
+    // `partition by key(b) partitions 3` under static pruning, where the
+    // LIKE conjunct refuses the fast plan and Go's NORMAL planner still
+    // reaches `Batch_Point_Get`: `findBestTask`'s `canConvertPointGet`
+    // never asks whether the WHERE was consumed, and
+    // `convertToBatchPointGet` moves the leftover TableFilters into a ROOT
+    // Selection above the batch read (`pkg/planner/core/find_best_task.go`),
+    // per surviving partition because static pruning fanned the DataSource
+    // out first. Ported as `commit_index_range_source`'s
+    // `residual_batch_point` arm (gated on Go's
+    // `getHashOrKeyPartitionColumnName`), with the residual Selection
+    // distributed root-side into the union's branches and each branch
+    // estimated from its own partition's statistics -- one row per unique
+    // point range clamped into `[1, realtimeRowCount]`
+    // (`pkg/planner/cardinality/row_count_index.go`), the Selection above it
+    // floored at one row (`selectivity.go`'s
+    // `ret = max(ret, 1.0/realtimeCount)`). The topic's remaining two are
+    // other families: an ORDER BY tie order and an interval-intersection
+    // Point_Get.
+    const KNOWN_DIVERGENCES: usize = 13;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

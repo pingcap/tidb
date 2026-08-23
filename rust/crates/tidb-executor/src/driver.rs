@@ -2094,12 +2094,13 @@ fn run_select_traced_with_delivery_choice_inner(
                         Some(std::slice::from_ref(&physical)),
                         &qualify,
                         logical_rows,
-                        crate::driver::access::select_predicate_stats_selectivity(
+                        crate::driver::access::select_predicate_stats_selectivity_in_session(
                             select,
                             predicate,
                             catalog,
                             current_db,
                             &filter_scope,
+                            ctx.default_string_match_selectivity(),
                         ),
                     );
                 } else if grouped_derived_output_pruned {

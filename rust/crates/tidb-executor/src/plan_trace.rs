@@ -1156,6 +1156,7 @@ impl PlanTrace {
         partitions: &[String],
         index: &str,
         static_partition_prune: bool,
+        branch_estimates: &[f64],
     ) {
         self.push(PlanNode::new(
             "TableDual",
@@ -1163,7 +1164,14 @@ impl PlanTrace {
             String::new(),
             String::new(),
         ));
-        self.index_batch_point_get(visible, count, partitions, index, static_partition_prune);
+        self.index_batch_point_get(
+            visible,
+            count,
+            partitions,
+            index,
+            static_partition_prune,
+            branch_estimates,
+        );
     }
 
     pub(crate) fn index_batch_point_get(
@@ -1173,11 +1181,20 @@ impl PlanTrace {
         partitions: &[String],
         index: &str,
         static_partition_prune: bool,
+        // One estimate per partition branch, when the caller could read the
+        // partitions' own statistics; empty falls back to `count`. Only the
+        // fanned-out branches consume these: Go's per-branch number is
+        // `min(CountAfterAccess, len(ranges))` where the partition's
+        // `getIndexRowCountForStatsV2` counts one row per unique point range
+        // and clamps into `[1, realtimeRowCount]`
+        // (`pkg/planner/cardinality/row_count_index.go`), while the single
+        // node is Go's FAST plan whose estimate is the value-list length.
+        branch_estimates: &[f64],
     ) {
-        let branch = |partitions: &[String]| {
+        let branch = |partitions: &[String], est: f64| {
             PlanNode::new(
                 "Batch_Point_Get",
-                Some(count as f64),
+                Some(est),
                 format!("table:{visible}{}, {index}", partition_object(partitions)),
                 "keep order:false, desc:false".to_owned(),
             )
@@ -1208,11 +1225,25 @@ impl PlanTrace {
             );
             union.children = partitions
                 .iter()
-                .map(|partition| branch(std::slice::from_ref(partition)))
+                .enumerate()
+                .map(|(position, partition)| {
+                    branch(
+                        std::slice::from_ref(partition),
+                        branch_estimates
+                            .get(position)
+                            .copied()
+                            .unwrap_or(count as f64),
+                    )
+                })
                 .collect();
+            // Go's `PhysicalUnionAll` estimate is the sum of its children's.
+            union.est_rows = union
+                .children
+                .iter()
+                .try_fold(0.0, |sum, child| child.est_rows.map(|rows| sum + rows));
             self.replace_top(union);
         } else {
-            self.replace_top(branch(partitions));
+            self.replace_top(branch(partitions, count as f64));
         }
         self.mark_top_access_consumed();
     }
@@ -2995,14 +3026,6 @@ impl PlanTrace {
         stats_selectivity: Option<f64>,
         column_names: &[Option<String>],
     ) {
-        let estimate = logical_rows.map_or_else(
-            || {
-                Est::ScaleFloorOne(
-                    stats_selectivity.unwrap_or_else(|| pseudo_selectivity(predicate)),
-                )
-            },
-            Est::Fixed,
-        );
         let info = (!column_names.is_empty())
             .then(|| {
                 built.and_then(|expressions| {
@@ -3016,6 +3039,57 @@ impl PlanTrace {
                     .and_then(|expressions| qualify.conditions(expressions))
             })
             .unwrap_or_else(|| qualify.expr(predicate));
+        // Go's static-prune `PartitionProcessor` divided the `DataSource`
+        // BEFORE physical planning, so `convertToBatchPointGet` builds one
+        // ROOT `Selection` per partition, each over its own batch read
+        // (`pkg/planner/core/find_best_task.go`). Its estimate is that
+        // partition's `ds.StatsInfo()`: the partition row count scaled by
+        // `cardinality.Selectivity`, whose result never drops below one row
+        // (`pkg/planner/cardinality/selectivity.go`:
+        // `ret = max(ret, 1.0/float64(coll.RealtimeCount))`) -- with the
+        // access conjuncts' share being exactly the branch's own access
+        // estimate, that is `max(branch_rows * residual_selectivity, 1)`.
+        // This tier records the plan bottom-up, so the union of batch point
+        // gets is already on the stack and the one residual Selection is
+        // distributed into its branches here.
+        if self.stack.last().is_some_and(|top| {
+            top.name == "PartitionUnion"
+                && !top.children.is_empty()
+                && top
+                    .children
+                    .iter()
+                    .all(|child| child.name == "Batch_Point_Get")
+        }) {
+            let selectivity =
+                stats_selectivity.unwrap_or_else(|| pseudo_selectivity(predicate));
+            let mut union = self.stack.pop().expect("the union was just seen");
+            for branch in std::mem::take(&mut union.children) {
+                let mut selection = PlanNode::new(
+                    "Selection",
+                    branch
+                        .est_rows
+                        .map(|rows| (rows * selectivity).max(1.0)),
+                    String::new(),
+                    info.clone(),
+                );
+                selection.children.push(branch);
+                union.children.push(selection);
+            }
+            union.est_rows = union
+                .children
+                .iter()
+                .try_fold(0.0, |sum, child| child.est_rows.map(|rows| sum + rows));
+            self.stack.push(union);
+            return;
+        }
+        let estimate = logical_rows.map_or_else(
+            || {
+                Est::ScaleFloorOne(
+                    stats_selectivity.unwrap_or_else(|| pseudo_selectivity(predicate)),
+                )
+            },
+            Est::Fixed,
+        );
         self.wrap("Selection", estimate, info);
     }
 
@@ -3909,6 +3983,23 @@ impl PlanTrace {
 
     /// Moves a residual filter below a non-covering lookup, onto its Probe.
     pub(crate) fn lookup_probe_selection(&mut self, logical_rows: Option<f64>) -> bool {
+        // A residual over a batch point get is already placed: Go's
+        // `convertToBatchPointGet` keeps `IndexFilters`/`TableFilters` in a
+        // ROOT `Selection` above the root read (`find_best_task.go`), so
+        // there is no cop Probe to move anything onto. The per-partition
+        // shape was distributed when the Selection was recorded (see
+        // [`Self::residual_selection`]), leaving the union on top.
+        if self.stack.last().is_some_and(|top| {
+            top.name == "PartitionUnion"
+                && !top.children.is_empty()
+                && top.children.iter().all(|child| {
+                    child.name == "Selection"
+                        && child.children.len() == 1
+                        && child.children[0].name == "Batch_Point_Get"
+                })
+        }) {
+            return true;
+        }
         let Some(mut selection) = self.stack.pop() else {
             return false;
         };
@@ -3940,6 +4031,13 @@ impl PlanTrace {
             return false;
         }
         let lookup = selection.children.pop().expect("selection child");
+        // A single-partition (or unpartitioned) batch point get also keeps
+        // its residual as the root Selection it already is.
+        if lookup.name == "Batch_Point_Get" {
+            selection.children.push(lookup);
+            self.stack.push(selection);
+            return true;
+        }
         if lookup.name != "IndexLookUp" || lookup.children.len() != 2 {
             selection.children.push(lookup);
             self.stack.push(selection);

@@ -1901,6 +1901,159 @@ fn a_batch_point_get_names_the_partitions_its_handles_reach() {
     );
 }
 
+/// Go's NORMAL planner still reaches `Batch_Point_Get` when a conjunct the
+/// fast plan cannot own remains: `findBestTask`'s `canConvertPointGet` never
+/// asks whether the WHERE was consumed, and `convertToBatchPointGet` moves
+/// the leftover `TableFilters` into a ROOT `Selection` above the batch read
+/// (`pkg/planner/core/find_best_task.go`) -- per surviving partition,
+/// because static pruning fanned the `DataSource` out before physical
+/// planning. For several ranges on a partitioned table the conversion also
+/// requires hash/key partitioning over one column
+/// (`getHashOrKeyPartitionColumnName`, `pkg/planner/core/point_get_plan.go`).
+///
+/// Every number below is TiDB's own, recorded in
+/// `tests/integrationtest/r/planner/core/casetest/partition/partition_pruner.result`
+/// over this exact schema and data (the topic sets
+/// `tidb_default_string_match_selectivity = 0.8` in its prologue):
+///
+/// ```text
+/// explain format = 'brief' select * from t where b in (1,2) and a like '%a%';
+/// PartitionUnion       2.60  root
+/// ├─Selection          1.60  root  like(issue42135.t.a, "%a%", 92)
+/// │ └─Batch_Point_Get  2.00  root  table:t, partition:p1, index:PRIMARY(b)  keep order:false, desc:false
+/// └─Selection          1.00  root  like(issue42135.t.a, "%a%", 92)
+///   └─Batch_Point_Get  1.00  root  table:t, partition:p2, index:PRIMARY(b)  keep order:false, desc:false
+/// ```
+///
+/// The branch estimates are per-PARTITION: `getIndexRowCountForStatsV2`
+/// counts one row per unique full-length point range and clamps the sum into
+/// `[1, realtimeRowCount]` (`pkg/planner/cardinality/row_count_index.go`) --
+/// p1 holds five rows so `[1,1],[2,2]` counts 2.00, p2 holds one row so the
+/// same ranges clamp to 1.00. Each root Selection is that partition's
+/// `ds.StatsInfo()`: the branch's access count scaled by the string-match
+/// selectivity and floored at one row (`pkg/planner/cardinality/
+/// selectivity.go`: `ret = max(ret, 1.0/float64(coll.RealtimeCount))`).
+///
+/// MUTATION: drop the `residual_batch_point` arm in
+/// `commit_index_range_source` and this prints per-partition `IndexLookUp`s
+/// over `IndexRangeScan range:[1,1], [2,2]`; drop the clamp in
+/// `batch_point_branch_estimates` and both branches read 2.00.
+#[test]
+fn a_residual_conjunct_keeps_the_static_per_partition_batch_point_get() {
+    let mut session = Session::new();
+    session
+        .run("SET @@tidb_partition_prune_mode = 'static'")
+        .unwrap();
+    session
+        .run("SET @@tidb_default_string_match_selectivity = 0.8")
+        .unwrap();
+    session
+        .run(
+            "CREATE TABLE t (a VARCHAR(255), b INT PRIMARY KEY NONCLUSTERED, KEY (a)) \
+             PARTITION BY KEY (b) PARTITIONS 3",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES ('Ab',1),('abc',2),('BC',3),('AC',4),('BA',5),('cda',6)")
+        .unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+
+    // The fast plan's shape first: the plain IN is Go's recorded
+    // `PartitionUnion 3.00` over per-partition batch point gets whose
+    // estimates come from each partition's own analyzed statistics.
+    let plain = crate::tests_support::row_text(
+        session.run("EXPLAIN SELECT * FROM t WHERE b IN (1,2)"),
+    );
+    let shape: Vec<(String, String, String)> = plain
+        .iter()
+        .map(|row| (row[0].clone(), row[1].clone(), row[3].clone()))
+        .collect();
+    assert_eq!(
+        shape,
+        vec![
+            (
+                "PartitionUnion_3".to_owned(),
+                "3.00".to_owned(),
+                String::new()
+            ),
+            (
+                "├─Batch_Point_Get_1".to_owned(),
+                "2.00".to_owned(),
+                "table:t, partition:p1, index:PRIMARY(b)".to_owned()
+            ),
+            (
+                "└─Batch_Point_Get_2".to_owned(),
+                "1.00".to_owned(),
+                "table:t, partition:p2, index:PRIMARY(b)".to_owned()
+            ),
+        ]
+    );
+
+    // The residual LIKE refuses the fast plan; the normal per-partition
+    // planner still chooses the batch point get, with the residual as a
+    // ROOT Selection inside every branch. (The leading Projection is this
+    // tier's always-present wrapper, an established printer divergence.)
+    let residual = crate::tests_support::row_text(
+        session.run("EXPLAIN SELECT * FROM t WHERE b IN (1,2) AND a LIKE '%a%'"),
+    );
+    let shape: Vec<(String, String, String, String)> = residual
+        .iter()
+        .skip(1)
+        .map(|row| {
+            (
+                row[0].trim_start_matches([' ', '│', '├', '└', '─']).to_owned(),
+                row[1].clone(),
+                row[3].clone(),
+                row[4].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        vec![
+            (
+                "PartitionUnion_5".to_owned(),
+                "2.60".to_owned(),
+                String::new(),
+                String::new()
+            ),
+            (
+                "Selection_2".to_owned(),
+                "1.60".to_owned(),
+                String::new(),
+                "like(test.t.a, \"%a%\", 92)".to_owned()
+            ),
+            (
+                "Batch_Point_Get_1".to_owned(),
+                "2.00".to_owned(),
+                "table:t, partition:p1, index:PRIMARY(b)".to_owned(),
+                "keep order:false, desc:false".to_owned()
+            ),
+            (
+                "Selection_4".to_owned(),
+                "1.00".to_owned(),
+                String::new(),
+                "like(test.t.a, \"%a%\", 92)".to_owned()
+            ),
+            (
+                "Batch_Point_Get_3".to_owned(),
+                "1.00".to_owned(),
+                "table:t, partition:p2, index:PRIMARY(b)".to_owned(),
+                "keep order:false, desc:false".to_owned()
+            ),
+        ]
+    );
+
+    // The residual still filters: only 'abc' contains a lowercase 'a' among
+    // the rows the handles pin (binary collation).
+    assert_eq!(
+        crate::tests_support::row_text(
+            session.run("SELECT * FROM t WHERE b IN (1,2) AND a LIKE '%a%'")
+        ),
+        vec![vec!["abc".to_owned(), "2".to_owned()]]
+    );
+}
+
 /// Go's `rule_partition_processor` under `@@tidb_partition_prune_mode =
 /// 'static'`: one scan per SURVIVING partition, under a `PartitionUnion`,
 /// each naming its own partition. Under `dynamic` -- the shipped default --
