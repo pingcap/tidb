@@ -640,6 +640,65 @@ fn cross_join_falls_back_to_the_nested_loop() {
     assert_eq!(run(&mut join).len(), 16);
 }
 
+/// Go executes a TRUE cross join through hash join v1 with an empty key:
+/// one chain, head-inserted (`hash_table_v1.go:634`), so each probe row
+/// sees the build rows NEWEST-FIRST. A join that only FALLS BACK here
+/// because its equality is not a bare `col = col` (`join_key_type_cast`'s
+/// cast keys) is keyed in Go and reads forward. Both directions are pinned
+/// by recordings; see `BuildTable`'s doc for the 15 -> 21 measurement that
+/// killed the uniform-reverse theory.
+#[test]
+fn nested_loop_emission_order_matches_gos_chain_direction() {
+    // Bare cross join: inner rows arrive in reverse input order.
+    let left = vec![vec![Datum::Int(1), Datum::Int(0)]];
+    let right = vec![
+        vec![Datum::Int(7), Datum::Int(70)],
+        vec![Datum::Int(8), Datum::Int(80)],
+    ];
+    let mut join = join_of(JoinKind::Inner, Vec::new(), left.clone(), right.clone(), 2);
+    assert!(!join.is_hash_join());
+    assert_eq!(
+        run(&mut join),
+        vec![vec![1, 0, 8, 80], vec![1, 0, 7, 70]],
+        "a keyless cross join walks Go's single chain newest-first"
+    );
+
+    // A cross-side equality that key extraction cannot take (one side is
+    // an expression, Go's `updateEQCond` injected-projection case) still
+    // marks the join KEYED, and keyed order reads forward.
+    let uneven_eq = {
+        let column = |index: i64| {
+            let mut column = Column::new(index + 1, long());
+            column.index = index;
+            Expression::Column(column)
+        };
+        let plus = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("plus"),
+            long(),
+            vec![
+                column(0),
+                Expression::Constant(Constant::new(Datum::Int(0), long())),
+            ],
+        ));
+        Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("eq"),
+            long(),
+            vec![plus, column(2)],
+        ))
+    };
+    let right = vec![
+        vec![Datum::Int(1), Datum::Int(70)],
+        vec![Datum::Int(1), Datum::Int(80)],
+    ];
+    let mut join = join_of(JoinKind::Inner, vec![uneven_eq], left, right, 2);
+    assert!(!join.is_hash_join());
+    assert_eq!(
+        run(&mut join),
+        vec![vec![1, 0, 1, 70], vec![1, 0, 1, 80]],
+        "a cast-shaped equality keeps Go's keyed forward order"
+    );
+}
+
 /// The scaling claim, asserted on the cost the hash table exists to
 /// remove rather than on the wall clock.
 ///

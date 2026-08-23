@@ -886,6 +886,9 @@ pub struct JoinExec<C: Columns> {
     /// would duplicate work and can rebuild a condition chunk with a schema
     /// that no longer describes a projected join row.
     residual_conditions: Vec<Expression>,
+    /// Whether some conjunct equates the two sides -- Go would KEY this
+    /// join (`updateEQCond`); see [`crate::hash_join::has_cross_side_equality`].
+    cross_side_equality: bool,
     /// The joined left-then-right row types the residual conditions read. Semi joins
     /// return only their left child, so this cannot be derived from `meta`.
     condition_types: Vec<FieldType>,
@@ -965,7 +968,9 @@ impl<C: Columns> JoinExec<C> {
         ctx: C,
         memory: StatementMemory,
     ) -> Self {
-        let split = crate::hash_join::split_equi(&conditions, left.ret_field_types().len());
+        let left_width = left.ret_field_types().len();
+        let split = crate::hash_join::split_equi(&conditions, left_width);
+        let cross_side_equality = crate::hash_join::has_cross_side_equality(&conditions, left_width);
         let flattened = conditions
             .iter()
             .flat_map(crate::hash_join::split_conjuncts)
@@ -991,6 +996,7 @@ impl<C: Columns> JoinExec<C> {
             kind,
             conditions,
             residual_conditions,
+            cross_side_equality,
             condition_types,
             condition_chunk,
             residual_decimal_mul_lt,
@@ -2612,7 +2618,22 @@ impl<C: Columns> JoinExec<C> {
         for outer_row in outer {
             let before_rows = req.num_rows();
             let before_bytes = req.memory_usage();
-            self.emit_outer_row(req, outer_row, inner.iter().map(Vec::as_slice))?;
+            // Go executes a TRUE cross join through hash join v1 with an
+            // EMPTY key: every build row is `Put` into one chain, and `Put`
+            // inserts at the HEAD (`newEntry.Next = oldEntry`,
+            // `hash_table_v1.go:634`), so `GetMatchedRowsAndPtrs` walks the
+            // chain newest-first and each probe row sees the build rows in
+            // REVERSE input order. `partition_pruner`'s recorded
+            // `t1 left join t2 on true ... order by t1.id, t1.a` shows it:
+            // t2's qualifying rows arrive 8 then 7 under the tied sort keys.
+            // A join that lands here only because its equality needs a CAST
+            // (`join_key_type_cast`) is KEYED in Go and its recorded order
+            // reads forward; `cross_side_equality` is that boundary.
+            if self.cross_side_equality {
+                self.emit_outer_row(req, outer_row, inner.iter().map(Vec::as_slice))?;
+            } else {
+                self.emit_outer_row(req, outer_row, inner.iter().rev().map(Vec::as_slice))?;
+            }
             let produced = i64::try_from(req.num_rows() - before_rows).unwrap_or(i64::MAX);
             let grew = (req.memory_usage() - before_bytes).max(0);
             self.tracker
@@ -3471,8 +3492,8 @@ impl<C: Columns> JoinExec<C> {
             // A probe row whose key holds a NULL matches nothing, so it never
             // touches the table -- and, on an outer join, pads immediately.
             //
-            // Go `GetMatchedRowsAndPtrs`: walk the bucket's pointers in order
-            // and dereference each one through the container, which is where
+            // Go `GetMatchedRowsAndPtrs`: walk the bucket's chain and
+            // dereference each pointer through the container, which is where
             // a spilled build side becomes a read from the spill file.
             let candidates: Vec<RowPtr> = match key {
                 Some(key) => {

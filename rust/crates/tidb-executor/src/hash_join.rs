@@ -270,6 +270,55 @@ fn push_conjuncts<'a>(expr: &'a Expression, out: &mut Vec<&'a Expression>) {
 /// the first two would need the key to be built from an evaluated expression
 /// (Go does that; this unit does not), and the third is a filter, not a join
 /// key.
+/// TRUE when some conjunct is an equality whose two argument trees read
+/// columns from OPPOSITE sides of the join -- exactly the conjuncts Go's
+/// `updateEQCond` (`logical_join.go`) turns into join KEYS, injecting child
+/// projections when a side is not a bare column. Such a join runs Go's
+/// KEYED hash join even when [`split_equi`] extracts nothing here (the
+/// cast-typed keys of `planner/core/join_key_type_cast`), and the recorded
+/// keyed match order reads FORWARD; only a join with no cross-side
+/// equality at all is Go's v1 cross join with the reversed single-chain
+/// order. See [`BuildTable`]'s doc for the measurements.
+pub(crate) fn has_cross_side_equality(conditions: &[Expression], left_width: usize) -> bool {
+    fn sides(expr: &Expression, left_width: usize, has: &mut (bool, bool)) {
+        match expr {
+            Expression::Column(column) => {
+                if usize::try_from(column.index).is_ok_and(|index| index < left_width) {
+                    has.0 = true;
+                } else {
+                    has.1 = true;
+                }
+            }
+            Expression::ScalarFunction(f) => {
+                for arg in &f.args {
+                    sides(arg, left_width, has);
+                }
+            }
+            Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
+        }
+    }
+    conditions
+        .iter()
+        .flat_map(split_conjuncts)
+        .any(|conjunct| {
+            let Expression::ScalarFunction(f) = conjunct else {
+                return false;
+            };
+            let name = f.func_name.lowercase();
+            if (name != "eq" && name != "nulleq") || f.args.len() != 2 {
+                return false;
+            }
+            let mut first = (false, false);
+            let mut second = (false, false);
+            sides(&f.args[0], left_width, &mut first);
+            sides(&f.args[1], left_width, &mut second);
+            matches!(
+                (first, second),
+                ((true, false), (false, true)) | ((false, true), (true, false))
+            )
+        })
+}
+
 pub(crate) fn split_equi(conditions: &[Expression], left_width: usize) -> EquiSplit {
     let mut keys = Vec::new();
     let mut equal_mask = Vec::new();
@@ -804,10 +853,23 @@ pub(crate) fn equi_keys_equal_chunk_rows(
 /// [`RowContainer`] holding the row DATA and, per key, the [`RowPtr`]s that
 /// carry it IN BUILD ORDER.
 ///
-/// The order is not incidental. The nested loop this replaces emits, for one
-/// probe row, its matches in build-input order; keeping each bucket sorted
-/// by build order is what makes the hash join's output byte-identical to it
-/// rather than merely equivalent as a set.
+/// The order is not incidental, and the two Go hash joins READ IT IN
+/// OPPOSITE DIRECTIONS. v1's `Put` inserts each row at the HEAD of its
+/// bucket's chain (`hash_table_v1.go:634` `newEntry.Next = oldEntry`), so
+/// a probe row sees its matches NEWEST-FIRST -- and a cross join, which
+/// only v1 executes (`CanUseHashJoinV2` refuses empty keys), shows exactly
+/// that in `partition_pruner`'s recorded `... on true ... order by t1.id,
+/// t1.a`: t2's rows 7 and 8 arrive 8 then 7 under the tied sort keys. The
+/// KEYED equi-joins the corpus records ran v2, and their visible orders
+/// read FORWARD: flipping these buckets to newest-first was measured at
+/// 15 -> 21 corpus divergences (join_key_type_cast +3,
+/// executor/jointest/join +4) and reverted. WHY v2 shows forward order is
+/// NOT established -- its probe also walks a chain head-first
+/// (`inner_join_probe.go:47-57`), so the reversal must be cancelled
+/// upstream of the chain (build-side segment enumeration, partition
+/// assembly, or the recorded server's join choice); until someone reads
+/// that far, the recordings are the authority. Keyed buckets therefore
+/// iterate forward; only the cross-join path (`next_nested`) reverses.
 ///
 /// # Why the rows live in a container and the pointers do not
 ///

@@ -2378,7 +2378,21 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // join_key_type_cast 2, and one each of index_join, explain_easy's
     // HAVING decorrelation, agg_predicate_pushdown, stale_txn
     // (MVCC-blocked), and autoid.
-    const KNOWN_DIVERGENCES: usize = 15;
+    // 15 -> 14 at the CROSS-JOIN EMISSION ORDER:
+    // `partition_pruner`'s `t1 left join t2 on true ... order by t1.id,
+    // t1.a` now emits t2's tied rows 8 then 7. Go executes a true cross
+    // join through hash join v1 with an EMPTY key -- one chain,
+    // head-inserted (`hash_table_v1.go:634`) -- so each probe row reads
+    // the build rows newest-first, and the nested path
+    // (`join::next_nested`) now walks its inner rows in reverse. The
+    // reversal is GATED on `hash_join::has_cross_side_equality`: a join
+    // that only lands on the nested path because its equality needs a
+    // cast (`join_key_type_cast`) is KEYED in Go, and keyed recorded
+    // orders read forward -- flipping keyed buckets newest-first was
+    // measured at 15 -> 21 (join_key_type_cast +3,
+    // executor/jointest/join +4) and reverted; why v2's chain walk shows
+    // forward order is documented as OPEN at `BuildTable`'s doc.
+    const KNOWN_DIVERGENCES: usize = 14;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path
