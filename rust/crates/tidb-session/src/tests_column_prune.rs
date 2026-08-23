@@ -119,19 +119,20 @@ fn the_gate_refuses_every_wide_shape_and_they_still_answer_correctly() {
     assert_eq!(rows, vec![vec!["1", "10", "100", "1000"]]);
     assert_eq!(decoded, all);
 
-    // A correlated subquery -- which is how a correlated reference to this
-    // scope is refused, since one can only occur inside a subquery. (An
-    // UNCORRELATED subquery is not in this list: the driver folds it into a
-    // literal before pruning is offered, so what the gate sees is a genuine
-    // plain single-table scan and pruning it is correct -- covered by
-    // `an_uncorrelated_subquery_is_folded_away_before_the_gate_sees_it`.)
+    // A correlated subquery. Go's `LogicalApply.PruneColumns`
+    // (`pkg/planner/core/operator/logicalop/logical_apply.go:105-136`) prunes
+    // the OUTER child with the parent's demand plus the correlated columns
+    // the inner plan reads (`CorCols`, :130-133) -- here `t.c` (selected) and
+    // `t.a` (the correlation `s.k = t.a`). The unrelated `t.b` and `t.d` are
+    // never decoded, exactly as Go leaves them out of the outer scan.
     let (rows, decoded) = rows_and_decoded(
         &mut session,
         "SELECT c FROM t WHERE EXISTS (SELECT 1 FROM s WHERE s.k = t.a) ORDER BY a",
     );
     assert_eq!(rows, vec![vec!["100"], vec!["200"]]);
-    assert!(
-        decoded.is_superset(&all),
+    assert_eq!(
+        decoded,
+        BTreeSet::from([A, C]),
         "correlated subquery decoded {decoded:?}"
     );
 
