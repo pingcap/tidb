@@ -130,6 +130,46 @@ any cluster protocol, ask what OTHER nodes will now expect of this one.
 
 Known follow-ups: the MDL gate is whole-transaction rather than Go's
 per-table `CheckOldRunningTxn`, so a long transaction delays unrelated
-DDL more than Go would (conservative, never wrong); and the ladder's
-performance columns show the Rust node still 2-4x behind Go per
-statement, which is a separate optimization unit, not a correctness one.
+DDL more than Go would (conservative, never wrong -- measured at 39s for
+one DDL under eight-thread load); and the ladder's performance columns
+show the Rust node still 2-4x behind Go per statement, which is a
+separate optimization unit, not a correctness one.
+
+## The last rung-8 divergence, diagnosed but NOT fixed
+
+Under rung 8 the workload dies at `COMMIT` with `9007 Write conflict`.
+Traced to `tidb-session/src/txn.rs`'s commit guard: a transaction in that
+driver holds a whole WORKING COPY of the catalog and republishes it at
+commit, so it refuses when `shared.version()` has moved.
+
+Two things are wrong with that against Go, and they pull in opposite
+directions:
+
+1. **Identity.** When the mover is a DDL, Go reports
+   `domain.ErrInfoSchemaChanged` -- 8028, carrying `kv.TxnRetryableMark`
+   (`pkg/domain/domain.go:3014-3016`, raised at
+   `pkg/domain/schema_checker.go:74`) -- never 9007. The remedy differs:
+   re-run the statements against the new schema, rather than re-resolve a
+   contended key.
+
+2. **Whether it should fire at all.** With metadata locks ENABLED --
+   the default on both engines -- Go does not reach the check.
+   `validator.Check` (`pkg/infoschema/isvalidator/validator.go:236-241`)
+   skips the schema-delta comparison outright, because "if there are DDL
+   running for the related tables, DDL will wait the txn to finishes
+   before move to next step". That is the wait this node now
+   participates in. So the node currently holds the DDL back AND fails
+   its own commit for the same schema move -- both halves of the
+   protocol running, contradicting each other.
+
+A first attempt simply renamed the error to 8028 and was REVERTED,
+because it is not that simple: `a_conflicting_commit_is_refused` pins
+the same guard catching a peer's DATA write, which in Go is a genuine
+write conflict. This driver's single version counter is bumped by
+schema changes and data writes alike, so at that line the cause cannot
+be told apart, and either error name is wrong half the time.
+
+The real fix is to give the guard the two facts Go has: WHAT moved
+(schema vs data) and WHETHER it was related to this transaction. That
+most likely means the transaction staging a narrower unit than the whole
+catalog, which is its own change and wants its own plan.
