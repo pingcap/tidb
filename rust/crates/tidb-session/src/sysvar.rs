@@ -155,13 +155,27 @@ mod catalog;
 
 pub use catalog::SYS_VARS;
 
+/// The name to look a variable up by, lowercased only when it needs it.
+///
+/// Statement execution reads variables by the dozens, and almost every name
+/// that arrives is already lowercase -- parser output and internal callers
+/// both speak in the registry's own casing. `to_ascii_lowercase()` allocates
+/// for every one of them; the scan proves most calls need no copy at all.
+pub(crate) fn lowered_if_needed(name: &str) -> std::borrow::Cow<'_, str> {
+    if name.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        std::borrow::Cow::Owned(name.to_ascii_lowercase())
+    } else {
+        std::borrow::Cow::Borrowed(name)
+    }
+}
+
 /// Go `GetSysVar`: looks an entry up by name, case-insensitively (Go
 /// lowercases first).
 #[must_use]
 pub fn get_sys_var(name: &str) -> Option<&'static SysVarDef> {
-    let lowered = name.to_ascii_lowercase();
+    let lowered = lowered_if_needed(name);
     SYS_VARS
-        .binary_search_by(|candidate| candidate.name.cmp(lowered.as_str()))
+        .binary_search_by(|candidate| candidate.name.cmp(lowered.as_ref()))
         .ok()
         .map(|index| &SYS_VARS[index])
 }

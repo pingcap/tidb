@@ -150,11 +150,12 @@ impl GlobalSysvars {
     pub fn get(&self, name: &str) -> Result<String, VarError> {
         let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        let lowered = crate::sysvar::lowered_if_needed(name);
         Ok(self
             .store(def)
             .lock()
             .expect("global sysvar lock poisoned")
-            .get(&name.to_ascii_lowercase())
+            .get(lowered.as_ref())
             .cloned()
             .unwrap_or_else(|| crate::sysvar::effective_default(def)))
     }
@@ -638,9 +639,10 @@ impl SessionVars {
         if !def.has_session_scope() {
             return self.globals.get(name);
         }
+        let lowered = crate::sysvar::lowered_if_needed(name);
         Ok(self
             .systems
-            .get(&name.to_ascii_lowercase())
+            .get(lowered.as_ref())
             .cloned()
             .unwrap_or_else(|| crate::sysvar::effective_default(def)))
     }
