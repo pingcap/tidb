@@ -788,10 +788,12 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		// Change NULL to auto id.
 		// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 		if autoDatum.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
+			// Consume the auto IDs in RetryInfo first.
 			if retryInfo.Retrying {
-				cachedID, ok := retryInfo.GetCurrAutoIncrementID()
+				nextID, ok := retryInfo.GetCurrAutoIncrementID()
 				if ok {
-					if err = setDatumAutoIDAndCast(e.ctx, &rows[processedIdx][idx], cachedID, col); err != nil {
+					err = setDatumAutoIDAndCast(e.ctx, &rows[processedIdx][idx], nextID, col)
+					if err != nil {
 						return nil, err
 					}
 					continue
@@ -840,9 +842,10 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
 	needsAutoID := !hasValue || e.isAutoNull(ctx, d, c)
 	if retryInfo.Retrying && needsAutoID {
-		cachedID, ok := retryInfo.GetCurrAutoIncrementID()
+		id, ok := retryInfo.GetCurrAutoIncrementID()
 		if ok {
-			if err := setDatumAutoIDAndCast(e.ctx, &d, cachedID, c); err != nil {
+			err := setDatumAutoIDAndCast(e.ctx, &d, id, c)
+			if err != nil {
 				return types.Datum{}, err
 			}
 			return d, nil
@@ -917,9 +920,10 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
 	needsAutoID := !hasValue || e.isAutoNull(ctx, d, c)
 	if retryInfo.Retrying && needsAutoID {
-		cachedID, ok := retryInfo.GetCurrAutoRandomID()
+		autoRandomID, ok := retryInfo.GetCurrAutoRandomID()
 		if ok {
-			if err := setDatumAutoIDAndCast(e.ctx, &d, cachedID, c); err != nil {
+			err := setDatumAutoIDAndCast(e.ctx, &d, autoRandomID, c)
+			if err != nil {
 				return types.Datum{}, err
 			}
 			return d, nil
