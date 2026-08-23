@@ -698,9 +698,7 @@ pub fn pessimistic_lock_delta(
 /// classifiers Go reads (`tablecodec.IsRecordKey` / `IsIndexKey` /
 /// `IndexKVIsUnique`).
 fn statement_key_needs_lock(key: &[u8], value: Option<&[u8]>) -> bool {
-    if !tidb_tablecodec::is_record_key(key)
-        && !tidb_tablecodec::is_index_key(key)
-    {
+    if !tidb_tablecodec::is_record_key(key) && !tidb_tablecodec::is_index_key(key) {
         // Go's "meta key always need to lock".
         return true;
     }

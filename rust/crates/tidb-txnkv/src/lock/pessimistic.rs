@@ -328,11 +328,8 @@ mod tests {
     #[test]
     fn commit_record_still_classifies_as_committed() {
         assert_eq!(
-            classify_determined_pessimistic_status(&response(
-                KvrpcTxnAction::NoAction,
-                42
-            ))
-            .unwrap(),
+            classify_determined_pessimistic_status(&response(KvrpcTxnAction::NoAction, 42))
+                .unwrap(),
             ResolvedTxnStatus::Committed(42)
         );
     }

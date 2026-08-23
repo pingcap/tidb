@@ -311,7 +311,12 @@ fn limit_zero_dml_still_validates_the_statement() {
     );
 
     assert!(
-        run_update_on("UPDATE lz SET b = 1 ORDER BY nope LIMIT 0", &mut catalog, &ctx).is_err(),
+        run_update_on(
+            "UPDATE lz SET b = 1 ORDER BY nope LIMIT 0",
+            &mut catalog,
+            &ctx
+        )
+        .is_err(),
         "an unresolvable ORDER BY column must error under LIMIT 0"
     );
     assert!(
@@ -320,7 +325,12 @@ fn limit_zero_dml_still_validates_the_statement() {
     );
 
     assert!(
-        run_update_on("UPDATE lz PARTITION (p0) SET b = 1 LIMIT 0", &mut catalog, &ctx).is_err(),
+        run_update_on(
+            "UPDATE lz PARTITION (p0) SET b = 1 LIMIT 0",
+            &mut catalog,
+            &ctx
+        )
+        .is_err(),
         "a partition selection on an unpartitioned table must error under LIMIT 0"
     );
     assert!(

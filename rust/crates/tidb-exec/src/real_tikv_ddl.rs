@@ -378,12 +378,14 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
                 warning: write.warning,
             })
         }
-        OptimisticCommitOutcome::RolledBack(rolled_back) => {
-            Err(withdraw_bundles(classify(planned_version, &rolled_back.cause)))
-        }
-        OptimisticCommitOutcome::CleanupFailed(cleanup_failed) => Err(withdraw_bundles(
-            classify(planned_version, &cleanup_failed.cause),
-        )),
+        OptimisticCommitOutcome::RolledBack(rolled_back) => Err(withdraw_bundles(classify(
+            planned_version,
+            &rolled_back.cause,
+        ))),
+        OptimisticCommitOutcome::CleanupFailed(cleanup_failed) => Err(withdraw_bundles(classify(
+            planned_version,
+            &cleanup_failed.cause,
+        ))),
         // An undetermined commit may have PUBLISHED the catalog that claims
         // these bundles; withdrawing them here could strip a live table's
         // placement, so they stay.
