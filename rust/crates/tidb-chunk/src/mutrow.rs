@@ -1026,4 +1026,133 @@ mod tests {
         second.set_datum(2, &string("a value that forces detached storage"));
         assert_eq!(chunk.get_row(0).get_bytes(1), grown_source.as_bytes());
     }
+    /// Go `TestMutRow` (`pkg/util/chunk/mutrow_test.go`). The
+    /// `MutRowFromTypes` zero-value sweep over `newAllTypes` is pinned against
+    /// real Go output by `from_types_matches_go`; this port covers the value
+    /// mutation surface.
+    #[test]
+    fn go_test_mut_row() {
+        // MutRowFromValues("abc", 123).
+        let mut mut_row = MutRow::from_datums(&[string("abc"), Datum::Int(123)]);
+        let mut row = mut_row.to_row();
+        assert!(!row.is_null(0));
+        assert_eq!(row.get_string(0).as_bytes(), b"abc");
+        assert!(!row.is_null(1));
+        assert_eq!(row.get_int64(1), 123);
+
+        mut_row.set_values(&[string("abcd"), Datum::Int(456)]);
+        row = mut_row.to_row();
+        assert_eq!(row.get_string(0).as_bytes(), b"abcd");
+        assert!(!row.is_null(0));
+        assert_eq!(row.get_int64(1), 456);
+        assert!(!row.is_null(1));
+
+        mut_row.set_datums(&[string("defgh"), Datum::Int(33)]);
+        let row = mut_row.to_row();
+        assert!(!row.is_null(0));
+        assert_eq!(row.get_string(0).as_bytes(), b"defgh");
+        assert!(!row.is_null(1));
+        assert_eq!(row.get_int64(1), 33);
+
+        // SetRow copies nullity too.
+        let n_source = MutRow::from_datums(&[Datum::Null, Datum::Int(111)]);
+        let n_row = n_source.to_row();
+        assert!(n_row.is_null(0));
+        assert!(!n_row.is_null(1));
+        mut_row.set_row(n_row);
+        let row = mut_row.to_row();
+        assert!(row.is_null(0));
+        assert!(!row.is_null(1));
+
+        // JSON and Time cells round-trip through FromValues.
+        let j = json("true");
+        let time = Time::new(
+            CoreTime::from_date(2000, 1, 1, 1, 0, 0, 0),
+            TimeType::DateTime,
+            6,
+        )
+        .expect("valid time");
+        let json_value = match &j {
+            Datum::Json(value) => value.clone(),
+            other => panic!("expected a JSON datum, got {other:?}"),
+        };
+        let mut mut_row = MutRow::from_datums(&[j, Datum::Time(time)]);
+        let row = mut_row.to_row();
+        assert_eq!(row.get_json(0), json_value);
+        assert_eq!(row.get_time(1), time);
+
+        // SetValue and SetDatum on a duration column produce exactly the same
+        // raw cell as `Chunk.AppendDuration`.
+        let ret_types = vec![ft(C::Duration)];
+        let mut chk = Chunk::new(&ret_types, 1, 1);
+        let dur = MySqlDuration::from_nanoseconds(
+            (1 * 3_600 + 23 * 60 + 45) * 1_000_000_000,
+            0,
+        )
+        .expect("01:23:45");
+        chk.append_duration(0, dur);
+        let mut mut_row = MutRow::from_types(&ret_types);
+        mut_row.set_value(0, &Datum::Duration(dur));
+        assert_eq!(
+            mut_row.chunk.column(0).data.snapshot(),
+            chk.column(0).data.snapshot()
+        );
+        mut_row.set_datum(0, &Datum::Duration(dur));
+        assert_eq!(
+            mut_row.chunk.column(0).data.snapshot(),
+            chk.column(0).data.snapshot()
+        );
+    }
+
+    /// Go `TestMutRowShallowCopyPartialRow`: the copy shares the source's cell
+    /// storage, so resetting the source chunk and appending new datums is
+    /// observed through the mutable row until a write detaches the storage.
+    #[test]
+    fn go_test_mut_row_shallow_copy_partial_row() {
+        use C::{LongLong, Timestamp, VarString};
+        let col_types = vec![ft(VarString), ft(LongLong), ft(Timestamp)];
+
+        let zero_timestamp = Time::new(
+            CoreTime::from_date(0, 0, 0, 0, 0, 0, 0),
+            TimeType::Timestamp,
+            0,
+        )
+        .expect("the zero timestamp is representable");
+
+        let mut mut_row = MutRow::from_types(&col_types);
+        let mut row_chunk = Chunk::new_with_capacity(&col_types, 1);
+        row_chunk.append_string(0, "abc");
+        row_chunk.append_int64(1, 123);
+        row_chunk.append_time(2, zero_timestamp);
+        mut_row.shallow_copy_partial_row(0, &mut row_chunk, 0);
+        let copied = mut_row.to_row();
+        let row = row_chunk.get_row(0);
+        assert_eq!(copied.get_string(0).as_bytes(), row.get_string(0).as_bytes());
+        assert_eq!(copied.get_int64(1), row.get_int64(1));
+        assert_eq!(copied.get_time(2), row.get_time(2));
+
+        // Reset the SOURCE and append fresh datums: the shallow copy observes
+        // them, because the appends reuse the shared backing store.
+        row_chunk.reset();
+        let d_string = string("dfg");
+        row_chunk.append_string(0, "dfg");
+        row_chunk.append_int64(1, 567);
+        let now = Time::new(
+            CoreTime::from_date(2026, 8, 22, 15, 30, 45, 0),
+            TimeType::Timestamp,
+            6,
+        )
+        .expect("valid timestamp");
+        row_chunk.append_time(2, now);
+        let _ = d_string;
+
+        let copied = mut_row.to_row();
+        assert_eq!(copied.get_time(2), now);
+        assert_eq!(copied.get_string(0).as_bytes(), b"dfg");
+        assert_eq!(copied.get_int64(1), 567);
+        let row = row_chunk.get_row(0);
+        assert_eq!(copied.get_string(0).as_bytes(), row.get_string(0).as_bytes());
+        assert_eq!(copied.get_int64(1), row.get_int64(1));
+        assert_eq!(copied.get_time(2), row.get_time(2));
+    }
 }

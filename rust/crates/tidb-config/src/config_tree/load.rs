@@ -559,6 +559,37 @@ mod tests {
         assert!(err
             .to_string()
             .contains("deploy-mode can only be configured for nextgen TiDB"));
+
+        // premium_reserved on a classic kernel -> Valid() rejects it.
+        let mut c = new_config();
+        c.deploy_mode = Mode::PremiumReserved;
+        assert!(c
+            .valid()
+            .unwrap_err()
+            .contains("deploy-mode can only be configured for nextgen TiDB"));
+    }
+
+    /// Go TestDeployModeConfig's opening defaults block, shared by both
+    /// kernels.
+    #[test]
+    fn deploy_mode_defaults_and_invalid_mode() {
+        let mut conf = new_config();
+        assert_eq!(conf.deploy_mode, Mode::Premium);
+        assert_eq!(
+            conf.dxf_resource_limit,
+            crate::config_tree::config::DEF_DXF_RESOURCE_LIMIT
+        );
+        conf.valid().unwrap();
+
+        conf.deploy_mode = Mode::Unknown(100);
+        assert!(conf
+            .valid()
+            .unwrap_err()
+            .contains("invalid deploy-mode=unknown(100)"));
+
+        conf.deploy_mode = Mode::Premium;
+        conf.max_allowed_packet = 0;
+        conf.valid().unwrap();
     }
 
     // Go TestRemovedVariableCheck (a representative subset; the Go test
