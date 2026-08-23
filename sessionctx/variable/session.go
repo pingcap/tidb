@@ -119,47 +119,63 @@ func (r *RetryInfo) ResetOffset() {
 }
 
 // AddAutoIncrementID adds id to autoIncrementIDs.
-func (r *RetryInfo) AddAutoIncrementID(id int64) {
-	r.autoIncrementIDs.autoIDs = append(r.autoIncrementIDs.autoIDs, id)
+func (r *RetryInfo) AddAutoIncrementID(tableID, id int64) {
+	r.autoIncrementIDs.add(tableID, id)
 }
 
 // GetCurrAutoIncrementID gets current autoIncrementID.
-func (r *RetryInfo) GetCurrAutoIncrementID() (int64, bool) {
-	return r.autoIncrementIDs.getCurrent()
+func (r *RetryInfo) GetCurrAutoIncrementID(tableID int64) (int64, bool) {
+	return r.autoIncrementIDs.getCurrent(tableID)
 }
 
 // AddAutoRandomID adds id to autoRandomIDs.
-func (r *RetryInfo) AddAutoRandomID(id int64) {
-	r.autoRandomIDs.autoIDs = append(r.autoRandomIDs.autoIDs, id)
+func (r *RetryInfo) AddAutoRandomID(tableID, id int64) {
+	r.autoRandomIDs.add(tableID, id)
 }
 
 // GetCurrAutoRandomID gets current AutoRandomID.
-func (r *RetryInfo) GetCurrAutoRandomID() (int64, bool) {
-	return r.autoRandomIDs.getCurrent()
+func (r *RetryInfo) GetCurrAutoRandomID(tableID int64) (int64, bool) {
+	return r.autoRandomIDs.getCurrent(tableID)
 }
 
 type retryInfoAutoIDs struct {
+	byTable map[int64]*retryInfoAutoID
+}
+
+type retryInfoAutoID struct {
 	currentOffset int
 	autoIDs       []int64
 }
 
 func (r *retryInfoAutoIDs) resetOffset() {
-	r.currentOffset = 0
+	for _, ids := range r.byTable {
+		ids.currentOffset = 0
+	}
 }
 
 func (r *retryInfoAutoIDs) clean() {
-	r.currentOffset = 0
-	if len(r.autoIDs) > 0 {
-		r.autoIDs = r.autoIDs[:0]
-	}
+	r.byTable = nil
 }
 
-func (r *retryInfoAutoIDs) getCurrent() (int64, bool) {
-	if r.currentOffset >= len(r.autoIDs) {
+func (r *retryInfoAutoIDs) add(tableID, id int64) {
+	if r.byTable == nil {
+		r.byTable = make(map[int64]*retryInfoAutoID)
+	}
+	ids := r.byTable[tableID]
+	if ids == nil {
+		ids = &retryInfoAutoID{}
+		r.byTable[tableID] = ids
+	}
+	ids.autoIDs = append(ids.autoIDs, id)
+}
+
+func (r *retryInfoAutoIDs) getCurrent(tableID int64) (int64, bool) {
+	ids := r.byTable[tableID]
+	if ids == nil || ids.currentOffset >= len(ids.autoIDs) {
 		return 0, false
 	}
-	id := r.autoIDs[r.currentOffset]
-	r.currentOffset++
+	id := ids.autoIDs[ids.currentOffset]
+	ids.currentOffset++
 	return id, true
 }
 

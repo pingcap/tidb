@@ -762,6 +762,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		return rows, nil
 	}
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
+	tableID := e.Table.Meta().ID
 	rowCount := len(rows)
 	for processedIdx := 0; processedIdx < rowCount; processedIdx++ {
 		autoDatum := rows[processedIdx][idx]
@@ -790,7 +791,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		if autoDatum.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
 			// Consume the auto IDs in RetryInfo first.
 			if retryInfo.Retrying {
-				nextID, ok := retryInfo.GetCurrAutoIncrementID()
+				nextID, ok := retryInfo.GetCurrAutoIncrementID(tableID)
 				if ok {
 					err = setDatumAutoIDAndCast(e.ctx, &rows[processedIdx][idx], nextID, col)
 					if err != nil {
@@ -826,7 +827,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 					return nil, err
 				}
 				if !retryInfo.Retrying {
-					retryInfo.AddAutoIncrementID(id)
+					retryInfo.AddAutoIncrementID(tableID, id)
 				}
 			}
 			continue
@@ -842,9 +843,10 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 
 func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
+	tableID := e.Table.Meta().ID
 	needsAutoID := !hasValue || e.isAutoNull(ctx, d, c)
 	if retryInfo.Retrying && needsAutoID {
-		id, ok := retryInfo.GetCurrAutoIncrementID()
+		id, ok := retryInfo.GetCurrAutoIncrementID(tableID)
 		if ok {
 			err := setDatumAutoIDAndCast(e.ctx, &d, id, c)
 			if err != nil {
@@ -894,7 +896,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 		return types.Datum{}, err
 	}
 	if needsAutoID && !retryInfo.Retrying {
-		retryInfo.AddAutoIncrementID(recordID)
+		retryInfo.AddAutoIncrementID(tableID, recordID)
 	}
 	return d, nil
 }
@@ -920,9 +922,10 @@ func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int
 
 func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
+	tableID := e.Table.Meta().ID
 	needsAutoID := !hasValue || e.isAutoNull(ctx, d, c)
 	if retryInfo.Retrying && needsAutoID {
-		autoRandomID, ok := retryInfo.GetCurrAutoRandomID()
+		autoRandomID, ok := retryInfo.GetCurrAutoRandomID(tableID)
 		if ok {
 			err := setDatumAutoIDAndCast(e.ctx, &d, autoRandomID, c)
 			if err != nil {
@@ -979,7 +982,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		return types.Datum{}, err
 	}
 	if needsAutoID && !retryInfo.Retrying {
-		retryInfo.AddAutoRandomID(recordID)
+		retryInfo.AddAutoRandomID(tableID, recordID)
 	}
 	return d, nil
 }

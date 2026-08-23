@@ -1498,6 +1498,34 @@ func TestAutoIncrementIDRetryWhenStatementRowCountGrows(t *testing.T) {
 	))
 }
 
+func TestAutoIncrementIDRetryAcrossTables(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table src (k int primary key, u int, v int)")
+	tk.MustExec("create table a (id int auto_increment primary key, u int unique key)")
+	tk.MustExec("create table b (id int auto_increment primary key, u int unique key)")
+	tk.MustExec("insert into src values (1, 1, 0)")
+	tk.MustExec("insert into b values (1, 1)")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into a (u) select u from src")
+	tk.MustExec("insert into b (u) values (2)")
+	tk.MustExec("update src set v = 1 where k = 1")
+
+	// The first insert produces no rows during retry. The insert into b must
+	// reuse b's cached ID instead of consuming the cached ID allocated for a.
+	tk2.MustExec("delete from src where k = 1")
+
+	tk.MustExec("commit")
+	tk.MustQuery("select id, u from b order by id").Check(testkit.Rows(
+		"1 1",
+		"2 2",
+	))
+}
+
 func TestAutoRandomIDRetryUsesCurrentExplicitID(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

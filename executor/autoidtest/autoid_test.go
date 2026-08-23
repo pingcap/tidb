@@ -573,9 +573,11 @@ func testInsertWithAutoidSchema(t *testing.T, tk *testkit.TestKit) {
 	for _, tt := range tests {
 		if strings.HasPrefix(tt.insert, "retry : ") {
 			// it's the last retry insert case, change the sessionVars.
+			tableID, err := strconv.ParseInt(tk.MustQuery(`select tidb_table_id from information_schema.tables where table_schema = "test" and table_name = "t8"`).Rows()[0][0].(string), 10, 64)
+			require.NoError(t, err)
 			retryInfo := &variable.RetryInfo{Retrying: true}
-			retryInfo.AddAutoIncrementID(1000)
-			retryInfo.AddAutoIncrementID(1001)
+			retryInfo.AddAutoIncrementID(tableID, 1000)
+			retryInfo.AddAutoIncrementID(tableID, 1001)
 			tk.Session().GetSessionVars().RetryInfo = retryInfo
 			tk.MustExec(tt.insert[8:])
 			tk.Session().GetSessionVars().RetryInfo = &variable.RetryInfo{}
