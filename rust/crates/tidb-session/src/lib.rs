@@ -341,6 +341,9 @@ pub struct Session {
     server_start_timestamp: Option<i64>,
     /// Metadata snapshot cache keyed by the catalog mutation version.
     tidb_decode_key_cache: RefCell<Option<(u64, Rc<tidb_executor::TidbDecodeKeySnapshot>)>>,
+    /// Suppresses the metadata snapshot while a narrow fast path builds a
+    /// statement context that cannot evaluate `TIDB_DECODE_KEY`.
+    skip_tidb_decode_key_snapshot: Cell<bool>,
     /// One connection-wide memory/disk tracker pair. Every statement gets a
     /// fresh child below these roots, so an open cursor remains counted when
     /// the client starts its next command.
@@ -600,6 +603,7 @@ impl Default for Session {
             catalog: SharedCatalog::default(),
             server_start_timestamp: None,
             tidb_decode_key_cache: RefCell::new(None),
+            skip_tidb_decode_key_snapshot: Cell::new(false),
             session_memory: tidb_executor::SessionMemory::new(
                 tidb_util::memory::DEF_MEM_QUOTA_QUERY,
                 tidb_executor::OomAction::Cancel,

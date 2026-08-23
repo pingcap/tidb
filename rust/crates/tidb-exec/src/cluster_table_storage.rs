@@ -1039,14 +1039,18 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
 
     fn scan(
         &mut self,
-        _start: &Key,
-        _end: &Key,
-        _limit: Option<usize>,
+        start: &Key,
+        end: &Key,
+        limit: Option<usize>,
     ) -> Result<SnapshotPairs, StorageError> {
         self.consume()?;
-        Err(StorageError::Backend(
-            "a MaxTS point snapshot cannot serve a range scan".to_owned(),
-        ))
+        // A bounded single-row statement still has a range-shaped plan. Keep
+        // its MaxTS declaration, but use the direct range reader rather than
+        // opening a pinned transaction worker for every YCSB E operation.
+        let call = UnaryCallContext::with_timeout(self.timeout);
+        self.opener
+            .snapshot_scan_at_max_ts(start.as_bytes(), end.as_bytes(), limit, &call)
+            .map_err(classify)
     }
 
     fn start_ts(&self) -> u64 {
@@ -1173,6 +1177,7 @@ impl SessionTransaction {
                 TransactionOpen::ReadOnlyAt(u64::MAX),
                 "cluster-point-get-max-ts",
             )?,
+            pessimistic: false,
         })
     }
 

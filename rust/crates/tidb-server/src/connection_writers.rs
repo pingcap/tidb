@@ -280,6 +280,17 @@ pub(crate) fn write_payload<O: ConnectionPacketOutput + ?Sized>(
 /// framing and negotiated compression cannot diverge by command type.
 pub(crate) trait ConnectionPacketOutput {
     fn write_packet(&mut self, sequence: u8, payload: &[u8]) -> Result<u8, MysqlConnectionError>;
+
+    fn write_packets(
+        &mut self,
+        mut sequence: u8,
+        payloads: &[&[u8]],
+    ) -> Result<u8, MysqlConnectionError> {
+        for payload in payloads {
+            sequence = self.write_packet(sequence, payload)?;
+        }
+        Ok(sequence)
+    }
 }
 
 impl ConnectionPacketOutput for ClientStream {
@@ -289,12 +300,37 @@ impl ConnectionPacketOutput for ClientStream {
         writer.flush()?;
         Ok(writer.sequence())
     }
+
+    fn write_packets(
+        &mut self,
+        sequence: u8,
+        payloads: &[&[u8]],
+    ) -> Result<u8, MysqlConnectionError> {
+        let mut writer = PacketWriter::with_sequence(self, sequence);
+        for payload in payloads {
+            writer.write_packet(payload)?;
+        }
+        writer.flush()?;
+        Ok(writer.sequence())
+    }
 }
 
 impl<W: Write> ConnectionPacketOutput for PacketIoWriter<W> {
     fn write_packet(&mut self, sequence: u8, payload: &[u8]) -> Result<u8, MysqlConnectionError> {
         self.set_sequence(sequence);
         self.write_packet(payload)?;
+        let next_sequence = self.sequence();
+        self.flush()?;
+        Ok(next_sequence)
+    }
+
+    fn write_packets(
+        &mut self,
+        sequence: u8,
+        payloads: &[&[u8]],
+    ) -> Result<u8, MysqlConnectionError> {
+        self.set_sequence(sequence);
+        PacketIoWriter::write_packets(self, payloads)?;
         let next_sequence = self.sequence();
         self.flush()?;
         Ok(next_sequence)
@@ -334,6 +370,21 @@ impl<O: ConnectionPacketOutput + ?Sized> ResultSetSink for TcpResultSetSink<'_, 
                 bytes_escaped: true,
             })?;
         self.packets += 1;
+        Ok(())
+    }
+
+    fn write_payloads(&mut self, payloads: &[&[u8]]) -> Result<(), SinkWriteError> {
+        if payloads.is_empty() {
+            return Ok(());
+        }
+        self.sequence = self
+            .output
+            .write_packets(self.sequence, payloads)
+            .map_err(|error| SinkWriteError {
+                message: error.to_string(),
+                bytes_escaped: true,
+            })?;
+        self.packets += payloads.len();
         Ok(())
     }
 

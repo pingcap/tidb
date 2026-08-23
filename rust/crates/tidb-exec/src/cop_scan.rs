@@ -313,12 +313,20 @@ where
         let (rows, batches) = sync_channel::<Result<Chunk, String>>(batches_ahead);
         let factory = Arc::clone(&self.factory);
         let node_rows = Arc::clone(&self.rows_returned);
-        thread::Builder::new()
-            .name("cop-scan".to_owned())
-            .spawn(move || serve_scan(&factory, plan, &rows, &node_rows))
-            .map_err(|error| {
-                PushdownScannerError::Backend(StorageError::Backend(error.to_string()))
-            })?;
+        // A bounded one-row request is consumed immediately by the caller.
+        // Serving it on this worker avoids creating and detaching a native
+        // thread for every YCSB-E scan while retaining the threaded stream for
+        // full scans, where response decoding must overlap executor work.
+        if request.limit == Some(1) {
+            serve_scan(&factory, plan, &rows, &node_rows);
+        } else {
+            thread::Builder::new()
+                .name("cop-scan".to_owned())
+                .spawn(move || serve_scan(&factory, plan, &rows, &node_rows))
+                .map_err(|error| {
+                    PushdownScannerError::Backend(StorageError::Backend(error.to_string()))
+                })?;
+        }
         self.scans_served.fetch_add(1, Ordering::Relaxed);
         self.requests
             .lock()
@@ -696,12 +704,20 @@ where
         let (rows, batches) = sync_channel::<Result<Chunk, String>>(batches_ahead);
         let factory = Arc::clone(&self.factory);
         let node_rows = Arc::clone(&self.rows_returned);
-        thread::Builder::new()
-            .name("cop-scan".to_owned())
-            .spawn(move || serve_scan(&factory, plan, &rows, &node_rows))
-            .map_err(|error| {
-                PushdownScannerError::Backend(StorageError::Backend(error.to_string()))
-            })?;
+        // A bounded one-row request is consumed immediately by the caller.
+        // Serving it on this worker avoids creating and detaching a native
+        // thread for every YCSB-E scan while retaining the threaded stream for
+        // full scans, where response decoding must overlap executor work.
+        if request.limit == Some(1) {
+            serve_scan(&factory, plan, &rows, &node_rows);
+        } else {
+            thread::Builder::new()
+                .name("cop-scan".to_owned())
+                .spawn(move || serve_scan(&factory, plan, &rows, &node_rows))
+                .map_err(|error| {
+                    PushdownScannerError::Backend(StorageError::Backend(error.to_string()))
+                })?;
+        }
         self.scans_served.fetch_add(1, Ordering::Relaxed);
         self.requests
             .lock()

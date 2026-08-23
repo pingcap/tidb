@@ -42,7 +42,6 @@ use crate::node_config::NodeConfig;
 use crate::resultset_source::ResultSetSource;
 use crate::wire_status::WireStatus;
 use tidb_session::process::ProcessKillTarget;
-use tidb_session::PreparedAst;
 
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
@@ -562,6 +561,8 @@ pub struct PreparedGeneral {
     /// The parser-owned statement retained at COM_STMT_PREPARE.  General
     /// executes clone and bind this tree instead of reparsing `sql`.
     template: Option<Stmt>,
+    /// A schema-versioned point-get plan compiled at PREPARE time.
+    point_get_plan: Option<std::sync::Arc<tidb_executor::PreparedPointGetPlan>>,
 }
 
 impl PreparedGeneral {
@@ -573,6 +574,7 @@ impl PreparedGeneral {
             parameter_count,
             result_columns,
             template: None,
+            point_get_plan: None,
         }
     }
 
@@ -590,6 +592,26 @@ impl PreparedGeneral {
             parameter_count,
             result_columns,
             template: Some(template),
+            point_get_plan: None,
+        }
+    }
+
+    /// Creates a retained template together with its immutable point-get
+    /// cache candidate.
+    #[must_use]
+    pub fn with_template_and_point_get_plan(
+        sql: String,
+        parameter_count: usize,
+        result_columns: Vec<ColumnInfo>,
+        template: Stmt,
+        point_get_plan: Option<std::sync::Arc<tidb_executor::PreparedPointGetPlan>>,
+    ) -> Self {
+        Self {
+            sql,
+            parameter_count,
+            result_columns,
+            template: Some(template),
+            point_get_plan,
         }
     }
 
@@ -617,6 +639,14 @@ impl PreparedGeneral {
     #[must_use]
     pub fn template(&self) -> Option<&Stmt> {
         self.template.as_ref()
+    }
+
+    /// The immutable point-get cache candidate compiled at PREPARE time.
+    #[must_use]
+    pub fn point_get_plan(
+        &self,
+    ) -> Option<&std::sync::Arc<tidb_executor::PreparedPointGetPlan>> {
+        self.point_get_plan.as_ref()
     }
 }
 

@@ -177,20 +177,16 @@ pub fn run_fast_prepared_insert(
             ctx,
         )?);
     }
-    let conflicts = kv
-        .conflicting_handles(&row, ctx)
-        .map_err(|error| DriverError::Parse(format!("conflict lookup failed: {error:?}")))?;
-    if !conflicts.is_empty() {
-        if let Ok(crate::kv_table::KvTableError::DuplicateEntry { value, key }) =
-            kv.duplicate_entry_error(&row, ctx)
-        {
-            let warning = DriverError::DuplicateEntry { value, key }.to_mysql_error();
-            ctx.append_warning_parts(warning.code, &warning.message);
-        }
-        return Ok(Some((0, None)));
+    // `insert_row` performs the authoritative clustered-key existence check
+    // immediately before the write.  An earlier `conflicting_handles` probe
+    // repeated that same KV read for this no-index shape and made every YCSB-D
+    // insert pay two round trips.  IGNORE only changes the duplicate result;
+    // the single writer-owned check still preserves that outcome.
+    match kv.insert_row(&row, ctx) {
+        Ok(_) => Ok(Some((1, None))),
+        Err(crate::kv_table::KvTableError::DuplicateEntry { .. }) => Ok(Some((0, None))),
+        Err(error) => Err(kv_write_error(error)),
     }
-    kv.insert_row(&row, ctx).map_err(kv_write_error)?;
-    Ok(Some((1, None)))
 }
 
 struct InsertTargetLayout {
@@ -1740,7 +1736,8 @@ pub fn run_fast_prepared_update(
         crate::bad_null::handle_bad_null(value, field_type, name, level, ctx)?;
     }
     if row == old_row { return Ok(Some(0)); }
-    kv.update_row(&handle, &row, ctx).map_err(kv_write_error)?;
+    kv.update_row_with_old(&handle, Some(&old_row), &row, ctx)
+        .map_err(kv_write_error)?;
     Ok(Some(1))
 }
 

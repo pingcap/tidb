@@ -232,6 +232,24 @@ impl ResultEncoder {
         };
         Ok(encode_with_charset(src, charset))
     }
+
+    /// Owned counterpart of [`Self::encode_data`].  The binary prepared-result
+    /// writer already owns string cells, so the UTF-8/binary no-op encodings
+    /// can retain that allocation instead of cloning every cell once more.
+    pub fn encode_data_owned(&self, src: Vec<u8>) -> Result<Vec<u8>, ResultEncoderError> {
+        let Some(data_charset) = self.data_charset else {
+            return Err(ResultEncoderError::DataEncodingUnset);
+        };
+        let use_data_charset = self.result_charset.is_none()
+            || self.result_charset == Some(ResultCharset::Binary)
+            || self.data_is_binary;
+        let charset = if use_data_charset {
+            data_charset
+        } else {
+            self.result_charset.expect("non-null result charset")
+        };
+        Ok(encode_with_charset_owned(src, charset))
+    }
 }
 
 fn charset_default_collation_id(charset: ResultCharset) -> u16 {
@@ -285,6 +303,30 @@ fn encode_with_charset(src: &[u8], charset: ResultCharset) -> Vec<u8> {
                 _ => unreachable!(),
             })
             .transform(src, TransformOp::ENCODE_REPLACE)
+            .bytes()
+            .to_vec()
+        }
+    }
+}
+
+fn encode_with_charset_owned(src: Vec<u8>, charset: ResultCharset) -> Vec<u8> {
+    match charset {
+        ResultCharset::Binary | ResultCharset::Utf8 | ResultCharset::Utf8Mb4 => src,
+        ResultCharset::Latin1 => match std::str::from_utf8(&src) {
+            Ok(text) => text
+                .chars()
+                .map(|c| u8::try_from(u32::from(c)).unwrap_or(b'?'))
+                .collect(),
+            Err(_) => src,
+        },
+        ResultCharset::Ascii | ResultCharset::Gbk | ResultCharset::Gb18030 => {
+            find_encoding(match charset {
+                ResultCharset::Ascii => "ascii",
+                ResultCharset::Gbk => "gbk",
+                ResultCharset::Gb18030 => "gb18030",
+                _ => unreachable!(),
+            })
+            .transform(&src, TransformOp::ENCODE_REPLACE)
             .bytes()
             .to_vec()
         }

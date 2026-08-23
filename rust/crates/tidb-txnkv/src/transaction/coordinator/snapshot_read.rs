@@ -126,7 +126,6 @@ where
         let request = KvrpcGetRequest {
             key: key.to_vec(),
             version: start_ts,
-            need_commit_ts: true,
             ..KvrpcGetRequest::default()
         };
         let response = begin_get(runtime, &route, &context, &request, call)?;
@@ -232,6 +231,214 @@ where
     }
 }
 
+/// Runs one MaxTS range snapshot without constructing transaction state.
+///
+/// The bounded single-row path uses this alongside [`direct_snapshot_get`].
+/// It keeps the same region retry, lock resolution, and post-page GC checks as
+/// an ordinary transaction scan, while avoiding a PD timestamp and a pinned
+/// transaction worker for each YCSB E operation.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn direct_snapshot_scan<C, L, T>(
+    runtime: &SharedReadRuntime<C, L>,
+    timestamps: &T,
+    gc_state: &GcStateCache,
+    start_key: &[u8],
+    end_key: &[u8],
+    limit: Option<usize>,
+    call: &UnaryCallContext,
+) -> Result<SnapshotScanPairs, OptimisticCoordinatorError>
+where
+    C: TransactionCommandClient + LockRecoveryClient,
+    L: RegionRecoveryLoader,
+    T: TimestampSource,
+{
+    let mut forward_backoff = RegionBackoffBudget::campaign_default();
+    let mut resolved_locks = crate::lock::SnapshotLockSet::default();
+    let mut snapshot_reads = Vec::new();
+    snapshot_scan_with(
+        runtime,
+        timestamps,
+        gc_state,
+        &mut forward_backoff,
+        &mut resolved_locks,
+        &mut snapshot_reads,
+        start_key,
+        end_key,
+        limit,
+        u64::MAX,
+        call,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn snapshot_scan_with<C, L, T>(
+    runtime: &SharedReadRuntime<C, L>,
+    timestamps: &T,
+    gc_state: &GcStateCache,
+    forward_backoff: &mut RegionBackoffBudget,
+    resolved_locks: &mut crate::lock::SnapshotLockSet,
+    snapshot_reads: &mut Vec<SnapshotReadReceipt>,
+    start_key: &[u8],
+    end_key: &[u8],
+    limit: Option<usize>,
+    read_ts: u64,
+    call: &UnaryCallContext,
+) -> Result<SnapshotScanPairs, OptimisticCoordinatorError>
+where
+    C: TransactionCommandClient + LockRecoveryClient,
+    L: RegionRecoveryLoader,
+    T: TimestampSource,
+{
+    if limit == Some(0) {
+        return Ok(Vec::new());
+    }
+    if start_key.is_empty() {
+        return Err(OptimisticCoordinatorError::SnapshotGet(
+            "scan start key is empty".to_owned(),
+        ));
+    }
+    if end_key.is_empty() || end_key <= start_key {
+        return Err(OptimisticCoordinatorError::SnapshotGet(
+            "scan range must be a non-empty [start, end)".to_owned(),
+        ));
+    }
+    resolved_locks.rescope(read_ts);
+    let mut pairs = Vec::new();
+    let mut cursor = start_key.to_vec();
+    let mut lock_backoff = RegionBackoffBudget::campaign_default();
+    while cursor.as_slice() < end_key {
+        let route = point_route(runtime, &cursor)
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        let mut context = route.context().clone();
+        resolved_locks.stamp(&mut context);
+        let region_end = route.region_end_key().to_vec();
+        let page_end = if region_end.is_empty() || region_end.as_slice() > end_key {
+            end_key.to_vec()
+        } else {
+            region_end.clone()
+        };
+        let page_limit = limit.map_or(SCAN_PAGE_LIMIT, |limit| {
+            u32::try_from(limit - pairs.len())
+                .unwrap_or(SCAN_PAGE_LIMIT)
+                .min(SCAN_PAGE_LIMIT)
+        });
+        let request = KvrpcScanRequest {
+            start_key: cursor.clone(),
+            end_key: page_end.clone(),
+            limit: page_limit,
+            version: read_ts,
+            ..KvrpcScanRequest::default()
+        };
+        let response = begin_scan_direct(runtime, &route, &context, &request, call)?;
+        if let Some(region_error) = response.response.region_error.as_ref() {
+            recover_region_error_with(
+                runtime,
+                forward_backoff,
+                region_error,
+                route.attempt(),
+                call,
+            )
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+            continue;
+        }
+        let mut locked = Vec::new();
+        if let Some(key_error) = response.response.error.as_ref() {
+            collect_scan_lock(key_error, &mut locked)?;
+        }
+        for pair in &response.response.pairs {
+            if let Some(key_error) = pair.error.as_ref() {
+                collect_scan_lock(key_error, &mut locked)?;
+            }
+        }
+        if !locked.is_empty() {
+            let recovery = resolve_optimistic_locks(
+                runtime,
+                &locked,
+                read_ts,
+                &context,
+                call,
+                timestamps,
+                true,
+            )
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+            resolved_locks.absorb(&recovery);
+            if recovery.is_alive() {
+                let delay = lock_backoff
+                    .next_delay_capped(
+                        crate::retry::RegionBackoffKind::TxnLockFast,
+                        alive_retry_delay(recovery.ttl),
+                    )
+                    .map_err(|exhausted| {
+                        OptimisticCoordinatorError::SnapshotGet(format!(
+                            "scan lock retry budget exhausted: {exhausted:?}"
+                        ))
+                    })?;
+                wait_with_call(call, delay)
+                    .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+            }
+            continue;
+        }
+        gc_state
+            .check_visibility(read_ts)
+            .map_err(OptimisticCoordinatorError::Visibility)?;
+        let page_len = response.response.pairs.len();
+        let last_key = response
+            .response
+            .pairs
+            .last()
+            .map(|pair| pair.key.clone())
+            .unwrap_or_default();
+        for pair in response.response.pairs {
+            pairs.push((pair.key, pair.value));
+        }
+        snapshot_reads.push(SnapshotReadReceipt {
+            key: cursor.clone(),
+            region: route.region(),
+            publication: response.publication,
+        });
+        if limit.is_some_and(|limit| pairs.len() >= limit) {
+            break;
+        }
+        if page_len == page_limit as usize {
+            cursor = last_key;
+            cursor.push(0);
+        } else {
+            if page_end.as_slice() >= end_key {
+                break;
+            }
+            cursor = page_end;
+        }
+    }
+    Ok(pairs)
+}
+
+fn begin_scan_direct<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    route: &RegionKeyBatch,
+    context: &tidb_proto::KvrpcContext,
+    request: &KvrpcScanRequest,
+    call: &UnaryCallContext,
+) -> Result<TransactionBatchResponse<KvrpcScanResponse>, OptimisticCoordinatorError>
+where
+    C: TransactionCommandClient,
+    L: RegionRecoveryLoader,
+{
+    let published = runtime
+        .client()
+        .try_borrow_mut()
+        .map_err(|_| {
+            OptimisticCoordinatorError::SnapshotGet("TiKV client is already borrowed".to_owned())
+        })?
+        .publish_transaction_scan(route.address(), request, context, call);
+    match published {
+        PublishedCommand::Response(response) => Ok(response),
+        PublishedCommand::BeforePublication(error)
+        | PublishedCommand::AfterPublication { error, .. } => {
+            Err(OptimisticCoordinatorError::SnapshotGet(error))
+        }
+    }
+}
+
 impl<C, L, T> RealOptimisticTransaction<C, L, T>
 where
     C: TransactionCommandClient + LockRecoveryClient,
@@ -292,7 +499,6 @@ where
             let request = KvrpcGetRequest {
                 key: key.to_vec(),
                 version: read_ts,
-                need_commit_ts: true,
                 ..KvrpcGetRequest::default()
             };
             let response = begin_get(&self.runtime, &route, &context, &request, call)?;
@@ -587,175 +793,22 @@ where
         read_ts: u64,
         call: &UnaryCallContext,
     ) -> Result<SnapshotScanPairs, OptimisticCoordinatorError> {
-        if limit == Some(0) {
-            return Ok(Vec::new());
-        }
-        if start_key.is_empty() {
-            return Err(OptimisticCoordinatorError::SnapshotGet(
-                "scan start key is empty".to_owned(),
-            ));
-        }
-        if end_key.is_empty() || end_key <= start_key {
-            return Err(OptimisticCoordinatorError::SnapshotGet(
-                "scan range must be a non-empty [start, end)".to_owned(),
-            ));
-        }
         self.state
             .transition(CoordinatorState::Reading)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-        let mut pairs = Vec::new();
-        let mut cursor = start_key.to_vec();
-        self.resolved_locks.rescope(read_ts);
-        // Go `Scanner.getData` (`scannerNextMaxBackoff`, 20s): the same
-        // time-budgeted `BoTxnLockFast` wait as `snapshot_get`'s lock arm.
-        let mut lock_backoff = RegionBackoffBudget::campaign_default();
-        while cursor.as_slice() < end_key {
-            let route = point_route(&self.runtime, &cursor)
-                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-            let mut context = route.context().clone();
-            self.resolved_locks.stamp(&mut context);
-            // TiKV stops at the region boundary anyway; naming it keeps the
-            // cursor advance exact when a page ends flush with the region.
-            let region_end = route.region_end_key().to_vec();
-            let page_end = if region_end.is_empty() || region_end.as_slice() > end_key {
-                end_key.to_vec()
-            } else {
-                region_end.clone()
-            };
-            // A caller that wants fewer rows than a full page must not make
-            // TiKV read a full page: the page itself shrinks to what is left
-            // of the caller's budget.
-            let page_limit = limit.map_or(SCAN_PAGE_LIMIT, |limit| {
-                u32::try_from(limit - pairs.len())
-                    .unwrap_or(SCAN_PAGE_LIMIT)
-                    .min(SCAN_PAGE_LIMIT)
-            });
-            let request = KvrpcScanRequest {
-                start_key: cursor.clone(),
-                end_key: page_end.clone(),
-                limit: page_limit,
-                version: read_ts,
-                ..KvrpcScanRequest::default()
-            };
-            let response = self.begin_scan(&route, &context, &request, call)?;
-            if let Some(region_error) = response.response.region_error.as_ref() {
-                self.recover_region_error(
-                    RecoveryPhase::Forward,
-                    region_error,
-                    route.attempt(),
-                    call,
-                )
-                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-                continue;
-            }
-            let mut locked = Vec::new();
-            if let Some(key_error) = response.response.error.as_ref() {
-                collect_scan_lock(key_error, &mut locked)?;
-            }
-            for pair in &response.response.pairs {
-                if let Some(key_error) = pair.error.as_ref() {
-                    collect_scan_lock(key_error, &mut locked)?;
-                }
-            }
-            if !locked.is_empty() {
-                let recovery = resolve_optimistic_locks(
-                    &self.runtime,
-                    &locked,
-                    read_ts,
-                    &context,
-                    call,
-                    &self.timestamps,
-                    true,
-                )
-                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-                self.resolved_locks.absorb(&recovery);
-                // See `snapshot_get`'s lock arm: Go's `BoTxnLockFast` time
-                // budget, no attempt cap.
-                if recovery.is_alive() {
-                    // client-go's `BackoffWithCfgAndMaxSleep`: the TTL cap
-                    // bounds the CHARGED sleep too, so the 20s budget measures
-                    // real waiting -- charging the unclamped exponential
-                    // exhausted it after under a second against short-TTL
-                    // locks.
-                    let delay = lock_backoff
-                        .next_delay_capped(
-                            crate::retry::RegionBackoffKind::TxnLockFast,
-                            alive_retry_delay(recovery.ttl),
-                        )
-                        .map_err(|exhausted| {
-                            OptimisticCoordinatorError::SnapshotGet(format!(
-                                "scan lock retry budget exhausted: {exhausted:?}"
-                            ))
-                        })?;
-                    wait_with_call(call, delay).map_err(|error| {
-                        OptimisticCoordinatorError::SnapshotGet(error.to_string())
-                    })?;
-                }
-                // Redo this page: a locked scan returns no trustworthy pairs.
-                continue;
-            }
-            // Per page, as client-go checks per `scan.Next` batch: a long scan
-            // must not spend its whole range on the strength of one check made
-            // before the first page.
-            self.check_visibility_at(read_ts)?;
-            let page_len = response.response.pairs.len();
-            let last_key = response
-                .response
-                .pairs
-                .last()
-                .map(|pair| pair.key.clone())
-                .unwrap_or_default();
-            for pair in response.response.pairs {
-                pairs.push((pair.key, pair.value));
-            }
-            self.snapshot_reads.push(SnapshotReadReceipt {
-                key: cursor.clone(),
-                region: route.region(),
-                publication: response.publication,
-            });
-            if limit.is_some_and(|limit| pairs.len() >= limit) {
-                break;
-            }
-            if page_len == page_limit as usize {
-                // The page filled up; the next key after the last one served
-                // is the smallest key this page could not have covered.
-                cursor = last_key;
-                cursor.push(0);
-            } else {
-                // The region (or the requested range) is drained.
-                if page_end.as_slice() >= end_key {
-                    break;
-                }
-                cursor = page_end;
-            }
-        }
-        Ok(pairs)
-    }
-
-    fn begin_scan(
-        &self,
-        route: &RegionKeyBatch,
-        context: &tidb_proto::KvrpcContext,
-        request: &KvrpcScanRequest,
-        call: &UnaryCallContext,
-    ) -> Result<TransactionBatchResponse<KvrpcScanResponse>, OptimisticCoordinatorError> {
-        let published = self
-            .runtime
-            .client()
-            .try_borrow_mut()
-            .map_err(|_| {
-                OptimisticCoordinatorError::SnapshotGet(
-                    "TiKV client is already borrowed".to_owned(),
-                )
-            })?
-            .publish_transaction_scan(route.address(), request, context, call);
-        match published {
-            PublishedCommand::Response(response) => Ok(response),
-            PublishedCommand::BeforePublication(error)
-            | PublishedCommand::AfterPublication { error, .. } => {
-                Err(OptimisticCoordinatorError::SnapshotGet(error))
-            }
-        }
+        snapshot_scan_with(
+            &self.runtime,
+            &self.timestamps,
+            &self.gc_state,
+            &mut self.forward_backoff,
+            &mut self.resolved_locks,
+            &mut self.snapshot_reads,
+            start_key,
+            end_key,
+            limit,
+            read_ts,
+            call,
+        )
     }
 }
 

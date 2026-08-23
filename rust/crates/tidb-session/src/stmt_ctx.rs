@@ -173,7 +173,7 @@ impl Session {
     /// the statement, because this tier accepts the variable without
     /// validating it at SET time -- Go validates there instead, and that
     /// check is the deferred half of this port.
-    pub(crate) fn session_time_zone(&self) -> tidb_executor::SessionTimeZone {
+    pub fn session_time_zone(&self) -> tidb_executor::SessionTimeZone {
         use tidb_executor::SessionTimeZone;
         let written = self
             .vars
@@ -300,6 +300,9 @@ impl Session {
     }
 
     fn tidb_decode_key_snapshot(&self) -> Rc<tidb_executor::TidbDecodeKeySnapshot> {
+        if self.skip_tidb_decode_key_snapshot.get() {
+            return Rc::default();
+        }
         let Ok(catalog) = self.catalog.lock() else {
             return Rc::default();
         };
@@ -404,6 +407,20 @@ impl Session {
 
     pub(crate) fn statement_context(&self, is_dml: bool) -> tidb_executor::StmtContext {
         self.statement_context_ignoring(is_dml, false)
+    }
+
+    /// Builds the context used by the narrow prepared point/DML paths.
+    /// Those paths do not evaluate `TIDB_DECODE_KEY`, so constructing its
+    /// catalog metadata snapshot only adds per-execute work.
+    pub(crate) fn fast_statement_context(
+        &self,
+        is_dml: bool,
+        ignore_err: bool,
+    ) -> tidb_executor::StmtContext {
+        let previous = self.skip_tidb_decode_key_snapshot.replace(true);
+        let context = self.statement_context_ignoring(is_dml, ignore_err);
+        self.skip_tidb_decode_key_snapshot.set(previous);
+        context
     }
 
     /// [`Self::statement_context`] for a DML statement that carries the
@@ -934,5 +951,25 @@ pub(crate) fn scanner_sql_mode_of(mode: &str) -> tidb_parser::SqlMode {
         high_not_precedence: has("HIGH_NOT_PRECEDENCE"),
         ignore_space: has("IGNORE_SPACE"),
         pipes_as_concat: has("PIPES_AS_CONCAT"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fast_statement_context_does_not_build_decode_key_metadata() {
+        let session = Session::new();
+        // Session bootstrap may create a normal context; isolate the fast
+        // path assertion from that startup bookkeeping.
+        *session.tidb_decode_key_cache.borrow_mut() = None;
+        let _fast = session.fast_statement_context(false, false);
+        assert!(session.tidb_decode_key_cache.borrow().is_none());
+
+        // The suppression is scoped to one context construction; ordinary
+        // statements still retain the metadata required by TIDB_DECODE_KEY.
+        let _normal = session.statement_context(false);
+        assert!(session.tidb_decode_key_cache.borrow().is_some());
     }
 }

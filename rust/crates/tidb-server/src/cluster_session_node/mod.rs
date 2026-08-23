@@ -434,8 +434,6 @@ impl ClusterSessionFactory {
         }
     }
 
-    /// Installs the startup-validated physical spill authority.
-    #[must_use]
     /// Replaces the factory's pin registry with the node-owned one the
     /// schema-sync acknowledger reads.
     #[must_use]
@@ -474,16 +472,16 @@ impl ClusterSessionFactory {
     /// merged client-side and re-tested by the same predicate (see
     /// [`tidb_executor::remote_scan`]).
     #[must_use]
+    pub fn with_cop_scans(mut self, scanner: Arc<dyn PushdownScanner>) -> Self {
+        self.cop_scans = Some(scanner);
+        self
+    }
+
     /// Binds the node's server-info syncer for
     /// `information_schema.TIDB_SERVERS_INFO`.
     #[must_use]
     pub fn with_server_info(mut self, syncer: Arc<tidb_domain::serverinfo_syncer::Syncer>) -> Self {
         self.server_info = Some(syncer);
-        self
-    }
-
-    pub fn with_cop_scans(mut self, scanner: Arc<dyn PushdownScanner>) -> Self {
-        self.cop_scans = Some(scanner);
         self
     }
 
@@ -598,7 +596,6 @@ impl QuerySessionFactory for ClusterSessionFactory {
             stats: Arc::clone(&self.stats),
             statistics,
             explicit: None,
-            point_get_max_ts: None,
             savepoints: Vec::new(),
             skipped: built.skipped,
             auto_ids: Arc::clone(&self.auto_ids),
@@ -650,11 +647,6 @@ pub struct ClusterServerSession {
     /// where a statement prepares a timestamp of its own after planning and
     /// waits for it at its first read.
     explicit: Option<Box<dyn OpenClusterTransaction>>,
-    /// Reusable connection-local max-ts read transaction for clustered
-    /// common-handle point gets. Its per-statement snapshots are dropped after
-    /// each query, while the transaction worker remains available for the next
-    /// point read and avoids an open/finish handshake on every request.
-    point_get_max_ts: Option<Box<dyn OpenClusterTransaction>>,
     /// The transaction's savepoints, oldest first: for each, the name
     /// lowercased and the buffer image taken when it was declared.
     ///
@@ -880,17 +872,12 @@ impl ClusterServerSession {
                     StatementReadShape::AutocommitPointGet
                         | StatementReadShape::AutocommitSingleRowRead
                 ) => {
-                    if self.point_get_max_ts.is_none() {
-                        self.point_get_max_ts = Some(
-                            self.transactions
-                                .begin_max_ts()
-                                .map_err(SqlQueryError::unknown)?,
-                        );
-                    }
-                    self.point_get_max_ts
-                        .as_ref()
-                        .expect("max-ts transaction was just opened")
-                        .snapshot()
+                    // Go's clustered-handle point-get optimisation reads
+                    // directly at MaxTS. Keep this on the connection worker:
+                    // opening a reusable transaction would add a channel hop
+                    // and a pinned worker to every point read.
+                    self.transactions
+                        .open_max_ts_snapshot()
                         .map_err(SqlQueryError::unknown)?
                 }
                 // Start the ordinary timestamped snapshot while the session
@@ -1182,9 +1169,6 @@ impl ClusterServerSession {
     fn begin_if_autocommit_off(&mut self) -> Result<(), SqlQueryError> {
         if self.explicit.is_some() || self.session.is_autocommit() {
             return Ok(());
-        }
-        if let Some(point_get) = self.point_get_max_ts.take() {
-            point_get.rollback().map_err(SqlQueryError::unknown)?;
         }
         self.open_explicit()
     }
@@ -1779,9 +1763,6 @@ impl QuerySession for ClusterServerSession {
             // timestamp every statement of the new transaction reads at, and
             // that its COMMIT will prewrite at.
             Some(TransactionControl::Begin { .. }) => {
-                if let Some(point_get) = self.point_get_max_ts.take() {
-                    point_get.rollback().map_err(SqlQueryError::unknown)?;
-                }
                 self.discard_explicit()?;
                 // The refresh happens BEFORE the pin: the new transaction
                 // reads the schema as of its own start, not as of the moment
@@ -1868,6 +1849,7 @@ impl QuerySession for ClusterServerSession {
         }
         let prepared_ast = self.session.prepare_ast(sql).map_err(map_error)?;
         let parameter_count = prepared_ast.parameter_count();
+        let point_get_plan = prepared_ast.point_get_plan();
         let kind = prepared_ast.statement_kind(&self.session);
         if kind == StmtKind::Write {
             // A prepared DDL is admitted here and executed at EXECUTE, so a
@@ -1901,18 +1883,18 @@ impl QuerySession for ClusterServerSession {
         // by planning the statement with every marker bound to NULL. Planning
         // reads the catalog and may read rows, so it takes a snapshot like any
         // other statement.
-        let owned = sql.to_owned();
         let template = self.session.parse_statement(sql).map_err(map_error)?;
         // The PREPARE probe runs the statement with every marker NULL, which
         // is not the statement the client will execute; it declares nothing,
         // and -- see `probe_statement` -- it opens no transaction either.
         let probe: Vec<tidb_datatype::Datum> =
             std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
-        let mut bound_probe = Some(prepared_ast.bind(&probe).map_err(map_error)?);
+        let zone = self.session.session_time_zone();
+        let mut bound_probe = Some(prepared_ast.bind(&probe, &zone).map_err(map_error)?);
         let result_columns = self.probe_statement(StatementReadShape::Unknown, |session| {
             let bound = match bound_probe.take() {
                 Some(bound) => bound,
-                None => prepared_ast.bind(&probe).map_err(map_error)?,
+                None => prepared_ast.bind(&probe, &zone).map_err(map_error)?,
             };
             match session.run_bound_prepared(bound) {
                 Ok(StmtOutput::Rows { columns, .. }) => {
@@ -1927,11 +1909,12 @@ impl QuerySession for ClusterServerSession {
                 _ => Ok(Vec::new()),
             }
         })?;
-        Ok(PreparedGeneral::with_template(
+        Ok(PreparedGeneral::with_template_and_point_get_plan(
             sql.to_owned(),
             parameter_count,
             result_columns,
             template,
+            point_get_plan,
         ))
     }
 
@@ -1993,6 +1976,7 @@ impl QuerySession for ClusterServerSession {
         let params = crate::pipeline_session::prepared_parameters(values);
         let sql = statement.sql().to_owned();
         let retained = statement.template();
+        let cached_point_get_plan = statement.point_get_plan().cloned();
         // YCSB's prepared point reads are a retained SELECT template whose
         // only changing value is the clustered key.  Resolve that key directly
         // from the template and execute values; cloning/binding the complete
@@ -2042,6 +2026,14 @@ impl QuerySession for ClusterServerSession {
         };
         let output = self.with_statement(shape, move |session| {
             if fast {
+                if let Some(cached) = cached_point_get_plan.as_ref().and_then(|plan| {
+                    session
+                        .bind_cached_prepared_point_get(plan, &params)
+                }) {
+                    return session
+                        .execute_cached_prepared_point_get(cached)
+                        .map_err(map_error);
+                }
                 if let Some(output) = session
                     .execute_fast_prepared_point_get(
                         retained.expect("fast prepared point read has a retained template"),

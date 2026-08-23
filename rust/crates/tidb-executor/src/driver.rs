@@ -628,6 +628,16 @@ pub(crate) fn plan_fast_point_get(
     let Some(table) = access::single_kv_table(&select.from, catalog, current_db) else {
         return Ok(None);
     };
+    let hints = crate::index_hints::single_table_scan_hints(
+        select,
+        Some(table_ref),
+        &table,
+        current_db,
+        ctx,
+    )?;
+    if !hints.allows_table() || !hints.allows_common_primary() {
+        return Ok(None);
+    }
     let visible = table_ref
         .alias
         .clone()
@@ -831,6 +841,102 @@ pub fn run_fast_prepared_point_get(
     Ok(Some((output_columns, rows)))
 }
 
+/// Executes the same prepared clustered-handle point shape with the narrow
+/// decode context used by the prepared point-get cache.  The binary protocol
+/// can reach this path before a complete planner context is needed; keeping
+/// it narrow avoids rebuilding session-wide metadata (notably
+/// `TIDB_DECODE_KEY`) for every YCSB execute.
+pub fn run_fast_prepared_point_get_with_decode_context(
+    select: &tidb_ast::SelectStmt,
+    params: &[Datum],
+    catalog: &mut Catalog,
+    current_db: &str,
+    context: &crate::kv_table::PreparedPointGetDecodeContext,
+) -> Result<Option<SelectMeta>, DriverError> {
+    if select.with.is_some()
+        || select.distinct
+        || !select.group_by.is_empty()
+        || select.having.is_some()
+        || !select.order_by.is_empty()
+        || !select.windows.is_empty()
+        || select.limit.is_some()
+        || select.lock.is_some()
+        || select.into_outfile.is_some()
+        || select.calc_found_rows
+    {
+        return Ok(None);
+    }
+    let Some(table_ref) = access::single_table_ref(&select.from) else {
+        return Ok(None);
+    };
+    let (database, table_name) = match table_ref.name.as_slice() {
+        [name] if !current_db.is_empty() => (current_db, name.as_str()),
+        [database, name] => (database.as_str(), name.as_str()),
+        _ => return Ok(None),
+    };
+    let Some(TableEntry::Kv(table)) = catalog.get_mut_in(database, table_name) else {
+        return Ok(None);
+    };
+    let columns = table.visible_columns();
+    let Some(handle) = access::try_prepared_common_handle_point_get_path(
+        select,
+        table,
+        params,
+        context.zone(),
+    )?
+    else {
+        return Ok(None);
+    };
+
+    let mut output_offsets = Vec::new();
+    let mut output_columns = Vec::new();
+    for field in select.fields.fields() {
+        match field {
+            tidb_ast::SelectField::Wildcard(_) => {
+                for (offset, column) in columns.iter().enumerate() {
+                    output_offsets.push(offset);
+                    output_columns.push((column.name.clone(), column.field_type.clone()));
+                }
+            }
+            tidb_ast::SelectField::Expr { expr, alias } => {
+                let tidb_ast::Expr::Column(path) = expr else {
+                    return Ok(None);
+                };
+                let Some(name) = path.last() else {
+                    return Ok(None);
+                };
+                let Some((offset, column)) = columns
+                    .iter()
+                    .enumerate()
+                    .find(|(_, column)| column.name.eq_ignore_ascii_case(name))
+                else {
+                    return Ok(None);
+                };
+                output_offsets.push(offset);
+                output_columns.push((
+                    alias.clone().unwrap_or_else(|| column.name.clone()),
+                    column.field_type.clone(),
+                ));
+            }
+        }
+    }
+    if output_offsets.is_empty() {
+        return Ok(None);
+    }
+    let decoder = crate::kv_table::PreparedPointGetRowDecoder::new_with_handles(
+        columns,
+        table.pk_handle_offset(),
+        table.common_handle_offsets(),
+        &output_offsets,
+    )
+    .map_err(|error| DriverError::Parse(format!("point row decoder failed: {error:?}")))?;
+    let row = table
+        .get_prepared_point_row(&handle, &decoder, context)
+        .map_err(|error| DriverError::Parse(format!("row decode failed: {error:?}")))?;
+    let rows = row.into_iter().collect();
+    Ok(Some((output_columns, rows)))
+}
+
 /// The read-free decision shared by SQL execution and EXPLAIN for YCSB E's
 /// one-row clustered-handle range.
 pub(crate) struct FastSingleRowScanPlan {
@@ -874,6 +980,16 @@ pub(crate) fn plan_fast_single_row_scan(
     let Some(table) = access::single_kv_table(&select.from, catalog, current_db) else {
         return Ok(None);
     };
+    let hints = crate::index_hints::single_table_scan_hints(
+        select,
+        Some(table_ref),
+        &table,
+        current_db,
+        ctx,
+    )?;
+    if !hints.allows_table() || !hints.allows_common_primary() {
+        return Ok(None);
+    }
     let visible = table_ref
         .alias
         .clone()
@@ -962,10 +1078,15 @@ pub fn run_fast_single_row_scan(
         output_columns,
         ..
     } = plan;
-    let row = table
+    // The proven one-row shape already carries the complete clustered-key
+    // range. Use the storage seam's bounded max-ts primitive directly: a DAG
+    // cop request would create a transport and response stream for one row,
+    // which is measurably slower than the same TiKV range seek. This remains
+    // fail-closed because the shape gate above rejects every residual,
+    // partitioned, dirty, or non-clustered table.
+    let rows = table
         .first_row_in_handle_ranges(None, &ranges, &ctx.session_zone())
-        .map_err(|error| DriverError::Parse(format!("row decode failed: {error:?}")))?;
-    let rows = row
+        .map_err(|error| DriverError::Parse(format!("row decode failed: {error:?}")))?
         .map(|(_, row)| {
             output_offsets
                 .into_iter()

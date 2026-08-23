@@ -27,6 +27,15 @@ pub trait ResultSetSink {
     /// Writes one logical packet payload.
     fn write_payload(&mut self, payload: &[u8]) -> Result<(), SinkWriteError>;
 
+    /// Writes several payloads while allowing a connection sink to coalesce
+    /// their transport flush. In-memory sinks retain the one-packet behavior.
+    fn write_payloads(&mut self, payloads: &[&[u8]]) -> Result<(), SinkWriteError> {
+        for payload in payloads {
+            self.write_payload(payload)?;
+        }
+        Ok(())
+    }
+
     /// Flushes any connection-owned result-set buffering.
     ///
     /// In-memory sinks do not need a flush. A socket sink uses this boundary

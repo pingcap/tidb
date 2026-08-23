@@ -73,6 +73,13 @@ impl PreparedAst {
         session.statement_kind_parsed(&self.statement)
     }
 
+    /// The immutable fast point-read plan compiled while the statement was
+    /// prepared, when its shape is safe to reuse for every EXECUTE.
+    #[must_use]
+    pub fn point_get_plan(&self) -> Option<Arc<PreparedPointGetPlan>> {
+        self.point_get_plan.clone()
+    }
+
     /// The persistent cluster state this statement changes, if any.
     #[must_use]
     pub fn stored_state_change(&self) -> StoredStateChange {
@@ -82,12 +89,16 @@ impl PreparedAst {
     /// Clones the retained tree and installs this execution's values on its
     /// parameter markers, matching Go's immutable prepared definition plus
     /// per-execution marker state.
-    pub fn bind(&self, values: &[Datum]) -> Result<BoundPreparedAst, DriverError> {
+    pub fn bind(
+        &self,
+        values: &[Datum],
+        zone: &tidb_datatype::SessionTimeZone,
+    ) -> Result<BoundPreparedAst, DriverError> {
         let statement = tidb_executor::bind_prepared_statement(&self.statement, values)?;
         let point_get = self
             .point_get_plan
             .as_ref()
-            .and_then(|plan| plan.bind(values));
+            .and_then(|plan| plan.bind(values, zone));
         let point_get_cache_hit = self.point_get_cache_ready.load(Ordering::Acquire);
         let execution_sql = if matches!(statement, Stmt::Query(_)) {
             self.sql.clone()
@@ -115,12 +126,13 @@ impl PreparedAst {
         if values.len() != self.parameter_count {
             return Err(DriverError::WrongParamCount);
         }
+        let zone = session.session_time_zone();
         if self.point_get_cache_ready.load(Ordering::Acquire) {
             if let Some(execution) = self
                 .point_get_plan
                 .as_ref()
                 .filter(|plan| session.can_reuse_prepared_point_get(plan))
-                .and_then(|plan| plan.bind(values))
+                .and_then(|plan| plan.bind(values, &zone))
             {
                 return Ok(BoundPreparedAst {
                     execution_sql: self.sql.clone(),
@@ -132,7 +144,7 @@ impl PreparedAst {
                 });
             }
         }
-        self.bind(values)
+        self.bind(values, &zone)
     }
 }
 
@@ -242,5 +254,18 @@ impl Session {
         }
         self.lock_catalog()
             .is_ok_and(|catalog| plan.matches_catalog(&catalog, self.current_database()))
+    }
+
+    /// Binds a retained point-get plan for a binary EXECUTE after applying
+    /// the same autocommit, snapshot, session-binding, and schema gates used
+    /// by the Go point-get cache.
+    pub fn bind_cached_prepared_point_get(
+        &self,
+        plan: &Arc<PreparedPointGetPlan>,
+        values: &[Datum],
+    ) -> Option<PreparedPointGetExecution> {
+        self.can_reuse_prepared_point_get(plan)
+            .then(|| plan.bind(values, &self.session_time_zone()))
+            .flatten()
     }
 }

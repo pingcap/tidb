@@ -113,6 +113,10 @@ pub struct PreparedPointGetPlan {
     table_id: i64,
     parameter_order: usize,
     handle_type: FieldType,
+    /// Empty for an integer PK handle; one offset for the supported prepared
+    /// common-handle shape. Keeping this explicit lets `bind` rebuild the
+    /// encoded handle without re-running the AST path matcher.
+    common_handle_offsets: Vec<usize>,
     output: FastPointOutput,
     row_decoder: crate::kv_table::PreparedPointGetRowDecoder,
 }
@@ -133,14 +137,27 @@ impl PreparedPointGetPlan {
     /// Rebuilds the parameter-dependent handle. A value that cannot be moved
     /// exactly into the PK domain declines the cache and must be replanned.
     #[must_use]
-    pub fn bind(self: &Arc<Self>, values: &[Datum]) -> Option<PreparedPointGetExecution> {
+    pub fn bind(
+        self: &Arc<Self>,
+        values: &[Datum],
+        zone: &tidb_datatype::SessionTimeZone,
+    ) -> Option<PreparedPointGetExecution> {
         let value = values.get(self.parameter_order)?;
         let handle = if value.is_null() {
             None
         } else {
             match point_get_value(&self.handle_type, value)? {
-                Datum::Int(value) => Some(TableHandle::Int(value)),
-                Datum::UInt(value) => Some(TableHandle::Int(value as i64)),
+                Datum::Int(value) if self.common_handle_offsets.is_empty() => {
+                    Some(TableHandle::Int(value))
+                }
+                Datum::UInt(value) if self.common_handle_offsets.is_empty() => {
+                    Some(TableHandle::Int(value as i64))
+                }
+                value if !self.common_handle_offsets.is_empty() => {
+                    let encoded = tidb_codec::encode_key_in_timezone(zone, &[value]).ok()?;
+                    let handle = tidb_txnkv::CommonHandle::new(encoded).ok()?;
+                    Some(TableHandle::Common(handle.encoded().to_vec()))
+                }
                 _ => return None,
             }
         };
@@ -214,7 +231,7 @@ pub fn build_prepared_point_get_plan(
     let table_ref = single_table_ref(&select.from)?;
     if !table_ref.partitions.is_empty()
         || table_ref.as_of.is_some()
-        || !table_ref.hints.is_empty()
+        || !prepared_primary_index_hint(table_ref)
         || table_ref.sample.is_some()
     {
         return None;
@@ -226,7 +243,18 @@ pub fn build_prepared_point_get_plan(
     if table.partition().is_some() {
         return None;
     }
-    let handle_offset = table.pk_handle_offset()?;
+    let (handle_offset, common_handle_offsets) = if let Some(offset) = table.pk_handle_offset() {
+        (Some(offset), Vec::new())
+    } else {
+        let offsets = table.common_handle_offsets();
+        // The cache currently handles one marker and therefore one-column
+        // common handles. Composite handles continue through the general
+        // prepared path, which preserves their parameter-order semantics.
+        if offsets.len() != 1 {
+            return None;
+        }
+        (None, offsets.to_vec())
+    };
     let columns = entry.column_list();
     let visible = table_ref.alias.as_deref().unwrap_or(table_name);
     let scope = PlanTrace::single_table_scope(
@@ -248,7 +276,9 @@ pub fn build_prepared_point_get_plan(
     }
     let (column, parameter_order) = prepared_handle_marker(select.where_clause.as_ref()?)?;
     let (offset, _, _) = ScopeResolver { scope: &scope }.resolve(column)?;
-    if offset != handle_offset || parameter_order != 0 {
+    let matches_handle = handle_offset == Some(offset)
+        || common_handle_offsets.len() == 1 && common_handle_offsets[0] == offset;
+    if !matches_handle || parameter_order != 0 {
         return None;
     }
 
@@ -259,14 +289,33 @@ pub fn build_prepared_point_get_plan(
         table: table_name.to_owned(),
         table_id: table.table_id,
         parameter_order,
-        handle_type: columns.get(handle_offset)?.1.clone(),
-        row_decoder: crate::kv_table::PreparedPointGetRowDecoder::new(
+        handle_type: columns.get(offset)?.1.clone(),
+        row_decoder: crate::kv_table::PreparedPointGetRowDecoder::new_with_handles(
             table.visible_columns(),
             handle_offset,
+            &common_handle_offsets,
             &output.offsets,
         )
         .ok()?,
+        common_handle_offsets,
         output,
+    })
+}
+
+/// YCSB's MySQL adapter pins every single-row lookup with
+/// `FORCE INDEX(PRIMARY)`. That hint does not alter a clustered-handle point
+/// read, so it is safe to retain in the prepared cache; all other hint shapes
+/// stay on the ordinary planner to preserve their access-path semantics.
+fn prepared_primary_index_hint(table_ref: &tidb_ast::TableRef) -> bool {
+    table_ref.hints.iter().all(|hint| {
+        matches!(
+            (hint.kind, hint.scope, hint.indexes.as_slice()),
+            (
+                tidb_ast::IndexHintKind::Force | tidb_ast::IndexHintKind::Use,
+                tidb_ast::IndexHintScope::All,
+                [name]
+            ) if name.eq_ignore_ascii_case("PRIMARY")
+        )
     })
 }
 
