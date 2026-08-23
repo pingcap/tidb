@@ -123,3 +123,44 @@ fn a_probe_key_outside_the_group_keys_is_refused() {
         "`bb` is not a group key, so no leaf is re-seeded by it:\n{plan_text}"
     );
 }
+
+/// The IN-subquery dedup an index join builds from is a StreamAgg on both
+/// sides of its reader once the subquery's key has an ordered index.
+///
+/// Go's `buildDistinct` (`pkg/planner/core/logical_plan_builder.go:1966`)
+/// makes that dedup a LogicalAggregation, `getStreamAggs`
+/// (`pkg/planner/core/operator/physicalop/physical_stream_agg.go:89`)
+/// enumerates it beside the hash candidate, and the index prefix
+/// `PreparePossibleProperties` offers makes the stream one admissible. The
+/// index join asks its OUTER child for no order, which does not take that
+/// costed candidate away -- the ordered scan is what it was costed WITH.
+///
+/// Recorded by TiDB in `tests/integrationtest/r/index_join.result:47-56`.
+#[test]
+fn an_index_joins_dedup_build_side_keeps_its_ordered_index_stream_agg() {
+    let mut session = Session::new();
+    session
+        .run("SET @@tidb_opt_insubq_to_join_and_agg=1")
+        .unwrap();
+    session
+        .run("CREATE TABLE t1(a int not null, b int not null, key a(a))")
+        .unwrap();
+    session
+        .run("CREATE TABLE t2(a int not null, b int not null, key a(a))")
+        .unwrap();
+    let plan_text = plan(
+        &mut session,
+        "EXPLAIN SELECT /*+ TIDB_INLJ(t1) */ * FROM t1 WHERE t1.a IN (SELECT t2.a FROM t2)",
+    );
+    for expected in [
+        "StreamAgg_4(Build) 8000.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+        "IndexReader_3 8000.00 root  index:StreamAgg",
+        "StreamAgg_2 8000.00 cop[tikv]  group by:test.t2.a, ",
+        "IndexFullScan_1 10000.00 cop[tikv] table:t2, index:a(a) keep order:true, stats:pseudo",
+    ] {
+        assert!(
+            plan_text.contains(expected),
+            "missing `{expected}` in:\n{plan_text}"
+        );
+    }
+}

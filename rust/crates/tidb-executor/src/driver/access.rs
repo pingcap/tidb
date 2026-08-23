@@ -1081,11 +1081,32 @@ pub(crate) fn commit_fast_path_source(
                     .and_then(|source| source.table_access())
                     .is_some_and(|access| access.accept_handle_ranges(&ranges));
                 if accepted {
+                    // Go's `convertToPointGet`
+                    // (`pkg/planner/core/find_best_task.go:3012`) replaces the
+                    // chosen table path with a `PointGetPlan` whose stats are
+                    // scaled to `accessCnt := math.Min(CountAfterAccess, 1)`
+                    // (`:3025`) and wraps it in a `RootTask` (`:3040`). Both
+                    // halves matter to the executor, not only to EXPLAIN: a
+                    // ROOT task never carries a coprocessor partial
+                    // aggregation, and the one-row estimate is what the scan
+                    // refuses that push-down by.
+                    let converted_to_point_get = !disable_point_get
+                        && !ranges.is_empty()
+                        && (table.pk_handle_offset().is_some()
+                            && single_point_handle(&ranges).is_some()
+                            || !table.common_handle_offsets().is_empty()
+                                && ranges.len() == 1
+                                && ranges[0].is_point(false)
+                                && ranges[0].low.len() == table.common_handle_offsets().len());
                     if let Some(access) = from_source
                         .as_mut()
                         .and_then(|source| source.table_access())
                     {
-                        access.accept_scan_estimate(estimate.rows);
+                        access.accept_scan_estimate(if converted_to_point_get {
+                            estimate.rows.min(1.0)
+                        } else {
+                            estimate.rows
+                        });
                     }
                     // Go returns a PhysicalTableDual as soon as the chosen
                     // path has no ranges. No residual predicate survives

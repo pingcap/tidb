@@ -697,7 +697,7 @@ pub(crate) fn run_aggregate_select(
     let root = match &dedup_keys {
         Some(keys) => {
             let schema = root.schema().clone();
-            Box::new(distinct_over(root, &schema, keys, ctx)) as Box<dyn Executor>
+            distinct_over(root, &schema, keys, ctx, false)
         }
         None => root,
     };
@@ -2455,9 +2455,17 @@ fn grouped_stream_partial_plan(
             GroupedPartialSource::Function(functions.len() - 1),
         ));
     }
-    if functions.is_empty() {
-        return None;
-    }
+    // A pure dedup -- every aggregate is a FIRST_ROW carrier of a group key --
+    // leaves the cop stage with NO function to compute, and Go pushes it down
+    // all the same. `BasePhysicalAgg.NewPartialAggregate`
+    // (`pkg/planner/core/operator/physicalop/base_physical_agg.go:296`) runs
+    // `RemoveUnnecessaryFirstRow` (`:460`) over the split's partial functions,
+    // which DELETES every FIRST_ROW whose argument equals a partial group-by
+    // item because the group tuple already carries that value. A `SELECT
+    // DISTINCT a` / `GROUP BY a` therefore reaches TiKV as a group-by with an
+    // empty function list -- the recorded `StreamAgg cop[tikv]
+    // group by:index_join.t2.a, ` with nothing after `group by`.
+    //
     // Go orders FIRST_ROW carriers by their physical source-column offset,
     // independently of the SELECT-list order. The final projection maps
     // these states back to the visible derived-table columns.
@@ -4922,7 +4930,7 @@ fn distinct_and_drain(
             .collect();
         let schema = Schema::new(columns);
         let all: Vec<usize> = (0..schema.columns.len()).collect();
-        root = Box::new(distinct_over(root, &schema, &all, ctx));
+        root = distinct_over(root, &schema, &all, ctx, false);
     }
 
     if let Some(deferred) = deferred_exec {

@@ -1828,6 +1828,7 @@ impl PlanTrace {
         fields: &[tidb_ast::SelectField],
         qualify: &Qualifier<'_>,
         logical_rows: Option<f64>,
+        streamed: bool,
     ) -> bool {
         let Some(mut scan) = self.stack.pop() else {
             return false;
@@ -1840,17 +1841,22 @@ impl PlanTrace {
                 return false;
             }
         };
+        let aggregate = if streamed { "StreamAgg" } else { "HashAgg" };
         let estimate =
             logical_rows.or_else(|| Est::ScaleFloorOne(DISTINCT_FACTOR).apply(scan.est_rows));
         let projected = sorted_field_list(fields, qualify);
         scan.task = "cop[tikv]";
         let act_rows = scan.act_rows.clone();
         let key_ndv_ratio = scan.key_ndv_ratio;
+        // Go joins `group by:` and `funcs:` with `", "` and then renders an
+        // EMPTY function list, so the recorded cop dedup line keeps that
+        // separator's trailing space (`explain_easy.result:104`:
+        // `HashAgg\tcop[tikv]\t\tgroup by:explain_easy.t2.c2, `).
         let mut partial = PlanNode::new(
-            "HashAgg",
+            aggregate,
             estimate,
             String::new(),
-            format!("group by:{projected},"),
+            format!("group by:{projected}, "),
         );
         partial.task = "cop[tikv]";
         partial.act_rows = act_rows.clone();
@@ -1861,9 +1867,9 @@ impl PlanTrace {
             estimate,
             String::new(),
             if reader == "TableReader" {
-                "data:HashAgg".to_owned()
+                format!("data:{aggregate}")
             } else {
-                "index:HashAgg".to_owned()
+                format!("index:{aggregate}")
             },
         );
         reader_node.key_ndv_ratio = key_ndv_ratio;
@@ -2340,6 +2346,45 @@ impl PlanTrace {
             ) -> bool {
                 let target = format!("table:{visible}");
                 if matches!(node.name, "TableReader" | "IndexReader") && node.children.len() == 1 {
+                    // A coprocessor partial aggregation belongs to the plan
+                    // that read the WHOLE relation. The index join re-seeds
+                    // this leaf per outer row, and the rebuilt inner executor
+                    // is an `IndexJoinLookupExec` that offers no
+                    // `table_access`, so it never accepts that partial. Drop
+                    // it here so the printed inner subtree is the one the
+                    // rebuilt task actually runs -- Go equally discards the
+                    // whole-relation candidate and re-plans the inner side
+                    // under `prop.IndexJoinProp`
+                    // (`enumerateIndexJoinByOuterIdx`,
+                    // `pkg/planner/core/exhaust_physical_plans.go:461`).
+                    let partial_hides_target = matches!(
+                        node.children[0].name,
+                        "HashAgg" | "StreamAgg"
+                    ) && node.children[0].task == "cop[tikv]"
+                        && node.children[0].children.len() == 1
+                        && {
+                            let below = &node.children[0].children[0];
+                            let scan = if is_scan(below) {
+                                Some(below)
+                            } else if below.name == "Selection"
+                                && below.children.len() == 1
+                                && is_scan(&below.children[0])
+                            {
+                                Some(&below.children[0])
+                            } else {
+                                None
+                            };
+                            scan.is_some_and(|scan| scan.access.starts_with(&target))
+                        };
+                    if partial_hides_target {
+                        let label = node.children[0].label;
+                        let mut partial_child = node.children[0]
+                            .children
+                            .pop()
+                            .expect("one coprocessor partial aggregate child");
+                        partial_child.label = label;
+                        node.children[0] = partial_child;
+                    }
                     let child = &mut node.children[0];
                     let scan = if is_scan(child) {
                         Some(&mut *child)
@@ -2456,23 +2501,33 @@ impl PlanTrace {
         // been built independently as StreamAgg for its internal ORDER BY;
         // Go replans that candidate as an unordered HashAgg instead of
         // carrying the superseded property into the committed join.
+        // The retraction is all-or-nothing: an outer StreamAgg whose ordered
+        // input came from an INDEX is a costed `getStreamAggs` candidate --
+        // `possibleChildProperty` really delivers the group keys, so the
+        // empty required property takes nothing away from it and TiDB records
+        // that build side as StreamAgg over `IndexReader index:StreamAgg`
+        // (`tests/integrationtest/r/index_join.result:50`). Renaming only the
+        // root of such a subtree would print a HashAgg above a cop StreamAgg,
+        // which is no plan Go can produce.
         if !keep_outer_order {
             let outer = &mut self.stack[outer_at];
             if let Some(rows) = estimated_outer_rows {
-                if outer.name == "StreamAgg" && outer.children.len() == 1 {
+                if outer.name == "StreamAgg"
+                    && outer.children.len() == 1
+                    && outer.children[0].name == "TableReader"
+                    && outer.children[0].children.len() == 1
+                {
                     outer.name = "HashAgg";
                     outer.est_rows = Some(rows);
                     let reader = &mut outer.children[0];
-                    if reader.name == "TableReader" && reader.children.len() == 1 {
-                        reader.est_rows = Some(rows);
-                        if reader.info == "data:StreamAgg" {
-                            reader.info = "data:HashAgg".to_owned();
-                        }
-                        let partial = &mut reader.children[0];
-                        if partial.name == "StreamAgg" && partial.children.len() == 1 {
-                            partial.name = "HashAgg";
-                            partial.est_rows = Some(rows);
-                        }
+                    reader.est_rows = Some(rows);
+                    if reader.info == "data:StreamAgg" {
+                        reader.info = "data:HashAgg".to_owned();
+                    }
+                    let partial = &mut reader.children[0];
+                    if partial.name == "StreamAgg" && partial.children.len() == 1 {
+                        partial.name = "HashAgg";
+                        partial.est_rows = Some(rows);
                     }
                 }
             }
@@ -4568,6 +4623,7 @@ impl PlanTrace {
         fields: &[tidb_ast::SelectField],
         qualify: &Qualifier<'_>,
         logical_rows: Option<f64>,
+        streamed: bool,
     ) {
         let projected = sorted_field_list(fields, qualify);
         let funcs = fields
@@ -4583,7 +4639,7 @@ impl PlanTrace {
             .join(", ");
         let info = format!("group by:{projected}, funcs:{funcs}");
         self.wrap(
-            "HashAgg",
+            if streamed { "StreamAgg" } else { "HashAgg" },
             logical_rows.map_or(Est::ScaleFloorOne(DISTINCT_FACTOR), Est::Fixed),
             info,
         );
@@ -4598,6 +4654,7 @@ impl PlanTrace {
         fields: &[Expression],
         column_names: &[Option<String>],
         logical_rows: Option<f64>,
+        streamed: bool,
     ) -> bool {
         let Some(mut projected) = fields
             .iter()
@@ -4616,7 +4673,7 @@ impl PlanTrace {
             .collect::<Vec<_>>()
             .join(", ");
         self.wrap(
-            "HashAgg",
+            if streamed { "StreamAgg" } else { "HashAgg" },
             logical_rows.map_or(Est::ScaleFloorOne(DISTINCT_FACTOR), Est::Fixed),
             format!("group by:{}, funcs:{funcs}", projected.join(", ")),
         );
@@ -4629,6 +4686,7 @@ impl PlanTrace {
         &mut self,
         fields: &[tidb_ast::SelectField],
         qualify: &Qualifier<'_>,
+        streamed: bool,
     ) {
         let projected = sorted_field_list(fields, qualify);
         let funcs = fields
@@ -4643,7 +4701,7 @@ impl PlanTrace {
             .collect::<Vec<_>>()
             .join(", ");
         self.wrap(
-            "HashAgg",
+            if streamed { "StreamAgg" } else { "HashAgg" },
             Est::Inherit,
             format!("group by:{projected}, funcs:{funcs}"),
         );

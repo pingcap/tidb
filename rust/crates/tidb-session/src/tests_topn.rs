@@ -152,7 +152,10 @@ fn select_distinct_fuses_above_aggregation_and_keeps_gos_rows() {
             "TopN_5|2.00|root||test.t.a, offset:0, count:2",
             "└─HashAgg_4|8000.00|root||group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
             "  └─TableReader_3|8000.00|root||data:HashAgg",
-            "    └─HashAgg_2|8000.00|cop[tikv]||group by:test.t.a,",
+            // The cop dedup has NO `funcs:` and keeps the separator's trailing
+            // space, as TiDB records it (`tests/integrationtest/r/
+            // explain_easy.result:104`: `group by:explain_easy.t2.c2, `).
+            "    └─HashAgg_2|8000.00|cop[tikv]||group by:test.t.a, ",
             "      └─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );

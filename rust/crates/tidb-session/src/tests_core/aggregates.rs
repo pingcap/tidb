@@ -186,6 +186,64 @@ fn aggregates_over_numeric_domains() {
     );
 }
 
+/// A dedup whose group keys an index already delivers in order is a
+/// StreamAgg on BOTH sides of the reader.
+///
+/// Go enumerates `getStreamAggs`
+/// (`pkg/planner/core/operator/physicalop/physical_stream_agg.go:89`) beside
+/// `getHashAggs` for every LogicalAggregation and lets cost decide; the
+/// ordered index prefix makes the stream candidate admissible and cheaper.
+/// `BasePhysicalAgg.NewPartialAggregate`
+/// (`pkg/planner/core/operator/physicalop/base_physical_agg.go:296`) then
+/// splits it, and `RemoveUnnecessaryFirstRow` (`:460`) deletes the partial
+/// `firstrow(a)` because the group tuple already carries `a` -- which is why
+/// the coprocessor half prints `group by:test.t2.a, ` with no `funcs:`.
+///
+/// `SELECT DISTINCT a` is the SAME plan: `PlanBuilder.buildDistinct`
+/// (`pkg/planner/core/logical_plan_builder.go:1966`) builds an aggregation
+/// grouping by the projected columns with one `FIRST_ROW` each.
+///
+/// Recorded by TiDB in `tests/integrationtest/r/index_join.result:50-53`.
+#[test]
+fn an_ordered_index_dedup_streams_on_both_sides_of_the_reader() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t2 (a int not null, b int not null, key a(a))")
+        .unwrap();
+    session
+        .run("INSERT INTO t2 VALUES (1,1),(1,2),(2,3),(3,4)")
+        .unwrap();
+
+    let plan = |session: &mut Session, sql: &str| {
+        row_text(session.run(sql))
+            .into_iter()
+            .map(|row| format!("{}|{}|{}", row[0], row[2], row[4]))
+            .collect::<Vec<_>>()
+    };
+    let streamed = vec![
+        "StreamAgg_4|root|group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a".to_owned(),
+        "└─IndexReader_3|root|index:StreamAgg".to_owned(),
+        "  └─StreamAgg_2|cop[tikv]|group by:test.t2.a, ".to_owned(),
+        "    └─IndexFullScan_1|cop[tikv]|keep order:true, stats:pseudo".to_owned(),
+    ];
+    assert_eq!(plan(&mut session, "EXPLAIN SELECT DISTINCT a FROM t2"), streamed);
+    assert_eq!(
+        plan(&mut session, "EXPLAIN SELECT a FROM t2 GROUP BY a"),
+        streamed
+    );
+
+    // The rows the streaming dedup answers, which is the whole point of the
+    // ordered scan below it.
+    assert_eq!(
+        row_text(session.run("SELECT DISTINCT a FROM t2 ORDER BY a")),
+        [["1"], ["2"], ["3"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT a FROM t2 GROUP BY a ORDER BY a")),
+        [["1"], ["2"], ["3"]]
+    );
+}
+
 /// `STREAM_AGG()` may enforce the order its aggregate needs. Go's physical
 /// stream aggregate receives a sorted child when no access path already
 /// provides the grouping order; the hint therefore changes this otherwise
