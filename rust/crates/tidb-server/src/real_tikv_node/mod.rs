@@ -47,7 +47,7 @@ use tidb_exec::real_tikv_ddl::{
     commit_cluster_ddl, prepare_cluster_ddl_with_context, ClusterDdlReport, SchemaVersionNotifier,
 };
 use tidb_exec::real_tikv_dml::{
-    commit_configured_write, prepare_configured_write, prepare_text_write, ConfiguredWriteWarning,
+    prepare_configured_write, prepare_text_write, ConfiguredWriteWarning,
 };
 use tidb_exec::real_tikv_read::{
     prepare_configured_point_read, PdTimestampSource, ProductionReadProcessAuthority,
@@ -83,7 +83,7 @@ use crate::resultset_source::ResultSetSource;
 use crate::session_transaction::SessionTransaction;
 use crate::sorting_result_set::SortingResultSetSource;
 use crate::sql_node::{
-    cluster_ddl_error, configured_write_error, ActiveQueryCancellation, ConcurrentSqlNode,
+    cluster_ddl_error, ActiveQueryCancellation, ConcurrentSqlNode,
     PreparedPointRead, PreparedWrite, QueryCancellationLease, QueryResult, QuerySession,
     QuerySessionFactory, SessionContext, SqlNodeError, SqlQueryError, WriteOutcome,
 };
@@ -789,13 +789,43 @@ where
         let report = match buffered {
             Some(Ok(report)) => report,
             Some(Err(error)) => return Err(self.report(&error)),
-            None => commit_configured_write(
-                &self.transaction_opener,
-                &bound,
-                PRODUCTION_CONTROL_PLANE_TIMEOUT,
-                &session_tz,
-            )
-            .map_err(|error| configured_write_error(&error))?,
+            // Go never publishes an autocommit DML optimistically under the
+            // default `@@tidb_txn_mode=pessimistic`: each statement runs in
+            // its own implicit transaction whose rows are locked during the
+            // statement (`pkg/executor`'s pessimistic DML) and published by
+            // the commit protocol. The optimistic one-shot here predated the
+            // multi-statement coordinator and cost every sysbench write
+            // workload its lock-first round trip. Run the same pessimistic
+            // statement-and-commit shape Go runs.
+            None => {
+                let opener = self.transaction_opener.clone();
+                let table = self.inner.configured_table().clone();
+                let mut transaction = MultiStatementTransaction::begin(
+                    &opener,
+                    tidb_planner::txn_mode::SessionTxnMode::Pessimistic,
+                    crate::session_transaction::session_fair_locking(),
+                    tidb_exec::session_commit_protocol::session_commit_protocol(),
+                    table,
+                    PRODUCTION_CONTROL_PLANE_TIMEOUT,
+                )
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+                // A failed statement ends its own autocommit transaction, so
+                // dropping the coordinator on any error is the right cleanup.
+                let report = transaction
+                    .execute_write(&bound, &session_tz)
+                    .map_err(|error| {
+                        let sql_error = error.sql_error();
+                        SqlQueryError::new(
+                            sql_error.code,
+                            sql_error.state,
+                            sql_error.message.clone(),
+                        )
+                    })?;
+                transaction
+                    .commit()
+                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+                report
+            }
         };
         self.statement_warnings = report.warnings;
         Ok(WriteOutcome {
@@ -1988,6 +2018,7 @@ mod tests {
     use crate::connection_writers::{write_query_error, ConnectionPacketOutput};
     use crate::mysql_connection::MysqlConnectionError;
     use crate::secure_transport::TransportKind;
+    use crate::sql_node::configured_write_error;
     use std::cell::Cell;
     use std::sync::Mutex;
     use tidb_exec::real_tikv_ddl::ClusterDdlError;
