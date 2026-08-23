@@ -2484,7 +2484,7 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //
     // The nine that remain: through_projection 5, and one each of
     // partition_pruner, index_join, stale_txn (MVCC-blocked), and autoid.
-    const KNOWN_DIVERGENCES: usize = 8;
+    const KNOWN_DIVERGENCES: usize = 3;
     // 9 -> 8: `partition_pruner` fully closed (293 of 294 matched, one
     // `PlanWithoutProperty` skip). The last statement was the col_95
     // interval-intersection Point_Get: `... where col_95 between ... or
@@ -2523,6 +2523,70 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //
     // The eight that remain after both merges: through_projection 5, and
     // one each of index_join, stale_txn (MVCC-blocked), and autoid.
+    //
+    // 8 -> 3: `planner/core/join_reorder_through_projection` fully closed
+    // (326 of 346 matched; the 20 others are the standing OutOfDomain 16 and
+    // RecorderRewroteOutput 4 skips). All five statements were ONE leaf: the
+    // `injectExpr` wrapper -- the pass-through-plus-computed projection
+    // `through_proj` spells around a base table whose computed join key
+    // needs a column -- assembled unlike Go's in three ways, each now
+    // ported, in the order the shapes demanded:
+    //
+    //  * THE JOIN KEY'S NULL-REJECTION NOW REACHES THE LEAF. Go's
+    //    `LogicalJoin.PredicatePushDown` derives `not(isnull(<key>))` and
+    //    `breakDownPredicates` (`logical_projection.go:647`) substitutes it
+    //    through ANY projection expression -- computed included -- into the
+    //    child; this tier's `derived_projection_pushdown` accepted only
+    //    bare-column outputs, so the filter stayed a root Selection ABOVE
+    //    the wrapper. Substituting through computed outputs (same Go gates:
+    //    no variables, and no aggregate/window/subquery output) moved it
+    //    below the projection into the leaf's own WHERE, and the `expr_key`
+    //    and `upper_c` statements closed on that alone: their recorded
+    //    `MergeJoin` over `IndexJoin`/`IndexHashJoin` trees priced through.
+    //  * THE WRAPPER'S PROJECTION NEVER ENTERS A CUMULATIVE COST. Go builds
+    //    it inside `buildJoinEdge` (`rule_join_reorder.go:763`), AFTER
+    //    `generateJoinOrderNode` costed the group leaves, and
+    //    `calcJoinCumCost` (`:978`) adds only the join's row count -- so the
+    //    dissolved leaf costs 8000 (the DataSource under the pushed
+    //    null-rejection), not 16000 (DataSource plus projection summed).
+    //    This tier's greedy modelled the wrapper as an ordinary derived
+    //    leaf, and at 16000 the `cumCost` sort seeded the WRONG first pair
+    //    for the two `dt1`/`dt2` statements: `(t1w, t2)` at 36000 where
+    //    Go's `(t1w, t3w)` -- the expression-key pair -- costs 26000 vs
+    //    28000 once the leaves price 8000. `join_reorder`'s `injected` flag
+    //    (leaf-shape-recognized, `through_proj = ON` only) makes the
+    //    projection transparent to `DerivedNode::cum_cost`, and both
+    //    four-way trees reorder to Go's `[t1, t3, t2, t4]`.
+    //  * THE WRAPPER PUBLISHES THE PRUNED SCHEMA. Column pruning runs before
+    //    join reorder in Go, so `Column2Exprs(p.Schema().Columns)`
+    //    republishes only the columns the statement still reads -- which is
+    //    what lets the leaf take the COVERING `IndexFullScan index:b(b)`
+    //    (`result:1604`'s `Projection  t2.a, t2.b, mul(t2.b, 2)` over a
+    //    table whose `c` nothing reads). `through_proj::used_base_columns`
+    //    computes that set from the rewritten statement (fail-closed to full
+    //    width on any unattributable reference), and the three covering
+    //    statements closed. This exact narrowing was tried once before and
+    //    REVERTED at 5 -> 6 -- publishing the pruned set while the two
+    //    assembly gaps above still mispriced the wrapper flipped a parent
+    //    merge to hash; landing it LAST is why it lands.
+    //
+    // Rows moved nowhere (`compared` holds at 9674): every closed statement
+    // was compared-and-diverged before and matched after, and `PlanProperty`
+    // matches rose 79 -> 84. The family is pinned by
+    // `driver::tests::through_proj`, whose
+    // `an_expression_join_key_gets_an_injected_column` now runs the
+    // recording's own `tidb_hash_join_concurrency = 1` session and asserts
+    // the recorded tree whole, and whose
+    // `the_injected_wrapper_is_pruned_and_its_leaf_takes_the_covering_index`
+    // names each mechanism above. One rendering residue stays open there:
+    // the recording reads the pushed null-rejection as
+    // `TableReader -> Selection cop[tikv]` under the wrapper, while this
+    // tier's single-table residual filter executes at root over a bare scan
+    // (a module-wide rendering gap this per-scan comparison never reads);
+    // see the wrapper note in `through_proj::wrap_node`.
+    //
+    // The three that remain: one each of index_join, stale_txn
+    // (MVCC-blocked), and autoid.
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

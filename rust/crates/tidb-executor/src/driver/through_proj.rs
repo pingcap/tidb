@@ -121,7 +121,7 @@
 //! `ExprReferenceSchema` test); declining outright is strictly the more
 //! conservative of the two and keeps this rewrite's rule set small.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tidb_ast::{
     BinaryOp, Expr, GroupByItem, Join, JoinNode, JoinType, OrderItem, QueryStmt, SelectField,
@@ -690,8 +690,141 @@ fn inject_expressions(
             return None;
         }
     }
-    wrap_relations(rewritten.from.as_mut()?, &relations, &injections)?;
+    let used = used_base_columns(&rewritten, &relations, &injections);
+    wrap_relations(rewritten.from.as_mut()?, &relations, &injections, &used)?;
     Some(rewritten)
+}
+
+/// Which of each relation's columns the rewritten statement still reads --
+/// Go's `PruneColumns` result as `injectExpr` sees it: column pruning runs
+/// BEFORE join reorder, so `Column2Exprs(p.Schema().Columns)` republishes the
+/// PRUNED leaf schema (which is why `result:1604` records the wrapper as
+/// `Projection  t2.a, t2.b, mul(t2.b, 2)` over a table whose `c` nothing
+/// reads, and why its leaf can take the COVERING `IndexFullScan  index:b(b)`).
+///
+/// `None` for a relation DECLINES the narrowing and publishes every column --
+/// taken whenever a reference cannot be attributed cleanly: a subquery
+/// anywhere in the statement (whose correlated references this walk does not
+/// enter), or a qualified reference to a wrapped relation that is neither one
+/// of its columns nor an injected name. Fail-closed: the cost of declining is
+/// a wider projection, the cost of over-pruning would be a wrong answer.
+fn used_base_columns(
+    select: &SelectStmt,
+    relations: &[Relation],
+    injections: &[Injection],
+) -> Vec<Option<BTreeSet<usize>>> {
+    let mut used: Vec<Option<BTreeSet<usize>>> =
+        (0..relations.len()).map(|_| Some(BTreeSet::new())).collect();
+    let mut mark_all = |used: &mut Vec<Option<BTreeSet<usize>>>, relation: usize| {
+        used[relation] = None;
+    };
+    let mut mark_expr = |used: &mut Vec<Option<BTreeSet<usize>>>, expr: &Expr| {
+        if expr.flags() & tidb_ast::FLAG_HAS_SUBQUERY != 0 {
+            for relation in 0..relations.len() {
+                used[relation] = None;
+            }
+            return;
+        }
+        for path in column_paths(expr) {
+            let Some((qualifier, name)) = split_path(&path) else {
+                for relation in 0..relations.len() {
+                    used[relation] = None;
+                }
+                return;
+            };
+            let mut resolved = false;
+            for (index, relation) in relations.iter().enumerate() {
+                if let Some(qualifier) = qualifier {
+                    if !relation.visible.eq_ignore_ascii_case(qualifier) {
+                        continue;
+                    }
+                }
+                if let Some(column) = relation
+                    .columns
+                    .iter()
+                    .position(|column| column.eq_ignore_ascii_case(name))
+                {
+                    if let Some(set) = &mut used[index] {
+                        set.insert(column);
+                    }
+                    resolved = true;
+                } else if qualifier.is_some() {
+                    // A qualified name this relation owns but that is not a
+                    // base column: an injected wrapper output resolves to its
+                    // registered expression below; anything else is a name
+                    // this walk cannot attribute, so the relation keeps its
+                    // full width.
+                    let injected = injections.iter().any(|injection| {
+                        injection.relation == index && injection.name.eq_ignore_ascii_case(name)
+                    });
+                    if injected {
+                        resolved = true;
+                    } else {
+                        used[index] = None;
+                    }
+                }
+            }
+            if !resolved {
+                // An unqualified name no relation owns: an output alias or a
+                // name resolved elsewhere. It reads no base column here.
+            }
+        }
+    };
+    for field in select.fields.fields() {
+        match field {
+            SelectField::Expr { expr, .. } => mark_expr(&mut used, expr),
+            SelectField::Wildcard(path) => match split_path(path) {
+                Some((_, qualifier)) => {
+                    for (index, relation) in relations.iter().enumerate() {
+                        if relation.visible.eq_ignore_ascii_case(qualifier) {
+                            mark_all(&mut used, index);
+                        }
+                    }
+                }
+                None => {
+                    for relation in 0..relations.len() {
+                        mark_all(&mut used, relation);
+                    }
+                }
+            },
+        }
+    }
+    if let Some(where_clause) = &select.where_clause {
+        mark_expr(&mut used, where_clause);
+    }
+    if let Some(from) = &select.from {
+        let mut on_exprs = Vec::new();
+        collect_on_exprs(from, &mut on_exprs);
+        for expr in on_exprs {
+            mark_expr(&mut used, &expr);
+        }
+    }
+    for item in &select.group_by {
+        mark_expr(&mut used, &item.expr);
+    }
+    if let Some(having) = &select.having {
+        mark_expr(&mut used, having);
+    }
+    for item in &select.order_by {
+        mark_expr(&mut used, &item.expr);
+    }
+    for injection in injections {
+        mark_expr(&mut used, &injection.expr);
+    }
+    used
+}
+
+/// Every `ON` expression of a join tree, cloned out for the reading walk.
+fn collect_on_exprs(join: &Join, out: &mut Vec<Expr>) {
+    if let Some(on) = &join.on {
+        out.push(on.clone());
+    }
+    if let JoinNode::Join(inner) = &join.left {
+        collect_on_exprs(inner, out);
+    }
+    if let Some(JoinNode::Join(inner)) = &join.right {
+        collect_on_exprs(inner, out);
+    }
 }
 
 /// One expression Go would have materialized, and where.
@@ -828,11 +961,16 @@ fn for_each_on_conjunct_mut(join: &mut Join, f: &mut dyn FnMut(&mut Expr)) {
 /// Replaces every injected-into leaf with the derived table that publishes its
 /// own columns plus the injected expressions -- Go's `LogicalProjection` over
 /// that branch, spelled in the `FROM`.
-fn wrap_relations(join: &mut Join, relations: &[Relation], injections: &[Injection]) -> Option<()> {
+fn wrap_relations(
+    join: &mut Join,
+    relations: &[Relation],
+    injections: &[Injection],
+    used: &[Option<BTreeSet<usize>>],
+) -> Option<()> {
     let mut index = 0usize;
-    wrap_node(&mut join.left, relations, injections, &mut index)?;
+    wrap_node(&mut join.left, relations, injections, used, &mut index)?;
     if let Some(right) = &mut join.right {
-        wrap_node(right, relations, injections, &mut index)?;
+        wrap_node(right, relations, injections, used, &mut index)?;
     }
     Some(())
 }
@@ -841,13 +979,14 @@ fn wrap_node(
     node: &mut JoinNode,
     relations: &[Relation],
     injections: &[Injection],
+    used: &[Option<BTreeSet<usize>>],
     index: &mut usize,
 ) -> Option<()> {
     match node {
         JoinNode::Join(inner) => {
-            wrap_node(&mut inner.left, relations, injections, index)?;
+            wrap_node(&mut inner.left, relations, injections, used, index)?;
             if let Some(right) = &mut inner.right {
-                wrap_node(right, relations, injections, index)?;
+                wrap_node(right, relations, injections, used, index)?;
             }
             Some(())
         }
@@ -862,29 +1001,41 @@ fn wrap_node(
                 return Some(());
             }
             let relation = &relations[position];
-            // `Column2Exprs(p.Schema().Columns)`: the pass-through half, so the
-            // branch's own outputs are unchanged, then `AppendExpr` for each
-            // injected expression.
+            // `Column2Exprs(p.Schema().Columns)`: the pass-through half, then
+            // `AppendExpr` for each injected expression. `p.Schema()` is the
+            // leaf's PRUNED schema -- Go's column pruning runs before join
+            // reorder -- so the pass-through half carries only the columns
+            // the statement still reads ([`used_base_columns`]), which is
+            // what lets the leaf under this wrapper take a COVERING index
+            // (`result:1604` reads `IndexFullScan  t2, index:b(b)` under the
+            // pruned `Projection  t2.a, t2.b, mul(t2.b,2)`). An earlier
+            // attempt at this narrowing was reverted at 5 -> 6 recorded
+            // divergences; it lands now because the wrapper's ASSEMBLY is
+            // Go's first -- the join-key null-rejection is substituted
+            // through this projection into the leaf
+            // (`derived_projection_pushdown`, Go `breakDownPredicates`) and
+            // the reorder prices this wrapper as Go's `injectExpr` artifact
+            // (`join_reorder`'s `injected` flag) -- so the parent
+            // merge-vs-hash comparisons already price Go's shapes.
             //
-            // Go's `PruneColumns` then narrows this projection to the columns
-            // read above it, which is what lets its leaf take a COVERING
-            // index (`result:1604` reads `IndexFullScan  t2, index:b(b)`
-            // under the pruned `Projection  t2.a, t2.b, mul(t2.b,2)`).
-            // Publishing the pruned set here was MEASURED and reverted: it
-            // closed the covering rows it targeted but re-priced the hash
-            // alternative below every parent merge-vs-hash comparison, and
-            // this tier's candidate assembly does not yet reproduce Go's
-            // node shapes (cop Selection below the projection, the reader's
-            // net term) exactly enough for those comparisons to land on Go's
-            // side -- `join_reorder_through_projection` went 5 -> 6 recorded
-            // divergences, with the narrow-output statements flipping to a
-            // whole-hash tree Go does not build. NAMED RESIDUE: Go's
-            // `PruneColumns` over this wrapper, blocked on candidate-shape
-            // fidelity at the sites `build_join_with_choice` prices.
+            // NAMED RESIDUE (rendering, not choice): the recording reads the
+            // pushed null-rejection as `TableReader -> Selection cop[tikv]`
+            // under this wrapper's Projection; this tier's single-table
+            // residual filter executes at root over a bare scan -- for every
+            // standalone `SELECT ... WHERE <unranged filter>`, not only
+            // here -- so the reader boundary belongs to that module-wide
+            // residue. The per-scan recorded comparison never reads it; the
+            // family's unit pin documents it at its THIRD CORRECTION.
             let mut fields: Vec<SelectField> = relation
                 .columns
                 .iter()
-                .map(|column| SelectField::Expr {
+                .enumerate()
+                .filter(|(offset, _)| {
+                    used.get(position)
+                        .and_then(|used| used.as_ref())
+                        .is_none_or(|used| used.contains(offset))
+                })
+                .map(|(_, column)| SelectField::Expr {
                     expr: Expr::Column(vec![relation.visible.clone(), column.clone()]),
                     alias: Some(column.clone()),
                 })

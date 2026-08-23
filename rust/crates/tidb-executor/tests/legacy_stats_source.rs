@@ -98,6 +98,7 @@ fn join(
 fn projection(child: LogicalNode, exprs: &[(ColumnId, &[ColumnId])]) -> LogicalNode {
     LogicalNode::Projection {
         child: Box::new(child),
+        injected: false,
         exprs: exprs
             .iter()
             .map(|(output, inputs)| ProjectionExpr {

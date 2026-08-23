@@ -418,10 +418,10 @@ pub(crate) fn push_filters_into_derived(
         return None;
     }
     let definitions = if select.group_by.is_empty() {
-        if !pass_through_select(select) {
+        if !projection_only_select(select) {
             return None;
         }
-        pass_through_definitions(select)?
+        projection_definitions(select)?
     } else {
         group_key_definitions(select)?
     };
@@ -493,6 +493,75 @@ fn pass_through_select(select: &SelectStmt) -> bool {
                 }
             )
         })
+}
+
+/// A SELECT whose row set IS its `FROM`'s row set -- Go's `LogicalProjection`
+/// over the join tree, with nothing above it that could change which rows
+/// exist. A predicate over such a SELECT's outputs pushes below the projection
+/// by substituting each referenced output's defining expression -- Go's
+/// `breakDownPredicates` (`pkg/planner/core/operator/logicalop/
+/// logical_projection.go:647`), which substitutes through ANY projection
+/// expression, computed or bare, and keeps only predicates whose substitution
+/// fails (or reads a variable) above.
+///
+/// This is [`pass_through_select`] minus the bare-column field requirement:
+/// the fields may compute, but an AGGREGATE without `GROUP BY` makes the
+/// SELECT a global aggregation -- one row, not the `FROM`'s rows -- so any
+/// aggregate-flagged field declines the whole shape.
+fn projection_only_select(select: &SelectStmt) -> bool {
+    select.from.is_some()
+        && select.with.is_none()
+        && !select.distinct
+        && !select.rollup
+        && select.group_by.is_empty()
+        && select.having.is_none()
+        && select.windows.is_empty()
+        && select.order_by.is_empty()
+        && select.limit.is_none()
+        && select.lock.is_none()
+        && select.into_outfile.is_none()
+        && select.values.is_empty()
+        && select.fields.fields().iter().all(|field| match field {
+            SelectField::Expr { expr, .. } => !expr.has_aggregate_flag(),
+            SelectField::Wildcard(_) => true,
+        })
+}
+
+/// One definition per substitutable output of a projection-only SELECT.
+///
+/// Go substitutes through every projection expression; the flags excluded
+/// here are the ones whose substitution Go also refuses (`HasAssignSetVarFunc`
+/// over the projection, `HasGetSetVarFunc` over the result -- both
+/// variable-carrying) or that cannot be a `LogicalProjection` expression at
+/// all in Go (aggregates, windows), plus a subquery-valued output, which this
+/// tier declines rather than re-evaluate the subquery inside a moved
+/// predicate. An output with no definition simply cannot be referenced by a
+/// pushed predicate -- [`substitute_outputs`] fails on it, exactly Go's
+/// per-predicate `canNotBePushed` arm.
+fn projection_definitions(select: &SelectStmt) -> Option<Vec<(String, Expr)>> {
+    use tidb_ast::{
+        FLAG_HAS_AGGREGATE_FUNC, FLAG_HAS_DEFAULT, FLAG_HAS_PARAM_MARKER, FLAG_HAS_SUBQUERY,
+        FLAG_HAS_VARIABLE, FLAG_HAS_WINDOW_FUNC,
+    };
+    const UNSUBSTITUTABLE: u64 = FLAG_HAS_AGGREGATE_FUNC
+        | FLAG_HAS_WINDOW_FUNC
+        | FLAG_HAS_SUBQUERY
+        | FLAG_HAS_VARIABLE
+        | FLAG_HAS_DEFAULT
+        | FLAG_HAS_PARAM_MARKER;
+    let names = super::from::derived_field_names(select)?;
+    unique_definitions(
+        names
+            .into_iter()
+            .zip(select.fields.fields())
+            .filter_map(|(name, field)| match field {
+                SelectField::Expr { expr, .. } if expr.flags() & UNSUBSTITUTABLE == 0 => {
+                    Some((name, expr.clone()))
+                }
+                _ => None,
+            })
+            .collect(),
+    )
 }
 
 fn pass_through_definitions(select: &SelectStmt) -> Option<Vec<(String, Expr)>> {
