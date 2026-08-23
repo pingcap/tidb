@@ -906,6 +906,9 @@ pub(super) fn validate_request(metadata: &KvRequestMetadata) -> Result<(), CopRe
     if metadata.store_batch_size > 0 {
         return Err(CopReadTaskError::StoreBatching);
     }
+    if !metadata.keep_order && !metadata.allow_unordered_response {
+        return Err(CopReadTaskError::UnorderedResponse);
+    }
     if !metadata.partition_id_and_ranges.is_empty() {
         return Err(CopReadTaskError::PartitionedRanges);
     }

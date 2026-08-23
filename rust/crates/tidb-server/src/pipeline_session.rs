@@ -389,6 +389,7 @@ impl QuerySession for PipelineServerSession {
     /// statement that answers with an OK packet reports none.
     fn prepare_general(&mut self, sql: &str) -> Result<PreparedGeneral, SqlQueryError> {
         let parameter_count = self.session.parameter_count(sql).map_err(map_error)?;
+        let template = self.session.parse_statement(sql).map_err(map_error)?;
         let result_columns = match self.session.statement_kind(sql).map_err(map_error)? {
             StmtKind::Query => {
                 let probe: Vec<tidb_datatype::Datum> =
@@ -412,10 +413,11 @@ impl QuerySession for PipelineServerSession {
             }
             StmtKind::Write => Vec::new(),
         };
-        Ok(PreparedGeneral::new(
+        Ok(PreparedGeneral::with_template(
             sql.to_owned(),
             parameter_count,
             result_columns,
+            template,
         ))
     }
 

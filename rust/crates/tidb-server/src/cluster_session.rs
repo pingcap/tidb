@@ -618,6 +618,17 @@ pub(crate) fn cluster_table(
         if index.state != SchemaState::PUBLIC {
             continue;
         }
+        // A clustered PRIMARY is the record handle, not a secondary `_i`
+        // entry.  Go keeps the IndexInfo in its catalog so SHOW/metadata can
+        // report the key, but its write path never maintains a second index
+        // for it.  Loading it into KvTable::indexes made a Rust update write
+        // a non-clustered PRIMARY entry beside the clustered record and
+        // corrupted tables shared with a Go TiDB node.
+        if (table.pk_is_handle || table.is_common_handle)
+            && index.name.original().eq_ignore_ascii_case("PRIMARY")
+        {
+            continue;
+        }
         kv_table.add_index(kv_index(&index, &columns)?);
     }
     if let Some(spec) = partition_spec {

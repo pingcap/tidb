@@ -465,6 +465,45 @@ impl<W: Write> PacketIoWriter<W> {
         self.write_logical_payload(payload)
     }
 
+    /// Writes several logical payloads as one uncompressed transport write.
+    ///
+    /// The server result path commonly has a metadata packet, one row packet,
+    /// and a terminal EOF to emit together.  Coalescing their headers and
+    /// bodies here keeps the packet sequence unchanged while avoiding one
+    /// `Write::write_all` (and, for the connection stream, one mutex lock) per
+    /// frame.  Compressed connections retain the incremental writer because
+    /// compression envelopes are themselves a transport boundary.
+    pub fn write_packets(&mut self, payloads: &[&[u8]]) -> Result<(), PacketError> {
+        if !matches!(self.output, PacketOutput::Uncompressed(_)) {
+            for payload in payloads {
+                self.write_logical_payload(payload)?;
+            }
+            return Ok(());
+        }
+
+        let mut framed = Vec::new();
+        let mut sequence = self.sequence;
+        for payload in payloads {
+            let mut remaining = *payload;
+            loop {
+                let frame_len = remaining.len().min(MAX_PAYLOAD_LEN);
+                framed.extend_from_slice(&PacketHeader::new(frame_len, sequence)?.encode());
+                framed.extend_from_slice(&remaining[..frame_len]);
+                sequence = sequence.wrapping_add(1);
+                remaining = &remaining[frame_len..];
+                if frame_len < MAX_PAYLOAD_LEN {
+                    break;
+                }
+            }
+        }
+
+        if let PacketOutput::Uncompressed(inner) = &mut self.output {
+            inner.write_all(&framed)?;
+        }
+        self.sequence = sequence;
+        Ok(())
+    }
+
     /// Writes Go `PacketIO.WritePacket`'s source-shaped buffer.
     ///
     /// The first four bytes are reserved for the packet header and are not

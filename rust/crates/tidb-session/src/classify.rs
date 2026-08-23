@@ -163,28 +163,67 @@ impl Session {
         let Ok(stmt) = self.parse(sql) else {
             return StatementReadShape::Unknown;
         };
-        self.statement_read_shape_parsed(&stmt)
+        self.statement_read_shape_bound(&stmt)
     }
 
-    /// [`Self::statement_read_shape`] over the bound AST retained by a
-    /// prepared execution. The tree has already been parsed under PREPARE's
-    /// SQL mode and has this execution's parameter values installed.
+    /// Classify a prepared statement from the AST retained at PREPARE time.
+    ///
+    /// Binary-protocol EXECUTE already has this tree, so reparsing the SQL
+    /// text here only adds latency before the statement can start. Bind a
+    /// clone of the template for the same access-path decision without
+    /// changing the template stored in the prepared handle.
     #[must_use]
-    pub fn statement_read_shape_parsed(&self, stmt: &Stmt) -> StatementReadShape {
-        // Fix 52592 turns the point/batch shortcut into an ordinary range.
-        // Snapshot declaration happens before `apply_set_var_hints`, so
-        // derive the direct-AST overlay here as part of the same parse used
-        // for shape classification. Declaring MaxTS first and disabling the
-        // point plan later would silently read a range without a snapshot.
-        if crate::variables::effective_fix_52592(stmt, self.vars.optimizer_fix_control()) {
-            return StatementReadShape::Unknown;
-        }
+    pub fn statement_read_shape_parsed(
+        &self,
+        statement: &Stmt,
+        params: &[Datum],
+    ) -> StatementReadShape {
+        let stmt = if params.is_empty() {
+            statement.clone()
+        } else {
+            match tidb_executor::bind_statement(statement.clone(), params) {
+                Ok(stmt) => stmt,
+                Err(_) => return StatementReadShape::Unknown,
+            }
+        };
+        self.statement_read_shape_bound(&stmt)
+    }
+
+    /// Classifies an already-bound prepared statement without replacing its
+    /// markers again. This is the fast path used by the cluster-session wire
+    /// executor, which binds once and shares the resulting tree with planning.
+    #[must_use]
+    pub fn statement_read_shape_bound(&self, stmt: &Stmt) -> StatementReadShape {
         let catalog = self
             .catalog
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         tidb_executor::access_path::statement_read_shape(
             stmt,
+            &catalog,
+            self.current_database(),
+            &self.session_time_zone(),
+        )
+    }
+
+    /// Classifies the narrow prepared clustered-handle point read directly
+    /// from its retained template and execute values.  Unlike
+    /// [`Self::statement_read_shape_parsed`], this path does not clone and
+    /// bind the complete AST; a refusal returns `Unknown` and lets the caller
+    /// use the ordinary bound-tree path.
+    #[must_use]
+    pub fn fast_prepared_statement_read_shape(
+        &self,
+        statement: &Stmt,
+        params: &[Datum],
+    ) -> StatementReadShape {
+        let catalog = self
+            .catalog
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        tidb_executor::access_path::prepared_statement_read_shape(
+            statement,
+            params,
             &catalog,
             self.current_database(),
             &self.session_time_zone(),

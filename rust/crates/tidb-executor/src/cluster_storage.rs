@@ -571,15 +571,47 @@ impl TableStorage for ClusterTableStorage {
         )?))
     }
 
-    /// Serves the scan through the node's coprocessor when it has one, and
-    /// hands the session's staged writes for the same range back with it.
-    ///
-    /// The row cap is the one place the two halves interact. TiKV stops after
-    /// `limit` *snapshot* rows, which is the right prefix only when nothing is
-    /// staged in the range: a staged insert with a smaller key displaces the
-    /// last remote row, and a staged delete uncovers a row past it. So the cap
-    /// travels only when the staged range is empty, and the caller enforces it
-    /// again either way.
+    fn first(
+        &mut self,
+        start: Option<&Key>,
+        upper_bound: Option<&Key>,
+    ) -> Result<Option<(Key, Vec<u8>)>, StorageError> {
+        self.check_usable()?;
+        let (Some(start), Some(end)) = (start, upper_bound) else {
+            return Err(StorageError::Backend(
+                "cluster storage requires a bounded scan range".to_owned(),
+            ));
+        };
+        let staged = self.buffer.range(start, end);
+        // A staged row can displace or shadow the snapshot prefix. Keep the
+        // ordinary merge in that case; the native one-row request is only a
+        // safe replacement for a clean table.
+        if !staged.is_empty() {
+            let mut iterator = self.iter(Some(start), Some(end))?;
+            let first = if iterator.valid() {
+                Some((iterator.key().clone(), iterator.value().to_vec()))
+            } else {
+                None
+            };
+            iterator.close();
+            return Ok(first);
+        }
+        crate::storage::note_storage_op(|ops| ops.scans += 1);
+        self.snapshot
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .scan(start, end, Some(1))
+            .map(|pairs| {
+                pairs
+                    .into_iter()
+                    .next()
+                    .map(|(key, value)| (Key::from_bytes(key), value))
+            })
+    }
+
+    /// Serves a clean scan through the node's unordered coprocessor path.
+    /// Session-local staged writes require key-ordered merging, so that shape
+    /// falls back to the snapshot cursor below instead.
     fn open_remote_scan(
         &mut self,
         request: &PushdownScanRequest,
@@ -1152,6 +1184,20 @@ mod tests {
             read <= SNAPSHOT_BATCH,
             "a LIMIT 1 read {read} rows of {rows}; one batch of {SNAPSHOT_BATCH} is the budget"
         );
+    }
+
+    /// The bounded one-row primitive must retain the staged/snapshot merge.
+    /// In particular, a staged tombstone at the range start exposes the next
+    /// snapshot row instead of recursing through the trait override.
+    #[test]
+    fn first_row_with_staged_prefix_uses_the_merged_iterator() {
+        let (mut store, _snapshot, _buffer) = large_storage(100);
+        let start = key(b"row");
+        let end = key(b"rox");
+
+        let first = store.first(Some(&start), Some(&end)).unwrap().unwrap();
+        assert_eq!(first.0.as_bytes(), row_key(1).as_slice());
+        assert_eq!(first.1, b"snap1");
     }
 
     /// The batched merge must answer exactly what a one-shot merge did,

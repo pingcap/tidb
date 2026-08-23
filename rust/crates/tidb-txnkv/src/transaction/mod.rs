@@ -23,7 +23,10 @@ mod region_batches;
 mod state;
 mod ttl;
 
-pub use command_client::{PublishedCommand, TransactionCommandClient};
+pub use command_client::{
+    PublishedCommand, TransactionCommitRequest, TransactionCommandClient,
+    TransactionPrewriteRequest,
+};
 pub use coordinator::{
     CommitProtocol, OptimisticCoordinatorError, PdLockTimestampSource,
     ProductionOptimisticTransaction, ProductionPessimisticTransaction, RealOptimisticTransaction,

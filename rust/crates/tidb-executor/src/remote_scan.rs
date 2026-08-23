@@ -1075,6 +1075,17 @@ mod tests {
         fixture
     }
 
+    /// A clustered common-handle table whose catalog does not carry a
+    /// physical PRIMARY `KvIndex`. This mirrors the metadata shape produced
+    /// by the real clustered-table loader during a merge, where the handle
+    /// offsets are present but the index entry is synthesized by the scan
+    /// path.
+    fn common_handle_without_catalog_index_fixture() -> Fixture {
+        let mut fixture = fixture_with(None);
+        fixture.table.set_common_handle_offsets(vec![0, 1]);
+        fixture
+    }
+
     fn fixture_with(pk_handle_offset: Option<usize>) -> Fixture {
         let snapshot = Arc::new(Mutex::new(MockSnapshot::default()));
         let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&snapshot) as _;
@@ -1116,6 +1127,38 @@ mod tests {
     #[test]
     fn a_clean_common_handle_range_uses_the_coprocessor() {
         let mut fixture = common_handle_fixture();
+        for row in [[1, 10], [1, 20], [2, 30]] {
+            fixture
+                .table
+                .insert_row(
+                    &[Datum::Int(row[0]), Datum::Int(row[1])],
+                    &tidb_expr::NoColumns,
+                )
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture.table.clear_dirty_content();
+
+        let catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+        let (rows, ops) = capture_storage_ops(|| {
+            run_select_on("SELECT a, b FROM t WHERE a = 1 ORDER BY b", &catalog, &ctx).unwrap()
+        });
+        assert_eq!(
+            rows,
+            vec![
+                vec![Datum::Int(1), Datum::Int(10)],
+                vec![Datum::Int(1), Datum::Int(20)]
+            ]
+        );
+        assert_eq!(ops.cop_scans, 1);
+        assert_eq!(ops.cop_rows, 2);
+        assert_eq!(ops.gets, 0);
+    }
+
+    #[test]
+    fn a_clean_common_handle_without_catalog_index_uses_the_coprocessor() {
+        let mut fixture = common_handle_without_catalog_index_fixture();
         for row in [[1, 10], [1, 20], [2, 30]] {
             fixture
                 .table

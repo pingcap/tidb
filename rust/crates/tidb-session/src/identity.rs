@@ -28,6 +28,38 @@ use tidb_datatype::Datum;
 use crate::{privilege, process, vars, DriverError, Session};
 
 impl Session {
+    /// Checks the one table privilege needed by a retained, refusal-admitted
+    /// prepared statement without walking (and cloning) its immutable AST.
+    /// The ordinary statement gate still uses [`required_table_privileges`]
+    /// for every shape that is not admitted by a fast executor arm.
+    pub(crate) fn require_fast_table_privilege(
+        &self,
+        path: &[String],
+        privilege: privilege::GlobalPriv,
+    ) -> Result<(), DriverError> {
+        let (database, table) = match path {
+            [table] if !self.current_db.is_empty() => (self.current_db.as_str(), table.as_str()),
+            [database, table] => (database.as_str(), table.as_str()),
+            _ => return Ok(()),
+        };
+        let granted = match crate::table_privilege::mem_db_verdict_mask(database, privilege.bit()) {
+            Some(verdict) => verdict,
+            None => self.has_scoped_privilege(database, table, privilege),
+        };
+        if granted {
+            return Ok(());
+        }
+        let Some((_, user, host)) = self.privilege_context() else {
+            return Ok(());
+        };
+        Err(DriverError::TableAccessDenied {
+            privilege: privilege.print_name(),
+            user: user.to_owned(),
+            host: host.to_owned(),
+            table: table.to_lowercase(),
+        })
+    }
+
     /// Go's privilege gate on `SET GLOBAL`: SUPER, or the dynamic
     /// `SYSTEM_VARIABLES_ADMIN` privilege (which `has_dynamic_priv` already
     /// falls back to SUPER for, so this one call covers "at least one of").

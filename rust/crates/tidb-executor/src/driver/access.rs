@@ -113,6 +113,10 @@ pub struct PreparedPointGetPlan {
     table_id: i64,
     parameter_order: usize,
     handle_type: FieldType,
+    /// Empty for an integer PK handle; one offset for the supported prepared
+    /// common-handle shape. Keeping this explicit lets `bind` rebuild the
+    /// encoded handle without re-running the AST path matcher.
+    common_handle_offsets: Vec<usize>,
     output: FastPointOutput,
     row_decoder: crate::kv_table::PreparedPointGetRowDecoder,
 }
@@ -133,14 +137,27 @@ impl PreparedPointGetPlan {
     /// Rebuilds the parameter-dependent handle. A value that cannot be moved
     /// exactly into the PK domain declines the cache and must be replanned.
     #[must_use]
-    pub fn bind(self: &Arc<Self>, values: &[Datum]) -> Option<PreparedPointGetExecution> {
+    pub fn bind(
+        self: &Arc<Self>,
+        values: &[Datum],
+        zone: &tidb_datatype::SessionTimeZone,
+    ) -> Option<PreparedPointGetExecution> {
         let value = values.get(self.parameter_order)?;
         let handle = if value.is_null() {
             None
         } else {
             match point_get_value(&self.handle_type, value)? {
-                Datum::Int(value) => Some(TableHandle::Int(value)),
-                Datum::UInt(value) => Some(TableHandle::Int(value as i64)),
+                Datum::Int(value) if self.common_handle_offsets.is_empty() => {
+                    Some(TableHandle::Int(value))
+                }
+                Datum::UInt(value) if self.common_handle_offsets.is_empty() => {
+                    Some(TableHandle::Int(value as i64))
+                }
+                value if !self.common_handle_offsets.is_empty() => {
+                    let encoded = tidb_codec::encode_key_in_timezone(zone, &[value]).ok()?;
+                    let handle = tidb_txnkv::CommonHandle::new(encoded).ok()?;
+                    Some(TableHandle::Common(handle.encoded().to_vec()))
+                }
                 _ => return None,
             }
         };
@@ -214,7 +231,7 @@ pub fn build_prepared_point_get_plan(
     let table_ref = single_table_ref(&select.from)?;
     if !table_ref.partitions.is_empty()
         || table_ref.as_of.is_some()
-        || !table_ref.hints.is_empty()
+        || !prepared_primary_index_hint(table_ref)
         || table_ref.sample.is_some()
     {
         return None;
@@ -226,7 +243,18 @@ pub fn build_prepared_point_get_plan(
     if table.partition().is_some() {
         return None;
     }
-    let handle_offset = table.pk_handle_offset()?;
+    let (handle_offset, common_handle_offsets) = if let Some(offset) = table.pk_handle_offset() {
+        (Some(offset), Vec::new())
+    } else {
+        let offsets = table.common_handle_offsets();
+        // The cache currently handles one marker and therefore one-column
+        // common handles. Composite handles continue through the general
+        // prepared path, which preserves their parameter-order semantics.
+        if offsets.len() != 1 {
+            return None;
+        }
+        (None, offsets.to_vec())
+    };
     let columns = entry.column_list();
     let visible = table_ref.alias.as_deref().unwrap_or(table_name);
     let scope = PlanTrace::single_table_scope(
@@ -248,7 +276,9 @@ pub fn build_prepared_point_get_plan(
     }
     let (column, parameter_order) = prepared_handle_marker(select.where_clause.as_ref()?)?;
     let (offset, _, _) = ScopeResolver { scope: &scope }.resolve(column)?;
-    if offset != handle_offset || parameter_order != 0 {
+    let matches_handle = handle_offset == Some(offset)
+        || common_handle_offsets.len() == 1 && common_handle_offsets[0] == offset;
+    if !matches_handle || parameter_order != 0 {
         return None;
     }
 
@@ -259,14 +289,33 @@ pub fn build_prepared_point_get_plan(
         table: table_name.to_owned(),
         table_id: table.table_id,
         parameter_order,
-        handle_type: columns.get(handle_offset)?.1.clone(),
-        row_decoder: crate::kv_table::PreparedPointGetRowDecoder::new(
+        handle_type: columns.get(offset)?.1.clone(),
+        row_decoder: crate::kv_table::PreparedPointGetRowDecoder::new_with_handles(
             table.visible_columns(),
             handle_offset,
+            &common_handle_offsets,
             &output.offsets,
         )
         .ok()?,
+        common_handle_offsets,
         output,
+    })
+}
+
+/// YCSB's MySQL adapter pins every single-row lookup with
+/// `FORCE INDEX(PRIMARY)`. That hint does not alter a clustered-handle point
+/// read, so it is safe to retain in the prepared cache; all other hint shapes
+/// stay on the ordinary planner to preserve their access-path semantics.
+fn prepared_primary_index_hint(table_ref: &tidb_ast::TableRef) -> bool {
+    table_ref.hints.iter().all(|hint| {
+        matches!(
+            (hint.kind, hint.scope, hint.indexes.as_slice()),
+            (
+                tidb_ast::IndexHintKind::Force | tidb_ast::IndexHintKind::Use,
+                tidb_ast::IndexHintScope::All,
+                [name]
+            ) if name.eq_ignore_ascii_case("PRIMARY")
+        )
     })
 }
 
@@ -4818,6 +4867,38 @@ pub(crate) fn try_point_get(
         }
     }
 
+    // A clustered common primary key is the record handle itself. Go's
+    // `tryPointGetPlan` accepts it when every handle column is pinned exactly
+    // once; unlike a secondary unique index this remains one storage read.
+    let common_offsets = table.common_handle_offsets();
+    if !common_offsets.is_empty() && common_offsets.len() == pairs.len() {
+        let mut values = Vec::with_capacity(common_offsets.len());
+        for offset in common_offsets {
+            let Some((column_name, _)) = columns.get(*offset) else {
+                values.clear();
+                break;
+            };
+            let Some(pair) = pairs
+                .iter()
+                .find(|pair| pair.column.eq_ignore_ascii_case(column_name))
+            else {
+                values.clear();
+                break;
+            };
+            values.push(pair.value.clone());
+        }
+        if values.len() == common_offsets.len() {
+            let encoded = tidb_codec::encode_key_in_timezone(zone, &values)
+                .map_err(|e| DriverError::Parse(format!("common handle encode failed: {e:?}")))?;
+            let handle = tidb_txnkv::CommonHandle::new(encoded)
+                .map_err(|e| DriverError::Parse(format!("common handle build failed: {e:?}")))?;
+            return Ok(Some(PointGetPin {
+                handle: Some(TableHandle::Common(handle.encoded().to_vec())),
+                index: None,
+            }));
+        }
+    }
+
     // The unique-index path: every column of some unique index is pinned.
     let mut table = table.clone();
     for index in table.plan_indexes().cloned().collect::<Vec<_>>() {
@@ -4878,8 +4959,111 @@ pub(crate) fn try_point_get(
     Ok(None)
 }
 
-/// The row order a committed access path produces, for the `ORDER BY` half of
-/// the `LIMIT` push-down rule.
+/// Prepared clustered-handle point-get admission using the table's borrowed
+/// column metadata.  The ordinary helper above serves the planner's tuple
+/// metadata shape; this variant is the binary YCSB hot path and deliberately
+/// avoids allocating/cloning a `(name, FieldType)` vector for every EXECUTE.
+pub(crate) fn try_prepared_common_handle_point_get_path(
+    select: &tidb_ast::SelectStmt,
+    table: &KvTable,
+    params: &[Datum],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<Option<TableHandle>, DriverError> {
+    if table.plan_indexes().next().is_some() {
+        return Ok(None);
+    }
+    let Some(where_clause) = select.where_clause.as_ref() else {
+        return Ok(None);
+    };
+    let mut pairs = Vec::new();
+    if !prepared_name_value_pairs(where_clause, params, &mut pairs) || pairs.is_empty() {
+        return Ok(None);
+    }
+    let columns = table.visible_columns();
+    for pair in &mut pairs {
+        let Some(column) = columns
+            .iter()
+            .find(|column| column.name.eq_ignore_ascii_case(&pair.column))
+        else {
+            return Ok(None);
+        };
+        let Some(value) = point_get_value(&column.field_type, &pair.value) else {
+            return Ok(None);
+        };
+        pair.value = value;
+    }
+    if let Some(handle_offset) = table.pk_handle_offset() {
+        let handle_column = &columns[handle_offset].name;
+        if pairs.len() != 1 || !pairs[0].column.eq_ignore_ascii_case(handle_column) {
+            return Ok(None);
+        }
+        let handle = match pairs[0].value {
+            Datum::Int(value) => TableHandle::Int(value),
+            Datum::UInt(value) => TableHandle::Int(value as i64),
+            _ => return Ok(None),
+        };
+        return Ok(Some(handle));
+    }
+    let common_offsets = table.common_handle_offsets();
+    if common_offsets.is_empty() || common_offsets.len() != pairs.len() {
+        return Ok(None);
+    }
+    let mut values = Vec::with_capacity(common_offsets.len());
+    for offset in common_offsets {
+        let Some(column) = columns.get(*offset) else {
+            return Ok(None);
+        };
+        let Some(pair) = pairs
+            .iter()
+            .find(|pair| pair.column.eq_ignore_ascii_case(&column.name))
+        else {
+            return Ok(None);
+        };
+        values.push(pair.value.clone());
+    }
+    let encoded = tidb_codec::encode_key_in_timezone(zone, &values)
+        .map_err(|e| DriverError::Parse(format!("common handle encode failed: {e:?}")))?;
+    let handle = tidb_txnkv::CommonHandle::new(encoded)
+        .map_err(|e| DriverError::Parse(format!("common handle build failed: {e:?}")))?;
+    Ok(Some(TableHandle::Common(handle.encoded().to_vec())))
+}
+
+fn prepared_name_value_pairs(
+    expr: &tidb_ast::Expr,
+    params: &[Datum],
+    pairs: &mut Vec<NameValuePair>,
+) -> bool {
+    use tidb_ast::{BinaryOp, Expr};
+    match expr {
+        Expr::Paren(inner) => prepared_name_value_pairs(inner, params, pairs),
+        Expr::Binary(BinaryOp::LogicAnd, lhs, rhs) => {
+            prepared_name_value_pairs(lhs, params, pairs)
+                && prepared_name_value_pairs(rhs, params, pairs)
+        }
+        Expr::Binary(BinaryOp::Eq, lhs, rhs) => {
+            let (column, marker) = match (&**lhs, &**rhs) {
+                (Expr::Column(path), Expr::ParamMarker { order, .. }) => (path, *order),
+                (Expr::ParamMarker { order, .. }, Expr::Column(path)) => (path, *order),
+                _ => return false,
+            };
+            let Some(name) = column.last() else {
+                return false;
+            };
+            let Some(value) = params.get(marker) else {
+                return false;
+            };
+            pairs.push(NameValuePair {
+                column: name.clone(),
+                value: value.clone(),
+            });
+            true
+        }
+        _ => false,
+    }
+}
+
+/// The row order a committed index access path produces, for the `ORDER BY`
+/// half of the `LIMIT` push-down rule.
 pub(crate) struct IndexAccessOrder {
     /// The unfixed key columns as offsets into the source row, in key order.
     column_offsets: Vec<usize>,

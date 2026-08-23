@@ -1487,12 +1487,10 @@ where
         let mut builder = RequestBuilder::new();
         builder
             .set_start_ts(snapshot_ts)
-            // This direct table-reader path has already rejected ORDER BY and
-            // does not own a SQL ordering contract. Go leaves these scans
-            // unordered, allowing independent regions to run concurrently;
-            // the response runtime merges their chunks without changing SQL
-            // semantics.
+            // SQL without ORDER BY permits the source's unordered response
+            // path, avoiding the ordered-response coordinator.
             .set_keep_order(false)
+            .set_allow_unordered_response(true)
             .set_non_partitioned_key_ranges(key_ranges)
             .set_dag_request(plan_evidence.request_envelope(), dag_data);
         let request = builder

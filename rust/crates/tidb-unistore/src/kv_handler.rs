@@ -223,8 +223,14 @@ impl KvHandler {
                 })
                 .collect(),
         };
-        match self.store.prewrite(&reduced) {
-            Ok(()) => kvrpcpb::PrewriteResponse::default(),
+        match self.store.prewrite_with_outcome(&reduced) {
+            // Go `server.go:419-424`: the async-commit and 1PC context
+            // fields ride the response.
+            Ok(outcome) => kvrpcpb::PrewriteResponse {
+                min_commit_ts: outcome.async_min_commit_ts,
+                one_pc_commit_ts: outcome.one_pc_commit_ts,
+                ..kvrpcpb::PrewriteResponse::default()
+            },
             Err(err) => kvrpcpb::PrewriteResponse {
                 errors: vec![convert_to_key_error(&err)],
                 ..kvrpcpb::PrewriteResponse::default()

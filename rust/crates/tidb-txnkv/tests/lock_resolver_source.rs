@@ -1570,25 +1570,32 @@ fn the_snapshot_read_path_stamps_its_lock_sets_on_every_send() {
             .join("src/transaction/coordinator/snapshot_read.rs"),
     )
     .unwrap();
-    // One stamp per read command, all taken from the freshly routed context.
+    // One stamp and one absorb per read command, each taken from the freshly
+    // routed context. Counted UNQUALIFIED: the point-read and scan bodies are
+    // shared free functions (so the transaction path and the timestamp-free
+    // MaxTS path cannot fork), where the set arrives as a parameter rather
+    // than through `self`. Pinning the `self.`-qualified spelling instead
+    // asserted where the code lives rather than what it does, and went red on
+    // an extraction that changed neither.
     assert_eq!(
         snapshot
-            .matches("self.resolved_locks.stamp(&mut context)")
+            .matches("resolved_locks.stamp(&mut context)")
             .count(),
-        3
+        4
     );
     assert_eq!(
-        snapshot
-            .matches("self.resolved_locks.absorb(&recovery)")
-            .count(),
-        3
+        snapshot.matches("resolved_locks.absorb(&recovery)").count(),
+        4
     );
     assert!(!snapshot.contains("route.context(), call)"));
     // Every read-command call must pass the FRESHLY routed context, never a
     // context read back off the route. `begin_get` is a free function taking
     // the runtime first, `begin_scan` a method, so each call site is checked
     // for the same trailing argument list rather than one fixed prefix.
-    for command in ["begin_get(", "begin_scan("] {
+    // `begin_scan_direct` is the scan's post-extraction name: it is a free
+    // function so the transaction path and the MaxTS path share one body.
+    // The pin follows the CALL SITES, not the spelling of the old method.
+    for command in ["begin_get(", "begin_scan_direct("] {
         // `let response = ` selects the CALL sites; the `fn` definitions
         // spell the same name and are not argument lists.
         let sites: Vec<&str> = snapshot

@@ -72,10 +72,11 @@ use tidb_pd_client::PdClient;
 use tidb_txnkv::pd_capability::{CapabilityTimestampSource, TimestampFutureWait};
 use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext};
 use tidb_txnkv::transaction::{
-    LockKeepAlive, LockWaitTime, OptimisticCommitOutcome, OptimisticCoordinatorError,
-    OptimisticMutation, PessimisticLockFailure, RealOptimisticTransaction,
-    RealOptimisticTransactionOpener, RealPessimisticTransaction, StorePdCapability,
-    StoreWriteClient, StoreWriteLoader, MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
+    CommitProtocol, LockKeepAlive, LockWaitTime, OptimisticCommitOutcome,
+    OptimisticCoordinatorError, OptimisticMutation, PessimisticLockFailure,
+    RealOptimisticTransaction, RealOptimisticTransactionOpener, RealPessimisticTransaction,
+    StorePdCapability, StoreWriteClient, StoreWriteLoader, MAX_OPTIMISTIC_MUTATIONS,
+    MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 use tidb_txnkv::Key;
 use tidb_txnkv::PdRegionLoader;
@@ -241,8 +242,15 @@ impl TransactionThread {
         timeout: Duration,
         writable: bool,
         name: &str,
+        commit_protocol: CommitProtocol,
     ) -> Result<Self, OptimisticCoordinatorError> {
-        Self::open_with(opener, timeout, TransactionOpen::writable(writable), name)
+        Self::open_with(
+            opener,
+            timeout,
+            TransactionOpen::writable(writable),
+            name,
+            commit_protocol,
+        )
     }
 
     fn open_with<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
@@ -250,8 +258,9 @@ impl TransactionThread {
         timeout: Duration,
         open: TransactionOpen,
         name: &str,
+        commit_protocol: CommitProtocol,
     ) -> Result<Self, OptimisticCoordinatorError> {
-        Self::prepare_with(opener, timeout, open, name)?.wait()
+        Self::prepare_with(opener, timeout, open, name, commit_protocol)?.wait()
     }
 
     fn prepare_with<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
@@ -259,6 +268,7 @@ impl TransactionThread {
         timeout: Duration,
         open: TransactionOpen,
         name: &str,
+        commit_protocol: CommitProtocol,
     ) -> Result<PreparedTransactionThread, OptimisticCoordinatorError> {
         let (requests, incoming) = mpsc::channel::<TransactionRequest>();
         let (opened, opened_reply) = mpsc::channel::<Result<u64, OptimisticCoordinatorError>>();
@@ -272,7 +282,12 @@ impl TransactionThread {
                             MAX_OPTIMISTIC_MUTATIONS,
                             MAX_OPTIMISTIC_TRANSACTION_BYTES,
                         ) {
-                            Ok(transaction) => {
+                            Ok(mut transaction) => {
+                                // `@@tidb_enable_async_commit` / `@@tidb_enable_1pc`
+                                // reach this transaction exactly as they reach the
+                                // explicit-transaction path: the commit-time
+                                // eligibility check still decides per transaction.
+                                transaction.set_commit_protocol(commit_protocol);
                                 if opened.send(Ok(transaction.start_ts())).is_err() {
                                     let _ = transaction.into_two_pc().finish_without_writes();
                                     return;
@@ -300,7 +315,14 @@ impl TransactionThread {
                         }
                     };
                     let transaction = match begun {
-                        Ok(transaction) => {
+                        Ok(mut transaction) => {
+                            // The same protocol resolution the pessimistic arm
+                            // applies: a writable optimistic transaction may also
+                            // attempt the faster commit protocols, and read-only
+                            // transactions simply never commit.
+                            if open == TransactionOpen::Writable {
+                                transaction.set_commit_protocol(commit_protocol);
+                            }
                             // A caller that stopped waiting leaves no lock
                             // behind: the transaction ends here instead.
                             if opened.send(Ok(transaction.start_ts())).is_err() {
@@ -888,6 +910,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
                 self.timeout,
                 TransactionOpen::ReadOnlyAt(start_ts),
                 "cluster-statement-snapshot",
+                CommitProtocol::two_phase_only(),
             )?,
         })
     }
@@ -925,7 +948,14 @@ impl StatementSnapshot {
         timeout: Duration,
     ) -> Result<Self, OptimisticCoordinatorError> {
         Ok(Self {
-            thread: TransactionThread::open(&opener, timeout, false, "cluster-statement-snapshot")?,
+            thread: TransactionThread::open(
+                &opener,
+                timeout,
+                false,
+                "cluster-statement-snapshot",
+                // Read-only: no commit ever runs, so the protocol is moot.
+                CommitProtocol::two_phase_only(),
+            )?,
         })
     }
 
@@ -1053,14 +1083,18 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
 
     fn scan(
         &mut self,
-        _start: &Key,
-        _end: &Key,
-        _limit: Option<usize>,
+        start: &Key,
+        end: &Key,
+        limit: Option<usize>,
     ) -> Result<SnapshotPairs, StorageError> {
         self.consume()?;
-        Err(StorageError::Backend(
-            "a MaxTS point snapshot cannot serve a range scan".to_owned(),
-        ))
+        // A bounded single-row statement still has a range-shaped plan. Keep
+        // its MaxTS declaration, but use the direct range reader rather than
+        // opening a pinned transaction worker for every YCSB E operation.
+        let call = UnaryCallContext::with_timeout(self.timeout);
+        self.opener
+            .snapshot_scan_at_max_ts(start.as_bytes(), end.as_bytes(), limit, &call)
+            .map_err(classify)
     }
 
     fn start_ts(&self) -> u64 {
@@ -1103,9 +1137,16 @@ impl SessionTransaction {
     pub fn begin<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         timeout: Duration,
+        commit_protocol: CommitProtocol,
     ) -> Result<Self, OptimisticCoordinatorError> {
         Ok(Self {
-            thread: TransactionThread::open(&opener, timeout, true, "cluster-session-transaction")?,
+            thread: TransactionThread::open(
+                &opener,
+                timeout,
+                true,
+                "cluster-session-transaction",
+                commit_protocol,
+            )?,
             pessimistic: false,
         })
     }
@@ -1117,6 +1158,7 @@ impl SessionTransaction {
     pub fn begin_pessimistic<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         timeout: Duration,
+        commit_protocol: CommitProtocol,
     ) -> Result<Self, OptimisticCoordinatorError> {
         Ok(Self {
             thread: TransactionThread::open_with(
@@ -1124,6 +1166,7 @@ impl SessionTransaction {
                 timeout,
                 TransactionOpen::WritablePessimistic,
                 "cluster-session-pessimistic",
+                commit_protocol,
             )?,
             pessimistic: true,
         })
@@ -1168,6 +1211,28 @@ impl SessionTransaction {
         answer.recv().map_err(|_| {
             StorageError::Backend("the transaction thread stopped mid-release".to_owned())
         })?
+    }
+
+    /// Opens a reusable read-only transaction at `u64::MAX`, the latest
+    /// committed marker used by Go for autocommit clustered-common-handle
+    /// point gets.  The transaction has no write budget and is therefore only
+    /// suitable for the connection-local point-read cache; it is deliberately
+    /// separate from [`Self::begin`] so a caller cannot accidentally publish
+    /// through it.
+    pub fn begin_read_only_at_max_ts<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+        timeout: Duration,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        Ok(Self {
+            thread: TransactionThread::open_with(
+                &opener,
+                timeout,
+                TransactionOpen::ReadOnlyAt(u64::MAX),
+                "cluster-point-get-max-ts",
+                CommitProtocol::two_phase_only(),
+            )?,
+            pessimistic: false,
+        })
     }
 
     /// The one timestamp every statement of this transaction reads at.
@@ -1420,6 +1485,7 @@ pub fn commit_staged_buffer<C: StoreWriteClient, L: StoreWriteLoader, P: StorePd
     buffer: &MutationBuffer,
     read_ts: Option<u64>,
     timeout: Duration,
+    commit_protocol: CommitProtocol,
 ) -> Result<Option<OptimisticCommitOutcome>, LockSqlError> {
     let (mutations, planned_bytes) = staged_mutations(buffer).map_err(coordinator_sql_error)?;
     if mutations.is_empty() {
@@ -1430,6 +1496,11 @@ pub fn commit_staged_buffer<C: StoreWriteClient, L: StoreWriteLoader, P: StorePd
         None => opener.begin(mutations.len(), planned_bytes),
     }
     .map_err(coordinator_sql_error)?;
+    let mut transaction = transaction;
+    // Go's autocommit committer checks `@@tidb_enable_async_commit` /
+    // `@@tidb_enable_1pc` at execute time (`checkAsyncCommit` / `checkOnePC`);
+    // the same eligibility decision then runs at commit.
+    transaction.set_commit_protocol(commit_protocol);
     let call = UnaryCallContext::with_timeout(timeout.max(TRANSACTION_END_TIMEOUT));
     let outcome = transaction
         .commit(mutations, &call)

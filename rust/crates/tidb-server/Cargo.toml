@@ -14,6 +14,7 @@ workspace = true
 
 [dependencies]
 base64.workspace = true
+tikv-jemallocator = { version = "0.7", optional = true }
 ctrlc.workspace = true
 signal-hook.workspace = true
 rcgen.workspace = true
@@ -24,6 +25,7 @@ sha1.workspace = true
 sha2.workspace = true
 subtle.workspace = true
 tidb-chunk = { path = "../tidb-chunk" }
+tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-exec = { path = "../tidb-exec" }
@@ -51,7 +53,7 @@ prost.workspace = true
 rcgen.workspace = true
 rustls.workspace = true
 rustls-pemfile.workspace = true
-tidb-ast = { path = "../tidb-ast" }
+tidb-parser = { path = "../tidb-parser" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 
@@ -66,3 +68,6 @@ path = "tests/auth_session_source.rs"
 [[test]]
 name = "configured_user_store_source"
 path = "tests/configured_user_store_source.rs"
+
+[features]
+jemalloc = ["dep:tikv-jemallocator"]

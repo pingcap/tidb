@@ -25,8 +25,45 @@ use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
 use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
 
 use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
-use crate::{infoschema, statement_kind_of, Session, StatementKind, StmtOutput, WarningLevel};
+use crate::{
+    infoschema, privilege, statement_kind_of, Session, StatementKind, StmtOutput, WarningLevel,
+};
 use crate::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
+
+/// Returns the one table privilege needed by the refusal-admitted prepared
+/// fast paths.  Complex statements deliberately fall back to the ordinary
+/// AST privilege collector so authorization cannot be weakened by an
+/// optimization refusal.
+fn fast_table_privilege_target(stmt: &Stmt) -> Option<(&[String], privilege::GlobalPriv)> {
+    match stmt {
+        Stmt::Query(query) => {
+            let tidb_ast::QueryStmt::Select(select) = &**query else {
+                return None;
+            };
+            let join = select.from.as_ref()?;
+            if join.right.is_some() {
+                return None;
+            }
+            let tidb_ast::JoinNode::Table(table) = &join.left else {
+                return None;
+            };
+            Some((table.name.as_slice(), privilege::GlobalPriv::Select))
+        }
+        Stmt::Dml(dml) => match &**dml {
+            DmlStmt::Insert(insert) => {
+                Some((insert.table.as_slice(), privilege::GlobalPriv::Insert))
+            }
+            DmlStmt::Update(update) => match &update.kind {
+                tidb_ast::UpdateKind::Single(table) => {
+                    Some((table.name.as_slice(), privilege::GlobalPriv::Update))
+                }
+                tidb_ast::UpdateKind::Multi { .. } => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
 
 /// Every `information_schema` base table a top-level join tree references.
 ///
@@ -397,6 +434,126 @@ impl Session {
         self.execute_parsed_statement(sql, stmt, false, None)
     }
 
+    /// Executes the conservative prepared clustered-handle point-read path.
+    /// A refusal returns `None`, allowing the caller to bind and run the
+    /// complete ordinary prepared statement implementation.
+    pub fn execute_fast_prepared_point_get(
+        &mut self,
+        stmt: &Stmt,
+        params: &[tidb_datatype::Datum],
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        if !self.in_transaction() {
+            self.lock_catalog()?.clear_dirty_content();
+        }
+        if let Some((path, privilege)) = fast_table_privilege_target(stmt) {
+            self.require_fast_table_privilege(path, privilege)?;
+        } else {
+            self.require_statement_table_privileges(stmt)?;
+        }
+        self.refuse_pinned_historical_read()?;
+        let Stmt::Query(query) = stmt else {
+            return Ok(None);
+        };
+        let tidb_ast::QueryStmt::Select(select) = &**query else {
+            return Ok(None);
+        };
+        let current_db = self.current_db.clone();
+        let context = self.prepared_point_get_context();
+        let result = self.with_catalog_mut(|catalog| {
+            tidb_executor::run_fast_prepared_point_get_with_decode_context(
+                select,
+                params,
+                catalog,
+                &current_db,
+                &context,
+            )
+        })?;
+        Ok(result.map(|(columns, rows)| StmtOutput::Rows { columns, rows }))
+    }
+
+    /// Executes the conservative one-row prepared INSERT path.  A refusal
+    /// returns `None`, allowing the complete bound AST path to answer it.
+    pub fn execute_fast_prepared_insert(
+        &mut self,
+        stmt: &Stmt,
+        params: &[tidb_datatype::Datum],
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        if !self.in_transaction() {
+            self.lock_catalog()?.clear_dirty_content();
+        }
+        if let Some((path, privilege)) = fast_table_privilege_target(stmt) {
+            self.require_fast_table_privilege(path, privilege)?;
+        } else {
+            self.require_statement_table_privileges(stmt)?;
+        }
+        self.refuse_pinned_historical_read()?;
+        let Stmt::Dml(dml) = stmt else {
+            return Ok(None);
+        };
+        let DmlStmt::Insert(insert) = &**dml else {
+            return Ok(None);
+        };
+        let current_db = self.current_db.clone();
+        let ctx = self
+            .fast_statement_context(true, insert.ignore)
+            .with_statement_class(tidb_executor::StatementClass::Insert);
+        let result = self.with_catalog_mut(|catalog| {
+            tidb_executor::run_fast_prepared_insert(insert, params, catalog, &current_db, &ctx)
+        })?;
+        self.drain_eval_warnings(&ctx);
+        let Some((affected, _)) = result else {
+            return Ok(None);
+        };
+        self.statement_insert_id = ctx
+            .published_last_insert_id()
+            .unwrap_or_else(|| ctx.given_insert_id());
+        Ok(Some(StmtOutput::Affected(affected)))
+    }
+
+    /// Executes the conservative one-row prepared UPDATE path.  A refusal
+    /// returns `None`, allowing the complete bound AST path to answer it.
+    pub fn execute_fast_prepared_update(
+        &mut self,
+        stmt: &Stmt,
+        params: &[tidb_datatype::Datum],
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        if !self.in_transaction() {
+            self.lock_catalog()?.clear_dirty_content();
+        }
+        if let Some((path, privilege)) = fast_table_privilege_target(stmt) {
+            self.require_fast_table_privilege(path, privilege)?;
+        } else {
+            self.require_statement_table_privileges(stmt)?;
+        }
+        self.refuse_pinned_historical_read()?;
+        let Stmt::Dml(dml) = stmt else {
+            return Ok(None);
+        };
+        let DmlStmt::Update(update) = &**dml else {
+            return Ok(None);
+        };
+        let current_db = self.current_db.clone();
+        let ctx = self
+            .fast_statement_context(true, update.ignore)
+            .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
+        let result = self.with_catalog_mut(|catalog| {
+            tidb_executor::run_fast_prepared_update(update, params, catalog, &current_db, &ctx)
+        })?;
+        self.drain_eval_warnings(&ctx);
+        Ok(result.map(StmtOutput::Affected))
+    }
+
+    /// Executes a statement tree already parsed and bound by the prepared
+    /// protocol path.  The surrounding session lifecycle is still applied by
+    /// `run_with_columns_using`; this seam only avoids reparsing the SQL text.
+    pub(crate) fn execute_statement_parsed(
+        &mut self,
+        stmt: Stmt,
+        sql: &str,
+    ) -> Result<StmtOutput, DriverError> {
+        self.execute_prepared_ast(sql, stmt, None)
+    }
+
     pub(crate) fn execute_prepared_ast(
         &mut self,
         sql: &str,
@@ -411,7 +568,7 @@ impl Session {
     /// plan has already passed the statement-shape, schema, autocommit,
     /// stale-read, binding, and hint gates. Go skips rebuilding visitInfo for
     /// this reused executor; this path likewise avoids revisiting the AST.
-    pub(crate) fn execute_cached_prepared_point_get(
+    pub fn execute_cached_prepared_point_get(
         &mut self,
         cached: tidb_executor::PreparedPointGetExecution,
     ) -> Result<StmtOutput, DriverError> {
@@ -736,6 +893,27 @@ impl Session {
                     },
                     _ => select,
                 };
+                // Go keeps YCSB-E's clustered `LIMIT 1` range on its narrow
+                // table-reader path. The bound prepared AST already contains
+                // the execute-time key, so try the equivalent range/coprocessor
+                // path before constructing the complete logical and physical
+                // tree. Every unsupported clause, hint, residual predicate,
+                // dirty table, or backend refusal remains on the ordinary
+                // planner path below.
+                let current_db = self.current_db.clone();
+                let ctx = self.statement_context(false);
+                let fast_range = self.with_catalog_mut(|catalog| {
+                    tidb_executor::run_fast_single_row_scan(
+                        select,
+                        catalog,
+                        &current_db,
+                        &ctx,
+                    )
+                })?;
+                if let Some((columns, rows)) = fast_range {
+                    self.drain_eval_warnings(&ctx);
+                    return Ok(StmtOutput::Rows { columns, rows });
+                }
                 if let Some(cached) = cached_point_get.as_ref() {
                     let current_db = self.current_db.clone();
                     let ctx = self.prepared_point_get_context();
@@ -781,7 +959,13 @@ impl Session {
                             enable_strict_not_null_check,
                         );
                     let result = self.with_staged_catalog(|catalog| {
-                        tidb_executor::run_insert_reporting(sql, catalog, &current_db, &ctx)
+                        // Go executes the statement the protocol BOUND
+                        // (`pkg/server`'s `statement`/`executableParams`
+                        // carry the values): re-parsing `sql` here would run
+                        // a tree whose markers never met their execute-time
+                        // values, which is a wrong answer for every binary-
+                        // protocol write.
+                        tidb_executor::run_insert_stmt(insert, catalog, &current_db, &ctx)
                     });
                     self.drain_eval_warnings(&ctx);
                     // Go `session.LastInsertID()`, the OK packet's field:
@@ -817,8 +1001,11 @@ impl Session {
                         .statement_context_ignoring(true, update.ignore)
                         .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
                     let output = self.with_staged_catalog(|catalog| {
-                        Ok(StmtOutput::Affected(tidb_executor::run_update_in(
-                            sql,
+                        // Bound AST, not SQL text: the text still carries the
+                        // markers the binary protocol already replaced. See
+                        // the INSERT arm above.
+                        Ok(StmtOutput::Affected(tidb_executor::run_update_stmt(
+                            update,
                             catalog,
                             &current_db,
                             &ctx,
@@ -838,8 +1025,9 @@ impl Session {
                         .statement_context_ignoring(true, delete.ignore)
                         .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
                     let output = self.with_staged_catalog(|catalog| {
-                        Ok(StmtOutput::Affected(tidb_executor::run_delete_in(
-                            sql,
+                        // Bound AST, not SQL text -- see the UPDATE arm.
+                        Ok(StmtOutput::Affected(tidb_executor::run_delete_stmt(
+                            delete,
                             catalog,
                             &current_db,
                             &ctx,

@@ -702,7 +702,10 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         if cancellation.is_cancelled() {
             return Err(DirectUnaryTransportError::CallerCancelled.to_string());
         }
-        if dispatch.operation != QueryOperation::SelectWithRuntimeStats {
+        if !matches!(
+            dispatch.operation,
+            QueryOperation::Select | QueryOperation::SelectWithRuntimeStats
+        ) {
             return Err(
                 DirectUnaryTransportError::UnsupportedOperation(dispatch.operation).to_string(),
             );

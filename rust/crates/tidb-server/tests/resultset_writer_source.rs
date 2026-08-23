@@ -68,16 +68,23 @@ impl ResultSetSource for Source {
 struct Sink {
     payloads: Vec<Vec<u8>>,
     fail_at: Option<usize>,
+    flushes: usize,
 }
 
 #[derive(Default)]
 struct CountingSink {
     packets: usize,
+    flushes: usize,
 }
 
 impl ResultSetSink for CountingSink {
     fn write_payload(&mut self, _: &[u8]) -> Result<(), SinkWriteError> {
         self.packets += 1;
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), SinkWriteError> {
+        self.flushes += 1;
         Ok(())
     }
 
@@ -95,6 +102,11 @@ impl ResultSetSink for Sink {
             });
         }
         self.payloads.push(payload.to_vec());
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), SinkWriteError> {
+        self.flushes += 1;
         Ok(())
     }
 
@@ -152,6 +164,7 @@ fn empty_first_next_still_emits_metadata_then_finishes_and_emits_eof() {
     assert_eq!(source.log, ["next", "columns", "finish"]);
     assert_eq!(outcome.rows_written, 0);
     assert_eq!(sink.payloads.len(), 4);
+    assert_eq!(sink.flushes, 1);
     assert_eq!(sink.payloads.first().unwrap(), &[1]);
     assert_eq!(sink.payloads.last().unwrap()[0], 0xfe);
 }
@@ -246,6 +259,7 @@ fn caller_owned_sink_receives_packets_without_a_response_vec() {
             .unwrap();
     assert_eq!(outcome.rows_written, 1);
     assert_eq!(outcome.packets_written, sink.packets);
+    assert_eq!(sink.flushes, 1);
     assert_eq!(source.log, ["next", "columns", "next", "finish", "close"]);
     assert_eq!(source.close_calls, 1);
 }

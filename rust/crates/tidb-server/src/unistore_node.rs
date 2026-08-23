@@ -38,6 +38,8 @@ use tidb_txnkv::region::RegionCache;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_txnkv::{SharedReadAuthority, SharedReadOpener};
 use tidb_unistore::client::InProcessClient;
+use tidb_unistore::kv_handler::KvHandler;
+use tidb_unistore::mvcc_store::MvccStore;
 use tidb_unistore::region_loader::{InProcessRegionLoader, IN_PROCESS_CLUSTER_ID};
 use tidb_unistore::tso::InProcessPd;
 
@@ -140,8 +142,14 @@ fn in_process_write_stack() -> Result<
     ),
     SqlQueryError,
 > {
-    let client = InProcessClient::new();
     let pd = InProcessPd::new();
+    // Go's unistore store holds THE cluster's mock PD client
+    // (`mock_region.go`), so its async-commit/1PC `minCommitTS` draws from
+    // the same oracle start timestamps do. The embedded store mirrors that:
+    // one shared oracle, both faster protocols available.
+    let client = InProcessClient::over(KvHandler {
+        store: MvccStore::with_pd(pd.oracle()),
+    });
     let cache = RegionCache::new(InProcessRegionLoader);
     let read_authority = SharedReadAuthority::start(client, cache)
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
@@ -149,16 +157,17 @@ fn in_process_write_stack() -> Result<
     // static zero -- Go's unistore behavior for a store with no PD to ask.
     let gc_state = TxnSafePointRefresher::start_with_source(|| Ok(0))
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-    // The opener's default protocol -- classic two-phase only -- stands: the
-    // embedded store names its async-commit/1PC refusal in prewrite, so the
-    // node must not offer what the store will abort.
+    // The bootstrapped cluster protocol -- async commit and 1PC are both ON
+    // on TiKV (`session_commit_protocol`) -- and the shared-oracle store can
+    // answer both, exactly as Go's unistore does under its mock PD.
     let transaction_opener = RealOptimisticTransactionOpener::from_capabilities(
         read_authority.opener(),
         pd.clone(),
         IN_PROCESS_TIMEOUT,
         gc_state,
     )
-    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+    .map_err(|error| SqlQueryError::unknown(error.to_string()))?
+    .with_commit_protocol(tidb_exec::session_commit_protocol::session_commit_protocol());
     Ok((read_authority, pd, transaction_opener))
 }
 

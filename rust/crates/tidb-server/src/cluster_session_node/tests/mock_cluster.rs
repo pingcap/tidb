@@ -339,6 +339,24 @@ impl ClusterTransactions for MockTransactions {
         }))
     }
 
+    fn begin_max_ts(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        Ok(Box::new(MockSessionTransaction {
+            start_ts: u64::MAX,
+            data: self.0.snapshot(),
+            cluster: Arc::clone(&self.0),
+            max_ts: true,
+        }))
+    }
+
+    fn begin_autocommit_write(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        Ok(Box::new(MockSessionTransaction {
+            start_ts: self.0.timestamp(),
+            data: self.0.snapshot(),
+            cluster: Arc::clone(&self.0),
+            max_ts: false,
+        }))
+    }
+
     fn commit(&self, buffer: &MutationBuffer, read_ts: Option<u64>) -> Result<(), SqlQueryError> {
         let staged = buffer.staged();
         if staged.is_empty() {
@@ -393,6 +411,7 @@ impl ClusterTransactions for MockTransactions {
             start_ts: self.0.timestamp(),
             data: self.0.snapshot(),
             cluster: Arc::clone(&self.0),
+            max_ts: false,
         }))
     }
 }
@@ -405,6 +424,7 @@ pub(super) struct MockSessionTransaction {
     pub(super) start_ts: u64,
     pub(super) data: BTreeMap<Vec<u8>, Vec<u8>>,
     pub(super) cluster: Arc<MockCluster>,
+    pub(super) max_ts: bool,
 }
 
 impl OpenClusterTransaction for MockSessionTransaction {
@@ -413,9 +433,16 @@ impl OpenClusterTransaction for MockSessionTransaction {
     }
 
     fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
+        if self.max_ts {
+            self.cluster.opened_at_max_ts.fetch_add(1, Ordering::AcqRel);
+        }
         self.cluster.live.fetch_add(1, Ordering::AcqRel);
         Ok(Box::new(MockSnapshot {
-            data: self.data.clone(),
+            data: if self.max_ts {
+                self.cluster.snapshot()
+            } else {
+                self.data.clone()
+            },
             cluster: Arc::clone(&self.cluster),
             // Every statement of the transaction reads at what BEGIN took,
             // which is also what the eventual publication is checked against.

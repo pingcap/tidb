@@ -341,6 +341,9 @@ pub struct Session {
     server_start_timestamp: Option<i64>,
     /// Metadata snapshot cache keyed by the catalog mutation version.
     tidb_decode_key_cache: RefCell<Option<(u64, Rc<tidb_executor::TidbDecodeKeySnapshot>)>>,
+    /// Suppresses the metadata snapshot while a narrow fast path builds a
+    /// statement context that cannot evaluate `TIDB_DECODE_KEY`.
+    skip_tidb_decode_key_snapshot: Cell<bool>,
     /// One connection-wide memory/disk tracker pair. Every statement gets a
     /// fresh child below these roots, so an open cursor remains counted when
     /// the client starts its next command.
@@ -600,6 +603,7 @@ impl Default for Session {
             catalog: SharedCatalog::default(),
             server_start_timestamp: None,
             tidb_decode_key_cache: RefCell::new(None),
+            skip_tidb_decode_key_snapshot: Cell::new(false),
             session_memory: tidb_executor::SessionMemory::new(
                 tidb_util::memory::DEF_MEM_QUOTA_QUERY,
                 tidb_executor::OomAction::Cancel,
@@ -1116,6 +1120,20 @@ impl Session {
         bound: BoundPreparedAst,
     ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
         self.run_bound_prepared_internal(bound, true)
+    }
+
+    /// Runs an owned bound statement while reusing the prepared SQL text.
+    /// Binary-protocol callers already have both values, so restoring the AST
+    /// merely to obtain text would add work to every execute.
+    pub fn run_parsed_bound_owned_with_sql(
+        &mut self,
+        bound: tidb_ast::Stmt,
+        sql: &str,
+    ) -> Result<StmtOutput, DriverError> {
+        self.run_with_columns_using(sql, false, move |session| {
+            session.execute_statement_parsed(bound, sql)
+        })
+        .map(|(output, _)| output)
     }
 
     fn run_bound_prepared_internal(

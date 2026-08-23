@@ -906,6 +906,81 @@ fn encode_binary_result_row_inner(
     encoded
 }
 
+fn encode_binary_result_row_owned_inner(
+    cells: Vec<BinaryResultCell>,
+    mut column_encoding: Option<(&[ColumnInfo], crate::result_encoder::ResultEncoder)>,
+    precomputed_encodings: Option<&[Option<crate::result_encoder::ResultEncoder>]>,
+) -> Vec<u8> {
+    let null_bitmap_len = (cells.len() + 7 + 2) / 8;
+    let mut encoded = Vec::with_capacity(1 + null_bitmap_len + cells.len() * 8);
+    encoded.push(0);
+    encoded.resize(1 + null_bitmap_len, 0);
+    for (index, cell) in cells.into_iter().enumerate() {
+        match cell {
+            BinaryResultCell::Null => {
+                let bit = index + 2;
+                encoded[1 + bit / 8] |= 1 << (bit % 8);
+            }
+            BinaryResultCell::Tiny(value) => encoded.push(value as u8),
+            BinaryResultCell::Short(value) => {
+                encoded.extend_from_slice(&(value as u16).to_le_bytes());
+            }
+            BinaryResultCell::Long(value) => {
+                encoded.extend_from_slice(&(value as u32).to_le_bytes());
+            }
+            BinaryResultCell::LongLong(value) => {
+                encoded.extend_from_slice(&(value as u64).to_le_bytes());
+            }
+            BinaryResultCell::Float(value) => {
+                encoded.extend_from_slice(&value.to_bits().to_le_bytes());
+            }
+            BinaryResultCell::Double(value) => {
+                encoded.extend_from_slice(&value.to_bits().to_le_bytes());
+            }
+            BinaryResultCell::NewDecimal(value) => {
+                append_length_encoded_bytes(&mut encoded, Some(value.to_string().as_bytes()));
+            }
+            BinaryResultCell::String(bytes) => {
+                let bytes = if let Some(encodings) = precomputed_encodings {
+                    match encodings.get(index).and_then(Option::as_ref) {
+                        Some(encoder) => encoder
+                            .encode_data_owned(bytes)
+                            .expect("data encoding was initialized above"),
+                        None => bytes,
+                    }
+                } else if let Some((columns, encoder)) = &mut column_encoding {
+                    let metadata = &columns[index];
+                    let collation = if matches!(
+                        metadata.type_code,
+                        TYPE_JSON | TYPE_TIDB_VECTOR_FLOAT32
+                    ) {
+                        DEFAULT_COLLATION_ID
+                    } else {
+                        metadata.charset
+                    };
+                    if encoder.update_data_encoding(collation).is_ok() {
+                        encoder
+                            .encode_data_owned(bytes)
+                            .expect("data encoding was initialized above")
+                    } else {
+                        bytes
+                    }
+                } else {
+                    bytes
+                };
+                append_length_encoded_bytes(&mut encoded, Some(&bytes));
+            }
+            BinaryResultCell::Datetime(packed, kind) => {
+                encoded.extend_from_slice(&encode_binary_datetime(packed, kind));
+            }
+            BinaryResultCell::Duration(nanoseconds) => {
+                encoded.extend_from_slice(&encode_binary_time(nanoseconds));
+            }
+        }
+    }
+    encoded
+}
+
 /// Whether a result column type is dumped as a length-encoded string by TiDB's
 /// `DumpBinaryRow`.
 ///
@@ -1002,6 +1077,10 @@ const fn cell_matches_result_type(cell: &BinaryResultCell, type_code: u8) -> boo
 pub struct BinaryResultSetStream {
     columns: Vec<ColumnInfo>,
     options: ResultSetOptions,
+    /// Per-column result encoders resolved once when the stream is created.
+    /// Prepared executions reuse the same column metadata shape, so looking up
+    /// a collation for every row would only repeat immutable work.
+    data_encodings: Vec<Option<crate::result_encoder::ResultEncoder>>,
     state: BinaryResultSetState,
 }
 
@@ -1038,9 +1117,32 @@ impl BinaryResultSetStream {
                 });
             }
         }
+        let data_encodings = columns
+            .iter()
+            .map(|metadata| {
+                if !is_binary_string_result_type(metadata.type_code) {
+                    return None;
+                }
+                let collation = if matches!(
+                    metadata.type_code,
+                    TYPE_JSON | TYPE_TIDB_VECTOR_FLOAT32
+                ) {
+                    DEFAULT_COLLATION_ID
+                } else {
+                    metadata.charset
+                };
+                let mut encoder = options.result_encoder;
+                if encoder.update_data_encoding(collation).is_ok() {
+                    Some(encoder)
+                } else {
+                    None
+                }
+            })
+            .collect();
         Ok(Self {
             columns,
             options,
+            data_encodings,
             state: BinaryResultSetState::Initial,
         })
     }
@@ -1097,6 +1199,38 @@ impl BinaryResultSetStream {
         Ok(encode_binary_result_row_inner(
             cells,
             Some((&self.columns, self.options.result_encoder)),
+        ))
+    }
+
+    /// Emits one binary row by consuming its already-owned cells.
+    pub fn row_packet_owned(
+        &self,
+        cells: Vec<BinaryResultCell>,
+    ) -> Result<Vec<u8>, PreparedStatementError> {
+        if self.state != BinaryResultSetState::Rows {
+            return Err(PreparedStatementError::InvalidField {
+                field: "binary result-set state",
+                value: self.state as u8,
+            });
+        }
+        if cells.len() != self.columns.len() {
+            return Err(PreparedStatementError::RowColumnCount {
+                expected: self.columns.len(),
+                actual: cells.len(),
+            });
+        }
+        for (column, (cell, metadata)) in cells.iter().zip(&self.columns).enumerate() {
+            if !cell_matches_result_type(cell, metadata.type_code) {
+                return Err(PreparedStatementError::MismatchedBinaryResultCell {
+                    column,
+                    type_code: metadata.type_code,
+                });
+            }
+        }
+        Ok(encode_binary_result_row_owned_inner(
+            cells,
+            Some((&self.columns, self.options.result_encoder)),
+            Some(&self.data_encodings),
         ))
     }
 

@@ -238,6 +238,60 @@ pub struct ScalarFunction {
     json_schema_cache: crate::builtin_ext::JsonSchemaCache,
 }
 
+/// Go's 1690 text for one binary arithmetic overflow: the result type's
+/// integer class (`BIGINT` / `BIGINT UNSIGNED`, from the function's own
+/// declared result type) and the operand list rendered as Go's
+/// `StringWithCtx(errors.RedactLogDisable)` renders constants.
+fn arithmetic_overflow_error(function: &ScalarFunction, op: tidb_ast::BinaryOp) -> EvalError {
+    let symbol = match op {
+        tidb_ast::BinaryOp::Plus => "+",
+        tidb_ast::BinaryOp::Minus => "-",
+        tidb_ast::BinaryOp::Mul => "*",
+        tidb_ast::BinaryOp::Div => "/",
+        tidb_ast::BinaryOp::IntDiv => "DIV",
+        tidb_ast::BinaryOp::Mod => "%",
+        _ => return EvalError::IntOverflow,
+    };
+    // A faithful operand list needs each argument rendered the way Go's
+    // `StringWithCtx` renders it. Constants carry everything needed; a COLUMN
+    // would print its qualified SQL name (`test.y.a`), which this layer does
+    // not know, so a non-constant operand keeps the bare overflow error
+    // rather than emitting a wrong message.
+    fn render(expression: &Expression) -> Option<String> {
+        match expression {
+            Expression::Constant(constant) => match &constant.value {
+                Datum::Int(value) => Some(value.to_string()),
+                Datum::UInt(value) => Some(value.to_string()),
+                Datum::Real(value) => {
+                    // Go strconv.FormatFloat(v, 'f', -1, 64).
+                    Some(format!("{value}"))
+                }
+                Datum::Decimal(value) => Some(value.to_string()),
+                Datum::Null => Some("NULL".to_owned()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+    let operands = match function.get_args() {
+        [left, right] => match (render(left), render(right)) {
+            (Some(left), Some(right)) => {
+                format!("({left} {symbol} {right})")
+            }
+            _ => return EvalError::IntOverflow,
+        },
+        _ => return EvalError::IntOverflow,
+    };
+    let class = match function.get_static_type() {
+        Some(field_type) if field_type.is_unsigned() => "BIGINT UNSIGNED",
+        _ => "BIGINT",
+    };
+    EvalError::DataOutOfRange {
+        value: class,
+        expression: Box::leak(operands.into_boxed_str()),
+    }
+}
+
 impl ScalarFunction {
     /// Builds a scalar-function node.
     #[must_use]
@@ -505,7 +559,19 @@ impl ScalarFunction {
                     self.derived_collation(),
                     crate::ops::Operands::of(&self.args[0], &self.args[1]),
                     ctx,
-                );
+                )
+                .map_err(|error| match error {
+                    // Go's arithmetic signatures raise
+                    // `types.ErrOverflow.GenWithStackByArgs("BIGINT[ UNSIGNED]",
+                    // "(arg OP arg)")` -- MySQL 1690 carries the OPERANDS
+                    // (`builtin_arithmetic.go:700,716`). The bare datum-level
+                    // overflow becomes the source-shaped message here, where
+                    // the argument expressions are still at hand.
+                    EvalError::IntOverflow => {
+                        arithmetic_overflow_error(self, op)
+                    }
+                    other => other,
+                });
             }
         }
         if let Some(op) = unary_op_for_name(name) {
@@ -518,6 +584,28 @@ impl ScalarFunction {
                     ctx,
                 );
             }
+        }
+        // Go `builtinIsTrueOrFalseSig` (`builtin_op.go`): MySQL's IS TRUE /
+        // IS FALSE / IS UNKNOWN never answer NULL -- NULL tests FALSE for
+        // TRUE/FALSE and TRUE for UNKNOWN.
+        if matches!(
+            &*name,
+            "istrue" | "isnottrue" | "isfalse" | "isnotfalse" | "isunknown" | "isnotunknown"
+        ) {
+            if self.args.len() != 1 {
+                return Err(EvalError::WrongParameterCount("is true or false"));
+            }
+            let operand = self.args[0].eval(ctx, row)?;
+            let truthy = crate::truthy_of(&operand)?;
+            let result = match &*name {
+                "istrue" => truthy == Some(true),
+                "isnottrue" => truthy != Some(true),
+                "isfalse" => truthy == Some(false),
+                "isnotfalse" => truthy != Some(false),
+                "isunknown" => truthy.is_none(),
+                _ => truthy.is_some(),
+            };
+            return Ok(Datum::Int(i64::from(result)));
         }
         if let [arg] = self.args.as_slice() {
             if let Some(value) = crate::collation_derive::info_metadata_value(name, arg) {

@@ -290,6 +290,30 @@ impl KvTable {
         )
     }
 
+    /// Reads only the first row covered by `handle_ranges`, using the
+    /// storage backend's bounded primitive when it has one. This is the
+    /// byte-level counterpart of a `TableRangeScan` with `LIMIT 1`.
+    pub fn first_row_in_handle_ranges(
+        &mut self,
+        keep: Option<&[usize]>,
+        handle_ranges: &[IndexRange],
+        zone: &SessionTimeZone,
+    ) -> Result<Option<(TableHandle, Vec<Datum>)>, KvTableError> {
+        let context = RowDecodeContext::legacy_default(zone);
+        let decoder = self.row_decoder_projected(keep, &context)?;
+        for (low, upper) in self.record_key_ranges(Some(handle_ranges), zone)? {
+            let Some((key, value)) = self
+                .store
+                .first(Some(&low), Some(&upper))
+                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
+            else {
+                continue;
+            };
+            return decoder.decode_record(key.as_bytes(), &value).map(Some);
+        }
+        Ok(None)
+    }
+
     /// The record ranges this scan reads, as the storage seam's half-open
     /// `[start, end)` pairs in ascending key order.
     ///
@@ -376,11 +400,10 @@ impl KvTable {
     /// describe the conjuncts the caller applies to every emitted row anyway,
     /// so the remote filter is a pre-filter and cannot change the answer.
     ///
-    /// A common-handle (clustered non-integer primary key) table is refused:
-    /// the merge below addresses rows by their integer handle, so a handle
-    /// this cursor cannot compare is a shape it must not claim to serve. So is
-    /// a scan whose handle ranges cover no record at all, which a coprocessor
-    /// request cannot express.
+    /// A common-handle (clustered non-integer primary key) table is served
+    /// without a client-side handle merge. Its clustered primary metadata is
+    /// synthesized when the catalog omits the physical index entry, matching
+    /// the table's record-key layout and Go's always-present `IndexInfo`.
     #[allow(clippy::too_many_arguments)]
     pub fn pushdown_row_cursor_with_context(
         &mut self,
@@ -397,7 +420,7 @@ impl KvTable {
         statement: &PushdownStatementContext,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
         let common_handle = !self.common_handle_offsets.is_empty();
-        let common_primary = crate::handle_range::common_handle_primary(self);
+        let common_primary = crate::handle_range::clustered_primary_metadata(self);
         if common_handle && (self.has_dirty_content() || common_primary.is_none()) {
             return Ok(None);
         }
@@ -465,12 +488,14 @@ impl KvTable {
             )
         };
         let primary_column_ids: Vec<i64> = common_primary
+            .as_ref()
             .into_iter()
             .flat_map(|index| index.column_offsets.iter())
             .filter_map(|offset| self.columns.get(*offset))
             .map(|column| column.id)
             .collect();
         let primary_prefix_column_ids: Vec<i64> = common_primary
+            .as_ref()
             .into_iter()
             .flat_map(|index| {
                 index

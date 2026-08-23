@@ -19,6 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use tidb_codec::table_key::RECORD_ROW_KEY_LEN;
 use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
 use tidb_tablecodec::decode_table_row_to_map;
+use tidb_txnkv::CommonHandle;
 
 use super::table_meta::NOT_NULL_FLAG;
 use super::{KvColumn, KvTableError, PreparedPointGetDecodeContext, RowDecodeContext, TableHandle};
@@ -81,6 +82,7 @@ pub struct RowDecoder {
 struct PreparedPointGetColumn {
     column: KvColumn,
     from_handle: bool,
+    common_handle_part: Option<usize>,
 }
 
 /// Immutable row-decoder metadata retained by a cached prepared PointGet.
@@ -93,6 +95,19 @@ struct PreparedPointGetColumn {
 pub struct PreparedPointGetRowDecoder {
     columns: Vec<PreparedPointGetColumn>,
     stored_column_types: BTreeMap<i64, FieldType>,
+    common_handle_offsets: Vec<usize>,
+    /// Whether the projection contains a column supplied by the clustered
+    /// handle. Most YCSB projections do not select the key, so parsing the
+    /// common-handle bytes for every row would be needless work.
+    needs_handle: bool,
+    /// Whether any projected column can be absent from an older row and needs
+    /// an execute-time origin-default value.
+    has_origin_defaults: bool,
+    /// Row V2 metadata is immutable for the schema-versioned prepared plan.
+    /// Keeping it here avoids cloning ten `ColumnInfo`s and handle IDs on each
+    /// YCSB execute.
+    v2_columns: Vec<tidb_codec::ColumnInfo>,
+    v2_handle_column_ids: Vec<i64>,
 }
 
 impl PreparedPointGetRowDecoder {
@@ -102,6 +117,21 @@ impl PreparedPointGetRowDecoder {
         pk_handle_offset: usize,
         output_offsets: &[usize],
     ) -> Result<Self, KvTableError> {
+        Self::new_with_handles(columns, Some(pk_handle_offset), &[], output_offsets)
+    }
+
+    /// Compiles a prepared point-get projection for either an integer or a
+    /// common clustered handle.
+    pub fn new_with_handles(
+        columns: &[KvColumn],
+        pk_handle_offset: Option<usize>,
+        common_handle_offsets: &[usize],
+        output_offsets: &[usize],
+    ) -> Result<Self, KvTableError> {
+        let common_handle_column_ids: Vec<i64> = common_handle_offsets
+            .iter()
+            .filter_map(|offset| columns.get(*offset).map(|column| column.id))
+            .collect();
         let projected = output_offsets
             .iter()
             .map(|offset| {
@@ -117,7 +147,10 @@ impl PreparedPointGetRowDecoder {
                 }
                 Ok(PreparedPointGetColumn {
                     column,
-                    from_handle: *offset == pk_handle_offset,
+                    from_handle: pk_handle_offset == Some(*offset),
+                    common_handle_part: common_handle_offsets
+                        .iter()
+                        .position(|handle_offset| *handle_offset == *offset),
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -126,9 +159,36 @@ impl PreparedPointGetRowDecoder {
             .filter(|column| !column.from_handle)
             .map(|column| (column.column.id, column.column.field_type.clone()))
             .collect();
+        let v2_columns = projected
+            .iter()
+            .map(|output| tidb_codec::ColumnInfo {
+                id: output.column.id,
+                is_pk_handle: output.from_handle,
+                virtual_generated: false,
+                field_type: output.column.field_type.clone(),
+            })
+            .collect::<Vec<_>>();
+        let v2_handle_column_ids = projected
+            .iter()
+            .find(|output| output.from_handle)
+            .map(|output| output.column.id)
+            .into_iter()
+            .chain(common_handle_column_ids.iter().copied())
+            .collect();
+        let needs_handle = projected
+            .iter()
+            .any(|output| output.from_handle || output.common_handle_part.is_some());
+        let has_origin_defaults = projected
+            .iter()
+            .any(|output| output.column.origin_default.is_some());
         Ok(Self {
             columns: projected,
             stored_column_types,
+            common_handle_offsets: common_handle_offsets.to_vec(),
+            needs_handle,
+            has_origin_defaults,
+            v2_columns,
+            v2_handle_column_ids,
         })
     }
 
@@ -138,6 +198,53 @@ impl PreparedPointGetRowDecoder {
         value: &[u8],
         context: &PreparedPointGetDecodeContext,
     ) -> Result<Vec<Datum>, KvTableError> {
+        // Row V2 stores a column directory and can decode directly into the
+        // requested projection. This avoids the legacy BTreeMap allocation on
+        // every prepared point read (the YCSB hot path).
+        if tidb_codec::is_new_format(value) {
+            let codec_handle = self.needs_handle.then(|| match handle {
+                TableHandle::Int(handle_value) => Ok(tidb_codec::Handle::Int(*handle_value)),
+                TableHandle::Common(encoded) => {
+                    let common = CommonHandle::new(encoded.clone())
+                        .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+                    let parts = (0..self.common_handle_offsets.len())
+                        .filter_map(|part| common.encoded_column(part).map(<[u8]>::to_vec))
+                        .collect();
+                    Ok(tidb_codec::Handle::Common(parts))
+                }
+            });
+            let codec_handle = codec_handle.transpose()?;
+            let defaults = self
+                .has_origin_defaults
+                .then(|| {
+                    self.columns
+                        .iter()
+                        .map(|output| {
+                            output
+                                .column
+                                .origin_default_value(
+                                    context.origin_default_flags(),
+                                    context.zone(),
+                                )
+                                .map_err(|error| KvTableError::Decode(error.to_string()))
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?;
+            return tidb_codec::decode_row_to_datums(
+                value,
+                &self.v2_columns,
+                &tidb_codec::DecodeRowOptions {
+                    handle_column_ids: &self.v2_handle_column_ids,
+                    handle: codec_handle.as_ref(),
+                    defaults: defaults.as_deref(),
+                    timezone: Some(context.zone()),
+                    ..tidb_codec::DecodeRowOptions::default()
+                },
+            )
+            .map(|row| row.values)
+            .map_err(|error| KvTableError::Decode(format!("{error:?}")));
+        }
         let decoded =
             decode_table_row_to_map(value, &self.stored_column_types, Some(context.zone()))
                 .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
@@ -156,6 +263,32 @@ impl PreparedPointGetRowDecoder {
                         Some(context.zone()),
                     )
                     .map_err(|error| KvTableError::Decode(format!("{error:?}")));
+                }
+                if let Some(part) = output.common_handle_part {
+                    let TableHandle::Common(encoded) = handle else {
+                        return Err(KvTableError::Decode(
+                            "prepared point-get plan requires a common handle".to_owned(),
+                        ));
+                    };
+                    let common = CommonHandle::new(encoded.clone())
+                        .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+                    let Some(encoded) = common.encoded_column(part) else {
+                        return Err(KvTableError::Decode(
+                            "prepared point-get common handle is missing a column".to_owned(),
+                        ));
+                    };
+                    let (remainder, value) = tidb_codec::decode_one_typed_in_timezone(
+                        encoded,
+                        &output.column.field_type,
+                        Some(context.zone()),
+                    )
+                    .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+                    if !remainder.is_empty() {
+                        return Err(KvTableError::Decode(
+                            "prepared point-get common handle has trailing bytes".to_owned(),
+                        ));
+                    }
+                    return Ok(value);
                 }
                 if let Some(value) = decoded.get(&output.column.id) {
                     return Ok(value.clone());

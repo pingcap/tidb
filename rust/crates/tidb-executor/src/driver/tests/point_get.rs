@@ -306,6 +306,154 @@ fn point_get_is_chosen_only_for_the_shapes_go_accepts() {
     );
 }
 
+#[test]
+fn prepared_fast_point_get_binds_common_handle_without_cloning_template() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE prepared_y (id VARCHAR(64) PRIMARY KEY, v VARCHAR(32))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO prepared_y VALUES ('user-0001', 'value-1')",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let stmt = tidb_parser::parse("SELECT * FROM prepared_y WHERE id = ?").unwrap();
+    let select = match &stmt {
+        Stmt::Query(query) => match &**query {
+            QueryStmt::Select(select) => select,
+            QueryStmt::SetOpr(_) => panic!("expected a select"),
+        },
+        _ => panic!("expected a query"),
+    };
+    let fast = run_fast_prepared_point_get(
+        select,
+        &[Datum::Bytes(b"user-0001".to_vec())],
+        &mut catalog,
+        "test",
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap()
+    .expect("prepared common-handle point read should use the fast path");
+    assert_eq!(fast.1.len(), 1);
+    assert_eq!(datum_text_for_test(&fast.1[0][0]), "user-0001");
+    assert_eq!(datum_text_for_test(&fast.1[0][1]), "value-1");
+}
+
+/// The YCSB E scan fast path reads one clustered-handle range row and refuses
+/// a wider limit, leaving every non-admitted shape on the general planner.
+#[test]
+fn fast_single_row_scan_reads_the_first_clustered_handle() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE ycsb_scan (id VARCHAR(32) PRIMARY KEY CLUSTERED, v VARCHAR(32))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_insert_on(
+        "INSERT INTO ycsb_scan VALUES ('user-0001','value-1'),('user-0002','value-2'),('user-0003','value-3')",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    catalog.clear_dirty_content();
+    let stmt =
+        tidb_parser::parse("SELECT * FROM ycsb_scan WHERE id >= 'user-0002' LIMIT 1").unwrap();
+    let select = match &stmt {
+        Stmt::Query(query) => match &**query {
+            QueryStmt::Select(select) => select,
+            QueryStmt::SetOpr(_) => panic!("expected a select"),
+        },
+        _ => panic!("expected a query"),
+    };
+    let fast = run_fast_single_row_scan(select, &catalog, "test", &crate::StmtContext::for_query())
+        .unwrap()
+        .expect("bounded clustered-handle scan should use the fast path");
+    assert_eq!(datum_text_for_test(&fast.1[0][0]), "user-0002");
+    assert_eq!(datum_text_for_test(&fast.1[0][1]), "value-2");
+    let scan_select = select;
+
+    let wider =
+        tidb_parser::parse("SELECT * FROM ycsb_scan WHERE id >= 'user-0002' LIMIT 2").unwrap();
+    let Stmt::Query(query) = &wider else {
+        panic!("expected a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("expected a select");
+    };
+    assert!(
+        run_fast_single_row_scan(select, &catalog, "test", &crate::StmtContext::for_query(),)
+            .unwrap()
+            .is_none()
+    );
+
+    let cell = |datum: &Datum| match datum {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let point = tidb_parser::parse("SELECT * FROM ycsb_scan WHERE id = 'user-0002'").unwrap();
+    let Stmt::Query(query) = &point else {
+        panic!("expected a query");
+    };
+    let QueryStmt::Select(point) = &**query else {
+        panic!("expected a select");
+    };
+    let (_, point_rows) = crate::explain::explain_select_stmt(
+        point,
+        &catalog,
+        "test",
+        &crate::StmtContext::for_query(),
+        crate::explain::ExplainFormat::Row,
+    )
+    .unwrap();
+    assert_eq!(point_rows.len(), 1, "point plan has no root wrappers");
+    assert!(cell(&point_rows[0][0]).starts_with("Point_Get_"));
+    assert!(cell(&point_rows[0][3]).contains("clustered index:PRIMARY(id)"));
+
+    let (_, scan_rows) = crate::explain::explain_select_stmt(
+        scan_select,
+        &catalog,
+        "test",
+        &crate::StmtContext::for_query(),
+        crate::explain::ExplainFormat::Row,
+    )
+    .unwrap();
+    let scan_names = scan_rows
+        .iter()
+        .map(|row| cell(&row[0]))
+        .collect::<Vec<_>>();
+    assert!(scan_names[0].starts_with("Limit_"), "{scan_names:?}");
+    assert!(scan_names[1].contains("TableReader_"), "{scan_names:?}");
+    assert!(scan_names[2].contains("Limit_"), "{scan_names:?}");
+    assert!(scan_names[3].contains("TableRangeScan_"), "{scan_names:?}");
+
+    let update =
+        tidb_parser::parse("UPDATE ycsb_scan SET v = 'updated' WHERE id = 'user-0002'").unwrap();
+    let Stmt::Dml(update) = &update else {
+        panic!("expected DML");
+    };
+    let tidb_ast::DmlStmt::Update(update) = &**update else {
+        panic!("expected UPDATE");
+    };
+    let (_, update_rows) = crate::explain::explain_update_stmt(
+        update,
+        &mut catalog,
+        "test",
+        &crate::StmtContext::for_query(),
+        crate::explain::ExplainFormat::Row,
+    )
+    .unwrap();
+    let update_names = update_rows
+        .iter()
+        .map(|row| cell(&row[0]))
+        .collect::<Vec<_>>();
+    assert!(update_names[0].starts_with("Update_"), "{update_names:?}");
+    assert!(update_names[1].contains("Point_Get_"), "{update_names:?}");
+    assert_eq!(update_names.len(), 2, "{update_names:?}");
+}
+
 /// Go's tryWhereIn2BatchPointGet: `col IN (constants)` over the handle or
 /// a single-column unique index reads those rows directly. Results must
 /// match the scan in every case, including the shapes Go rejects.

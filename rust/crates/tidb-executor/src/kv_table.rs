@@ -83,7 +83,7 @@ use index_entries::duplicate_value_text;
 pub(in crate::kv_table) use index_entries::index_entry_handle;
 pub(crate) use index_entries::IndexEntryForCheck;
 use tidb_tablecodec::encode_table_row;
-use tidb_txnkv::Key;
+use tidb_txnkv::{CommonHandle, Key};
 
 /// Deduplicates index columns by table-column offset, preserving the first
 /// occurrence and its pointer identity.
@@ -2398,6 +2398,65 @@ impl KvTable {
         entry: &[u8],
         context: &RowDecodeContext,
     ) -> Result<Vec<Datum>, KvTableError> {
+        // Row V2 already carries a positional column directory. For ordinary
+        // stored columns, decode it directly instead of allocating the legacy
+        // column-id map and rebuilding a full RowDecoder for every point read.
+        // Generated columns still use RowDecoder so their expressions retain
+        // the statement context and evaluation order.
+        if tidb_codec::is_new_format(entry)
+            && !self.columns.iter().any(|column| column.generated.is_some())
+        {
+            let columns = self
+                .columns
+                .iter()
+                .enumerate()
+                .map(|(offset, column)| tidb_codec::ColumnInfo {
+                    id: column.id,
+                    is_pk_handle: self.pk_handle_offset == Some(offset),
+                    virtual_generated: false,
+                    field_type: column.field_type.clone(),
+                })
+                .collect::<Vec<_>>();
+            let handle_column_ids = self
+                .pk_handle_offset
+                .into_iter()
+                .chain(self.common_handle_offsets.iter().copied())
+                .filter_map(|offset| self.columns.get(offset).map(|column| column.id))
+                .collect::<Vec<_>>();
+            let codec_handle = match handle {
+                TableHandle::Int(value) => tidb_codec::Handle::Int(*value),
+                TableHandle::Common(encoded) => {
+                    let common = CommonHandle::new(encoded.clone())
+                        .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+                    let parts = (0..self.common_handle_offsets.len())
+                        .filter_map(|index| common.encoded_column(index).map(<[u8]>::to_vec))
+                        .collect();
+                    tidb_codec::Handle::Common(parts)
+                }
+            };
+            let defaults = self
+                .columns
+                .iter()
+                .map(|column| {
+                    column
+                        .origin_default_value(context.origin_default_flags(), context.zone())
+                        .map_err(|error| KvTableError::Decode(error.to_string()))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return tidb_codec::decode_row_to_datums(
+                entry,
+                &columns,
+                &tidb_codec::DecodeRowOptions {
+                    handle_column_ids: &handle_column_ids,
+                    handle: Some(&codec_handle),
+                    defaults: Some(&defaults),
+                    timezone: Some(context.zone()),
+                    ..tidb_codec::DecodeRowOptions::default()
+                },
+            )
+            .map(|row| row.values)
+            .map_err(|error| KvTableError::Decode(format!("{error:?}")));
+        }
         let decoder = RowDecoder::for_table_read(
             self.columns.clone(),
             self.pk_handle_offset,
@@ -2428,7 +2487,27 @@ impl KvTable {
         row: &[Datum],
         ctx: &crate::StmtContext,
     ) -> Result<(), KvTableError> {
-        self.update_row_in(handle, row, ctx, &RowDecodeContext::for_write(ctx))
+        self.update_row_in(handle, None, row, ctx, &RowDecodeContext::for_write(ctx))
+    }
+
+    /// Replaces a row when the caller already holds the selected row. Passing
+    /// it avoids a second point read to discover the old record key and is
+    /// equivalent to Go's update executor retaining its input chunk.
+    pub fn update_row_with_old(
+        &mut self,
+        handle: &TableHandle,
+        old_row: Option<&[Datum]>,
+        row: &[Datum],
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<(), KvTableError> {
+        let zone = ctx.time_zone();
+        self.update_row_in(
+            handle,
+            old_row,
+            row,
+            ctx,
+            &RowDecodeContext::legacy_default(&zone),
+        )
     }
 
     /// Legacy row update retained for unmigrated DML/FK callers. Reading the
@@ -2440,12 +2519,13 @@ impl KvTable {
         ctx: &impl tidb_expr::Columns,
     ) -> Result<(), KvTableError> {
         let zone = ctx.time_zone();
-        self.update_row_in(handle, row, ctx, &RowDecodeContext::legacy_default(&zone))
+        self.update_row_in(handle, None, row, ctx, &RowDecodeContext::legacy_default(&zone))
     }
 
     fn update_row_in(
         &mut self,
         handle: &TableHandle,
+        old_row: Option<&[Datum]>,
         row: &[Datum],
         ctx: &impl tidb_expr::Columns,
         decode_context: &RowDecodeContext,
@@ -2519,16 +2599,39 @@ impl KvTable {
                 key: self.qualified_key("PRIMARY"),
             });
         }
-        let old_key = self.stored_record_key(handle)?;
+        let new_physical_id = self.record_physical_id(row, ctx)?;
+        let old_key = if new_handle == *handle {
+            if let Some(old) = old_row {
+                let old_physical_id = self.record_physical_id(old, ctx)?;
+                if old_physical_id == new_physical_id {
+                    Some(Key::from_bytes(encode_row_key_with_handle(
+                        old_physical_id,
+                        &handle.record_handle(),
+                    )))
+                } else {
+                    self.stored_record_key(handle)?
+                }
+            } else {
+                self.stored_record_key(handle)?
+            }
+        } else {
+            self.stored_record_key(handle)?
+        };
         let old_physical_id = old_key.as_ref().map_or(self.table_id, |key| {
             tidb_codec::decode_table_id(key.as_bytes())
         });
-        let new_physical_id = self.record_physical_id(row, ctx)?;
         // Go removes the old index entries and writes the new ones. They point
         // AT the handle, so a moved row needs them rewritten even when the
         // indexed values did not change.
         if !self.indexes.is_empty() {
-            let old = self.read_row(handle, decode_context)?;
+            let owned_old;
+            let old = match old_row {
+                Some(old) => Some(old),
+                None => {
+                    owned_old = self.read_row(handle, decode_context)?;
+                    owned_old.as_deref()
+                }
+            };
             if let Some(old) = &old {
                 self.delete_index_entries(old, handle, old_physical_id, &zone)?;
             }

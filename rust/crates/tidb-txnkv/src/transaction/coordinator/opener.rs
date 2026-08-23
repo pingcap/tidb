@@ -364,6 +364,38 @@ where
         .map(|result| result.value)
     }
 
+    /// Reads a bounded range at `u64::MAX` without activating a transaction.
+    ///
+    /// This is the range-shaped companion to [`Self::snapshot_get_at_max_ts`]
+    /// used by a statement that is proven to return at most one row.
+    pub fn snapshot_scan_at_max_ts(
+        &self,
+        start_key: &[u8],
+        end_key: &[u8],
+        limit: Option<usize>,
+        call: &crate::rpc::UnaryCallContext,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, OptimisticCoordinatorError> {
+        let runtime = self
+            .opener
+            .open_session()
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        if runtime.cluster_id() != self.pd.cluster_id() {
+            return Err(OptimisticCoordinatorError::ClusterMismatch {
+                pd: self.pd.cluster_id(),
+                region_cache: runtime.cluster_id(),
+            });
+        }
+        super::snapshot_read::direct_snapshot_scan(
+            &runtime,
+            &crate::pd_capability::CapabilityTimestampSource(self.pd.clone()),
+            self.gc_state.cache().as_ref(),
+            start_key,
+            end_key,
+            limit,
+            call,
+        )
+    }
+
     fn open(
         &self,
         planned_mutation_count: usize,

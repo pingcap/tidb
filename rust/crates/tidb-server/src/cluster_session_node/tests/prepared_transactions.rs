@@ -41,6 +41,17 @@ fn prepared(session: &mut ClusterServerSession, sql: &str) {
     session.execute_general(&statement, &[]).expect("execute");
 }
 
+/// Binary prepared DML must retain its parsed tree.  Dropping it at PREPARE
+/// sends every YCSB UPDATE back through SQL-text parse/bind on EXECUTE.
+#[test]
+fn prepared_dml_retains_the_parse_tree_for_execute() {
+    let (mut session, _) = open_session();
+    let statement = session
+        .prepare_general("UPDATE t SET v = ? WHERE id = ?")
+        .expect("prepare");
+    assert!(statement.template().is_some());
+}
+
 /// Reads through the prepared path, so the snapshot under test is the one an
 /// EXECUTE takes.
 fn prepared_rows(session: &mut ClusterServerSession, sql: &str) -> Vec<Vec<Datum>> {
@@ -260,4 +271,96 @@ fn an_explicit_transaction_does_not_lock_what_go_would_lock() {
             error.message
         );
     }
+}
+
+/// A prepared UPDATE whose table the fast write planner declines — here a
+/// composite clustered primary key, which `run_fast_prepared_update` admits
+/// only for a single-column handle — falls back to the ordinary bound
+/// execution, and that fallback must apply its parameters.
+///
+/// The regression: the fallback reparsed the PREPARE-time SQL text on every
+/// EXECUTE, resurrecting raw `?` markers into the expression rewriter (1105
+/// "expression form is not yet supported by the rewriter"). Go binds the
+/// execute values onto the retained `*ast.UpdateStmt` (`ExecStmt.exec` ->
+/// `UpdateExec`) and never reparses, so TPC-C's payment-style
+/// `SET d_ytd = d_ytd + ?` answers 1 affected row; here it answered an error
+/// and every prepared payment failed.
+#[test]
+fn a_prepared_update_the_fast_planner_declines_binds_its_parameters() {
+    use tidb_protocol::PreparedValue;
+
+    let (mut session, _node) = open_session();
+    session
+        .execute_write(
+            "CREATE TABLE dist (w INT NOT NULL, d INT NOT NULL, \
+             ytd DECIMAL(10,2) NOT NULL DEFAULT 0, PRIMARY KEY (w, d))",
+        )
+        .expect("create");
+    session
+        .execute_write("INSERT INTO dist (w, d, ytd) VALUES (1, 1, 100.00)")
+        .expect("seed");
+
+    let statement = session
+        .prepare_general("UPDATE dist SET ytd = ytd + ? WHERE w = ? AND d = ?")
+        .expect("prepare");
+    let affected = {
+        let outcome = session
+            .execute_general(
+                &statement,
+                &[
+                    PreparedValue::Double(25.5),
+                    PreparedValue::SignedLongLong(1),
+                    PreparedValue::SignedLongLong(1),
+                ],
+            )
+            .expect("execute");
+        let GeneralExecuteOutcome::Write(outcome) = outcome else {
+            panic!("a prepared UPDATE answers OK with an affected count");
+        };
+        outcome.affected_rows
+    };
+    assert_eq!(affected, 1, "the matched row is updated");
+
+    let rows = prepared_rows(&mut session, "SELECT ytd FROM dist WHERE w = 1 AND d = 1");
+    assert_eq!(rows.len(), 1);
+    let applied = match &rows[0][0] {
+        Datum::Decimal(value) => value.to_string(),
+        other => panic!("a DECIMAL column answers a decimal, found {other:?}"),
+    };
+    assert!(
+        applied.contains("125.5"),
+        "ytd must hold 100.00 + 25.50, found {applied}"
+    );
+
+    // And inside an explicit transaction, where the statement runs through
+    // the pessimistic loop rather than autocommit publication.
+    prepared(&mut session, "BEGIN");
+    let affected = {
+        let outcome = session
+            .execute_general(
+                &statement,
+                &[
+                    PreparedValue::Double(0.5),
+                    PreparedValue::SignedLongLong(1),
+                    PreparedValue::SignedLongLong(1),
+                ],
+            )
+            .expect("execute inside a transaction");
+        let GeneralExecuteOutcome::Write(outcome) = outcome else {
+            panic!("a prepared UPDATE answers OK with an affected count");
+        };
+        outcome.affected_rows
+    };
+    assert_eq!(affected, 1);
+    prepared(&mut session, "COMMIT");
+
+    let rows = prepared_rows(&mut session, "SELECT ytd FROM dist WHERE w = 1 AND d = 1");
+    let applied = match &rows[0][0] {
+        Datum::Decimal(value) => value.to_string(),
+        other => panic!("a DECIMAL column answers a decimal, found {other:?}"),
+    };
+    assert!(
+        applied.contains("126"),
+        "the committed row must hold 126.00, found {applied}"
+    );
 }

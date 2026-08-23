@@ -25,13 +25,17 @@ use std::collections::VecDeque;
 
 use tidb_proto::{KvrpcCommitRequest, KvrpcCommitRole, KvrpcCommitTsExpired};
 
+use super::super::region_batches::{group_keys, group_mutations, RegionMutationBatch};
+
 use crate::lock::{LockRecoveryClient, TimestampSource};
 use crate::region::RegionRecoveryLoader;
 use crate::rpc::UnaryCallContext;
 
-use super::super::command_client::{PublishedCommand, TransactionCommandClient};
+use super::super::command_client::{
+    PublishedCommand, TransactionCommitRequest, TransactionCommandClient,
+    TransactionPrewriteRequest,
+};
 use super::super::mutation::{validate_and_sort, MutationSetError, OptimisticMutation};
-use super::super::region_batches::{group_keys, group_mutations};
 use super::super::state::{
     CommittedProtocol, CommittedTransaction, CoordinatorState, OptimisticCommitOutcome,
     OptimisticTransactionReceipt, SecondaryCommitFailure, TransactionAttemptPhase,
@@ -119,125 +123,82 @@ where
         };
         let mut lock_attempts = 0usize;
 
-        while let Some((batch, is_retry)) = queue.pop_front() {
-            receipt.region_attempts.push(batch.region());
-            let published_keys = batch.keys();
-            match self.prewrite_batch(
-                &batch,
-                &primary_key,
-                mutations.len(),
-                lock_ttl_ms,
-                is_retry,
-                &protocol,
-                call,
-            ) {
-                PublishedCommand::Response(response) => {
-                    possibly_prewrite_keys.extend(published_keys.iter().cloned());
-                    receipt
-                        .prewrite_attempt_publications
-                        .push(response.publication.clone());
-                    if let Some(region_error) = response.response.region_error.as_ref() {
-                        // Go `prewrite.go:436-443` (`handleRegionErr`): an
-                        // `UndeterminedResult` under async commit or 1PC
-                        // returns `ErrResultUndetermined` immediately, before
-                        // any backoff or relocation. TiKV is saying it does not
-                        // know whether this write applied, and for these
-                        // protocols the write may have been the commit.
-                        if response_is_undetermined(region_error)
-                            && protocol.commit_point_may_have_passed()
-                        {
-                            let cause = TransactionCause::Region {
-                                detail: format!(
-                                    "Prewrite returned undetermined region error under {}: {region_error:?}",
-                                    protocol.name()
-                                ),
-                            };
-                            record_attempt(
-                                &mut receipt,
-                                TransactionAttemptPhase::Prewrite,
-                                &published_keys,
-                                &batch,
-                                Some(response.publication.clone()),
-                                TransactionAttemptResult::Ambiguous(cause.clone()),
-                            );
-                            return self.undetermined_prewrite(receipt, cause);
-                        }
-                        let region_cause = TransactionCause::Region {
-                            detail: format!("Prewrite region retry: {region_error:?}"),
-                        };
-                        if let Err(cause) = self.recover_region_error(
-                            RecoveryPhase::Forward,
-                            region_error,
-                            batch.attempt(),
-                            call,
-                        ) {
-                            record_attempt(
-                                &mut receipt,
-                                TransactionAttemptPhase::Prewrite,
-                                &published_keys,
-                                &batch,
-                                Some(response.publication.clone()),
-                                TransactionAttemptResult::DefinitiveFailure(cause.clone()),
-                            );
-                            return Ok(self.rollback_after_failure(
-                                receipt,
-                                &possibly_prewrite_keys,
-                                cause,
-                            ));
-                        }
-                        record_attempt(
-                            &mut receipt,
-                            TransactionAttemptPhase::Prewrite,
-                            &published_keys,
-                            &batch,
-                            Some(response.publication.clone()),
-                            TransactionAttemptResult::Retry(region_cause),
-                        );
-                        match group_mutations(&self.runtime, batch.mutations()) {
-                            Ok(regrouped) => {
-                                protocol.observe_batch_count(regrouped.len());
-                                for regrouped_batch in regrouped.into_iter().rev() {
-                                    queue.push_front((regrouped_batch, true));
-                                }
-                                continue;
-                            }
-                            Err(error) => {
-                                return Ok(self.rollback_after_failure(
-                                    receipt,
-                                    &possibly_prewrite_keys,
-                                    TransactionCause::Region {
-                                        detail: format!("cannot regroup Prewrite keys: {error}"),
-                                    },
-                                ));
-                            }
-                        }
+        loop {
+            // One concurrent round: every pending region batch's Prewrite is
+            // admitted before any response is awaited, which is how Go's
+            // per-region committers (`2pc.go`, `prewriteRegions` via
+            // `doBatches`) keep a multi-region commit at one round trip
+            // instead of one per region. Retries regrouped out of this round
+            // re-enter the queue and run as the next round.
+            let round: Vec<(RegionMutationBatch, bool)> = queue.drain(..).collect();
+            if round.is_empty() {
+                break;
+            }
+
+            let requests: Vec<TransactionPrewriteRequest> = round
+                .iter()
+                .map(|(batch, is_retry)| {
+                    let (request, context) = self.build_prewrite_request(
+                        batch,
+                        &primary_key,
+                        mutations.len(),
+                        lock_ttl_ms,
+                        *is_retry,
+                        &protocol,
+                    );
+                    TransactionPrewriteRequest {
+                        address: batch.address(),
+                        request,
+                        context,
                     }
-                    if !response.response.errors.is_empty() {
-                        match self.handle_prewrite_key_errors(
-                            &response.response.errors,
-                            batch.context(),
-                            call,
-                        ) {
-                            Ok(()) if lock_attempts < MAX_LOCK_ATTEMPTS => {
-                                record_attempt(
-                                    &mut receipt,
-                                    TransactionAttemptPhase::Prewrite,
-                                    &published_keys,
-                                    &batch,
-                                    Some(response.publication.clone()),
-                                    TransactionAttemptResult::Retry(TransactionCause::Lock {
-                                        key: primary_key.clone(),
-                                        detail: "Prewrite lock resolved or waited; retrying at the same start_ts".to_owned(),
-                                    }),
-                                );
-                                lock_attempts += 1;
-                                queue.push_front((batch, true));
-                                continue;
-                            }
-                            Ok(()) => {
-                                let cause = TransactionCause::Lock {
-                                    key: primary_key.clone(),
-                                    detail: "Prewrite lock retry budget exhausted".to_owned(),
+                })
+                .collect();
+
+            let results = match self.runtime.client().try_borrow_mut() {
+                Ok(mut client) => client.publish_prewrites(&requests, call),
+                Err(_) => {
+                    let error = "TiKV client is already borrowed while publishing Prewrite";
+                    requests
+                        .into_iter()
+                        .map(|_| PublishedCommand::BeforePublication(error.to_owned()))
+                        .collect()
+                }
+            };
+
+            // Every admitted attempt went on the wire, so its keys may hold a
+            // prewrite even if a sibling batch fails this round first. A
+            // BeforePublication attempt never left this process and is added
+            // by its own arm below instead.
+            for (result, (batch, _)) in results.iter().zip(round.iter()) {
+                if !matches!(result, PublishedCommand::BeforePublication(_)) {
+                    possibly_prewrite_keys.extend(batch.keys().iter().cloned());
+                }
+            }
+
+            let mut next_round = VecDeque::new();
+            for ((batch, _), result) in round.into_iter().zip(results) {
+                receipt.region_attempts.push(batch.region());
+                let published_keys = batch.keys();
+                match result {
+                    PublishedCommand::Response(response) => {
+                        receipt
+                            .prewrite_attempt_publications
+                            .push(response.publication.clone());
+                        if let Some(region_error) = response.response.region_error.as_ref() {
+                            // Go `prewrite.go:436-443` (`handleRegionErr`): an
+                            // `UndeterminedResult` under async commit or 1PC
+                            // returns `ErrResultUndetermined` immediately, before
+                            // any backoff or relocation. TiKV is saying it does not
+                            // know whether this write applied, and for these
+                            // protocols the write may have been the commit.
+                            if response_is_undetermined(region_error)
+                                && protocol.commit_point_may_have_passed()
+                            {
+                                let cause = TransactionCause::Region {
+                                    detail: format!(
+                                        "Prewrite returned undetermined region error under {}: {region_error:?}",
+                                        protocol.name()
+                                    ),
                                 };
                                 record_attempt(
                                     &mut receipt,
@@ -245,15 +206,19 @@ where
                                     &published_keys,
                                     &batch,
                                     Some(response.publication.clone()),
-                                    TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                                    TransactionAttemptResult::Ambiguous(cause.clone()),
                                 );
-                                return Ok(self.rollback_after_failure(
-                                    receipt,
-                                    &possibly_prewrite_keys,
-                                    cause,
-                                ));
+                                return self.undetermined_prewrite(receipt, cause);
                             }
-                            Err(cause) => {
+                            let region_cause = TransactionCause::Region {
+                                detail: format!("Prewrite region retry: {region_error:?}"),
+                            };
+                            if let Err(cause) = self.recover_region_error(
+                                RecoveryPhase::Forward,
+                                region_error,
+                                batch.attempt(),
+                                call,
+                            ) {
                                 record_attempt(
                                     &mut receipt,
                                     TransactionAttemptPhase::Prewrite,
@@ -268,15 +233,129 @@ where
                                     cause,
                                 ));
                             }
+                            record_attempt(
+                                &mut receipt,
+                                TransactionAttemptPhase::Prewrite,
+                                &published_keys,
+                                &batch,
+                                Some(response.publication.clone()),
+                                TransactionAttemptResult::Retry(region_cause),
+                            );
+                            match group_mutations(&self.runtime, batch.mutations()) {
+                                Ok(regrouped) => {
+                                    protocol.observe_batch_count(regrouped.len());
+                                    for regrouped_batch in regrouped {
+                                        next_round.push_back((regrouped_batch, true));
+                                    }
+                                }
+                                Err(error) => {
+                                    return Ok(self.rollback_after_failure(
+                                        receipt,
+                                        &possibly_prewrite_keys,
+                                        TransactionCause::Region {
+                                            detail: format!(
+                                                "cannot regroup Prewrite keys: {error}"
+                                            ),
+                                        },
+                                    ));
+                                }
+                            }
+                        } else if !response.response.errors.is_empty() {
+                            match self.handle_prewrite_key_errors(
+                                &response.response.errors,
+                                batch.context(),
+                                call,
+                            ) {
+                                Ok(()) if lock_attempts < MAX_LOCK_ATTEMPTS => {
+                                    record_attempt(
+                                        &mut receipt,
+                                        TransactionAttemptPhase::Prewrite,
+                                        &published_keys,
+                                        &batch,
+                                        Some(response.publication.clone()),
+                                        TransactionAttemptResult::Retry(TransactionCause::Lock {
+                                            key: primary_key.clone(),
+                                            detail: "Prewrite lock resolved or waited; retrying at the same start_ts".to_owned(),
+                                        }),
+                                    );
+                                    lock_attempts += 1;
+                                    next_round.push_back((batch, true));
+                                }
+                                Ok(()) => {
+                                    let cause = TransactionCause::Lock {
+                                        key: primary_key.clone(),
+                                        detail: "Prewrite lock retry budget exhausted".to_owned(),
+                                    };
+                                    record_attempt(
+                                        &mut receipt,
+                                        TransactionAttemptPhase::Prewrite,
+                                        &published_keys,
+                                        &batch,
+                                        Some(response.publication.clone()),
+                                        TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                                    );
+                                    return Ok(self.rollback_after_failure(
+                                        receipt,
+                                        &possibly_prewrite_keys,
+                                        cause,
+                                    ));
+                                }
+                                Err(cause) => {
+                                    record_attempt(
+                                        &mut receipt,
+                                        TransactionAttemptPhase::Prewrite,
+                                        &published_keys,
+                                        &batch,
+                                        Some(response.publication.clone()),
+                                        TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                                    );
+                                    return Ok(self.rollback_after_failure(
+                                        receipt,
+                                        &possibly_prewrite_keys,
+                                        cause,
+                                    ));
+                                }
+                            }
+                        } else {
+                            if let Err(cause) =
+                                protocol.observe_prewrite_response(&response.response)
+                            {
+                                record_attempt(
+                                    &mut receipt,
+                                    TransactionAttemptPhase::Prewrite,
+                                    &published_keys,
+                                    &batch,
+                                    Some(response.publication.clone()),
+                                    TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                                );
+                                return Ok(self.rollback_after_failure(
+                                    receipt,
+                                    &possibly_prewrite_keys,
+                                    cause,
+                                ));
+                            }
+                            min_commit_ts = min_commit_ts.max(response.response.min_commit_ts);
+                            record_attempt(
+                                &mut receipt,
+                                TransactionAttemptPhase::Prewrite,
+                                &published_keys,
+                                &batch,
+                                Some(response.publication.clone()),
+                                TransactionAttemptResult::Confirmed,
+                            );
+                            receipt.prewrite_publications.push(response.publication);
                         }
                     }
-                    if let Err(cause) = protocol.observe_prewrite_response(&response.response) {
+                    PublishedCommand::BeforePublication(error) => {
+                        let cause = TransactionCause::Transport {
+                            detail: format!("Prewrite failed before publication: {error}"),
+                        };
                         record_attempt(
                             &mut receipt,
                             TransactionAttemptPhase::Prewrite,
                             &published_keys,
                             &batch,
-                            Some(response.publication.clone()),
+                            None,
                             TransactionAttemptResult::DefinitiveFailure(cause.clone()),
                         );
                         return Ok(self.rollback_after_failure(
@@ -285,55 +364,40 @@ where
                             cause,
                         ));
                     }
-                    min_commit_ts = min_commit_ts.max(response.response.min_commit_ts);
-                    record_attempt(
-                        &mut receipt,
-                        TransactionAttemptPhase::Prewrite,
-                        &published_keys,
-                        &batch,
-                        Some(response.publication.clone()),
-                        TransactionAttemptResult::Confirmed,
-                    );
-                    receipt.prewrite_publications.push(response.publication);
-                }
-                PublishedCommand::BeforePublication(error) => {
-                    let cause = TransactionCause::Transport {
-                        detail: format!("Prewrite failed before publication: {error}"),
-                    };
-                    record_attempt(
-                        &mut receipt,
-                        TransactionAttemptPhase::Prewrite,
-                        &published_keys,
-                        &batch,
-                        None,
-                        TransactionAttemptResult::DefinitiveFailure(cause.clone()),
-                    );
-                    return Ok(self.rollback_after_failure(
-                        receipt,
-                        &possibly_prewrite_keys,
-                        cause,
-                    ));
-                }
-                PublishedCommand::AfterPublication { publication, error } => {
-                    possibly_prewrite_keys.extend(published_keys.iter().cloned());
-                    receipt
-                        .prewrite_attempt_publications
-                        .push(publication.clone());
-                    // Go `prewrite.go:352-361` (`prewrite1BatchReqHandler.drop`):
-                    // an async-commit or 1PC committer whose prewrite got no
-                    // answer calls `setUndeterminedErr`, because for these
-                    // protocols a prewrite that got no answer may already have
-                    // committed the transaction. `2pc.go:1717-1737` then runs
-                    // cleanup only when `c.getUndeterminedErr() == nil`, so the
-                    // locks are left for the lock resolver, which can read the
-                    // primary lock's secondary list and decide correctly.
-                    // Rolling back here would be a contradicting operation, not
-                    // a retry.
-                    if protocol.commit_point_may_have_passed() {
+                    PublishedCommand::AfterPublication { publication, error } => {
+                        receipt
+                            .prewrite_attempt_publications
+                            .push(publication.clone());
+                        // Go `prewrite.go:352-361` (`prewrite1BatchReqHandler.drop`):
+                        // an async-commit or 1PC committer whose prewrite got no
+                        // answer calls `setUndeterminedErr`, because for these
+                        // protocols a prewrite that got no answer may already have
+                        // committed the transaction. `2pc.go:1717-1737` then runs
+                        // cleanup only when `c.getUndeterminedErr() == nil`, so the
+                        // locks are left for the lock resolver, which can read the
+                        // primary lock's secondary list and decide correctly.
+                        // Rolling back here would be a contradicting operation, not
+                        // a retry.
+                        if protocol.commit_point_may_have_passed() {
+                            let cause = TransactionCause::Transport {
+                                detail: format!(
+                                    "Prewrite completion failed after publication under {}: {error}",
+                                    protocol.name()
+                                ),
+                            };
+                            record_attempt(
+                                &mut receipt,
+                                TransactionAttemptPhase::Prewrite,
+                                &published_keys,
+                                &batch,
+                                Some(publication),
+                                TransactionAttemptResult::Ambiguous(cause.clone()),
+                            );
+                            return self.undetermined_prewrite(receipt, cause);
+                        }
                         let cause = TransactionCause::Transport {
                             detail: format!(
-                                "Prewrite completion failed after publication under {}: {error}",
-                                protocol.name()
+                                "Prewrite completion failed after publication: {error}"
                             ),
                         };
                         record_attempt(
@@ -342,28 +406,17 @@ where
                             &published_keys,
                             &batch,
                             Some(publication),
-                            TransactionAttemptResult::Ambiguous(cause.clone()),
+                            TransactionAttemptResult::DefinitiveFailure(cause.clone()),
                         );
-                        return self.undetermined_prewrite(receipt, cause);
+                        return Ok(self.rollback_after_failure(
+                            receipt,
+                            &possibly_prewrite_keys,
+                            cause,
+                        ));
                     }
-                    let cause = TransactionCause::Transport {
-                        detail: format!("Prewrite completion failed after publication: {error}"),
-                    };
-                    record_attempt(
-                        &mut receipt,
-                        TransactionAttemptPhase::Prewrite,
-                        &published_keys,
-                        &batch,
-                        Some(publication),
-                        TransactionAttemptResult::DefinitiveFailure(cause.clone()),
-                    );
-                    return Ok(self.rollback_after_failure(
-                        receipt,
-                        &possibly_prewrite_keys,
-                        cause,
-                    ));
                 }
             }
+            queue = next_round;
         }
 
         self.state
@@ -757,7 +810,6 @@ where
     ///
     /// The batch that happens to hold the primary key commits in the primary
     /// role — which only occurs on the async-commit path, where every key is
-    /// passed in at once because the decision was already made at prewrite.
     fn commit_secondaries(
         &mut self,
         secondary_keys: &[Vec<u8>],
@@ -785,111 +837,155 @@ where
             }
         };
         let mut failures = Vec::new();
-        while let Some(batch) = queue.pop_front() {
-            receipt.region_attempts.push(batch.region());
-            let holds_primary = batch.keys().iter().any(|key| key.as_slice() == primary_key);
-            let request = KvrpcCommitRequest {
-                start_version: self.start_ts,
-                keys: batch.keys().to_vec(),
-                commit_version: commit_ts,
-                commit_role: if holds_primary {
-                    KvrpcCommitRole::Primary as i32
-                } else {
-                    KvrpcCommitRole::Secondary as i32
-                },
-                primary_key: primary_key.to_vec(),
-                use_async_commit,
-                ..KvrpcCommitRequest::default()
-            };
-            let context = self.write_context(batch.context());
-            let published = match self.runtime.client().try_borrow_mut() {
-                Ok(mut client) => {
-                    client.publish_commit(batch.address(), &request, &context, &cleanup_call)
-                }
-                Err(_) => PublishedCommand::BeforePublication(
-                    "TiKV client is already borrowed while publishing secondary Commit".to_owned(),
-                ),
-            };
-            match published {
-                PublishedCommand::BeforePublication(error) => {
-                    let cause = TransactionCause::Transport {
-                        detail: format!("secondary Commit failed before publication: {error}"),
-                    };
-                    record_attempt(
-                        receipt,
-                        TransactionAttemptPhase::SecondaryCommit,
-                        batch.keys(),
-                        &batch,
-                        None,
-                        TransactionAttemptResult::DefinitiveFailure(cause.clone()),
-                    );
-                    failures.push(SecondaryCommitFailure {
+        while !queue.is_empty() {
+            // One concurrent round: every pending region batch's secondary
+            // Commit is admitted before any response is awaited, mirroring Go
+            // `twoPhaseCommitter.commitRegions` (`2pc.go`) whose `doBatches`
+            // runs the region commits concurrently. Retries regrouped out of
+            // this round re-enter the queue and run as the next round.
+            let round: Vec<_> = queue.drain(..).collect();
+            let mut requests = Vec::with_capacity(round.len());
+            for batch in &round {
+                receipt.region_attempts.push(batch.region());
+                let holds_primary =
+                    batch.keys().iter().any(|key| key.as_slice() == primary_key);
+                requests.push(TransactionCommitRequest {
+                    address: batch.address(),
+                    request: KvrpcCommitRequest {
+                        start_version: self.start_ts,
                         keys: batch.keys().to_vec(),
-                        region: Some(batch.region()),
-                        address: Some(batch.address().to_owned()),
-                        publication: None,
-                        cause,
-                    });
-                }
-                PublishedCommand::AfterPublication { publication, error } => {
-                    receipt
-                        .secondary_attempt_publications
-                        .push(publication.clone());
-                    let cause = TransactionCause::Transport {
-                        detail: format!(
-                            "secondary Commit completion failed after publication: {error}"
-                        ),
-                    };
-                    record_attempt(
-                        receipt,
-                        TransactionAttemptPhase::SecondaryCommit,
-                        batch.keys(),
-                        &batch,
-                        Some(publication.clone()),
-                        TransactionAttemptResult::Ambiguous(cause.clone()),
-                    );
-                    failures.push(SecondaryCommitFailure {
-                        keys: batch.keys().to_vec(),
-                        region: Some(batch.region()),
-                        address: Some(batch.address().to_owned()),
-                        publication: Some(publication),
-                        cause,
-                    });
-                }
-                PublishedCommand::Response(response) => {
-                    receipt
-                        .secondary_attempt_publications
-                        .push(response.publication.clone());
-                    if let Some(region_error) = response.response.region_error.as_ref() {
-                        match self.recover_region_error(
-                            RecoveryPhase::Secondary,
-                            region_error,
-                            batch.attempt(),
-                            &cleanup_call,
-                        ) {
-                            Ok(()) => match group_keys(&self.runtime, batch.keys()) {
-                                Ok(regrouped) => {
-                                    record_attempt(
-                                        receipt,
-                                        TransactionAttemptPhase::SecondaryCommit,
-                                        batch.keys(),
-                                        &batch,
-                                        Some(response.publication.clone()),
-                                        TransactionAttemptResult::Retry(TransactionCause::Region {
-                                            detail: format!(
-                                                "secondary Commit region retry: {region_error:?}"
+                        commit_version: commit_ts,
+                        commit_role: if holds_primary {
+                            KvrpcCommitRole::Primary as i32
+                        } else {
+                            KvrpcCommitRole::Secondary as i32
+                        },
+                        primary_key: primary_key.to_vec(),
+                        use_async_commit,
+                        ..KvrpcCommitRequest::default()
+                    },
+                    context: self.write_context(batch.context()),
+                });
+            }
+            let results = match self.runtime.client().try_borrow_mut() {
+                Ok(mut client) => client.publish_commits(&requests, &cleanup_call),
+                Err(_) => requests
+                    .iter()
+                    .map(|_| {
+                        PublishedCommand::BeforePublication(
+                            "TiKV client is already borrowed while publishing secondary Commit"
+                                .to_owned(),
+                        )
+                    })
+                    .collect(),
+            };
+            let mut next_round = VecDeque::new();
+            for (batch, published) in round.into_iter().zip(results) {
+                match published {
+                    PublishedCommand::BeforePublication(error) => {
+                        let cause = TransactionCause::Transport {
+                            detail: format!(
+                                "secondary Commit failed before publication: {error}"
+                            ),
+                        };
+                        record_attempt(
+                            receipt,
+                            TransactionAttemptPhase::SecondaryCommit,
+                            batch.keys(),
+                            &batch,
+                            None,
+                            TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                        );
+                        failures.push(SecondaryCommitFailure {
+                            keys: batch.keys().to_vec(),
+                            region: Some(batch.region()),
+                            address: Some(batch.address().to_owned()),
+                            publication: None,
+                            cause,
+                        });
+                    }
+                    PublishedCommand::AfterPublication { publication, error } => {
+                        receipt
+                            .secondary_attempt_publications
+                            .push(publication.clone());
+                        let cause = TransactionCause::Transport {
+                            detail: format!(
+                                "secondary Commit completion failed after publication: {error}"
+                            ),
+                        };
+                        record_attempt(
+                            receipt,
+                            TransactionAttemptPhase::SecondaryCommit,
+                            batch.keys(),
+                            &batch,
+                            Some(publication.clone()),
+                            TransactionAttemptResult::Ambiguous(cause.clone()),
+                        );
+                        failures.push(SecondaryCommitFailure {
+                            keys: batch.keys().to_vec(),
+                            region: Some(batch.region()),
+                            address: Some(batch.address().to_owned()),
+                            publication: Some(publication),
+                            cause,
+                        });
+                    }
+                    PublishedCommand::Response(response) => {
+                        receipt
+                            .secondary_attempt_publications
+                            .push(response.publication.clone());
+                        if let Some(region_error) = response.response.region_error.as_ref() {
+                            match self.recover_region_error(
+                                RecoveryPhase::Secondary,
+                                region_error,
+                                batch.attempt(),
+                                &cleanup_call,
+                            ) {
+                                Ok(()) => match group_keys(&self.runtime, batch.keys()) {
+                                    Ok(regrouped) => {
+                                        record_attempt(
+                                            receipt,
+                                            TransactionAttemptPhase::SecondaryCommit,
+                                            batch.keys(),
+                                            &batch,
+                                            Some(response.publication.clone()),
+                                            TransactionAttemptResult::Retry(
+                                                TransactionCause::Region {
+                                                    detail: format!(
+                                                        "secondary Commit region retry: {region_error:?}"
+                                                    ),
+                                                },
                                             ),
-                                        }),
-                                    );
-                                    for item in regrouped.into_iter().rev() {
-                                        queue.push_front(item);
+                                        );
+                                        for item in regrouped {
+                                            next_round.push_back(item);
+                                        }
                                     }
-                                    continue;
-                                }
-                                Err(error) => {
-                                    let cause = TransactionCause::Region {
-                                        detail: format!("secondary Commit regroup failed: {error}"),
-                                    };
+                                    Err(error) => {
+                                        let cause = TransactionCause::Region {
+                                            detail: format!(
+                                                "secondary Commit regroup failed: {error}"
+                                            ),
+                                        };
+                                        record_attempt(
+                                            receipt,
+                                            TransactionAttemptPhase::SecondaryCommit,
+                                            batch.keys(),
+                                            &batch,
+                                            Some(response.publication.clone()),
+                                            TransactionAttemptResult::DefinitiveFailure(
+                                                cause.clone(),
+                                            ),
+                                        );
+                                        failures.push(SecondaryCommitFailure {
+                                            keys: batch.keys().to_vec(),
+                                            region: Some(batch.region()),
+                                            address: Some(batch.address().to_owned()),
+                                            publication: Some(response.publication.clone()),
+                                            cause,
+                                        });
+                                    }
+                                },
+                                Err(cause) => {
                                     record_attempt(
                                         receipt,
                                         TransactionAttemptPhase::SecondaryCommit,
@@ -906,55 +1002,39 @@ where
                                         cause,
                                     });
                                 }
-                            },
-                            Err(cause) => {
-                                record_attempt(
-                                    receipt,
-                                    TransactionAttemptPhase::SecondaryCommit,
-                                    batch.keys(),
-                                    &batch,
-                                    Some(response.publication.clone()),
-                                    TransactionAttemptResult::DefinitiveFailure(cause.clone()),
-                                );
-                                failures.push(SecondaryCommitFailure {
-                                    keys: batch.keys().to_vec(),
-                                    region: Some(batch.region()),
-                                    address: Some(batch.address().to_owned()),
-                                    publication: Some(response.publication.clone()),
-                                    cause,
-                                });
                             }
+                        } else if let Some(error) = response.response.error.as_ref() {
+                            let cause = classify_key_error(error);
+                            record_attempt(
+                                receipt,
+                                TransactionAttemptPhase::SecondaryCommit,
+                                batch.keys(),
+                                &batch,
+                                Some(response.publication.clone()),
+                                TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                            );
+                            failures.push(SecondaryCommitFailure {
+                                keys: batch.keys().to_vec(),
+                                region: Some(batch.region()),
+                                address: Some(batch.address().to_owned()),
+                                publication: Some(response.publication.clone()),
+                                cause,
+                            });
+                        } else {
+                            record_attempt(
+                                receipt,
+                                TransactionAttemptPhase::SecondaryCommit,
+                                batch.keys(),
+                                &batch,
+                                Some(response.publication.clone()),
+                                TransactionAttemptResult::Confirmed,
+                            );
+                            receipt.secondary_publications.push(response.publication);
                         }
-                    } else if let Some(error) = response.response.error.as_ref() {
-                        let cause = classify_key_error(error);
-                        record_attempt(
-                            receipt,
-                            TransactionAttemptPhase::SecondaryCommit,
-                            batch.keys(),
-                            &batch,
-                            Some(response.publication.clone()),
-                            TransactionAttemptResult::DefinitiveFailure(cause.clone()),
-                        );
-                        failures.push(SecondaryCommitFailure {
-                            keys: batch.keys().to_vec(),
-                            region: Some(batch.region()),
-                            address: Some(batch.address().to_owned()),
-                            publication: Some(response.publication.clone()),
-                            cause,
-                        });
-                    } else {
-                        record_attempt(
-                            receipt,
-                            TransactionAttemptPhase::SecondaryCommit,
-                            batch.keys(),
-                            &batch,
-                            Some(response.publication.clone()),
-                            TransactionAttemptResult::Confirmed,
-                        );
-                        receipt.secondary_publications.push(response.publication);
                     }
                 }
             }
+            queue = next_round;
         }
         failures
     }

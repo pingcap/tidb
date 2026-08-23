@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The range of a table's CLUSTERED HANDLE that a `WHERE` implies: what
-//! turns Go's `TableFullScan` into its `TableRangeScan`.
+//! The range of a table's CLUSTERED HANDLE that a `WHERE` implies:
+//! what turns Go's `TableFullScan` into its `TableRangeScan`.
 //!
 //! Mirrors Go `pkg/planner/core/stats.go`'s `deriveTablePathStats`, which is
 //! three steps this module keeps in the same order:
@@ -79,14 +79,20 @@ use tidb_planner::cardinality::row_count_estimator::{
 };
 use tidb_txnkv::Key;
 
-/// The ranges a `WHERE` implies over `table`'s clustered handle, or `None`
-/// when this tier builds none.
+/// The ranges a `WHERE` implies over `table`'s clustered handle, or
+/// `None` when this tier builds none.
 ///
 /// `None` is Go's full range, and the caller reads the whole table for it.
 /// The refusals are:
 ///
-/// * a table with no primary-key handle -- a `_tidb_rowid` table has no
-///   handle a `WHERE` can name;
+/// * a table with no declared primary-key handle -- a `_tidb_rowid` table has
+///   no handle a `WHERE` can name;
+/// * an UNSIGNED handle. The record key encodes a handle with the SIGNED
+///   integer codec, so an unsigned value above `i64::MAX` encodes as a
+///   negative key and a range over it is not the interval its bounds read
+///   like. Go handles this through `points2TableRanges`' unsigned domain;
+///   refusing is a lost optimization on such tables, never a wrong answer,
+///   because the `WHERE` above the source still filters every row;
 /// * a `WHERE` that constrains the handle with nothing the ranger can use.
 ///
 /// An UNSIGNED handle is ranged over like any other. Its two extra steps --
@@ -104,8 +110,23 @@ pub(crate) fn build_handle_ranges<'a>(
     where_clause: &'a tidb_ast::Expr,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<IndexRanges<'a>> {
-    if !table.common_handle_offsets().is_empty() {
-        return build_common_handle_ranges(table, where_clause, zone);
+    let common_offsets = table.common_handle_offsets();
+    if !common_offsets.is_empty() {
+        let columns = common_offsets
+            .iter()
+            .map(|offset| {
+                let column = table.columns.get(*offset)?;
+                Some(crate::index_range::RangeColumn::whole(
+                    column.name.clone(),
+                    column.field_type.clone(),
+                ))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        return crate::index_range::detach_cond_and_build_range_for_index(
+            &columns,
+            where_clause,
+            zone,
+        );
     }
     let column = handle_column(table)?;
     let mut built = crate::index_range::detach_cond_and_build_range_for_index(
@@ -438,7 +459,7 @@ pub(crate) fn record_key_ranges(
     table: &KvTable,
     ranges: &[IndexRange],
     zone: &tidb_datatype::SessionTimeZone,
-) -> Result<Option<Vec<(Key, Key)>>, tidb_codec::CodecError> {
+ ) -> Result<Option<Vec<(Key, Key)>>, tidb_codec::CodecError> {
     // DDL does not materialize the clustered PRIMARY as a secondary index.
     // The table path still carries the common-handle column offsets, and Go's
     // `CommonHandleRangesToKVRanges` uses those record keys directly.

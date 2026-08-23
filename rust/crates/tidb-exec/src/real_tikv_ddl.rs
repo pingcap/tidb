@@ -486,7 +486,11 @@ fn commit_cluster_ddl_with_backfill_once<
     notifier: Option<&dyn SchemaVersionNotifier>,
     backfiller: &dyn IndexBackfiller,
 ) -> Result<ClusterDdlReport, ClusterDdlError> {
-    let transaction = SessionTransaction::begin(opener, timeout)?;
+    let transaction = SessionTransaction::begin(
+        opener,
+        timeout,
+        crate::session_commit_protocol::session_commit_protocol(),
+    )?;
     let start_ts = transaction.start_ts();
     let plan = {
         let mut snapshot = SnapshotMetaSnapshot::new(

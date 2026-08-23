@@ -238,7 +238,10 @@ pub(crate) const ER_UNKNOWN_STMT_HANDLER: u16 = 1243;
 pub(crate) const RESULT_BATCH_SIZE: usize = 128;
 
 struct ConnectionPreparedStatement {
-    statement: PreparedStatement,
+    /// The parsed statement is immutable after PREPARE.  Keep it behind an
+    /// `Arc` so COM_STMT_EXECUTE only clones a pointer; cloning the retained
+    /// AST for every execute made YCSB's point reads pay a full tree copy.
+    statement: Arc<PreparedStatement>,
     parameter_types: Option<Vec<PreparedParameterType>>,
     /// An open read-only cursor: the materialized result a cursor-mode
     /// execute stored for later `COM_STMT_FETCH` commands, with the columns
@@ -299,7 +302,7 @@ impl PreparedStatementRegistry {
             statement_id,
             ConnectionPreparedStatement {
                 bound_params: vec![None; statement.parameter_count()],
-                statement,
+                statement: Arc::new(statement),
                 parameter_types: None,
                 cursor: None,
             },
@@ -1514,6 +1517,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     sink.write_payload(&packet)
                         .map_err(|error| MysqlConnectionError::PartialResult(error.message))?;
                 }
+                sink.flush()
+                    .map_err(|error| MysqlConnectionError::PartialResult(error.message))?;
                 commands.stmt_prepare_successes += 1;
             }
             Command::StmtExecute(bytes) => {
@@ -1541,7 +1546,10 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     )?;
                     continue;
                 };
-                let prepared_statement = statement.statement.clone();
+                // The statement is immutable after PREPARE.  Cloning the
+                // `Arc` keeps the registry borrow short without cloning the
+                // parser-owned AST on every execute.
+                let prepared_statement = Arc::clone(&statement.statement);
                 let previous_types = statement.parameter_types.clone();
                 // The marker count is per statement: a point read owns one, a
                 // write owns one per bound column plus its handle.
@@ -1605,7 +1613,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     }
                 };
                 let values = execute.values;
-                match prepared_statement {
+                match prepared_statement.as_ref() {
                     // The same two lines the text arm runs, so the transaction
                     // a prepared BEGIN opens, and the status flag the client
                     // reads back, are the text protocol's own.
@@ -1655,7 +1663,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             }
                         };
                         let mut result =
-                            match engine.execute_prepared_point_read(&point_read, &parameters) {
+                            match engine.execute_prepared_point_read(point_read, &parameters) {
                                 Ok(result) => result,
                                 Err(error) => {
                                     write_query_error(&mut output, &error, protocol_41)?;
@@ -1727,7 +1735,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         // later through COM_STMT_FETCH.
                         if execute.cursor_flags & tidb_protocol::CURSOR_TYPE_READ_ONLY != 0 {
                             let mut write_outcome = None;
-                            match engine.execute_general(&general, &values) {
+                            match engine.execute_general(general, &values) {
                                 Ok(GeneralExecuteOutcome::Rows(mut result)) => {
                                     match open_prepared_cursor(
                                         &mut result,
@@ -1779,7 +1787,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             continue;
                         }
                         let mut write_outcome = None;
-                        match engine.execute_general(&general, &values) {
+                        match engine.execute_general(general, &values) {
                             Ok(GeneralExecuteOutcome::Rows(mut result)) => {
                                 let write_result = {
                                     let statement_options = framing.result_set(
@@ -1846,8 +1854,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         // set. Affected rows reach the client only after the
                         // transaction committed determinately; every other
                         // terminal state arrived here as an error.
-                        match engine.execute_prepared_write(&write, &write_bind_parameters(values))
-                        {
+                        match engine.execute_prepared_write(write, &write_bind_parameters(values)) {
                             Ok(outcome) => {
                                 write_affected_rows_ok(
                                     &mut output,
