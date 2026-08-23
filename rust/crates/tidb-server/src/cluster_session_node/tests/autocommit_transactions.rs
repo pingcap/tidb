@@ -873,3 +873,53 @@ fn the_backoff_jitter_is_not_degenerate_at_the_small_bounds() {
         }
     }
 }
+
+/// A binary-protocol write must execute the statement the protocol BOUND.
+///
+/// The DML arms used to re-parse the statement's SQL text at EXECUTE, so the
+/// tree they ran still carried every `?` the COM_STMT_EXECUTE packet had
+/// already replaced -- and the expression rewriter refused the surviving
+/// `ParamMarker` with a generic 1105. Go executes the bound plan
+/// (`pkg/server`'s `statement` carries the compiled plan and its values), so
+/// sysbench's prepared UPDATE/DELETE shapes are ordinary SQL there.
+#[test]
+fn a_prepared_write_executes_the_bound_statement_not_a_reparse() {
+    use tidb_protocol::PreparedValue;
+    let (mut session, _cluster) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed");
+
+    let update = session
+        .prepare_general("UPDATE t SET v = v + ? WHERE id = ?")
+        .expect("prepare");
+    {
+        let outcome = session
+            .execute_general(
+                &update,
+                &[PreparedValue::SignedLongLong(5), PreparedValue::SignedLongLong(1)],
+            )
+            .expect("the bound UPDATE executes");
+        let GeneralExecuteOutcome::Write(outcome) = outcome else {
+            panic!("an UPDATE answers with an OK, not rows");
+        };
+        assert_eq!(outcome.affected_rows, 1);
+    }
+    let value = rows(&mut session, "SELECT v FROM t WHERE id = 1");
+    assert_eq!(value, vec![vec![Datum::Int(15)]], "the bound values landed");
+
+    let delete = session
+        .prepare_general("DELETE FROM t WHERE id = ?")
+        .expect("prepare");
+    {
+        let outcome = session
+            .execute_general(&delete, &[PreparedValue::SignedLongLong(1)])
+            .expect("the bound DELETE executes");
+        let GeneralExecuteOutcome::Write(outcome) = outcome else {
+            panic!("a DELETE answers with an OK, not rows");
+        };
+        assert_eq!(outcome.affected_rows, 1);
+    }
+    let remaining = rows(&mut session, "SELECT v FROM t WHERE id = 1");
+    assert!(remaining.is_empty(), "the row is gone");
+}

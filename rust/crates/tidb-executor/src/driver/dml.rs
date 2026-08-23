@@ -90,7 +90,7 @@ pub fn run_insert_reporting(
 /// needs (it already holds the parsed statement the `EXPLAIN` wraps, and
 /// real `EXPLAIN ANALYZE` executes the wrapped statement, captured via
 /// `pkg/executor`: an `EXPLAIN ANALYZE INSERT` really inserts the row).
-pub(crate) fn run_insert_stmt(
+pub fn run_insert_stmt(
     insert: &tidb_ast::InsertStmt,
     catalog: &mut Catalog,
     current_db: &str,
@@ -2463,7 +2463,7 @@ pub fn run_delete_in(
 /// [`run_delete_in`]'s body, taking the already-parsed AST directly -- see
 /// [`run_update_stmt`]'s doc for why `explain::explain_analyze_delete_stmt`
 /// needs this split.
-pub(crate) fn run_delete_stmt(
+pub fn run_delete_stmt(
     delete: &tidb_ast::DeleteStmt,
     catalog: &mut Catalog,
     current_db: &str,

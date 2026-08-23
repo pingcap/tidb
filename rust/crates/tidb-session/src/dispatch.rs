@@ -959,7 +959,13 @@ impl Session {
                             enable_strict_not_null_check,
                         );
                     let result = self.with_staged_catalog(|catalog| {
-                        tidb_executor::run_insert_reporting(sql, catalog, &current_db, &ctx)
+                        // Go executes the statement the protocol BOUND
+                        // (`pkg/server`'s `statement`/`executableParams`
+                        // carry the values): re-parsing `sql` here would run
+                        // a tree whose markers never met their execute-time
+                        // values, which is a wrong answer for every binary-
+                        // protocol write.
+                        tidb_executor::run_insert_stmt(insert, catalog, &current_db, &ctx)
                     });
                     self.drain_eval_warnings(&ctx);
                     // Go `session.LastInsertID()`, the OK packet's field:
@@ -995,8 +1001,11 @@ impl Session {
                         .statement_context_ignoring(true, update.ignore)
                         .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
                     let output = self.with_staged_catalog(|catalog| {
-                        Ok(StmtOutput::Affected(tidb_executor::run_update_in(
-                            sql,
+                        // Bound AST, not SQL text: the text still carries the
+                        // markers the binary protocol already replaced. See
+                        // the INSERT arm above.
+                        Ok(StmtOutput::Affected(tidb_executor::run_update_stmt(
+                            update,
                             catalog,
                             &current_db,
                             &ctx,
@@ -1016,8 +1025,9 @@ impl Session {
                         .statement_context_ignoring(true, delete.ignore)
                         .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
                     let output = self.with_staged_catalog(|catalog| {
-                        Ok(StmtOutput::Affected(tidb_executor::run_delete_in(
-                            sql,
+                        // Bound AST, not SQL text -- see the UPDATE arm.
+                        Ok(StmtOutput::Affected(tidb_executor::run_delete_stmt(
+                            delete,
                             catalog,
                             &current_db,
                             &ctx,
