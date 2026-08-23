@@ -128,6 +128,7 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tidb_chunk::codec::estimate_type_width;
@@ -242,6 +243,12 @@ const MAX_PENALTY_ROW_COUNT: f64 = 1000.0;
 #[derive(Debug, Default)]
 pub struct StatsLoadState {
     loaded: Mutex<LoadedStatistics>,
+    /// Set whenever anything enters a pending set, cleared by `advance`.
+    /// Statement execution advances EVERY cached table's load state
+    /// (`Catalog::advance_statistics_loads`), and the overwhelming common case
+    /// is "nothing is pending" — one relaxed atomic read per table instead of
+    /// a lock-and-scan of eight collections.
+    has_pending: AtomicBool,
 }
 
 /// A statement-planning checkpoint for one table's shared statistics cache.
@@ -283,6 +290,9 @@ impl StatsLoadState {
             .loaded
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = checkpoint.loaded.clone();
+        let pending = !checkpoint.loaded.pending_columns.is_empty()
+            || !checkpoint.loaded.pending_indexes.is_empty();
+        self.has_pending.store(pending, Ordering::Relaxed);
     }
 
     /// Atomically publishes one statement's loads and returns the cumulative
@@ -320,6 +330,9 @@ impl StatsLoadState {
     /// these items affect later statements without retroactively changing the
     /// statement that triggered Go's asynchronous load.
     fn mark_accessed(&self, columns: BTreeSet<i64>, indexes: BTreeSet<i64>) {
+        if columns.is_empty() && indexes.is_empty() {
+            return;
+        }
         let mut loaded = self
             .loaded
             .lock()
@@ -334,9 +347,15 @@ impl StatsLoadState {
                 loaded.pending_index_order.push(id);
             }
         }
+        self.has_pending.store(true, Ordering::Relaxed);
     }
 
     fn advance(&self) {
+        if !self.has_pending.swap(false, Ordering::Relaxed) {
+            // Nothing queued since the last advance: Go's own load loop only
+            // ever touches tables with something to load.
+            return;
+        }
         let mut loaded = self
             .loaded
             .lock()
