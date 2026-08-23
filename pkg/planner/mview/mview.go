@@ -376,7 +376,7 @@ type buildLocalResult struct {
 	sctx     planctx.PlanContext
 
 	mvDBName     pmodel.CIStr
-	mviewTable           *model.TableInfo
+	mviewTable   *model.TableInfo
 	baseTableID  int64
 	mlogTableID  int64
 	baseTable    *model.TableInfo
@@ -516,7 +516,7 @@ func buildLocal(
 		MVSelect:          mvSel,
 		sctx:              sctx,
 		mvDBName:          mvDBName,
-		mviewTable:                mv,
+		mviewTable:        mv,
 		baseTableID:       baseTableID,
 		mlogTableID:       mlogTableID,
 		baseTable:         baseTable,
