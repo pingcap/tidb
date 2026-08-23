@@ -1456,6 +1456,8 @@ mod tests_in_list_full_evaluation;
 mod tests_index_hints;
 mod tests_index_key_length;
 #[cfg(test)]
+mod tests_join_key_cast;
+#[cfg(test)]
 mod tests_join_predicate_placement;
 #[cfg(test)]
 mod tests_join_reorder_cost;

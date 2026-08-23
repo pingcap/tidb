@@ -4051,6 +4051,14 @@ fn build_join_with_choice(
     // `equal:[...]`/`other cond:` and the hash table's own keys are one
     // decision rather than two that can drift.
     let split = crate::hash_join::split_equi(&conditions, left_width);
+    // Go's join-key cast chain over the same conditions: the mismatched
+    // int-vs-string equalities `updateEQCond` would materialize (their
+    // plan-column ids advance the statement's stream below), and the subset
+    // `rule_join_key_type_cast.go` rewrites to an integer key, which is what
+    // makes an INL_JOIN on the int side's handle possible at all.
+    let mut coercions = crate::driver::join_key_cast::analyze(&conditions, left_width, ctx);
+    let coercion_double_cast_pairs = coercions.double_cast_pairs();
+    let coercion_rewritten = coercions.rewritten();
     let physical_conditions = {
         let mut flattened = Vec::new();
         for condition in &conditions {
@@ -4351,6 +4359,7 @@ fn build_join_with_choice(
                     | crate::driver::join_search::Refusal::NoChildOrders
             )
     );
+    let mut cast_probe_ordinal = None;
     let index_joins = (demand.runtime_lookup.is_none() && !coalescing && index_enumerated)
         .then(|| {
             let (left_side, right_side) = crate::driver::index_join_decision::join_sides(
@@ -4363,7 +4372,7 @@ fn build_join_with_choice(
                 &left_types,
                 &right_types,
             );
-            crate::driver::index_join_decision::index_join_decisions_with_context(
+            let mut decisions = crate::driver::index_join_decision::index_join_decisions_with_context(
                 kind,
                 &split.keys,
                 &left_side,
@@ -4383,7 +4392,61 @@ fn build_join_with_choice(
                     Some(left_width),
                 )
             })
-            .collect::<Vec<crate::driver::index_join_decision::IndexJoinDecision>>()
+            .collect::<Vec<crate::driver::index_join_decision::IndexJoinDecision>>();
+            // Go's `rule_join_key_type_cast` rewrite makes the INT side of a
+            // mismatched equality probeable by `cast(str AS SIGNED)`. The
+            // split keys hold no such equality, so it arrives here as its
+            // own candidate -- and only under an index-family hint naming
+            // the int side, the one surface the recordings pin (every
+            // unhinted recording of this shape is a hash join).
+            if decisions.is_empty() && forced_index_name.is_some() {
+                for (ordinal, &pair_at) in coercion_rewritten.iter().enumerate() {
+                    let pair = &mut coercions.mismatched[pair_at];
+                    let lookup_is_left = pair.int_offset < left_width;
+                    let lookup_alias = if lookup_is_left {
+                        hint_left.as_deref()
+                    } else {
+                        hint_right.as_deref()
+                    };
+                    let hinted = lookup_alias.zip(demand.join_hints).is_some_and(
+                        |(alias, hints)| hints.index_family_names_alias(alias),
+                    );
+                    if !hinted {
+                        continue;
+                    }
+                    let Some(rewrite) = pair.rewrite.take() else {
+                        continue;
+                    };
+                    let (inner_side, inner_offset, outer_offset) = if lookup_is_left {
+                        (&left_side, pair.int_offset, pair.str_offset - left_width)
+                    } else {
+                        (&right_side, pair.int_offset - left_width, pair.str_offset)
+                    };
+                    let decision = crate::driver::index_join_decision::cast_lookup_decision(
+                        kind,
+                        lookup_is_left,
+                        crate::driver::index_join_decision::CastLookupKey {
+                            inner_offset,
+                            outer_offset,
+                            rewrite,
+                        },
+                        inner_side,
+                        demand.rows,
+                    );
+                    if let Some(decision) = decision.filter(|decision| {
+                        index_join_satisfies_required_order(
+                            decision.lookup_is_left,
+                            &compact_required,
+                            Some(left_width),
+                        )
+                    }) {
+                        cast_probe_ordinal = Some(ordinal);
+                        decisions.push(decision);
+                        break;
+                    }
+                }
+            }
+            decisions
         })
         .unwrap_or_default();
     for decision in &index_joins {
@@ -4839,12 +4902,32 @@ fn build_join_with_choice(
     let merged = matches!(winning_choice, CostedJoinChoice::Merge)
         .then_some(merged)
         .flatten();
-    let index_join = match winning_choice {
+    let mut index_join = match winning_choice {
         CostedJoinChoice::Index { decision_index, .. } => {
             index_joins.into_iter().nth(decision_index)
         }
         CostedJoinChoice::Merge | CostedJoinChoice::Hash { .. } => None,
     };
+    // Go's join-key cast chain consumes plan-column ids during logical
+    // optimization -- after the sources and the SELECT projection's ids,
+    // before any physical numbering -- whether or not any strategy uses the
+    // rewrite. This point runs exactly once per finally-built join: the
+    // cost-only initial pass above returns into `build_join_with_choice`
+    // BEFORE reaching it. The chosen cast probe's range text is numbered
+    // from the same stream: Go's `indexJoinIntPKRangeInfo` prints the
+    // rule's injected cast column, which has no `OrigName` -- `Column#N`.
+    if let Some(trace) = trace.as_deref() {
+        let cast_stream_ids =
+            trace.join_key_cast_stream(coercion_double_cast_pairs, coercion_rewritten.len());
+        if let Some(decision) = index_join
+            .as_mut()
+            .filter(|decision| decision.probe_cast.is_some())
+        {
+            if let Some(id) = cast_probe_ordinal.and_then(|at| cast_stream_ids.get(at)) {
+                decision.range_info = format!("[Column#{id}]");
+            }
+        }
+    }
     let selected_index_name = match winning_choice {
         CostedJoinChoice::Index { kind, .. } => Some(index_join_kind_name(kind)),
         CostedJoinChoice::Merge | CostedJoinChoice::Hash { .. } => forced_index_name,
@@ -5065,10 +5148,34 @@ fn build_join_with_choice(
         {
             keys.sort_by(|(_, _, left, _), (_, _, right, _)| left.0.cmp(&right.0));
         }
-        let keys = keys
+        let mut keys = keys
             .into_iter()
             .map(|(_, _, key, _)| key)
             .collect::<Vec<_>>();
+        // The cast probe's equality is not among the split keys; its outer
+        // key is the rule's injected cast column, already numbered into
+        // `range_info` (`[Column#N]`), and its inner key is the int side's
+        // re-published bare column, which this tier does not number -- Go's
+        // unnamed-column fallback. The scan row the harness compares does
+        // not read these; they keep the operator info from printing empty
+        // key lists.
+        if let Some(cast) = &decision.probe_cast {
+            let outer = decision
+                .range_info
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .to_owned();
+            let inner = decision
+                .output_offsets
+                .get(cast.inner_offset)
+                .and_then(|offset| decision.columns.get(*offset))
+                .map_or_else(
+                    || "Column".to_owned(),
+                    |(name, _)| format!("{}.{}.{name}", decision.database, decision.visible),
+                );
+            equal_conditions = vec![format!("eq({outer}, {inner})")];
+            keys = vec![(outer, inner)];
+        }
         let index = match &decision.object {
             crate::access_path::LookupObject::Index(_) => true,
             crate::access_path::LookupObject::Handle
@@ -5233,6 +5340,7 @@ fn build_join_with_choice(
             aggregation_stream_ordered: decision.aggregation_stream_ordered(),
             outer_not_null: outer_not_null.clone(),
             inner_not_null: inner_not_null.clone(),
+            probe_cast: decision.probe_cast.clone(),
         });
         join_exec.set_consumes_where(pushed_consumes_where || decision.consumes_where);
         (

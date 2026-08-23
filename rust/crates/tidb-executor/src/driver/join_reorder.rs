@@ -2642,7 +2642,12 @@ fn collect_rows<'a>(
     if join.right.is_none() && join.on.is_none() && join.using.is_empty() && !join.natural {
         return push_row_node(&join.left, catalog, current_db, ctx, ids, leaves, on_conds);
     }
-    if join.straight || join.natural || !join.using.is_empty() {
+    // `straight_join` pins the join ORDER, not the rows: Go's stats derivation
+    // runs over a straight join like any other, and this inventory never
+    // rebuilds the tree, so a straight node contributes its leaves and its
+    // `ON` conjuncts exactly as a plain join does. Only NATURAL/`USING`
+    // stay refused -- they change the column set the leaves expose.
+    if join.natural || !join.using.is_empty() {
         return false;
     }
     let Some(right) = &join.right else {

@@ -258,6 +258,7 @@ fn both_ways(
         aggregation_stream_ordered: false,
         outer_not_null: Vec::new(),
         inner_not_null: Vec::new(),
+        probe_cast: None,
     });
     assert!(looked_up.is_index_join());
     let index_rows = drain(&mut looked_up, &types);
@@ -511,6 +512,7 @@ fn one_key_repeated_across_a_batch_is_probed_once() {
         aggregation_stream_ordered: false,
         outer_not_null: Vec::new(),
         inner_not_null: Vec::new(),
+        probe_cast: None,
     });
     let rows = drain(&mut exec, &types);
     assert_eq!(
@@ -764,4 +766,159 @@ mod decision {
         )
         .is_none());
     }
+}
+
+/// Go's `rule_join_key_type_cast` probe: the outer key is
+/// `cast(str AS SIGNED)` computed behind the rule's guard
+/// (`driver::join_key_cast`), probing the inner table's integer handle.
+///
+/// The oracle is this unit's own nested loop over the SAME data -- the
+/// original double equality `eq(varchar, int)` evaluated per pair -- which
+/// the replay corpus already proves against TiDB. The guard is what makes
+/// the two agree: without it, `'1.5'` casts to 2 and the probe would read
+/// handle 2, a row the double equality rejects. `'abc'` casts to 0 AND its
+/// double value is 0.0, so it must match the id-0 row; a NULL key matches
+/// nothing.
+#[test]
+fn a_cast_probe_guards_and_matches_like_the_double_equality() {
+    let mut table = KvTable::new(96, vec![column("id", 1), column("v", 2)]);
+    table.set_pk_handle_offset(0);
+    for (id, v) in [(0i64, 0i64), (1, 10), (2, 20), (3, 30)] {
+        table
+            .insert_row(&[Datum::Int(id), Datum::Int(v)], &tidb_expr::NoColumns)
+            .unwrap();
+    }
+    let varchar = {
+        let mut ft = FieldType::new(FieldTypeCode::Varchar);
+        ft.set_flen(20);
+        ft.set_charset_name("utf8mb4");
+        ft.set_collation_name("utf8mb4_bin");
+        ft
+    };
+    // outer(rowid bigint, key varchar(20)).
+    let outer_column = |index: usize, ft: FieldType| {
+        let mut c = Column::new(index as i64 + 1, ft);
+        c.index = index as i64;
+        c
+    };
+    let outer_schema = Schema::new(vec![
+        outer_column(0, long()),
+        outer_column(1, varchar.clone()),
+    ]);
+    let outer_rows: Vec<Vec<Datum>> = [
+        Some("1"),
+        Some("2"),
+        Some("1.5"),
+        Some("abc"),
+        None,
+        Some("2"),
+    ]
+    .iter()
+    .enumerate()
+    .map(|(i, key)| {
+        vec![
+            Datum::Int(i as i64),
+            key.map_or(Datum::Null, |k| Datum::Bytes(k.as_bytes().to_vec())),
+        ]
+    })
+    .collect();
+    let joined_schema = || {
+        Schema::new(vec![
+            outer_column(0, long()),
+            outer_column(1, varchar.clone()),
+            outer_column(2, long()),
+            outer_column(3, long()),
+        ])
+    };
+    let types = [long(), varchar.clone(), long(), long()];
+    // The ORIGINAL equality, `eq(varchar, int)` over the joined row: no
+    // split key comes of it, so the reference join is the nested loop
+    // evaluating the double comparison -- and the index side retains it as
+    // its residual check.
+    let condition = {
+        let column = |index: usize, ft: FieldType| {
+            let mut c = Column::new(index as i64 + 1, ft);
+            c.index = index as i64;
+            Expression::Column(c)
+        };
+        Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("eq"),
+            long(),
+            vec![column(1, varchar.clone()), column(2, long())],
+        ))
+    };
+    let outer_exec = || {
+        Box::new(MemTableSourceExec::new(
+            ExecutorMeta::new(outer_schema.clone(), 0, INIT_CAP, CHUNK),
+            outer_rows.clone(),
+        )) as Box<dyn Executor>
+    };
+    let meta = || ExecutorMeta::new(joined_schema(), 0, INIT_CAP, CHUNK);
+    let memory = crate::StmtContext::for_query().statement_memory();
+
+    let mut nested = JoinExec::new(
+        meta(),
+        JoinKind::Inner,
+        vec![condition.clone()],
+        outer_exec(),
+        scan_of(&table, 2),
+        crate::StmtContext::for_query(),
+        memory.clone(),
+    );
+    let nested_rows = drain(&mut nested, &types);
+
+    let ctx = crate::StmtContext::for_query();
+    let rewrite = crate::driver::join_key_cast::build_rewrite(&long(), &varchar, &ctx)
+        .expect("the cast and guard build over one string column");
+    let mut looked_up = JoinExec::new(
+        meta(),
+        JoinKind::Inner,
+        vec![condition],
+        outer_exec(),
+        scan_of(&table, 2),
+        crate::StmtContext::for_query(),
+        memory,
+    );
+    looked_up.set_index_lookup_plan(IndexLookupPlan {
+        lookup_is_left: false,
+        probe_keys: Vec::new(),
+        source: crate::join::IndexLookupSource::Leaf(lookup_source(
+            &table,
+            LookupObject::Handle,
+            2,
+        )),
+        aggregation: None,
+        aggregation_stream_ordered: false,
+        outer_not_null: Vec::new(),
+        inner_not_null: Vec::new(),
+        probe_cast: Some(crate::join::IndexProbeCast {
+            outer_offset: 1,
+            inner_offset: 0,
+            cast: rewrite.cast,
+            guard: rewrite.guard,
+            str_type: rewrite.str_type,
+        }),
+    });
+    assert!(looked_up.is_index_join());
+    let index_rows = drain(&mut looked_up, &types);
+
+    // The joined (outer rowid, inner id) pairs: '1' and '2' land on their
+    // handles, 'abc' casts to 0 and its DOUBLE value is 0.0 so it matches
+    // id 0, '1.5' and NULL match nothing.
+    let id_pairs = |rows: &[Vec<Datum>]| {
+        rows.iter()
+            .map(|row| (row[0].clone(), row[2].clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        id_pairs(&nested_rows),
+        vec![
+            (Datum::Int(0), Datum::Int(1)),
+            (Datum::Int(1), Datum::Int(2)),
+            (Datum::Int(3), Datum::Int(0)),
+            (Datum::Int(5), Datum::Int(2)),
+        ],
+        "the double-equality oracle moved",
+    );
+    assert_eq!(index_rows, nested_rows, "the cast probe disagrees with it");
 }

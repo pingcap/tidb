@@ -314,6 +314,7 @@ mod grouping;
 mod having;
 pub(crate) mod index_join_decision;
 pub mod infoschema_meta;
+pub(crate) mod join_key_cast;
 pub(crate) mod join_method_hints;
 pub(crate) mod join_reorder;
 pub(crate) mod join_search;

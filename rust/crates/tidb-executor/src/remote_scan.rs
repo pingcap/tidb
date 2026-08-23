@@ -1309,6 +1309,7 @@ mod tests {
             aggregation_stream_ordered: false,
             outer_not_null: Vec::new(),
             inner_not_null: Vec::new(),
+            probe_cast: None,
         });
 
         join.open().unwrap();

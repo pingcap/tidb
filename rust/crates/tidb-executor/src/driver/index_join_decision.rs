@@ -491,6 +491,11 @@ pub(crate) struct IndexJoinDecision {
     /// Whether those leaf filters plus the join equalities cover the complete
     /// written WHERE.
     pub(crate) consumes_where: bool,
+    /// Go's `rule_join_key_type_cast` probe: the outer key is
+    /// `cast(str AS SIGNED)` computed behind the rule's guard rather than a
+    /// bare outer column, and the equality it belongs to is not in the
+    /// split keys. See [`crate::driver::join_key_cast`].
+    pub(crate) probe_cast: Option<crate::join::IndexProbeCast>,
 }
 
 impl IndexJoinDecision {
@@ -1064,6 +1069,7 @@ fn decide_over(
                 filters: filters.clone(),
                 filter_exprs: filter_exprs.clone(),
                 consumes_where,
+                probe_cast: None,
             });
         }
     }
@@ -1122,6 +1128,7 @@ fn decide_over(
                 filters: filters.clone(),
                 filter_exprs: filter_exprs.clone(),
                 consumes_where,
+                probe_cast: None,
             });
         }
     }
@@ -1224,8 +1231,123 @@ fn decide_over(
         filters,
         filter_exprs,
         consumes_where,
+        probe_cast: None,
     });
     decisions
+}
+
+/// One rewritten mismatched equality mapped onto a concrete lookup side --
+/// [`crate::driver::join_key_cast`]'s product, in the child-local offsets the
+/// executor reads.
+pub(crate) struct CastLookupKey {
+    /// Child-local offset of the INT column in the LOOKUP side's output.
+    pub(crate) inner_offset: usize,
+    /// Child-local offset of the STRING column in the OUTER side's output.
+    pub(crate) outer_offset: usize,
+    /// The computed key: `cast(str AS SIGNED)` and Go's guard.
+    pub(crate) rewrite: crate::driver::join_key_cast::RewrittenEquality,
+}
+
+/// The lookup decision for Go's `rule_join_key_type_cast` shape: an INNER
+/// join whose only usable equality pairs a signed INT column (the lookup
+/// side's clustered handle) with a STRING column, made probeable by the
+/// rule's `cast(str AS SIGNED)` key.
+///
+/// Deliberately NARROWER than `decide_over`, each refusal fail-closed:
+///
+/// * INNER joins only. Go's rule skips a preserved string side, and the
+///   lookup refuses a preserved lookup side, so an outer join never
+///   qualifies on both counts at once.
+/// * the probed column must be the clustered INT handle -- Go's recorded
+///   shape (`TableRangeScan range: decided by [Column#N]`); a secondary
+///   index over the int column is NAMED RESIDUE.
+/// * no leaf filters on the lookup side: the plain-column path threads them
+///   into the probe with their selectivity, and this path would silently
+///   drop them.
+pub(crate) fn cast_lookup_decision(
+    kind: crate::join::JoinKind,
+    lookup_is_left: bool,
+    key: CastLookupKey,
+    inner: &JoinSide<'_>,
+    rows: Option<&crate::driver::join_reorder::RowSource>,
+) -> Option<IndexJoinDecision> {
+    if kind != crate::join::JoinKind::Inner {
+        return None;
+    }
+    let table = inner.table?;
+    if table.partition().is_some()
+        || inner.aggregation.is_some()
+        || inner.composite
+        || !inner.source_filters.is_empty()
+    {
+        return None;
+    }
+    if rows.is_some_and(|rows| {
+        rows.filters_for(&inner.visible)
+            .is_some_and(|filters| !filters.is_empty())
+    }) {
+        return None;
+    }
+    let database = inner
+        .origin
+        .as_deref()
+        .and_then(|origin| origin.rsplit_once('.'))
+        .map(|(database, _)| database.to_owned())?;
+    if inner.output_to_source.len() != inner.types.len() {
+        return None;
+    }
+    let output_offsets = inner
+        .output_to_source
+        .iter()
+        .copied()
+        .collect::<Option<Vec<_>>>()?;
+    let columns: Vec<(String, FieldType)> = table
+        .visible_columns()
+        .iter()
+        .map(|column| (column.name.clone(), column.field_type.clone()))
+        .collect();
+    // The probed column must be the table's clustered INT handle.
+    let source_offset = *output_offsets.get(key.inner_offset)?;
+    if !table.is_clustered_handle_column(source_offset) {
+        return None;
+    }
+    Some(IndexJoinDecision {
+        lookup_is_left,
+        probe_keys: Vec::new(),
+        probe_parts: vec![crate::access_path::LookupProbePart::Dynamic(0)],
+        join_key_count: 1,
+        table: table.clone(),
+        object: crate::access_path::LookupObject::Handle,
+        filter_selectivity: 1.0,
+        source_filter_selectivity: 1.0,
+        aggregation: None,
+        aggregation_info: None,
+        aggregation_final_info: None,
+        aggregation_partial_info: None,
+        composite: false,
+        constant_constrained_probe: false,
+        columns,
+        database,
+        output_offsets,
+        visible: inner.source_visible.clone(),
+        // Go `indexJoinIntPKRangeInfo` prints the OUTER key column, which is
+        // the rule's injected cast column and has no `OrigName`. The caller
+        // patches in the numbered `Column#N` form when a plan trace carries
+        // the statement's Go plan-column stream; this bare fallback is what
+        // `format='plan_tree'` recordings show.
+        range_info: format!("[{UNNAMED_COLUMN}]"),
+        filters: Vec::new(),
+        filter_exprs: Vec::new(),
+        consumes_where: rows
+            .is_some_and(crate::driver::join_reorder::RowSource::all_where_is_leaf_or_join_equality),
+        probe_cast: Some(crate::join::IndexProbeCast {
+            outer_offset: key.outer_offset,
+            inner_offset: key.inner_offset,
+            cast: key.rewrite.cast,
+            guard: key.rewrite.guard,
+            str_type: key.rewrite.str_type,
+        }),
+    })
 }
 
 /// Pushes a predicate on carried derived outputs down to the base row the

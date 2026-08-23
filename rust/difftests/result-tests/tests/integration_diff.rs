@@ -2453,7 +2453,38 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // The thirteen that remain: through_projection 5, partition_pruner 3,
     // join_key_type_cast 2, and one each of index_join, stale_txn
     // (MVCC-blocked), and autoid.
-    const KNOWN_DIVERGENCES: usize = 11;
+    //
+    // 11 -> 9 at the JOIN-KEY CAST family: `join_key_type_cast` closed
+    // whole (77 of 77 matched), both statements by Go's own mechanisms.
+    // The INL_JOIN explain now prints `TableRangeScan table:t_idx_int
+    // range: decided by [Column#12]`: the chain is `updateEQCond`'s
+    // double-cast child projections (2 AllocPlanColumnID per mismatched
+    // equality, `logical_join.go:1754`), `BuildKeyInfoPortal`'s
+    // `buildSchemaByExprs` re-allocation over those projections (+2,
+    // `logical_projection.go:505`), then `rule_join_key_type_cast.go`
+    // rewriting the DOUBLE equality to an INTEGER one under ONE fresh id --
+    // the recorded `Column#12`, reproduced by
+    // `PlanTrace::join_key_cast_stream` from the statement's own stream
+    // (the arithmetic is pinned id by id in `driver::join_key_cast`'s
+    // module doc, including the un-rewritten unsigned statement's
+    // `Column#8`/`#9` and `t_mixed`'s rowid-shifted `Column#13`). The
+    // executor probes the int side's clustered handle with the computed
+    // `cast(str AS SIGNED)` behind the rule's guard
+    // (`join::IndexProbeCast`), so `'1.5'` matches nothing and `'abc'`
+    // matches id 0 -- the recorded rows. The multi-way `t_mj` statement's
+    // row ORDER closed with it: its FROM holds a `straight_join` subtree
+    // the row inventory refused, so every join site planned without
+    // estimates and the mid-tree cartesian built its default side;
+    // `straight_join` pins the join ORDER, not the rows, so
+    // `collect_rows` now models it and the EXISTING ver2 orientation
+    // comparison (Go's `getHashJoins` innerIdx 1/0 pair) picks the
+    // recorded build side -- probe `t3`, build the joined `(t1,t2)` rows,
+    // newest-first per probe row. Nothing else moved: `compared` reads
+    // 9674 where it stood.
+    //
+    // The nine that remain: through_projection 5, and one each of
+    // partition_pruner, index_join, stale_txn (MVCC-blocked), and autoid.
+    const KNOWN_DIVERGENCES: usize = 9;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path
