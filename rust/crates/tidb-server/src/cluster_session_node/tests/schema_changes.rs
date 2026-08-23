@@ -583,3 +583,35 @@ fn a_catalog_refusal_carries_the_code_mysql_clients_switch_on() {
     });
     assert_eq!(code, 1072);
 }
+
+/// REPRODUCTION PROBE (rung 8's 9007-at-COMMIT): a schema move landing under
+/// an open transaction must not fail its COMMIT with the narrow guard's
+/// "Write conflict, please retry the transaction" -- with MDL on (the
+/// default), Go's `validator.Check` skips the delta comparison entirely
+/// (`pkg/infoschema/isvalidator/validator.go:236-241`), because the DDL
+/// waits for the transaction instead.
+#[test]
+fn commit_survives_a_schema_move_under_the_transaction() {
+    let (mut session, node) = open_session();
+    session.control_transaction("BEGIN").expect("begin");
+    let statement = session
+        .prepare_general("UPDATE t SET v = 90 WHERE id = 9")
+        .expect("prepare");
+    session
+        .execute_general(&statement, &[])
+        .expect("update inside the transaction");
+
+    // The reloader's shape: a Go peer's DDL bumps the cluster catalog while
+    // this transaction is open. The catalog CONTENT is unchanged -- rung 8's
+    // failing workload never touches the DDL'd table.
+    let mut moved = (*node.catalog.load()).clone();
+    moved.schema_version += 1;
+    node.catalog.store(moved);
+
+    let outcome = session.control_transaction("COMMIT");
+    assert!(
+        outcome.is_ok(),
+        "an unrelated schema move must not fail COMMIT: {:?}",
+        outcome.err()
+    );
+}

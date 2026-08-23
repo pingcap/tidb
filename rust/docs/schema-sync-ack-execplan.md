@@ -135,41 +135,43 @@ one DDL under eight-thread load); and the ladder's performance columns
 show the Rust node still 2-4x behind Go per statement, which is a
 separate optimization unit, not a correctness one.
 
-## The last rung-8 divergence, diagnosed but NOT fixed
+## The last rung-8 divergence: FOUND AND FIXED
 
-Under rung 8 the workload dies at `COMMIT` with `9007 Write conflict`.
-Traced to `tidb-session/src/txn.rs`'s commit guard: a transaction in that
-driver holds a whole WORKING COPY of the catalog and republishes it at
-commit, so it refuses when `shared.version()` has moved.
+Under rung 8 the workload died at `COMMIT` with `9007 Write conflict` --
+the narrow commit guard's message, not a KV conflict. The static reading
+stalled (every mid-transaction rebuild looked guarded), so the guard was
+instrumented and the live failure caught:
 
-Two things are wrong with that against Go, and they pull in opposite
-directions:
+```
+narrow_commit_guard_fired: shared_version=86 base_version=1910
+```
 
-1. **Identity.** When the mover is a DDL, Go reports
-   `domain.ErrInfoSchemaChanged` -- 8028, carrying `kv.TxnRetryableMark`
-   (`pkg/domain/domain.go:3014-3016`, raised at
-   `pkg/domain/schema_checker.go:74`) -- never 9007. The remedy differs:
-   re-run the statements against the new schema, rather than re-resolve a
-   contended key.
+`base_version 1910` is a pin taken on the connection's long-lived
+catalog; `shared_version 86` is a FRESHLY REBUILT one, its version
+counter restarted. The shared catalog was replaced mid-transaction --
+through the one unguarded path: the wide node's `BEGIN` flow rebuilt the
+catalog TWICE, once before `session.control_transaction` pinned the
+driver transaction's `base_version` (correct) and once after, inside the
+dispatch match arm (the bug -- its comment claimed "before the pin",
+true only for the WIDE pin). A reload or statistics republish landing in
+the microseconds between the narrow pin and the second rebuild swapped
+the catalog under the just-opened transaction; its COMMIT then failed
+the guard. Eight threads at ~1600 BEGINs per run against reloads every
+second put roughly one hit per run in exactly one thread -- the observed
+shape.
 
-2. **Whether it should fire at all.** With metadata locks ENABLED --
-   the default on both engines -- Go does not reach the check.
-   `validator.Check` (`pkg/infoschema/isvalidator/validator.go:236-241`)
-   skips the schema-delta comparison outright, because "if there are DDL
-   running for the related tables, DDL will wait the txn to finishes
-   before move to next step". That is the wait this node now
-   participates in. So the node currently holds the DDL back AND fails
-   its own commit for the same schema move -- both halves of the
-   protocol running, contradicting each other.
+The fix is deletion: one refresh per BEGIN, before both pins, which is
+Go's own shape -- one `domain.GetSnapshotInfoSchema(startTS)` per
+activation (`pkg/executor/ddl.go` additionally shows a user transaction
+can never contain a DDL: `DDLExec.Next` commits it first). Receipt:
+three consecutive full ladders with rung 8 at 6/6, the load leg's first
+passes ever.
 
-A first attempt simply renamed the error to 8028 and was REVERTED,
-because it is not that simple: `a_conflicting_commit_is_refused` pins
-the same guard catching a peer's DATA write, which in Go is a genuine
-write conflict. This driver's single version counter is bumped by
-schema changes and data writes alike, so at that line the cause cannot
-be told apart, and either error name is wrong half the time.
-
-The real fix is to give the guard the two facts Go has: WHAT moved
-(schema vs data) and WHETHER it was related to this transaction. That
-most likely means the transaction staging a narrower unit than the whole
-catalog, which is its own change and wants its own plan.
+The earlier analysis in this section survives as design notes: the
+narrow guard still conflates "schema moved" (Go: 8028 with the
+retryable mark, skipped entirely under MDL) with "peer data write"
+(Go: 9007) because one version counter serves both -- but with the
+sandwich gone, no unguarded writer of the per-connection catalog
+remains, so in the WIDE node the guard is now unreachable rather than
+wrong. The identity split still matters for the narrow in-process tier,
+where two sessions genuinely share one catalog.

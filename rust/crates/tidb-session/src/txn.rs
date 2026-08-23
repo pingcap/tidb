@@ -132,8 +132,7 @@ pub(crate) struct Savepoint {
     /// The corpus asserts exactly this -- `executor/executor_txn`'s
     /// `TestSavepointWithTemporaryTable` inserts three rows under three
     /// savepoints and rolls back to each in turn.
-    global_temporary:
-        std::collections::HashMap<i64, Box<dyn tidb_executor::storage::TableStorage>>,
+    global_temporary: std::collections::HashMap<i64, Box<dyn tidb_executor::storage::TableStorage>>,
 }
 
 /// The session's temporary-table state while it is OFF the catalog, and the

@@ -871,7 +871,8 @@ impl ClusterServerSession {
                     shape,
                     StatementReadShape::AutocommitPointGet
                         | StatementReadShape::AutocommitSingleRowRead
-                ) => {
+                ) =>
+                {
                     // Go's clustered-handle point-get optimisation reads
                     // directly at MaxTS. Keep this on the connection worker:
                     // opening a reusable transaction would add a channel hop
@@ -945,12 +946,9 @@ impl ClusterServerSession {
                         }
                         Err(error) => break Err(error),
                     }
-                    match self
-                        .commit_if_session_left_transaction()
-                        .and_then(|()| {
-                            self.flush_if_autocommit(read_ts.get(), write_transaction.clone())
-                        })
-                    {
+                    match self.commit_if_session_left_transaction().and_then(|()| {
+                        self.flush_if_autocommit(read_ts.get(), write_transaction.clone())
+                    }) {
                         Ok(()) => break Ok(value),
                         Err(error) => break Err(error),
                     }
@@ -1764,10 +1762,19 @@ impl QuerySession for ClusterServerSession {
             // that its COMMIT will prewrite at.
             Some(TransactionControl::Begin { .. }) => {
                 self.discard_explicit()?;
-                // The refresh happens BEFORE the pin: the new transaction
-                // reads the schema as of its own start, not as of the moment
-                // this connection was opened.
-                self.rebuild_catalog_now();
+                // NO refresh here, deliberately. The refresh for this BEGIN
+                // already ran above, BEFORE `session.control_transaction`
+                // pinned the driver transaction's `base_version` -- one
+                // refresh, then both pins, which is Go's shape (one
+                // `GetSnapshotInfoSchema(startTS)` per activation). A second
+                // rebuild HERE ran after that pin, so a reload or statistics
+                // republish landing in the microseconds between them swapped
+                // the connection's catalog under the just-opened transaction
+                // -- whose COMMIT then failed the base-version guard with a
+                // phantom 9007. Receipted live by the guard probe under rung
+                // 8: `shared_version:86, base_version:1910` -- a freshly
+                // rebuilt catalog (counter restarted) against a pin taken on
+                // the long-lived one, once per run, exactly one thread.
                 self.open_explicit()?;
             }
             Some(
@@ -2026,10 +2033,10 @@ impl QuerySession for ClusterServerSession {
         };
         let output = self.with_statement(shape, move |session| {
             if fast {
-                if let Some(cached) = cached_point_get_plan.as_ref().and_then(|plan| {
-                    session
-                        .bind_cached_prepared_point_get(plan, &params)
-                }) {
+                if let Some(cached) = cached_point_get_plan
+                    .as_ref()
+                    .and_then(|plan| session.bind_cached_prepared_point_get(plan, &params))
+                {
                     return session
                         .execute_cached_prepared_point_get(cached)
                         .map_err(map_error);
