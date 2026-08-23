@@ -1292,16 +1292,38 @@ impl MyDecimal {
                 carry = 1;
             }
         }
-        if (carry > 0) == from1.negative {
-            1
-        } else {
-            -1
-        }
+        if (carry > 0) == from1.negative { 1 } else { -1 }
     }
     /// Go `digitsFrac`: the decimal digits after the point.
     #[must_use]
     pub fn digits_frac(&self) -> i8 {
         self.digits_frac
+    }
+
+    /// The value as `(signed coefficient, fraction scale)` when the whole
+    /// number fits an `i128` -- the shape [`crate::decimal::Decimal`]
+    /// accumulates in. The digits reuse [`Self::to_decimal_parts`]'s buffer;
+    /// only the `DecimalDigits`/`pad_scale` machinery is skipped, which is
+    /// what makes a per-row aggregate fold (SUM over DECIMAL(15,2))
+    /// affordable. Returns `None` when the digit count exceeds i128.
+    #[must_use]
+    pub fn coefficient_i128(&self) -> Option<(i128, u32)> {
+        const I128_MAX_DIGITS: usize = 38;
+        let (negative, digits, storage_scale, _) = self.to_decimal_parts();
+        if digits.is_empty() || digits.len() > I128_MAX_DIGITS {
+            return None;
+        }
+        let mut coefficient: i128 = 0;
+        for &digit in digits.iter() {
+            let value = i128::from(digit.wrapping_sub(b'0'));
+            coefficient = coefficient.checked_mul(10)?.checked_add(value)?;
+        }
+        let value = if negative {
+            coefficient.checked_neg()?
+        } else {
+            coefficient
+        };
+        Some((value, storage_scale))
     }
 
     /// Go `resultFrac`: fractional digits exposed by `String`, which may be
@@ -1569,6 +1591,36 @@ fn parse_decimal_group(group: &[u8]) -> i32 {
 mod tests {
     use super::*;
 
+    /// `coefficient_i128` agrees with the Decimal round-trip on common
+    /// aggregate shapes, and refuses what i128 cannot hold.
+    #[test]
+    fn coefficient_i128_matches_decimal_round_trip() {
+        let cases = [
+            "0",
+            "1",
+            "-1",
+            "123.45",
+            "-123.45",
+            "37734107.00",
+            "0.0000012345",
+            "99999999999999999999999999999999999999", // 38 digits: fits
+        ];
+        for text in cases {
+            let (parsed, error) = MyDecimal::from_string(text.as_bytes());
+            assert!(error.is_none(), "{text}");
+            let (coefficient, scale) = parsed
+                .coefficient_i128()
+                .unwrap_or_else(|| panic!("{text} must fit"));
+            let rebuilt = crate::decimal::Decimal::from_scaled_i128(coefficient, scale);
+            assert_eq!(rebuilt.to_string(), text, "{text}");
+        }
+        // 39 digits cannot fit.
+        let (huge, error) = MyDecimal::from_string(b"999999999999999999999999999999999999999");
+        if error.is_none() {
+            assert!(huge.coefficient_i128().is_none());
+        }
+    }
+
     /// Differential fixture: every expectation is `types.MyDecimal.FromString`
     /// output captured from the Go implementation in this repository
     /// (input, `String()`, error, `digitsInt`, `digitsFrac`, `negative`).
@@ -1583,44 +1635,100 @@ mod tests {
             bool,
         );
         let cases: &[Case] = &[
-        ("0", "0", None, 1, 0, false),
-        ("1", "1", None, 1, 0, false),
-        ("-1", "-1", None, 1, 0, true),
-        ("12345", "12345", None, 5, 0, false),
-        ("1.5", "1.5", None, 1, 1, false),
-        ("-1.50", "-1.50", None, 1, 2, true),
-        ("0.000001", "0.000001", None, 1, 6, false),
-        ("123456789012345678901234567890", "123456789012345678901234567890", None, 30, 0, false),
-        ("  42  ", "42", None, 2, 0, false),
-        ("+3.14", "3.14", None, 1, 2, false),
-        (".5", "0.5", None, 0, 1, false),
-        ("5.", "5", None, 1, 0, false),
-        ("1e3", "1000", None, 4, 0, false),
-        ("1E-3", "0.001", None, 0, 3, false),
-        ("1.5e10", "15000000000", None, 11, 0, false),
-        ("-1.5e-10", "-0.00000000015", None, 0, 11, true),
-        ("1e100", "999999999999999999999999999999999999999999999999999999999999999999999999999999999", Some(DecimalError::Overflow), 81, 0, false),
-        ("1e-100", "0", Some(DecimalError::Truncated), 0, 0, false),
-        ("1e1000000000000", "999999999999999999999999999999999999999999999999999999999999999999999999999999999", Some(DecimalError::Overflow), 81, 0, false),
-        ("1e-1000000000000", "0", Some(DecimalError::Truncated), 0, 0, false),
-        ("1.23e5", "123000", None, 6, 0, false),
-        ("999999999999999999999999999999.9999999999999999999999999999999999", "999999999999999999999999999999.9999999999999999999999999999999999", None, 30, 34, false),
-        ("abc", "0", Some(DecimalError::BadNumber), 0, 0, false),
-        ("", "0", Some(DecimalError::BadNumber), 0, 0, false),
-        ("   ", "0", Some(DecimalError::BadNumber), 0, 0, false),
-        ("1x", "1", Some(DecimalError::Truncated), 1, 0, false),
-        ("1.2.3", "1.2", Some(DecimalError::Truncated), 1, 1, false),
-        ("1e", "1", Some(DecimalError::Truncated), 1, 0, false),
-        ("1e+", "1", Some(DecimalError::Truncated), 1, 0, false),
-        ("0.0", "0.0", None, 1, 1, false),
-        ("-0.0", "0.0", None, 1, 1, false),
-        ("-0", "0", None, 1, 0, false),
-        ("12345678901234567890.12345678901234567890", "12345678901234567890.12345678901234567890", None, 20, 20, false),
-        ("1e9", "1000000000", None, 10, 0, false),
-        ("1e-9", "0.000000001", None, 0, 9, false),
-        ("123.456e-2", "1.23456", None, 1, 5, false),
-        ("0.1e-80", "0.000000000000000000000000000000000000000000000000000000000000000000000000000000001", None, 0, 81, false),
-        ("9e81", "999999999999999999999999999999999999999999999999999999999999999999999999999999999", Some(DecimalError::Overflow), 81, 0, false),
+            ("0", "0", None, 1, 0, false),
+            ("1", "1", None, 1, 0, false),
+            ("-1", "-1", None, 1, 0, true),
+            ("12345", "12345", None, 5, 0, false),
+            ("1.5", "1.5", None, 1, 1, false),
+            ("-1.50", "-1.50", None, 1, 2, true),
+            ("0.000001", "0.000001", None, 1, 6, false),
+            (
+                "123456789012345678901234567890",
+                "123456789012345678901234567890",
+                None,
+                30,
+                0,
+                false,
+            ),
+            ("  42  ", "42", None, 2, 0, false),
+            ("+3.14", "3.14", None, 1, 2, false),
+            (".5", "0.5", None, 0, 1, false),
+            ("5.", "5", None, 1, 0, false),
+            ("1e3", "1000", None, 4, 0, false),
+            ("1E-3", "0.001", None, 0, 3, false),
+            ("1.5e10", "15000000000", None, 11, 0, false),
+            ("-1.5e-10", "-0.00000000015", None, 0, 11, true),
+            (
+                "1e100",
+                "999999999999999999999999999999999999999999999999999999999999999999999999999999999",
+                Some(DecimalError::Overflow),
+                81,
+                0,
+                false,
+            ),
+            ("1e-100", "0", Some(DecimalError::Truncated), 0, 0, false),
+            (
+                "1e1000000000000",
+                "999999999999999999999999999999999999999999999999999999999999999999999999999999999",
+                Some(DecimalError::Overflow),
+                81,
+                0,
+                false,
+            ),
+            (
+                "1e-1000000000000",
+                "0",
+                Some(DecimalError::Truncated),
+                0,
+                0,
+                false,
+            ),
+            ("1.23e5", "123000", None, 6, 0, false),
+            (
+                "999999999999999999999999999999.9999999999999999999999999999999999",
+                "999999999999999999999999999999.9999999999999999999999999999999999",
+                None,
+                30,
+                34,
+                false,
+            ),
+            ("abc", "0", Some(DecimalError::BadNumber), 0, 0, false),
+            ("", "0", Some(DecimalError::BadNumber), 0, 0, false),
+            ("   ", "0", Some(DecimalError::BadNumber), 0, 0, false),
+            ("1x", "1", Some(DecimalError::Truncated), 1, 0, false),
+            ("1.2.3", "1.2", Some(DecimalError::Truncated), 1, 1, false),
+            ("1e", "1", Some(DecimalError::Truncated), 1, 0, false),
+            ("1e+", "1", Some(DecimalError::Truncated), 1, 0, false),
+            ("0.0", "0.0", None, 1, 1, false),
+            ("-0.0", "0.0", None, 1, 1, false),
+            ("-0", "0", None, 1, 0, false),
+            (
+                "12345678901234567890.12345678901234567890",
+                "12345678901234567890.12345678901234567890",
+                None,
+                20,
+                20,
+                false,
+            ),
+            ("1e9", "1000000000", None, 10, 0, false),
+            ("1e-9", "0.000000001", None, 0, 9, false),
+            ("123.456e-2", "1.23456", None, 1, 5, false),
+            (
+                "0.1e-80",
+                "0.000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+                None,
+                0,
+                81,
+                false,
+            ),
+            (
+                "9e81",
+                "999999999999999999999999999999999999999999999999999999999999999999999999999999999",
+                Some(DecimalError::Overflow),
+                81,
+                0,
+                false,
+            ),
         ];
         for (input, text, want_err, digits_int, digits_frac, negative) in cases {
             let (d, err) = MyDecimal::from_string(input.as_bytes());

@@ -97,8 +97,8 @@
 //! Go's 8175 cancellation rather than unbounded growth or silent truncation.
 
 use super::*;
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::mpsc::{channel, sync_channel};
 use std::sync::{Arc, Mutex};
@@ -142,9 +142,7 @@ impl HashAggContext for crate::StmtContext {
     /// may evaluate expressions through `&StmtContext`.
     const PARALLEL_WORKERS_MAY_EVAL: bool = true;
 
-    fn run_parallel_pipeline_bridge(
-        exec: &mut HashAggExec<Self>,
-    ) -> Option<Result<(), ExecError>> {
+    fn run_parallel_pipeline_bridge(exec: &mut HashAggExec<Self>) -> Option<Result<(), ExecError>> {
         Some(exec.execute_parallel_pipeline())
     }
 }
@@ -855,7 +853,7 @@ fn merge_state(dst: &mut AggState, mut src: AggState, src_is_first: bool) -> Res
         _ => {
             return Err(ExecError::unsupported(
                 "aggregate kind reached the parallel merge gate unfiltered",
-            ))
+            ));
         }
     }
     Ok(())
@@ -865,8 +863,8 @@ fn merge_state(dst: &mut AggState, mut src: AggState, src_is_first: bool) -> Res
 mod tests {
     use super::*;
     use tidb_datatype::{FieldType, FieldTypeCode};
-    use tidb_expr::column::Column;
     use tidb_expr::NoColumns;
+    use tidb_expr::column::Column;
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::LongLong)
@@ -1289,7 +1287,14 @@ mod tests {
             types: &[FieldType],
             ctx: crate::StmtContext,
         ) -> HashAggExec<crate::StmtContext> {
-            HashAggExec::new(out_meta(types), group_by, funcs, child, ctx, StatementMemory::default())
+            HashAggExec::new(
+                out_meta(types),
+                group_by,
+                funcs,
+                child,
+                ctx,
+                StatementMemory::default(),
+            )
         }
 
         fn drain(exec: &mut HashAggExec<crate::StmtContext>) -> Vec<Vec<Datum>> {
