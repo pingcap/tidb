@@ -1096,4 +1096,61 @@ mod tests {
         assert_eq!(estimate_type_width(&col_type), 32);
     }
 
+    /// Go `TestCodec` (`codec_test.go:26`): a six-column chunk with NULLs,
+    /// ints, strings, decimals and JSON survives `Encode` -> `DecodeToChunk`
+    /// with no remainder and identical values.
+    #[test]
+    fn go_test_codec() {
+        let col_types = vec![
+            ft(C::LongLong),
+            ft(C::LongLong),
+            ft(C::Varchar),
+            ft(C::Varchar),
+            ft(C::NewDecimal),
+            ft(C::Json),
+        ];
+        let num_rows = 10usize;
+
+        let mut old_chk = Chunk::new_with_capacity(&col_types, num_rows);
+        for i in 0..num_rows {
+            let text = format!("{i}.12345");
+            let (decimal, error) = MyDecimal::from_string(text.as_bytes());
+            assert!(error.is_none(), "well-formed decimal literal");
+            old_chk.append_null(0);
+            old_chk.append_int64(1, i as i64);
+            old_chk.append_string(2, &text);
+            old_chk.append_string(3, &text);
+            old_chk.append_my_decimal(4, &decimal);
+            old_chk.append_json(5, &BinaryJSON::parse(&text).expect("JSON"));
+        }
+
+        let codec = Codec::new(col_types.clone());
+        let buffer = codec.encode(&old_chk);
+
+        let mut new_chk = Chunk::new_with_capacity(&col_types, num_rows);
+        let remained = codec.decode_to_chunk(&buffer, &mut new_chk);
+
+        assert!(remained.is_empty());
+        assert_eq!(new_chk.num_cols(), 6);
+        assert_eq!(new_chk.num_rows(), num_rows);
+        for i in 0..num_rows {
+            let row = new_chk.get_row(i);
+            let text = format!("{i}.12345");
+            assert!(row.is_null(0));
+            assert!(!row.is_null(1));
+            assert!(!row.is_null(2));
+            assert!(!row.is_null(3));
+            assert!(!row.is_null(4));
+            assert!(!row.is_null(5));
+
+            assert_eq!(row.get_int64(1), i as i64);
+            assert_eq!(row.get_string(2).as_bytes(), text.as_bytes());
+            assert_eq!(row.get_string(3).as_bytes(), text.as_bytes());
+            assert_eq!(row.get_my_decimal(4).to_string_bytes(), text.as_bytes());
+            // Go: `string(row.GetJSON(5).GetString())` -- the STRING VALUE of
+            // a string element, no quotes.
+            assert_eq!(row.get_json(5).to_string(), text);
+        }
+    }
+
 }

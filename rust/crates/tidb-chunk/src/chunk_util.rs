@@ -308,7 +308,53 @@ impl ColumnSwapHelper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use tidb_datatype::{CoreTime, FieldType, FieldTypeCode, Time, TimeType};
+
+    /// Go `TestMergeInputIdxToOutputIdxes` (`chunk_util_test.go:225`): two
+    /// input columns that ALIAS each other must merge their output slots, so
+    /// the projection's four columns all designate one owner and the cached
+    /// mapping carries the union `{0: [0, 1, 2, 3]}`.
+    #[test]
+    fn go_test_merge_input_idx_to_output_idxes() {
+        let mut input_idx_to_output_idxes = HashMap::new();
+        // Input 0 should be referred to as output columns 0 and 1.
+        input_idx_to_output_idxes.insert(0usize, vec![0usize, 1usize]);
+        // Input 1 should be referred to as output columns 2 and 3.
+        input_idx_to_output_idxes.insert(1usize, vec![2usize, 3usize]);
+        let column_eval = ColumnSwapHelper::from_mapping(input_idx_to_output_idxes);
+
+        let long_long = FieldType::new(FieldTypeCode::LongLong);
+        let mut input =
+            Chunk::new_empty(&[long_long.clone(), long_long.clone()]);
+        input.append_int64(0, 99);
+        // The input chunk's columns 0 and 1 designate one owner.
+        input.make_ref(0, 1);
+
+        let mut output = Chunk::new_empty(&[
+            long_long.clone(),
+            long_long.clone(),
+            long_long.clone(),
+            long_long,
+        ]);
+
+        column_eval
+            .swap_columns(&mut input, &mut output)
+            .expect("neither chunk carries a selection");
+        // All four output columns are aliases pointing at the first one.
+        assert!(output.columns_share_identity(0, &output, 1));
+        assert!(output.columns_share_identity(1, &output, 2));
+        assert!(output.columns_share_identity(2, &output, 3));
+        assert_eq!(output.get_row(0).get_int64(0), 99);
+
+        let merged = column_eval
+            .merged_mapping()
+            .expect("swap_columns caches the merged mapping");
+        assert_eq!(merged.len(), 1);
+        let mut indexes = merged.get(&0).cloned().expect("owner 0 holds every slot");
+        indexes.sort_unstable();
+        assert_eq!(indexes, vec![0, 1, 2, 3]);
+    }
 
     /// Go `getChk`'s chunk shape: `newChunkWithInitCap(numRows, 0, 0, 8, 8,
     /// sizeTime, 0)` -- two var-length columns, two 8-byte columns, one Time

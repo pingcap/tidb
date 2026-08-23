@@ -326,4 +326,25 @@ mod tests {
             );
         }
     }
+
+    /// Go `TestNewPool` (`pool_test.go:25`): the pool carries its initial
+    /// capacity and all five physical column buckets. Rust constructs every
+    /// bucket eagerly (Go's `sync.Pool` values are non-nil at construction),
+    /// so the structural assertion is the capacity plus bucket reachability.
+    #[test]
+    fn go_test_new_pool() {
+        let pool = Pool::new(1024);
+        assert_eq!(pool.init_capacity(), 1024);
+        // Every fixed-width bucket answers `get_column` without panic; a
+        // missing bucket would take the `unsupported width` branch.
+        // Fixed-width buckets size their packed buffer at
+        // `initCap * width`; the variable bucket sizes its OFFSETS buffer
+        // (`8 * initCap`), so only the fixed widths have an exact answer.
+        for type_size in [4i64, 8, 16, 40] {
+            let column = pool.bucket(type_size).get_or_create(type_size, 1024);
+            assert_eq!(column.data_capacity(), 1024 * type_size as usize);
+        }
+        let variable = pool.bucket(VAR_ELEM_LEN).get_or_create(VAR_ELEM_LEN, 1024);
+        assert!(variable.data_capacity() >= 8 * 1024);
+    }
 }

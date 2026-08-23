@@ -1155,4 +1155,74 @@ mod tests {
         assert_eq!(copied.get_int64(1), row.get_int64(1));
         assert_eq!(copied.get_time(2), row.get_time(2));
     }
+
+    /// Go `TestIssue29947` (`mutrow_test.go:91`): writing a NULL over an
+    /// already-initialized MutRow column must not grow, shrink or move the
+    /// column's packed storage -- every var-length offset returns to zero and
+    /// both `data` and `elemBuf` keep their previous contents.
+    #[test]
+    fn go_test_issue29947() {
+        let all_types = all_types();
+        let mut mut_row = MutRow::from_types(&all_types);
+
+        fn snapshot(mut_row: &MutRow, index: usize) -> (Vec<u8>, Option<Vec<u8>>) {
+            let column = mut_row.chunk.columns[index].read();
+            let data = column.data.read().to_vec();
+            let elem_buf = column.elem_buf.clone();
+            (data, elem_buf)
+        }
+
+        let before: Vec<(Vec<u8>, Option<Vec<u8>>)> =
+            (0..mut_row.len()).map(|index| snapshot(&mut_row, index)).collect();
+
+        for index in 0..mut_row.len() {
+            mut_row.set_datum(index, &Datum::Null);
+            let row = mut_row.to_row();
+            assert!(row.is_null(index), "column {index} holds NULL");
+            {
+                let column = mut_row.chunk.columns[index].read();
+                for offset in &column.offsets {
+                    assert_eq!(*offset, 0, "column {index} offsets collapse to 0");
+                }
+            }
+            let after = snapshot(&mut_row, index);
+            assert_eq!(
+                after.0, before[index].0,
+                "column {index} keeps its data buffer"
+            );
+            assert_eq!(
+                after.1, before[index].1,
+                "column {index} keeps its elem buffer"
+            );
+        }
+    }
+
+    /// Go `newAllTypes` (`chunk_test.go:345`).
+    fn all_types() -> Vec<FieldType> {
+        vec![
+            FieldType::new(FieldTypeCode::Tiny),
+            FieldType::new(FieldTypeCode::Short),
+            FieldType::new(FieldTypeCode::Int24),
+            FieldType::new(FieldTypeCode::Long),
+            FieldType::new(FieldTypeCode::LongLong),
+            FieldType::new(FieldTypeCode::LongLong)
+                .with_added_flags(tidb_datatype::FieldTypeFlags::UNSIGNED),
+            FieldType::new(FieldTypeCode::Year),
+            FieldType::new(FieldTypeCode::Float),
+            FieldType::new(FieldTypeCode::Double),
+            FieldType::new(FieldTypeCode::String),
+            FieldType::new(FieldTypeCode::VarString),
+            FieldType::new(FieldTypeCode::Varchar),
+            FieldType::new(FieldTypeCode::Blob),
+            FieldType::new(FieldTypeCode::TinyBlob),
+            FieldType::new(FieldTypeCode::MediumBlob),
+            FieldType::new(FieldTypeCode::LongBlob),
+            FieldType::new(FieldTypeCode::NewDecimal),
+            FieldType::new(FieldTypeCode::Date),
+            FieldType::new(FieldTypeCode::Datetime),
+            FieldType::new(FieldTypeCode::Timestamp),
+            FieldType::new(FieldTypeCode::Duration),
+            FieldType::new(FieldTypeCode::Json),
+        ]
+    }
 }
