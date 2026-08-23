@@ -109,6 +109,12 @@ RUN_SAMPLES=${SYSBENCH_SAMPLES:-3}
 # counts as starved. Go's own owner re-checks every second, so a healthy node
 # acknowledges within a few; the budget is deliberately far above that so only
 # a real stall trips it.
+# Preflight exec-warm budget: how long to keep re-execing a freshly linked
+# binary that is stuck in `_dyld_start`, and how long one attempt may hang
+# before it is killed and retried. Observed drains today: 130s twice, ~6min
+# and ~40min under three concurrent build trees.
+WARM_BUDGET_SECONDS=${SYSBENCH_WARM_BUDGET:-900}
+WARM_PROBE_SECONDS=${SYSBENCH_WARM_PROBE:-10}
 MDL_THREADS=${SYSBENCH_MDL_THREADS:-8}
 MDL_LOAD_SECONDS=${SYSBENCH_MDL_SECONDS:-45}
 MDL_DDL_BUDGET=${SYSBENCH_MDL_DDL_BUDGET:-20}
@@ -233,6 +239,50 @@ if [[ ! -x "${RUST_SERVER}" ]]; then
   echo "sysbench-ladder Rust server is not executable: ${RUST_SERVER}" >&2
   exit 1
 fi
+
+# Preflight: prove the binary can EXEC before anything expensive starts.
+#
+# A freshly linked executable on this machine can hang in `_dyld_start` at 0%
+# CPU for minutes while `syspolicyd` drains its per-exec XProtect behavioural
+# queue -- worst under concurrent builds across several checkouts. It is not
+# Gatekeeper assessment (`spctl --status` reports that disabled here), not the
+# signature (the linker's ad-hoc signature verifies), and not this binary in
+# particular: the same wedge hits a 16KB hello-world, and it always drains on
+# its own.
+#
+# What made it expensive was the ORDER: rung 0 brings up a whole TiUP cluster
+# (~60s) and rung 1 then failed the entire run on a binary that was merely
+# waiting its turn. Warming here costs one exec when the machine is idle and
+# turns a wedge into a wait instead of a lost cluster.
+warm_rust_binary() {
+  local deadline=$(( $(date +%s) + WARM_BUDGET_SECONDS )) attempt=0 pid started
+  started=$(date +%s)
+  while [[ $(date +%s) -lt "${deadline}" ]]; do
+    attempt=$((attempt + 1))
+    "${RUST_SERVER}" --version >/dev/null 2>&1 &
+    pid=$!
+    local waited=0
+    while kill -0 "${pid}" 2>/dev/null && [[ "${waited}" -lt "${WARM_PROBE_SECONDS}" ]]; do
+      sleep 1
+      waited=$((waited + 1))
+    done
+    if kill -0 "${pid}" 2>/dev/null; then
+      # Still in _dyld_start. Kill and retry: the queue drains on its own and
+      # a re-exec picks up as soon as it has.
+      kill -9 "${pid}" 2>/dev/null || true
+      wait "${pid}" 2>/dev/null || true
+      continue
+    fi
+    wait "${pid}" 2>/dev/null || true
+    note "OK preflight: binary execs (attempt ${attempt}, $(( $(date +%s) - started ))s)"
+    return 0
+  done
+  note "FAIL preflight: ${RUST_SERVER} never reached its entry point in ${WARM_BUDGET_SECONDS}s"
+  note "  the exec queue is backed up; stop other builds and retry (it drains on its own)"
+  return 1
+}
+step "preflight: the Rust binary reaches its entry point"
+warm_rust_binary || exit 1
 
 for port in "${PD_PORT}" "${GO_SQL_PORT}" "${TIKV_SEED_PORT}" \
   "${GO_STATUS_PORT}" "${RUST_SQL_PORT}"; do
