@@ -3181,16 +3181,27 @@ fn project_dnf_to_leaf(expr: &Expr, target: usize, leaves: &[Leaf<'_>]) -> Optio
         .map(|branch| {
             let mut conjuncts = Vec::new();
             crate::plan_trace::collect_and(branch, &mut conjuncts);
-            let conjuncts = conjuncts
-                .into_iter()
-                .filter(|conjunct| {
-                    matches!(classify(conjunct, leaves, None), Some(Classified::Single(leaf)) if leaf == target)
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            (!conjuncts.is_empty()).then(|| {
-                super::predicate_push_down::compose(BinaryOp::LogicAnd, conjuncts)
-            })
+            let mut kept = Vec::new();
+            for conjunct in conjuncts {
+                // Go recurses into a conjunct that is itself a DNF
+                // (`DeriveRelaxedFiltersFromDNF` on the embedded LogicOr),
+                // keeping its relaxation and DROPPING the conjunct when the
+                // relaxation is the universal set. Classifying the whole OR
+                // as one conjunct -- the previous shape here -- lost every
+                // mixed-leaf embedded DNF wholesale.
+                if matches!(strip(conjunct), Expr::Binary(BinaryOp::LogicOr, _, _)) {
+                    if let Some(relaxed) = project_dnf_to_leaf(conjunct, target, leaves) {
+                        kept.push(relaxed);
+                    }
+                    continue;
+                }
+                if matches!(classify(conjunct, leaves, None), Some(Classified::Single(leaf)) if leaf == target)
+                {
+                    kept.push(conjunct.clone());
+                }
+            }
+            (!kept.is_empty())
+                .then(|| super::predicate_push_down::compose(BinaryOp::LogicAnd, kept))
         })
         .collect::<Option<Vec<_>>>()?;
     Some(super::predicate_push_down::compose(

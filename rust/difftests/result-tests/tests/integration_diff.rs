@@ -2362,7 +2362,23 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // over the injected wrapper) that this tier's assembly does not yet
     // reproduce -- publishing the pruned wrapper was measured at 5 -> 6 and
     // reverted; see `driver::through_proj::wrap_node`'s NAMED RESIDUE.
-    const KNOWN_DIVERGENCES: usize = 24;
+    // 24 -> 15 at the consolidated merge of this session's five lines: the
+    // eight `planner/core/join_reorder2` statements priced away as the
+    // block above records, and `explain_easy`'s
+    // `update t set j = -j where i = 1 and j = 1` now prints the recorded
+    // Point_Get -- the write-side single-point chooser
+    // (`driver::access_cost::heuristic_point_path`, Go's
+    // `derivePathStatsAndTryHeuristics` first-arm) selects the handle path
+    // before cost. The embedded-DNF relaxation recursion
+    // (`driver::join_reorder::project_dnf_to_leaf`, Go's
+    // `DeriveRelaxedFiltersFromDNF`) landed in the same tree; it moves no
+    // corpus statement -- its receipt is `tests_join_predicate_placement`'s
+    // outer-WHERE embedded-DNF row. The fifteen that remain are the named
+    // residue: through_projection 5, partition_pruner 3,
+    // join_key_type_cast 2, and one each of index_join, explain_easy's
+    // HAVING decorrelation, agg_predicate_pushdown, stale_txn
+    // (MVCC-blocked), and autoid.
+    const KNOWN_DIVERGENCES: usize = 15;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path
