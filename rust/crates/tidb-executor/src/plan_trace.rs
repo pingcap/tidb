@@ -2069,6 +2069,30 @@ impl PlanTrace {
         );
     }
 
+    /// Relabels the recorded partial/final `HashAgg` pair (and its reader's
+    /// `data:HashAgg` info) as the STREAM aggregate Go prints when the same
+    /// global split is costed as a serial fold -- TPC-H q6/q17/q19 over
+    /// pseudo statistics answer `StreamAgg / TableReader data:StreamAgg /
+    /// StreamAgg cop` where analyzed statistics answer `HashAgg`.
+    pub(crate) fn rename_partial_hash_agg_to_stream(&mut self) {
+        fn walk(node: &mut PlanNode, is_root_of_pair: bool) {
+            if node.name == "HashAgg" {
+                node.name = "StreamAgg";
+            }
+            if let Some(info) = node.info.strip_prefix("data:HashAgg") {
+                let owned = format!("data:StreamAgg{info}");
+                node.info = owned;
+            }
+            let _ = is_root_of_pair;
+            for child in &mut node.children {
+                walk(child, false);
+            }
+        }
+        for root in &mut self.stack {
+            walk(root, false);
+        }
+    }
+
     /// Root merger for [`Self::partial_grouped_hash_agg`]. Aggregate
     /// functions read TiKV's partial result columns, while group-key
     /// FIRST_ROW carriers retain their physical catalog names.
@@ -3557,6 +3581,20 @@ impl PlanTrace {
             _ => None,
         });
         let Some((name, distinct, argument)) = aggregate else {
+            // A scalar wrapper over the aggregate (`SUM(x) / 7.0`) has no
+            // bare Aggregate field to read; Go still prints the hoisted
+            // function itself, which grouped_aggregate_info rebuilds.
+            let wrapped = select.fields.fields().iter().any(|field| {
+                matches!(field, tidb_ast::SelectField::Expr { expr, .. } if expr.has_aggregate_flag())
+            });
+            if wrapped {
+                self.wrap(
+                    "StreamAgg",
+                    Est::Fixed(1.0),
+                    grouped_aggregate_info(select, qualify, false, false),
+                );
+                return;
+            }
             self.refuse("stream aggregation has no aggregate expression");
             return;
         };
