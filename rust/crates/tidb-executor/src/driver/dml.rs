@@ -2266,7 +2266,7 @@ pub(crate) fn run_update_traced(
                 let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
                     unreachable!("only a byte-backed table stages rewrites")
                 };
-                match kv.update_row(&handle, &new_row, ctx) {
+                match kv.update_row_with_old(&handle, Some(&old_row), &new_row, ctx) {
                     Ok(()) => changed += 1,
                     Err(crate::kv_table::KvTableError::DuplicateEntry { value, key }) => {
                         let warning = DriverError::DuplicateEntry { value, key }.to_mysql_error();
@@ -2302,8 +2302,8 @@ pub(crate) fn run_update_traced(
             let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
                 unreachable!("only a byte-backed table stages rewrites")
             };
-            for (handle, _, new_row) in &rewrites {
-                kv.update_row(handle, new_row, ctx)
+            for (handle, old_row, new_row) in &rewrites {
+                kv.update_row_with_old(handle, Some(old_row), new_row, ctx)
                     .map_err(kv_write_error)?;
                 changed += 1;
             }
@@ -2755,8 +2755,10 @@ pub(crate) fn run_delete_traced(
         let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
             unreachable!("only a byte-backed table stages deletions")
         };
-        for (handle, _) in &doomed {
-            kv.delete_row(handle, &zone)
+        for (handle, old_row) in &doomed {
+            // One read per deleted row: the fetch above already produced the
+            // old row its index entries are removed from (Go RemoveRecord).
+            kv.delete_row_with_old(handle, old_row, ctx)
                 .map_err(|e| kv_read_error("row delete failed", e))?;
             deleted += 1;
         }

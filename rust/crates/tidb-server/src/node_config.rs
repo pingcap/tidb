@@ -37,8 +37,21 @@ use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_util::disk::{SpillEncryptionMethod, SpillStorageSpec};
 use tidb_util::versioninfo::VersionInfo;
 
-const DEFAULT_MAX_CONNECTIONS: usize = 8;
-const MAX_CONNECTION_WORKERS: usize = 256;
+/// Go's `config.Instance.MaxConnections` default is 0, and
+/// `server.go`'s `checkConnectionCount` reads 0 as *unlimited*:
+///
+/// ```go
+/// // When the value of Instance.MaxConnections is 0, the number of connections is unlimited.
+/// if int(s.cfg.Instance.MaxConnections) == 0 {
+///     return nil
+/// }
+/// ```
+const DEFAULT_MAX_CONNECTIONS: usize = 0;
+/// The warm connection-worker pool never pre-spawns more than this many
+/// threads; demand past it (or all of it, when the limit is 0/unlimited) is
+/// served by one dedicated thread per accepted connection, mirroring Go's
+/// `go s.onConn(clientConn)` per accept.
+pub(crate) const MAX_CONNECTION_WORKERS: usize = 256;
 const DEFAULT_CONNECTION_TIMEOUT_MS: u64 = 30_000;
 // The current configured reader only exposes fixed-width signed BIGINT rows.
 // Keep the first in-memory TopN vertical deliberately small until the executor
@@ -205,7 +218,9 @@ pub struct NodeConfig {
     /// therefore incompatible with `--read-table`/`--load-table`, which
     /// describe the bounded surface.
     pub cluster_session: bool,
-    /// Fixed connection-worker count and accepted-socket queue capacity.
+    /// Go's `Instance.MaxConnections`: the configured cap on simultaneous
+    /// client connections. `0` means unlimited, exactly as
+    /// `server.go`'s `checkConnectionCount` treats it.
     pub max_connections: usize,
     /// Handshake, idle-command, and socket-write deadline for one connection.
     pub connection_timeout: Duration,
@@ -825,13 +840,13 @@ impl NodeConfig {
             (None, true, false) => PathBuf::new(),
             (None, false, false) => return Err(NodeConfigError::MissingOption("--auth-file")),
         };
+        // Go's flag is a plain uint32 whose zero value means unlimited
+        // (`server.go`'s `checkConnectionCount`), so `--max-connections 0`
+        // is accepted here rather than rejected as a non-positive count.
         let max_connections = match max_connections {
-            Some(value) => parse_positive_number("--max-connections", &value)?,
+            Some(value) => parse_connection_limit("--max-connections", &value)?,
             None => DEFAULT_MAX_CONNECTIONS,
         };
-        if max_connections > MAX_CONNECTION_WORKERS {
-            return Err(invalid("--max-connections", "value must not exceed 256"));
-        }
         let connection_timeout = Duration::from_millis(match connection_timeout_ms {
             Some(value) => parse_positive_number("--connection-timeout-ms", &value)?,
             None => DEFAULT_CONNECTION_TIMEOUT_MS,
@@ -879,7 +894,7 @@ impl NodeConfig {
             config.path = pd_endpoints.join(",");
             config.max_allowed_packet = u64::try_from(max_allowed_packet).unwrap_or(u64::MAX);
             config.instance.max_connections =
-                u32::try_from(max_connections).expect("bounded worker count fits u32");
+                u32::try_from(max_connections).expect("connection limit fits u32");
             config.instance.server_memory_limit = memory_arbitrator.server_memory_limit.clone();
             config.instance.mem_arbitrator_mode = memory_arbitrator.mode.clone();
             config.instance.mem_arbitrator_soft_limit = memory_arbitrator.soft_limit.clone();
@@ -1308,6 +1323,15 @@ where
         return Err(invalid(option, "value must be greater than zero"));
     }
     Ok(parsed)
+}
+
+/// Parses `--max-connections` with Go's semantics: a plain uint32 where zero
+/// means unlimited, not an error.
+fn parse_connection_limit(option: &str, value: &str) -> Result<usize, NodeConfigError> {
+    let parsed = value
+        .parse::<u32>()
+        .map_err(|_| invalid(option, "expected an unsigned 32-bit integer"))?;
+    Ok(usize::try_from(parsed).expect("u32 fits usize"))
 }
 
 fn parse_positive_id(option: &str, value: String) -> Result<i64, NodeConfigError> {
@@ -1964,7 +1988,8 @@ mod tests {
         assert_eq!(projected["port"], 4406);
         assert_eq!(projected["path"], "127.0.0.1:2379");
         assert_eq!(projected["store"], "tikv");
-        assert_eq!(projected["instance"]["max_connections"], 8);
+        // Go's config default: `Instance.MaxConnections` is 0 (unlimited).
+        assert_eq!(projected["instance"]["max_connections"], 0);
     }
 
     #[test]

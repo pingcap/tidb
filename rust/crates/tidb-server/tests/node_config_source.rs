@@ -348,7 +348,8 @@ fn source_tikv_startup_surface_is_explicit_and_bounded() {
         config.auth_file,
         std::path::Path::new("/tmp/campaign21-users.tsv")
     );
-    assert_eq!(config.max_connections, 8);
+    // Go's `config.Instance.MaxConnections` default is 0: unlimited.
+    assert_eq!(config.max_connections, 0);
     assert_eq!(config.connection_timeout, Duration::from_secs(30));
     assert_eq!(config.max_topn_rows, 1_024);
     assert_eq!(config.deadlock_history_capacity, 10);
@@ -527,16 +528,18 @@ fn authentication_file_is_required_before_startup() {
 }
 
 #[test]
-fn worker_count_is_positive_bounded_and_explicit() {
-    for count in ["1", "256"] {
+fn connection_limit_is_go_uint32_with_zero_unlimited() {
+    // Go's flag is a plain uint32; every in-range value parses, including the
+    // zero that `server.go`'s `checkConnectionCount` reads as unlimited.
+    for count in ["0", "1", "256", "257", "4294967295"] {
         let mut args = required();
         args.extend(["--max-connections", count]);
         assert_eq!(
             NodeConfig::parse(args).unwrap().max_connections,
-            count.parse::<usize>().unwrap()
+            count.parse::<u32>().unwrap() as usize
         );
     }
-    for count in ["0", "257"] {
+    for count in ["-1", "4294967296", "abc"] {
         let mut args = required();
         args.extend(["--max-connections", count]);
         assert!(matches!(
