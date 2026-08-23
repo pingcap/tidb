@@ -1426,6 +1426,8 @@ mod tests_datetime_year_compare;
 #[cfg(test)]
 mod tests_deadlock_history;
 #[cfg(test)]
+mod tests_decorrelate_count_having;
+#[cfg(test)]
 mod tests_derived_agg_pruning;
 #[cfg(test)]
 mod tests_dml_lock_keys;

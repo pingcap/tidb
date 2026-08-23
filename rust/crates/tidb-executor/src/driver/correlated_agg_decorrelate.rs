@@ -16,29 +16,44 @@
 //!
 //! Go's `DecorrelateSolver` has two aggregation arms.  When an outer source
 //! has a non-null unique key, the first scalar aggregation can be pulled above
-//! a left join: the unique key becomes `GROUP BY`, outer values become
-//! `FIRST_ROW`, and the scalar aggregate keeps its empty-input NULL through
-//! the left join.  Once the outer side is itself aggregated, later scalar
-//! aggregations stay below the join: their correlation keys are appended to
-//! their own grouping and the Apply becomes a left join to that grouped
-//! relation.
+//! a left join (`CanPullUpAgg`/`CanPullUp`): the unique key becomes
+//! `GROUP BY`, outer values become `FIRST_ROW`, and the scalar aggregate
+//! keeps its empty-input NULL through the left join — whatever columns the
+//! subquery correlates on.  When that arm cannot fire — the outer has no
+//! non-null key, the Apply carries a pulled-up condition (a HAVING), the
+//! outer side is already aggregated, or the aggregate's argument survives
+//! NULL-extension (`COUNT(1)`) — the aggregation stays below the join: its
+//! correlation keys are appended to its own grouping and the Apply becomes a
+//! left join to that grouped relation.  A default-valued aggregate (`COUNT`)
+//! under a HAVING additionally moves the pulled-up condition OFF the join
+//! into a projection over `IFNULL(count, 0)` (`rule_decorrelate.go`'s
+//! `havingConds` branch), because an empty input owes the default while a
+//! HAVING-filtered group owes NULL.
 //!
-//! This module transcribes those two arms over the AST because this executor
+//! This module transcribes those arms over the AST because this executor
 //! does not retain a separate logical-plan tree.  Its acceptance boundary is
 //! deliberately proof-shaped:
 //!
-//! * one base-table outer source with a non-null primary/unique key;
-//! * selected outer values are bare columns;
-//! * each rewritten field is exactly one non-distinct `SUM(column)` scalar
-//!   subquery;
+//! * SELECT-list arm ([`rewrite_current`]): one base-table outer source with
+//!   a non-null primary/unique key, bare-column outer values, and each
+//!   rewritten field exactly one non-distinct `SUM(column)` scalar subquery;
+//! * SELECT-list HAVING arm ([`rewrite_count_having_fields`]): a
+//!   single-argument non-distinct `COUNT` subquery with a HAVING that reads
+//!   only the aggregate output and outer columns;
+//! * predicate arm ([`rewrite_predicate_aggregate`]): one scalar
+//!   `AVG`/`MIN`/`MAX`/`SUM(column)` subquery inside a WHERE conjunct;
 //! * every correlation is a column equality, and removing those equalities
 //!   leaves no outer reference in the subquery;
 //! * the inner `FROM` contains inner joins only.
 //!
 //! Any clause outside that boundary leaves the statement byte-for-byte
-//! unchanged.  In particular, no LIMIT, HAVING, DISTINCT, window, locking,
-//! volatile expression, nullable unique key, or non-equality correlation is
-//! guessed at.
+//! unchanged, and unwritten Go arms remain unwritten rather than guessed at:
+//! non-equality correlations, the no-HAVING default projection
+//! (`IFNULL`-only), the `BIT_AND`/`BIT_OR`/`BIT_XOR` defaults, DISTINCT,
+//! LIMIT, windows, locking, and `pruneRedundantApply` all keep their Apply
+//! plans.  Go also runs `rule_aggregation_elimination` after decorrelating,
+//! collapsing a unique-keyed group to a projection; this tier keeps the
+//! grouped aggregate, which changes plan TEXT but no scan choice or row.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -70,6 +85,10 @@ pub(crate) fn rewrite(
         changed = true;
     }
     if let Some(current) = rewrite_predicate_aggregate(&rewritten, catalog, current_db, ctx) {
+        rewritten = current;
+        changed = true;
+    }
+    if let Some(current) = rewrite_count_having_fields(&rewritten, catalog, current_db, ctx) {
         rewritten = current;
         changed = true;
     }
@@ -235,7 +254,17 @@ fn rewrite_predicate_aggregate(
     let predicate = predicate?;
     let aggregate = aggregate?;
 
-    if let Some(group_key) = pull_up_group_key(select, &outer_scope, &aggregate.correlations) {
+    // Go unfolds `*` before it builds the WHERE clause, so the relation
+    // a decorrelation adds is never an output column. Both arms below need
+    // the unfolded list; the pull-up arm additionally reads output names off
+    // it, so a `SELECT *` must be expanded before the arm is chosen.
+    let mut expanded = select.clone();
+    if !super::subquery::expand_unqualified_wildcards(&mut expanded, &outer_scope) {
+        return None;
+    }
+    let select = &expanded;
+
+    if let Some(group_key) = pull_up_group_key(select, &outer_scope) {
         let mut inner_from = aggregate.inner.from.clone()?;
         let residual_local = attach_to_inner_join(
             &mut inner_from,
@@ -258,12 +287,6 @@ fn rewrite_predicate_aggregate(
             join_conditions.push(residual);
         }
         let mut grouped = select.clone();
-        // Go unfolds `*` before it builds the WHERE clause, so the relation
-        // a decorrelation adds is never an output column. See
-        // `super::subquery::expand_unqualified_wildcards`.
-        if !super::subquery::expand_unqualified_wildcards(&mut grouped, &outer_scope) {
-            return None;
-        }
         grouped.from = Some(Join {
             left: join_node(select.from.clone()?),
             right: Some(join_node(inner_from)),
@@ -406,12 +429,6 @@ fn rewrite_predicate_aggregate(
     );
 
     let mut rewritten = select.clone();
-    // Go unfolds `*` before it builds the WHERE clause, so the relation
-    // a decorrelation adds is never an output column. See
-    // `super::subquery::expand_unqualified_wildcards`.
-    if !super::subquery::expand_unqualified_wildcards(&mut rewritten, &outer_scope) {
-        return None;
-    }
     remaining.push(predicate);
     rewritten.where_clause = combine_and(remaining);
     rewritten.from = Some(Join {
@@ -427,10 +444,21 @@ fn rewrite_predicate_aggregate(
     Some(rewritten)
 }
 
+/// The GROUP BY key Go's aggregation pull-up arm uses: the outer source's
+/// non-null primary/unique key. Go gates the arm in `LogicalApply.
+/// CanPullUpAgg` (`logical_apply.go`) on the Apply carrying no join
+/// condition — true here because the scalar predicate stays above — and on
+/// `outerPlan.Schema().PKOrUK` being non-empty; `LogicalAggregation.
+/// CanPullUp` (`logical_aggregation.go`) additionally requires an ungrouped
+/// aggregate whose arguments evaluate to NULL over an all-NULL row, which
+/// `scalar_aggregate_expression`'s AVG/MIN/MAX/SUM-of-column shape satisfies
+/// (and COUNT, whose constant argument survives NULL-extension, does not
+/// reach). Whether the correlation columns cover the key is deliberately NOT
+/// asked: Go groups the join by the outer key regardless of what the
+/// subquery correlates on.
 fn pull_up_group_key(
     select: &SelectStmt,
     outer_scope: &super::from::FromScope,
-    correlations: &[Correlation],
 ) -> Option<Vec<Vec<String>>> {
     if !select.group_by.is_empty()
         || select.having.is_some()
@@ -446,18 +474,402 @@ fn pull_up_group_key(
     }
     let fds = super::funcdep::scope_fd_set(outer_scope, select.from.as_ref(), None);
     let primary_key = fds.primary_key()?;
-    let correlation_columns = super::funcdep::ColSet::of(
-        correlations
-            .iter()
-            .map(|correlation| correlation.outer_offset as i64),
-    );
-    if !primary_key.subset_of(&correlation_columns) {
-        return None;
-    }
     primary_key
         .iter()
         .map(|offset| outer_scope.qualified_path(usize::try_from(offset).ok()?))
         .collect()
+}
+
+/// One SELECT-list scalar `COUNT` subquery with a HAVING, matched by
+/// [`count_having_subquery`].
+struct CountHavingSubquery {
+    count: Expr,
+    alias: Option<String>,
+    having: Expr,
+    inner: SelectStmt,
+    local_conditions: Vec<Expr>,
+    correlations: Vec<Correlation>,
+}
+
+/// Go's grouped-below aggregation arm for a SELECT-list scalar `COUNT`
+/// subquery that carries a HAVING (`rule_decorrelate.go`, the
+/// `LogicalApply -> LogicalAggregation -> Selection` arm with a non-empty
+/// `defaultValueMap` and pulled-up join conditions).
+///
+/// Go reaches this shape in three steps. The HAVING becomes a `Selection`
+/// above the aggregation, and the solver's Selection arm attaches its
+/// decorrelated condition to the Apply as a join condition. The Apply over
+/// the aggregation then cannot take the pull-up arm — `CanPullUpAgg`
+/// refuses an Apply that carries join conditions — so the equality
+/// correlations under the aggregation become join keys, their inner columns
+/// join the GROUP BY, and the Apply becomes a left outer join to that
+/// grouped relation. Finally, because `COUNT` owes a non-NULL default (0)
+/// on an empty subquery input while a HAVING-filtered group owes NULL, the
+/// attached conditions are taken OFF the join again (`havingConds`) and
+/// applied in a projection instead: the aggregate output reads
+/// `IFNULL(count, 0)`, and the scalar value becomes
+/// `IF(<having over that default>, IFNULL(count, 0), NULL)`.
+///
+/// Boundary of this transcription, matching the sibling arms: equality-only
+/// correlations, a HAVING that references nothing but the aggregate output
+/// (by its alias or by repeating the aggregate) and outer columns, and a
+/// single-argument non-distinct `COUNT`. Go's same arm without a HAVING
+/// (the `IFNULL`-only projection) and its `BIT_AND`/`BIT_OR`/`BIT_XOR`
+/// default values are not taken here; those statements keep their Apply
+/// plans.
+fn rewrite_count_having_fields(
+    select: &SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Option<SelectStmt> {
+    if !plain_outer(select) || !has_count_having_candidate(select) {
+        return None;
+    }
+    let outer_scope = super::subquery::select_outer_scope(select, catalog, current_db, ctx);
+    let outer_resolver = ScopeResolver {
+        scope: &outer_scope,
+    };
+    let field_names = super::from::derived_field_names(select)?;
+    let mut rewritten = select.clone();
+    let mut fields = rewritten.fields.fields().to_vec();
+    let mut changed = false;
+    let mut round = 0usize;
+    for (index, field) in fields.iter_mut().enumerate() {
+        let SelectField::Expr { expr, alias } = field else {
+            continue;
+        };
+        let Some(found) = count_having_subquery(expr, &outer_scope, catalog, current_db, ctx)
+        else {
+            continue;
+        };
+        let relation_alias = format!("__decorrelated_having_{round}");
+        let value_alias = "__decorrelated_value_0";
+        // COUNT's empty-input default from Go's `aggDefaultValueMap`.
+        let default_value = Expr::Func {
+            name: "IFNULL".to_owned(),
+            args: vec![
+                Expr::Column(vec![relation_alias.clone(), value_alias.to_owned()]),
+                Expr::Int("0".to_owned()),
+            ],
+            origin_position: 0,
+        };
+        let Some(having) = rewrite_having_over_aggregate(
+            &found.having,
+            found.alias.as_deref(),
+            &found.count,
+            &default_value,
+            &outer_resolver,
+            &found.inner,
+            catalog,
+            current_db,
+            ctx,
+        ) else {
+            continue;
+        };
+        let Some(on) = found
+            .correlations
+            .iter()
+            .enumerate()
+            .map(|(key, correlation)| {
+                Some(Expr::Binary(
+                    BinaryOp::Eq,
+                    Box::new(Expr::Column(
+                        outer_scope.qualified_path(correlation.outer_offset)?,
+                    )),
+                    Box::new(Expr::Column(vec![
+                        relation_alias.clone(),
+                        format!("__decorrelated_key_{key}"),
+                    ])),
+                ))
+            })
+            .collect::<Option<Vec<_>>>()
+            .and_then(combine_and)
+        else {
+            continue;
+        };
+        let Some(from) = rewritten.from.clone() else {
+            continue;
+        };
+        let mut grouped = found.inner.clone();
+        grouped.having = None;
+        grouped.where_clause = combine_and(found.local_conditions.clone());
+        grouped.group_by = found
+            .correlations
+            .iter()
+            .map(|correlation| GroupByItem {
+                expr: Expr::Column(correlation.inner.clone()),
+                desc: None,
+            })
+            .collect();
+        let mut grouped_fields = vec![SelectField::Expr {
+            expr: found.count.clone(),
+            alias: Some(value_alias.to_owned()),
+        }];
+        grouped_fields.extend(
+            found
+                .correlations
+                .iter()
+                .enumerate()
+                .map(|(key, correlation)| SelectField::Expr {
+                    expr: Expr::Column(correlation.inner.clone()),
+                    alias: Some(format!("__decorrelated_key_{key}")),
+                }),
+        );
+        grouped.fields = grouped_fields.into();
+        rewritten.from = Some(Join {
+            left: join_node(from),
+            right: Some(derived_node(grouped, &relation_alias)),
+            tp: JoinType::Left,
+            straight: false,
+            on: Some(on),
+            using: Vec::new(),
+            natural: false,
+            explicit_parens: false,
+        });
+        *expr = Expr::Func {
+            name: "IF".to_owned(),
+            args: vec![having, default_value, Expr::Null],
+            origin_position: 0,
+        };
+        if alias.is_none() {
+            // The scalar subquery's output name is the field's own text; the
+            // replacement expression restores differently, so the original
+            // name is pinned as an alias.
+            *alias = Some(field_names[index].clone());
+        }
+        changed = true;
+        round += 1;
+    }
+    if !changed {
+        return None;
+    }
+    rewritten.fields = fields.into();
+    Some(rewritten)
+}
+
+/// A side-effect-free gate for the only field shape
+/// [`rewrite_count_having_fields`] can rewrite, mirroring
+/// [`has_scalar_sum_candidate`]'s reason to exist.
+fn has_count_having_candidate(select: &SelectStmt) -> bool {
+    select.fields.fields().iter().any(|field| {
+        let SelectField::Expr {
+            expr: Expr::Subquery(query),
+            ..
+        } = field
+        else {
+            return false;
+        };
+        let QueryStmt::Select(inner) = &**query else {
+            return false;
+        };
+        inner.having.is_some()
+            && matches!(
+                inner.fields.fields(),
+                [SelectField::Expr {
+                    expr: Expr::Aggregate {
+                        name,
+                        distinct: false,
+                        args,
+                    },
+                    ..
+                }] if name.eq_ignore_ascii_case("COUNT") && args.len() == 1
+            )
+    })
+}
+
+fn count_having_subquery(
+    expr: &Expr,
+    outer_scope: &super::from::FromScope,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Option<CountHavingSubquery> {
+    let Expr::Subquery(query) = expr else {
+        return None;
+    };
+    let QueryStmt::Select(inner) = &**query else {
+        return None;
+    };
+    if !plain_scalar_inner_ignoring_having(inner) || !inner_joins_only(inner.from.as_ref()?) {
+        return None;
+    }
+    let having = inner.having.clone()?;
+    let [SelectField::Expr {
+        expr:
+            count @ Expr::Aggregate {
+                name,
+                distinct: false,
+                args,
+            },
+        alias,
+    }] = inner.fields.fields()
+    else {
+        return None;
+    };
+    if !name.eq_ignore_ascii_case("COUNT") {
+        return None;
+    }
+    let inner_scope = super::subquery::select_outer_scope(inner, catalog, current_db, ctx);
+    let inner_resolver = ScopeResolver {
+        scope: &inner_scope,
+    };
+    // The COUNT argument must belong to the inner row or be a literal;
+    // an outer reference inside the aggregate is a different Go path.
+    match args.as_slice() {
+        [Expr::Column(path)] => {
+            inner_resolver.resolve(path)?;
+        }
+        [Expr::Int(_) | Expr::Decimal(_) | Expr::Float(_) | Expr::String(_) | Expr::Bool(_)] => {}
+        _ => return None,
+    }
+    let outer_resolver = ScopeResolver { scope: outer_scope };
+    let mut correlations = Vec::new();
+    let mut local_conditions = Vec::new();
+    for conjunct in conjuncts(inner.where_clause.as_ref()?) {
+        if let Some((inner_path, outer_path)) =
+            predicate_correlation_equality(conjunct, &inner_resolver, &outer_resolver)
+        {
+            let (outer_offset, _, _) = outer_resolver.resolve(&outer_path)?;
+            let inner_path = normalize_inner_expression(
+                &Expr::Column(inner_path),
+                &inner_resolver,
+                &inner_scope,
+            )?;
+            let Expr::Column(inner_path) = inner_path else {
+                unreachable!()
+            };
+            correlations.push(Correlation {
+                inner: inner_path,
+                outer_offset,
+            });
+        } else {
+            local_conditions.push(normalize_inner_expression(
+                conjunct,
+                &inner_resolver,
+                &inner_scope,
+            )?);
+        }
+    }
+    if correlations.is_empty() {
+        return None;
+    }
+    // Removing the correlation equalities must leave no outer reference in
+    // the grouped relation this arm builds (the HAVING is validated
+    // separately, over the outer scope it will live in).
+    let mut uncorrelated = (**inner).clone();
+    uncorrelated.having = None;
+    uncorrelated.fields = vec![SelectField::Expr {
+        expr: count.clone(),
+        alias: None,
+    }]
+    .into();
+    uncorrelated.where_clause = combine_and(local_conditions.clone());
+    let mut remaining = Vec::new();
+    super::subquery::collect_correlated_columns_query(
+        &QueryStmt::Select(Box::new(uncorrelated)),
+        outer_scope,
+        catalog,
+        current_db,
+        &mut remaining,
+        ctx,
+    );
+    if !remaining.is_empty() {
+        return None;
+    }
+    Some(CountHavingSubquery {
+        count: count.clone(),
+        alias: alias.clone(),
+        having,
+        inner: (**inner).clone(),
+        local_conditions,
+        correlations,
+    })
+}
+
+/// Rewrites a HAVING over the decorrelated aggregate's defaulted output:
+/// every reference to the aggregate — its SELECT-list alias or the aggregate
+/// expression itself — becomes `replacement` (`IFNULL(count, 0)`), outer
+/// columns stay, and anything else refuses the arm.
+#[allow(clippy::too_many_arguments)]
+fn rewrite_having_over_aggregate(
+    having: &Expr,
+    alias: Option<&str>,
+    aggregate: &Expr,
+    replacement: &Expr,
+    outer: &ScopeResolver<'_>,
+    inner: &SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Option<Expr> {
+    let inner_scope = super::subquery::select_outer_scope(inner, catalog, current_db, ctx);
+    struct Rewrite<'a> {
+        alias: Option<&'a str>,
+        aggregate: &'a Expr,
+        replacement: &'a Expr,
+        outer: &'a ScopeResolver<'a>,
+        inner: ScopeResolver<'a>,
+        valid: bool,
+    }
+
+    impl tidb_ast::Visitor for Rewrite<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expr) = node.downcast_mut::<Expr>() else {
+                return false;
+            };
+            if expr == self.aggregate {
+                *expr = self.replacement.clone();
+                return true;
+            }
+            match expr {
+                Expr::Column(path) => {
+                    // HAVING resolves the SELECT-list alias before any table
+                    // column, so the alias match must come first.
+                    if path.len() == 1
+                        && self
+                            .alias
+                            .is_some_and(|alias| path[0].eq_ignore_ascii_case(alias))
+                    {
+                        *expr = self.replacement.clone();
+                    } else if self.inner.resolve(path).is_some()
+                        || self.outer.resolve(path).is_none()
+                    {
+                        // An inner-row column below the aggregate, or a name
+                        // this statement cannot resolve at all: not a shape
+                        // this arm hoists.
+                        self.valid = false;
+                    }
+                    true
+                }
+                Expr::Aggregate { .. } | Expr::GroupConcat { .. } | Expr::Subquery(_) => {
+                    self.valid = false;
+                    true
+                }
+                _ => false,
+            }
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            self.valid
+        }
+    }
+
+    let mut rewritten = having.clone();
+    let mut visitor = Rewrite {
+        alias,
+        aggregate,
+        replacement,
+        outer,
+        inner: ScopeResolver {
+            scope: &inner_scope,
+        },
+        valid: true,
+    };
+    if !tidb_ast::Visitable::accept(&mut rewritten, &mut visitor) || !visitor.valid {
+        return None;
+    }
+    Some(rewritten)
 }
 
 fn replace_column(expression: &Expr, path: &[&str], replacement: &Expr) -> Expr {
@@ -1175,13 +1587,18 @@ fn plain_outer(select: &SelectStmt) -> bool {
 }
 
 fn plain_scalar_inner(select: &SelectStmt) -> bool {
+    select.having.is_none() && plain_scalar_inner_ignoring_having(select)
+}
+
+/// [`plain_scalar_inner`] minus the HAVING refusal, for the one arm that
+/// exists to hoist a HAVING ([`rewrite_count_having_fields`]).
+fn plain_scalar_inner_ignoring_having(select: &SelectStmt) -> bool {
     select.with.is_none()
         && select.hints.is_empty()
         && !select.distinct
         && select.values.is_empty()
         && select.group_by.is_empty()
         && !select.rollup
-        && select.having.is_none()
         && select.windows.is_empty()
         && select.order_by.is_empty()
         && select.limit.is_none()

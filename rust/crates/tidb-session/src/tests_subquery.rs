@@ -889,3 +889,67 @@ fn row_valued_in_subqueries_preserve_all_selected_columns() {
         [["1", "10"]]
     );
 }
+
+/// A scalar aggregate subquery in a WHERE predicate whose OUTER has a
+/// non-null primary key takes Go's aggregation PULL-UP arm
+/// (`rule_decorrelate.go`: `CanPullUpAgg` + `CanPullUp`): the aggregate
+/// rises ABOVE a left outer join grouped by the outer key, whatever the
+/// correlation columns are — Go never asks whether they cover that key.
+///
+/// Schema, rows, and both answers are the recorded
+/// `tests/integrationtest/r/agg_predicate_pushdown.result` statement: the
+/// row answer is TiDB's own `13 1540776`, and the recorded plan reads BOTH
+/// sides as `TableFullScan` under a pulled-up `HashAgg` grouped by `t.id` —
+/// where the group-below arm used to probe `t1` by the aggregate through an
+/// index join instead.
+#[test]
+fn a_predicate_aggregate_pulls_above_the_join_when_the_outer_has_a_key() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (id INT, tran_id INT, PRIMARY KEY (id))")
+        .unwrap();
+    session
+        .run(
+            "INSERT INTO t (id, tran_id) VALUES (1,1540776),(2,1540776),(3,1540776),\
+             (4,1540777),(5,1540777),(6,1540778),(7,1540778),(8,1540779),(9,1540779),\
+             (10,1540780),(11,NULL),(12,NULL),(13,1540776),(14,1540777),(15,1540778)",
+        )
+        .unwrap();
+
+    assert_eq!(
+        row_text(session.run(
+            "SELECT * FROM t t1 WHERE t1.tran_id = 1540776 AND t1.id = \
+             (SELECT MAX(t0.id) FROM t t0 WHERE t0.tran_id = t1.tran_id)"
+        )),
+        [["13", "1540776"]]
+    );
+
+    let plan = row_text(session.run(
+        "EXPLAIN SELECT * FROM t t1 WHERE t1.tran_id = 1540776 AND t1.id = \
+         (SELECT MAX(t0.id) FROM t t0 WHERE t0.tran_id = t1.tran_id)",
+    ));
+    let agg = plan
+        .iter()
+        .find(|row| row[0].contains("HashAgg") && row[2] == "root")
+        .unwrap_or_else(|| panic!("the aggregate is pulled above the join: {plan:?}"));
+    assert!(
+        agg[4].contains("group by:test.t1.id"),
+        "the pulled aggregate groups by the OUTER key: {agg:?}"
+    );
+    assert!(
+        plan.iter()
+            .any(|row| row[0].contains("HashJoin") && row[4].contains("left outer join")),
+        "the Apply becomes a left outer join below the aggregate: {plan:?}"
+    );
+    assert_eq!(
+        plan.iter()
+            .filter(|row| row[0].contains("TableFullScan"))
+            .count(),
+        2,
+        "both sides read the whole table, no aggregate-probed range: {plan:?}"
+    );
+    assert!(
+        !plan.iter().any(|row| row[0].contains("TableRangeScan")),
+        "the group-below arm's index-join probe must not appear: {plan:?}"
+    );
+}
