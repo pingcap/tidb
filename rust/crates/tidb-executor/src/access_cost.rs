@@ -1308,6 +1308,9 @@ pub(crate) fn enumerate_paths(
             realtime,
             source_rows,
             index_filter_selectivity,
+            // Go's gate on the same two lists
+            // (`cross_estimation.go:117-122`).
+            !index_filters.is_empty() || table_filter_count > 0,
         );
         candidates.push(Candidate {
             // Go `indexCondsColMap` is `ExtractCol2Len(AccessConds ++
@@ -1568,6 +1571,7 @@ fn full_scan_candidate(
         realtime,
         source_rows,
         index_filter_selectivity,
+        !index_filters.is_empty() || table_filter_count > 0,
     );
     Some(Candidate {
         access_columns: ColSet::new(),
@@ -1848,18 +1852,28 @@ pub(crate) fn adjust_table_scan_row_count_by_limit(
 /// An ordered lookup with a residual table filter may need to read more index
 /// entries than the visible LIMIT, so scale the expected count by the logical
 /// selectivity and then apply the configured ordering-risk ratio.
+///
+/// Go gates that ratio on the path carrying filters
+/// (`cross_estimation.go:117-122`: `len(path.IndexFilters) > 0 ||
+/// len(path.TableFilters) > 0`): the ratio prices the risk of scanning for a
+/// row the index's order cannot locate, which only exists when something
+/// FILTERS outside the index. A filter-free ordered scan finds its first LIMIT
+/// rows immediately, so `SELECT ... ORDER BY a DESC LIMIT 2` over pseudo stats
+/// estimates exactly 2 there, and this port must refuse the bump the same way
+/// (`has_filters`).
 fn adjust_index_scan_rows_for_limit(
     scan_rows: f64,
     logical_rows: f64,
     expected_rows: f64,
     ordering_selectivity_ratio: f64,
+    has_filters: bool,
 ) -> f64 {
     let mut adjusted = scan_rows;
     if expected_rows < logical_rows && logical_rows > 0.0 && scan_rows > 0.0 {
         let selectivity = logical_rows / scan_rows;
         adjusted = (expected_rows / selectivity).min(scan_rows);
     }
-    if ordering_selectivity_ratio > 0.0 && scan_rows > adjusted {
+    if has_filters && ordering_selectivity_ratio > 0.0 && scan_rows > adjusted {
         adjusted += (scan_rows - adjusted) * ordering_selectivity_ratio;
     }
     adjusted
@@ -1911,6 +1925,10 @@ fn index_path(
     realtime: f64,
     source_row_count: f64,
     index_filter_selectivity: Option<f64>,
+    // Go's `len(path.IndexFilters) > 0 || len(path.TableFilters) > 0`: the
+    // ordering-risk ratio in `AdjustRowCountForIndexScanByLimit` applies only
+    // to a path that still FILTERS somewhere (`cross_estimation.go:117`).
+    has_filters: bool,
 ) -> AccessPath {
     // Go `detachCondAndBuildRangeForPath` estimates over `pruneEstimateRange`
     // -- the ranges trimmed back to the index's DECLARED columns -- and never
@@ -1945,6 +1963,7 @@ fn index_path(
             source_row_count,
             limit.cap,
             limit.ordering_selectivity_ratio,
+            has_filters,
         );
     }
     // Go `deriveIndexPathStats`: with index filters the post-index count is
@@ -4252,6 +4271,7 @@ mod tests {
             // has nothing to equalize.
             1.0,
             None,
+            false,
         );
         let covering = index_path(
             &table,
@@ -4266,6 +4286,7 @@ mod tests {
             // has nothing to equalize.
             1.0,
             None,
+            false,
         );
         let request_term = |rows: f64| {
             rows * DOUBLE_READ_REQUESTS_PER_ROW * TIDB_REQUEST_FACTOR / INDEX_LOOKUP_CONCURRENCY
@@ -4328,6 +4349,7 @@ mod tests {
             realtime,
             realtime,
             None,
+            false,
         );
         assert!(
             whole_table.cost > scan.cost,
