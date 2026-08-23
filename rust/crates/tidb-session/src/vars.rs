@@ -556,6 +556,16 @@ pub enum VarError {
 #[derive(Clone, Debug, Default)]
 pub struct SessionVars {
     systems: HashMap<String, String>,
+    /// Bumped by every mutation of `systems`, so a caller can cache what it
+    /// PARSES out of the raw text -- the scanner's `sql_mode` bits, the
+    /// optimizer's cost environment -- and re-derive only when a `SET`
+    /// actually happened. Go holds the same products as typed fields on
+    /// `SessionVars` updated by each variable's `SetSession` hook; a
+    /// generation stamp buys that read cost without a hook per variable.
+    /// Session-scoped reads never consult the shared globals
+    /// (`get_system`'s fallback is the static default), so this counter
+    /// alone is a complete invalidation key for them.
+    generation: u64,
     /// Parsed authority kept in lockstep with the raw system-variable text.
     optimizer_fix_control: OptimizerFixControl,
     /// The shared GLOBAL-scope table this session's factory holds. Cloning a
@@ -621,6 +631,12 @@ impl SessionVars {
     /// matter what `SET GLOBAL` wrote (captured: after
     /// `set @@global.tidb_mem_oom_action='LOG'`, `select @@tidb_mem_oom_action`
     /// reports `LOG`).
+    /// The mutation stamp for [`SessionVars`]-derived caches; see the field.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
     pub fn get_system(&self, name: &str) -> Result<String, VarError> {
         let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
@@ -687,6 +703,7 @@ impl SessionVars {
                 None => self.systems.remove(&key),
             };
         }
+        self.generation += 1;
         self.refresh_optimizer_fix_control();
     }
 
@@ -756,6 +773,7 @@ impl SessionVars {
                 .insert(other.to_owned(), validated.value.clone());
         }
         self.systems.insert(key, validated.value);
+        self.generation += 1;
         if let Some(parsed) = parsed_fix_control {
             self.optimizer_fix_control = parsed;
         }

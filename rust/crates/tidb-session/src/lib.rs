@@ -487,6 +487,15 @@ pub struct Session {
     /// reports. Absent on the in-process tier, whose catalog is not a
     /// cluster's.
     cluster_schema_version: Option<std::sync::Arc<dyn Fn() -> i64 + Send + Sync>>,
+    /// Parsed-products cache over the raw system-variable text, keyed by
+    /// [`vars::SessionVars::generation`]. Go holds these as typed fields on
+    /// `SessionVars`, updated by each variable's `SetSession` hook, so a
+    /// statement never re-parses `sql_mode` or re-reads thirty cost knobs
+    /// through string lookups; the generation stamp buys the same read cost
+    /// without a hook per variable. Measured before the cache: the two were
+    /// the hottest user-code frames under sysbench, ahead of the parser.
+    scanner_sql_mode_cache: std::cell::Cell<Option<(u64, tidb_parser::SqlMode)>>,
+    cost_env_cache: std::cell::RefCell<Option<(u64, tidb_planner::candidate_cost::CostEnv, f64)>>,
     /// Go `SessionVars.LastTxnInfo` (`pkg/sessionctx/variable/session.go:1467`):
     /// client-go's `TxnInfo` JSON for the last transaction that ACTIVATED --
     /// full (with `commit_ts`) after a commit, start-only otherwise, and
@@ -657,6 +666,8 @@ impl Default for Session {
             server_info_syncer: None,
             cluster_schema_version: None,
             mdl_related_tables: None,
+            scanner_sql_mode_cache: std::cell::Cell::new(None),
+            cost_env_cache: std::cell::RefCell::new(None),
             last_txn_info: std::cell::RefCell::new(String::new()),
             published_last_insert_id: Rc::default(),
             retry_auto_ids: Rc::default(),

@@ -129,7 +129,7 @@ pub(crate) fn rename_column_action(
     if let Some(dependent) = table.column_dependent(offset) {
         return Err(super::column_dependent_error(dependent, from));
     }
-    table.columns[offset].name = to.to_owned();
+    table.columns_mut()[offset].name = to.to_owned();
     Ok(())
 }
 
@@ -274,7 +274,7 @@ pub(crate) fn alter_column_default_action(
         });
     };
     let Some(expr) = default_value else {
-        let column = &mut table.columns[offset];
+        let column = &mut table.columns_mut()[offset];
         column.default_value = None;
         column
             .field_type
@@ -296,7 +296,7 @@ pub(crate) fn alter_column_default_action(
         if table.auto_increment_offset() == Some(offset) {
             return Err(DriverError::InvalidDefault(column_name.to_owned()));
         }
-        let column = &mut table.columns[offset];
+        let column = &mut table.columns_mut()[offset];
         column.default_value = Some(default);
         column
             .field_type
@@ -350,7 +350,7 @@ pub(crate) fn alter_column_default_action(
         default_value: stored,
         field_type,
         ..
-    } = &mut table.columns[offset];
+    } = &mut table.columns_mut()[offset];
     *stored = Some(crate::column_default::ColumnDefault::Value(prepared.stored));
     field_type.del_flags(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE);
     Ok(())

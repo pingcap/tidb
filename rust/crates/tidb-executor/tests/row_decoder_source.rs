@@ -605,7 +605,8 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
         .unwrap();
 
     // Stored reads preserve the value written under the old expression.
-    table.columns[1].generated = Some(generated_column("a + 2", true, &table.columns[..1], &zone));
+    let rewritten = generated_column("a + 2", true, &table.columns[..1], &zone);
+    table.columns_mut()[1].generated = Some(rewritten);
     let read = table
         .get_row_by_handle_with_context(&handle, &RowDecodeContext::for_query(&statement))
         .unwrap()

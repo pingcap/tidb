@@ -416,7 +416,7 @@ impl KvTable {
         zone: &SessionTimeZone,
     ) -> Result<(), KvTableError> {
         let indexes = self.indexes.clone();
-        for index in &indexes {
+        for index in indexes.iter() {
             let (key, distinct) = self.index_key(index, row, handle, physical_id, zone)?;
             let value = self.index_entry_value(index, row, handle, distinct, zone)?;
             let key = Key::from_bytes(key);
@@ -442,7 +442,7 @@ impl KvTable {
         zone: &SessionTimeZone,
     ) -> Result<(), KvTableError> {
         let indexes = self.indexes.clone();
-        for index in &indexes {
+        for index in indexes.iter() {
             let (key, _) = self.index_key(index, row, handle, physical_id, zone)?;
             self.store
                 .delete(Key::from_bytes(key))

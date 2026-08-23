@@ -414,7 +414,18 @@ pub struct KvTable {
     /// at the end is what makes a visible offset and a physical offset the
     /// same number, so no call site has to translate between the two -- see
     /// [`crate::expression_index`] for why that matters.
-    pub columns: Vec<KvColumn>,
+    ///
+    /// Behind an `Arc`, because this is METADATA and Go shares metadata by
+    /// pointer: an `InfoSchema`'s `TableInfo` is immutable and every session
+    /// holds the same one, with DDL building a NEW `TableInfo` rather than
+    /// editing in place. Cloning a `KvTable` -- which the narrow tier does
+    /// per transaction and the wide node per catalog rebuild -- was deep-
+    /// copying every column's name and collation strings, and the clone was
+    /// the single heaviest write-path frame under sysbench. Mutators go
+    /// through [`KvTable::columns_mut`], whose `Arc::make_mut` is Go's
+    /// build-a-new-TableInfo, one shared metadata copied only when a DDL
+    /// actually changes it.
+    pub columns: std::sync::Arc<Vec<KvColumn>>,
     /// How many of the TRAILING entries of `columns` are hidden (Go
     /// `ColumnInfo.Hidden`). Zero for every table with no expression index.
     hidden_columns: usize,
@@ -424,8 +435,9 @@ pub struct KvTable {
     /// Go `TableInfo.PKIsHandle`: the offset of the single integer primary-key
     /// column whose value IS the row handle, when the table has one.
     pk_handle_offset: Option<usize>,
-    /// The table's indexes (Go `TableInfo.Indices`).
-    indexes: Vec<KvIndex>,
+    /// The table's indexes (Go `TableInfo.Indices`); `Arc`-shared like
+    /// `columns`, for the same reason.
+    indexes: std::sync::Arc<Vec<KvIndex>>,
     /// The AUTO_INCREMENT column's offset, if the table has one.
     auto_increment_offset: Option<usize>,
     /// Go's auto-id allocator, shared across the copies a transaction stages
@@ -666,6 +678,17 @@ const ROW_ID_BIT_LENGTH: u64 = 64;
 impl KvTable {
     /// Builds an empty table over the in-process backend.
     #[must_use]
+    /// The mutable view a DDL takes of the shared column metadata --
+    /// Go's "build a new TableInfo": the first mutation after a share
+    /// copies, an unshared table edits in place.
+    pub fn columns_mut(&mut self) -> &mut Vec<KvColumn> {
+        std::sync::Arc::make_mut(&mut self.columns)
+    }
+
+    fn indexes_mut(&mut self) -> &mut Vec<KvIndex> {
+        std::sync::Arc::make_mut(&mut self.indexes)
+    }
+
     pub fn new(table_id: i64, columns: Vec<KvColumn>) -> Self {
         KvTable::with_storage(table_id, columns, Box::new(MemTableStorage::new()))
     }
@@ -705,11 +728,11 @@ impl KvTable {
             pre_split_regions: 0,
             table_id,
             name: String::new(),
-            columns,
+            columns: std::sync::Arc::new(columns),
             hidden_columns: 0,
             store,
             pk_handle_offset: None,
-            indexes: Vec::new(),
+            indexes: std::sync::Arc::new(Vec::new()),
             common_handle_offsets: Vec::new(),
             auto_increment_offset: None,
             auto_id: AutoIdAllocator::new(),
@@ -794,7 +817,7 @@ impl KvTable {
     ) -> Self {
         let mut copy = KvTable::with_storage_and_collation(
             table_id,
-            self.columns.clone(),
+            self.columns.as_ref().clone(),
             Box::new(MemTableStorage::new()),
             self.use_new_collation,
         );
@@ -1612,7 +1635,7 @@ impl KvTable {
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
             written.push(key);
         }
-        self.indexes.push(index);
+        self.indexes_mut().push(index);
         Ok(())
     }
 
@@ -1646,7 +1669,7 @@ impl KvTable {
         else {
             return Ok(false);
         };
-        let index = self.indexes.remove(position);
+        let index = self.indexes_mut().remove(position);
         let rows = self.scan_rows_with_handles_recomputed(decode_context)?;
         for (handle, row) in &rows {
             let physical_id = self.stored_physical_id(handle)?.unwrap_or(self.table_id);
@@ -1699,7 +1722,7 @@ impl KvTable {
     /// It goes at the very end, so no existing offset moves and the tail
     /// invariant holds by construction.
     pub fn add_hidden_column(&mut self, column: KvColumn) -> usize {
-        self.columns.push(column);
+        self.columns_mut().push(column);
         self.hidden_columns += 1;
         self.columns.len() - 1
     }
@@ -1717,7 +1740,7 @@ impl KvTable {
     /// `information_schema.columns` gives them ordinals 1 and 2.
     pub fn add_column(&mut self, position: usize, column: KvColumn) {
         let position = position.min(self.visible_column_count());
-        self.columns.insert(position, column);
+        self.columns_mut().insert(position, column);
         let shift = |offset: &mut usize| {
             if *offset >= position {
                 *offset += 1;
@@ -1732,7 +1755,7 @@ impl KvTable {
         if let Some(offset) = self.auto_increment_offset.as_mut() {
             shift(offset);
         }
-        for index in &mut self.indexes {
+        for index in self.indexes_mut() {
             for offset in &mut index.column_offsets {
                 shift(offset);
             }
@@ -1755,7 +1778,7 @@ impl KvTable {
         if self.is_hidden(offset) {
             self.hidden_columns -= 1;
         }
-        self.columns.remove(offset);
+        self.columns_mut().remove(offset);
         let shift = |value: &mut usize| {
             if *value > offset {
                 *value -= 1;
@@ -1770,7 +1793,7 @@ impl KvTable {
         if let Some(value) = self.auto_increment_offset.as_mut() {
             shift(value);
         }
-        for index in &mut self.indexes {
+        for index in self.indexes_mut() {
             for value in &mut index.column_offsets {
                 shift(value);
             }
@@ -1883,7 +1906,7 @@ impl KvTable {
             converted_rows.push((physical_id, handle, row));
         }
 
-        self.columns[offset] = new_column;
+        self.columns_mut()[offset] = new_column;
         if let Some(partition) = &mut self.partition {
             partition.update_dependency_type(
                 &self.columns[offset].name,
@@ -1901,7 +1924,7 @@ impl KvTable {
         // prints `UNIQUE KEY idx (a)`, and `char(250) idx(a(10))` modified to
         // `char(9)` does too.
         let field_type = self.columns[offset].field_type.clone();
-        for index in &mut self.indexes {
+        for index in self.indexes_mut() {
             for (position, at) in index.column_offsets.iter().enumerate() {
                 if *at != offset {
                     continue;
@@ -1940,8 +1963,8 @@ impl KvTable {
     /// Moves the column at `from` to `to`, carrying every offset that
     /// addresses a column with it.
     fn move_column(&mut self, from: usize, to: usize) {
-        let column = self.columns.remove(from);
-        self.columns.insert(to, column);
+        let column = self.columns_mut().remove(from);
+        self.columns_mut().insert(to, column);
         let shift = |offset: &mut usize| {
             *offset = if *offset == from {
                 to
@@ -1962,7 +1985,7 @@ impl KvTable {
         if let Some(offset) = self.auto_increment_offset.as_mut() {
             shift(offset);
         }
-        for index in &mut self.indexes {
+        for index in self.indexes_mut() {
             for offset in &mut index.column_offsets {
                 shift(offset);
             }
@@ -1992,7 +2015,7 @@ impl KvTable {
                 found.push(handle);
             }
         }
-        for index in self.indexes.clone() {
+        for index in self.indexes.as_ref().clone() {
             if !index.unique {
                 continue;
             }
@@ -2045,7 +2068,7 @@ impl KvTable {
                 });
             }
         }
-        for index in self.indexes.clone() {
+        for index in self.indexes.as_ref().clone() {
             if !index.unique {
                 continue;
             }
@@ -2063,7 +2086,7 @@ impl KvTable {
 
     /// Adds an index, whose entries every later write maintains.
     pub fn add_index(&mut self, index: KvIndex) {
-        self.indexes.push(index);
+        self.indexes_mut().push(index);
     }
 
     /// The next auto-increment value, which `SHOW TABLE STATUS` reports as
@@ -2088,7 +2111,7 @@ impl KvTable {
     /// ... {VISIBLE|INVISIBLE}`). Names match case-insensitively, as every
     /// other index lookup here and in Go does.
     pub fn index_mut_by_name(&mut self, name: &str) -> Option<&mut KvIndex> {
-        self.indexes
+        self.indexes_mut()
             .iter_mut()
             .find(|index| index.name.eq_ignore_ascii_case(name))
     }
@@ -2283,7 +2306,7 @@ impl KvTable {
     /// needs the whole list as metadata.
     #[must_use]
     pub fn index_list_for_check(&self) -> Vec<KvIndex> {
-        self.indexes.clone()
+        self.indexes.as_ref().clone()
     }
 
     /// [`KvTable::index_key`] for [`crate::admin_check`]: the entry key one
@@ -2458,7 +2481,7 @@ impl KvTable {
             .map_err(|error| KvTableError::Decode(format!("{error:?}")));
         }
         let decoder = RowDecoder::for_table_read(
-            self.columns.clone(),
+            self.columns.as_ref().clone(),
             self.pk_handle_offset,
             self.common_handle_offsets.clone(),
             None,
@@ -2519,7 +2542,13 @@ impl KvTable {
         ctx: &impl tidb_expr::Columns,
     ) -> Result<(), KvTableError> {
         let zone = ctx.time_zone();
-        self.update_row_in(handle, None, row, ctx, &RowDecodeContext::legacy_default(&zone))
+        self.update_row_in(
+            handle,
+            None,
+            row,
+            ctx,
+            &RowDecodeContext::legacy_default(&zone),
+        )
     }
 
     fn update_row_in(
@@ -2710,7 +2739,9 @@ impl KvTable {
         if !self.indexes.is_empty() {
             self.delete_index_entries(old_row, handle, old_physical_id, &zone)?;
         }
-        self.store.delete(key).map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        self.store
+            .delete(key)
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
         self.dirty_content = true;
         Ok(())
     }
@@ -3207,7 +3238,7 @@ mod tests {
             .unwrap();
         }
         // A row of the next table id, written into the same storage layout.
-        let mut neighbour = KvTable::new(t.table_id + 1, t.columns.clone());
+        let mut neighbour = KvTable::new(t.table_id + 1, t.columns.to_vec());
         neighbour
             .insert_row(
                 &[Datum::Int(99), Datum::Bytes(b"y".to_vec())],

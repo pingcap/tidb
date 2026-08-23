@@ -68,7 +68,7 @@ impl KvTable {
         context: &RowDecodeContext,
     ) -> Result<RowDecoder, KvTableError> {
         let decoder = RowDecoder::for_table_read(
-            self.columns.clone(),
+            self.columns.as_ref().clone(),
             self.pk_handle_offset,
             self.common_handle_offsets.clone(),
             keep,
@@ -84,7 +84,7 @@ impl KvTable {
         context: &RowDecodeContext,
     ) -> Result<RowDecoder, KvTableError> {
         RowDecoder::for_recomputed_read(
-            self.columns.clone(),
+            self.columns.as_ref().clone(),
             self.pk_handle_offset,
             self.common_handle_offsets.clone(),
             self.use_new_collation,
@@ -223,9 +223,7 @@ impl KvTable {
         // `physical_ids.len() > 1`.
         let physical_count = self.record_physical_ids().len();
         let mut iterators = Vec::new();
-        for (low, upper) in
-            self.record_key_ranges(handle_ranges, zone, ordered || descending)?
-        {
+        for (low, upper) in self.record_key_ranges(handle_ranges, zone, ordered || descending)? {
             iterators.push(
                 if descending {
                     self.store.iter_reverse(Some(&upper), Some(&low))
@@ -365,9 +363,9 @@ impl KvTable {
         };
         let encoded = match handle_ranges {
             Some(ranges) => {
-                crate::handle_range::record_key_ranges(self, ranges, zone, keep_order)
+                { crate::handle_range::record_key_ranges(self, ranges, zone, keep_order) }
+                    .map_err(|error| KvTableError::Encode(format!("{error:?}")))?
             }
-                .map_err(|error| KvTableError::Encode(format!("{error:?}")))?,
             None => None,
         };
         Ok(encoded.unwrap_or_else(|| self.record_key_range()))

@@ -32,6 +32,20 @@ impl Session {
         mem_quota: i64,
         tmp_storage_on_oom: bool,
     ) -> (tidb_planner::candidate_cost::CostEnv, f64) {
+        // Everything below derives from the session's variable table, except
+        // the two per-statement arguments, which are patched onto the cached
+        // copy -- so a statement pays one stamp check and one clone instead
+        // of thirty-odd string lookups and parses. Go's equivalents are
+        // typed `SessionVars` fields maintained at `SET`.
+        let generation = self.vars.generation();
+        if let Some((cached_at, env, join_concurrency)) = self.cost_env_cache.borrow().as_ref() {
+            if *cached_at == generation {
+                let mut env = env.clone();
+                env.session.mem_quota = mem_quota;
+                env.session.enable_tmp_storage_on_oom = tmp_storage_on_oom;
+                return (env, *join_concurrency);
+            }
+        }
         let number = |name: &str, default: f64| {
             self.vars
                 .get_system(name)
@@ -97,7 +111,9 @@ impl Session {
         env.cost_factors.hash_join = number("tidb_opt_hash_join_cost_factor", 1.0);
         env.cost_factors.index_join = number("tidb_opt_index_join_cost_factor", 1.0);
 
-        (env, resolved_concurrency("tidb_hash_join_concurrency"))
+        let join_concurrency = resolved_concurrency("tidb_hash_join_concurrency");
+        *self.cost_env_cache.borrow_mut() = Some((generation, env.clone(), join_concurrency));
+        (env, join_concurrency)
     }
 
     /// The expression context used by an immutable prepared PointGet plan.
@@ -328,18 +344,30 @@ impl Session {
     /// [`tidb_executor::StmtContext`], which every executor entry already
     /// takes, rather than on ~30 separate parameters.
     pub(crate) fn scanner_sql_mode(&self) -> tidb_parser::SqlMode {
+        // Cached against the variable table's generation: Go keeps the
+        // parsed mode as `SessionVars.SQLMode`, a typed field the `SET` hook
+        // maintains, so the per-statement read is a field access there and a
+        // stamp check here.
+        let generation = self.vars.generation();
+        if let Some((cached_at, mode)) = self.scanner_sql_mode_cache.get() {
+            if cached_at == generation {
+                return mode;
+            }
+        }
         // `SET sql_mode = 'ANSI'` is stored already expanded (captured from
         // TiDB: `@@sql_mode` reads back
         // `REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI`),
         // so matching names against the stored text sees every flag a
         // combination brought in.
-        scanner_sql_mode_of(
+        let mode = scanner_sql_mode_of(
             &self
                 .vars
                 .get_system("sql_mode")
                 .unwrap_or_default()
                 .to_ascii_uppercase(),
-        )
+        );
+        self.scanner_sql_mode_cache.set(Some((generation, mode)));
+        mode
     }
 
     /// Parses one statement of THIS session, under the `sql_mode` in force
