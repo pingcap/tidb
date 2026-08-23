@@ -337,7 +337,7 @@ pub(crate) enum LeafAccessPath {
 /// The same answer [`crate::merge_join_plan::table_scan_order`] gives, read
 /// through the leaf's column list so it can be compared with
 /// [`leaf_index_order`] on one numbering.
-fn leaf_handle_order(table: &KvTable, columns: &[(String, FieldType)]) -> Vec<usize> {
+pub(crate) fn leaf_handle_order(table: &KvTable, columns: &[(String, FieldType)]) -> Vec<usize> {
     crate::merge_join_plan::table_scan_order(table)
         .into_iter()
         .next()
@@ -362,7 +362,7 @@ fn leaf_handle_order(table: &KvTable, columns: &[(String, FieldType)]) -> Vec<us
 /// same one [`crate::driver::merge_decision`] does: an expression index's
 /// hidden column is a column of the TABLE that no query row carries, so it
 /// truncates the order rather than pointing at the wrong offset.
-fn leaf_index_order(
+pub(crate) fn leaf_index_order(
     table: &KvTable,
     index: &crate::kv_table::KvIndex,
     columns: &[(String, FieldType)],

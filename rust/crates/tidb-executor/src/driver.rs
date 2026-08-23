@@ -1298,6 +1298,11 @@ fn run_select_traced_with_delivery_choice_inner(
     let mut joined_logical_rows = None;
     let mut restored_join_output = None;
     let mut aggregate_join_projection = None;
+    // The ORDER this select's `FROM` source was asked for, in the sole
+    // table's own column offsets -- carried out of the arm below so
+    // `commit_fast_path_source` can refuse to replace the ordered scan with
+    // an unordered path (see its `required_order` doc).
+    let mut source_required_order: Option<Vec<usize>> = None;
     let (mut from_source, mut scope, mut from_delivered): (
         Option<Box<dyn Executor>>,
         FromScope,
@@ -1526,6 +1531,15 @@ fn run_select_traced_with_delivery_choice_inner(
                 } else {
                     aggregation_required.as_ref().unwrap_or(&parent_required)
                 };
+            if !source_required.is_sort_item_empty() {
+                source_required_order = Some(
+                    source_required
+                        .sort_items
+                        .iter()
+                        .map(|item| item.col as usize)
+                        .collect(),
+                );
+            }
             let (exec, mut scope, delivered) = build_join(
                 planned,
                 catalog,
@@ -1663,6 +1677,7 @@ fn run_select_traced_with_delivery_choice_inner(
             &mut from_source,
             trace.as_deref_mut(),
             ctx,
+            source_required_order.as_deref(),
         )?
     };
     let AccessPathCommit {
@@ -2592,8 +2607,43 @@ fn run_select_traced_with_delivery_choice_inner(
     // complete WHERE even when the executable Selection remains above the scan.
     if let Some(delivered) = output_delivered.as_deref_mut() {
         delivered.candidate = logical_column_prune
-            .then(|| from_delivered.candidate.clone().or(access_candidate))
+            .then(|| from_delivered.candidate.clone().or_else(|| access_candidate.clone()))
             .flatten();
+        // A COMPUTED simple projection is Go's `PhysicalProjection` over the
+        // child task, priced by `getPlanCostVer24PhysicalProjection` -- child
+        // cost plus a per-row expression CPU term. Delivering it lets the
+        // parent join PRICE the site: without a receipt, `build_join`'s
+        // `unpriced_merge` arm keeps a structural merge preference, and a
+        // committed merge then forces an index join by elimination below
+        // (measured: `planner/core/join_reorder_through_projection`'s five
+        // recorded divergences, all of them `dt`-shaped derived tables of
+        // exactly this projection). `simple_projection` plus an empty ORDER
+        // BY bounds the claim to selects whose ONLY root operator is that
+        // projection -- a Sort, Limit, Aggregation or DISTINCT above it would
+        // make this receipt understate the task.
+        if delivered.candidate.is_none()
+            && !logical_column_prune
+            && simple_projection
+            && select.order_by.is_empty()
+        {
+            if let Some(child) = from_delivered.candidate.clone().or_else(|| access_candidate.clone())
+            {
+                let input_rows = tidb_planner::candidate_cost::evaluate(
+                    &child,
+                    &tidb_planner::candidate_cost::CostEnv::default(),
+                    tidb_planner::task_type::TaskType::Root,
+                )
+                .rows;
+                delivered.candidate = Some(tidb_planner::candidate_cost::Candidate::Projection {
+                    child: Box::new(child),
+                    input_rows,
+                    exprs: exprs
+                        .iter()
+                        .map(|expr| matches!(expr, Expression::ScalarFunction(_)))
+                        .collect(),
+                });
+            }
+        }
     }
 
     // Output schema: one column per field, typed by the expression's static type.

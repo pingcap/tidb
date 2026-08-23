@@ -487,6 +487,7 @@ fn index_ranges_are_built_the_way_go_builds_them() {
             false,
             &crate::StmtContext::for_query(),
             None,
+            None,
         ) {
             Some(crate::driver::access::ChosenPath::Index(id, ranges, _, _, _, _)) => {
                 Some((id, ranges))
@@ -728,6 +729,7 @@ fn a_non_unique_index_ranges_on_the_clustered_handle_too() {
             false,
             &crate::StmtContext::for_query(),
             None,
+            None,
         ) {
             Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _, _, _)) => Some(ranges),
             Some(crate::driver::access::ChosenPath::HandleRange(ranges, _, _, _)) => {
@@ -895,6 +897,7 @@ fn a_unique_index_gets_no_handle_dimension() {
             false,
             &crate::StmtContext::for_query(),
             None,
+            None,
         )
     {
         assert!(
@@ -1010,6 +1013,7 @@ fn a_handle_that_is_already_a_key_part_is_not_appended_again() {
             &crate::index_hints::AvailablePaths::unrestricted(),
             false,
             &crate::StmtContext::for_query(),
+            None,
             None,
         )
     else {

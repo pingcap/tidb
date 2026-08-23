@@ -2327,6 +2327,41 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // `tidb_session::tests_join_predicate_placement`'s
     // `an_outer_join_on_condition_derives_the_inner_range_through_the_key`
     // and its four siblings.
+    // 30 -> 22 at the JOIN-REORDER COST family, `planner/core/join_reorder2`
+    // (8 -> 0) and `planner/core/join_reorder_through_projection` (5 -> 5,
+    // the five STATEMENTS shifted -- see below). One mechanism closed all
+    // eight: a derived table whose `FROM` writes a LEFT OUTER join was
+    // declined whole by the row inventory
+    // (`driver::join_reorder::DerivedRel`), so the join ABOVE it -- the
+    // `(sub, t4)` top join of every diverging statement -- had no row
+    // estimate, no priced alternatives, and fell to `build_join_with_choice`'s
+    // structural merge fallback; the committed merge's child order then
+    // forced an INDEX join by elimination below (`getHashJoins` returns
+    // nothing under a non-empty property), which is the recorded
+    // `TableRangeScan t3 range: decided by [t2.id]` row. Modelling the
+    // outer join (`LogicalJoin.DeriveStats`' `count = math.Max(count,
+    // leftProfile.RowCount)` arm, reached exactly as Go reaches it through
+    // `optimizeRecursive` into the subquery) lets the site PRICE: hash
+    // 3,872,144 beats merge 8,331,569 under ver2, Go's own pick, and the
+    // left-outer site below -- now under the EMPTY property -- picks the
+    // recorded MergeJoin over the ordered `t3` full scan on cost.
+    //
+    // Two more Go mechanisms landed in the same unit and keep
+    // `join_reorder_through_projection` at five while CHANGING which five:
+    // `hash_join_candidate` now reads the session's resolved
+    // `tidb_hash_join_concurrency` (Go stamps `p.Concurrency` in
+    // `getHashJoins` and `getPlanCostVer24PhysicalHashJoin` divides the
+    // probe terms by it; mysql-tester's DSN pins it to 1, and the hardcoded
+    // plain-session 5 priced a different session than the recordings), and a
+    // COMPUTED simple projection now delivers Go's `PhysicalProjection` task
+    // receipt so the joins above a `(select t2.a, t2.b*2 ...) dt` derived
+    // table compare priced candidates instead of keeping the structural
+    // merge. The five that remain are one family: sites where the recorded
+    // choice turns on per-node candidate SHAPE fidelity (Go's cop Selection
+    // below the injected projection, the reader's net term, `PruneColumns`
+    // over the injected wrapper) that this tier's assembly does not yet
+    // reproduce -- publishing the pruned wrapper was measured at 5 -> 6 and
+    // reverted; see `driver::through_proj::wrap_node`'s NAMED RESIDUE.
     const KNOWN_DIVERGENCES: usize = 24;
     //
     //

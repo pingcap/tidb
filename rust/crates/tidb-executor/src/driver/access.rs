@@ -587,6 +587,16 @@ pub(crate) fn commit_fast_path_source(
     from_source: &mut Option<Box<dyn Executor>>,
     mut trace: Option<&mut PlanTrace>,
     ctx: &crate::StmtContext,
+    // Go `findBestTask`'s own `prop` when this SELECT is a child a parent
+    // asked for an ORDER of (a merge join's side, an index join's outer
+    // side): the required column sequence in this table's own offsets, or
+    // `None` for the empty property. `convertToIndexScan` /
+    // `convertToTableScan` both open with `if !prop.IsSortItemEmpty() &&
+    // !candidate.matchPropResult.Matched() { return invalidTask }` -- a path
+    // that does not walk in the required order is not a candidate AT ALL, so
+    // the ordered scan `build_from` already installed must not be replaced
+    // by a cheaper unordered one here.
+    required_order: Option<&[usize]>,
 ) -> Result<AccessPathCommit, DriverError> {
     #[cfg(test)]
     ORDINARY_ACCESS_PATH_ENTRIES.with(|entries| entries.set(entries.get() + 1));
@@ -928,6 +938,7 @@ pub(crate) fn commit_fast_path_source(
             partition_scan,
             ctx,
             None,
+            required_order,
         ) {
             // A table path the ranger narrowed. The source already installed
             // by `build_from` IS the right executor -- a `TableRangeScan` is
@@ -1385,6 +1396,7 @@ fn choose_automatic_index_merge_union(
         input.hints,
         input.partition_scan,
         input.ordering_index_selectivity_ratio,
+        None,
         None,
     )?;
     let rows = crate::access_cost::realtime_row_count(stats)
@@ -2419,6 +2431,7 @@ pub(crate) fn choose_index_range_path(
     partition_scan: bool,
     ctx: &crate::StmtContext,
     source_rows: Option<f64>,
+    required_order: Option<&[usize]>,
 ) -> Option<ChosenPath> {
     let (best, needed) = best_single_table_access_path(
         select,
@@ -2430,6 +2443,7 @@ pub(crate) fn choose_index_range_path(
         partition_scan,
         ctx.ordering_index_selectivity_ratio(),
         source_rows,
+        required_order,
     )?;
     let estimate = best.estimate;
     let planner_candidate = best.planner_candidate;
@@ -2469,6 +2483,7 @@ fn best_single_table_access_path(
     partition_scan: bool,
     ordering_index_selectivity_ratio: f64,
     source_rows: Option<f64>,
+    required_order: Option<&[usize]>,
 ) -> Option<(crate::access_cost::AccessPath, Vec<usize>)> {
     // No `WHERE` at all is not a reason to stop: a covering index is still a
     // candidate, and reading the whole of a narrow index beats reading the
@@ -2521,7 +2536,7 @@ fn best_single_table_access_path(
     });
     let stats = catalog.table_statistics(table.stats_physical_id());
     let stats = stats.as_ref().map(AsRef::as_ref);
-    let paths = crate::access_cost::enumerate_paths(
+    let mut paths = crate::access_cost::enumerate_paths(
         table,
         columns,
         where_clause,
@@ -2538,6 +2553,29 @@ fn best_single_table_access_path(
         true,
         source_rows,
     );
+    if let Some(wanted) = required_order {
+        // `matchProperty` as a FILTER over the enumeration, exactly as
+        // [`crate::driver::leaf_access::leaf_index_path`] applies it for a
+        // leaf of a multi-table `FROM`: a path that does not already walk in
+        // the parent-required order could only ever have become Go's
+        // `invalidTask`. Without this, pruning a wrapped relation to a
+        // covering set let the covering `IndexFullScan` REPLACE the ordered
+        // table scan under a merge join's key order -- a plan whose merge
+        // executor would silently interleave unsorted rows.
+        paths.retain(|candidate| match &candidate.path.index {
+            Some((index_id, _)) => table
+                .indexes()
+                .iter()
+                .find(|index| index.id == *index_id)
+                .is_some_and(|index| {
+                    crate::driver::leaf_access::leaf_index_order(table, index, columns)
+                        .starts_with(wanted)
+                }),
+            None => {
+                crate::driver::leaf_access::leaf_handle_order(table, columns).starts_with(wanted)
+            }
+        });
+    }
     // Go's `prop.ExpectedCnt != math.MaxFloat64`: a row cap on the required
     // property is what disables Fix45132's row-ratio rule inside pruning.
     crate::access_cost::choose_access_path(paths, stats, cap.is_some()).map(|best| (best, needed))

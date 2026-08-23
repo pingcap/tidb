@@ -865,6 +865,22 @@ fn wrap_node(
             // `Column2Exprs(p.Schema().Columns)`: the pass-through half, so the
             // branch's own outputs are unchanged, then `AppendExpr` for each
             // injected expression.
+            //
+            // Go's `PruneColumns` then narrows this projection to the columns
+            // read above it, which is what lets its leaf take a COVERING
+            // index (`result:1604` reads `IndexFullScan  t2, index:b(b)`
+            // under the pruned `Projection  t2.a, t2.b, mul(t2.b,2)`).
+            // Publishing the pruned set here was MEASURED and reverted: it
+            // closed the covering rows it targeted but re-priced the hash
+            // alternative below every parent merge-vs-hash comparison, and
+            // this tier's candidate assembly does not yet reproduce Go's
+            // node shapes (cop Selection below the projection, the reader's
+            // net term) exactly enough for those comparisons to land on Go's
+            // side -- `join_reorder_through_projection` went 5 -> 6 recorded
+            // divergences, with the narrow-output statements flipping to a
+            // whole-hash tree Go does not build. NAMED RESIDUE: Go's
+            // `PruneColumns` over this wrapper, blocked on candidate-shape
+            // fidelity at the sites `build_join_with_choice` prices.
             let mut fields: Vec<SelectField> = relation
                 .columns
                 .iter()
