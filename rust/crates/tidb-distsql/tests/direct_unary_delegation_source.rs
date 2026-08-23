@@ -131,7 +131,7 @@ fn process_owner_issues_openers_and_sessions_without_sharing_shutdown_authority(
         .find("pub struct SharedReadRuntime")
         .expect("session read runtime")..];
     let session = &session[..session.find("\n}").expect("session fields")];
-    assert!(session.contains("client: Rc<RefCell<C>>"));
+    assert!(session.contains("client: Arc<Mutex<C>>"));
     assert!(session.contains("region_cache: BackgroundRegionCache<L>"));
     assert!(session.contains("authority_id: u64"));
     assert!(!runtime.contains("region_cache: Rc<RefCell<RegionCache<L>>>"));

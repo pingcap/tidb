@@ -3252,11 +3252,7 @@ pub(crate) fn split_scan_predicates(
             // ... and the DESCRIPTION beside it has to say the same thing:
             // Go refines before it builds the comparison at all, so the
             // constant it sends TiKV -- and prints -- is the refined one.
-            crate::predicate_pushdown::adopt_refined_literals(
-                &mut predicate,
-                &unrefined,
-                &filter,
-            );
+            crate::predicate_pushdown::adopt_refined_literals(&mut predicate, &unrefined, &filter);
             Some((predicate, filter))
         }) {
             Some((predicate, filter)) => {
@@ -4638,8 +4634,7 @@ impl IndexAccessOrder {
     ) -> bool {
         crate::column_prune::expr_column_offsets(predicate, resolver).is_some_and(|offsets| {
             offsets.iter().all(|offset| {
-                self.column_offsets.contains(offset)
-                    || self.handle_covered_offsets.contains(offset)
+                self.column_offsets.contains(offset) || self.handle_covered_offsets.contains(offset)
             })
         })
     }

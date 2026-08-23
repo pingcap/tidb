@@ -182,7 +182,9 @@ pub use explain::{
     explain_insert_stmt, explain_select_stmt, explain_set_opr_stmt, explain_update_stmt,
     ExplainFormat,
 };
-pub use hash_agg::{AggFunc, AggKind, GroupedStreamAggExec, HashAggExec, StreamAggExec};
+pub use hash_agg::{
+    AggFunc, AggKind, GroupedStreamAggExec, HashAggContext, HashAggExec, StreamAggExec,
+};
 pub use join::{JoinExec, JoinKind};
 pub use kv_table::{
     DecodedRow, FkAction, GeneratedColumnSelection, IndexRange, KvColumn, KvForeignKey, KvIndex,

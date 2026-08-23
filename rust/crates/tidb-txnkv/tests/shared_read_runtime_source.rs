@@ -75,17 +75,17 @@ fn sessions_share_process_authority_but_not_client_cells() {
     let second = authority.open_session().expect("second session");
 
     assert_ne!(
-        first.client_handle().as_ptr(),
-        second.client_handle().as_ptr()
+        Arc::as_ptr(&first.client_handle()),
+        Arc::as_ptr(&second.client_handle())
     );
-    assert_eq!(first.client().borrow().0, 7);
-    assert_eq!(second.client().borrow().0, 7);
+    assert_eq!((*first.client().lock().unwrap()).0, 7);
+    assert_eq!((*second.client().lock().unwrap()).0, 7);
     assert_eq!(first.authority_id(), authority.authority_id());
     assert_eq!(second.authority_id(), authority.authority_id());
     assert_eq!(first.cluster_id(), second.cluster_id());
 
     drop(first);
-    assert_eq!(second.client().borrow().0, 7);
+    assert_eq!((*second.client().lock().unwrap()).0, 7);
     drop(second);
     authority.shutdown().expect("unique authority shutdown");
 }
@@ -107,7 +107,7 @@ fn authority_is_send_and_sync_while_sessions_are_opened_in_workers() {
         workers.push(std::thread::spawn(move || {
             let session = authority.open_session().expect("worker session");
             barrier.wait();
-            let client_id = session.client().borrow().0;
+            let client_id = (*session.client().lock().unwrap()).0;
             (session.authority_id(), client_id)
         }));
     }

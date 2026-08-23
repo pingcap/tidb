@@ -168,7 +168,7 @@ where
         request.context = None;
         let mut context = self.write_context(batch.context());
         context.is_retry_request = is_retry;
-        match self.runtime.client().try_borrow_mut() {
+        match self.runtime.client().try_lock() {
             Ok(mut client) => client.publish_prewrite(batch.address(), &request, &context, call),
             Err(_) => PublishedCommand::BeforePublication(
                 "TiKV client is already borrowed while publishing Prewrite".to_owned(),

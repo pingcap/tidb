@@ -43,7 +43,11 @@ fn range(session: &mut Session, sql: &str) -> String {
         .find_map(|row| {
             row.iter().find_map(|cell| {
                 let text = cell.split_once("range:")?.1;
-                Some(text.split_once(", keep order:").map_or(text, |(r, _)| r).to_owned())
+                Some(
+                    text.split_once(", keep order:")
+                        .map_or(text, |(r, _)| r)
+                        .to_owned(),
+                )
             })
         })
         .unwrap_or_default()
@@ -172,7 +176,10 @@ fn enum_endpoints_order_by_member_number_not_name() {
     // Members admitted by name (`'c'` and `'b'` both exceed `'a'`), listed by
     // number: `'c'` is 1 and `'b'` is 2.
     assert_eq!(
-        range(&mut session, "EXPLAIN SELECT * FROM e USE INDEX (ix) WHERE x > 'a'"),
+        range(
+            &mut session,
+            "EXPLAIN SELECT * FROM e USE INDEX (ix) WHERE x > 'a'"
+        ),
         "[\"c\",\"c\"], [\"b\",\"b\"]"
     );
     let mut rows = row_text(session.run("SELECT y FROM e USE INDEX (ix) WHERE x > 'a'"));

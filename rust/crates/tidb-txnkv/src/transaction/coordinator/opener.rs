@@ -553,7 +553,7 @@ where
         let published = self
             .runtime
             .client()
-            .try_borrow_mut()
+            .try_lock()
             .map_err(|_| {
                 HeartBeatFailure::Transport("keep-alive session is already borrowed".to_owned())
             })?

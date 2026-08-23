@@ -494,7 +494,7 @@ fn cancellation_after_check_or_resolve_wins_before_followup_mutation() {
             ..KvrpcCheckTxnStatusResponse::default()
         }]);
         {
-            let mut client = runtime.client().borrow_mut();
+            let mut client = runtime.client().lock().unwrap();
             client.cancel_after_check = !cancel_after_resolve;
             client.cancel_after_resolve = cancel_after_resolve;
         }
@@ -519,7 +519,7 @@ fn cancellation_after_check_or_resolve_wins_before_followup_mutation() {
 #[test]
 fn caller_cancelled_rpc_is_typed_at_both_lock_commands() {
     let (check_runtime, _) = runtime(vec![KvrpcCheckTxnStatusResponse::default()]);
-    check_runtime.client().borrow_mut().check_error = Some(DirectUnaryClientError::CallerCancelled);
+    check_runtime.client().lock().unwrap().check_error = Some(DirectUnaryClientError::CallerCancelled);
     assert_eq!(
         resolve_optimistic_locks(
             &check_runtime,
@@ -537,7 +537,7 @@ fn caller_cancelled_rpc_is_typed_at_both_lock_commands() {
         commit_version: 1_200 << 18,
         ..KvrpcCheckTxnStatusResponse::default()
     }]);
-    resolve_runtime.client().borrow_mut().resolve_error =
+    resolve_runtime.client().lock().unwrap().resolve_error =
         Some(DirectUnaryClientError::CallerCancelled);
     assert_eq!(
         resolve_optimistic_locks(
@@ -554,7 +554,7 @@ fn caller_cancelled_rpc_is_typed_at_both_lock_commands() {
     assert_eq!(recorded.borrow().resolves.len(), 1);
 
     let (remote_runtime, _) = runtime(vec![KvrpcCheckTxnStatusResponse::default()]);
-    remote_runtime.client().borrow_mut().check_error = Some(DirectUnaryClientError::Connection(
+    remote_runtime.client().lock().unwrap().check_error = Some(DirectUnaryClientError::Connection(
         DirectUnaryConnectionError::remote_grpc(
             "primary:20160",
             9,

@@ -248,10 +248,14 @@ impl Session {
                     // (`UnsetUserVar`), which is the opposite of the inline
                     // `@x := NULL` assignment expression -- that one leaves
                     // the existing value alone.
+                    let mut vars = self
+                        .user_vars
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     if matches!(value, Datum::Null) {
-                        self.user_vars.borrow_mut().remove(&key);
+                        vars.remove(&key);
                     } else {
-                        self.user_vars.borrow_mut().insert(key, value);
+                        vars.insert(key, value);
                     }
                 }
                 Ok(Some(()))
@@ -922,7 +926,10 @@ impl Session {
             // the same way, at build time.
             Expr::UserVar(name) => uservar_read_expr(
                 name,
-                self.user_vars.borrow().get(&name.to_ascii_lowercase()),
+                self.user_vars
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .get(&name.to_ascii_lowercase()),
             ),
             _ => unreachable!("VariableBinder only sends variable atoms to this helper"),
         })

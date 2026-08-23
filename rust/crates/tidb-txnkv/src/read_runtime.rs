@@ -14,9 +14,8 @@
 
 //! Shared ownership boundary for the retained TiKV read path.
 
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::region::{
@@ -198,7 +197,7 @@ where
 /// Cloning this value clones only the handles. It cannot create another
 /// client, channel pool, region cache, topology map, or retry authority.
 pub struct SharedReadRuntime<C, L> {
-    client: Rc<RefCell<C>>,
+    client: Arc<Mutex<C>>,
     region_cache: BackgroundRegionCache<L>,
     cluster_id: u64,
     authority_id: u64,
@@ -207,7 +206,7 @@ pub struct SharedReadRuntime<C, L> {
 impl<C, L> Clone for SharedReadRuntime<C, L> {
     fn clone(&self) -> Self {
         Self {
-            client: Rc::clone(&self.client),
+            client: Arc::clone(&self.client),
             region_cache: self.region_cache.clone(),
             cluster_id: self.cluster_id,
             authority_id: self.authority_id,
@@ -221,7 +220,7 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
     pub fn new_injected(client: C, region_cache: RegionCache<L>) -> Self {
         let cluster_id = region_cache.cluster_id();
         Self {
-            client: Rc::new(RefCell::new(client)),
+            client: Arc::new(Mutex::new(client)),
             region_cache: BackgroundRegionCache::without_worker(region_cache),
             cluster_id,
             authority_id: next_read_authority_id(),
@@ -236,7 +235,7 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
     ) -> Result<Self, BackgroundRegionCacheError> {
         let cluster_id = region_cache.with_cache(|cache| cache.cluster_id())?;
         Ok(Self {
-            client: Rc::new(RefCell::new(client)),
+            client: Arc::new(Mutex::new(client)),
             region_cache,
             cluster_id,
             authority_id,
@@ -245,13 +244,13 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
 
     /// Returns a handle to the same client authority.
     #[must_use]
-    pub fn client_handle(&self) -> Rc<RefCell<C>> {
-        Rc::clone(&self.client)
+    pub fn client_handle(&self) -> Arc<Mutex<C>> {
+        Arc::clone(&self.client)
     }
 
-    /// Borrows the same client cell without cloning a handle.
+    /// Locks the same client authority without cloning a handle.
     #[must_use]
-    pub fn client(&self) -> &RefCell<C> {
+    pub fn client(&self) -> &Mutex<C> {
         self.client.as_ref()
     }
 

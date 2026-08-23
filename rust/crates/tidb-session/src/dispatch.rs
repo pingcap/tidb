@@ -469,7 +469,10 @@ impl Session {
                         if row.len() != names.len() {
                             return Err(DriverError::SelectIntoColumnMismatch);
                         }
-                        let mut vars = self.user_vars.borrow_mut();
+                        let mut vars = self
+                            .user_vars
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         for (name, value) in names.iter().zip(row.iter()) {
                             vars.insert(name.to_ascii_lowercase(), value.clone());
                         }

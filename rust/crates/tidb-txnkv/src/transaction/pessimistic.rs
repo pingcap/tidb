@@ -566,7 +566,7 @@ where
                 keys: batch.keys().to_vec(),
                 ..KvrpcPessimisticRollbackRequest::default()
             };
-            let published = match self.two_pc.runtime().client().try_borrow_mut() {
+            let published = match self.two_pc.runtime().client().try_lock() {
                 Ok(mut client) => client.publish_pessimistic_rollback(
                     batch.address(),
                     &request,
@@ -845,7 +845,7 @@ where
         call: &UnaryCallContext,
     ) -> Result<KvrpcPessimisticLockResponse, PessimisticLockFailure> {
         let context = self.two_pc.write_context(batch.context());
-        let published = match self.two_pc.runtime().client().try_borrow_mut() {
+        let published = match self.two_pc.runtime().client().try_lock() {
             Ok(mut client) => {
                 client.publish_pessimistic_lock(batch.address(), request, &context, call)
             }

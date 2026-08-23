@@ -251,7 +251,7 @@ where
     };
     let response = runtime
         .client()
-        .try_borrow_mut()
+        .try_lock()
         .map_err(|_| LockRecoveryError::ClientLifecycle)?
         .pessimistic_rollback_for_lock(&address, &request, &context, call)
         .map_err(map_rpc_error)?;

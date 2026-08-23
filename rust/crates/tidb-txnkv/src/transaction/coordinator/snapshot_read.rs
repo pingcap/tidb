@@ -210,7 +210,7 @@ where
 {
     let published = runtime
         .client()
-        .try_borrow_mut()
+        .try_lock()
         .map_err(|_| {
             OptimisticCoordinatorError::SnapshotGet("TiKV client is already borrowed".to_owned())
         })?
@@ -408,7 +408,7 @@ where
             let published = self
                 .runtime
                 .client()
-                .try_borrow_mut()
+                .try_lock()
                 .map_err(|_| {
                     OptimisticCoordinatorError::SnapshotGet(
                         "TiKV client is already borrowed".to_owned(),
@@ -680,7 +680,7 @@ where
         let published = self
             .runtime
             .client()
-            .try_borrow_mut()
+            .try_lock()
             .map_err(|_| {
                 OptimisticCoordinatorError::SnapshotGet(
                     "TiKV client is already borrowed".to_owned(),

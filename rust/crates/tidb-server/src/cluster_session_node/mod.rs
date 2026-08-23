@@ -743,7 +743,12 @@ impl ClusterServerSession {
                     // (`pkg/session/session.go:1197`). The IDS cross between
                     // attempts; the timestamp must not, which is why this
                     // rewinds a list and touches nothing about the snapshot.
-                    self.session.retry_auto_ids().borrow_mut().begin_attempt();
+                    self
+                            .session
+                            .retry_auto_ids()
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .begin_attempt();
                     // Go's replay calls `RebuildPlan` per attempt
                     // (`pkg/session/session.go:1207`), so a schema that moved
                     // under the conflict is picked up before the next try.
@@ -756,7 +761,12 @@ impl ClusterServerSession {
         // now over, however it ended. The next statement's rows are not these
         // rows, and reusing an id across statements would write the same id
         // twice.
-        self.session.retry_auto_ids().borrow_mut().clean();
+        self
+                        .session
+                        .retry_auto_ids()
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clean();
         outcome
     }
 

@@ -355,7 +355,7 @@ fn named_and_nested_defaults_use_the_referenced_column() {
 /// anything; treating DEFAULT as omission interleaves the two sequences.
 #[test]
 fn explicit_values_defaults_are_lowered_before_runtime_expressions() {
-    use std::rc::Rc;
+    use std::sync::Arc;
 
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
@@ -363,9 +363,9 @@ fn explicit_values_defaults_are_lowered_before_runtime_expressions() {
         &mut catalog,
     )
     .unwrap();
-    let actual_rng = Rc::new(tidb_expr::MysqlRng::new_with_seed(1));
+    let actual_rng = Arc::new(tidb_expr::MysqlRng::new_with_seed(1));
     let ctx =
-        crate::StmtContext::for_dml(false, true, false).with_rand_session(Rc::clone(&actual_rng));
+        crate::StmtContext::for_dml(false, true, false).with_rand_session(Arc::clone(&actual_rng));
     run_insert_on(
         "INSERT INTO default_rng VALUES (DEFAULT, RAND()), (DEFAULT, RAND())",
         &mut catalog,
@@ -626,9 +626,8 @@ fn multi_update_defaults_resolve_across_sources() {
 /// rejected statement cannot consume the source expression's side effect.
 #[test]
 fn insert_select_generated_target_is_rejected_before_source_effects() {
-    use std::cell::RefCell;
     use std::collections::HashMap;
-    use std::rc::Rc;
+    use std::sync::{Arc, Mutex};
 
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
@@ -636,11 +635,12 @@ fn insert_select_generated_target_is_rejected_before_source_effects() {
         &mut catalog,
     )
     .unwrap();
-    let variables = Rc::new(RefCell::new(HashMap::from([(
+    let variables = Arc::new(Mutex::new(HashMap::from([(
         "probe".to_owned(),
         Datum::Int(0),
     )])));
-    let ctx = crate::StmtContext::for_dml(false, true, false).with_user_vars(Rc::clone(&variables));
+    let ctx =
+        crate::StmtContext::for_dml(false, true, false).with_user_vars(Arc::clone(&variables));
     assert!(matches!(
         run_insert_on(
             "INSERT INTO select_default (g) SELECT @probe := 1",
@@ -649,7 +649,13 @@ fn insert_select_generated_target_is_rejected_before_source_effects() {
         ),
         Err(DriverError::BadGeneratedColumn { .. })
     ));
-    assert_eq!(variables.borrow().get("probe"), Some(&Datum::Int(0)));
+    assert_eq!(
+        variables
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get("probe"),
+        Some(&Datum::Int(0))
+    );
 }
 
 /// AUTO_INCREMENT, checked against behavior captured from real TiDB:

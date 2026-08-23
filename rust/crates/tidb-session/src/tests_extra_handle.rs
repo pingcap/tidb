@@ -19,7 +19,9 @@ use crate::Session;
 
 fn fixture() -> Session {
     let mut session = Session::new();
-    session.run("CREATE TABLE t (a int, b int, KEY ia(a))").unwrap();
+    session
+        .run("CREATE TABLE t (a int, b int, KEY ia(a))")
+        .unwrap();
     session
         .run("INSERT INTO t VALUES (10, 1), (20, 2), (30, 3)")
         .unwrap();
@@ -150,7 +152,9 @@ fn a_write_reads_the_extra_handle_without_writing_it() {
 
     // Writing it is a different capability, gated in Go behind
     // `tidb_opt_write_row_id`; refused here rather than silently accepted.
-    assert!(session.run("UPDATE t SET _tidb_rowid = 7 WHERE a = 10").is_err());
+    assert!(session
+        .run("UPDATE t SET _tidb_rowid = 7 WHERE a = 10")
+        .is_err());
 }
 
 /// A condition on `_tidb_rowid` bounds the SCAN, because the extra handle IS
@@ -176,7 +180,10 @@ fn a_rowid_comparison_bounds_the_table_scan() {
             .join("\n")
     };
 
-    let plan = scan(&mut session, "EXPLAIN SELECT * FROM t WHERE _tidb_rowid > 1");
+    let plan = scan(
+        &mut session,
+        "EXPLAIN SELECT * FROM t WHERE _tidb_rowid > 1",
+    );
     assert!(
         plan.contains("TableRangeScan") && plan.contains("range:(1,+inf]"),
         "the rowid bounds the scan:\n{plan}"
@@ -255,9 +262,7 @@ fn a_rowid_equality_is_a_point_get_with_no_filter_above_it() {
 #[test]
 fn an_insert_may_write_the_extra_handle_under_its_variable() {
     let mut session = Session::new();
-    session
-        .run("CREATE TABLE t (a int, b int)")
-        .unwrap();
+    session.run("CREATE TABLE t (a int, b int)").unwrap();
     session
         .run("INSERT INTO t VALUES (1, 7), (1, 8), (1, 9)")
         .unwrap();

@@ -200,7 +200,8 @@ impl Session {
     fn prepare_source_text(&self, name: &str) -> String {
         let value = self
             .user_vars
-            .borrow()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&name.to_ascii_lowercase())
             .cloned()
             .unwrap_or(Datum::Null);
@@ -236,7 +237,8 @@ impl Session {
             .map(|expr| match expr {
                 Expr::UserVar(name) => self
                     .user_vars
-                    .borrow()
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .get(&name.to_ascii_lowercase())
                     .cloned()
                     .unwrap_or(Datum::Null),

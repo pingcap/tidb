@@ -4303,14 +4303,21 @@ fn build_aggregation(
                 } else if state.grouped_hash_output_reordered
                     || !grouped_stream_extra_first_rows.is_empty()
                     || grouped_input_projection_trace.is_some()
+                    || grouped_hash_has_first_row
                 {
                     // A reordered state layout, a carrier no written field
                     // shows, or an injected input projection is the PHYSICAL
-                    // aggregate, and only its own renderer describes it. An
-                    // ordinary grouped SELECT whose states already follow the
-                    // written list keeps the logical rendering: Go explains
-                    // such an aggregation over its WRITTEN select fields, not
-                    // its internal carriers.
+                    // aggregate, and only its own renderer describes it. The
+                    // same holds whenever the function inventory carries any
+                    // FIRST_ROW at all: Go's buildAggregation wraps every
+                    // child-schema column -- a selected group-by key, or a
+                    // HAVING/ORDER BY carrier -- in `firstrow`, so the
+                    // physical grouped HashAgg explains
+                    // `funcs:firstrow(key)->key` beside the real aggregates
+                    // (upstream goldens from pkg/executor/testdata through
+                    // TPC-H q2 all print it). Only an inventory with no
+                    // FIRST_ROW falls back to the written-field logical
+                    // rendering.
                     trace.grouped_hash_agg(traced_select, &qualify, grouped_logical_rows);
                 } else {
                     trace.hash_agg(traced_select, &qualify, grouped_logical_rows);

@@ -28,7 +28,7 @@ const PARALLEL_INT_AGG_WORKERS: usize = 5;
 // is only 1K rows, so 40 chunks forced dozens of thread cohorts for 1.5M rows.
 const PARALLEL_INT_AGG_CHUNKS_PER_WINDOW: usize = 256;
 
-impl<C: Columns> HashAggExec<C> {
+impl<C: HashAggContext> HashAggExec<C> {
     /// Bytes this aggregation has written to spill files (Go's `diskTracker`).
     #[must_use]
     pub fn bytes_in_disk(&self) -> i64 {
@@ -140,8 +140,16 @@ impl<C: Columns> HashAggExec<C> {
     }
 
     fn execute_impl(&mut self) -> Result<(), ExecError> {
+        // The q13-shaped integer fast path keeps its historical priority;
+        // the general partial/final worker pipeline takes every other
+        // eligible aggregation, and the round machinery below is the serial
+        // implementation.
         if let Some((group_column, group_unsigned, specs)) = self.parallel_int_agg_specs() {
             return self.execute_parallel_int_agg(group_column, group_unsigned, &specs);
+        }
+        if self.pipeline_mode {
+            return C::run_parallel_pipeline_bridge(self)
+                .expect("pipeline mode implies a context-provided bridge");
         }
         loop {
             let before = self.child_chunk.memory_usage();

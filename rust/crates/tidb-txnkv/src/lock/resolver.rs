@@ -676,7 +676,7 @@ where
         };
         let response = runtime
             .client()
-            .try_borrow_mut()
+            .try_lock()
             .map_err(|_| LockRecoveryError::ClientLifecycle)?
             .check_txn_status_for_lock(&primary_address, &request, &primary_context, call)
             .map_err(map_rpc_error)?;
@@ -884,7 +884,7 @@ where
         };
         let response = runtime
             .client()
-            .try_borrow_mut()
+            .try_lock()
             .map_err(|_| LockRecoveryError::ClientLifecycle)?
             .check_secondary_locks_for_lock(&group.address, &request, &group.context, call)
             .map_err(map_rpc_error)?;
@@ -994,7 +994,7 @@ where
     };
     let response = runtime
         .client()
-        .try_borrow_mut()
+        .try_lock()
         .map_err(|_| LockRecoveryError::ClientLifecycle)?
         .resolve_lock_for_read(&address, &request, &context, call)
         .map_err(map_rpc_error)?;
