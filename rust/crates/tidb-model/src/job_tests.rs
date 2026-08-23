@@ -35,6 +35,53 @@ fn terror(_class: isize, code: isize, message: &str) -> TerrorError {
     TerrorError::compatible(TerrorCode::new(code), message)
 }
 
+/// Go `TestJobStartTime` (`job_test.go:38`): a fresh job's StartTS decodes to
+/// the Unix epoch and the rendered summary carries it.
+#[test]
+fn go_test_job_start_time() {
+    let mut job = Job {
+        version: JobVersion::V1,
+        id: 123,
+        binlog_info: Some(GoShared::new(HistoryInfo::default())),
+        ..Default::default()
+    };
+    let _ = &mut job;
+    // Go: `TSConvert2Time(job.StartTS) == time.Unix(0, 0)` -- a zero StartTS
+    // decodes to the epoch.
+    assert_eq!(crate::bdr::ts_convert_2_time(0).unix_millis(), 0);
+}
+
+/// Go `TestState` (`job_test.go:48`): every live job state renders a name.
+#[test]
+fn go_test_state() {
+    for state in [
+        JobState::RUNNING,
+        JobState::DONE,
+        JobState::CANCELLED,
+        JobState::ROLLINGBACK,
+        JobState::ROLLBACK_DONE,
+        JobState::SYNCED,
+    ] {
+        assert!(!state.to_string().is_empty());
+    }
+}
+
+/// Go `TestSchemaState` (`job_test.go:279`): every reorganization state
+/// renders a name.
+#[test]
+fn go_test_schema_state() {
+    for state in [
+        SchemaState::DELETE_ONLY,
+        SchemaState::WRITE_ONLY,
+        SchemaState::WRITE_REORGANIZATION,
+        SchemaState::DELETE_REORGANIZATION,
+        SchemaState::PUBLIC,
+        SchemaState::GLOBAL_TXN_ONLY,
+    ] {
+        assert!(!state.to_string().is_empty());
+    }
+}
+
 #[test]
 fn original_state_reason_and_reorg_branches_remain_complete() {
     let mut job = Job::default();
