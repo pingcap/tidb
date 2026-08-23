@@ -3698,18 +3698,24 @@ fn comparison_constant(
         // `GetAccurateCmpType` selects ETDatetime for a temporal column
         // compared with a string constant. `WrapWithCastAsTime` then builds
         // DATETIME(26,6), and constant folding leaves a MysqlTime literal.
+        // When the constant does NOT fold -- `created <= 'garbage'` -- Go's
+        // `RefineComparedConstant` returns the ORIGINAL constant unchanged
+        // (`builtin_compare.go:1588-1597`: a non-overflow conversion error is
+        // `return con, false`), and the pushed comparison carries the cast as
+        // an evaluation-time `CastStringAsTime` instead. Describe exactly
+        // that: the raw string literal beside the temporal column, with the
+        // cast deferred to the filter expression the source evaluates.
         let target = FieldType::new(FieldTypeCode::Datetime)
             .with_flen(26)
             .with_decimal(tidb_datatype::MAX_FSP)
             .with_added_flags(tidb_datatype::FieldTypeFlags::BINARY);
-        let converted = literal
-            .convert_to_in(&target, tidb_datatype::DEFAULT_STATEMENT_FLAGS, &zone)
-            .ok()?;
-        if converted.event.is_some() {
-            return None;
+        match literal.convert_to_in(&target, tidb_datatype::DEFAULT_STATEMENT_FLAGS, &zone) {
+            Ok(converted) if converted.event.is_none() => {
+                literal = converted.value;
+                literal_type = target;
+            }
+            _ => {}
         }
-        literal = converted.value;
-        literal_type = target;
     }
     Some((literal, literal_type))
 }
