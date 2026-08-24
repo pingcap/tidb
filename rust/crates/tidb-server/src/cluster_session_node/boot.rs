@@ -34,6 +34,15 @@ use crate::real_tikv_node::{
     node_accounts, run_with_process_shutdown, spawn_catalog_reloader, spawn_privilege_watch,
     spawn_schema_version_watch, RunConfiguredNodeError,
 };
+
+/// The per-request RPC deadline for the transaction tier's row reads and
+/// writes. Deliberately NOT [`super::CONTROL_PLANE_TIMEOUT`]: those five
+/// seconds budget metadata round trips that answer in milliseconds, while a
+/// data read can legitimately wait behind concurrent coprocessor scans on the
+/// same store. Go budgets the same surface with `tikvGRPCTimeout`-scale
+/// deadlines (tens of seconds), and a request queued past ITS deadline failed
+/// with `timeout_ms: 0` -- the admission-time zero the old constant produced.
+const TRANSACTION_RPC_TIMEOUT: Duration = Duration::from_secs(60);
 use crate::sql_node::{ConcurrentSqlNode, SqlQueryError};
 
 use super::{
@@ -183,9 +192,15 @@ pub(crate) fn run_cluster_session_node_with_spill(
         )
     });
     let factory = ClusterSessionFactory::new(
+        // Row reads and writes are DATA-plane traffic: a statement's snapshot
+        // gets queue behind concurrent coprocessor scans on the same store,
+        // so their admission deadline must tolerate store-side latency rather
+        // than the 5s control-plane budget -- go gives the same surface
+        // `coprocessor` timeouts measured in tens of seconds
+        // (`tikv-worker`/client default 30s+).
         Arc::new(RealClusterTransactions::new(
             authority.transaction_opener(),
-            CONTROL_PLANE_TIMEOUT,
+            TRANSACTION_RPC_TIMEOUT,
         )),
         Arc::new(RealClusterDdl::new(
             authority.transaction_opener(),
