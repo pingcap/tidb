@@ -69,14 +69,6 @@ pub fn fold_constant_in_mode(
 }
 
 fn fold_current_value_in(expr: &mut Expression, ctx: &impl crate::Columns) -> Option<Datum> {
-    // Recursively fold sub-expressions FIRST (Go's `FoldConstant` walks
-    // bottom-up): a nested `date_add_month("...", "...")` whose args are all
-    // constants becomes a Constant before the parent checks its own args.
-    if let Expression::ScalarFunction(func) = expr {
-        for arg in &mut func.args {
-            fold_current_value_in(arg, ctx);
-        }
-    }
     let func = match expr {
         Expression::Constant(constant) => return Some(constant.value.clone()),
         Expression::Column(_) | Expression::CorrelatedColumn(_) => return None,
