@@ -190,21 +190,6 @@ func (mr *MockTaskTableMockRecorder) GetTaskExecInfoByExecID(arg0, arg1 any) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskExecInfoByExecID", reflect.TypeOf((*MockTaskTable)(nil).GetTaskExecInfoByExecID), arg0, arg1)
 }
 
-// GetTasksByIDs mocks base method.
-func (m *MockTaskTable) GetTasksByIDs(arg0 context.Context, arg1 []int64) ([]*proto.Task, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTasksByIDs", arg0, arg1)
-	ret0, _ := ret[0].([]*proto.Task)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetTasksByIDs indicates an expected call of GetTasksByIDs.
-func (mr *MockTaskTableMockRecorder) GetTasksByIDs(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTasksByIDs", reflect.TypeOf((*MockTaskTable)(nil).GetTasksByIDs), arg0, arg1)
-}
-
 // InitMeta mocks base method.
 func (m *MockTaskTable) InitMeta(arg0 context.Context, arg1, arg2 string) error {
 	m.ctrl.T.Helper()

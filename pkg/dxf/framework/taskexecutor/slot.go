@@ -144,14 +144,3 @@ func (sm *slotManager) availableSlots() int {
 func (sm *slotManager) usedSlots() int {
 	return sm.capacity - int(sm.available.Load())
 }
-
-func (sm *slotManager) runtimeSlotsSnapshot() map[int64]int {
-	sm.RLock()
-	defer sm.RUnlock()
-
-	runtimeSlotsByTaskID := make(map[int64]int, len(sm.executorTasks))
-	for _, task := range sm.executorTasks {
-		runtimeSlotsByTaskID[task.ID] = task.GetRuntimeSlots()
-	}
-	return runtimeSlotsByTaskID
-}

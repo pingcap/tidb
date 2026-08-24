@@ -24,11 +24,11 @@ import (
 func TestRiskOfDiskFull(t *testing.T) {
 	require.Equal(t, uint64(10), reservedCapacityBytes(100))
 	require.Equal(t, uint64(11), reservedCapacityBytes(101))
-	require.False(t, RiskOfDiskFull(11, 100))
-	require.False(t, RiskOfDiskFull(10, 100))
-	require.True(t, RiskOfDiskFull(9, 100))
-	require.False(t, RiskOfDiskFull(11, 101))
-	require.True(t, RiskOfDiskFull(10, 101))
+	require.False(t, riskOfDiskFull(11, 100))
+	require.False(t, riskOfDiskFull(10, 100))
+	require.True(t, riskOfDiskFull(9, 100))
+	require.False(t, riskOfDiskFull(11, 101))
+	require.True(t, riskOfDiskFull(10, 101))
 }
 
 func TestCheckLocalSortFreeDisk(t *testing.T) {
@@ -43,102 +43,78 @@ func TestCheckLocalSortFreeDisk(t *testing.T) {
 		{
 			name: "enough space",
 			check: localSortFreeDiskCheck{
-				execID:                   execID,
-				sortPath:                 "/tmp/local-sort",
-				availableBytes:           20 * size.GB,
-				totalCapacityBytes:       20 * size.GB,
-				otherRunningJobCount:     1,
-				otherRunningRuntimeSlots: 4,
-				otherRunningUsedBytes:    size.GB,
-				currentJobRuntimeSlots:   2,
+				execID:                  execID,
+				sortPath:                "/tmp/local-sort",
+				availableBytes:          7 * size.GB,
+				totalCapacityBytes:      20 * size.GB,
+				currentTaskRuntimeSlots: 2,
 			},
 		},
 		{
-			name: "not enough for aggregate slots",
+			name: "available space equal to required space",
 			check: localSortFreeDiskCheck{
-				execID:                   execID,
-				sortPath:                 "/tmp/local-sort",
-				availableBytes:           12 * size.GB,
-				totalCapacityBytes:       20 * size.GB,
-				otherRunningJobCount:     1,
-				otherRunningRuntimeSlots: 3,
-				currentJobRuntimeSlots:   2,
+				execID:                  execID,
+				sortPath:                "/tmp/local-sort",
+				availableBytes:          6 * size.GB,
+				totalCapacityBytes:      20 * size.GB,
+				currentTaskRuntimeSlots: 2,
 			},
 			wantErr: true,
+			errMsgs: []string{
+				"6442450944 bytes available; available free disk space must be greater than 6442450944 bytes",
+			},
+			notMsgs: []string{
+				"6442450944 bytes required",
+			},
 		},
 		{
-			name: "below reserved capacity",
+			name: "above 10 percent but insufficient for current task",
 			check: localSortFreeDiskCheck{
-				execID:                   execID,
-				sortPath:                 "/tmp/local-sort",
-				availableBytes:           9 * size.GB,
-				totalCapacityBytes:       10 * size.GB,
-				otherRunningJobCount:     2,
-				otherRunningRuntimeSlots: 4,
-				otherRunningUsedBytes:    2 * size.GB,
-				currentJobRuntimeSlots:   1,
+				execID:                  execID,
+				sortPath:                "/tmp/local-sort",
+				availableBytes:          2 * size.GB,
+				totalCapacityBytes:      10 * size.GB,
+				currentTaskRuntimeSlots: 1,
 			},
 			wantErr: true,
 		},
 		{
 			name: "quota cap leaves enough space",
 			check: localSortFreeDiskCheck{
-				execID:                   execID,
-				sortPath:                 "/tmp/local-sort",
-				availableBytes:           81 * size.GB,
-				totalCapacityBytes:       200 * size.GB,
-				otherRunningJobCount:     1,
-				otherRunningRuntimeSlots: 40,
-				otherRunningUsedBytes:    40 * size.GB,
-				currentJobRuntimeSlots:   20,
+				execID:                  execID,
+				sortPath:                "/tmp/local-sort",
+				availableBytes:          121 * size.GB,
+				totalCapacityBytes:      200 * size.GB,
+				currentTaskRuntimeSlots: 60,
 			},
 		},
 		{
 			name: "quota cap still short",
 			check: localSortFreeDiskCheck{
-				execID:                   execID,
-				sortPath:                 "/tmp/local-sort",
-				availableBytes:           80 * size.GB,
-				totalCapacityBytes:       200 * size.GB,
-				otherRunningJobCount:     1,
-				otherRunningRuntimeSlots: 40,
-				otherRunningUsedBytes:    40 * size.GB,
-				currentJobRuntimeSlots:   20,
+				execID:                  execID,
+				sortPath:                "/tmp/local-sort",
+				availableBytes:          120 * size.GB,
+				totalCapacityBytes:      200 * size.GB,
+				currentTaskRuntimeSlots: 60,
 			},
 			wantErr: true,
-		},
-		{
-			name: "usage already above quota",
-			check: localSortFreeDiskCheck{
-				execID:                   execID,
-				sortPath:                 "/tmp/local-sort",
-				availableBytes:           21 * size.GB,
-				totalCapacityBytes:       200 * size.GB,
-				otherRunningJobCount:     1,
-				otherRunningRuntimeSlots: 40,
-				otherRunningUsedBytes:    101 * size.GB,
-				currentJobRuntimeSlots:   20,
-			},
 		},
 		{
 			name: "user-facing error",
 			check: localSortFreeDiskCheck{
-				execID:                   execID,
-				sortPath:                 "/tmp/local-sort",
-				availableBytes:           size.GB,
-				totalCapacityBytes:       size.GB,
-				otherRunningJobCount:     1,
-				otherRunningRuntimeSlots: 1,
-				currentJobRuntimeSlots:   1,
+				execID:                  execID,
+				sortPath:                "/tmp/local-sort",
+				availableBytes:          size.GB,
+				totalCapacityBytes:      size.GB,
+				currentTaskRuntimeSlots: 1,
 			},
 			wantErr: true,
 			errMsgs: []string{
-				"insufficient free disk space on TiDB node 10.0.1.8:4000 at /tmp/local-sort: 1073741824 bytes available",
+				"insufficient free disk space on TiDB node 10.0.1.8:4000 at /tmp/local-sort: 1073741824 bytes available; available free disk space must be greater than 2254857831 bytes",
 				"the add-index job cannot start because low disk space would degrade SST ingestion",
 				"Free disk space on this TiDB node by removing unnecessary logs or files",
 			},
 			notMsgs: []string{
-				"running local-sort job count",
 				"runtime slots",
 				"bytes per slot",
 			},

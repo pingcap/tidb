@@ -65,8 +65,6 @@ type readIndexStepExecutor struct {
 	avgRowSize      int
 	cloudStorageURI string
 
-	localDiskPrecheck func(context.Context) error
-
 	summary *execute.SubtaskSummary
 
 	summaryMap sync.Map // subtaskID => readIndexSummary
@@ -110,11 +108,6 @@ func newReadIndexExecutor(
 
 func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
-	if r.localDiskPrecheck != nil {
-		if err := r.localDiskPrecheck(ctx); err != nil {
-			return err
-		}
-	}
 	if r.isGlobalSort() {
 		// Multi-schema proxy jobs may not carry UseCloudStorage. Set it here
 		// before the framework starts detectAndHandleParamModifyLoop, which

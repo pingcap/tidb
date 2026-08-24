@@ -117,27 +117,6 @@ func TestSlotManager(t *testing.T) {
 	require.Len(t, sm.executorTasks, 0)
 	require.Len(t, sm.taskID2Index, 0)
 	require.Equal(t, 10, sm.availableSlots())
-
-	t.Run("snapshot uses effective runtime slots", func(t *testing.T) {
-		sm := newSlotManager(16)
-		task1 := &proto.TaskBase{ID: 1, RequiredSlots: 3}
-		task2 := &proto.TaskBase{ID: 2, RequiredSlots: 5}
-		task3 := &proto.TaskBase{
-			ID:            3,
-			RequiredSlots: 7,
-			ExtraParams: proto.ExtraParams{
-				MaxRuntimeSlots: 2,
-			},
-		}
-		require.True(t, sm.alloc(task1))
-		require.True(t, sm.alloc(task2))
-		require.True(t, sm.alloc(task3))
-		require.Equal(t, map[int64]int{
-			1: 3,
-			2: 5,
-			3: 2,
-		}, sm.runtimeSlotsSnapshot())
-	})
 }
 
 func TestSlotManagerExchangeSlots(t *testing.T) {

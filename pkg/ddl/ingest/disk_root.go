@@ -47,16 +47,12 @@ type DiskRoot interface {
 	UsageInfo() string
 	PreCheckUsage() error
 	StartupCheck() error
-	// GetJobDiskUsage returns the tracked local disk usage for jobID, or zero if unregistered.
-	GetJobDiskUsage(jobID int64) uint64
 }
 
 const (
 	capacityThreshold = 0.9
 	// TiDB nodes typically have 2 GiB memory per CPU slot, and local sort flushes
-	// a similar-sized batch. Use 2 GiB per slot as a best-effort estimate of the
-	// aggregate headroom needed to reduce frequent small flush/import cycles across
-	// concurrent jobs, capped by tidb_ddl_disk_quota.
+	// a similar-sized batch.
 	localSortBytesPerSlot = 2 * size.GB
 )
 
@@ -103,17 +99,6 @@ func (d *diskRootImpl) Count() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return len(d.items)
-}
-
-// GetJobDiskUsage returns the tracked local disk usage for jobID, or zero if unregistered.
-func (d *diskRootImpl) GetJobDiskUsage(jobID int64) uint64 {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	tracker, ok := d.items[jobID]
-	if !ok {
-		return 0
-	}
-	return tracker.GetDiskUsage()
 }
 
 // UpdateUsage implements DiskRoot interface.
@@ -187,7 +172,7 @@ func (d *diskRootImpl) PreCheckUsage() error {
 	if err != nil {
 		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(err.Error())
 	}
-	if RiskOfDiskFull(sz.Available, sz.Capacity) {
+	if riskOfDiskFull(sz.Available, sz.Capacity) {
 		logutil.DDLIngestLogger().Warn("available disk space is less than 10%, cannot use ingest mode",
 			zap.String("sort path", d.path),
 			zap.String("usage", d.usageInfo()))
@@ -220,24 +205,14 @@ func reservedCapacityBytes(capacity uint64) uint64 {
 	return capacity - uint64(float64(capacity)*capacityThreshold)
 }
 
-// RiskOfDiskFull checks if the disk has less than the reserved capacity available.
-func RiskOfDiskFull(available, capacity uint64) bool {
+func riskOfDiskFull(available, capacity uint64) bool {
 	return available < reservedCapacityBytes(capacity)
 }
 
-// LocalSortFreeDiskCheck is the admission snapshot for a local-sort disk precheck.
-type LocalSortFreeDiskCheck struct {
-	ExecID                   string
-	OtherRunningJobCount     int
-	OtherRunningRuntimeSlots int
-	OtherRunningUsedBytes    uint64
-	CurrentJobRuntimeSlots   int
-}
-
-// CheckLocalSortFreeDisk performs a best-effort precheck of aggregate headroom
-// before a local-sort job starts, reducing the risk that all concurrent jobs
-// frequently import small SST batches.
-func CheckLocalSortFreeDisk(p LocalSortFreeDiskCheck) error {
+// CheckLocalSortFreeDisk performs a best-effort precheck of the current task's
+// estimated growth before local sort starts, reducing the risk of frequent small
+// SST imports when the local disk has little free space.
+func CheckLocalSortFreeDisk(execID string, currentTaskRuntimeSlots int) error {
 	sortPath, err := GenIngestTempDataDir()
 	if err != nil {
 		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(err.Error())
@@ -248,58 +223,49 @@ func CheckLocalSortFreeDisk(p LocalSortFreeDiskCheck) error {
 	}
 
 	return checkLocalSortFreeDisk(localSortFreeDiskCheck{
-		execID:                   p.ExecID,
-		sortPath:                 sortPath,
-		availableBytes:           sz.Available,
-		totalCapacityBytes:       sz.Capacity,
-		otherRunningJobCount:     p.OtherRunningJobCount,
-		otherRunningRuntimeSlots: p.OtherRunningRuntimeSlots,
-		otherRunningUsedBytes:    p.OtherRunningUsedBytes,
-		currentJobRuntimeSlots:   p.CurrentJobRuntimeSlots,
+		execID:                  execID,
+		sortPath:                sortPath,
+		availableBytes:          sz.Available,
+		totalCapacityBytes:      sz.Capacity,
+		currentTaskRuntimeSlots: currentTaskRuntimeSlots,
 	})
 }
 
 type localSortFreeDiskCheck struct {
-	execID                   string
-	sortPath                 string
-	availableBytes           uint64
-	totalCapacityBytes       uint64
-	otherRunningJobCount     int
-	otherRunningRuntimeSlots int
-	otherRunningUsedBytes    uint64
-	currentJobRuntimeSlots   int
+	execID                  string
+	sortPath                string
+	availableBytes          uint64
+	totalCapacityBytes      uint64
+	currentTaskRuntimeSlots int
 }
 
 func checkLocalSortFreeDisk(p localSortFreeDiskCheck) error {
-	allJobsRequiredBytes := uint64(p.otherRunningRuntimeSlots+p.currentJobRuntimeSlots) * localSortBytesPerSlot
-	// Use a best-effort aggregate growth target to reduce the risk that all
-	// concurrent local-sort jobs frequently import small SST batches. Cap it at
-	// tidb_ddl_disk_quota because crossing the quota triggers an import that
-	// releases disk; this does not guarantee per-job headroom or performance.
-	allJobsTargetBytes := min(allJobsRequiredBytes, vardef.DDLDiskQuota.Load())
-	allJobsGapBytes := uint64(0)
-	if allJobsTargetBytes > p.otherRunningUsedBytes {
-		allJobsGapBytes = allJobsTargetBytes - p.otherRunningUsedBytes
-	}
-	totalRequiredBytes := reservedCapacityBytes(p.totalCapacityBytes) + allJobsGapBytes
-	if p.availableBytes > totalRequiredBytes {
+	// Cap the estimate at tidb_ddl_disk_quota because exceeding the quota
+	// triggers an import that releases local disk space.
+	currentTaskEstimatedGrowthBytes := min(
+		uint64(p.currentTaskRuntimeSlots)*localSortBytesPerSlot,
+		vardef.DDLDiskQuota.Load(),
+	)
+	freeThresholdBytes := reservedCapacityBytes(p.totalCapacityBytes) + currentTaskEstimatedGrowthBytes
+	if p.availableBytes > freeThresholdBytes {
 		logutil.DDLIngestLogger().Info("local sort free disk check passed",
-			zap.Uint64("totalRequiredBytes", totalRequiredBytes),
+			zap.Uint64("freeDiskThresholdBytes", freeThresholdBytes),
 			zap.Uint64("availableBytes", p.availableBytes),
 			zap.String("sortPath", p.sortPath),
 			zap.Uint64("totalCapacityBytes", p.totalCapacityBytes),
-			zap.Int("otherRunningLocalSortJobCount", p.otherRunningJobCount),
-			zap.Int("currentJobRuntimeSlots", p.currentJobRuntimeSlots),
+			zap.Int("currentTaskRuntimeSlots", p.currentTaskRuntimeSlots),
+			zap.Uint64("currentTaskEstimatedGrowthBytes", currentTaskEstimatedGrowthBytes),
 			zap.Uint64("localSortBytesPerSlot", localSortBytesPerSlot))
 		return nil
 	}
 
 	return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
 		fmt.Sprintf(
-			"insufficient free disk space on TiDB node %s at %s: %d bytes available; the add-index job cannot start because low disk space would degrade SST ingestion. Free disk space on this TiDB node by removing unnecessary logs or files",
+			"insufficient free disk space on TiDB node %s at %s: %d bytes available; available free disk space must be greater than %d bytes; the add-index job cannot start because low disk space would degrade SST ingestion. Free disk space on this TiDB node by removing unnecessary logs or files",
 			p.execID,
 			p.sortPath,
 			p.availableBytes,
+			freeThresholdBytes,
 		),
 	)
 }
