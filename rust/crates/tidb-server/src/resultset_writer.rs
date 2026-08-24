@@ -193,14 +193,35 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         if batch.is_empty() {
             break;
         }
+        // Go streams a result set through a bufio.Writer that flushes only
+        // when it fills, so 90k rows leave the server as a few megabyte-scale
+        // transport writes. Flushing PER PACKET here turned every row into
+        // its own TCP syscall -- the dominant cost of any wide streaming
+        // read. Coalesce one batch of row packets into a single coalesced
+        // transport write, then flush once at the batch boundary so the
+        // client still sees progressive delivery while the source fetches
+        // its next chunk.
+        let mut payloads = Vec::with_capacity(batch.len());
         for row in batch {
             let row = format_row(row, &text_columns, stream.row_count())
                 .map_err(|message| tracked_after_pull(message, sink, false))?;
             let payload = stream
                 .row_packet(&row)
                 .map_err(|error| tracked_after_pull(error.to_string(), sink, false))?;
-            write_payload(sink, &payload).map_err(|error| tracked(error, false))?;
+            payloads.push(payload);
         }
+        let refs: Vec<&[u8]> = payloads.iter().map(|payload| payload.as_slice()).collect();
+        sink.write_payloads(&refs).map_err(|error| {
+            tracked(
+                ResultSetWriteError {
+                    message: error.message,
+                    retryable: true,
+                    bytes_escaped: error.bytes_escaped,
+                },
+                false,
+            )
+        })?;
+        flush_sink(sink).map_err(|error| tracked(error, false))?;
         batch = source
             .next_batch(batch_size)
             .map_err(|message| tracked_after_pull(message, sink, false))?;
