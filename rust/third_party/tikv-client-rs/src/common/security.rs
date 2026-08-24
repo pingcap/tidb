@@ -140,8 +140,36 @@ impl SecurityManager {
     where
         Factory: FnOnce(Channel) -> Client,
     {
+        self.connect_with_http2_settings_and_timeout(
+            addr,
+            keepalive_time,
+            keepalive_timeout,
+            initial_stream_window_size,
+            initial_connection_window_size,
+            None,
+            factory,
+        )
+        .await
+    }
+
+    /// Connect using explicit HTTP/2 settings and an optional transport dial
+    /// deadline. The deadline is separate from per-request RPC deadlines.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn connect_with_http2_settings_and_timeout<Factory, Client>(
+        &self,
+        addr: &str,
+        keepalive_time: Duration,
+        keepalive_timeout: Duration,
+        initial_stream_window_size: Option<u32>,
+        initial_connection_window_size: Option<u32>,
+        connect_timeout: Option<Duration>,
+        factory: Factory,
+    ) -> Result<Client>
+    where
+        Factory: FnOnce(Channel) -> Client,
+    {
         info!("connect to rpc server at endpoint: {:?}", addr);
-        let channel = if self.tls_configured() {
+        let mut channel = if self.tls_configured() {
             self.tls_channel(
                 addr,
                 keepalive_time,
@@ -160,6 +188,9 @@ impl SecurityManager {
             )
             .await?
         };
+        if let Some(connect_timeout) = connect_timeout {
+            channel = channel.connect_timeout(connect_timeout);
+        }
         let ch = channel.connect().await?;
 
         Ok(factory(ch))

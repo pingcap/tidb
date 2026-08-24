@@ -90,6 +90,10 @@ pub struct MockPdClient {
     closed_client_addresses: Arc<Mutex<Vec<String>>>,
     #[new(default)]
     bucket_updates: Arc<Mutex<Vec<(RegionVerId, u64, Vec<Vec<u8>>)>>>,
+    #[new(default)]
+    keyspace_meta: Arc<Mutex<Option<keyspacepb::KeyspaceMeta>>>,
+    #[new(default)]
+    loaded_keyspaces: Arc<Mutex<Vec<String>>>,
 }
 
 #[async_trait]
@@ -127,6 +131,8 @@ impl MockPdClient {
             invalidated_regions: Arc::default(),
             closed_client_addresses: Arc::default(),
             bucket_updates: Arc::default(),
+            keyspace_meta: Arc::default(),
+            loaded_keyspaces: Arc::default(),
         }
     }
 
@@ -201,6 +207,14 @@ impl MockPdClient {
 
     pub(crate) fn bucket_updates(&self) -> Vec<(RegionVerId, u64, Vec<Vec<u8>>)> {
         self.bucket_updates.lock().unwrap().clone()
+    }
+
+    pub(crate) fn set_keyspace_meta(&self, meta: keyspacepb::KeyspaceMeta) {
+        *self.keyspace_meta.lock().unwrap() = Some(meta);
+    }
+
+    pub(crate) fn loaded_keyspaces(&self) -> Vec<String> {
+        self.loaded_keyspaces.lock().unwrap().clone()
     }
 }
 
@@ -291,7 +305,15 @@ impl PdClient for MockPdClient {
             .push(address.to_owned());
     }
 
-    async fn load_keyspace(&self, _keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
-        unimplemented!()
+    async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
+        self.loaded_keyspaces
+            .lock()
+            .unwrap()
+            .push(keyspace.to_owned());
+        self.keyspace_meta
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| Error::KeyspaceNotFound(keyspace.to_owned()))
     }
 }

@@ -1978,6 +1978,12 @@ pub trait HasLocks {
     fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
         Vec::new()
     }
+
+    /// Extract only a response-level lock, leaving item-level locks attached
+    /// to their results for a source owner such as `txnsnapshot.Scanner`.
+    fn take_response_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
+        self.take_locks()
+    }
 }
 
 // Return duration in milliseconds until lock expired.

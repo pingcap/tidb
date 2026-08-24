@@ -1,3 +1,4 @@
+use crate::pd::{PdClient, PdRpcClient};
 use crate::transaction::sync_client::safe_block_on;
 use crate::{
     BoundRange, GetOption, Key, KvPair, Priority, ReplicaReadAdjuster, ReplicaReadConfig,
@@ -13,14 +14,14 @@ use std::time::Duration;
 ///
 /// This is a wrapper around the async [`Snapshot`] that provides blocking methods.
 /// All operations block the current thread until completed.
-pub struct SyncSnapshot {
-    inner: Snapshot,
+pub struct SyncSnapshot<PdC: PdClient = PdRpcClient> {
+    inner: Snapshot<PdC>,
     runtime: Arc<tokio::runtime::Runtime>,
 }
 
 /// Blocking counterpart of [`crate::SnapshotIterator`].
-pub struct SyncSnapshotIterator<'a> {
-    snapshot: &'a mut SyncSnapshot,
+pub struct SyncSnapshotIterator<'a, PdC: PdClient = PdRpcClient> {
+    snapshot: &'a mut SyncSnapshot<PdC>,
     range: BoundRange,
     reverse: bool,
     batch_size: u32,
@@ -29,8 +30,8 @@ pub struct SyncSnapshotIterator<'a> {
     valid: bool,
 }
 
-impl<'a> SyncSnapshotIterator<'a> {
-    fn new(snapshot: &'a mut SyncSnapshot, range: BoundRange, reverse: bool) -> Self {
+impl<'a, PdC: PdClient> SyncSnapshotIterator<'a, PdC> {
+    fn new(snapshot: &'a mut SyncSnapshot<PdC>, range: BoundRange, reverse: bool) -> Self {
         Self {
             batch_size: snapshot.inner.iterator_batch_size(),
             snapshot,
@@ -84,6 +85,7 @@ impl<'a> SyncSnapshotIterator<'a> {
     }
 
     /// Fetch and return the next pair, or `None` after the scan is exhausted.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Result<Option<KvPair>> {
         self.refill()?;
         Ok(self.buffered.pop_front())
@@ -100,8 +102,8 @@ impl<'a> SyncSnapshotIterator<'a> {
     }
 }
 
-impl SyncSnapshot {
-    pub(crate) fn new(inner: Snapshot, runtime: Arc<tokio::runtime::Runtime>) -> Self {
+impl<PdC: PdClient> SyncSnapshot<PdC> {
+    pub(crate) fn new(inner: Snapshot<PdC>, runtime: Arc<tokio::runtime::Runtime>) -> Self {
         Self { inner, runtime }
     }
 
@@ -336,7 +338,7 @@ impl SyncSnapshot {
     }
 
     /// Create and prefetch a blocking stateful forward scanner.
-    pub fn iter(&mut self, range: impl Into<BoundRange>) -> Result<SyncSnapshotIterator<'_>> {
+    pub fn iter(&mut self, range: impl Into<BoundRange>) -> Result<SyncSnapshotIterator<'_, PdC>> {
         let mut iterator = SyncSnapshotIterator::new(self, range.into(), false);
         iterator.refill()?;
         Ok(iterator)
@@ -346,7 +348,7 @@ impl SyncSnapshot {
     pub fn iter_reverse(
         &mut self,
         range: impl Into<BoundRange>,
-    ) -> Result<SyncSnapshotIterator<'_>> {
+    ) -> Result<SyncSnapshotIterator<'_, PdC>> {
         let mut iterator = SyncSnapshotIterator::new(self, range.into(), true);
         iterator.refill()?;
         Ok(iterator)
@@ -386,5 +388,85 @@ impl SyncSnapshot {
         limit: u32,
     ) -> Result<impl Iterator<Item = Key>> {
         safe_block_on(&self.runtime, self.inner.scan_keys_reverse(range, limit))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::any::Any;
+    use std::sync::{Arc, Mutex};
+
+    use super::SyncSnapshot;
+    use crate::mock::{MockKvClient, MockPdClient};
+    use crate::proto::kvrpcpb;
+    use crate::request::Keyspace;
+    use crate::timestamp::TimestampExt;
+    use crate::{KvPair, Snapshot, Timestamp, Transaction, TransactionOptions};
+
+    #[test]
+    fn sync_scanner_uses_pair_local_point_read_recovery() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let captured_requests = Arc::clone(&requests);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if request.is::<kvrpcpb::ScanRequest>() {
+                    captured_requests.lock().unwrap().push("scan");
+                    return Ok(Box::new(kvrpcpb::ScanResponse {
+                        pairs: vec![
+                            kvrpcpb::KvPair {
+                                error: Some(kvrpcpb::KeyError {
+                                    locked: Some(kvrpcpb::LockInfo {
+                                        key: b"a".to_vec(),
+                                        ..Default::default()
+                                    }),
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            },
+                            kvrpcpb::KvPair {
+                                key: b"b".to_vec(),
+                                value: b"b-value".to_vec(),
+                                ..Default::default()
+                            },
+                        ],
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if let Some(request) = request.downcast_ref::<kvrpcpb::GetRequest>() {
+                    captured_requests.lock().unwrap().push("get");
+                    assert_eq!(request.key, b"a");
+                    return Ok(Box::new(kvrpcpb::GetResponse {
+                        value: b"a-value".to_vec(),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected sync scanner request")
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().read_only(),
+            Keyspace::Disable,
+        );
+        transaction.set_snapshot_scan_batch_size(2);
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap(),
+        );
+        let mut snapshot = SyncSnapshot::new(Snapshot::new(transaction), runtime);
+
+        let mut iterator = snapshot.iter(b"a".to_vec()..b"z".to_vec()).unwrap();
+        assert_eq!(
+            iterator.next().unwrap(),
+            Some(KvPair(b"a".to_vec().into(), b"a-value".to_vec()))
+        );
+        assert_eq!(
+            iterator.next().unwrap(),
+            Some(KvPair(b"b".to_vec().into(), b"b-value".to_vec()))
+        );
+        assert_eq!(*requests.lock().unwrap(), ["scan", "get"]);
     }
 }

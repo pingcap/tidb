@@ -91,6 +91,70 @@ pub enum CommandType {
 
 #[allow(dead_code)]
 impl CommandType {
+    /// Maps the stable Rust transport label back to client-go's dynamic
+    /// command identity. Native-only or currently unsupported commands remain
+    /// `None` and are reported as `Unknown`, matching `CmdType.String`'s
+    /// fallback.
+    pub(crate) fn from_request_label(label: &str) -> Option<Self> {
+        match label {
+            "kv_get" => Some(Self::Get),
+            "kv_scan" => Some(Self::Scan),
+            "kv_prewrite" => Some(Self::Prewrite),
+            "kv_commit" => Some(Self::Commit),
+            "kv_cleanup" => Some(Self::Cleanup),
+            "kv_batch_get" => Some(Self::BatchGet),
+            "kv_batch_rollback" => Some(Self::BatchRollback),
+            "kv_scan_lock" => Some(Self::ScanLock),
+            "kv_resolve_lock" => Some(Self::ResolveLock),
+            "kv_gc" => Some(Self::Gc),
+            "kv_delete_range" => Some(Self::DeleteRange),
+            "kv_pessimistic_lock" => Some(Self::PessimisticLock),
+            "kv_pessimistic_rollback" => Some(Self::PessimisticRollback),
+            "kv_txn_heart_beat" => Some(Self::TxnHeartBeat),
+            "kv_check_txn_status" => Some(Self::CheckTxnStatus),
+            "kv_check_secondary_locks_request" => Some(Self::CheckSecondaryLocks),
+            "kv_flashback_to_version" => Some(Self::FlashbackToVersion),
+            "kv_prepare_flashback_to_version" => Some(Self::PrepareFlashbackToVersion),
+            "kv_flush" => Some(Self::Flush),
+            "kv_buffer_batch_get" => Some(Self::BufferBatchGet),
+            "raw_get" => Some(Self::RawGet),
+            "raw_batch_get" => Some(Self::RawBatchGet),
+            "raw_put" => Some(Self::RawPut),
+            "raw_batch_put" => Some(Self::RawBatchPut),
+            "raw_delete" => Some(Self::RawDelete),
+            "raw_batch_delete" => Some(Self::RawBatchDelete),
+            "raw_delete_range" => Some(Self::RawDeleteRange),
+            "raw_scan" => Some(Self::RawScan),
+            "raw_get_key_ttl" => Some(Self::RawGetKeyTtl),
+            "raw_compare_and_swap" => Some(Self::RawCompareAndSwap),
+            "raw_checksum" => Some(Self::RawChecksum),
+            "unsafe_destroy_range" => Some(Self::UnsafeDestroyRange),
+            "register_lock_observer" => Some(Self::RegisterLockObserver),
+            "check_lock_observer" => Some(Self::CheckLockObserver),
+            "remove_lock_observer" => Some(Self::RemoveLockObserver),
+            "physical_scan_lock" => Some(Self::PhysicalScanLock),
+            "store_safe_ts" => Some(Self::StoreSafeTs),
+            "get_lock_wait_info" => Some(Self::LockWaitInfo),
+            "get_health_feedback" => Some(Self::GetHealthFeedback),
+            "broadcast_txn_status" => Some(Self::BroadcastTxnStatus),
+            "coprocessor" => Some(Self::Coprocessor),
+            "coprocessor_stream" => Some(Self::CoprocessorStream),
+            "batch_coprocessor" => Some(Self::BatchCoprocessor),
+            "dispatch_mpp_task" => Some(Self::DispatchMppTask),
+            "establish_mpp_connection" => Some(Self::EstablishMppConnection),
+            "cancel_mpp_task" => Some(Self::CancelMppTask),
+            "is_alive" => Some(Self::IsMppAlive),
+            "mvcc_get_by_key" => Some(Self::MvccGetByKey),
+            "mvcc_get_by_start_ts" => Some(Self::MvccGetByStartTs),
+            "split_region" => Some(Self::SplitRegion),
+            "debug_get_region_properties" => Some(Self::DebugGetRegionProperties),
+            "compact" => Some(Self::Compact),
+            "get_tiflash_system_table" => Some(Self::GetTiFlashSystemTable),
+            "empty" => Some(Self::Empty),
+            _ => None,
+        }
+    }
+
     /// client-go's `CmdType.String()` result.
     pub const fn name(self) -> &'static str {
         match self {

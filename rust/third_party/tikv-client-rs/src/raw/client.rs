@@ -136,15 +136,27 @@ impl Client<PdRpcClient> {
             )),
             RawApiVersion::V1 => config.keyspace.as_deref().map(build_keyspace_name),
         };
-        let enable_codec = keyspace_name.is_some();
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
-        let rpc =
-            Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), enable_codec).await?);
+        let rpc = match &keyspace_name {
+            Some(name) => {
+                PdRpcClient::connect_with_keyspace(
+                    &pd_endpoints,
+                    config.clone(),
+                    KeyMode::Raw,
+                    name.clone(),
+                )
+                .await?
+            }
+            None => PdRpcClient::connect(&pd_endpoints, config.clone(), false).await?,
+        };
+        let rpc = Arc::new(rpc);
         let cluster_id = rpc.cluster_id().await;
         let (keyspace, keyspace_name) = match keyspace_name {
-            Some(name) => {
-                let keyspace = rpc.load_keyspace(&name).await?;
-                (keyspace_from_pd_meta(&keyspace)?, Some(keyspace.name))
+            Some(_) => {
+                let meta = rpc
+                    .keyspace_meta()
+                    .expect("V2 PD client retains the metadata used to build its codec");
+                (keyspace_from_pd_meta(meta)?, Some(meta.name.clone()))
             }
             None => match config.raw_api_version {
                 RawApiVersion::V1 => (Keyspace::Disable, None),

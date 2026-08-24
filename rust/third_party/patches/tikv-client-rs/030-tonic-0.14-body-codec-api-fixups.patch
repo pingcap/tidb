@@ -1,5 +1,5 @@
 diff --git a/src/pd/client.rs b/src/pd/client.rs
-index 6cf2313..3c9e50d 100644
+index 17dfa5b..d58f8dc 100644
 --- a/src/pd/client.rs
 +++ b/src/pd/client.rs
 @@ -11,6 +11,7 @@ use futures::stream::BoxStream;
@@ -9,8 +9,8 @@ index 6cf2313..3c9e50d 100644
 +use tonic_prost::ProstCodec;
  
  use crate::compat::stream_fn;
- use crate::kv::codec;
-@@ -489,7 +490,7 @@ where
+ use crate::kv::{ReplicaReadConfig, ReplicaReadType};
+@@ -522,7 +523,7 @@ where
                          service: String::new(),
                      }),
                      PathAndQuery::from_static("/grpc.health.v1.Health/Check"),

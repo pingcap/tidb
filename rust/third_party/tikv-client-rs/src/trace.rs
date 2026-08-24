@@ -4,10 +4,294 @@
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
+use std::fmt;
+use std::future::Future;
 use std::ops::{BitOr, BitOrAssign};
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use lazy_static::lazy_static;
+
+use crate::proto::kvrpcpb;
+
+/// One source `spanInfo` node reconstructed from TiKV `ExecDetailsV2`.
+///
+/// `duration` is the duration explicitly reported for this node. A zero value
+/// is intentionally retained for formatting; timeline construction derives it
+/// from synchronous children exactly as client-go's `calcDur` does.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionDetailSpan {
+    pub name: &'static str,
+    pub duration: Duration,
+    pub asynchronous: bool,
+    pub children: Vec<ExecutionDetailSpan>,
+}
+
+impl ExecutionDetailSpan {
+    fn leaf(name: &'static str, nanos: u64) -> Self {
+        Self {
+            name,
+            duration: Duration::from_nanos(nanos),
+            asynchronous: false,
+            children: Vec::new(),
+        }
+    }
+
+    fn calculate_duration(&mut self) -> Duration {
+        if self.duration.is_zero() {
+            self.duration = self
+                .children
+                .iter_mut()
+                .filter_map(|child| {
+                    let duration = child.calculate_duration();
+                    (!child.asynchronous).then_some(duration)
+                })
+                .sum();
+        }
+        self.duration
+    }
+
+    fn calculate_timeline_durations(&mut self) {
+        self.calculate_duration();
+        for child in &mut self.children {
+            child.calculate_timeline_durations();
+        }
+    }
+
+    fn append_timeline(
+        &self,
+        start_offset: Duration,
+        output: &mut Vec<ExecutionDetailTiming>,
+    ) -> Duration {
+        if self.duration.is_zero() {
+            return start_offset;
+        }
+        let mut child_offset = start_offset;
+        for child in &self.children {
+            child_offset = child.append_timeline(child_offset, output);
+        }
+        output.push(ExecutionDetailTiming {
+            name: self.name,
+            start_offset,
+            duration: self.duration,
+            asynchronous: self.asynchronous,
+        });
+        if self.asynchronous {
+            start_offset
+        } else {
+            start_offset + self.duration
+        }
+    }
+
+    /// Return child-before-parent span timings, matching the finish order of
+    /// client-go's recursive `spanInfo.addTo` implementation.
+    pub fn timeline(&self) -> Vec<ExecutionDetailTiming> {
+        let mut normalized = self.clone();
+        normalized.calculate_timeline_durations();
+        let mut output = Vec::new();
+        normalized.append_timeline(Duration::ZERO, &mut output);
+        output
+    }
+}
+
+impl fmt::Display for ExecutionDetailSpan {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.name)?;
+        if self.asynchronous {
+            formatter.write_str("'")?;
+        }
+        if !self.duration.is_zero() {
+            write!(formatter, "[{}]", format_go_duration(self.duration))?;
+        }
+        if !self.children.is_empty() {
+            formatter.write_str("{")?;
+            for child in &self.children {
+                write!(formatter, " {child}")?;
+            }
+            formatter.write_str(" }")?;
+        }
+        Ok(())
+    }
+}
+
+/// Historical timing for one emitted execution-detail span.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionDetailTiming {
+    pub name: &'static str,
+    pub start_offset: Duration,
+    pub duration: Duration,
+    pub asynchronous: bool,
+}
+
+/// Per-task sink used by [`with_trace_exec_details`]. The first argument is
+/// the physical RPC start instant; the tree supplies source-exact offsets.
+pub type ExecutionDetailsTraceHandler = Arc<dyn Fn(Instant, &ExecutionDetailSpan) + Send + Sync>;
+
+tokio::task_local! {
+    static EXECUTION_DETAILS_TRACE_HANDLER: ExecutionDetailsTraceHandler;
+}
+
+/// Enable TiKV execution-detail tracing for one asynchronous operation.
+///
+/// This is the native async counterpart of client-go's
+/// `ContextWithTraceExecDetails`: every physical RPC awaited by `future`
+/// reports its reconstructed historical span tree to `handler`.
+pub async fn with_trace_exec_details<F>(
+    handler: ExecutionDetailsTraceHandler,
+    future: F,
+) -> F::Output
+where
+    F: Future,
+{
+    EXECUTION_DETAILS_TRACE_HANDLER.scope(handler, future).await
+}
+
+pub(crate) fn current_execution_details_trace_handler() -> Option<ExecutionDetailsTraceHandler> {
+    EXECUTION_DETAILS_TRACE_HANDLER
+        .try_with(ExecutionDetailsTraceHandler::clone)
+        .ok()
+}
+
+/// Build client-go's exact execution-detail span tree.
+pub fn build_execution_detail_span(
+    details: &kvrpcpb::ExecDetailsV2,
+) -> Option<ExecutionDetailSpan> {
+    let (rpc_duration, wait_duration, process_duration, suspend_duration, has_v2) =
+        if let Some(time) = details.time_detail_v2.as_ref() {
+            (
+                time.total_rpc_wall_time_ns,
+                time.wait_wall_time_ns,
+                time.process_wall_time_ns,
+                time.process_suspend_wall_time_ns,
+                true,
+            )
+        } else {
+            let time = details.time_detail.as_ref()?;
+            (
+                time.total_rpc_wall_time_ns,
+                time.wait_wall_time_ms.saturating_mul(1_000_000),
+                time.process_wall_time_ms.saturating_mul(1_000_000),
+                0,
+                false,
+            )
+        };
+
+    let mut wait = ExecutionDetailSpan::leaf("tikv.Wait", wait_duration);
+    let mut process = ExecutionDetailSpan::leaf("tikv.Process", process_duration);
+    if let Some(scan) = details.scan_detail_v2.as_ref() {
+        wait.children.push(ExecutionDetailSpan::leaf(
+            "tikv.GetSnapshot",
+            scan.get_snapshot_nanos,
+        ));
+        if details.write_detail.is_none() {
+            process.children.push(ExecutionDetailSpan::leaf(
+                "tikv.RocksDBBlockRead",
+                scan.rocksdb_block_read_nanos,
+            ));
+        }
+    }
+
+    let mut root = ExecutionDetailSpan::leaf("tikv.RPC", rpc_duration);
+    root.children.push(wait);
+    root.children.push(process);
+    if has_v2 {
+        root.children
+            .push(ExecutionDetailSpan::leaf("tikv.Suspend", suspend_duration));
+    }
+
+    if let Some(write) = details.write_detail.as_ref() {
+        let mut persist_log = ExecutionDetailSpan::leaf("tikv.PersistLog", write.persist_log_nanos);
+        persist_log.asynchronous = true;
+        persist_log.children = vec![
+            ExecutionDetailSpan::leaf(
+                "tikv.RaftDBWriteWait",
+                write.raft_db_write_leader_wait_nanos,
+            ),
+            ExecutionDetailSpan::leaf("tikv.RaftDBWriteWAL", write.raft_db_sync_log_nanos),
+            ExecutionDetailSpan::leaf(
+                "tikv.RaftDBWriteMemtable",
+                write.raft_db_write_memtable_nanos,
+            ),
+        ];
+        let mut apply_log = ExecutionDetailSpan::leaf("tikv.ApplyLog", write.apply_log_nanos);
+        apply_log.children = vec![
+            ExecutionDetailSpan::leaf("tikv.ApplyMutexLock", write.apply_mutex_lock_nanos),
+            ExecutionDetailSpan::leaf(
+                "tikv.ApplyWriteLeaderWait",
+                write.apply_write_leader_wait_nanos,
+            ),
+            ExecutionDetailSpan::leaf("tikv.ApplyWriteWAL", write.apply_write_wal_nanos),
+            ExecutionDetailSpan::leaf("tikv.ApplyWriteMemtable", write.apply_write_memtable_nanos),
+        ];
+        root.children.push(ExecutionDetailSpan {
+            name: "tikv.AsyncWrite",
+            duration: Duration::ZERO,
+            asynchronous: false,
+            children: vec![
+                ExecutionDetailSpan::leaf("tikv.StoreBatchWait", write.store_batch_wait_nanos),
+                ExecutionDetailSpan::leaf("tikv.ProposeSendWait", write.propose_send_wait_nanos),
+                persist_log,
+                ExecutionDetailSpan::leaf("tikv.CommitLog", write.commit_log_nanos),
+                ExecutionDetailSpan::leaf("tikv.ApplyBatchWait", write.apply_batch_wait_nanos),
+                apply_log,
+            ],
+        });
+    }
+    Some(root)
+}
+
+pub(crate) fn trace_exec_details_response(started_at: Instant, response: &dyn Any) {
+    let Ok(handler) = EXECUTION_DETAILS_TRACE_HANDLER.try_with(ExecutionDetailsTraceHandler::clone)
+    else {
+        return;
+    };
+    let Some(details) = crate::store::exec_details_v2(response) else {
+        return;
+    };
+    let Some(span) = build_execution_detail_span(details) else {
+        return;
+    };
+    handler(started_at, &span);
+}
+
+fn format_go_duration(duration: Duration) -> String {
+    let nanos = duration.as_nanos();
+    if nanos == 0 {
+        return "0s".to_owned();
+    }
+    fn decimal(whole: u128, remainder: u128, width: usize, suffix: &str) -> String {
+        if remainder == 0 {
+            return format!("{whole}{suffix}");
+        }
+        let fraction = format!("{remainder:0width$}")
+            .trim_end_matches('0')
+            .to_owned();
+        format!("{whole}.{fraction}{suffix}")
+    }
+    if nanos < 1_000 {
+        return format!("{nanos}ns");
+    }
+    if nanos < 1_000_000 {
+        return decimal(nanos / 1_000, nanos % 1_000, 3, "µs");
+    }
+    if nanos < 1_000_000_000 {
+        return decimal(nanos / 1_000_000, nanos % 1_000_000, 6, "ms");
+    }
+
+    let seconds = nanos / 1_000_000_000;
+    let fraction = nanos % 1_000_000_000;
+    let hours = seconds / 3_600;
+    let minutes = (seconds % 3_600) / 60;
+    let seconds = seconds % 60;
+    let seconds = decimal(seconds, fraction, 9, "s");
+    if hours > 0 {
+        format!("{hours}h{minutes}m{seconds}")
+    } else if minutes > 0 {
+        format!("{minutes}m{seconds}")
+    } else {
+        seconds
+    }
+}
 
 /// Trace logging control bits sent to TiKV.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -134,6 +418,9 @@ pub type TraceEventHandler =
     Arc<dyn Fn(&TraceContext, Category, &str, &[TraceField]) + Send + Sync>;
 pub type CategoryEnabledHandler = Arc<dyn Fn(Category) -> bool + Send + Sync>;
 pub type TraceControlExtractor = Arc<dyn Fn(&TraceContext) -> TraceControlFlags + Send + Sync>;
+/// Native counterpart of grpc-opentracing's global text-map injector.
+/// Implementations add the active trace carrier to outgoing gRPC metadata.
+pub type GrpcTraceMetadataInjector = Arc<dyn Fn(&mut tonic::metadata::MetadataMap) + Send + Sync>;
 
 fn no_op_event(_: &TraceContext, _: Category, _: &str, _: &[TraceField]) {}
 fn no_categories(_: Category) -> bool {
@@ -142,6 +429,7 @@ fn no_categories(_: Category) -> bool {
 fn default_trace_control(_: &TraceContext) -> TraceControlFlags {
     TraceControlFlags::TIKV_CATEGORY_REQUEST
 }
+fn no_op_grpc_trace_injector(_: &mut tonic::metadata::MetadataMap) {}
 
 lazy_static! {
     static ref TRACE_EVENT_HANDLER: RwLock<TraceEventHandler> = RwLock::new(Arc::new(no_op_event));
@@ -149,6 +437,12 @@ lazy_static! {
         RwLock::new(Arc::new(no_categories));
     static ref TRACE_CONTROL_EXTRACTOR: RwLock<TraceControlExtractor> =
         RwLock::new(Arc::new(default_trace_control));
+    static ref GRPC_TRACE_METADATA_INJECTOR: RwLock<GrpcTraceMetadataInjector> =
+        RwLock::new(Arc::new(no_op_grpc_trace_injector));
+}
+
+tokio::task_local! {
+    static GRPC_OPEN_TRACING_ENABLED: bool;
 }
 
 /// Replace the event handler; `None` restores the no-op implementation.
@@ -178,6 +472,40 @@ pub fn set_trace_control_extractor(extractor: Option<TraceControlExtractor>) {
         extractor.unwrap_or_else(|| Arc::new(default_trace_control));
 }
 
+/// Installs the process-wide carrier injector used when
+/// [`crate::Config::open_tracing_enable`] is true. `None` restores the no-op
+/// global tracer behavior.
+pub fn set_grpc_trace_metadata_injector(injector: Option<GrpcTraceMetadataInjector>) {
+    *GRPC_TRACE_METADATA_INJECTOR.write().unwrap() =
+        injector.unwrap_or_else(|| Arc::new(no_op_grpc_trace_injector));
+}
+
+pub(crate) async fn with_grpc_open_tracing<F>(enabled: bool, future: F) -> F::Output
+where
+    F: Future,
+{
+    GRPC_OPEN_TRACING_ENABLED.scope(enabled, future).await
+}
+
+pub(crate) fn inject_current_grpc_trace_metadata(metadata: &mut tonic::metadata::MetadataMap) {
+    if GRPC_OPEN_TRACING_ENABLED.try_with(|enabled| *enabled) != Ok(true) {
+        return;
+    }
+    let injector = GRPC_TRACE_METADATA_INJECTOR.read().unwrap().clone();
+    injector(metadata);
+}
+
+pub(crate) fn inject_grpc_trace_metadata(
+    metadata: &mut tonic::metadata::MetadataMap,
+    enabled: bool,
+) {
+    if !enabled {
+        return;
+    }
+    let injector = GRPC_TRACE_METADATA_INJECTOR.read().unwrap().clone();
+    injector(metadata);
+}
+
 pub fn trace_control_flags(context: &TraceContext) -> TraceControlFlags {
     let extractor = TRACE_CONTROL_EXTRACTOR.read().unwrap().clone();
     extractor(context)
@@ -197,6 +525,7 @@ mod tests {
         set_trace_event_handler(None);
         set_category_enabled_handler(None);
         set_trace_control_extractor(None);
+        set_grpc_trace_metadata_injector(None);
     }
 
     #[test]
@@ -306,5 +635,225 @@ mod tests {
         let second = first.with_trace_id(vec![6, 7, 8, 9, 10]);
         assert_eq!(second.trace_id(), Some(&[6, 7, 8, 9, 10][..]));
         assert_eq!(first.trace_id(), Some(&[1, 2, 3, 4, 5][..]));
+    }
+
+    fn timing_millis(span: &ExecutionDetailSpan) -> Vec<(&'static str, u128, u128, bool)> {
+        span.timeline()
+            .into_iter()
+            .map(|timing| {
+                (
+                    timing.name,
+                    timing.start_offset.as_millis(),
+                    timing.duration.as_millis(),
+                    timing.asynchronous,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn execution_detail_tree_and_historical_timeline_match_client_go() {
+        assert_eq!(
+            build_execution_detail_span(&kvrpcpb::ExecDetailsV2::default()),
+            None
+        );
+
+        let rpc_only = build_execution_detail_span(&kvrpcpb::ExecDetailsV2 {
+            time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
+                total_rpc_wall_time_ns: 1_000_000_000,
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            rpc_only.to_string(),
+            "tikv.RPC[1s]{ tikv.Wait tikv.Process tikv.Suspend }"
+        );
+        assert_eq!(
+            timing_millis(&rpc_only),
+            vec![("tikv.RPC", 0, 1_000, false)]
+        );
+
+        let time = kvrpcpb::TimeDetailV2 {
+            total_rpc_wall_time_ns: 1_000_000_000,
+            wait_wall_time_ns: 100_000_000,
+            process_wall_time_ns: 500_000_000,
+            process_suspend_wall_time_ns: 50_000_000,
+            ..Default::default()
+        };
+        let timed = build_execution_detail_span(&kvrpcpb::ExecDetailsV2 {
+            time_detail_v2: Some(time.clone()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            timed.to_string(),
+            "tikv.RPC[1s]{ tikv.Wait[100ms] tikv.Process[500ms] tikv.Suspend[50ms] }"
+        );
+        assert_eq!(
+            timing_millis(&timed),
+            vec![
+                ("tikv.Wait", 0, 100, false),
+                ("tikv.Process", 100, 500, false),
+                ("tikv.Suspend", 600, 50, false),
+                ("tikv.RPC", 0, 1_000, false),
+            ]
+        );
+
+        let scan = kvrpcpb::ScanDetailV2 {
+            get_snapshot_nanos: 80_000_000,
+            rocksdb_block_read_nanos: 200_000_000,
+            ..Default::default()
+        };
+        let read = build_execution_detail_span(&kvrpcpb::ExecDetailsV2 {
+            time_detail_v2: Some(time.clone()),
+            scan_detail_v2: Some(scan.clone()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            read.to_string(),
+            "tikv.RPC[1s]{ tikv.Wait[100ms]{ tikv.GetSnapshot[80ms] } tikv.Process[500ms]{ tikv.RocksDBBlockRead[200ms] } tikv.Suspend[50ms] }"
+        );
+        assert_eq!(
+            timing_millis(&read),
+            vec![
+                ("tikv.GetSnapshot", 0, 80, false),
+                ("tikv.Wait", 0, 100, false),
+                ("tikv.RocksDBBlockRead", 100, 200, false),
+                ("tikv.Process", 100, 500, false),
+                ("tikv.Suspend", 600, 50, false),
+                ("tikv.RPC", 0, 1_000, false),
+            ]
+        );
+
+        let empty_write = build_execution_detail_span(&kvrpcpb::ExecDetailsV2 {
+            time_detail_v2: Some(time),
+            scan_detail_v2: Some(scan),
+            write_detail: Some(kvrpcpb::WriteDetail::default()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            empty_write.to_string(),
+            "tikv.RPC[1s]{ tikv.Wait[100ms]{ tikv.GetSnapshot[80ms] } tikv.Process[500ms] tikv.Suspend[50ms] tikv.AsyncWrite{ tikv.StoreBatchWait tikv.ProposeSendWait tikv.PersistLog'{ tikv.RaftDBWriteWait tikv.RaftDBWriteWAL tikv.RaftDBWriteMemtable } tikv.CommitLog tikv.ApplyBatchWait tikv.ApplyLog{ tikv.ApplyMutexLock tikv.ApplyWriteLeaderWait tikv.ApplyWriteWAL tikv.ApplyWriteMemtable } } }"
+        );
+        assert_eq!(
+            timing_millis(&empty_write),
+            vec![
+                ("tikv.GetSnapshot", 0, 80, false),
+                ("tikv.Wait", 0, 100, false),
+                ("tikv.Process", 100, 500, false),
+                ("tikv.Suspend", 600, 50, false),
+                ("tikv.RPC", 0, 1_000, false),
+            ]
+        );
+
+        let write = build_execution_detail_span(&kvrpcpb::ExecDetailsV2 {
+            time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
+                total_rpc_wall_time_ns: 1_000_000_000,
+                ..Default::default()
+            }),
+            scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
+                get_snapshot_nanos: 80_000_000,
+                ..Default::default()
+            }),
+            write_detail: Some(kvrpcpb::WriteDetail {
+                store_batch_wait_nanos: 10_000_000,
+                propose_send_wait_nanos: 10_000_000,
+                persist_log_nanos: 100_000_000,
+                raft_db_write_leader_wait_nanos: 20_000_000,
+                raft_db_sync_log_nanos: 30_000_000,
+                raft_db_write_memtable_nanos: 30_000_000,
+                commit_log_nanos: 200_000_000,
+                apply_batch_wait_nanos: 20_000_000,
+                apply_log_nanos: 300_000_000,
+                apply_mutex_lock_nanos: 10_000_000,
+                apply_write_leader_wait_nanos: 10_000_000,
+                apply_write_wal_nanos: 80_000_000,
+                apply_write_memtable_nanos: 50_000_000,
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            write.to_string(),
+            "tikv.RPC[1s]{ tikv.Wait{ tikv.GetSnapshot[80ms] } tikv.Process tikv.Suspend tikv.AsyncWrite{ tikv.StoreBatchWait[10ms] tikv.ProposeSendWait[10ms] tikv.PersistLog'[100ms]{ tikv.RaftDBWriteWait[20ms] tikv.RaftDBWriteWAL[30ms] tikv.RaftDBWriteMemtable[30ms] } tikv.CommitLog[200ms] tikv.ApplyBatchWait[20ms] tikv.ApplyLog[300ms]{ tikv.ApplyMutexLock[10ms] tikv.ApplyWriteLeaderWait[10ms] tikv.ApplyWriteWAL[80ms] tikv.ApplyWriteMemtable[50ms] } } }"
+        );
+        assert_eq!(
+            timing_millis(&write),
+            vec![
+                ("tikv.GetSnapshot", 0, 80, false),
+                ("tikv.Wait", 0, 80, false),
+                ("tikv.StoreBatchWait", 80, 10, false),
+                ("tikv.ProposeSendWait", 90, 10, false),
+                ("tikv.RaftDBWriteWait", 100, 20, false),
+                ("tikv.RaftDBWriteWAL", 120, 30, false),
+                ("tikv.RaftDBWriteMemtable", 150, 30, false),
+                ("tikv.PersistLog", 100, 100, true),
+                ("tikv.CommitLog", 100, 200, false),
+                ("tikv.ApplyBatchWait", 300, 20, false),
+                ("tikv.ApplyMutexLock", 320, 10, false),
+                ("tikv.ApplyWriteLeaderWait", 330, 10, false),
+                ("tikv.ApplyWriteWAL", 340, 80, false),
+                ("tikv.ApplyWriteMemtable", 420, 50, false),
+                ("tikv.ApplyLog", 320, 300, false),
+                ("tikv.AsyncWrite", 80, 540, false),
+                ("tikv.RPC", 0, 1_000, false),
+            ]
+        );
+
+        let legacy = build_execution_detail_span(&kvrpcpb::ExecDetailsV2 {
+            time_detail: Some(kvrpcpb::TimeDetail {
+                wait_wall_time_ms: 2,
+                process_wall_time_ms: 3,
+                total_rpc_wall_time_ns: 6_000_000,
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            legacy.to_string(),
+            "tikv.RPC[6ms]{ tikv.Wait[2ms] tikv.Process[3ms] }"
+        );
+    }
+
+    #[tokio::test]
+    async fn execution_detail_scope_is_task_local_and_opt_in() {
+        let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = observed.clone();
+        let response = kvrpcpb::GetResponse {
+            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
+                    total_rpc_wall_time_ns: 1_000_000,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let start = Instant::now();
+        trace_exec_details_response(start, &response);
+        assert!(observed.lock().unwrap().is_empty());
+
+        with_trace_exec_details(
+            Arc::new(move |started_at, span| {
+                sink.lock().unwrap().push((started_at, span.to_string()));
+            }),
+            async {
+                trace_exec_details_response(start, &response);
+            },
+        )
+        .await;
+        assert_eq!(
+            *observed.lock().unwrap(),
+            vec![(
+                start,
+                "tikv.RPC[1ms]{ tikv.Wait tikv.Process tikv.Suspend }".to_owned()
+            )]
+        );
     }
 }

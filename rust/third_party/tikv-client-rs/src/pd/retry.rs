@@ -31,6 +31,13 @@ const RECONNECT_INTERVAL_SEC: u64 = 1;
 const MAX_REQUEST_COUNT: usize = 5;
 const LEADER_CHANGE_RETRY: usize = 10;
 
+/// Options carried by PD's `BatchScanRegions` request.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RegionScanOptions {
+    pub need_buckets: bool,
+    pub contain_all_key_range: bool,
+}
+
 #[async_trait]
 pub trait RetryClientTrait {
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
@@ -44,6 +51,13 @@ pub trait RetryClientTrait {
     }
 
     async fn get_prev_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader>;
+
+    async fn get_prev_region_with_buckets(
+        self: Arc<Self>,
+        key: Vec<u8>,
+    ) -> Result<RegionWithLeader> {
+        self.get_prev_region(key).await
+    }
 
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader>;
 
@@ -83,21 +97,28 @@ pub trait RetryClientTrait {
         Ok(regions)
     }
 
-    /// Source `PDClient.BatchScanRegions`, used to pre-fetch several disjoint
-    /// key ranges in one round trip. Unlike `scan_regions`, there is no
-    /// point-lookup-derived default: a client that does not implement this
-    /// natively reports it as unimplemented rather than silently issuing many
-    /// serial `get_region` calls under a different name.
+    /// PD's multi-range region scan. Custom clients can explicitly retain an
+    /// unsupported result so callers can fall back to `ScanRegions`, as
+    /// client-go's region cache does for older PD servers.
     async fn batch_scan_regions(
         self: Arc<Self>,
         _ranges: Vec<pdpb::KeyRange>,
         _limit: usize,
-        _contain_all_key_range: bool,
+        _options: RegionScanOptions,
     ) -> Result<Vec<RegionWithLeader>> {
         Err(Error::Unimplemented)
     }
 
-    /// Source `PDClient.GetGCState`* keyspace-scoped GC state (txn safe
+    /// Requests PD to split at the supplied physical keys.
+    async fn split_regions(
+        self: Arc<Self>,
+        _split_keys: Vec<Vec<u8>>,
+        _retry_limit: u64,
+    ) -> Result<pdpb::SplitRegionsResponse> {
+        Err(Error::Unimplemented)
+    }
+
+    /// Source `PDClient.GetGCState`: the keyspace-scoped GC state (txn safe
     /// point, GC safe point, GC barriers), distinct from the legacy
     /// cluster-wide `update_safepoint`/`UpdateGCSafePoint`.
     async fn get_gc_state(
@@ -169,6 +190,7 @@ macro_rules! retry_core {
 
             match stats.done(res) {
                 Ok(r) => return Ok(r),
+                Err(Error::Unimplemented) => return Err(Error::Unimplemented),
                 Err(e) => last_err = Err(e),
             }
 
@@ -278,6 +300,23 @@ impl RetryClientTrait for RetryClient<Cluster> {
         })
     }
 
+    async fn get_prev_region_with_buckets(
+        self: Arc<Self>,
+        key: Vec<u8>,
+    ) -> Result<RegionWithLeader> {
+        retry_mut!(self, "get_prev_region_with_buckets", |cluster| {
+            let key = key.clone();
+            async {
+                cluster
+                    .get_prev_region_with_buckets(key.clone(), self.timeout, true)
+                    .await
+                    .and_then(|resp| {
+                        region_from_response(resp, || Error::RegionForKeyNotFound { key })
+                    })
+            }
+        })
+    }
+
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader> {
         retry_mut!(self, "get_region_by_id", |cluster| async {
             cluster
@@ -325,16 +364,27 @@ impl RetryClientTrait for RetryClient<Cluster> {
         self: Arc<Self>,
         ranges: Vec<pdpb::KeyRange>,
         limit: usize,
-        contain_all_key_range: bool,
+        options: RegionScanOptions,
     ) -> Result<Vec<RegionWithLeader>> {
         retry_mut!(self, "batch_scan_regions", |cluster| {
             let ranges = ranges.clone();
             async {
                 cluster
-                    .batch_scan_regions(ranges, limit, true, contain_all_key_range, self.timeout)
+                    .batch_scan_regions(ranges, limit, options, self.timeout)
                     .await
                     .and_then(regions_from_batch_scan_response)
             }
+        })
+    }
+
+    async fn split_regions(
+        self: Arc<Self>,
+        split_keys: Vec<Vec<u8>>,
+        retry_limit: u64,
+    ) -> Result<pdpb::SplitRegionsResponse> {
+        retry_mut!(self, "split_regions", |cluster| {
+            let split_keys = split_keys.clone();
+            cluster.split_regions(split_keys, retry_limit, self.timeout)
         })
     }
 

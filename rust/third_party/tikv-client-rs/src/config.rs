@@ -68,7 +68,9 @@ pub struct TxnLocalLatches {
 }
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
-const DEFAULT_GRPC_MAX_DECODING_MESSAGE_SIZE: usize = 4 * 1024 * 1024; // 4MB
+/// Client-go's exported `MaxRecvMsgSize` default (`math.MaxInt64 - 1`). The
+/// Rust field remains configurable per client instead of process-global.
+const DEFAULT_GRPC_MAX_DECODING_MESSAGE_SIZE: usize = (i64::MAX - 1) as usize;
 
 impl Default for Config {
     fn default() -> Self {
@@ -143,9 +145,9 @@ impl Config {
 
     /// Set the timeout for clients.
     ///
-    /// The timeout is used for all requests when using or connecting to a TiKV cluster (including
-    /// PD nodes). If the request does not complete within timeout, the request is cancelled and
-    /// an error returned to the user.
+    /// The timeout is used for RPC requests and PD connection setup. If an operation does not
+    /// complete within the timeout, it is cancelled and an error is returned to the user. TiKV
+    /// transport dialing uses client-go's separate fixed five-second deadline.
     ///
     /// The default timeout is two seconds.
     ///
@@ -238,6 +240,14 @@ mod tests {
                 .with_raw_api_version(RawApiVersion::V1Ttl)
                 .raw_api_version,
             RawApiVersion::V1Ttl
+        );
+    }
+
+    #[test]
+    fn source_max_receive_message_size_is_the_default() {
+        assert_eq!(
+            Config::default().grpc_max_decoding_message_size,
+            (i64::MAX - 1) as usize
         );
     }
 }

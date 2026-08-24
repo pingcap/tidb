@@ -115,6 +115,31 @@ pub(crate) fn keyspace_from_pd_meta(meta: &keyspacepb::KeyspaceMeta) -> crate::R
     Keyspace::try_enable(keyspace_id)
 }
 
+/// Extracts a source-compatible numeric keyspace ID from loaded PD metadata.
+///
+/// This is deliberately stricter than codec construction: client-go's
+/// `GetKeyspaceID` rejects disabled keyspaces and API V3 identities before
+/// returning the legacy numeric ID arm.
+pub(crate) fn keyspace_id_from_pd_meta(
+    name: &str,
+    meta: &keyspacepb::KeyspaceMeta,
+) -> crate::Result<u32> {
+    if meta.state != keyspacepb::KeyspaceState::Enabled as i32 {
+        return Err(crate::Error::StringError(format!(
+            "keyspace {name} not enabled"
+        )));
+    }
+    match &meta.keyspace {
+        Some(keyspacepb::keyspace_meta::Keyspace::KeyspaceIdentity(_)) => {
+            Err(crate::Error::StringError(format!(
+                "keyspace {name} uses an API V3 keyspace identity, which is not supported"
+            )))
+        }
+        Some(keyspacepb::keyspace_meta::Keyspace::Id(id)) => Ok(*id),
+        None => Ok(0),
+    }
+}
+
 /// Canonicalizes an optional user keyspace name like client-go's `BuildKeyspaceName`.
 pub fn build_keyspace_name(name: impl AsRef<str>) -> String {
     let name = name.as_ref();
@@ -1071,6 +1096,49 @@ mod tests {
         assert_eq!(
             keyspace_from_pd_meta(&keyspacepb::KeyspaceMeta::default()).unwrap(),
             Keyspace::Enable { keyspace_id: 0 }
+        );
+    }
+
+    #[test]
+    fn source_get_keyspace_id_rejects_non_enabled_and_v3_metadata() {
+        let disabled = keyspacepb::KeyspaceMeta {
+            state: keyspacepb::KeyspaceState::Disabled as i32,
+            keyspace: Some(keyspacepb::keyspace_meta::Keyspace::Id(7)),
+            ..Default::default()
+        };
+        assert_eq!(
+            keyspace_id_from_pd_meta("tenant", &disabled)
+                .unwrap_err()
+                .to_string(),
+            "keyspace tenant not enabled"
+        );
+
+        let identity = keyspacepb::KeyspaceMeta {
+            state: keyspacepb::KeyspaceState::Enabled as i32,
+            keyspace: Some(keyspacepb::keyspace_meta::Keyspace::KeyspaceIdentity(
+                crate::proto::apipb::KeyspaceIdentity {
+                    namespace_id: 1,
+                    keyspace_id: 2,
+                },
+            )),
+            ..Default::default()
+        };
+        assert_eq!(
+            keyspace_id_from_pd_meta("tenant", &identity)
+                .unwrap_err()
+                .to_string(),
+            "keyspace tenant uses an API V3 keyspace identity, which is not supported"
+        );
+
+        let enabled = keyspacepb::KeyspaceMeta {
+            state: keyspacepb::KeyspaceState::Enabled as i32,
+            keyspace: Some(keyspacepb::keyspace_meta::Keyspace::Id(42)),
+            ..Default::default()
+        };
+        assert_eq!(keyspace_id_from_pd_meta("tenant", &enabled).unwrap(), 42);
+        assert_eq!(
+            keyspace_id_from_pd_meta("tenant", &keyspacepb::KeyspaceMeta::default()).unwrap(),
+            0
         );
     }
 

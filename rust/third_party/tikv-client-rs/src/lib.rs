@@ -108,6 +108,7 @@ pub mod redact;
 pub mod request;
 pub mod retry;
 pub mod trace;
+pub mod traffic;
 #[doc(hidden)]
 pub mod transaction;
 

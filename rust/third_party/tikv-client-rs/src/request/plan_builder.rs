@@ -84,6 +84,7 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 replica_selector_state: crate::locate::ReplicaSelectorState::default(),
                 store_health: None,
                 record_client_side_slow_score: false,
+                physical_endpoint_type: crate::store::EndpointType::TiKv,
                 resource_control_replica_number: 1,
                 resource_control_access_location: crate::kv::AccessLocationType::Unknown,
                 predicted_read_bytes: 0,
@@ -91,6 +92,10 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 store_token_count: Arc::new(std::sync::atomic::AtomicI64::new(0)),
                 store_token_store_id: 0,
                 interceptor: None,
+                execution_details_trace_handler:
+                    crate::trace::current_execution_details_trace_handler(),
+                network_traffic_details: crate::traffic::current_network_traffic_details(),
+                network_stale_read: false,
                 resource_control: None,
                 response_codec,
                 v1_response_codec,
@@ -146,6 +151,7 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
     /// Select replicas for this read using client-go's region selector. The
     /// setting is retained through shard and retry clones; leader is default.
     pub fn replica_read(mut self, config: ReplicaReadConfig) -> Self {
+        self.plan.network_stale_read = config.stale_read;
         self.plan.replica_read_config = config;
         self
     }
@@ -347,6 +353,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 read_lock_context: None,
                 snapshot_runtime_stats: None,
                 snapshot_lock_backoff: None,
+                response_locks_only: false,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -360,6 +367,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
     /// Resolve locks encountered by a snapshot read. Unlike a mutation,
     /// client-go reissues the read with TiKV's resolved/committed-lock hints
     /// instead of waiting for secondary-lock cleanup.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn resolve_lock_for_read(
         self,
         timestamp: Timestamp,
@@ -400,6 +408,59 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                     snapshot_variables,
                 )),
                 snapshot_runtime_stats,
+                response_locks_only: false,
+            },
+            keyspace_name: self.keyspace_name,
+            rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
+            phantom: PhantomData,
+        }
+    }
+
+    /// Resolve only a response-level snapshot lock. Pair-level errors remain
+    /// attached for the scanner to recover with key-local point reads.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn resolve_response_lock_for_read(
+        self,
+        timestamp: Timestamp,
+        backoff: Backoff,
+        keyspace: Keyspace,
+        read_lock_context: ReadLockContext,
+        mut resolve_locks_context: ResolveLocksContext,
+        snapshot_runtime_stats: Option<Arc<crate::SnapshotRuntimeStats>>,
+        snapshot_variables: Arc<crate::Variables>,
+    ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
+    where
+        P: Shardable,
+        P::Result: HasLocks,
+    {
+        resolve_locks_context.rpc_interceptor = self.rpc_interceptor.clone();
+        resolve_locks_context.resource_group_name = self.resource_group_name.clone();
+        resolve_locks_context.resource_control = self.resource_control.clone();
+        resolve_locks_context.ru_details = self.ru_details.clone();
+        PlanBuilder {
+            pd_client: self.pd_client.clone(),
+            plan: ResolveLock {
+                inner: self.plan,
+                timestamp,
+                backoff,
+                pd_client: self.pd_client,
+                keyspace,
+                keyspace_name: self.keyspace_name.clone(),
+                rpc_interceptor: self.rpc_interceptor.clone(),
+                resource_group_name: self.resource_group_name.clone(),
+                resource_control: self.resource_control.clone(),
+                ru_details: self.ru_details.clone(),
+                resolve_locks_context,
+                read_lock_context: Some(read_lock_context),
+                snapshot_lock_backoff: Some(SnapshotLockBackoff::new(
+                    snapshot_runtime_stats.clone(),
+                    snapshot_variables,
+                )),
+                snapshot_runtime_stats,
+                response_locks_only: true,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -485,6 +546,27 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
             plan: ProcessResponse {
                 inner: self.plan,
                 processor: DefaultProcessor,
+            },
+            keyspace_name: self.keyspace_name,
+            rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
+            phantom: PhantomData,
+        }
+    }
+
+    /// Transform one plan response before a later routing/retry stage.
+    pub(crate) fn process<Pr>(self, processor: Pr) -> PlanBuilder<PdC, ProcessResponse<P, Pr>, Ph>
+    where
+        P: Plan,
+        Pr: Process<P::Result>,
+    {
+        PlanBuilder {
+            pd_client: self.pd_client.clone(),
+            plan: ProcessResponse {
+                inner: self.plan,
+                processor,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -654,11 +736,25 @@ fn set_single_region_store<PdC: PdClient, R: KvRequest>(
     ru_details: Option<Arc<crate::RuDetails>>,
 ) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
     plan.request.set_leader(&store.request_region())?;
+    plan.request.set_replica_read(store.is_replica_read());
+    plan.request.set_stale_read(store.stale_read);
+    plan.request.set_busy_threshold_ms(store.busy_threshold_ms);
+    plan.request
+        .set_buckets_version(store.region_with_leader.buckets_version());
+    plan.network_stale_read |= store.stale_read;
+    plan.resource_control_replica_number = store.resource_control_replica_number;
+    plan.resource_control_access_location = store.resource_control_access_location;
+    plan.store_token_count = store.store_token_count;
+    plan.store_token_store_id = store.target_peer.as_ref().map_or(0, |peer| peer.store_id);
+    if store.busy_threshold_disabled {
+        plan.replica_selector_state.disable_busy_threshold();
+    }
     plan.kv_client = Some(store.client);
     plan.target = store.target;
     plan.forwarded_host = store.forwarded_host;
     plan.store_health = store.health_status;
     plan.record_client_side_slow_score = store.record_client_side_slow_score;
+    plan.physical_endpoint_type = store.physical_endpoint_type;
     Ok(PlanBuilder {
         plan,
         pd_client,

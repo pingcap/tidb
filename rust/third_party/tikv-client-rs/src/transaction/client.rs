@@ -173,16 +173,31 @@ impl Client {
         let latches = transaction_latches(&config)?;
         debug!("creating new transactional client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
-        let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), true).await?);
+        let configured_keyspace = config.keyspace.as_deref().map(build_keyspace_name);
+        let pd = match &configured_keyspace {
+            Some(name) => {
+                PdRpcClient::connect_with_keyspace(
+                    &pd_endpoints,
+                    config.clone(),
+                    KeyMode::Txn,
+                    name.clone(),
+                )
+                .await?
+            }
+            None => PdRpcClient::connect(&pd_endpoints, config.clone(), true).await?,
+        };
+        let pd = Arc::new(pd);
         let read_timestamp_validator = Arc::new(PdReadTimestampValidator(
             PdOracle::from_pd_client(pd.clone(), PdOracleOptions::default())
                 .await
                 .map_err(|error| crate::Error::StringError(error.to_string()))?,
         ));
-        let (keyspace, keyspace_name) = match config.keyspace {
-            Some(name) => {
-                let keyspace = pd.load_keyspace(&build_keyspace_name(name)).await?;
-                (keyspace_from_pd_meta(&keyspace)?, Some(keyspace.name))
+        let (keyspace, keyspace_name) = match configured_keyspace {
+            Some(_) => {
+                let meta = pd
+                    .keyspace_meta()
+                    .expect("V2 PD client retains the metadata used to build its codec");
+                (keyspace_from_pd_meta(meta)?, Some(meta.name.clone()))
             }
             None => (Keyspace::Disable, None),
         };

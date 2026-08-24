@@ -43,6 +43,7 @@ use crate::store::RegionStore;
 use crate::store::Request;
 use crate::store::Store;
 use crate::store::{region_stream_for_keys, region_stream_for_range};
+use crate::store::{HasKeyErrors, HasRegionError};
 use crate::timestamp::TimestampExt;
 use crate::transaction::requests::kvrpcpb::prewrite_request::PessimisticAction;
 use crate::transaction::HasLocks;
@@ -58,20 +59,25 @@ macro_rules! pair_locks {
     ($response_type:ty) => {
         impl HasLocks for $response_type {
             fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
-                if self.pairs.is_empty() {
-                    self.error
-                        .as_mut()
-                        .and_then(|error| error.locked.take())
-                        .into_iter()
-                        .collect()
-                } else {
-                    self.pairs
-                        .iter_mut()
-                        .filter_map(|pair| {
-                            pair.error.as_mut().and_then(|error| error.locked.take())
-                        })
-                        .collect()
+                // A response-level key error means TiKV returned an
+                // incomplete `pairs` list. client-go resolves that lock and
+                // retries the original request; pair-level locks are only
+                // meaningful when the response itself succeeded.
+                if let Some(lock) = self.error.as_mut().and_then(|error| error.locked.take()) {
+                    return vec![lock];
                 }
+                self.pairs
+                    .iter_mut()
+                    .filter_map(|pair| pair.error.as_mut().and_then(|error| error.locked.take()))
+                    .collect()
+            }
+
+            fn take_response_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
+                self.error
+                    .as_mut()
+                    .and_then(|error| error.locked.take())
+                    .into_iter()
+                    .collect()
             }
         }
     };
@@ -88,6 +94,10 @@ macro_rules! error_locks {
                     .and_then(|error| error.locked.take())
                     .into_iter()
                     .collect()
+            }
+
+            fn take_response_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
+                self.take_locks()
             }
         }
     };
@@ -358,6 +368,58 @@ impl Merge<kvrpcpb::ScanResponse> for Collect {
         input
             .into_iter()
             .flat_map_ok(|resp| resp.pairs.into_iter().map(Into::into))
+            .collect()
+    }
+}
+
+/// Scan response whose pair errors remain available to the snapshot scanner.
+/// Region retry may inspect only the response-level error; pair errors are
+/// source-owned iterator entries and are recovered with point reads.
+#[derive(Clone)]
+pub(crate) struct ScannerBatchResponse {
+    pub(crate) pairs: Vec<kvrpcpb::KvPair>,
+    region_error: Option<crate::proto::errorpb::Error>,
+    error: Option<kvrpcpb::KeyError>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct PreserveScannerPairErrors;
+
+impl Process<kvrpcpb::ScanResponse> for PreserveScannerPairErrors {
+    type Out = ScannerBatchResponse;
+
+    fn process(&self, input: Result<kvrpcpb::ScanResponse>) -> Result<Self::Out> {
+        let response = input?;
+        Ok(ScannerBatchResponse {
+            pairs: response.pairs,
+            region_error: response.region_error,
+            error: response.error,
+        })
+    }
+}
+
+impl HasKeyErrors for ScannerBatchResponse {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
+        self.error.take().map(|error| vec![error.into()])
+    }
+}
+
+impl HasRegionError for ScannerBatchResponse {
+    fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
+        self.region_error.take()
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct CollectScannerPairs;
+
+impl Merge<ScannerBatchResponse> for CollectScannerPairs {
+    type Out = Vec<kvrpcpb::KvPair>;
+
+    fn merge(&self, input: Vec<Result<ScannerBatchResponse>>) -> Result<Self::Out> {
+        input
+            .into_iter()
+            .flat_map_ok(|response| response.pairs)
             .collect()
     }
 }
@@ -1807,6 +1869,7 @@ mod tests {
     use crate::request::Shardable;
     use crate::request::{ApiV1Codec, ApiV2Codec, KeyMode, KvRequest};
     use crate::store::Request;
+    use crate::transaction::HasLocks;
     use crate::KvPair;
     use crate::Timestamp;
     use crate::TimestampExt;
@@ -2074,6 +2137,39 @@ mod tests {
             .unwrap();
         assert_eq!(batch_get_response.pairs[0].key, b"key");
         assert_eq!(scan_response.pairs[0].key, b"key");
+    }
+
+    #[test]
+    fn pair_response_lock_takes_precedence_over_incomplete_pairs() {
+        let response_lock = kvrpcpb::LockInfo {
+            key: b"response-lock".to_vec(),
+            ..Default::default()
+        };
+        let pair_lock = kvrpcpb::LockInfo {
+            key: b"pair-lock".to_vec(),
+            ..Default::default()
+        };
+        let mut response = kvrpcpb::ScanResponse {
+            error: Some(kvrpcpb::KeyError {
+                locked: Some(response_lock.clone()),
+                ..Default::default()
+            }),
+            pairs: vec![kvrpcpb::KvPair {
+                error: Some(kvrpcpb::KeyError {
+                    locked: Some(pair_lock),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_eq!(response.take_locks(), vec![response_lock]);
+        assert!(response.pairs[0]
+            .error
+            .as_ref()
+            .and_then(|error| error.locked.as_ref())
+            .is_some());
     }
 
     #[test]

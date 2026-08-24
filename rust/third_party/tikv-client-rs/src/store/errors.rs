@@ -140,13 +140,19 @@ has_str_error!(kvrpcpb::GetLockWaitInfoResponse);
 
 impl HasKeyErrors for kvrpcpb::ScanResponse {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
-        extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take()))
+        self.error
+            .take()
+            .map(|error| vec![error.into()])
+            .or_else(|| extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take())))
     }
 }
 
 impl HasKeyErrors for kvrpcpb::BatchGetResponse {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
-        extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take()))
+        self.error
+            .take()
+            .map(|error| vec![error.into()])
+            .or_else(|| extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take())))
     }
 }
 
@@ -194,8 +200,10 @@ impl HasKeyErrors for kvrpcpb::FlushResponse {
 
 impl HasKeyErrors for kvrpcpb::BufferBatchGetResponse {
     fn key_errors(&mut self) -> Option<Vec<Error>> {
-        let pair_errors = extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take()));
-        pair_errors.or_else(|| self.error.take().map(|error| vec![error.into()]))
+        self.error
+            .take()
+            .map(|error| vec![error.into()])
+            .or_else(|| extract_errors(self.pairs.iter_mut().map(|pair| pair.error.take())))
     }
 }
 
@@ -295,5 +303,26 @@ mod test {
 
         let mut resp: Result<kvrpcpb::CommitResponse, _> = Err(internal_err!("some error"));
         assert!(resp.key_errors().is_some());
+    }
+
+    #[test]
+    fn scan_response_error_precedes_pair_errors() {
+        let mut response = kvrpcpb::ScanResponse {
+            error: Some(kvrpcpb::KeyError {
+                abort: "response error".to_owned(),
+                ..Default::default()
+            }),
+            pairs: vec![kvrpcpb::KvPair {
+                error: Some(kvrpcpb::KeyError {
+                    abort: "pair error".to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert!(response.key_errors().is_some());
+        assert!(response.pairs[0].error.is_some());
     }
 }

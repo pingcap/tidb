@@ -14,9 +14,9 @@ use tonic::codegen::http::uri::PathAndQuery;
 use tonic_prost::ProstCodec;
 
 use crate::compat::stream_fn;
-use crate::kv::codec;
 use crate::kv::{ReplicaReadConfig, ReplicaReadType};
 use crate::locate::{MixedReplicaSelection, ReplicaSelectorState};
+use crate::pd::codec::{CodecPdClient, PdRegionCodec};
 use crate::pd::retry::RetryClientTrait;
 use crate::pd::Cluster;
 use crate::pd::RetryClient;
@@ -28,6 +28,9 @@ use crate::region::RegionVerId;
 use crate::region::RegionWithLeader;
 use crate::region::StoreId;
 use crate::region_cache::{RegionCache, StoreLiveness};
+use crate::request::{
+    build_keyspace_name, keyspace_from_pd_meta, keyspace_id_from_pd_meta, KeyMode, Keyspace,
+};
 use crate::retry::RetryBackoffer;
 use crate::store::KvConnect;
 use crate::store::RegionStore;
@@ -170,6 +173,19 @@ pub trait PdClient: Send + Sync + 'static {
 
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta>;
 
+    /// Loads metadata using client-go's canonical default keyspace name.
+    async fn get_keyspace_meta(&self, name: &str) -> Result<keyspacepb::KeyspaceMeta> {
+        self.load_keyspace(&build_keyspace_name(name)).await
+    }
+
+    /// Loads the canonical keyspace name and returns its legacy numeric ID.
+    /// Disabled keyspaces and API V3 identities are rejected exactly as by
+    /// client-go's `internal/locate.GetKeyspaceID`.
+    async fn get_keyspace_id(&self, name: &str) -> Result<u32> {
+        let meta = self.get_keyspace_meta(name).await?;
+        keyspace_id_from_pd_meta(name, &meta)
+    }
+
     /// In transactional API, `key` is in raw format
     async fn store_for_key(self: Arc<Self>, key: &Key) -> Result<RegionStore> {
         let region = self.region_for_key(key).await?;
@@ -295,37 +311,6 @@ pub trait PdClient: Send + Sync + 'static {
         .boxed()
     }
 
-    fn decode_region(mut region: RegionWithLeader, enable_codec: bool) -> Result<RegionWithLeader> {
-        if enable_codec {
-            codec::decode_bytes_in_place(&mut region.region.start_key, false)?;
-            codec::decode_bytes_in_place(&mut region.region.end_key, false)?;
-            if let Some(buckets) = &mut region.buckets {
-                for key in &mut buckets.keys {
-                    codec::decode_bytes_in_place(key, false)?;
-                }
-            }
-        }
-        Ok(region)
-    }
-
-    /// The cache owns PD's encoded keyspace. Region errors have already been
-    /// decoded by the request response codec, so cache-refresh writes must
-    /// restore that representation before inserting them.
-    fn encode_region(mut region: RegionWithLeader, enable_codec: bool) -> RegionWithLeader {
-        if enable_codec {
-            region.region.start_key = encode_region_key(&region.region.start_key);
-            region.region.end_key = encode_region_key(&region.region.end_key);
-            if let Some(buckets) = &mut region.buckets {
-                buckets.keys = buckets
-                    .keys
-                    .iter()
-                    .map(|key| encode_region_key(key))
-                    .collect();
-            }
-        }
-        region
-    }
-
     async fn update_leader(&self, ver_id: RegionVerId, leader: metapb::Peer) -> Result<()>;
 
     /// Installs region metadata carried by TiKV's `EpochNotMatch` response.
@@ -380,12 +365,12 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     kv_client_lifecycle: Arc<Mutex<()>>,
     kv_client_closed: Arc<AtomicBool>,
     store_token_counts: Arc<std::sync::Mutex<HashMap<StoreId, Arc<AtomicI64>>>>,
-    enable_codec: bool,
+    keyspace_meta: Option<keyspacepb::KeyspaceMeta>,
     enable_forwarding: bool,
     zone_label: String,
     security_mgr: Arc<SecurityManager>,
     store_liveness_timeout: Duration,
-    region_cache: Arc<RegionCache<RetryClient<Cl>>>,
+    region_cache: Arc<RegionCache<CodecPdClient<RetryClient<Cl>>>>,
 }
 
 #[derive(Clone, PartialEq, prost::Message)]
@@ -562,7 +547,6 @@ where
         tokio::spawn(async move {
             let mut route = route;
             let mut last_resolve = std::time::Instant::now();
-            let mut liveness = StoreLiveness::Unreachable;
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 let Some(client) = client.upgrade() else {
@@ -574,16 +558,11 @@ where
                 }
                 if last_resolve.elapsed() >= STORE_RE_RESOLVE_INTERVAL {
                     last_resolve = std::time::Instant::now();
-                    client.region_cache.invalidate_store_cache(store_id).await;
-                    match client.region_cache.get_store_by_id(store_id).await {
+                    match client.region_cache.refresh_store_by_id(store_id).await {
                         Ok(store) => {
                             let endpoint_type = crate::store::EndpointType::from_store(&store);
                             route.target = store.address;
                             route.physical_endpoint_type = endpoint_type;
-                            // The refreshed entry begins reachable by default,
-                            // but source keeps its prior liveness until this
-                            // loop's next Health/Check result is known.
-                            client.region_cache.set_store_liveness(store_id, liveness);
                         }
                         Err(error) => {
                             log::debug!(
@@ -592,7 +571,7 @@ where
                         }
                     }
                 }
-                liveness = client.request_store_liveness(&route).await;
+                let liveness = client.request_store_liveness(&route).await;
                 client.region_cache.set_store_liveness(store_id, liveness);
                 if liveness == StoreLiveness::Reachable {
                     client.region_cache.finish_store_health_check(store_id);
@@ -854,31 +833,15 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     }
 
     async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
-        let enable_codec = self.enable_codec;
-        let key = if enable_codec {
-            key.to_encoded()
-        } else {
-            key.clone()
-        };
-
-        let region = self.region_cache.get_region_by_key(&key).await?;
-        Self::decode_region(region, enable_codec)
+        self.region_cache.get_region_by_key(key).await
     }
 
     async fn region_for_end_key(&self, key: &Key) -> Result<RegionWithLeader> {
-        let enable_codec = self.enable_codec;
-        let key = if enable_codec {
-            key.to_encoded()
-        } else {
-            key.clone()
-        };
-        let region = self.region_cache.get_region_by_end_key(&key).await?;
-        Self::decode_region(region, enable_codec)
+        self.region_cache.get_region_by_end_key(key).await
     }
 
     async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader> {
-        let region = self.region_cache.get_region_by_id(id).await?;
-        Self::decode_region(region, self.enable_codec)
+        self.region_cache.get_region_by_id(id).await
     }
 
     async fn batch_load_regions_from_key(
@@ -887,17 +850,9 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         count: usize,
         backoffer: &mut RetryBackoffer,
     ) -> Result<Vec<RegionWithLeader>> {
-        let key = if self.enable_codec {
-            key.to_encoded()
-        } else {
-            key.clone()
-        };
         self.region_cache
-            .batch_load_regions_from_key(key, count, backoffer)
-            .await?
-            .into_iter()
-            .map(|region| Self::decode_region(region, self.enable_codec))
-            .collect()
+            .batch_load_regions_from_key(key.clone(), count, backoffer)
+            .await
     }
 
     async fn all_stores(&self) -> Result<Vec<Store>> {
@@ -941,19 +896,12 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 
     async fn update_region_cache(&self, regions: Vec<RegionWithLeader>) -> Result<()> {
         for region in regions {
-            self.region_cache
-                .add_region(Self::encode_region(region, self.enable_codec))
-                .await;
+            self.region_cache.add_region(region).await;
         }
         Ok(())
     }
 
     async fn update_buckets(&self, ver_id: RegionVerId, version: u64, keys: Vec<Vec<u8>>) {
-        let keys = if self.enable_codec {
-            keys.iter().map(|key| encode_region_key(key)).collect()
-        } else {
-            keys
-        };
         self.region_cache
             .update_buckets(ver_id, version, keys)
             .await;
@@ -985,22 +933,45 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     }
 }
 
-fn encode_region_key(key: &[u8]) -> Vec<u8> {
-    if key.is_empty() {
-        return Vec::new();
-    }
-    let mut encoded = Vec::new();
-    codec::encode_bytes(&mut encoded, key);
-    encoded
-}
-
 impl PdRpcClient<TikvConnect, Cluster> {
     pub async fn connect(
         pd_endpoints: &[String],
         config: Config,
         enable_codec: bool,
     ) -> Result<PdRpcClient> {
-        PdRpcClient::new(
+        let mode = if enable_codec {
+            KeyMode::Txn
+        } else {
+            KeyMode::Raw
+        };
+        Self::connect_with_codec_config(pd_endpoints, config, PdCodecConfig::V1(mode)).await
+    }
+
+    pub(crate) async fn connect_with_keyspace(
+        pd_endpoints: &[String],
+        config: Config,
+        mode: KeyMode,
+        keyspace_name: String,
+    ) -> Result<PdRpcClient> {
+        Self::connect_with_codec_config(
+            pd_endpoints,
+            config,
+            PdCodecConfig::V2 {
+                mode,
+                keyspace_name,
+            },
+        )
+        .await
+    }
+
+    async fn connect_with_codec_config(
+        pd_endpoints: &[String],
+        config: Config,
+        codec_config: PdCodecConfig,
+    ) -> Result<PdRpcClient> {
+        let enable_preload = config.enable_preload;
+        let regions_refresh_interval = config.regions_refresh_interval;
+        let client = PdRpcClient::new_with_codec_resolver(
             config.clone(),
             |security_mgr| {
                 TikvConnect::new_with_grpc_compression(
@@ -1018,13 +989,60 @@ impl PdRpcClient<TikvConnect, Cluster> {
                         .filter(|size| *size > 0),
                     config.tikv_client.grpc_connection_count as usize,
                 )
+                .with_open_tracing(config.open_tracing_enable)
                 .with_tikv_client_config(config.tikv_client.clone())
             },
             |security_mgr| RetryClient::connect(pd_endpoints, security_mgr, config.timeout),
-            enable_codec,
+            move |pd| async move {
+                match codec_config {
+                    PdCodecConfig::V1(mode) => Ok((PdRegionCodec::v1(mode), None)),
+                    PdCodecConfig::V2 {
+                        mode,
+                        keyspace_name,
+                    } => {
+                        let canonical_name = build_keyspace_name(keyspace_name);
+                        let meta = pd.load_keyspace(&canonical_name).await?;
+                        let keyspace_id = match keyspace_from_pd_meta(&meta)? {
+                            Keyspace::Enable { keyspace_id } => keyspace_id,
+                            _ => {
+                                unreachable!("PD metadata always constructs a numeric V2 keyspace")
+                            }
+                        };
+                        Ok((PdRegionCodec::v2(mode, keyspace_id)?, Some(meta)))
+                    }
+                }
+            },
         )
-        .await
+        .await?;
+        if enable_preload {
+            let mut backoffer =
+                RetryBackoffer::new(crate::async_util::Cancellation::default(), 20_000);
+            if let Err(error) = client
+                .region_cache
+                .refresh_region_index(&mut backoffer)
+                .await
+            {
+                log::debug!("preload region index failed: {error}");
+            }
+        }
+        if regions_refresh_interval > 0 {
+            client
+                .region_cache
+                .start_background_refresh(Duration::from_secs(regions_refresh_interval));
+        } else {
+            client.region_cache.start_background_gc();
+        }
+        Ok(client)
     }
+}
+
+#[derive(Clone, Debug)]
+enum PdCodecConfig {
+    V1(KeyMode),
+    V2 {
+        mode: KeyMode,
+        keyspace_name: String,
+    },
 }
 
 impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
@@ -1049,9 +1067,37 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         enable_codec: bool,
     ) -> Result<PdRpcClient<KvC, Cl>>
     where
+        Cl: Send + Sync + 'static,
         PdFut: Future<Output = Result<RetryClient<Cl>>>,
         MakeKvC: FnOnce(Arc<SecurityManager>) -> KvC,
         MakePd: FnOnce(Arc<SecurityManager>) -> PdFut,
+    {
+        let mode = if enable_codec {
+            KeyMode::Txn
+        } else {
+            KeyMode::Raw
+        };
+        let client = Self::new_with_codec_resolver(config, kv_connect, pd, move |_| async move {
+            Ok((PdRegionCodec::v1(mode), None))
+        })
+        .await?;
+        client.region_cache.start_background_gc();
+        Ok(client)
+    }
+
+    async fn new_with_codec_resolver<PdFut, CodecFut, MakeKvC, MakePd, ResolveCodec>(
+        config: Config,
+        kv_connect: MakeKvC,
+        pd: MakePd,
+        resolve_codec: ResolveCodec,
+    ) -> Result<PdRpcClient<KvC, Cl>>
+    where
+        Cl: Send + Sync + 'static,
+        PdFut: Future<Output = Result<RetryClient<Cl>>>,
+        CodecFut: Future<Output = Result<(PdRegionCodec, Option<keyspacepb::KeyspaceMeta>)>>,
+        MakeKvC: FnOnce(Arc<SecurityManager>) -> KvC,
+        MakePd: FnOnce(Arc<SecurityManager>) -> PdFut,
+        ResolveCodec: FnOnce(Arc<RetryClient<Cl>>) -> CodecFut,
     {
         let security_mgr = Arc::new(
             config
@@ -1067,12 +1113,15 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             })?;
 
         let pd = Arc::new(pd(security_mgr.clone()).await?);
+        let (region_codec, keyspace_meta) = resolve_codec(pd.clone()).await?;
         let kv_client_cache = Default::default();
         let kv_client_versions = Default::default();
         let kv_client_lifecycle = Default::default();
         let kv_client_closed = Default::default();
         let store_token_counts = Default::default();
         crate::kv::STORE_LIMIT.store(config.tikv_client.store_limit, Ordering::Relaxed);
+        let codec_pd = Arc::new(CodecPdClient::new(pd.clone(), region_codec));
+        let region_cache = Arc::new(RegionCache::new(codec_pd));
         Ok(PdRpcClient {
             pd: pd.clone(),
             kv_client_cache,
@@ -1081,13 +1130,17 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             kv_client_closed,
             store_token_counts,
             kv_connect: kv_connect(security_mgr.clone()),
-            enable_codec,
+            keyspace_meta,
             enable_forwarding: config.enable_forwarding,
             zone_label: config.zone_label,
             security_mgr,
             store_liveness_timeout,
-            region_cache: Arc::new(RegionCache::new(pd)),
+            region_cache,
         })
+    }
+
+    pub(crate) fn keyspace_meta(&self) -> Option<&keyspacepb::KeyspaceMeta> {
+        self.keyspace_meta.as_ref()
     }
 
     async fn kv_client(&self, address: &str) -> Result<KvC::KvClient> {
@@ -1131,7 +1184,10 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
 
     /// Retires all pooled TiKV clients and prevents future connections. This
     /// is the owning counterpart of client-go `RPCClient.Close`.
-    pub async fn close(&self) {
+    pub async fn close(&self)
+    where
+        Cl: Send + Sync + 'static,
+    {
         if self.kv_client_closed.swap(true, Ordering::AcqRel) {
             return;
         }
@@ -1146,6 +1202,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         for client in retired {
             client.close();
         }
+        self.region_cache.close_background_task().await;
     }
 }
 
@@ -1181,32 +1238,6 @@ pub mod test {
     use crate::pd::RetryClient;
     use crate::store::{KvClient, KvConnect, Request};
     use crate::Config;
-
-    #[test]
-    fn source_pd_codec_round_trips_region_bucket_keys() {
-        let mut encoded_key = Vec::new();
-        codec::encode_bytes(&mut encoded_key, b"bucket");
-        let mut region = RegionWithLeader::default();
-        region.region.start_key = encoded_key.clone();
-        region.region.end_key = Vec::new();
-        region.buckets = Some(metapb::Buckets {
-            keys: vec![Vec::new(), encoded_key],
-            ..Default::default()
-        });
-
-        let decoded = PdRpcClient::<MockKvConnect>::decode_region(region, true).unwrap();
-        assert_eq!(decoded.region.start_key, b"bucket");
-        assert_eq!(
-            decoded.buckets.as_ref().unwrap().keys,
-            [Vec::new(), b"bucket".to_vec()]
-        );
-
-        let reencoded = PdRpcClient::<MockKvConnect>::encode_region(decoded, true);
-        assert_eq!(
-            reencoded.region.start_key,
-            reencoded.buckets.as_ref().unwrap().keys[1]
-        );
-    }
 
     #[test]
     fn source_exhausted_or_hintless_leader_falls_back_to_a_follower_probe() {
@@ -1247,6 +1278,27 @@ pub mod test {
         );
         assert_eq!(parse_source_duration("0s"), Some(Duration::ZERO));
         assert_eq!(parse_source_duration("bad"), None);
+    }
+
+    #[tokio::test]
+    async fn source_get_keyspace_id_loads_canonical_name_and_rejects_v3_identity() {
+        let client = MockPdClient::default();
+        client.set_keyspace_meta(keyspacepb::KeyspaceMeta {
+            state: keyspacepb::KeyspaceState::Enabled as i32,
+            keyspace: Some(keyspacepb::keyspace_meta::Keyspace::KeyspaceIdentity(
+                crate::proto::apipb::KeyspaceIdentity {
+                    namespace_id: 1,
+                    keyspace_id: 2,
+                },
+            )),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            client.get_keyspace_id("").await.unwrap_err().to_string(),
+            "keyspace  uses an API V3 keyspace identity, which is not supported"
+        );
+        assert_eq!(client.loaded_keyspaces(), ["DEFAULT"]);
     }
 
     #[tokio::test]
@@ -1515,7 +1567,11 @@ pub mod test {
 
         client.kv_client("store-a").await.unwrap();
         client.kv_client("store-b").await.unwrap();
-        client.close().await;
+        let store_a_version = client.kv_client_cache.read().await["store-a"].version;
+        tokio::join!(
+            client.close(),
+            client.close_cached_kv_client_addr_ver("store-a", store_a_version)
+        );
         client.close().await;
 
         assert_eq!(connects.load(Ordering::SeqCst), 2);

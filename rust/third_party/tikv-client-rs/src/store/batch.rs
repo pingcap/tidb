@@ -7,6 +7,7 @@
 //! connection and forwarding lifecycle.
 
 use std::collections::HashMap;
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -14,10 +15,11 @@ use std::time::Instant;
 use std::time::SystemTime;
 
 use crate::proto::tikvpb;
+use futures::FutureExt;
 use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
 use tokio::task::JoinHandle;
 
-use super::client::{ClientEventListener, KvClient, KvRpcClient};
+use super::client::{ClientEventListener, KvClient, KvRpcClient, TIKV_DIAL_TIMEOUT};
 use super::command::BatchRequestIdAllocator;
 use super::command::{
     BatchPendingResponses, BatchResponseDisposition, BatchStreamMetricLabels, BatchStreamProgress,
@@ -28,9 +30,12 @@ use super::BatchCommandResponse;
 use crate::async_util::Cancellation;
 use crate::retry::{RetryBackoffer, BO_TIKV_RPC};
 use crate::stats::{
-    increment_batch_stream_request_counter, observe_batch_client_unavailable,
-    observe_batch_stream_recv_loop, observe_batch_stream_tail, BatchStreamRequestCounter,
-    BatchStreamTailKind,
+    increment_batch_stream_request_counter, observe_batch_best_size, observe_batch_client_recycle,
+    observe_batch_client_unavailable, observe_batch_client_wait_establish,
+    observe_batch_head_arrival_interval, observe_batch_more_requests,
+    observe_batch_pending_requests, observe_batch_requests, observe_batch_send_loop,
+    observe_batch_send_tail, observe_batch_stream_recv_loop, observe_batch_stream_tail,
+    BatchStreamRequestCounter, BatchStreamTailKind,
 };
 use crate::{Error, Result};
 
@@ -42,6 +47,7 @@ const TURBO_BATCH_ALWAYS: u8 = 0;
 const TURBO_BATCH_TIME_BASED: u8 = 1;
 const TURBO_BATCH_PROB_BASED: u8 = 2;
 const BATCH_RECV_TAIL_LATENCY_THRESHOLD: Duration = Duration::from_millis(20);
+const BATCH_SEND_TAIL_LATENCY_THRESHOLD: Duration = Duration::from_millis(20);
 const BATCH_REQUEST_INSPECT_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Source JSON shape for a client-go custom batch policy. Missing fields
@@ -594,12 +600,20 @@ pub(crate) struct BatchCommandEntry {
 /// turbo/overload wait is appropriate, then pass that wait into `collect`.
 struct BatchRequestCollector {
     latest_arrival: Option<Instant>,
+    last_head_received_at: Option<Instant>,
+    last_head_arrival_interval: Option<Duration>,
+    last_extra_fetched: Option<usize>,
+    last_waited_for_overload: bool,
 }
 
 impl BatchRequestCollector {
     fn new() -> Self {
         Self {
             latest_arrival: None,
+            last_head_received_at: None,
+            last_head_arrival_interval: None,
+            last_extra_fetched: None,
+            last_waited_for_overload: false,
         }
     }
 
@@ -616,6 +630,7 @@ impl BatchRequestCollector {
         wait: Option<Duration>,
     ) -> Option<Option<Duration>> {
         let head = receiver.recv().await?;
+        self.last_head_received_at = Some(Instant::now());
         let interval = self
             .latest_arrival
             .filter(|previous| head.arrived_at > *previous)
@@ -660,6 +675,10 @@ impl BatchRequestCollector {
         policy: &mut BatchCollectionPolicy,
         transport_layer_load: u64,
     ) -> bool {
+        self.last_head_received_at = None;
+        self.last_head_arrival_interval = None;
+        self.last_extra_fetched = None;
+        self.last_waited_for_overload = false;
         let Some(interval) = self
             .collect(
                 receiver,
@@ -672,10 +691,20 @@ impl BatchRequestCollector {
         else {
             return false;
         };
+        self.last_head_arrival_interval = interval;
+        let initial_size = builder.len();
+        let overload_wait = initial_size < policy.max_batch_size
+            && !policy.max_batch_wait_time.is_zero()
+            && transport_layer_load > policy.overload_threshold;
         if let Some((wait_size, wait)) =
             policy.wait_for_more(builder.len(), interval, transport_layer_load)
         {
             Self::collect_more(receiver, builder, policy.max_batch_size, wait_size, wait).await;
+            if overload_wait {
+                self.last_waited_for_overload = true;
+            } else {
+                self.last_extra_fetched = Some(builder.len().saturating_sub(initial_size));
+            }
         }
         policy.observe_batch_size(builder.len());
         true
@@ -1029,6 +1058,47 @@ where
     false
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn run_batch_receive_loop_recovering_panics<S>(
+    responses: S,
+    pending: Arc<BatchPendingResponses>,
+    forwarded_host: String,
+    target: &str,
+    connection_index: usize,
+    progress: Arc<BatchStreamProgress>,
+    cancellation: Cancellation,
+    transport_layer_load: Arc<AtomicU64>,
+    event_listener: Arc<std::sync::RwLock<Option<Arc<dyn ClientEventListener>>>>,
+) -> bool
+where
+    S: futures::Stream<Item = std::result::Result<tikvpb::BatchCommandsResponse, tonic::Status>>
+        + Unpin,
+{
+    let result = AssertUnwindSafe(run_batch_receive_loop(
+        responses,
+        pending.clone(),
+        forwarded_host.clone(),
+        target,
+        connection_index,
+        progress,
+        cancellation,
+        transport_layer_load,
+        event_listener,
+    ))
+    .catch_unwind()
+    .await;
+    match result {
+        Ok(stop) => stop,
+        Err(_) => {
+            crate::stats::increment_batch_receive_loop_panic();
+            pending.fail_for_host(&forwarded_host, || {
+                Error::StringError("BatchCommands receive loop panicked".to_owned())
+            });
+            false
+        }
+    }
+}
+
 /// Owned bidirectional stream for exactly one forwarding destination on one
 /// selected pool channel. Reconnection remains a separate lifecycle layer;
 /// this type owns one concrete stream and ensures all of its pending entries
@@ -1140,7 +1210,7 @@ impl BatchCommandsStream {
     ) {
         let target = client.batch_metric_target();
         loop {
-            if run_batch_receive_loop(
+            if run_batch_receive_loop_recovering_panics(
                 responses,
                 pending.clone(),
                 forwarded_host.clone(),
@@ -1155,6 +1225,7 @@ impl BatchCommandsStream {
             {
                 return;
             }
+            client.mark_connection_transient_failure(connection_index);
             state.lock().await.outbound = None;
             ready.notify_waiters();
 
@@ -1169,15 +1240,20 @@ impl BatchCommandsStream {
                 if cancellation.is_cancelled() {
                     return;
                 }
-                match Self::open_generation(
-                    &client,
-                    connection_index,
-                    &forwarded_host,
-                    queue_capacity,
+                let establish_started = Instant::now();
+                let reopen = tokio::time::timeout(
+                    TIKV_DIAL_TIMEOUT,
+                    Self::open_generation(
+                        &client,
+                        connection_index,
+                        &forwarded_host,
+                        queue_capacity,
+                    ),
                 )
-                .await
-                {
-                    Ok((outbound, reopened)) => {
+                .await;
+                observe_batch_client_wait_establish(establish_started.elapsed());
+                match reopen {
+                    Ok(Ok((outbound, reopened))) => {
                         progress.reset();
                         state.lock().await.outbound = Some(outbound);
                         ready.notify_waiters();
@@ -1185,9 +1261,24 @@ impl BatchCommandsStream {
                         observe_batch_client_unavailable(unavailable_started.elapsed());
                         break;
                     }
-                    Err(error) => {
+                    Ok(Err(error)) => {
                         if backoffer
                             .backoff(BO_TIKV_RPC, error.to_string())
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                    Err(_) => {
+                        if backoffer
+                            .backoff(
+                                BO_TIKV_RPC,
+                                format!(
+                                    "BatchCommands reconnect timed out after {:?}",
+                                    TIKV_DIAL_TIMEOUT
+                                ),
+                            )
                             .await
                             .is_err()
                         {
@@ -1199,7 +1290,11 @@ impl BatchCommandsStream {
         }
     }
 
-    pub(crate) async fn publish(&self, group: BatchCommandGroup) -> Result<()> {
+    pub(crate) async fn publish(
+        &self,
+        group: BatchCommandGroup,
+        fast_fail_when_unavailable: bool,
+    ) -> Result<()> {
         assert_eq!(
             group.forwarded_host, self.forwarded_host,
             "BatchCommands group must use its matching forwarding stream"
@@ -1221,6 +1316,11 @@ impl BatchCommandsStream {
                     .await;
             }
             drop(state);
+            if fast_fail_when_unavailable {
+                crate::stats::increment_no_available_batch_connection();
+                group.fail(|| Error::StringError("no available connections".to_owned()));
+                return Err(Error::StringError("no available connections".to_owned()));
+            }
             tokio::select! {
                 _ = self.ready.notified() => {}
                 _ = self.cancellation.cancelled() => {
@@ -1253,6 +1353,8 @@ pub(crate) struct BatchCommandsDispatcher {
     max_concurrency_request_limit: usize,
     cancellation: Cancellation,
     transport_layer_load: Arc<AtomicU64>,
+    #[cfg(test)]
+    panic_next_send_loop: AtomicBool,
 }
 
 #[allow(dead_code)]
@@ -1291,62 +1393,112 @@ impl BatchCommandsDispatcher {
         let capacity =
             usize::try_from(config.max_batch_size).expect("enabled batch size fits usize");
         let (sender, mut receiver) = mpsc::channel(capacity);
-        let mut policy = BatchCollectionPolicy::from_config(config);
+        let config = config.clone();
         let transport_layer_load = self.transport_layer_load.clone();
         let dispatcher = self.clone();
         let task = tokio::spawn(async move {
-            let mut collector = BatchRequestCollector::new();
-            let mut collected = BatchCommandsBuilder::new();
-            let mut last_pending_inspect_at = Instant::now();
             loop {
-                let mut idle = false;
-                let collected_more = tokio::select! {
-                    _ = dispatcher.cancellation.cancelled() => false,
-                    _ = tokio::time::sleep(idle_timeout) => {
-                        idle = true;
-                        false
+                let generation = AssertUnwindSafe(async {
+                    #[cfg(test)]
+                    if dispatcher
+                        .panic_next_send_loop
+                        .swap(false, Ordering::AcqRel)
+                    {
+                        panic!("source batch-send-loop panic injection");
                     }
-                    collected_more = collector.collect_with_policy(
-                        &mut receiver,
-                        &mut collected,
-                        &mut policy,
-                        transport_layer_load.load(Ordering::Acquire),
-                    ) => collected_more,
-                };
-                if !collected_more {
-                    // client-go inspects pending published entries before a
-                    // closed or idle batch-send loop exits. Those entries may
-                    // still be waiting in a live stream even though no new
-                    // candidate was collected.
-                    dispatcher.inspect_pending_requests(Instant::now());
-                    if idle {
-                        // client-go's batch loop marks its pool idle, then
-                        // the next request recycles it. Closing this shared
-                        // pool state makes the next Rust dispatch take the
-                        // existing connection-error retry/replacement path.
-                        KvClient::close(&dispatcher.client);
-                        dispatcher.close_now();
+                    let mut policy = BatchCollectionPolicy::from_config(&config);
+                    let mut collector = BatchRequestCollector::new();
+                    let mut collected = BatchCommandsBuilder::new();
+                    let mut last_pending_inspect_at = Instant::now();
+                    loop {
+                        let send_loop_started = Instant::now();
+                        let mut idle = false;
+                        let collected_more = tokio::select! {
+                        _ = dispatcher.cancellation.cancelled() => false,
+                        _ = tokio::time::sleep(idle_timeout) => {
+                            idle = true;
+                            false
+                        }
+                        collected_more = collector.collect_with_policy(
+                            &mut receiver,
+                            &mut collected,
+                            &mut policy,
+                            transport_layer_load.load(Ordering::Acquire),
+                        ) => collected_more,
+                            };
+                        if !collected_more {
+                            // client-go inspects pending published entries before a
+                            // closed or idle batch-send loop exits. Those entries may
+                            // still be waiting in a live stream even though no new
+                            // candidate was collected.
+                            dispatcher.inspect_pending_requests(Instant::now());
+                            if idle {
+                                // client-go's batch loop marks its pool idle, then
+                                // the next request recycles it. Closing this shared
+                                // pool state makes the next Rust dispatch take the
+                                // existing connection-error retry/replacement path.
+                                let recycle_started = Instant::now();
+                                KvClient::close(&dispatcher.client);
+                                dispatcher.close_now();
+                                observe_batch_client_recycle(recycle_started.elapsed());
+                            }
+                            collected
+                                .cancel(|| Error::StringError("batch client closed".to_owned()));
+                            while let Ok(entry) = receiver.try_recv() {
+                                entry.fail(|| Error::StringError("batch client closed".to_owned()));
+                            }
+                            return;
+                        }
+                        let target = dispatcher.client.batch_metric_target();
+                        let head_received_at =
+                            collector.last_head_received_at.unwrap_or(send_loop_started);
+                        observe_batch_pending_requests(&target, receiver.len() + collected.len());
+                        observe_batch_best_size(&target, policy.average_batch_wait_size);
+                        observe_batch_head_arrival_interval(
+                            &target,
+                            collector.last_head_arrival_interval.unwrap_or_default(),
+                        );
+                        observe_batch_send_loop(
+                            &target,
+                            "wait-head",
+                            head_received_at.saturating_duration_since(send_loop_started),
+                        );
+                        observe_batch_send_loop(&target, "wait-more", send_loop_started.elapsed());
+                        if collector.last_waited_for_overload {
+                            crate::stats::increment_batch_wait_overload();
+                        }
+                        if let Some(extra) = collector.last_extra_fetched {
+                            observe_batch_more_requests(&target, extra);
+                        }
+                        let entries = collected.entries.take(collected.len());
+                        {
+                            let mut builder = dispatcher.builder.lock().unwrap();
+                            for entry in entries {
+                                builder.entries.push(entry);
+                            }
+                        }
+                        let _ = dispatcher.flush(policy.max_batch_size).await;
+                        observe_batch_send_loop(&target, "send", send_loop_started.elapsed());
+                        let send_tail = head_received_at.elapsed();
+                        if send_tail > BATCH_SEND_TAIL_LATENCY_THRESHOLD {
+                            observe_batch_send_tail(&target, send_tail);
+                        }
+                        collected.reset();
+                        let now = Instant::now();
+                        if now.duration_since(last_pending_inspect_at)
+                            >= BATCH_REQUEST_INSPECT_INTERVAL
+                        {
+                            dispatcher.inspect_pending_requests(now);
+                            last_pending_inspect_at = now;
+                        }
                     }
-                    collected.cancel(|| Error::StringError("batch client closed".to_owned()));
-                    while let Ok(entry) = receiver.try_recv() {
-                        entry.fail(|| Error::StringError("batch client closed".to_owned()));
-                    }
+                })
+                .catch_unwind()
+                .await;
+                if generation.is_ok() {
                     return;
                 }
-                let entries = collected.entries.take(collected.len());
-                {
-                    let mut builder = dispatcher.builder.lock().unwrap();
-                    for entry in entries {
-                        builder.entries.push(entry);
-                    }
-                }
-                let _ = dispatcher.flush(policy.max_batch_size).await;
-                collected.reset();
-                let now = Instant::now();
-                if now.duration_since(last_pending_inspect_at) >= BATCH_REQUEST_INSPECT_INTERVAL {
-                    dispatcher.inspect_pending_requests(now);
-                    last_pending_inspect_at = now;
-                }
+                crate::stats::increment_batch_send_loop_panic();
             }
         });
         BatchCommandsWorker {
@@ -1379,6 +1531,8 @@ impl BatchCommandsDispatcher {
             max_concurrency_request_limit,
             cancellation: Cancellation::default(),
             transport_layer_load: Arc::new(AtomicU64::new(0)),
+            #[cfg(test)]
+            panic_next_send_loop: AtomicBool::new(false),
         }
     }
 
@@ -1424,6 +1578,7 @@ impl BatchCommandsDispatcher {
             .clone();
         let mut published = 0;
         let mut first_error = None;
+        let fast_fail_when_unavailable = self.max_concurrency_request_limit == i64::MAX as usize;
 
         for group in groups {
             let group_len = group.len();
@@ -1436,7 +1591,10 @@ impl BatchCommandsDispatcher {
                     .entry(forwarded_host.clone())
                 {
                     std::collections::hash_map::Entry::Occupied(entry) => {
-                        entry.into_mut().publish(group).await
+                        entry
+                            .into_mut()
+                            .publish(group, fast_fail_when_unavailable)
+                            .await
                     }
                     std::collections::hash_map::Entry::Vacant(entry) => {
                         match BatchCommandsStream::open_on(
@@ -1452,7 +1610,12 @@ impl BatchCommandsDispatcher {
                         )
                         .await
                         {
-                            Ok(stream) => entry.insert(stream).publish(group).await,
+                            Ok(stream) => {
+                                entry
+                                    .insert(stream)
+                                    .publish(group, fast_fail_when_unavailable)
+                                    .await
+                            }
                             Err(error) => {
                                 let message = error.to_string();
                                 group.fail(|| Error::StringError(message.clone()));
@@ -1474,6 +1637,9 @@ impl BatchCommandsDispatcher {
                     }
                 }
             }
+        }
+        if published != 0 {
+            observe_batch_requests(&self.client.batch_metric_target(), published);
         }
         first_error.map_or(Ok(published), Err)
     }
@@ -2655,6 +2821,112 @@ mod tests {
         fn on_health_feedback(&self, feedback: &kvrpcpb::HealthFeedback) {
             self.0.lock().unwrap().push(feedback.feedback_seq_no);
         }
+    }
+
+    struct PanickingHealthFeedback;
+
+    impl ClientEventListener for PanickingHealthFeedback {
+        fn on_health_feedback(&self, _feedback: &kvrpcpb::HealthFeedback) {
+            panic!("source receive-loop panic injection");
+        }
+    }
+
+    #[tokio::test]
+    async fn source_receive_loop_recovers_panics_and_retires_pending_requests() {
+        let pending = Arc::new(BatchPendingResponses::new());
+        let (sender, receiver) = oneshot::channel();
+        pending.register_sender_with_telemetry(
+            9,
+            "",
+            sender,
+            Arc::new(BatchRequestTelemetry::new(0, Instant::now())),
+            None,
+        );
+        let listener: Arc<dyn ClientEventListener> = Arc::new(PanickingHealthFeedback);
+        let stopped = run_batch_receive_loop_recovering_panics(
+            futures::stream::iter([Ok(tikvpb::BatchCommandsResponse {
+                request_ids: vec![9],
+                responses: vec![tikvpb::batch_commands_response::Response {
+                    cmd: Some(tikvpb::batch_commands_response::response::Cmd::Empty(
+                        tikvpb::BatchCommandsEmptyResponse::default(),
+                    )),
+                }],
+                health_feedback: Some(kvrpcpb::HealthFeedback::default()),
+                ..Default::default()
+            })]),
+            pending.clone(),
+            String::new(),
+            "panic-recovery",
+            0,
+            Arc::new(BatchStreamProgress::default()),
+            Cancellation::default(),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(std::sync::RwLock::new(Some(listener))),
+        )
+        .await;
+
+        assert!(!stopped, "the supervisor must recreate the stream");
+        assert!(matches!(
+            receiver.await,
+            Ok(Err(Error::StringError(message))) if message == "BatchCommands receive loop panicked"
+        ));
+        assert_eq!(pending.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn source_send_loop_recovers_panics_and_keeps_collecting() {
+        let client = KvRpcClient::new(
+            vec![TikvClient::new(
+                Channel::from_static("http://127.0.0.1:1").connect_lazy(),
+            )],
+            Duration::from_secs(1),
+        );
+        let dispatcher = Arc::new(BatchCommandsDispatcher::new(client, 2));
+        dispatcher
+            .panic_next_send_loop
+            .store(true, Ordering::Release);
+        let mut config = crate::config::TiKvClient::default();
+        config.max_batch_size = 2;
+        let worker = dispatcher.spawn_worker(&config);
+
+        tokio::task::yield_now().await;
+        tokio::task::yield_now().await;
+        assert!(
+            !worker.task.is_finished(),
+            "the recovered send loop must restart and wait for work"
+        );
+        worker.close();
+    }
+
+    #[tokio::test]
+    async fn source_default_concurrency_fast_fails_an_unavailable_batch_stream() {
+        let pending = Arc::new(BatchPendingResponses::new());
+        let cancellation = Cancellation::default();
+        let stream = BatchCommandsStream {
+            forwarded_host: String::new(),
+            target: "fast-fail".to_owned(),
+            connection_index: 0,
+            progress: Arc::new(BatchStreamProgress::default()),
+            pending,
+            state: Arc::new(AsyncMutex::new(BatchStreamState { outbound: None })),
+            ready: Arc::new(tokio::sync::Notify::new()),
+            cancellation,
+            supervisor: tokio::spawn(futures::future::pending()),
+        };
+        let mut builder = BatchCommandsBuilder::new();
+        let mut submission = builder.push(empty(1), 0, "");
+        let (group, forwarded) = builder.build_with_limit(1);
+        assert!(forwarded.is_empty());
+
+        let error = stream
+            .publish(group.expect("one direct group"), true)
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "no available connections");
+        assert!(matches!(
+            submission.recv().await,
+            Ok(Err(Error::StringError(message))) if message == "no available connections"
+        ));
     }
 
     #[tokio::test]
