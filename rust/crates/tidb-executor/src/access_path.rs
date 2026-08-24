@@ -603,6 +603,10 @@ pub struct HandleSourceExec {
     /// Source-row offsets this complete point plan emits, in result order.
     /// `None` keeps the ordinary visible-row schema for residual root work.
     output_offsets: Option<Vec<usize>>,
+    /// Rows prefetched at `open` through ONE batched read, in handle order;
+    /// `None` until then. Go's `BatchPointGetExec.values` -- fetched once,
+    /// served per `Next`.
+    preloaded: Option<Vec<Option<Vec<Datum>>>>,
     /// Where `_tidb_rowid` sits in the source row, when the schema carries
     /// it. Go's extra handle column reports the record HANDLE rather than any
     /// stored value, so nothing in the decoded row fills this slot and the
@@ -626,6 +630,7 @@ impl HandleSourceExec {
             handles,
             physical_ids: None,
             cursor: 0,
+            preloaded: None,
             produced: Rc::new(Cell::new(0)),
             decode_context,
             output_offsets: None,
@@ -670,6 +675,7 @@ impl HandleSourceExec {
             decode_context,
             output_offsets: Some(output_offsets),
             extra_handle_slot: None,
+            preloaded: None,
         }
     }
 
@@ -700,6 +706,7 @@ impl HandleSourceExec {
             decode_context,
             output_offsets,
             extra_handle_slot: None,
+            preloaded: None,
         }
     }
 
@@ -717,40 +724,61 @@ impl HandleSourceExec {
     }
 }
 
+
+/// Moves one prefetched row out of the stored preload for `index`.
+fn preloaded_ref<'a>(
+    preloaded: &'a mut Option<Vec<Option<Vec<Datum>>>>,
+    index: usize,
+) -> Result<&'a Option<Vec<Datum>>, ExecError> {
+    preloaded
+        .as_ref()
+        .and_then(|rows| rows.get(index))
+        .ok_or_else(|| ExecError::unsupported("batch point read lost its prefetch"))
+}
+
 impl Executor for HandleSourceExec {
     fn open(&mut self) -> Result<(), ExecError> {
         self.cursor = 0;
         self.produced.set(0);
+        // Go's `BatchPointGetExec.initialize` reads every handle with ONE
+        // `BatchGet` before the first `Next`. Prefetch here too: a batched
+        // storage call per partition replaces N sequential point reads on
+        // the statement's critical path.
+        let rows = self
+            .table
+            .stored_records_batched(
+                &self.handles,
+                self.physical_ids.as_deref(),
+                &self.decode_context,
+            )
+            .map_err(|error| ExecError::unsupported(format!(
+                "table bytes failed to decode: {error:?}"
+            )))?;
+        self.preloaded = Some(rows);
         Ok(())
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
         let cap = self.meta.max_chunk_size();
+        // The prefetch at `open` owns the reads; `Next` only serves rows.
+        let preloaded = self.preloaded.take().unwrap_or_else(|| {
+            vec![None; self.handles.len()]
+        });
+        self.preloaded = Some(preloaded);
         while req.num_rows() < cap {
-            let Some(handle) = self.handles.get(self.cursor) else {
+            if self.cursor >= self.handles.len() {
                 return Ok(());
             };
+            let index = self.cursor;
+            let handle = self.handles.get(index);
             self.cursor += 1;
             // A handle with no row is Go's point get that finds nothing: the
             // plan is right, the row is simply absent.
-            let row = match self
-                .physical_ids
-                .as_ref()
-                .and_then(|physical_ids| physical_ids.get(self.cursor - 1))
-            {
-                Some(physical_id) => self.table.get_row_by_handle_in_physical_id_with_context(
-                    handle,
-                    *physical_id,
-                    &self.decode_context,
-                ),
-                None => self
-                    .table
-                    .get_row_by_handle_with_context(handle, &self.decode_context),
-            }
-            .map_err(|error| {
-                ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
-            })?;
+            let row = preloaded_ref(&mut self.preloaded, index)
+                .map_err(|error| {
+                    ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+                })?;
             if let Some(row) = row {
                 let borrowed = visible_of(&self.table, &row);
                 let owned;
@@ -759,7 +787,7 @@ impl Executor for HandleSourceExec {
                         owned = crate::kv_table::insert_extra_handle(
                             borrowed.to_vec(),
                             slot,
-                            handle,
+                            handle.expect("cursor indexes handles"),
                         );
                         &owned
                     }
@@ -1511,7 +1539,11 @@ impl IndexRangeSourceExec {
                             &self.ranges,
                             self.decode_context.zone(),
                         )
-                        .map_err(|_| ExecError::unsupported("index range is not scannable"))?,
+                        .map_err(|error| {
+                            ExecError::unsupported(format!(
+                                "index range is not scannable: {error:?}"
+                            ))
+                        })?,
                 );
                 continue;
             }
@@ -1544,7 +1576,11 @@ impl IndexRangeSourceExec {
                         // order.
                         true,
                     )
-                    .map_err(|_| ExecError::unsupported("index range is not scannable"))?,
+                    .map_err(|error| {
+                            ExecError::unsupported(format!(
+                                "index range is not scannable: {error:?}"
+                            ))
+                        })?,
             );
         }
     }
@@ -2437,7 +2473,11 @@ impl IndexMergeSourceExec {
             self.cursor = Some(
                 self.table
                     .index_ranges_cursor(*index_id, ranges, self.decode_context.zone())
-                    .map_err(|_| ExecError::unsupported("index range is not scannable"))?,
+                    .map_err(|error| {
+                            ExecError::unsupported(format!(
+                                "index range is not scannable: {error:?}"
+                            ))
+                        })?,
             );
         }
     }
@@ -2451,7 +2491,11 @@ impl IndexMergeSourceExec {
         let mut cursor = self
             .table
             .index_ranges_cursor(index_id, ranges, self.decode_context.zone())
-            .map_err(|_| ExecError::unsupported("index range is not scannable"))?;
+            .map_err(|error| {
+                            ExecError::unsupported(format!(
+                                "index range is not scannable: {error:?}"
+                            ))
+                        })?;
         while let Some(handle) = cursor
             .next_handle()
             .map_err(|_| ExecError::unsupported("index bytes failed to decode"))?
@@ -2968,7 +3012,11 @@ impl IndexJoinLookupExec {
                     self.cursor = Some(
                         self.table
                             .index_range_cursor(*index_id, &range, self.decode_context.zone())
-                            .map_err(|_| ExecError::unsupported("index range is not scannable"))?,
+                            .map_err(|error| {
+                            ExecError::unsupported(format!(
+                                "index range is not scannable: {error:?}"
+                            ))
+                        })?,
                     );
                 }
                 LookupObject::Handle => {

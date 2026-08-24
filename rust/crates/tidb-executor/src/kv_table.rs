@@ -1179,6 +1179,53 @@ impl KvTable {
         Ok(self.stored_record(handle)?.map(|(key, _)| key))
     }
 
+    /// One stored record per requested handle, in request order; `None`
+    /// where the row is absent.
+    ///
+    /// Reads through ONE batched storage call per physical partition -- Go's
+    /// `BatchPointGetExec.initialize` fetching every handle with a single
+    /// `BatchGet` -- instead of one point read per handle. A handle whose
+    /// row is absent yields `None`, Go's point get that finds nothing.
+    pub(crate) fn stored_records_batched(
+        &mut self,
+        handles: &[TableHandle],
+        physical_ids: Option<&[i64]>,
+        context: &RowDecodeContext,
+    ) -> Result<Vec<Option<Vec<Datum>>>, KvTableError> {
+        let mut rows: Vec<Option<Vec<Datum>>> = vec![None; handles.len()];
+        // Group the requested handles by the physical partition they name
+        // (all under this table id for an unpartitioned table), so each
+        // partition costs exactly one batched read.
+        let mut grouped: std::collections::BTreeMap<i64, Vec<(usize, Key)>> =
+            std::collections::BTreeMap::new();
+        for (index, handle) in handles.iter().enumerate() {
+            let id = physical_ids
+                .and_then(|ids| ids.get(index).copied())
+                .unwrap_or(self.table_id);
+            grouped
+                .entry(id)
+                .or_default()
+                .push((
+                    index,
+                    Key::from_bytes(encode_row_key_with_handle(id, &handle.record_handle())),
+                ));
+        }
+        for (_id, keys) in grouped {
+            let key_refs: Vec<Key> = keys.iter().map(|(_, key)| key.clone()).collect();
+            let found = self
+                .store
+                .batch_get(&key_refs)
+                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+            for (index, key) in keys {
+                if let Some(entry) = found.get(&key) {
+                    rows[index] =
+                        Some(self.decode_row_entry(&handles[index], entry, context)?);
+                }
+            }
+        }
+        Ok(rows)
+    }
+
     /// Records a foreign key this table declares.
     pub fn add_foreign_key(&mut self, foreign_key: KvForeignKey) {
         self.foreign_keys.push(foreign_key);
