@@ -70,4 +70,9 @@ name = "configured_user_store_source"
 path = "tests/configured_user_store_source.rs"
 
 [features]
+# Production TiKV ships jemalloc, and this node statement path is
+# allocation-heavy: the default build therefore runs on tikv-jemallocator
+# (the global_allocator in src/bin/tidb-server.rs). The opt-out exists
+# for builds that must stay on the platform allocator.
+default = ["jemalloc"]
 jemalloc = ["dep:tikv-jemallocator"]
