@@ -17,11 +17,20 @@ package importsdk
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
+	drivermysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/importinto/jobstats"
 )
 
 // JobManager defines the interface for managing import jobs
@@ -36,7 +45,8 @@ type JobManager interface {
 const timeLayout = "2006-01-02 15:04:05"
 
 type jobManager struct {
-	db *sql.DB
+	db             *sql.DB
+	rawUnsupported atomic.Bool
 }
 
 // NewJobManager creates a new JobManager
@@ -55,7 +65,7 @@ func (m *jobManager) SubmitJob(ctx context.Context, query string) (int64, error)
 	defer rows.Close()
 
 	if rows.Next() {
-		status, err := scanJobStatus(rows)
+		status, err := scanLegacyStatus(rows)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -71,6 +81,32 @@ func (m *jobManager) SubmitJob(ctx context.Context, query string) (int64, error)
 
 // GetJobStatus gets the status of an import job
 func (m *jobManager) GetJobStatus(ctx context.Context, jobID int64) (*JobStatus, error) {
+	if m.rawUnsupported.Load() {
+		return m.getLegacyStatus(ctx, jobID)
+	}
+	query := fmt.Sprintf("SHOW RAW IMPORT JOB %d", jobID)
+	rows, err := m.db.QueryContext(ctx, query)
+	if err != nil {
+		if isRawUnsupportedErr(err) {
+			m.rawUnsupported.Store(true)
+			return m.getLegacyStatus(ctx, jobID)
+		}
+		return nil, errors.Trace(err)
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		return scanRawStatus(rows)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return nil, ErrJobNotFound
+}
+
+func (m *jobManager) getLegacyStatus(ctx context.Context, jobID int64) (*JobStatus, error) {
 	query := fmt.Sprintf("SHOW IMPORT JOB %d", jobID)
 	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
@@ -79,13 +115,11 @@ func (m *jobManager) GetJobStatus(ctx context.Context, jobID int64) (*JobStatus,
 	defer rows.Close()
 
 	if rows.Next() {
-		return scanJobStatus(rows)
+		return scanLegacyStatus(rows)
 	}
-
 	if err := rows.Err(); err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	return nil, ErrJobNotFound
 }
 
@@ -120,16 +154,23 @@ func (m *jobManager) GetJobsByGroup(ctx context.Context, groupKey string) ([]*Jo
 	if groupKey == "" {
 		return nil, ErrInvalidOptions
 	}
-	query := fmt.Sprintf("SHOW IMPORT JOBS WHERE GROUP_KEY = '%s'", strings.ReplaceAll(groupKey, "'", "''"))
+	if m.rawUnsupported.Load() {
+		return m.getLegacyGroupJobs(ctx, groupKey)
+	}
+	query := fmt.Sprintf("SHOW RAW IMPORT JOBS WHERE GROUP_KEY = '%s'", strings.ReplaceAll(groupKey, "'", "''"))
 	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
+		if isRawUnsupportedErr(err) {
+			m.rawUnsupported.Store(true)
+			return m.getLegacyGroupJobs(ctx, groupKey)
+		}
 		return nil, errors.Trace(err)
 	}
 	defer rows.Close()
 
 	var jobs []*JobStatus
 	for rows.Next() {
-		status, err := scanJobStatus(rows)
+		status, err := scanRawStatus(rows)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -142,7 +183,174 @@ func (m *jobManager) GetJobsByGroup(ctx context.Context, groupKey string) ([]*Jo
 	return jobs, nil
 }
 
-func scanJobStatus(rows *sql.Rows) (*JobStatus, error) {
+func (m *jobManager) getLegacyGroupJobs(ctx context.Context, groupKey string) ([]*JobStatus, error) {
+	query := fmt.Sprintf("SHOW IMPORT JOBS WHERE GROUP_KEY = '%s'", strings.ReplaceAll(groupKey, "'", "''"))
+	rows, err := m.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer rows.Close()
+
+	var jobs []*JobStatus
+	for rows.Next() {
+		status, err := scanLegacyStatus(rows)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		jobs = append(jobs, status)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return jobs, nil
+}
+
+func isRawUnsupportedErr(err error) bool {
+	// 1064 is returned by old servers that cannot parse SHOW RAW, while 1235
+	// is returned by the classic kernel where SHOW RAW is intentionally disabled.
+	var code int
+	switch err := errors.Cause(err).(type) {
+	case *drivermysql.MySQLError:
+		code = int(err.Number)
+	case interface{ Code() errors.ErrCode }:
+		// The testkit database/sql driver returns a normalized TiDB error.
+		code = int(err.Code())
+	default:
+		return false
+	}
+	return code == errno.ErrParse || code == errno.ErrNotSupportedYet
+}
+
+func scanRawStatus(rows *sql.Rows) (*JobStatus, error) {
+	var (
+		jobID        int64
+		groupKey     sql.NullString
+		rawStatsJSON string
+	)
+
+	if err := rows.Scan(&jobID, &groupKey, &rawStatsJSON); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	stats := &jobstats.RawStats{}
+	if err := json.Unmarshal([]byte(rawStatsJSON), stats); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if stats.Version != jobstats.ContractVersion {
+		return nil, errors.Errorf(
+			"unsupported SHOW RAW IMPORT JOB stats contract version %d (supported version: %d)",
+			stats.Version, jobstats.ContractVersion,
+		)
+	}
+	// Populate identity fields that are intentionally omitted from Raw_Stats.
+	stats.JobID = jobID
+	if groupKey.Valid {
+		stats.GroupKey = groupKey.String
+	} else {
+		stats.GroupKey = ""
+	}
+	return statusFromRaw(stats), nil
+}
+
+func statusFromRaw(stats *jobstats.RawStats) *JobStatus {
+	status := &JobStatus{
+		JobID:               stats.JobID,
+		GroupKey:            stats.GroupKey,
+		DataSource:          stats.DataSource,
+		TargetTable:         stats.TargetTable,
+		TableID:             stats.TableID,
+		Phase:               stats.Phase,
+		Status:              stats.Status,
+		ContractVersion:     stats.Version,
+		StatusCategory:      stats.StatusCategory,
+		SourceFileSizeBytes: stats.SourceFileSizeBytes,
+		Error:               stats.Error,
+		Summary:             stats.Summary,
+		CreatedBy:           stats.CreatedBy,
+		CreateTimeUnix:      stats.CreateTimeUnix,
+		StartTimeUnix:       stats.StartTimeUnix,
+		EndTimeUnix:         stats.EndTimeUnix,
+		UpdateTimeUnix:      stats.UpdateTimeUnix,
+		CurrentStep:         stats.CurrentStep,
+	}
+	if stats.Error != nil {
+		status.ErrorMessage = stats.Error.Message
+	}
+	if stats.ImportedRows != nil {
+		status.ImportedRows = *stats.ImportedRows
+	}
+	if stats.SourceFileSizeBytes > 0 {
+		status.SourceFileSize = units.BytesSize(float64(stats.SourceFileSizeBytes))
+	} else if stats.Status == "pending" || (stats.Status == importer.JobStatusRunning && stats.Phase == importer.JobStepPreparing) {
+		status.SourceFileSize = "N/A"
+	} else {
+		status.SourceFileSize = units.BytesSize(0)
+	}
+	status.ResultMessage = legacyResult(stats)
+	if status.ResultMessage == "" && stats.Status != importer.JobStatusFinished {
+		status.ResultMessage = status.ErrorMessage
+	}
+	status.CreateTime = unixTime(stats.CreateTimeUnix)
+	status.StartTime = unixTime(stats.StartTimeUnix)
+	status.EndTime = unixTime(stats.EndTimeUnix)
+	status.UpdateTime = unixTime(stats.UpdateTimeUnix)
+	if stats.CurrentStep != nil {
+		fillLegacyProgress(status, stats.CurrentStep)
+	}
+	return status
+}
+
+func fillLegacyProgress(status *JobStatus, step *jobstats.RawStepStats) {
+	status.Step = step.Name
+	conflictStep := step.Name == "collect-conflicts" || step.Name == "conflict-resolution"
+	var processed, total int64
+	if conflictStep {
+		processed, total = step.ProcessedConflicts, step.TotalConflicts
+		status.ProcessedSize = fmt.Sprintf("%d conflicts", processed)
+		status.TotalSize = fmt.Sprintf("%d conflicts", total)
+		status.Speed = fmt.Sprintf("%d conflicts/s", step.SpeedConflictsPerSec)
+	} else {
+		processed, total = step.ProcessedBytes, step.TotalBytes
+		status.ProcessedSize = units.BytesSize(float64(processed))
+		status.TotalSize = units.BytesSize(float64(total))
+		status.Speed = fmt.Sprintf("%s/s", units.BytesSize(float64(step.SpeedBytesPerSec)))
+	}
+	if step.Name == "post-process" || step.Name == "init" {
+		status.Percent = "N/A"
+	} else {
+		percent := int64(0)
+		if total > 0 {
+			percent = min(int64(float64(processed)/float64(total)*100), 100)
+		}
+		status.Percent = strconv.FormatInt(percent, 10)
+	}
+	status.ETA = "N/A"
+	if step.RemainingSeconds != nil {
+		status.ETA = importinto.FormatSecondAsTime(*step.RemainingSeconds)
+	}
+}
+
+func legacyResult(stats *jobstats.RawStats) string {
+	if stats.Status != importer.JobStatusFinished {
+		if stats.Error != nil {
+			return stats.Error.Message
+		}
+		return ""
+	}
+	if stats.Summary == nil {
+		return ""
+	}
+	items := make([]string, 0, 2)
+	if stats.Summary.ConflictRows > 0 {
+		items = append(items, fmt.Sprintf("%d conflicted rows.", stats.Summary.ConflictRows))
+	}
+	if stats.Summary.TooManyConflicts {
+		items = append(items, "Too many conflicted rows, checksum skipped.")
+	}
+	return strings.Join(items, " ")
+}
+
+func scanLegacyStatus(rows *sql.Rows) (*JobStatus, error) {
 	var (
 		id             int64
 		groupKey       sql.NullString
@@ -255,4 +463,11 @@ func parseNullTime(ns sql.NullString) time.Time {
 		return time.Time{}
 	}
 	return parseTime(ns.String)
+}
+
+func unixTime(sec int64) time.Time {
+	if sec == 0 {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0)
 }

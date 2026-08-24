@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -162,6 +163,13 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show full tables like '%lmn'").Check(testkit.Rows("abclmn BASE TABLE"))
 	tk.MustGetErrCode("show tables like T", errno.ErrBadField)
 	tk.MustGetErrCode("show tables like `T`", errno.ErrBadField)
+	if kerneltype.IsNextGen() {
+		tk.MustGetErrCode("show raw import jobs where job__id = 1", errno.ErrBadField)
+		tk.MustGetErrCode("show raw import jobs where x.job_id = 1", errno.ErrBadField)
+	} else {
+		tk.MustGetErrCode("show raw import jobs", errno.ErrNotSupportedYet)
+		tk.MustGetErrCode("show raw import job 1", errno.ErrNotSupportedYet)
+	}
 
 	tk.MustExec("drop database test;")
 	tk.MustExec("create database test;")

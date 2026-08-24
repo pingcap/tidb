@@ -56,6 +56,14 @@ func (e *jobProgressEstimator) updateJobTotalSize(
 		total = max(total, job.TableMeta.TotalSize)
 	}
 	if total <= 0 {
+		total = max(total, status.SourceFileSizeBytes)
+	}
+	if total <= 0 {
+		if status.CurrentStep != nil {
+			total = max(total, status.CurrentStep.TotalBytes)
+		}
+	}
+	if total <= 0 {
 		if size, ok := e.parseHumanSize(jobID, status.SourceFileSize, "failed to parse source file size"); ok {
 			total = max(total, size)
 		}
@@ -81,11 +89,9 @@ func (*jobProgressEstimator) isGlobalSortStatus(status *importsdk.JobStatus) boo
 	case "global-sorting", "resolving-conflicts":
 		return true
 	}
-	switch status.Step {
-	case "encode", "merge-sort", "ingest", "collect-conflicts", "conflict-resolution":
-		return true
-	}
-	return false
+	step := effectiveStep(status)
+	return stepInPhases(jobProgressPhases(true), step) &&
+		!stepInPhases(jobProgressPhases(false), step)
 }
 
 func jobProgressPhases(isGlobalSort bool) []jobProgressPhase {
@@ -104,6 +110,16 @@ func jobProgressPhases(isGlobalSort bool) []jobProgressPhase {
 }
 
 func (e *jobProgressEstimator) stepRatio(status *importsdk.JobStatus) float64 {
+	if status.CurrentStep != nil {
+		processed, total := status.CurrentStep.ProcessedBytes, status.CurrentStep.TotalBytes
+		if total <= 0 {
+			processed, total = status.CurrentStep.ProcessedConflicts, status.CurrentStep.TotalConflicts
+		}
+		if total > 0 {
+			return mathutil.Clamp(float64(processed)/float64(total), 0, 1)
+		}
+		return 0
+	}
 	if status.Percent == "" || status.Percent == "N/A" {
 		return 0
 	}
@@ -134,6 +150,22 @@ func findStep(steps []string, step string) (int, bool) {
 	return 0, false
 }
 
+func effectiveStep(status *importsdk.JobStatus) string {
+	if status.CurrentStep != nil {
+		return status.CurrentStep.Name
+	}
+	return status.Step
+}
+
+func stepInPhases(phases []jobProgressPhase, step string) bool {
+	for _, phase := range phases {
+		if _, ok := findStep(phase.steps, step); ok {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *jobProgressEstimator) jobProgress(status *importsdk.JobStatus) float64 {
 	isGlobalSort := e.isGlobalSort
 	phases := jobProgressPhases(isGlobalSort)
@@ -151,7 +183,8 @@ func (e *jobProgressEstimator) jobProgress(status *importsdk.JobStatus) float64 
 	}
 
 	ratio := e.stepRatio(status)
-	stepIdx, ok := findStep(phases[phaseIdx].steps, status.Step)
+	step := effectiveStep(status)
+	stepIdx, ok := findStep(phases[phaseIdx].steps, step)
 	if !ok {
 		stepIdx = 0
 		ratio = 0
