@@ -2002,26 +2002,46 @@ impl Executor for IndexRangeSourceExec {
         // coprocessor request and the caller's cap stops it after n. Every
         // refusal below is `None`, which lands back on the exact local path
         // this used to take.
-        let remote_eligible = match (self.covering, self.index_filter, self.top_n.is_some()) {
-            (true, _, _) => false,
-            (false, filter, topn) => filter || topn || self.descending,
-        };
-        self.remote_index = if !remote_eligible {
-            None
-        } else {
-            self.table
-                .pushdown_index_handle_cursor(
-                    self.index_id,
-                    &self.ranges,
-                    &self.keep,
-                    &self.pushed,
-                    self.top_n.as_ref(),
-                    self.decode_context.zone(),
-                    &self.statement,
-                    self.descending,
-                )
-                .map_err(|_| ExecError::unsupported("remote index scan failed to open"))?
-        };
+        // Stream the index ENTRIES from TiKV whenever that answers exactly
+        // what the byte-level cursor below it would walk. Go's `indexWorker`
+        // always collects `lookupTableTask` handles from a coprocessor
+        // IndexRangeScan; the residual Selection rides the TABLE side unless
+        // the planner proved the residual evaluable on the entries
+        // (`idxIsCovering`), and the same division holds here: a residual
+        // proven index-covered (`index_filter`, or a TopN the driver gated on
+        // the same proof) lowers into the index-side DAG, anything else stays
+        // with the row lookup -- lowering it against entries that do not
+        // carry its columns would ask TiKV to evaluate what its executor
+        // cannot read. Reads too small to fill one handle batch keep the
+        // in-process cursor: opening a coprocessor stream for them costs more
+        // than walking a handful of entries locally. Every condition that
+        // could change WHAT the stream answers -- dirty staging, a
+        // partitioned table, rows staged behind the request -- refuses inside
+        // [`KvTable::pushdown_index_handle_cursor`] and lands back on the
+        // byte-level cursor. No row-estimate gate: pseudo statistics price
+        // an unanalyzed range at one row and would pin every cold read to
+        // the local walk, which is exactly the shape that cannot afford it;
+        // a servable request is refused into the local cursor only by the
+        // semantic guards above.
+        let lowered: &[crate::predicate_pushdown::ScanPredicate] =
+            if self.index_filter || self.top_n.is_some() {
+                &self.pushed
+            } else {
+                &[]
+            };
+        self.remote_index = self
+            .table
+            .pushdown_index_handle_cursor(
+                self.index_id,
+                &self.ranges,
+                &self.keep,
+                lowered,
+                self.top_n.as_ref(),
+                self.decode_context.zone(),
+                &self.statement,
+                self.descending,
+            )
+            .map_err(|_| ExecError::unsupported("remote index scan failed to open"))?;
         if let Some(aggregate) = self.partial_aggregate.as_ref() {
             self.partial_remote = self
                 .table
@@ -2253,6 +2273,15 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         };
         self.meta = meta;
         self.filter = filter;
+        // The pushed descriptions must name the SAME row space the filter
+        // evaluates. Both travel to remote lowerings (the handle-collection
+        // stream and the filtered lookup) whose rows are projected through
+        // `self.keep`; leaving either half in pre-prune offsets makes every
+        // lowering remap fail and silently turns the whole read local.
+        self.pushed = self
+            .filter
+            .as_ref()
+            .map_or(Vec::new(), |filter| filter.predicates().to_vec());
         self.keep = keep.iter().map(|offset| self.keep[*offset]).collect();
         true
     }

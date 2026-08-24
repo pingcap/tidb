@@ -762,20 +762,31 @@ impl KvTable {
         let mut request_handles = handles.to_vec();
         request_handles.sort();
         request_handles.dedup();
-        let ranges = request_handles
-            .iter()
-            .map(|handle| {
-                let TableHandle::Int(value) = handle else {
-                    unreachable!("handle kind checked above")
-                };
-                IndexRange {
+        // Go's `buildKeyRanges` over a sorted handle batch: consecutive
+        // handles collapse into one closed interval, so a bulk-loaded window
+        // arrives as a handful of wide ranges instead of one seek per row --
+        // TiKV scans the record span instead of seeking every key apart. A
+        // fragmented batch keeps its point intervals and pays only what it
+        // must; the gap rowids a merged interval spans match no stored row
+        // and answer nothing.
+        let mut ranges: Vec<IndexRange> = Vec::with_capacity(request_handles.len());
+        for handle in &request_handles {
+            let TableHandle::Int(value) = handle else {
+                unreachable!("handle kind checked above")
+            };
+            match (ranges.last_mut(), value.checked_sub(1)) {
+                // Consecutive handle: widen the open interval's high end.
+                (Some(range), Some(prev)) if range.high.first() == Some(&Datum::Int(prev)) => {
+                    range.high = vec![Datum::Int(*value)];
+                }
+                _ => ranges.push(IndexRange {
                     low: vec![Datum::Int(*value)],
                     high: vec![Datum::Int(*value)],
                     low_exclusive: false,
                     high_exclusive: false,
-                }
-            })
-            .collect::<Vec<_>>();
+                }),
+            }
+        }
         let context = RowDecodeContext::legacy_default(zone);
         let Some(mut cursor) = self.pushdown_row_cursor_with_context(
             &keep,
