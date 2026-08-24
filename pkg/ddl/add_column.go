@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -46,6 +47,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
@@ -101,6 +103,11 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		}
 		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
+		// Verify inline CHECK constraints before backfill.
+		if err := w.verifyAndAddInlineCheckConstraints(jobCtx, job, tblInfo, columnInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 		// delete only -> write only
 		columnInfo.State = model.StateWriteOnly
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != columnInfo.State)
@@ -147,6 +154,90 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 	}
 
 	return ver, errors.Trace(err)
+}
+
+// verifyAndAddInlineCheckConstraints verifies that the column default value satisfies
+// each inline CHECK constraint, then adds the verified constraints to the table info.
+// This runs before backfill (DeleteOnly → WriteOnly), so failure can cancel the job cheaply.
+func (w *worker) verifyAndAddInlineCheckConstraints(
+	jobCtx *jobContext,
+	job *model.Job,
+	tblInfo *model.TableInfo,
+	columnInfo *model.ColumnInfo,
+) error {
+	args, err := model.GetTableColumnArgs(job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(args.Constraints) == 0 {
+		return nil
+	}
+
+	sctx, err := w.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.Put(sctx)
+
+	// ExprString uses RestoreNameBackQuotes (no RestoreNameLowercase),
+	// so identifiers preserve original case. Use Name.O to match.
+	colIdent := sqlescape.MustEscapeSQL("%n", columnInfo.Name.O)
+
+	verified := make([]*model.ConstraintInfo, 0, len(args.Constraints))
+	for _, c := range args.Constraints {
+		if !c.Enforced {
+			verified = append(verified, c)
+			continue
+		}
+
+		var defaultLiteral string
+		if columnInfo.DefaultIsExpr {
+			defaultExpr, ok := columnInfo.GetDefaultValue().(string)
+			if !ok || defaultExpr == "" {
+				return dbterror.ErrCheckConstraintIsViolated.GenWithStackByArgs(c.Name.L)
+			}
+			defaultLiteral = defaultExpr
+		} else {
+			defaultValue := columnInfo.GetDefaultValue()
+			if defaultValue == nil {
+				// No default — existing rows get NULL. NULL passes every CHECK, skip check.
+				verified = append(verified, c)
+				continue
+			}
+			defaultLiteral = sqlescape.MustEscapeSQL("%?", defaultValue)
+		}
+
+		checkExpr := strings.ReplaceAll(c.ExprString, colIdent, "("+defaultLiteral+")")
+
+		var buf strings.Builder
+		sqlescape.MustFormatSQL(&buf, "select 1 from %n.%n where not (", job.SchemaName, tblInfo.Name.L)
+		buf.WriteString(checkExpr)
+		buf.WriteString(") limit 1")
+
+		ctx := kv.WithInternalSourceType(jobCtx.stepCtx, kv.InternalTxnDDL)
+		rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, buf.String())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(rows) > 0 {
+			return dbterror.ErrCheckConstraintIsViolated.GenWithStackByArgs(c.Name.L)
+		}
+
+		verified = append(verified, c)
+	}
+
+	// Add verified constraints to table info.
+	namesMap := map[string]bool{}
+	for _, c := range tblInfo.Constraints {
+		namesMap[c.Name.L] = true
+	}
+	setNameForConstraintInfo(tblInfo.Name.L, namesMap, verified)
+	for _, c := range verified {
+		c.ID = allocateConstraintID(tblInfo)
+		c.State = model.StatePublic
+		tblInfo.Constraints = append(tblInfo.Constraints, c)
+	}
+	return nil
 }
 
 func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model.DBInfo, spec *ast.AlterTableSpec, t table.Table, specNewColumn *ast.ColumnDef) (*table.Column, error) {
