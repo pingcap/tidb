@@ -68,16 +68,59 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       `cargo test --lib --features mock` both pass inside the vendored
       checkout (`third_party/tikv-client-rs/`, standalone, not yet wired into
       `rust/Cargo.toml`).
-- [ ] Phase 0, remaining: the three behavioral-gap patches from the Decision
-      Log (`scan_regions`/`batch_scan_regions`, keyspace-scoped `GetGCState`,
-      undetermined-commit signal) are not yet written — deferred until the
-      corresponding Phase 1/2 work needs them, since they are call-site-driven
-      (easier to get the exact signature right once the caller in
-      `tidb-pd-client`/`tidb-txnkv` is being written against it) rather than
-      speculative additions. Add `tikv-client.workspace = true` to
-      `rust/Cargo.toml` `[workspace.dependencies]` pointing at
-      `third_party/tikv-client-rs` as the first step of Phase 1.
-- [ ] Phase 1: replace `tidb-pd-client` internals.
+- [x] (2026-08-24) Phase 0, PD behavioral gaps: `scan_regions` was found
+      already added upstream (upstream moved between the research pass and
+      this point — expect this kind of drift on every resync). Added
+      `040-add-batch-scan-regions-and-gc-state.patch`: `Cluster`/
+      `RetryClientTrait::{batch_scan_regions, get_gc_state}`, following the
+      exact pattern already established for `scan_regions`/`get_store`. Both
+      trait methods default to `Error::Unimplemented` for other
+      `RetryClientTrait` implementors (the test-only `MockRetryClient`),
+      matching the trait's existing convention. Verified the full four-patch
+      set reapplies cleanly against upstream's latest commit
+      (`sync-tikv-client-rs.sh` re-run from a clean scratch clone after
+      upstream advanced twice more during this session — confirms the
+      patch-rebase workflow itself works, not just the patches' current
+      content), and `cargo check --workspace` passes with `tikv-client` wired
+      into `rust/Cargo.toml`.
+- [ ] Phase 0, remaining: the undetermined-commit signal patch (the third
+      behavioral gap from the Decision Log) is not yet written — deferred to
+      Phase 2, since it touches the transaction coordinator that Phase 2 is
+      about to rewrite anyway, and is easier to get right once written
+      alongside its caller. `tikv-client.workspace = true` is already wired
+      into `rust/Cargo.toml` and `crates/tidb-pd-client/Cargo.toml` (done,
+      see Phase 1 progress below) — this bullet only tracks the coordinator
+      patch itself.
+- [ ] Phase 1: replace `tidb-pd-client` internals. **Not started** (only the
+      Cargo dependency is wired, per the next bullet) — this is the next unit
+      of work for whoever resumes this plan. See the worker-thread/sync-API
+      architecture note in `Surprises & Discoveries` above before starting:
+      the integration point is `client/worker.rs`'s command loop and
+      `client/requests.rs`, not `client/mod.rs`'s public `PdClient` struct
+      (which must keep its synchronous signatures). Suggested order: (1)
+      `etcd.rs` -> `etcd-client` crate (matches Go's own direct
+      `go.etcd.io/etcd/client/v3` dependency, independent of the PD-gRPC
+      rewrite, good first slice); (2) `client/requests.rs` -> delegate each
+      method to the corresponding `tikv_client::pd::cluster::Cluster` call;
+      (3) `client/failover.rs` -> evaluate replacing with
+      `tikv_client::pd::retry::RetryClient`'s failover, or keep if its
+      behavior has diverged from client-go in a way worth preserving (check
+      for a parity-audit doc first, the way `two-phase-commit-vs-client-go.md`
+      existed for `tidb-txnkv` — none was found for `tidb-pd-client` as of
+      this session, so this one likely needs a fresh audit rather than an
+      existing one to preserve); (4) `client/topology.rs` -> retarget its
+      wire-response-to-domain-model conversions from `tidb_proto::pdpb` to
+      `tikv_client`'s generated `pdpb` (same wire shape, different Rust
+      type); (5) `security.rs` -> wrap
+      `tikv_client::common::security::SecurityManager` while keeping
+      `ClusterSecurity`/`secure_endpoint`'s existing signatures; (6) `tso.rs`
+      (622 lines, not yet read this session) -> read it before deciding
+      whether it maps to `tikv_client::oracle::PdOracle` or has TiDB-specific
+      behavior worth keeping. `cargo test -p tidb-pd-client` (existing test
+      suite, unchanged) is the regression net for every step.
+- [x] (2026-08-24) Phase 1, dependency wiring only: `tikv-client.workspace =
+      true` added to `crates/tidb-pd-client/Cargo.toml`; `cargo check
+      --workspace` passes. No internals changed.
 - [ ] Phase 2: replace `tidb-txnkv` internals (region cache, RPC transport,
       2PC/lock-resolver engine, raw KV), porting the documented parity fixes
       from `rust/docs/two-phase-commit-vs-client-go.md`.
@@ -93,6 +136,35 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
 
 ## Surprises & Discoveries
 
+- Observation: `crates/tidb-pd-client/src/client/mod.rs`'s doc comment states
+  the design directly: "A bounded, foreground PD control-plane client... A
+  dedicated worker owns the Tokio runtime so the public synchronous API never
+  nests a runtime owned by its caller." Concretely: `PdClient`'s public
+  methods are **synchronous** (blocking); a dedicated OS thread
+  (`worker::run_worker`, spawned in `client/worker.rs`) owns a Tokio runtime
+  internally and every public call is a `WorkerCommand` sent over a
+  `std::sync::mpsc` channel, answered on a matching reply channel. This is a
+  materially different shape from `tikv_client::pd::{PdRpcClient, Cluster,
+  RetryClient}`, which are natively `async fn` with no dedicated-thread
+  wrapper. Phase 1 must NOT change `tidb-pd-client`'s public sync API (per
+  the Interfaces and Dependencies section) — the correct integration point is
+  inside `worker::run_worker`'s command-handling loop and `client/requests.rs`
+  (currently "one PD gRPC method each"): those become the layer that
+  `.await`s `tikv_client` calls on the worker's already-owned Tokio runtime,
+  replacing their own hand-rolled gRPC/etcd calls, while `client/mod.rs`'s
+  public `PdClient` struct and its blocking method signatures stay as they
+  are. `client/failover.rs` (member discovery/failover, 603 lines) is very
+  likely largely replaceable by `tikv_client::pd::retry::RetryClient`'s own
+  failover, and `client/topology.rs` (418 lines, projects raw PD wire
+  responses into `PdRegion`/`PdStore`) needs its input type changed from
+  `tidb_proto::pdpb::*` to `tikv_client`'s own generated `pdpb` module (same
+  wire shape, same kvproto pin, different Rust type identity since each crate
+  generates its own protobuf bindings — there is no shared prost type between
+  `tidb-proto` and the vendored `tikv-client-rs`).
+  Evidence: `crates/tidb-pd-client/src/client/mod.rs` module doc and
+  `WorkerCommand` enum (lines 15-30, 76-125 as read during this session);
+  `third_party/tikv-client-rs/src/pd/{client,cluster,retry}.rs` all-`async fn`
+  surface.
 - Observation: `ngaut/client-rust`'s `region.rs`, `region_cache.rs`, and
   `locate.rs` are private (`mod`, not `pub mod`) in `src/lib.rs`, and its
   `mock.rs`/`store/mockserver.rs` in-process backend is gated
