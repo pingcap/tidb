@@ -69,7 +69,10 @@ func Build(sctx sessionctx.Context, v *physicalop.PhysicalWindow, childExec exec
 		initialPartialResultMemUsage += memDelta
 		resultColIdx++
 	}
-	memTracker := newWindowMemoryTracker(initialPartialResultMemUsage, len(windowFuncs))
+	memTracker := newWindowMemoryTracker(
+		initialPartialResultMemUsage,
+		len(windowFuncs),
+	)
 
 	if forcePipelined || sctx.GetSessionVars().EnablePipelinedWindowExec {
 		exec := &PipelinedWindowExec{
