@@ -180,6 +180,7 @@ fn remaining_misc_statement_restore_source_rows() {
 fn test_deallocate() {
     for (sql, expected) in [
         ("DEALLOCATE PREPARE test", "DEALLOCATE PREPARE `test`"),
+        ("DEALLOCATE PREPARE s3", "DEALLOCATE PREPARE `s3`"),
         ("DEALLOCATE PREPARE ``", "DEALLOCATE PREPARE ``"),
     ] {
         assert_eq!(r(sql), expected, "source SQL: {sql}");

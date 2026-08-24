@@ -541,7 +541,7 @@ impl Parser {
             self.bump(); // DEALLOCATE / DROP
             self.bump(); // PREPARE
             Ok(Stmt::Session(tidb_ast::NodeBox::new(
-                SessionStmt::Deallocate(self.parse_name()?),
+                SessionStmt::Deallocate(self.parse_name_or_keyword()?),
             )))
         } else if self.is_kw("SHOW") && self.is_kw_at(1, "CREATE") && self.is_kw_at(2, "USER") {
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(

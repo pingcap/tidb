@@ -608,6 +608,12 @@ fn prepared_statements() {
     );
     assert_eq!(r("deallocate prepare stmt"), "DEALLOCATE PREPARE `stmt`");
     assert_eq!(r("drop prepare stmt"), "DEALLOCATE PREPARE `stmt`");
+    // Go's parseDeallocateStmt names the statement via its ident-like
+    // parseName (isIdentLike: identifier OR non-reserved keyword), so a
+    // storage keyword such as S3 is a legal prepared-statement name here
+    // (pkg/parser prepared_stmt_parser.go::parseDeallocateStmt on master).
+    assert_eq!(r("deallocate prepare s3"), "DEALLOCATE PREPARE `s3`");
+    assert_eq!(r("drop prepare s3"), "DEALLOCATE PREPARE `s3`");
 
     // Go parses an empty SQL string into PrepareStmt, then Restore rejects
     // the zero-value SQLText/SQLVar state. Keep parse and restore failures as
