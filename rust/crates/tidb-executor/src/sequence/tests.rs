@@ -294,10 +294,10 @@ fn a_cache_batch_is_clamped_at_maxvalue() {
 #[test]
 fn setval_only_moves_a_sequence_forward() {
     let alloc = SequenceAllocator::new(SequenceInfo::default());
-    assert_eq!(alloc.set_val(100), Some(100));
+    assert_eq!(alloc.set_val(100), Ok(Some(100)));
     assert_eq!(alloc.next_val(), Ok(101));
     // Backwards: NULL, and the sequence keeps its place.
-    assert_eq!(alloc.set_val(50), None);
+    assert_eq!(alloc.set_val(50), Ok(None));
     assert_eq!(alloc.next_val(), Ok(102));
 }
 
@@ -308,8 +308,8 @@ fn setval_only_moves_a_sequence_forward() {
 #[test]
 fn a_lower_setval_reports_null_even_with_no_cache_yet() {
     let alloc = SequenceAllocator::new(SequenceInfo::default());
-    assert_eq!(alloc.set_val(100), Some(100));
-    assert_eq!(alloc.set_val(50), None);
+    assert_eq!(alloc.set_val(100), Ok(Some(100)));
+    assert_eq!(alloc.set_val(50), Ok(None));
     assert_eq!(alloc.next_val(), Ok(101));
 }
 

@@ -2306,7 +2306,14 @@ impl Columns for StmtContext {
 
     fn sequence_setval(&self, path: &[String], value: i64) -> Result<Datum, tidb_expr::EvalError> {
         let (_, allocator) = self.sequences.resolve(path)?;
-        Ok(allocator.set_val(value).map_or(Datum::Null, Datum::Int))
+        // Go `SetSequenceVal`: the reported value is NULL when the stored
+        // counter was already at or past `value` (`alreadySatisfied`).
+        let reported = allocator.set_val(value).map_err(|_| {
+            tidb_expr::EvalError::Sequence(tidb_expr::SequenceEvalError::RunOut(
+                self.sequences.key(path),
+            ))
+        })?;
+        Ok(reported.map_or(Datum::Null, Datum::Int))
     }
 }
 

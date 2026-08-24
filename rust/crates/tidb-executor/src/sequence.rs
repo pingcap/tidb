@@ -62,12 +62,16 @@ const fn decode_cmp_uint_to_int(value: u64) -> i64 {
     (value ^ (1u64 << 63)) as i64
 }
 
-/// Go `table.ErrSequenceHasRunOut` (4135) and `ddl.ErrSequenceInvalidData`
-/// (4136) -- the two errors the allocator itself can raise.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Go `table.ErrSequenceHasRunOut` (4135), plus the way a cluster counter
+/// reports its storage being unreachable.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SequenceError {
     /// 4135: no value is left, and the sequence does not `CYCLE`.
     RunOut,
+    /// The shared counter could not be read or advanced (cluster tier). Go
+    /// surfaces the raw meta/KV error here; this tier carries it as text
+    /// because the statement reports the sequence name around it.
+    Store(String),
 }
 
 /// Go `model.SequenceInfo`, reduced to the fields that decide values.
@@ -194,7 +198,8 @@ pub fn seek_to_first_sequence_value(
 ///
 /// The returned size is always a positive magnitude; the caller applies the
 /// sign of `increment` when it advances the store.
-fn calc_sequence_batch_size(
+#[must_use]
+pub fn calc_sequence_batch_size(
     base: i64,
     size: i64,
     increment: i64,
@@ -239,6 +244,125 @@ struct SequenceStoreState {
     round: i64,
 }
 
+/// The shared counter one sequence's reservations serialize through: Go's
+/// meta keys `SequenceValue` (`TID:<id>` hash field `SEV`) and `SequenceCycle`.
+/// The in-process tier keeps it behind a mutex ([`LocalSequenceCounter`]); a
+/// cluster tier replaces it with one transaction per reservation, which is
+/// what lets two TiDB nodes share the ladder without ever overlapping.
+///
+/// Go `pkg/meta/autoid/autoid.go`: `AllocSeqCache` -> `alloc4Sequence`,
+/// `RebaseSeq` -> `rebase4Sequence`; `ALTER SEQUENCE ... RESTART` PUTs the
+/// counter directly (`ddl/sequence.go`).
+pub trait SequenceCounter: std::fmt::Debug + Send + Sync {
+    /// Go `Allocator.AllocSeqCache`: atomically reserve one batch from the
+    /// shared counter, returning `(base, end, round)` of the reserved window.
+    fn alloc_seq_cache(
+        &self,
+        info: &SequenceInfo,
+    ) -> Result<(i64, i64, i64), SequenceError>;
+
+    /// Go `Allocator.RebaseSeq`: move the shared counter forward to
+    /// `required`. `(0, true)` is Go's `alreadySatisfied`, meaning the counter
+    /// was already at or past it and nothing was written.
+    fn rebase_seq(
+        &self,
+        info: &SequenceInfo,
+        required: i64,
+    ) -> Result<(i64, bool), SequenceError>;
+
+    /// Go `AlterSequence` with `RESTART`: the stored counter goes one integer
+    /// outside `with`, so the next congruence seek returns `with` itself.
+    fn restart(&self, info: &SequenceInfo, with: i64);
+}
+
+/// The process-local counter: Go's behaviour when the "meta store" is this
+/// node's own memory (the in-process tier, and every test of it).
+#[derive(Debug)]
+pub struct LocalSequenceCounter(Mutex<SequenceStoreState>);
+
+impl LocalSequenceCounter {
+    #[must_use]
+    pub fn new(stored: i64) -> Self {
+        LocalSequenceCounter(Mutex::new(SequenceStoreState {
+            stored,
+            round: 0,
+        }))
+    }
+}
+
+impl SequenceCounter for LocalSequenceCounter {
+    fn alloc_seq_cache(
+        &self,
+        info: &SequenceInfo,
+    ) -> Result<(i64, i64, i64), SequenceError> {
+        let size = if info.cache { info.cache_value } else { 1 };
+        let mut store = self.0.lock().expect("sequence store state");
+        let mut base = store.stored;
+        let mut offset = sequence_offset(info, store.round);
+        let step = match calc_sequence_batch_size(
+            base,
+            size,
+            info.increment,
+            offset,
+            info.min_value,
+            info.max_value,
+        ) {
+            Some(step) => step,
+            None => {
+                if !info.cycle {
+                    return Err(SequenceError::RunOut);
+                }
+                // Go resets the counter one step OUTSIDE the wrapped-to bound
+                // so the first seek after the wrap lands on the bound itself.
+                if info.increment > 0 {
+                    base = info.min_value - 1;
+                    offset = info.min_value;
+                } else {
+                    base = info.max_value + 1;
+                    offset = info.max_value;
+                }
+                store.round += 1;
+                store.stored = base;
+                calc_sequence_batch_size(
+                    base,
+                    size,
+                    info.increment,
+                    offset,
+                    info.min_value,
+                    info.max_value,
+                )
+                .ok_or(SequenceError::RunOut)?
+            }
+        };
+        let delta = if info.increment > 0 { step } else { -step };
+        store.stored = base + delta;
+        Ok((base, store.stored, store.round))
+    }
+
+    fn rebase_seq(
+        &self,
+        info: &SequenceInfo,
+        required: i64,
+    ) -> Result<(i64, bool), SequenceError> {
+        let mut store = self.0.lock().expect("sequence store state");
+        let already_satisfied = if info.increment > 0 {
+            store.stored >= required
+        } else {
+            store.stored <= required
+        };
+        if !already_satisfied {
+            store.stored = required;
+        }
+        Ok((required, already_satisfied))
+    }
+
+    fn restart(&self, info: &SequenceInfo, with: i64) {
+        let mut store = self.0.lock().expect("sequence store state");
+        store.stored = if info.increment > 0 { with - 1 } else { with + 1 };
+        store.round = 0;
+    }
+}
+
 /// Go `sequenceCommon`: one table instance's local cache window.
 #[derive(Debug)]
 struct SequenceState {
@@ -260,7 +384,7 @@ struct SequenceState {
 #[derive(Clone, Debug)]
 pub struct SequenceAllocator {
     info: SequenceInfo,
-    store: Arc<Mutex<SequenceStoreState>>,
+    store: Arc<dyn SequenceCounter>,
     state: Arc<Mutex<SequenceState>>,
 }
 
@@ -278,9 +402,18 @@ impl SequenceAllocator {
         } else {
             info.start + 1
         };
+        SequenceAllocator::over_counter(info, Arc::new(LocalSequenceCounter::new(stored)))
+    }
+
+    /// An allocator whose shared counter lives somewhere else -- a cluster's
+    /// meta store. Everything else about the allocator (the local cache, the
+    /// seek, exhaustion) is unchanged, because those are Go's table-side
+    /// halves and do not care where the number lives.
+    #[must_use]
+    pub fn over_counter(info: SequenceInfo, store: Arc<dyn SequenceCounter>) -> Self {
         SequenceAllocator {
             info,
-            store: Arc::new(Mutex::new(SequenceStoreState { stored, round: 0 })),
+            store,
             state: Arc::new(Mutex::new(SequenceState {
                 base: 0,
                 end: 0,
@@ -304,7 +437,6 @@ impl SequenceAllocator {
             })),
         }
     }
-
     /// The sequence's options, for `SHOW CREATE SEQUENCE`.
     #[must_use]
     pub fn info(&self) -> SequenceInfo {
@@ -326,31 +458,24 @@ impl SequenceAllocator {
     /// integer outside `restart_with`, so the next congruence seek returns the
     /// requested value.
     pub fn restart(&mut self, restart_with: i64) {
+        self.store.restart(&self.info, restart_with);
         let mut state = self.state.lock().expect("sequence state");
-        let mut store = self.store.lock().expect("sequence store state");
-        store.stored = if self.info.increment > 0 {
+        // The stored counter now sits exactly one integer outside
+        // `restart_with`; the cache collapses onto it either way.
+        let stored = if self.info.increment > 0 {
             restart_with - 1
         } else {
             restart_with + 1
         };
-        store.round = 0;
-        state.base = store.stored;
-        state.end = store.stored;
+        state.base = stored;
+        state.end = stored;
         state.round = 0;
     }
 
     /// Go `sequenceCommon.getOffset`: the congruence offset is `START` until
     /// `CYCLE` has wrapped at least once, and the wrapped-to bound afterwards.
     fn offset(&self, round: i64) -> i64 {
-        if self.info.cycle && round > 0 {
-            if self.info.increment > 0 {
-                self.info.min_value
-            } else {
-                self.info.max_value
-            }
-        } else {
-            self.info.start
-        }
+        sequence_offset(&self.info, round)
     }
 
     /// Go `TableCommon.GetSequenceNextVal`: seek inside the cached batch, and
@@ -397,52 +522,7 @@ impl SequenceAllocator {
     /// shared meta counter. The returned bounds belong exclusively to the
     /// caller; consuming values inside them needs no store lock.
     pub fn alloc_seq_cache(&self) -> Result<(i64, i64, i64), SequenceError> {
-        let size = if self.info.cache {
-            self.info.cache_value
-        } else {
-            1
-        };
-        let mut store = self.store.lock().expect("sequence store state");
-        let mut base = store.stored;
-        let mut offset = self.offset(store.round);
-        let step = match calc_sequence_batch_size(
-            base,
-            size,
-            self.info.increment,
-            offset,
-            self.info.min_value,
-            self.info.max_value,
-        ) {
-            Some(step) => step,
-            None => {
-                if !self.info.cycle {
-                    return Err(SequenceError::RunOut);
-                }
-                // Go resets the counter one step OUTSIDE the wrapped-to bound
-                // so the first seek after the wrap lands on the bound itself.
-                if self.info.increment > 0 {
-                    base = self.info.min_value - 1;
-                    offset = self.info.min_value;
-                } else {
-                    base = self.info.max_value + 1;
-                    offset = self.info.max_value;
-                }
-                store.round += 1;
-                store.stored = base;
-                calc_sequence_batch_size(
-                    base,
-                    size,
-                    self.info.increment,
-                    offset,
-                    self.info.min_value,
-                    self.info.max_value,
-                )
-                .ok_or(SequenceError::RunOut)?
-            }
-        };
-        let delta = if self.info.increment > 0 { step } else { -step };
-        store.stored = base + delta;
-        Ok((base, store.stored, store.round))
+        self.store.alloc_seq_cache(&self.info)
     }
 
     /// Refill one table instance's local cache from [`Self::alloc_seq_cache`].
@@ -455,25 +535,25 @@ impl SequenceAllocator {
     }
 
     /// Go `TableCommon.SetSequenceVal`: move the sequence forward to
-    /// `new_val`. `None` is Go's `alreadySatisfied`, which `SETVAL` reports as
-    /// SQL `NULL` -- a sequence never moves backwards.
-    pub fn set_val(&self, new_val: i64) -> Option<i64> {
+    /// `new_val`. `Ok(None)` is Go's `alreadySatisfied`, which `SETVAL`
+    /// reports as SQL `NULL` -- a sequence never moves backwards.
+    pub fn set_val(&self, new_val: i64) -> Result<Option<i64>, SequenceError> {
         let mut state = self.state.lock().expect("sequence state");
         if self.info.increment > 0 {
             if new_val <= state.base {
-                return None;
+                return Ok(None);
             }
             if new_val <= state.end {
                 state.base = new_val;
-                return Some(new_val);
+                return Ok(Some(new_val));
             }
         } else {
             if new_val >= state.base {
-                return None;
+                return Ok(None);
             }
             if new_val >= state.end {
                 state.base = new_val;
-                return Some(new_val);
+                return Ok(Some(new_val));
             }
         }
         // Past the cached batch: rebase the store, and record the new value as
@@ -484,22 +564,36 @@ impl SequenceAllocator {
         // Go `rebase4Sequence`: a store already at or past `new_val` is left
         // untouched and reported as `alreadySatisfied`. The cache window is
         // collapsed onto `new_val` EITHER WAY.
-        let mut store = self.store.lock().expect("sequence store state");
-        let already_satisfied = if self.info.increment > 0 {
-            store.stored >= new_val
-        } else {
-            store.stored <= new_val
-        };
-        if !already_satisfied {
-            store.stored = new_val;
-        }
+        let (_, already_satisfied) = self.store.rebase_seq(&self.info, new_val)?;
         state.base = new_val;
         state.end = new_val;
         if already_satisfied {
-            None
+            Ok(None)
         } else {
-            Some(new_val)
+            Ok(Some(new_val))
         }
+    }
+
+    /// Go `GetSequenceBaseEndRound`, exposed for tests that pin the cache.
+    #[must_use]
+    pub fn base_end_round(&self) -> (i64, i64, i64) {
+        let state = self.state.lock().expect("sequence state");
+        (state.base, state.end, state.round)
+    }
+}
+
+/// Go `sequenceCommon.getOffset`, free-standing: both counter implementations
+/// need the same congruence offset for the current cycle round.
+#[must_use]
+pub fn sequence_offset(info: &SequenceInfo, round: i64) -> i64 {
+    if info.cycle && round > 0 {
+        if info.increment > 0 {
+            info.min_value
+        } else {
+            info.max_value
+        }
+    } else {
+        info.start
     }
 }
 
