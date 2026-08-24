@@ -14,6 +14,10 @@ require (
 	go.uber.org/goleak v1.3.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/text v0.39.0
+<<<<<<< HEAD
+=======
+	modernc.org/mathutil v1.6.0
+>>>>>>> f6d14104094 (parser: upgrade x/text to v0.39.0 (#70244))
 	modernc.org/parser v1.1.0
 	modernc.org/y v1.1.0
 )
