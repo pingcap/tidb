@@ -254,6 +254,17 @@ func NewEvalContext(opt ...EvalCtxOption) *EvalContext {
 	return ctx
 }
 
+// NewDefaultEvalContext returns an EvalContext with the defaults used by
+// internal, session-independent operations (no SQL mode, default type flags).
+// errLevels seeds error handling; callers pass their statement error levels.
+func NewDefaultEvalContext(errLevels errctx.LevelMap) *EvalContext {
+	return NewEvalContext(
+		WithSQLMode(mysql.ModeNone),
+		WithTypeFlags(types.DefaultStmtFlags),
+		WithErrLevelMap(errLevels),
+	)
+}
+
 // CtxID returns the context ID.
 func (ctx *EvalContext) CtxID() uint64 {
 	return ctx.id

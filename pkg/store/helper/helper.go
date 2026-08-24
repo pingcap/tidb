@@ -849,6 +849,72 @@ func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexSta
 	return pdCli.GetRegionStatusByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), false)
 }
 
+// RegionApproximateSizes returns each region's raw end key and byte size over
+// [startKey, endKey) via PD, in key order. Size is max(ApproximateSize,
+// ApproximateKvSize): the KV size best tracks logical data but can be 0 when TiKV
+// does not report it. PD keys are decoded from the codec keyspace back to raw.
+func (h *Helper) RegionApproximateSizes(ctx context.Context, pdCli pd.Client, startKey, endKey kv.Key) (endKeys []kv.Key, sizes []int64, err error) {
+	codec := h.Store.GetCodec()
+	cur, end := codec.EncodeRegionRange(startKey, endKey)
+	for {
+		regions, err := pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(cur, end), 128)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(regions.Regions) == 0 {
+			break
+		}
+		for _, r := range regions.Regions {
+			encoded, err := hex.DecodeString(r.EndKey)
+			if err != nil {
+				return nil, nil, err
+			}
+			raw, err := codec.DecodeRegionKey(encoded)
+			if err != nil {
+				return nil, nil, err
+			}
+			endKeys = append(endKeys, raw)
+			sizes = append(sizes, max(r.ApproximateSize, r.ApproximateKvSize)*1024*1024)
+		}
+		cur, err = hex.DecodeString(regions.Regions[len(regions.Regions)-1].EndKey)
+		if err != nil {
+			return nil, nil, err
+		}
+		if bytes.Compare(cur, end) >= 0 {
+			break
+		}
+	}
+	return endKeys, sizes, nil
+}
+
+// EstimateKeyRangeSize sums each region's max(ApproximateSize, ApproximateKvSize)
+// over [startKey, endKey) via PD. Unlike RegionApproximateSizes it keeps O(1)
+// memory and decodes only the page cursor, since callers here need just the total.
+func (h *Helper) EstimateKeyRangeSize(ctx context.Context, pdCli pd.Client, startKey, endKey kv.Key) (int64, error) {
+	start, end := h.Store.GetCodec().EncodeRegionRange(startKey, endKey)
+	var totalSize int64
+	for {
+		regions, err := pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(start, end), 128)
+		if err != nil {
+			return 0, err
+		}
+		if len(regions.Regions) == 0 {
+			break
+		}
+		for _, r := range regions.Regions {
+			totalSize += max(r.ApproximateSize, r.ApproximateKvSize) * 1024 * 1024
+		}
+		start, err = hex.DecodeString(regions.Regions[len(regions.Regions)-1].EndKey)
+		if err != nil {
+			return 0, err
+		}
+		if bytes.Compare(start, end) >= 0 {
+			break
+		}
+	}
+	return totalSize, nil
+}
+
 // GetTiFlashTableIDFromEndKey computes tableID from pd rule's endKey.
 func GetTiFlashTableIDFromEndKey(endKey string) int64 {
 	e, _ := hex.DecodeString(endKey)
