@@ -17,6 +17,7 @@ package execdetails
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -928,6 +929,166 @@ func (m *RUV2Metrics) calculateRUValuesWithWeights(weights RUV2Weights) (tidbRU 
 			float64(m.TxnCnt())*weights.TxnCnt
 
 	return tidbRUFloat * weights.RUScale
+}
+
+// FormatRUCalculationDetail formats the RU v1 calculation as a formula.
+func FormatRUCalculationDetail(ruDetails *tikvutil.RUDetails) string {
+	if ruDetails == nil {
+		return ""
+	}
+	calculation, hasCalculation, consistent := ruDetails.RUCalculation()
+	if !consistent {
+		return ""
+	}
+	tiflashRU := ruDetails.TiflashRU()
+	if !hasCalculation && tiflashRU == 0 {
+		return ""
+	}
+
+	var rruTerms, wruTerms []ruFormulaTerm
+	var rru, wru float64
+	if hasCalculation {
+		factors, inputs := calculation.Factors, calculation.Inputs
+		addRUFormulaTerm(&rruTerms, "read_rpc_count", inputs.ReadRPCCount, "READ_BASE_COST", factors.ReadBaseCost)
+		addRUFormulaTermWithRatio(&rruTerms, "read_rpc_count", inputs.ReadRPCCount,
+			"READ_PER_BATCH_BASE_COST", factors.ReadPerBatchBaseCost, "BATCH_PROPORTION", factors.BatchProportion)
+		addRUFormulaTerm(&rruTerms, "charged_read_bytes", inputs.ReadBytes, "READ_BYTES_COST", factors.ReadBytesCost)
+		addRUFormulaTerm(&rruTerms, "kv_cpu_ms", inputs.KVCPUTimeMs, "CPU_MS_COST", factors.CPUMsCost)
+		formulaRRU := sumRUFormulaTerms(rruTerms)
+
+		addRUFormulaTerm(&wruTerms, "replica_weighted_write_rpc_count", inputs.ReplicaWeightedWriteRPCCount,
+			"WRITE_BASE_COST", factors.WriteBaseCost)
+		addRUFormulaTermWithRatio(&wruTerms, "replica_weighted_write_rpc_count", inputs.ReplicaWeightedWriteRPCCount,
+			"WRITE_PER_BATCH_BASE_COST", factors.WritePerBatchBaseCost, "BATCH_PROPORTION", factors.BatchProportion)
+		addRUFormulaTerm(&wruTerms, "replica_weighted_write_bytes", inputs.ReplicaWeightedWriteBytes,
+			"WRITE_BYTES_COST", factors.WriteBytesCost)
+		addNegativeRUFormulaTerm(&wruTerms, "failed_write_rpc_count", inputs.FailedWriteRPCCount,
+			"WRITE_BASE_COST", factors.WriteBaseCost)
+		addNegativeRUFormulaTerm(&wruTerms, "failed_write_bytes", inputs.FailedWriteBytes,
+			"WRITE_BYTES_COST", factors.WriteBytesCost)
+		formulaWRU := sumRUFormulaTerms(wruTerms)
+		if !sameDisplayedRUValue(formulaRRU, calculation.RRU) || !sameDisplayedRUValue(formulaWRU, calculation.WRU) {
+			return ""
+		}
+		rru, wru = calculation.RRU, calculation.WRU
+	}
+	if !sameDisplayedRUValue(rru+wru, ruDetails.RRU()+ruDetails.WRU()-tiflashRU) {
+		return ""
+	}
+
+	details := make([]string, 0, 3)
+	totalTerms := make([]string, 0, 3)
+	var displayedTotal float64
+	if len(rruTerms) > 0 {
+		displayedRRU := roundRUFormulaResult(rru)
+		details = append(details, "RRU="+formatRUFormulaTerms(rruTerms)+"="+formatRUFormulaResult(displayedRRU))
+		totalTerms = append(totalTerms, "RRU("+formatRUFormulaResult(displayedRRU)+")")
+		displayedTotal += displayedRRU
+	}
+	if len(wruTerms) > 0 {
+		displayedWRU := roundRUFormulaResult(wru)
+		details = append(details, "WRU="+formatRUFormulaTerms(wruTerms)+"="+formatRUFormulaResult(displayedWRU))
+		totalTerms = append(totalTerms, "WRU("+formatRUFormulaResult(displayedWRU)+")")
+		displayedTotal += displayedWRU
+	}
+	if tiflashRU != 0 {
+		displayedTiFlashRU := roundRUFormulaResult(tiflashRU)
+		totalTerms = append(totalTerms, "tiflash_ru("+formatRUFormulaResult(displayedTiFlashRU)+")")
+		displayedTotal += displayedTiFlashRU
+	}
+	if len(totalTerms) == 0 {
+		return ""
+	}
+	details = append(details, "RU="+strings.Join(totalTerms, "+")+"="+formatRUFormulaResult(displayedTotal))
+	return strings.Join(details, "; ")
+}
+
+type ruFormulaTerm struct {
+	text         string
+	contribution float64
+	negative     bool
+}
+
+func addRUFormulaTerm(terms *[]ruFormulaTerm, inputName string, input float64, factorName string, factor float64) {
+	if input == 0 || factor == 0 {
+		return
+	}
+	*terms = append(*terms, ruFormulaTerm{
+		text:         fmt.Sprintf("%s(%s)*%s(%s)", inputName, formatRUFormulaValue(input), factorName, formatRUFormulaValue(factor)),
+		contribution: input * factor,
+	})
+}
+
+func addRUFormulaTermWithRatio(
+	terms *[]ruFormulaTerm,
+	inputName string,
+	input float64,
+	factorName string,
+	factor float64,
+	ratioName string,
+	ratio float64,
+) {
+	if input == 0 || factor == 0 || ratio == 0 {
+		return
+	}
+	*terms = append(*terms, ruFormulaTerm{
+		text: fmt.Sprintf("%s(%s)*%s(%s)*%s(%s)",
+			inputName, formatRUFormulaValue(input), factorName, formatRUFormulaValue(factor),
+			ratioName, formatRUFormulaValue(ratio)),
+		contribution: input * factor * ratio,
+	})
+}
+
+func addNegativeRUFormulaTerm(terms *[]ruFormulaTerm, inputName string, input float64, factorName string, factor float64) {
+	if input == 0 || factor == 0 {
+		return
+	}
+	*terms = append(*terms, ruFormulaTerm{
+		text:         fmt.Sprintf("%s(%s)*%s(%s)", inputName, formatRUFormulaValue(input), factorName, formatRUFormulaValue(factor)),
+		contribution: -input * factor,
+		negative:     true,
+	})
+}
+
+func sumRUFormulaTerms(terms []ruFormulaTerm) float64 {
+	var total float64
+	for _, term := range terms {
+		total += term.contribution
+	}
+	return total
+}
+
+func formatRUFormulaTerms(terms []ruFormulaTerm) string {
+	var builder strings.Builder
+	for i, term := range terms {
+		if term.negative {
+			builder.WriteByte('-')
+		} else if i > 0 {
+			builder.WriteByte('+')
+		}
+		builder.WriteString(term.text)
+	}
+	return builder.String()
+}
+
+func formatRUFormulaValue(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
+func formatRUFormulaResult(value float64) string {
+	return strconv.FormatFloat(value, 'f', 6, 64)
+}
+
+func roundRUFormulaResult(value float64) float64 {
+	rounded := math.Round(value*1e6) / 1e6
+	if rounded == 0 {
+		return 0
+	}
+	return rounded
+}
+
+func sameDisplayedRUValue(left, right float64) bool {
+	return formatRUFormulaResult(left) == formatRUFormulaResult(right)
 }
 
 // FormatRUV2Summary formats the RUv2 total and detailed metrics in one pass.

@@ -86,6 +86,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	tikvtrace "github.com/tikv/client-go/v2/trace"
 	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -2424,6 +2425,9 @@ func (a *ExecStmt) updatePrevStmt() {
 }
 
 func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.Context {
+	ruVersion := currentRUVersion(a.Ctx)
+	execdetails.SetStatementRUVersion(ctx, ruVersion)
+
 	topSQL, topRU := topsqlstate.TopSQLEnabled(), topsqlstate.TopRUEnabled()
 	topProfiling := topsqlstate.TopProfilingEnabled()
 	if !topProfiling && IsFastPlan(a.Plan) {
@@ -2457,10 +2461,7 @@ func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.
 			if vars.User != nil {
 				beginInfo.User = vars.User.String()
 			}
-			beginInfo.RUVersion = stmtstats.DefaultRUVersion()
-			if do := domain.GetDomain(a.Ctx); do != nil {
-				beginInfo.RUVersion = stmtstats.NormalizeRUVersion(do.GetRUVersion())
-			}
+			beginInfo.RUVersion = stmtstats.NormalizeRUVersion(ruVersion)
 		}
 	}
 	if !topProfiling {
@@ -2490,6 +2491,13 @@ func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.
 	}
 	topsql.RegisterPlan(normalizedPlan, planDigest)
 	return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
+}
+
+func currentRUVersion(ctx sessionctx.Context) rmclient.RUVersion {
+	if do := domain.GetDomain(ctx); do != nil {
+		return do.GetRUVersion()
+	}
+	return rmclient.DefaultRUVersion
 }
 
 // UpdatePlanCacheRuntimeInfo updates the runtime information of the plan in the plan cache.

@@ -4541,16 +4541,18 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:2A+FjDtw0Ej6TT6fX496j+/jDNj7wz4ENMXnjOqhc80=",
-        version = "v2.0.8-0.20260807103401-b75f6efa8ddd",
+        replace = "github.com/JmPotato/client-go/v2",
+        sum = "h1:+yGFF7CapkJR+8mV/eRXNgegc2u+AYLWLiPmclZwDak=",
+        version = "v2.0.0-20260821050331-653c1824be20",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sum = "h1:q5NgKsvuOdEHspG/pZEpKhWlPLrIfmO8P/lDFjTEdok=",
-        version = "v0.0.0-20260805103528-afa43111d149",
+        replace = "github.com/JmPotato/pd/client",
+        sum = "h1:0/9o+chqwsjhjvN/JR7KeJYGur+3sXvfWRIYa+bOCkQ=",
+        version = "v0.0.0-20260821050134-d9b686cee60b",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",

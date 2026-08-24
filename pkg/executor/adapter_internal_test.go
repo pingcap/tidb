@@ -288,7 +288,8 @@ func TestObserveStmtBeginOnTopProfilingRUV2Wiring(t *testing.T) {
 	topsqlstate.EnableTopRU()
 
 	t.Run("domain ru version v2 drives top ru sampling", func(t *testing.T) {
-		stmt, stats := newExecStmtWithStmtStatsForTest(context.Background(), t)
+		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		stmt, stats := newExecStmtWithStmtStatsForTest(goCtx, t)
 		testCtx := stmt.Ctx.(*stmtStatsTestContext)
 		testCtx.BindDomainAndSchValidator(newMockDomainWithRUVersion(t, rmclient.RUVersionV2), nil)
 
@@ -298,7 +299,10 @@ func TestObserveStmtBeginOnTopProfilingRUV2Wiring(t *testing.T) {
 		vars.RUV2Metrics = metrics
 		expectedRU := metrics.TotalRU(vars.RUV2Weights(), 0, 0)
 
-		_ = stmt.observeStmtBeginForTopProfiling(context.Background())
+		_ = stmt.observeStmtBeginForTopProfiling(goCtx)
+		ruVersion, ok := execdetails.StatementRUVersionFromContext(goCtx)
+		require.True(t, ok)
+		require.Equal(t, rmclient.RUVersionV2, ruVersion)
 
 		key := ruKeyForStmt(t, stmt)
 		m := stats.MergeRUInto()

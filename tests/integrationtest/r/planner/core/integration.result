@@ -3872,19 +3872,19 @@ create table t(a int primary key, b varchar(20));
 insert into t values (1,1);
 explain analyze format='brief' select * from t where a=1;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Point_Get	1.00	1	root	table:t	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, Get:{num_rpc:<num>, total_time:<num>}	handle:<num>	N/A	N/A
+Point_Get	1.00	1	root	table:t	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, RU_detail:RRU=read_rpc_count(1)*READ_BASE_COST(0.125)+read_rpc_count(1)*READ_PER_BATCH_BASE_COST(0.5)*BATCH_PROPORTION(0.7)=0.475000; RU=RRU(0.475000)=0.475000, Get:{num_rpc:<num>, total_time:<num>}	handle:<num>	N/A	N/A
 explain analyze format='brief' select * from t where a in (1,2,3);
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Batch_Point_Get	3.00	1	root	table:t	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, BatchGet:{num_rpc:<num>, total_time:<num>}	handle:[1 2 3], keep order:false, desc:false	N/A	N/A
+Batch_Point_Get	3.00	1	root	table:t	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, RU_detail:RRU=read_rpc_count(1)*READ_BASE_COST(0.125)+read_rpc_count(1)*READ_PER_BATCH_BASE_COST(0.5)*BATCH_PROPORTION(0.7)=0.475000; RU=RRU(0.475000)=0.475000, BatchGet:{num_rpc:<num>, total_time:<num>}	handle:[1 2 3], keep order:false, desc:false	N/A	N/A
 drop table if exists t;
 create table t (a int, b int, unique index (a));
 insert into t values (1,1);
 explain analyze format='brief' select * from t where a=1;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Point_Get	1.00	1	root	table:t, index:a(a)	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, Get:{num_rpc:<num>, total_time:<num>}	NULL	N/A	N/A
+Point_Get	1.00	1	root	table:t, index:a(a)	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, RU_detail:RRU=read_rpc_count(2)*READ_BASE_COST(0.125)+read_rpc_count(2)*READ_PER_BATCH_BASE_COST(0.5)*BATCH_PROPORTION(0.7)=0.950000; RU=RRU(0.950000)=0.950000, Get:{num_rpc:<num>, total_time:<num>}	NULL	N/A	N/A
 explain analyze format='brief' insert ignore into t values (1,1),(2,2),(3,3),(4,4);
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Insert	N/A	0	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, prepare:<num>, check_insert: {total_time:<num>, mem_insert_time:<num>, prefetch:<num>, fk_check:<num>, rpc:{BatchGet:{num_rpc:<num>, total_time:<num>}}}, RU:<num>	N/A	<num> Bytes	N/A
+Insert	N/A	0	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, prepare:<num>, check_insert: {total_time:<num>, mem_insert_time:<num>, prefetch:<num>, fk_check:<num>, rpc:{BatchGet:{num_rpc:<num>, total_time:<num>}}}, RU:<num>, RU_detail:RRU=read_rpc_count(1)*READ_BASE_COST(0.125)+read_rpc_count(1)*READ_PER_BATCH_BASE_COST(0.5)*BATCH_PROPORTION(0.7)=0.475000; WRU=replica_weighted_write_rpc_count(2)*WRITE_BASE_COST(1)+replica_weighted_write_rpc_count(2)*WRITE_PER_BATCH_BASE_COST(1)*BATCH_PROPORTION(0.7)+replica_weighted_write_bytes(376)*WRITE_BYTES_COST(0.0009765625)=3.767188; RU=RRU(0.475000)+WRU(3.767188)=4.242188	N/A	<num> Bytes	N/A
 drop table if exists t;
 create table t (a int, b int);
 insert into t values (1, 2);
