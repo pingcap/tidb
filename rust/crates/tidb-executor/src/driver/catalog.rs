@@ -111,6 +111,15 @@ pub struct Catalog {
     /// commit (`tidb-session`'s `txn.rs` compares this against the version it
     /// started from). Go advances its schema version per COMPLETED DDL job.
     version: u64,
+    /// Bumped ONLY by mutations that change schema METADATA a key decoder
+    /// reads: databases registered or dropped, tables registered, renamed,
+    /// dropped, or re-registered with new columns. Deliberately NOT bumped by
+    /// [`Self::get_mut_in`] (every write path takes it, and Go's schema
+    /// version -- what row-decode caches key on -- moves only on DDL), nor by
+    /// staged-write marks, statistics refreshes, or id allocation. Bumped at
+    /// each mutator's ENTRY, so a call that declines still invalidates: the
+    /// cost of a spurious rebuild is one snapshot walk, never staleness.
+    metadata_version: u64,
     /// The entries a session's LOCAL temporary tables are DISPLACING while
     /// they are attached: `(folded database, folded name, the entry that was
     /// there)`.
@@ -248,6 +257,7 @@ impl Default for Catalog {
             next_database_id: 3,
             next_table_id: 0,
             version: 0,
+            metadata_version: 0,
             shadowed_by_local_temporary: Vec::new(),
             statistics: HashMap::new(),
             commit_history: Arc::new(std::sync::Mutex::new(CommitHistory::default())),
@@ -408,6 +418,7 @@ impl Catalog {
     /// exists by construction; a statement-driven create names its schema and
     /// goes through [`Catalog::register_kv_in`], which reports 1049 instead.
     pub fn register(&mut self, name: &str, table: MemTable) {
+        self.bump_metadata_version();
         self.register_in(DEFAULT_DATABASE, name, TableEntry::Mem(table))
             .expect("the default database exists in a freshly built catalog");
     }
@@ -417,6 +428,7 @@ impl Catalog {
     /// # Panics
     /// As [`Catalog::register`].
     pub fn register_kv(&mut self, name: &str, table: KvTable) {
+        self.bump_metadata_version();
         self.register_in(DEFAULT_DATABASE, name, TableEntry::Kv(table))
             .expect("the default database exists in a freshly built catalog");
     }
@@ -539,6 +551,7 @@ impl Catalog {
     /// `OnExistError` (8238), `OnExistIgnore`, or `OnExistReplace`, exactly
     /// as Go's `OnExist` does.
     pub fn create_policy(&mut self, mut policy: tidb_model::PolicyInfo) -> bool {
+        self.bump_metadata_version();
         let key = policy.name.lowercase().to_owned();
         if self.policies.contains_key(&key) {
             return false;
@@ -560,6 +573,7 @@ impl Catalog {
         name: &str,
         settings: tidb_model::PlacementSettings,
     ) -> bool {
+        self.bump_metadata_version();
         let key = tidb_ast::CiString::new(name).lowercase().to_owned();
         let Some(policy) = self.policies.get_mut(&key) else {
             return false;
@@ -571,6 +585,7 @@ impl Catalog {
 
     /// Go `DropPlacementPolicy`: removes a policy by name.
     pub fn drop_policy(&mut self, name: &str) -> bool {
+        self.bump_metadata_version();
         let key = tidb_ast::CiString::new(name).lowercase().to_owned();
         if self.policies.remove(&key).is_none() {
             return false;
@@ -612,11 +627,13 @@ impl Catalog {
     }
 
     pub fn create_database(&mut self, database: &str) -> bool {
+        self.bump_metadata_version();
         self.create_database_with_charset(database, TableCharset::default())
     }
 
     /// Creates a database with its resolved charset and collation defaults.
     pub fn create_database_with_charset(&mut self, database: &str, charset: TableCharset) -> bool {
+        self.bump_metadata_version();
         let key = database.to_lowercase();
         if self.databases.contains_key(&key) {
             return false;
@@ -641,6 +658,7 @@ impl Catalog {
     /// schemas replaces their synthetic IDs rather than silently discarding
     /// the source identity. Returns whether the schema name was newly added.
     pub fn register_database_with_id(&mut self, database: &str, id: i64) -> bool {
+        self.bump_metadata_version();
         self.register_database_with_id_and_charset(database, id, TableCharset::default())
     }
 
@@ -658,6 +676,7 @@ impl Catalog {
         id: i64,
         charset: TableCharset,
     ) -> bool {
+        self.bump_metadata_version();
         let key = database.to_lowercase();
         self.next_database_id = self.next_database_id.max(id);
         if let Some(existing) = self.databases.get_mut(&key) {
@@ -699,6 +718,7 @@ impl Catalog {
         to_database: &str,
         to_name: &str,
     ) -> bool {
+        self.bump_metadata_version();
         let to_key = to_database.to_lowercase();
         if !self.databases.contains_key(&to_key) {
             return false;
@@ -728,6 +748,7 @@ impl Catalog {
 
     /// Drops one table, reporting whether it existed.
     pub fn drop_table_in(&mut self, database: &str, name: &str) -> bool {
+        self.bump_metadata_version();
         let dropped = match self.databases.get_mut(&database.to_lowercase()) {
             Some(database) => database.tables.remove(&name.to_lowercase()).is_some(),
             None => false,
@@ -739,6 +760,7 @@ impl Catalog {
     /// Drops `database` and its tables, reporting whether it existed. Go
     /// raises `ErrDBDropExists` (1008) unless `IF EXISTS` was written.
     pub fn drop_database(&mut self, database: &str) -> bool {
+        self.bump_metadata_version();
         let dropped = self.databases.remove(&database.to_lowercase()).is_some();
         self.version += u64::from(dropped);
         dropped
@@ -828,6 +850,18 @@ impl Catalog {
     #[must_use]
     pub fn version(&self) -> u64 {
         self.version
+    }
+
+    /// The counter that moves only when key-decode-relevant schema metadata
+    /// mutators run: the cache key Go's per-infoschema row-decode metadata is
+    /// keyed on (a schema version that DDL moves and DML never does).
+    #[must_use]
+    pub fn metadata_version(&self) -> u64 {
+        self.metadata_version
+    }
+
+    fn bump_metadata_version(&mut self) {
+        self.metadata_version += 1;
     }
 
     /// Hands out the next TSO -- PD's shape (`now_ms << 18`), strictly
@@ -1006,6 +1040,7 @@ impl Catalog {
     /// # Panics
     /// Never: the schema is created just above when it is missing.
     pub fn register_mem_in(&mut self, database: &str, name: &str, table: MemTable) {
+        self.bump_metadata_version();
         let key = database.to_lowercase();
         if !self.databases.contains_key(&key) {
             self.next_database_id += 1;
@@ -1051,6 +1086,7 @@ impl Catalog {
         name: &str,
         table: KvTable,
     ) -> Result<(), DriverError> {
+        self.bump_metadata_version();
         self.register_in(database, name, TableEntry::Kv(table))
     }
 
@@ -1076,6 +1112,7 @@ impl Catalog {
         name: &str,
         table: KvTable,
     ) -> Result<(), DriverError> {
+        self.bump_metadata_version();
         let folded_database = database.to_lowercase();
         let folded_name = name.to_lowercase();
         let schema = self.databases.get_mut(&folded_database).ok_or_else(|| {
@@ -1100,6 +1137,7 @@ impl Catalog {
     /// its `DBInfo` by value) and this tier cannot, which is the one
     /// documented gap in the overlay.
     pub fn attach_local_temporary_tables(&mut self, tables: Vec<(String, String, KvTable)>) {
+        self.bump_metadata_version();
         for (database, name, table) in tables {
             let Some(schema) = self.databases.get_mut(&database) else {
                 continue;
@@ -1122,6 +1160,7 @@ impl Catalog {
     /// that dropped the temporary table and created a permanent one under the
     /// same name keeps the new table rather than the resurrected old one.
     pub fn take_local_temporary_tables(&mut self) -> Vec<(String, String, KvTable)> {
+        self.bump_metadata_version();
         let mut slots = Vec::new();
         for (folded_database, schema) in &self.databases {
             for (folded_name, entry) in &schema.tables {
@@ -1204,6 +1243,7 @@ impl Catalog {
         name: &str,
         view: ViewDef,
     ) -> Result<(), DriverError> {
+        self.bump_metadata_version();
         self.register_in(database, name, TableEntry::View(view))
     }
 
@@ -1243,6 +1283,7 @@ impl Catalog {
         name: &str,
         sequence: SequenceDef,
     ) -> Result<(), DriverError> {
+        self.bump_metadata_version();
         self.register_in(database, name, TableEntry::Sequence(sequence))
     }
 

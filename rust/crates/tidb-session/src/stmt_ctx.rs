@@ -368,7 +368,11 @@ impl Session {
         let Ok(catalog) = self.catalog.lock() else {
             return Rc::default();
         };
-        let version = catalog.version();
+        // Keyed on the METADATA counter, not the mutation counter: Go's
+        // row-decode metadata is cached per infoschema version, which DDL
+        // moves and DML never does. Keying on `version()` here would rebuild
+        // this snapshot on every write statement.
+        let version = catalog.metadata_version();
         if let Some((cached_version, snapshot)) = self.tidb_decode_key_cache.borrow().as_ref() {
             if *cached_version == version {
                 return Rc::clone(snapshot);
