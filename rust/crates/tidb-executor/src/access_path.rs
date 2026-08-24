@@ -1460,6 +1460,14 @@ impl IndexRangeSourceExec {
                             ))
                         })?
                 };
+                // A fully-filtered batch leaves no rows for this window: the
+                // next handle batch must be collected NOW, or the emission
+                // below indexes an empty vector. The stream-exhaustion arm
+                // inside the refill still terminates the scan.
+                if self.lookup_rows.is_empty() {
+                    self.lookup_row_at = 0;
+                    continue;
+                }
             }
             let row = std::mem::take(&mut self.lookup_rows[self.lookup_row_at]);
             let handle = self
