@@ -49,13 +49,15 @@ const (
 	// baseDataSizeForExport is how much data one reference (baseCores-core) node
 	// clears within exportTargetSeconds at exportPodBandwidth.
 	baseDataSizeForExport = float64(exportPodBandwidth) * exportTargetSeconds
-	// ExportDumpConcurrencyMultiplier and ExportSchemaConcurrencyMultiplier
-	// mirror pkg/dxf/export's countCapMultiplier/schemaConcurrencyMultiplier:
-	// the Dump and Schema step per-node small-chunk concurrency is this times
-	// allocated slots. They live here, not in pkg/dxf/export, because export
-	// imports this package, so the reverse would cycle; pkg/dxf/export
-	// references these instead of defining its own copies.
-	ExportDumpConcurrencyMultiplier   = 4
+	// ExportDumpConcurrencyMultiplier mirrors pkg/dxf/export's
+	// countCapMultiplier: the Dump step's per-node small-chunk concurrency is
+	// this times allocated slots. It lives here, not in pkg/dxf/export,
+	// because export imports this package, so the reverse would cycle;
+	// pkg/dxf/export references this instead of defining its own copy.
+	ExportDumpConcurrencyMultiplier = 4
+	// ExportSchemaConcurrencyMultiplier is ExportDumpConcurrencyMultiplier's
+	// counterpart for the Schema step, mirroring pkg/dxf/export's
+	// schemaConcurrencyMultiplier.
 	ExportSchemaConcurrencyMultiplier = 8
 	// baseTableCountForExport is how many small (latency-bound) table chunks
 	// one reference (baseCores-core) node's Dump and Schema phases together
