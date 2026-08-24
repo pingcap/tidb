@@ -1,0 +1,221 @@
+syntax = "proto3";
+package coprocessor;
+
+import "errorpb.proto";
+import "gogoproto/gogo.proto";
+import "kvrpcpb.proto";
+import "metapb.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+// [start, end)
+message KeyRange {
+  bytes start = 1;
+  bytes end = 2;
+}
+
+// KeyRange with an attached read_ts (version).
+// It is used by TiCI versioned lookup. Callers must ensure `range` is a point range.
+message VersionedKeyRange {
+  KeyRange range = 1;
+  uint64 read_ts = 2;
+}
+
+message Request {
+  kvrpcpb.Context context = 1;
+  int64 tp = 2;
+  bytes data = 3;
+  uint64 start_ts = 7;
+  repeated KeyRange ranges = 4;
+
+  // If cache is enabled, TiKV returns cache hit instead of data if
+  // its last version matches this `cache_if_match_version`.
+  bool is_cache_enabled = 5;
+  uint64 cache_if_match_version = 6;
+  // Any schema-ful storage to validate schema correctness if necessary.
+  int64 schema_ver = 8;
+  bool is_trace_enabled = 9;
+  // paging_size is 0 when it's disabled, otherwise, it should be a positive number.
+  uint64 paging_size = 10;
+  // tasks stores the batched coprocessor tasks sent to the same tikv store.
+  repeated StoreBatchTask tasks = 11;
+  uint64 connection_id = 12; // This is the session id between a client and tidb
+  string connection_alias = 13; // This is the session alias between a client and tidb
+
+  repeated TableShardInfos table_shard_infos = 14; // Shard infos for FTS index, used by TiFlash reading TiCI.
+  // Versioned point ranges for TiCI lookup.
+  // When `versioned_ranges` is non-empty, all `versioned_ranges[i].range` must be point range.
+  repeated VersionedKeyRange versioned_ranges = 15;
+  // max_keys_read is 0 when disabled, otherwise limits the number of storage
+  // engine keys scanned per coprocessor task. It is a per-task hard ceiling
+  // applied uniformly to any coprocessor request, used to bound worst-case
+  // scan amplification regardless of how the request is paginated.
+  uint64 max_keys_read = 16;
+  // paging_size_bytes is 0 when disabled, otherwise it should be a positive number.
+  // When set, within a paged coprocessor request, TiKV stops scanning the current
+  // page once accumulated scanned bytes reach this limit and returns the page
+  // boundary so the next page can resume from there.
+  //
+  // Unlike max_keys_read, which is a per-task hard ceiling on keys scanned,
+  // paging_size_bytes is an independent rate-control dimension intended for
+  // Resource Control: it bounds the byte volume of a single page so that RU
+  // pre-charging in PD's resource controller can be performed at byte
+  // granularity, complementing the existing row-count-based paging
+  // (paging_size). The two fields target different scenarios and may be set
+  // independently.
+  uint64 paging_size_bytes = 17;
+}
+
+message Response {
+  bytes data = 1 [
+    (gogoproto.customtype) = "github.com/pingcap/kvproto/pkg/sharedbytes.SharedBytes",
+    (gogoproto.nullable) = false
+  ];
+  errorpb.Error region_error = 2;
+  kvrpcpb.LockInfo locked = 3;
+  string other_error = 4;
+  KeyRange range = 5;
+
+  // This field is always filled for compatibility consideration. However
+  // newer TiDB should respect `exec_details_v2` field instead.
+  kvrpcpb.ExecDetails exec_details = 6;
+  // This field is provided in later versions, containing more detailed
+  // information.
+  kvrpcpb.ExecDetailsV2 exec_details_v2 = 11;
+
+  bool is_cache_hit = 7;
+  uint64 cache_last_version = 8;
+  bool can_be_cached = 9;
+
+  reserved 10;
+
+  // Contains the latest buckets version of the region.
+  // Clients should query PD to update buckets in cache if its is stale.
+  uint64 latest_buckets_version = 12;
+
+  // StoreBatchTaskResponse is the collection of batch task responses.
+  repeated StoreBatchTaskResponse batch_responses = 13;
+}
+
+message RegionInfo {
+  uint64 region_id = 1;
+  metapb.RegionEpoch region_epoch = 2;
+  repeated KeyRange ranges = 3;
+}
+
+message ShardInfo {
+  uint64 shard_id = 1;
+  uint64 shard_epoch = 2;
+  repeated KeyRange ranges = 3;
+}
+
+message TableShardInfos {
+  // The executor ID is used to identify the tici executor.
+  string executor_id = 1;
+  // The shard_infos contains the shard information for each tici executor.
+  repeated ShardInfo shard_infos = 2;
+}
+
+message TiCIEstimateCountRequest {
+  kvrpcpb.Context context = 1;
+  uint64 start_ts = 2;
+  int64 table_id = 3;
+  int64 index_id = 4;
+  bytes fts_query_info = 5;
+  string time_zone_name = 6;
+  int64 time_zone_offset = 7;
+  repeated ShardInfo shard_infos = 8;
+}
+
+message TiCIEstimateCountResponse {
+  uint64 est_count = 1;
+  string other_error = 2;
+}
+
+message TableRegions {
+  int64 physical_table_id = 1;
+  repeated RegionInfo regions = 2;
+}
+
+message BatchRequest {
+  kvrpcpb.Context context = 1;
+  int64 tp = 2;
+  bytes data = 3;
+  repeated RegionInfo regions = 4;
+  uint64 start_ts = 5;
+  // Any schema-ful storage to validate schema correctness if necessary.
+  int64 schema_ver = 6;
+  // Used for partition table scan
+  repeated TableRegions table_regions = 7;
+  string log_id = 8;
+  uint64 connection_id = 9; // This is the session id between a client and tidb
+  string connection_alias = 10; // This is the session alias between a client and tidb
+  repeated TableShardInfos table_shard_infos = 11; // Shard infos for FTS index, used by TiFlash reading TiCI.
+}
+
+message BatchResponse {
+  bytes data = 1 [
+    (gogoproto.customtype) = "github.com/pingcap/kvproto/pkg/sharedbytes.SharedBytes",
+    (gogoproto.nullable) = false
+  ];
+  string other_error = 2;
+  kvrpcpb.ExecDetails exec_details = 3;
+  repeated metapb.Region retry_regions = 4;
+  repeated ShardInfo retry_shards = 5;
+}
+
+message StoreBatchTask {
+  uint64 region_id = 1;
+  metapb.RegionEpoch region_epoch = 2;
+  metapb.Peer peer = 3;
+  repeated KeyRange ranges = 4;
+  uint64 task_id = 5;
+  // Versioned point ranges for TiCI lookup.
+  // When `versioned_ranges` is non-empty, all `versioned_ranges[i].range` must be point range.
+  repeated VersionedKeyRange versioned_ranges = 6;
+  // Bucket metadata version used to validate this child task.
+  uint64 buckets_version = 7;
+}
+
+message StoreBatchTaskResponse {
+  bytes data = 1 [
+    (gogoproto.customtype) = "github.com/pingcap/kvproto/pkg/sharedbytes.SharedBytes",
+    (gogoproto.nullable) = false
+  ];
+  errorpb.Error region_error = 2;
+  kvrpcpb.LockInfo locked = 3;
+  string other_error = 4;
+  uint64 task_id = 5;
+  kvrpcpb.ExecDetailsV2 exec_details_v2 = 6;
+}
+
+message DelegateRequest {
+  kvrpcpb.Context context = 1;
+  uint64 start_ts = 2;
+  repeated KeyRange ranges = 3;
+  // Used for avoid redundant mem-table copying.
+  // If the sequence is the same, tikv-server will not return the mem-table.
+  uint64 mem_table_sequence = 4;
+
+  // Used for avoid redundant snapshot copying.
+  // If the sequence is the same, tikv-server will not return the snapshot.
+  uint64 snapshot_sequence = 5;
+}
+
+message DelegateResponse {
+  bytes mem_table_data = 1;
+  bytes snapshot = 2;
+  errorpb.Error region_error = 3;
+  kvrpcpb.LockInfo locked = 4;
+  string other_error = 5;
+  // Used for avoid redundant mem-table copying.
+  uint64 mem_table_sequence = 6;
+}

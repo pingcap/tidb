@@ -8,3 +8,9 @@ workstreams/integration-receipt.json
 
 # Go sources read as the behavioural oracle; fetched, never committed.
 .oracle/
+
+# Scratch git clone used by scripts/sync-tikv-client-rs.sh to fetch upstream
+# ngaut/client-rust and diff/rsync it into the tracked third_party/tikv-client-rs/
+# copy. Never committed; third_party/tikv-client-rs/ itself (plain files, no
+# nested .git) is tracked normally.
+third_party/.scratch/

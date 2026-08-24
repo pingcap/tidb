@@ -1,0 +1,301 @@
+syntax = "proto3";
+package resource_manager;
+
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+service ResourceManager {
+  rpc ListResourceGroups(ListResourceGroupsRequest) returns (ListResourceGroupsResponse) {}
+
+  rpc GetResourceGroup(GetResourceGroupRequest) returns (GetResourceGroupResponse) {}
+
+  rpc AddResourceGroup(PutResourceGroupRequest) returns (PutResourceGroupResponse) {}
+
+  rpc ModifyResourceGroup(PutResourceGroupRequest) returns (PutResourceGroupResponse) {}
+
+  rpc DeleteResourceGroup(DeleteResourceGroupRequest) returns (DeleteResourceGroupResponse) {}
+
+  rpc AcquireTokenBuckets(stream TokenBucketsRequest) returns (stream TokenBucketsResponse) {}
+}
+
+// KeyspaceIDValue is a wrapper for the value of keyspace ID.
+// Because the 0 value is a valid keyspace ID, we need to use a wrapper to distinguish it from the null keyspace ID.
+message KeyspaceIDValue {
+  uint32 value = 1;
+}
+
+message ListResourceGroupsRequest {
+  bool with_ru_stats = 1;
+  // There're two cases for this field:
+  //   - If the keyspace ID is not set, it means this may be a message from an older version.
+  //     To maintain compatibility, we will treat it as a null keyspace ID, which is uint32.Max.
+  //   - If the keyspace ID is set to a valid value, the listed resource groups will be filtered
+  //     by the given keyspace ID.
+  KeyspaceIDValue keyspace_id = 2;
+}
+
+message ListResourceGroupsResponse {
+  Error error = 1;
+  repeated ResourceGroup groups = 2;
+}
+
+message GetResourceGroupRequest {
+  string resource_group_name = 1;
+  bool with_ru_stats = 2;
+  // There're two cases for this field:
+  //   - If the keyspace ID is not set, it means this may be a message from an older version.
+  //     To maintain compatibility, we will treat it as a null keyspace ID, which is uint32.Max.
+  //   - If the keyspace ID is set to a valid value, it will try to get the resource group within
+  //     the given keyspace ID.
+  KeyspaceIDValue keyspace_id = 3;
+}
+
+message GetResourceGroupResponse {
+  Error error = 1;
+  ResourceGroup group = 2;
+}
+
+message DeleteResourceGroupRequest {
+  string resource_group_name = 1;
+  // There're two cases for this field:
+  //   - If the keyspace ID is not set, it means this may be a message from an older version.
+  //     To maintain compatibility, we will treat it as a null keyspace ID, which is uint32.Max.
+  //   - If the keyspace ID is set to a valid value, it will try to delete the resource group within
+  //     the given keyspace ID.
+  KeyspaceIDValue keyspace_id = 2;
+}
+
+message DeleteResourceGroupResponse {
+  Error error = 1;
+  string body = 2;
+}
+
+message PutResourceGroupRequest {
+  ResourceGroup group = 1;
+}
+
+message PutResourceGroupResponse {
+  Error error = 1;
+  string body = 2;
+}
+
+message TokenBucketsRequest {
+  repeated TokenBucketRequest requests = 1;
+  uint64 target_request_period_ms = 2;
+  uint64 client_unique_id = 3;
+}
+
+message TokenBucketRequest {
+  message RequestRU {
+    repeated RequestUnitItem request_r_u = 1;
+  }
+  message RequestRawResource {
+    repeated RawResourceItem request_raw_resource = 1;
+  }
+
+  string resource_group_name = 1;
+  oneof request {
+    // RU mode, group settings with WRU/RRU etc resource abstract unit.
+    RequestRU ru_items = 2;
+    // Raw mode, group settings with CPU/IO etc resource unit.
+    RequestRawResource raw_resource_items = 3;
+  }
+  // Aggregate statistics in group level.
+  Consumption consumption_since_last_request = 4;
+  // label background request.
+  bool is_background = 5;
+  bool is_tiflash = 6;
+  // There're two cases for this field:
+  //   - If the keyspace ID is not set, it means this may be a message from an older version.
+  //     To maintain compatibility, we will treat it as a null keyspace ID, which is uint32.Max.
+  //   - If the keyspace ID is set to a valid value, it will try to request the token bucket from
+  //     the resource group within the given keyspace ID.
+  KeyspaceIDValue keyspace_id = 7;
+}
+
+message TokenBucketsResponse {
+  Error error = 1;
+  repeated TokenBucketResponse responses = 2;
+}
+
+message TokenBucketResponse {
+  string resource_group_name = 1;
+  // RU mode
+  repeated GrantedRUTokenBucket granted_r_u_tokens = 2;
+  // Raw mode
+  repeated GrantedRawResourceTokenBucket granted_resource_tokens = 3;
+  // There're two cases for this field:
+  //   - If the keyspace ID is not set, it means this may be a message from an older version,
+  //     which can be safely ignored to keep compatibility.
+  //   - If the keyspace ID is set to a valid value, it means this response is from the resource
+  //     group within this keyspace ID.
+  KeyspaceIDValue keyspace_id = 4;
+}
+
+message GrantedRUTokenBucket {
+  RequestUnitType type = 1;
+  TokenBucket granted_tokens = 2;
+  int64 trickle_time_ms = 3;
+}
+
+message GrantedRawResourceTokenBucket {
+  RawResourceType type = 1;
+  TokenBucket granted_tokens = 2;
+  int64 trickle_time_ms = 3;
+}
+
+enum RequestUnitType {
+  RU = 0;
+}
+
+enum RawResourceType {
+  CPU = 0;
+  IOReadFlow = 1;
+  IOWriteFlow = 2;
+}
+
+message Consumption {
+  double r_r_u = 1;
+  double w_r_u = 2;
+  double read_bytes = 3;
+  double write_bytes = 4;
+  double total_cpu_time_ms = 5;
+  double sql_layer_cpu_time_ms = 6;
+  double kv_read_rpc_count = 7;
+  double kv_write_rpc_count = 8;
+  uint64 read_cross_az_traffic_bytes = 9;
+  uint64 write_cross_az_traffic_bytes = 10;
+  // RUv2 is an experimental v2 RU calculation.
+  // For now it only records the consumption without actual token deduction.
+  double tikv_r_u_v2 = 11;
+  double tidb_r_u_v2 = 12;
+  // tiflash_r_u_v2 equals tiflash RRU + tiflash WRU.
+  double tiflash_r_u_v2 = 13;
+}
+
+message RequestUnitItem {
+  RequestUnitType type = 1;
+  double value = 2;
+}
+
+message RawResourceItem {
+  RawResourceType type = 1;
+  double value = 2;
+}
+
+enum GroupMode {
+  Unknown = 0;
+  RUMode = 1;
+  RawMode = 2;
+}
+
+// ResourceGroup the settings definitions.
+message ResourceGroup {
+  string name = 1;
+  GroupMode mode = 2;
+  // Used in RU mode, group settings with WRU/RRU etc resource abstract unit.
+  GroupRequestUnitSettings r_u_settings = 3;
+  // Used in Raw mode, group settings with CPU/IO etc resource unit.
+  GroupRawResourceSettings raw_resource_settings = 4;
+  // The task scheduling priority
+  uint32 priority = 5;
+  // Runaway queries settings
+  RunawaySettings runaway_settings = 6;
+  // Background task control settings.
+  BackgroundSettings background_settings = 7;
+  // RU consumption statistics.
+  Consumption RUStats = 8;
+  // The keyspace ID that the resource group belongs to.
+  // There're two cases for this field:
+  //   - If the keyspace ID is not set, it means this may be a message from an older version.
+  //     To maintain compatibility, we will treat it as a null keyspace ID, which is uint32.Max.
+  //   - If the keyspace ID is set to a valid value, it will directly be used.
+  KeyspaceIDValue keyspace_id = 9;
+}
+
+message GroupRequestUnitSettings {
+  TokenBucket r_u = 1;
+}
+
+message GroupRawResourceSettings {
+  TokenBucket cpu = 1;
+  TokenBucket io_read = 2;
+  TokenBucket io_write = 3;
+}
+
+message TokenBucket {
+  TokenLimitSettings settings = 1;
+  // Once used to reconfigure, the tokens is delta tokens.
+  double tokens = 2;
+}
+
+message TokenLimitSettings {
+  uint64 fill_rate = 1;
+  int64 burst_limit = 2;
+  double max_tokens = 3;
+}
+
+message Error {
+  string message = 1;
+}
+
+enum RunawayAction {
+  NoneAction = 0;
+  DryRun = 1; // do nothing
+  CoolDown = 2; // deprioritize the task
+  Kill = 3; // kill the task
+  SwitchGroup = 4; // switch the task to another group
+}
+
+enum RunawayWatchType {
+  NoneWatch = 0;
+  Exact = 1;
+  Similar = 2;
+  Plan = 3;
+}
+
+message RunawayRule {
+  uint64 exec_elapsed_time_ms = 1;
+  int64 processed_keys = 2;
+  int64 request_unit = 3;
+}
+
+message RunawayWatch {
+  // how long would the watch last
+  int64 lasting_duration_ms = 1;
+  RunawayWatchType type = 2;
+}
+
+message RunawaySettings {
+  RunawayRule rule = 1;
+  RunawayAction action = 2;
+  RunawayWatch watch = 3;
+  // When the runaway action is `SwitchGroup`,
+  // this field will be used to indicate which group to switch.
+  string switch_group_name = 4;
+}
+
+message BackgroundSettings {
+  // background task types.
+  repeated string job_types = 1;
+  // the percentage limit of total resource(cpu/io) that background tasks can use.
+  uint64 utilization_limit = 2;
+}
+
+message Participant {
+  // name is the unique name of the resource manager participant.
+  string name = 1;
+  // id is the unique id of the resource manager participant.
+  uint64 id = 2;
+  // listen_urls is the serivce endpoint list in the url format.
+  // listen_urls[0] is primary service endpoint.
+  repeated string listen_urls = 3;
+}

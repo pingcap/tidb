@@ -1,0 +1,152 @@
+syntax = "proto3";
+package configpb;
+
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "rustproto.proto";
+
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+service Config {
+  rpc Create(CreateRequest) returns (CreateResponse) {}
+  rpc GetAll(GetAllRequest) returns (GetAllResponse) {}
+  rpc Get(GetRequest) returns (GetResponse) {
+    option (google.api.http) = {get: "/component"};
+  }
+  rpc Update(UpdateRequest) returns (UpdateResponse) {
+    option (google.api.http) = {
+      post: "/component"
+      body: "*"
+    };
+  }
+  rpc Delete(DeleteRequest) returns (DeleteResponse) {
+    option (google.api.http) = {delete: "/component"};
+  }
+}
+
+enum StatusCode {
+  UNKNOWN = 0;
+  OK = 1;
+  WRONG_VERSION = 2;
+  NOT_CHANGE = 3;
+  COMPONENT_NOT_FOUND = 4;
+  COMPONENT_ID_NOT_FOUND = 5;
+}
+
+message Status {
+  StatusCode code = 1;
+  string message = 2;
+}
+
+// The version is used to tell the configuration which can be shared
+// or not apart.
+// Global version represents the version of these configuration
+// which can be shared, each kind of component only have one.
+// For local version, every component will have one to represent
+// the version of these configuration which cannot be shared.
+message Version {
+  uint64 local = 1;
+  uint64 global = 2;
+}
+
+message Local {
+  string component_id = 1;
+}
+
+message Global {
+  string component = 1;
+}
+
+message ConfigKind {
+  oneof kind {
+    Local local = 1;
+    Global global = 2;
+  }
+}
+
+message ConfigEntry {
+  string name = 1;
+  string value = 2;
+}
+
+message LocalConfig {
+  Version version = 1;
+  string component = 2;
+  string component_id = 3;
+  string config = 4;
+}
+
+message Header {
+  uint64 cluster_id = 1;
+}
+
+message CreateRequest {
+  Header header = 1;
+  Version version = 2;
+  string component = 3;
+  string component_id = 4;
+  string config = 5;
+}
+
+message CreateResponse {
+  Header header = 1;
+  Status status = 2;
+  Version version = 3;
+  string config = 4;
+}
+
+message GetAllRequest {
+  Header header = 1;
+}
+
+message GetAllResponse {
+  Header header = 1;
+  Status status = 2;
+  repeated LocalConfig local_configs = 3;
+}
+
+message GetRequest {
+  Header header = 1;
+  Version version = 2;
+  string component = 3;
+  string component_id = 4;
+}
+
+message GetResponse {
+  Header header = 1;
+  Status status = 2;
+  Version version = 3;
+  string config = 4;
+}
+
+message UpdateRequest {
+  Header header = 1;
+  Version version = 2;
+  ConfigKind kind = 3;
+  repeated ConfigEntry entries = 4;
+}
+
+message UpdateResponse {
+  Header header = 1;
+  Status status = 2;
+  Version version = 3;
+  string config = 4;
+}
+
+message DeleteRequest {
+  Header header = 1;
+  Version version = 2;
+  ConfigKind kind = 3;
+}
+
+message DeleteResponse {
+  Header header = 1;
+  Status status = 2;
+  Version version = 3;
+}

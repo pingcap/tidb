@@ -1,0 +1,8 @@
+[resolver]
+incompatible-rust-versions = "fallback"
+
+[build]
+# The parallel compiler frontend: type- and borrow-checking a crate across
+# threads rather than one core per crate. Nightly-only, which is what
+# `rust-toolchain.toml` pins the channel for.
+rustflags = ["-Zthreads=8"]

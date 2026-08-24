@@ -1,0 +1,82 @@
+syntax = "proto3";
+package deadlock;
+
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+message WaitForEntriesRequest {}
+
+message WaitForEntriesResponse {
+  repeated WaitForEntry entries = 1 [(gogoproto.nullable) = false];
+}
+
+message WaitForEntry {
+  // The transaction id that is waiting.
+  uint64 txn = 1;
+  // The transaction id that is being waited for.
+  uint64 wait_for_txn = 2;
+  // The hash value of the key is being waited for.
+  uint64 key_hash = 3;
+  // The key the current txn is trying to lock.
+  bytes key = 4;
+  // The tag came from the lock request's context.
+  bytes resource_group_tag = 5;
+  // Milliseconds it has been waits.
+  uint64 wait_time = 6;
+}
+
+enum DeadlockRequestType {
+  Detect = 0;
+  // CleanUpWaitFor cleans a single entry the transaction is waiting.
+  CleanUpWaitFor = 1;
+  // CleanUp cleans all entries the transaction is waiting.
+  CleanUp = 2;
+}
+
+message ReplaceLockByKeyItem {
+  uint64 key_hash = 1;
+  bytes key = 2;
+  uint64 old_lock_ts = 3;
+  uint64 new_lock_ts = 4;
+}
+
+message ReplaceLocksByKeysRequest {
+  repeated ReplaceLockByKeyItem items = 1;
+}
+
+message DeadlockRequest {
+  DeadlockRequestType tp = 1;
+  WaitForEntry entry = 2 [(gogoproto.nullable) = false];
+  ReplaceLocksByKeysRequest replace_locks_by_keys = 3;
+}
+
+message DeadlockResponse {
+  // The same entry sent by DeadlockRequest, identifies the sender.
+  WaitForEntry entry = 1 [(gogoproto.nullable) = false];
+  // The key hash of the lock that is hold by the waiting transaction. The hash of the `deadlock_key` field.
+  uint64 deadlock_key_hash = 2;
+  // The other entries of the dead lock circle. The current entry is in `entry` field and  not
+  // included in this field.
+  repeated WaitForEntry wait_chain = 3;
+  // The key of the lock that is hold by the waiting transaction.
+  bytes deadlock_key = 4;
+}
+
+service Deadlock {
+  // Get local wait for entries, should be handle by every node.
+  // The owner should sent this request to all members to build the complete wait for graph.
+  rpc GetWaitForEntries(WaitForEntriesRequest) returns (WaitForEntriesResponse) {}
+
+  // Detect should only sent to the owner. only be handled by the owner.
+  // The DeadlockResponse is sent back only if there is deadlock detected.
+  // CleanUpWaitFor and CleanUp doesn't return responses.
+  rpc Detect(stream DeadlockRequest) returns (stream DeadlockResponse) {}
+}

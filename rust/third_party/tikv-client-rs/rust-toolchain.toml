@@ -1,0 +1,12 @@
+# Pinned NIGHTLY, for the parallel compiler frontend (`-Zthreads`), which is
+# nightly-only and is configured in `.cargo/config.toml`. Measured on the
+# sibling tidb/rust workspace: ~30% off `cargo check` and ~15% off a release
+# build, while nightly on its OWN was no faster at all -- so the flag and the
+# channel belong together.
+#
+# The DATE is pinned deliberately: a floating `nightly` would rebuild the
+# world whenever the channel moved and could break the tree on a compiler
+# regression. Bump it on purpose, with the tests green.
+[toolchain]
+channel = "nightly-2026-08-22"
+components = ["rustfmt", "clippy"]

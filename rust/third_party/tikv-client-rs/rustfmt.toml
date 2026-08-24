@@ -1,0 +1,14 @@
+edition = "2021"
+reorder_imports = true
+
+# Those options are disabled for not supported in stable rust.
+# We should enable them back once stabilized.
+#
+# version = "Two"
+# imports_granularity = "Item"
+# group_imports = "StdExternalCrate"
+# where_single_line = true
+# trailing_comma = "Vertical"
+# overflow_delimited_expr = true
+# format_code_in_doc_comments = true
+# normalize_comments = true

@@ -1,0 +1,85 @@
+syntax = "proto3";
+package recover_data;
+
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+// request to read region meata from a store
+message ReadRegionMetaRequest {
+  uint64 store_id = 1;
+}
+
+message Error {
+  string msg = 1;
+}
+
+message RegionMeta {
+  uint64 region_id = 1;
+  uint64 peer_id = 2;
+  uint64 last_log_term = 3;
+  uint64 last_index = 4;
+  uint64 commit_index = 5;
+  uint64 version = 6;
+  bool tombstone = 7; //reserved, it may be used in late phase for peer check
+  bytes start_key = 8;
+  bytes end_key = 9;
+}
+
+// command to store for recover region
+message RecoverRegionRequest {
+  uint64 region_id = 1;
+  bool as_leader = 2; // force region_id as leader
+  bool tombstone = 3; // set Peer to tombstoned in late phase
+}
+
+message RecoverRegionResponse {
+  Error error = 1;
+  uint64 store_id = 2;
+}
+
+// wait apply to last index
+message WaitApplyRequest {
+  uint64 store_id = 1;
+}
+
+message WaitApplyResponse {
+  Error error = 1;
+}
+
+// resolve data by resolved_ts
+message ResolveKvDataRequest {
+  uint64 resolved_ts = 1;
+}
+
+message ResolveKvDataResponse {
+  Error error = 1;
+  uint64 store_id = 2;
+  uint64 resolved_key_count = 3; // reserved for summary of restore
+  // cursor of delete key.commit_ts, reserved for progress of restore
+  // progress is (current_commit_ts - resolved_ts) / (backup_ts - resolved_ts) x 100%
+  uint64 current_commit_ts = 4;
+}
+
+// a recovery workflow likes
+// 1. BR read ReadRegionMeta to get all region meta
+// 2. BR send recover region to tikv, e.g assign leader and wait leader apply to last index
+// 3. BR wait all regions in tikv to apply to last index (no write during the recovery)
+// 4. BR resolved kv data
+service RecoverData {
+  // read region meta to ready region meta
+  rpc ReadRegionMeta(ReadRegionMetaRequest) returns (stream RegionMeta) {}
+  // execute the recovery command
+  rpc RecoverRegion(stream RecoverRegionRequest) returns (RecoverRegionResponse) {}
+  // wait all region apply to last index
+  rpc WaitApply(WaitApplyRequest) returns (WaitApplyResponse) {}
+  // execute delete data from kv db
+  rpc ResolveKvData(ResolveKvDataRequest) returns (stream ResolveKvDataResponse) {}
+}

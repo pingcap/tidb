@@ -1,0 +1,94 @@
+syntax = "proto3";
+package diagnosticspb;
+
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+// Diagnostics service for TiDB cluster components.
+service Diagnostics {
+  // Searchs log in the target node
+  rpc search_log(SearchLogRequest) returns (stream SearchLogResponse) {}
+  // Retrieves server info in the target node
+  rpc server_info(ServerInfoRequest) returns (ServerInfoResponse) {}
+}
+
+enum LogLevel {
+  UNKNOWN = 0;
+  Debug = 1;
+  Info = 2;
+  Warn = 3;
+  Trace = 4;
+  Critical = 5;
+  Error = 6;
+}
+
+message SearchLogRequest {
+  enum Target {
+    Normal = 0;
+    Slow = 1;
+  }
+  int64 start_time = 1;
+  int64 end_time = 2;
+  repeated LogLevel levels = 3;
+  // We use a string array to represent multiple CNF pattern sceniaor like:
+  // SELECT * FROM t WHERE c LIKE '%s%' and c REGEXP '.*a.*' because
+  // Golang and Rust don't support perl-like (?=re1)(?=re2)
+  repeated string patterns = 4;
+  Target target = 5;
+}
+
+message SearchLogResponse {
+  repeated LogMessage messages = 1;
+}
+
+message LogMessage {
+  int64 time = 1;
+  LogLevel level = 2;
+  string message = 3;
+}
+
+enum ServerInfoType {
+  All = 0;
+  HardwareInfo = 1;
+  SystemInfo = 2;
+  LoadInfo = 3;
+}
+
+message ServerInfoRequest {
+  ServerInfoType tp = 1;
+}
+
+message ServerInfoPair {
+  string key = 1;
+  string value = 2;
+}
+
+message ServerInfoItem {
+  // cpu, memory, disk, network ...
+  string tp = 1;
+  // eg. network: lo1/eth0, cpu: core1/core2, disk: sda1/sda2
+  string name = 2;
+  // all key-value pairs for specified item, e.g:
+  // ServerInfoItem {
+  //     tp = "network"
+  //     name = "eth0"
+  //     paris = [
+  //         ServerInfoPair { key = "readbytes", value = "4k"},
+  //         ServerInfoPair { key = "writebytes", value = "1k"},
+  //     ]
+  // }
+  repeated ServerInfoPair pairs = 3;
+}
+
+message ServerInfoResponse {
+  repeated ServerInfoItem items = 1;
+}

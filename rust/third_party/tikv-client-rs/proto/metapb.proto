@@ -1,0 +1,161 @@
+syntax = "proto3";
+package metapb;
+
+import "encryptionpb.proto";
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+message Cluster {
+  uint64 id = 1;
+  // max peer count for a region.
+  // pd will do the auto-balance if region peer count mismatches.
+  uint32 max_peer_count = 2;
+  // more attributes......
+}
+
+enum StoreState {
+  Up = 0;
+  Offline = 1;
+  Tombstone = 2;
+}
+
+// NodeState is going to replace StoreState to make the state concept more clear.
+// "Up" is devided into "Preparing" and "Serving" stages so that we can better describe the online process.
+// "Removing" is just like previous `Offline` which is more accurate.
+// "Removed" has the same meaning with `Tombstone`.
+enum NodeState {
+  Preparing = 0;
+  Serving = 1;
+  Removing = 2;
+  Removed = 3;
+}
+
+// Case insensitive key/value for replica constraints.
+message StoreLabel {
+  string key = 1;
+  string value = 2;
+}
+
+message Store {
+  uint64 id = 1;
+  // Address to handle client requests (kv, cop, etc.)
+  string address = 2;
+  StoreState state = 3;
+  repeated StoreLabel labels = 4;
+  string version = 5;
+  // Address to handle peer requests (raft messages from other store).
+  // Empty means same as address.
+  string peer_address = 6;
+  // Status address provides the HTTP service for external components
+  string status_address = 7;
+  string git_hash = 8;
+  // The start timestamp of the current store
+  int64 start_timestamp = 9;
+  string deploy_path = 10;
+  // The last heartbeat timestamp of the store.
+  int64 last_heartbeat = 11;
+  // If the store is physically destroyed, which means it can never up again.
+  bool physically_destroyed = 12;
+  // NodeState is used to replace StoreState which will be deprecated in the future.
+  NodeState node_state = 13;
+}
+
+message RegionEpoch {
+  // Conf change version, auto increment when add or remove peer
+  uint64 conf_ver = 1;
+  // Region version, auto increment when split or merge
+  uint64 version = 2;
+}
+
+message BucketStats {
+  // total read in bytes of each bucket
+  repeated uint64 read_bytes = 1;
+
+  // total write in bytes of each bucket
+  repeated uint64 write_bytes = 2;
+
+  // total read qps of each bucket
+  repeated uint64 read_qps = 3;
+
+  // total write qps of each bucket
+  repeated uint64 write_qps = 4;
+
+  // total read keys of each bucket
+  repeated uint64 read_keys = 5;
+
+  // total write keys of each bucket
+  repeated uint64 write_keys = 6;
+}
+
+message Buckets {
+  uint64 region_id = 1;
+
+  // A hint indicate if keys have changed.
+  uint64 version = 2;
+
+  // keys of buckets, include start/end key of region
+  repeated bytes keys = 3;
+
+  // bucket stats
+  BucketStats stats = 4;
+
+  // The period in milliseconds that stats are collected with in
+  uint64 period_in_ms = 5;
+}
+
+message BucketMeta {
+  // A hint indicate if keys have changed.
+  uint64 version = 1;
+  // keys of buckets, include start/end key of region
+  repeated bytes keys = 2;
+}
+
+message Region {
+  uint64 id = 1;
+  // Region key range [start_key, end_key).
+  bytes start_key = 2;
+  bytes end_key = 3;
+  RegionEpoch region_epoch = 4;
+  repeated Peer peers = 5;
+  // Encryption metadata for start_key and end_key. encryption_meta.iv is IV for start_key.
+  // IV for end_key is calculated from (encryption_meta.iv + len(start_key)).
+  // The field is only used by PD and should be ignored otherwise.
+  // If encryption_meta is empty (i.e. nil), it means start_key and end_key are unencrypted.
+  encryptionpb.EncryptionMeta encryption_meta = 6;
+  // The flashback state indicates whether this region is in the flashback state.
+  // TODO: only check by `flashback_start_ts` in the future. Keep for compatibility now.
+  bool is_in_flashback = 7;
+  // The start_ts that the current flashback progress is using.
+  uint64 flashback_start_ts = 8;
+}
+
+enum PeerRole {
+  // Voter -> Voter
+  Voter = 0;
+  // Learner/None -> Learner
+  Learner = 1;
+  // Learner/None -> Voter
+  IncomingVoter = 2;
+  // Voter -> Learner
+  DemotingVoter = 3;
+  // We forbid Voter -> None, it can introduce unavailability as discussed in
+  // etcd-io/etcd#7625
+  // Learner -> None can be apply directly, doesn't need to be stored as
+  // joint state.
+}
+
+message Peer {
+  uint64 id = 1;
+  uint64 store_id = 2;
+  PeerRole role = 3;
+  bool is_witness = 4;
+}

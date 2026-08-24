@@ -1,0 +1,98 @@
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+name: CI
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v1
+        with:
+          version: '3.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+      - name: make check
+        run: make check
+      - name: Catch unexpected changes in the generated code
+        run: |
+          git diff --exit-code
+
+  unit-test:
+    name: unit test
+    env:
+      CARGO_INCREMENTAL: 0
+      NEXTEST_PROFILE: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v1
+        with:
+          version: '3.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Install latest nextest release
+        uses: taiki-e/install-action@nextest
+      - name: unit test
+        run: make unit-test
+
+  integration-test:
+    name: integration test
+    strategy:
+      fail-fast: false
+      matrix:
+        case: ["integration-test-txn", "integration-test-raw"]
+    env:
+      CARGO_INCREMENTAL: 0
+      NEXTEST_PROFILE: ci
+      TIKV_VERSION: v8.5.5
+      RUST_LOG: info
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v1
+        with:
+          version: '3.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+      - name: install tiup
+        run: curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh
+      - name: start tiup playground
+        run: |
+          # use latest stable version
+          ~/.tiup/bin/tiup install tikv:${{ env.TIKV_VERSION }} pd:${{ env.TIKV_VERSION }}
+          ~/.tiup/bin/tiup playground ${{ env.TIKV_VERSION }} --mode tikv-slim --kv 3 --tag cluster --without-monitor --kv.config config/tikv.toml --pd.config config/pd.toml &
+          while :; do
+            echo "waiting cluster to be ready"
+            [[ "$(curl -I http://127.0.0.1:2379/pd/api/v1/regions 2>/dev/null | head -n 1 | cut -d$' ' -f2)" -ne "405" ]] || break
+            sleep 1
+          done
+      - name: Install latest nextest release
+        uses: taiki-e/install-action@nextest
+      - name: Integration test
+        run: MULTI_REGION=1 make ${{ matrix.case }}
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cluster-logs
+          path: |
+            ~/.tiup/data/cluster/tikv*/*.log
+            ~/.tiup/data/cluster/pd*/*.log

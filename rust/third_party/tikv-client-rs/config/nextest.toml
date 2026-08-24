@@ -1,0 +1,8 @@
+[profile.ci]
+retries = 0
+fail-fast = false
+slow-timeout = { period = "60s", terminate-after = 10 } # Timeout 10m. TODO: speed up the slow tests.
+failure-output = "final"
+
+[profile.ci.junit]
+path = "junit.xml"

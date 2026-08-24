@@ -1,0 +1,217 @@
+syntax = "proto3";
+package schedulingpb;
+
+import "gogoproto/gogo.proto";
+import "metapb.proto";
+import "pdpb.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+service Scheduling {
+  rpc StoreHeartbeat(StoreHeartbeatRequest) returns (StoreHeartbeatResponse) {}
+
+  rpc RegionHeartbeat(stream RegionHeartbeatRequest) returns (stream RegionHeartbeatResponse) {}
+
+  rpc SplitRegions(SplitRegionsRequest) returns (SplitRegionsResponse) {}
+
+  rpc ScatterRegions(ScatterRegionsRequest) returns (ScatterRegionsResponse) {}
+
+  rpc GetOperator(GetOperatorRequest) returns (GetOperatorResponse) {}
+
+  rpc AskBatchSplit(AskBatchSplitRequest) returns (AskBatchSplitResponse) {}
+
+  rpc RegionBuckets(stream RegionBucketsRequest) returns (stream RegionBucketsResponse) {}
+}
+
+message RequestHeader {
+  // cluster_id is the ID of the cluster which be sent to.
+  uint64 cluster_id = 1;
+  // sender_id is the ID of the sender server.
+  uint64 sender_id = 2;
+}
+
+message ResponseHeader {
+  // cluster_id is the ID of the cluster which sent the response.
+  uint64 cluster_id = 1;
+  Error error = 2;
+}
+
+enum ErrorType {
+  OK = 0;
+  UNKNOWN = 1;
+  NOT_BOOTSTRAPPED = 2;
+  ALREADY_BOOTSTRAPPED = 3;
+  INVALID_VALUE = 4;
+  CLUSTER_MISMATCHED = 5;
+}
+
+message Error {
+  ErrorType type = 1;
+  string message = 2;
+}
+
+message Participant {
+  // name is the unique name of the scheduling participant.
+  string name = 1;
+  // id is the unique id of the scheduling participant.
+  uint64 id = 2;
+  // listen_urls is the serivce endpoint list in the url format.
+  // listen_urls[0] is primary service endpoint.
+  repeated string listen_urls = 3;
+}
+
+message StoreHeartbeatRequest {
+  RequestHeader header = 1;
+  pdpb.StoreStats stats = 2;
+}
+
+message StoreHeartbeatResponse {
+  ResponseHeader header = 1;
+  string cluster_version = 2;
+}
+
+message RegionHeartbeatRequest {
+  RequestHeader header = 1;
+
+  metapb.Region region = 2;
+  // Leader Peer sending the heartbeat.
+  metapb.Peer leader = 3;
+  // Term is the term of raft group.
+  uint64 term = 4;
+  // Leader considers that these peers are down.
+  repeated pdpb.PeerStats down_peers = 5;
+  // Pending peers are the peers that the leader can't consider as
+  // working followers.
+  repeated metapb.Peer pending_peers = 6;
+  // Bytes read/written during this period.
+  uint64 bytes_written = 7;
+  uint64 bytes_read = 8;
+  // Keys read/written during this period.
+  uint64 keys_written = 9;
+  uint64 keys_read = 10;
+  // Approximate region size.
+  uint64 approximate_size = 11;
+  // Approximate number of keys.
+  uint64 approximate_keys = 12;
+  // QueryStats reported write query stats, and there are read query stats in store heartbeat
+  pdpb.QueryStats query_stats = 13;
+  // Actually reported time interval
+  pdpb.TimeInterval interval = 14;
+  // BucketMeta is the bucket version and keys of this region if TiKV enabled the bucket feature
+  metapb.BucketMeta bucket_meta = 15;
+}
+
+message RegionHeartbeatResponse {
+  ResponseHeader header = 1;
+
+  // ID of the region
+  uint64 region_id = 2;
+  metapb.RegionEpoch region_epoch = 3;
+  // Leader of the region at the moment of the corresponding request was made.
+  metapb.Peer target_peer = 4;
+  // Notice, Pd only allows handling reported epoch >= current pd's.
+  // Leader peer reports region status with RegionHeartbeatRequest
+  // to pd regularly, pd will determine whether this region
+  // should do ChangePeer or not.
+  // E,g, max peer number is 3, region A, first only peer 1 in A.
+  // 1. Pd region state -> Peers (1), ConfVer (1).
+  // 2. Leader peer 1 reports region state to pd, pd finds the
+  // peer number is < 3, so first changes its current region
+  // state -> Peers (1, 2), ConfVer (1), and returns ChangePeer Adding 2.
+  // 3. Leader does ChangePeer, then reports Peers (1, 2), ConfVer (2),
+  // pd updates its state -> Peers (1, 2), ConfVer (2).
+  // 4. Leader may report old Peers (1), ConfVer (1) to pd before ConfChange
+  // finished, pd stills responses ChangePeer Adding 2, of course, we must
+  // guarantee the second ChangePeer can't be applied in TiKV.
+  pdpb.ChangePeer change_peer = 5;
+  // Pd can return transfer_leader to let TiKV does leader transfer itself.
+  pdpb.TransferLeader transfer_leader = 6;
+  pdpb.Merge merge = 7;
+  // PD sends split_region to let TiKV split a region into two regions.
+  pdpb.SplitRegion split_region = 8;
+  // Multiple change peer operations atomically.
+  // Note: PD can use both ChangePeer and ChangePeerV2 at the same time
+  //       (not in the same RegionHeartbeatResponse).
+  //       Now, PD use ChangePeerV2 in following scenarios:
+  //       1. replacing peers
+  //       2. demoting voter directly
+  pdpb.ChangePeerV2 change_peer_v2 = 9;
+  pdpb.BatchSwitchWitness switch_witnesses = 10;
+  pdpb.ChangeSplit change_split = 11;
+}
+
+message ScatterRegionsRequest {
+  RequestHeader header = 1;
+  // If group is defined, the regions with the same group would be scattered as a whole group.
+  // If not defined, the regions would be scattered in a cluster level.
+  string group = 2;
+
+  // If regions_id is defined, the region_id would be ignored.
+  repeated uint64 regions_id = 3;
+  uint64 retry_limit = 4;
+  bool skip_store_limit = 5;
+}
+
+message ScatterRegionsResponse {
+  ResponseHeader header = 1;
+  uint64 finished_percentage = 2;
+  repeated uint64 failed_regions_id = 3;
+}
+
+message SplitRegionsRequest {
+  RequestHeader header = 1;
+  repeated bytes split_keys = 2;
+  uint64 retry_limit = 3;
+}
+
+message SplitRegionsResponse {
+  ResponseHeader header = 1;
+  uint64 finished_percentage = 2;
+  repeated uint64 regions_id = 3;
+}
+
+message GetOperatorRequest {
+  RequestHeader header = 1;
+  uint64 region_id = 2;
+}
+
+message GetOperatorResponse {
+  ResponseHeader header = 1;
+  uint64 region_id = 2;
+  bytes desc = 3;
+  pdpb.OperatorStatus status = 4;
+  bytes kind = 5;
+}
+
+message AskBatchSplitRequest {
+  RequestHeader header = 1;
+
+  metapb.Region region = 2;
+  uint32 split_count = 3;
+  pdpb.SplitReason reason = 4;
+}
+
+message AskBatchSplitResponse {
+  ResponseHeader header = 1;
+
+  repeated pdpb.SplitID ids = 2;
+}
+
+message RegionBucketsRequest {
+  RequestHeader header = 1;
+
+  metapb.RegionEpoch region_epoch = 2;
+  metapb.Buckets buckets = 3;
+}
+
+message RegionBucketsResponse {
+  ResponseHeader header = 1;
+}

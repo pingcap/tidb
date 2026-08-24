@@ -1,0 +1,414 @@
+syntax = "proto3";
+package raft_cmdpb;
+
+import "eraftpb.proto";
+import "errorpb.proto";
+import "gogoproto/gogo.proto";
+import "import_sstpb.proto";
+import "kvrpcpb.proto";
+import "metapb.proto";
+import "raft_serverpb.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+message GetRequest {
+  string cf = 1;
+  bytes key = 2;
+}
+
+message GetResponse {
+  bytes value = 1;
+}
+
+message PutRequest {
+  string cf = 1;
+  bytes key = 2;
+  bytes value = 3;
+}
+
+message PutResponse {}
+
+message DeleteRequest {
+  string cf = 1;
+  bytes key = 2;
+}
+
+message DeleteResponse {}
+
+message DeleteRangeRequest {
+  string cf = 1;
+  bytes start_key = 2;
+  bytes end_key = 3;
+  bool notify_only = 4;
+}
+
+message DeleteRangeResponse {}
+
+message SnapRequest {}
+
+message SnapResponse {
+  metapb.Region region = 1;
+}
+
+message PrewriteRequest {
+  bytes key = 1;
+  bytes value = 2;
+  bytes lock = 3;
+}
+
+message PrewriteResponse {}
+
+message IngestSSTRequest {
+  import_sstpb.SSTMeta sst = 1;
+}
+
+message IngestSSTResponse {}
+
+message ReadIndexRequest {
+  // In replica read, leader uses start_ts and key_ranges to check memory locks.
+  uint64 start_ts = 1;
+  repeated kvrpcpb.KeyRange key_ranges = 2;
+}
+
+message ReadIndexResponse {
+  uint64 read_index = 1;
+  // The memory lock blocking this read at the leader
+  kvrpcpb.LockInfo locked = 2;
+}
+
+enum CmdType {
+  Invalid = 0;
+  Get = 1;
+  Put = 3;
+  Delete = 4;
+  Snap = 5;
+  Prewrite = 6;
+  DeleteRange = 7;
+  IngestSST = 8;
+  ReadIndex = 9;
+}
+
+message Request {
+  CmdType cmd_type = 1;
+  GetRequest get = 2;
+  PutRequest put = 4;
+  DeleteRequest delete = 5;
+  SnapRequest snap = 6;
+  PrewriteRequest prewrite = 7;
+  DeleteRangeRequest delete_range = 8;
+  IngestSSTRequest ingest_sst = 9;
+  ReadIndexRequest read_index = 10;
+}
+
+message Response {
+  CmdType cmd_type = 1;
+  GetResponse get = 2;
+  PutResponse put = 4;
+  DeleteResponse delete = 5;
+  SnapResponse snap = 6;
+  PrewriteResponse prewrite = 7;
+  DeleteRangeResponse delte_range = 8;
+  IngestSSTResponse ingest_sst = 9;
+  ReadIndexResponse read_index = 10;
+}
+
+message ChangePeerRequest {
+  // This can be only called in internal RaftStore now.
+  eraftpb.ConfChangeType change_type = 1;
+  metapb.Peer peer = 2;
+}
+
+message ChangePeerResponse {
+  metapb.Region region = 1;
+}
+
+message ChangePeerV2Request {
+  repeated ChangePeerRequest changes = 1;
+}
+
+message ChangePeerV2Response {
+  metapb.Region region = 1;
+}
+
+message SplitRequest {
+  // This can be only called in internal RaftStore now.
+  // The split_key must be in the been splitting region.
+  bytes split_key = 1;
+  // We split the region into two, first uses the origin
+  // parent region id, and the second uses the new_region_id.
+  // We must guarantee that the new_region_id is global unique.
+  uint64 new_region_id = 2;
+  // The peer ids for the new split region.
+  repeated uint64 new_peer_ids = 3;
+  // If true, right region derive the origin region_id,
+  // left region use new_region_id.
+  // Will be ignored in batch split, use `BatchSplitRequest::right_derive` instead.
+  bool right_derive = 4 [deprecated = true];
+  // It should be false iff the region split by user key such as split table or create partion table etc,
+  // the new region's will not share the source region size, so it's region size is zero.
+  // It should be true iff the region's load reaches the threshold such as size, keys, load check etc,
+  // the new region's size will share the origin region, so it's region size is half of the source region.
+  bool share_source_region_size = 5;
+}
+
+message SplitResponse {
+  metapb.Region left = 1;
+  metapb.Region right = 2;
+}
+
+message BatchSplitRequest {
+  repeated SplitRequest requests = 1;
+  // If true, the last region derive the origin region_id,
+  // other regions use new ids.
+  bool right_derive = 2;
+  // It should be false iff the region split by user key such as split table or create partion table etc,
+  // the new region's will not share the source region size, so it's region size is zero.
+  // It should be true iff the region's load reaches the threshold such as size, keys, load check etc,
+  // the new region's size will share the origin region, so it's region size is half of the source region.
+  bool share_source_region_size = 3;
+}
+
+message BatchSplitResponse {
+  repeated metapb.Region regions = 1;
+}
+
+message CompactLogRequest {
+  uint64 compact_index = 1;
+  uint64 compact_term = 2;
+  uint64 voter_replicated_index = 3;
+}
+
+message CompactLogResponse {}
+
+message TransferLeaderRequest {
+  metapb.Peer peer = 1;
+  repeated metapb.Peer peers = 2;
+}
+
+message TransferLeaderResponse {}
+
+message ComputeHashRequest {
+  bytes context = 1;
+}
+
+message VerifyHashRequest {
+  uint64 index = 1;
+  bytes hash = 2;
+
+  bytes context = 3;
+}
+
+message VerifyHashResponse {}
+
+message PrepareMergeRequest {
+  uint64 min_index = 1;
+  metapb.Region target = 2;
+}
+
+message PrepareMergeResponse {}
+
+message PrepareFlashbackRequest {
+  // The start_ts that the current flashback progress is using.
+  uint64 start_ts = 1;
+}
+
+message PrepareFlashbackResponse {}
+
+message FinishFlashbackRequest {}
+
+message FinishFlashbackResponse {}
+
+message CommitMergeRequest {
+  metapb.Region source = 1;
+  uint64 commit = 2;
+  repeated eraftpb.Entry entries = 3;
+  // Used in v2. When it's present, `source` and `commit` will not be set.
+  raft_serverpb.RegionLocalState source_state = 4;
+  bytes source_meta = 100;
+
+  reserved 101 to 200;
+}
+
+message CommitMergeResponse {}
+
+message RollbackMergeRequest {
+  uint64 commit = 1;
+}
+
+message RollbackMergeResponse {}
+
+message SwitchWitnessRequest {
+  uint64 peer_id = 1;
+  bool is_witness = 2;
+}
+
+message BatchSwitchWitnessRequest {
+  repeated SwitchWitnessRequest switch_witnesses = 1;
+}
+
+message BatchSwitchWitnessResponse {}
+
+message UpdateGcPeerRequest {
+  repeated uint64 peer_id = 1;
+}
+
+enum AdminCmdType {
+  InvalidAdmin = 0;
+  ChangePeer = 1;
+  // Use `BatchSplit` instead.
+  Split = 2 [deprecated = true];
+  CompactLog = 3;
+  TransferLeader = 4;
+  ComputeHash = 5;
+  VerifyHash = 6;
+  PrepareMerge = 7;
+  CommitMerge = 8;
+  RollbackMerge = 9;
+  BatchSplit = 10;
+  ChangePeerV2 = 11;
+  PrepareFlashback = 12;
+  FinishFlashback = 13;
+  BatchSwitchWitness = 14;
+  // Command that updates RegionLocalState.gc_peers
+  UpdateGcPeer = 15;
+}
+
+message AdminRequest {
+  AdminCmdType cmd_type = 1;
+  ChangePeerRequest change_peer = 2;
+  SplitRequest split = 3 [deprecated = true];
+  CompactLogRequest compact_log = 4;
+  TransferLeaderRequest transfer_leader = 5;
+  VerifyHashRequest verify_hash = 6;
+  PrepareMergeRequest prepare_merge = 7;
+  CommitMergeRequest commit_merge = 8;
+  RollbackMergeRequest rollback_merge = 9;
+  BatchSplitRequest splits = 10;
+  ChangePeerV2Request change_peer_v2 = 11;
+  ComputeHashRequest compute_hash = 12;
+  PrepareFlashbackRequest prepare_flashback = 13;
+  FinishFlashbackRequest finish_flashback = 14;
+  BatchSwitchWitnessRequest switch_witnesses = 15;
+  UpdateGcPeerRequest update_gc_peers = 16;
+}
+
+message AdminResponse {
+  AdminCmdType cmd_type = 1;
+  ChangePeerResponse change_peer = 2;
+  SplitResponse split = 3 [deprecated = true];
+  CompactLogResponse compact_log = 4;
+  TransferLeaderResponse transfer_leader = 5;
+  VerifyHashResponse verify_hash = 6;
+  PrepareMergeResponse prepare_merge = 7;
+  CommitMergeResponse commit_merge = 8;
+  RollbackMergeResponse rollback_merge = 9;
+  BatchSplitResponse splits = 10;
+  ChangePeerV2Response change_peer_v2 = 11;
+  PrepareFlashbackResponse prepare_flashback = 12;
+  FinishFlashbackResponse finish_flashback = 13;
+  BatchSwitchWitnessResponse switch_witnesses = 14;
+  // UpdateGcPeer doesn't need to be responded. Avoid consuming a tag number.
+}
+
+// For get the leader of the region.
+message RegionLeaderRequest {}
+
+message RegionLeaderResponse {
+  metapb.Peer leader = 1;
+}
+
+// For getting more information of the region.
+// We add some admin operations (ChangePeer, Split...) into the pb job list,
+// then pd server will peek the first one, handle it and then pop it from the job lib.
+// But sometimes, the pd server may crash before popping. When another pd server
+// starts and finds the job is running but not finished, it will first check whether
+// the raft server already has handled this job.
+// E,g, for ChangePeer, if we add Peer10 into region1 and find region1 has already had
+// Peer10, we can think this ChangePeer is finished, and can pop this job from job list
+// directly.
+message RegionDetailRequest {}
+
+message RegionDetailResponse {
+  metapb.Region region = 1;
+  metapb.Peer leader = 2;
+}
+
+enum StatusCmdType {
+  InvalidStatus = 0;
+  RegionLeader = 1;
+  RegionDetail = 2;
+}
+
+message StatusRequest {
+  StatusCmdType cmd_type = 1;
+  RegionLeaderRequest region_leader = 2;
+  RegionDetailRequest region_detail = 3;
+}
+
+message StatusResponse {
+  StatusCmdType cmd_type = 1;
+  RegionLeaderResponse region_leader = 2;
+  RegionDetailResponse region_detail = 3;
+}
+
+message RaftRequestHeader {
+  uint64 region_id = 1;
+  metapb.Peer peer = 2;
+  // true for read linearization
+  bool read_quorum = 3;
+  // 16 bytes, to distinguish request.
+  bytes uuid = 4;
+
+  metapb.RegionEpoch region_epoch = 5;
+  uint64 term = 6;
+
+  bool sync_log = 7;
+  bool replica_read = 8;
+
+  // Read requests can be responsed directly after the Raft applys to `applied_index`.
+  uint64 applied_index = 9;
+
+  // Custom flags for this raft request.
+  uint64 flags = 10;
+  bytes flag_data = 11;
+
+  kvrpcpb.CommandPri priority = 12;
+  string resource_group_name = 13;
+}
+
+message RaftResponseHeader {
+  errorpb.Error error = 1;
+  bytes uuid = 2;
+  uint64 current_term = 3;
+}
+
+message CustomRequest {
+  bytes data = 1;
+}
+
+message RaftCmdRequest {
+  RaftRequestHeader header = 1;
+  // We can't enclose normal requests and administrator request
+  // at same time.
+  repeated Request requests = 2;
+  AdminRequest admin_request = 3;
+  StatusRequest status_request = 4;
+  CustomRequest custom_request = 5;
+
+  reserved 100 to 200;
+}
+
+message RaftCmdResponse {
+  RaftResponseHeader header = 1;
+  repeated Response responses = 2;
+  AdminResponse admin_response = 3;
+  StatusResponse status_response = 4;
+}

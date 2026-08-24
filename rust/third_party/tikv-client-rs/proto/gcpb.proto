@@ -1,0 +1,119 @@
+syntax = "proto3";
+package gcpb;
+
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+service GC {
+  rpc ListKeySpaces(ListKeySpacesRequest) returns (ListKeySpacesResponse) {}
+
+  rpc GetMinServiceSafePoint(GetMinServiceSafePointRequest) returns (GetMinServiceSafePointResponse) {}
+
+  rpc UpdateGCSafePoint(UpdateGCSafePointRequest) returns (UpdateGCSafePointResponse) {}
+
+  rpc UpdateServiceSafePoint(UpdateServiceSafePointRequest) returns (UpdateServiceSafePointResponse) {}
+}
+
+message RequestHeader {
+  // cluster_id is the ID of the cluster which be sent to.
+  uint64 cluster_id = 1;
+  // sender_id is the ID of the sender server, also member ID or etcd ID.
+  uint64 sender_id = 2;
+}
+
+message ResponseHeader {
+  // cluster_id is the ID of the cluster which sent the response.
+  uint64 cluster_id = 1;
+  Error error = 2;
+}
+
+enum ErrorType {
+  OK = 0;
+  UNKNOWN = 1;
+  NOT_BOOTSTRAPPED = 2;
+  // revision supplied does not match the current etcd revision
+  REVISION_MISMATCH = 3;
+  // if the proposed safe point is earlier than old safe point or gc safe point
+  SAFEPOINT_ROLLBACK = 4;
+}
+
+message Error {
+  ErrorType type = 1;
+  string message = 2;
+}
+
+message KeySpace {
+  bytes space_id = 1;
+  uint64 gc_safe_point = 2;
+}
+
+message ListKeySpacesRequest {
+  RequestHeader header = 1;
+  // set with_gc_safe_point to true to also receive gc safe point for each key space
+  bool with_gc_safe_point = 2;
+}
+
+message ListKeySpacesResponse {
+  ResponseHeader header = 1;
+  repeated KeySpace key_spaces = 2;
+}
+
+message GetMinServiceSafePointRequest {
+  RequestHeader header = 1;
+  bytes space_id = 2;
+}
+
+message GetMinServiceSafePointResponse {
+  ResponseHeader header = 1;
+  uint64 safe_point = 2;
+  // revision here is to safeguard the validity of the obtained min,
+  // preventing cases where new services register their safe points after min is obtained by gc worker
+  int64 revision = 3;
+}
+
+message UpdateGCSafePointRequest {
+  RequestHeader header = 1;
+  bytes space_id = 2;
+  uint64 safe_point = 3;
+  // here client need to provide the revision obtained from GetMinServiceSafePoint,
+  // so server can check if it's still valid
+  int64 revision = 4;
+}
+
+message UpdateGCSafePointResponse {
+  ResponseHeader header = 1;
+  // update will be successful if revision is valid and new safepoint > old safe point
+  // if failed, previously obtained min might be incorrect, should retry from GetMinServiceSafePoint
+  bool succeeded = 2;
+  uint64 new_safe_point = 3;
+}
+
+message UpdateServiceSafePointRequest {
+  RequestHeader header = 1;
+  bytes space_id = 2;
+  bytes service_id = 3;
+  // safe point will be set to expire on (PD Server time + TTL)
+  // pass in a ttl < 0 to remove target safe point
+  // pass in MAX_INT64 to set a safe point that never expire
+  int64 TTL = 4;
+  uint64 safe_point = 5;
+}
+
+message UpdateServiceSafePointResponse {
+  ResponseHeader header = 1;
+  // update will be successful if ttl < 0 (a removal request)
+  // or if new safe point >= old safe point and new safe point >= gc safe point
+  bool succeeded = 2;
+  uint64 gc_safe_point = 3;
+  uint64 old_safe_point = 4;
+  uint64 new_safe_point = 5;
+}

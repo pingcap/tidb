@@ -1,0 +1,96 @@
+syntax = "proto3";
+package enginepb;
+
+import "gogoproto/gogo.proto";
+import "metapb.proto";
+import "raft_cmdpb.proto";
+import "raft_serverpb.proto";
+import "rustproto.proto";
+
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+message CommandRequestHeader {
+  uint64 region_id = 1;
+  uint64 index = 2;
+  uint64 term = 3;
+
+  // Flush in-memory data to disk.
+  bool sync_log = 4;
+  // Destroy the region.
+  bool destroy = 5;
+
+  // Additional information for the request.
+  bytes context = 6;
+}
+
+message CommandRequest {
+  CommandRequestHeader header = 1;
+
+  // We don't enclose normal requests and administrator request
+  // at same time.
+
+  // kv put / delete
+  repeated raft_cmdpb.Request requests = 2;
+
+  // region metadata manipulation command.
+  raft_cmdpb.AdminRequest admin_request = 3;
+  // region metadata manipulation result.
+  raft_cmdpb.AdminResponse admin_response = 4;
+}
+
+message CommandRequestBatch {
+  repeated CommandRequest requests = 1;
+}
+
+message CommandResponseHeader {
+  uint64 region_id = 1;
+  // Region is destroyed.
+  bool destroyed = 2;
+}
+
+message CommandResponse {
+  CommandResponseHeader header = 1;
+
+  raft_serverpb.RaftApplyState apply_state = 2;
+  uint64 applied_term = 3;
+}
+
+message CommandResponseBatch {
+  repeated CommandResponse responses = 1;
+}
+
+message SnapshotState {
+  metapb.Region region = 1;
+  metapb.Peer peer = 2;
+  raft_serverpb.RaftApplyState apply_state = 3;
+}
+
+message SnapshotData {
+  string cf = 1;
+  uint32 checksum = 2;
+  repeated raft_serverpb.KeyValue data = 3;
+}
+
+message SnapshotRequest {
+  oneof chunk {
+    // The first message for snapshots.
+    // It contains the latest region information after applied snapshot.
+    SnapshotState state = 1;
+
+    // Following messages are always data.
+    SnapshotData data = 2;
+  }
+}
+
+message SnapshotDone {}
+
+service Engine {
+  rpc ApplyCommandBatch(stream CommandRequestBatch) returns (stream CommandResponseBatch) {}
+  rpc ApplySnapshot(stream SnapshotRequest) returns (SnapshotDone) {}
+}

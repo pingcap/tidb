@@ -1,0 +1,3 @@
+pingcap/kvproto b41e86365ce0e0fba482005c0dfa5e2ca967d74c (2026-06-22)
+Matches client-go v2.0.8-0.20260708122311-01bd8f99f4da (go.mod: kvproto v0.0.0-20260622063236-b41e86365ce0).
+Re-vendor: copy proto/*.proto (matching names only) and include/ from that revision, then `make generate`.

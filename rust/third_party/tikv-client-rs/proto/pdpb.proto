@@ -1,0 +1,1423 @@
+syntax = "proto3";
+package pdpb;
+
+import "eraftpb.proto";
+import "gogoproto/gogo.proto";
+import "metapb.proto";
+import "raft_serverpb.proto";
+import "replication_modepb.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+service PD {
+  // GetClusterInfo get the information of this cluster. It does not require
+  // the cluster_id in request matchs the id of this cluster.
+  rpc GetClusterInfo(GetClusterInfoRequest) returns (GetClusterInfoResponse) {}
+
+  // GetMembers get the member list of this cluster. It does not require
+  // the cluster_id in request matchs the id of this cluster.
+  rpc GetMembers(GetMembersRequest) returns (GetMembersResponse) {}
+
+  rpc Tso(stream TsoRequest) returns (stream TsoResponse) {}
+
+  rpc Bootstrap(BootstrapRequest) returns (BootstrapResponse) {}
+
+  rpc IsBootstrapped(IsBootstrappedRequest) returns (IsBootstrappedResponse) {}
+
+  rpc AllocID(AllocIDRequest) returns (AllocIDResponse) {}
+
+  rpc IsSnapshotRecovering(IsSnapshotRecoveringRequest) returns (IsSnapshotRecoveringResponse) {}
+
+  rpc GetStore(GetStoreRequest) returns (GetStoreResponse) {}
+
+  rpc PutStore(PutStoreRequest) returns (PutStoreResponse) {}
+
+  rpc GetAllStores(GetAllStoresRequest) returns (GetAllStoresResponse) {}
+
+  rpc StoreHeartbeat(StoreHeartbeatRequest) returns (StoreHeartbeatResponse) {}
+
+  rpc RegionHeartbeat(stream RegionHeartbeatRequest) returns (stream RegionHeartbeatResponse) {}
+
+  rpc GetRegion(GetRegionRequest) returns (GetRegionResponse) {}
+
+  rpc GetPrevRegion(GetRegionRequest) returns (GetRegionResponse) {}
+
+  rpc GetRegionByID(GetRegionByIDRequest) returns (GetRegionResponse) {}
+
+  rpc QueryRegion(stream QueryRegionRequest) returns (stream QueryRegionResponse) {}
+
+  // Deprecated: use BatchScanRegions instead.
+  rpc ScanRegions(ScanRegionsRequest) returns (ScanRegionsResponse) {}
+
+  rpc BatchScanRegions(BatchScanRegionsRequest) returns (BatchScanRegionsResponse) {}
+
+  rpc AskSplit(AskSplitRequest) returns (AskSplitResponse) {
+    // Use AskBatchSplit instead.
+    option deprecated = true;
+  }
+
+  rpc ReportSplit(ReportSplitRequest) returns (ReportSplitResponse) {
+    // Use ResportBatchSplit instead.
+    option deprecated = true;
+  }
+
+  rpc AskBatchSplit(AskBatchSplitRequest) returns (AskBatchSplitResponse) {}
+
+  rpc ReportBatchSplit(ReportBatchSplitRequest) returns (ReportBatchSplitResponse) {}
+
+  rpc GetClusterConfig(GetClusterConfigRequest) returns (GetClusterConfigResponse) {}
+
+  rpc PutClusterConfig(PutClusterConfigRequest) returns (PutClusterConfigResponse) {}
+
+  rpc ScatterRegion(ScatterRegionRequest) returns (ScatterRegionResponse) {}
+
+  rpc GetGCSafePoint(GetGCSafePointRequest) returns (GetGCSafePointResponse) {}
+
+  rpc UpdateGCSafePoint(UpdateGCSafePointRequest) returns (UpdateGCSafePointResponse) {}
+
+  rpc UpdateServiceGCSafePoint(UpdateServiceGCSafePointRequest) returns (UpdateServiceGCSafePointResponse) {}
+
+  rpc GetGCSafePointV2(GetGCSafePointV2Request) returns (GetGCSafePointV2Response) {}
+
+  rpc WatchGCSafePointV2(WatchGCSafePointV2Request) returns (stream WatchGCSafePointV2Response) {}
+
+  rpc UpdateGCSafePointV2(UpdateGCSafePointV2Request) returns (UpdateGCSafePointV2Response) {}
+
+  rpc UpdateServiceSafePointV2(UpdateServiceSafePointV2Request) returns (UpdateServiceSafePointV2Response) {}
+
+  rpc GetAllGCSafePointV2(GetAllGCSafePointV2Request) returns (GetAllGCSafePointV2Response) {}
+
+  rpc AdvanceGCSafePoint(AdvanceGCSafePointRequest) returns (AdvanceGCSafePointResponse) {}
+
+  rpc AdvanceTxnSafePoint(AdvanceTxnSafePointRequest) returns (AdvanceTxnSafePointResponse) {}
+
+  rpc SetGCBarrier(SetGCBarrierRequest) returns (SetGCBarrierResponse) {}
+
+  rpc DeleteGCBarrier(DeleteGCBarrierRequest) returns (DeleteGCBarrierResponse) {}
+
+  rpc SetGlobalGCBarrier(SetGlobalGCBarrierRequest) returns (SetGlobalGCBarrierResponse) {}
+
+  rpc DeleteGlobalGCBarrier(DeleteGlobalGCBarrierRequest) returns (DeleteGlobalGCBarrierResponse) {}
+
+  rpc GetGCState(GetGCStateRequest) returns (GetGCStateResponse) {}
+
+  rpc GetAllKeyspacesGCStates(GetAllKeyspacesGCStatesRequest) returns (GetAllKeyspacesGCStatesResponse) {}
+
+  rpc SyncRegions(stream SyncRegionRequest) returns (stream SyncRegionResponse) {}
+
+  rpc GetOperator(GetOperatorRequest) returns (GetOperatorResponse) {}
+
+  rpc SyncMaxTS(SyncMaxTSRequest) returns (SyncMaxTSResponse) {}
+
+  rpc SplitRegions(SplitRegionsRequest) returns (SplitRegionsResponse) {}
+
+  rpc SplitAndScatterRegions(SplitAndScatterRegionsRequest) returns (SplitAndScatterRegionsResponse) {}
+
+  rpc GetDCLocationInfo(GetDCLocationInfoRequest) returns (GetDCLocationInfoResponse) {}
+
+  rpc StoreGlobalConfig(StoreGlobalConfigRequest) returns (StoreGlobalConfigResponse) {}
+
+  rpc LoadGlobalConfig(LoadGlobalConfigRequest) returns (LoadGlobalConfigResponse) {}
+
+  rpc WatchGlobalConfig(WatchGlobalConfigRequest) returns (stream WatchGlobalConfigResponse) {}
+
+  rpc ReportBuckets(stream ReportBucketsRequest) returns (ReportBucketsResponse) {}
+
+  rpc ReportMinResolvedTS(ReportMinResolvedTsRequest) returns (ReportMinResolvedTsResponse) {}
+
+  rpc SetExternalTimestamp(SetExternalTimestampRequest) returns (SetExternalTimestampResponse) {}
+
+  rpc GetExternalTimestamp(GetExternalTimestampRequest) returns (GetExternalTimestampResponse) {}
+
+  // Get the minimum timestamp across all keyspace groups from API server
+  // TODO: Currently, we need to ask API server to get the minimum timestamp.
+  // Once we support service discovery, we can remove it.
+  rpc GetMinTS(GetMinTSRequest) returns (GetMinTSResponse) {}
+}
+
+message WatchGlobalConfigRequest {
+  string config_path = 1;
+  int64 revision = 2;
+}
+
+message WatchGlobalConfigResponse {
+  repeated GlobalConfigItem changes = 1;
+  int64 revision = 2;
+  ResponseHeader header = 3;
+}
+
+message StoreGlobalConfigRequest {
+  repeated GlobalConfigItem changes = 1;
+  string config_path = 2;
+}
+
+message StoreGlobalConfigResponse {
+  Error error = 1;
+}
+
+message LoadGlobalConfigRequest {
+  repeated string names = 1;
+  string config_path = 2;
+}
+
+message LoadGlobalConfigResponse {
+  repeated GlobalConfigItem items = 1;
+  int64 revision = 2;
+}
+
+enum EventType {
+  PUT = 0;
+  DELETE = 1;
+}
+
+message GlobalConfigItem {
+  string name = 1;
+  // this field 'value' is replaced by the field 'payload'.
+  string value = 2;
+  Error error = 3;
+  EventType kind = 4;
+  // Since item value needs to support marshal of different struct types,
+  // it should be set to bytes instead of string.
+  bytes payload = 5;
+}
+
+message RequestHeader {
+  // cluster_id is the ID of the cluster which be sent to.
+  uint64 cluster_id = 1;
+  // sender_id is the ID of the sender server, also member ID or etcd ID.
+  // sender_id is used in PD internal communication.
+  uint64 sender_id = 2;
+  // caller_id is the ID of the client which sends the request, such as tikv,
+  // tidb, cdc, etc.
+  string caller_id = 3;
+  // caller_component is the component of the client which sends the request,
+  // such as ddl, optimizer, etc.
+  string caller_component = 4;
+}
+
+message ResponseHeader {
+  // cluster_id is the ID of the cluster which sent the response.
+  uint64 cluster_id = 1;
+  Error error = 2;
+}
+
+enum ErrorType {
+  OK = 0;
+  UNKNOWN = 1;
+  NOT_BOOTSTRAPPED = 2;
+  STORE_TOMBSTONE = 3;
+  ALREADY_BOOTSTRAPPED = 4;
+  INCOMPATIBLE_VERSION = 5;
+  REGION_NOT_FOUND = 6;
+  GLOBAL_CONFIG_NOT_FOUND = 7;
+  DUPLICATED_ENTRY = 8;
+  ENTRY_NOT_FOUND = 9;
+  INVALID_VALUE = 10;
+  // required watch revision is smaller than current compact/min revision.
+  DATA_COMPACTED = 11;
+  REGIONS_NOT_CONTAIN_ALL_KEY_RANGE = 12;
+}
+
+message Error {
+  ErrorType type = 1;
+  string message = 2;
+}
+
+message TsoRequest {
+  RequestHeader header = 1;
+
+  uint32 count = 2;
+  string dc_location = 3;
+}
+
+message Timestamp {
+  int64 physical = 1;
+  int64 logical = 2;
+  // Number of suffix bits used for global distinction,
+  // PD client will use this to compute a TSO's logical part.
+  uint32 suffix_bits = 3;
+}
+
+message TsoResponse {
+  ResponseHeader header = 1;
+
+  uint32 count = 2;
+  Timestamp timestamp = 3;
+}
+
+message BootstrapRequest {
+  RequestHeader header = 1;
+
+  metapb.Store store = 2;
+  metapb.Region region = 3;
+}
+
+message BootstrapResponse {
+  ResponseHeader header = 1;
+  replication_modepb.ReplicationStatus replication_status = 2;
+}
+
+message IsBootstrappedRequest {
+  RequestHeader header = 1;
+}
+
+message IsBootstrappedResponse {
+  ResponseHeader header = 1;
+
+  bool bootstrapped = 2;
+}
+
+message AllocIDRequest {
+  RequestHeader header = 1;
+
+  uint32 count = 2;
+}
+
+message AllocIDResponse {
+  ResponseHeader header = 1;
+
+  uint64 id = 2;
+  uint32 count = 3;
+}
+
+message IsSnapshotRecoveringRequest {
+  RequestHeader header = 1;
+}
+
+message IsSnapshotRecoveringResponse {
+  ResponseHeader header = 1;
+  bool marked = 2;
+}
+
+message GetStoreRequest {
+  RequestHeader header = 1;
+
+  uint64 store_id = 2;
+}
+
+message GetStoreResponse {
+  ResponseHeader header = 1;
+
+  metapb.Store store = 2;
+  StoreStats stats = 3;
+}
+
+message PutStoreRequest {
+  RequestHeader header = 1;
+
+  metapb.Store store = 2;
+}
+
+message PutStoreResponse {
+  ResponseHeader header = 1;
+  replication_modepb.ReplicationStatus replication_status = 2;
+}
+
+message GetAllStoresRequest {
+  RequestHeader header = 1;
+  // Do NOT return tombstone stores if set to true.
+  bool exclude_tombstone_stores = 2;
+}
+
+message GetAllStoresResponse {
+  ResponseHeader header = 1;
+
+  repeated metapb.Store stores = 2;
+}
+
+message GetRegionRequest {
+  RequestHeader header = 1;
+
+  bytes region_key = 2;
+  bool need_buckets = 3;
+}
+
+message GetRegionResponse {
+  reserved 4;
+
+  ResponseHeader header = 1;
+
+  metapb.Region region = 2;
+  metapb.Peer leader = 3;
+  // Leader considers that these peers are down.
+  repeated PeerStats down_peers = 5;
+  // Pending peers are the peers that the leader can't consider as
+  // working followers.
+  repeated metapb.Peer pending_peers = 6;
+  // buckets isn't nil if GetRegion.* requests set need_buckets.
+  metapb.Buckets buckets = 7;
+}
+
+message GetRegionByIDRequest {
+  RequestHeader header = 1;
+
+  uint64 region_id = 2;
+  bool need_buckets = 3;
+}
+
+message QueryRegionRequest {
+  RequestHeader header = 1;
+
+  // Whether to include the buckets info within the response.
+  bool need_buckets = 2;
+  // The region IDs to query.
+  repeated uint64 ids = 3;
+  // The region keys to query.
+  repeated bytes keys = 4;
+  // The previous region keys to query.
+  repeated bytes prev_keys = 5;
+}
+
+message QueryRegionResponse {
+  ResponseHeader header = 1;
+
+  // This array functions as a map corresponding to the region IDs,
+  // preserving the order of the input region keys, if they are present.
+  repeated uint64 key_id_map = 2;
+  // This array functions as a map corresponding to the previous region IDs,
+  // preserving the order of the input previous region keys, if they are present.
+  repeated uint64 prev_key_id_map = 3;
+  // RegionID -> RegionResponse
+  map<uint64, RegionResponse> regions_by_id = 4;
+}
+
+message RegionResponse {
+  metapb.Region region = 1;
+  metapb.Peer leader = 2;
+  repeated PeerStats down_peers = 3;
+  repeated metapb.Peer pending_peers = 4;
+  metapb.Buckets buckets = 5;
+}
+
+// Use GetRegionResponse as the response of GetRegionByIDRequest.
+// Deprecated: use BatchScanRegionsRequest instead.
+message ScanRegionsRequest {
+  RequestHeader header = 1;
+
+  bytes start_key = 2;
+  int32 limit = 3; // no limit when limit <= 0.
+  bytes end_key = 4; // end_key is +inf when it is empty.
+}
+
+message Region {
+  metapb.Region region = 1;
+  metapb.Peer leader = 2;
+  // Leader considers that these peers are down.
+  repeated PeerStats down_peers = 3;
+  // Pending peers are the peers that the leader can't consider as
+  // working followers.
+  repeated metapb.Peer pending_peers = 4;
+  // buckets isn't nil only when need_buckets is true.
+  metapb.Buckets buckets = 5;
+}
+
+message ScanRegionsResponse {
+  ResponseHeader header = 1;
+
+  // Keep for backword compatibability.
+  repeated metapb.Region region_metas = 2;
+  repeated metapb.Peer leaders = 3;
+
+  // Extended region info with down/pending peers.
+  repeated Region regions = 4;
+}
+
+message KeyRange {
+  bytes start_key = 1;
+  bytes end_key = 2; // end_key is +inf when it is empty.
+}
+
+message BatchScanRegionsRequest {
+  RequestHeader header = 1;
+  bool need_buckets = 2;
+
+  repeated KeyRange ranges = 3; // the given ranges must be in order.
+  int32 limit = 4; // limit the total number of regions to scan.
+  // If contain_all_key_range is true, the output must contain all
+  // key ranges in the request.
+  // If the output does not contain all key ranges, the request is considered
+  // failed and returns an error(REGIONS_NOT_CONTAIN_ALL_KEY_RANGE).
+  bool contain_all_key_range = 5;
+}
+
+message BatchScanRegionsResponse {
+  ResponseHeader header = 1;
+
+  // the returned regions are flattened into a list, because the given ranges can located in the same range, we do not return duplicated regions then.
+  repeated Region regions = 2;
+}
+
+message GetClusterConfigRequest {
+  RequestHeader header = 1;
+}
+
+message GetClusterConfigResponse {
+  ResponseHeader header = 1;
+
+  metapb.Cluster cluster = 2;
+}
+
+message PutClusterConfigRequest {
+  RequestHeader header = 1;
+
+  metapb.Cluster cluster = 2;
+}
+
+message PutClusterConfigResponse {
+  ResponseHeader header = 1;
+}
+
+message Member {
+  // name is the name of the PD member.
+  string name = 1;
+  // member_id is the unique id of the PD member.
+  uint64 member_id = 2;
+  repeated string peer_urls = 3;
+  repeated string client_urls = 4;
+  int32 leader_priority = 5;
+  string deploy_path = 6;
+  string binary_version = 7;
+  string git_hash = 8;
+  string dc_location = 9;
+}
+
+message GetMembersRequest {
+  RequestHeader header = 1;
+}
+
+message GetMembersResponse {
+  ResponseHeader header = 1;
+
+  repeated Member members = 2;
+  Member leader = 3;
+  Member etcd_leader = 4;
+  map<string, Member> tso_allocator_leaders = 5;
+}
+
+message GetClusterInfoRequest {
+  ResponseHeader header = 1;
+}
+
+enum ServiceMode {
+  UNKNOWN_SVC_MODE = 0;
+  PD_SVC_MODE = 1;
+  API_SVC_MODE = 2;
+}
+
+message GetClusterInfoResponse {
+  ResponseHeader header = 1;
+
+  repeated ServiceMode serviceModes = 2;
+  // If service mode is API_SVC_MODE, this field will be set to the
+  // registered tso service addresses.
+  repeated string tso_urls = 3;
+}
+
+message PeerStats {
+  metapb.Peer peer = 1;
+  uint64 down_seconds = 2;
+}
+
+message RegionHeartbeatRequest {
+  RequestHeader header = 1;
+
+  metapb.Region region = 2;
+  // Leader Peer sending the heartbeat.
+  metapb.Peer leader = 3;
+  // Leader considers that these peers are down.
+  repeated PeerStats down_peers = 4;
+  // Pending peers are the peers that the leader can't consider as
+  // working followers.
+  repeated metapb.Peer pending_peers = 5;
+  // Bytes read/written during this period.
+  uint64 bytes_written = 6;
+  uint64 bytes_read = 7;
+  // Keys read/written during this period.
+  uint64 keys_written = 8;
+  uint64 keys_read = 9;
+  // Approximate region size.
+  uint64 approximate_size = 10;
+  reserved 11;
+  // Actually reported time interval
+  TimeInterval interval = 12;
+  // Approximate number of keys.
+  uint64 approximate_keys = 13;
+  // Term is the term of raft group.
+  uint64 term = 14;
+  replication_modepb.RegionReplicationStatus replication_status = 15;
+  // QueryStats reported write query stats, and there are read query stats in store heartbeat
+  QueryStats query_stats = 16;
+  // cpu_usage is the total CPU time usage of the leader region since the last heartbeat,
+  // which is calculated by cpu_time_delta/heartbeat_reported_interval.
+  // Deprecated: use cpu_stats instead.
+  uint64 cpu_usage = 17 [deprecated = true];
+  // cpu_stats reports CPU usage breakdown for the leader region by kind
+  // (e.g. unified read).
+  CPUStats cpu_stats = 21;
+  // Approximate size of row-based key-value pairs for billing.
+  // It's counted on size of user key & value (excluding metadata fields), before compression, and latest versions only.
+  uint64 approximate_kv_size = 18;
+  // Approximate size of column-based key-value pairs for billing.
+  // It's counted on size of user key & value (excluding metadata fields), before compression, and latest versions only.
+  uint64 approximate_columnar_kv_size = 19;
+
+  // BucketMeta is the bucket version and keys of this region if TiKV enabled the bucket feature
+  metapb.BucketMeta bucket_meta = 20;
+}
+
+message ChangePeer {
+  metapb.Peer peer = 1;
+  eraftpb.ConfChangeType change_type = 2;
+}
+
+message ChangePeerV2 {
+  // If changes is empty, it means that to exit joint state.
+  repeated ChangePeer changes = 1;
+}
+
+message TransferLeader {
+  metapb.Peer peer = 1;
+  repeated metapb.Peer peers = 2;
+}
+
+message Merge {
+  metapb.Region target = 1;
+}
+
+message SplitRegion {
+  CheckPolicy policy = 1;
+  repeated bytes keys = 2;
+}
+
+message SwitchWitness {
+  uint64 peer_id = 1;
+  bool is_witness = 2;
+}
+
+message BatchSwitchWitness {
+  repeated SwitchWitness switch_witnesses = 1;
+}
+
+enum CheckPolicy {
+  SCAN = 0;
+  APPROXIMATE = 1;
+  USEKEY = 2;
+}
+
+message ChangeSplit {
+  // auto_split_enabled configures whether the corresponding Region is allowed to be auto split by size or load.
+  bool auto_split_enabled = 1;
+}
+
+message RegionHeartbeatResponse {
+  ResponseHeader header = 1;
+
+  // Notice, Pd only allows handling reported epoch >= current pd's.
+  // Leader peer reports region status with RegionHeartbeatRequest
+  // to pd regularly, pd will determine whether this region
+  // should do ChangePeer or not.
+  // E,g, max peer number is 3, region A, first only peer 1 in A.
+  // 1. Pd region state -> Peers (1), ConfVer (1).
+  // 2. Leader peer 1 reports region state to pd, pd finds the
+  // peer number is < 3, so first changes its current region
+  // state -> Peers (1, 2), ConfVer (1), and returns ChangePeer Adding 2.
+  // 3. Leader does ChangePeer, then reports Peers (1, 2), ConfVer (2),
+  // pd updates its state -> Peers (1, 2), ConfVer (2).
+  // 4. Leader may report old Peers (1), ConfVer (1) to pd before ConfChange
+  // finished, pd stills responses ChangePeer Adding 2, of course, we must
+  // guarantee the second ChangePeer can't be applied in TiKV.
+  ChangePeer change_peer = 2;
+  // Pd can return transfer_leader to let TiKV does leader transfer itself.
+  TransferLeader transfer_leader = 3;
+  // ID of the region
+  uint64 region_id = 4;
+  metapb.RegionEpoch region_epoch = 5;
+  // Leader of the region at the moment of the corresponding request was made.
+  metapb.Peer target_peer = 6;
+  Merge merge = 7;
+  // PD sends split_region to let TiKV split a region into two regions.
+  SplitRegion split_region = 8;
+  // Multiple change peer operations atomically.
+  // Note: PD can use both ChangePeer and ChangePeerV2 at the same time
+  //       (not in the same RegionHeartbeatResponse).
+  //       Now, PD use ChangePeerV2 in following scenarios:
+  //       1. replacing peers
+  //       2. demoting voter directly
+  ChangePeerV2 change_peer_v2 = 9;
+  BatchSwitchWitness switch_witnesses = 10;
+  ChangeSplit change_split = 11;
+}
+
+message AskSplitRequest {
+  RequestHeader header = 1;
+
+  metapb.Region region = 2;
+}
+
+message AskSplitResponse {
+  ResponseHeader header = 1;
+
+  // We split the region into two, first uses the origin
+  // parent region id, and the second uses the new_region_id.
+  // We must guarantee that the new_region_id is global unique.
+  uint64 new_region_id = 2;
+  // The peer ids for the new split region.
+  repeated uint64 new_peer_ids = 3;
+}
+
+message ReportSplitRequest {
+  RequestHeader header = 1;
+
+  metapb.Region left = 2;
+  metapb.Region right = 3;
+}
+
+message ReportSplitResponse {
+  ResponseHeader header = 1;
+}
+
+enum SplitReason {
+  ADMIN = 0;
+  SIZE = 1;
+  LOAD = 2;
+}
+
+message AskBatchSplitRequest {
+  RequestHeader header = 1;
+
+  metapb.Region region = 2;
+  uint32 split_count = 3;
+  SplitReason reason = 4;
+}
+
+message SplitID {
+  uint64 new_region_id = 1;
+  repeated uint64 new_peer_ids = 2;
+}
+
+message AskBatchSplitResponse {
+  ResponseHeader header = 1;
+
+  repeated SplitID ids = 2;
+}
+
+message ReportBatchSplitRequest {
+  RequestHeader header = 1;
+
+  repeated metapb.Region regions = 2;
+}
+
+message ReportBatchSplitResponse {
+  ResponseHeader header = 1;
+}
+
+message TimeInterval {
+  // The unix timestamp in seconds of the start of this period.
+  uint64 start_timestamp = 1;
+  // The unix timestamp in seconds of the end of this period.
+  uint64 end_timestamp = 2;
+}
+
+message RecordPair {
+  string key = 1;
+  uint64 value = 2;
+}
+
+message PeerStat {
+  uint64 region_id = 1;
+  uint64 read_keys = 2;
+  uint64 read_bytes = 3;
+  QueryStats query_stats = 4;
+  uint64 written_keys = 5;
+  uint64 written_bytes = 6;
+  // cpu_stats is the CPU usage of the region's unified read pool since the last heartbeat,
+  // which is calculated by cpu_time_delta/heartbeat_reported_interval.
+  CPUStats cpu_stats = 7;
+}
+
+message StoreStats {
+  uint64 store_id = 1;
+  // Capacity for the store.
+  uint64 capacity = 2;
+  // Available size for the store.
+  uint64 available = 3;
+  // Total region count in this store.
+  uint32 region_count = 4;
+  // Current sending snapshot count.
+  uint32 sending_snap_count = 5;
+  // Current receiving snapshot count.
+  uint32 receiving_snap_count = 6;
+  // When the store is started (unix timestamp in seconds).
+  uint32 start_time = 7;
+  // How many region is applying snapshot.
+  uint32 applying_snap_count = 8;
+  // If the store is busy
+  bool is_busy = 9;
+  // Actually used space by db
+  uint64 used_size = 10;
+  // Bytes written for the store during this period.
+  uint64 bytes_written = 11;
+  // Keys written for the store during this period.
+  uint64 keys_written = 12;
+  // Bytes read for the store during this period.
+  uint64 bytes_read = 13;
+  // Keys read for the store during this period.
+  uint64 keys_read = 14;
+  // Actually reported time interval
+  TimeInterval interval = 15;
+  // Threads' CPU usages in the store
+  repeated RecordPair cpu_usages = 16;
+  // Threads' read disk I/O rates in the store
+  repeated RecordPair read_io_rates = 17;
+  // Threads' write disk I/O rates in the store
+  repeated RecordPair write_io_rates = 18;
+  // Operations' latencies in the store
+  repeated RecordPair op_latencies = 19;
+  // Hot peer stat in the store
+  repeated PeerStat peer_stats = 20;
+  // Store query stats
+  QueryStats query_stats = 21;
+  // Score that represents the speed of the store, ranges in [1, 100], lower is better.
+  uint64 slow_score = 22;
+  // Damaged regions on the store that need to be removed by PD.
+  repeated uint64 damaged_regions_id = 23;
+  // If the apply worker is busy, namely high apply wait duration
+  bool is_apply_busy = 24;
+  // Snapshot stats in the store
+  repeated SnapshotStat snapshot_stats = 25;
+  SlowTrend slow_trend = 26;
+  // If the grpc server is paused.
+  bool is_grpc_paused = 27;
+  // Total memory of the store in bytes.
+  uint64 total_memory = 28;
+  // Used memory of the store in bytes.
+  uint64 used_memory = 29;
+  // Network_slow_scores indicate the network status between TiKV nodes, ranging from 1 to 100 (lower is better).
+  // StoreID -> score
+  map<uint64, uint64> network_slow_scores = 30;
+  // The statistics about DFS uploads.
+  repeated DfsStatItem dfs = 31;
+  // True if the store is undergoing graceful shutdown.
+  bool is_stopping = 32;
+
+  // Reserved for a downstream fork
+  reserved 1000 to 1199;
+}
+
+message DfsStatScope {
+  // When true, the statistic is not tied to any keyspace.
+  bool is_global = 1;
+  // The keyspace of this statistic. Ignore when is_global is true.
+  uint32 keyspace_id = 2;
+  // The component that provides the statistic.
+  string component = 3;
+}
+
+message DfsStatItem {
+  DfsStatScope scope = 1;
+  // Number of bytes written to DFS.
+  uint64 written_bytes = 2;
+  // Number of write requests sent to DFS.
+  uint64 write_requests = 3;
+}
+
+message SlowTrend {
+  double cause_value = 1;
+  double cause_rate = 2;
+  double result_value = 3;
+  double result_rate = 4;
+}
+
+message SnapshotStat {
+  uint64 region_id = 1;
+  // Generate snapshot duration
+  uint64 generate_duration_sec = 2;
+  // Send snapshot duration
+  uint64 send_duration_sec = 3;
+  // |-- waiting --|-- generate --｜-- send --|
+  // |-----------total duration---------------|
+  // Total duration include waiting and executing duration
+  uint64 total_duration_sec = 4;
+  // Size is the transport data size
+  uint64 transport_size = 5;
+}
+
+message PeerReport {
+  raft_serverpb.RaftLocalState raft_state = 1;
+  raft_serverpb.RegionLocalState region_state = 2;
+  bool is_force_leader = 3;
+  // The peer has proposed but uncommitted commit merge.
+  bool has_commit_merge = 4;
+  // raft applied index
+  uint64 applied_index = 5;
+}
+
+message StoreReport {
+  repeated PeerReport peer_reports = 1;
+  uint64 step = 2;
+}
+
+message StoreHeartbeatRequest {
+  RequestHeader header = 1;
+
+  StoreStats stats = 2;
+  // Detailed store report that is only filled up on PD's demand for online unsafe recovery.
+  StoreReport store_report = 3;
+  replication_modepb.StoreDRAutoSyncStatus dr_autosync_status = 4;
+}
+
+message DemoteFailedVoters {
+  uint64 region_id = 1;
+  repeated metapb.Peer failed_voters = 2;
+}
+
+message ForceLeader {
+  // The store ids of the failed stores, TiKV uses it to decide if a peer is alive.
+  repeated uint64 failed_stores = 1;
+  // The region ids of the peer which is to be force leader.
+  repeated uint64 enter_force_leaders = 2;
+}
+
+message RecoveryPlan {
+  // Create empty regions to fill the key range hole.
+  repeated metapb.Region creates = 1;
+  // Update the meta of the regions, including peer lists, epoch and key range.
+  repeated metapb.Region updates = 2 [deprecated = true];
+  // Tombstone the peers on the store locally.
+  repeated uint64 tombstones = 3;
+  // Issue conf change that demote voters on failed stores to learners on the regions.
+  repeated DemoteFailedVoters demotes = 4;
+  // Make the peers to be force leaders.
+  ForceLeader force_leader = 5;
+  // Step is an increasing number to note the round of recovery,
+  // It should be filled in the corresponding store report.
+  uint64 step = 6;
+}
+
+message AwakenRegions {
+  // Awake all regions if abnormal_stores is empty.
+  repeated uint64 abnormal_stores = 1;
+}
+
+enum ControlGrpcEvent {
+  // Pause TiKV grpc server.
+  PAUSE = 0;
+  // Resume TiKV grpc server.
+  RESUME = 1;
+}
+
+message ControlGrpc {
+  ControlGrpcEvent ctrl_event = 1;
+}
+
+message StoreHeartbeatResponse {
+  ResponseHeader header = 1;
+  replication_modepb.ReplicationStatus replication_status = 2;
+  string cluster_version = 3;
+
+  // Used by online unsafe recovery to request store report.
+  // Now it's substituted by reusing recovery_plan field. PD will send a empty
+  // recovery plan instead to request store report.
+  bool require_detailed_report = 4 [deprecated = true];
+  // Operations of recovery. After the plan is executed, TiKV should attach the
+  // store report in store heartbeat.
+  RecoveryPlan recovery_plan = 5;
+  // Pd can return awaken_regions to let TiKV awaken hibernated regions itself.
+  AwakenRegions awaken_regions = 6;
+  // Pd can return operations to let TiKV forcely PAUSE | RESUME grpc server.
+  ControlGrpc control_grpc = 7;
+  // NodeState is going to mark the state of the store.
+  metapb.NodeState state = 8;
+}
+
+message ScatterRegionRequest {
+  RequestHeader header = 1;
+
+  uint64 region_id = 2 [deprecated = true];
+
+  // PD will use these region information if it can't find the region.
+  // For example, the region is just split and hasn't report to PD yet.
+  metapb.Region region = 3;
+  metapb.Peer leader = 4;
+
+  // If group is defined, the regions with the same group would be scattered as a whole group.
+  // If not defined, the regions would be scattered in a cluster level.
+  string group = 5;
+
+  // If regions_id is defined, the region_id would be ignored.
+  repeated uint64 regions_id = 6;
+  uint64 retry_limit = 7;
+  bool skip_store_limit = 8;
+}
+
+message ScatterRegionResponse {
+  ResponseHeader header = 1;
+  uint64 finished_percentage = 2;
+  repeated uint64 failed_regions_id = 3;
+}
+
+message GetGCSafePointRequest {
+  RequestHeader header = 1;
+}
+
+message GetGCSafePointResponse {
+  ResponseHeader header = 1;
+
+  uint64 safe_point = 2;
+}
+
+message UpdateGCSafePointRequest {
+  RequestHeader header = 1;
+
+  uint64 safe_point = 2;
+}
+
+message UpdateGCSafePointResponse {
+  ResponseHeader header = 1;
+
+  uint64 new_safe_point = 2;
+}
+
+message UpdateServiceGCSafePointRequest {
+  RequestHeader header = 1;
+
+  bytes service_id = 2;
+  int64 TTL = 3;
+  uint64 safe_point = 4;
+}
+
+message UpdateServiceGCSafePointResponse {
+  ResponseHeader header = 1;
+
+  bytes service_id = 2;
+  int64 TTL = 3;
+  uint64 min_safe_point = 4;
+}
+
+message GetGCSafePointV2Request {
+  RequestHeader header = 1;
+
+  uint32 keyspace_id = 2;
+}
+
+message GetGCSafePointV2Response {
+  ResponseHeader header = 1;
+
+  uint64 safe_point = 2;
+}
+
+message WatchGCSafePointV2Request {
+  RequestHeader header = 1;
+  int64 revision = 2;
+}
+
+// SafePointEvent is for the rpc WatchGCSafePointV2.
+message SafePointEvent {
+  uint32 keyspace_id = 1;
+  uint64 safe_point = 2;
+  EventType type = 3;
+}
+
+message WatchGCSafePointV2Response {
+  ResponseHeader header = 1;
+  repeated SafePointEvent events = 2;
+  int64 revision = 3;
+}
+
+message UpdateGCSafePointV2Request {
+  RequestHeader header = 1;
+
+  uint32 keyspace_id = 2;
+  uint64 safe_point = 3;
+}
+
+message UpdateGCSafePointV2Response {
+  ResponseHeader header = 1;
+
+  uint64 new_safe_point = 2;
+}
+
+message UpdateServiceSafePointV2Request {
+  RequestHeader header = 1;
+
+  uint32 keyspace_id = 2;
+  bytes service_id = 3;
+  uint64 safe_point = 4;
+  // Safe point will be set to expire on (PD Server time + TTL),
+  // pass in a ttl < 0 to remove target safe point;
+  // pass in MAX_INT64 to set a safe point that never expire.
+  // This should be set by component that may crash unexpectedly so that it doesn't block
+  // cluster garbage collection.
+  int64 ttl = 5;
+}
+
+message UpdateServiceSafePointV2Response {
+  ResponseHeader header = 1;
+
+  bytes service_id = 2;
+  int64 ttl = 3;
+  uint64 min_safe_point = 4;
+}
+
+message GetAllGCSafePointV2Request {
+  RequestHeader header = 1;
+}
+
+message GCSafePointV2 {
+  uint32 keyspace_id = 1;
+  uint64 gc_safe_point = 2;
+}
+
+message GetAllGCSafePointV2Response {
+  ResponseHeader header = 1;
+  repeated GCSafePointV2 gc_safe_points = 2;
+  int64 revision = 3;
+}
+
+// A wrapper over keyspace_id.
+// When a field is not specified in proto3, its value will be regarded as 0; however, keyspace_id = 0 is regarded as a valid keyspace (which
+// is the "DEFAULT" keyspace). To distinguish unspecified keyspace (NullKeyspace, 0xffffffff) and the default keyspace in some APIs as well
+// as preventing potential misuse, we wrap the keyspace_id into a message type which is nullable.
+message KeyspaceScope {
+  uint32 keyspace_id = 1;
+}
+
+message AdvanceGCSafePointRequest {
+  RequestHeader header = 1;
+
+  KeyspaceScope keyspace_scope = 2;
+  uint64 target = 3;
+}
+
+message AdvanceGCSafePointResponse {
+  ResponseHeader header = 1;
+
+  uint64 old_gc_safe_point = 2;
+  uint64 new_gc_safe_point = 3;
+}
+
+message AdvanceTxnSafePointRequest {
+  RequestHeader header = 1;
+
+  KeyspaceScope keyspace_scope = 2;
+  uint64 target = 3;
+}
+
+message AdvanceTxnSafePointResponse {
+  ResponseHeader header = 1;
+
+  uint64 old_txn_safe_point = 2;
+  uint64 new_txn_safe_point = 3;
+  string blocker_description = 4;
+}
+
+message SetGCBarrierRequest {
+  RequestHeader header = 1;
+
+  KeyspaceScope keyspace_scope = 2;
+
+  string barrier_id = 3;
+  uint64 barrier_ts = 4;
+  int64 ttl_seconds = 5;
+}
+
+message GCBarrierInfo {
+  string barrier_id = 1;
+  uint64 barrier_ts = 2;
+  int64 ttl_seconds = 3;
+}
+
+message SetGCBarrierResponse {
+  ResponseHeader header = 1;
+
+  GCBarrierInfo new_barrier_info = 2;
+}
+
+message DeleteGCBarrierRequest {
+  RequestHeader header = 1;
+
+  KeyspaceScope keyspace_scope = 2;
+
+  string barrier_id = 3;
+}
+
+message DeleteGCBarrierResponse {
+  ResponseHeader header = 1;
+
+  GCBarrierInfo deleted_barrier_info = 2;
+}
+
+message SetGlobalGCBarrierRequest {
+  RequestHeader header = 1;
+  string barrier_id = 2;
+  uint64 barrier_ts = 3;
+  int64 ttl_seconds = 4;
+}
+
+message SetGlobalGCBarrierResponse {
+  ResponseHeader header = 1;
+  GlobalGCBarrierInfo new_barrier_info = 2;
+}
+
+message DeleteGlobalGCBarrierRequest {
+  RequestHeader header = 1;
+  string barrier_id = 2;
+}
+
+message DeleteGlobalGCBarrierResponse {
+  ResponseHeader header = 1;
+  GlobalGCBarrierInfo deleted_barrier_info = 2;
+}
+
+message GlobalGCBarrierInfo {
+  string barrier_id = 1;
+  uint64 barrier_ts = 2;
+  int64 ttl_seconds = 3;
+}
+
+message GetGCStateRequest {
+  RequestHeader header = 1;
+
+  KeyspaceScope keyspace_scope = 2;
+  bool exclude_gc_barriers = 3;
+}
+
+message GCState {
+  KeyspaceScope keyspace_scope = 1;
+
+  bool is_keyspace_level_gc = 2;
+  uint64 txn_safe_point = 3;
+  uint64 gc_safe_point = 4;
+  repeated GCBarrierInfo gc_barriers = 5;
+}
+
+message GetGCStateResponse {
+  ResponseHeader header = 1;
+
+  GCState gc_state = 2;
+}
+
+message GetAllKeyspacesGCStatesRequest {
+  RequestHeader header = 1;
+
+  bool exclude_gc_barriers = 2;
+  bool exclude_global_gc_barriers = 3;
+}
+
+message GetAllKeyspacesGCStatesResponse {
+  ResponseHeader header = 1;
+
+  repeated GCState gc_states = 2;
+  repeated GlobalGCBarrierInfo global_gc_barriers = 3;
+}
+
+message RegionStat {
+  // Bytes read/written during this period.
+  uint64 bytes_written = 1;
+  uint64 bytes_read = 2;
+  // Keys read/written during this period.
+  uint64 keys_written = 3;
+  uint64 keys_read = 4;
+}
+
+message SyncRegionRequest {
+  RequestHeader header = 1;
+  Member member = 2;
+  // the follower PD will use the start index to locate historical changes
+  // that require synchronization.
+  uint64 start_index = 3;
+}
+
+message PeersStats {
+  repeated PeerStats peers = 1;
+}
+
+message Peers {
+  repeated metapb.Peer peers = 1;
+}
+
+message SyncRegionResponse {
+  ResponseHeader header = 1;
+  // the leader PD will send the repsonds include
+  // changed regions records and the index of the first record.
+  repeated metapb.Region regions = 2;
+  uint64 start_index = 3;
+  repeated RegionStat region_stats = 4;
+  repeated metapb.Peer region_leaders = 5;
+  // the buckets informations without stats.
+  repeated metapb.Buckets buckets = 6;
+  repeated PeersStats down_peers = 16;
+  repeated Peers pending_peers = 17;
+}
+
+message GetOperatorRequest {
+  RequestHeader header = 1;
+  uint64 region_id = 2;
+}
+
+enum OperatorStatus {
+  SUCCESS = 0;
+  TIMEOUT = 1;
+  CANCEL = 2;
+  REPLACE = 3;
+  RUNNING = 4;
+}
+
+message GetOperatorResponse {
+  ResponseHeader header = 1;
+  uint64 region_id = 2;
+  bytes desc = 3;
+  OperatorStatus status = 4;
+  bytes kind = 5;
+}
+
+message SyncMaxTSRequest {
+  RequestHeader header = 1;
+  Timestamp max_ts = 2;
+  // If skip_check is true, the sync will try to write the max_ts without checking whether it's bigger.
+  bool skip_check = 3;
+}
+
+message SyncMaxTSResponse {
+  ResponseHeader header = 1;
+  Timestamp max_local_ts = 2;
+  repeated string synced_dcs = 3;
+}
+
+message SplitRegionsRequest {
+  RequestHeader header = 1;
+  repeated bytes split_keys = 2;
+  uint64 retry_limit = 3;
+}
+
+message SplitRegionsResponse {
+  ResponseHeader header = 1;
+  uint64 finished_percentage = 2;
+  repeated uint64 regions_id = 3;
+}
+
+message SplitAndScatterRegionsRequest {
+  RequestHeader header = 1;
+  repeated bytes split_keys = 2;
+  string group = 3;
+  uint64 retry_limit = 4;
+}
+
+message SplitAndScatterRegionsResponse {
+  ResponseHeader header = 1;
+  uint64 split_finished_percentage = 2;
+  uint64 scatter_finished_percentage = 3;
+  repeated uint64 regions_id = 4;
+}
+
+message GetDCLocationInfoRequest {
+  RequestHeader header = 1;
+  string dc_location = 2;
+}
+
+message GetDCLocationInfoResponse {
+  ResponseHeader header = 1;
+  // suffix sign
+  int32 suffix = 2;
+  // max_ts will be included into this response if PD leader think the receiver needs,
+  // which it's set when the number of the max suffix bits changes.
+  Timestamp max_ts = 3;
+}
+
+message QueryStats {
+  uint64 GC = 1;
+  uint64 Get = 2;
+  uint64 Scan = 3;
+  uint64 Coprocessor = 4;
+  uint64 Delete = 5;
+  uint64 DeleteRange = 6;
+  uint64 Put = 7;
+  uint64 Prewrite = 8;
+  uint64 AcquirePessimisticLock = 9;
+  uint64 Commit = 10;
+  uint64 Rollback = 11;
+}
+
+// CPU usage breakdown by kind. New kinds may be added in the future.
+message CPUStats {
+  // UnifiedRead is the CPU usage of the unified read pool.
+  uint64 UnifiedRead = 1;
+  // Scheduler is the CPU usage of the scheduler pool, it contains `sched-pool`, `sched-high`, and `sched-pri`.
+  uint64 Scheduler = 2;
+}
+
+enum QueryKind {
+  Others = 0;
+  GC = 1;
+  Get = 2;
+  Scan = 3;
+  Coprocessor = 4;
+  Delete = 5;
+  DeleteRange = 6;
+  Put = 7;
+  Prewrite = 8;
+  AcquirePessimisticLock = 9;
+  Commit = 10;
+  Rollback = 11;
+}
+
+message ReportBucketsRequest {
+  RequestHeader header = 1;
+
+  metapb.RegionEpoch region_epoch = 2;
+  metapb.Buckets buckets = 3;
+}
+
+message ReportBucketsResponse {
+  ResponseHeader header = 1;
+}
+
+message ReportMinResolvedTsRequest {
+  RequestHeader header = 1;
+
+  uint64 store_id = 2;
+
+  uint64 min_resolved_ts = 3;
+}
+
+message ReportMinResolvedTsResponse {
+  ResponseHeader header = 1;
+}
+
+message SetExternalTimestampRequest {
+  RequestHeader header = 1;
+
+  uint64 timestamp = 2;
+}
+
+message SetExternalTimestampResponse {
+  ResponseHeader header = 1;
+}
+
+message GetExternalTimestampRequest {
+  RequestHeader header = 1;
+}
+
+message GetExternalTimestampResponse {
+  ResponseHeader header = 1;
+
+  uint64 timestamp = 2;
+}
+
+message GetMinTSRequest {
+  RequestHeader header = 1;
+}
+
+message GetMinTSResponse {
+  ResponseHeader header = 1;
+
+  Timestamp timestamp = 2;
+}

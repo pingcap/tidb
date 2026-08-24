@@ -1,0 +1,499 @@
+syntax = "proto3";
+
+package import_sstpb;
+
+import "brpb.proto";
+import "encryptionpb.proto";
+import "errorpb.proto";
+import "gogoproto/gogo.proto";
+import "kvrpcpb.proto";
+import "metapb.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+// ImportSST provides a service to import a generated SST file to a region in TiKV.
+//
+// In order to import an SST file to a region, the user should:
+// 1. Retrieve the meta of the region according to the SST file's range.
+// 2. Upload the SST file to the servers where the region's peers locate in.
+// 3. Issue an ingest request to the region's leader with the SST file's metadata.
+//
+// It's the user's responsibility to make sure that the SST file is uploaded to
+// the servers where the region's peers locate in, before issue the ingest
+// request to the region's leader. However, the region can be scheduled (so the
+// location of the region's peers will be changed) or split/merged (so the range
+// of the region will be changed), after the SST file is uploaded, but before
+// the SST file is ingested. So, the region's epoch is provided in the SST
+// file's metadata, to guarantee that the region's epoch must be the same
+// between the SST file is uploaded and ingested later.
+service ImportSST {
+  // Switch to normal/import mode.
+  rpc SwitchMode(SwitchModeRequest) returns (SwitchModeResponse) {}
+  // Get import mode(normal/import).
+  rpc GetMode(GetModeRequest) returns (GetModeResponse) {}
+  // Upload an SST file to a server.
+  rpc Upload(stream UploadRequest) returns (UploadResponse) {}
+  // Ingest an uploaded SST file to a region.
+  rpc Ingest(IngestRequest) returns (IngestResponse) {}
+  // Compact the specific range for better performance.
+  rpc Compact(CompactRequest) returns (CompactResponse) {}
+
+  rpc SetDownloadSpeedLimit(SetDownloadSpeedLimitRequest) returns (SetDownloadSpeedLimitResponse) {}
+  // Download an SST file from an external storage, and performs key-rewrite
+  // after downloading.
+  rpc Download(DownloadRequest) returns (DownloadResponse) {}
+  // Download SST files in batch from external storage, perform key rewrite,
+  // and merge them into one SST after downloading.
+  rpc BatchDownload(DownloadRequest) returns (DownloadResponse) {}
+  // Download SST files in batch from external storage, perform key rewrite,
+  // merge them into one SST, and keep only the latest MVCC version after downloading.
+  rpc BatchDownloadLatestMVCC(DownloadRequest) returns (DownloadResponse) {}
+
+  // Open a write stream to generate sst files
+  rpc Write(stream WriteRequest) returns (WriteResponse) {}
+  rpc RawWrite(stream RawWriteRequest) returns (RawWriteResponse) {}
+
+  // Ingest Multiple files in one request
+  rpc MultiIngest(MultiIngestRequest) returns (IngestResponse) {}
+
+  // Collect duplicate data from TiKV.
+  rpc DuplicateDetect(DuplicateDetectRequest) returns (stream DuplicateDetectResponse) {}
+
+  // Apply download & apply increment kv files to TiKV.
+  rpc Apply(ApplyRequest) returns (ApplyResponse) {}
+
+  // ClearFiles clear applied file after restore succeed.
+  rpc ClearFiles(ClearRequest) returns (ClearResponse) {}
+
+  // Suspend ingest for data listeners don't support catching import data.
+  rpc SuspendImportRPC(SuspendImportRPCRequest) returns (SuspendImportRPCResponse) {}
+
+  // AddForcePartitionRange marks a range in tikv that any compact overlaps with this range
+  // should generates SST files partitioned at region boundaries as well as this range boundary.
+  // TiKV will also try to do manual compact(if needed) after setting this range to eusure
+  // any incoming SST under this range can be ingested into the bottom level if there is no real kv overlap.
+  rpc AddForcePartitionRange(AddPartitionRangeRequest) returns (AddPartitionRangeResponse) {}
+
+  // Remove the force partition range after the task is finished. If this function is not called,
+  // tikv will cleanup the range after TTL to ensure it can be cleaned eventually.
+  rpc RemoveForcePartitionRange(RemovePartitionRangeRequest) returns (RemovePartitionRangeResponse) {}
+}
+
+message SuspendImportRPCRequest {
+  // whether to suspend new imports.
+  bool should_suspend_imports = 1;
+
+  // the duration of import service suspension
+  // when should_deny_imports is false,
+  // this won't take effect.
+  uint64 duration_in_secs = 2;
+  // The identifier for the caller.
+  string caller = 3;
+}
+
+message SuspendImportRPCResponse {
+  // The last state before this RPC.
+  bool already_suspended = 1;
+}
+
+enum SwitchMode {
+  Normal = 0;
+  Import = 1;
+}
+
+message SwitchModeRequest {
+  SwitchMode mode = 1;
+  repeated Range ranges = 2;
+}
+
+message SwitchModeResponse {}
+
+message GetModeRequest {}
+
+message GetModeResponse {
+  SwitchMode mode = 1;
+}
+
+message Range {
+  bytes start = 1;
+  bytes end = 2;
+}
+
+message SSTMeta {
+  bytes uuid = 1;
+  Range range = 2;
+  uint32 crc32 = 3;
+  uint64 length = 4;
+  string cf_name = 5;
+  uint64 region_id = 6;
+  metapb.RegionEpoch region_epoch = 7;
+  bool end_key_exclusive = 8;
+  // total_kvs and total_bytes is equivalent to PD's approximate_keys and approximate_size
+  // set these values can save time from tikv upload keys and size to PD through Heartbeat.
+  uint64 total_kvs = 9;
+  uint64 total_bytes = 10;
+  // API version implies the encode of the key and value.
+  kvrpcpb.APIVersion api_version = 11;
+  // cipher_iv is used to encrypt/decrypt sst
+  bytes cipher_iv = 12;
+
+  // Reserved for a downstream fork
+  reserved 1000 to 1199;
+}
+
+// A rewrite rule is applied on the *encoded* keys (the internal storage
+// representation).
+message RewriteRule {
+  bytes old_key_prefix = 1;
+  bytes new_key_prefix = 2;
+  // (Optional) Rewrite all keys in the range to use this timestamp.
+  uint64 new_timestamp = 3;
+  // (Optional) Skip keys with timestamps greater than this during download, useful for compacted SST backups.
+  uint64 ignore_after_timestamp = 4;
+  // (Optional) Skip write CF keys with timestamps less than this during download. Default CF keys are preserved.
+  uint64 ignore_before_timestamp = 5;
+}
+
+message UploadRequest {
+  oneof chunk {
+    SSTMeta meta = 1;
+    bytes data = 2;
+  }
+}
+
+message UploadResponse {}
+
+message IngestRequest {
+  kvrpcpb.Context context = 1;
+  SSTMeta sst = 2;
+}
+
+message MultiIngestRequest {
+  kvrpcpb.Context context = 1;
+  repeated SSTMeta ssts = 2;
+}
+
+message IngestResponse {
+  errorpb.Error error = 1;
+}
+
+message CompactRequest {
+  // Compact files in the range and above the output level.
+  // Compact all files if the range is not specified.
+  // Compact all files to the bottommost level if the output level is -1.
+  Range range = 1;
+  int32 output_level = 2;
+  kvrpcpb.Context context = 3;
+}
+
+message CompactResponse {}
+
+message DownloadRequest {
+  // Map represents the map of <name, SSTMeta>.
+  // We'll generate all SSTMeta into one SST File.
+  map<string, SSTMeta> ssts = 1;
+  // resolved_ts is used to merge related SST Files.
+  uint64 resolved_ts = 3;
+
+  // The SST meta used to identify the downloaded file.
+  // Must be the same among all nodes in the same Raft group.
+  // Note: the "crc32" and "cf_name" fields are ignored in this request,
+  // and the "range" field represents the closed key range after rewrite
+  // (as origin keys in encoded representation).
+  SSTMeta sst = 2 [(gogoproto.nullable) = false];
+
+  // The url field is deprecated, use storage_backend instead
+  reserved 8;
+  reserved "url";
+
+  // The file name of the SST file.
+  string name = 9;
+
+  // Performs a key prefix rewrite after downloading the SST file.
+  // All keys in the SST will be rewritten as:
+  //
+  //  new_key = new_key_prefix + old_key[len(old_key_prefix)..]
+  //
+  // When used for TiDB, rewriting the prefix changes the table ID. Please
+  // note that key-rewrite is applied on the origin keys in encoded
+  // representation (the SST itself should still use data keys in encoded
+  // representation).
+  //
+  // You need to ensure that the keys before and after rewriting are in the
+  // same order, otherwise the RPC request will fail.
+  RewriteRule rewrite_rule = 13 [(gogoproto.nullable) = false];
+  repeated RewriteRule sorted_rewrite_rules = 20;
+
+  backup.StorageBackend storage_backend = 14;
+  // The identity for the stroage backend.
+  // When this field presents, the storage would be cached.
+  // If there is a cached storage, TiKV would use it driectly.
+  string storage_cache_id = 17;
+
+  bool is_raw_kv = 15;
+  // cipher_info is used to decrypt sst when download sst
+  backup.CipherInfo cipher_info = 16;
+
+  // The type of the download request.
+  DownloadRequestType request_type = 18;
+  kvrpcpb.Context context = 19;
+}
+
+enum DownloadRequestType {
+  // For the compatibility with old version of TiDBs
+  Legacy = 0;
+  // For the TiDBs with newer versions that support keyspace feature.
+  Keyspace = 1;
+}
+
+// For now it is just used for distinguishing the error of the request with the error
+// of gRPC, add more concrete types if it is necessary later.
+message Error {
+  string message = 1;
+
+  // We meet some internal errors of the store.
+  errorpb.Error store_error = 2;
+}
+
+message DownloadResponse {
+  // The actual key range (after rewrite) of the downloaded SST. The range is
+  // inclusive in both ends.
+  Range range = 1 [(gogoproto.nullable) = false];
+
+  // Whether the SST is empty. An empty SST is prohibited in TiKV, do not
+  // ingest if this field is true.
+  // (Deprecated, should be replaced by checking `length == 0` in the future)
+  bool is_empty = 2;
+
+  Error error = 3;
+
+  // The CRC32 checksum of the rewritten SST file (implementation can return
+  // zero, indicating the CRC32 was not calculated).
+  uint32 crc32 = 4;
+  // The actual length of the rewritten SST file.
+  uint64 length = 5;
+
+  // This field only return when file-copy backup enabled.
+  // Because it will merge many SST files in a download request.
+  repeated SSTMeta ssts = 6;
+}
+
+message SetDownloadSpeedLimitRequest {
+  // The download speed limit (bytes/second). Set to 0 for unlimited speed.
+  uint64 speed_limit = 1;
+
+  // The download speed limit task id.
+  string task_id = 2;
+
+  // The download speed limit ttl. Set to 0 means it will never expire.
+  uint64 ttl_seconds = 3;
+}
+
+message SetDownloadSpeedLimitResponse {}
+
+message Pair {
+  bytes key = 1;
+  bytes value = 2;
+  enum OP {
+    Put = 0;
+    Delete = 1;
+  }
+  OP op = 3;
+}
+
+message WriteBatch {
+  uint64 commit_ts = 1;
+  repeated Pair pairs = 2;
+}
+
+message WriteRequest {
+  oneof chunk {
+    SSTMeta meta = 1;
+    WriteBatch batch = 2;
+  }
+  kvrpcpb.Context context = 3;
+}
+
+message WriteResponse {
+  Error error = 1;
+  repeated SSTMeta metas = 2;
+}
+
+message RawWriteBatch {
+  uint64 ttl = 1;
+  repeated Pair pairs = 2;
+
+  // To be compatible with the key encoding of API V2.
+  // This field should be generated from the client instead of the server,
+  // since the message will be send to all the replicas of a region.
+  // Otherwise, the underlying data generated by the server would be inconsistent which is hard to scale
+  // for other features like MVCC over RawKV.
+  uint64 ts = 3;
+}
+
+message RawWriteRequest {
+  oneof chunk {
+    SSTMeta meta = 1;
+    RawWriteBatch batch = 2;
+  }
+  kvrpcpb.Context context = 3;
+}
+
+message RawWriteResponse {
+  Error error = 1;
+  repeated SSTMeta metas = 2;
+}
+
+message DuplicateDetectRequest {
+  kvrpcpb.Context context = 1;
+  bytes start_key = 2;
+  bytes end_key = 3;
+  // Return only the keys found by scanning, not their values.
+  bool key_only = 4;
+  // We only check the data whose timestamp is larger than `min_commit_ts`. `min_commit_ts` is exclueded.
+  uint64 min_commit_ts = 5;
+}
+
+message KvPair {
+  bytes key = 1;
+  bytes value = 2;
+  uint64 commit_ts = 3;
+}
+
+message DuplicateDetectResponse {
+  errorpb.Error region_error = 1;
+  Error key_error = 2;
+  // The these keys will be in asc order (but commit time is in desc order),
+  //  and the content is just like following:
+  // [
+  //   {key: "key1", value: "value11", commit_ts: 1005},
+  //   {key: "key1", value: "value12", commit_ts: 1004},
+  //   {key: "key1", value: "value13", commit_ts: 1001},
+  //   {key: "key2", value: "value21", commit_ts: 1004},
+  //   {key: "key2", value: "value22", commit_ts: 1002},
+  //   ...
+  // ]
+  repeated KvPair pairs = 3;
+}
+
+message KVMeta {
+  // The file name of the KV file.
+  string name = 1;
+
+  // file offset, sometimes only need to get a part of data from the merged file
+  uint64 range_offset = 11;
+
+  // file length for check.
+  uint64 length = 2;
+
+  // range length of the merged file, if it exists.
+  uint64 range_length = 12;
+
+  // tell us which cf should apply. WRITE_CF or DEFAULT_CF e.g.
+  string cf = 3;
+
+  // is_delete represents whether we should delete the kv in tikv.
+  // it may not be too much delete file. only rollBack operation will generate delete kv file.
+  bool is_delete = 4;
+
+  // the key ts space being smaller than start_ts can be filter.
+  uint64 start_ts = 10;
+
+  // the key ts space large than restore_ts can be filter.
+  uint64 restore_ts = 5;
+
+  bytes start_key = 6;
+
+  bytes end_key = 7;
+
+  // used for checksum when download kv file.
+  bytes sha256 = 8;
+
+  // the key ts space less than start_snapshot_ts can be filter.
+  // Deprecated: this field 'start_snapshot_ts' is replaced by the field 'start_ts'.
+  uint64 start_snapshot_ts = 9;
+
+  // the compression type for the file.
+  backup.CompressionType compression_type = 13;
+
+  // encryption information of the kv file, not set if encryption is not enabled.
+  encryptionpb.FileEncryptionInfo file_encryption_info = 14;
+}
+
+message ApplyRequest {
+  // The meta of the KV file.
+  KVMeta meta = 1;
+  repeated KVMeta metas = 12;
+
+  // Performs a key prefix rewrite after downloading the file.
+  // All keys in the files will be rewritten as:
+  //
+  //  new_key = new_key_prefix + old_key[len(old_key_prefix)..]
+  //
+  // When used for TiDB, rewriting the prefix changes the table ID. Please
+  // note that key-rewrite is applied on the origin keys in encoded
+  // representation.
+  //
+  // You need to ensure that the keys before and after rewriting are in the
+  // same order, otherwise the RPC request will fail.
+  RewriteRule rewrite_rule = 2 [(gogoproto.nullable) = false];
+  repeated RewriteRule rewrite_rules = 13;
+
+  // The identity for the stroage backend.
+  // When this field presents, the storage would be cached.
+  // If there is a cached storage, TiKV would use it driectly.
+  string storage_cache_id = 5;
+  backup.StorageBackend storage_backend = 3;
+
+  // context represents region info and it used to build raft commands.
+  kvrpcpb.Context context = 4;
+
+  // plaintext data key to decrypt kv file if configured during log backup.
+  backup.CipherInfo cipher_info = 11;
+
+  // master keys config used to decrypt data keys in restore if configured during log backup.
+  repeated encryptionpb.MasterKey master_keys = 14;
+}
+
+message ApplyResponse {
+  // The actual key range (after rewrite) of the downloaded file. The range is
+  // inclusive in both ends.
+  Range range = 1 [(gogoproto.nullable) = false];
+
+  Error error = 2;
+}
+
+message ClearRequest {
+  // clear files in import directory with given prefix.
+  string prefix = 1;
+}
+
+message ClearResponse {
+  Error error = 1;
+}
+
+message AddPartitionRangeRequest {
+  Range range = 1;
+  // the number of seconds this range is valid.
+  //After this duration, if this range is still not removed by
+  // `RemoveForcePartitionRange`, tikv will automically remove it. So the client
+  // should set a big enough value to avoid auto cleanup. But in general, 1h
+  // should be a big enough value. If its value is 0, tikv will auto adjust it to 3600(1h).
+  uint64 ttl_seconds = 2;
+}
+
+message AddPartitionRangeResponse {}
+
+message RemovePartitionRangeRequest {
+  Range range = 1;
+}
+
+message RemovePartitionRangeResponse {}

@@ -1,0 +1,73 @@
+syntax = "proto3";
+package logbackup;
+
+import "errorpb.proto";
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+// The minimal information for identify a region.
+message RegionIdentity {
+  uint64 id = 1;
+  uint64 epoch_version = 2;
+  // We omitted epoch_conf_version because config change won't make range change.
+}
+
+// The last flush ts with region information.
+message RegionCheckpoint {
+  errorpb.Error err = 1;
+  RegionIdentity region = 2;
+  uint64 checkpoint = 3;
+}
+
+message GetLastFlushTSOfRegionRequest {
+  repeated RegionIdentity regions = 1;
+}
+
+message GetLastFlushTSOfRegionResponse {
+  repeated RegionCheckpoint checkpoints = 1;
+}
+
+message SubscribeFlushEventRequest {
+  string client_id = 1;
+}
+
+message SubscribeFlushEventResponse {
+  repeated FlushEvent events = 1;
+}
+
+message FlushEvent {
+  bytes start_key = 1;
+  bytes end_key = 2;
+  uint64 checkpoint = 3;
+}
+
+message FlushNowRequest {}
+
+message FlushNowResponse {
+  repeated FlushResult results = 1;
+}
+
+message FlushResult {
+  string task_name = 1;
+  bool success = 2;
+  string error_message = 3;
+}
+
+// The log backup service.
+// Generally, most essential interfaces of log backup (say, checkpoint management, task management) are
+// provided by adding some key in the embed etcd of PD.
+// This interface is mainly provided for the checkpoint advancer and debug usage.
+service LogBackup {
+  rpc GetLastFlushTSOfRegion(GetLastFlushTSOfRegionRequest) returns (GetLastFlushTSOfRegionResponse) {}
+  rpc SubscribeFlushEvent(SubscribeFlushEventRequest) returns (stream SubscribeFlushEventResponse) {}
+  rpc FlushNow(FlushNowRequest) returns (FlushNowResponse) {}
+}

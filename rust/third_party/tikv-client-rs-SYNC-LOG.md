@@ -1,0 +1,8 @@
+# `vendor/tikv-client-rs` sync log
+
+One line per `scripts/sync-tikv-client-rs.sh` run, oldest first. This is the
+audit trail for "what upstream `ngaut/client-rust` commit is the workspace
+currently built against" — see `docs/client-rust-migration-execplan.md`.
+
+- 2026-08-24T06:51:03Z: synced to ngaut/client-rust@77ac9fe1349090daaca2d1cbfa1855fa73d7ec24 (committed 2026-08-23T23:48:56-07:00), patches: 0 applied
+- 2026-08-24T06:51:53Z: synced to ngaut/client-rust@5e154bb857cf8c94ebdf8626f581307de4397054 (committed 2026-08-23T23:51:30-07:00), patches: 0 applied

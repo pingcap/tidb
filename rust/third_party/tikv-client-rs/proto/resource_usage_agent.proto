@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package resource_usage_agent;
+
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+// ResourceUsageAgent is the service for storing resource usage records.
+service ResourceUsageAgent {
+  // Report the resource usage records. By default, the records with the same
+  // resource group tag will be batched by minute.
+  rpc Report(stream ResourceUsageRecord) returns (EmptyResponse) {}
+}
+
+// TiKV implements ResourceMeteringPubSub service for clients to subscribe to resource metering records.
+service ResourceMeteringPubSub {
+  // Clients subscribe to resource metering records through this RPC, and TiKV periodically (e.g. per minute)
+  // publishes resource metering records to clients via gRPC stream.
+  rpc Subscribe(ResourceMeteringRequest) returns (stream ResourceUsageRecord) {}
+}
+
+message ResourceMeteringRequest {}
+
+message EmptyResponse {}
+
+message ResourceUsageRecord {
+  oneof record_oneof {
+    GroupTagRecord record = 1;
+    RegionRecord region_record = 2;
+  }
+}
+
+// GroupTagRecord is a set of resource usage data grouped by resource_group_tag.
+message GroupTagRecord {
+  bytes resource_group_tag = 1;
+  repeated GroupTagRecordItem items = 2;
+}
+
+message GroupTagRecordItem {
+  uint64 timestamp_sec = 1;
+  uint32 cpu_time_ms = 2;
+  uint32 read_keys = 3;
+  uint32 write_keys = 4;
+  uint64 network_in_bytes = 5;
+  uint64 network_out_bytes = 6;
+  uint64 logical_read_bytes = 7;
+  uint64 logical_write_bytes = 8;
+}
+
+// RegionRecord is a set of resource usage data grouped by region.
+message RegionRecord {
+  uint64 region_id = 1;
+  repeated GroupTagRecordItem items = 2;
+}

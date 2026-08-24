@@ -1,0 +1,80 @@
+[package]
+name = "tikv-client"
+version = "0.4.0"
+keywords = ["TiKV", "KV", "distributed-systems"]
+license = "Apache-2.0"
+authors = ["The TiKV Project Authors"]
+repository = "https://github.com/tikv/client-rust"
+description = "The Rust language implementation of TiKV client."
+edition = "2021"
+rust-version = "1.93.0"
+
+[features]
+default = ["prometheus"]
+prometheus = ["prometheus/push", "prometheus/process"]
+# Enable integration tests with a running TiKV and PD instance.
+# Use $PD_ADDRS, comma separated, to set the addresses the tests use.
+integration-tests = []
+# Enable behavior that client-go selects with its internal `intest` build tag.
+internal-tests = []
+# Enable test behavior intended for execution under a race detector such as ThreadSanitizer.
+race-tests = []
+# Match client-go's `nextgen` build tag.
+nextgen = []
+
+[lib]
+name = "tikv_client"
+
+[workspace]
+members = [
+    ".",
+    "proto-build",
+    "unistore",
+]
+
+[dependencies]
+async-recursion = "0.3"
+async-trait = "0.1"
+derive-new = "0.5"
+either = "1.6"
+fail = "0.4"
+futures = { version = "0.3" }
+lazy_static = "1"
+log = "0.4"
+pin-project = "1"
+prometheus = { version = "0.13", default-features = false }
+prost = "0.13"
+rand = "0.8"
+regex = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pemfile = "2"
+semver = "1.0"
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1"
+take_mut = "0.2.2"
+thiserror = "1"
+tokio = { version = "1.21", features = ["sync", "rt-multi-thread", "macros", "time"] }
+tonic = { version = "0.12", features = ["tls", "gzip"] }
+url = "2"
+
+[dev-dependencies]
+clap = "2"
+env_logger = "0.10"
+fail = { version = "0.4", features = ["failpoints"] }
+openssl = "0.10"
+proptest = "1"
+proptest-derive = "0.5.1"
+reqwest = { version = "0.11", features = ["json", "native-tls-vendored"] }
+rstest = "0.18.2"
+serde_json = "1"
+serial_test = "0.5.0"
+tempfile = "=3.14.0"
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "net"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+unistore = { path = "unistore" }
+
+[[test]]
+name = "failpoint_tests"
+path = "tests/failpoint_tests.rs"
+required-features = ["fail/failpoints"]

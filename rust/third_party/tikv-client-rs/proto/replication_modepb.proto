@@ -1,0 +1,76 @@
+syntax = "proto3";
+package replication_modepb;
+
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+enum ReplicationMode {
+  // The standard mode. Replicate logs to majority peer.
+  MAJORITY = 0;
+  // DR mode. Replicate logs among 2 DCs.
+  DR_AUTO_SYNC = 1;
+}
+
+// The replication status sync from PD to TiKV.
+message ReplicationStatus {
+  ReplicationMode mode = 1;
+  DRAutoSync dr_auto_sync = 2;
+
+  // Reserved for a downstream fork
+  reserved 1000 to 1199;
+}
+
+enum DRAutoSyncState {
+  // Raft logs need to sync between different DCs
+  SYNC = 0;
+  // Wait for switching to ASYNC. Stop sync raft logs between DCs.
+  ASYNC_WAIT = 1;
+  // Raft logs need to sync to majority peers
+  ASYNC = 2;
+  // Switching from ASYNC to SYNC mode
+  SYNC_RECOVER = 3;
+}
+
+// The status of dr-autosync mode.
+message DRAutoSync {
+  // The key of the label that used for distinguish different DC.
+  string label_key = 1;
+  DRAutoSyncState state = 2;
+  // Unique ID of the state, it increases after each state transfer.
+  uint64 state_id = 3;
+  // Duration to wait before switching to SYNC by force (in seconds)
+  int32 wait_sync_timeout_hint = 4;
+  // Stores should only sync messages with available stores when state is ASYNC or ASYNC_WAIT.
+  repeated uint64 available_stores = 5;
+  // Stores should forbid region split.
+  bool pause_region_split = 6;
+}
+
+enum RegionReplicationState {
+  // The region's state is unknown
+  UNKNOWN = 0;
+  // Logs sync to majority peers
+  SIMPLE_MAJORITY = 1;
+  // Logs sync to different DCs
+  INTEGRITY_OVER_LABEL = 2;
+}
+
+// The replication status sync from TiKV to PD.
+message RegionReplicationStatus {
+  RegionReplicationState state = 1;
+  // Unique ID of the state, it increases after each state transfer.
+  uint64 state_id = 2;
+}
+
+message StoreDRAutoSyncStatus {
+  DRAutoSyncState state = 1;
+  uint64 state_id = 2;
+}

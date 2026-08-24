@@ -1,0 +1,134 @@
+syntax = "proto3";
+package tsopb;
+
+import "gogoproto/gogo.proto";
+import "pdpb.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+service TSO {
+  rpc Tso(stream TsoRequest) returns (stream TsoResponse) {}
+  // Find the keyspace group that the keyspace belongs to by keyspace id.
+  rpc FindGroupByKeyspaceID(FindGroupByKeyspaceIDRequest) returns (FindGroupByKeyspaceIDResponse) {}
+  // Get the minimum timestamp across all keyspace groups served by the TSO server who receives
+  // and handle the request. If the TSO server/pod is not serving any keyspace group, return
+  // an empty timestamp, and the client needs to skip the empty timestamps when collecting
+  // the min timestamp from all TSO servers/pods.
+  rpc GetMinTS(GetMinTSRequest) returns (GetMinTSResponse) {}
+}
+
+message RequestHeader {
+  // cluster_id is the ID of the cluster which be sent to.
+  uint64 cluster_id = 1;
+  // sender_id is the ID of the sender server.
+  uint64 sender_id = 2;
+
+  // keyspace_id is the unique id of the tenant/keyspace.
+  uint32 keyspace_id = 3;
+  // keyspace_group_id is the unique id of the keyspace group to which the tenant/keyspace belongs.
+  uint32 keyspace_group_id = 4;
+  // callee_id is the ID of the server which the client expects to receive the request.
+  // such as tso-0, tso-1, pd-0, pd-1 etc.
+  // This field is used to check if the request is sent to the expected server.
+  // If it is not matched, the server will return an error.
+  string callee_id = 5;
+}
+
+message ResponseHeader {
+  // cluster_id is the ID of the cluster which sent the response.
+  uint64 cluster_id = 1;
+  Error error = 2;
+
+  // keyspace_id is the unique id of the tenant/keyspace as the response receiver.
+  uint32 keyspace_id = 3;
+  // keyspace_group_id is the unique id of the keyspace group to which the tenant/keyspace belongs.
+  uint32 keyspace_group_id = 4;
+}
+
+enum ErrorType {
+  OK = 0;
+  UNKNOWN = 1;
+  NOT_BOOTSTRAPPED = 2;
+  ALREADY_BOOTSTRAPPED = 3;
+  INVALID_VALUE = 4;
+  CLUSTER_MISMATCHED = 5;
+}
+
+message Error {
+  ErrorType type = 1;
+  string message = 2;
+}
+
+message TsoRequest {
+  RequestHeader header = 1;
+
+  uint32 count = 2;
+  string dc_location = 3;
+}
+
+message TsoResponse {
+  ResponseHeader header = 1;
+
+  uint32 count = 2;
+  pdpb.Timestamp timestamp = 3;
+}
+
+message Participant {
+  // name is the unique name of the TSO participant.
+  string name = 1;
+  // id is the unique id of the TSO participant.
+  uint64 id = 2;
+  // listen_urls is the serivce endpoint list in the url format.
+  // listen_urls[0] is primary service endpoint.
+  repeated string listen_urls = 3;
+}
+
+message KeyspaceGroupMember {
+  string address = 1;
+  bool is_primary = 2;
+}
+
+message SplitState {
+  uint32 split_source = 1;
+}
+
+message KeyspaceGroup {
+  uint32 id = 1;
+  string user_kind = 2;
+  SplitState split_state = 3;
+  repeated KeyspaceGroupMember members = 4;
+}
+
+message FindGroupByKeyspaceIDRequest {
+  RequestHeader header = 1;
+  uint32 keyspace_id = 2;
+  uint64 mod_revision = 3;
+}
+
+message FindGroupByKeyspaceIDResponse {
+  ResponseHeader header = 1;
+  KeyspaceGroup keyspace_group = 2;
+  uint64 mod_revision = 3;
+}
+
+message GetMinTSRequest {
+  RequestHeader header = 1;
+  string dc_location = 2;
+}
+
+message GetMinTSResponse {
+  ResponseHeader header = 1;
+  pdpb.Timestamp timestamp = 2;
+  // the count of keyspace group primaries that the TSO server/pod is serving
+  uint32 keyspace_groups_serving = 3;
+  // the total count of keyspace groups
+  uint32 keyspace_groups_total = 4;
+}

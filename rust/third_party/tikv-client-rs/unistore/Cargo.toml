@@ -1,0 +1,10 @@
+[package]
+name = "unistore"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Reusable in-memory MVCC store for TiKV client tests"
+publish = false
+
+[dependencies]
+thiserror = "1"

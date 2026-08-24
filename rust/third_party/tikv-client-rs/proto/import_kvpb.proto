@@ -1,0 +1,163 @@
+syntax = "proto3";
+
+package import_kvpb;
+
+import "gogoproto/gogo.proto";
+import "import_sstpb.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+// ImportKV provides a service to import key-value pairs to TiKV.
+//
+// In order to import key-value pairs to TiKV, the user should:
+// 1. Open an engine identified by an UUID.
+// 2. Open write streams to write key-value batches to the opened engine.
+//    Different streams/clients can write to the same engine concurrently.
+// 3. Close the engine after all write batches have been finished. An
+//    engine can only be closed when all write streams are closed. An
+//    engine can only be closed once, and it can not be opened again
+//    once it is closed.
+// 4. Import the data in the engine to the target cluster. Note that
+//    the import process is not atomic, it requires the data to be
+//    idempotent on retry. An engine can only be imported after it is
+//    closed. An engine can be imported multiple times, but can not be
+//    imported concurrently.
+// 5. Clean up the engine after it has been imported. Delete all data
+//    in the engine. An engine can not be cleaned up when it is
+//    writing or importing.
+service ImportKV {
+  // Switch the target cluster to normal/import mode.
+  rpc SwitchMode(SwitchModeRequest) returns (SwitchModeResponse) {}
+  // Open an engine.
+  rpc OpenEngine(OpenEngineRequest) returns (OpenEngineResponse) {}
+  // Open a write stream to the engine.
+  rpc WriteEngine(stream WriteEngineRequest) returns (WriteEngineResponse) {}
+  // Write to engine, single message version
+  rpc WriteEngineV3(WriteEngineV3Request) returns (WriteEngineResponse) {}
+  // Close the engine.
+  rpc CloseEngine(CloseEngineRequest) returns (CloseEngineResponse) {}
+  // Import the engine to the target cluster.
+  rpc ImportEngine(ImportEngineRequest) returns (ImportEngineResponse) {}
+  // Clean up the engine.
+  rpc CleanupEngine(CleanupEngineRequest) returns (CleanupEngineResponse) {}
+  // Compact the target cluster for better performance.
+  rpc CompactCluster(CompactClusterRequest) returns (CompactClusterResponse) {}
+  // Get current version and commit hash
+  rpc GetVersion(GetVersionRequest) returns (GetVersionResponse) {}
+  // Get importer metrics
+  rpc GetMetrics(GetMetricsRequest) returns (GetMetricsResponse) {}
+}
+
+message SwitchModeRequest {
+  string pd_addr = 1;
+  import_sstpb.SwitchModeRequest request = 2;
+}
+
+message SwitchModeResponse {}
+
+message OpenEngineRequest {
+  bytes uuid = 1;
+  bytes key_prefix = 2;
+}
+
+message OpenEngineResponse {}
+
+message WriteHead {
+  bytes uuid = 1;
+}
+
+message Mutation {
+  enum OP {
+    Put = 0;
+  }
+  OP op = 1;
+  bytes key = 2;
+  bytes value = 3;
+}
+
+message WriteBatch {
+  uint64 commit_ts = 1;
+  repeated Mutation mutations = 2;
+}
+
+message WriteEngineRequest {
+  oneof chunk {
+    WriteHead head = 1;
+    WriteBatch batch = 2;
+  }
+}
+
+message KVPair {
+  bytes key = 1;
+  bytes value = 2;
+}
+
+message WriteEngineV3Request {
+  bytes uuid = 1;
+  uint64 commit_ts = 2;
+  repeated KVPair pairs = 3;
+}
+
+message WriteEngineResponse {
+  Error error = 1;
+}
+
+message CloseEngineRequest {
+  bytes uuid = 1;
+}
+
+message CloseEngineResponse {
+  Error error = 1;
+}
+
+message ImportEngineRequest {
+  bytes uuid = 1;
+  string pd_addr = 2;
+}
+
+message ImportEngineResponse {}
+
+message CleanupEngineRequest {
+  bytes uuid = 1;
+}
+
+message CleanupEngineResponse {}
+
+message CompactClusterRequest {
+  string pd_addr = 1;
+  import_sstpb.CompactRequest request = 2;
+}
+
+message CompactClusterResponse {}
+
+message GetVersionRequest {}
+
+message GetVersionResponse {
+  string version = 1;
+  string commit = 2;
+}
+
+message GetMetricsRequest {}
+
+message GetMetricsResponse {
+  string prometheus = 1;
+}
+
+message Error {
+  message EngineNotFound {
+    bytes uuid = 1;
+  }
+  // This can happen if the client hasn't opened the engine, or the server
+  // restarts while the client is writing or closing. An unclosed engine will
+  // be removed on server restart, so the client should not continue but
+  // restart the previous job in that case.
+  EngineNotFound engine_not_found = 1;
+}

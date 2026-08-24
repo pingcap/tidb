@@ -1,0 +1,48 @@
+syntax = "proto3";
+package autoid;
+
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+message AutoIDRequest {
+  int64 dbID = 1;
+  int64 tblID = 2;
+  bool isUnsigned = 3;
+  uint64 n = 4;
+  int64 increment = 5;
+  int64 offset = 6;
+  uint32 keyspaceID = 7;
+}
+
+message AutoIDResponse {
+  int64 min = 1;
+  int64 max = 2;
+
+  bytes errmsg = 3;
+}
+
+message RebaseRequest {
+  int64 dbID = 1;
+  int64 tblID = 2;
+  bool isUnsigned = 3;
+  int64 base = 4;
+  bool force = 5;
+}
+
+message RebaseResponse {
+  bytes errmsg = 1;
+}
+
+service AutoIDAlloc {
+  rpc AllocAutoID(AutoIDRequest) returns (AutoIDResponse) {}
+  rpc Rebase(RebaseRequest) returns (RebaseResponse) {}
+}

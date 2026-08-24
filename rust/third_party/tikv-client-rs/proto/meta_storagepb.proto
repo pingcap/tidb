@@ -1,0 +1,167 @@
+syntax = "proto3";
+package meta_storagepb;
+
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+// MetaStorage is the meta storage service.
+service MetaStorage {
+  rpc Watch(WatchRequest) returns (stream WatchResponse) {}
+
+  // Get is the same as etcd Range which might be implemented in a more common way
+  // so that we can use other storages to replace etcd in the future.
+  rpc Get(GetRequest) returns (GetResponse) {}
+
+  rpc Put(PutRequest) returns (PutResponse) {}
+
+  // Delete is the same as etcd Range which might be implemented in a more common way
+  // so that we can use other storages to replace etcd in the future.
+  rpc Delete(DeleteRequest) returns (DeleteResponse) {}
+}
+
+enum ErrorType {
+  OK = 0;
+  UNKNOWN = 1;
+  // required watch revision is smaller than current compact/min revision.
+  DATA_COMPACTED = 2;
+}
+
+message Error {
+  ErrorType type = 1;
+  string message = 2;
+}
+
+message RequestHeader {
+  // cluster_id is the ID of the cluster which be sent to.
+  uint64 cluster_id = 1;
+  // source is the source of the request.
+  string source = 2;
+}
+
+message ResponseHeader {
+  // cluster_id is the ID of the cluster which sent the response.
+  uint64 cluster_id = 1;
+  Error error = 2;
+  int64 revision = 3;
+}
+
+// copied part of https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/etcdserverpb/rpc.proto
+message WatchRequest {
+  RequestHeader header = 1;
+  bytes key = 2;
+  bytes range_end = 3;
+  int64 start_revision = 4;
+  bool prev_kv = 5;
+}
+
+// copied part of https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/etcdserverpb/rpc.proto
+message WatchResponse {
+  ResponseHeader header = 1;
+  int64 compact_revision = 2;
+  repeated Event events = 3;
+}
+
+// copied part of https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/etcdserverpb/rpc.proto
+message GetRequest {
+  RequestHeader header = 1;
+  bytes key = 2;
+  bytes range_end = 3;
+  int64 limit = 4;
+  int64 revision = 5;
+}
+
+// copied part of https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/etcdserverpb/rpc.proto
+message GetResponse {
+  ResponseHeader header = 1;
+  repeated KeyValue kvs = 2;
+  bool more = 3;
+  int64 count = 4;
+}
+
+// copied part of https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/etcdserverpb/rpc.proto
+message PutRequest {
+  RequestHeader header = 1;
+  bytes key = 2;
+  bytes value = 3;
+  int64 lease = 4;
+  bool prev_kv = 5;
+}
+
+// copied part of https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/etcdserverpb/rpc.proto
+message PutResponse {
+  ResponseHeader header = 1;
+  KeyValue prev_kv = 2;
+}
+
+// copied from etcd https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/mvccpb/kv.proto
+message DeleteRequest {
+  RequestHeader header = 1;
+  bytes key = 2;
+  // range_end is the key following the last key to delete for the range [key, range_end).
+  // If range_end is not given, the range is defined to contain only the key argument.
+  // If range_end is one bit larger than the given key, then the range is all the keys
+  // with the prefix (the given key).
+  // If range_end is '\0', the range is all keys greater than or equal to the key argument.
+  bytes range_end = 3;
+
+  // If prev_kv is set, etcd gets the previous key-value pairs before deleting it.
+  // The previous key-value pairs will be returned in the delete response.
+  bool prev_kv = 4;
+}
+
+message DeleteResponse {
+  ResponseHeader header = 1;
+  // deleted is the number of keys deleted by the delete range request.
+  int64 deleted = 2;
+  repeated KeyValue prev_kvs = 3;
+}
+
+// copied from etcd https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/mvccpb/kv.proto
+message KeyValue {
+  // key is the key in bytes. An empty key is not allowed.
+  bytes key = 1;
+  // create_revision is the revision of last creation on this key.
+  int64 create_revision = 2;
+  // mod_revision is the revision of last modification on this key.
+  int64 mod_revision = 3;
+  // version is the version of the key. A deletion resets
+  // the version to zero and any modification of the key
+  // increases its version.
+  int64 version = 4;
+  // value is the value held by the key, in bytes.
+  bytes value = 5;
+  // lease is the ID of the lease that attached to key.
+  // When the attached lease expires, the key will be deleted.
+  // If lease is 0, then no lease is attached to the key.
+  int64 lease = 6;
+}
+
+// copied from etcd https://github.com/etcd-io/etcd/blob/7dfd29b0cc7ce25337276dce646ca2a65aa44b4d/api/mvccpb/kv.proto
+message Event {
+  enum EventType {
+    PUT = 0;
+    DELETE = 1;
+  }
+  // type is the kind of event. If type is a PUT, it indicates
+  // new data has been stored to the key. If type is a DELETE,
+  // it indicates the key was deleted.
+  EventType type = 1;
+  // kv holds the KeyValue for the event.
+  // A PUT event contains current kv pair.
+  // A PUT event with kv.Version=1 indicates the creation of a key.
+  // A DELETE/EXPIRE event contains the deleted key with
+  // its modification revision set to the revision of deletion.
+  KeyValue kv = 2;
+
+  // prev_kv holds the key-value pair before the event happens.
+  KeyValue prev_kv = 3;
+}

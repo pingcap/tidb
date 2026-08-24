@@ -1,0 +1,217 @@
+syntax = "proto3";
+package errorpb;
+
+import "gogoproto/gogo.proto";
+import "metapb.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+// NotLeader is the error variant that tells a request be handle by raft leader
+// is sent to raft follower or learner.
+message NotLeader {
+  // The requested region ID
+  uint64 region_id = 1;
+  // Region leader of the requested region
+  metapb.Peer leader = 2;
+}
+
+// IsWitness is the error variant that tells a request be handle by witness
+// which should be forbidden and retry.
+message IsWitness {
+  // The requested region ID
+  uint64 region_id = 1;
+}
+
+// BucketVersionNotMatch is the error variant that tells the request buckets version is not match.
+// client should update the buckets version and retry.
+message BucketVersionNotMatch {
+  uint64 version = 1;
+  repeated bytes keys = 2;
+}
+
+message DiskFull {
+  // The requested store ID
+  repeated uint64 store_id = 1;
+  // The detailed info
+  string reason = 2;
+}
+
+// StoreNotMatch is the error variant that tells the request is sent to wrong store.
+// (i.e. inconsistency of the store ID that request shows and the real store ID of this server.)
+message StoreNotMatch {
+  // Store id in request
+  uint64 request_store_id = 1;
+  // Actual store id
+  uint64 actual_store_id = 2;
+}
+
+// RegionNotFound is the error variant that tells there isn't any region in this TiKV
+// matches the requested region ID.
+message RegionNotFound {
+  // The requested region ID
+  uint64 region_id = 1;
+}
+
+// RegionNotInitialized is the error variant that tells there isn't any initialized peer
+// matchesthe request region ID.
+message RegionNotInitialized {
+  // The request region ID
+  uint64 region_id = 1;
+}
+
+// KeyNotInRegion is the error variant that tells the key the request requires isn't present in
+// this region.
+message KeyNotInRegion {
+  // The requested key
+  bytes key = 1;
+  // The requested region ID
+  uint64 region_id = 2;
+  // Start key of the requested region
+  bytes start_key = 3;
+  // Snd key of the requested region
+  bytes end_key = 4;
+}
+
+// EpochNotMatch is the error variant that tells a region has been updated.
+// (e.g. by splitting / merging, or raft Confchange.)
+// Hence, a command is based on a stale version of a region.
+message EpochNotMatch {
+  // Available regions that may be siblings of the requested one.
+  repeated metapb.Region current_regions = 1;
+}
+
+// ServerIsBusy is the error variant that tells the server is too busy to response.
+message ServerIsBusy {
+  string reason = 1;
+  // The suggested backoff time
+  uint64 backoff_ms = 2;
+  uint32 estimated_wait_ms = 3;
+  // Current applied_index at the leader, may be used in replica read.
+  uint64 applied_index = 4;
+}
+
+// StaleCommand is the error variant that tells the command is stale, that is,
+// the current request term is lower than current raft term.
+// This can be retried at most time.
+message StaleCommand {}
+
+// RaftEntryTooLarge is the error variant that tells the request is too large to be serialized to a
+// reasonable small raft entry.
+// (i.e. greater than the configured value `raft_entry_max_size` in `raftstore`)
+message RaftEntryTooLarge {
+  // The requested region ID
+  uint64 region_id = 1;
+  // Size of the raft entry
+  uint64 entry_size = 2;
+}
+
+// MaxTimestampNotSynced is the error variant that tells the peer has just become a leader and
+// updating the max timestamp in the concurrency manager from PD TSO is ongoing. In this case,
+// the prewrite of an async commit transaction cannot succeed. The client can backoff and
+// resend the request.
+message MaxTimestampNotSynced {}
+
+// ReadIndexNotReady is the error variant that tells the read index request is not ready, that is,
+// the current region is in a status that not ready to serve the read index request. For example,
+// region is in splitting or merging status.
+// This can be retried at most time.
+message ReadIndexNotReady {
+  // The reason why the region is not ready to serve read index request
+  string reason = 1;
+  // The requested region ID
+  uint64 region_id = 2;
+}
+
+// ProposalInMergingMode is the error variant that tells the proposal is rejected because raft is
+// in the merging mode. This may happen when BR/Lightning try to ingest SST.
+// This can be retried at most time.
+message ProposalInMergingMode {
+  // The requested region ID
+  uint64 region_id = 1;
+}
+
+message DataIsNotReady {
+  // The requested region ID
+  uint64 region_id = 1;
+  uint64 peer_id = 2;
+  uint64 safe_ts = 3;
+}
+
+message RecoveryInProgress {
+  // The requested region ID
+  uint64 region_id = 1;
+}
+
+message FlashbackInProgress {
+  // The requested region ID
+  uint64 region_id = 1;
+  uint64 flashback_start_ts = 2;
+}
+
+message FlashbackNotPrepared {
+  // The requested region ID
+  uint64 region_id = 1;
+}
+
+// MismatchPeerId is the error variant that tells the request is sent to wrong peer.
+// Client receives this error should reload the region info and retry.
+message MismatchPeerId {
+  uint64 request_peer_id = 1;
+  uint64 store_peer_id = 2;
+}
+
+// UndeterminedResult is the error variant that tells the result is not determined yet.
+// For example, the raft protocol timed out and the apply result is unknown.
+message UndeterminedResult {
+  string message = 1;
+}
+
+// Error wraps all region errors, indicates an error encountered by a request.
+message Error {
+  reserved "stale_epoch";
+
+  // The error message
+  string message = 1;
+  NotLeader not_leader = 2;
+  RegionNotFound region_not_found = 3;
+  KeyNotInRegion key_not_in_region = 4;
+  EpochNotMatch epoch_not_match = 5;
+  ServerIsBusy server_is_busy = 6;
+  StaleCommand stale_command = 7;
+  StoreNotMatch store_not_match = 8;
+  RaftEntryTooLarge raft_entry_too_large = 9;
+  MaxTimestampNotSynced max_timestamp_not_synced = 10;
+  ReadIndexNotReady read_index_not_ready = 11;
+  ProposalInMergingMode proposal_in_merging_mode = 12;
+  DataIsNotReady data_is_not_ready = 13;
+  RegionNotInitialized region_not_initialized = 14;
+  DiskFull disk_full = 15;
+  // Online recovery is still in performing, reject writes to avoid potential issues
+  RecoveryInProgress RecoveryInProgress = 16;
+  // Flashback is still in performing, reject any read or write to avoid potential issues.
+  // NOTICE: this error is non-retryable, the request should fail ASAP when it meets this error.
+  FlashbackInProgress FlashbackInProgress = 17;
+  // If the second phase flashback request is sent to a region that is not prepared for the flashback,
+  // this error will be returned.
+  // NOTICE: this error is non-retryable, the client should retry the first phase flashback request when it meets this error.
+  FlashbackNotPrepared FlashbackNotPrepared = 18;
+  // IsWitness is the error variant that tells a request be handle by witness
+  // which should be forbidden and retry.
+  IsWitness is_witness = 19;
+
+  MismatchPeerId mismatch_peer_id = 20;
+
+  // BucketVersionNotMatch is the error variant that tells the request buckets version is not match.
+  BucketVersionNotMatch bucket_version_not_match = 21;
+
+  // UndeterminedResult is the error variant that tells the result is not determined yet.
+  UndeterminedResult undetermined_result = 22;
+}

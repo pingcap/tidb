@@ -1,0 +1,88 @@
+syntax = "proto3";
+package keyspacepb;
+
+import "gogoproto/gogo.proto";
+import "pdpb.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+// Keyspace provides services to manage keyspaces.
+service Keyspace {
+  rpc LoadKeyspace(LoadKeyspaceRequest) returns (LoadKeyspaceResponse) {}
+  rpc LoadKeyspaceByID(LoadKeyspaceByIDRequest) returns (LoadKeyspaceResponse) {}
+  // WatchKeyspaces first return all current keyspaces' metadata as its first response.
+  // Then, it returns responses containing keyspaces that had their metadata changed.
+  rpc WatchKeyspaces(WatchKeyspacesRequest) returns (stream WatchKeyspacesResponse) {}
+  rpc UpdateKeyspaceState(UpdateKeyspaceStateRequest) returns (UpdateKeyspaceStateResponse) {}
+  rpc GetAllKeyspaces(GetAllKeyspacesRequest) returns (GetAllKeyspacesResponse) {}
+}
+
+message KeyspaceMeta {
+  uint32 id = 1;
+  string name = 2;
+  KeyspaceState state = 3;
+  int64 created_at = 4;
+  int64 state_changed_at = 5;
+  map<string, string> config = 7;
+}
+
+enum KeyspaceState {
+  ENABLED = 0;
+  DISABLED = 1;
+  ARCHIVED = 2;
+  TOMBSTONE = 3;
+}
+
+message LoadKeyspaceRequest {
+  pdpb.RequestHeader header = 1;
+  string name = 2;
+}
+
+message LoadKeyspaceByIDRequest {
+  pdpb.RequestHeader header = 1;
+  uint32 id = 2;
+}
+
+message LoadKeyspaceResponse {
+  pdpb.ResponseHeader header = 1;
+  KeyspaceMeta keyspace = 2;
+}
+
+message WatchKeyspacesRequest {
+  pdpb.RequestHeader header = 1;
+}
+
+message WatchKeyspacesResponse {
+  pdpb.ResponseHeader header = 1;
+  repeated KeyspaceMeta keyspaces = 2;
+}
+
+message UpdateKeyspaceStateRequest {
+  pdpb.RequestHeader header = 1;
+  uint32 id = 2;
+  KeyspaceState state = 3;
+}
+
+message UpdateKeyspaceStateResponse {
+  pdpb.ResponseHeader header = 1;
+  KeyspaceMeta keyspace = 2;
+}
+
+message GetAllKeyspacesRequest {
+  pdpb.RequestHeader header = 1;
+  uint32 start_id = 2;
+  uint32 limit = 3;
+}
+
+message GetAllKeyspacesResponse {
+  pdpb.ResponseHeader header = 1;
+  repeated KeyspaceMeta keyspaces = 2;
+}

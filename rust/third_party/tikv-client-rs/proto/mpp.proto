@@ -1,0 +1,110 @@
+syntax = "proto3";
+package mpp;
+
+import "coprocessor.proto";
+import "gogoproto/gogo.proto";
+import "kvrpcpb.proto";
+import "metapb.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+// TaskMeta contains meta of a mpp plan, including query's ts and task address.
+message TaskMeta {
+  uint64 start_ts = 1; // start ts of a query
+  int64 task_id = 2; // if task id is -1 , it indicates a tidb task.
+  int64 partition_id = 3; // Only used for hash partition
+  string address = 4; // target address of this task.
+  uint64 gather_id = 5; // used to distinguish different gathers in the mpp query.
+  uint64 query_ts = 6; // timestamp when start to execute query, used for TiFlash miniTSO schedule.
+  uint64 local_query_id = 7; // unique local query_id if tidb don't restart. So we can use gather_id + query_ts + local_query_id + server_id to represent a global unique query.
+  uint64 server_id = 8; // TiDB server id
+  int64 mpp_version = 9; // mpp version
+  uint32 keyspace_id = 10; // keyspace id of the request
+  string coordinator_address = 11; // coordinator_address of this query
+  bool report_execution_summary = 12; // Only when coordinator_address is not empty, this flag can be true. When set to true, TiFlash only report execution summary through ReportMPPTaskStatus service, don't include summaries in MppDataPacket
+  kvrpcpb.APIVersion api_version = 16; // API version of the request
+  string resource_group_name = 17;
+  uint64 connection_id = 18; // This is the session id between a client and tidb
+  string connection_alias = 19; // This is the session alias between a client and tidb
+  string sql_digest = 20;
+  string plan_digest = 21;
+}
+
+message IsAliveRequest {}
+
+message IsAliveResponse {
+  bool available = 1;
+  int64 mpp_version = 2;
+}
+
+// Dipsatch the task request to different tiflash servers.
+message DispatchTaskRequest {
+  TaskMeta meta = 1;
+  bytes encoded_plan = 2;
+  int64 timeout = 3;
+  repeated coprocessor.RegionInfo regions = 4;
+  // If this task contains table scan, we still need their region info.
+  int64 schema_ver = 5;
+  // Used for partition table scan
+  repeated coprocessor.TableRegions table_regions = 6;
+  // Shard infos for TiCI/FTS routing in MPP dispatch path.
+  repeated coprocessor.TableShardInfos table_shard_infos = 7;
+}
+
+// Get response of DispatchTaskRequest.
+message DispatchTaskResponse {
+  Error error = 1;
+  repeated metapb.Region retry_regions = 2;
+}
+
+// CancelTaskRequest closes the execution of a task.
+message CancelTaskRequest {
+  TaskMeta meta = 1;
+  Error error = 2;
+}
+
+message CancelTaskResponse {
+  Error error = 1;
+}
+
+// ReportTaskStatus reports the execution status of a task.
+// when TiFlash reports status to TiDB, ReportTaskStatusRequest serialize tipb.TiFlashExecutionInfo into data;
+message ReportTaskStatusRequest {
+  TaskMeta meta = 1;
+  bytes data = 2;
+  Error error = 3;
+}
+
+message ReportTaskStatusResponse {
+  Error error = 1;
+}
+
+// build connection between different tasks. Data is sent by the tasks that are closer to the data sources.
+message EstablishMPPConnectionRequest {
+  TaskMeta sender_meta = 1; // node closer to the source
+  TaskMeta receiver_meta = 2; // node closer to the tidb mpp gather.
+}
+
+// when TiFlash sends data to TiDB, Data packets wrap tipb.SelectResponse, i.e., serialize tipb.SelectResponse into data;
+// when TiFlash sends data to TiFlash, data blocks are serialized into chunks, and the execution_summaries in tipb.SelectResponse are serialized into data only for the last packet.
+message MPPDataPacket {
+  bytes data = 1;
+  Error error = 2;
+  repeated bytes chunks = 3;
+  repeated uint64 stream_ids = 4;
+  int64 version = 5; // version of data packet format
+}
+
+message Error {
+  int32 code = 1;
+  string msg = 2;
+  int64 mpp_version = 3;
+}

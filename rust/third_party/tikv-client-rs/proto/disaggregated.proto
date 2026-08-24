@@ -1,0 +1,178 @@
+syntax = "proto3";
+package disaggregated;
+
+import "coprocessor.proto";
+import "gogoproto/gogo.proto";
+import "kvrpcpb.proto";
+import "rustproto.proto";
+
+option java_package = "org.tikv.kvproto";
+option (gogoproto.goproto_sizecache_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (rustproto.lite_runtime_all) = true;
+
+/// For S3 lock service ///
+
+message S3LockResult {
+  oneof error {
+    Success success = 1;
+    NotOwner not_owner = 2;
+    Conflict conflict = 3;
+  }
+}
+message Success {}
+
+// Error caused by S3GC owner changed
+// client should retry
+message NotOwner {}
+
+// Error caused by concurrency conflict,
+// request cancel
+message Conflict {
+  string reason = 1;
+}
+
+message TryAddLockRequest {
+  // The data file key to add lock
+  bytes data_file_key = 1;
+  // The lock store id
+  uint64 lock_store_id = 3;
+  // The upload sequence number of lock store
+  uint64 lock_seq = 4;
+}
+
+message TryAddLockResponse {
+  S3LockResult result = 1;
+}
+
+message TryMarkDeleteRequest {
+  // The data file key to be marked as deleted
+  bytes data_file_key = 1;
+}
+
+message TryMarkDeleteResponse {
+  S3LockResult result = 1;
+}
+
+/// For disagg compute node init its disagg configuration ///
+
+message GetDisaggConfigRequest {}
+message DisaggS3Config {
+  string bucket = 1;
+  string root = 2;
+  string endpoint = 3;
+}
+message GetDisaggConfigResponse {
+  DisaggS3Config s3_config = 1;
+}
+
+/// For compute task dispatch and data exchange ///
+
+message DisaggTaskMeta {
+  uint64 start_ts = 1; // start ts of a query
+  // gather_id + query_ts + server_id + local_query_id to represent a global unique query.
+  int64 gather_id = 9; // used to distinguish different gathers in the mpp query
+  uint64 query_ts = 2; // timestamp when start to execute query, used for TiFlash miniTSO schedule.
+  uint64 server_id = 3; // TiDB server id
+  uint64 local_query_id = 4; // unique local query_id if tidb don't restart.
+  int64 task_id = 5; // if task id is -1 , it indicates a tidb task.
+  string executor_id = 6; // the exectuor id
+  uint32 keyspace_id = 7; // keyspace id of the request
+  kvrpcpb.APIVersion api_version = 8; // API version of the request
+  uint64 connection_id = 10; // This is the session id between a client and tidb
+  string connection_alias = 11; // This is the session alias between a client and tidb
+}
+
+message DisaggReadError {
+  int32 code = 1;
+  string msg = 2;
+}
+
+message EstablishDisaggTaskError {
+  oneof errors {
+    ErrorRegion error_region = 1;
+    ErrorLocked error_locked = 2;
+
+    ErrorOther error_other = 99;
+  }
+}
+
+message ErrorRegion {
+  string msg = 1;
+  // The read node needs to update its region cache about these regions.
+  repeated uint64 region_ids = 2;
+}
+
+message ErrorLocked {
+  string msg = 1;
+  // The read node needs to resolve these locks.
+  repeated kvrpcpb.LockInfo locked = 2;
+}
+
+message ErrorOther {
+  int32 code = 1;
+  string msg = 2;
+}
+
+message EstablishDisaggTaskRequest {
+  DisaggTaskMeta meta = 1;
+  string address = 2; // target address of this task.
+  // The write node needs to ensure that subsequent
+  // FetchDisaggPagesRequest can be processed within timeout_s.
+  // unit: seconds
+  int64 timeout_s = 3;
+  // The key ranges, Region meta that read node need to execute TableScan
+  repeated coprocessor.RegionInfo regions = 4;
+  int64 schema_ver = 5;
+  // Used for PartitionTableScan
+  repeated coprocessor.TableRegions table_regions = 6;
+  // The encoded TableScan/PartitionTableScan + Selection.
+  bytes encoded_plan = 7;
+}
+
+message EstablishDisaggTaskResponse {
+  EstablishDisaggTaskError error = 1;
+
+  // Write node maintains a snapshot with a lease time.
+  // Read node should read the delta pages
+  // (ColumnFileInMemory and ColumnFileTiny)
+  // along with this store_id and snapshot_id.
+  uint64 store_id = 3; // metapb.Store.id
+  DisaggTaskMeta snapshot_id = 4;
+  // Serialized disaggregated tasks (per physical table)
+  repeated bytes tables = 5;
+}
+
+message CancelDisaggTaskRequest {
+  DisaggTaskMeta meta = 1;
+}
+
+message CancelDisaggTaskResponse {}
+
+message FetchDisaggPagesRequest {
+  // The snapshot id to fetch pages
+  DisaggTaskMeta snapshot_id = 1;
+  int64 table_id = 2;
+  uint64 segment_id = 3;
+  // It must be a subset of the delta pages ids returned
+  // in EstablishDisaggTaskResponse.segments
+  repeated uint64 page_ids = 4;
+}
+
+message PagesPacket {
+  DisaggReadError error = 1;
+
+  // Serialized column file data
+  // * ColumnFilePersisted alone with its schema, page data, field offsets
+  repeated bytes pages = 2;
+  // * ColumnFileInMemory alone with its serialized block
+  repeated bytes chunks = 3;
+
+  // Return tipb.SelectResponse.execution_summaries in the
+  // last packet
+  repeated bytes summaries = 4;
+}
