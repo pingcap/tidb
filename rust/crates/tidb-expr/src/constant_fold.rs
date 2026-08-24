@@ -72,9 +72,16 @@ fn fold_current_value_in(expr: &mut Expression, ctx: &impl crate::Columns) -> Op
     // Recursively fold sub-expressions FIRST (Go's `FoldConstant` walks
     // bottom-up): a nested `date_add_month("...", "...")` whose args are all
     // constants becomes a Constant before the parent checks its own args.
+    // Lazy short-circuit functions are exempt: their UNTAKEN branches must
+    // not evaluate -- `SELECT IF(1, 1, 1/0)` runs without dividing, so
+    // plan-time folding inside them would fabricate both warnings and
+    // errors the runtime never reaches.
     if let Expression::ScalarFunction(func) = expr {
-        for arg in &mut func.args {
-            fold_current_value_in(arg, ctx);
+        let lazy = is_lazy_short_circuit(func.func_name.lowercase());
+        if !lazy {
+            for arg in &mut func.args {
+                fold_current_value_in(arg, ctx);
+            }
         }
     }
     let func = match expr {
@@ -257,5 +264,15 @@ fn is_unfoldable(name: &str) -> bool {
             | "lastval"
             | "setval"
             | "any_value"
+    )
+}
+
+/// Whether the function evaluates only SOME of its arguments at run time.
+/// Folding inside one would evaluate branches or operands the executor can
+/// skip, changing warnings and errors (`IF(1, 1, 1/0)` divides).
+fn is_lazy_short_circuit(name: &str) -> bool {
+    matches!(
+        name,
+        "if" | "ifnull" | "case" | "case_when" | "and" | "or" | "xor" | "nullif" | "coalesce"
     )
 }
