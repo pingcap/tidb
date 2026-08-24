@@ -30,7 +30,14 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 )
+
+// countCapMultiplier sizes the hard cap on concurrently running chunks
+// relative to node CPU: small chunks are PUT-latency-bound rather than
+// bandwidth-bound, so they can usefully run at well above 1x cores before
+// hitting diminishing returns.
+const countCapMultiplier = 4
 
 type exportTaskExecutor struct {
 	*taskexecutor.BaseTaskExecutor
@@ -71,6 +78,13 @@ func (e *exportTaskExecutor) GetStepExecutor(task *proto.Task) (execute.StepExec
 			store:    e.TaskRuntime.Store(),
 			logger:   logutil.BgLogger().With(zap.Int64("task-id", task.ID), zap.String("step", "dump")),
 		}, nil
+	case proto.ExportStepSchema:
+		return &schemaStepExecutor{
+			taskMeta: taskMeta,
+			store:    e.TaskRuntime.Store(),
+			taskTbl:  e.GetTaskTable(),
+			logger:   logutil.BgLogger().With(zap.Int64("task-id", task.ID), zap.String("step", "schema")),
+		}, nil
 	default:
 		return nil, errors.Errorf("unknown export step %d", task.Step)
 	}
@@ -97,7 +111,7 @@ func (e *dumpStepExecutor) Init(ctx context.Context) error {
 	}
 	e.objStore = objStore
 
-	tableInfos, err := snapshotTableInfos(e.store, e.taskMeta)
+	tableInfos, _, err := snapshotTableInfos(e.store, e.taskMeta)
 	if err != nil {
 		return err
 	}
@@ -128,45 +142,70 @@ func decodeSubtaskMeta(ctx context.Context, subtask *proto.Subtask) (*SubtaskMet
 	return stMeta, nil
 }
 
-// RunSubtask implements execute.StepExecutor. A worker pool (sized to the
-// subtask's CPU capacity, like IMPORT INTO) pulls the subtask's chunks from a
-// queue and exports each.
+// RunSubtask implements execute.StepExecutor. A subtask's chunks mix
+// bandwidth-bound regular chunks and latency-bound irregular ones (see
+// packSubtasks), so a single fixed worker count either over-concurrents big
+// chunks (bandwidth contention) or under-uses small ones (idle capacity while
+// latency-bound). Instead, each chunk is admitted against two caps sized to
+// the node's CPU: a byte-weighted cap (weightCap = nodeCPU * chunkSize, the
+// number of chunkSize-sized streams that saturate a node's egress bandwidth)
+// that a large chunk consumes almost entirely by itself, and a flat count cap
+// (countCap) that bounds how many small, near-zero-weight chunks can run at
+// once regardless of how little bandwidth they use.
 func (e *dumpStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	stMeta, err := decodeSubtaskMeta(ctx, subtask)
 	if err != nil {
 		return err
 	}
-	concurrency := max(1, int(e.GetResource().CPU.Capacity()))
+	nodeCPU := int64(max(1, int(e.GetResource().CPU.Capacity())))
+	weightCap := nodeCPU * chunkSize
+	countCap := countCapMultiplier * nodeCPU
 	e.logger.Info("run export dump subtask",
 		zap.Int64("subtask-id", subtask.ID),
 		zap.Int("chunk-cnt", len(stMeta.Chunks)),
-		zap.Int("concurrency", concurrency))
+		zap.Int64("weight-cap", weightCap),
+		zap.Int64("count-cap", countCap))
 
-	chunkCh := make(chan Chunk)
+	// cePool reuses chunkExporters across chunks (they're expensive to build
+	// but not safe for concurrent use) instead of one per worker, since there
+	// are no fixed long-lived workers left to own one each.
+	cePool := make(chan *chunkExporter, countCap)
+	getCE := func() *chunkExporter {
+		select {
+		case ce := <-cePool:
+			return ce
+		default:
+			return e.newChunkExporter()
+		}
+	}
+	putCE := func(ce *chunkExporter) {
+		select {
+		case cePool <- ce:
+		default:
+		}
+	}
+
+	weightSem := semaphore.NewWeighted(weightCap)
+	countSem := semaphore.NewWeighted(countCap)
 	eg, egCtx := errgroup.WithContext(ctx)
-	for range concurrency {
+	for _, c := range stMeta.Chunks {
+		w := max(int64(1), min(c.Size, weightCap))
+		if err := weightSem.Acquire(egCtx, w); err != nil {
+			break
+		}
+		if err := countSem.Acquire(egCtx, 1); err != nil {
+			weightSem.Release(w)
+			break
+		}
 		eg.Go(func() error {
-			ce := e.newChunkExporter()
-			for c := range chunkCh {
-				if err := e.exportChunk(egCtx, ce, c); err != nil {
-					return err
-				}
-			}
-			return nil
+			defer weightSem.Release(w)
+			defer countSem.Release(1)
+			ce := getCE()
+			defer putCE(ce)
+			return e.exportChunk(egCtx, ce, c)
 		})
 	}
-	eg.Go(func() error {
-		defer close(chunkCh)
-		for _, c := range stMeta.Chunks {
-			select {
-			case chunkCh <- c:
-			case <-egCtx.Done():
-				return egCtx.Err()
-			}
-		}
-		return nil
-	})
 	return eg.Wait()
 }
 

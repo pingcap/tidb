@@ -120,7 +120,7 @@ func (*exportScheduler) OnTick(context.Context, *proto.Task) {}
 
 // OnPrepare implements scheduler.Extension.
 func (s *exportScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
-	tableInfos, err := snapshotTableInfos(s.store, s.taskMeta)
+	tableInfos, _, err := snapshotTableInfos(s.store, s.taskMeta)
 	if err != nil {
 		return err
 	}
@@ -164,37 +164,39 @@ func (s *exportScheduler) setResources(ctx context.Context, task *proto.Task, to
 
 // snapshotTableInfos resolves every table in taskMeta.DBs against the snapshot
 // at taskMeta.SnapshotTS, filling in each DBSpec's DBName as a side effect.
-func snapshotTableInfos(store kv.Storage, taskMeta *TaskMeta) (map[int64]*model.TableInfo, error) {
+func snapshotTableInfos(store kv.Storage, taskMeta *TaskMeta) (map[int64]*model.TableInfo, map[int64]*model.DBInfo, error) {
 	reader := meta.NewReader(store.GetSnapshot(kv.NewVersion(taskMeta.SnapshotTS)))
 	tableInfos := make(map[int64]*model.TableInfo, taskMeta.tableCount())
+	dbInfos := make(map[int64]*model.DBInfo, len(taskMeta.DBs))
 	for i := range taskMeta.DBs {
 		db := &taskMeta.DBs[i]
 		dbInfo, err := reader.GetDatabase(db.DBID)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		if dbInfo == nil {
-			return nil, errors.Errorf("export: database %d not found in snapshot metadata", db.DBID)
+			return nil, nil, errors.Errorf("export: database %d not found in snapshot metadata", db.DBID)
 		}
 		if dbInfo.State != model.StatePublic {
-			return nil, errors.Errorf("export: database %d is not public", db.DBID)
+			return nil, nil, errors.Errorf("export: database %d is not public", db.DBID)
 		}
 		db.DBName = dbInfo.Name.O
+		dbInfos[db.DBID] = dbInfo
 		for _, tableID := range db.TableIDs {
 			tableInfo, err := reader.GetTable(db.DBID, tableID)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, nil, errors.Trace(err)
 			}
 			if tableInfo == nil {
-				return nil, errors.Errorf("export: table %d not found in snapshot metadata", tableID)
+				return nil, nil, errors.Errorf("export: table %d not found in snapshot metadata", tableID)
 			}
 			if tableInfo.State != model.StatePublic {
-				return nil, errors.Errorf("export: table %d is not public", tableID)
+				return nil, nil, errors.Errorf("export: table %d is not public", tableID)
 			}
 			tableInfos[tableID] = tableInfo
 		}
 	}
-	return tableInfos, nil
+	return tableInfos, dbInfos, nil
 }
 
 // GetNextStep implements scheduler.Extension.

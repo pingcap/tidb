@@ -89,13 +89,14 @@ func TestSnapshotTableInfosUsesTaskStore(t *testing.T) {
 		},
 	}
 
-	got, err := snapshotTableInfos(s.store, s.taskMeta)
+	got, gotDBs, err := snapshotTableInfos(s.store, s.taskMeta)
 	require.NoError(t, err)
 	require.Equal(t, tableInfo, got[tableInfo.ID])
+	require.Equal(t, dbInfo.Name.O, gotDBs[dbInfo.ID].Name.O)
 	require.Equal(t, dbInfo.Name.O, s.taskMeta.DBs[0].DBName)
 
 	s.taskMeta.DBs[0].TableIDs = []int64{nonPublicTable.ID}
-	_, err = snapshotTableInfos(s.store, s.taskMeta)
+	_, _, err = snapshotTableInfos(s.store, s.taskMeta)
 	require.ErrorContains(t, err, "is not public")
 }
 
