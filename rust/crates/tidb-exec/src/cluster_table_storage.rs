@@ -1523,7 +1523,7 @@ impl ClusterSnapshot for SessionSnapshot {
 fn classify(error: OptimisticCoordinatorError) -> StorageError {
     let message = error.to_string();
     let lowered = message.to_lowercase();
-    let retryable = ["region", "epoch", "lock", "leader", "stale", "budget"]
+    let retryable = ["region", "epoch", "lock", "leader", "stale", "budget", "deadline"]
         .iter()
         .any(|cause| lowered.contains(cause));
     if retryable {
