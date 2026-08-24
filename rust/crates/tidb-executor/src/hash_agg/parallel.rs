@@ -589,7 +589,7 @@ impl<C: Columns + Sync + HashAggContext> HashAggExec<C> {
             merge_map(&mut global, map)?;
         }
         let mut groups: Vec<PipelineGroup> = global.into_values().collect();
-        groups.sort_by_key(|group| group.first_seq);
+        groups.sort_unstable_by_key(|group| group.first_seq);
 
         // Finish values in first-seen order (the serial path's contract).
         let ret_types = self.meta.ret_field_types().to_vec();
