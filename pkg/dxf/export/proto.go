@@ -44,6 +44,23 @@ func (m *TaskMeta) tableCount() int {
 	return n
 }
 
+// dbFirstTableIdxs returns the set of flat table indices (matching
+// Chunk.TableIdx) that are the first table of their database, in the same
+// (DBs, TableIDs) order used to assign those indices. Exactly one table per
+// non-empty database is picked, so whichever schema subtask that table lands
+// in is the one that also writes the database's CREATE DATABASE file.
+func (m *TaskMeta) dbFirstTableIdxs() map[int]struct{} {
+	firstIdxs := make(map[int]struct{}, len(m.DBs))
+	idx := 0
+	for i := range m.DBs {
+		if len(m.DBs[i].TableIDs) > 0 {
+			firstIdxs[idx] = struct{}{}
+		}
+		idx += len(m.DBs[i].TableIDs)
+	}
+	return firstIdxs
+}
+
 // Chunk is a ~chunkSize key range of one physical table. Its table-local Ordinal
 // fixes the output file name at split time, so retries produce the same files.
 type Chunk struct {
@@ -74,4 +91,21 @@ func newSubtaskMeta(chunks []Chunk) *SubtaskMeta {
 		total += c.Size
 	}
 	return &SubtaskMeta{Chunks: chunks, ChunkCount: len(chunks), TotalSize: total}
+}
+
+// SchemaSubtaskMeta is the external representation of a schema-file batch:
+// the flat table indices (matching Chunk.TableIdx) whose CREATE TABLE text
+// this subtask renders. Which of those tables also own their database's
+// CREATE DATABASE file is a static property of the index (see
+// TaskMeta.dbFirstTableIdxs), not tracked here.
+type SchemaSubtaskMeta struct {
+	dxfutil.BaseExternalMeta
+	TableIdxs  []int `json:"table_idxs" external:"true"`
+	TableCount int   `json:"table_count"`
+}
+
+// newSchemaSubtaskMeta builds a SchemaSubtaskMeta from table indices, filling
+// in the summary field.
+func newSchemaSubtaskMeta(tableIdxs []int) *SchemaSubtaskMeta {
+	return &SchemaSubtaskMeta{TableIdxs: tableIdxs, TableCount: len(tableIdxs)}
 }

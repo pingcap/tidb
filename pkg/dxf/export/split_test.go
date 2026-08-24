@@ -84,6 +84,45 @@ func TestDivideSubtasks(t *testing.T) {
 	require.Nil(t, divideSubtasks(nil, 2))
 }
 
+func TestDivideSchemaSubtasks(t *testing.T) {
+	want := make([]int, 10)
+	for i := range want {
+		want[i] = i
+	}
+
+	// count divides evenly: every group is the same size.
+	groups := divideSchemaSubtasks(10, 5)
+	require.Len(t, groups, 5)
+	seen := make([]int, 0, 10)
+	for _, g := range groups {
+		require.Len(t, g, 2)
+		seen = append(seen, g...)
+	}
+	require.ElementsMatch(t, want, seen)
+
+	// count doesn't divide evenly: group sizes differ by at most 1.
+	groups = divideSchemaSubtasks(10, 3)
+	require.Len(t, groups, 3)
+	seen = make([]int, 0, 10)
+	for _, g := range groups {
+		require.LessOrEqual(t, len(g), 4)
+		require.GreaterOrEqual(t, len(g), 3)
+		seen = append(seen, g...)
+	}
+	require.ElementsMatch(t, want, seen)
+
+	// count is clamped to tableCount, not left empty.
+	groups = divideSchemaSubtasks(2, 5)
+	require.Len(t, groups, 2)
+
+	// count <= 0 still yields at least 1 group.
+	groups = divideSchemaSubtasks(3, 0)
+	require.Len(t, groups, 1)
+	require.ElementsMatch(t, []int{0, 1, 2}, groups[0])
+
+	require.Nil(t, divideSchemaSubtasks(0, 3))
+}
+
 // TestPackSubtasksBalance checks the two properties packSubtasks relies on:
 // oversized (>= chunkSize) chunks are equal weight so any split among bins is
 // balanced, and the remaining, size-varying chunks are packed largest-first

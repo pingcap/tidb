@@ -36,9 +36,10 @@ import (
 
 func TestGetNextStep(t *testing.T) {
 	s := &exportScheduler{}
-	// StepInit -> Dump -> Done.
+	// StepInit -> Dump -> Schema -> Done.
 	require.Equal(t, proto.ExportStepDump, s.GetNextStep(&proto.TaskBase{Step: proto.StepInit}))
-	require.Equal(t, proto.StepDone, s.GetNextStep(&proto.TaskBase{Step: proto.ExportStepDump}))
+	require.Equal(t, proto.ExportStepSchema, s.GetNextStep(&proto.TaskBase{Step: proto.ExportStepDump}))
+	require.Equal(t, proto.StepDone, s.GetNextStep(&proto.TaskBase{Step: proto.ExportStepSchema}))
 	require.Equal(t, proto.StepDone, s.GetNextStep(&proto.TaskBase{Step: proto.StepDone}))
 }
 

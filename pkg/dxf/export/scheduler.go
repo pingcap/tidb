@@ -154,8 +154,9 @@ func (*exportScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	switch task.Step {
 	case proto.StepInit, proto.StepPrepared:
 		return proto.ExportStepDump
+	case proto.ExportStepDump:
+		return proto.ExportStepSchema
 	default:
-		// PostProcess is inserted here by a later milestone.
 		return proto.StepDone
 	}
 }
@@ -184,6 +185,19 @@ func (s *exportScheduler) OnNextSubtasksBatch(
 			return nil, err
 		}
 		s.logger.Info("split export dump subtasks",
+			zap.Int("table-cnt", s.taskMeta.tableCount()), zap.Int("subtask-cnt", len(metas)))
+		return metas, nil
+	case proto.ExportStepSchema:
+		nodeCnt := len(execIDs)
+		if kerneltype.IsNextGen() {
+			nodeCnt = task.MaxNodeCount
+		}
+		groups := divideSchemaSubtasks(s.taskMeta.tableCount(), nodeCnt)
+		metas, err := marshalSchemaSubtasks(ctx, task.ID, nextStep, groups)
+		if err != nil {
+			return nil, err
+		}
+		s.logger.Info("split export schema subtasks",
 			zap.Int("table-cnt", s.taskMeta.tableCount()), zap.Int("subtask-cnt", len(metas)))
 		return metas, nil
 	default:
@@ -232,6 +246,31 @@ func marshalSubtasks(ctx context.Context, taskID int64, step proto.Step, groups 
 	metas := make([][]byte, 0, len(groups))
 	for i, g := range groups {
 		sm := newSubtaskMeta(g)
+		sm.ExternalPath = dxfutil.PlanMetaPath(taskID, stepStr, i+1)
+		if err := sm.WriteJSONToExternalStorage(ctx, store, sm); err != nil {
+			return nil, errors.Trace(err)
+		}
+		bs, err := sm.Marshal(sm)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		metas = append(metas, bs)
+	}
+	return metas, nil
+}
+
+func marshalSchemaSubtasks(ctx context.Context, taskID int64, step proto.Step, groups [][]int) ([][]byte, error) {
+	if len(groups) == 0 {
+		return nil, nil
+	}
+	store, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	stepStr := proto.Step2Str(proto.Export, step)
+	metas := make([][]byte, 0, len(groups))
+	for i, g := range groups {
+		sm := newSchemaSubtaskMeta(g)
 		sm.ExternalPath = dxfutil.PlanMetaPath(taskID, stepStr, i+1)
 		if err := sm.WriteJSONToExternalStorage(ctx, store, sm); err != nil {
 			return nil, errors.Trace(err)

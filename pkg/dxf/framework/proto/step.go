@@ -99,17 +99,21 @@ func exampleStep2Str(s Step) string {
 }
 
 // Steps of Export. The initial step is StepInit(-1).
-// StepInit -> ExportStepDump -> StepDone
-// (PostProcess is inserted before StepDone by a later milestone.)
+// StepInit -> ExportStepDump -> ExportStepSchema -> StepDone
 const (
 	// ExportStepDump scans key-ordered spans of the export task and writes data files.
 	ExportStepDump Step = 1
+	// ExportStepSchema writes each table's CREATE TABLE text and each database's
+	// CREATE DATABASE text.
+	ExportStepSchema Step = 2
 )
 
 func exportStep2Str(s Step) string {
 	switch s {
 	case ExportStepDump:
 		return "dump"
+	case ExportStepSchema:
+		return "schema"
 	default:
 		return unknownStepStr(s)
 	}

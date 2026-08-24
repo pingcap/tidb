@@ -231,6 +231,30 @@ func packSubtasks(chunks []Chunk, count int) [][]Chunk {
 	return subtasks
 }
 
+// divideSchemaSubtasks splits tableCount table indices into up to count
+// roughly equal groups, shuffled first so a subtask's schema-file writes
+// aren't all clustered on adjacent tables' S3 key prefixes — same rationale
+// as packSubtasks, but schema files are all near-equal (small) weight, so a
+// plain shuffle-then-round-robin split is enough; no need for size-weighted
+// bin packing.
+func divideSchemaSubtasks(tableCount, count int) [][]int {
+	if tableCount == 0 {
+		return nil
+	}
+	idxs := make([]int, tableCount)
+	for i := range idxs {
+		idxs[i] = i
+	}
+	rand.Shuffle(len(idxs), func(i, j int) { idxs[i], idxs[j] = idxs[j], idxs[i] })
+
+	count = min(max(count, 1), tableCount)
+	groups := make([][]int, count)
+	for i, idx := range idxs {
+		groups[i%count] = append(groups[i%count], idx)
+	}
+	return groups
+}
+
 // subtaskBin accumulates the chunks assigned to one subtask by packSubtasks.
 type subtaskBin struct {
 	chunks []Chunk
