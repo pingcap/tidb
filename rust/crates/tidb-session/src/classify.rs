@@ -240,6 +240,26 @@ impl Session {
         self.statement_prelock_keys(&stmt)
     }
 
+    /// [`Self::statement_prelock_keys`] for an EXECUTE template: the `?`
+    /// markers resolve against the execute parameters before classification,
+    /// exactly as [`Self::pessimistic_write_point_keys`] binds them.
+    #[must_use]
+    pub fn prepared_statement_prelock_keys(&self, stmt: &Stmt, params: &[Datum]) -> Vec<Vec<u8>> {
+        let bound;
+        let stmt: &Stmt = if params.is_empty() {
+            stmt
+        } else {
+            match tidb_executor::bind_statement(stmt.clone(), params) {
+                Ok(bound_stmt) => {
+                    bound = bound_stmt;
+                    &bound
+                }
+                Err(_) => return Vec::new(),
+            }
+        };
+        self.statement_prelock_keys(stmt)
+    }
+
     /// [`Self::text_statement_prelock_keys`] over an already-parsed
     /// statement.
     #[must_use]

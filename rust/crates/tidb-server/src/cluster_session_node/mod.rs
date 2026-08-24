@@ -2194,12 +2194,17 @@ impl QuerySession for ClusterServerSession {
         // execute parameters -- the same walker reads both. Empty output (a
         // scan-shaped WHERE, a non-pessimistic or autocommit statement) keeps
         // today's read-then-lock order untouched.
+        // Both pre-lock arms, write and locking read: `SELECT ... FOR UPDATE`
+        // on a fully pinned clustered handle folds exactly like a point write
+        // (go's `SelectLockExec` locks the rows as they are read), while a
+        // plain point SELECT must NOT lock -- the read arm's own guards
+        // (LockKind::Update, default wait, no ORDER BY/LIMIT) draw that line.
         let prelock_keys = match self.explicit.as_ref() {
             Some(transaction) if transaction.is_pessimistic() => {
                 if let Some(bound) = bound_template.as_ref() {
-                    self.session.pessimistic_write_point_keys(bound, &[])
+                    self.session.statement_prelock_keys(bound)
                 } else if let Some(template) = retained {
-                    self.session.pessimistic_write_point_keys(template, &params)
+                    self.session.prepared_statement_prelock_keys(template, &params)
                 } else {
                     Vec::new()
                 }
