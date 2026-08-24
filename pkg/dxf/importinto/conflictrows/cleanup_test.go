@@ -549,9 +549,9 @@ func TestCleanFiles(t *testing.T) {
 	})
 }
 
-func TestCleanExpiredFiles(t *testing.T) {
+func TestCleanConflictRowFiles(t *testing.T) {
 	t.Run("empty URI", func(t *testing.T) {
-		require.NoError(t, CleanExpiredFiles(context.Background(), nil, ""))
+		require.NoError(t, CleanConflictRowFiles(context.Background(), nil, ""))
 	})
 
 	t.Run("open error does not log URI", func(t *testing.T) {
@@ -560,7 +560,7 @@ func TestCleanExpiredFiles(t *testing.T) {
 		restoreLog := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{Level: zap.NewAtomicLevelAt(zap.InfoLevel)})
 		t.Cleanup(restoreLog)
 
-		err := CleanExpiredFiles(context.Background(), nil, credentialURI)
+		err := CleanConflictRowFiles(context.Background(), nil, credentialURI)
 		require.Error(t, err)
 		require.Empty(t, logs.All())
 	})

@@ -30,8 +30,10 @@ import (
 )
 
 const (
-	// Conflict-row files are retained for one week. Keep this hardcoded until
-	// customer feedback shows that a configurable retention period is needed.
+	// Conflict-row output from successful tasks is retained for one week. Output
+	// from failed or reverted tasks, files without matching IMPORT INTO task
+	// metadata, and invalid file names are deleted immediately. Keep the retention
+	// period hardcoded until customer feedback shows that it should be configurable.
 	retention          = 7 * 24 * time.Hour
 	maxTaskIDsPerFlush = 128
 	maxObjectsPerFlush = 1000
@@ -265,8 +267,11 @@ func cleanFiles(
 	return stats, nil
 }
 
-// CleanExpiredFiles cleans conflict-row files based on task metadata and the retention policy.
-func CleanExpiredFiles(ctx context.Context, infoGetter TaskInfoGetter, cloudStorageURI string) error {
+// CleanConflictRowFiles applies the conflict-row cleanup policy. Files for failed
+// or reverted tasks, files without matching IMPORT INTO task metadata, and file
+// names without a valid positive task ID are deleted immediately. Files for
+// successful tasks are deleted after the retention period; other states are retained.
+func CleanConflictRowFiles(ctx context.Context, infoGetter TaskInfoGetter, cloudStorageURI string) error {
 	if cloudStorageURI == "" {
 		return nil
 	}

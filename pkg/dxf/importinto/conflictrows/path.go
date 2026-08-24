@@ -26,7 +26,9 @@ const (
 )
 
 // NewFileNamePrefix returns a new file name prefix used to store the conflict
-// rows for the given task and subtask.
+// rows for the given task and subtask. All files under storagePrefix must use a
+// prefix returned by this function; CleanConflictRowFiles treats malformed paths
+// in that namespace as invalid files and deletes them.
 func NewFileNamePrefix(taskID, subtaskID int64) string {
 	// Keep these files available for user inspection. They must not live directly
 	// under '<task-id>/', where global-sort cleanup would delete them with temp data.
