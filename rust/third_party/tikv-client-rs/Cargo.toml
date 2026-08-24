@@ -11,6 +11,10 @@ rust-version = "1.93.0"
 
 [features]
 default = ["prometheus"]
+# Expose the in-process mock PD/TiKV backend outside test builds, for
+# downstream crates (e.g. TiDB's tidb-unistore) that need a production-usable
+# in-process backend, not just #[cfg(test)] support within this crate.
+mock = ["dep:tokio-stream"]
 prometheus = ["prometheus/push", "prometheus/process"]
 # Enable integration tests with a running TiKV and PD instance.
 # Use $PD_ADDRS, comma separated, to set the addresses the tests use.
@@ -33,6 +37,7 @@ members = [
 ]
 
 [dependencies]
+tokio-stream = { version = "0.1", features = ["net"], optional = true }
 async-recursion = "0.3"
 async-trait = "0.1"
 derive-new = "0.5"
@@ -43,7 +48,7 @@ lazy_static = "1"
 log = "0.4"
 pin-project = "1"
 prometheus = { version = "0.13", default-features = false }
-prost = "0.13"
+prost = "0.14"
 rand = "0.8"
 regex = "1"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
@@ -55,7 +60,8 @@ serde_json = "1"
 take_mut = "0.2.2"
 thiserror = "1"
 tokio = { version = "1.21", features = ["sync", "rt-multi-thread", "macros", "time"] }
-tonic = { version = "0.12", features = ["tls", "gzip"] }
+tonic = { version = "0.14", features = ["tls-ring", "gzip"] }
+tonic-prost = "0.14"
 url = "2"
 
 [dev-dependencies]

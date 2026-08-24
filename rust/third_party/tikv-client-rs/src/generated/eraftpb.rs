@@ -9,8 +9,7 @@
 /// For configuration changes, the data will contain the ConfChange message and the
 /// context will provide anything needed to assist the configuration change. The context
 /// if for the user to set and use in this case.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Entry {
     #[prost(enumeration = "EntryType", tag = "1")]
     pub entry_type: i32,
@@ -27,8 +26,7 @@ pub struct Entry {
     #[prost(bool, tag = "5")]
     pub sync_log: bool,
 }
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SnapshotMetadata {
     /// The current `ConfState`.
     #[prost(message, optional, tag = "1")]
@@ -40,15 +38,13 @@ pub struct SnapshotMetadata {
     #[prost(uint64, tag = "3")]
     pub term: u64,
 }
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Snapshot {
     #[prost(bytes = "vec", tag = "1")]
     pub data: ::prost::alloc::vec::Vec<u8>,
     #[prost(message, optional, tag = "2")]
     pub metadata: ::core::option::Option<SnapshotMetadata>,
 }
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Message {
     #[prost(enumeration = "MessageType", tag = "1")]
@@ -87,8 +83,7 @@ pub struct Message {
     #[prost(int64, tag = "15")]
     pub priority: i64,
 }
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct HardState {
     #[prost(uint64, tag = "1")]
     pub term: u64,
@@ -97,8 +92,7 @@ pub struct HardState {
     #[prost(uint64, tag = "3")]
     pub commit: u64,
 }
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConfState {
     #[prost(uint64, repeated, tag = "1")]
     pub voters: ::prost::alloc::vec::Vec<u64>,
@@ -117,8 +111,7 @@ pub struct ConfState {
     #[prost(bool, tag = "5")]
     pub auto_leave: bool,
 }
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConfChange {
     #[prost(enumeration = "ConfChangeType", tag = "2")]
     pub change_type: i32,
@@ -131,8 +124,7 @@ pub struct ConfChange {
 }
 /// ConfChangeSingle is an individual configuration change operation. Multiple
 /// such operations can be carried out atomically via a ConfChangeV2.
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConfChangeSingle {
     #[prost(enumeration = "ConfChangeType", tag = "1")]
     pub change_type: i32,
@@ -171,7 +163,6 @@ pub struct ConfChangeSingle {
 /// For details on Raft membership changes, see:
 ///
 /// \[1\]: <https://github.com/ongardie/dissertation/blob/master/online-trim.pdf>
-#[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ConfChangeV2 {
     #[prost(enumeration = "ConfChangeTransition", tag = "1")]
@@ -195,9 +186,9 @@ impl EntryType {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            EntryType::EntryNormal => "EntryNormal",
-            EntryType::EntryConfChange => "EntryConfChange",
-            EntryType::EntryConfChangeV2 => "EntryConfChangeV2",
+            Self::EntryNormal => "EntryNormal",
+            Self::EntryConfChange => "EntryConfChange",
+            Self::EntryConfChangeV2 => "EntryConfChangeV2",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -240,25 +231,25 @@ impl MessageType {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            MessageType::MsgHup => "MsgHup",
-            MessageType::MsgBeat => "MsgBeat",
-            MessageType::MsgPropose => "MsgPropose",
-            MessageType::MsgAppend => "MsgAppend",
-            MessageType::MsgAppendResponse => "MsgAppendResponse",
-            MessageType::MsgRequestVote => "MsgRequestVote",
-            MessageType::MsgRequestVoteResponse => "MsgRequestVoteResponse",
-            MessageType::MsgSnapshot => "MsgSnapshot",
-            MessageType::MsgHeartbeat => "MsgHeartbeat",
-            MessageType::MsgHeartbeatResponse => "MsgHeartbeatResponse",
-            MessageType::MsgUnreachable => "MsgUnreachable",
-            MessageType::MsgSnapStatus => "MsgSnapStatus",
-            MessageType::MsgCheckQuorum => "MsgCheckQuorum",
-            MessageType::MsgTransferLeader => "MsgTransferLeader",
-            MessageType::MsgTimeoutNow => "MsgTimeoutNow",
-            MessageType::MsgReadIndex => "MsgReadIndex",
-            MessageType::MsgReadIndexResp => "MsgReadIndexResp",
-            MessageType::MsgRequestPreVote => "MsgRequestPreVote",
-            MessageType::MsgRequestPreVoteResponse => "MsgRequestPreVoteResponse",
+            Self::MsgHup => "MsgHup",
+            Self::MsgBeat => "MsgBeat",
+            Self::MsgPropose => "MsgPropose",
+            Self::MsgAppend => "MsgAppend",
+            Self::MsgAppendResponse => "MsgAppendResponse",
+            Self::MsgRequestVote => "MsgRequestVote",
+            Self::MsgRequestVoteResponse => "MsgRequestVoteResponse",
+            Self::MsgSnapshot => "MsgSnapshot",
+            Self::MsgHeartbeat => "MsgHeartbeat",
+            Self::MsgHeartbeatResponse => "MsgHeartbeatResponse",
+            Self::MsgUnreachable => "MsgUnreachable",
+            Self::MsgSnapStatus => "MsgSnapStatus",
+            Self::MsgCheckQuorum => "MsgCheckQuorum",
+            Self::MsgTransferLeader => "MsgTransferLeader",
+            Self::MsgTimeoutNow => "MsgTimeoutNow",
+            Self::MsgReadIndex => "MsgReadIndex",
+            Self::MsgReadIndexResp => "MsgReadIndexResp",
+            Self::MsgRequestPreVote => "MsgRequestPreVote",
+            Self::MsgRequestPreVoteResponse => "MsgRequestPreVoteResponse",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -313,9 +304,9 @@ impl ConfChangeTransition {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            ConfChangeTransition::Auto => "Auto",
-            ConfChangeTransition::Implicit => "Implicit",
-            ConfChangeTransition::Explicit => "Explicit",
+            Self::Auto => "Auto",
+            Self::Implicit => "Implicit",
+            Self::Explicit => "Explicit",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -342,9 +333,9 @@ impl ConfChangeType {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            ConfChangeType::AddNode => "AddNode",
-            ConfChangeType::RemoveNode => "RemoveNode",
-            ConfChangeType::AddLearnerNode => "AddLearnerNode",
+            Self::AddNode => "AddNode",
+            Self::RemoveNode => "RemoveNode",
+            Self::AddLearnerNode => "AddLearnerNode",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.

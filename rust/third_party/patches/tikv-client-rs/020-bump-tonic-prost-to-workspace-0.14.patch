@@ -1,0 +1,80 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index a501b5c..fd70aed 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -11,6 +11,10 @@ rust-version = "1.93.0"
+ 
+ [features]
+ default = ["prometheus"]
++# Expose the in-process mock PD/TiKV backend outside test builds, for
++# downstream crates (e.g. TiDB's tidb-unistore) that need a production-usable
++# in-process backend, not just #[cfg(test)] support within this crate.
++mock = ["dep:tokio-stream"]
+ prometheus = ["prometheus/push", "prometheus/process"]
+ # Enable integration tests with a running TiKV and PD instance.
+ # Use $PD_ADDRS, comma separated, to set the addresses the tests use.
+@@ -33,6 +37,7 @@ members = [
+ ]
+ 
+ [dependencies]
++tokio-stream = { version = "0.1", features = ["net"], optional = true }
+ async-recursion = "0.3"
+ async-trait = "0.1"
+ derive-new = "0.5"
+@@ -43,7 +48,7 @@ lazy_static = "1"
+ log = "0.4"
+ pin-project = "1"
+ prometheus = { version = "0.13", default-features = false }
+-prost = "0.13"
++prost = "0.14"
+ rand = "0.8"
+ regex = "1"
+ rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+@@ -55,7 +60,8 @@ serde_json = "1"
+ take_mut = "0.2.2"
+ thiserror = "1"
+ tokio = { version = "1.21", features = ["sync", "rt-multi-thread", "macros", "time"] }
+-tonic = { version = "0.12", features = ["tls", "gzip"] }
++tonic = { version = "0.14", features = ["tls-ring", "gzip"] }
++tonic-prost = "0.14"
+ url = "2"
+ 
+ [dev-dependencies]
+diff --git a/proto-build/Cargo.toml b/proto-build/Cargo.toml
+index ca3fad6..445ac04 100644
+--- a/proto-build/Cargo.toml
++++ b/proto-build/Cargo.toml
+@@ -12,6 +12,6 @@ edition = "2021"
+ 
+ [dependencies]
+ glob = "0.3"
+-tonic-build = { version = "0.10", features = ["cleanup-markdown"] }
++tonic-prost-build = "0.14"
+ # Keep this compatible with rust-toolchain 1.84.1.
+ tempfile = "=3.14.0"
+diff --git a/proto-build/src/main.rs b/proto-build/src/main.rs
+index c856bec..27ab898 100644
+--- a/proto-build/src/main.rs
++++ b/proto-build/src/main.rs
+@@ -1,18 +1,18 @@
+ // Copyright 2023 TiKV Project Authors. Licensed under Apache-2.0.
+ 
+ fn main() {
+-    tonic_build::configure()
++    tonic_prost_build::configure()
+         .emit_rerun_if_changed(false)
+         .build_server(true)
+         .server_mod_attribute(".", "#[allow(non_camel_case_types)]")
+         .include_file("mod.rs")
+         .out_dir("src/generated")
+-        .compile(
++        .compile_protos(
+             &glob::glob("proto/*.proto")
+                 .unwrap()
+                 .collect::<Result<Vec<_>, _>>()
+                 .unwrap(),
+-            &["proto/include", "proto"],
++            &["proto/include".into(), "proto".into()],
+         )
+         .unwrap();
+ }

@@ -1,0 +1,60 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 4d71b52..24dd12f 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -115,20 +115,20 @@ mod common;
+ mod compat;
+ pub mod config;
+ pub mod kv;
+-mod locate;
++pub mod locate;
+ pub mod oracle;
+-mod pd;
++pub mod pd;
+ mod proto;
+-mod region;
+-mod region_cache;
++pub mod region;
++pub mod region_cache;
+ mod resource_control;
+ mod stats;
+-mod store;
++pub mod store;
+ mod timestamp;
+ pub mod util;
+ 
+-#[cfg(test)]
+-mod mock;
++#[cfg(any(test, feature = "mock"))]
++pub mod mock;
+ #[cfg(test)]
+ mod proptests;
+ 
+diff --git a/src/pd/retry.rs b/src/pd/retry.rs
+index d30d329..77b41fb 100644
+--- a/src/pd/retry.rs
++++ b/src/pd/retry.rs
+@@ -90,7 +90,7 @@ pub struct RetryClient<Cl = Cluster> {
+     timeout: Duration,
+ }
+ 
+-#[cfg(test)]
++#[cfg(any(test, feature = "mock"))]
+ impl<Cl> RetryClient<Cl> {
+     pub fn new_with_cluster(
+         security_mgr: Arc<SecurityManager>,
+diff --git a/src/store/mod.rs b/src/store/mod.rs
+index d539f67..6862886 100644
+--- a/src/store/mod.rs
++++ b/src/store/mod.rs
+@@ -5,8 +5,8 @@ mod client;
+ mod command;
+ mod endpoint;
+ mod errors;
+-#[cfg(test)]
+-mod mockserver;
++#[cfg(any(test, feature = "mock"))]
++pub mod mockserver;
+ mod priority_queue;
+ mod request;
+ 

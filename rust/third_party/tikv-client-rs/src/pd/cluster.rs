@@ -113,6 +113,23 @@ impl Cluster {
         req.send(&mut self.client, timeout).await
     }
 
+    /// Fetches at most `limit` consecutive PD regions from `start_key` through
+    /// `end_key` (empty end means positive infinity). This is the PD RPC used
+    /// by client-go `RegionCache.BatchLoadRegionsFromKey`.
+    pub async fn scan_regions(
+        &mut self,
+        start_key: Vec<u8>,
+        end_key: Vec<u8>,
+        limit: usize,
+        timeout: Duration,
+    ) -> Result<pdpb::ScanRegionsResponse> {
+        let mut req = pd_request!(self.id, pdpb::ScanRegionsRequest);
+        req.start_key = start_key;
+        req.end_key = end_key;
+        req.limit = i32::try_from(limit).unwrap_or(i32::MAX);
+        req.send(&mut self.client, timeout).await
+    }
+
     pub async fn get_store(
         &mut self,
         id: u64,
@@ -466,6 +483,16 @@ impl PdMessage for pdpb::GetRegionByIdRequest {
 }
 
 #[async_trait]
+impl PdMessage for pdpb::ScanRegionsRequest {
+    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Response = pdpb::ScanRegionsResponse;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.scan_regions(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
 impl PdMessage for pdpb::GetStoreRequest {
     type Client = pdpb::pd_client::PdClient<Channel>;
     type Response = pdpb::GetStoreResponse;
@@ -546,6 +573,12 @@ impl PdResponse for pdpb::GetStoreResponse {
 }
 
 impl PdResponse for pdpb::GetRegionResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.header.as_ref().unwrap()
+    }
+}
+
+impl PdResponse for pdpb::ScanRegionsResponse {
     fn header(&self) -> &pdpb::ResponseHeader {
         self.header.as_ref().unwrap()
     }

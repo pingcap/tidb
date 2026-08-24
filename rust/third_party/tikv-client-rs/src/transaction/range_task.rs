@@ -4,21 +4,24 @@
 
 //! A task is a contiguous group of region intersections. The producer keeps
 //! discovery ordered, while up to `concurrency` handlers run at once. The
-//! first handler error cancels the shared token and drops pending futures,
-//! matching the source worker pool's stop-on-error contract.
+//! first handler error cancels the shared token and prevents queued work from
+//! starting, matching the source worker pool's stop-on-error contract.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use async_trait::async_trait;
-use futures::StreamExt;
+use log::info;
+use tokio::sync::{mpsc, watch, Mutex as AsyncMutex};
+use tokio::task::JoinSet;
 
 use crate::async_util::Cancellation;
 use crate::pd::PdClient;
-use crate::store::region_stream_for_range;
 use crate::Result;
 
 pub(crate) const DEFAULT_REGIONS_PER_TASK: usize = 128;
+const DEFAULT_STAT_LOG_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 /// The completed and failed region counts returned by one source task.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -41,12 +44,14 @@ pub(crate) trait RangeTaskHandler: Clone + Send + Sync + 'static {
 /// Source-compatible scheduler for operations performed across a key range.
 pub(crate) struct Runner<PdC: PdClient, H: RangeTaskHandler> {
     name: &'static str,
+    identifier: String,
     pd_client: Arc<PdC>,
     handler: H,
     concurrency: usize,
     regions_per_task: usize,
-    completed_regions: AtomicUsize,
-    failed_regions: AtomicUsize,
+    stat_log_interval: std::time::Duration,
+    completed_regions: Arc<AtomicUsize>,
+    failed_regions: Arc<AtomicUsize>,
 }
 
 impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
@@ -56,15 +61,29 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
         concurrency: usize,
         handler: H,
     ) -> Self {
+        Self::new_with_id(name, name, pd_client, concurrency, handler)
+    }
+
+    /// Source `NewRangeTaskRunnerWithID`: metrics are keyed by `name`, while
+    /// human-readable progress logging can distinguish individual runners.
+    pub(crate) fn new_with_id(
+        name: &'static str,
+        identifier: impl Into<String>,
+        pd_client: Arc<PdC>,
+        concurrency: usize,
+        handler: H,
+    ) -> Self {
         assert!(concurrency > 0, "range task concurrency must be at least 1");
         Self {
             name,
+            identifier: identifier.into(),
             pd_client,
             handler,
             concurrency,
             regions_per_task: DEFAULT_REGIONS_PER_TASK,
-            completed_regions: AtomicUsize::new(0),
-            failed_regions: AtomicUsize::new(0),
+            stat_log_interval: DEFAULT_STAT_LOG_INTERVAL,
+            completed_regions: Arc::new(AtomicUsize::new(0)),
+            failed_regions: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -74,6 +93,12 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
             "range task regions_per_task must be at least 1"
         );
         self.regions_per_task = regions_per_task;
+    }
+
+    /// Changes the source periodic progress-log cadence. As in Go,
+    /// non-positive intervals are rejected by ticker construction at run time.
+    pub(crate) fn set_stat_log_interval(&mut self, interval: std::time::Duration) {
+        self.stat_log_interval = interval;
     }
 
     pub(crate) fn completed_regions(&self) -> usize {
@@ -90,49 +115,189 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
         self.completed_regions.store(0, Ordering::Release);
         self.failed_regions.store(0, Ordering::Release);
         if !end_key.is_empty() && start_key >= end_key {
+            info!(
+                "range task ignored empty range; name={}, start_key={}, end_key={}",
+                self.identifier,
+                crate::redact::key(&start_key),
+                crate::redact::key(&end_key)
+            );
             return Ok(());
         }
+        info!(
+            "range task started; name={}, start_key={}, end_key={}, concurrency={}",
+            self.identifier,
+            crate::redact::key(&start_key),
+            crate::redact::key(&end_key),
+            self.concurrency
+        );
 
         let cancellation = Cancellation::default();
-        let task_cancellation = cancellation.clone();
-        let handler = self.handler.clone();
-        let tasks = region_stream_for_range((start_key, end_key), self.pd_client.clone())
-            .map(|result| result.map(|(range, _)| range))
-            .chunks(self.regions_per_task)
-            .map(move |ranges| {
-                let handler = handler.clone();
-                let cancellation = task_cancellation.clone();
-                async move {
-                    let ranges = ranges.into_iter().collect::<Result<Vec<_>>>()?;
-                    let first = ranges.first().expect("region task chunk cannot be empty");
-                    let last = ranges.last().expect("region task chunk cannot be empty");
-                    Ok::<_, crate::Error>(
-                        handler
-                            .handle(cancellation, (first.0.clone(), last.1.clone()))
-                            .await,
-                    )
-                }
-            })
-            .buffer_unordered(self.concurrency);
-        futures::pin_mut!(tasks);
-
-        while let Some(outcome) = tasks.next().await {
-            let (stat, result) = outcome?;
-            self.completed_regions
-                .fetch_add(stat.completed_regions, Ordering::AcqRel);
-            self.failed_regions
-                .fetch_add(stat.failed_regions, Ordering::AcqRel);
-            crate::stats::add_range_task_stats(
+        // client-go has `concurrency` workers and a channel with the same
+        // capacity. A worker removes its task before running its handler, so
+        // discovery can run ahead of handlers by both active and queued work.
+        let (sender, receiver) = mpsc::channel(self.concurrency);
+        let receiver = Arc::new(AsyncMutex::new(receiver));
+        // Wakes every idle worker and the blocked producer after a handler
+        // error. The handler still receives `Cancellation`, which is its
+        // source-compatible control token.
+        let (stop, _) = watch::channel(false);
+        let mut workers = JoinSet::new();
+        for _ in 0..self.concurrency {
+            workers.spawn(Self::run_worker(
                 self.name,
-                stat.completed_regions,
-                stat.failed_regions,
-            );
+                self.handler.clone(),
+                receiver.clone(),
+                cancellation.clone(),
+                stop.clone(),
+                stop.subscribe(),
+                self.completed_regions.clone(),
+                self.failed_regions.clone(),
+            ));
+        }
+
+        let started_at = Instant::now();
+        let mut progress_ticker = tokio::time::interval(self.stat_log_interval);
+        // Tokio's first interval tick is immediate, unlike Go's `NewTicker`.
+        progress_ticker.tick().await;
+        let mut stop_producer = stop.subscribe();
+        let mut next_key = start_key;
+        let producer_result = loop {
+            let load_key = next_key.clone().into();
+            let loaded_regions = tokio::select! {
+                loaded = self.pd_client.batch_load_regions_from_key(&load_key, self.regions_per_task) => loaded,
+                _ = progress_ticker.tick() => {
+                    info!(
+                        "range task in progress; name={}, elapsed_ms={}, completed_regions={}",
+                        self.identifier,
+                        started_at.elapsed().as_millis(),
+                        self.completed_regions()
+                    );
+                    continue;
+                }
+            };
+            let regions = match loaded_regions {
+                Ok(regions) => regions,
+                Err(error) => break Err(error),
+            };
+            let mut task_end: Vec<u8> = regions
+                .last()
+                .expect("batch-loaded region list cannot be empty")
+                .end_key()
+                .into();
+            let is_last = task_end.is_empty() || (!end_key.is_empty() && task_end >= end_key);
+            if is_last {
+                task_end = end_key.clone();
+            }
+            let task = (next_key.clone(), task_end.clone());
+            let push_started = Instant::now();
+            let sent = tokio::select! {
+                result = sender.send(task) => Some(result),
+                _ = stop_producer.changed() => None,
+            };
+            crate::stats::observe_range_task_push_duration(self.name, push_started.elapsed());
+            let Some(sent) = sent else {
+                break Ok(());
+            };
+            if sent.is_err() {
+                break Ok(());
+            }
+            if is_last {
+                break Ok(());
+            }
+            next_key = task_end;
+        };
+        drop(sender);
+
+        let mut worker_error = None;
+        while let Some(joined) = workers.join_next().await {
+            match joined {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) if worker_error.is_none() => worker_error = Some(error),
+                Err(error) if worker_error.is_none() => worker_error = Some(error.into()),
+                _ => {}
+            }
+        }
+        match producer_result {
+            Err(error) => {
+                info!(
+                    "range task failed loading regions; name={}, elapsed_ms={}, completed_regions={}, failed_regions={}, error={}",
+                    self.identifier,
+                    started_at.elapsed().as_millis(),
+                    self.completed_regions(),
+                    self.failed_regions(),
+                    error
+                );
+                Err(error)
+            }
+            Ok(()) => match worker_error {
+                Some(error) => {
+                    info!(
+                        "range task failed; name={}, elapsed_ms={}, completed_regions={}, failed_regions={}, error={}",
+                        self.identifier,
+                        started_at.elapsed().as_millis(),
+                        self.completed_regions(),
+                        self.failed_regions(),
+                        error
+                    );
+                    Err(error)
+                }
+                None => {
+                    info!(
+                        "range task finished; name={}, elapsed_ms={}, completed_regions={}",
+                        self.identifier,
+                        started_at.elapsed().as_millis(),
+                        self.completed_regions()
+                    );
+                    Ok(())
+                }
+            },
+        }
+    }
+
+    async fn run_worker(
+        name: &'static str,
+        handler: H,
+        receiver: Arc<AsyncMutex<mpsc::Receiver<(Vec<u8>, Vec<u8>)>>>,
+        cancellation: Cancellation,
+        stop: watch::Sender<bool>,
+        mut stop_receiver: watch::Receiver<bool>,
+        completed_regions: Arc<AtomicUsize>,
+        failed_regions: Arc<AtomicUsize>,
+    ) -> Result<()> {
+        loop {
+            if *stop_receiver.borrow() {
+                return Ok(());
+            }
+            let task = {
+                let mut receiver = receiver.lock().await;
+                tokio::select! {
+                    task = receiver.recv() => task,
+                    _ = stop_receiver.changed() => return Ok(()),
+                }
+            };
+            let Some(task) = task else {
+                return Ok(());
+            };
+            if *stop_receiver.borrow() {
+                return Ok(());
+            }
+            let (stat, result) = handler.handle(cancellation.clone(), task.clone()).await;
+            completed_regions.fetch_add(stat.completed_regions, Ordering::AcqRel);
+            failed_regions.fetch_add(stat.failed_regions, Ordering::AcqRel);
+            crate::stats::add_range_task_stats(name, stat.completed_regions, stat.failed_regions);
             if let Err(error) = result {
+                info!(
+                    "range task worker cancelling after error; name={}, start_key={}, end_key={}, error={}",
+                    name,
+                    crate::redact::key(&task.0),
+                    crate::redact::key(&task.1),
+                    error
+                );
                 cancellation.cancel();
+                stop.send_replace(true);
                 return Err(error);
             }
         }
-        Ok(())
     }
 }
 
@@ -240,6 +405,25 @@ mod tests {
         );
         assert_eq!(runner.completed_regions(), 2);
         assert_eq!(runner.failed_regions(), 0);
+        assert_eq!(
+            crate::stats::range_task_push_duration_samples("range-task-grouping"),
+            2
+        );
+    }
+
+    #[test]
+    fn source_runner_keeps_a_distinct_log_identifier_and_interval() {
+        let mut runner = Runner::new_with_id(
+            "range-task-metric-name",
+            "range-task-log-id",
+            Arc::new(MockPdClient::default()),
+            1,
+            RecordingHandler::default(),
+        );
+        runner.set_stat_log_interval(Duration::from_secs(7));
+        assert_eq!(runner.name, "range-task-metric-name");
+        assert_eq!(runner.identifier, "range-task-log-id");
+        assert_eq!(runner.stat_log_interval, Duration::from_secs(7));
     }
 
     #[tokio::test]

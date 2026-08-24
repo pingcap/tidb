@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use derive_new::new;
 
+pub(crate) use self::keyspace::keyspace_from_pd_meta;
 pub use self::keyspace::EncodeKeyspace;
 pub use self::keyspace::KeyMode;
 pub use self::keyspace::Keyspace;

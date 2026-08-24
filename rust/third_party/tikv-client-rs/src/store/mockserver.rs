@@ -21,6 +21,7 @@ use tokio_stream::StreamExt;
 use tonic::codegen::{http, Body, BoxFuture, Service, StdError};
 use tonic::transport::server::{Connected, TcpConnectInfo};
 use tonic::transport::Server;
+use tonic_prost::ProstCodec;
 
 use crate::proto::{coprocessor, kvrpcpb, tikvpb};
 
@@ -301,7 +302,7 @@ where
     B: Body + Send + 'static,
     B::Error: Into<StdError> + Send + 'static,
 {
-    type Response = http::Response<tonic::body::BoxBody>;
+    type Response = http::Response<tonic::body::Body>;
     type Error = Infallible;
     type Future = BoxFuture<Self::Response, Self::Error>;
 
@@ -317,7 +318,7 @@ where
                 };
                 Box::pin(async move {
                     Ok(
-                        tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                        tonic::server::Grpc::new(ProstCodec::default())
                             .unary(service, request)
                             .await,
                     )
@@ -329,7 +330,7 @@ where
                 };
                 Box::pin(async move {
                     Ok(
-                        tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                        tonic::server::Grpc::new(ProstCodec::default())
                             .unary(service, request)
                             .await,
                     )
@@ -341,7 +342,7 @@ where
                 };
                 Box::pin(async move {
                     Ok(
-                        tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                        tonic::server::Grpc::new(ProstCodec::default())
                             .server_streaming(service, request)
                             .await,
                     )
@@ -353,7 +354,7 @@ where
                 };
                 Box::pin(async move {
                     Ok(
-                        tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                        tonic::server::Grpc::new(ProstCodec::default())
                             .streaming(service, request)
                             .await,
                     )
@@ -364,7 +365,7 @@ where
                     .status(200)
                     .header("grpc-status", "12")
                     .header("content-type", "application/grpc")
-                    .body(tonic::body::empty_body())
+                    .body(tonic::body::Body::empty())
                     .unwrap())
             }),
         }

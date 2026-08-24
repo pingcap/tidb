@@ -21,7 +21,7 @@ use crate::request::KvRequest;
 use crate::request::NoTarget;
 use crate::request::Plan;
 use crate::request::PlanBuilder;
-use crate::request::{build_keyspace_name, Keyspace};
+use crate::request::{build_keyspace_name, keyspace_from_pd_meta, Keyspace};
 use crate::retry::RetryBackoffer;
 use crate::store::region_stream_for_range;
 use crate::timestamp::TimestampExt;
@@ -144,7 +144,7 @@ impl Client {
         let (keyspace, keyspace_name) = match config.keyspace {
             Some(name) => {
                 let keyspace = pd.load_keyspace(&build_keyspace_name(name)).await?;
-                (Keyspace::try_enable(keyspace.id)?, Some(keyspace.name))
+                (keyspace_from_pd_meta(&keyspace)?, Some(keyspace.name))
             }
             None => (Keyspace::Disable, None),
         };

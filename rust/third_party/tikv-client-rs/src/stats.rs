@@ -133,11 +133,26 @@ pub(crate) fn add_range_task_stats(
         .add(failed_regions as f64);
 }
 
+/// Records client-go's time spent waiting to enqueue a range subtask for a
+/// worker. This is deliberately the channel-send duration, not handler time.
+pub(crate) fn observe_range_task_push_duration(task_type: &'static str, duration: Duration) {
+    TIKV_RANGE_TASK_PUSH_DURATION
+        .with_label_values(&[task_type])
+        .observe(duration_to_sec(duration));
+}
+
 #[cfg(test)]
 pub(crate) fn range_task_stat(task_type: &'static str, result: &'static str) -> f64 {
     TIKV_RANGE_TASK_STATS
         .with_label_values(&[task_type, result])
         .get()
+}
+
+#[cfg(test)]
+pub(crate) fn range_task_push_duration_samples(task_type: &'static str) -> u64 {
+    TIKV_RANGE_TASK_PUSH_DURATION
+        .with_label_values(&[task_type])
+        .get_sample_count()
 }
 
 /// Records the stage/outcome breakdown emitted by client-go's BatchCommands
@@ -415,6 +430,15 @@ lazy_static::lazy_static! {
         "tikv_client_go_range_task_stats",
         "stat of range tasks",
         &["type", "result"]
+    )
+    .unwrap();
+    static ref TIKV_RANGE_TASK_PUSH_DURATION: HistogramVec = register_histogram_vec!(
+        HistogramOpts::new(
+            "tikv_client_go_range_task_push_duration",
+            "duration to push sub tasks to range task workers"
+        )
+        .buckets(prometheus::exponential_buckets(0.001, 2.0, 20).unwrap()),
+        &["type"]
     )
     .unwrap();
     static ref TIKV_BATCH_REQUEST_STAGE_DURATION: HistogramVec = register_histogram_vec!(

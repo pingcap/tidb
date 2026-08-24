@@ -11,6 +11,7 @@ use futures::stream::BoxStream;
 use log::info;
 use tokio::sync::{Mutex, RwLock};
 use tonic::codegen::http::uri::PathAndQuery;
+use tonic_prost::ProstCodec;
 
 use crate::compat::stream_fn;
 use crate::kv::codec;
@@ -102,6 +103,38 @@ pub trait PdClient: Send + Sync + 'static {
 
     /// In transactional API, the returned region is decoded (keys in raw format)
     async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader>;
+
+    /// Loads a bounded consecutive sequence of regions beginning at `key`.
+    /// The default is source-compatible for custom PD clients, while
+    /// `PdRpcClient` overrides it with PD's one-RPC ScanRegions path.
+    async fn batch_load_regions_from_key(
+        &self,
+        key: &Key,
+        count: usize,
+    ) -> Result<Vec<RegionWithLeader>> {
+        let mut next = key.clone();
+        let mut regions = Vec::with_capacity(count);
+        while regions.len() < count {
+            let region = self.region_for_key(&next).await?;
+            let end = region.end_key();
+            if !end.is_empty() && end <= next {
+                return Err(crate::Error::StringError(
+                    "PD returned a region that does not advance batch loading".to_owned(),
+                ));
+            }
+            regions.push(region);
+            if end.is_empty() {
+                break;
+            }
+            next = end;
+        }
+        if regions.is_empty() {
+            return Err(crate::Error::StringError(
+                "PD returned no region while batch loading regions from key".to_owned(),
+            ));
+        }
+        Ok(regions)
+    }
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp>;
 
@@ -489,7 +522,7 @@ where
                         service: String::new(),
                     }),
                     PathAndQuery::from_static("/grpc.health.v1.Health/Check"),
-                    tonic::codec::ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
+                    ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
                 )
                 .await
                 .map_err(crate::Error::from)
@@ -830,6 +863,24 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader> {
         let region = self.region_cache.get_region_by_id(id).await?;
         Self::decode_region(region, self.enable_codec)
+    }
+
+    async fn batch_load_regions_from_key(
+        &self,
+        key: &Key,
+        count: usize,
+    ) -> Result<Vec<RegionWithLeader>> {
+        let key = if self.enable_codec {
+            key.to_encoded()
+        } else {
+            key.clone()
+        };
+        self.region_cache
+            .batch_load_regions_from_key(key, count)
+            .await?
+            .into_iter()
+            .map(|region| Self::decode_region(region, self.enable_codec))
+            .collect()
     }
 
     async fn all_stores(&self) -> Result<Vec<Store>> {

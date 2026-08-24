@@ -386,6 +386,33 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         Ok(region)
     }
 
+    /// Source `BatchLoadRegionsFromKey`: always refreshes a bounded run of
+    /// consecutive regions from PD, then caches only regions with a known
+    /// leader. Callers still receive every PD result so they can advance the
+    /// source range-task cursor through leaderless metadata.
+    pub async fn batch_load_regions_from_key(
+        &self,
+        start_key: Key,
+        count: usize,
+    ) -> Result<Vec<RegionWithLeader>> {
+        let regions = self
+            .inner_client
+            .clone()
+            .scan_regions(start_key.into(), Vec::new(), count)
+            .await?;
+        if regions.is_empty() {
+            return Err(Error::StringError(
+                "PD returned no region while batch loading regions from key".to_owned(),
+            ));
+        }
+        for region in &regions {
+            if region.leader.is_some() {
+                self.add_region(region.clone()).await;
+            }
+        }
+        Ok(regions)
+    }
+
     /// Force read through (query from PD) and update cache
     async fn read_through_region_by_id(&self, id: RegionId) -> Result<RegionWithLeader> {
         // put a notify to let others know the region id is being queried

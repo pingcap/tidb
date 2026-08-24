@@ -4,6 +4,7 @@ use std::ops::{Bound, Range};
 
 use serde_derive::{Deserialize, Serialize};
 
+use crate::proto::keyspacepb;
 use crate::transaction::Mutation;
 use crate::{proto::kvrpcpb, Key};
 use crate::{BoundRange, KvPair};
@@ -91,6 +92,27 @@ impl Keyspace {
     pub(crate) fn v1_response_codec(&self, mode: KeyMode) -> Option<ApiV1Codec> {
         matches!(self, Self::Disable | Self::V1Ttl).then(|| ApiV1Codec::new(mode))
     }
+}
+
+/// Builds the API V2 numeric keyspace codec input from PD metadata.
+///
+/// Client-go's V2 codec only understands the numeric `id` arm. API V3 uses
+/// a namespace/keyspace identity instead, which must be rejected rather than
+/// silently becoming the default numeric keyspace (ID zero).
+pub(crate) fn keyspace_from_pd_meta(meta: &keyspacepb::KeyspaceMeta) -> crate::Result<Keyspace> {
+    let keyspace_id = match &meta.keyspace {
+        Some(keyspacepb::keyspace_meta::Keyspace::Id(id)) => *id,
+        Some(keyspacepb::keyspace_meta::Keyspace::KeyspaceIdentity(_)) => {
+            return Err(crate::Error::StringError(
+                "unsupported keyspace identity: codec V2 only supports the numeric keyspace ID"
+                    .to_owned(),
+            ));
+        }
+        // `KeyspaceMeta.GetId()` in client-go returns zero when the oneof is
+        // absent. Preserve that compatibility for older PD responses.
+        None => 0,
+    };
+    Keyspace::try_enable(keyspace_id)
 }
 
 /// Canonicalizes an optional user keyspace name like client-go's `BuildKeyspaceName`.
@@ -1029,6 +1051,27 @@ mod tests {
         );
         let error = Keyspace::try_enable(MAX_KEYSPACE_ID + 1).unwrap_err();
         assert!(error.to_string().contains("out of range"));
+    }
+
+    #[test]
+    fn source_v2_codec_rejects_api_v3_keyspace_identity() {
+        let meta = keyspacepb::KeyspaceMeta {
+            keyspace: Some(keyspacepb::keyspace_meta::Keyspace::KeyspaceIdentity(
+                crate::proto::apipb::KeyspaceIdentity {
+                    namespace_id: 1,
+                    keyspace_id: 2,
+                },
+            )),
+            ..Default::default()
+        };
+        assert_eq!(
+            keyspace_from_pd_meta(&meta).unwrap_err().to_string(),
+            "unsupported keyspace identity: codec V2 only supports the numeric keyspace ID"
+        );
+        assert_eq!(
+            keyspace_from_pd_meta(&keyspacepb::KeyspaceMeta::default()).unwrap(),
+            Keyspace::Enable { keyspace_id: 0 }
+        );
     }
 
     #[test]

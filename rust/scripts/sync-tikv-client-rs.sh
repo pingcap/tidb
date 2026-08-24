@@ -28,6 +28,13 @@
 # the patch) or upstream already absorbed the fix (delete the patch and
 # re-verify the dependent Rust code against the new upstream shape). Never
 # silently skip a failing patch.
+#
+# After patches apply, `src/generated/**` is regenerated (not patched as a
+# frozen diff -- a ~20K-line generated-code patch would conflict on every
+# upstream .proto change and defeats the point of tracking master). This
+# requires `protoc` on PATH (`apt-get install protobuf-compiler` or
+# https://github.com/protocolbuffers/protobuf/releases); the regeneration
+# step fails loudly if it is missing rather than silently skipping.
 
 set -euo pipefail
 
@@ -70,6 +77,16 @@ if [ -d "$PATCH_DIR" ]; then
     git -C "$SCRATCH_DIR" apply "$patch"
   done
 fi
+
+if ! command -v protoc >/dev/null 2>&1; then
+  echo "protoc not found on PATH -- install it (apt-get install protobuf-compiler" >&2
+  echo "or https://github.com/protocolbuffers/protobuf/releases) before syncing," >&2
+  echo "so src/generated/** can be regenerated against the patched proto-build." >&2
+  exit 1
+fi
+
+echo "Regenerating src/generated/** (cargo run -p tikv-client-proto-build)"
+(cd "$SCRATCH_DIR" && cargo run -p tikv-client-proto-build)
 
 rm -rf "$VENDOR_DIR"
 mkdir -p "$VENDOR_DIR"

@@ -1,6 +1,7 @@
 syntax = "proto3";
 package keyspacepb;
 
+import "apipb.proto";
 import "gogoproto/gogo.proto";
 import "pdpb.proto";
 import "rustproto.proto";
@@ -26,7 +27,12 @@ service Keyspace {
 }
 
 message KeyspaceMeta {
-  uint32 id = 1;
+  oneof keyspace {
+    // V1/V2 compatibility keyspace id. V3 should read keyspace_identity instead.
+    uint32 id = 1;
+    // Canonical V3 keyspace identity.
+    apipb.KeyspaceIdentity keyspace_identity = 8;
+  }
   string name = 2;
   KeyspaceState state = 3;
   int64 created_at = 4;

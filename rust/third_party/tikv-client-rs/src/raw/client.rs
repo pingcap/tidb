@@ -26,7 +26,7 @@ use crate::request::NoTarget;
 use crate::request::Plan;
 use crate::request::PlanBuilder;
 use crate::request::TruncateKeyspace;
-use crate::request::{build_keyspace_name, Keyspace};
+use crate::request::{build_keyspace_name, keyspace_from_pd_meta, Keyspace};
 use crate::request::{plan, Collect};
 use crate::retry::{RetryBackoffer, BO_REGION_MISS};
 use crate::store::{HasRegionError, RegionStore};
@@ -144,7 +144,7 @@ impl Client<PdRpcClient> {
         let (keyspace, keyspace_name) = match keyspace_name {
             Some(name) => {
                 let keyspace = rpc.load_keyspace(&name).await?;
-                (Keyspace::try_enable(keyspace.id)?, Some(keyspace.name))
+                (keyspace_from_pd_meta(&keyspace)?, Some(keyspace.name))
             }
             None => match config.raw_api_version {
                 RawApiVersion::V1 => (Keyspace::Disable, None),

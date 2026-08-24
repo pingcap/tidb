@@ -54,6 +54,35 @@ pub trait RetryClientTrait {
         self.get_region_by_id(region_id).await
     }
 
+    /// Source `PDClient.ScanRegions`, used to refresh a contiguous region
+    /// range in one request. The default keeps custom/mock clients compatible
+    /// by deriving the same bounded sequence from point lookups.
+    async fn scan_regions(
+        self: Arc<Self>,
+        start_key: Vec<u8>,
+        end_key: Vec<u8>,
+        limit: usize,
+    ) -> Result<Vec<RegionWithLeader>> {
+        let mut next: crate::Key = start_key.into();
+        let end: crate::Key = end_key.into();
+        let mut regions = Vec::with_capacity(limit);
+        while regions.len() < limit {
+            let region = self.clone().get_region(next.clone().into()).await?;
+            let region_end = region.end_key();
+            if !region_end.is_empty() && region_end <= next {
+                return Err(Error::StringError(
+                    "PD returned a region that does not advance ScanRegions".to_owned(),
+                ));
+            }
+            regions.push(region);
+            if region_end.is_empty() || (!end.is_empty() && region_end >= end) {
+                break;
+            }
+            next = region_end;
+        }
+        Ok(regions)
+    }
+
     async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store>;
 
     async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>>;
@@ -90,7 +119,7 @@ pub struct RetryClient<Cl = Cluster> {
     timeout: Duration,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "mock"))]
 impl<Cl> RetryClient<Cl> {
     pub fn new_with_cluster(
         security_mgr: Arc<SecurityManager>,
@@ -249,6 +278,24 @@ impl RetryClientTrait for RetryClient<Cluster> {
         })
     }
 
+    async fn scan_regions(
+        self: Arc<Self>,
+        start_key: Vec<u8>,
+        end_key: Vec<u8>,
+        limit: usize,
+    ) -> Result<Vec<RegionWithLeader>> {
+        retry_mut!(self, "scan_regions", |cluster| {
+            let start_key = start_key.clone();
+            let end_key = end_key.clone();
+            async {
+                cluster
+                    .scan_regions(start_key, end_key, limit, self.timeout)
+                    .await
+                    .and_then(regions_from_scan_response)
+            }
+        })
+    }
+
     async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store> {
         retry_mut!(self, "get_store", |cluster| async {
             cluster
@@ -323,6 +370,34 @@ fn region_from_response(
     region.pending_peers = std::mem::take(&mut resp.pending_peers);
     region.down_peers = std::mem::take(&mut resp.down_peers);
     Ok(region)
+}
+
+fn regions_from_scan_response(resp: pdpb::ScanRegionsResponse) -> Result<Vec<RegionWithLeader>> {
+    if !resp.regions.is_empty() {
+        return resp
+            .regions
+            .into_iter()
+            .map(|mut entry| {
+                let region = entry.region.take().ok_or_else(|| {
+                    Error::StringError("PD ScanRegions response has no region metadata".to_owned())
+                })?;
+                Ok(RegionWithLeader {
+                    region,
+                    leader: entry.leader.take(),
+                    buckets: entry.buckets.take(),
+                    pending_peers: std::mem::take(&mut entry.pending_peers),
+                    down_peers: std::mem::take(&mut entry.down_peers),
+                })
+            })
+            .collect();
+    }
+
+    Ok(resp
+        .region_metas
+        .into_iter()
+        .enumerate()
+        .map(|(index, region)| RegionWithLeader::new(region, resp.leaders.get(index).cloned()))
+        .collect())
 }
 
 // A node-like thing that can be connected to.
@@ -484,5 +559,66 @@ mod test {
             assert!(retry_max_ok(client.clone(), max_retries).await.is_ok());
             assert_eq!(client.cluster.read().await.0.load(Ordering::SeqCst), 2);
         })
+    }
+
+    #[test]
+    fn source_scan_regions_decodes_extended_and_legacy_shapes() {
+        let extended = pdpb::ScanRegionsResponse {
+            regions: vec![pdpb::Region {
+                region: Some(metapb::Region {
+                    id: 1,
+                    start_key: b"a".to_vec(),
+                    end_key: b"z".to_vec(),
+                    ..Default::default()
+                }),
+                leader: Some(metapb::Peer {
+                    id: 7,
+                    store_id: 8,
+                    ..Default::default()
+                }),
+                pending_peers: vec![metapb::Peer {
+                    id: 9,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let regions = regions_from_scan_response(extended).unwrap();
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].id(), 1);
+        assert_eq!(regions[0].leader.as_ref().unwrap().store_id, 8);
+        assert_eq!(regions[0].pending_peers[0].id, 9);
+
+        let legacy = pdpb::ScanRegionsResponse {
+            region_metas: vec![metapb::Region {
+                id: 2,
+                start_key: b"z".to_vec(),
+                ..Default::default()
+            }],
+            leaders: vec![metapb::Peer {
+                id: 10,
+                store_id: 11,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let regions = regions_from_scan_response(legacy).unwrap();
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].id(), 2);
+        assert_eq!(regions[0].leader.as_ref().unwrap().store_id, 11);
+    }
+
+    #[test]
+    fn source_scan_regions_rejects_an_extended_entry_without_metadata() {
+        let error = regions_from_scan_response(pdpb::ScanRegionsResponse {
+            regions: vec![pdpb::Region::default()],
+            ..Default::default()
+        })
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "PD ScanRegions response has no region metadata"
+        );
     }
 }

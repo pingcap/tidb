@@ -115,20 +115,20 @@ mod common;
 mod compat;
 pub mod config;
 pub mod kv;
-mod locate;
+pub mod locate;
 pub mod oracle;
-mod pd;
+pub mod pd;
 mod proto;
-mod region;
-mod region_cache;
+pub mod region;
+pub mod region_cache;
 mod resource_control;
 mod stats;
-mod store;
+pub mod store;
 mod timestamp;
 pub mod util;
 
-#[cfg(test)]
-mod mock;
+#[cfg(any(test, feature = "mock"))]
+pub mod mock;
 #[cfg(test)]
 mod proptests;
 
