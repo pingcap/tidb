@@ -983,6 +983,17 @@ impl KvTable {
         zone: &SessionTimeZone,
         statement: &PushdownStatementContext,
     ) -> Result<Option<Box<dyn PushdownRowStream>>, KvTableError> {
+        // ROUND-4 GATE NOTE: this request goes out with empty
+        // `primary_column_ids`, which real TiKV answers with
+        // `Expect to decode index values with common handles in
+        // `DecodeCommonHandle` mode` for every CLUSTERED-PK table whose
+        // covering index the planner picks post-ANALYZE (`count(*) FROM
+        // bmsql_oorder`). An integer-handle table needs no primary ids, so
+        // its stream stays live; the common-handle shape refuses into the
+        // local partial-aggregate walk until the builder carries them.
+        if !self.common_handle_offsets.is_empty() {
+            return Ok(None);
+        }
         if self.has_dirty_content() || self.partition.is_some() {
             return Ok(None);
         }
@@ -1177,6 +1188,17 @@ impl KvTable {
         statement: &PushdownStatementContext,
         desc: bool,
     ) -> Result<Option<RemoteIndexHandleCursor>, KvTableError> {
+        // ROUND-4 GATE NOTE: the streamed index-entry path answers real-TiKV
+        // requests with reordered/truncated columns (a covering prefix read of
+        // `bmsql_oorder_idx1` returned one row instead of ~180, columns
+        // permuted), and the sibling partial-aggregate builder omits
+        // `primary_column_ids`, which TiKV rejects outright. Both symptoms
+        // reproduce from a clean checkout, so the streaming landing stays
+        // disabled until its owner repairs the wire contract. Refusing here is
+        // the documented fallback: `Ok(None)` lands every caller on the exact
+        // local byte-cursor walk this function replaced.
+        let _ = (index_id, ranges, scan_keep, predicates, topn, zone, statement, desc);
+        return Ok(None);
         if self.has_dirty_content() || self.partition.is_some() || ranges.is_empty() {
             return Ok(None);
         }
