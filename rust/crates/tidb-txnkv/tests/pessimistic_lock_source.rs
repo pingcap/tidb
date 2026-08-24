@@ -194,6 +194,11 @@ enum LockOutcome {
     WriteConflict,
     /// Blocked by a lock the owner refreshed `refreshed_ms` ago.
     BlockedByLiveLock { refreshed_ms: u64 },
+    /// A grant that also answers `return_values`.
+    GrantedWithValues {
+        values: Vec<Vec<u8>>,
+        not_founds: Vec<bool>,
+    },
     /// A Normal wake-up answered with the ForceLock-only `results` field.
     ForceLockResults,
     /// A ForceLock wake-up granted without conflict.
@@ -272,6 +277,11 @@ fn lock_response(outcome: &LockOutcome, request: &KvrpcPessimisticLockRequest) -
         .unwrap_or_default();
     let response = match outcome {
         LockOutcome::Granted => KvrpcPessimisticLockResponse::default(),
+        LockOutcome::GrantedWithValues { values, not_founds } => KvrpcPessimisticLockResponse {
+            values: values.clone(),
+            not_founds: not_founds.clone(),
+            ..KvrpcPessimisticLockResponse::default()
+        },
         LockOutcome::RegionError => KvrpcPessimisticLockResponse {
             region_error: Some(errorpb::Error {
                 recovery_in_progress: Some(errorpb::RecoveryInProgress {
@@ -1444,4 +1454,65 @@ fn a_pessimistic_committer_resolves_a_newer_prewrite_lock_instead_of_conflicting
         "a pessimistic committer must reach lock recovery, not shortcut to a \
          write conflict: {cause:?}"
     );
+}
+
+// -----------------------------------------------------------------------------
+// return_values
+// -----------------------------------------------------------------------------
+
+/// A `KeyReturningValue` lock asks TiKV for the row and surfaces the answer.
+///
+/// Go `pkg/executor/point_get.go:614` calls `lockCtx.InitReturnValues(1)`
+/// before `doLockKeys`, then serves the point get from the answered values
+/// (`TxnCtx.SetPessimisticLockCache`) -- one round trip instead of a separate
+/// Get. The request must carry `return_values`, and the response's
+/// parallel `values`/`not_founds` arrays must land in [`AcquiredLocks::values`].
+#[test]
+fn a_returning_value_lock_carries_the_rows_answer() {
+    let (_server, recorded, mut transaction) = fixture(vec![LockOutcome::GrantedWithValues {
+        values: vec![b"row-value".to_vec(), b"second-value".to_vec()],
+        not_founds: vec![false, true],
+    }]);
+
+    let acquired = transaction
+        .acquire_locks_returning_values(
+            &[PRIMARY_KEY.to_vec(), SECOND_KEY.to_vec()],
+            &no_presumption(),
+            LockWaitTime::AlwaysWait,
+            &call(),
+        )
+        .expect("the value-carrying lock is granted");
+
+    assert_eq!(
+        acquired.values.get(PRIMARY_KEY).map(|v| v.as_deref()),
+        Some(Some(b"row-value".as_slice())),
+        "an existing key answers its bytes"
+    );
+    assert_eq!(
+        acquired.values.get(SECOND_KEY).map(|v| v.as_deref()),
+        Some(None),
+        "a reported-absent key answers None"
+    );
+
+    let recorded = recorded.lock().unwrap();
+    assert!(
+        recorded.locks[0].return_values,
+        "the request must ask TiKV to return the row"
+    );
+}
+
+/// Plain `acquire_locks` keeps asking for no values, exactly as before.
+#[test]
+fn a_plain_lock_still_omits_return_values() {
+    let (_server, recorded, mut transaction) = fixture(Vec::new());
+
+    transaction
+        .acquire_locks(
+            &[PRIMARY_KEY.to_vec()],
+            &no_presumption(),
+            LockWaitTime::AlwaysWait,
+            &call(),
+        )
+        .expect("granted");
+    assert!(recorded.lock().unwrap().locks[0].return_values == false);
 }

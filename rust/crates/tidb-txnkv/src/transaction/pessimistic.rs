@@ -262,6 +262,14 @@ pub struct AcquiredLocks {
     /// `ErrWriteConflict{reason: "LockedWithConflict"}` in
     /// `pkg/store/driver/txn.generateWriteConflictForLockedWithConflict`.
     pub locked_with_conflict: Vec<(Vec<u8>, u64)>,
+    /// Row values TiKV returned with the locks — Go `LockCtx.Values`, filled
+    /// when the request carried `return_values`
+    /// (`pkg/executor/point_get.go:614 InitReturnValues(1)`; the response
+    /// lands in `TxnCtx.SetPessimisticLockCache`, and the executor's own
+    /// `get` then reads from that cache instead of storage). Empty unless
+    /// [`RealPessimisticTransaction::acquire_locks_returning_values`] was
+    /// used. A key maps to `None` when TiKV reports it absent.
+    pub values: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
 }
 
 /// One concrete pessimistic transaction over the shared process authorities.
@@ -441,6 +449,37 @@ where
         wait: LockWaitTime,
         call: &UnaryCallContext,
     ) -> Result<AcquiredLocks, PessimisticLockFailure> {
+        self.acquire_locks_impl(keys, presume_not_exists, wait, call, false)
+    }
+
+    /// [`Self::acquire_locks`], asking TiKV to return each locked key's
+    /// current value with the lock.
+    ///
+    /// Go `KVTxn.LockKeys` sets `KeyReturningValue` when the executor needs
+    /// the row it is about to modify (`pkg/kv/txn.go`'s flag; set from
+    /// `pkg/executor/point_get.go:614 InitReturnValues(1)`), and caches every
+    /// answered value in `TxnCtx.SetPessimisticLockCache`, so a DML's row read
+    /// costs ONE round trip. The values land in [`AcquiredLocks::values`] —
+    /// keys fair locking granted at a conflicting timestamp are absent, since
+    /// Go recomputes such a statement from a newer snapshot anyway.
+    pub fn acquire_locks_returning_values(
+        &mut self,
+        keys: &[Vec<u8>],
+        presume_not_exists: &BTreeSet<Vec<u8>>,
+        wait: LockWaitTime,
+        call: &UnaryCallContext,
+    ) -> Result<AcquiredLocks, PessimisticLockFailure> {
+        self.acquire_locks_impl(keys, presume_not_exists, wait, call, true)
+    }
+
+    fn acquire_locks_impl(
+        &mut self,
+        keys: &[Vec<u8>],
+        presume_not_exists: &BTreeSet<Vec<u8>>,
+        wait: LockWaitTime,
+        call: &UnaryCallContext,
+        return_values: bool,
+    ) -> Result<AcquiredLocks, PessimisticLockFailure> {
         if keys.is_empty() {
             return Err(PessimisticLockFailure::Transaction(
                 TransactionCause::InvalidResponse {
@@ -479,6 +518,7 @@ where
         let mut queue = VecDeque::from(self.group(&sorted)?);
         let mut newly_locked = Vec::new();
         let mut locked_with_conflict: Vec<(Vec<u8>, u64)> = Vec::new();
+        let mut values: BTreeMap<Vec<u8>, Option<Vec<u8>>> = BTreeMap::new();
         while let Some(batch) = queue.pop_front() {
             match self.lock_batch(
                 &batch,
@@ -489,6 +529,8 @@ where
                 wait,
                 wait_started_at,
                 wake_up_mode,
+                return_values,
+                &mut values,
                 call,
             )? {
                 BatchOutcome::Locked { conflicts } => {
@@ -518,6 +560,7 @@ where
             keys: newly_locked,
             primary_key,
             locked_with_conflict,
+            values,
         })
     }
 
@@ -670,6 +713,7 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn lock_batch(
         &mut self,
         batch: &RegionKeyBatch,
@@ -680,6 +724,8 @@ where
         wait: LockWaitTime,
         wait_started_at: Instant,
         wake_up_mode: KvrpcPessimisticLockWakeUpMode,
+        return_values: bool,
+        values: &mut BTreeMap<Vec<u8>, Option<Vec<u8>>>,
         call: &UnaryCallContext,
     ) -> Result<BatchOutcome, PessimisticLockFailure> {
         let mutations = batch
@@ -711,6 +757,9 @@ where
                 wait_timeout: wait.wait_timeout_ms(waited),
                 min_commit_ts: self.for_update_ts.saturating_add(1),
                 wake_up_mode: wake_up_mode as i32,
+                // Go `KVTxn.LockKeys` with `KeyReturningValue`: the row a DML
+                // is about to modify rides back ON the lock response.
+                return_values,
                 ..KvrpcPessimisticLockRequest::default()
             };
             let response = self.publish_lock(batch, &request, call)?;
@@ -731,6 +780,18 @@ where
             ) {
                 match self.read_force_lock_result(batch, &response)? {
                     ForceLockOutcome::Locked { conflicts } => {
+                        // The ForceLock answer carries the locked key's value
+                        // in its single result (`PessimisticLockKeyResult`
+                        // tag 2) whenever the request asked for it.
+                        if return_values {
+                            if let Some(result) = response.results.first() {
+                                let exists = !result.value.is_empty() || result.existence;
+                                values.insert(
+                                    batch.keys()[0].clone(),
+                                    exists.then(|| result.value.clone()),
+                                );
+                            }
+                        }
                         return Ok(BatchOutcome::Locked { conflicts })
                     }
                     // TiKV refused this key. It reports why in `errors`, and
@@ -761,6 +822,21 @@ where
                 ));
             }
             if response.errors.is_empty() {
+                if return_values {
+                    // Go `handlePessimisticLockResponseSingleBatch`: `values`
+                    // and `not_founds` answer the request's mutations in
+                    // order, which is this batch's own key order.
+                    for (key, index) in batch.keys().iter().zip(0usize..) {
+                        let found = response.not_founds.get(index).copied();
+                        let value = response.values.get(index);
+                        let entry = match (found, value) {
+                            (Some(true), _) | (None, None) => None,
+                            (_, Some(bytes)) => Some(bytes.clone()),
+                            (Some(false), None) => Some(Vec::new()),
+                        };
+                        values.insert(key.clone(), entry);
+                    }
+                }
                 return Ok(BatchOutcome::Locked {
                     conflicts: Vec::new(),
                 });
