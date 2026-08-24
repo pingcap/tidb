@@ -225,124 +225,6 @@ impl<F> CopScanSource<F> {
     }
 }
 
-impl<F> CopScanSource<F>
-where
-    F: RealTiKvSessionTransportFactory + 'static,
-    <F::Transport as QueryTransport>::Response: 'static,
-{
-    /// The covering-index shape of [`PushdownScanner::open`]: the only
-    /// index request the executor sends today is a partial aggregation
-    /// over encoded index-key ranges (`pushdown_index_partial_aggregate_cursor`),
-    /// so every other index shape refuses by name.
-    fn open_index_aggregate(
-        &self,
-        request: &PushdownScanRequest,
-        index: &tidb_executor::remote_scan::PushdownIndexScan,
-        refuse: impl Fn(&str) -> PushdownScannerError,
-    ) -> Result<Box<dyn PushdownRowStream>, PushdownScannerError> {
-        let Some(aggregate) = request.aggregate.as_ref() else {
-            return Err(refuse(
-                "a bare index scan is not lowered; only the covering aggregate shape is",
-            ));
-        };
-        if !request.predicates.is_empty()
-            || request.limit.is_some()
-            || request.topn.is_some()
-            || request.output_offsets.is_some()
-            || request.desc
-        {
-            return Err(refuse(
-                "an index aggregation composes with nothing else in this lowering",
-            ));
-        }
-        let columns = request
-            .columns
-            .iter()
-            .map(scan_column)
-            .collect::<Option<Vec<_>>>()
-            .ok_or_else(|| refuse("a column has no bounded coprocessor descriptor"))?;
-        let field_types: Vec<FieldType> = aggregate.output_types();
-        let aggregation = aggregation_to_pb(aggregate, &columns)
-            .ok_or_else(|| refuse("a pushed aggregate has no bounded lowering"))?;
-        let index_scan = tidb_proto::tipb::IndexScan {
-            table_id: Some(request.table_id),
-            index_id: Some(index.index_id),
-            columns: columns
-                .iter()
-                .map(crate::dag_request::column_to_pb)
-                .collect(),
-            desc: Some(false),
-            unique: Some(index.declared_unique),
-            primary_column_ids: Vec::new(),
-        };
-        let (time_zone_name, time_zone_offset_secs) = request.statement.time_zone.dag_zone();
-        let dag = crate::dag_request::construct_index_aggregated_dag_req(
-            &DagRequestContext::new(
-                time_zone_name,
-                time_zone_offset_secs,
-                request.statement.push_down_flags,
-                EncodeType::Default,
-            ),
-            index_scan,
-            aggregation,
-            field_types.len(),
-        )
-        .map_err(|error| PushdownScannerError::Unsupported(error.to_string()))?;
-        let summary = dag_summary(&dag);
-        let key_ranges: Vec<KeyRange> = request
-            .ranges
-            .iter()
-            .map(|(start, end)| KeyRange::new(start.clone(), end.clone()))
-            .collect();
-        let shapes = vec![
-            ExecutorShape::new(ExecutorKind::IndexScan),
-            ExecutorShape::new(ExecutorKind::Other),
-        ];
-        let plan = RemoteScanPlan {
-            dag,
-            envelope: RequestEnvelope::new(shapes),
-            key_ranges,
-            snapshot_ts: request.snapshot_ts,
-            keep_order: request.keep_order,
-            desc: request.desc,
-            field_types: field_types.clone(),
-            time_zone: request.statement.time_zone.clone(),
-            warnings: request.statement.warnings.clone(),
-        };
-        let batches_ahead = request.read_ahead_batches.clamp(1, MAX_BATCHES_AHEAD);
-        let (rows, batches) = sync_channel::<Result<Chunk, String>>(batches_ahead);
-        let factory = Arc::clone(&self.factory);
-        let node_rows = Arc::clone(&self.rows_returned);
-        // A bounded one-row request is consumed immediately by the caller.
-        // Serving it on this worker avoids creating and detaching a native
-        // thread for every YCSB-E scan while retaining the threaded stream for
-        // full scans, where response decoding must overlap executor work.
-        if request.limit == Some(1) {
-            serve_scan(&factory, plan, &rows, &node_rows);
-        } else {
-            thread::Builder::new()
-                .name("cop-scan".to_owned())
-                .spawn(move || serve_scan(&factory, plan, &rows, &node_rows))
-                .map_err(|error| {
-                    PushdownScannerError::Backend(StorageError::Backend(error.to_string()))
-                })?;
-        }
-        self.scans_served.fetch_add(1, Ordering::Relaxed);
-        self.requests
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .push(summary);
-        Ok(Box::new(CopRowStream {
-            batches: Some(batches),
-            pending: None,
-            pending_row: 0,
-            returned: 0,
-            field_types,
-            predicates_applied: request.predicates.is_empty(),
-        }))
-    }
-}
-
 impl<F> PushdownScanner for CopScanSource<F>
 where
     F: RealTiKvSessionTransportFactory + 'static,
@@ -364,21 +246,15 @@ where
         // request was answered whole, so silently serving raw table rows for
         // an aggregate or index request is wrong data, not degraded service.
         // A refused `topn` or cap is different -- the contract names those
-        // best-effort and the caller retains the local stage either way.
-        if let Some(index) = request.index.as_ref() {
-            if request.aggregate.is_some() {
-                return self.open_index_aggregate(request, index, refuse);
-            }
-            // An AGGREGATE-LESS index request lowers through the general
-            // path below, whose `TiKvIndexScanSpec` branch already builds
-            // the IndexScan DAG with its declared direction (`spec.desc`).
-            // Routing every index request here used to refuse exactly that
-            // shape by name ("a bare index scan is not lowered"), so a
-            // descending keep-order lookup fell back to a local cursor that
-            // materialized the whole bounded range before reversing -- an
-            // `ORDER BY indexed_col DESC LIMIT n` read every index entry to
-            // answer n rows.
-        }
+        // best-effort and the caller retains the local stage either way. No
+        // index shape is special-cased either: an aggregate-carrying index
+        // request composes [IndexScan, Selection?, Aggregation] exactly as Go
+        // `ConstructDAGReq` does, with the same all-or-nothing Selection gate
+        // every aggregate arm states, and an AGGREGATE-LESS index request
+        // lowers through the `TiKvIndexScanSpec` branch below with its
+        // declared direction (`spec.desc`) -- routing it here instead of a
+        // bespoke refusal is what lets a descending keep-order lookup answer
+        // n rows without materializing the whole bounded range locally.
         if request.output_offsets.is_some() {
             return Err(refuse(
                 "this coprocessor lowering does not narrow output columns",

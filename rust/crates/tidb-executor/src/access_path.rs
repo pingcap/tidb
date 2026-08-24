@@ -952,7 +952,10 @@ pub struct IndexRangeSourceExec {
     decode_context: crate::kv_table::RowDecodeContext,
     /// Statement flags and warning sink carried into a remote DAG request.
     statement: PushdownStatementContext,
-    /// Planner estimate used to avoid partial aggregation for point-like work.
+    /// Planner row estimate for this source. Go's aggregate push-down decision
+    /// (`CheckAggCanPushCop`) consults function pushability only -- never the
+    /// estimate -- so this value is carried for evidence and EXPLAIN, not as a
+    /// push-down gate.
     estimated_rows: Option<f64>,
     /// Partial aggregation accepted from the root aggregation executor.
     partial_aggregate: Option<PushdownPartialAggregate>,
@@ -1928,6 +1931,7 @@ impl Executor for IndexRangeSourceExec {
                     self.index_id,
                     &self.ranges,
                     &self.keep,
+                    &self.pushed,
                     aggregate,
                     self.decode_context.zone(),
                     &self.statement,
@@ -2084,11 +2088,10 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         if !crate::pushdown_blacklist::aggregate_admits(aggregate, ctx) {
             return false;
         }
-        if self.estimated_rows.is_none_or(|rows| rows <= 1.0)
-            || aggregate
-                .input_offsets()
-                .into_iter()
-                .any(|offset| offset >= self.keep.len())
+        if aggregate
+            .input_offsets()
+            .into_iter()
+            .any(|offset| offset >= self.keep.len())
             || !supported
             || self.partial_aggregate.is_some()
             || self.limit.is_some()
