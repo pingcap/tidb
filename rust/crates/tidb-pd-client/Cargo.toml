@@ -15,6 +15,7 @@ workspace = true
 
 [dependencies]
 tidb-proto = { path = "../tidb-proto" }
+tikv-client.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tonic.workspace = true
