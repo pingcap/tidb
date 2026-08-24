@@ -1597,7 +1597,16 @@ fn build_cnf_ranges<'a>(
                 }
                 None => column.points,
             });
-            consumed[i] = true;
+            // Go `detacher.go` `ExtractEqAndInCondition`: an access cond on a
+            // key part that stores LESS than the whole column is ALSO a
+            // filter -- the entry holds the CUT value (`cut_prefix_for_points`
+            // above), so the range proves only that prefix. Leaving the
+            // conjunct unconsumed is how this builder keeps it: it re-surfaces
+            // in `IndexRanges::residual`, and no other key part can consume it
+            // because `points_for_condition` matches by column name.
+            if key_part_is_full_length(key_part) {
+                consumed[i] = true;
+            }
             access_count += 1;
         }
         let Some(points) = points else { break };
@@ -1629,7 +1638,13 @@ fn build_cnf_ranges<'a>(
                 &column.points,
                 key_part.field_type.collation(),
             ));
-            consumed[i] = true;
+            // Same rule as the equality walk: Go's `conditionChecker` answers
+            // `shouldKeepFilter = !isFullLengthColumn()`, so a range condition
+            // (`>`, `LIKE 'x%'`, ...) on a prefix key part is re-checked after
+            // the read too.
+            if key_part_is_full_length(key_part) {
+                consumed[i] = true;
+            }
             access_count += 1;
         }
     }
@@ -1689,6 +1704,13 @@ fn build_cnf_ranges<'a>(
             .map(|(_, condition)| *condition)
             .collect(),
     }
+}
+
+/// Go `detacher.go`'s `isFullLength`: a key part stores the whole column when
+/// it declares no length, or its declared length equals the column's own --
+/// only then does the index entry prove the full value.
+fn key_part_is_full_length(key_part: &RangeColumn) -> bool {
+    key_part.prefix_len == UNSPECIFIED_LENGTH || key_part.prefix_len == key_part.field_type.flen()
 }
 
 /// Flattens an `AND` chain into its conjuncts.

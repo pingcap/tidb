@@ -53,6 +53,11 @@ use super::{
 /// five-second boot/catalog control-plane deadline. TPC-H partial aggregates
 /// legitimately spend more than five seconds in TiKV on a cold SF1 cache.
 const COPROCESSOR_QUERY_TIMEOUT: Duration = Duration::from_secs(300);
+/// \`ANALYZE\` reads whole tables -- one prefix scan over \`cast_info\` is
+/// minutes, not milliseconds -- so its reads carry the query budget rather
+/// than the five-second control-plane one whose expiry aborted every large
+/// table's statistics run mid-scan.
+const ANALYZE_READ_TIMEOUT: Duration = COPROCESSOR_QUERY_TIMEOUT;
 
 /// Starts the convergence node: wide SQL over cluster storage and cluster
 /// accounts, served on the MySQL port.

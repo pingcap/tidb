@@ -39,7 +39,7 @@ use super::super::region_batches::{group_keys, point_route, RegionKeyBatch};
 use super::super::state::{CoordinatorState, SnapshotReadReceipt};
 use super::{
     alive_retry_delay, recover_region_error_with, wait_with_call, OptimisticCoordinatorError,
-    RealOptimisticTransaction, RecoveryPhase,
+    RealOptimisticTransaction, RecoveryPhase, RPC_READ_TIMEOUT_MEDIUM,
 };
 
 /// Pairs one Scan page may return. client-go's `scanBatchSize`.
@@ -329,14 +329,26 @@ where
             version: read_ts,
             ..KvrpcScanRequest::default()
         };
-        let response = begin_scan_direct(runtime, &route, &context, &request, call)?;
+        // Go bounds each region page by its own fresh `ReadTimeoutMedium`
+        // (`SendReq(bo, req, loc.Region, ReadTimeoutMedium)` per iteration of
+        // `KVSnapshot.scan`): no absolute deadline spans the whole logical
+        // range, only the caller's cancellation does. Sharing ONE context here
+        // let a table-wide ANALYZE sample -- tens of thousands of honest
+        // pages -- saturate its shared deadline to zero mid-scan, and every
+        // later page then answered instantly with "timed out after 0ms". Each
+        // page now opens its own budget on the caller's cancellation carrier.
+        let page_call = UnaryCallContext::with_deadline(
+            std::time::Instant::now() + RPC_READ_TIMEOUT_MEDIUM,
+            call.cancellation().clone(),
+        );
+        let response = begin_scan_direct(runtime, &route, &context, &request, &page_call)?;
         if let Some(region_error) = response.response.region_error.as_ref() {
             recover_region_error_with(
                 runtime,
                 forward_backoff,
                 region_error,
                 route.attempt(),
-                call,
+                &page_call,
             )
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
             continue;
@@ -356,7 +368,15 @@ where
             // protocol instead of refusing it. `true` is the reader's
             // step-over permission, as at every other read site.
             let recovery =
-                resolve_blocking_locks(runtime, &locked, read_ts, &context, call, timestamps, true)
+                resolve_blocking_locks(
+                    runtime,
+                    &locked,
+                    read_ts,
+                    &context,
+                    &page_call,
+                    timestamps,
+                    true,
+                )
                     .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
             resolved_locks.absorb(&recovery);
             if recovery.is_alive() {
@@ -370,7 +390,7 @@ where
                             "scan lock retry budget exhausted: {exhausted:?}"
                         ))
                     })?;
-                wait_with_call(call, delay)
+                wait_with_call(&page_call, delay)
                     .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
             }
             continue;

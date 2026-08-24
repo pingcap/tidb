@@ -1590,6 +1590,13 @@ impl IndexRangeSourceExec {
                     continue;
                 }
             }
+            // A batch every remote filter rejected leaves no row to emit.
+            // Pull the next batch instead of indexing past the end -- Go's
+            // `lookupTableTask` simply has zero results for such a task and
+            // moves on to the next one.
+            if self.lookup_rows.is_empty() {
+                continue;
+            }
             let row = std::mem::take(&mut self.lookup_rows[self.lookup_row_at]);
             let handle = self
                 .lookup_handles
@@ -2590,6 +2597,26 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         // storeType)`, so `mysql.expr_pushdown_blacklist` refuses an
         // aggregate by its own name exactly as it refuses a scalar function.
         if !crate::pushdown_blacklist::aggregate_admits(aggregate, ctx) {
+            return false;
+        }
+        // Go pushes an aggregate to TiKV together with the cop Selection that
+        // feeds it -- one DAG request, aggregation over POST-Selection rows.
+        // This tier's PARTIAL paths read the rows `next_lookup_row` emits,
+        // and over an index whose key part stores LESS than the whole column
+        // those rows carry the CUT value, so a probe residual naming such a
+        // column cannot be answered there. Go never asks it to: the condition
+        // stays outside the pushdown because `conditionChecker` keeps every
+        // prefix-column conjunct as a filter. Refuse the partial stage for
+        // exactly that shape -- a filter over a prefix index -- and let the
+        // root aggregate consume the filtered rows instead. An ordinary
+        // index's rows hold whole values, so its partial stage still runs.
+        let index_is_prefix = self
+            .table
+            .indexes()
+            .iter()
+            .find(|index| index.id == self.index_id)
+            .is_some_and(crate::kv_table::KvIndex::has_prefix);
+        if self.filter.is_some() && index_is_prefix {
             return false;
         }
         if aggregate

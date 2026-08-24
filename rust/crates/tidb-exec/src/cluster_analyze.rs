@@ -358,15 +358,20 @@ fn cluster_analyze_plan(table: &TableInfo) -> Result<AnalyzePlan, AnalyzeError> 
             continue;
         }
         let mut column_positions = Vec::with_capacity(index.columns.len());
+        // A prefix key part (`KEY idx(s(4))`) files each entry under the CUT
+        // value, and this sampler does not cut, so a histogram built here
+        // would describe keys the index never holds. Go samples the index KV
+        // directly and needs no cut; until this sampler reads the index the
+        // way it is stored, the honest move is to leave THAT index without a
+        // histogram -- the planner then falls back to pseudo index statistics
+        // exactly as for an index never analyzed -- while the table's column
+        // histograms and every full-length index still land.
+        let mut has_prefix_key_part = false;
         for index_column in index.columns.iter_deref() {
             let index_column = index_column.read();
             if index_column.length != UNSPECIFIED_LENGTH {
-                return Err(AnalyzeError::unsupported(format!(
-                    "this node does not analyze the prefix index `{}` on `{}`: its sampled \
-                     value is each column value cut to the prefix, which it does not cut",
-                    index.name.original(),
-                    table.name.original()
-                )));
+                has_prefix_key_part = true;
+                break;
             }
             let position = by_offset
                 .get(&index_column.offset)
@@ -379,6 +384,9 @@ fn cluster_analyze_plan(table: &TableInfo) -> Result<AnalyzePlan, AnalyzeError> 
                     ))
                 })?;
             column_positions.push(position);
+        }
+        if has_prefix_key_part {
+            continue;
         }
         indexes.push(AnalyzedIndex {
             id: index.id,

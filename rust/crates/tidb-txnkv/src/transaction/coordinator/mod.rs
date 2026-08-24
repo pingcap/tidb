@@ -77,6 +77,12 @@ pub(super) const MAX_LOCK_ATTEMPTS: usize = 4;
 /// Go `client.ReadTimeoutShort` (`internal/client/client.go:79`), the per-RPC
 /// deadline every cleanup and commit batch is sent under.
 const RPC_READ_TIMEOUT_SHORT: Duration = Duration::from_secs(30);
+
+/// Go `client.ReadTimeoutMedium` (`internal/client/client.go:82`), the per-RPC
+/// deadline every coprocessor and scan request is sent under: each region page
+/// of one logical Scan opens its own budget rather than spending one shared
+/// absolute deadline across the whole range.
+const RPC_READ_TIMEOUT_MEDIUM: Duration = Duration::from_secs(60);
 /// Go `cleanupMaxBackoff` (`2pc.go:1638`).
 const CLEANUP_MAX_BACKOFF: Duration = Duration::from_millis(20_000);
 /// Go `CommitSecondaryMaxBackoff` (`2pc.go:967`).

@@ -30,6 +30,10 @@ name = "all"
 path = "tests/all.rs"
 
 [[test]]
+name = "snapshot_scan_page_deadline_source"
+path = "tests/snapshot_scan_page_deadline_source.rs"
+
+[[test]]
 name = "lock_resolver_source"
 path = "tests/lock_resolver_source.rs"
 

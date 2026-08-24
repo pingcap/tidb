@@ -2511,6 +2511,7 @@ impl PlanTrace {
         } = path;
         let depth = self.stack.len();
         if depth < 2 {
+
             return Err(());
         }
         let at = if lookup_is_left { depth - 2 } else { depth - 1 };
@@ -2563,6 +2564,42 @@ impl PlanTrace {
                 node.name,
                 "TableFullScan" | "IndexFullScan" | "TableRangeScan" | "IndexRangeScan"
             ) && node.children.is_empty()
+        }
+
+        /// Whether the subtree already carries a rebuilt index-join lookup:
+        /// an `IndexLookUp` whose scan children read the target table under
+        /// a dynamic (`decided by`) range -- the exact shape the composite
+        /// rewrite below produces. The scan may carry a cop Selection above
+        /// it (an accepted residual filter), so look through one Selection
+        /// when naming the scan beneath.
+        fn contains_rebuilt_lookup(node: &PlanNode, target: &str) -> bool {
+            let rebuilt_scan = |child: &PlanNode| {
+                let scan = if is_scan(child) {
+                    Some(child)
+                } else if child.name == "Selection"
+                    && child.children.len() == 1
+                    && is_scan(&child.children[0])
+                {
+                    Some(&child.children[0])
+                } else {
+                    None
+                };
+                scan.filter(|scan| {
+                    scan.access.starts_with(target) && scan.info.contains("range: decided by")
+                })
+                .is_some()
+            };
+            if node.name == "IndexLookUp"
+                && node
+                    .children
+                    .iter()
+                    .any(|child| rebuilt_scan(child))
+            {
+                return true;
+            }
+            node.children
+                .iter()
+                .any(|child| contains_rebuilt_lookup(child, target))
         }
 
         if composite {
@@ -2741,15 +2778,59 @@ impl PlanTrace {
                 false
             }
 
-            if rewrite_target(
-                &mut self.stack[at],
-                visible,
-                &access,
-                range_info,
-                index,
-                estimated_rows,
-                estimated_access_rows.or(outer_rows),
-            ) {
+            // A NESTED index join was already rebuilt while its own trace
+            // printed: its lookup now stands in the subtree directly as an
+            // \`IndexLookUp\` over the dynamic-range scan (\`range: decided
+            // by ...\`), not as the whole-relation reader this rewrite hunts.
+            // Go threads the same rebuild through every level of the inner
+            // plan (\`IndexJoinProp\`), so meeting the final shape here means
+            // the work is done -- accept the subtree as-is rather than fail
+            // the print for finding nothing left to rewrite.
+            let target_table = format!("table:{visible}");
+            let already_rebuilt = contains_rebuilt_lookup(&self.stack[at], &target_table);
+            // When the subtree names the target table NOWHERE, the planner
+            // chose the inner side straight as the dynamic-range lookup --
+            // Go's own rebuild output (\`enumerateIndexJoinByOuterIdx\`
+            // re-plans the inner under \`IndexJoinProp\` before any task is
+            // built), so there never was a whole-relation reader to rewrite.
+            // Print that final shape directly instead of refusing the plan.
+            if !already_rebuilt && !contains_lookup(&self.stack[at], visible) {
+                let mut scan = PlanNode::new(
+                    if index {
+                        "IndexRangeScan"
+                    } else {
+                        "TableRangeScan"
+                    },
+                    estimated_access_rows.or(estimated_rows),
+                    String::new(),
+                    format!("range: decided by {range_info}, keep order:false"),
+                );
+                scan.task = "cop[tikv]";
+                scan.access = access.clone();
+                let mut reader = PlanNode::new(
+                    if index {
+                        "IndexReader"
+                    } else {
+                        "TableReader"
+                    },
+                    estimated_rows,
+                    String::new(),
+                    String::new(),
+                );
+                reader.children.push(scan);
+                self.stack[at] = reader;
+            }
+            if already_rebuilt
+                || rewrite_target(
+                    &mut self.stack[at],
+                    visible,
+                    &access,
+                    range_info,
+                    index,
+                    estimated_rows,
+                    estimated_access_rows.or(outer_rows),
+                )
+            {
                 prefer_lookup_build(&mut self.stack[at], visible);
                 if scan_is_index_join_outer(&self.stack[outer_at]).is_some() {
                     let outer = std::mem::replace(
@@ -2810,6 +2891,7 @@ impl PlanTrace {
                         .iter()
                         .any(|offset| *offset >= outer.projection_outputs.len())
                 {
+
                     return Err(());
                 }
                 let predicates = outer_not_null
@@ -2820,12 +2902,14 @@ impl PlanTrace {
                 outer.est_rows = outer_estimate;
                 let reader = &mut outer.children[0];
                 if reader.name != "TableReader" || reader.children.len() != 1 {
+
                     return Err(());
                 }
                 reader.est_rows = outer_estimate.or(reader.est_rows);
                 reader.info = "data:Selection".to_owned();
                 let scan = &mut reader.children[0];
                 if !is_scan(scan) {
+
                     return Err(());
                 }
                 let mut selection = PlanNode::new(
@@ -2869,6 +2953,7 @@ impl PlanTrace {
             // place instead of requiring the HashAgg + IndexLookUp shape.
             if node.name == "StreamAgg" {
                 if node.children.len() != 1 {
+
                     return Err(());
                 }
                 node.info = aggregation_info.ok_or(())?.to_owned();
@@ -2877,12 +2962,14 @@ impl PlanTrace {
                 if !matches!(reader.name, "IndexReader" | "TableReader")
                     || reader.children.len() != 1
                 {
+
                     return Err(());
                 }
                 reader.est_rows = estimated_rows.or(reader.est_rows);
                 if matches!(reader.children[0].name, "StreamAgg" | "HashAgg") {
                     let partial = &mut reader.children[0];
                     if partial.children.len() != 1 {
+
                         return Err(());
                     }
                     let label = partial.label;
@@ -2900,6 +2987,7 @@ impl PlanTrace {
                 {
                     &mut scan_holder.children[0]
                 } else {
+
                     return Err(());
                 };
                 let pseudo = if scan.info.contains("stats:pseudo") {
@@ -2981,6 +3069,7 @@ impl PlanTrace {
             // aggregation, so retaining this tree is plan reporting of the
             // operator that actually runs rather than a trace-only rewrite.
             if node.name != "HashAgg" || node.children.len() != 1 {
+
                 return Err(());
             }
             node.info = if index_lookup {
@@ -3050,6 +3139,7 @@ impl PlanTrace {
                 *lookup = rebuilt;
             }
             if lookup.name != "IndexLookUp" || lookup.children.len() != 2 || !index_lookup {
+
                 return Err(());
             }
             lookup.est_rows = estimated_rows.or(lookup.est_rows);
@@ -3062,6 +3152,7 @@ impl PlanTrace {
             {
                 (&mut scan_holder.children[0], true)
             } else {
+
                 return Err(());
             };
             let pseudo = if scan.info.contains("stats:pseudo") {
@@ -3121,6 +3212,7 @@ impl PlanTrace {
                 || table_read.children.len() != 1
                 || table_read.children[0].name != "TableRowIDScan"
             {
+
                 return Err(());
             }
             table_read.info = aggregation_partial_info.ok_or(())?.to_owned();
@@ -3163,6 +3255,7 @@ impl PlanTrace {
         {
             &mut source.children[0]
         } else {
+
             return Err(());
         };
         // `stats:pseudo` is a property of the TABLE, not of the path, so it
@@ -5185,7 +5278,8 @@ impl PlanTrace {
         }
         conjuncts.extend_from_slice(pushed);
         if conjuncts.len() != equal_mask.len() {
-            return Err(());
+
+            return Err(())
         }
         let mut equal = Vec::new();
         let mut other = Vec::new();
@@ -5289,7 +5383,8 @@ impl PlanTrace {
             tail.push_str(&other.join(", "));
         }
         let (Some(mut right), Some(mut left)) = (self.stack.pop(), self.stack.pop()) else {
-            return Err(());
+
+            return Err(())
         };
         // Go prints the BUILD child first and labels both sides
         // (`flat_plan.go`'s `BuildSide`/`ProbeSide`).
@@ -5426,7 +5521,8 @@ impl PlanTrace {
         anti: bool,
     ) -> Result<(), ()> {
         if conditions.len() != equal_mask.len() {
-            return Err(());
+
+            return Err(())
         }
         let qualify = Qualifier {
             db: current_db,
@@ -5460,7 +5556,8 @@ impl PlanTrace {
         }
 
         let (Some(mut right), Some(mut left)) = (self.stack.pop(), self.stack.pop()) else {
-            return Err(());
+
+            return Err(())
         };
         right.label = "(Build)";
         left.label = "(Probe)";
