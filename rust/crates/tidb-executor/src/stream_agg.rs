@@ -164,6 +164,40 @@ impl<C: Columns> StreamAggExec<C> {
     /// group is retained as pending work so a full output chunk never causes
     /// the group expression to be evaluated twice.
     fn consume_row(&mut self, chunk: &Chunk) -> Result<bool, ExecError> {
+        // A global aggregate sends every row to the same group: skip all
+        // key construction and comparison.
+        if self.group_by.is_empty() && self.current_key.is_some() {
+            // The DECIMAL-SUM fast path: fold the raw cell coefficient.
+            if let Some(index) = self.decimal_sum_column {
+                let column = chunk.column(index);
+                if !column.is_null(self.row_cursor) {
+                    if let Some((coefficient, scale)) =
+                        column.get_my_decimal(self.row_cursor).to_i128_scaled()
+                    {
+                        self.states[0].update_sum_decimal_fast(coefficient, scale);
+                        self.row_cursor += 1;
+                        return Ok(false);
+                    }
+                } else {
+                    self.row_cursor += 1;
+                    return Ok(false);
+                }
+            }
+            let row = chunk.get_row(self.row_cursor);
+            for c in 0..self.agg_funcs.len() {
+                let func = &self.agg_funcs[c];
+                let mut extra = Vec::new();
+                let input = eval_agg_input(func, &self.ctx, row, &mut extra)?;
+                self.tracker.consume(self.states[c].update(
+                    input.value,
+                    &extra,
+                    Vec::new(),
+                    input.distinct_key,
+                )?);
+            }
+            self.row_cursor += 1;
+            return Ok(false);
+        }
         let key = self.group_key(chunk)?;
         if self
             .current_key
