@@ -1,0 +1,39 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "conflictrows",
+    srcs = [
+        "cleanup.go",
+        "path.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/dxf/importinto/conflictrows",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/storage",
+        "//pkg/executor/importer",
+        "//pkg/objstore/storeapi",
+        "//pkg/util/logutil",
+        "@com_github_google_uuid//:uuid",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "conflictrows_test",
+    timeout = "short",
+    srcs = ["cleanup_test.go"],
+    embed = [":conflictrows"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/storage",
+        "//pkg/objstore",
+        "//pkg/objstore/storeapi",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
+    ],
+)
