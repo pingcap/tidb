@@ -928,14 +928,13 @@ fn decide_over(
     else {
         return Vec::new();
     };
-    let columns: Vec<(String, FieldType)> = table
-        .visible_columns()
-        .iter()
-        .map(|column| (column.name.clone(), column.field_type.clone()))
-        .collect();
     // Every bare output must map back to the physical table. A grouped
     // derived side may also contain computed aggregate outputs, which are
     // rebuilt after the lookup and therefore have no source offset.
+    //
+    // These admission checks are pure metadata and fire for most statements,
+    // so they must run BEFORE the per-column name/type clones below (the
+    // unconditional build profiled at several percent of process CPU).
     if inner.output_to_source.len() != inner.types.len() {
         return Vec::new();
     }
@@ -948,6 +947,11 @@ fn decide_over(
         return Vec::new();
     }
     let output_offsets = output_offsets.unwrap_or_default();
+    let columns: Vec<(String, FieldType)> = table
+        .visible_columns()
+        .iter()
+        .map(|column| (column.name.clone(), column.field_type.clone()))
+        .collect();
     let inner_at = |key: &EquiKey| if lookup_is_left { key.left } else { key.right };
     let outer_at = |key: &EquiKey| if lookup_is_left { key.right } else { key.left };
     // Which of this side's columns a key probes, and with which key.
@@ -1327,16 +1331,19 @@ pub(crate) fn cast_lookup_decision(
         .iter()
         .copied()
         .collect::<Option<Vec<_>>>()?;
+    // The probed column must be the table's clustered INT handle. This
+    // refusal fires for every join whose equality is not the int-handle cast
+    // shape -- most statements -- so it must run BEFORE the per-column clone
+    // below (profiled at ~5% of process CPU when built unconditionally).
+    let source_offset = *output_offsets.get(key.inner_offset)?;
+    if !table.is_clustered_handle_column(source_offset) {
+        return None;
+    }
     let columns: Vec<(String, FieldType)> = table
         .visible_columns()
         .iter()
         .map(|column| (column.name.clone(), column.field_type.clone()))
         .collect();
-    // The probed column must be the table's clustered INT handle.
-    let source_offset = *output_offsets.get(key.inner_offset)?;
-    if !table.is_clustered_handle_column(source_offset) {
-        return None;
-    }
     Some(IndexJoinDecision {
         lookup_is_left,
         probe_keys: Vec::new(),
