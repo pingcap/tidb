@@ -230,6 +230,57 @@ pub(crate) fn collect_table_names(stmt: &Stmt) -> Vec<(String, String)> {
     collector.names
 }
 
+/// What one preprocess walk over the statement's table refs learns.
+///
+/// Go's `Preprocess` visits the AST once and answers every per-statement
+/// question from that single pass (`preprocess.go`); this is that shape for
+/// the dispatch funnel, which otherwise re-walked (and, because the visitor
+/// API is mutable, re-CLONED) the statement once per question.
+pub(crate) struct StatementTableScan {
+    /// `(schema, table)` lowercased, [`collect_table_names`]'s exact output.
+    pub(crate) names: Vec<(String, String)>,
+    /// Whether any table ref carries `AS OF TIMESTAMP`.
+    pub(crate) has_as_of: bool,
+}
+
+/// Collects [`StatementTableScan`] in one in-place walk, no clone.
+pub(crate) fn scan_statement_tables(stmt: &mut Stmt) -> StatementTableScan {
+    struct Scanner {
+        names: Vec<(String, String)>,
+        has_as_of: bool,
+    }
+    impl Visitor for Scanner {
+        fn enter(&mut self, node: &mut dyn Any) -> bool {
+            if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
+                if table_ref.as_of.is_some() {
+                    self.has_as_of = true;
+                }
+                let (schema, table) = match table_ref.name.as_slice() {
+                    [table] => (String::new(), table.clone()),
+                    [schema, table] => (schema.clone(), table.clone()),
+                    _ => return false,
+                };
+                self.names
+                    .push((schema.to_lowercase(), table.to_lowercase()));
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn Any) -> bool {
+            true
+        }
+    }
+    let mut scanner = Scanner {
+        names: Vec::new(),
+        has_as_of: false,
+    };
+    stmt.accept(&mut scanner);
+    StatementTableScan {
+        names: scanner.names,
+        has_as_of: scanner.has_as_of,
+    }
+}
+
 /// Every `TableRef` in traversal order, keeping the name path and alias AS
 /// WRITTEN.
 ///
