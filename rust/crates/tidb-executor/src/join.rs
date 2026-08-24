@@ -205,6 +205,15 @@ struct HashState {
     /// The chunk the probe child streams into, and how far it is consumed.
     probe_chunk: Chunk,
     probe_row: usize,
+    /// The build-candidate cursor WITHIN `hash.probe_row`'s candidate list.
+    /// A residual join can fill the caller's chunk mid-list; Go resumes that
+    /// list on the next `Next` (`hashJoinExec.Next` re-enters the same probe
+    /// row), so losing the cursor dropped every remaining match of the row --
+    /// one lost output row per full-chunk boundary.
+    probe_candidate: usize,
+    /// The current probe row's candidate list, materialized once when the
+    /// cursor is at zero so a resumed row does not re-probe the hash table.
+    probe_candidates: Vec<RowPtr>,
     probe_done: bool,
     /// Products of a constant DECIMAL factor and a build-side DECIMAL column,
     /// keyed by the stable build-row address. `Some(None)` caches SQL NULL.
@@ -3570,6 +3579,8 @@ impl<C: Columns> JoinExec<C> {
             build_buf,
             probe_chunk,
             probe_row: 0,
+            probe_candidate: 0,
+            probe_candidates: Vec::new(),
             probe_done: false,
             decimal_mul_products: Arc::new(std::sync::RwLock::new(HashMap::new())),
             unmatched_build_scan,
@@ -3995,21 +4006,32 @@ impl<C: Columns> JoinExec<C> {
                 return Ok(());
             }
             let probe_index = hash.probe_row;
+            // The candidate cursor survives a full caller chunk: Go's
+            // `Next` re-enters the SAME probe row and walks its remaining
+            // build matches, so a chunk boundary must not skip any.
+            if hash.probe_candidate == 0 {
+                let probe_row = hash.probe_chunk.get_row(probe_index);
+                let exact_key = exact_int.and_then(|key| {
+                    exact_int_key_chunk(probe_row, offset(key), &probe_types[offset(key)])
+                });
+                let key = if exact_int.is_some() {
+                    None
+                } else {
+                    row_hash_chunk(&keys, probe_row, probe_types, offset).map_err(key_error)?
+                };
+                // shadowed below by the row borrow; keep the candidates list
+
+                let candidates: &[RowPtr] = if exact_int.is_some() {
+                    exact_key.map_or(&[], |key| hash.table.probe_exact_int(key))
+                } else {
+                    key.map_or(&[], |key| hash.table.probe(key))
+                };
+                hash.probe_candidates.clear();
+                hash.probe_candidates.extend_from_slice(candidates);
+            }
             let probe_row = hash.probe_chunk.get_row(probe_index);
-            let exact_key = exact_int.and_then(|key| {
-                exact_int_key_chunk(probe_row, offset(key), &probe_types[offset(key)])
-            });
-            let key = if exact_int.is_some() {
-                None
-            } else {
-                row_hash_chunk(&keys, probe_row, probe_types, offset).map_err(key_error)?
-            };
-            let candidates: &[RowPtr] = if exact_int.is_some() {
-                exact_key.map_or(&[], |key| hash.table.probe_exact_int(key))
-            } else {
-                key.map_or(&[], |key| hash.table.probe(key))
-            };
-            for &ptr in candidates {
+            let candidates: &[RowPtr] = &hash.probe_candidates;
+            for &ptr in &candidates[hash.probe_candidate..] {
                 let cached_product = match (decimal_mul_lt, product_build_column) {
                     (Some(fast), Some(column)) => {
                         let mut products = hash
@@ -4088,11 +4110,20 @@ impl<C: Columns> JoinExec<C> {
                         Ok::<(), ExecError>(())
                     })
                     .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
+                hash.probe_candidate += 1;
                 if req.is_full() {
                     break;
                 }
             }
-            hash.probe_row += 1;
+            if hash.probe_candidate >= candidates.len() {
+                // The whole candidate list is drained: move to the next row
+                // and reset the cursor for its fresh probe.
+                hash.probe_candidate = 0;
+                hash.probe_candidates.clear();
+                hash.probe_row += 1;
+            } else {
+                // Stopped mid-list with a full chunk; resume here next call.
+            }
         }
     }
 

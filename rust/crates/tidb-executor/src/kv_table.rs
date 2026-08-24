@@ -1203,23 +1203,43 @@ impl KvTable {
         context: &RowDecodeContext,
     ) -> Result<Vec<Option<Vec<Datum>>>, KvTableError> {
         let mut rows: Vec<Option<Vec<Datum>>> = vec![None; handles.len()];
-        // Group the requested handles by the physical partition they name
-        // (all under this table id for an unpartitioned table), so each
-        // partition costs exactly one batched read.
+        // Group the requested handles by the physical partition they name,
+        // so every partition costs exactly one batched read.
+        //
+        // A caller that supplies one id per handle has ALREADY routed each
+        // handle (Go's partitioned `BatchPointGetExec`). Without that, the
+        // pre-batch behavior probed EVERY partition id per handle
+        // ([`Self::stored_record`]) -- a partitioned table's row lives under
+        // its PARTITION id, never under the logical `self.table_id`, so the
+        // fallback fans out across `record_physical_ids()` instead of reading
+        // the logical prefix. All of a handle's candidates ride the SAME
+        // single batched read; the first partition holding the row wins.
         let mut grouped: std::collections::BTreeMap<i64, Vec<(usize, Key)>> =
             std::collections::BTreeMap::new();
+        let partition_ids = self.record_physical_ids();
         for (index, handle) in handles.iter().enumerate() {
-            let id = physical_ids
-                .and_then(|ids| ids.get(index).copied())
-                .unwrap_or(self.table_id);
-            grouped
-                .entry(id)
-                .or_default()
-                .push((
+            match physical_ids.and_then(|ids| ids.get(index).copied()) {
+                Some(id) => grouped.entry(id).or_default().push((
                     index,
-                    Key::from_bytes(encode_row_key_with_handle(id, &handle.record_handle())),
-                ));
+                    Key::from_bytes(encode_row_key_with_handle(
+                        id,
+                        &handle.record_handle(),
+                    )),
+                )),
+                None => {
+                    for id in &partition_ids {
+                        grouped.entry(*id).or_default().push((
+                            index,
+                            Key::from_bytes(encode_row_key_with_handle(
+                                *id,
+                                &handle.record_handle(),
+                            )),
+                        ));
+                    }
+                }
+            }
         }
+        let mut answered: Vec<bool> = vec![false; handles.len()];
         for (_id, keys) in grouped {
             let key_refs: Vec<Key> = keys.iter().map(|(_, key)| key.clone()).collect();
             let found = self
@@ -1227,9 +1247,15 @@ impl KvTable {
                 .batch_get(&key_refs)
                 .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
             for (index, key) in keys {
-                if let Some(entry) = found.get(&key) {
-                    rows[index] =
-                        Some(self.decode_row_entry(&handles[index], entry, context)?);
+                // One handle may carry several candidate keys (one per
+                // partition); the FIRST partition holding it answers,
+                // mirroring [`Self::stored_record`]'s probe order.
+                if !answered[index] {
+                    if let Some(entry) = found.get(&key) {
+                        rows[index] =
+                            Some(self.decode_row_entry(&handles[index], entry, context)?);
+                        answered[index] = true;
+                    }
                 }
             }
         }
