@@ -62,8 +62,13 @@
 //! * **Index merge** (`generateIndexMergePath`): needs a union/intersection
 //!   reader this tier has no executor for, so a costed candidate could be
 //!   chosen and then not run.
-//! * **Multi-valued indexes** (`generateMVIndexPartialPath`): the JSON path
-//!   extraction and its `IndexMerge`-only lowering are both absent.
+//! * **Multi-valued indexes through IndexMerge** (`generateMVIndexPartialPath`):
+//!   the union/intersection reader is absent (see the IndexMerge bullet), but a
+//!   multi-valued index IS enumerated as one plain index-range candidate: go's
+//!   `(v MEMBER OF (j))` -> EQ rewrite (`buildPartialPaths4MVIndex`) feeds the
+//!   ordinary ranger point ranges over the stored elements. A multi-valued
+//!   index no conjunct serves is not a path at all -- go's "cannot use any
+//!   filter on this MVIndex".
 //! * **Partitioned tables**: the session catalog refuses them upstream
 //!   (`cluster_session.rs`), so there is never a partition to prune.
 //! * **TiFlash / MPP paths**: no columnar replica is read by this node, and
@@ -131,8 +136,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use tidb_ast::{BinaryOp, Expr};
 use tidb_chunk::codec::estimate_type_width;
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
 use tidb_planner::cardinality::pseudo::{
     pseudo_row_count_by_index_ranges, pseudo_selectivity, IndexRange as PseudoIndexRange,
     PseudoBoundKind, PseudoColumn, PseudoFunctionKind, PseudoIndex, PseudoPredicate, ScalarRange,
@@ -1057,6 +1063,108 @@ fn table_scan_penalty_rows(
     min_rows.max(modify_count)
 }
 
+/// One multi-valued key part of `index`: its position among the key parts
+/// and the row offset of the hidden virtual column that holds it.
+///
+/// Go `model.IndexInfo.MVIndex`, set by DDL's `buildIndexColumns`
+/// (`pkg/ddl/index.go`): an index is multi-valued exactly when a key part is
+/// an ARRAY-typed column, and DDL refuses more than one such part. The part
+/// itself is a hidden generated column storing `cast(source AS elem ARRAY)`;
+/// the ARRAY marker survives in restored metadata as
+/// `FieldType.IsArray()`.
+fn mv_index_array_key_part(index: &KvIndex, table: &KvTable) -> Option<(usize, usize)> {
+    let mut found = None;
+    for (position, offset) in index.column_offsets.iter().enumerate() {
+        let column = table.columns.get(*offset)?;
+        if column.field_type.is_array() {
+            if found.is_some() {
+                // More than one array key part: DDL never builds this shape.
+                return None;
+            }
+            found = Some((position, *offset));
+        }
+    }
+    found
+}
+
+/// The ELEMENT field type a multi-valued key part ranges over.
+///
+/// Go `PrepareIdxColsAndUnwrapArrayType` (`pkg/planner/core/
+/// indexmerge_path.go`): the key part reads as its underlying element type --
+/// JSON-ARRAY(CHAR(9990)) ranges as CHAR(9990) -- under a BINARY charset and
+/// collation, because every index entry stores one array element encoded
+/// byte-exact.
+fn mv_element_field_type(field_type: &FieldType) -> FieldType {
+    let mut element = field_type.clone();
+    element.set_code(field_type.array_element_code());
+    element.set_charset_name("binary");
+    element.set_collation(Collation::Binary);
+    element
+}
+
+/// The column a `MEMBER OF` right operand names, through any parentheses.
+fn member_of_array_column(expr: &Expr) -> Option<&Vec<String>> {
+    match expr {
+        Expr::Column(path) => Some(path),
+        Expr::Paren(inner) => member_of_array_column(inner),
+        _ => None,
+    }
+}
+
+fn names_one_of(expr: &Expr, names: &[String]) -> bool {
+    member_of_array_column(expr).is_some_and(|path| {
+        path.last()
+            .is_some_and(|last| names.iter().any(|name| name.eq_ignore_ascii_case(last)))
+    })
+}
+
+/// `(v MEMBER OF (source))` over this multi-valued part's source column
+/// becomes ``_V$... = v`` -- go's `buildPartialPaths4MVIndex`
+/// (`pkg/planner/core/indexmerge_path.go`) rewriting `json_member_of` to EQ
+/// so the ordinary ranger builds point ranges over the stored elements.
+///
+/// Scope: AND conjuncts only (through parentheses). A disjunct or negated
+/// member-of never rewrites, matching go's per-conjunct access collection --
+/// those shapes stay residual filters above every path. Returns `None` when
+/// nothing rewrote, which leaves the index without a usable access filter.
+fn rewrite_member_of_conjuncts(
+    clause: &Expr,
+    sources: &[String],
+    hidden: &str,
+) -> Option<(bool, Expr)> {
+    match clause {
+        Expr::Paren(inner) => {
+            let (changed, rewritten) = rewrite_member_of_conjuncts(inner, sources, hidden)?;
+            Some((changed, Expr::Paren(Box::new(rewritten))))
+        }
+        Expr::Binary(BinaryOp::LogicAnd, left, right) => {
+            let left_rewritten = rewrite_member_of_conjuncts(left, sources, hidden);
+            let right_rewritten = rewrite_member_of_conjuncts(right, sources, hidden);
+            if left_rewritten.is_none() && right_rewritten.is_none() {
+                return None;
+            }
+            let left = left_rewritten.map_or_else(|| (false, (**left).clone()), |(c, e)| (c, e));
+            let right = right_rewritten.map_or_else(|| (false, (**right).clone()), |(c, e)| (c, e));
+            if !left.0 && !right.0 {
+                return None;
+            }
+            Some((
+                true,
+                Expr::Binary(BinaryOp::LogicAnd, Box::new(left.1), Box::new(right.1)),
+            ))
+        }
+        Expr::MemberOf { expr, array } if names_one_of(array, sources) => Some((
+            true,
+            Expr::Binary(
+                BinaryOp::Eq,
+                Box::new(Expr::Column(vec![hidden.to_string()])),
+                expr.clone(),
+            ),
+        )),
+        _ => Some((false, clause.clone())),
+    }
+}
+
 /// Every candidate way of reading `table` under `where_clause`.
 ///
 /// The table path is always a candidate -- Go's `tablePath` is built
@@ -1264,6 +1372,41 @@ pub(crate) fn enumerate_paths(
         if index_columns.len() != index.column_offsets.len() {
             continue;
         }
+        // A multi-valued key part: go's `PrepareIdxColsAndUnwrapArrayType` +
+        // `buildPartialPaths4MVIndex` (`pkg/planner/core/indexmerge_path.go`).
+        // The member-of conjuncts over this part's source column rewrite to EQ
+        // against the hidden column, so the ordinary ranger builds point
+        // ranges over the stored elements; a multi-valued index no conjunct
+        // serves is NOT a readable path on its own -- go drops it there with
+        // "cannot use any filter on this MVIndex", and so does this loop.
+        let mut mv_rewritten_clause: Option<Expr> = None;
+        let detach_clause: Option<&Expr> = match mv_index_array_key_part(index, table) {
+            Some((position, offset)) => {
+                let hidden = &table.columns[offset];
+                // The source column the ARRAY part indexes, recorded by the
+                // loader off `ColumnInfo.Dependences` (go
+                // `buildHiddenColumnInfoWithCheck`). Without it no conjunct
+                // can be attributed to this part, and go's rule applies:
+                // "cannot use any filter on this MVIndex".
+                let Some(source) = table.mv_key_part_source(index.id) else {
+                    continue;
+                };
+                let sources = [source.to_owned()];
+                let rewritten = range_clause.and_then(|clause| {
+                    rewrite_member_of_conjuncts(clause, &sources, &hidden.name)
+                        .filter(|(changed, _)| *changed)
+                        .map(|(_, rewritten)| rewritten)
+                });
+                let Some(rewritten) = rewritten else {
+                    continue;
+                };
+                index_columns[position].field_type =
+                    mv_element_field_type(&index_columns[position].field_type);
+                mv_rewritten_clause = Some(rewritten);
+                mv_rewritten_clause.as_ref()
+            }
+            None => range_clause,
+        };
         // Go `fillIndexPath` (`pkg/planner/core/stats.go`): the clustered
         // integer handle is a REAL trailing key part of every non-unique
         // secondary index, so it joins `path.IdxCols` before the ranger runs.
@@ -1274,7 +1417,7 @@ pub(crate) fn enumerate_paths(
             index_columns.push(handle.0);
             range_offsets.push(handle.1);
         }
-        let built = range_clause.and_then(|range_clause| {
+        let built = detach_clause.and_then(|range_clause| {
             crate::index_range::detach_cond_and_build_range_for_index_with_like_default_escape(
                 &index_columns,
                 range_clause,
@@ -1337,6 +1480,9 @@ pub(crate) fn enumerate_paths(
             // Go's gate on the same two lists
             // (`cross_estimation.go:117-122`).
             !index_filters.is_empty() || table_filter_count > 0,
+            // A multi-valued index is reachable only as go's IndexMerge
+            // partial, whose count is never equalized (`stats.go:249`).
+            mv_rewritten_clause.is_some(),
         );
         candidates.push(Candidate {
             // Go `indexCondsColMap` is `ExtractCol2Len(AccessConds ++
@@ -1599,6 +1745,7 @@ fn full_scan_candidate(
         source_rows,
         index_filter_selectivity,
         !index_filters.is_empty() || table_filter_count > 0,
+        false,
     );
     Some(Candidate {
         access_columns: ColSet::new(),
@@ -1966,6 +2113,13 @@ fn index_path(
     // ordering-risk ratio in `AdjustRowCountForIndexScanByLimit` applies only
     // to a path that still FILTERS somewhere (`cross_estimation.go:117`).
     has_filters: bool,
+    // Go `deriveIndexPathStats`'s `isIm`: an IndexMerge PARTIAL path never
+    // runs `adjustCountAfterAccess` (`stats.go:249`, `if !isIm`), because the
+    // merge reads exactly the rows its own conjuncts select -- equalizing it
+    // to the data source's whole-row count would price the partial as a full
+    // scan and the merge could never win. This tier reaches multi-valued
+    // indexes only as such partials.
+    is_index_merge_partial: bool,
 ) -> AccessPath {
     // Go `detachCondAndBuildRangeForPath` estimates over `pruneEstimateRange`
     // -- the ranges trimmed back to the index's DECLARED columns -- and never
@@ -1991,7 +2145,11 @@ fn index_path(
     // out of the plan that TiDB's own recording chooses.
     let estimate_ranges = prune_estimate_range(&ranges, index.column_offsets.len());
     let bounds = index_row_count(index, table, &estimate_ranges, stats, realtime);
-    let mut estimated = adjust_count_after_access(bounds.est, source_row_count, realtime);
+    let mut estimated = if is_index_merge_partial {
+        bounds.est
+    } else {
+        adjust_count_after_access(bounds.est, source_row_count, realtime)
+    };
     if let Some(limit) =
         limit.filter(|limit| (limit.satisfied_by)(index.ordered_column_offsets(), &ranges))
     {
@@ -4324,6 +4482,7 @@ mod tests {
             1.0,
             None,
             false,
+            false,
         );
         let covering = index_path(
             &table,
@@ -4338,6 +4497,7 @@ mod tests {
             // has nothing to equalize.
             1.0,
             None,
+            false,
             false,
         );
         let request_term = |rows: f64| {
@@ -4401,6 +4561,7 @@ mod tests {
             realtime,
             realtime,
             None,
+            false,
             false,
         );
         assert!(
@@ -4497,5 +4658,208 @@ mod tests {
             table_scan_penalty_rows(Some(&analyzed(50000)), 10.0, false, false),
             50000.0
         );
+    }
+
+    // ---- multi-valued index access through `MEMBER OF` ----
+    //
+    // Go reaches a multi-valued index only through IndexMerge
+    // (`generateANDIndexMerge4MVIndex`), rewriting `(v MEMBER OF (j))` to EQ
+    // on the hidden array column so the ordinary ranger builds point ranges
+    // over the stored elements. This tier has no IndexMerge executor, so the
+    // same rewrite feeds ONE plain index-range candidate instead -- the plan
+    // shape differs, the accessed keys and the surviving rows do not.
+
+    fn json_column(name: &str, id: i64) -> KvColumn {
+        KvColumn {
+            name: name.to_owned(),
+            id,
+            field_type: FieldType::new(FieldTypeCode::Json),
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            default_value: None,
+            origin_default: None,
+            comment: String::new(),
+            generated: None,
+        }
+    }
+
+    /// The hidden column an expression index was rewritten into:
+    /// `cast(tags AS char(9990) array)` stores its ELEMENT type under a
+    /// binary charset with the ARRAY marker set (`buildHiddenColumnInfoWithCheck`).
+    fn hidden_array_column(name: &str, id: i64) -> KvColumn {
+        let mut field_type = FieldType::new(FieldTypeCode::VarString);
+        field_type.set_flen(9990);
+        field_type.set_charset_name("binary");
+        field_type.set_collation(tidb_datatype::Collation::Binary);
+        field_type = field_type.with_array(true);
+        KvColumn {
+            name: name.to_owned(),
+            id,
+            field_type,
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            default_value: None,
+            origin_default: None,
+            comment: String::new(),
+            generated: None,
+        }
+    }
+
+    fn varchar_column(name: &str, id: i64, flen: i64) -> KvColumn {
+        let mut field_type = FieldType::new(FieldTypeCode::Varchar);
+        field_type.set_flen(flen);
+        KvColumn {
+            name: name.to_owned(),
+            id,
+            field_type,
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            default_value: None,
+            origin_default: None,
+            comment: String::new(),
+            generated: None,
+        }
+    }
+
+    fn mv_test_table() -> KvTable {
+        // create table t(id bigint primary key, tags json, country varchar(2),
+        //                _V$_tags_0 char(9990) binary /* cast(tags as char(9990) array) */,
+        //                key tags_mv((cast(tags as char(9990) array)), country));
+        let mut table = KvTable::with_storage(
+            90,
+            vec![
+                long_column("id", 1),
+                json_column("tags", 2),
+                varchar_column("country", 3, 2),
+                hidden_array_column("_V$_tags_0", 4),
+            ],
+            Box::new(MemTableStorage::new()),
+        );
+        table.set_pk_handle_offset(0);
+        table.add_index(KvIndex {
+            id: 7,
+            name: "tags_mv".to_owned(),
+            comment: String::new(),
+            unique: false,
+            column_offsets: vec![3, 2],
+            prefix_lengths: vec![
+                crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+                crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+            ],
+            visible: true,
+            global: false,
+        });
+        table
+    }
+
+    #[test]
+    fn a_member_of_conjunct_ranges_the_multi_valued_index() {
+        let mut table = mv_test_table();
+        // The loader records this off `ColumnInfo.Dependences` when the
+        // stored metadata names exactly one source column.
+        table.set_mv_key_part_source(7, "tags".to_owned());
+        let columns: Vec<(String, FieldType)> = table
+            .columns
+            .iter()
+            .map(|column| (column.name.clone(), column.field_type.clone()))
+            .collect();
+        let where_clause = parse_where("'OC8p0384XTkt.org/s/link' MEMBER OF (tags) AND country = 'US'");
+        let hints = crate::index_hints::AvailablePaths::unrestricted();
+        let candidates = enumerate_paths(
+            &table,
+            &columns,
+            Some(&where_clause),
+            &[1],
+            &NamedColumnResolver { table: &table },
+            None,
+            None,
+            &hints,
+            false,
+            false,
+            false,
+            true,
+            None,
+        );
+        let (_, ranges) = candidates
+            .iter()
+            .find_map(|candidate| candidate.path.index.as_ref().map(|(id, ranges)| (*id, ranges)))
+            .unwrap_or_else(|| panic!("no index candidate among {:?}", candidates.iter().map(|c| c.path.index.as_ref().map(|(id, _)| *id)).collect::<Vec<_>>()));
+        assert_eq!(ranges.len(), 1, "{ranges:?}");
+        assert!(ranges[0].is_point(false), "{:?}", ranges[0]);
+        // The stored elements are byte keys: low == high == [element, country].
+        let text = |datums: &[Datum]| -> Vec<String> {
+            datums
+                .iter()
+                .map(|datum| match datum {
+                    Datum::String(string) => string.as_utf8().unwrap_or("").to_owned(),
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect()
+        };
+        assert_eq!(
+            text(&ranges[0].low),
+            vec![
+                "OC8p0384XTkt.org/s/link".to_owned(),
+                "US".to_owned()
+            ],
+            "{:?}",
+            ranges[0]
+        );
+        assert_eq!(text(&ranges[0].high), text(&ranges[0].low), "{:?}", ranges[0]);
+    }
+
+    #[test]
+    fn a_multi_valued_index_without_a_recorded_source_is_not_a_path() {
+        // The loader records nothing when the stored metadata does not pin
+        // exactly one source column; go's rule then applies verbatim --
+        // "cannot use any filter on this MVIndex" -- and the index is never
+        // a readable path of its own.
+        let table = mv_test_table();
+        let columns: Vec<(String, FieldType)> = table
+            .columns
+            .iter()
+            .map(|column| (column.name.clone(), column.field_type.clone()))
+            .collect();
+        let where_clause = parse_where("'x' MEMBER OF (tags)");
+        let hints = crate::index_hints::AvailablePaths::unrestricted();
+        let candidates = enumerate_paths(
+            &table,
+            &columns,
+            Some(&where_clause),
+            &[1],
+            &NamedColumnResolver { table: &table },
+            None,
+            None,
+            &hints,
+            false,
+            false,
+            false,
+            true,
+            None,
+        );
+        assert!(
+            candidates
+                .iter()
+                .all(|candidate| !candidate.path.index.as_ref().is_some_and(|(id, _)| *id == 7)),
+            "the multi-valued index became a path without a source: {:?}",
+            candidates.iter().map(|c| c.path.index.as_ref().map(|(id, _)| *id)).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_member_of_over_another_column_never_serves_the_part() {
+        // `other` is a JSON column this index's part does not index; the
+        // rewrite must not attribute the conjunct to `_V$_tags_0`.
+        let table = mv_test_table();
+        let sources = ["tags".to_owned()];
+        let clause = parse_where("'x' MEMBER OF (country)");
+        let untouched = rewrite_member_of_conjuncts(&clause, &sources, "_V$_tags_0")
+            .expect("a conjunct walks through unchanged");
+        assert!(!untouched.0, "a foreign member-of must not rewrite");
+        let clause = parse_where("'x' MEMBER OF (tags)");
+        let rewritten = rewrite_member_of_conjuncts(&clause, &sources, "_V$_tags_0")
+            .expect("a matching member-of rewrites");
+        assert!(rewritten.0, "the rewrite reports that it changed something");
+        let printed = rewritten.1.restore();
+        assert!(printed.contains("_V$_tags_0"), "{printed}");
+        assert!(!printed.contains("MEMBER"), "{printed}");
     }
 }
