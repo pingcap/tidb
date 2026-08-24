@@ -858,6 +858,16 @@ fn merge_state(dst: &mut AggState, mut src: AggState, src_is_first: bool) -> Res
             *dst_sum = dst_sum.wrapping_add(src_sum);
             *dst_count = dst_count.wrapping_add(src_count);
         }
+        (Partial::SumDecimal(None), Partial::SumDecimalFast { sum, scale }) => {
+            dst.partial = Partial::SumDecimalFast {
+                sum: sum,
+                scale: scale,
+            };
+        }
+        (Partial::SumDecimalFast { .. }, Partial::SumDecimal(None)) => {
+            // The accumulator already holds the folded total; an empty
+            // partial contributes nothing.
+        }
         (Partial::Bit { acc: dst_acc, op }, Partial::Bit { acc: src_acc, .. }) => match op {
             BitOp::And => *dst_acc &= src_acc,
             BitOp::Or => *dst_acc |= src_acc,
