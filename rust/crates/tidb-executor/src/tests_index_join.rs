@@ -261,6 +261,7 @@ fn both_ways(
         outer_not_null: Vec::new(),
         inner_not_null: Vec::new(),
         probe_cast: None,
+            probe_bounds: Vec::new(),
     });
     assert!(looked_up.is_index_join());
     let index_rows = drain(&mut looked_up, &types);
@@ -392,7 +393,10 @@ fn a_complete_common_handle_probe_reads_one_record() {
         LookupProbePart::Dynamic(0),
         LookupProbePart::Dynamic(1),
     ]);
-    source.set_probes(vec![vec![Datum::Int(1), Datum::Int(2)]]);
+    source.set_probes(crate::access_path::IndexJoinProbes {
+        keys: vec![vec![Datum::Int(1), Datum::Int(2)]],
+        bound_values: Vec::new(),
+    });
 
     assert_eq!(
         drain(&mut source, &[long(), long()]),
@@ -408,7 +412,10 @@ fn a_common_handle_prefix_probe_reads_every_matching_record() {
     let table = common_handle_table(&[(1, 1), (1, 2), (1, 3), (2, 1)]);
     let mut source = lookup_source(&table, LookupObject::CommonHandle, 2);
     source.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
-    source.set_probes(vec![vec![Datum::Int(1)]]);
+    source.set_probes(crate::access_path::IndexJoinProbes {
+        keys: vec![vec![Datum::Int(1)]],
+        bound_values: Vec::new(),
+    });
 
     assert_eq!(
         drain(&mut source, &[long(), long()]),
@@ -427,7 +434,10 @@ fn a_ddl_common_handle_prefix_probe_reads_every_matching_record() {
     let table = ddl_common_handle_table(&[(1, 1), (1, 2), (1, 3), (2, 1)]);
     let mut source = lookup_source(&table, LookupObject::CommonHandle, 2);
     source.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
-    source.set_probes(vec![vec![Datum::Int(1)]]);
+    source.set_probes(crate::access_path::IndexJoinProbes {
+        keys: vec![vec![Datum::Int(1)]],
+        bound_values: Vec::new(),
+    });
 
     assert_eq!(
         drain(&mut source, &[long(), long()]),
@@ -515,6 +525,7 @@ fn one_key_repeated_across_a_batch_is_probed_once() {
         outer_not_null: Vec::new(),
         inner_not_null: Vec::new(),
         probe_cast: None,
+            probe_bounds: Vec::new(),
     });
     let rows = drain(&mut exec, &types);
     assert_eq!(
@@ -901,6 +912,7 @@ fn a_cast_probe_guards_and_matches_like_the_double_equality() {
             guard: rewrite.guard,
             str_type: rewrite.str_type,
         }),
+        probe_bounds: Vec::new(),
     });
     assert!(looked_up.is_index_join());
     let index_rows = drain(&mut looked_up, &types);

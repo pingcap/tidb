@@ -797,17 +797,26 @@ pub(crate) enum IndexLookupSource {
 impl IndexLookupSource {
     fn fork_prefetched_common_handle(
         &self,
-        probes: Vec<Vec<Datum>>,
+        probes: Vec<IndexTaskProbe>,
     ) -> Result<Option<Self>, ExecError> {
         match self {
-            Self::Leaf(source) => source
-                .fork_prefetched_common_handle(probes)
-                .map(|source| source.map(Self::Leaf)),
+            Self::Leaf(source) => {
+                let (keys, bound_values) = probes
+                    .into_iter()
+                    .map(|probe| (probe.key, probe.bounds))
+                    .unzip();
+                source
+                    .fork_prefetched_common_handle(crate::access_path::IndexJoinProbes {
+                        keys,
+                        bound_values,
+                    })
+                    .map(|source| source.map(Self::Leaf))
+            }
             Self::Composite { .. } => Ok(None),
         }
     }
 
-    fn set_probes(&mut self, probes: Vec<Vec<Datum>>) -> Result<(), ExecError> {
+    fn set_probes(&mut self, probes: crate::access_path::IndexJoinProbes) -> Result<(), ExecError> {
         match self {
             Self::Leaf(source) => {
                 source.set_probes(probes);
@@ -817,8 +826,11 @@ impl IndexLookupSource {
                 exec,
                 probes: shared,
             } => {
+                // A composite subtree never carries bounds (the decision layer
+                // refuses them there), so the shared channel publishes keys.
+                let keys = probes.keys;
                 exec.close()?;
-                shared.borrow_mut().publish(probes);
+                shared.borrow_mut().publish(keys);
                 exec.open()
             }
         }
@@ -932,6 +944,11 @@ pub(crate) struct IndexLookupPlan {
     /// `split_equi` keys only `col = col`. When set, the probe, the inner
     /// match map and the outer drain all use this one key.
     pub(crate) probe_cast: Option<IndexProbeCast>,
+    /// Outer-derived comparisons on the object-key column just past the probe
+    /// prefix -- Go's `CompareFilters`. Each is evaluated over one OUTER row
+    /// per batch and extends that probe's range past its key prefix. The
+    /// arguments are already indexed onto the outer child's output row.
+    pub(crate) probe_bounds: Vec<crate::access_path::LookupProbeBound>,
 }
 
 /// The index strategy's live state: one outer batch and the inner rows its
@@ -972,7 +989,16 @@ struct PendingIndexLookupTask {
 
 enum PendingIndexLookupSource {
     Prefetched(IndexLookupSource),
-    Synchronous(Vec<Vec<Datum>>),
+    Synchronous(Vec<IndexTaskProbe>),
+}
+
+/// One deduped lookup content of an outer batch: its equality-key tuple plus
+/// the evaluated bound values Go carries on `IndexJoinLookUpContent` for
+/// `ColWithCmpFuncManager`.
+#[derive(Clone)]
+struct IndexTaskProbe {
+    key: Vec<Datum>,
+    bounds: Vec<Datum>,
 }
 
 /// The merge strategy's live state: one [`MergeSide`] per child.
@@ -1903,7 +1929,15 @@ impl<C: Columns> JoinExec<C> {
                 memory,
             ),
             PendingIndexLookupSource::Synchronous(probes) => {
-                plan.source.set_probes(probes)?;
+                let (keys_seeded, bound_values) = probes
+                    .into_iter()
+                    .map(|probe| (probe.key, probe.bounds))
+                    .unzip();
+                plan.source
+                    .set_probes(crate::access_path::IndexJoinProbes {
+                        keys: keys_seeded,
+                        bound_values,
+                    })?;
                 Self::materialize_index_inner(
                     &mut plan.source,
                     state,
@@ -1946,16 +1980,23 @@ impl<C: Columns> JoinExec<C> {
                 }
                 continue;
             }
-            let probes = Self::index_task_probes(ctx, keys, plan, &outer, outer_is_left)?;
+            let probes = Self::index_task_probes(
+                ctx,
+                keys,
+                plan,
+                &outer,
+                outer_types.as_slice(),
+                outer_is_left,
+            )?;
             let source = if state.prefetch_disabled {
-                PendingIndexLookupSource::Synchronous(probes)
+                PendingIndexLookupSource::Synchronous(probes.clone())
             } else if let Some(source) =
                 plan.source.fork_prefetched_common_handle(probes.clone())?
             {
                 PendingIndexLookupSource::Prefetched(source)
             } else {
                 state.prefetch_disabled = true;
-                PendingIndexLookupSource::Synchronous(probes)
+                PendingIndexLookupSource::Synchronous(probes.clone())
             };
             let synchronous = matches!(source, PendingIndexLookupSource::Synchronous(_));
             tracker.consume(outer_bytes);
@@ -2012,14 +2053,16 @@ impl<C: Columns> JoinExec<C> {
         keys: &[EquiKey],
         plan: &IndexLookupPlan,
         outer: &[Vec<Datum>],
+        outer_types: &[FieldType],
         outer_is_left: bool,
-    ) -> Result<Vec<Vec<Datum>>, ExecError> {
+    ) -> Result<Vec<IndexTaskProbe>, ExecError> {
         if let Some(cast) = &plan.probe_cast {
             // The computed key: `cast(str AS SIGNED)` behind Go's guard.
             // Distinct values only, keyed by their INT-domain encoding,
             // exactly like the column path below.
             let encoding = IndexProbeCast::key_encoding();
-            let mut probes_by_key = std::collections::BTreeMap::new();
+            let mut probes_by_key: std::collections::BTreeMap<Vec<u8>, IndexTaskProbe> =
+                std::collections::BTreeMap::new();
             for row in outer {
                 let Some(value) = crate::driver::join_key_cast::computed_probe_key(
                     &cast.cast,
@@ -2031,9 +2074,12 @@ impl<C: Columns> JoinExec<C> {
                 else {
                     continue;
                 };
-                let probe = vec![value];
+                let probe = IndexTaskProbe {
+                    key: vec![value],
+                    bounds: Vec::new(),
+                };
                 let encoded =
-                    row_key(&encoding, &probe, |key| key.left).map_err(|_: KeyError| {
+                    row_key(&encoding, &probe.key, |key| key.left).map_err(|_: KeyError| {
                         ExecError::unsupported("a join key column has no comparable encoding")
                     })?;
                 if let Some(encoded) = encoded {
@@ -2054,6 +2100,36 @@ impl<C: Columns> JoinExec<C> {
                 null_safe: false,
             })
             .collect();
+        // Go's `ColWithCmpFuncManager` dedup: lookup contents compare equal
+        // only when their keys AND their affected-column values match
+        // (`CompareRow`). Encode the evaluated bounds into the dedup key so
+        // two outer rows sharing a prefix but not a window stay two probes.
+        let bound_encoding: Vec<EquiKey> = plan
+            .probe_bounds
+            .iter()
+            .enumerate()
+            .filter_map(|(at, bound)| {
+                let field_type = bound.arg.static_type()?.clone();
+                use crate::hash_join::KeyClass;
+                let class = KeyClass::of(
+                    &field_type,
+                    &field_type,
+                    tidb_datatype::Collation::Binary,
+                )?;
+                Some(EquiKey {
+                    left: at,
+                    right: at,
+                    class,
+                    null_safe: false,
+                })
+            })
+            .collect();
+        if bound_encoding.len() != plan.probe_bounds.len() {
+            return Err(ExecError::unsupported(
+                "a lookup probe bound has no comparable encoding",
+            ));
+        }
+        let mut bound_chunk = tidb_chunk::chunk::Chunk::new(outer_types, 1, 2);
         let mut probes_by_key = std::collections::BTreeMap::new();
         for row in outer {
             let probe: Option<Vec<Datum>> = plan
@@ -2067,13 +2143,50 @@ impl<C: Columns> JoinExec<C> {
             let Some(probe) = probe else {
                 continue;
             };
+            // Evaluate this row's bounds. A NULL result is Go's empty range:
+            // the content reads nothing and contributes no probe.
+            let bounds = if plan.probe_bounds.is_empty() {
+                Vec::new()
+            } else {
+                bound_chunk.reset();
+                for (at, value) in row.iter().enumerate() {
+                    bound_chunk.append_datum(at, value);
+                }
+                let chunk_row = bound_chunk.get_row(0);
+                let mut evaluated = Vec::with_capacity(plan.probe_bounds.len());
+                for bound in &plan.probe_bounds {
+                    match bound.arg.eval(ctx, chunk_row).map_err(ExecError::Eval)? {
+                        Datum::Null => {
+                            evaluated.clear();
+                            break;
+                        }
+                        value => evaluated.push(value),
+                    }
+                }
+                if evaluated.is_empty() && !plan.probe_bounds.is_empty() {
+                    continue;
+                }
+                evaluated
+            };
             let encoded =
                 row_key(&probe_encoding, &probe, |key| key.left).map_err(|_: KeyError| {
                     ExecError::unsupported("a join key column has no comparable encoding")
                 })?;
-            if let Some(encoded) = encoded {
-                probes_by_key.entry(encoded).or_insert(probe);
+            let mut encoded = match encoded {
+                Some(encoded) => encoded,
+                None => continue,
+            };
+            if !bound_encoding.is_empty() {
+                let bound_bytes = row_key_by(&bound_encoding, |key| bounds[key.left].clone())
+                    .map_err(|_: KeyError| {
+                        ExecError::unsupported("a lookup probe bound is not encodable")
+                    })?;
+                match bound_bytes {
+                    Some(bytes) => encoded.extend_from_slice(&bytes),
+                    None => continue,
+                }
             }
+            probes_by_key.insert(encoded, IndexTaskProbe { key: probe, bounds });
         }
         Ok(probes_by_key.into_values().collect())
     }

@@ -496,6 +496,13 @@ pub(crate) struct IndexJoinDecision {
     /// bare outer column, and the equality it belongs to is not in the
     /// split keys. See [`crate::driver::join_key_cast`].
     pub(crate) probe_cast: Option<crate::join::IndexProbeCast>,
+    /// Outer-derived comparisons on the object-key column just past
+    /// `probe_parts` -- Go's `CompareFilters` (`ColWithCmpFuncManager`). The
+    /// executor evaluates each against one outer row and extends that probe's
+    /// point range with the result, which is what turns Go's
+    /// `range: decided by [... ge(col, outer-expr) ...]` from text into rows
+    /// actually not read. Empty keeps the point-probe path.
+    pub(crate) probe_bounds: Vec<crate::access_path::LookupProbeBound>,
 }
 
 impl IndexJoinDecision {
@@ -1100,6 +1107,7 @@ fn decide_over(
                 filter_exprs: filter_exprs.clone(),
                 consumes_where,
                 probe_cast: None,
+                probe_bounds: Vec::new(),
             });
         }
     }
@@ -1159,6 +1167,7 @@ fn decide_over(
                 filter_exprs: filter_exprs.clone(),
                 consumes_where,
                 probe_cast: None,
+                probe_bounds: Vec::new(),
             });
         }
     }
@@ -1262,6 +1271,7 @@ fn decide_over(
         filter_exprs,
         consumes_where,
         probe_cast: None,
+                probe_bounds: Vec::new(),
     });
     decisions
 }
@@ -1380,6 +1390,7 @@ pub(crate) fn cast_lookup_decision(
             guard: key.rewrite.guard,
             str_type: key.rewrite.str_type,
         }),
+        probe_bounds: Vec::new(),
     })
 }
 
@@ -1630,7 +1641,10 @@ fn inner_column_name(inner: &JoinSide<'_>, column: usize) -> String {
 
 /// Go's dynamic IndexJoin range text uses the outer column's `OrigName`, not
 /// the relation alias through which SQL name resolution reached it.
-fn physical_outer_column_name(outer: &JoinSide<'_>, output: usize) -> String {
+pub(crate) fn physical_outer_column_name(
+    outer: &JoinSide<'_>,
+    output: usize,
+) -> String {
     outer
         .origin
         .as_ref()

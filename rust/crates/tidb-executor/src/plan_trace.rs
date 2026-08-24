@@ -5720,7 +5720,7 @@ fn align_physical_join_equality(expression: &Expression, left_width: usize) -> O
 /// projection elimination. Unsupported nodes are refused by the caller; a
 /// fallback to AST text would describe a different expression than the one
 /// the Selection executor evaluates.
-fn physical_expression_text_with_columns(
+pub(crate) fn physical_expression_text_with_columns(
     expression: &Expression,
     column_names: &[Option<String>],
 ) -> Option<String> {

@@ -1471,3 +1471,137 @@ fn index_join_probe_rows_use_only_the_access_paths_join_keys() {
         "the complete-key index must beat the broad primary-key prefix: {plan:#?}"
     );
 }
+
+/// Go's `ColWithCmpFuncManager`: a join comparison against the object-key
+/// column just past the probe prefix (`ol_o_id >= d_next_o_id - 20 AND
+/// ol_o_id < d_next_o_id`) must narrow EVERY probe's range instead of reading
+/// the whole (warehouse, district) prefix and filtering above it. Go's
+/// STOCK_LEVEL inner scan prints the folded comparisons inside
+/// `range: decided by [...]` and reads ~20 orders per district, not all of
+/// them; the executor here evaluates the same comparisons per outer row
+/// (`buildRangesForIndexJoin`'s last slot) and extends the point range.
+#[test]
+fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE district (d_id INT NOT NULL, d_w_id INT NOT NULL, d_next_o_id INT, PRIMARY KEY (d_w_id,d_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE order_line (ol_o_id INT NOT NULL, ol_d_id INT NOT NULL, ol_w_id INT NOT NULL, ol_number INT NOT NULL, PRIMARY KEY (ol_w_id,ol_d_id,ol_o_id,ol_number))",
+        &mut catalog,
+    )
+    .unwrap();
+    // The in-memory DDL catalog stores only the clustered handle; mirror the
+    // parity fixture's metadata by also exposing PRIMARY as an access path.
+    for (table_name, column_offsets) in
+        [("district", vec![1, 0]), ("order_line", vec![2, 1, 0, 3])]
+    {
+        let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
+            panic!("{table_name} is not a KV table");
+        };
+        table.add_index(
+            crate::kv_table::KvIndex {
+                id: 1,
+                name: "PRIMARY".to_owned(),
+                comment: String::new(),
+                unique: true,
+                prefix_lengths: vec![
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                    column_offsets.len()
+                ],
+                column_offsets,
+                visible: true,
+                global: false,
+                clustered_primary: false,
+            },
+            false,
+        );
+    }
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO district VALUES (1,1,30),(2,1,NULL)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    // Window for d_next_o_id = 30 is [10, 30): the boundaries 9/10/29/30
+    // decide inclusivity, and 40 lies outside entirely. District (1,2) has no
+    // next order id yet -- its probe must read nothing at all.
+    run_insert_on(
+        "INSERT INTO order_line VALUES \
+            (9,1,1,1),(10,1,1,1),(11,1,1,1),(29,1,1,1),\
+            (30,1,1,1),(31,1,1,1),(40,1,1,1),(10,2,1,1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT /*+ TIDB_INLJ(order_line) */ ol_o_id FROM district \
+        JOIN order_line ON ol_w_id = d_w_id AND ol_d_id = d_id \
+         AND ol_o_id >= d_next_o_id - 20 AND ol_o_id < d_next_o_id";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+
+    let mut ids: Vec<i64> = run_select_on(sql, &catalog, &ctx)
+        .unwrap()
+        .into_iter()
+        .map(|row| match &row[0] {
+            Datum::Int(value) => *value,
+            other => panic!("ol_o_id is a plain INT, got {other:?}"),
+        })
+        .collect();
+    ids.sort_unstable();
+    let result: Vec<Vec<Datum>> = ids.into_iter().map(Datum::Int).map(|v| vec![v]).collect();
+    assert_eq!(
+        result,
+        vec![vec![Datum::Int(10)], vec![Datum::Int(11)], vec![Datum::Int(29)]],
+        "the window [d_next_o_id-20, d_next_o_id) holds 10, 11 and 29; \
+         9/30/31/40 sit outside it and the NULL district matches nothing",
+    );
+
+    let (_, plan) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &ctx,
+        crate::explain::ExplainFormat::Brief,
+    )
+    .unwrap();
+    let plan = plan
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|datum| match datum {
+                    Datum::Bytes(bytes) => {
+                        String::from_utf8_lossy(bytes).into_owned()
+                    }
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\t")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        plan.iter().any(|line| line.contains("IndexJoin")),
+        "the hint must keep the lookup family in play: {plan:#?}"
+    );
+    assert!(
+        plan.iter().any(|line| {
+            line.contains("TableRangeScan")
+                && line.contains("table:order_line")
+                && line.contains(
+                    "ge(test.order_line.ol_o_id, minus(test.district.d_next_o_id, 20))",
+                )
+                && line.contains("lt(test.order_line.ol_o_id, test.district.d_next_o_id)")
+        }),
+        "the inner range must carry both outer-derived bounds exactly as Go \
+         prints them inside `range: decided by [...]`: {plan:#?}",
+    );
+}

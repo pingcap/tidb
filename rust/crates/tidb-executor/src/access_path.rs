@@ -3080,6 +3080,52 @@ pub(crate) enum LookupProbePart {
     Constant(Datum),
 }
 
+/// Which comparison one [`LookupProbeBound`] applies, always in the normalized
+/// `target_key_col op arg` orientation Go's `indexJoinPathBuildColManager`
+/// produces (`The column manager always build expression in the form of col op
+/// arg1`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LookupProbeBoundOp {
+    Ge,
+    Gt,
+    Lt,
+    Le,
+}
+
+impl LookupProbeBoundOp {
+    /// The `EXPLAIN` spelling Go prints inside `range: decided by [...]`.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Ge => "ge",
+            Self::Gt => "gt",
+            Self::Lt => "lt",
+            Self::Le => "le",
+        }
+    }
+}
+
+/// One outer-derived comparison against the object-key column just past the
+/// probe prefix -- Go's `ColWithCmpFuncManager` row. Where Go rebuilds a
+/// dynamic range for the compared key column per lookup content
+/// (`BuildRangesByRow` -> the range's last slot), this tier evaluates `arg`
+/// over each outer row and extends that probe's point range with the result.
+#[derive(Clone, Debug)]
+pub(crate) struct LookupProbeBound {
+    pub(crate) op: LookupProbeBoundOp,
+    /// The compared expression, evaluated over one OUTER child's output row:
+    /// every `Column.index` is already an outer-child offset.
+    pub(crate) arg: Expression,
+}
+
+/// One outer batch's deduped probes plus the per-probe bound values the join
+/// evaluated alongside them. `bound_values` is empty when the decision carries
+/// no bounds; otherwise it aligns 1:1 with `keys`.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct IndexJoinProbes {
+    pub(crate) keys: Vec<Vec<Datum>>,
+    pub(crate) bound_values: Vec<Vec<Datum>>,
+}
+
 /// The inner side of an index join: the rows of one table whose join-key
 /// columns equal one of a batch of probe values.
 ///
@@ -3139,6 +3185,12 @@ pub struct IndexJoinLookupExec {
     /// composite IndexHashJoin inner subtree.
     shared_probes: Option<Rc<RefCell<SharedIndexJoinProbes>>>,
     shared_generation: u64,
+    /// The comparisons each probe's next object-key slot must satisfy. Empty
+    /// keeps the point-probe path; set once at build time alongside
+    /// [`Self::set_probes`]'s per-probe values.
+    probe_bound_ops: Vec<LookupProbeBoundOp>,
+    /// The current batch's bound values, aligned with `probes`.
+    probe_bound_values: Vec<Vec<Datum>>,
 }
 
 /// Go's IndexHashJoin table reader receives the whole outer task's handles in
@@ -3192,6 +3244,8 @@ impl IndexJoinLookupExec {
             output_offsets: None,
             shared_probes: None,
             shared_generation: 0,
+            probe_bound_ops: Vec::new(),
+            probe_bound_values: Vec::new(),
         }
     }
 
@@ -3217,8 +3271,9 @@ impl IndexJoinLookupExec {
     /// `produced` is NOT reset: it accumulates across batches, because the
     /// operator EXPLAIN prints is the inner reader as a whole and Go's
     /// `actRows` for it is the total over every batch, not the last one's.
-    pub(crate) fn set_probes(&mut self, probes: Vec<Vec<Datum>>) {
-        self.probes = probes;
+    pub(crate) fn set_probes(&mut self, probes: IndexJoinProbes) {
+        self.probes = probes.keys;
+        self.probe_bound_values = probes.bound_values;
         self.next_probe = 0;
         self.cursor = None;
         self.record_cursor = None;
@@ -3237,7 +3292,7 @@ impl IndexJoinLookupExec {
     /// without making statement-local `Rc` state cross a thread boundary.
     pub(crate) fn fork_prefetched_common_handle(
         &self,
-        probes: Vec<Vec<Datum>>,
+        probes: IndexJoinProbes,
     ) -> Result<Option<Self>, ExecError> {
         let complete_common_handle = matches!(self.object, LookupObject::CommonHandle)
             && (self.probe_parts.is_empty()
@@ -3281,6 +3336,8 @@ impl IndexJoinLookupExec {
             output_offsets: self.output_offsets.clone(),
             shared_probes: None,
             shared_generation: 0,
+            probe_bound_ops: self.probe_bound_ops.clone(),
+            probe_bound_values: Vec::new(),
         };
         task.set_probes(probes);
         task.open_prefetched_common_handle_cursor()
@@ -3299,7 +3356,11 @@ impl IndexJoinLookupExec {
         };
         let shared = shared.borrow();
         if self.shared_generation != shared.generation {
-            self.set_probes(shared.probes.clone());
+            // A composite subtree never carries bounds (the decision layer
+            // refuses them there), so the shared channel publishes keys only.
+            let keys = shared.probes.clone();
+            let bound_values = Vec::new();
+            self.set_probes(IndexJoinProbes { keys, bound_values });
             self.shared_generation = shared.generation;
         }
     }
@@ -3307,6 +3368,14 @@ impl IndexJoinLookupExec {
     /// Installs the complete object-key shape built by the index ranger.
     pub(crate) fn set_probe_parts(&mut self, probe_parts: Vec<LookupProbePart>) {
         self.probe_parts = probe_parts;
+    }
+
+    /// Installs the outer-derived comparisons each probe must honor past its
+    /// key prefix. Go builds these once per statement
+    /// (`indexJoinPathBuildColManager`) and rebuilds their VALUES per lookup
+    /// content; the values arrive here through [`IndexJoinProbes`].
+    pub(crate) fn set_probe_bound_ops(&mut self, ops: Vec<LookupProbeBoundOp>) {
+        self.probe_bound_ops = ops;
     }
 
     /// Installs every predicate local to the looked-up leaf.
@@ -3341,28 +3410,114 @@ impl IndexJoinLookupExec {
     }
 
     /// Assembles the next object's leading key from one dynamic probe and its
-    /// static template. An incomplete dynamic tuple is skipped like Go's
-    /// failed `constructDatumLookupKey` conversion.
-    fn next_probe(&mut self) -> Option<Vec<Datum>> {
+    /// static template, together with that probe's converted bound values. An
+    /// incomplete dynamic tuple is skipped like Go's failed
+    /// `constructDatumLookupKey` conversion; a probe whose bounds hold NULL
+    /// reads nothing at all, exactly as Go's `BuildColumnRange` answers an
+    /// empty range for it.
+    fn next_probe_with_bounds(&mut self) -> Option<(Vec<Datum>, Vec<Datum>)> {
         loop {
-            let dynamic_probe = self.probes.get(self.next_probe)?.clone();
+            let Some(dynamic_probe) = self.probes.get(self.next_probe).cloned() else {
+                return None;
+            };
+            let probe_ordinal = self.next_probe;
             self.next_probe += 1;
-            if self.probe_parts.is_empty() {
-                return Some(dynamic_probe);
+            let key = if self.probe_parts.is_empty() {
+                Some(dynamic_probe)
+            } else {
+                self.probe_parts
+                    .iter()
+                    .map(|part| match part {
+                        LookupProbePart::Dynamic(offset) => dynamic_probe.get(*offset).cloned(),
+                        LookupProbePart::Constant(value) => Some(value.clone()),
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .and_then(|probe| self.probe_in_key_domain(probe))
+            };
+            let Some(key) = key else {
+                // A probe that fails its own key conversion reads nothing,
+                // exactly as before; it does not end the walk.
+                continue;
+            };
+            if self.probe_bound_ops.is_empty() {
+                return Some((key, Vec::new()));
             }
-            if let Some(probe) = self
-                .probe_parts
-                .iter()
-                .map(|part| match part {
-                    LookupProbePart::Dynamic(offset) => dynamic_probe.get(*offset).cloned(),
-                    LookupProbePart::Constant(value) => Some(value.clone()),
-                })
-                .collect::<Option<Vec<_>>>()
-                .and_then(|probe| self.probe_in_key_domain(probe))
-            {
-                return Some(probe);
+            // Fail-closed on desync: a caller that seeds keys without the
+            // aligned bound values must not silently read UNBOUNDED ranges.
+            let Some(values) = self.probe_bound_values.get(probe_ordinal) else {
+                return None;
+            };
+            if values.len() != self.probe_bound_ops.len() {
+                return None;
+            }
+            let Some(bounds) = self.bound_values_in_key_domain(values) else {
+                // NULL or unconvertible bounds are Go's empty range: this
+                // probe reads nothing, but later probes still run.
+                continue;
+            };
+            return Some((key, bounds));
+        }
+    }
+
+    /// Converts one probe's evaluated bound datums into the compared key
+    /// column's domain -- the same conversion `probe_in_key_domain` applies to
+    /// equality probes. A NULL or unconvertible value yields `None`: Go's
+    /// ranger answers such comparisons with an empty range, i.e. no rows.
+    fn bound_values_in_key_domain(&self, values: &[Datum]) -> Option<Vec<Datum>> {
+        let types = self.probe_key_types()?;
+        let column = types.get(self.probe_parts.len())?;
+        values
+            .iter()
+            .map(|value| {
+                if matches!(value, Datum::Null) {
+                    return None;
+                }
+                crate::driver::point_get_key::point_get_value(column, value)
+            })
+            .collect()
+    }
+
+    /// The range one probe reads: a POINT over its key when no bounds are
+    /// configured, otherwise Go's per-row rebuilt range
+    /// (`buildRangesForIndexJoin`'s last slot): the key prefix extended by the
+    /// evaluated lower/upper bound on the next key column.
+    fn probe_index_range(&self, key: &[Datum], bounds: &[Datum]) -> IndexRange {
+        if bounds.is_empty() {
+            return IndexRange {
+                low: key.to_vec(),
+                high: key.to_vec(),
+                low_exclusive: false,
+                high_exclusive: false,
+            };
+        }
+        let mut low = key.to_vec();
+        let mut high = key.to_vec();
+        let mut low_exclusive = false;
+        let mut high_exclusive = false;
+        for (op, value) in self.probe_bound_ops.iter().copied().zip(bounds.iter()) {
+            match op {
+                LookupProbeBoundOp::Ge | LookupProbeBoundOp::Gt => {
+                    low.push(value.clone());
+                    low_exclusive = op == LookupProbeBoundOp::Gt;
+                }
+                LookupProbeBoundOp::Lt | LookupProbeBoundOp::Le => {
+                    high.push(value.clone());
+                    high_exclusive = op == LookupProbeBoundOp::Lt;
+                }
             }
         }
+        IndexRange {
+            low,
+            high,
+            low_exclusive,
+            high_exclusive,
+        }
+    }
+
+    /// The next probe's converted key tuple, bounds dropped. Callers that do
+    /// not open ranges (batched complete-handle lookups) never carry bounds.
+    fn next_probe(&mut self) -> Option<Vec<Datum>> {
+        Some(self.next_probe_with_bounds()?.0)
     }
 
     /// Go `innerWorker.constructDatumLookupKey`
@@ -3447,20 +3602,16 @@ impl IndexJoinLookupExec {
                 }
                 self.cursor = None;
             }
-            let Some(probe) = self.next_probe() else {
+            let Some((probe, bounds)) = self.next_probe_with_bounds() else {
                 return Ok(None);
             };
             match &self.object {
                 LookupObject::Index(index_id) => {
                     // Go's `IndexRangeScan` over the range the outer row
-                    // decided: a POINT range over the key columns, both
-                    // bounds the probe itself and neither excluded.
-                    let range = IndexRange {
-                        low: probe.clone(),
-                        high: probe,
-                        low_exclusive: false,
-                        high_exclusive: false,
-                    };
+                    // decided: a POINT range over the key columns when no
+                    // outer-derived bound exists, otherwise Go's
+                    // `buildRangesForIndexJoin` last-slot extension.
+                    let range = self.probe_index_range(&probe, &bounds);
                     self.cursor = Some(
                         self.table
                             .index_range_cursor(*index_id, &range, self.decode_context.zone())
@@ -3517,15 +3668,10 @@ impl IndexJoinLookupExec {
             }
             let mut ranges = Vec::with_capacity(INDEX_LOOKUP_BATCH_SIZE);
             while ranges.len() < INDEX_LOOKUP_BATCH_SIZE {
-                let Some(probe) = self.next_probe() else {
+                let Some((probe, bounds)) = self.next_probe_with_bounds() else {
                     break;
                 };
-                ranges.push(IndexRange {
-                    low: probe.clone(),
-                    high: probe,
-                    low_exclusive: false,
-                    high_exclusive: false,
-                });
+                ranges.push(self.probe_index_range(&probe, &bounds));
             }
             if ranges.is_empty() {
                 return Ok(None);
@@ -3579,13 +3725,8 @@ impl IndexJoinLookupExec {
     fn open_prefetched_common_handle_cursor(&mut self) -> Result<bool, ExecError> {
         let first_probe = self.next_probe;
         let mut ranges = Vec::with_capacity(self.probes.len().saturating_sub(first_probe));
-        while let Some(probe) = self.next_probe() {
-            ranges.push(IndexRange {
-                low: probe.clone(),
-                high: probe,
-                low_exclusive: false,
-                high_exclusive: false,
-            });
+        while let Some((probe, bounds)) = self.next_probe_with_bounds() {
+            ranges.push(self.probe_index_range(&probe, &bounds));
         }
         if ranges.is_empty() {
             self.next_probe = first_probe;

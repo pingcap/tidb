@@ -2480,6 +2480,274 @@ fn index_join_kind_name(kind: tidb_planner::plan_cost_ver2::IndexJoinKind) -> &'
     }
 }
 
+/// Go's `indexJoinPathBuildColManager` + `ColWithCmpFuncManager` detection.
+///
+/// For every decision whose probe prefix leaves the object's NEXT key column
+/// unfixed, collect the join's non-equality conjuncts that compare exactly
+/// that column against an expression over OUTER columns only. The executor
+/// evaluates each against one outer row and extends the probe's point range
+/// with the result (Go rebuilds `BuildRangesByRow` into the range's last
+/// slot). The conjuncts STAY in the join's own residual evaluation, so every
+/// shape refused here keeps today's whole-prefix read and answers
+/// identically -- this pass only decides how many rows a probe no longer has
+/// to read.
+#[allow(clippy::too_many_arguments)]
+fn attach_lookup_probe_bounds(
+    decisions: &mut [crate::driver::index_join_decision::IndexJoinDecision],
+    others: &[Expression],
+    left_side: &crate::driver::index_join_decision::JoinSide<'_>,
+    right_side: &crate::driver::index_join_decision::JoinSide<'_>,
+    scope: &FromScope,
+    left_width: usize,
+) {
+    /// Go `symmetricOp`: the manager normalizes to `col op arg1`.
+    const fn symmetric(op: crate::access_path::LookupProbeBoundOp)
+        -> crate::access_path::LookupProbeBoundOp {
+        use crate::access_path::LookupProbeBoundOp::*;
+        match op {
+            Ge => Le,
+            Gt => Lt,
+            Lt => Gt,
+            Le => Ge,
+        }
+    }
+    for decision in decisions.iter_mut() {
+        // A retained aggregation or composite subtree re-seeds through paths
+        // this tier does not rebuild with bounds; the cast probe owns its own
+        // key shape. All three keep today's path.
+        if decision.composite || decision.aggregation.is_some() || decision.probe_cast.is_some() {
+            continue;
+        }
+        if decision.probe_parts.is_empty() || !decision.probe_bounds.is_empty() {
+            continue;
+        }
+        let next_column = match decision.object {
+            crate::access_path::LookupObject::Index(index_id) => decision
+                .table
+                .indexes()
+                .iter()
+                .find(|index| index.id == index_id)
+                .and_then(|index| {
+                    index.column_offsets.get(decision.probe_parts.len()).copied()
+                }),
+            crate::access_path::LookupObject::CommonHandle => decision
+                .table
+                .common_handle_offsets()
+                .get(decision.probe_parts.len())
+                .copied(),
+            // A single integer handle has no key column past its probe.
+            crate::access_path::LookupObject::Handle => None,
+        };
+        let Some(next_column) = next_column else {
+            continue;
+        };
+        let inner = if decision.lookup_is_left {
+            left_side
+        } else {
+            right_side
+        };
+        let outer_base = if decision.lookup_is_left { left_width } else { 0 };
+        let inner_base = if decision.lookup_is_left { 0 } else { left_width };
+        // The joined-row positions whose base column IS the compared one.
+        let target_positions: Vec<usize> = inner
+            .output_to_source
+            .iter()
+            .enumerate()
+            .filter(|(_, source)| **source == Some(next_column))
+            .map(|(at, _)| inner_base + at)
+            .collect();
+        if target_positions.is_empty() {
+            continue;
+        }
+        let is_target = |index: i64| {
+            usize::try_from(index)
+                .is_ok_and(|at| target_positions.contains(&at))
+        };
+        let on_outer = |index: i64| {
+            usize::try_from(index).is_ok_and(|at| at >= outer_base && at < scope.width())
+        };
+        // The EXPLAIN names, per attach call: Go renders every range operand
+        // through `Column.StringWithCtx`, whose `OrigName` reads
+        // `<database>.<table own name>.<column>` no matter the alias -- the
+        // same convention the eq() parts of `range_info` print.
+        let outer = if decision.lookup_is_left {
+            right_side
+        } else {
+            left_side
+        };
+        let column_names: Vec<Option<String>> = (0..scope.width())
+            .map(|at| {
+                at.checked_sub(outer_base)
+                    .filter(|relative| *relative < outer.names.len())
+                    .map(|relative| {
+                        crate::driver::index_join_decision::physical_outer_column_name(
+                            outer, relative,
+                        )
+                    })
+            })
+            .collect();
+        let mut bounds: Vec<crate::access_path::LookupProbeBound> = Vec::new();
+        let mut texts = Vec::new();
+        let mut abandoned = false;
+        for conjunct in others {
+            if abandoned {
+                break;
+            }
+            let Expression::ScalarFunction(function) = conjunct else {
+                continue;
+            };
+            if function.args.len() != 2 {
+                continue;
+            }
+            use crate::access_path::LookupProbeBoundOp as Op;
+            let name = function.func_name.lowercase();
+            let written = match name {
+                "ge" => Op::Ge,
+                "gt" => Op::Gt,
+                "lt" => Op::Lt,
+                "le" => Op::Le,
+                _ => continue,
+            };
+            // One side must BE the compared key column; the manager always
+            // stores `col op arg`, so the flipped spelling takes the symmetric
+            // operator (Go `symmetricOp`).
+            let (op, arg) =
+                if let Expression::Column(column) = &function.args[0] {
+                    if is_target(column.index) {
+                        (written, &function.args[1])
+                    } else if let Expression::Column(right) = &function.args[1] {
+                        if is_target(right.index) {
+                            (symmetric(written), &function.args[0])
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                } else if let Expression::Column(column) = &function.args[1] {
+                    if is_target(column.index) {
+                        (symmetric(written), &function.args[0])
+                    } else {
+                        continue;
+                    }
+                } else {
+                    continue;
+                };
+            // The compared expression must read OUTER columns only. Go skips
+            // a conjunct any of whose affected columns sit in the inner
+            // schema; so does this arm.
+            let referenced = expression_column_indices(arg);
+            if referenced.is_empty() || referenced.iter().any(|at| !on_outer(*at)) {
+                continue;
+            }
+            // One lower bound and one upper bound at most. Anything richer
+            // (two ge's, a bound on several columns) abandons the whole set:
+            // fail closed to today's point-probe path rather than guess an
+            // intersection Go's ranger would compute differently.
+            let lowers = bounds.iter().filter(|bound| {
+                matches!(
+                    bound.op,
+                    Op::Ge | Op::Gt
+                )
+            }).count();
+            let uppers = bounds.iter().filter(|bound| {
+                matches!(
+                    bound.op,
+                    Op::Lt | Op::Le
+                )
+            }).count();
+            if (matches!(op, Op::Ge | Op::Gt) && lowers >= 1)
+                || (matches!(op, Op::Lt | Op::Le) && uppers >= 1)
+            {
+                abandoned = true;
+                break;
+            }
+            // The dedup encoder needs a comparable domain for the evaluated
+            // values; string domains carry collations this admission does not
+            // resolve, so they keep today's path.
+            let eval_type = arg
+                .static_type()
+                .map(|field_type| field_type.eval_type());
+            if !matches!(
+                eval_type,
+                Some(tidb_datatype::EvalType::Int)
+                    | Some(tidb_datatype::EvalType::Real)
+                    | Some(tidb_datatype::EvalType::Decimal)
+            ) {
+                continue;
+            }
+            let Some(text) =
+                crate::plan_trace::physical_expression_text_with_columns(arg, &column_names)
+            else {
+                continue;
+            };
+            // Re-index the argument onto the OUTER child's output row.
+            let Some(remapped) = remap_expression_to_child(arg, outer_base) else {
+                continue;
+            };
+            let target_name = inner
+                .output_to_source
+                .iter()
+                .enumerate()
+                .find(|(_, source)| **source == Some(next_column))
+                .and_then(|(at, _)| inner.names.get(at))
+                .cloned()
+                .unwrap_or_default();
+            texts.push(format!("{}({}, {})", op.name(), target_name, text));
+            bounds.push(crate::access_path::LookupProbeBound { op, arg: remapped });
+        }
+        if abandoned || bounds.is_empty() {
+            continue;
+        }
+        // EXPLAIN parity falls out here: Go prints the same comparisons
+        // inside `range: decided by [...]`.
+        if let Some(stripped) = decision.range_info.strip_suffix(']') {
+            decision.range_info = format!("{} {}]", stripped, texts.join(" "));
+        }
+        decision.probe_bounds = bounds;
+    }
+}
+
+/// Every column position one expression reads, in walk order.
+fn expression_column_indices(expression: &Expression) -> Vec<i64> {
+    match expression {
+        Expression::Column(column) => vec![column.index],
+        Expression::ScalarFunction(function) => function
+            .args
+            .iter()
+            .flat_map(expression_column_indices)
+            .collect(),
+        Expression::Constant(_) | Expression::CorrelatedColumn(_) => Vec::new(),
+    }
+}
+
+/// Clones an expression, shifting every column off the JOINED row onto the
+/// owning child's own row (`index - child_base`). A reference that does not
+/// live on that child refuses the whole expression: evaluating it against the
+/// wrong row width would silently misread.
+fn remap_expression_to_child(expression: &Expression, child_base: usize) -> Option<Expression> {
+    match expression {
+        Expression::Column(column) => {
+            let at = usize::try_from(column.index).ok()?;
+            let shifted = (at >= child_base).then(|| at - child_base)?;
+            let mut remapped = column.clone();
+            remapped.index = shifted as i64;
+            Some(Expression::Column(remapped))
+        }
+        Expression::Constant(_) | Expression::CorrelatedColumn(_) => Some(expression.clone()),
+        Expression::ScalarFunction(function) => {
+            let args = function
+                .args
+                .iter()
+                .map(|argument| remap_expression_to_child(argument, child_base))
+                .collect::<Option<Vec<_>>>()?;
+            let mut remapped = function.clone();
+            remapped.args = args;
+            Some(Expression::ScalarFunction(remapped))
+        }
+    }
+}
+
 fn fallback_index_join_kind(
     decision: &crate::driver::index_join_decision::IndexJoinDecision,
     catalog: &Catalog,
@@ -4220,6 +4488,23 @@ fn build_join_with_choice(
     // `equal:[...]`/`other cond:` and the hash table's own keys are one
     // decision rather than two that can drift.
     let split = crate::hash_join::split_equi(&conditions, left_width);
+    // The join's non-equality residue, flattened once while `conditions` is
+    // still owned here -- Go's `joinOtherConditions`, which
+    // `indexJoinPathBuildColManager` later mines for outer-derived range
+    // bounds on the lookup side's next key column.
+    let mut flattened_conditions = Vec::new();
+    for condition in &conditions {
+        flattened_conditions.extend(crate::hash_join::split_conjuncts(condition));
+    }
+    let mut other_join_conditions = Vec::new();
+    for (conjunct, is_equal) in flattened_conditions
+        .into_iter()
+        .zip(split.equal_mask.iter().copied())
+    {
+        if !is_equal {
+            other_join_conditions.push(conjunct.clone());
+        }
+    }
     // Go's join-key cast chain over the same conditions: the mismatched
     // int-vs-string equalities `updateEQCond` would materialize (their
     // plan-column ids advance the statement's stream below), and the subset
@@ -4635,6 +4920,20 @@ fn build_join_with_choice(
                     }
                 }
             }
+            // Go's `indexJoinPathBuildColManager` reads the join's
+            // other-conditions for comparisons against the object-key column
+            // just past the probe prefix, and its executor rebuilds that key
+            // slot's range per outer row (`ColWithCmpFuncManager`). Attach the
+            // same conjuncts to every decision so the chosen lookup narrows
+            // each probe instead of reading a whole prefix and filtering above.
+            attach_lookup_probe_bounds(
+                &mut decisions,
+                &other_join_conditions,
+                &left_side,
+                &right_side,
+                &scope,
+                left_width,
+            );
             decisions
         })
         .unwrap_or_default();
@@ -5292,6 +5591,18 @@ fn build_join_with_choice(
                 crate::kv_table::RowDecodeContext::for_query(ctx),
             );
             source.set_probe_parts(decision.probe_parts.clone());
+            // Go's executor receives the same comparisons through
+            // `IndexJoinExecutorBuilder`'s `cwc` argument; the per-row values
+            // arrive with every seeded batch.
+            if !decision.probe_bounds.is_empty() {
+                source.set_probe_bound_ops(
+                    decision
+                        .probe_bounds
+                        .iter()
+                        .map(|bound| bound.op)
+                        .collect(),
+                );
+            }
             source.set_filters(decision.filter_exprs.clone(), ctx.clone());
             let aggregation_offsets =
                 decision
@@ -5598,6 +5909,7 @@ fn build_join_with_choice(
             outer_not_null: outer_not_null.clone(),
             inner_not_null: inner_not_null.clone(),
             probe_cast: decision.probe_cast.clone(),
+            probe_bounds: decision.probe_bounds.clone(),
         });
         join_exec.set_consumes_where(pushed_consumes_where || decision.consumes_where);
         (

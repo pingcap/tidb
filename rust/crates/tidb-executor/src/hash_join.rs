@@ -219,7 +219,7 @@ impl KeyClass {
     /// deliberately absent: their equality involves timezone resolution,
     /// fractional-second precision, or structural folding that this unit has
     /// not proven injective, and an unproven key is a dropped row.
-    fn of(left: &FieldType, right: &FieldType, collation: Collation) -> Option<Self> {
+    pub(crate) fn of(left: &FieldType, right: &FieldType, collation: Collation) -> Option<Self> {
         let eval_type = left.eval_type();
         if eval_type != right.eval_type() {
             return None;
