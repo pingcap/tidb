@@ -58,6 +58,7 @@
 //! [`ClusterSnapshot`]: tidb_executor::cluster_storage::ClusterSnapshot
 //! [`MutationBuffer`]: tidb_executor::cluster_storage::MutationBuffer
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -120,8 +121,17 @@ enum TransactionRequest {
     /// `for_update_ts` -- Go's `KVTxn.LockKeys` for one DML statement's
     /// written keys. Served only by a pessimistic transaction; the
     /// optimistic worker refuses it.
+    ///
+    /// With `return_values`, TiKV is asked to answer each newly locked key's
+    /// current row WITH the lock — Go's `KeyReturningValue` flag, set from
+    /// `lockCtx.InitReturnValues` when an executor needs the row it is about
+    /// to modify (`pkg/executor/point_get.go:614`). The answered rows land in
+    /// the worker's pessimistic-lock cache (Go
+    /// `TxnCtx.SetPessimisticLockCache`) and later reads of those keys are
+    /// served from it without touching storage.
     LockKeys {
         keys: Vec<Vec<u8>>,
+        return_values: bool,
         reply: Sender<LockKeysOutcome>,
     },
     /// Releases the locks a FAILED statement accumulated across its retry
@@ -572,6 +582,14 @@ fn serve_pessimistic_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: St
     // Refreshes the primary lock's TTL from the first lock on; `None` until
     // one exists. Ending the transaction drops it, which stops the heartbeat.
     let mut keep_alive: Option<LockKeepAlive> = None;
+    // Rows TiKV answered WITH a pessimistic lock, keyed by encoded key —
+    // Go's `TxnCtx.SetPessimisticLockCache`
+    // (`pkg/executor/point_get.go`'s lock fold). The transaction holds these
+    // locks until COMMIT or an explicit release, so an entry cannot go stale
+    // behind anyone's back; a read of a locked-but-unstaged key is answered
+    // from here instead of storage, which is what folds a point write's row
+    // read into its own PessimisticLock round trip.
+    let mut lock_values: BTreeMap<Vec<u8>, Option<Vec<u8>>> = BTreeMap::new();
     while let Ok(request) = incoming.recv() {
         let call = UnaryCallContext::with_timeout(timeout);
         let call = &call;
@@ -581,6 +599,16 @@ fn serve_pessimistic_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: St
                 read_ts,
                 reply,
             } => {
+                // Go `PointGetExecutor.get` (`pkg/executor/point_get.go:656-680`):
+                // memBuffer first (that overlay lives at the session layer,
+                // above this snapshot), then the pessimistic-lock cache, then
+                // storage. A cached answer is exact at ANY statement
+                // timestamp: the lock pins the key against every other
+                // writer, so no later commit can exist under it.
+                if let Some(cached) = lock_values.get(&key) {
+                    let _ = reply.send(Ok(cached.clone()));
+                    continue;
+                }
                 let read_ts = read_ts.unwrap_or_else(|| transaction.start_ts());
                 let answer = transaction
                     .snapshot()
@@ -594,10 +622,30 @@ fn serve_pessimistic_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: St
                 read_ts,
                 reply,
             } => {
+                // Same order as [`TransactionRequest::Get`], per key: a key
+                // the cache answers costs no batch member, and only the rest
+                // reach storage together.
+                let mut answered: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+                let mut uncached: Vec<Vec<u8>> = Vec::with_capacity(keys.len());
+                for key in keys {
+                    match lock_values.get(&key) {
+                        Some(Some(value)) => answered.push((key, value.clone())),
+                        Some(None) => {}
+                        None => uncached.push(key),
+                    }
+                }
+                if uncached.is_empty() {
+                    let _ = reply.send(Ok(answered));
+                    continue;
+                }
                 let read_ts = read_ts.unwrap_or_else(|| transaction.start_ts());
                 let answer = transaction
                     .snapshot()
-                    .snapshot_batch_get_at(&keys, read_ts, call)
+                    .snapshot_batch_get_at(&uncached, read_ts, call)
+                    .map(|mut pairs| {
+                        pairs.extend(answered);
+                        pairs
+                    })
                     .map_err(classify);
                 let _ = reply.send(answer);
             }
@@ -615,9 +663,20 @@ fn serve_pessimistic_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: St
                     .map_err(classify);
                 let _ = reply.send(answer);
             }
-            TransactionRequest::LockKeys { keys, reply } => {
-                let outcome =
-                    acquire_statement_locks(&mut transaction, opener, &mut keep_alive, &keys, call);
+            TransactionRequest::LockKeys {
+                keys,
+                return_values,
+                reply,
+            } => {
+                let outcome = acquire_statement_locks(
+                    &mut transaction,
+                    opener,
+                    &mut keep_alive,
+                    &mut lock_values,
+                    &keys,
+                    return_values,
+                    call,
+                );
                 let fatal = matches!(outcome, LockKeysOutcome::TransactionError(_));
                 let _ = reply.send(outcome);
                 if fatal {
@@ -645,6 +704,16 @@ fn serve_pessimistic_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: St
                 let released = transaction
                     .pessimistic_rollback(&keys, &cleanup_call)
                     .map_err(|cause| StorageError::Backend(cause.to_string()));
+                if released.is_ok() {
+                    // The rows rode in WITH these locks; once the locks go,
+                    // another writer may change the keys, so their cached
+                    // images are dead (Go drops the whole TxnCtx cache only
+                    // at COMMIT; per-key release is this tier's failed-
+                    // statement cleanup, and it must not outlive its locks).
+                    for key in &keys {
+                        lock_values.remove(key);
+                    }
+                }
                 let _ = reply.send(released);
             }
             TransactionRequest::Commit { mutations, reply } => {
@@ -751,29 +820,56 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
     transaction: &mut RealPessimisticTransaction<C, L, CapabilityTimestampSource<P>>,
     opener: &Arc<RealOptimisticTransactionOpener<C, L, P>>,
     keep_alive: &mut Option<LockKeepAlive>,
+    lock_values: &mut BTreeMap<Vec<u8>, Option<Vec<u8>>>,
     keys: &[Vec<u8>],
+    return_values: bool,
     call: &UnaryCallContext,
 ) -> LockKeysOutcome {
     use std::collections::BTreeSet;
     let held: BTreeSet<Vec<u8>> = transaction.locked_keys().into_iter().collect();
+    // Go `KVTxn.LockKeys` filters keys this transaction already holds BEFORE
+    // any RPC (client-go `kv.go`: a key already in `txn.locks` is reported as
+    // `AlreadyLocked`, never re-sent): the lock pins the key against every
+    // other writer, so re-acquiring it could discover nothing new and only
+    // spends a round trip. A held key absent from the value cache (locked
+    // earlier by a path that asked for no rows -- a locking read) simply has
+    // no cached image: the statement's own read falls through to storage,
+    // exactly Go's `getValueFromLockCtx` AlreadyLocked arm.
     let added: Vec<Vec<u8>> = keys
         .iter()
         .filter(|key| !held.contains(*key))
         .cloned()
         .collect();
+    if added.is_empty() {
+        return LockKeysOutcome::Locked {
+            for_update_ts: transaction.for_update_ts(),
+            newly_locked: Vec::new(),
+        };
+    }
     /// Bound on deadlock-retryable re-acquisitions, the narrow driver's own.
     const MAX_LOCK_RETRIES: usize = 8;
     let mut attempt = 0usize;
     loop {
         // No absence presumption: DML locks target rows that exist (the
         // rewritten set); INSERT keeps its NotExist assertion at Prewrite.
-        match transaction.acquire_locks(
-            keys,
-            &BTreeSet::new(),
-            LockWaitTime::session_lock_wait_timeout(),
-            call,
-        ) {
+        match if return_values {
+            transaction.acquire_locks_returning_values(&added, &BTreeSet::new(), LockWaitTime::session_lock_wait_timeout(), call)
+        } else {
+            transaction.acquire_locks(&added, &BTreeSet::new(), LockWaitTime::session_lock_wait_timeout(), call)
+        } {
             Ok(acquired) => {
+                // Rows that rode back with the locks enter the cache now:
+                // both exits below KEEP these locks (a clean grant, or fair
+                // locking's grant-despite-conflict), so the images stay valid
+                // either way. Conflict-granted keys answer no value — Go
+                // recomputes such a statement from a newer snapshot, and so
+                // does this one.
+                lock_values.extend(
+                    acquired
+                        .values
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone())),
+                );
                 if keep_alive.is_none() {
                     match opener
                         .start_lock_keep_alive(acquired.primary_key.clone(), transaction.start_ts())
@@ -1184,14 +1280,32 @@ impl SessionTransaction {
     /// lock step. The outcome tells the session layer whether the statement
     /// stands, must be re-executed at an advanced timestamp, or failed.
     pub fn lock_keys(&self, keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, StorageError> {
+        self.lock_keys_with_values(keys, false)
+    }
+
+    /// [`Self::lock_keys`], asking TiKV to answer each newly locked key's row
+    /// WITH the lock and serving later reads of those keys from the answers —
+    /// Go's point-write fold (`InitReturnValues` /
+    /// `TxnCtx.SetPessimisticLockCache`, `pkg/executor/point_get.go:612-624`).
+    pub fn lock_keys_with_values(
+        &self,
+        keys: Vec<Vec<u8>>,
+        return_values: bool,
+    ) -> Result<LockKeysOutcome, StorageError> {
         let requests = self.thread.sender()?;
         let (reply, answer) = mpsc::channel();
         requests
-            .send(TransactionRequest::LockKeys { keys, reply })
+            .send(TransactionRequest::LockKeys {
+                keys,
+                return_values,
+                reply,
+            })
             .map_err(|_| StorageError::Backend("the transaction thread is gone".to_owned()))?;
-        answer.recv().map_err(|_| {
-            StorageError::Backend("the transaction thread stopped mid-lock".to_owned())
-        })
+        answer
+            .recv()
+            .map_err(|_| {
+                StorageError::Backend("the transaction thread stopped mid-lock".to_owned())
+            })
     }
 
     /// Releases the locks a FAILED statement accumulated across its retry

@@ -237,6 +237,17 @@ pub trait OpenClusterTransaction: Send {
         Err("only a pessimistic transaction locks statement keys".to_owned())
     }
 
+    /// [`Self::lock_staged_keys`], asking TiKV to answer each newly locked
+    /// key's row WITH the lock and serving later reads of those keys from the
+    /// answers — Go's point-write fold (`InitReturnValues` /
+    /// `TxnCtx.SetPessimisticLockCache`, `pkg/executor/point_get.go:612-624`).
+    fn lock_staged_keys_with_values(
+        &self,
+        _keys: Vec<Vec<u8>>,
+    ) -> Result<LockKeysOutcome, String> {
+        Err("only a pessimistic transaction locks statement keys".to_owned())
+    }
+
     /// Releases the locks a FAILED statement accumulated across its retry
     /// rounds -- Go `OnPessimisticStmtEnd(isSuccessful=false)` ->
     /// `CancelFairLocking`. The optimistic default holds no locks and
@@ -863,6 +874,11 @@ impl OpenClusterTransaction for SessionTransaction {
 
     fn lock_staged_keys(&self, keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, String> {
         SessionTransaction::lock_keys(self, keys).map_err(|error| error.to_string())
+    }
+
+    fn lock_staged_keys_with_values(&self, keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, String> {
+        SessionTransaction::lock_keys_with_values(self, keys, true)
+            .map_err(|error| error.to_string())
     }
 
     fn release_statement_locks(&self, keys: Vec<Vec<u8>>) -> Result<(), String> {
