@@ -609,6 +609,15 @@ pub(crate) fn plan_fast_point_get(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Option<FastPointGetPlan>, DriverError> {
+    // Go `TryFastPlan`'s first gate (`point_get_plan.go:83`): fix control
+    // 52592 disables the point-get fast path for select/update/delete, so
+    // EXPLAIN and execution both fall through to ordinary planning.
+    if ctx
+        .optimizer_fix_control()
+        .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
+    {
+        return Ok(None);
+    }
     if select.with.is_some()
         || select.distinct
         || !select.group_by.is_empty()

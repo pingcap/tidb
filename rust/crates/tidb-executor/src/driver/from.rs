@@ -1153,16 +1153,47 @@ fn build_from_inner(
                                     {
                                         if ranges.is_empty() {
                                             trace.empty_range_table_dual();
-                                        } else if let Some(handle) =
-                                            kv.pk_handle_offset().and_then(|_| {
-                                                crate::driver::access::single_point_handle(&ranges)
-                                            })
-                                        {
-                                            trace.point_get(&visible, kv, Some(&handle), None);
                                         } else {
-                                            trace.table_range_scan(&visible, &ranges, estimate);
-                                            if keep_order {
-                                                trace.keep_order(false);
+                                            // Go `find_best_task.go:2194`: fix
+                                            // control 52592 sets
+                                            // `canConvertPointGet = false`, so
+                                            // a single-point table range stays
+                                            // a TableRangeScan instead of
+                                            // converting to a Point_Get.
+                                            let allow_point_get = !ctx
+                                                .optimizer_fix_control()
+                                                .get_bool_with_default(
+                                                    tidb_planner::fix_control::FIX_52592,
+                                                    false,
+                                                );
+                                            let point_handle = if allow_point_get {
+                                                kv.pk_handle_offset().and_then(|_| {
+                                                    crate::driver::access::single_point_handle(
+                                                        &ranges,
+                                                    )
+                                                })
+                                            } else {
+                                                None
+                                            };
+                                            match point_handle {
+                                                Some(handle) => {
+                                                    trace.point_get(
+                                                        &visible,
+                                                        kv,
+                                                        Some(&handle),
+                                                        None,
+                                                    );
+                                                }
+                                                None => {
+                                                    trace.table_range_scan(
+                                                        &visible,
+                                                        &ranges,
+                                                        estimate,
+                                                    );
+                                                    if keep_order {
+                                                        trace.keep_order(false);
+                                                    }
+                                                }
                                             }
                                         }
                                     }

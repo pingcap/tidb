@@ -164,7 +164,14 @@ pub(crate) fn leaf_index_path(
     // the same direct lookup when its local predicates pin a handle or a
     // complete unique/common key; a one-row source satisfies any requested
     // order trivially.
-    if hints.allows_table() {
+    if hints.allows_table()
+        // Go `find_best_task.go:2194`: fix control 52592 sets
+        // `canConvertPointGet = false`, so a DataSource never converts to a
+        // point get and the leaf falls through to its range-scan arms.
+        && !ctx
+            .optimizer_fix_control()
+            .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
+    {
         if let Some(where_clause) = where_clause {
             let stmt = PointPlanStmt::of_write(Some(where_clause), &[], None);
             if let Ok(Some(pin)) =
