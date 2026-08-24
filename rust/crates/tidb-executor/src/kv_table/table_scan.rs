@@ -371,6 +371,63 @@ impl KvTable {
         Ok(encoded.unwrap_or_else(|| self.record_key_range()))
     }
 
+    /// The same intervals as [`Self::record_key_ranges], split into the
+    /// VALUE-ordered halves an ORDERED reader consumes one after the other --
+    /// Go's `firstPartGroupedRanges then `secondPartGroupedRanges
+    /// (`table_reader.go). An unsigned handle whose domain wraps the int64
+    /// boundary yields `[signed_half, unsigned_half]; a descending read
+    /// reverses the pair, exactly Go's `desc = true answer. Every other
+    /// shape is one group, and an unencodable bound falls back to the whole
+    /// record range as one group, reading a correct superset.
+    fn record_key_range_groups(
+        &self,
+        handle_ranges: Option<&[IndexRange]>,
+        zone: &SessionTimeZone,
+        descending: bool,
+    ) -> Result<Vec<Vec<(Key, Key)>>, KvTableError> {
+        let full_common_handle = [IndexRange {
+            low: vec![Datum::MinNotNull],
+            high: vec![Datum::MaxValue],
+            low_exclusive: false,
+            high_exclusive: false,
+        }];
+        // See [`Self::record_key_ranges]: the full-domain defaults exist so
+        // the boundary split can see the handle's own width.
+        let full_unsigned_handle = [IndexRange {
+            low: vec![Datum::UInt(0)],
+            high: vec![Datum::UInt(u64::MAX)],
+            low_exclusive: false,
+            high_exclusive: false,
+        }];
+        let handle_ranges = if handle_ranges.is_some() {
+            handle_ranges
+        } else if crate::handle_range::common_handle_primary(self).is_some() {
+            Some(full_common_handle.as_slice())
+        } else if self.unsigned_pk_handle() {
+            Some(full_unsigned_handle.as_slice())
+        } else {
+            handle_ranges
+        };
+        let encoded = match handle_ranges {
+            Some(ranges) => crate::handle_range::record_key_range_value_halves(
+                self,
+                ranges,
+                zone,
+            )
+            .map_err(|error| KvTableError::Encode(format!("{error:?}")))?,
+            None => None,
+        };
+        let mut groups = match encoded {
+            Some([signed_half, unsigned_half]) => vec![signed_half, unsigned_half],
+            None => vec![self.record_key_range()],
+        };
+        groups.retain(|group| !group.is_empty());
+        if descending {
+            groups.reverse();
+        }
+        Ok(groups)
+    }
+
     /// The record ranges this table's rows live in, as the storage seam's
     /// half-open `[start, end)` pairs in ascending key order.
     ///
@@ -435,17 +492,29 @@ impl KvTable {
         if self.partition.is_some() {
             return Ok(None);
         }
-        let ranges =
-            self.record_key_ranges(handle_ranges, context.zone(), keep_order || descending)?;
-        // No range at all is a read of NOTHING -- `id > 100 AND id < 100`, or a
+        // An ORDERED read of an unsigned handle whose domain wraps the int64
+        // boundary cannot travel as one ascending range list: Go opens TWO
+        // results -- `firstPartGroupedRanges then `secondPartGroupedRanges
+        // (`table_reader.go) -- and reads them one after the other through
+        // `resultHandler.open(firstResult, secondResult). The groups below are
+        // exactly those parts in read order (a descending read reverses the
+        // pair); every shape without a straddle is one group and takes the
+        // single-request path unchanged. An UNORDERED read keeps Go's merged
+        // ascending wire order from [`Self::record_key_ranges].
+        let groups = if keep_order || descending {
+            self.record_key_range_groups(handle_ranges, context.zone(), descending)?
+        } else {
+            vec![self.record_key_ranges(handle_ranges, context.zone(), false)?]
+        };
+        // No range at all is a read of NOTHING -- `id > 100 AND id < 100, or a
         // bound that is NULL -- and a coprocessor request has no way to say
-        // that: its `Ranges` list is what the transport turns into region
+        // that: its `Ranges list is what the transport turns into region
         // tasks, so an empty one is a malformed request rather than an empty
-        // answer (`tidb_distsql`'s `metadata_region_ranges` rejects it as
-        // `missing_ranges`). The local cursor states it exactly, by opening no
+        // answer (`tidb_distsql's `metadata_region_ranges rejects it as
+        // `missing_ranges). The local cursor states it exactly, by opening no
         // iterator, so the read goes there. Go plans a `TableDual` for the same
         // shape and sends no request either.
-        if ranges.is_empty() {
+        if groups.iter().all(|group| group.is_empty()) {
             return Ok(None);
         }
         let mut columns: Vec<PushdownScanColumn> = keep
@@ -515,13 +584,16 @@ impl KvTable {
                     })
             })
             .collect();
-        let request = PushdownScanRequest {
+        // One request PER group. Both open up front -- Go builds both parts'
+        // responses before reading either (`buildRespForGroupedRanges) -- and
+        // the rows are consumed strictly part by part.
+        let build_request = |ranges: Vec<(Key, Key)>| PushdownScanRequest {
             table_id: self.table_id,
             index: None,
-            columns,
+            columns: columns.clone(),
             handle_index,
-            primary_column_ids,
-            primary_prefix_column_ids,
+            primary_column_ids: primary_column_ids.clone(),
+            primary_prefix_column_ids: primary_prefix_column_ids.clone(),
             predicates: predicates.to_vec(),
             output_offsets: output_offsets.map(<[usize]>::to_vec),
             topn: topn.cloned(),
@@ -536,32 +608,56 @@ impl KvTable {
             ranges,
             statement: statement.clone(),
         };
-        let Some(scan) = self.store.open_remote_scan(&request) else {
-            return Ok(None);
-        };
-        let mut scan = scan.map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        if common_handle && !scan.staged.is_empty() {
-            scan.stream.close();
-            return Ok(None);
-        }
-        // One request reached a region. Counted here rather than at the
-        // storage seam so a backend that REFUSED the shape (and returned an
-        // `Unsupported` the caller turned into a byte-level cursor) is not
-        // recorded as a coprocessor read.
-        crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
-        let decoder = self.row_decoder_projected(Some(keep), context)?;
-        let mut staged = Vec::with_capacity(scan.staged.len());
-        for (key, value) in scan.staged {
-            let row = match value {
-                Some(value) => Some(decoder.decode_record(key.as_bytes(), &value)?.1),
-                None => None,
+        let mut scans: Vec<crate::remote_scan::PushdownScan> =
+            Vec::with_capacity(groups.len());
+        for ranges in &groups {
+            let Some(scan) = self.store.open_remote_scan(&build_request(ranges.clone())) else {
+                for mut opened in scans.drain(..) {
+                    opened.stream.close();
+                }
+                return Ok(None);
             };
-            staged.push((key.into_bytes(), row));
+            let mut scan = scan.map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            if common_handle && !scan.staged.is_empty() {
+                scan.stream.close();
+                for mut opened in scans.drain(..) {
+                    opened.stream.close();
+                }
+                return Ok(None);
+            }
+            // One request reached a region. Counted here rather than at the
+            // storage seam so a backend that REFUSED the shape (and returned
+            // an `Unsupported` the caller turned into a byte-level cursor) is
+            // not recorded as a coprocessor read.
+            crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
+            scans.push(scan);
+        }
+        let decoder = self.row_decoder_projected(Some(keep), context)?;
+        let mut staged = Vec::new();
+        // Each part's staged slice covers only that part's ranges and arrives
+        // in part order, so concatenating them preserves the key order the
+        // merge below walks -- ascending for an ascending read, descending for
+        // a descending one (`open_remote_scan already reverses to match).
+        for scan in &mut scans {
+            for (key, value) in std::mem::take(&mut scan.staged) {
+                let row = match value {
+                    Some(value) => Some(decoder.decode_record(key.as_bytes(), &value)?.1),
+                    None => None,
+                };
+                staged.push((key.into_bytes(), row));
+            }
         }
         let merge_staged = !staged.is_empty();
-        let predicates_applied = scan.stream.predicates_applied();
+        let predicates_applied = scans.iter().all(|scan| scan.stream.predicates_applied());
+        let stream: Box<dyn crate::remote_scan::PushdownRowStream> = if scans.len() == 1 {
+            scans.pop().expect("exactly one scan").stream
+        } else {
+            crate::remote_scan::ChainedPushdownStream::new(
+                scans.into_iter().map(|scan| scan.stream).collect(),
+            )
+        };
         Ok(Some(RemoteRowCursor {
-            stream: scan.stream,
+            stream,
             staged: staged.into_iter(),
             pending_staged: None,
             pending_remote: None,

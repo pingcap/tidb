@@ -543,6 +543,72 @@ pub trait PushdownRowStream: Send {
     fn close(&mut self);
 }
 
+/// Two (or more) remote scans serving ONE ordered read whose unsigned-handle
+/// halves cannot form a single ascending range list. Go opens
+/// `firstPartGroupedRanges then `secondPartGroupedRanges as separate results
+/// and reads them one after the other through
+/// `resultHandler.open(firstResult, secondResult); this is that sequence at
+/// the stream seam. Rows from part N+1 begin only after part N returns `None.
+///
+/// Chunks are deliberately NOT supported: a columnar batch cannot span a part
+/// boundary, and the row path keeps the boundary invisible to callers.
+pub struct ChainedPushdownStream {
+    /// Every part in read order; drained by index.
+    parts: Vec<Box<dyn PushdownRowStream>>,
+    /// Index of the part currently serving [`PushdownRowStream::next_row].
+    current: usize,
+    /// Whether a part has returned `None AND no later part exists -- after
+    /// which every call answers `None without touching the parts.
+    finished: bool,
+}
+
+impl ChainedPushdownStream {
+    /// Chains the parts in READ order: part 0's rows all precede part 1's.
+    #[must_use]
+    pub fn new(parts: Vec<Box<dyn PushdownRowStream>>) -> Box<dyn PushdownRowStream> {
+        assert!(!parts.is_empty(), "a chained stream needs at least one part");
+        Box::new(ChainedPushdownStream {
+            parts,
+            current: 0,
+            finished: false,
+        })
+    }
+}
+
+impl PushdownRowStream for ChainedPushdownStream {
+    fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
+        if self.finished {
+            return Ok(None);
+        }
+        loop {
+            let Some(part) = self.parts.get_mut(self.current) else {
+                self.finished = true;
+                return Ok(None);
+            };
+            match part.next_row()? {
+                Some(row) => return Ok(Some(row)),
+                None => self.current += 1,
+            }
+        }
+    }
+
+    // A batch cannot span the part boundary, so the chain always serves rows.
+
+    fn rows_returned(&self) -> u64 {
+        self.parts.iter().map(|part| part.rows_returned()).sum()
+    }
+
+    fn predicates_applied(&self) -> bool {
+        self.parts.iter().all(|part| part.predicates_applied())
+    }
+
+    fn close(&mut self) {
+        for part in &mut self.parts {
+            part.close();
+        }
+    }
+}
+
 /// A remote scan plus the client-side overlay it must be merged with.
 pub struct PushdownScan {
     /// The snapshot rows, filtered and capped at the backend.

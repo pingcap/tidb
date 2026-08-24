@@ -466,66 +466,38 @@ pub(crate) fn record_key_ranges(
     zone: &tidb_datatype::SessionTimeZone,
     keep_order: bool,
 ) -> Result<Option<Vec<(Key, Key)>>, tidb_codec::CodecError> {
-    // DDL does not materialize the clustered PRIMARY as a secondary index.
-    // The table path still carries the common-handle column offsets, and Go's
-    // `CommonHandleRangesToKVRanges` uses those record keys directly.
-    if !table.common_handle_offsets().is_empty() {
-        return common_handle_record_key_ranges(table, ranges, zone).map(Some);
-    }
-    let ids = table.record_physical_ids();
-    let unsigned = handle_is_unsigned(table);
-    // Go `points2TableRanges`: replace the open endpoints with the handle
-    // domain's own extremes, so every bound below is a real integer -- and,
-    // for an unsigned handle, one the boundary split can recognise.
-    let materialized: Vec<IndexRange> = ranges
-        .iter()
-        .map(|range| materialize_open_bounds(range, unsigned))
-        .collect();
-    // Go `table_reader.go:295`: `SplitRangesAcrossInt64Boundary(ranges,
-    // e.keepOrder, e.desc, ...)`. An ORDERED read opens the halves as two
-    // results consumed one after the other, and `keepOrder = true, desc =
-    // false` answers signed-first; this tier hands such a caller ONE list in
-    // exactly that VALUE order, and its descending callers reverse the list
-    // (and each range), which yields Go's `desc = true` answer -- the
-    // unsigned half first.
-    //
-    // An UNORDERED read differs ON THE WIRE: Go merges both halves into ONE
-    // request, `append(unsignedRanges, signedRanges...)`, because values
-    // above `MaxInt64` encode NEGATIVE record keys and therefore sort before
-    // every ordinary handle. That list ascends in encoded-key order -- the
-    // only shape an unordered request may hand the coprocessor transport,
-    // whose task builder consumes ranges in list order.
-    let materialized = if !unsigned {
-        materialized
-    } else if keep_order {
-        let (first, second) = split_ranges_across_int64_boundary(materialized, true, false);
-        first.into_iter().chain(second).collect()
-    } else {
-        let (mut merged, second) =
-            split_ranges_across_int64_boundary(materialized, false, false);
-        merged.extend(second);
-        merged
-    };
-    let mut handle_ranges = Vec::with_capacity(materialized.len());
-    for range in &materialized {
-        let (low, high, low_exclusive, high_exclusive) = to_table_range_in_domain(range, unsigned);
-        // An empty range is not an error: `id > 100 AND id < 100` admits no
-        // row, and Go plans a `TableDual` for it. The caller reads nothing.
-        let Ok(handle_range) = SignedHandleRange::new(low, high, low_exclusive, high_exclusive)
-        else {
-            continue;
-        };
-        handle_ranges.push(handle_range);
-    }
-    let mut key_ranges = Vec::with_capacity(handle_ranges.len() * ids.len());
-    for id in ids {
-        for encoded in signed_handle_ranges_to_kv_ranges(id, &handle_ranges) {
-            key_ranges.push((encoded.start_key, encoded.end_key));
+    match record_key_range_value_halves(table, ranges, zone)? {
+        Some([signed_half, unsigned_half]) => {
+            if keep_order {
+                // Go's ordered answer reads the signed half first
+                // (`keepOrder = true, desc = false); a descending caller
+                // reverses this one list, which puts the unsigned half first.
+                Ok(Some(
+                    signed_half.into_iter().chain(unsigned_half).collect(),
+                ))
+            } else {
+                // Go's unordered wire order merges both halves into ONE
+                // request: `append(unsignedRanges, signedRanges...) ascends
+                // in ENCODED keys, because values above `MaxInt64 encode
+                // NEGATIVE and sort before every ordinary handle.
+                let mut merged = unsigned_half;
+                merged.extend(signed_half);
+                Ok(Some(merged))
+            }
         }
+        None => unreachable!("the halves are always computed"),
     }
-    Ok(Some(key_ranges))
 }
 
+/// The two VALUE-ordered halves of [`record_key_ranges]: an unsigned handle
+/// whose domain wraps the int64 boundary yields `[signed_half, unsigned_half]
+/// -- each half's intervals ascend in ENCODED-key order -- while every other
+/// shape is one non-empty half. An ORDERED reader consumes the halves in list
+/// order (a descending reader reverses the pair, Go's `firstPart /
+/// `secondPart choice), because the two halves cannot form one ascending
+/// range list an ordered coprocessor request could carry. An UNORDERED reader
+/// never calls this: its single request carries Go's merged wire order,
+/// which only [`record_key_ranges] assembles.
 /// Go `CommonHandleRangesToKVRanges`: the ranger's encoded tuple bounds
 /// prefixed by each physical table's record namespace.
 fn common_handle_record_key_ranges(
@@ -558,6 +530,61 @@ fn common_handle_record_key_ranges(
         }
     }
     Ok(key_ranges)
+}
+
+pub(crate) fn record_key_range_value_halves(
+    table: &KvTable,
+    ranges: &[IndexRange],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<Option<[Vec<(Key, Key)>; 2]>, tidb_codec::CodecError> {
+    // DDL does not materialize the clustered PRIMARY as a secondary index.
+    // The table path still carries the common-handle column offsets, and Go's
+    // `CommonHandleRangesToKVRanges` uses those record keys directly.
+    if !table.common_handle_offsets().is_empty() {
+        return common_handle_record_key_ranges(table, ranges, zone)
+            .map(|list| Some([list, Vec::new()]));
+    }
+    let ids = table.record_physical_ids();
+    let unsigned = handle_is_unsigned(table);
+    // Go `points2TableRanges`: replace the open endpoints with the handle
+    // domain's own extremes, so every bound below is a real integer -- and,
+    // for an unsigned handle, one the boundary split can recognise.
+    let materialized: Vec<IndexRange> = ranges
+        .iter()
+        .map(|range| materialize_open_bounds(range, unsigned))
+        .collect();
+    let (signed_side, unsigned_side) = if unsigned {
+        split_ranges_across_int64_boundary(materialized, true, false)
+    } else {
+        (materialized, Vec::new())
+    };
+    fn encode(half: &[IndexRange], ids: &[i64], unsigned: bool) -> Vec<(Key, Key)> {
+        let mut handle_ranges = Vec::with_capacity(half.len());
+        for range in half {
+            let (low, high, low_exclusive, high_exclusive) =
+                to_table_range_in_domain(range, unsigned);
+            // An empty range is not an error: `id > 100 AND id < 100 admits
+            // no row, and Go plans a `TableDual` for it. The caller reads
+            // nothing from this interval.
+            let Ok(handle_range) =
+                SignedHandleRange::new(low, high, low_exclusive, high_exclusive)
+            else {
+                continue;
+            };
+            handle_ranges.push(handle_range);
+        }
+        let mut key_ranges = Vec::with_capacity(handle_ranges.len() * ids.len());
+        for &id in ids {
+            for encoded in signed_handle_ranges_to_kv_ranges(id, &handle_ranges) {
+                key_ranges.push((encoded.start_key, encoded.end_key));
+            }
+        }
+        key_ranges
+    };
+    Ok(Some([
+        encode(&signed_side, &ids, unsigned),
+        encode(&unsigned_side, &ids, unsigned),
+    ]))
 }
 
 /// Go `SplitRangesAcrossInt64Boundary`
