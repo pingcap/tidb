@@ -3492,10 +3492,18 @@ impl PlanTrace {
         let mut lines = Vec::new();
         for field in select.fields.fields() {
             if let tidb_ast::SelectField::Expr { expr, .. } = field {
+                // Go injects a Projection only for SCALAR-EXPRESSION
+                // arguments; a bare-column argument reads its column
+                // directly and no Projection exists to print.
                 for aggregate in aggregate_exprs(expr) {
                     if let tidb_ast::Expr::Aggregate { args, .. } = &aggregate {
-                        if let Some(arg) = args.first() {
-                            lines.push(format!("{}->Column#0", qualify.expr(arg)));
+                        match args.first() {
+                            Some(arg @ tidb_ast::Expr::Column(_)) => {}
+                            Some(arg @ tidb_ast::Expr::Paren(_)) => {}
+                            Some(arg) => {
+                                lines.push(format!("{}->Column#0", qualify.expr(arg)));
+                            }
+                            None => {}
                         }
                     }
                 }
