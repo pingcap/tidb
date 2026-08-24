@@ -204,6 +204,10 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "Insert"
 	case *ImportIntoStmt:
 		return "ImportInto"
+	case *ExportTableStmt:
+		return "ExportTable"
+	case *ExportSchemaStmt:
+		return "ExportSchema"
 	case *LoadDataStmt:
 		return "LoadData"
 	case *RollbackStmt:

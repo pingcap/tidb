@@ -459,6 +459,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	expansion                  "EXPANSION"
 	expire                     "EXPIRE"
 	explore                    "EXPLORE"
+	export                     "EXPORT"
 	extended                   "EXTENDED"
 	failedLoginAttempts        "FAILED_LOGIN_ATTEMPTS"
 	faultsSym                  "FAULTS"
@@ -1085,6 +1086,8 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	CallStmt                   "CALL statement"
 	ImportIntoStmt             "IMPORT INTO statement"
 	ImportFromSelectStmt       "SELECT statement of IMPORT INTO"
+	ExportTableStmt            "EXPORT TABLE statement"
+	ExportSchemaStmt           "EXPORT SCHEMA statement"
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
@@ -7588,6 +7591,7 @@ UnReservedKeyword:
 |	"REPAIR"
 |	"IMPORT"
 |	"IMPORTS"
+|	"EXPORT"
 |	"DISCARD"
 |	"OLD"
 |	"RETAIN"
@@ -13130,6 +13134,8 @@ Statement:
 |	GrantRoleStmt
 |	CallStmt
 |	ImportIntoStmt
+|	ExportTableStmt
+|	ExportSchemaStmt
 |	InsertIntoStmt
 |	KillStmt
 |	LoadDataStmt
@@ -16164,6 +16170,28 @@ ImportIntoStmt:
 			return 1
 		}
 		$$ = st
+	}
+
+ExportTableStmt:
+	"EXPORT" "TABLE" TableName "TO" stringLit FormatOpt LoadDataOptionListOpt
+	{
+		$$ = &ast.ExportTableStmt{
+			Table:   $3.(*ast.TableName),
+			Path:    $5,
+			Format:  $6.(*string),
+			Options: $7.([]*ast.LoadDataOpt),
+		}
+	}
+
+ExportSchemaStmt:
+	"EXPORT" DatabaseSym DBNameList "TO" stringLit FormatOpt LoadDataOptionListOpt
+	{
+		$$ = &ast.ExportSchemaStmt{
+			Schemas: $3.([]string),
+			Path:    $5,
+			Format:  $6.(*string),
+			Options: $7.([]*ast.LoadDataOpt),
+		}
 	}
 
 ImportFromSelectStmt:

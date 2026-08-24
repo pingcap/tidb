@@ -462,6 +462,31 @@ type ImportInto struct {
 	SelectPlan base.PhysicalPlan
 }
 
+// ExportTable represents an EXPORT TABLE plan.
+type ExportTable struct {
+	physicalop.SimpleSchemaProducer
+
+	Table   *resolve.TableNameW
+	Path    string
+	Format  *string
+	Options []*LoadDataOpt
+	Stmt    string
+}
+
+// ExportSchema represents an EXPORT SCHEMA plan. Unlike ExportTable, the
+// schemas' tables aren't resolved at plan-build time (mirroring
+// DropDatabase's plan-time privilege-only check) — the executor enumerates
+// each schema's base tables against the infoschema it runs against.
+type ExportSchema struct {
+	physicalop.SimpleSchemaProducer
+
+	Schemas []string
+	Path    string
+	Format  *string
+	Options []*LoadDataOpt
+	Stmt    string
+}
+
 // LoadStats represents a load stats plan.
 type LoadStats struct {
 	physicalop.SimpleSchemaProducer

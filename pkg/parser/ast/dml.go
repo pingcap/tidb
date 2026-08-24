@@ -35,6 +35,8 @@ var (
 	_ DMLNode = &ShowStmt{}
 	_ DMLNode = &LoadDataStmt{}
 	_ DMLNode = &ImportIntoStmt{}
+	_ DMLNode = &ExportTableStmt{}
+	_ DMLNode = &ExportSchemaStmt{}
 	_ DMLNode = &SplitRegionStmt{}
 	_ DMLNode = &NonTransactionalDMLStmt{}
 
@@ -2355,6 +2357,135 @@ func (n *ImportIntoStmt) SecureText() string {
 		}
 		redactedStmt.Options = append(redactedStmt.Options, outOpt)
 	}
+	var sb strings.Builder
+	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+	return sb.String()
+}
+
+// ExportTableStmt represents an EXPORT TABLE statement node.
+// It exports a single table to an external storage as a DXF task.
+type ExportTableStmt struct {
+	dmlNode
+
+	Table   *TableName
+	Path    string
+	Format  *string
+	Options []*LoadDataOpt
+}
+
+var _ SensitiveStmtNode = &ExportTableStmt{}
+
+// Restore implements Node interface.
+func (n *ExportTableStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("EXPORT TABLE ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore ExportTableStmt.Table")
+	}
+	ctx.WriteKeyWord(" TO ")
+	ctx.WriteString(n.Path)
+	if n.Format != nil {
+		ctx.WriteKeyWord(" FORMAT ")
+		ctx.WriteString(*n.Format)
+	}
+	if len(n.Options) > 0 {
+		ctx.WriteKeyWord(" WITH")
+		for i, option := range n.Options {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WritePlain(" ")
+			if err := option.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore ExportTableStmt.Options")
+			}
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *ExportTableStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ExportTableStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+	return v.Leave(n)
+}
+
+// SecureText implements SensitiveStmtNode interface.
+func (n *ExportTableStmt) SecureText() string {
+	redactedStmt := *n
+	redactedStmt.Path = RedactURL(n.Path)
+	var sb strings.Builder
+	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+	return sb.String()
+}
+
+// ExportSchemaStmt represents an EXPORT SCHEMA(S) statement node. It exports
+// every base table across one or more schemas to an external storage as a
+// single DXF task.
+type ExportSchemaStmt struct {
+	dmlNode
+
+	Schemas []string
+	Path    string
+	Format  *string
+	Options []*LoadDataOpt
+}
+
+var _ SensitiveStmtNode = &ExportSchemaStmt{}
+
+// Restore implements Node interface.
+func (n *ExportSchemaStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("EXPORT SCHEMA ")
+	for i, schema := range n.Schemas {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		ctx.WriteName(schema)
+	}
+	ctx.WriteKeyWord(" TO ")
+	ctx.WriteString(n.Path)
+	if n.Format != nil {
+		ctx.WriteKeyWord(" FORMAT ")
+		ctx.WriteString(*n.Format)
+	}
+	if len(n.Options) > 0 {
+		ctx.WriteKeyWord(" WITH")
+		for i, option := range n.Options {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WritePlain(" ")
+			if err := option.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore ExportSchemaStmt.Options")
+			}
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *ExportSchemaStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ExportSchemaStmt)
+	return v.Leave(n)
+}
+
+// SecureText implements SensitiveStmtNode interface.
+func (n *ExportSchemaStmt) SecureText() string {
+	redactedStmt := *n
+	redactedStmt.Path = RedactURL(n.Path)
 	var sb strings.Builder
 	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 	return sb.String()

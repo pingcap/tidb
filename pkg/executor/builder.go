@@ -234,6 +234,10 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildInsert(v)
 	case *plannercore.ImportInto:
 		return b.buildImportInto(v)
+	case *plannercore.ExportTable:
+		return b.buildExportTable(v)
+	case *plannercore.ExportSchema:
+		return b.buildExportSchema(v)
 	case *plannercore.LoadData:
 		return b.buildLoadData(v)
 	case *plannercore.LoadStats:
@@ -1113,6 +1117,47 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 	}
 
 	return executor
+}
+
+func (b *executorBuilder) buildExportTable(v *plannercore.ExportTable) exec.Executor {
+	latestIS := b.sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
+	tbl, ok := latestIS.TableByID(context.Background(), v.Table.TableInfo.ID)
+	if !ok {
+		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
+		return nil
+	}
+	if !tbl.Meta().IsBaseTable() {
+		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "EXPORT")
+		return nil
+	}
+	base := exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID())
+	return newExportTableExec(base, b.sctx, v, tbl)
+}
+
+func (b *executorBuilder) buildExportSchema(v *plannercore.ExportSchema) exec.Executor {
+	latestIS := b.sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
+	dbs := make([]exportSchemaDB, 0, len(v.Schemas))
+	for _, schemaName := range v.Schemas {
+		dbInfo, ok := latestIS.SchemaByName(ast.NewCIStr(schemaName))
+		if !ok {
+			b.err = infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+			return nil
+		}
+		tblInfos, err := latestIS.SchemaTableInfos(context.Background(), dbInfo.Name)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		baseTables := make([]*model.TableInfo, 0, len(tblInfos))
+		for _, tblInfo := range tblInfos {
+			if tblInfo.IsBaseTable() {
+				baseTables = append(baseTables, tblInfo)
+			}
+		}
+		dbs = append(dbs, exportSchemaDB{dbInfo: dbInfo, tables: baseTables})
+	}
+	base := exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID())
+	return newExportSchemaExec(base, b.sctx, v, dbs)
 }
 
 func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) exec.Executor {

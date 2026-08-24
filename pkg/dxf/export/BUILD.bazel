@@ -10,6 +10,7 @@ go_library(
         "scheduler.go",
         "schema_executor.go",
         "split.go",
+        "submit.go",
         "task_executor.go",
         "writer.go",
     ],
