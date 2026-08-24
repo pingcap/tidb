@@ -39,9 +39,16 @@ const (
 	// Each node should handle at least 2 subtasks, each 100GiB data.
 	// For every additional 200 GiB of data, add 1 node.
 	baseDataSize = 200 * units.GiB
-	// Export is faster per node than add-index/import-into, so a node clears more
-	// data; use a larger per-node budget.
-	baseDataSizeForExport = 400 * units.GiB
+	// exportTargetSeconds is the wall-clock budget an export task should finish
+	// within, independent of table count.
+	exportTargetSeconds = 30 * 60
+	// exportPodBandwidth is the measured per-pod S3 upload bandwidth cap (a few
+	// concurrent chunk-sized streams already saturate it, more concurrency past
+	// that doesn't add throughput).
+	exportPodBandwidth = 400 * units.MiB
+	// baseDataSizeForExport is how much data one reference (baseCores-core) node
+	// clears within exportTargetSeconds at exportPodBandwidth.
+	baseDataSizeForExport = float64(exportPodBandwidth) * exportTargetSeconds
 	// To improve performance for small tasks, we assume that on a 8c machine,
 	// importing 200 GiB of data requires full utilization of a single node’s resources.
 	// Therefore, for every additional 25 GiB, add 1 slot as an estimate for task's
@@ -101,10 +108,11 @@ func (rc *ResourceCalc) CalcMaxNodeCountForAddIndex() int {
 	return rc.calcMaxNodeCountBySize(size, limit, baseDataSize)
 }
 
-// CalcMaxNodeCountForExport calculates the maximum number of nodes to execute export.
-//
-// TODO: also size by file/table count, since S3 PUT rate can dominate the
-// wall-clock for many small tables.
+// CalcMaxNodeCountForExport calculates the maximum number of nodes needed to
+// finish an export within exportTargetSeconds. Table count doesn't factor in
+// here: per-node chunk concurrency (see packSubtasks/RunSubtask) already
+// keeps many-small-table PUT throughput well under the deadline on a single
+// node, so scaling node count on it would just be wasted capacity.
 func (rc *ResourceCalc) CalcMaxNodeCountForExport() int {
 	size := rc.getAmplifiedDataSize()
 	limit := rc.factors.AmplifyFactor * maxNodeCountLimitForExport
