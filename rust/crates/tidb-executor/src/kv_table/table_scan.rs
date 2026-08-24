@@ -1188,17 +1188,16 @@ impl KvTable {
         statement: &PushdownStatementContext,
         desc: bool,
     ) -> Result<Option<RemoteIndexHandleCursor>, KvTableError> {
-        // ROUND-4 GATE NOTE: the streamed index-entry path answers real-TiKV
-        // requests with reordered/truncated columns (a covering prefix read of
-        // `bmsql_oorder_idx1` returned one row instead of ~180, columns
-        // permuted), and the sibling partial-aggregate builder omits
-        // `primary_column_ids`, which TiKV rejects outright. Both symptoms
-        // reproduce from a clean checkout, so the streaming landing stays
-        // disabled until its owner repairs the wire contract. Refusing here is
-        // the documented fallback: `Ok(None)` lands every caller on the exact
-        // local byte-cursor walk this function replaced.
-        let _ = (index_id, ranges, scan_keep, predicates, topn, zone, statement, desc);
-        return Ok(None);
+        // The wire contract this request once broke -- reordered and
+        // truncated columns on real TiKV -- came from the executor schema
+        // DEDUPING clustered-handle columns the index already carried:
+        // TiKV reads [index datums..., handle datums...] by subtracting
+        // primary_column_ids.len() from the column count, so the shrunken
+        // layout decoded bytes where ints were expected. The schema below
+        // appends every primary-key column (duplicates included) per Go's
+        // `is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...))`,
+        // and a covering prefix read of bmsql_oorder_idx1 plus the ecasdb
+        // max(dtlno) stream answer correctly against the real backend again.
         if self.has_dirty_content() || self.partition.is_some() || ranges.is_empty() {
             return Ok(None);
         }
