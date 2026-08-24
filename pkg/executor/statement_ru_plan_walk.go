@@ -55,6 +55,11 @@ type statementRUOperatorResult struct {
 	outputRows int64
 }
 
+type statementRUOperatorRU struct {
+	selfRU float64
+	cumRU  float64
+}
+
 // statementRUOwner owns the first-record-wins outcome and the first terminal
 // finalization for one ExecStmt. Its calculation setup is released when the
 // shared finishOnce is consumed.
@@ -206,6 +211,32 @@ func calculateStatementRU(
 	setup statementRUCalculationSetup,
 	rootEOF bool,
 ) (statementRUFinalizedSnapshot, bool) {
+	return calculateStatementRUInternal(flat, runtimeStatsColl, metrics, setup, rootEOF, nil)
+}
+
+func calculateStatementRUWithOperators(
+	flat *plannercore.FlatPhysicalPlan,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	metrics *execdetails.RUV2Metrics,
+	setup statementRUCalculationSetup,
+	rootEOF bool,
+) (statementRUFinalizedSnapshot, map[int]statementRUOperatorRU, bool) {
+	operatorRUs := make(map[int]statementRUOperatorRU)
+	finalized, ok := calculateStatementRUInternal(flat, runtimeStatsColl, metrics, setup, rootEOF, operatorRUs)
+	if !ok {
+		return statementRUFinalizedSnapshot{}, nil, false
+	}
+	return finalized, operatorRUs, true
+}
+
+func calculateStatementRUInternal(
+	flat *plannercore.FlatPhysicalPlan,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	metrics *execdetails.RUV2Metrics,
+	setup statementRUCalculationSetup,
+	rootEOF bool,
+	operatorRUs map[int]statementRUOperatorRU,
+) (statementRUFinalizedSnapshot, bool) {
 	if !rootEOF || flat == nil || len(flat.Main) == 0 || len(flat.CTEs) != 0 || len(flat.ScalarSubQueries) != 0 {
 		return statementRUFinalizedSnapshot{}, false
 	}
@@ -227,11 +258,16 @@ func calculateStatementRU(
 		0,
 		runtimeStatsColl,
 		&calculator,
+		operatorRUs,
 	)
 	if planResult.state != statementRUOperatorComplete {
 		return statementRUFinalizedSnapshot{}, false
 	}
-	return calculator.finalize()
+	finalized, ok := calculator.finalize()
+	if !ok {
+		return statementRUFinalizedSnapshot{}, false
+	}
+	return finalized, true
 }
 
 // calculateStatementRUPlan evaluates one subtree from a canonical
@@ -245,13 +281,19 @@ func calculateStatementRUPlan(
 	operatorIndex int,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	calculator *statementRUCalculator,
+	operatorRUs ...map[int]statementRUOperatorRU,
 ) statementRUOperatorResult {
+	var ruCache map[int]statementRUOperatorRU
+	if len(operatorRUs) > 0 {
+		ruCache = operatorRUs[0]
+	}
 	return calculateStatementRUPlanChildFirst(
 		tree,
 		operatorIndex,
 		runtimeStatsColl,
 		calculator,
 		len(tree),
+		ruCache,
 	)
 }
 
@@ -261,6 +303,7 @@ func calculateStatementRUPlanChildFirst(
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	calculator *statementRUCalculator,
 	remainingDepth int,
+	operatorRUs map[int]statementRUOperatorRU,
 ) statementRUOperatorResult {
 	if operatorIndex < 0 || operatorIndex >= len(tree) || calculator == nil || remainingDepth <= 0 {
 		return statementRUOperatorResult{state: statementRUOperatorInvalid}
@@ -270,6 +313,7 @@ func calculateStatementRUPlanChildFirst(
 		return statementRUOperatorResult{state: statementRUOperatorInvalid}
 	}
 
+	beforeSubtree := calculator.units
 	children := make([]statementRUOperatorResult, len(operator.ChildrenIdx))
 	childState := statementRUOperatorComplete
 	for childOrdinal, childIndex := range operator.ChildrenIdx {
@@ -279,6 +323,7 @@ func calculateStatementRUPlanChildFirst(
 			runtimeStatsColl,
 			calculator,
 			remainingDepth-1,
+			operatorRUs,
 		)
 		childState = mergeStatementRUOperatorState(childState, children[childOrdinal].state)
 	}
@@ -297,6 +342,8 @@ func calculateStatementRUPlanChildFirst(
 	if outputRows < 0 {
 		return statementRUOperatorResult{state: statementRUOperatorInvalid}
 	}
+
+	beforeOperator := calculator.units
 
 	switch origin := operator.Origin.(type) {
 	case *physicalop.PhysicalTableReader:
@@ -415,6 +462,19 @@ func calculateStatementRUPlanChildFirst(
 		return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 	}
 
+	if operatorRUs != nil {
+		selfUnits := subtractStatementRURawUnits(calculator.units, beforeOperator)
+		cumUnits := subtractStatementRURawUnits(calculator.units, beforeSubtree)
+		if operatorIndex == 0 {
+			selfUnits = addStatementRURawUnits(selfUnits, beforeSubtree)
+			cumUnits = addStatementRURawUnits(cumUnits, beforeSubtree)
+		}
+		operatorRUs[operator.Origin.ID()] = statementRUOperatorRU{
+			selfRU: calculateStatementRUResultOnly(selfUnits).TotalRU,
+			cumRU:  calculateStatementRUResultOnly(cumUnits).TotalRU,
+		}
+	}
+
 	return statementRUOperatorResult{state: statementRUOperatorComplete, outputRows: outputRows}
 }
 
@@ -516,4 +576,22 @@ func addStatementRUScanBytes(calculator *statementRUCalculator, scanBytes float6
 	}
 	calculator.units.ScanBytes += scanBytes
 	return !math.IsInf(calculator.units.ScanBytes, 0)
+}
+
+func addStatementRURawUnits(left, right statementRURawUnits) statementRURawUnits {
+	return statementRURawUnits{
+		CPUWork:              left.CPUWork + right.CPUWork,
+		ScanBytes:            left.ScanBytes + right.ScanBytes,
+		NetBytes:             left.NetBytes + right.NetBytes,
+		FrontendCompileBytes: left.FrontendCompileBytes + right.FrontendCompileBytes,
+	}
+}
+
+func subtractStatementRURawUnits(left, right statementRURawUnits) statementRURawUnits {
+	return statementRURawUnits{
+		CPUWork:              left.CPUWork - right.CPUWork,
+		ScanBytes:            left.ScanBytes - right.ScanBytes,
+		NetBytes:             left.NetBytes - right.NetBytes,
+		FrontendCompileBytes: left.FrontendCompileBytes - right.FrontendCompileBytes,
+	}
 }
