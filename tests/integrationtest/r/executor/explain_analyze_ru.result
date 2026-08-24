@@ -7,10 +7,10 @@ insert into t values (1), (10);
 insert into t values (1), (10);
 explain analyze format='ru' select * from t;
 id	task	actRows	selfRU	cumRU	cumRU%	detail
-TableReader_5	root	10	556.00	556.00	100.00%	
+TableReader_5	root	10	43.00	43.00	100.00%	
 └─TableFullScan_4	cop[tikv]	10	0.00	0.00	0.00%	
 explain analyze format='ru' select * from t where a < 10;
 id	task	actRows	selfRU	cumRU	cumRU%	detail
-TableReader_7	root	5	537.00	547.00	100.00%	
-└─Selection_6	cop[tikv]	5	10.00	10.00	1.83%	
+TableReader_7	root	5	56.00	66.00	100.00%	
+└─Selection_6	cop[tikv]	5	10.00	10.00	15.15%	
   └─TableFullScan_5	cop[tikv]	10	0.00	0.00	0.00%	
