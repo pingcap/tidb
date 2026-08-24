@@ -91,10 +91,11 @@ pub enum LiteralValue {
 /// Keeping the generated keyword table behind this helper prevents parser
 /// crates from maintaining a second list.
 pub fn is_builtin_function_keyword(word: &str) -> bool {
-    let upper = word.to_ascii_uppercase();
-    keywords::BUILTIN_FUNC_KEYWORDS
-        .binary_search(&upper.as_str())
-        .is_ok()
+    let mut upper_buffer = [0u8; KEYWORD_UPPER_MAX];
+    // A word longer than any builtin keyword name is a cheap negative, same
+    // as the search miss the old table walk produced.
+    uppercased_into(word, &mut upper_buffer)
+        .is_some_and(|upper| keyword_sets().builtin.contains(upper))
 }
 
 use reader::Reader;
@@ -233,18 +234,23 @@ impl<'a> Lexer<'a> {
         // `AS`/`MEMBER` followed by `OF` merges into a single keyword token
         // whose offset is the `OF` position (matching Scanner.Lex).
         if kind == TokenKind::Keyword {
-            let upper = ascii_upper(&text);
-            if upper == "AS" || upper == "MEMBER" {
-                let saved = (self.r.offset(), self.identifier_dot, self.in_bang_comment);
-                let (k2, s2, e2, t2) = self.scan_token();
-                if k2 == TokenKind::Keyword && ascii_upper(&t2) == "OF" {
-                    text = format!("{text} {t2}");
-                    start = s2;
-                    end = e2;
-                } else {
-                    self.r.set_offset(saved.0);
-                    self.identifier_dot = saved.1;
-                    self.in_bang_comment = saved.2;
+            let mut merge_buffer = [0u8; KEYWORD_UPPER_MAX];
+            if let Some(upper) = uppercased_into(&text, &mut merge_buffer) {
+                if upper == "AS" || upper == "MEMBER" {
+                    let saved = (self.r.offset(), self.identifier_dot, self.in_bang_comment);
+                    let (k2, s2, e2, t2) = self.scan_token();
+                    let mut of_buffer = [0u8; KEYWORD_UPPER_MAX];
+                    if k2 == TokenKind::Keyword
+                        && uppercased_into(&t2, &mut of_buffer) == Some("OF")
+                    {
+                        text = format!("{text} {t2}");
+                        start = s2;
+                        end = e2;
+                    } else {
+                        self.r.set_offset(saved.0);
+                        self.identifier_dot = saved.1;
+                        self.in_bang_comment = saved.2;
+                    }
                 }
             }
         }
@@ -252,7 +258,8 @@ impl<'a> Lexer<'a> {
         // Shift the keyword history (mirrors Scanner.Lex's lastKeyword shift),
         // recording only the keywords that gate optimizer-hint recognition.
         let interned = if kind == TokenKind::Keyword {
-            intern_hint_keyword(&ascii_upper(&text))
+            let mut hint_buffer = [0u8; KEYWORD_UPPER_MAX];
+            uppercased_into(&text, &mut hint_buffer).and_then(intern_hint_keyword)
         } else {
             None
         };
@@ -401,7 +408,13 @@ impl<'a> Lexer<'a> {
             break;
         }
 
-        let upper = ascii_upper(text);
+        // Uppercase into a stack buffer: keywords are short, so no token ever
+        // allocates here, and anything past the bound is simply not a keyword
+        // -- the same negative the old binary search produced.
+        let mut upper_buffer = [0u8; KEYWORD_UPPER_MAX];
+        let Some(upper) = uppercased_into(text, &mut upper_buffer) else {
+            return None;
+        };
 
         // Builtin function keywords normally require an adjacent `(`. Under
         // IGNORE_SPACE, Go scans past whitespace for this one decision without
@@ -415,13 +428,19 @@ impl<'a> Lexer<'a> {
         } else {
             self.r.peek() == b'('
         };
-        if check_bt_func && keyword_in(keywords::BUILTIN_FUNC_KEYWORDS, &upper) {
+        // Keyword recognition is a membership test against three fixed name
+        // sets. Go answers it with one map probe (`tokenMap`); hashing the
+        // uppercased token once beats walking a 805-entry binary search with
+        // per-probe string compares, and the stack buffer keeps every token
+        // allocation off the heap.
+        let sets = keyword_sets();
+        if check_bt_func && sets.builtin.contains(upper) {
             return Some(());
         }
-        if keyword_in(keywords::GENERAL_KEYWORDS, &upper) {
+        if sets.general.contains(upper) {
             return Some(());
         }
-        if self.support_window_func && keyword_in(keywords::WINDOW_FUNC_KEYWORDS, &upper) {
+        if self.support_window_func && sets.window.contains(upper) {
             return Some(());
         }
         None
@@ -1018,15 +1037,44 @@ fn supported_feature(id: &str) -> bool {
     can_parse_feature(&[id])
 }
 
-fn ascii_upper(s: &str) -> String {
-    s.as_bytes()
-        .iter()
-        .map(|&c| if c.is_ascii_lowercase() { c - 32 } else { c } as char)
-        .collect()
+/// Longest keyword in the generated tables is 30 bytes, so any token past
+/// this bound cannot be one; `uppercased_into` turns that into a cheap `None`.
+const KEYWORD_UPPER_MAX: usize = 40;
+
+/// Uppercases ASCII letters into `buffer` without touching the heap. Non-ASCII
+/// bytes pass through untouched (which keeps UTF-8 valid), and a token longer
+/// than the buffer yields `None` -- callers only use the result for keyword
+/// membership, where "too long" and "not found" are the same answer.
+fn uppercased_into<'b>(text: &str, buffer: &'b mut [u8]) -> Option<&'b str> {
+    let bytes = text.as_bytes();
+    if bytes.len() > buffer.len() {
+        return None;
+    }
+    for (slot, &byte) in buffer.iter_mut().zip(bytes) {
+        *slot = if byte.is_ascii_lowercase() { byte - 32 } else { byte };
+    }
+    // The transform only rewrites ASCII letters in place, so validity of the
+    // input UTF-8 carries over; the check keeps this safe by construction.
+    std::str::from_utf8(&buffer[..bytes.len()]).ok()
 }
 
-fn keyword_in(table: &[&str], upper: &str) -> bool {
-    table.binary_search(&upper).is_ok()
+struct KeywordSets {
+    general: std::collections::HashSet<&'static str>,
+    builtin: std::collections::HashSet<&'static str>,
+    window: std::collections::HashSet<&'static str>,
+}
+
+/// The three generated keyword tables as hashed name sets. Go resolves a word
+/// with one `tokenMap` probe (`pkg/parser/misc.go`); hashing once here replaces
+/// the per-token binary searches whose probe-by-probe string compares showed up
+/// as the lexer's dominant cost under load.
+fn keyword_sets() -> &'static KeywordSets {
+    static SETS: std::sync::OnceLock<KeywordSets> = std::sync::OnceLock::new();
+    SETS.get_or_init(|| KeywordSets {
+        general: keywords::GENERAL_KEYWORDS.iter().copied().collect(),
+        builtin: keywords::BUILTIN_FUNC_KEYWORDS.iter().copied().collect(),
+        window: keywords::WINDOW_FUNC_KEYWORDS.iter().copied().collect(),
+    })
 }
 
 /// Interns only the keywords that gate optimizer-hint recognition, so the

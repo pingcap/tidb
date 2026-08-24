@@ -171,13 +171,34 @@ pub(crate) fn lowered_if_needed(name: &str) -> std::borrow::Cow<'_, str> {
 
 /// Go `GetSysVar`: looks an entry up by name, case-insensitively (Go
 /// lowercases first).
+///
+/// Go resolves the name through the `sysVars` map, one hash probe. The name-
+/// ordered [`SYS_VARS`] slice stays as the const-time assembly and the test
+/// oracle, but reads go through a lazily-built name -> index table: statement
+/// execution looks variables up by the dozens, and a binary search over ~950
+/// entries pays a string compare per level every single time.
 #[must_use]
 pub fn get_sys_var(name: &str) -> Option<&'static SysVarDef> {
     let lowered = lowered_if_needed(name);
-    SYS_VARS
-        .binary_search_by(|candidate| candidate.name.cmp(lowered.as_ref()))
-        .ok()
+    sys_var_index()
+        .get(lowered.as_ref())
+        .copied()
         .map(|index| &SYS_VARS[index])
+}
+
+/// The registry's names are unique (the sortedness test rejects duplicates),
+/// so a hash table keyed by the entry's own name answers exactly what the old
+/// binary search answered -- just without the per-probe comparisons.
+fn sys_var_index() -> &'static std::collections::HashMap<&'static str, usize> {
+    static INDEX: std::sync::OnceLock<std::collections::HashMap<&'static str, usize>> =
+        std::sync::OnceLock::new();
+    INDEX.get_or_init(|| {
+        SYS_VARS
+            .iter()
+            .enumerate()
+            .map(|(index, definition)| (definition.name, index))
+            .collect()
+    })
 }
 
 /// The process-effective default for one registry entry.
