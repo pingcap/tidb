@@ -87,6 +87,42 @@ func TestCalcMaxNodeCountByDataSize(t *testing.T) {
 	}
 }
 
+func TestCalcMaxNodeCountForExport(t *testing.T) {
+	tests := []struct {
+		dataSize      int64
+		cores         int
+		amplifyFactor float64
+		expected      int
+	}{
+		{0, 8, 1, 1},
+		{10, 0, 1, 0},
+		// exactly baseDataSizeForExport (400MiB/s * 30min) on an 8c node.
+		{int64(baseDataSizeForExport), 8, 1, 1},
+		// the scenario the user is about to benchmark: a single ~5TiB table.
+		{5 * units.TiB, 8, 1, 7},
+		{5 * units.TiB, 4, 1, 15},
+		// 100k tiny tables summing to a trivial total size: table count alone
+		// must not blow up node count (see CalcMaxNodeCountForExport's doc
+		// comment — per-node chunk concurrency handles table count instead).
+		{100 * units.KiB, 8, 1, 1},
+		{100 * units.GiB, 8, 1, 1},
+		{800 * units.GiB, 8, 1, 1},
+		{2000 * units.GiB, 8, 1, 3},
+		// capped at maxNodeCountLimitForExport regardless of how large.
+		{100 * units.TiB, 8, 1, 30},
+		// AmplifyFactor scales both the size and the node-count cap.
+		{5 * units.TiB, 8, 2, 15},
+	}
+	for i, tt := range tests {
+		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
+			calc := NewRCCalc(tt.dataSize, tt.cores, 0, &schstatus.TuneFactors{AmplifyFactor: tt.amplifyFactor})
+			got := calc.CalcMaxNodeCountForExport()
+			require.Equal(t, tt.expected, got,
+				fmt.Sprintf("dataSize:%d cores:%d amplify:%v", tt.dataSize, tt.cores, tt.amplifyFactor))
+		})
+	}
+}
+
 func TestCalcRequiredSlotsByDataSize(t *testing.T) {
 	tests := []struct {
 		dataSize int64

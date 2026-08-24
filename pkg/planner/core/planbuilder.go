@@ -4949,6 +4949,15 @@ func (b *PlanBuilder) buildExportTable(ctx context.Context, st *ast.ExportTableS
 }
 
 func (b *PlanBuilder) buildExportSchema(_ context.Context, st *ast.ExportSchemaStmt) (base.Plan, error) {
+	seen := make(map[string]struct{}, len(st.Schemas))
+	for _, schema := range st.Schemas {
+		lower := strings.ToLower(schema)
+		if _, ok := seen[lower]; ok {
+			return nil, errors.Errorf("EXPORT SCHEMA lists database %s more than once", schema)
+		}
+		seen[lower] = struct{}{}
+	}
+
 	u, err := url.Parse(st.Path)
 	if err != nil {
 		return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs("EXPORT SCHEMA destination", err.Error())
