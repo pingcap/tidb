@@ -260,6 +260,63 @@ pub fn cluster_session_catalog(
     stats: &StatsSnapshot,
     auto_ids: &dyn TableAutoIds,
 ) -> ClusterSessionCatalog {
+    let mut templates = StatsTemplates::default();
+    cluster_session_catalog_with_templates(loaded, storage, stats, auto_ids, &mut templates)
+}
+
+/// Per-snapshot planner statistics shared by every session opened against the
+/// same [`StatsSnapshot`] generation.
+///
+/// Go builds one `statistics.Table` per table inside the domain's shared
+/// `StatsHandle`, and every session plans against that ONE copy. Rebuilding
+/// `planner_statistics` per session instead cloned every histogram, TopN and
+/// CMSketch for all ~700 restored tables into EACH connection -- measured at
+/// ~50MB per session just to open, which is what ran the node into the
+/// container's memory ceiling under a connection flood. The built value is a
+/// pure function of the (catalog, snapshot) pair this factory owns, so one
+/// `Arc` per table is exactly as correct and a few KB instead of tens of MB.
+#[derive(Default)]
+pub struct StatsTemplates {
+    /// `Arc::as_ptr` of the snapshot these templates were built from. A new
+    /// publish by the reload thread moves the pointer; the whole cache then
+    /// drops, so a DDL/stats reload never serves stale histograms.
+    snapshot_generation: usize,
+    per_table: std::collections::HashMap<i64, Arc<TableStatistics>>,
+}
+
+impl StatsTemplates {
+    /// Drops the cache when `snapshot` is not the generation it was built
+    /// from. Call once per catalog build, before any lookup.
+    pub fn reuse(&mut self, snapshot: &Arc<StatsSnapshot>) {
+        let generation = Arc::as_ptr(snapshot) as usize;
+        if self.snapshot_generation != generation {
+            self.snapshot_generation = generation;
+            self.per_table.clear();
+        }
+    }
+
+    /// The shared statistics for one table, building them on first use within
+    /// this snapshot generation.
+    fn get_or_build(
+        &mut self,
+        table_id: i64,
+        build: impl FnOnce() -> TableStatistics,
+    ) -> Arc<TableStatistics> {
+        self.per_table
+            .entry(table_id)
+            .or_insert_with(|| Arc::new(build()))
+            .clone()
+    }
+}
+
+#[must_use]
+pub fn cluster_session_catalog_with_templates(
+    loaded: &ClusterCatalog,
+    storage: &ClusterTableStorage,
+    stats: &StatsSnapshot,
+    auto_ids: &dyn TableAutoIds,
+    templates: &mut StatsTemplates,
+) -> ClusterSessionCatalog {
     let mut catalog = Catalog::default();
     let mut skipped = Vec::new();
     for database in &loaded.databases {
@@ -303,10 +360,10 @@ pub fn cluster_session_catalog(
                     if let Some(loaded_stats) =
                         stats.get(&table.id).and_then(TableStatsState::loaded)
                     {
-                        catalog.set_table_statistics(
-                            table.id,
-                            Arc::new(planner_statistics(loaded_stats, table)),
-                        );
+                        let statistics = templates.get_or_build(table.id, || {
+                            planner_statistics(loaded_stats, table)
+                        });
+                        catalog.set_table_statistics(table.id, statistics);
                     }
                     catalog
                         .register_kv_in(&schema, table.name.original(), kv_table)

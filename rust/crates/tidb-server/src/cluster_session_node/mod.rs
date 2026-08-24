@@ -192,7 +192,10 @@ use tidb_exec::cluster_table_storage::LockKeysOutcome;
 
 use crate::cluster_account_seam::ClusterAccountWriter;
 use crate::cluster_analyze_seam::ClusterAnalyze;
-use crate::cluster_session::{cluster_session_catalog, SkippedTable, TableAutoIds};
+use crate::cluster_session::{
+    cluster_session_catalog, cluster_session_catalog_with_templates, StatsTemplates,
+    SkippedTable, TableAutoIds,
+};
 use crate::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::pipeline_session::MaterializedResultSetSource;
 use crate::sql_node::{
@@ -387,6 +390,10 @@ pub struct ClusterSessionFactory {
     /// a Go DDL owner this node has the new schema. See
     /// [`schema_sync::SchemaPinRegistry`].
     schema_pins: Arc<schema_sync::SchemaPinRegistry>,
+    /// Planner statistics built once per stats snapshot and handed to every
+    /// session opened against it, the way Go's domain-level `StatsHandle`
+    /// serves one `statistics.Table` per table to all sessions.
+    session_stats_cache: Arc<Mutex<StatsTemplates>>,
 }
 
 impl ClusterSessionFactory {
@@ -431,6 +438,7 @@ impl ClusterSessionFactory {
             spill_storage: None,
             mem_arbitrator: None,
             schema_pins: Arc::new(schema_sync::SchemaPinRegistry::default()),
+            session_stats_cache: Arc::new(Mutex::new(StatsTemplates::default())),
         }
     }
 
@@ -527,7 +535,20 @@ impl QuerySessionFactory for ClusterSessionFactory {
         }
         let loaded = self.catalog.load();
         let statistics = self.stats.load();
-        let built = cluster_session_catalog(&loaded, &storage, &statistics, self.auto_ids.as_ref());
+        // One planner-statistics set per stats snapshot, shared by every
+        // session on it. Building histograms per connection cost ~50MB each.
+        let mut templates = self
+            .session_stats_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        templates.reuse(&statistics);
+        let built = cluster_session_catalog_with_templates(
+            &loaded,
+            &storage,
+            &statistics,
+            self.auto_ids.as_ref(),
+            &mut templates,
+        );
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
         session.set_advisory_lock_service(Arc::new(transactions::ClusterAdvisoryLockService::new(
             Arc::clone(&self.transactions),
