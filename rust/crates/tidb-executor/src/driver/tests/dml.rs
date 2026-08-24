@@ -28,7 +28,12 @@ fn retryable_storage_errors_keep_their_transaction_identity() {
         "row read failed",
         crate::kv_table::KvTableError::Storage("Backend(\"disk error\")".to_owned()),
     );
-    assert!(matches!(ordinary, DriverError::Parse(_)));
+    // A storage failure is a runtime 1105, never a 1064: the client's SQL
+    // text was fine.
+    assert!(matches!(
+        ordinary,
+        DriverError::Exec(crate::ExecError::Internal(_))
+    ));
 }
 
 /// go-tpc's delivery transaction deletes several `new_order` rows with one

@@ -1207,7 +1207,10 @@ pub(crate) fn kv_read_error(operation: &str, error: crate::kv_table::KvTableErro
         crate::kv_table::KvTableError::Storage(message) if message.starts_with("Retryable(") => {
             DriverError::Txn(crate::TxnErrorKind::RegionUnavailable)
         }
-        other => DriverError::Parse(format!("{operation}: {other:?}")),
+        // A row that could not be READ is a runtime storage/decode failure;
+        // Go surfaces it through its generic 1105 path -- never a 1064, which
+        // would tell the client its SQL TEXT was at fault.
+        other => DriverError::Exec(ExecError::Internal(format!("{operation}: {other:?}").into())),
     }
 }
 

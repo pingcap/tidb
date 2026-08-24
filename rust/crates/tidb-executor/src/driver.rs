@@ -740,7 +740,7 @@ pub fn run_fast_point_get(
     };
     let row = table
         .get_row_by_handle(&handle, &ctx.session_zone())
-        .map_err(|error| DriverError::Parse(format!("row decode failed: {error:?}")))?;
+        .map_err(|error| DriverError::Exec(ExecError::Internal(format!("row decode failed: {error:?}").into())))?;
     let rows = row
         .map(|row| {
             output_offsets
@@ -837,7 +837,7 @@ pub fn run_fast_prepared_point_get(
     }
     let row = table
         .get_row_by_handle(&handle, &ctx.session_zone())
-        .map_err(|error| DriverError::Parse(format!("row decode failed: {error:?}")))?;
+        .map_err(|error| DriverError::Exec(ExecError::Internal(format!("row decode failed: {error:?}").into())))?;
     let rows = row
         .map(|row| {
             output_offsets
@@ -938,10 +938,10 @@ pub fn run_fast_prepared_point_get_with_decode_context(
         table.common_handle_offsets(),
         &output_offsets,
     )
-    .map_err(|error| DriverError::Parse(format!("point row decoder failed: {error:?}")))?;
+    .map_err(|error| DriverError::Exec(ExecError::Internal(format!("point row decoder failed: {error:?}").into())))?;
     let row = table
         .get_prepared_point_row(&handle, &decoder, context)
-        .map_err(|error| DriverError::Parse(format!("row decode failed: {error:?}")))?;
+        .map_err(|error| DriverError::Exec(ExecError::Internal(format!("row decode failed: {error:?}").into())))?;
     let rows = row.into_iter().collect();
     Ok(Some((output_columns, rows)))
 }
@@ -1095,7 +1095,7 @@ pub fn run_fast_single_row_scan(
     // partitioned, dirty, or non-clustered table.
     let rows = table
         .first_row_in_handle_ranges(None, &ranges, &ctx.session_zone())
-        .map_err(|error| DriverError::Parse(format!("row decode failed: {error:?}")))?
+        .map_err(|error| DriverError::Exec(ExecError::Internal(format!("row decode failed: {error:?}").into())))?
         .map(|(_, row)| {
             output_offsets
                 .into_iter()
