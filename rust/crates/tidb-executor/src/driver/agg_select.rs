@@ -4201,6 +4201,33 @@ fn build_aggregation(
             if matches!(stream_plan, GlobalStreamAggPlan::Count) {
                 agg_funcs[0].kind = AggKind::FinalCount;
             }
+        } else if matches!(stream_plan, GlobalStreamAggPlan::DecimalSum) {
+            // Go's InjectProjBelowAgg extracts a SCALAR-EXPRESSION argument
+            // into a Projection below the aggregate; SUM then folds one
+            // DECIMAL column. A bare-column argument needs no extraction.
+            let needs_projection =
+                !matches!(agg_funcs[0].arg.as_ref(), Some(Expression::Column(_)));
+            if needs_projection {
+                let argument = agg_funcs[0]
+                    .arg
+                    .take()
+                    .expect("decimal SUM eligibility requires one argument");
+                let mut projected_column =
+                    Column::new(1, FieldType::new(FieldTypeCode::NewDecimal));
+                projected_column.index = 0;
+                source = Box::new(ProjectionExec::new(
+                    ExecutorMeta::new(
+                        Schema::new(vec![projected_column.clone()]),
+                        1,
+                        INIT_CAP,
+                        MAX_CHUNK_SIZE,
+                    ),
+                    vec![argument],
+                    source,
+                    ctx.clone(),
+                ));
+                agg_funcs[0].arg = Some(Expression::Column(projected_column));
+            }
         } else if let GlobalStreamAggPlan::IntegerSum { precision } = stream_plan {
             let argument = agg_funcs[0]
                 .arg
@@ -4320,8 +4347,17 @@ fn build_aggregation(
                     trace.refuse("global StreamAgg child is not a point get or bare scan");
                 }
                 if !partial_stream_agg {
-                    if let GlobalStreamAggPlan::IntegerSum { precision } = stream_plan {
-                        trace.sum_cast_projection(traced_select, &qualify, precision);
+                    match stream_plan {
+                        GlobalStreamAggPlan::IntegerSum { precision } => {
+                            trace.sum_cast_projection(traced_select, &qualify, precision);
+                        }
+                        GlobalStreamAggPlan::DecimalSum => {
+                            // Go's InjectProjBelowAgg: the scalar argument is
+                            // evaluated by a Projection BELOW the aggregate,
+                            // which reads the projected column.
+                            trace.injected_below_agg_projection(traced_select, &qualify);
+                        }
+                        _ => {}
                     }
                 }
                 trace.stream_agg(
