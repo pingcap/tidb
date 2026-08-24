@@ -3057,6 +3057,12 @@ fn apply_pushed_leaf_filters(
             .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
         tidb_expr::builtin_compare::refine_comparisons(&mut expression, ctx)
             .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
+        // Go's rewriter runs `foldConstant` while building every pushed
+        // condition (`expression.rewrite` -> `foldConstant`), so a
+        // DATE_ADD over constants lands as a literal even when THIS
+        // scope lost its statement context during the join rebuild --
+        // the caller's `ctx` is the same session context Go would use.
+        tidb_expr::fold_constant_in_mode(&mut expression, ctx, tidb_expr::ConstantFoldMode::Normal);
         built.push(expression);
     }
     let (trace_filters, trace_built): (Vec<_>, Vec<_>) = filters
