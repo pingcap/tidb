@@ -172,6 +172,24 @@ func TestCompileBooleanQueryStandardPrefix(t *testing.T) {
 	require.True(t, matchQueryForTest(t, config, "ti*", []ColumnInput{{Text: "TiDB storage"}}))
 	require.False(t, matchQueryForTest(t, config, "tidb-mysql*", []ColumnInput{{Text: "tidb mysql"}}))
 	require.False(t, matchQueryForTest(t, config, "+tidb-mysql*", []ColumnInput{{Text: "tidb mysql"}}))
+
+	// A wildcard applies only to the last word of a split term. Without '+',
+	// the words are alternatives; with '+', all words are required.
+	require.True(t, matchQueryForTest(t, config, "foo.bar*", []ColumnInput{{Text: "foo only"}}))
+	require.True(t, matchQueryForTest(t, config, "foo.bar*", []ColumnInput{{Text: "barista only"}}))
+	require.False(t, matchQueryForTest(t, config, "foo.bar*", []ColumnInput{{Text: "food only"}}))
+	require.True(t, matchQueryForTest(t, config, "+foo.bar*", []ColumnInput{{Text: "foo barista"}}))
+	require.False(t, matchQueryForTest(t, config, "+foo.bar*", []ColumnInput{{Text: "foo only"}}))
+	require.False(t, matchQueryForTest(t, config, "+foo.bar*", []ColumnInput{{Text: "barista only"}}))
+
+	// The wildcard preserves a final word that would otherwise be too short.
+	require.True(t, matchQueryForTest(t, config, "+foo.a*", []ColumnInput{{Text: "foo alpha"}}))
+
+	// A prohibited split term excludes when either its exact word or final
+	// prefix matches.
+	require.False(t, matchQueryForTest(t, config, "baz -foo.bar*", []ColumnInput{{Text: "baz foo"}}))
+	require.False(t, matchQueryForTest(t, config, "baz -foo.bar*", []ColumnInput{{Text: "baz barista"}}))
+	require.True(t, matchQueryForTest(t, config, "baz -foo.bar*", []ColumnInput{{Text: "baz qux"}}))
 }
 
 func TestCompileBooleanQueryRepeatedTokenPhraseMiss(t *testing.T) {
@@ -208,9 +226,16 @@ func TestCompileBooleanQueryNgram(t *testing.T) {
 	require.True(t, matchQueryForTest(t, config, "abc", []ColumnInput{{Text: "abc"}}))
 	require.False(t, matchQueryForTest(t, config, "abc", []ColumnInput{{Text: "acb"}}))
 	require.True(t, matchQueryForTest(t, config, `"abc"`, []ColumnInput{{Text: "abc"}}))
-	require.False(t, matchQueryForTest(t, config, "a*", []ColumnInput{{Text: "abc"}}))
+	require.True(t, matchQueryForTest(t, config, "a*", []ColumnInput{{Text: "abc"}}))
 	require.True(t, matchQueryForTest(t, config, "ab*", []ColumnInput{{Text: "abc"}}))
-	require.False(t, matchQueryForTest(t, config, "abc*", []ColumnInput{{Text: "abc"}}))
+	require.True(t, matchQueryForTest(t, config, "abc*", []ColumnInput{{Text: "abc"}}))
+	require.False(t, matchQueryForTest(t, config, "abc*", []ColumnInput{{Text: "abx"}}))
+}
+
+func TestCompileBooleanQueryNgramUnicodeNumber(t *testing.T) {
+	config := ngramConfigForTest()
+	config.NgramTokenSize = 1
+	require.True(t, matchQueryForTest(t, config, "²", []ColumnInput{{Text: "²"}}))
 }
 
 func TestCompiledQueryEstimationMetadata(t *testing.T) {
@@ -274,9 +299,9 @@ func ngramConfigForTest() AnalyzerConfig {
 }
 
 // TestCompileBooleanQueryMultiTokenTerm covers a boolean term the analyzer
-// splits into several words, such as `foo.bar`. Each word is required: a
-// document matching the original term contains all of them. Previously such a
-// term was dropped, which made the whole query match no document at all.
+// splits into several words, such as `foo.bar`. MySQL combines those words
+// according to the term modifier: '+' intersects them, while an unmodified or
+// prohibited term uses their union.
 func TestCompileBooleanQueryMultiTokenTerm(t *testing.T) {
 	config := AnalyzerConfig{
 		ParserType:           model.FullTextParserTypeStandardV1,
@@ -302,9 +327,17 @@ func TestCompileBooleanQueryMultiTokenTerm(t *testing.T) {
 	require.True(t, matches("+foo.bar +baz", "foo bar baz"))
 	require.False(t, matches("+foo.bar +baz", "foo bar"))
 
-	// Optional position: the term still needs all of its words.
+	// An unmodified split term is a union of its analyzed words.
 	require.True(t, matches("foo.bar qux", "qux alone"))
 	require.True(t, matches("foo.bar qux", "foo bar"))
+	require.True(t, matches("foo.bar", "foo only"))
+	require.True(t, matches("foo.bar", "bar only"))
+
+	// The '-' modifier applies to that union, so either analyzed word excludes
+	// the document.
+	require.False(t, matches("baz -foo.bar", "baz foo"))
+	require.False(t, matches("baz -foo.bar", "baz bar"))
+	require.True(t, matches("baz -foo.bar", "baz qux"))
 
 	// A term the analyzer removes entirely still constrains nothing.
 	stopConfig := config
