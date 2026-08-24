@@ -83,7 +83,7 @@ use crate::real_tikv_catalog::TransactionMetaSnapshot;
 /// enough that even a handful of peers do not queue this deep.
 ///
 /// [`DEFAULT_AUTO_ID_STEP`]: tidb_executor::kv_table::DEFAULT_AUTO_ID_STEP
-const MAX_RESERVE_RETRIES: usize = 100;
+pub(crate) const MAX_RESERVE_RETRIES: usize = 100;
 
 /// Go `autoid.AutoIDLeaderPath`.
 pub const AUTO_ID_LEADER_PATH: &str = "tidb/autoid/leader";
