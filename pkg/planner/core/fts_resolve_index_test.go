@@ -127,45 +127,6 @@ func TestTiFlashFTSMatchWordDirtyTxn(t *testing.T) {
 	})
 }
 
-func TestExplainAnalyzeRUFormat(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-
-	var input []struct {
-		SQL string
-	}
-	var output []struct {
-		SQL  string
-		Rows [][]string
-	}
-	suiteData := core.GetExplainAnalyzeRUSuiteData()
-	suiteData.LoadTestCases(t, &input, &output)
-	require.Equal(t, len(input), len(output))
-
-	toStringRows := func(rows [][]any) [][]string {
-		stringRows := make([][]string, len(rows))
-		for i, row := range rows {
-			stringRows[i] = make([]string, len(row))
-			for j, col := range row {
-				stringRows[i][j] = col.(string)
-			}
-		}
-		return stringRows
-	}
-
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt.SQL
-			output[i].Rows = toStringRows(tk.MustQuery(tt.SQL).Rows())
-		})
-		require.Equal(t, tt.SQL, output[i].SQL)
-		require.Equal(t, output[i].Rows, toStringRows(tk.MustQuery(tt.SQL).Rows()))
-	}
-}
-
 func setStarterDeployModeForFTSTest(t *testing.T) {
 	t.Helper()
 	if !kerneltype.IsNextGen() {
