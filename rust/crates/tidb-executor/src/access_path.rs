@@ -4649,6 +4649,7 @@ mod tests {
                     name: "k4".to_owned(),
                     comment: String::new(),
                     unique: false,
+                    clustered_primary: false,
                     column_offsets: vec![0, 1, 3],
                     prefix_lengths: vec![
                         crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
