@@ -83,6 +83,31 @@ pub trait RetryClientTrait {
         Ok(regions)
     }
 
+    /// Source `PDClient.BatchScanRegions`, used to pre-fetch several disjoint
+    /// key ranges in one round trip. Unlike `scan_regions`, there is no
+    /// point-lookup-derived default: a client that does not implement this
+    /// natively reports it as unimplemented rather than silently issuing many
+    /// serial `get_region` calls under a different name.
+    async fn batch_scan_regions(
+        self: Arc<Self>,
+        _ranges: Vec<pdpb::KeyRange>,
+        _limit: usize,
+        _contain_all_key_range: bool,
+    ) -> Result<Vec<RegionWithLeader>> {
+        Err(Error::Unimplemented)
+    }
+
+    /// Source `PDClient.GetGCState`* keyspace-scoped GC state (txn safe
+    /// point, GC safe point, GC barriers), distinct from the legacy
+    /// cluster-wide `update_safepoint`/`UpdateGCSafePoint`.
+    async fn get_gc_state(
+        self: Arc<Self>,
+        _keyspace_id: Option<u32>,
+        _exclude_gc_barriers: bool,
+    ) -> Result<pdpb::GcState> {
+        Err(Error::Unimplemented)
+    }
+
     async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store>;
 
     async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>>;
@@ -296,6 +321,35 @@ impl RetryClientTrait for RetryClient<Cluster> {
         })
     }
 
+    async fn batch_scan_regions(
+        self: Arc<Self>,
+        ranges: Vec<pdpb::KeyRange>,
+        limit: usize,
+        contain_all_key_range: bool,
+    ) -> Result<Vec<RegionWithLeader>> {
+        retry_mut!(self, "batch_scan_regions", |cluster| {
+            let ranges = ranges.clone();
+            async {
+                cluster
+                    .batch_scan_regions(ranges, limit, true, contain_all_key_range, self.timeout)
+                    .await
+                    .and_then(regions_from_batch_scan_response)
+            }
+        })
+    }
+
+    async fn get_gc_state(
+        self: Arc<Self>,
+        keyspace_id: Option<u32>,
+        exclude_gc_barriers: bool,
+    ) -> Result<pdpb::GcState> {
+        retry_mut!(self, "get_gc_state", |cluster| async {
+            cluster
+                .get_gc_state(keyspace_id, exclude_gc_barriers, self.timeout)
+                .await
+        })
+    }
+
     async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store> {
         retry_mut!(self, "get_store", |cluster| async {
             cluster
@@ -398,6 +452,26 @@ fn regions_from_scan_response(resp: pdpb::ScanRegionsResponse) -> Result<Vec<Reg
         .enumerate()
         .map(|(index, region)| RegionWithLeader::new(region, resp.leaders.get(index).cloned()))
         .collect())
+}
+
+fn regions_from_batch_scan_response(
+    resp: pdpb::BatchScanRegionsResponse,
+) -> Result<Vec<RegionWithLeader>> {
+    resp.regions
+        .into_iter()
+        .map(|mut entry| {
+            let region = entry.region.take().ok_or_else(|| {
+                Error::StringError("PD BatchScanRegions response has no region metadata".to_owned())
+            })?;
+            Ok(RegionWithLeader {
+                region,
+                leader: entry.leader.take(),
+                buckets: entry.buckets.take(),
+                pending_peers: std::mem::take(&mut entry.pending_peers),
+                down_peers: std::mem::take(&mut entry.down_peers),
+            })
+        })
+        .collect()
 }
 
 // A node-like thing that can be connected to.

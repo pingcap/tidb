@@ -140,6 +140,27 @@ impl Cluster {
         req.send(&mut self.client, timeout).await
     }
 
+    /// Fetches regions covering `ranges` (which must be sorted and
+    /// non-overlapping) in one round trip. This is the PD RPC used by
+    /// client-go `RegionCache.BatchLoadRegionsWithKeyRange` for multi-range
+    /// pre-fetch; unlike `scan_regions`, it can cover several disjoint key
+    /// ranges in a single call.
+    pub async fn batch_scan_regions(
+        &mut self,
+        ranges: Vec<pdpb::KeyRange>,
+        limit: usize,
+        need_buckets: bool,
+        contain_all_key_range: bool,
+        timeout: Duration,
+    ) -> Result<pdpb::BatchScanRegionsResponse> {
+        let mut req = pd_request!(self.id, pdpb::BatchScanRegionsRequest);
+        req.ranges = ranges;
+        req.limit = i32::try_from(limit).unwrap_or(i32::MAX);
+        req.need_buckets = need_buckets;
+        req.contain_all_key_range = contain_all_key_range;
+        req.send(&mut self.client, timeout).await
+    }
+
     pub async fn get_all_stores(
         &mut self,
         timeout: Duration,
@@ -187,6 +208,26 @@ impl Cluster {
         let mut req = pd_request!(self.id, pdpb::UpdateGcSafePointRequest);
         req.safe_point = safepoint;
         req.send(&mut self.client, timeout).await
+    }
+
+    /// Fetches the keyspace-scoped GC state (txn safe point, GC safe point,
+    /// and GC barriers), as opposed to the legacy cluster-wide
+    /// `update_safepoint`/`UpdateGCSafePoint`. This is the PD RPC client-go's
+    /// `pd/client.go` `GetGCInternalController`/txn-safepoint path calls
+    /// `GetGCState` for.
+    pub async fn get_gc_state(
+        &mut self,
+        keyspace_id: Option<u32>,
+        exclude_gc_barriers: bool,
+        timeout: Duration,
+    ) -> Result<pdpb::GcState> {
+        let mut req = pd_request!(self.id, pdpb::GetGcStateRequest);
+        req.keyspace_scope = keyspace_id.map(|id| pdpb::KeyspaceScope { keyspace_id: id });
+        req.exclude_gc_barriers = exclude_gc_barriers;
+        req.send(&mut self.client, timeout)
+            .await?
+            .gc_state
+            .ok_or_else(|| Error::StringError("PD GetGCState response has no gc_state".to_owned()))
     }
 
     pub async fn load_keyspace(
@@ -523,6 +564,26 @@ impl PdMessage for pdpb::UpdateGcSafePointRequest {
 }
 
 #[async_trait]
+impl PdMessage for pdpb::BatchScanRegionsRequest {
+    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Response = pdpb::BatchScanRegionsResponse;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.batch_scan_regions(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
+impl PdMessage for pdpb::GetGcStateRequest {
+    type Client = pdpb::pd_client::PdClient<Channel>;
+    type Response = pdpb::GetGcStateResponse;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.get_gc_state(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
 impl PdMessage for pdpb::SetExternalTimestampRequest {
     type Client = pdpb::pd_client::PdClient<Channel>;
     type Response = pdpb::SetExternalTimestampResponse;
@@ -591,6 +652,18 @@ impl PdResponse for pdpb::GetAllStoresResponse {
 }
 
 impl PdResponse for pdpb::UpdateGcSafePointResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.header.as_ref().unwrap()
+    }
+}
+
+impl PdResponse for pdpb::BatchScanRegionsResponse {
+    fn header(&self) -> &pdpb::ResponseHeader {
+        self.header.as_ref().unwrap()
+    }
+}
+
+impl PdResponse for pdpb::GetGcStateResponse {
     fn header(&self) -> &pdpb::ResponseHeader {
         self.header.as_ref().unwrap()
     }

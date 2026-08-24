@@ -18,9 +18,11 @@ use tokio::task::JoinSet;
 
 use crate::async_util::Cancellation;
 use crate::pd::PdClient;
+use crate::retry::RetryBackoffer;
 use crate::Result;
 
 pub(crate) const DEFAULT_REGIONS_PER_TASK: usize = 128;
+const LOCATE_REGION_MAX_BACKOFF_MS: u64 = 20_000;
 const DEFAULT_STAT_LOG_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 /// The completed and failed region counts returned by one source task.
@@ -163,8 +165,10 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
         let mut next_key = start_key;
         let producer_result = loop {
             let load_key = next_key.clone().into();
+            let mut backoffer =
+                RetryBackoffer::new(cancellation.clone(), LOCATE_REGION_MAX_BACKOFF_MS);
             let loaded_regions = tokio::select! {
-                loaded = self.pd_client.batch_load_regions_from_key(&load_key, self.regions_per_task) => loaded,
+                loaded = self.pd_client.batch_load_regions_from_key(&load_key, self.regions_per_task, &mut backoffer) => loaded,
                 _ = progress_ticker.tick() => {
                     info!(
                         "range task in progress; name={}, elapsed_ms={}, completed_regions={}",

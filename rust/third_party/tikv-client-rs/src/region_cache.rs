@@ -28,6 +28,7 @@ use crate::region::RegionId;
 use crate::region::RegionVerId;
 use crate::region::RegionWithLeader;
 use crate::region::StoreId;
+use crate::retry::{RetryBackoffer, BO_PD_RPC};
 use crate::store::{ClientEventListener, EndpointType};
 use crate::Key;
 use crate::Result;
@@ -95,6 +96,27 @@ fn now_epoch_secs() -> i64 {
 fn next_region_cache_ttl(now: i64) -> i64 {
     let jitter = rand::thread_rng().gen_range(0..REGION_CACHE_TTL_JITTER_SECS);
     now + REGION_CACHE_TTL_SECS + jitter
+}
+
+/// Source `regionsHaveGapInRanges` for the single unbounded range used by
+/// `BatchLoadRegionsFromKey`. A bounded PD response may end at `limit`, but
+/// every returned entry must cover the cursor left by its predecessor.
+fn regions_have_no_gap(start_key: &Key, regions: &[RegionWithLeader]) -> bool {
+    let mut cursor = start_key.clone();
+    for region in regions {
+        if !region.contains(&cursor) {
+            return false;
+        }
+        let end = region.end_key();
+        if end.is_empty() {
+            return true;
+        }
+        if end <= cursor {
+            return false;
+        }
+        cursor = end;
+    }
+    !regions.is_empty()
 }
 
 struct RegionCacheMap {
@@ -394,23 +416,57 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         &self,
         start_key: Key,
         count: usize,
+        backoffer: &mut RetryBackoffer,
     ) -> Result<Vec<RegionWithLeader>> {
-        let regions = self
-            .inner_client
-            .clone()
-            .scan_regions(start_key.into(), Vec::new(), count)
-            .await?;
-        if regions.is_empty() {
-            return Err(Error::StringError(
-                "PD returned no region while batch loading regions from key".to_owned(),
-            ));
-        }
-        for region in &regions {
-            if region.leader.is_some() {
+        loop {
+            let scan_started = Instant::now();
+            let scanned = self
+                .inner_client
+                .clone()
+                .scan_regions(start_key.clone().into(), Vec::new(), count)
+                .await;
+            crate::stats::observe_region_cache_scan(scan_started.elapsed(), scanned.is_ok());
+            let regions = match scanned {
+                Ok(regions) if regions_have_no_gap(&start_key, &regions) => regions,
+                Ok(_) => {
+                    crate::stats::increment_stale_region_from_pd();
+                    backoffer
+                        .backoff(
+                            BO_PD_RPC,
+                            "PD returned regions with gaps while batch loading",
+                        )
+                        .await
+                        .map_err(|error| Error::StringError(error.to_string()))?;
+                    continue;
+                }
+                Err(error) => {
+                    backoffer
+                        .backoff(BO_PD_RPC, format!("PD ScanRegions failed: {error}"))
+                        .await
+                        .map_err(|error| Error::StringError(error.to_string()))?;
+                    continue;
+                }
+            };
+            let valid_regions = regions
+                .into_iter()
+                .filter(|region| region.leader.is_some())
+                .collect::<Vec<_>>();
+            if valid_regions.is_empty() {
+                crate::stats::increment_stale_region_from_pd();
+                backoffer
+                    .backoff(
+                        BO_PD_RPC,
+                        "PD returned only leaderless regions while batch loading",
+                    )
+                    .await
+                    .map_err(|error| Error::StringError(error.to_string()))?;
+                continue;
+            }
+            for region in &valid_regions {
                 self.add_region(region.clone()).await;
             }
+            return Ok(valid_regions);
         }
-        Ok(regions)
     }
 
     /// Force read through (query from PD) and update cache
@@ -1204,8 +1260,8 @@ mod test {
     use tokio::sync::Mutex;
 
     use super::{
-        now_epoch_secs, CachedStore, MixedReplicaSelection, RegionCache, ReplicaCandidate,
-        ReplicaSelectorState, StoreLiveness, REGION_CACHE_TTL_SECS,
+        now_epoch_secs, regions_have_no_gap, CachedStore, MixedReplicaSelection, RegionCache,
+        ReplicaCandidate, ReplicaSelectorState, StoreLiveness, REGION_CACHE_TTL_SECS,
     };
     use crate::common::Error;
     use crate::kv::ReplicaReadType;
@@ -2146,6 +2202,24 @@ mod test {
         // We don't care about other fields here
 
         region
+    }
+
+    #[test]
+    fn source_batch_scan_rejects_empty_and_gapped_regions() {
+        let start: Key = vec![10].into();
+        assert!(!regions_have_no_gap(&start, &[]));
+        assert!(!regions_have_no_gap(
+            &start,
+            &[region(1, vec![11], vec![20])]
+        ));
+        assert!(!regions_have_no_gap(
+            &start,
+            &[region(1, vec![10], vec![20]), region(2, vec![21], vec![])]
+        ));
+        assert!(regions_have_no_gap(
+            &start,
+            &[region(1, vec![10], vec![20]), region(2, vec![20], vec![])]
+        ));
     }
 
     #[test]

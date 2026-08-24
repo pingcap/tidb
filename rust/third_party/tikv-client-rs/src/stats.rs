@@ -141,6 +141,24 @@ pub(crate) fn observe_range_task_push_duration(task_type: &'static str, duration
         .observe(duration_to_sec(duration));
 }
 
+/// Source `LoadRegionCacheHistogramWithRegions` plus the paired ScanRegions
+/// result counter. These observations belong to every PD range-scan attempt,
+/// including attempts that will be retried by the caller.
+pub(crate) fn observe_region_cache_scan(duration: Duration, succeeded: bool) {
+    TIKV_LOAD_REGION_CACHE_DURATION
+        .with_label_values(&["scan_regions"])
+        .observe(duration_to_sec(duration));
+    TIKV_REGION_CACHE_OPERATIONS
+        .with_label_values(&["scan_regions", if succeeded { "ok" } else { "err" }])
+        .inc();
+}
+
+/// Source `TiKVStaleRegionFromPDCounter` for malformed, incomplete, or
+/// leaderless PD range-scan results that must be retried.
+pub(crate) fn increment_stale_region_from_pd() {
+    TIKV_STALE_REGION_FROM_PD.inc();
+}
+
 #[cfg(test)]
 pub(crate) fn range_task_stat(task_type: &'static str, result: &'static str) -> f64 {
     TIKV_RANGE_TASK_STATS
@@ -439,6 +457,26 @@ lazy_static::lazy_static! {
         )
         .buckets(prometheus::exponential_buckets(0.001, 2.0, 20).unwrap()),
         &["type"]
+    )
+    .unwrap();
+    static ref TIKV_REGION_CACHE_OPERATIONS: IntCounterVec = register_int_counter_vec!(
+        "tikv_client_go_region_cache_operations_total",
+        "Counter of region cache.",
+        &["type", "result"]
+    )
+    .unwrap();
+    static ref TIKV_LOAD_REGION_CACHE_DURATION: HistogramVec = register_histogram_vec!(
+        HistogramOpts::new(
+            "tikv_client_go_load_region_cache_seconds",
+            "Load region information duration"
+        )
+        .buckets(prometheus::exponential_buckets(0.0001, 2.0, 20).unwrap()),
+        &["type"]
+    )
+    .unwrap();
+    static ref TIKV_STALE_REGION_FROM_PD: IntCounter = register_int_counter!(
+        "tikv_client_go_stale_region_from_pd",
+        "Counter of stale region from PD"
     )
     .unwrap();
     static ref TIKV_BATCH_REQUEST_STAGE_DURATION: HistogramVec = register_histogram_vec!(
