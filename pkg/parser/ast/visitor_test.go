@@ -59,6 +59,105 @@ func (v *testVisitor) Leave(n parserast.Node) (parserast.Node, bool) {
 	return v.leave(n)
 }
 
+type benchmarkVisitor struct{}
+
+func (*benchmarkVisitor) Enter(n parserast.Node) (parserast.Node, bool) {
+	return n, false
+}
+
+func (*benchmarkVisitor) Leave(n parserast.Node) (parserast.Node, bool) {
+	return n, true
+}
+
+type benchmarkInPlaceVisitor struct{}
+
+func (*benchmarkInPlaceVisitor) Enter(parserast.Node) bool {
+	return false
+}
+
+func (*benchmarkInPlaceVisitor) Leave(parserast.Node) bool {
+	return true
+}
+
+func BenchmarkVisitorTraversal(b *testing.B) {
+	for _, replaceableNodes := range []int{10, 100, 500, 1000} {
+		root := newBenchmarkSelect(replaceableNodes)
+		visitedNodes := 0
+		visitor := &testInPlaceVisitor{
+			enter: func(parserast.Node) bool {
+				visitedNodes++
+				return false
+			},
+			leave: func(parserast.Node) bool {
+				return true
+			},
+		}
+		if !parserast.Walk(root, visitor) {
+			b.Fatal("benchmark fixture traversal stopped")
+		}
+		if visitedNodes != replaceableNodes+1 {
+			b.Fatalf("expected %d visited nodes, got %d", replaceableNodes+1, visitedNodes)
+		}
+
+		b.Run(fmt.Sprintf("%dReplaceableNodes", replaceableNodes), func(b *testing.B) {
+			b.Run("Visitor", func(b *testing.B) {
+				root := newBenchmarkSelect(replaceableNodes)
+				visitor := &benchmarkVisitor{}
+				var ok bool
+				b.ReportAllocs()
+				for b.Loop() {
+					_, ok = root.Accept(visitor)
+				}
+				if !ok {
+					b.Fatal("visitor traversal stopped")
+				}
+			})
+
+			b.Run("InPlaceVisitor", func(b *testing.B) {
+				root := newBenchmarkSelect(replaceableNodes)
+				visitor := &benchmarkInPlaceVisitor{}
+				var ok bool
+				b.ReportAllocs()
+				for b.Loop() {
+					ok = parserast.Walk(root, visitor)
+				}
+				if !ok {
+					b.Fatal("in-place visitor traversal stopped")
+				}
+			})
+		})
+	}
+}
+
+// newBenchmarkSelect returns a select with exactly replaceableNodes children.
+// The legacy Visitor writes every returned child back into its parent, while
+// InPlaceVisitor traverses the same nodes without those framework writes.
+func newBenchmarkSelect(replaceableNodes int) *parserast.SelectStmt {
+	fields := make([]*parserast.SelectField, 0, replaceableNodes/3+1)
+	remaining := replaceableNodes - 1 // SelectStmt.Fields accounts for one child.
+	for remaining > 0 {
+		switch {
+		case remaining == 4:
+			fields = append(fields,
+				&parserast.SelectField{Expr: &parserast.DefaultExpr{}},
+				&parserast.SelectField{Expr: &parserast.DefaultExpr{}},
+			)
+			remaining = 0
+		case remaining >= 3:
+			fields = append(fields, &parserast.SelectField{
+				Expr: &parserast.ColumnNameExpr{Name: &parserast.ColumnName{}},
+			})
+			remaining -= 3
+		case remaining == 2:
+			fields = append(fields, &parserast.SelectField{Expr: &parserast.DefaultExpr{}})
+			remaining = 0
+		default:
+			panic("replaceableNodes must be at least 3")
+		}
+	}
+	return &parserast.SelectStmt{Fields: &parserast.FieldList{Fields: fields}}
+}
+
 func TestWalk(t *testing.T) {
 	t.Run("traversal_order", func(t *testing.T) {
 		leafA := &parserast.DefaultExpr{}
