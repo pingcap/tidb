@@ -710,8 +710,35 @@ impl KvTable {
         zone: &SessionTimeZone,
         statement: &PushdownStatementContext,
     ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool)>, KvTableError> {
+        let Some(staged) = self.stage_rows_by_handles_filtered(
+            handles, scan_keep, predicates, zone, statement,
+        )?
+        else {
+            return Ok(None);
+        };
+        Self::finish_rows_by_handles(handles, staged)
+            .map(|answer| answer.map(|(rows, applied, _wire)| (rows, applied)))
+    }
+
+    /// Everything [`Self::pushdown_rows_by_handles_filtered`] does BEFORE any
+    /// row crosses back: the refusal gates, the record-range grouping, the
+    /// region request OPEN. Split from the drain so a caller may run the
+    /// (network-bound) drain on another thread while this thread keeps
+    /// issuing the next requests -- go's table-worker pool. Staging runs on
+    /// the CALLER's thread on purpose: the storage-operation probe it feeds
+    /// is thread-local, so the read is counted exactly where a serial walk
+    /// would count it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn stage_rows_by_handles_filtered(
+        &mut self,
+        handles: &[TableHandle],
+        scan_keep: &[usize],
+        predicates: &[ScanPredicate],
+        zone: &SessionTimeZone,
+        statement: &PushdownStatementContext,
+    ) -> Result<Option<StagedHandlesLookup>, KvTableError> {
         if handles.is_empty() {
-            return Ok(Some((Vec::new(), true)));
+            return Ok(None);
         }
         if self.has_dirty_content()
             || self.partition.is_some()
@@ -788,7 +815,7 @@ impl KvTable {
             }
         }
         let context = RowDecodeContext::legacy_default(zone);
-        let Some(mut cursor) = self.pushdown_row_cursor_with_context(
+        let Some(cursor) = self.pushdown_row_cursor_with_context(
             &keep,
             &predicates,
             None,
@@ -804,25 +831,45 @@ impl KvTable {
         else {
             return Ok(None);
         };
-        let predicates_applied = cursor.predicates_applied();
+        Ok(Some(StagedHandlesLookup {
+            cursor,
+            handle_position,
+            appended_handle,
+        }))
+    }
+
+    /// Drains a staged handle lookup and pairs each returned row back to the
+    /// CALLER's handle order -- index order for a keep-order read, whatever
+    /// order the windows were collected in otherwise -- so the answer never
+    /// depends on how the drain was scheduled. The trailing count is what
+    /// crossed the wire, for the caller's storage probe (a worker thread has
+    /// no probe of its own).
+    #[must_use]
+    pub fn finish_rows_by_handles(
+        handles: &[TableHandle],
+        mut staged: StagedHandlesLookup,
+    ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool, u64)>, KvTableError> {
+        let wire_rows = staged.cursor.rows_returned();
+        let predicates_applied = staged.cursor.predicates_applied();
         let mut rows = Vec::new();
         // This helper asks the remote cursor to retain the synthetic
         // `_tidb_rowid` appended by `pushdown_row_cursor_with_context`.
         // Ordinary consumers intentionally truncate that transport-only
         // column before returning a projected row, but the lookup caller
         // needs it to associate each fetched row with its index handle.
-        while let Some(mut row) = cursor.next_row_with_handle()? {
-            let Some(Datum::Int(handle)) = row.get(handle_position) else {
+        while let Some(mut row) = staged.cursor.next_row_with_handle()? {
+            let Some(Datum::Int(handle)) = row.get(staged.handle_position) else {
                 return Ok(None);
             };
             let handle = TableHandle::Int(*handle);
-            if appended_handle {
-                row.remove(handle_position);
+            if staged.appended_handle {
+                row.remove(staged.handle_position);
             }
             rows.push((handle, row));
         }
+        let wire_rows = staged.cursor.rows_returned().saturating_sub(wire_rows);
         rows.sort_by_key(|(handle, _)| handles.iter().position(|candidate| candidate == handle));
-        Ok(Some((rows, predicates_applied)))
+        Ok(Some((rows, predicates_applied, wire_rows)))
     }
 
     /// Opens a coprocessor partial aggregation over this table, or returns
@@ -1861,6 +1908,16 @@ type StagedRow = (Vec<u8>, Option<Vec<Datum>>);
 /// The caller applies its pushed predicate to *every* row this yields, staged
 /// or remote, so a staged row that no longer satisfies the `WHERE` is dropped
 /// by the same test the snapshot rows passed at TiKV.
+/// One OPEN remote handle lookup: [`KvTable::stage_rows_by_handles_filtered`]
+/// built the request and the region is already streaming; draining it is
+/// [`KvTable::finish_rows_by_handles`]. `Send` so a bounded-concurrency
+/// lookup pipeline can drain it off the executor thread.
+pub struct StagedHandlesLookup {
+    cursor: RemoteRowCursor,
+    handle_position: usize,
+    appended_handle: bool,
+}
+
 pub struct RemoteRowCursor {
     stream: Box<dyn PushdownRowStream>,
     staged: std::vec::IntoIter<StagedRow>,

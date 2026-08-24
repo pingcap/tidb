@@ -68,7 +68,7 @@ pub use table_meta::{
 pub(crate) use table_scan::insert_extra_handle;
 pub use table_scan::{
     capture_decoded_column_ids, IndexRangeCursor, RemoteIndexHandleCursor, RemoteRowCursor,
-    RowCursor, TableScanExec,
+    RowCursor, StagedHandlesLookup, TableScanExec,
 };
 
 use crate::storage::{MemTableStorage, StorageError, TableStorage};

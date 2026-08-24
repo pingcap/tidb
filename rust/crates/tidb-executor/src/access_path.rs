@@ -53,7 +53,7 @@
 //! with one it reports the truncation, as Go's does.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{btree_set, BTreeMap, BTreeSet};
+use std::collections::{btree_set, BTreeMap, BTreeSet, VecDeque};
 use std::rc::Rc;
 
 use tidb_chunk::chunk::Chunk;
@@ -1017,6 +1017,69 @@ impl crate::table_access::TableAccess for HandleSourceExec {}
 /// "inside a transaction": Go asks per TABLE, so a clean table read inside a
 /// dirty transaction still gets no `UnionScan` and still answers in handle
 /// order.
+/// One lookup window moving through the bounded-concurrency fetch pipeline.
+struct LookupBatchJob {
+    /// The handles this window was collected from, in collection order. A
+    /// remote refusal discovered off-thread is answered here through the
+    /// local byte seam, on the executor thread.
+    handles: Vec<TableHandle>,
+    /// The fetch outcome when the drain runs off-thread.
+    receiver: Option<std::sync::mpsc::Receiver<Result<LookupFetch, String>>>,
+    /// Windows that complete at collect time carry their payload directly.
+    ready: Option<Result<LookupFetch, String>>,
+}
+
+/// What one lookup window's drain produced.
+enum LookupFetch {
+    /// The remote answered: surviving rows in the CALLER's handle order,
+    /// whether TiKV evaluated every pushed conjunct, and how many rows the
+    /// region streamed (for the executor thread's storage probe -- a worker
+    /// thread has no probe of its own).
+    Remote(Vec<(TableHandle, Vec<Datum>)>, bool, u64),
+    /// The backend refused the remote shape (`Ok(None)` upstream): answer
+    /// through the local byte seam instead.
+    LocalFallback,
+}
+
+/// go `IndexLookUpExecutor`'s table-worker pool, narrowed to what this tier
+/// needs: row lookups for successive handle windows run concurrently up to
+/// [`LOOKUP_FETCH_CONCURRENCY`], while emission stays strictly in window
+/// collection order -- index order for a keep-order read, go's per-window
+/// handle order for an unordered one -- so concurrency changes only WHEN a
+/// window's network wait happens, never what the scan answers.
+struct LookupPipeline {
+    /// Spawned windows awaiting emission, oldest (next to emit) first.
+    inflight: VecDeque<LookupBatchJob>,
+    /// How many drains may run at once.
+    width: usize,
+    /// Handles collected into spawned windows but not yet emitted. go
+    /// `extractTaskHandles` cuts a pushed-Limit read at
+    /// `Offset + Count - scannedKeys` -- counted on EXTRACTION, so the
+    /// concurrent pool must charge every window it spawns against the same
+    /// budget or an eager worker walks entries the Limit discards.
+    unemitted_handles: u64,
+}
+
+/// go `DefTiDBIndexLookupConcurrency`: the table-worker pool size behind an
+/// IndexLookUpExecutor.
+const DEFAULT_LOOKUP_FETCH_CONCURRENCY: usize = 4;
+const MAX_LOOKUP_FETCH_CONCURRENCY: usize = 8;
+
+/// The pipeline width, from `TIKV_INDEX_LOOKUP_CONCURRENCY`. Unset means go's
+/// own default; `1` degenerates to the serial walk (one window in flight).
+fn lookup_fetch_concurrency() -> usize {
+    static CACHED: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *CACHED.get_or_init(|| {
+        std::env::var("TIKV_INDEX_LOOKUP_CONCURRENCY")
+            .ok()
+            .and_then(|width| width.parse::<usize>().ok())
+            .map_or(
+                DEFAULT_LOOKUP_FETCH_CONCURRENCY,
+                |width| width.clamp(1, MAX_LOOKUP_FETCH_CONCURRENCY),
+            )
+    })
+}
+
 pub struct IndexRangeSourceExec {
     meta: ExecutorMeta,
     table: KvTable,
@@ -1153,6 +1216,15 @@ pub struct IndexRangeSourceExec {
     partial_remote: Option<Box<dyn PushdownRowStream>>,
     partial_rows: Option<std::vec::IntoIter<Vec<Datum>>>,
     partial_done: bool,
+    /// Bounded-concurrency prefetch pipeline over the row-lookup windows.
+    lookup_pipeline: Option<LookupPipeline>,
+    /// Row demand the parent has EXPOSED so far: the sum of every output
+    /// chunk's `required_rows`. The prefetch pipeline may never hold more
+    /// unemitted windows than this minus what was produced -- a parent that
+    /// will discard rows (a root Limit whose cap could not ride inside the
+    /// source) simply stops exposing demand, and an eager worker then walks
+    /// nothing the serial walk would not have.
+    chunk_demand: u64,
 }
 
 /// Go's `indexWorker.batchSize` at its first batch.
@@ -1282,6 +1354,8 @@ impl IndexRangeSourceExec {
             partial_remote: None,
             partial_rows: None,
             partial_done: false,
+            lookup_pipeline: None,
+            chunk_demand: 0,
         }
     }
 
@@ -1500,73 +1574,13 @@ impl IndexRangeSourceExec {
                 self.lookup_rows.clear();
                 self.lookup_row_at = 0;
                 self.lookup_filter_complete = false;
-                let target = self.limit.map_or(self.batch_size, |limit| {
-                    self.batch_size.min(
-                        usize::try_from(limit.saturating_sub(self.produced.get())).unwrap_or(0),
-                    )
-                });
-                let mut handles = Vec::with_capacity(target);
-                while handles.len() < target {
-                    let Some(handle) = self.next_lookup_handle()? else {
-                        break;
-                    };
-                    handles.push(handle);
-                }
-                if handles.is_empty() {
+                let Some((rows, lookup_handles, filter_complete)) = self.next_lookup_batch()?
+                else {
                     return Ok(None);
-                }
-                // A clean table can answer the whole lookup batch in one
-                // coprocessor request even when no residual predicate was
-                // accepted on the index. The old gate only enabled this for
-                // non-empty `pushed`, leaving ordinary wide index lookups to
-                // decode every row through the local BatchGet path.
-                let remote = if self.partial_aggregate.is_none() {
-                    self.table
-                        .pushdown_rows_by_handles_filtered(
-                            &handles,
-                            &self.keep,
-                            &self.pushed,
-                            self.decode_context.zone(),
-                            &self.statement,
-                        )
-                        .map_err(|error| {
-                            ExecError::unsupported(format!("remote table lookup failed: {error:?}"))
-                        })?
-                } else {
-                    None
                 };
-                self.lookup_rows = if let Some((rows, predicates_applied)) = remote {
-                    self.lookup_filter_complete = predicates_applied;
-                    // The remote answers only the rows that survived its
-                    // filter, so its own handles are the ones to keep.
-                    self.lookup_handles = if self.extra_handle_slot.is_some() {
-                        rows.iter()
-                            .map(|(handle, _)| Some(handle.clone()))
-                            .collect()
-                    } else {
-                        Vec::new()
-                    };
-                    rows.into_iter().map(|(_, row)| Some(row)).collect()
-                } else {
-                    // The local batch answers one slot per requested handle,
-                    // in the order asked, so `handles` lines up with it.
-                    self.lookup_handles = if self.extra_handle_slot.is_some() {
-                        handles.iter().cloned().map(Some).collect()
-                    } else {
-                        Vec::new()
-                    };
-                    self.table
-                        .get_rows_by_handles_projected_with_context(
-                            &handles,
-                            Some(&self.keep),
-                            &self.decode_context,
-                        )
-                        .map_err(|error| {
-                            ExecError::unsupported(format!(
-                                "table bytes failed to decode: {error:?}"
-                            ))
-                        })?
-                };
+                self.lookup_rows = rows;
+                self.lookup_handles = lookup_handles;
+                self.lookup_filter_complete = filter_complete;
                 // A fully-filtered batch leaves no rows for this window: the
                 // next handle batch must be collected NOW, or the emission
                 // below indexes an empty vector. The stream-exhaustion arm
@@ -1592,6 +1606,255 @@ impl IndexRangeSourceExec {
                 }));
             }
         }
+    }
+
+    /// Produces the next lookup window's decodable rows: collects a handle
+    /// window from the (still serial, still ordered) phase-A stream, keeps up
+    /// to `TIKV_INDEX_LOOKUP_CONCURRENCY` remote drains in flight -- go's
+    /// table-worker pool behind an IndexLookUpExecutor -- and returns results
+    /// strictly in window COLLECTION order. Emission order therefore matches
+    /// the serial walk exactly: index order for a keep-order read, go's
+    /// per-window handle order for an unordered one. Concurrency changes only
+    /// WHEN each window's network wait happens, never what the scan answers.
+    ///
+    /// The pushed-Limit budget is unchanged: windows are still collected one
+    /// at a time on this thread with the same per-window targets, so a capped
+    /// read collects the same prefix of qualifying rows it always did; only
+    /// their fetches overlap. An early-stopping caller tears the pipeline
+    /// down and discards whatever is in flight -- the rows a serial walk
+    /// never reached.
+    #[allow(clippy::type_complexity)]
+    fn next_lookup_batch(
+        &mut self,
+    ) -> Result<Option<(Vec<Option<Vec<Datum>>>, Vec<Option<TableHandle>>, bool)>, ExecError> {
+        loop {
+            // Top the pipeline up while the phase-A stream still yields
+            // windows and the width allows more drains in flight.
+            let mut stream_exhausted = false;
+            loop {
+                let inflight = self
+                    .lookup_pipeline
+                    .as_ref()
+                    .map_or(0, |pipeline| pipeline.inflight.len());
+                let width = self
+                    .lookup_pipeline
+                    .as_ref()
+                    .map_or(1, |pipeline| pipeline.width);
+                if inflight >= width {
+                    break;
+                }
+                let unemitted = self
+                    .lookup_pipeline
+                    .as_ref()
+                    .map_or(0, |pipeline| pipeline.unemitted_handles);
+                // Two budgets bound one window:
+                // * a PUSHED limit cuts at the cumulative remainder it always
+                //   did (charged with in-flight handles, as go charges
+                //   `scannedKeys`). Zero here means the limit is satisfied --
+                //   stop collecting for good; any in-flight windows sit
+                //   inside the same cumulative cut and are emitted, and the
+                //   emission-side early stop then ends the read.
+                // * UNEXPOSED parent demand pauses PREFETCHING when something
+                //   is already in flight -- a Selection between this scan and
+                //   the parent's Limit means the parent exposes demand one
+                //   chunk at a time. It must never TERMINATE the scan: an
+                //   answer of zero rows is a real answer, and the only sound
+                //   end of stream is the phase-A walk itself running out. An
+                //   empty pipeline therefore always draws one window.
+                let mut target = self.batch_size;
+                if let Some(limit) = self.limit {
+                    target = target.min(
+                        usize::try_from(
+                            limit.saturating_sub(self.produced.get().saturating_add(unemitted)),
+                        )
+                        .unwrap_or(0),
+                    );
+                    if target == 0 {
+                        break;
+                    }
+                }
+                let demand_allowance = usize::try_from(
+                    self.chunk_demand
+                        .saturating_sub(self.produced.get())
+                        .saturating_sub(unemitted),
+                )
+                .unwrap_or(0);
+                if demand_allowance == 0 && inflight > 0 {
+                    break;
+                }
+                let mut handles = Vec::with_capacity(target);
+                while handles.len() < target {
+                    let Some(handle) = self.next_lookup_handle()? else {
+                        break;
+                    };
+                    handles.push(handle);
+                }
+                if handles.is_empty() {
+                    stream_exhausted = true;
+                    break;
+                }
+                let job = self.build_lookup_job(handles)?;
+                let pipeline = self
+                    .lookup_pipeline
+                    .get_or_insert_with(|| LookupPipeline {
+                        inflight: VecDeque::new(),
+                        // A directly-consumed source never opened itself;
+                        // stay serial rather than guess a width.
+                        width: 1,
+                        unemitted_handles: 0,
+                    });
+                pipeline.unemitted_handles += job.handles.len() as u64;
+                pipeline.inflight.push_back(job);
+            }
+
+            // Wait for the OLDEST window and hand its rows out. Later
+            // windows may already be done; their payloads wait in the deque
+            // and are emitted in turn.
+            let job = self
+                .lookup_pipeline
+                .as_mut()
+                .and_then(|pipeline| pipeline.inflight.pop_front());
+            let Some(job) = job else {
+                debug_assert!(stream_exhausted, "an empty pipeline only ends an                  exhausted stream");
+                return Ok(None);
+            };
+            if let Some(pipeline) = self.lookup_pipeline.as_mut() {
+                pipeline.unemitted_handles =
+                    pipeline.unemitted_handles.saturating_sub(job.handles.len() as u64);
+            }
+            let payload = if let Some(receiver) = job.receiver {
+                receiver
+                    .recv()
+                    .map_err(|_| {
+                        ExecError::unsupported(
+                            "remote table lookup failed: fetch worker exited",
+                        )
+                    })?
+                    .map_err(|error| {
+                        ExecError::unsupported(format!("remote table lookup failed: {error}"))
+                    })?
+            } else {
+                job.ready
+                    .expect("a job without a receiver carries its payload")
+                    .map_err(|error| {
+                        ExecError::unsupported(format!("remote table lookup failed: {error}"))
+                    })?
+            };
+            match payload {
+                LookupFetch::Remote(rows, predicates_applied, wire_rows) => {
+                    if wire_rows > 0 {
+                        crate::storage::note_storage_op(|ops| ops.cop_rows += wire_rows);
+                    }
+                    // The remote answers only the rows that survived its
+                    // filter, so its own handles are the ones to keep.
+                    let lookup_handles = if self.extra_handle_slot.is_some() {
+                        rows.iter().map(|(handle, _)| Some(handle.clone())).collect()
+                    } else {
+                        Vec::new()
+                    };
+                    let lookup_rows = rows.into_iter().map(|(_, row)| Some(row)).collect();
+                    return Ok(Some((lookup_rows, lookup_handles, predicates_applied)));
+                }
+                LookupFetch::LocalFallback => {
+                    // The local batch answers one slot per requested handle,
+                    // in the order asked, so `job.handles` lines up with it.
+                    let lookup_handles = if self.extra_handle_slot.is_some() {
+                        job.handles.iter().cloned().map(Some).collect()
+                    } else {
+                        Vec::new()
+                    };
+                    let lookup_rows = self
+                        .table
+                        .get_rows_by_handles_projected_with_context(
+                            &job.handles,
+                            Some(&self.keep),
+                            &self.decode_context,
+                        )
+                        .map_err(|error| {
+                            ExecError::unsupported(format!(
+                                "table bytes failed to decode: {error:?}"
+                            ))
+                        })?;
+                    return Ok(Some((lookup_rows, lookup_handles, false)));
+                }
+            }
+        }
+    }
+
+    /// Collects one lookup window into a pipeline job: STAGE the remote
+    /// request here (refusal gates, range grouping, region open -- and the
+    /// executor-thread storage probe that counts the read), then hand the
+    /// OPEN request to a worker for the network-bound drain. A refused shape
+    /// becomes a `LocalFallback` answered inline at emission time.
+    fn build_lookup_job(&mut self, handles: Vec<TableHandle>) -> Result<LookupBatchJob, ExecError> {
+        let staged = if self.partial_aggregate.is_none() {
+            self.table
+                .stage_rows_by_handles_filtered(
+                    &handles,
+                    &self.keep,
+                    &self.pushed,
+                    self.decode_context.zone(),
+                    &self.statement,
+                )
+                .map_err(|error| {
+                    ExecError::unsupported(format!("remote table lookup failed: {error:?}"))
+                })?
+        } else {
+            // A partial aggregate owns the answer end to end; the plain
+            // lookup never ran for this shape.
+            None
+        };
+        let Some(staged) = staged else {
+            return Ok(LookupBatchJob {
+                handles,
+                receiver: None,
+                ready: Some(Ok(LookupFetch::LocalFallback)),
+            });
+        };
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let worker_handles = handles.clone();
+        let worker = move || {
+            let outcome = crate::kv_table::KvTable::finish_rows_by_handles(
+                &worker_handles,
+                staged,
+            )
+            .map_err(|error| format!("{error:?}"))
+            .map(|answer| match answer {
+                Some((rows, applied, wire_rows)) => LookupFetch::Remote(rows, applied, wire_rows),
+                None => LookupFetch::LocalFallback,
+            });
+            sender.send(outcome).is_ok()
+        };
+        let spawned = std::thread::Builder::new()
+            .name("idx-lookup".to_owned())
+            .spawn(worker);
+        match spawned {
+            Ok(_handle) => Ok(LookupBatchJob {
+                handles,
+                receiver: Some(receiver),
+                ready: None,
+            }),
+            // No worker thread available: drain right here, serially -- the
+            // answer is identical, only the overlap is lost.
+            Err(_) => {
+                let payload = receiver.recv().map_err(|_| {
+                    ExecError::unsupported("remote table lookup failed: fetch worker exited")
+                })?;
+                Ok(LookupBatchJob {
+                    handles,
+                    receiver: None,
+                    ready: Some(payload),
+                })
+            }
+        }
+    }
+
+    /// Abandons in-flight lookup fetches. Dropping the receivers tells each
+    /// worker its consumer is gone; a worker exits after its single request.
+    /// Results that already arrived are dropped with the pipeline -- the same
+    /// discard an early-stopping serial walk performed by never fetching.
+    fn teardown_lookup_pipeline(&mut self) {
+        self.lookup_pipeline = None;
     }
 
     fn next_window_handle(&mut self) -> Result<Option<(TableHandle, usize)>, ExecError> {
@@ -2163,11 +2426,17 @@ impl Executor for IndexRangeSourceExec {
                     ExecError::unsupported(format!("index aggregate request failed: {error:?}"))
                 })?;
         }
+        self.lookup_pipeline = Some(LookupPipeline {
+            inflight: VecDeque::new(),
+            width: lookup_fetch_concurrency(),
+            unemitted_handles: 0,
+        });
         Ok(())
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         let cap = req.required_rows().clamp(1, self.meta.max_chunk_size());
+        self.chunk_demand += cap as u64;
         if self.produced.get() == 0
             && self.scanned.get() == 0
             && self.lookup_rows.is_empty()
@@ -2219,12 +2488,15 @@ impl Executor for IndexRangeSourceExec {
         while req.num_rows() < cap {
             if self.limit.is_some_and(|limit| self.produced.get() >= limit) {
                 // Early stop: the cursor is dropped, so no entry past the cap
-                // is read and no row past it is looked up.
+                // is read and no row past it is looked up. In-flight lookup
+                // fetches are abandoned the same way -- a serial walk never
+                // issued them.
                 self.cursor = None;
                 self.next_range = self.ranges.len();
                 self.batch.clear();
                 self.batch_at = 0;
                 self.pending_handle = None;
+                self.teardown_lookup_pipeline();
                 return Ok(());
             }
             let Some(row) = self.next_lookup_row()? else {
@@ -2254,6 +2526,7 @@ impl Executor for IndexRangeSourceExec {
         self.partial_rows = None;
         self.partial_done = false;
         self.remote_index = None;
+        self.teardown_lookup_pipeline();
         Ok(())
     }
 
@@ -2279,6 +2552,14 @@ impl Executor for IndexRangeSourceExec {
 
     fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
         Some(self)
+    }
+}
+
+impl Drop for IndexRangeSourceExec {
+    fn drop(&mut self) {
+        // A scan dropped mid-read stops caring about its in-flight fetches;
+        // dropping the receivers releases each worker after its request.
+        self.lookup_pipeline = None;
     }
 }
 
