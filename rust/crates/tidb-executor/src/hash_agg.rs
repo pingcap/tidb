@@ -354,9 +354,12 @@ impl ParallelIntKey {
 
 struct ParallelIntGroup {
     first_seq: usize,
-    counts: Vec<i64>,
-    decimal_sums: Vec<Option<ParallelDecimalSum>>,
-    first_rows: Vec<Option<Datum>>,
+    /// Inline storage for the common one-to-two-aggregate case: q18's
+    /// subquery opens 1.5M groups, and three heap allocations per group
+    /// showed up as a top jemalloc cost. `SmallVec` keeps them inline.
+    counts: smallvec::SmallVec<[i64; 2]>,
+    decimal_sums: smallvec::SmallVec<[Option<ParallelDecimalSum>; 1]>,
+    first_rows: smallvec::SmallVec<[Option<Datum>; 1]>,
 }
 
 /// A partial decimal SUM in the bounded integer aggregate. TPC-H q17's
@@ -2435,19 +2438,19 @@ impl<C: HashAggContext> HashAggExec<C> {
                     // of every group (q13 opens 150k customer groups in each
                     // worker map and needs COUNT state only).
                     counts: if needs_counts {
-                        vec![0; specs.len()]
+                        smallvec::smallvec![0; specs.len()]
                     } else {
-                        Vec::new()
+                        smallvec::SmallVec::new()
                     },
                     decimal_sums: if needs_decimal_sums {
-                        vec![None; specs.len()]
+                        smallvec::smallvec![None; specs.len()]
                     } else {
-                        Vec::new()
+                        smallvec::SmallVec::new()
                     },
                     first_rows: if needs_first_rows {
-                        vec![None; specs.len()]
+                        smallvec::smallvec![None; specs.len()]
                     } else {
-                        Vec::new()
+                        smallvec::SmallVec::new()
                     },
                 });
                 for (index, spec) in specs.iter().enumerate() {
@@ -3364,11 +3367,11 @@ mod tests {
         assert_eq!(groups.len(), 2);
         assert_eq!(
             groups.remove(&ParallelIntKey::Signed(30)).unwrap().counts,
-            vec![1]
+            smallvec::SmallVec::<[i64; 2]>::from_slice(&[1])
         );
         assert_eq!(
             groups.remove(&ParallelIntKey::Signed(10)).unwrap().counts,
-            vec![0]
+            smallvec::SmallVec::<[i64; 2]>::from_slice(&[0])
         );
     }
 
