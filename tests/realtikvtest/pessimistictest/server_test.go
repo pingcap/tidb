@@ -30,20 +30,103 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMultiStatementPrefetchInterruptedOnDisconnect(t *testing.T) {
+func TestStatementsInterruptedOnDisconnect(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	serverAddr := startTiDBServer(t, store, dom)
 
 	adminDB := openDB(t, serverAddr, "tcp", false)
 	adminDB.SetMaxOpenConns(5)
-	mustExec(t, adminDB, "drop table if exists issue68682_multi_prefetch")
-	mustExec(t, adminDB, "create table issue68682_multi_prefetch (id int primary key, v int)")
-	mustExec(t, adminDB, "insert into issue68682_multi_prefetch values (1, 0), (2, 0), (3, 0)")
+
+	testCases := []disconnectInterruptTestCase{
+		{
+			name: "autocommit_update_query",
+			buildSQL: func(tableName string) string {
+				return "update " + tableName + " set v = 2 where id = 2"
+			},
+		},
+		{
+			name:     "autocommit_update_prepared",
+			prepared: true,
+			buildSQL: func(tableName string) string {
+				return "update " + tableName + " set v = 2 where id = 2"
+			},
+		},
+		{
+			name:     "explicit_txn_update_query",
+			txnSetup: "begin pessimistic",
+			buildSQL: func(tableName string) string {
+				return "update " + tableName + " set v = 2 where id = 2"
+			},
+		},
+		{
+			name:     "explicit_txn_update_prepared",
+			txnSetup: "begin pessimistic",
+			prepared: true,
+			buildSQL: func(tableName string) string {
+				return "update " + tableName + " set v = 2 where id = 2"
+			},
+		},
+		{
+			name:        "explicit_txn_select_for_update_query",
+			txnSetup:    "begin pessimistic",
+			returnsRows: true,
+			buildSQL: func(tableName string) string {
+				return "select * from " + tableName + " where id = 2 for update"
+			},
+		},
+		{
+			name:        "explicit_txn_select_for_update_prepared",
+			txnSetup:    "begin pessimistic",
+			prepared:    true,
+			returnsRows: true,
+			buildSQL: func(tableName string) string {
+				return "select * from " + tableName + " where id = 2 for update"
+			},
+		},
+		{
+			name:     "autocommit_off_update_query",
+			txnSetup: "set autocommit = 0",
+			buildSQL: func(tableName string) string {
+				return "update " + tableName + " set v = 2 where id = 2"
+			},
+		},
+		{
+			name:            "multi_statement_prefetch",
+			txnSetup:        "begin pessimistic",
+			multiStatements: true,
+			buildSQL: func(tableName string) string {
+				return "update " + tableName + " set v = 2 where id = 2; update " + tableName + " set v = 3 where id = 3"
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			runDisconnectInterruptTest(t, adminDB, serverAddr, testCase)
+		})
+	}
+}
+
+type disconnectInterruptTestCase struct {
+	name            string
+	txnSetup        string
+	prepared        bool
+	returnsRows     bool
+	multiStatements bool
+	buildSQL        func(tableName string) string
+}
+
+func runDisconnectInterruptTest(t *testing.T, adminDB *sql.DB, serverAddr string, testCase disconnectInterruptTestCase) {
+	t.Helper()
+	tableName := "issue68682_" + testCase.name
+	mustExec(t, adminDB, "drop table if exists "+tableName)
+	mustExec(t, adminDB, "create table "+tableName+" (id int primary key, v int)")
+	mustExec(t, adminDB, "insert into "+tableName+" values (1, 0), (2, 0), (3, 0)")
 
 	// Capture the victim's TCP connection so the test can simulate the client
 	// disappearing while its request is blocked inside TiKV.
 	rawConnCh := make(chan net.Conn, 1)
-	const victimNetwork = "issue68682-victim"
+	victimNetwork := "issue68682-" + testCase.name
 	mysql.RegisterDialContext(victimNetwork, func(ctx context.Context, addr string) (net.Conn, error) {
 		conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
 		if err == nil {
@@ -54,31 +137,54 @@ func TestMultiStatementPrefetchInterruptedOnDisconnect(t *testing.T) {
 		}
 		return conn, err
 	})
-	victimDB := openDB(t, serverAddr, victimNetwork, true)
+	victimDB := openDB(t, serverAddr, victimNetwork, testCase.multiStatements)
+	victimDB.SetMaxOpenConns(1)
 	victim, err := victimDB.Conn(context.Background())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = victim.Close() })
 
+	var rawConn net.Conn
+	select {
+	case rawConn = <-rawConnCh:
+	case <-time.After(time.Second):
+		require.FailNow(t, "the victim TCP connection was not captured")
+	}
+	var blocker *sql.Conn
+	t.Cleanup(func() {
+		_ = rawConn.Close()
+		if blocker != nil {
+			_, _ = blocker.ExecContext(context.Background(), "rollback")
+			_ = blocker.Close()
+		}
+	})
+
 	mustExec(t, victim, "set tidb_txn_mode = 'pessimistic'")
-	mustExec(t, victim, "begin pessimistic")
-	mustExec(t, victim, "update issue68682_multi_prefetch set v = 1 where id = 1")
+	if testCase.txnSetup != "" {
+		mustExec(t, victim, testCase.txnSetup)
+		mustExec(t, victim, "update "+tableName+" set v = 1 where id = 1")
+	}
 	var victimID uint64
 	require.NoError(t, victim.QueryRowContext(context.Background(), "select connection_id()").Scan(&victimID))
 
-	blocker, err := adminDB.Conn(context.Background())
+	blocker, err = adminDB.Conn(context.Background())
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		_, _ = blocker.ExecContext(context.Background(), "rollback")
-		_ = blocker.Close()
-	})
 	mustExec(t, blocker, "begin pessimistic")
-	mustExec(t, blocker, "update issue68682_multi_prefetch set v = 2 where id = 2")
+	mustExec(t, blocker, "update "+tableName+" set v = 2 where id = 2")
 
-	const multiQuery = "update issue68682_multi_prefetch set v = 2 where id = 2; update issue68682_multi_prefetch set v = 3 where id = 3"
+	blockedSQL := testCase.buildSQL(tableName)
+	var stmt *sql.Stmt
+	if testCase.prepared {
+		stmt, err = victim.PrepareContext(context.Background(), blockedSQL)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_ = rawConn.Close()
+			_ = stmt.Close()
+		})
+	}
+
 	execDone := make(chan error, 1)
 	go func() {
-		_, execErr := victim.ExecContext(context.Background(), multiQuery)
-		execDone <- execErr
+		execDone <- executeBlockingSQL(victim, stmt, blockedSQL, testCase.returnsRows)
 	}()
 
 	var lockWaitErr error
@@ -90,14 +196,8 @@ func TestMultiStatementPrefetchInterruptedOnDisconnect(t *testing.T) {
 			join information_schema.tidb_trx trx on l.trx_id = trx.id
 			where trx.session_id = ?`, victimID).Scan(&count)
 		return lockWaitErr == nil && count > 0
-	}, 10*time.Second, 100*time.Millisecond, "the multi-statement prefetch did not enter a TiKV lock wait: %v", lockWaitErr)
+	}, 10*time.Second, 100*time.Millisecond, "the statement did not enter a TiKV lock wait: %v", lockWaitErr)
 
-	var rawConn net.Conn
-	select {
-	case rawConn = <-rawConnCh:
-	case <-time.After(time.Second):
-		require.FailNow(t, "the victim TCP connection was not captured")
-	}
 	require.NoError(t, rawConn.Close())
 
 	var execErr error
@@ -123,16 +223,42 @@ func TestMultiStatementPrefetchInterruptedOnDisconnect(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err = adminDB.ExecContext(ctx, "update issue68682_multi_prefetch set v = v + 1 where id = 1")
+	_, err = adminDB.ExecContext(ctx, "update "+tableName+" set v = v + 1 where id = 1")
 	require.NoError(t, err)
 
 	var row1, row2, row3 int
-	require.NoError(t, adminDB.QueryRowContext(context.Background(), `
-		select sum(if(id = 1, v, 0)), sum(if(id = 2, v, 0)), sum(if(id = 3, v, 0))
-		from issue68682_multi_prefetch`).Scan(&row1, &row2, &row3))
+	require.NoError(t, adminDB.QueryRowContext(context.Background(),
+		"select sum(if(id = 1, v, 0)), sum(if(id = 2, v, 0)), sum(if(id = 3, v, 0)) from "+tableName,
+	).Scan(&row1, &row2, &row3))
 	require.Equal(t, 1, row1)
 	require.Equal(t, 0, row2)
 	require.Equal(t, 0, row3)
+}
+
+func executeBlockingSQL(conn *sql.Conn, stmt *sql.Stmt, query string, returnsRows bool) error {
+	if !returnsRows {
+		if stmt != nil {
+			_, err := stmt.ExecContext(context.Background())
+			return err
+		}
+		_, err := conn.ExecContext(context.Background(), query)
+		return err
+	}
+
+	var rows *sql.Rows
+	var err error
+	if stmt != nil {
+		rows, err = stmt.QueryContext(context.Background())
+	} else {
+		rows, err = conn.QueryContext(context.Background(), query)
+	}
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+	}
+	return rows.Err()
 }
 
 func startTiDBServer(t *testing.T, store kv.Storage, dom *domain.Domain) string {
