@@ -296,10 +296,16 @@ impl ColumnResolver for ScopeResolver<'_> {
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
+        // Join-rebuild scopes lose their statement context; Go's planner
+        // always has one. Construct a minimal context from the scope's own
+        // fields so deterministic functions over constants (DATE_ADD over
+        // literals, string ops, ...) still fold at build time.
         match &self.scope.constant_context {
             Some(ctx) => tidb_expr::fold_constant_in_mode(expression, ctx, mode),
             None if mode != tidb_expr::ConstantFoldMode::Disabled => {
                 tidb_expr::derive_constant_null_flag(expression);
+                let minimal = crate::StmtContext::for_query();
+                tidb_expr::fold_constant_in_mode(expression, &minimal, mode);
             }
             None => {}
         }
