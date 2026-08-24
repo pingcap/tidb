@@ -681,9 +681,12 @@ func TestIndexLookUpConcurrency(t *testing.T) {
 		"a between 45 and 49",
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
 	for concurrency := 1; concurrency <= 5; concurrency++ {
 		tk.MustExec("set @@tidb_index_lookup_concurrency=" + strconv.Itoa(concurrency))
-		tk.MustQuery("select b from t force index(k) where " + strings.Join(conds, " or ") + " order by a desc limit 15").Check(
+		result := tk.MustQueryWithContext(ctx, "select b from t force index(k) where "+strings.Join(conds, " or ")+" order by a desc limit 15")
+		result.Check(
 			testkit.Rows("490", "480", "470", "460", "450", "390", "380", "370", "360", "350", "290", "280", "270", "260", "250"),
 		)
 	}
