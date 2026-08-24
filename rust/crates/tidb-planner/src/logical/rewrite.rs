@@ -30,13 +30,16 @@
 //! post-order, which is exactly a stack discipline. Each rewriter keeps its
 //! own `Vec` and pushes in `descend`, pops in `ascend`.
 
+use tidb_expr::aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::normal_form::split_cnf_items;
 use tidb_expr::expr_util::substitute::SubstituteOptions;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
+use tidb_expr::simple_expr::extract_columns;
 
 use crate::base_arms;
+use crate::find_best_task::LogicalJoinType;
 use crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len;
 use crate::cardinality::join::{
     estimate_full_join_row_count, FullJoinRowCountInput, JoinKeyEstimate,
@@ -50,8 +53,8 @@ use super::rule::{
 };
 use super::schema_producer;
 use super::{
-    LogicalExpand, LogicalLimit, LogicalMaxOneRow, LogicalPlan, LogicalTableDual, LogicalTopN,
-    LogicalUnionAll, LogicalUnionScan,
+    BaseLogicalPlan, LogicalExpand, LogicalLimit, LogicalMaxOneRow, LogicalPlan, LogicalSort,
+    LogicalTableDual, LogicalTopN, LogicalUnionAll, LogicalUnionScan,
 };
 
 /// The schema an operator effectively exposes, materialized.
@@ -691,13 +694,24 @@ enum PendingTopN {
     /// Re-attach this TopN ABOVE the node on the way up — Go's
     /// `topN.AttachChild(p)`.
     Reattach(Box<LogicalTopN>),
+    /// Go `topnEliminated` WITH order (`logical_join.go:456-463`): an outer
+    /// join absorbed a by-item TopN whose inner side is unique, so only the
+    /// ORDER survives above the join as a plain `LogicalSort`.
+    ReattachAsSort(Vec<ByItems>),
+    /// Go bodies that RETURN THE CHILD (`LogicalLimit.PushDownTopN`,
+    /// `LogicalSort.PushDownTopN`): this operator disappears; an optional
+    /// TopN re-attaches above the surviving child.
+    ReplaceWithChild(Option<Box<LogicalTopN>>),
 }
 
-struct PushDownTopN {
+struct PushDownTopN<'a> {
     stash: Vec<PendingTopN>,
+    /// Go `SCtx().GetExprCtx()`: the builder the projection arm substitutes
+    /// and constant-folds by-items through.
+    builder: &'a dyn tidb_expr::expr_util::builder::FunctionBuilder,
 }
 
-impl OwnedRewrite for PushDownTopN {
+impl OwnedRewrite for PushDownTopN<'_> {
     type Down = Option<Box<LogicalTopN>>;
     type Up = ();
 
@@ -711,26 +725,35 @@ impl OwnedRewrite for PushDownTopN {
             // Go `LogicalSort.PushDownTopN` (`logical_sort.go:88`): a Sort with
             // a TopN above it is ABSORBED by that TopN, which takes the Sort's
             // order when it has none of its own.
-            LogicalPlan::Sort(_) => {
-                self.stash
-                    .push(topn.map_or(PendingTopN::Nothing, PendingTopN::Reattach));
-                Descend::Children(vec![None])
+            LogicalPlan::Sort(op) => {
+                // "if topN == nil" the base body keeps the sort; otherwise the
+                // SORT ITSELF disappears — its order merges into an incoming
+                // limit-shaped TopN, and a real TopN simply swallows it
+                // ("If a TopN is pushed down, this sort is useless.").
+                match topn {
+                    None => {
+                        self.stash.push(PendingTopN::Nothing);
+                        Descend::Children(vec![None])
+                    }
+                    Some(mut incoming) => {
+                        if incoming.is_limit() {
+                            incoming.by_items = op.by_items.clone();
+                        }
+                        self.stash.push(PendingTopN::ReplaceWithChild(Some(incoming)));
+                        Descend::Children(vec![])
+                    }
+                }
             }
             // Go `LogicalLimit.PushDownTopN` (`logical_limit.go:106`): the
-            // limit becomes a TopN and MERGES with the incoming one.
+            // limit CONVERTS to a TopN and travels INTO the child; only an
+            // incoming TopN from above re-attaches here. The limit operator
+            // itself never survives.
             LogicalPlan::Limit(op) => {
                 let converted = op.convert_to_topn();
-                let merged = topn.map_or(converted, |incoming| *incoming);
-                self.stash.push(PendingTopN::Reattach(Box::new(merged)));
-                Descend::Children(vec![None])
-            }
-            // Go `LogicalTopN.PushDownTopN` (`logical_top_n.go:96`): the
-            // incoming TopN replaces this one, and this one is pushed onward.
-            LogicalPlan::TopN(op) => {
-                let self_topn = op.clone();
-                self.stash
-                    .push(PendingTopN::Reattach(topn.unwrap_or(Box::new(self_topn))));
-                Descend::Children(vec![None])
+                // Go returns the CONVERTED-and-pushed CHILD in every case —
+                // the limit operator itself never survives.
+                self.stash.push(PendingTopN::ReplaceWithChild(topn));
+                Descend::Children(vec![Some(Box::new(converted)); child_count.max(1)])
             }
             // Go `LogicalUnionAll.PushDownTopN` (`logical_union_all.go:159`): a
             // COPY that keeps `count + offset` rows enters each branch, and the
@@ -774,30 +797,177 @@ impl OwnedRewrite for PushDownTopN {
                 }
                 self.stash
                     .push(topn.map_or(PendingTopN::Nothing, PendingTopN::Reattach));
-                Descend::Stop(())
+                // Ascend must run to re-attach above this leaf.
+                Descend::Children(Vec::new())
             }
             // Go `LogicalCTE.PushDownTopN` (`logical_cte.go:139`): a TopN never
             // enters a CTE.
             LogicalPlan::CTE(_) => {
                 self.stash
                     .push(topn.map_or(PendingTopN::Nothing, PendingTopN::Reattach));
-                Descend::Stop(())
+                // Ascend must run to re-attach above this node.
+                Descend::Children(Vec::new())
             }
             // Go's base body, `pushDownTopNForBaseLogicalPlan`
             // (`logical_plans_misc.go:110`): every child is rewritten with NO
             // TopN, and the incoming one is re-attached above this node.
             //
-            // NARROWING: Go's `LogicalJoin.PushDownTopN`
-            // (`logical_join.go:428`) pushes the TopN into the OUTER side of an
-            // outer join and may eliminate it; that decision needs
-            // `pushDownTopNToChild`'s order-preservation analysis, which is a
-            // later batch. The base body here is the conservative half — the
-            // TopN stays above the join, which is always correct.
+            // Go `LogicalProjection.PushDownTopN` (`logical_projection.go:183`):
+            // by-items substitute through the projection's expressions and the
+            // TopN continues BELOW — the projection stays where it is. Set-var
+            // projections and non-immutable orders take the base body.
+            LogicalPlan::Projection(op) => {
+                let Some(incoming) = topn else {
+                    self.stash.push(PendingTopN::Nothing);
+                    return Descend::Children(vec![None; child_count.max(1)]);
+                };
+                if op.exprs.iter().any(tidb_expr::evaluator::has_get_set_var_func) {
+                    self.stash.push(PendingTopN::Reattach(incoming));
+                    return Descend::Children(vec![None; child_count]);
+                }
+                let own_schema = op.base.base.schema().cloned().unwrap_or_default();
+                let opts = SubstituteOptions::new(self.builder);
+                let mut substituted_items = Vec::with_capacity(incoming.by_items.len());
+                for item in &incoming.by_items {
+                    let substituted = tidb_expr::expr_util::fold::fold_constant(
+                        &tidb_expr::expr_util::substitute::column_substitute(
+                            &item.expr,
+                            &own_schema,
+                            &op.exprs,
+                            &opts,
+                        ),
+                        &tidb_expr::NoColumns,
+                        &opts,
+                    );
+                    // "if the order-by expression is un-deterministic like
+                    // 'order by rand()', stop pushing down."
+                    if !tidb_expr::expr_util::predicates::is_immutable_func(&substituted) {
+                        self.stash.push(PendingTopN::Reattach(incoming));
+                        return Descend::Children(vec![None; child_count]);
+                    }
+                    substituted_items.push(substituted);
+                }
+                // A column with ID 0 that only THIS projection produces cannot
+                // enter the child; keep the TopN above.
+                let child_schema = op.base.children().first().and_then(super::LogicalPlan::schema);
+                let blocked_by_projection = substituted_items.iter().any(|expr| {
+                    extract_columns(expr).iter().any(|col| {
+                        col.id == 0
+                            && own_schema.contains(col)
+                            && !child_schema.is_some_and(|schema| schema.contains(col))
+                    })
+                });
+                if blocked_by_projection {
+                    self.stash.push(PendingTopN::Reattach(incoming));
+                    return Descend::Children(vec![None; child_count]);
+                }
+                // Drop meaningless constant sort items.
+                let mut pushed = *incoming;
+                let kept: Vec<bool> = substituted_items
+                    .iter()
+                    .map(|expr| !matches!(expr, Expression::Constant(_)))
+                    .collect();
+                pushed.by_items = pushed
+                    .by_items
+                    .into_iter()
+                    .zip(kept)
+                    .filter_map(|(item, keep)| keep.then_some(item))
+                    .collect();
+                self.stash.push(PendingTopN::Nothing);
+                Descend::Children(vec![Some(Box::new(pushed)); child_count])
+            }
+            // Go `LogicalJoin.PushDownTopN` (`logical_join.go:428`): a TopN
+            // over an OUTER join descends into the PRESERVED side — the other
+            // side and every non-outer join type take the base body. When the
+            // inner side is unique on the join key, each preserved-side row
+            // keeps its own output row, so the offset travels down too and the
+            // join ELIMINATES the TopN (a by-item-only sort stays above).
+            LogicalPlan::Join(op) => {
+                let outer_idx = match op.join_type {
+                    LogicalJoinType::LeftOuter
+                    | LogicalJoinType::LeftOuterSemi
+                    | LogicalJoinType::AntiLeftOuterSemi => Some(0usize),
+                    LogicalJoinType::RightOuter => Some(1usize),
+                    LogicalJoinType::Inner
+                    | LogicalJoinType::Semi
+                    | LogicalJoinType::AntiSemi => None,
+                };
+                let Some(outer_idx) = outer_idx else {
+                    self.stash.push(match topn {
+                        Some(inner_topn) => PendingTopN::Reattach(inner_topn),
+                        None => PendingTopN::Nothing,
+                    });
+                    return Descend::Children(vec![None; child_count]);
+                };
+                let Some(topn) = topn else {
+                    self.stash.push(PendingTopN::Nothing);
+                    return Descend::Children(vec![None; child_count]);
+                };
+                let topn = *topn;
+                let children = op.base.children();
+                let child_schema = children
+                    .get(outer_idx)
+                    .and_then(super::LogicalPlan::schema)
+                    .map(|schema| schema.to_owned());
+                // "for _, by := range topN.ByItems": every by-item column must
+                // survive in the preserved child's schema, else the TopN
+                // cannot enter that child and just re-attaches above.
+                let by_item_cols_fit_child = child_schema.as_ref().is_some_and(|schema| {
+                    topn.by_items.iter().all(|item| {
+                        extract_columns(&item.expr).iter().all(|col| schema.contains(col))
+                    })
+                });
+                if !by_item_cols_fit_child {
+                    self.stash.push(PendingTopN::Reattach(Box::new(topn)));
+                    if child_count == 0 {
+                        return Descend::Stop(());
+                    }
+                    return Descend::Children(vec![None; child_count]);
+                }
+                let inner_idx = 1 - outer_idx;
+                let (left_keys, right_keys, _is_null_eq, has_null_eq) = op.get_join_keys();
+                let inner_keys = if outer_idx == 0 { right_keys } else { left_keys };
+                #[allow(clippy::diverging_sub_expression)]
+                eprintln!(
+                    "DBG join outer={outer_idx} inner={inner_idx} keys_l={:?} keys_r={:?} uniq={:?} child_schema={:?}",
+                    inner_keys.iter().map(|c| c.unique_id).collect::<Vec<_>>(),
+                    children.get(outer_idx).and_then(super::LogicalPlan::schema).map(|sc| sc.pk_or_uk.len()),
+                    children.get(inner_idx).and_then(super::LogicalPlan::schema).map(|sc| sc.is_unique(true, &inner_keys)),
+                    children.get(inner_idx).and_then(super::LogicalPlan::schema).map(|sc| (sc.pk_or_uk.len(), sc.nullable_uk.len()))
+                );
+                let inner_unique = children.get(inner_idx).and_then(super::LogicalPlan::schema)
+                    .is_some_and(|schema| {
+                        schema.is_unique(true, &inner_keys)
+                            || (!has_null_eq && schema.is_unique(false, &inner_keys))
+                    });
+                let (count, offset) = if inner_unique {
+                    (topn.count, topn.offset)
+                } else {
+                    (topn.count + topn.offset, 0)
+                };
+                let mut pushed = topn.clone();
+                pushed.count = count;
+                pushed.offset = offset;
+                self.stash.push(if inner_unique && topn.by_items.is_empty() {
+                    PendingTopN::Nothing
+                } else if inner_unique {
+                    PendingTopN::ReattachAsSort(topn.by_items.clone())
+                } else {
+                    PendingTopN::Reattach(Box::new(topn))
+                });
+                if child_count == 0 {
+                    return Descend::Stop(());
+                }
+                let mut downs: Vec<Option<Box<LogicalTopN>>> = vec![None; child_count];
+                if let Some(slot) = downs.get_mut(outer_idx) {
+                    *slot = Some(Box::new(pushed));
+                }
+                Descend::Children(downs)
+            }
             base_arms![
                 Selection,
-                Projection,
-                Join,
                 Apply,
+                TopN,
                 Aggregation,
                 Window,
                 Expand,
@@ -816,27 +986,59 @@ impl OwnedRewrite for PushDownTopN {
             ] => {
                 self.stash
                     .push(topn.map_or(PendingTopN::Nothing, PendingTopN::Reattach));
-                if child_count == 0 {
-                    return Descend::Stop(());
-                }
+                // An EMPTY Children vector still parks the node, so ascend
+                // runs and re-attaches the TopN above a leaf.
                 Descend::Children(vec![None; child_count])
             }
         }
     }
 
-    fn ascend(&mut self, node: LogicalPlan, _child_ups: Vec<Self::Up>) -> (LogicalPlan, Self::Up) {
+    fn ascend(&mut self, mut node: LogicalPlan, _child_ups: Vec<Self::Up>) -> (LogicalPlan, Self::Up) {
         match self.stash.pop() {
             Some(PendingTopN::Reattach(topn)) => (topn.attach_child(node), ()),
+            Some(PendingTopN::ReattachAsSort(by_items)) => {
+                // "Add a sort if the topN has order by items."
+                let mut sort = LogicalSort {
+                    base: BaseLogicalPlan::default(),
+                    by_items,
+                };
+                sort.base.set_children(vec![node]);
+                (LogicalPlan::Sort(sort), ())
+            }
+            // Go bodies that return the child: swap this operator out for its
+            // single child, optionally with a TopN re-attached above it.
+            Some(PendingTopN::ReplaceWithChild(topn)) => {
+                let mut children = node.base_mut().take_children();
+                let child = children.pop().unwrap_or(node);
+                match topn {
+                    Some(topn) => (topn.attach_child(child), ()),
+                    None => (child, ()),
+                }
+            }
             Some(PendingTopN::Nothing) | None => (node, ()),
         }
     }
 }
 
+/// Test convenience: the rule body with the preserving test builder.
+#[cfg(test)]
+#[must_use]
+pub(crate) fn push_down_topn(plan: LogicalPlan, topn: Option<LogicalTopN>) -> LogicalPlan {
+    push_down_topn_with_builder(&super::rule_tests::TEST_BUILDER, plan, topn)
+}
+
 /// Go `base.LogicalPlan.PushDownTopN(topN)` over a whole tree, Go rule #21's
 /// body.
 #[must_use]
-pub fn push_down_topn(plan: LogicalPlan, topn: Option<LogicalTopN>) -> LogicalPlan {
-    let mut rewrite = PushDownTopN { stash: Vec::new() };
+pub fn push_down_topn_with_builder(
+    builder: &dyn tidb_expr::expr_util::builder::FunctionBuilder,
+    plan: LogicalPlan,
+    topn: Option<LogicalTopN>,
+) -> LogicalPlan {
+    let mut rewrite = PushDownTopN {
+        stash: Vec::new(),
+        builder,
+    };
     let (plan, ()) = fold_owned(&mut rewrite, plan, topn.map(Box::new));
     plan
 }

@@ -942,10 +942,13 @@ impl LogicalOptRule for PushDownTopNOptimizer {
     #[allow(clippy::result_large_err)]
     fn optimize(
         &self,
-        _ctx: &RuleContext<'_>,
+        ctx: &RuleContext<'_>,
         plan: LogicalPlan,
     ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
-        Ok((super::rewrite::push_down_topn(plan, None), false))
+        Ok((
+            super::rewrite::push_down_topn_with_builder(ctx.builder, plan, None),
+            false,
+        ))
     }
 
     fn name(&self) -> &'static str {

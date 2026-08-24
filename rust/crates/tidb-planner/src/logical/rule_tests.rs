@@ -50,14 +50,14 @@ use super::sort::LogicalSort;
 use super::topn::LogicalTopN;
 use super::{BaseLogicalPlan, LogicalPlan};
 
-const BUILDER: PreservingFunctionBuilder = PreservingFunctionBuilder;
+pub(crate) const TEST_BUILDER: PreservingFunctionBuilder = PreservingFunctionBuilder;
 
 /// A [`RuleContext`] over a caller-owned allocator, for tests elsewhere in the
 /// crate as well as this file.
 pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
     RuleContext {
         allocator,
-        builder: &BUILDER,
+        builder: &TEST_BUILDER,
         use_plan_cache: false,
         // Go's `AllowDeriveTopN` defaults ON in `sessionVars`.
         allow_derive_topn: true,
@@ -787,8 +787,9 @@ fn topn_push_down_absorbs_a_sort_below_a_topn() {
 
 #[test]
 fn topn_push_down_leaves_a_join_alone() {
-    // The narrowed base body keeps the TopN ABOVE the join, which is always
-    // correct; the outer-side push is a later batch.
+    // Go `LogicalJoin.PushDownTopN` (`logical_join.go:428`): without a unique
+    // inner side the offset cannot travel, so the limit re-attaches above the
+    // join as count+offset over zero offset.
     let allocator = PlanIdAllocator::new();
     let left = data_source(&allocator, &[1]);
     let right = data_source(&allocator, &[2]);
@@ -808,6 +809,168 @@ fn topn_push_down_leaves_a_join_alone() {
     let out = super::rewrite::push_down_topn(topn, None);
     assert!(matches!(out, LogicalPlan::TopN(_) | LogicalPlan::Limit(_)));
     assert_eq!(out.plan_count(), 4);
+    out.dismantle();
+}
+
+/// `col(left) = col(right)` as the ScalarFunction shape `EqualConditions` keeps.
+fn eq_scalar(left: i64, right: i64) -> ScalarFunction {
+    match eq_cols(left, right) {
+        Expression::ScalarFunction(sf) => sf,
+        _ => unreachable!("eq_cols builds a scalar function"),
+    }
+}
+
+#[test]
+fn topn_push_down_enters_a_left_join_whose_inner_side_is_unique() {
+    // Go `pushDownTopNToChild` (`logical_join.go:1272`) with a LEFT OUTER JOIN
+    // whose inner side carries the join key as PKOrUK: the offset travels down
+    // (`count, offset = topN.Count, topN.Offset`) and `topnEliminated` drops
+    // the root TopN entirely — the limit lands on the PRESERVED child.
+    let allocator = PlanIdAllocator::new();
+    let mut left_schema = schema_of(&[1]);
+    let mut right_schema = schema_of(&[2]);
+    right_schema.pk_or_uk = vec![vec![column(2)]];
+    let left = DataSource::new(
+        base(&allocator, "DataSource", Some(left_schema.clone())),
+        1,
+        "t",
+    );
+    let left = LogicalPlan::DataSource(left);
+    let right = DataSource::new(
+        base(&allocator, "DataSource", Some(right_schema)),
+        1,
+        "t",
+    );
+    let right = LogicalPlan::DataSource(right);
+    let mut join = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::LeftOuter,
+    ));
+    join.set_children(vec![left, right]);
+    let mut join_ref = match &mut join {
+        LogicalPlan::Join(op) => op,
+        _ => unreachable!(),
+    };
+    join_ref.equal_conditions.push(eq_scalar(1, 2));
+    let mut topn = LogicalPlan::Limit(LogicalLimit::new(
+        base(&allocator, "Limit", Some(schema_of(&[1, 2]))),
+        0,
+        5,
+    ));
+    topn.set_children(vec![join]);
+
+    let out = super::rewrite::push_down_topn(topn, None);
+    // The root limit is ELIMINATED; the join is what comes back.
+    fn dump(plan: &LogicalPlan, depth: usize) -> String {
+        let mut me = format!(
+            "{}{:p} tp={} kids={}\n",
+            " ".repeat(depth * 2),
+            plan,
+            plan.base().base.tp(),
+            plan.children().len()
+        );
+        for child in plan.children() {
+            me.push_str(&dump(child, depth + 1));
+        }
+        me
+    }
+    assert!(
+        matches!(out, LogicalPlan::Join(_)),
+        "expected the bare join, got {} | tree: {}",
+        out.explain_info(),
+        dump(&out, 0)
+    );
+    // ...and a LIMIT sits directly above the preserved (left) child.
+    let out_join_children = out.children();
+    assert_eq!(out_join_children.len(), 2);
+    assert!(
+        matches!(out_join_children[0], LogicalPlan::Limit(_)),
+        "expected the pushed limit on the outer side"
+    );
+    assert!(matches!(out_join_children[1], LogicalPlan::DataSource(_)));
+    out.dismantle();
+}
+
+#[test]
+fn topn_push_down_keeps_the_limit_above_a_left_join_with_a_wide_inner_side() {
+    // Go `pushDownTopNToChild` (`logical_join.go:1298`): when the inner side
+    // is NOT unique on the join key, one preserved row may fan out, so only
+    // `Count+Offset` rows are safe to keep and the limit RE-ATTACHES above
+    // the join.
+    let allocator = PlanIdAllocator::new();
+    let left = data_source(&allocator, &[1]);
+    let right = data_source(&allocator, &[2]);
+    let mut join = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::LeftOuter,
+    ));
+    join.set_children(vec![left, right]);
+    let mut join_ref = match &mut join {
+        LogicalPlan::Join(op) => op,
+        _ => unreachable!(),
+    };
+    join_ref.equal_conditions.push(eq_scalar(1, 2));
+    let mut limit = LogicalPlan::Limit(LogicalLimit::new(
+        base(&allocator, "Limit", Some(schema_of(&[1, 2]))),
+        3,
+        5,
+    ));
+    limit.set_children(vec![join]);
+
+    let out = super::rewrite::push_down_topn(limit, None);
+    // The original limit stays ABOVE the join...
+    let LogicalPlan::Limit(root) = &out else {
+        panic!("expected the limit above the join, got {}", out.explain_info())
+    };
+    assert_eq!(root.offset, 3, "the incoming limit keeps its own offset");
+    assert_eq!(root.count, 5);
+    // ...and a PARTIAL limit with count+offset sits on the preserved child.
+    let join = &root.base.children()[0];
+    let LogicalPlan::Join(join_op) = join else {
+        panic!("expected the join below the limit")
+    };
+    let LogicalPlan::Limit(pushed) = &join_op.base.children()[0] else {
+        panic!("expected the pushed partial limit on the outer side")
+    };
+    assert_eq!(pushed.offset, 0, "the pushed half loses its offset");
+    assert_eq!(pushed.count, 8, "count absorbs offset when not unique");
+    out.dismantle();
+}
+
+#[test]
+fn topn_push_down_over_an_inner_join_takes_the_base_body() {
+    // Go `LogicalJoin.PushDownTopN` (`logical_join.go:436-438`): only OUTER
+    // joins forward a TopN into a child; an inner join falls to
+    // `pushDownTopNForBaseLogicalPlan`, which re-attaches above.
+    let allocator = PlanIdAllocator::new();
+    let mut right_schema = schema_of(&[2]);
+    right_schema.pk_or_uk = vec![vec![column(2)]];
+    let left = data_source(&allocator, &[1]);
+    let right = DataSource::new(
+        base(&allocator, "DataSource", Some(right_schema)),
+        1,
+        "t",
+    );
+    let right = LogicalPlan::DataSource(right);
+    let mut join = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::Inner,
+    ));
+    join.set_children(vec![left, right]);
+    let mut topn = LogicalPlan::TopN(LogicalTopN::new(
+        base(&allocator, "TopN", None),
+        Vec::new(),
+        0,
+        5,
+    ));
+    topn.set_children(vec![join]);
+
+    let out = super::rewrite::push_down_topn(topn, None);
+    // The TopN stays above the join (as the limit it becomes on attach).
+    assert!(matches!(
+        out,
+        LogicalPlan::TopN(_) | LogicalPlan::Limit(_)
+    ));
     out.dismantle();
 }
 

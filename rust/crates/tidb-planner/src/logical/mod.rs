@@ -770,8 +770,20 @@ impl LogicalPlan {
     /// Go's parameter is a `base.LogicalPlan` that every body immediately
     /// asserts to a `*LogicalTopN`; the assertion is in the type here.
     #[must_use]
+    pub fn push_down_topn_with(
+        self,
+        builder: &dyn tidb_expr::expr_util::builder::FunctionBuilder,
+        topn: Option<LogicalTopN>,
+    ) -> Self {
+        rewrite::push_down_topn_with_builder(builder, self, topn)
+    }
+
+    /// Test-only convenience over [`LogicalPlan::push_down_topn_with`] using
+    /// the preserving test builder.
+    #[cfg(test)]
+    #[must_use]
     pub fn push_down_topn(self, topn: Option<LogicalTopN>) -> Self {
-        rewrite::push_down_topn(self, topn)
+        self.push_down_topn_with(&crate::logical::rule_tests::TEST_BUILDER, topn)
     }
 
     /// Go `DeriveTopN()` (`<5th>`), gated on `AllowDeriveTopN`.
