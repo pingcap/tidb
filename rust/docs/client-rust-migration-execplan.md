@@ -190,11 +190,25 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       not yet ported from client-go at all), and `rpc/unary.rs`/
       `rpc/transaction.rs` (map to client-go's
       `internal/client` BatchCommands transport, which the upstream ledger
-      marks `in-progress` and explicitly incomplete — same category of
-      finding as the PD failover one below). See `Surprises & Discoveries`
-      and `Outcomes & Retrospective` for the full reasoning. Next session
-      should re-check the ledger for `internal/client`/`internal/unionstore`/
-      `txnkv/transaction` before resuming here.
+      marked `in-progress` and explicitly incomplete at the time — same
+      category of finding as the PD failover one below). See
+      `Surprises & Discoveries` and `Outcomes & Retrospective` for the full
+      reasoning.
+- [x] (2026-08-24, scheduled check-in) Re-checked the ledger per the above:
+      `internal/client` now reads `complete`. Investigated whether this
+      actually unblocks `rpc/unary.rs`/`rpc/transaction.rs` — it does not,
+      *yet*, for a new and different reason than before (not incompleteness,
+      but an API-shape mismatch: type-erased `dyn Request`/`dyn Any` dispatch
+      vs. tidb-txnkv's strongly-typed per-RPC functions). This is now a
+      legitimate, well-scoped Phase 2 starting point for a dedicated future
+      session, not something to attempt inside a routine check-in. Full
+      reasoning and the specific adapter-layer options in
+      `Surprises & Discoveries`. `internal/locate` (region cache/PD retry),
+      `tikv`, `txnkv/transaction`, `txnkv/txnlock`, `txnkv/txnsnapshot` are
+      all still `seed`, not `complete`; `MemDb::remove_from_buffer` is still
+      a stub. Patches 030/040 needed rebasing this check-in (upstream moved
+      twice and broke two of the four maintained patches) — routine
+      maintenance, see the matching commit.
 - [ ] Phase 3: rewire `tidb-distsql`'s RPC/region-retry layer onto the vendored
       crate's `request::Plan`/`Shardable`/retry framework, porting the
       documented parity fixes from `rust/docs/distsql-coprocessor-parity.md`.
@@ -211,6 +225,44 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
 
 ## Surprises & Discoveries
 
+- Observation (2026-08-24, scheduled check-in via `trig_01MxJ7JyarpAxSeHQ9iTTjxJ`):
+  `internal/client` (the BatchCommands transport layer -- the row this plan's
+  Phase 2 notes named as blocking `tidb-txnkv/src/rpc/{unary,transaction}.rs`)
+  reached `complete` upstream, with a dedicated receipt doc
+  (`third_party/tikv-client-rs/doc/internal-client-source-artifact-audit.md`)
+  claiming all ten production files, the mockserver dependency, six test
+  files, and the goleak harness. This is real, substantive progress -- but
+  investigating the actual public API (`src/store/client.rs`'s `KvRpcClient`,
+  `KvClient` trait, and `src/store/request.rs`'s `Request` trait) found it is
+  NOT a drop-in replacement for `rpc/unary.rs`/`rpc/transaction.rs`, for a
+  structural reason distinct from every earlier "not ready" finding: this one
+  IS complete and correct, it is just API-shaped differently on purpose.
+  `KvClient::dispatch(&self, req: &dyn Request) -> Result<Box<dyn Any>>` is a
+  type-erased dispatch interface; `tidb-txnkv/rpc/transaction.rs` calls ~15
+  strongly-typed per-RPC functions (`KvrpcPrewriteRequest` ->
+  `KvrpcPrewriteResponse` etc., using `tidb_proto`'s generated types
+  directly, no `dyn Any` downcast). Adopting `KvRpcClient` would require
+  either implementing client-rust's ~20-method `Request` trait for each of
+  tidb-txnkv's `tidb_proto`-typed requests (large boilerplate, and `Request::
+  dispatch` takes `&TikvClient<Channel>` from `tikv_client`'s own generated
+  `tikvpb` module, which is `mod proto;` -- still private, would need its own
+  visibility patch), or switching request construction to `tikv_client`'s own
+  generated `kvrpcpb` types wholesale (the same type-identity migration this
+  plan has flagged before, at larger scale here since every 2PC/lock/scan RPC
+  request type would need retargeting, not just PD's smaller request set).
+  Verdict: this is now a legitimate, well-scoped **future** Phase 2 starting
+  point -- unlike PD failover (structurally can't reproduce required
+  behavior) or `MemBufferBackend` (blocked on a missing method) -- but it is
+  an adapter-layer project on the order of the `etcd.rs` slice or larger, not
+  something to start inside a routine periodic check-in. Next session should
+  scope this properly (read `src/store/request.rs`'s full `Request` trait,
+  decide the tidb_proto-impls-Request vs retarget-to-tikv_client-types
+  question, budget for it explicitly) rather than begin it opportunistically.
+  Evidence: `third_party/tikv-client-rs/doc/client-go-parity-ledger.md` row
+  `internal/client`; `third_party/tikv-client-rs/src/store/client.rs` lines
+  913-990 (`KvClient` trait, `KvRpcClient` struct); `third_party/tikv-client-rs/
+  src/store/request.rs` lines 171-230 (`Request` trait); `crates/tidb-txnkv/
+  src/rpc/transaction.rs` (existing strongly-typed call shape, unchanged).
 - Observation: `crates/tidb-pd-client/src/client/mod.rs`'s doc comment states
   the design directly: "A bounded, foreground PD control-plane client... A
   dedicated worker owns the Tokio runtime so the public synchronous API never
