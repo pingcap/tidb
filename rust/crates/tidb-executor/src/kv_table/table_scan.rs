@@ -3392,6 +3392,20 @@ impl crate::table_access::TableAccess for TableScanExec {
         {
             return false;
         }
+        // Go's TopN-over-table-scan reader sets `KeepOrder: true` and walks
+        // BACKWARD for a descending order (`table_reader.go` builds a cop
+        // task whose TableFullScan carries keepOrder:true, desc under its
+        // Limit), so the cop-side Limit reads only the boundary rows.
+        // Without flipping the walk direction the region streams every row
+        // ascending into the bound -- correct, but a full-scan worth of work
+        // for LIMIT 1. All items must agree on the direction for the flip to
+        // be valid; mixed directions keep the default forward walk and lean
+        // on the cop's own TopN executor.
+        let desc = topn.order_by[0].desc;
+        if topn.order_by.iter().all(|item| item.desc == desc) {
+            self.keep_order = true;
+            self.descending = desc;
+        }
         self.remote_topn = Some(topn.clone());
         true
     }

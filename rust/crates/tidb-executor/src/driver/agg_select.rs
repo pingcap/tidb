@@ -4049,18 +4049,46 @@ fn build_aggregation(
             ));
         }
         if elimination.reads_column {
-            source = Box::new(TopNExec::new(
-                ExecutorMeta::new(source.schema().clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
-                vec![SortByItem {
-                    expr: elimination.argument.clone(),
-                    desc: elimination.desc,
-                }],
-                source,
-                ctx.clone(),
-                0,
-                1,
-                ctx.statement_memory(),
-            ));
+            // Go's MaxMinEliminate endgame: the Limit(1) travels INTO the
+            // cop task as a bounded reverse scan (`table_reader.go` builds
+            // `TableReader <- Limit <- TableFullScan keepOrder:true, desc`),
+            // so `SELECT max(uid) FROM account` reads ONE key instead of the
+            // whole table into a root TopN. Offer the bounded order to the
+            // scan source; when it declines (or the argument is not a plain
+            // output column), fall back to the root TopN as before.
+            let pushed_remote = source
+                .table_access()
+                .is_some_and(|access| {
+                    // Go's MaxMinEliminate endgame
+                    // (\`table_reader.go\`: \`TableReader <- Limit <-
+                    // TableFullScan keepOrder:true, desc\`): the scan walks the
+                    // handle BACKWARD for max (forward for min) and its
+                    // cop-side Limit reads exactly one boundary key.
+                    access.accept_keep_order(elimination.desc)
+                        && access.accept_scan_limit(1)
+                });
+            if pushed_remote {
+                if let Some(trace) = trace.as_deref_mut() {
+                    trace.pushed_topn_reader(
+                        &traced_select.order_by,
+                        &qualify,
+                        1,
+                    );
+                }
+            } else {
+                source = Box::new(TopNExec::new(
+                    ExecutorMeta::new(source.schema().clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
+                    vec![SortByItem {
+                        expr: elimination.argument.clone(),
+                        desc: elimination.desc,
+                    }],
+                    source,
+                    ctx.clone(),
+                    0,
+                    1,
+                    ctx.statement_memory(),
+                ));
+            }
         } else {
             source = Box::new(LimitExec::new(
                 ExecutorMeta::new(source.schema().clone(), 4, INIT_CAP, MAX_CHUNK_SIZE),
