@@ -41,7 +41,7 @@ const (
 
 // TaskInfoGetter provides task metadata needed to decide conflict-row retention.
 type TaskInfoGetter interface {
-	GetTaskCleanupInfoByIDs(context.Context, []int64) (map[int64]storage.TaskCleanupInfo, error)
+	GetTaskCleanupInfoByIDs(context.Context, []int64) (map[int64]*storage.TaskCleanupInfo, error)
 }
 
 type cleanupStats struct {
@@ -187,15 +187,11 @@ func cleanFiles(
 		}
 		sort.Slice(taskIDs, func(i, j int) bool { return taskIDs[i] < taskIDs[j] })
 
-		infosByTaskID := make(map[int64]*storage.TaskCleanupInfo, len(taskIDs))
+		var infosByTaskID map[int64]*storage.TaskCleanupInfo
 		if len(taskIDs) > 0 {
-			infos, err := infoGetter.GetTaskCleanupInfoByIDs(ctx, taskIDs)
+			infosByTaskID, err = infoGetter.GetTaskCleanupInfoByIDs(ctx, taskIDs)
 			if err != nil {
 				return err
-			}
-			for taskID := range infos {
-				info := infos[taskID]
-				infosByTaskID[taskID] = &info
 			}
 		}
 		flushStats := cleanupStats{}

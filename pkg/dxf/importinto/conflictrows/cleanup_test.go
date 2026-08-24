@@ -32,12 +32,12 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 )
 
-type taskInfoGetterFunc func(context.Context, []int64) (map[int64]storage.TaskCleanupInfo, error)
+type taskInfoGetterFunc func(context.Context, []int64) (map[int64]*storage.TaskCleanupInfo, error)
 
 func (f taskInfoGetterFunc) GetTaskCleanupInfoByIDs(
 	ctx context.Context,
 	taskIDs []int64,
-) (map[int64]storage.TaskCleanupInfo, error) {
+) (map[int64]*storage.TaskCleanupInfo, error) {
 	return f(ctx, taskIDs)
 }
 
@@ -85,8 +85,8 @@ func requireTestFileExists(t *testing.T, store storeapi.Storage, name string, wa
 	require.Equal(t, want, exists, name)
 }
 
-func failedImportInfo(taskID int64) storage.TaskCleanupInfo {
-	return storage.TaskCleanupInfo{ID: taskID, Type: proto.ImportInto, State: proto.TaskStateFailed}
+func failedImportInfo(taskID int64) *storage.TaskCleanupInfo {
+	return &storage.TaskCleanupInfo{ID: taskID, Type: proto.ImportInto, State: proto.TaskStateFailed}
 }
 
 func TestParseTaskID(t *testing.T) {
@@ -229,9 +229,9 @@ func TestCleanFiles(t *testing.T) {
 		}
 		writeTestFiles(t, store, files...)
 		old := now.Add(-retention)
-		getter := taskInfoGetterFunc(func(_ context.Context, taskIDs []int64) (map[int64]storage.TaskCleanupInfo, error) {
+		getter := taskInfoGetterFunc(func(_ context.Context, taskIDs []int64) (map[int64]*storage.TaskCleanupInfo, error) {
 			require.ElementsMatch(t, []int64{1, 2, 3, 4}, taskIDs)
-			return map[int64]storage.TaskCleanupInfo{
+			return map[int64]*storage.TaskCleanupInfo{
 				1: failedImportInfo(1),
 				2: {ID: 2, Type: proto.ImportInto, State: proto.TaskStateRunning},
 				3: {ID: 3, Type: proto.TaskTypeExample, State: proto.TaskStateFailed},
@@ -262,9 +262,9 @@ func TestCleanFiles(t *testing.T) {
 	t.Run("task ID bound", func(t *testing.T) {
 		store := &testStorage{Storage: objstore.NewMemStorage()}
 		lookupSizes := make([]int, 0, 2)
-		getter := taskInfoGetterFunc(func(_ context.Context, taskIDs []int64) (map[int64]storage.TaskCleanupInfo, error) {
+		getter := taskInfoGetterFunc(func(_ context.Context, taskIDs []int64) (map[int64]*storage.TaskCleanupInfo, error) {
 			lookupSizes = append(lookupSizes, len(taskIDs))
-			result := make(map[int64]storage.TaskCleanupInfo, len(taskIDs))
+			result := make(map[int64]*storage.TaskCleanupInfo, len(taskIDs))
 			for _, taskID := range taskIDs {
 				result[taskID] = failedImportInfo(taskID)
 			}
@@ -285,9 +285,9 @@ func TestCleanFiles(t *testing.T) {
 	t.Run("object bound keeps current callback", func(t *testing.T) {
 		store := &testStorage{Storage: objstore.NewMemStorage()}
 		lookupSizes := make([]int, 0, 2)
-		getter := taskInfoGetterFunc(func(_ context.Context, taskIDs []int64) (map[int64]storage.TaskCleanupInfo, error) {
+		getter := taskInfoGetterFunc(func(_ context.Context, taskIDs []int64) (map[int64]*storage.TaskCleanupInfo, error) {
 			lookupSizes = append(lookupSizes, len(taskIDs))
-			return map[int64]storage.TaskCleanupInfo{1: failedImportInfo(1)}, nil
+			return map[int64]*storage.TaskCleanupInfo{1: failedImportInfo(1)}, nil
 		})
 		for i := range maxObjectsPerFlush + 1 {
 			writeTestFiles(t, store, fmt.Sprintf("conflicted-rows/1/data-%04d", i))
@@ -309,17 +309,17 @@ func TestCleanFiles(t *testing.T) {
 		writeTestFiles(t, store, "conflicted-rows/999/retain")
 		lookupErr := errors.New("lookup failed")
 		lookupCount := 0
-		getter := taskInfoGetterFunc(func(_ context.Context, taskIDs []int64) (map[int64]storage.TaskCleanupInfo, error) {
+		getter := taskInfoGetterFunc(func(_ context.Context, taskIDs []int64) (map[int64]*storage.TaskCleanupInfo, error) {
 			lookupCount++
 			if lookupCount == 2 {
 				return nil, lookupErr
 			}
-			result := make(map[int64]storage.TaskCleanupInfo, len(taskIDs))
+			result := make(map[int64]*storage.TaskCleanupInfo, len(taskIDs))
 			for _, taskID := range taskIDs {
 				if taskID != 999 {
 					result[taskID] = failedImportInfo(taskID)
 				} else {
-					result[taskID] = storage.TaskCleanupInfo{ID: taskID, Type: proto.ImportInto, State: proto.TaskStateRunning}
+					result[taskID] = &storage.TaskCleanupInfo{ID: taskID, Type: proto.ImportInto, State: proto.TaskStateRunning}
 				}
 			}
 			return result, nil
@@ -330,11 +330,11 @@ func TestCleanFiles(t *testing.T) {
 		require.Equal(t, int64(maxTaskIDsPerFlush+1), stats.deletedFiles)
 		require.Equal(t, int64(1), stats.failures)
 
-		getter = func(_ context.Context, taskIDs []int64) (map[int64]storage.TaskCleanupInfo, error) {
-			result := make(map[int64]storage.TaskCleanupInfo, len(taskIDs))
+		getter = func(_ context.Context, taskIDs []int64) (map[int64]*storage.TaskCleanupInfo, error) {
+			result := make(map[int64]*storage.TaskCleanupInfo, len(taskIDs))
 			for _, taskID := range taskIDs {
 				if taskID == 999 {
-					result[taskID] = storage.TaskCleanupInfo{ID: taskID, Type: proto.ImportInto, State: proto.TaskStateRunning}
+					result[taskID] = &storage.TaskCleanupInfo{ID: taskID, Type: proto.ImportInto, State: proto.TaskStateRunning}
 				} else {
 					result[taskID] = failedImportInfo(taskID)
 				}
@@ -358,8 +358,8 @@ func TestCleanFiles(t *testing.T) {
 			writeTestFiles(t, store, fmt.Sprintf("conflicted-rows/1/data-%04d", i))
 		}
 		writeTestFiles(t, store, "conflicted-rows/2/missing-metadata")
-		getter := taskInfoGetterFunc(func(_ context.Context, _ []int64) (map[int64]storage.TaskCleanupInfo, error) {
-			return map[int64]storage.TaskCleanupInfo{1: failedImportInfo(1)}, nil
+		getter := taskInfoGetterFunc(func(_ context.Context, _ []int64) (map[int64]*storage.TaskCleanupInfo, error) {
+			return map[int64]*storage.TaskCleanupInfo{1: failedImportInfo(1)}, nil
 		})
 
 		stats, err := cleanFiles(context.Background(), store, getter, now)
@@ -390,8 +390,8 @@ func TestCleanFiles(t *testing.T) {
 		}
 
 		stats, err := cleanFiles(context.Background(), store, taskInfoGetterFunc(
-			func(context.Context, []int64) (map[int64]storage.TaskCleanupInfo, error) {
-				return map[int64]storage.TaskCleanupInfo{}, nil
+			func(context.Context, []int64) (map[int64]*storage.TaskCleanupInfo, error) {
+				return map[int64]*storage.TaskCleanupInfo{}, nil
 			}), now)
 		require.NoError(t, err)
 		require.Equal(t, int64(20), stats.candidateTasks)
@@ -426,9 +426,9 @@ func TestCleanFiles(t *testing.T) {
 				fmt.Sprintf("conflicted-rows/not-a-task-%02d/data", i),
 			)
 		}
-		getter := taskInfoGetterFunc(func(_ context.Context, taskIDs []int64) (map[int64]storage.TaskCleanupInfo, error) {
+		getter := taskInfoGetterFunc(func(_ context.Context, taskIDs []int64) (map[int64]*storage.TaskCleanupInfo, error) {
 			require.Equal(t, []int64{1}, taskIDs)
-			return map[int64]storage.TaskCleanupInfo{
+			return map[int64]*storage.TaskCleanupInfo{
 				1: {ID: 1, Type: proto.TaskTypeExample, State: proto.TaskStateFailed},
 			}, nil
 		})
@@ -458,7 +458,7 @@ func TestCleanFiles(t *testing.T) {
 		}
 
 		stats, err := cleanFiles(context.Background(), store, taskInfoGetterFunc(
-			func(context.Context, []int64) (map[int64]storage.TaskCleanupInfo, error) {
+			func(context.Context, []int64) (map[int64]*storage.TaskCleanupInfo, error) {
 				require.FailNow(t, "metadata lookup should not run")
 				return nil, nil
 			}), now)
@@ -476,7 +476,7 @@ func TestCleanFiles(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		stats, err := cleanFiles(ctx, store, taskInfoGetterFunc(
-			func(context.Context, []int64) (map[int64]storage.TaskCleanupInfo, error) {
+			func(context.Context, []int64) (map[int64]*storage.TaskCleanupInfo, error) {
 				require.FailNow(t, "metadata lookup should not run")
 				return nil, nil
 			}), now)
