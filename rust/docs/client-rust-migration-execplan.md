@@ -121,6 +121,41 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
 - [x] (2026-08-24) Phase 1, dependency wiring only: `tikv-client.workspace =
       true` added to `crates/tidb-pd-client/Cargo.toml`; `cargo check
       --workspace` passes. No internals changed.
+- [x] (2026-08-24) Phase 1, slice 1 (`etcd.rs`): replaced
+      `run_kv_worker`/`across_endpoints`/`connect_channel`'s hand-rolled
+      `tidb_proto::etcdserverpb` KV/Lease calls with the `etcd-client` crate
+      (0.19, added to `rust/Cargo.toml` with the `tls` feature; already pins
+      tonic/prost 0.14 exactly, no patching needed — confirmed by checking
+      its own `Cargo.toml`, not assumed). Kept the exact per-call,
+      try-each-endpoint-in-order, drop-on-failure retry structure
+      (`across_endpoints`), just swapped the RPC implementation inside each
+      closure and the cached client type (`HashMap<String, tonic::Channel>`
+      -> `HashMap<String, etcd_client::Client>`, both cheap-`Clone`). Public
+      `EtcdClient`/`EtcdWatcher` API untouched — `EtcdWatcher` (the long-lived
+      bidi watch stream) was NOT touched this slice, still uses
+      `tidb_proto::etcdserverpb::WatchClient` directly; a fresh
+      `Surprises & Discoveries` entry below explains why and what it would
+      take to migrate it too. One documented, deliberate behavioral
+      difference: `LeaseKeepAliveOnce` now takes 2 round trips instead of 1
+      (`etcd_client::Client::lease_keep_alive`'s high-level wrapper consumes
+      the first response internally without returning its TTL); the returned
+      TTL value is still correct.
+      Verified: `cargo test -p tidb-pd-client` — 22 lib tests + 43
+      integration tests, same test names/assertions as before this slice,
+      all pass unchanged (this is the regression net the plan called for).
+      `cargo clippy -p tidb-pd-client --all-targets` — the only two
+      `tidb-pd-client`-attributed warnings (`type_complexity` on
+      `EtcdCommand::GetPrefix`/`get_prefix`) predate this change (confirmed
+      via `git diff` on those exact lines — zero diff). `prefix_range_end`
+      was deleted (dead code once `etcd_client::{GetOptions,
+      DeleteOptions}::with_prefix` compute it internally).
+- [ ] Phase 1, slice 2 (next): `client/requests.rs` -> delegate each method
+      to `tikv_client::pd::cluster::Cluster`, following slice 1's pattern
+      (keep `client/mod.rs`'s public sync API and `WorkerCommand` enum
+      exactly as-is; the integration point is inside `worker::run_worker`'s
+      command loop, same as `run_kv_worker` was for etcd). Read
+      `client/worker.rs` and `client/requests.rs` together before starting —
+      not yet done this session.
 - [ ] Phase 2: replace `tidb-txnkv` internals (region cache, RPC transport,
       2PC/lock-resolver engine, raw KV), porting the documented parity fixes
       from `rust/docs/two-phase-commit-vs-client-go.md`.
@@ -251,6 +286,40 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
   replaced.
   Evidence: `rust/docs/architecture/workspace.md`, "Crate responsibilities"
   table and "Dependency direction" section.
+- Observation: `etcd_client::Client::lease_keep_alive(id)` (0.19.0,
+  `src/rpc/lease.rs`) sends the first `LeaseKeepAliveRequest` and reads the
+  first `LeaseKeepAliveResponse` internally to validate `ttl > 0`, but
+  discards that response rather than returning it — the crate's own
+  `LeaseKeeper`/`LeaseKeepAliveStream` handle only lets a caller send/read
+  *subsequent* rounds. There is no public API to get the TTL from the first
+  round trip. `feature = "pub-response-field"` exposes internal protobuf
+  representations for response *construction*, not a way to intercept this
+  particular internal call. Accepted as a 2-round-trip implementation
+  (documented in the code and in the Progress entry above) rather than
+  bypassing the crate to hand-roll the bidi stream, since `EtcdClient::
+  lease_keep_alive_once` is a low-frequency lease-heartbeat call, not a hot
+  path — the extra latency is real but small and non-repeating within one
+  call.
+  Evidence: `third_party/tikv-client-rs/../etcd-client-0.19.0/src/rpc/lease.rs`
+  (cargo registry cache, not vendored into this repo — `etcd-client` is a
+  plain crates.io dependency, unlike `tikv-client`) lines 71-100.
+- Observation: `crates/tidb-pd-client/src/etcd.rs`'s `EtcdWatcher` (the
+  long-lived bidi watch stream backing DDL schema-version notification) was
+  NOT migrated in Phase 1 slice 1 — only `EtcdClient` (the KV/Lease worker)
+  was. `EtcdWatcher` still builds `tidb_proto::etcdserverpb::WatchClient`
+  directly (`watch_one_stream`, around line 1050 as of this session).
+  `etcd_client::Client::watch(key, options)` (`src/client.rs`) returns a
+  `WatchStream` and is the natural replacement, but migrating it needs care
+  this session didn't have time for: the current code holds the request
+  sender for the stream's whole life ("dropping it would half-close the bidi
+  call and end the watch" — the file's own comment) and tracks
+  `WatchCounters` (streams/events/reconnects) for `EtcdWatchStats`, both of
+  which need to be re-derived against `etcd_client`'s `WatchStream`/`Watcher`
+  shape rather than assumed to carry over unchanged. Left for the next
+  session/phase-1-continuation to pick up; `WatchClient`'s import was
+  deliberately kept (not removed) in slice 1 for exactly this reason.
+  Evidence: `crates/tidb-pd-client/src/etcd.rs` `watch_one_stream`,
+  `run_watch_loop`, `WatchCounters` (unchanged by slice 1).
 
 ## Decision Log
 
