@@ -164,6 +164,17 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       `internal/locate` row (region/PD retry) reaches `complete` on a resync
       — re-read that row's evidence before re-attempting, don't assume
       `complete` alone means safe (see the same entry).
+- [x] (2026-08-24) Phase 1 close-out: both `tidb-pd-client/src/etcd.rs`
+      halves (the `EtcdClient` KV/Lease worker and the `EtcdWatcher` watch
+      stream) now depend on `etcd-client` instead of hand-rolled
+      `tidb_proto::etcdserverpb` calls. `client/{failover,requests,worker,
+      topology}.rs`, `client/mod.rs`, and `tso.rs` (PD's own connection/
+      retry/TSO-batching layer) stay hand-rolled, on the specific evidence in
+      `Surprises & Discoveries` and the matching Decision Log entry — not
+      because they were skipped, but because they were read, compared
+      against the actual replacement, and found to already be correct where
+      the replacement is confirmed incomplete. Phase 1 is done to the extent
+      safely achievable right now.
 - [ ] Phase 2: replace `tidb-txnkv` internals (region cache, RPC transport,
       2PC/lock-resolver engine, raw KV), porting the documented parity fixes
       from `rust/docs/two-phase-commit-vs-client-go.md`. **Investigated this
@@ -332,23 +343,23 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
   Evidence: `third_party/tikv-client-rs/../etcd-client-0.19.0/src/rpc/lease.rs`
   (cargo registry cache, not vendored into this repo — `etcd-client` is a
   plain crates.io dependency, unlike `tikv-client`) lines 71-100.
-- Observation: `crates/tidb-pd-client/src/etcd.rs`'s `EtcdWatcher` (the
-  long-lived bidi watch stream backing DDL schema-version notification) was
-  NOT migrated in Phase 1 slice 1 — only `EtcdClient` (the KV/Lease worker)
-  was. `EtcdWatcher` still builds `tidb_proto::etcdserverpb::WatchClient`
-  directly (`watch_one_stream`, around line 1050 as of this session).
-  `etcd_client::Client::watch(key, options)` (`src/client.rs`) returns a
-  `WatchStream` and is the natural replacement, but migrating it needs care
-  this session didn't have time for: the current code holds the request
-  sender for the stream's whole life ("dropping it would half-close the bidi
-  call and end the watch" — the file's own comment) and tracks
-  `WatchCounters` (streams/events/reconnects) for `EtcdWatchStats`, both of
-  which need to be re-derived against `etcd_client`'s `WatchStream`/`Watcher`
-  shape rather than assumed to carry over unchanged. Left for the next
-  session/phase-1-continuation to pick up; `WatchClient`'s import was
-  deliberately kept (not removed) in slice 1 for exactly this reason.
+- Observation (resolved same session): `EtcdWatcher`'s `watch_one_stream` was
+  initially left on `tidb_proto::etcdserverpb::WatchClient` in slice 1, but
+  was migrated to `etcd_client::Client::watch(key, None)` immediately after
+  as a follow-up in this same session — it turned out simpler than expected
+  once traced through: `Client::watch` returns an owned `WatchStream` that
+  does not borrow from the `Client` that created it, so there was no
+  request-sender-lifetime problem to solve, and `WatchCounters` needed no
+  changes (it counts our own `stats.streams`/`stats.events`, not anything
+  `etcd_client`-shaped). The one real pitfall: `ConnectOptions::with_timeout`
+  applies a `grpc-timeout` to a streaming RPC's *entire* lifetime, not just
+  its first message — reusing the KV client's connect options verbatim would
+  have silently killed every watch after `timeout` elapsed. Fixed by
+  extracting `etcd_connect_options_with_tls` as a shared helper that leaves
+  timeout selection to each call site (KV: `with_timeout` + `with_connect_
+  timeout`; watch: `with_connect_timeout` only).
   Evidence: `crates/tidb-pd-client/src/etcd.rs` `watch_one_stream`,
-  `run_watch_loop`, `WatchCounters` (unchanged by slice 1).
+  `etcd_connect_options_with_tls`.
 - Observation: `client/failover.rs`'s failover policy is materially more
   precise than `tikv_client::pd::retry::RetryClient`'s. Concrete
   differences, each pinned by an existing `tidb-pd-client` test: (1)
