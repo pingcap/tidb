@@ -246,7 +246,7 @@ const HASH_JOIN_CONCURRENCY: usize = 5;
 /// goroutines alive for the complete probe; a bounded multi-chunk lane gives
 /// the scoped Rust implementation the same amortization without allowing
 /// probe/output memory to grow with the complete input.
-const PARALLEL_PROBE_CHUNKS_PER_WORKER: usize = 8;
+const PARALLEL_PROBE_CHUNKS_PER_WORKER: usize = 16;
 
 /// A residual DECIMAL comparison whose operands can be read directly from
 /// the two input rows. TPC-H q17's `l_quantity < 0.2 * avg(l_quantity)` is the
