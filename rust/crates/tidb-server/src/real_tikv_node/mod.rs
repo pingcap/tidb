@@ -55,7 +55,10 @@ use tidb_exec::real_tikv_read::{
     ReadProcessShutdownStage, RealOptimisticTransactionOpener, RealTiKvQuery, RealTiKvReadSession,
     RealTiKvReadSessionOpener,
 };
-use tidb_exec::real_tikv_stats::load_stats_snapshot_from_cluster;
+use tidb_exec::real_tikv_stats::{
+    load_stats_meta_versions, load_stats_snapshot_and_loader, load_stats_snapshot_from_cluster,
+    stats_snapshot_unchanged_since,
+};
 use tidb_exec::stats_watch::{SharedStats, StatsReloadError, StatsReloadStats, StatsReloader};
 use tidb_pd_client::{
     EtcdClient, EtcdWatchStats, EtcdWatcher, PdClient, DDL_GLOBAL_SCHEMA_VERSION_KEY,
@@ -1615,15 +1618,16 @@ pub(crate) fn node_accounts(
     users.global_vars().load_from_cluster(accounts.sysvars);
     let users = apply_account_policies(config, users);
     let users = Arc::new(users);
-    // Ticks at the same `schema_lease / 2` cadence as the catalog reloader,
-    // so a node is never more than one lease behind the cluster's accounts
-    // either. A failed spawn (only a zero lease can cause it, and the parser
-    // already rejects that) is reported rather than silently leaving the
-    // node on its startup snapshot forever.
+    // Ticks at Go `LoadPrivilegeLoop`'s fallback cadence
+    // (pkg/domain/domain.go:1394-1396): ten minutes when the etcd watch is up
+    // (the watch makes a peer's GRANT prompt), five when it is not. This used
+    // to tick every schema_lease/2 — one second at the benchmark lease —
+    // which re-read every account/grant table and rebuilt the whole registry
+    // hundreds of times more often than Go does.
     let reloader = PrivilegeReloader::spawn(
         users.accounts(),
         authority.transaction_opener(),
-        config.schema_lease / 2,
+        privilege_reload_interval(!config.pd_endpoints.is_empty()),
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
@@ -1717,11 +1721,27 @@ fn spawn_cluster_sysvar_reloader_with_read(
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))
 }
 
-pub(crate) fn sysvar_reload_interval(schema_lease: Duration) -> Duration {
-    // Go's `LoadSysVarCacheLoop` has a fixed 30-second fallback even when
-    // etcd watch delivery is unavailable. A schema lease may demand a
-    // tighter cadence, but it must never relax that safety bound.
-    (schema_lease / 2).min(Duration::from_secs(30))
+pub(crate) fn sysvar_reload_interval(_schema_lease: Duration) -> Duration {
+    // Go `LoadSysVarCacheLoop` (pkg/domain/domain.go:1473): the fallback tick
+    // is a FIXED 30 seconds, with or without etcd — the watch makes a peer's
+    // `SET GLOBAL` prompt, and nothing scales this interval by the schema
+    // lease. A short lease used to shrink this to one second here, which made
+    // every pass re-read and JSON-decode the whole `mysql.global_variables`
+    // image thirty times more often than Go does.
+    let _ = _schema_lease;
+    Duration::from_secs(30)
+}
+
+/// Go `LoadPrivilegeLoop`'s fallback cadence (pkg/domain/domain.go:1394-1396):
+/// ten minutes when the etcd watch is up, five when it is not. The watch —
+/// not the tick — is what makes an account change prompt; the tick is only
+/// the safety net for a lost watch channel.
+pub(crate) fn privilege_reload_interval(has_etcd_watch: bool) -> Duration {
+    if has_etcd_watch {
+        Duration::from_secs(10 * 60)
+    } else {
+        Duration::from_secs(5 * 60)
+    }
 }
 
 /// Every servable-table outcome a `--load-table` node can settle on, once its
@@ -2093,13 +2113,14 @@ mod tests {
         // The test nudges the worker; a long tick proves the observed update
         // came from that runtime path rather than an incidental timer pass.
         config.schema_lease = Duration::from_secs(120);
+        // Go's fixed fallback: the lease does not scale it.
         assert_eq!(
             sysvar_reload_interval(config.schema_lease),
             Duration::from_secs(30)
         );
         assert_eq!(
             sysvar_reload_interval(Duration::from_secs(10)),
-            Duration::from_secs(5)
+            Duration::from_secs(30)
         );
         let users = configured_account_store(&config)
             .expect("skip-grant startup creates no file-backed accounts");
