@@ -59,6 +59,10 @@ pub struct SelectionExec<C: Columns> {
 /// eligible, so casts, warnings, and three-valued cases keep the source path.
 #[derive(Clone, Debug)]
 enum FastSelectionFilter {
+    NullTest {
+        column_offset: usize,
+        negated: bool,
+    },
     StringIn {
         column_offset: usize,
         collator: tidb_datatype::Collator,
@@ -146,6 +150,26 @@ impl FastSelectionFilter {
             }
             return (!filters.is_empty()).then_some(Self::And { filters, complete });
         }
+        let function_name = function.func_name.lowercase();
+        if function.args.len() == 1 && (function_name == "isnull" || function_name == "not") {
+            let (argument, negated) = if function_name == "isnull" {
+                (&function.args[0], false)
+            } else {
+                let Expression::ScalarFunction(inner) = &function.args[0] else {
+                    return None;
+                };
+                if inner.func_name.lowercase() != "isnull" || inner.args.len() != 1 {
+                    return None;
+                }
+                (&inner.args[0], true)
+            };
+            let column = argument.as_column()?;
+            let column_offset = usize::try_from(column.index).ok()?;
+            return Some(Self::NullTest {
+                column_offset,
+                negated,
+            });
+        }
         if function.func_name.lowercase() != "in" || function.args.len() < 2 {
             return None;
         }
@@ -192,6 +216,10 @@ impl FastSelectionFilter {
 
     fn matches(&self, row: tidb_chunk::row::Row<'_>) -> bool {
         match self {
+            Self::NullTest {
+                column_offset,
+                negated,
+            } => row.is_null(*column_offset) != *negated,
             Self::StringIn {
                 column_offset,
                 collator,
@@ -209,7 +237,7 @@ impl FastSelectionFilter {
 
     fn is_complete(&self) -> bool {
         match self {
-            Self::StringIn { .. } => true,
+            Self::NullTest { .. } | Self::StringIn { .. } => true,
             Self::And { complete, .. } => *complete,
         }
     }
@@ -294,6 +322,15 @@ impl<C: Columns> Executor for SelectionExec<C> {
 
     fn new_chunk(&self) -> Chunk {
         self.meta.new_chunk()
+    }
+
+    /// A leaf Selection is still a negotiable wrapper around its base table.
+    /// Go's predicate pushdown walks through LogicalSelection before building
+    /// the physical reader; forwarding this capability lets reordered joins
+    /// do the same without removing the Selection that still owns any
+    /// residual or sibling-semijoin predicate.
+    fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
+        self.child.table_access()
     }
 }
 

@@ -392,11 +392,11 @@ pub fn construct_aggregated_read_only_dag_req_with_conditions(
 pub fn construct_index_aggregated_dag_req(
     context: &DagRequestContext,
     index_scan: IndexScan,
+    conditions: Vec<Expr>,
     aggregation: Aggregation,
     aggregation_width: usize,
 ) -> Result<DagRequest, DagRequestBuildError> {
-    let executors = vec![
-        Executor {
+    let mut executors = vec![Executor {
             tp: Some(ExecType::TypeIndexScan as i32),
             tbl_scan: None,
             idx_scan: Some(index_scan),
@@ -406,9 +406,11 @@ pub fn construct_index_aggregated_dag_req(
             limit: None,
             executor_id: None,
             parent_idx: None,
-        },
-        aggregation_to_executor(aggregation),
-    ];
+        }];
+    if !conditions.is_empty() {
+        executors.push(selection_executor(conditions)?);
+    }
+    executors.push(aggregation_to_executor(aggregation));
     let output_offsets = (0..aggregation_width)
         .map(|offset| u32::try_from(offset).expect("aggregate width fits TiKV u32 offsets"))
         .collect();

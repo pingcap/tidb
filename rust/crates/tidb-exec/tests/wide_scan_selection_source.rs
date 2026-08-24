@@ -39,6 +39,7 @@ use tidb_proto::tipb::{DagRequest, ExecType, Expr, ExprType, ScalarFuncSig};
 const MYSQL_TYPE_LONGLONG: i32 = 8;
 const MYSQL_TYPE_LONG: i32 = 3;
 const MYSQL_TYPE_VARCHAR: i32 = 15;
+const MYSQL_TYPE_NEWDECIMAL: i32 = 246;
 /// Go `mysql.UnsignedFlag`.
 const UNSIGNED_FLAG: i32 = 32;
 
@@ -868,8 +869,9 @@ fn the_string_lowering_refuses_every_comparison_whose_collation_it_cannot_derive
             "tp {tp}: ENUM/SET are refused"
         );
     }
-    // `IN` and `IS NULL` over a string column are still the integer path's,
-    // so they stay refused -- the widening here is the comparison only.
+    // `IN` over a string column still needs the richer string-list metadata,
+    // while `IS NULL` uses the evaluation-family-specific signature selected
+    // by Go (`StringIsNull` for this column).
     assert_eq!(
         wide_scan_selection_conditions(
             &[ScanPredicate::In {
@@ -883,17 +885,16 @@ fn the_string_lowering_refuses_every_comparison_whose_collation_it_cannot_derive
         ),
         Err(WideScanSelectionError::UnsupportedColumnType { offset: 0 })
     );
-    assert_eq!(
-        wide_scan_selection_conditions(
-            &[ScanPredicate::IsNull {
-                column_offset: 0,
-                column_type: FieldType::new(FieldTypeCode::Varchar),
-                negated: false,
-            }],
-            &[string_column("utf8mb4_bin")]
-        ),
-        Err(WideScanSelectionError::UnsupportedColumnType { offset: 0 })
-    );
+    let is_null = wide_scan_selection_conditions(
+        &[ScanPredicate::IsNull {
+            column_offset: 0,
+            column_type: FieldType::new(FieldTypeCode::Varchar),
+            negated: false,
+        }],
+        &[string_column("utf8mb4_bin")],
+    )
+    .unwrap();
+    assert_eq!(is_null[0].sig, Some(ScalarFuncSig::StringIsNull as i32));
 }
 
 /// `IS NULL`, `IS NOT NULL`, `IN`, `NOT IN`, `OR` and `NOT`, each lowered to
@@ -922,6 +923,21 @@ fn the_composed_integer_predicates_lower_to_gos_own_signatures() {
     assert_eq!(
         negated.children[0].sig,
         Some(ScalarFuncSig::IntIsNull as i32)
+    );
+
+    let decimal_columns = vec![column_of(MYSQL_TYPE_NEWDECIMAL, 0)];
+    let decimal_is_null = wide_scan_selection_conditions(
+        &[ScanPredicate::IsNull {
+            column_offset: 0,
+            column_type: FieldType::new(FieldTypeCode::NewDecimal),
+            negated: false,
+        }],
+        &decimal_columns,
+    )
+    .unwrap();
+    assert_eq!(
+        decimal_is_null[0].sig,
+        Some(ScalarFuncSig::DecimalIsNull as i32)
     );
 
     let membership = |negated, literals: Vec<i64>| ScanPredicate::In {

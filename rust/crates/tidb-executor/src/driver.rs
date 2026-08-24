@@ -2588,6 +2588,14 @@ fn run_select_traced_with_delivery_choice_inner(
     if access_residual.is_some() && !residual_on_index {
         full_row_projection = false;
     }
+    // Go keeps the written `SELECT *` Projection above a non-covering,
+    // ordered index lookup when its LIMIT is fused into the lookup window
+    // (Web3Bench R21/R23).  The scan already returns the same values, but the
+    // operator boundary is observable in EXPLAIN and is part of the plan
+    // contract; table scans and covering index paths remain elided.
+    if index_order.is_some() && select.limit.is_some() {
+        full_row_projection = false;
+    }
     if order_satisfied {
         if let Some(trace) = trace.as_deref_mut() {
             trace.keep_order(select.order_by.first().is_some_and(|item| item.desc));

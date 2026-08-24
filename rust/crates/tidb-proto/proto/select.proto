@@ -135,14 +135,22 @@ enum ScalarFuncSig {
   GEString = 133;
   EQString = 143;
   NEString = 153;
-  // The op group: the logical composition and negation of a boolean-integer
-  // predicate, and `IS NULL` over an integer argument.
+  // The op group: logical composition, negation, and the evaluation-family
+  // specific `IS NULL` signatures selected by Go's `isNullFunctionClass`.
   LogicalOr = 3102;
   UnaryNotInt = 3104;
+  DecimalIsNull = 3111;
+  DurationIsNull = 3112;
+  RealIsNull = 3113;
+  StringIsNull = 3114;
+  TimeIsNull = 3115;
   IntIsNull = 3116;
   // The set-membership group.
   InInt = 4001;
   InString = 4004;
+  // Go's vector null predicate; kept here so the family mapping remains
+  // complete even when a future scan admits vector columns.
+  VectorFloat32IsNull = 5155;
   // `builtinLikeSig` over (string, pattern, escape). The numeric id is the
   // upstream tipb ScalarFuncSig contract.
   LikeSig = 4310;

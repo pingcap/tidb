@@ -1873,16 +1873,16 @@ fn derived_source_relation_with_delivery<'a>(
             deferred_exec,
             false,
         )?,
-        QueryStmt::SetOpr(set_opr) => {
-            // A set operation has no traced builder: `run_set_opr_stmt` runs
-            // its arms and concatenates them without recording an operator, so
-            // there is no subtree to stand here. The refusal names the arm
-            // shape rather than the derived table, which IS described now.
-            if let Some(trace) = trace {
-                trace.refuse("a set-operation derived table's plan is not recorded yet");
-            }
-            run_set_opr_stmt(set_opr, catalog, current_db, ctx)?
-        }
+        // The traced set-operation builder leaves its Union subtree on the
+        // same trace stack, where Go places the derived query's physical plan.
+        QueryStmt::SetOpr(set_opr) => run_set_opr_traced_with_deferred(
+            set_opr,
+            catalog,
+            current_db,
+            ctx,
+            trace.as_deref_mut(),
+            deferred_exec,
+        )?,
     };
     // A derived table is a named relation, so its columns must be uniquely
     // named: Go's ErrDupFieldName, which `(SELECT * FROM t JOIN s ...)` hits
@@ -3066,13 +3066,20 @@ fn apply_pushed_leaf_filters(
         .or_else(|| table.name.last())
         .map(String::as_str)
         .unwrap_or_default();
-    let Some(all_filters) = demand
+    let mut offered_filters = demand
         .pushdown
-        .map(|pushdown| pushdown.filters_for(table))
-        .filter(|filters| !filters.is_empty())
-    else {
+        .map(|pushdown| pushdown.filters_for(table).to_vec())
+        .unwrap_or_default();
+    if let Some(pending) = prebuilt_pending_filters {
+        for filter in pending {
+            if !offered_filters.contains(filter) {
+                offered_filters.push(filter.clone());
+            }
+        }
+    }
+    if offered_filters.is_empty() {
         return Ok((exec, None));
-    };
+    }
     let path_receipt = demand
         .rows
         .and_then(|rows| rows.leaf_filter_receipt(visible));
@@ -3086,7 +3093,7 @@ fn apply_pushed_leaf_filters(
         .pushdown
         .map(|pushdown| pushdown.derived_for(table))
         .unwrap_or_default();
-    let filters = all_filters
+    let filters = offered_filters
         .iter()
         .filter(|filter| {
             // A decorrelated scalar predicate may already be recorded as
@@ -3152,7 +3159,7 @@ fn apply_pushed_leaf_filters(
     } else {
         Vec::new()
     };
-    let execution_filters = filters
+    let mut execution_filters = filters
         .iter()
         .zip(&built)
         .filter(|(filter, _)| {
@@ -3167,17 +3174,22 @@ fn apply_pushed_leaf_filters(
     // inputs silently kept their Selection at the root and shipped the whole
     // table over the wire. The source may accept only the pushable subset;
     // the original predicate remains in the parent plan for any residual.
-    if prebuilt_pending_filters.is_none() && scope.tables.len() == 1 {
+    let mut complete_filter_pushed = false;
+    if scope.tables.len() == 1 {
         if let Some(written) = crate::driver::predicate_push_down::combined(&filters) {
             let resolver = ScopeResolver { scope };
-            let (pushed, _) =
+            let (pushed, residual) =
                 crate::driver::access::split_scan_predicates(&written, &resolver, ctx);
             if !pushed.is_empty() {
-                let _ = exec
+                complete_filter_pushed = residual.is_none()
+                    && exec
                     .table_access()
                     .is_some_and(|access| access.accept_scan_filter(&pushed, ctx));
             }
         }
+    }
+    if complete_filter_pushed {
+        execution_filters.clear();
     }
 
     if !execution_filters.is_empty() {
@@ -3203,7 +3215,7 @@ fn apply_pushed_leaf_filters(
     if !original_filters.is_empty()
         && original_filters
             .iter()
-            .all(|filter| all_filters.contains(filter))
+            .all(|filter| offered_filters.contains(filter))
     {
         if let Some(rows) = demand.rows {
             rows.mark_leaf_filters_consumed(visible);

@@ -83,19 +83,20 @@
 use std::error::Error;
 use std::fmt;
 
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode};
 use tidb_executor::predicate_pushdown::{
     ScanColumnComparison, ScanComparison, ScanComparisonOp, ScanPredicate,
 };
 use tidb_expr::pb_predicate::{
     decimal_comparison_to_pb, int_comparison_to_pb, int_field_type, int_in_to_pb,
-    int_is_null_to_pb, is_int_family_type, is_string_family_type, is_unsigned, logical_not_to_pb,
-    logical_or_to_pb, string_comparison_to_pb, string_in_to_pb, string_like_to_pb,
+    is_int_family_type, is_null_to_pb, is_string_family_type, is_unsigned,
+    logical_not_to_pb, logical_or_to_pb, string_comparison_to_pb, string_in_to_pb,
+    string_like_to_pb,
     time_comparison_to_pb, DecimalPbOperand, IntPbOperand, PbPredicateError, StringPbOperand,
     TimePbOperand,
 };
 use tidb_planner::tikv_scan_spec::ScanColumnInfo;
-use tidb_proto::tipb::Expr;
+use tidb_proto::tipb::{Expr, ScalarFuncSig};
 
 /// Why a pushed conjunct cannot become a coprocessor Selection condition.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -216,7 +217,45 @@ fn predicate_to_pb(
             negated,
             ..
         } => {
-            let is_null = int_is_null_to_pb(int_column_operand(*column_offset, columns)?)?;
+            // Reuse the scan descriptor's fully populated TiPB field type.
+            // In particular, DECIMAL and string columns need their charset
+            // alongside the collation; constructing only the type code makes
+            // `columnToPBExpr` reject the leaf even though Go accepts IS NULL
+            // for every physical column type.
+            let descriptor = scan_column_descriptor(*column_offset, columns).ok_or(
+                WideScanSelectionError::UnsupportedColumnType {
+                    offset: *column_offset,
+                },
+            )?;
+            let code = FieldTypeCode::from_mysql_type(
+                u8::try_from(descriptor.tp).map_err(|_| {
+                    WideScanSelectionError::UnsupportedColumnType {
+                        offset: *column_offset,
+                    }
+                })?,
+            );
+            let described = FieldType::new(code)
+                .with_flags(descriptor.flag)
+                .with_flen(i64::from(descriptor.flen))
+                .with_decimal(i64::from(descriptor.decimal))
+                .with_charset_name(descriptor.charset)
+                .with_collation_name(descriptor.collation);
+            let child = tidb_expr::pushdown_catalog::to_pb(
+                &tidb_expr::pushdown_catalog::PbScalar::Column {
+                    offset: *column_offset,
+                    field_type: described,
+                },
+                &|offset| scan_column_descriptor(offset, columns),
+            )
+            .ok_or(WideScanSelectionError::UnsupportedColumnType {
+                offset: *column_offset,
+            })?;
+            let signature = is_null_signature(FieldType::new(code).eval_type()).ok_or(
+                WideScanSelectionError::UnsupportedColumnType {
+                    offset: *column_offset,
+                },
+            )?;
+            let is_null = is_null_to_pb(child, signature)?;
             Ok(negate_if(is_null, *negated))
         }
         ScanPredicate::In {
@@ -296,6 +335,19 @@ fn predicate_to_pb(
             Ok(logical_or_to_pb(branches)?)
         }
         ScanPredicate::Not(inner) => Ok(logical_not_to_pb(predicate_to_pb(inner, columns)?)),
+    }
+}
+
+fn is_null_signature(eval_type: EvalType) -> Option<ScalarFuncSig> {
+    match eval_type {
+        EvalType::Int => Some(ScalarFuncSig::IntIsNull),
+        EvalType::Decimal => Some(ScalarFuncSig::DecimalIsNull),
+        EvalType::Real => Some(ScalarFuncSig::RealIsNull),
+        EvalType::Datetime | EvalType::Timestamp => Some(ScalarFuncSig::TimeIsNull),
+        EvalType::Duration => Some(ScalarFuncSig::DurationIsNull),
+        EvalType::String => Some(ScalarFuncSig::StringIsNull),
+        EvalType::VectorFloat32 => Some(ScalarFuncSig::VectorFloat32IsNull),
+        EvalType::Json => Some(ScalarFuncSig::StringIsNull),
     }
 }
 

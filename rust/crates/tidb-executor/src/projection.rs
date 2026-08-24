@@ -110,6 +110,14 @@ impl<C: Columns> Executor for ProjectionExec<C> {
     fn new_chunk(&self) -> Chunk {
         self.meta.new_chunk()
     }
+
+    /// Projection preserves one output row per child row, so an exact child
+    /// cardinality is also exact for this wrapper.  Expressions are not
+    /// evaluated on the count-only path, which matches Go's parent COUNT
+    /// shortcut.
+    fn row_count(&mut self) -> Result<Option<u64>, ExecError> {
+        self.child.row_count()
+    }
 }
 
 #[cfg(test)]

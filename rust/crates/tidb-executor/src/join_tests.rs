@@ -33,6 +33,65 @@ fn decimal(text: &str) -> Decimal {
 }
 
 #[test]
+fn compact_count_join_key_and_decimal_comparison_are_bounded() {
+    let short = CompactBinaryKey::from_bytes(b"0xabc").expect("short key fits");
+    assert_eq!(short.len, 5);
+    assert_eq!(&short.bytes[..5], b"0xabc");
+    assert!(CompactBinaryKey::from_bytes(&[b'x'; COMPACT_BINARY_KEY_BYTES + 1]).is_none());
+
+    let lower = compact_join_decimal(
+        decimal("12.30")
+            .to_my_decimal()
+            .expect("decimal fits MyDecimal"),
+    );
+    let upper = compact_join_decimal(
+        decimal("12.31")
+            .to_my_decimal()
+            .expect("decimal fits MyDecimal"),
+    );
+    assert_eq!(compare_compact_join_decimal(lower, upper), Ordering::Less);
+    assert!(compact_matches(
+        2,
+        compare_compact_join_decimal(lower, upper)
+    ));
+    assert!(!compact_matches(
+        4,
+        compare_compact_join_decimal(lower, upper)
+    ));
+}
+
+#[test]
+fn compact_binary_join_key_matches_go_pad_space_and_null_rules() {
+    let field_type = FieldType::new(FieldTypeCode::Varchar)
+        .with_flen(42)
+        .with_collation(Collation::Utf8Mb4Bin);
+    let types = [field_type];
+    let mut chunk = Chunk::new(&types, 4, 4);
+    chunk.append_bytes(0, b"abc   ");
+    chunk.append_bytes(0, b"abc");
+    chunk.append_null(0);
+    let key = EquiKey {
+        left: 0,
+        right: 0,
+        class: KeyClass::Str(Collation::Utf8Mb4Bin),
+        null_safe: false,
+    };
+
+    let padded = JoinExec::<NoColumns>::compact_binary_key(&chunk, 0, &types, &key, |key| key.left)
+        .flatten()
+        .expect("non-NULL key");
+    let plain = JoinExec::<NoColumns>::compact_binary_key(&chunk, 1, &types, &key, |key| key.left)
+        .flatten()
+        .expect("non-NULL key");
+    assert_eq!(padded, plain, "utf8mb4_bin is PAD SPACE in Go");
+    assert_eq!(
+        JoinExec::<NoColumns>::compact_binary_key(&chunk, 2, &types, &key, |key| key.left),
+        Some(None),
+        "NULL is represented separately from an empty string"
+    );
+}
+
+#[test]
 fn decimal_residual_multiply_preserves_mysql_hidden_scale() {
     let average = Decimal::from_int(100)
         .div_mysql(&Decimal::from_int(4), 4)
@@ -630,6 +689,31 @@ fn residual_conditions_still_filter_hashed_candidates() {
     let mut looped = join_of(JoinKind::Left, conditions, left, right, 2);
     looped.force_nested_loop();
     assert_eq!(run(&mut hashed), run(&mut looped));
+}
+
+#[test]
+fn residual_hash_join_resumes_candidates_after_a_full_output_chunk() {
+    let column = |index: usize| {
+        let mut column = Column::new(index as i64 + 1, long());
+        column.index = index as i64;
+        Expression::Column(column)
+    };
+    let residual = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("lt"),
+        long(),
+        vec![column(3), column(1)],
+    ));
+    let left = vec![vec![Datum::Int(1), Datum::Int(2)]];
+    let right = vec![vec![Datum::Int(1), Datum::Int(1)]; CHUNK + 1];
+    let mut join = join_of(
+        JoinKind::Inner,
+        vec![eq_on(0, 0, 2), residual],
+        left,
+        right,
+        2,
+    );
+
+    assert_eq!(run(&mut join).len(), CHUNK + 1);
 }
 
 /// A join with no equal condition keeps the nested loop, as documented.

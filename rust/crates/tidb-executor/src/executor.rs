@@ -167,6 +167,13 @@ pub trait Executor {
     fn agg_tree_input_empty(&self) -> bool {
         false
     }
+
+    /// Exact cardinality shortcut for a parent global `COUNT(*)`. Operators
+    /// that can compute it without materializing their output may return it;
+    /// `None` keeps the normal pull path and all other aggregate semantics.
+    fn row_count(&mut self) -> Result<Option<u64>, ExecError> {
+        Ok(None)
+    }
 }
 
 /// Go `exec.executorMeta`: the schema/id/children/result-type base state shared

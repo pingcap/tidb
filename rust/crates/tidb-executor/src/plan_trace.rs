@@ -887,6 +887,17 @@ impl PlanTrace {
             .flatten()
             .or_else(|| qualify.conditions(built))
             .unwrap_or_else(|| qualify.expr(predicate));
+        let index = self.stack.len() - 1 - from_top;
+        if let Some(child) = self.stack.get_mut(index) {
+            if child.name == "Selection" && child.children.len() == 1 {
+                if !child.info.is_empty() {
+                    child.info.push_str(", ");
+                }
+                child.info.push_str(&info);
+                child.access.clear();
+                return;
+            }
+        }
         self.wrap_child(
             from_top,
             "Selection",
@@ -3296,6 +3307,20 @@ impl PlanTrace {
             .filter(|expressions| !expressions.is_empty())
             .and_then(|expressions| qualify.conditions(expressions))
             .unwrap_or_else(|| qualify.expr(predicate));
+        // Predicate pushdown can hand the recorder one conjunct at a time,
+        // while Go's logical Selection keeps the accepted conjuncts in one
+        // node.  Merge adjacent trace-only Selection wrappers so the plan
+        // receipt preserves that source-of-truth shape; execution still owns
+        // the original predicate list and is unchanged.
+        if let Some(top) = self.stack.last_mut() {
+            if top.name == "Selection" && top.children.len() == 1 {
+                if !top.info.is_empty() {
+                    top.info.push_str(", ");
+                }
+                top.info.push_str(&info);
+                return;
+            }
+        }
         self.wrap("Selection", est, info);
     }
 
@@ -3329,6 +3354,15 @@ impl PlanTrace {
         } else {
             Est::Scale(stats_selectivity.unwrap_or_else(|| pseudo_selectivity(written)))
         };
+        if let Some(top) = self.stack.last_mut() {
+            if top.name == "Selection" && top.children.len() == 1 {
+                if !top.info.is_empty() {
+                    top.info.push_str(", ");
+                }
+                top.info.push_str(&info);
+                return true;
+            }
+        }
         self.wrap("Selection", est, info);
         true
     }
@@ -3438,6 +3472,20 @@ impl PlanTrace {
             },
             Est::Fixed,
         );
+        // Predicate pushdown can hand the recorder one residual conjunct at a
+        // time, while Go's logical Selection keeps all accepted conjuncts in
+        // one node. Merge adjacent trace-only Selection wrappers so a scan
+        // can still be recognized as a TableReader by the physical receipt;
+        // execution retains the original predicate list.
+        if let Some(top) = self.stack.last_mut() {
+            if top.name == "Selection" && top.children.len() == 1 {
+                if !top.info.is_empty() {
+                    top.info.push_str(", ");
+                }
+                top.info.push_str(&info);
+                return;
+            }
+        }
         self.wrap("Selection", estimate, info);
     }
 

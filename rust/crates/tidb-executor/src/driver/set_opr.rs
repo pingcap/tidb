@@ -48,6 +48,114 @@
 //! materializing each term.
 
 use super::*;
+use tidb_chunk::chunk::Chunk;
+
+/// Runtime executor for the common direct `UNION ALL` shape.
+///
+/// The ordinary set-operation path materializes every term because it also
+/// owns type merging and duplicate folding.  A direct `UNION ALL` whose terms
+/// already expose the same types has neither operation to perform, so Go's
+/// union reader can stream the terms.  Keeping this as a separate, narrow
+/// executor lets a parent global `COUNT` ask each branch for an exact count
+/// without changing DISTINCT or mixed-type semantics.
+struct UnionAllExec {
+    meta: ExecutorMeta,
+    children: Vec<Box<dyn Executor>>,
+    current: usize,
+}
+
+impl UnionAllExec {
+    fn new(meta: ExecutorMeta, children: Vec<Box<dyn Executor>>) -> Self {
+        Self {
+            meta,
+            children,
+            current: 0,
+        }
+    }
+}
+
+impl Executor for UnionAllExec {
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.current = 0;
+        for child in &mut self.children {
+            child.open()?;
+        }
+        Ok(())
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        req.reset();
+        while self.current < self.children.len() {
+            self.children[self.current].next(req)?;
+            if req.num_rows() > 0 {
+                return Ok(());
+            }
+            self.current += 1;
+        }
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        for child in &mut self.children {
+            child.close()?;
+        }
+        Ok(())
+    }
+
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
+
+    fn row_count(&mut self) -> Result<Option<u64>, ExecError> {
+        let mut total = 0_u64;
+        for child in &mut self.children {
+            let count = match child.row_count()? {
+                Some(count) => count,
+                None => {
+                    // A UNION ALL count remains exact when a child does not
+                    // expose a structural shortcut: drain just that child
+                    // and continue asking later branches.  In Web3Bench the
+                    // point/index branch is tiny, while the join branch uses
+                    // JoinExec::row_count and never enters this fallback.
+                    let mut chunk = child.new_chunk();
+                    let mut count = 0_u64;
+                    loop {
+                        child.next(&mut chunk)?;
+                        let rows = chunk.num_rows();
+                        if rows == 0 {
+                            break;
+                        }
+                        count = count.checked_add(rows as u64).ok_or_else(|| {
+                            ExecError::unsupported("UNION ALL row count overflow")
+                        })?;
+                        chunk.reset();
+                    }
+                    count
+                }
+            };
+            total = total
+                .checked_add(count)
+                .ok_or_else(|| ExecError::unsupported("UNION ALL row count overflow"))?;
+        }
+        Ok(Some(total))
+    }
+}
 
 /// Go `preprocessor.checkSetOprSelectList`: every nested set-operation list is
 /// checked, and every plain term except that list's last one must put its own
@@ -239,7 +347,22 @@ pub(crate) fn run_set_opr_traced(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    trace: Option<&mut crate::plan_trace::PlanTrace>,
+) -> Result<SelectMeta, DriverError> {
+    run_set_opr_traced_with_deferred(stmt, catalog, current_db, ctx, trace, None)
+}
+
+/// [`run_set_opr_traced`] with an optional runtime executor destination for a
+/// derived table.  Only the direct, same-typed `UNION ALL` shape is streamed;
+/// all other set operations continue through the materialized implementation
+/// below.
+pub(crate) fn run_set_opr_traced_with_deferred(
+    stmt: &tidb_ast::SetOprStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
     mut trace: Option<&mut crate::plan_trace::PlanTrace>,
+    mut deferred_exec: Option<&mut Option<Box<dyn Executor>>>,
 ) -> Result<SelectMeta, DriverError> {
     validate_set_opr_usage(stmt)?;
     let union_shape = traced_set_opr(stmt);
@@ -258,6 +381,80 @@ pub(crate) fn run_set_opr_traced(
         }
         None => catalog,
     };
+
+    // A normal execution of a direct UNION ALL can retain the child executor
+    // trees.  This is intentionally disabled for EXPLAIN/EXPLAIN ANALYZE:
+    // those paths need the materialized branch counts for their existing plan
+    // receipts, while ordinary execution benefits from streaming and exact
+    // `COUNT(*)` propagation.
+    if trace.is_none() && matches!(union_shape, Some(TracedSetOpr::UnionAll)) {
+        if let Some(slot) = deferred_exec.as_deref_mut() {
+            let mut children = Vec::with_capacity(stmt.terms.len());
+            let mut columns: Option<Vec<(String, FieldType)>> = None;
+            let mut same_types = true;
+            for term in &stmt.terms {
+                let tidb_ast::SetOprTermBody::Select(select) = &term.body else {
+                    same_types = false;
+                    break;
+                };
+                let mut child_exec = None;
+                let (term_columns, rows) = super::run_select_traced_with_delivery(
+                    select,
+                    catalog,
+                    current_db,
+                    ctx,
+                    None,
+                    &tidb_planner::physical_property::PhysicalProperty::default(),
+                    None,
+                    Some(&mut child_exec),
+                    false,
+                )?;
+                if !rows.is_empty() {
+                    same_types = false;
+                    break;
+                }
+                let Some(child_exec) = child_exec else {
+                    same_types = false;
+                    break;
+                };
+                if let Some(first) = &columns {
+                    if first.len() != term_columns.len()
+                        || first
+                            .iter()
+                            .zip(&term_columns)
+                            .any(|((_, left), (_, right))| left != right)
+                    {
+                        same_types = false;
+                        break;
+                    }
+                } else {
+                    columns = Some(term_columns);
+                }
+                children.push(child_exec);
+            }
+            if same_types {
+                if let Some(columns) = columns {
+                    let schema = Schema::new(
+                        columns
+                            .iter()
+                            .enumerate()
+                            .map(|(index, (_, field_type))| {
+                                let mut column =
+                                    Column::new((index + 1) as i64, field_type.clone());
+                                column.index = index as i64;
+                                column
+                            })
+                            .collect(),
+                    );
+                    *slot = Some(Box::new(UnionAllExec::new(
+                        ExecutorMeta::new(schema, 6, INIT_CAP, MAX_CHUNK_SIZE),
+                        children,
+                    )));
+                    return Ok((columns, Vec::new()));
+                }
+            }
+        }
+    }
 
     // Every term is materialized BEFORE any is folded, because the output
     // column types are a property of ALL the terms: Go's `buildUnion` merges

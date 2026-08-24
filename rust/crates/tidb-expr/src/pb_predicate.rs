@@ -439,11 +439,36 @@ fn string_comparison_signature(operator: BinaryOp) -> Result<ScalarFuncSig, PbPr
     })
 }
 
-/// Lowers `column IS NULL` (Go `ScalarFuncSig_IntIsNull`).
+/// Lowers `column IS NULL` using the signature selected by its Go evaluation
+/// type (`IntIsNull`, `DecimalIsNull`, `StringIsNull`, and so on).
 pub fn int_is_null_to_pb(column: IntPbOperand) -> Result<Expr, PbPredicateError> {
     Ok(boolean_scalar_func(
         ScalarFuncSig::IntIsNull,
         vec![operand_to_pb(column)?],
+    ))
+}
+
+/// Lowers `column IS NULL` for an already-built column reference. The
+/// signature is deliberately supplied by the caller because TiKV dispatches
+/// each evaluation family separately; Go chooses it in `isNullFunctionClass`.
+pub fn is_null_to_pb(
+    column: Expr,
+    signature: ScalarFuncSig,
+) -> Result<Expr, PbPredicateError> {
+    Ok(boolean_scalar_func(
+        signature,
+        vec![column],
+    ))
+}
+
+/// Lowers `string_column IS NULL` with the same `IntIsNull` signature Go
+/// uses for every scalar type. The operand keeps its declared string
+/// collation in the column reference, so TiKV sees the same descriptor as a
+/// string comparison rather than an integer placeholder.
+pub fn string_is_null_to_pb(column: StringPbOperand) -> Result<Expr, PbPredicateError> {
+    Ok(boolean_scalar_func(
+        ScalarFuncSig::IntIsNull,
+        vec![string_operand_to_pb(column)?],
     ))
 }
 

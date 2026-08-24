@@ -291,27 +291,20 @@ fn explain_analyze_meters_inside_the_derived_table() {
     );
 }
 
-/// A derived table whose body is a SET OPERATION is the one shape still not
-/// described: `run_set_opr_stmt` concatenates its arms without recording an
-/// operator, so there is no subtree to stand in the `FROM` position. The
-/// refusal names the arm, and the statement still RUNS -- only its
-/// description is refused.
-///
-/// Go describes it (captured: a `Union_11` over two `TableReader`s with
-/// `gt(test.t.a, 0)` pushed into both arms), so this is a refusal to describe
-/// and not a claim about Go.
+/// A derived table whose body is a SET OPERATION stands its `Union` subtree
+/// directly in the `FROM` position. Go describes the same shape (captured: a
+/// `Union_11` over two `TableReader`s), without an operator for the alias.
 #[test]
-fn a_set_operation_derived_table_is_refused_only_as_a_description() {
+fn a_set_operation_derived_table_keeps_its_union_plan() {
     let mut session = derived_session();
-    let refused =
-        session.run("explain select * from (select * from t union all select a,b,c from t) x");
-    assert!(
-        matches!(
-            &refused,
-            Err(DriverError::Unsupported(reason)) if reason == "a set-operation derived table's plan is not recorded yet"
-        ),
-        "got {refused:?}"
+    let rows = plan(
+        &mut session,
+        "explain select * from (select * from t union all select a,b,c from t) x",
     );
+    assert_eq!(rows.len(), 3);
+    assert!(rows[0].starts_with("Union_"), "got {rows:?}");
+    assert!(rows[1].contains("TableFullScan_"), "got {rows:?}");
+    assert!(rows[2].contains("TableFullScan_"), "got {rows:?}");
     // The same statement executes: 3 rows from each arm, concatenated.
     assert_eq!(
         row_text(session.run(
