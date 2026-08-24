@@ -207,7 +207,7 @@ where
     P: tidb_txnkv::transaction::StorePdCapability,
 {
     let targets = current_stats_targets(&catalog);
-    let snapshot = load_stats_snapshot_from_cluster(&opener, timeout, &targets)
+    let (snapshot, loader) = load_stats_snapshot_and_loader(&opener, timeout, &targets)
         .map_err(|error| StatsReloadError::Spawn(std::io::Error::other(error.to_string())))?;
     let receipt = tidb_exec::stats_watch::receipt_of(&snapshot);
     eprintln!(
@@ -215,13 +215,38 @@ where
         receipt.loaded, receipt.pseudo
     );
     let shared = Arc::new(SharedStats::new(snapshot));
+    // The read closure needs its own handle to compare against what is
+    // published; the caller keeps the original for queries.
+    let published = Arc::clone(&shared);
     let reloader = StatsReloader::spawn(
         Arc::clone(&shared),
         schema_lease,
         Box::new(move || {
+            let shared = &published;
+            // Go `Handle.Update`'s tick (`pkg/statistics/handle/update.go`):
+            // ONE scan of `mysql.stats_meta` decides. Every version equal to
+            // what is published -- and the tracked set unchanged -- means the
+            // expensive per-table reads (histograms, buckets, top-n, the
+            // catalog they are located through) stay untouched this pass; a
+            // moved or new version falls back to the full snapshot load.
             let targets = current_stats_targets(&catalog);
-            load_stats_snapshot_from_cluster(&opener, timeout, &targets)
-                .map_err(|error| error.to_string())
+            let ids: Vec<i64> = targets.iter().map(|(id, _)| *id).collect();
+            match load_stats_meta_versions(&opener, timeout, &loader, &ids) {
+                Ok(versions) => {
+                    if stats_snapshot_unchanged_since(
+                        shared.load().as_ref(),
+                        &versions,
+                        &targets,
+                    ) {
+                        Ok(None)
+                    } else {
+                        load_stats_snapshot_from_cluster(&opener, timeout, &targets)
+                            .map(Some)
+                            .map_err(|error| error.to_string())
+                    }
+                }
+                Err(error) => Err(error.to_string()),
+            }
         }),
     )?;
     Ok((shared, reloader))

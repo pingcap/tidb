@@ -216,6 +216,36 @@ impl ClusterStatsLoader {
         })
     }
 
+    /// Go `stats_meta`'s rows, ONE range scan: `(table_id, version, modify_count,
+    /// count)` for every table that has one.
+    ///
+    /// This is the cheap half of Go's `Handle.Update`
+    /// (`pkg/statistics/handle/update.go`): a tick first reads only this table
+    /// and compares versions against its cache, and touches histograms,
+    /// buckets and top-n for a table ONLY when that table's version moved. A
+    /// pass whose versions all match costs exactly this one scan.
+    pub fn load_all_meta<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+    ) -> Result<BTreeMap<i64, (u64, i64, u64)>, SystemTableError> {
+        let mut result = BTreeMap::new();
+        for (key, value) in scan_system_table(snapshot, &self.meta)? {
+            let row = SystemRow::parse(&self.meta, &key, &value)?;
+            let Some(table_id) = row.i64("table_id")? else {
+                continue;
+            };
+            result.insert(
+                table_id,
+                (
+                    row.u64("version")?.unwrap_or_default(),
+                    row.i64("modify_count")?.unwrap_or_default(),
+                    row.u64("count")?.unwrap_or_default(),
+                ),
+            );
+        }
+        Ok(result)
+}
+
     /// Reads every histogram one table has, at one snapshot.
     ///
     /// `None` means the table has no `mysql.stats_meta` row at all — it was

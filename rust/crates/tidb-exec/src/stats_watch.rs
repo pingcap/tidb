@@ -229,10 +229,17 @@ struct StatsReloadSignal {
 /// One reload pass's read step: read every tracked table's statistics fresh
 /// and answer the new snapshot, or a reason it could not be read.
 ///
+/// `Ok(None)` is a pass that PROVED nothing moved without re-reading the
+/// statistics themselves -- Go `Handle.Update`'s version gate
+/// (`pkg/statistics/handle/update.go`): one `mysql.stats_meta` scan, every
+/// version equal to the published cache, so the expensive per-table reads are
+/// skipped outright and what is published stays in force.
+///
 /// Kept as an injectable closure, the same way
 /// [`crate::catalog_watch::ReloadPass`] and `PrivilegeReloadRead` are, so the
 /// thread's condvar/shutdown machinery can be tested without PD or TiKV.
-pub type StatsReloadRead = Box<dyn FnMut() -> Result<StatsSnapshot, String> + Send + 'static>;
+pub type StatsReloadRead =
+    Box<dyn FnMut() -> Result<Option<StatsSnapshot>, String> + Send + 'static>;
 
 /// Re-reads a node's tracked tables' statistics on a plain tick.
 ///
@@ -357,12 +364,15 @@ fn snapshots_differ(current: &StatsSnapshot, next: &StatsSnapshot) -> bool {
 /// when the read version differs from the cached one.
 fn run_one_stats_reload_pass(
     shared: &SharedStats,
-    read: &mut dyn FnMut() -> Result<StatsSnapshot, String>,
+    read: &mut dyn FnMut() -> Result<Option<StatsSnapshot>, String>,
     stats: &StatsReloadCounters,
 ) {
     stats.passes.fetch_add(1, Ordering::AcqRel);
     match read() {
-        Ok(next) => {
+        // The version probe proved nothing moved: one stats_meta scan was the
+        // whole cost of this pass, and the published snapshot stays.
+        Ok(None) => {}
+        Ok(Some(next)) => {
             let current = shared.load();
             if snapshots_differ(&current, &next) {
                 let receipt = receipt_of(&next);
@@ -480,7 +490,7 @@ mod tests {
         let error = StatsReloader::spawn(
             Arc::new(SharedStats::new(StatsSnapshot::new())),
             Duration::ZERO,
-            Box::new(|| Ok(StatsSnapshot::new())),
+            Box::new(|| Ok(Some(StatsSnapshot::new()))),
         )
         .unwrap_err();
         assert!(matches!(error, StatsReloadError::ZeroInterval));
@@ -497,7 +507,7 @@ mod tests {
             Box::new(move || {
                 version += 1;
                 sender.send(version).unwrap();
-                Ok(StatsSnapshot::from([loaded_at(1, version)]))
+                Ok(Some(StatsSnapshot::from([loaded_at(1, version)])))
             }),
         )
         .unwrap();
@@ -514,12 +524,27 @@ mod tests {
     }
 
     #[test]
+    fn a_proven_unchanged_pass_costs_no_reload_and_publishes_nothing() {
+        let shared = Arc::new(SharedStats::new(StatsSnapshot::from([loaded_at(7, 3)])));
+        let published = shared.load();
+        let stats = Arc::new(StatsReloadCounters::default());
+        // The version probe answered "nothing moved" without re-reading any
+        // statistics -- the whole cost of this pass was the probe itself.
+        let mut read: Box<dyn FnMut() -> Result<Option<StatsSnapshot>, String>> =
+            Box::new(|| Ok(None));
+        run_one_stats_reload_pass(&shared, read.as_mut(), &stats);
+        assert!(Arc::ptr_eq(&published, &shared.load()));
+        assert_eq!(stats.passes.load(Ordering::Acquire), 1);
+        assert_eq!(stats.reloads.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
     fn an_unchanged_read_publishes_nothing() {
         let shared = Arc::new(SharedStats::new(StatsSnapshot::from([loaded_at(7, 3)])));
         let published = shared.load();
         let stats = Arc::new(StatsReloadCounters::default());
-        let mut read: Box<dyn FnMut() -> Result<StatsSnapshot, String>> =
-            Box::new(|| Ok(StatsSnapshot::from([loaded_at(7, 3)])));
+        let mut read: Box<dyn FnMut() -> Result<Option<StatsSnapshot>, String>> =
+            Box::new(|| Ok(Some(StatsSnapshot::from([loaded_at(7, 3)]))));
         run_one_stats_reload_pass(&shared, read.as_mut(), &stats);
         assert!(Arc::ptr_eq(&published, &shared.load()));
         assert_eq!(stats.passes.load(Ordering::Acquire), 1);
@@ -530,7 +555,7 @@ mod tests {
     fn a_failed_pass_keeps_the_previous_snapshot_published() {
         let shared = Arc::new(SharedStats::new(StatsSnapshot::from([loaded_at(7, 3)])));
         let stats = Arc::new(StatsReloadCounters::default());
-        let mut read: Box<dyn FnMut() -> Result<StatsSnapshot, String>> =
+        let mut read: Box<dyn FnMut() -> Result<Option<StatsSnapshot>, String>> =
             Box::new(|| Err("snapshot read failed".to_owned()));
         run_one_stats_reload_pass(&shared, read.as_mut(), &stats);
         assert_eq!(shared.load()[&7].version(), Some(3));
@@ -547,8 +572,8 @@ mod tests {
             TableStatsState::Pseudo,
         )])));
         let stats = Arc::new(StatsReloadCounters::default());
-        let mut read: Box<dyn FnMut() -> Result<StatsSnapshot, String>> =
-            Box::new(|| Ok(StatsSnapshot::from([loaded_at(1, 1)])));
+        let mut read: Box<dyn FnMut() -> Result<Option<StatsSnapshot>, String>> =
+            Box::new(|| Ok(Some(StatsSnapshot::from([loaded_at(1, 1)]))));
         run_one_stats_reload_pass(&shared, read.as_mut(), &stats);
         assert_eq!(shared.load()[&1].version(), Some(1));
         assert_eq!(stats.reloads.load(Ordering::Acquire), 1);
@@ -563,7 +588,7 @@ mod tests {
             Duration::from_millis(5),
             Box::new(move || {
                 let _ = sender.send(());
-                Ok(StatsSnapshot::new())
+                Ok(Some(StatsSnapshot::new()))
             }),
         )
         .unwrap();

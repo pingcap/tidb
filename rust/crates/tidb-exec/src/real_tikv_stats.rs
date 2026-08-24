@@ -107,6 +107,21 @@ pub fn load_stats_snapshot_from_cluster<
     timeout: Duration,
     tables: &[(i64, BTreeMap<i64, FieldType>)],
 ) -> Result<StatsSnapshot, SystemTableError> {
+    load_stats_snapshot_and_loader(opener, timeout, tables).map(|(snapshot, _)| snapshot)
+}
+
+/// [`Self::load_stats_snapshot_from_cluster`], also handing back the located
+/// `mysql.stats_*` views so a caller can reuse them for the cheap per-tick
+/// version probe without re-reading the catalog.
+pub fn load_stats_snapshot_and_loader<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    timeout: Duration,
+    tables: &[(i64, BTreeMap<i64, FieldType>)],
+) -> Result<(StatsSnapshot, ClusterStatsLoader), SystemTableError> {
     let mut transaction = opener
         .begin_read_only()
         .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
@@ -122,10 +137,121 @@ pub fn load_stats_snapshot_from_cluster<
             };
             result.insert(*table_id, state);
         }
-        Ok(result)
+        Ok((result, loader))
     };
     transaction
         .finish_without_writes()
         .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
     loaded
+}
+
+/// The per-tick version probe Go's `Handle.Update` runs before any reload
+/// (`pkg/statistics/handle/update.go`): ONE scan of `mysql.stats_meta`, and
+/// each tracked table's `version`, `None` for a table with no row (never
+/// analyzed). Everything else -- histograms, buckets, top-n, the catalog
+/// itself -- stays untouched unless some version moved.
+pub fn load_stats_meta_versions<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    timeout: Duration,
+    loader: &ClusterStatsLoader,
+    table_ids: &[i64],
+) -> Result<BTreeMap<i64, Option<u64>>, SystemTableError> {
+    let mut transaction = opener
+        .begin_read_only()
+        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
+    let versions = {
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        let all = loader.load_all_meta(&mut snapshot)?;
+        table_ids
+            .iter()
+            .map(|table_id| (*table_id, all.get(table_id).map(|(version, _, _)| *version)))
+            .collect()
+    };
+    transaction
+        .finish_without_writes()
+        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
+    Ok(versions)
+}
+
+/// Whether the published snapshot already reflects exactly these versions:
+/// same tracked set, and every table's state version (absent = pseudo/never
+/// analyzed) equal to what `mysql.stats_meta` reports now. This is Go
+/// `Handle.Update`'s publish gate (`pkg/statistics/handle/update.go`: a table
+/// whose meta version equals its cached one is skipped), lifted to whole-
+/// snapshot granularity so an unchanged cluster costs one scan and nothing
+/// else.
+pub fn stats_snapshot_unchanged_since(
+    current: &StatsSnapshot,
+    versions: &BTreeMap<i64, Option<u64>>,
+    targets: &[(i64, BTreeMap<i64, FieldType>)],
+) -> bool {
+    if current.len() != targets.len() {
+        return false;
+    }
+    for (table_id, _) in targets {
+        let version = versions.get(table_id).copied().flatten();
+        match current.get(table_id) {
+            Some(state) if state.version() == version => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod unchanged_tests {
+    use super::*;
+    use crate::cluster_stats_load::ClusterTableStats;
+    use crate::stats_watch::TableStatsState;
+
+    fn loaded(table_id: i64, version: u64) -> TableStatsState {
+        TableStatsState::Loaded(std::sync::Arc::new(ClusterTableStats {
+            table_id,
+            version,
+            modify_count: 0,
+            row_count: 0,
+            columns: Vec::new(),
+            indexes: Vec::new(),
+            load_state: std::sync::Arc::default(),
+        }))
+    }
+
+    fn targets(ids: &[i64]) -> Vec<(i64, BTreeMap<i64, FieldType>)> {
+        ids.iter().map(|id| (*id, BTreeMap::new())).collect()
+    }
+
+    #[test]
+    fn equal_versions_and_set_mean_unchanged() {
+        let current = StatsSnapshot::from([(1, loaded(1, 5)), (2, TableStatsState::Pseudo)]);
+        let mut versions = BTreeMap::new();
+        versions.insert(1, Some(5));
+        versions.insert(2, None);
+        assert!(stats_snapshot_unchanged_since(
+            &current,
+            &versions,
+            &targets(&[1, 2])
+        ));
+    }
+
+    #[test]
+    fn a_moved_or_new_or_dropped_table_counts_as_changed() {
+        let moved = StatsSnapshot::from([(1, loaded(1, 5))]);
+        let mut versions = BTreeMap::new();
+        versions.insert(1, Some(9));
+        assert!(!stats_snapshot_unchanged_since(
+            &moved,
+            &versions,
+            &targets(&[1])
+        ));
+        // A target the published snapshot has never seen: a newly analyzed
+        // table must fall through to the full load.
+        let empty = StatsSnapshot::new();
+        let mut fresh = BTreeMap::new();
+        fresh.insert(5, Some(3));
+        assert!(!stats_snapshot_unchanged_since(
+            &empty,
+            &fresh,
+            &targets(&[5])
+        ));
+    }
 }
