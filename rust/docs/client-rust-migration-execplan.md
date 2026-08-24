@@ -166,10 +166,29 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       `complete` alone means safe (see the same entry).
 - [ ] Phase 2: replace `tidb-txnkv` internals (region cache, RPC transport,
       2PC/lock-resolver engine, raw KV), porting the documented parity fixes
-      from `rust/docs/two-phase-commit-vs-client-go.md`.
+      from `rust/docs/two-phase-commit-vs-client-go.md`. **Investigated this
+      session, not started**: read `tidb-txnkv/src/retry.rs` (maps to
+      TiDB-owned `pkg/kv/txn.go`, not client-go — stays custom, not a swap
+      target, correcting this plan's original assumption), `driver/
+      mem_buffer.rs`'s `MemBufferBackend` trait (a genuinely clean, currently
+      *unimplemented* seam for a future `tikv_client::transaction::unionstore`
+      adapter, but `unionstore`/`MemDb` are `mod`-private with every method
+      `pub(crate)` in the vendored crate — a broad visibility patch against a
+      file under the other agent's active development, not attempted this
+      session), and `rpc/unary.rs`/`rpc/transaction.rs` (map to client-go's
+      `internal/client` BatchCommands transport, which the upstream ledger
+      marks `in-progress` and explicitly incomplete — same category of
+      finding as the PD failover one below). See `Surprises & Discoveries`
+      and `Outcomes & Retrospective` for the full reasoning. Next session
+      should re-check the ledger for `internal/client`/`internal/unionstore`/
+      `txnkv/transaction` before resuming here.
 - [ ] Phase 3: rewire `tidb-distsql`'s RPC/region-retry layer onto the vendored
       crate's `request::Plan`/`Shardable`/retry framework, porting the
       documented parity fixes from `rust/docs/distsql-coprocessor-parity.md`.
+      **Not investigated this session** — `tidb-distsql` depends on
+      `tidb-txnkv`'s `region`/`rpc` modules (per the original research), so
+      it is naturally gated behind Phase 2's transport-layer decisions above
+      rather than independently startable.
 - [ ] Phase 4: full-workspace build, targeted + aggregate test pass, `make
       bazel_prepare` (Go-file-count is unaffected, but Bazel metadata for the
       Rust crates does not apply — confirm scope; see `Concrete Steps`),
@@ -359,9 +378,57 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
   this session); `crates/tidb-pd-client/tests/pd_client_source.rs` test names
   above; `third_party/tikv-client-rs/src/pd/retry.rs` lines 163-227
   (`retry_core!`/`retry_mut!`/`retry!` macros, `RetryClient::connect`).
+- Observation: `tidb-txnkv/src/driver/mem_buffer.rs`'s `MemBufferBackend`
+  trait (the injection point for the mutable transaction buffer) has **zero**
+  implementations anywhere in the workspace today — its own doc comment says
+  "A future TiKV client adapter supplies the concrete backend." This is
+  exactly the kind of pure-addition, zero-regression-risk seam this
+  migration should prefer (nothing existing to break). The natural filler is
+  `tikv_client::transaction::unionstore::{MemDb, UnionStore}` — client-rust's
+  ART/RBT mutation buffer, and unlike PD retry, `internal/unionstore` (and
+  its `arena`/`art`/`rbt` sub-packages) *is* marked `complete` in the
+  upstream ledger, with real receipts (block allocation, checkpoints,
+  value-log history/revert, all original tests). But `mod unionstore;` is
+  private in `third_party/tikv-client-rs/src/transaction/mod.rs`, and every
+  method on `MemDb` is `pub(crate)`, not `pub` — a far larger, more granular
+  visibility patch than the five-module `pub mod` patch from Phase 0 (which
+  only touched module declarations, not dozens of individual method
+  signatures). The ledger's own note on this row — "Public transaction
+  consumption remains on the separate `txnkv/transaction` row" — reads as a
+  signal that this exposure is planned to land as part of that (currently
+  `unassessed`) row rather than being an oversight to patch around now.
+  Recommendation for whoever resumes this: re-check whether `txnkv/
+  transaction` has made this public before writing a bespoke visibility
+  patch; if it's still private and `txnkv/transaction` is still far off,
+  patching `MemDb`'s specific methods used by `MemBufferBackend`'s ~20
+  required methods (listed in `mem_buffer.rs` lines 66-133) is a bounded,
+  legitimate patch to add — larger than Phase 0's patches but still
+  additive, not a behavior swap, so the risk profile is closer to "extra
+  maintenance surface" than "regression."
+  Evidence: `crates/tidb-txnkv/src/driver/mem_buffer.rs` lines 15-21
+  (module doc), 66-133 (`MemBufferBackend` trait); grep for `impl.*
+  MemBufferBackend for` across the workspace (zero matches);
+  `third_party/tikv-client-rs/src/transaction/mod.rs` line 53 (`mod
+  unionstore;`); `third_party/tikv-client-rs/src/transaction/unionstore.rs`
+  (every `MemDb`/`RbtMemDb` method `pub(crate)`);
+  `third_party/tikv-client-rs/doc/client-go-parity-ledger.md` row
+  `internal/unionstore`.
 
 ## Decision Log
 
+- Decision: proceed with the migration now, against whatever state
+  `ngaut/client-rust` master is in, rather than gating each crate's migration
+  on its corresponding upstream ledger row reaching `complete`.
+  Rationale: `third_party/tikv-client-rs/doc/client-go-parity-ledger.md`
+  (discovered during Phase 0 vendoring) shows `txnkv/transaction`,
+  `txnkv/txnlock`, `internal/locate`, and `internal/client` — exactly the
+  packages this plan's Phase 2/3 depend on most — marked `unassessed`/`seed`/
+  `in-progress`, not `complete`. Explicit user decision, made after this risk
+  was raised: proceed anyway, re-verifying/porting the documented
+  `tidb-txnkv`/`tidb-distsql` parity fixes ourselves per the existing Decision
+  Log entry on that topic, rather than blocking this plan's progress on a
+  concurrently-moving upstream ledger.
+  Date/Author: 2026-08-24, user decision via this session.
 - Decision: keep `tidb-pd-client`, `tidb-txnkv`, `tidb-distsql` as crate
   names/boundaries; do not split into a Go-shaped `pkg/kv`/`pkg/store/driver`
   layout. "Remove the crates to keep the project clean" is satisfied by
@@ -461,21 +528,51 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
 
 ## Outcomes & Retrospective
 
-(To be filled in as phases complete. Empty at plan creation.)
+**As of 2026-08-24, end of this session's active work:**
 
-- Decision: proceed with the migration now, against whatever state
-  `ngaut/client-rust` master is in, rather than gating each crate's migration
-  on its corresponding upstream ledger row reaching `complete`.
-  Rationale: `third_party/tikv-client-rs/doc/client-go-parity-ledger.md`
-  (discovered during Phase 0 vendoring) shows `txnkv/transaction`,
-  `txnkv/txnlock`, `internal/locate`, and `internal/client` — exactly the
-  packages this plan's Phase 2/3 depend on most — marked `unassessed`/`seed`/
-  `in-progress`, not `complete`. Explicit user decision, made after this risk
-  was raised: proceed anyway, re-verifying/porting the documented
-  `tidb-txnkv`/`tidb-distsql` parity fixes ourselves per the existing Decision
-  Log entry on that topic, rather than blocking this plan's progress on a
-  concurrently-moving upstream ledger.
-  Date/Author: 2026-08-24, user decision via this session.
+Phase 0 (vendoring infrastructure) is complete and durable: the sync/patch/
+regenerate pipeline works, was exercised repeatedly against a genuinely
+moving upstream (7+ resyncs during this session, each picking up real
+commits), and the four maintained patches keep reapplying cleanly. This
+infrastructure is the load-bearing deliverable for every later phase, not
+just Phase 0's own checkbox.
+
+Phase 1 delivered one complete, verified slice: `tidb-pd-client/src/etcd.rs`
+now depends on the `etcd-client` crate instead of hand-building
+`tidb_proto::etcdserverpb` calls, with its full existing test suite (22 lib +
+43 integration tests) passing unchanged. This is a genuine instance of "use
+client-rust the way Go TiDB uses client-go" — except etcd access was never a
+client-go responsibility even in Go (TiDB depends on `go.etcd.io/etcd/client/v3`
+directly), so `etcd-client` is that same architecture ported to Rust, not a
+`client-rust` contribution specifically. It is the cleanest kind of migration
+target: a mature, independent, complete crate with a narrow API surface that
+slotted under an unchanged retry/failover structure.
+
+Everything else investigated this session — PD failover/TSO (`client/
+failover.rs`, `tso.rs`), the `MemBufferBackend` seam in `tidb-txnkv`, and the
+BatchCommands transport (`tidb-txnkv/src/rpc/`) — turned out NOT to be safely
+swappable right now, each for a documented, specific reason (see
+`Surprises & Discoveries` and the two "do not replace" Decision Log entries).
+The common thread: `ngaut/client-rust`'s own parity ledger is honest that its
+PD-retry, region-locate, and internal-client-transport packages are
+`seed`/`in-progress`/`unassessed`, and reading the actual code confirms that
+self-assessment — this repo's hand-rolled equivalents are more complete and
+more precisely tested than what they would be replaced with, for these
+specific subsystems, today. That is a materially different situation from
+"less audited but plausibly fine" (the 2PC/coprocessor risk the user
+explicitly accepted); it is "confirmed to fail this repo's own tests."
+
+Net effect: this session's `tidb-txnkv` and `tidb-distsql` work is zero
+lines of behavioral change, not because the goal was abandoned, but because
+every concrete candidate examined would have been a regression, not a
+migration. The path forward for those two crates is either (a) wait for and
+periodically re-check the specific upstream ledger rows this plan names,
+integrating each as it reaches a receipt that actually covers what this
+repo's tests require (not just the status word), or (b) a dedicated future
+effort with live TiKV/PD access to properly verify a 2PC-engine swap against
+`rust/docs/two-phase-commit-vs-client-go.md`'s findings rather than assuming
+`tikv_client::transaction::{Client, Transaction}` (technically callable,
+never assessed) reproduces them.
 
 ## Context and Orientation
 
