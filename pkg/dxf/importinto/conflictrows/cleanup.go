@@ -16,7 +16,7 @@ package conflictrows
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -168,6 +168,9 @@ func shouldDelete(info storage.TaskCleanupInfo, now time.Time) bool {
 	}
 	switch info.State {
 	case proto.TaskStateFailed, proto.TaskStateReverted:
+		// Only successful task output is retained for user inspection. Failed or
+		// reverted tasks may leave incomplete conflict-row files, so remove them
+		// immediately with the task's other external artifacts.
 		return true
 	case proto.TaskStateSucceed:
 		return info.EndTime != nil && !now.Before(info.EndTime.Add(retention))
@@ -200,7 +203,7 @@ func cleanFiles(
 		for taskID := range taskFiles {
 			taskIDs = append(taskIDs, taskID)
 		}
-		sort.Slice(taskIDs, func(i, j int) bool { return taskIDs[i] < taskIDs[j] })
+		slices.Sort(taskIDs)
 
 		var infosByTaskID map[int64]*storage.TaskCleanupInfo
 		if len(taskIDs) > 0 {
