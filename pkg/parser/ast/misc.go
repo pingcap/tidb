@@ -166,7 +166,11 @@ func (n *TraceStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Stmt = node.(StmtNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Stmt = node.(StmtNode)
+	}
 	return v.Leave(n)
 }
 
@@ -274,12 +278,16 @@ func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ExplainStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	if n.Stmt != nil {
 		node, ok := n.Stmt.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Stmt = node.(StmtNode)
+		if replaceNode {
+			n.Stmt = node.(StmtNode)
+		}
 	}
 	return v.Leave(n)
 }
@@ -412,12 +420,16 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(n)
 	}
 
+	replaceNode := shouldReplaceNode(v)
+
 	if n.HistoricalStatsInfo != nil {
 		info, ok := n.HistoricalStatsInfo.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.HistoricalStatsInfo = info.(*AsOfClause)
+		if replaceNode {
+			n.HistoricalStatsInfo = info.(*AsOfClause)
+		}
 	}
 
 	if n.Stmt == nil {
@@ -426,7 +438,9 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 			if !ok {
 				return n, false
 			}
-			n.Where = node.(ExprNode)
+			if replaceNode {
+				n.Where = node.(ExprNode)
+			}
 		}
 
 		if n.OrderBy != nil {
@@ -434,7 +448,9 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 			if !ok {
 				return n, false
 			}
-			n.OrderBy = node.(*OrderByClause)
+			if replaceNode {
+				n.OrderBy = node.(*OrderByClause)
+			}
 		}
 
 		if n.Limit != nil {
@@ -442,7 +458,9 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 			if !ok {
 				return n, false
 			}
-			n.Limit = node.(*Limit)
+			if replaceNode {
+				n.Limit = node.(*Limit)
+			}
 		}
 		return v.Leave(n)
 	}
@@ -451,7 +469,9 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Stmt = node.(StmtNode)
+	if replaceNode {
+		n.Stmt = node.(StmtNode)
+	}
 	return v.Leave(n)
 }
 
@@ -648,7 +668,11 @@ func (n *CompactTableStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Table = node.(*TableName)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Table = node.(*TableName)
+	}
 	return v.Leave(n)
 }
 
@@ -688,12 +712,16 @@ func (n *PrepareStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*PrepareStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	if n.SQLVar != nil {
 		node, ok := n.SQLVar.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.SQLVar = node.(*VariableExpr)
+		if replaceNode {
+			n.SQLVar = node.(*VariableExpr)
+		}
 	}
 	return v.Leave(n)
 }
@@ -771,12 +799,16 @@ func (n *ExecuteStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ExecuteStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, val := range n.UsingVars {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.UsingVars[i] = node.(ExprNode)
+		if replaceNode {
+			n.UsingVars[i] = node.(ExprNode)
+		}
 	}
 	return v.Leave(n)
 }
@@ -821,12 +853,16 @@ func (n *BeginStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 
+	replaceNode := shouldReplaceNode(v)
+
 	if n.AsOf != nil {
 		node, ok := n.AsOf.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.AsOf = node.(*AsOfClause)
+		if replaceNode {
+			n.AsOf = node.(*AsOfClause)
+		}
 	}
 
 	n = newNode.(*BeginStmt)
@@ -1060,7 +1096,11 @@ func (n *VariableAssignment) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Value = node.(ExprNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Value = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
 
@@ -1192,12 +1232,16 @@ func (n *FlushStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*FlushStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, t := range n.Tables {
 		node, ok := t.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Tables[i] = node.(*TableName)
+		if replaceNode {
+			n.Tables[i] = node.(*TableName)
+		}
 	}
 	return v.Leave(n)
 }
@@ -1324,12 +1368,16 @@ func (n *SetStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SetStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, val := range n.Variables {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Variables[i] = node.(*VariableAssignment)
+		if replaceNode {
+			n.Variables[i] = node.(*VariableAssignment)
+		}
 	}
 	return v.Leave(n)
 }
@@ -1376,7 +1424,11 @@ func (n *SetConfigStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Value = node.(ExprNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Value = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
 
@@ -2204,12 +2256,16 @@ func (n *StringOrUserVar) Accept(v Visitor) (node Node, ok bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*StringOrUserVar)
+	replaceNode := shouldReplaceNode(v)
+
 	if n.UserVar != nil {
 		node, ok = n.UserVar.Accept(v)
 		if !ok {
 			return node, false
 		}
-		n.UserVar = node.(*VariableExpr)
+		if replaceNode {
+			n.UserVar = node.(*VariableExpr)
+		}
 	}
 	return v.Leave(n)
 }
@@ -2331,24 +2387,32 @@ func (n *CreateBindingStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CreateBindingStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	if n.OriginNode != nil {
 		origNode, ok := n.OriginNode.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.OriginNode = origNode.(StmtNode)
+		if replaceNode {
+			n.OriginNode = origNode.(StmtNode)
+		}
 		hintedNode, ok := n.HintedNode.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.HintedNode = hintedNode.(StmtNode)
+		if replaceNode {
+			n.HintedNode = hintedNode.(StmtNode)
+		}
 	} else {
 		for i, digest := range n.PlanDigests {
 			newDigest, ok := digest.Accept(v)
 			if !ok {
 				return n, false
 			}
-			n.PlanDigests[i] = newDigest.(*StringOrUserVar)
+			if replaceNode {
+				n.PlanDigests[i] = newDigest.(*StringOrUserVar)
+			}
 		}
 	}
 	return v.Leave(n)
@@ -2402,19 +2466,25 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropBindingStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	if n.OriginNode != nil {
 		//  OriginNode is nil means we build drop binding by sql digest
 		origNode, ok := n.OriginNode.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.OriginNode = origNode.(StmtNode)
+		if replaceNode {
+			n.OriginNode = origNode.(StmtNode)
+		}
 		if n.HintedNode != nil {
 			hintedNode, ok := n.HintedNode.Accept(v)
 			if !ok {
 				return n, false
 			}
-			n.HintedNode = hintedNode.(StmtNode)
+			if replaceNode {
+				n.HintedNode = hintedNode.(StmtNode)
+			}
 		}
 	} else {
 		for i, digest := range n.SQLDigests {
@@ -2422,7 +2492,9 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 			if !ok {
 				return n, false
 			}
-			n.SQLDigests[i] = newDigest.(*StringOrUserVar)
+			if replaceNode {
+				n.SQLDigests[i] = newDigest.(*StringOrUserVar)
+			}
 		}
 	}
 	return v.Leave(n)
@@ -2480,19 +2552,25 @@ func (n *SetBindingStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SetBindingStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	if n.OriginNode != nil {
 		// OriginNode is nil means we set binding stmt by sql digest
 		origNode, ok := n.OriginNode.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.OriginNode = origNode.(StmtNode)
+		if replaceNode {
+			n.OriginNode = origNode.(StmtNode)
+		}
 		if n.HintedNode != nil {
 			hintedNode, ok := n.HintedNode.Accept(v)
 			if !ok {
 				return n, false
 			}
-			n.HintedNode = hintedNode.(StmtNode)
+			if replaceNode {
+				n.HintedNode = hintedNode.(StmtNode)
+			}
 		}
 	}
 	return v.Leave(n)
@@ -2572,13 +2650,19 @@ func (n *CreateStatisticsStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Table = node.(*TableName)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Table = node.(*TableName)
+	}
 	for i, col := range n.Columns {
 		node, ok = col.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Columns[i] = node.(*ColumnName)
+		if replaceNode {
+			n.Columns[i] = node.(*ColumnName)
+		}
 	}
 	return v.Leave(n)
 }
@@ -2638,12 +2722,16 @@ func (n *DoStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DoStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, val := range n.Exprs {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Exprs[i] = node.(ExprNode)
+		if replaceNode {
+			n.Exprs[i] = node.(ExprNode)
+		}
 	}
 	return v.Leave(n)
 }
@@ -3004,12 +3092,16 @@ func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*AdminStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Tables[i] = node.(*TableName)
+		if replaceNode {
+			n.Tables[i] = node.(*TableName)
+		}
 	}
 
 	if n.Where != nil {
@@ -3017,7 +3109,9 @@ func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
 		if !ok {
 			return n, false
 		}
-		n.Where = node.(ExprNode)
+		if replaceNode {
+			n.Where = node.(ExprNode)
+		}
 	}
 
 	return v.Leave(n)
@@ -3096,12 +3190,16 @@ func (n *PrivElem) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*PrivElem)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, val := range n.Cols {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Cols[i] = node.(*ColumnName)
+		if replaceNode {
+			n.Cols[i] = node.(*ColumnName)
+		}
 	}
 	return v.Leave(n)
 }
@@ -3230,12 +3328,16 @@ func (n *RevokeStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*RevokeStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, val := range n.Privs {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Privs[i] = node.(*PrivElem)
+		if replaceNode {
+			n.Privs[i] = node.(*PrivElem)
+		}
 	}
 	return v.Leave(n)
 }
@@ -3362,12 +3464,16 @@ func (n *GrantStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*GrantStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, val := range n.Privs {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Privs[i] = node.(*PrivElem)
+		if replaceNode {
+			n.Privs[i] = node.(*PrivElem)
+		}
 	}
 	return v.Leave(n)
 }
@@ -3565,12 +3671,16 @@ func (n *RenameUserStmt) Accept(v Visitor) (Node, bool) {
 	}
 	n = newNode.(*RenameUserStmt)
 
+	replaceNode := shouldReplaceNode(v)
+
 	for i, t := range n.UserToUsers {
 		node, ok := t.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.UserToUsers[i] = node.(*UserToUser)
+		if replaceNode {
+			n.UserToUsers[i] = node.(*UserToUser)
+		}
 	}
 	return v.Leave(n)
 }
@@ -3860,12 +3970,16 @@ func (n *BRIEStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*BRIEStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Tables[i] = node.(*TableName)
+		if replaceNode {
+			n.Tables[i] = node.(*TableName)
+		}
 	}
 	return v.Leave(n)
 }
@@ -4491,12 +4605,16 @@ func (n *DynamicCalibrateResourceOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DynamicCalibrateResourceOption)
+	replaceNode := shouldReplaceNode(v)
+
 	if n.Ts != nil {
 		node, ok := n.Ts.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Ts = node.(ExprNode)
+		if replaceNode {
+			n.Ts = node.(ExprNode)
+		}
 	}
 	return v.Leave(n)
 }
@@ -4600,26 +4718,34 @@ func (n *QueryWatchOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*QueryWatchOption)
+	replaceNode := shouldReplaceNode(v)
+
 	if n.ResourceGroupOption != nil && n.ResourceGroupOption.GroupNameExpr != nil {
 		node, ok := n.ResourceGroupOption.GroupNameExpr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.ResourceGroupOption.GroupNameExpr = node.(ExprNode)
+		if replaceNode {
+			n.ResourceGroupOption.GroupNameExpr = node.(ExprNode)
+		}
 	}
 	if n.ActionOption != nil {
 		node, ok := n.ActionOption.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.ActionOption = node.(*ResourceGroupRunawayActionOption)
+		if replaceNode {
+			n.ActionOption = node.(*ResourceGroupRunawayActionOption)
+		}
 	}
 	if n.TextOption != nil {
 		node, ok := n.TextOption.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.TextOption = node.(*QueryWatchTextOption)
+		if replaceNode {
+			n.TextOption = node.(*QueryWatchTextOption)
+		}
 	}
 	return v.Leave(n)
 }
@@ -4686,12 +4812,16 @@ func (n *QueryWatchTextOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*QueryWatchTextOption)
+	replaceNode := shouldReplaceNode(v)
+
 	if n.PatternExpr != nil {
 		node, ok := n.PatternExpr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.PatternExpr = node.(ExprNode)
+		if replaceNode {
+			n.PatternExpr = node.(ExprNode)
+		}
 	}
 	return v.Leave(n)
 }

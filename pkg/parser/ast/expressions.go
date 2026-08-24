@@ -137,19 +137,27 @@ func (n *BetweenExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Expr = node.(ExprNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Expr = node.(ExprNode)
+	}
 
 	node, ok = n.Left.Accept(v)
 	if !ok {
 		return n, false
 	}
-	n.Left = node.(ExprNode)
+	if replaceNode {
+		n.Left = node.(ExprNode)
+	}
 
 	node, ok = n.Right.Accept(v)
 	if !ok {
 		return n, false
 	}
-	n.Right = node.(ExprNode)
+	if replaceNode {
+		n.Right = node.(ExprNode)
+	}
 
 	return v.Leave(n)
 }
@@ -256,13 +264,19 @@ func (n *BinaryOperationExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.L = node.(ExprNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.L = node.(ExprNode)
+	}
 
 	node, ok = n.R.Accept(v)
 	if !ok {
 		return n, false
 	}
-	n.R = node.(ExprNode)
+	if replaceNode {
+		n.R = node.(ExprNode)
+	}
 
 	return v.Leave(n)
 }
@@ -301,13 +315,19 @@ func (n *WhenClause) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Expr = node.(ExprNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Expr = node.(ExprNode)
+	}
 
 	node, ok = n.Result.Accept(v)
 	if !ok {
 		return n, false
 	}
-	n.Result = node.(ExprNode)
+	if replaceNode {
+		n.Result = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
 
@@ -378,26 +398,34 @@ func (n *CaseExpr) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*CaseExpr)
+	replaceNode := shouldReplaceNode(v)
+
 	if n.Value != nil {
 		node, ok := n.Value.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Value = node.(ExprNode)
+		if replaceNode {
+			n.Value = node.(ExprNode)
+		}
 	}
 	for i, val := range n.WhenClauses {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.WhenClauses[i] = node.(*WhenClause)
+		if replaceNode {
+			n.WhenClauses[i] = node.(*WhenClause)
+		}
 	}
 	if n.ElseClause != nil {
 		node, ok := n.ElseClause.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.ElseClause = node.(ExprNode)
+		if replaceNode {
+			n.ElseClause = node.(ExprNode)
+		}
 	}
 	return v.Leave(n)
 }
@@ -443,7 +471,11 @@ func (n *SubqueryExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Query = node.(ResultSetNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Query = node.(ResultSetNode)
+	}
 	return v.Leave(n)
 }
 
@@ -498,12 +530,18 @@ func (n *CompareSubqueryExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.L = node.(ExprNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.L = node.(ExprNode)
+	}
 	node, ok = n.R.Accept(v)
 	if !ok {
 		return n, false
 	}
-	n.R = node.(ExprNode)
+	if replaceNode {
+		n.R = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
 
@@ -544,7 +582,11 @@ func (n *TableNameExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Name = node.(*TableName)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Name = node.(*TableName)
+	}
 	return v.Leave(n)
 }
 
@@ -650,7 +692,11 @@ func (n *ColumnNameExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Name = node.(*ColumnName)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Name = node.(*ColumnName)
+	}
 	return v.Leave(n)
 }
 
@@ -731,7 +777,11 @@ func (n *ExistsSubqueryExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Sel = node.(ExprNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Sel = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
 
@@ -805,20 +855,28 @@ func (n *PatternInExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Expr = node.(ExprNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Expr = node.(ExprNode)
+	}
 	for i, val := range n.List {
 		node, ok = val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.List[i] = node.(ExprNode)
+		if replaceNode {
+			n.List[i] = node.(ExprNode)
+		}
 	}
 	if n.Sel != nil {
 		node, ok = n.Sel.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Sel = node.(ExprNode)
+		if replaceNode {
+			n.Sel = node.(ExprNode)
+		}
 	}
 	return v.Leave(n)
 }
@@ -866,7 +924,11 @@ func (n *IsNullExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Expr = node.(ExprNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Expr = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
 
@@ -929,7 +991,11 @@ func (n *IsTruthExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Expr = node.(ExprNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Expr = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
 
@@ -1020,19 +1086,25 @@ func (n *PatternLikeOrIlikeExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*PatternLikeOrIlikeExpr)
+	replaceNode := shouldReplaceNode(v)
+
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Expr = node.(ExprNode)
+		if replaceNode {
+			n.Expr = node.(ExprNode)
+		}
 	}
 	if n.Pattern != nil {
 		node, ok := n.Pattern.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Pattern = node.(ExprNode)
+		if replaceNode {
+			n.Pattern = node.(ExprNode)
+		}
 	}
 	return v.Leave(n)
 }
@@ -1083,12 +1155,16 @@ func (n *ParenthesesExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ParenthesesExpr)
+	replaceNode := shouldReplaceNode(v)
+
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Expr = node.(ExprNode)
+		if replaceNode {
+			n.Expr = node.(ExprNode)
+		}
 	}
 	return v.Leave(n)
 }
@@ -1265,12 +1341,16 @@ func (n *PositionExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*PositionExpr)
+	replaceNode := shouldReplaceNode(v)
+
 	if n.P != nil {
 		node, ok := n.P.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.P = node.(ExprNode)
+		if replaceNode {
+			n.P = node.(ExprNode)
+		}
 	}
 	return v.Leave(n)
 }
@@ -1332,12 +1412,18 @@ func (n *PatternRegexpExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Expr = node.(ExprNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Expr = node.(ExprNode)
+	}
 	node, ok = n.Pattern.Accept(v)
 	if !ok {
 		return n, false
 	}
-	n.Pattern = node.(ExprNode)
+	if replaceNode {
+		n.Pattern = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
 
@@ -1377,12 +1463,16 @@ func (n *RowExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*RowExpr)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, val := range n.Values {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Values[i] = node.(ExprNode)
+		if replaceNode {
+			n.Values[i] = node.(ExprNode)
+		}
 	}
 	return v.Leave(n)
 }
@@ -1424,7 +1514,11 @@ func (n *UnaryOperationExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.V = node.(ExprNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.V = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
 
@@ -1465,7 +1559,11 @@ func (n *ValuesExpr) Accept(v Visitor) (Node, bool) {
 	}
 	// `node` may be *ast.ValueExpr, to avoid panic, we write `_` and do not use
 	// it.
-	n.Column, _ = node.(*ColumnNameExpr)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Column, _ = node.(*ColumnNameExpr)
+	}
 	return v.Leave(n)
 }
 
@@ -1535,7 +1633,11 @@ func (n *VariableExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Value = node.(ExprNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Value = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
 
@@ -1629,18 +1731,24 @@ func (n *MatchAgainst) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*MatchAgainst)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, colName := range n.ColumnNames {
 		newColName, ok := colName.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.ColumnNames[i] = newColName.(*ColumnName)
+		if replaceNode {
+			n.ColumnNames[i] = newColName.(*ColumnName)
+		}
 	}
 	newAgainst, ok := n.Against.Accept(v)
 	if !ok {
 		return n, false
 	}
-	n.Against = newAgainst.(ExprNode)
+	if replaceNode {
+		n.Against = newAgainst.(ExprNode)
+	}
 	return v.Leave(n)
 }
 
@@ -1680,7 +1788,11 @@ func (n *SetCollationExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Expr = node.(ExprNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Expr = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
 

@@ -173,12 +173,16 @@ func (n *ProcedureDecl) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ProcedureDecl)
+	replaceNode := shouldReplaceNode(v)
+
 	if n.DeclDefault != nil {
 		node, ok := n.DeclDefault.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.DeclDefault = node.(ExprNode)
+		if replaceNode {
+			n.DeclDefault = node.(ExprNode)
+		}
 	}
 	return v.Leave(n)
 }
@@ -219,12 +223,16 @@ func (n *ProcedureBlock) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ProcedureBlock)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, ProcedureVar := range n.ProcedureVars {
 		node, ok := ProcedureVar.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.ProcedureVars[i] = node.(DeclNode)
+		if replaceNode {
+			n.ProcedureVars[i] = node.(DeclNode)
+		}
 	}
 	// Store Procedure doesn't check the justifiability for statements, so don't traverse ProcedureProcStmts.
 	return v.Leave(n)
@@ -275,18 +283,24 @@ func (n *ProcedureInfo) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ProcedureInfo)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, ProcedureParam := range n.ProcedureParam {
 		node, ok := ProcedureParam.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.ProcedureParam[i] = node.(*StoreParameter)
+		if replaceNode {
+			n.ProcedureParam[i] = node.(*StoreParameter)
+		}
 	}
 	node, ok := n.ProcedureBody.Accept(v)
 	if !ok {
 		return n, false
 	}
-	n.ProcedureBody = node.(StmtNode)
+	if replaceNode {
+		n.ProcedureBody = node.(StmtNode)
+	}
 	return v.Leave(n)
 }
 
@@ -349,7 +363,11 @@ func (n *ProcedureIfInfo) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.IfBody = node.(*ProcedureIfBlock)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.IfBody = node.(*ProcedureIfBlock)
+	}
 	return v.Leave(n)
 }
 
@@ -380,7 +398,11 @@ func (n *ProcedureElseIfBlock) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.ProcedureIfStmt = node.(*ProcedureIfBlock)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.ProcedureIfStmt = node.(*ProcedureIfBlock)
+	}
 	return v.Leave(n)
 }
 
@@ -451,12 +473,16 @@ func (n *ProcedureIfBlock) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ProcedureIfBlock)
+	replaceNode := shouldReplaceNode(v)
+
 	if n.IfExpr != nil {
 		node, ok := n.IfExpr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.IfExpr = node.(ExprNode)
+		if replaceNode {
+			n.IfExpr = node.(ExprNode)
+		}
 	}
 
 	if n.ProcedureElseStmt != nil {
@@ -464,7 +490,9 @@ func (n *ProcedureIfBlock) Accept(v Visitor) (Node, bool) {
 		if !ok {
 			return n, false
 		}
-		n.ProcedureElseStmt = node.(StmtNode)
+		if replaceNode {
+			n.ProcedureElseStmt = node.(StmtNode)
+		}
 	}
 	return v.Leave(n)
 }
@@ -502,12 +530,16 @@ func (n *SimpleWhenThenStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SimpleWhenThenStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Expr = node.(ExprNode)
+		if replaceNode {
+			n.Expr = node.(ExprNode)
+		}
 	}
 	// Store Procedure do not check sql justifiability, so don't traverse ProcedureStmts.
 	return v.Leave(n)
@@ -562,14 +594,20 @@ func (n *SimpleCaseStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Condition = node.(ExprNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Condition = node.(ExprNode)
+	}
 
 	for i, stmt := range n.WhenCases {
 		node, ok := stmt.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.WhenCases[i] = node.(*SimpleWhenThenStmt)
+		if replaceNode {
+			n.WhenCases[i] = node.(*SimpleWhenThenStmt)
+		}
 	}
 
 	if n.ElseCases != nil {
@@ -578,7 +616,9 @@ func (n *SimpleCaseStmt) Accept(v Visitor) (Node, bool) {
 			if !ok {
 				return n, false
 			}
-			n.ElseCases[i] = node.(StmtNode)
+			if replaceNode {
+				n.ElseCases[i] = node.(StmtNode)
+			}
 		}
 	}
 	return v.Leave(n)
@@ -617,12 +657,16 @@ func (n *SearchWhenThenStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SearchWhenThenStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Expr = node.(ExprNode)
+		if replaceNode {
+			n.Expr = node.(ExprNode)
+		}
 	}
 	// Store Procedure do not check sql justifiability, so don't traverse ProcedureStmts.
 	return v.Leave(n)
@@ -669,12 +713,16 @@ func (n *SearchCaseStmt) Accept(v Visitor) (Node, bool) {
 	}
 	n = newNode.(*SearchCaseStmt)
 
+	replaceNode := shouldReplaceNode(v)
+
 	for i, stmt := range n.WhenCases {
 		node, ok := stmt.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.WhenCases[i] = node.(*SearchWhenThenStmt)
+		if replaceNode {
+			n.WhenCases[i] = node.(*SearchWhenThenStmt)
+		}
 	}
 	// Store Procedure do not check sql justifiability, so don't traverse ElseCases.
 	return v.Leave(n)
@@ -715,19 +763,25 @@ func (n *ProcedureRepeatStmt) Accept(v Visitor) (Node, bool) {
 	}
 	n = newNode.(*ProcedureRepeatStmt)
 
+	replaceNode := shouldReplaceNode(v)
+
 	for i, stmt := range n.Body {
 		node, ok := stmt.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Body[i] = node.(StmtNode)
+		if replaceNode {
+			n.Body[i] = node.(StmtNode)
+		}
 	}
 
 	node, ok := n.Condition.Accept(v)
 	if !ok {
 		return n, false
 	}
-	n.Condition = node.(ExprNode)
+	if replaceNode {
+		n.Condition = node.(ExprNode)
+	}
 
 	return v.Leave(n)
 }
@@ -771,14 +825,20 @@ func (n *ProcedureWhileStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Condition = node.(ExprNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Condition = node.(ExprNode)
+	}
 
 	for i, stmt := range n.Body {
 		node, ok := stmt.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Body[i] = node.(StmtNode)
+		if replaceNode {
+			n.Body[i] = node.(StmtNode)
+		}
 	}
 	return v.Leave(n)
 }
@@ -856,12 +916,16 @@ func (n *ProcedureErrorControl) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ProcedureErrorControl)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, errorInfo := range n.ErrorCon {
 		node, ok := errorInfo.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.ErrorCon[i] = node.(ErrNode)
+		if replaceNode {
+			n.ErrorCon[i] = node.(ErrNode)
+		}
 	}
 	return v.Leave(n)
 }
@@ -1060,7 +1124,11 @@ func (n *ProcedureLabelBlock) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Block = node.(*ProcedureBlock)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Block = node.(*ProcedureBlock)
+	}
 	// Store Procedure do not check sql justifiability, so don't traverse 	ProcedureProcStmts.
 	return v.Leave(n)
 }
@@ -1122,7 +1190,11 @@ func (n *ProcedureLabelLoop) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Block = node.(StmtNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Block = node.(StmtNode)
+	}
 	// Store Procedure do not check sql justifiability, so don't traverse 	ProcedureProcStmts.
 	return v.Leave(n)
 }

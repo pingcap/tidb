@@ -600,12 +600,16 @@ func (n *FuncCallExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*FuncCallExpr)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, val := range n.Args {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Args[i] = node.(ExprNode)
+		if replaceNode {
+			n.Args[i] = node.(ExprNode)
+		}
 	}
 	return v.Leave(n)
 }
@@ -665,7 +669,11 @@ func (n *JSONSumCrc32Expr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Expr = node.(ExprNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Expr = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
 
@@ -745,7 +753,11 @@ func (n *FuncCastExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Expr = node.(ExprNode)
+	replaceNode := shouldReplaceNode(v)
+
+	if replaceNode {
+		n.Expr = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
 
@@ -935,19 +947,25 @@ func (n *AggregateFuncExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*AggregateFuncExpr)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, val := range n.Args {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Args[i] = node.(ExprNode)
+		if replaceNode {
+			n.Args[i] = node.(ExprNode)
+		}
 	}
 	if n.Order != nil {
 		node, ok := n.Order.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Order = node.(*OrderByClause)
+		if replaceNode {
+			n.Order = node.(*OrderByClause)
+		}
 	}
 	return v.Leave(n)
 }
@@ -1039,18 +1057,24 @@ func (n *WindowFuncExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*WindowFuncExpr)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, val := range n.Args {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Args[i] = node.(ExprNode)
+		if replaceNode {
+			n.Args[i] = node.(ExprNode)
+		}
 	}
 	node, ok := n.Spec.Accept(v)
 	if !ok {
 		return n, false
 	}
-	n.Spec = *node.(*WindowSpec)
+	if replaceNode {
+		n.Spec = *node.(*WindowSpec)
+	}
 	return v.Leave(n)
 }
 

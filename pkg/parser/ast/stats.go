@@ -187,12 +187,16 @@ func (n *AnalyzeTableStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*AnalyzeTableStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, val := range n.TableNames {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.TableNames[i] = node.(*TableName)
+		if replaceNode {
+			n.TableNames[i] = node.(*TableName)
+		}
 	}
 	return v.Leave(n)
 }
@@ -244,12 +248,16 @@ func (n *DropStatsStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropStatsStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Tables[i] = node.(*TableName)
+		if replaceNode {
+			n.Tables[i] = node.(*TableName)
+		}
 	}
 	return v.Leave(n)
 }
@@ -306,12 +314,16 @@ func (n *LockStatsStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*LockStatsStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Tables[i] = node.(*TableName)
+		if replaceNode {
+			n.Tables[i] = node.(*TableName)
+		}
 	}
 	return v.Leave(n)
 }
@@ -344,12 +356,16 @@ func (n *UnlockStatsStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*UnlockStatsStmt)
+	replaceNode := shouldReplaceNode(v)
+
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Tables[i] = node.(*TableName)
+		if replaceNode {
+			n.Tables[i] = node.(*TableName)
+		}
 	}
 	return v.Leave(n)
 }

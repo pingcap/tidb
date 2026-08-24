@@ -155,6 +155,54 @@ type Visitor interface {
 	Leave(n Node) (node Node, ok bool)
 }
 
+// InPlaceVisitor visits a Node without replacing nodes.
+// Enter and Leave have the same traversal control flow as Visitor. Callbacks
+// may intentionally mutate fields on the visited nodes; those mutations and
+// synchronization with concurrent access are the caller's responsibility.
+type InPlaceVisitor interface {
+	// Enter is called before children nodes are visited.
+	// skipChildren returns true means children nodes should be skipped.
+	Enter(n Node) (skipChildren bool)
+	// Leave is called after children nodes have been visited.
+	// ok returns false to stop visiting.
+	Leave(n Node) (ok bool)
+}
+
+type inPlaceVisitorAdapter struct {
+	visitor InPlaceVisitor
+}
+
+var _ Visitor = (*inPlaceVisitorAdapter)(nil)
+
+func (v *inPlaceVisitorAdapter) Enter(n Node) (Node, bool) {
+	return n, v.visitor.Enter(n)
+}
+
+func (v *inPlaceVisitorAdapter) Leave(n Node) (Node, bool) {
+	return n, v.visitor.Leave(n)
+}
+
+type inPlaceVisitorMarker interface {
+	inPlaceVisitor()
+}
+
+func (*inPlaceVisitorAdapter) inPlaceVisitor() {}
+
+func shouldReplaceNode(visitor Visitor) bool {
+	_, inPlace := visitor.(inPlaceVisitorMarker)
+	return !inPlace
+}
+
+// Walk visits node using Node.Accept's traversal order and control flow.
+// The in-place adapter never replaces nodes. TiDB AST Node.Accept implementations
+// skip framework child writebacks for Walk after their writebacks are guarded;
+// out-of-tree Node.Accept implementations define their own behavior. Callback
+// mutations and synchronization with concurrent access are the caller's responsibility.
+func Walk(node Node, visitor InPlaceVisitor) bool {
+	_, ok := node.Accept(&inPlaceVisitorAdapter{visitor: visitor})
+	return ok
+}
+
 // GetStmtLabel generates a label for a statement.
 func GetStmtLabel(stmtNode StmtNode) string {
 	switch x := stmtNode.(type) {
