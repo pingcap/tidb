@@ -1,0 +1,12 @@
+drop table if exists t;
+create table t (a int);
+insert into t values (1), (10);
+explain analyze format='ru' select * from t;
+id	task	actRows	selfRU	cumRU	cumRU%	detail
+TableReader_5	root	2	43.00	43.00	100.00%	
+└─TableFullScan_4	cop[tikv]	2	0.00	0.00	0.00%	
+explain analyze format='ru' select * from t where a < 10;
+id	task	actRows	selfRU	cumRU	cumRU%	detail
+TableReader_7	root	1	56.00	58.00	100.00%	
+└─Selection_6	cop[tikv]	1	2.00	2.00	3.45%	
+  └─TableFullScan_5	cop[tikv]	2	0.00	0.00	0.00%	
