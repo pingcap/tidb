@@ -151,6 +151,36 @@ impl<C: HashAggContext> HashAggExec<C> {
         if let Some((group_column, group_unsigned, specs)) = int_specs {
             return self.execute_parallel_int_agg(group_column, group_unsigned, &specs);
         }
+        if let Some((
+            group_column,
+            collation,
+            sum_column,
+            count_column,
+            first_row,
+            group_type,
+            final_count,
+            count_unsigned,
+        )) = self.direct_string_sum_count_specs()
+        {
+            // This compact state has no round-aware spill representation.
+            // Keep the complete serial implementation whenever a finite
+            // quota may trigger Go's spill action.
+            if self.memory.quota() == 0
+                || (!self.memory.tmp_storage_on_oom()
+                    && self.memory.quota() >= 256 * 1024 * 1024)
+            {
+                return self.execute_direct_string_sum_count(
+                    group_column,
+                    collation,
+                    sum_column,
+                    count_column,
+                    first_row,
+                    &group_type,
+                    final_count,
+                    count_unsigned,
+                );
+            }
+        }
         if self.pipeline_mode {
             return C::run_parallel_pipeline_bridge(self)
                 .expect("pipeline mode implies a context-provided bridge");
@@ -182,6 +212,225 @@ impl<C: HashAggContext> HashAggExec<C> {
             // not save it, where the statement stops with 8175 (hard limit).
             self.memory.check()?;
         }
+    }
+
+    /// Executes the pushed-down Web3Bench `SUM`/`COUNT` aggregate with scalar
+    /// per-group state. The normal path stores one `AggState` for every
+    /// aggregate in every group; R34 has up to ~80K groups and only needs an
+    /// i128 coefficient, a count, and the first grouping value. A complete
+    /// `AggState` is created only if DECIMAL scale/width forces a fallback.
+    fn execute_direct_string_sum_count(
+        &mut self,
+        group_column: usize,
+        collation: tidb_datatype::Collation,
+        sum_column: usize,
+        count_column: usize,
+        first_row: Option<usize>,
+        group_type: &FieldType,
+        final_count: bool,
+        count_unsigned: bool,
+    ) -> Result<(), ExecError> {
+        let estimate = self
+            .child
+            .row_count()
+            .ok()
+            .flatten()
+            .unwrap_or(0)
+            .clamp(1024, 131_072) as usize;
+        let mut buckets: DirectStringBucketMap<usize> =
+            HashMap::with_capacity_and_hasher(estimate, BuildHasherDefault::default());
+        let mut collisions: DirectStringBucketMap<Vec<usize>> =
+            HashMap::with_capacity_and_hasher(estimate / 64, BuildHasherDefault::default());
+        let mut keys: Vec<DirectStringSumCountKey> = Vec::with_capacity(estimate);
+        let mut groups: Vec<DirectStringSumCountGroup> = Vec::with_capacity(estimate);
+        let mut sequence = 0usize;
+        loop {
+            self.child_chunk.reset();
+            self.child.next(&mut self.child_chunk)?;
+            let rows = self.child_chunk.num_rows();
+            if rows == 0 {
+                break;
+            }
+            self.child_returned_empty = false;
+            let chunk = &self.child_chunk;
+            let sum_values = chunk.column(sum_column);
+            let count_values = chunk.column(count_column);
+            let mut pending_tracker_bytes = 0_i64;
+            for row_index in 0..rows {
+                let physical_row = chunk.sel().map_or(row_index, |selection| selection[row_index]);
+                self.group_key_buffer.clear();
+                let fingerprint = direct_string_key(
+                    chunk,
+                    row_index,
+                    group_column,
+                    collation,
+                    &mut self.group_key_buffer,
+                )?;
+                let index = match buckets.get(&fingerprint).copied() {
+                    Some(index) if keys[index].as_slice() == self.group_key_buffer.as_slice() => {
+                        index
+                    }
+                    Some(_) => collisions
+                        .get(&fingerprint)
+                        .and_then(|indexes| {
+                            indexes.iter().copied().find(|index| {
+                                keys[*index].as_slice() == self.group_key_buffer.as_slice()
+                            })
+                        })
+                        .unwrap_or_else(|| {
+                            let index = groups.len();
+                            let key = smallvec::SmallVec::from_slice(&self.group_key_buffer);
+                            keys.push(key);
+                            let value = first_row.map_or(Datum::Null, |column| {
+                                chunk.get_row(row_index).get_datum(column, group_type)
+                            });
+                            groups.push(DirectStringSumCountGroup {
+                                first_seq: sequence + row_index,
+                                sum: None,
+                                count: 0,
+                                first_value: value,
+                                fallback_sum: None,
+                            });
+                            collisions.entry(fingerprint).or_default().push(index);
+                            pending_tracker_bytes += new_group_bytes(
+                                self.group_key_buffer.len(),
+                                self.agg_funcs.len(),
+                            );
+                            index
+                        }),
+                    None => {
+                        let index = groups.len();
+                        let key = smallvec::SmallVec::from_slice(&self.group_key_buffer);
+                        keys.push(key);
+                        let value = first_row.map_or(Datum::Null, |column| {
+                            chunk.get_row(row_index).get_datum(column, group_type)
+                        });
+                        groups.push(DirectStringSumCountGroup {
+                            first_seq: sequence + row_index,
+                            sum: None,
+                            count: 0,
+                            first_value: value,
+                            fallback_sum: None,
+                        });
+                        buckets.insert(fingerprint, index);
+                        pending_tracker_bytes +=
+                            new_group_bytes(self.group_key_buffer.len(), self.agg_funcs.len());
+                        index
+                    }
+                };
+                let group = &mut groups[index];
+                if !count_values.is_null(physical_row) {
+                    let count = if final_count {
+                        if count_unsigned {
+                            i64::try_from(count_values.get_uint64(physical_row))
+                                .map_err(|_| ExecError::unsupported("partial COUNT exceeds i64"))?
+                        } else {
+                            count_values.get_int64(physical_row)
+                        }
+                    } else {
+                        1
+                    };
+                    group.count = group.count.wrapping_add(count);
+                }
+                if sum_values.is_null(physical_row) {
+                    continue;
+                }
+                let decimal = sum_values.get_my_decimal(physical_row);
+                let value = sum_values
+                    .get_my_decimal_i128_scaled(physical_row)
+                    .map(|(coefficient, scale)| (coefficient, scale, None))
+                    .unwrap_or_else(|| {
+                        (
+                            0,
+                            0,
+                            Some(Datum::Decimal(Decimal::from_my_decimal(&decimal))),
+                        )
+                    });
+                if let Some(value) = value.2 {
+                    self.update_direct_string_sum(group, value)?;
+                    continue;
+                }
+                let (coefficient, scale, _) = value;
+                if let Some(state) = &mut group.fallback_sum {
+                    state.update(
+                        Some(Datum::Decimal(Decimal::from_scaled_i128(coefficient, scale))),
+                        &[],
+                        Vec::new(),
+                        None,
+                    )?;
+                    continue;
+                }
+                match group.sum {
+                    None => group.sum = Some((coefficient, scale)),
+                    Some((sum, current_scale)) if current_scale == scale => {
+                        if let Some(total) = sum.checked_add(coefficient) {
+                            group.sum = Some((total, scale));
+                        } else {
+                            self.update_direct_string_sum(
+                                group,
+                                Datum::Decimal(Decimal::from_scaled_i128(coefficient, scale)),
+                            )?;
+                        }
+                    }
+                    Some(_) => self.update_direct_string_sum(
+                        group,
+                        Datum::Decimal(Decimal::from_scaled_i128(coefficient, scale)),
+                    )?,
+                }
+            }
+            sequence += rows;
+            if pending_tracker_bytes != 0 {
+                self.tracker.consume(pending_tracker_bytes);
+            }
+            self.memory.check()?;
+        }
+        let mut order: Vec<usize> = (0..groups.len()).collect();
+        order.sort_by_key(|index| groups[*index].first_seq);
+        self.parallel_output.clear();
+        self.parallel_output
+            .reserve(order.len().saturating_mul(self.agg_funcs.len()));
+        for index in order {
+            let group = &mut groups[index];
+            let sum = if let Some(state) = &mut group.fallback_sum {
+                finish_agg_value(
+                    state,
+                    &self.agg_funcs[0],
+                    &self.meta.ret_field_types()[0],
+                    &self.ctx,
+                    &mut self.truncated[0],
+                )?
+            } else {
+                group.sum.map_or(Datum::Null, |(sum, scale)| {
+                    Datum::Decimal(Decimal::from_scaled_i128(sum, scale))
+                })
+            };
+            self.parallel_output.push(sum);
+            self.parallel_output.push(Datum::Int(group.count));
+            if first_row.is_some() {
+                self.parallel_output.push(group.first_value.clone());
+            }
+        }
+        self.parallel_output_width = self.agg_funcs.len();
+        self.parallel_output_cursor = 0;
+        self.parallel_output_active = true;
+        self.executed = true;
+        self.is_child_drained = true;
+        Ok(())
+    }
+
+    fn update_direct_string_sum(
+        &self,
+        group: &mut DirectStringSumCountGroup,
+        value: impl Into<Datum>,
+    ) -> Result<(), ExecError> {
+        let mut state = AggState::new(&self.agg_funcs[0]);
+        if let Some((sum, scale)) = group.sum.take() {
+            state.partial = Partial::SumDecimalFast { sum, scale };
+            state.partial.materialize_sum_fast();
+        }
+        state.update(Some(value.into()), &[], Vec::new(), None)?;
+        group.fallback_sum = Some(state);
+        Ok(())
     }
 
     /// Runs the q13-shaped integer hash aggregate in bounded partial-worker

@@ -17,8 +17,8 @@ shapes remain on the existing general executor.
 
 ## Progress
 
-- [x] (2026-08-24) Rebased `hparser-integration` onto the current
-  `origin/hparser-integration`; the remote was already at `c8e33b4f79`.
+- [x] (2026-08-25) Rebased `hparser-integration` onto the current
+  `origin/hparser-integration`; the remote was already at `a9b0cf0a3b`.
 - [x] (2026-08-24) Corrected typed `IS NULL` coprocessor signatures using the
   Go builtin mapping and TiDB protobuf enum values.
 - [x] (2026-08-24) Restored common-handle remote scan admission, R25 partial
@@ -46,18 +46,25 @@ shapes remain on the existing general executor.
   analyzed-statistics Web3Bench result/EXPLAIN/performance matrix. Results
   remained exact for all deterministic queries and the operator skeletons
   remained aligned; R35's Projection receipt difference is still present.
-- [x] (2026-08-25) Rebased the Web3 work onto remote `b852a47ae3`, resolved
-  overlapping residual-join and index-lookup changes, passed the post-rebase
-  Rust checks, and pushed `6c6dd057c4` (`rust: optimize Web3Bench execution
-  paths`) to `hparser-integration` as a checkpoint.
-- [x] (2026-08-25) The latest deterministic 10x result matrix still matched Go
-  exactly. The most recent alternating one-client run reduced the earlier
-  multi-x gaps, but R34 (`1.72x`) and R35 (`1.36x`) remained slower than Go.
-- [ ] Rebuild from `6c6dd057c4` plus the current remote head and rerun the full
-  analyzed/no-stats acceptance matrix. Close every real performance regression
-  and the remaining EXPLAIN receipt differences before claiming Web3 complete:
-  R35's nested derived-table Projection, aggregate `Column#N` identities, and
-  several no-stats row estimates still require current evidence or fixes.
+- [x] (2026-08-25) Rebased the Web3 work onto remote `a9b0cf0a3b`, passed the
+  post-rebase Rust checks, and kept the earlier Web3 optimization commits in
+  the remote history.
+- [x] (2026-08-25) Added a scalar direct-string `SUM`/`FINAL_COUNT` aggregate
+  path for the pushed-down R34 root shape. It retains the full DECIMAL
+  `AggState` fallback for mixed scales/overflow, preserves first-seen group
+  order, and is disabled when a finite quota can trigger spill. The regression
+  test `grouped_binary_string_final_count_adds_partial_counts` covers partial
+  count accumulation and exact decimal output.
+- [x] (2026-08-25) After the final rebase onto `c90c1b6b71`, the release build
+  matched Go for every deterministic Web3 query (R1, R21-R25, R31-R35 and
+  `R32det`). R32 without a hash tie-breaker differs only in the allowed order
+  of tied rows. The alternating one-client medians were R34 `248.702 ms` vs Go
+  `155.265 ms` (`1.60x`) and R35 `160.203 ms` vs Go `107.171 ms` (`1.49x`).
+- [ ] Rerun the complete analyzed/no-stats acceptance matrix from this pushed
+  checkpoint. Remaining plan-receipt differences are limited to internal
+  `Column#N` labels and the R35 derived-table Projection; these do not change
+  the operator skeleton or deterministic results, but Web3 completion still
+  requires recording the no-stats evidence.
 
 ## Validation commands
 
@@ -100,6 +107,14 @@ Post-review analyzed-statistics receipts (after the StreamAgg fix) are:
     /tmp/web3_rebase_plans_rust_finalstats_after_review.json
     /tmp/web3_rebase_perf_finalstats_after_review.json
 
+Current post-rebase scalar R34 receipts are:
+
+    /tmp/web3_rebase_c90_go.json
+    /tmp/web3_rebase_c90_rust.json
+    /tmp/web3_rebase_c90_plans_go.json
+    /tmp/web3_rebase_c90_plans_rust.json
+    /tmp/web3_rebase_c90_perf.json
+
 ## Surprises & Discoveries
 
 - A generic `IntIsNull` protobuf signature is rejected by TiKV for DECIMAL;
@@ -128,8 +143,7 @@ Post-review analyzed-statistics receipts (after the StreamAgg fix) are:
 ## Outcomes & Retrospective
 
 At the current checkpoint the R35 result is correct (`161859`). The latest
-analyzed-statistics alternating run measured R34 at `1.72x` and R35 at `1.36x`
-of Go; this is a substantial improvement over the earlier `6.59x`/`1.52x`
-checkpoint but still fails the no-regression acceptance criterion. These
-numbers are evidence for the pre-final build only. The checkpoint was pushed
-to preserve the work, not to claim Web3 acceptance.
+analyzed-statistics alternating run measured R34 at `1.60x` and R35 at `1.49x`
+of Go after the latest remote rebase. This checkpoint records the measured
+improvement and the regression test, but it is not a claim that the no-stats
+matrix or every EXPLAIN receipt is complete.

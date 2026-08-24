@@ -87,7 +87,7 @@ use spill::new_group_bytes;
 pub use parallel::HashAggContext;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
-use std::hash::{BuildHasherDefault, Hasher};
+use std::hash::{BuildHasherDefault, Hash, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use tidb_chunk::chunk::Chunk;
@@ -282,6 +282,57 @@ enum DirectStringAgg {
     FinalCount(usize),
     Sum(usize),
     FirstRow { column: usize, field_type: FieldType },
+}
+
+/// The scalar states used by Web3Bench's pushed-down `SUM`/`COUNT` shape.
+/// Keeping these beside the direct-string group machinery lets the hot path
+/// avoid one `AggState` allocation per group while retaining a complete
+/// `AggState` fallback for unusual DECIMAL representations.
+type DirectStringSumCountKey = smallvec::SmallVec<[u8; 48]>;
+
+struct DirectStringSumCountGroup {
+    first_seq: usize,
+    sum: Option<(i128, u32)>,
+    count: i64,
+    first_value: Datum,
+    fallback_sum: Option<AggState>,
+}
+
+fn direct_string_key(
+    chunk: &Chunk,
+    row_index: usize,
+    offset: usize,
+    collation: tidb_datatype::Collation,
+    output: &mut Vec<u8>,
+) -> Result<u64, ExecError> {
+    let physical_row = chunk
+        .sel()
+        .map_or(row_index, |selection| selection[row_index]);
+    let column = chunk.column(offset);
+    output.clear();
+    if column.is_null(physical_row) {
+        output.push(0);
+    } else {
+        let bytes = column.get_bytes(physical_row);
+        let bytes = bytes.as_ref();
+        let bytes = if matches!(collation, tidb_datatype::Collation::Utf8Mb4Bin) {
+            let len = bytes
+                .iter()
+                .rposition(|byte| *byte != b' ')
+                .map_or(0, |index| index + 1);
+            &bytes[..len]
+        } else {
+            bytes
+        };
+        if bytes.len() > DIRECT_STRING_MAX_KEY_BYTES {
+            return Err(ExecError::unsupported(
+                "direct string aggregate key exceeds its declared width",
+            ));
+        }
+        output.push(1);
+        output.extend_from_slice(bytes);
+    }
+    Ok(fast_bytes_fingerprint(output))
 }
 
 const DIRECT_STRING_MAX_KEY_BYTES: usize = 192;
@@ -2583,6 +2634,88 @@ impl<C: HashAggContext> HashAggExec<C> {
             .collect()
     }
 
+    /// Returns the narrow pushed-down Web3Bench shape used by R34. The
+    /// coprocessor stage has two aggregate columns; the root stage adds the
+    /// `FIRST_ROW` carrier for the grouping key. Any other shape stays on the
+    /// general direct-string implementation.
+    fn direct_string_sum_count_specs(
+        &self,
+    ) -> Option<(
+        usize,
+        tidb_datatype::Collation,
+        usize,
+        usize,
+        Option<usize>,
+        FieldType,
+        bool,
+        bool,
+    )> {
+        let (group_column, collation) = self.direct_string_group_column()?;
+        if !(self.agg_funcs.len() == 2 || self.agg_funcs.len() == 3) {
+            return None;
+        }
+        let sum = &self.agg_funcs[0];
+        let count = &self.agg_funcs[1];
+        if sum.distinct
+            || !sum.extra_args.is_empty()
+            || !sum.order_by.is_empty()
+            || !matches!(sum.kind, AggKind::Sum)
+            || count.distinct
+            || !count.extra_args.is_empty()
+            || !count.order_by.is_empty()
+            || !matches!(count.kind, AggKind::Count | AggKind::FinalCount)
+        {
+            return None;
+        }
+        let sum_column = usize::try_from(sum.arg.as_ref()?.as_column()?.index).ok()?;
+        let count_column = usize::try_from(count.arg.as_ref()?.as_column()?.index).ok()?;
+        let sum_type = sum.arg.as_ref()?.static_type()?;
+        let count_type = count.arg.as_ref()?.static_type()?;
+        if sum_type.code() != FieldTypeCode::NewDecimal {
+            return None;
+        }
+        // A pushed grouped aggregate reaches the root as SUM(partial_sum),
+        // FINAL_COUNT(partial_count), FIRST_ROW(group_key).  The cop-side
+        // shape, when it is retained locally (for example in a unit test),
+        // remains COUNT(input).  Keep both forms explicit so the scalar path
+        // never mistakes a partial count for one input row.
+        let final_count = match count.kind {
+            AggKind::Count => false,
+            AggKind::FinalCount => true,
+            _ => return None,
+        };
+        if final_count && count_type.eval_type() != EvalType::Int {
+            return None;
+        }
+        let count_unsigned = count_type.is_unsigned();
+        let first_row = if self.agg_funcs.len() == 3 {
+            let func = &self.agg_funcs[2];
+            if func.distinct
+                || !func.extra_args.is_empty()
+                || !func.order_by.is_empty()
+                || !matches!(func.kind, AggKind::FirstRow)
+            {
+                return None;
+            }
+            let column = func.arg.as_ref()?.as_column()?;
+            (usize::try_from(column.index).ok()? == group_column).then_some(group_column)?;
+            Some(group_column)
+        } else {
+            None
+        };
+        let group_type = self.group_by[0].static_type()?.clone();
+        Some((
+            group_column,
+            collation,
+            sum_column,
+            count_column,
+            first_row,
+            group_type,
+            final_count,
+            count_unsigned,
+        ))
+    }
+
     /// Returns the narrow global `COUNT(DISTINCT string_column)` shape. The
     /// generic aggregate path evaluates a `Datum` and re-encodes it for every
     /// row; a binary string column can use its chunk bytes directly instead.
@@ -4084,6 +4217,71 @@ mod tests {
             ]
         );
         exec.close().unwrap();
+    }
+
+    #[test]
+    fn grouped_binary_string_final_count_adds_partial_counts() {
+        let group_type = binary_varchar();
+        let sum_type = decimal_with_shape(20, 2);
+        let count_type = long();
+        let fields = [group_type.clone(), sum_type.clone(), count_type.clone()];
+        let mut data = Chunk::new_with_capacity(&fields, 3);
+        for (group, sum, count) in [(b"a".as_slice(), "1.00", 2), (b"a", "2.50", 3), (b"b", "3.00", 1)] {
+            data.append_bytes(0, group);
+            data.append_datum(
+                1,
+                &Datum::Decimal(tidb_datatype::Decimal::from_literal(sum)),
+            );
+            data.append_int64(2, count);
+        }
+        let columns = fields
+            .iter()
+            .enumerate()
+            .map(|(index, field_type)| {
+                let mut column = Column::new((index + 1) as i64, field_type.clone());
+                column.index = index as i64;
+                column
+            })
+            .collect();
+        let source = Box::new(OneChunkSource {
+            meta: ExecutorMeta::new(Schema::new(columns), 0, 3, 1024),
+            data: Some(data),
+        });
+        let output_types = [sum_type.clone(), count_type.clone(), group_type.clone()];
+        let exec = HashAggExec::new(
+            out_meta_typed(&output_types),
+            vec![typed_col(0, group_type.clone())],
+            vec![
+                AggFunc::new(AggKind::Sum, Some(typed_col(1, sum_type))),
+                AggFunc::new(AggKind::FinalCount, Some(typed_col(2, count_type))),
+                AggFunc::new(AggKind::FirstRow, Some(typed_col(0, group_type.clone()))),
+            ],
+            source,
+            NoColumns,
+            StatementMemory::default(),
+        );
+        assert!(exec.direct_string_sum_count_specs().is_some());
+        assert_eq!(
+            run_typed(exec, &output_types),
+            vec![
+                vec![
+                    Datum::Decimal(tidb_datatype::Decimal::from_literal("3.50")),
+                    Datum::Int(5),
+                    Datum::String(tidb_datatype::StringDatum::new(
+                        b"a".to_vec(),
+                        Collation::Binary,
+                    )),
+                ],
+                vec![
+                    Datum::Decimal(tidb_datatype::Decimal::from_literal("3.00")),
+                    Datum::Int(1),
+                    Datum::String(tidb_datatype::StringDatum::new(
+                        b"b".to_vec(),
+                        Collation::Binary,
+                    )),
+                ],
+            ]
+        );
     }
 
     fn decimal_with_shape(flen: i64, scale: i64) -> FieldType {
