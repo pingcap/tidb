@@ -947,6 +947,13 @@ where
                     );
                 }
             }
+            // client-go returns an indeterminate result before every typed
+            // region-error branch. Do not mutate selector/cache state or let
+            // RawKV's generic region-miss retry resend a possibly committed
+            // write when a malformed response also carries another field.
+            if e.undetermined_result.is_some() {
+                return (Err(Error::RegionError(Box::new(e))), backoff);
+            }
             if source_configurable_server_busy_timeout(&plan, &e) {
                 if let Some(peer) = region_store.target_peer.as_ref() {
                     plan.mark_replica_deadline_exceeded(peer.id);
@@ -1434,6 +1441,12 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
     let ver_id = region_store.region_with_leader.ver_id();
     let store_id = region_store.region_with_leader.get_store_id();
     debug!("handling region error: {:?}, region: {:?}", e, ver_id);
+    // Source checks this flag before the ordered errorpb branch chain. A
+    // malformed response can carry several optional errors, so preserving the
+    // precedence prevents an indeterminate write from being retried.
+    if e.undetermined_result.is_some() {
+        return Err(Error::RegionError(Box::new(e)));
+    }
     if let Some(not_leader) = e.not_leader {
         if let Some(leader) = not_leader.leader {
             match pd_client
@@ -1476,15 +1489,6 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
             "region {} is not prepared for the flashback",
             flashback.region_id
         )))
-    } else if e.undetermined_result.is_some() {
-        // Source leaves the payload for the caller because it cannot know
-        // whether the command executed.
-        Err(Error::RegionError(Box::new(e)))
-    } else if e.raft_entry_too_large.is_some() {
-        // `onRegionError` returns `errors.New(regionErr.String())`: preserve
-        // the direct terminal boundary so outer RawKV region-error recovery
-        // cannot resend an oversized write.
-        Err(Error::StringError(format!("{e:?}")))
     } else if e.region_not_found.is_some() {
         pd_client.invalidate_region_cache(ver_id).await;
         // The one source retry is handled by the caller before entering this
@@ -1495,6 +1499,36 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
     } else if e.key_not_in_region.is_some() {
         pd_client.invalidate_region_cache(ver_id).await;
         Err(Error::RegionError(Box::new(e)))
+    } else if let Some(epoch_not_match) = e.epoch_not_match.clone() {
+        match on_region_epoch_not_match(pd_client.clone(), region_store, epoch_not_match).await? {
+            EpochNotMatchOutcome::RetryAfterBackoff => {
+                Ok(RegionErrorRetry::Backoff(BO_REGION_MISS))
+            }
+            EpochNotMatchOutcome::Stop => Err(Error::RegionError(Box::new(e))),
+        }
+    } else if let Some(bucket_mismatch) = e.bucket_version_not_match.as_ref() {
+        pd_client
+            .update_buckets(
+                ver_id,
+                bucket_mismatch.version,
+                bucket_mismatch.keys.clone(),
+            )
+            .await;
+        // client-go updates the bucket cache but deliberately returns this
+        // region error to its bucket-aware caller, which must reschedule the
+        // original work using the new boundaries.
+        Err(Error::RegionError(Box::new(e)))
+    } else if let Some(server_is_busy) = e.server_is_busy.as_ref() {
+        if server_is_busy.estimated_wait_ms == 0 {
+            if let Some(health_status) = region_store.health_status.as_ref() {
+                health_status.mark_already_slow();
+            }
+        }
+        Ok(RegionErrorRetry::Backoff(
+            source_server_busy_backoff_config(&region_store),
+        ))
+    } else if e.stale_command.is_some() {
+        Ok(RegionErrorRetry::Backoff(BO_STALE_CMD))
     } else if e.store_not_match.is_some() {
         // client-go marks the store for re-resolution and invalidates this
         // region, then stops the current send loop (`retry == false`). Do not
@@ -1517,36 +1551,11 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
                 .await;
         }
         Err(Error::RegionError(Box::new(e)))
-    } else if let Some(epoch_not_match) = e.epoch_not_match.clone() {
-        match on_region_epoch_not_match(pd_client.clone(), region_store, epoch_not_match).await? {
-            EpochNotMatchOutcome::RetryAfterBackoff => {
-                Ok(RegionErrorRetry::Backoff(BO_REGION_MISS))
-            }
-            EpochNotMatchOutcome::Stop => Err(Error::RegionError(Box::new(e))),
-        }
-    } else if let Some(bucket_mismatch) = e.bucket_version_not_match.as_ref() {
-        pd_client
-            .update_buckets(
-                ver_id,
-                bucket_mismatch.version,
-                bucket_mismatch.keys.clone(),
-            )
-            .await;
-        // client-go updates the bucket cache but deliberately returns this
-        // region error to its bucket-aware caller, which must reschedule the
-        // original work using the new boundaries.
-        Err(Error::RegionError(Box::new(e)))
-    } else if e.stale_command.is_some() {
-        Ok(RegionErrorRetry::Backoff(BO_STALE_CMD))
-    } else if let Some(server_is_busy) = e.server_is_busy.as_ref() {
-        if server_is_busy.estimated_wait_ms == 0 {
-            if let Some(health_status) = region_store.health_status.as_ref() {
-                health_status.mark_already_slow();
-            }
-        }
-        Ok(RegionErrorRetry::Backoff(
-            source_server_busy_backoff_config(&region_store),
-        ))
+    } else if e.raft_entry_too_large.is_some() {
+        // `onRegionError` returns `errors.New(regionErr.String())`: preserve
+        // the direct terminal boundary so outer RawKV region-error recovery
+        // cannot resend an oversized write.
+        Err(Error::StringError(format!("{e:?}")))
     } else if e.max_timestamp_not_synced.is_some() {
         Ok(RegionErrorRetry::Backoff(BO_MAX_TS_NOT_SYNCED))
     } else if e.region_not_initialized.is_some() {
@@ -2741,6 +2750,64 @@ mod test {
         )
         .await;
         assert!(matches!(invalid_max_ts, Err(Error::StringError(_))));
+    }
+
+    #[tokio::test]
+    async fn source_region_error_handler_preserves_mixed_field_precedence() {
+        let pd_client = Arc::new(MockPdClient::default());
+        let undetermined = handle_region_error(
+            pd_client.clone(),
+            errorpb::Error {
+                undetermined_result: Some(Default::default()),
+                not_leader: Some(errorpb::NotLeader {
+                    leader: Some(crate::proto::metapb::Peer {
+                        id: 99,
+                        store_id: 99,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            region_store(),
+        )
+        .await;
+        assert!(
+            matches!(undetermined, Err(Error::RegionError(error)) if error.undetermined_result.is_some())
+        );
+        assert!(pd_client.invalidated_regions().is_empty());
+
+        let busy_before_stale = handle_region_error(
+            Arc::new(MockPdClient::default()),
+            errorpb::Error {
+                server_is_busy: Some(Default::default()),
+                stale_command: Some(Default::default()),
+                ..Default::default()
+            },
+            region_store(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            busy_before_stale,
+            RegionErrorRetry::Backoff(BO_TIKV_SERVER_BUSY)
+        );
+
+        let pd_client = Arc::new(MockPdClient::default());
+        let epoch_before_store = handle_region_error(
+            pd_client.clone(),
+            errorpb::Error {
+                epoch_not_match: Some(Default::default()),
+                store_not_match: Some(Default::default()),
+                ..Default::default()
+            },
+            region_store().with_target("tikv-a"),
+        )
+        .await;
+        assert!(
+            matches!(epoch_before_store, Err(Error::RegionError(error)) if error.epoch_not_match.is_some())
+        );
+        assert!(pd_client.closed_client_addresses().is_empty());
     }
 
     #[tokio::test]

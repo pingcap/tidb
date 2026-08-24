@@ -1,6 +1,7 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
 use derive_new::new;
+use std::fmt;
 
 use crate::proto::metapb;
 use crate::proto::pdpb;
@@ -39,6 +40,16 @@ pub struct RegionVerId {
     pub conf_ver: u64,
     /// Region version, auto increment when split or merge
     pub ver: u64,
+}
+
+impl fmt::Display for RegionVerId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{{ region id: {}, ver: {}, confVer: {} }}",
+            self.id, self.ver, self.conf_ver
+        )
+    }
 }
 
 /// Information about a TiKV region and its leader.
@@ -216,6 +227,19 @@ mod test {
             }),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn source_region_version_display_preserves_field_order() {
+        assert_eq!(
+            RegionVerId {
+                id: 7,
+                conf_ver: 9,
+                ver: 8,
+            }
+            .to_string(),
+            "{ region id: 7, ver: 8, confVer: 9 }"
+        );
     }
 
     #[test]

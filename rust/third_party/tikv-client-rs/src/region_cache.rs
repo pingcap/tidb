@@ -5,8 +5,10 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex as StdMutex, RwLock as StdRwLock};
+use std::sync::atomic::{
+    AtomicBool, AtomicI64, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering,
+};
+use std::sync::{Arc, LazyLock, Mutex as StdMutex, RwLock as StdRwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use log::debug;
@@ -43,6 +45,8 @@ use crate::Result;
 const MAX_RETRY_WAITING_CONCURRENT_REQUEST: usize = 4;
 const REGION_CACHE_TTL_SECS: i64 = 600;
 const REGION_CACHE_TTL_JITTER_SECS: i64 = 60;
+static REGION_CACHE_TTL: AtomicI64 = AtomicI64::new(REGION_CACHE_TTL_SECS);
+static REGION_CACHE_TTL_JITTER: AtomicI64 = AtomicI64::new(REGION_CACHE_TTL_JITTER_SECS);
 const CLEAN_CACHE_INTERVAL: Duration = Duration::from_secs(1);
 const REFRESH_STORE_LIST_INTERVAL: Duration = Duration::from_secs(10);
 const CLEAN_STORE_METRICS_INTERVAL: Duration = Duration::from_secs(60);
@@ -112,7 +116,8 @@ impl CachedRegion {
         if now > self.ttl {
             return false;
         }
-        if !self.has_sync_flags(NEED_EXPIRE_AFTER_TTL) && self.ttl <= now + REGION_CACHE_TTL_SECS {
+        if !self.has_sync_flags(NEED_EXPIRE_AFTER_TTL) && self.ttl <= now + region_cache_ttl_secs()
+        {
             self.ttl = next_region_cache_ttl(now);
         }
         true
@@ -129,6 +134,228 @@ pub(crate) enum TiFlashSelectionError {
     AllStoresFiltered,
 }
 
+/// Source-compatible named filters accepted by TiFlash store discovery.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TiFlashLabelFilter {
+    OnlyWriteNode,
+    NoWriteNode,
+    AllTiFlashNodes,
+    AllNodes,
+}
+
+impl TiFlashLabelFilter {
+    pub fn matches(self, labels: &[metapb::StoreLabel]) -> bool {
+        let contains = |key: &str, value: &str| {
+            labels
+                .iter()
+                .any(|label| label.key == key && label.value == value)
+        };
+        let tiflash = contains("engine", "tiflash");
+        let write = contains("engine_role", "write");
+        match self {
+            Self::OnlyWriteNode => tiflash && write,
+            Self::NoWriteNode => tiflash && !write,
+            Self::AllTiFlashNodes => tiflash,
+            Self::AllNodes => true,
+        }
+    }
+}
+
+/// Runtime settings for PD region-metadata overload protection.
+///
+/// The zero error-rate threshold disables opening the breaker, which is the
+/// client-go default. Settings changes take effect at the next state/window
+/// transition rather than resetting in-flight observations.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdRegionMetaCircuitBreakerSettings {
+    pub error_rate_threshold_pct: u32,
+    pub min_qps_for_open: u32,
+    pub error_rate_window: Duration,
+    pub cool_down_interval: Duration,
+    pub half_open_success_count: u32,
+}
+
+impl Default for PdRegionMetaCircuitBreakerSettings {
+    fn default() -> Self {
+        Self {
+            error_rate_threshold_pct: 0,
+            min_qps_for_open: 10,
+            error_rate_window: Duration::from_secs(30),
+            cool_down_interval: Duration::from_secs(10),
+            half_open_success_count: 1,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CircuitBreakerStateType {
+    Closed,
+    Open,
+    HalfOpen,
+}
+
+#[derive(Debug)]
+struct CircuitBreakerState {
+    state_type: CircuitBreakerStateType,
+    end: Instant,
+    pending_count: u32,
+    success_count: u32,
+    failure_count: u32,
+}
+
+#[derive(Debug)]
+struct PdRegionMetaCircuitBreaker {
+    settings: PdRegionMetaCircuitBreakerSettings,
+    state: Arc<StdMutex<CircuitBreakerState>>,
+}
+
+impl PdRegionMetaCircuitBreaker {
+    fn new(settings: PdRegionMetaCircuitBreakerSettings, now: Instant) -> Self {
+        let state = Self::new_state(&settings, now, CircuitBreakerStateType::Closed);
+        Self { settings, state }
+    }
+
+    fn new_state(
+        settings: &PdRegionMetaCircuitBreakerSettings,
+        now: Instant,
+        state_type: CircuitBreakerStateType,
+    ) -> Arc<StdMutex<CircuitBreakerState>> {
+        let (end, pending_count) = match state_type {
+            CircuitBreakerStateType::Closed => (now + settings.error_rate_window, 0),
+            CircuitBreakerStateType::Open => (now + settings.cool_down_interval, 0),
+            CircuitBreakerStateType::HalfOpen => (now, 1),
+        };
+        Arc::new(StdMutex::new(CircuitBreakerState {
+            state_type,
+            end,
+            pending_count,
+            success_count: 0,
+            failure_count: 0,
+        }))
+    }
+
+    fn transition(&mut self, now: Instant, state_type: CircuitBreakerStateType) {
+        self.state = Self::new_state(&self.settings, now, state_type);
+    }
+
+    fn on_request_at(&mut self, now: Instant) -> Result<Arc<StdMutex<CircuitBreakerState>>> {
+        let (state_type, end, pending_count, success_count, failure_count) = {
+            let state = self.state.lock().unwrap();
+            (
+                state.state_type,
+                state.end,
+                state.pending_count,
+                state.success_count,
+                state.failure_count,
+            )
+        };
+
+        match state_type {
+            CircuitBreakerStateType::Closed => {
+                if now > end {
+                    let total = failure_count + success_count;
+                    let minimum = (self.settings.error_rate_window.as_secs() as u32)
+                        .saturating_mul(self.settings.min_qps_for_open);
+                    let observed_error_rate =
+                        (total > 0).then(|| failure_count.saturating_mul(100) / total);
+                    if self.settings.error_rate_threshold_pct > 0
+                        && total >= minimum
+                        && observed_error_rate
+                            .is_some_and(|rate| rate >= self.settings.error_rate_threshold_pct)
+                    {
+                        self.transition(now, CircuitBreakerStateType::Open);
+                        return Err(Error::CircuitBreakerOpen);
+                    }
+                    self.transition(now, CircuitBreakerStateType::Closed);
+                }
+                Ok(self.state.clone())
+            }
+            CircuitBreakerStateType::Open => {
+                if self.settings.error_rate_threshold_pct == 0 {
+                    self.transition(now, CircuitBreakerStateType::Closed);
+                    return Ok(self.state.clone());
+                }
+                if now > end {
+                    self.transition(now, CircuitBreakerStateType::HalfOpen);
+                    return Ok(self.state.clone());
+                }
+                Err(Error::CircuitBreakerOpen)
+            }
+            CircuitBreakerStateType::HalfOpen => {
+                if self.settings.error_rate_threshold_pct == 0 {
+                    self.transition(now, CircuitBreakerStateType::Closed);
+                    return Ok(self.state.clone());
+                }
+                if failure_count > 0 {
+                    self.transition(now, CircuitBreakerStateType::Open);
+                    return Err(Error::CircuitBreakerOpen);
+                }
+                if success_count == self.settings.half_open_success_count {
+                    self.transition(now, CircuitBreakerStateType::Closed);
+                    return Ok(self.state.clone());
+                }
+                if pending_count < self.settings.half_open_success_count {
+                    self.state.lock().unwrap().pending_count += 1;
+                    return Ok(self.state.clone());
+                }
+                Err(Error::CircuitBreakerOpen)
+            }
+        }
+    }
+
+    fn on_result(state: &Arc<StdMutex<CircuitBreakerState>>, overloaded: bool) {
+        let mut state = state.lock().unwrap();
+        if overloaded {
+            state.failure_count += 1;
+        } else {
+            state.success_count += 1;
+        }
+    }
+}
+
+static PD_REGION_META_CIRCUIT_BREAKER: LazyLock<StdMutex<PdRegionMetaCircuitBreaker>> =
+    LazyLock::new(|| {
+        StdMutex::new(PdRegionMetaCircuitBreaker::new(
+            PdRegionMetaCircuitBreakerSettings::default(),
+            Instant::now(),
+        ))
+    });
+
+/// Changes the process-wide PD region-metadata circuit-breaker settings.
+pub fn change_pd_region_meta_circuit_breaker_settings(
+    apply: impl FnOnce(&mut PdRegionMetaCircuitBreakerSettings),
+) {
+    let mut breaker = PD_REGION_META_CIRCUIT_BREAKER.lock().unwrap();
+    apply(&mut breaker.settings);
+}
+
+async fn pd_region_meta_call<T>(call: impl Future<Output = Result<T>>) -> Result<T> {
+    let state = PD_REGION_META_CIRCUIT_BREAKER
+        .lock()
+        .unwrap()
+        .on_request_at(Instant::now())?;
+    let result = call.await;
+    let overloaded = result
+        .as_ref()
+        .err()
+        .is_some_and(is_pd_region_meta_overload);
+    PdRegionMetaCircuitBreaker::on_result(&state, overloaded);
+    result
+}
+
+fn is_pd_region_meta_overload(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::GrpcAPI(status)
+            if matches!(
+                status.code(),
+                tonic::Code::DeadlineExceeded
+                    | tonic::Code::Unavailable
+                    | tonic::Code::ResourceExhausted
+            )
+    )
+}
+
 fn now_epoch_secs() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -136,9 +363,34 @@ fn now_epoch_secs() -> i64 {
         .as_secs() as i64
 }
 
+/// Changes the process-wide base region-cache TTL, in seconds.
+///
+/// This is client-go's `SetRegionCacheTTLSec` compatibility hook. New cache
+/// entries and live-entry refreshes observe the latest value.
+pub fn set_region_cache_ttl_secs(ttl_secs: i64) {
+    REGION_CACHE_TTL.store(ttl_secs, Ordering::Release);
+}
+
+/// Changes the process-wide region-cache TTL and its half-open jitter range.
+/// A non-positive jitter disables randomization, matching client-go.
+pub fn set_region_cache_ttl_with_jitter(ttl_secs: i64, jitter_secs: i64) {
+    REGION_CACHE_TTL.store(ttl_secs, Ordering::Release);
+    REGION_CACHE_TTL_JITTER.store(jitter_secs, Ordering::Release);
+}
+
+fn region_cache_ttl_secs() -> i64 {
+    REGION_CACHE_TTL.load(Ordering::Acquire)
+}
+
 fn next_region_cache_ttl(now: i64) -> i64 {
-    let jitter = rand::thread_rng().gen_range(0..REGION_CACHE_TTL_JITTER_SECS);
-    now + REGION_CACHE_TTL_SECS + jitter
+    let base = region_cache_ttl_secs();
+    let jitter_bound = REGION_CACHE_TTL_JITTER.load(Ordering::Acquire);
+    let jitter = if jitter_bound > 0 {
+        rand::thread_rng().gen_range(0..jitter_bound)
+    } else {
+        0
+    };
+    now + base + jitter
 }
 
 /// Source `regionsHaveGapInRanges`. A response that reaches its positive
@@ -995,11 +1247,10 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         };
         drop(region_cache_guard);
         if let Some((ver_id, old_region)) = reload {
-            return match self
-                .inner_client
-                .clone()
-                .get_region(key.clone().into())
-                .await
+            return match pd_region_meta_call(
+                self.inner_client.clone().get_region(key.clone().into()),
+            )
+            .await
             {
                 Ok(region) => {
                     self.add_region(region.clone()).await;
@@ -1022,6 +1273,52 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         self.read_through_region_by_key(key.clone()).await
     }
 
+    /// Groups ordered keys by their current cached/PD region and also returns
+    /// the first input key's region.
+    ///
+    /// `filter` follows client-go's deliberately narrow contract: it is
+    /// evaluated only when entering a new region. This is used by split-region
+    /// callers to discard a split key that is already the region start while
+    /// preserving later keys in that same region.
+    pub async fn group_keys_by_region(
+        &self,
+        keys: &[Key],
+        filter: Option<&(dyn Fn(&[u8], &[u8]) -> bool + Send + Sync)>,
+    ) -> Result<(HashMap<RegionVerId, Vec<Key>>, RegionVerId)> {
+        let mut groups = HashMap::new();
+        let mut first = RegionVerId::default();
+        let mut last_region: Option<RegionWithLeader> = None;
+
+        for (index, key) in keys.iter().enumerate() {
+            if last_region
+                .as_ref()
+                .is_none_or(|region| !region.contains(key))
+            {
+                let region = self.get_region_by_key(key).await?;
+                let filtered = filter
+                    .is_some_and(|filter| filter(key.as_ref(), region.region.start_key.as_slice()));
+                last_region = Some(region);
+                if filtered {
+                    continue;
+                }
+            }
+
+            let region = last_region
+                .as_ref()
+                .expect("a key always has a located region");
+            let ver_id = region.ver_id();
+            if index == 0 {
+                first = ver_id.clone();
+            }
+            groups
+                .entry(ver_id)
+                .or_insert_with(Vec::new)
+                .push(key.clone());
+        }
+
+        Ok((groups, first))
+    }
+
     /// Retrieves a region with PD bucket metadata. A valid cached bucket is
     /// reused; otherwise this intentionally performs the source `WithBuckets`
     /// lookup rather than treating ordinary region metadata as bucket-aware.
@@ -1030,11 +1327,12 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         if region.buckets.is_some() {
             return Ok(region);
         }
-        let region = self
-            .inner_client
-            .clone()
-            .get_region_with_buckets(key.clone().into())
-            .await?;
+        let region = pd_region_meta_call(
+            self.inner_client
+                .clone()
+                .get_region_with_buckets(key.clone().into()),
+        )
+        .await?;
         self.add_region(region.clone()).await;
         Ok(region)
     }
@@ -1074,11 +1372,12 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         };
         drop(region_cache_guard);
         if let Some((ver_id, old_region)) = reload {
-            return match self
-                .inner_client
-                .clone()
-                .get_prev_region(key.clone().into())
-                .await
+            return match pd_region_meta_call(
+                self.inner_client
+                    .clone()
+                    .get_prev_region(key.clone().into()),
+            )
+            .await
             {
                 Ok(region) => {
                     self.add_region(region.clone()).await;
@@ -1124,7 +1423,9 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     }
                     let old_region = region.region.clone();
                     drop(region_cache_guard);
-                    return match self.inner_client.clone().get_region_by_id(id).await {
+                    return match pd_region_meta_call(self.inner_client.clone().get_region_by_id(id))
+                        .await
+                    {
                         Ok(region) => {
                             self.add_region(region.clone()).await;
                             Ok(region)
@@ -1167,11 +1468,9 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         if region.buckets.is_some() {
             return Ok(region);
         }
-        let region = self
-            .inner_client
-            .clone()
-            .get_region_by_id_with_buckets(id)
-            .await?;
+        let region =
+            pd_region_meta_call(self.inner_client.clone().get_region_by_id_with_buckets(id))
+                .await?;
         self.add_region(region.clone()).await;
         Ok(region)
     }
@@ -1205,33 +1504,28 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
     /// trait has no router/follower option, but preserves the acceptance and
     /// retry boundary.
     async fn load_region_by_key_with_stale_retry(&self, key: Key) -> Result<RegionWithLeader> {
-        let region = self
-            .inner_client
-            .clone()
-            .get_region(key.clone().into())
-            .await?;
+        let region =
+            pd_region_meta_call(self.inner_client.clone().get_region(key.clone().into())).await?;
         if self.add_region(region.clone()).await {
             return Ok(region);
         }
-        let region = self.inner_client.clone().get_region(key.into()).await?;
+        let region = pd_region_meta_call(self.inner_client.clone().get_region(key.into())).await?;
         self.add_region(region.clone()).await;
         Ok(region)
     }
 
     async fn load_region_by_end_key_with_stale_retry(&self, key: Key) -> Result<RegionWithLeader> {
-        let region = self
-            .inner_client
-            .clone()
-            .get_prev_region(key.clone().into())
-            .await?;
+        let region = pd_region_meta_call(
+            self.inner_client
+                .clone()
+                .get_prev_region(key.clone().into()),
+        )
+        .await?;
         if self.add_region(region.clone()).await {
             return Ok(region);
         }
-        let region = self
-            .inner_client
-            .clone()
-            .get_prev_region(key.into())
-            .await?;
+        let region =
+            pd_region_meta_call(self.inner_client.clone().get_prev_region(key.into())).await?;
         self.add_region(region.clone()).await;
         Ok(region)
     }
@@ -1333,7 +1627,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
     /// Source `LocateRegionByIDFromPD`: bypass the cache for diagnostics and
     /// deliberately leave the returned metadata uncached.
     pub async fn load_region_by_id_from_pd(&self, id: RegionId) -> Result<RegionWithLeader> {
-        self.inner_client.clone().get_region_by_id(id).await
+        pd_region_meta_call(self.inner_client.clone().get_region_by_id(id)).await
     }
 
     async fn scan_regions(
@@ -1352,11 +1646,12 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         }];
         loop {
             let scan_started = Instant::now();
-            let scanned = self
-                .inner_client
-                .clone()
-                .scan_regions(start_key.clone().into(), end_key.clone().into(), count)
-                .await;
+            let scanned = pd_region_meta_call(self.inner_client.clone().scan_regions(
+                start_key.clone().into(),
+                end_key.clone().into(),
+                count,
+            ))
+            .await;
             crate::stats::observe_region_cache_scan(scan_started.elapsed(), scanned.is_ok());
             let regions = match scanned {
                 Ok(regions) if !regions_have_gap_in_ranges(&ranges, &regions, Some(count)) => {
@@ -1479,18 +1774,15 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         }
         loop {
             let scan_started = Instant::now();
-            let scanned = self
-                .inner_client
-                .clone()
-                .batch_scan_regions(
-                    ranges.to_vec(),
-                    count,
-                    RegionScanOptions {
-                        need_buckets,
-                        contain_all_key_range: true,
-                    },
-                )
-                .await;
+            let scanned = pd_region_meta_call(self.inner_client.clone().batch_scan_regions(
+                ranges.to_vec(),
+                count,
+                RegionScanOptions {
+                    need_buckets,
+                    contain_all_key_range: true,
+                },
+            ))
+            .await;
             crate::stats::observe_region_cache_batch_scan(scan_started.elapsed(), scanned.is_ok());
             let regions = match scanned {
                 Err(error) if is_unimplemented_batch_scan(&error) => {
@@ -1589,7 +1881,9 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         Ok(result)
     }
 
-    async fn try_cached_region_by_key(&self, key: &Key) -> Option<RegionWithLeader> {
+    /// Cache-only counterpart of client-go's `TryLocateKey`. It does not issue
+    /// a PD request and returns `None` for expired or reload-marked metadata.
+    pub async fn try_locate_key(&self, key: &Key) -> Option<RegionWithLeader> {
         let mut cache = self.region_cache.write().await;
         let version = cache
             .key_to_ver_id
@@ -1601,6 +1895,17 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             && region.check_ttl(now_epoch_secs())
             && !region.has_sync_flags(NEED_RELOAD_ON_ACCESS | NEED_DELAYED_RELOAD_READY))
         .then(|| region.region.clone())
+    }
+
+    /// Returns the exact cached version without applying TTL or reload flags,
+    /// matching `GetCachedRegionWithRLock`'s diagnostic/internal contract.
+    pub async fn get_cached_region(&self, ver_id: &RegionVerId) -> Option<RegionWithLeader> {
+        self.region_cache
+            .read()
+            .await
+            .ver_id_to_region
+            .get(ver_id)
+            .map(|region| region.region.clone())
     }
 
     async fn scan_regions_from_cache(
@@ -1714,7 +2019,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             }
 
             let start_key: Key = range.start_key.clone().into();
-            let Some(mut region) = self.try_cached_region_by_key(&start_key).await else {
+            let Some(mut region) = self.try_locate_key(&start_key).await else {
                 uncached_ranges.push(range);
                 continue;
             };
@@ -1793,7 +2098,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             region_cache_guard.on_my_way_id.insert(id, notify.clone());
         }
 
-        let result = self.inner_client.clone().get_region_by_id(id).await;
+        let result = pd_region_meta_call(self.inner_client.clone().get_region_by_id(id)).await;
         if let Ok(region) = &result {
             self.add_region(region.clone()).await;
         }
@@ -2941,16 +3246,19 @@ mod test {
     use std::sync::atomic::Ordering::SeqCst;
     use std::sync::atomic::{AtomicBool, AtomicU64};
     use std::sync::{Arc, Mutex as StdMutex};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use async_trait::async_trait;
     use tokio::sync::{Mutex, Notify};
 
     use super::{
-        now_epoch_secs, ranges_after_key, regions_have_gap_in_ranges, BatchLocateRegionMerger,
-        CachedStore, MixedReplicaSelection, RegionCache, ReplicaCandidate, ReplicaSelectorState,
-        StoreLiveness, StoreResolveState, CLEAN_STORE_METRICS_INTERVAL, NEED_DELAYED_RELOAD_READY,
-        NEED_EXPIRE_AFTER_TTL, NEED_RELOAD_ON_ACCESS, REGION_CACHE_TTL_SECS,
+        is_pd_region_meta_overload, next_region_cache_ttl, now_epoch_secs, ranges_after_key,
+        regions_have_gap_in_ranges, set_region_cache_ttl_secs, set_region_cache_ttl_with_jitter,
+        BatchLocateRegionMerger, CachedStore, MixedReplicaSelection, PdRegionMetaCircuitBreaker,
+        PdRegionMetaCircuitBreakerSettings, RegionCache, ReplicaCandidate, ReplicaSelectorState,
+        StoreLiveness, StoreResolveState, TiFlashLabelFilter, CLEAN_STORE_METRICS_INTERVAL,
+        NEED_DELAYED_RELOAD_READY, NEED_EXPIRE_AFTER_TTL, NEED_RELOAD_ON_ACCESS,
+        REGION_CACHE_TTL_JITTER_SECS, REGION_CACHE_TTL_SECS,
     };
     use crate::async_util::Cancellation;
     use crate::common::Error;
@@ -4732,6 +5040,143 @@ mod test {
         assert!(cache.get_region_by_key(&vec![25].into()).await.is_err());
         assert_eq!(cache.get_region_by_key(&vec![60].into()).await?, region4);
         Ok(())
+    }
+
+    #[test]
+    fn source_region_cache_ttl_controls_disable_non_positive_jitter() {
+        // Keep the base at its process default so parallel cache tests remain
+        // valid even while the source-compatible global jitter is disabled.
+        set_region_cache_ttl_secs(REGION_CACHE_TTL_SECS);
+        set_region_cache_ttl_with_jitter(REGION_CACHE_TTL_SECS, 0);
+        assert_eq!(next_region_cache_ttl(1_000), 1_000 + REGION_CACHE_TTL_SECS);
+        set_region_cache_ttl_with_jitter(REGION_CACHE_TTL_SECS, REGION_CACHE_TTL_JITTER_SECS);
+    }
+
+    #[tokio::test]
+    async fn source_group_keys_by_region_preserves_first_and_filter_boundary() -> Result<()> {
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        let first_region = region(1, vec![], vec![10]);
+        let second_region = region(2, vec![10], vec![]);
+        cache.add_region(first_region.clone()).await;
+        cache.add_region(second_region.clone()).await;
+
+        let keys = vec![
+            vec![0].into(),
+            vec![5].into(),
+            vec![10].into(),
+            vec![15].into(),
+        ];
+        let filter = |key: &[u8], region_start: &[u8]| key == region_start;
+        let (groups, first) = cache.group_keys_by_region(&keys, Some(&filter)).await?;
+
+        assert_eq!(first, first_region.ver_id());
+        assert_eq!(groups[&first_region.ver_id()], keys[..2]);
+        // The region-start key is filtered only when entering region 2;
+        // following keys in that same region remain grouped.
+        assert_eq!(groups[&second_region.ver_id()], keys[3..]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_cache_only_location_and_exact_version_lookup_do_not_contact_pd() -> Result<()> {
+        let client = Arc::new(MockRetryClient::default());
+        let cache = RegionCache::new(client.clone());
+        let cached = region(1, vec![], vec![10]);
+        let version = cached.ver_id();
+        cache.add_region(cached.clone()).await;
+
+        assert_eq!(
+            cache.try_locate_key(&vec![5].into()).await,
+            Some(cached.clone())
+        );
+        assert_eq!(
+            cache.get_cached_region(&version).await,
+            Some(cached.clone())
+        );
+        assert!(cache
+            .get_cached_region(&crate::region::RegionVerId {
+                ver: version.ver + 1,
+                ..version.clone()
+            })
+            .await
+            .is_none());
+        assert!(cache.mark_region_reload_on_access(&version).await);
+        assert!(cache.try_locate_key(&vec![5].into()).await.is_none());
+        assert_eq!(cache.get_cached_region(&version).await, Some(cached));
+        assert_eq!(client.get_region_count.load(SeqCst), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn source_tiflash_label_filters_cover_write_nonwrite_and_all_nodes() {
+        let tiflash = metapb::StoreLabel {
+            key: "engine".into(),
+            value: "tiflash".into(),
+        };
+        let write = metapb::StoreLabel {
+            key: "engine_role".into(),
+            value: "write".into(),
+        };
+        let ordinary = metapb::StoreLabel {
+            key: "engine".into(),
+            value: "tikv".into(),
+        };
+
+        assert!(TiFlashLabelFilter::OnlyWriteNode.matches(&[tiflash.clone(), write.clone()]));
+        assert!(!TiFlashLabelFilter::OnlyWriteNode.matches(std::slice::from_ref(&tiflash)));
+        assert!(TiFlashLabelFilter::NoWriteNode.matches(std::slice::from_ref(&tiflash)));
+        assert!(!TiFlashLabelFilter::NoWriteNode.matches(&[tiflash.clone(), write]));
+        assert!(TiFlashLabelFilter::AllTiFlashNodes.matches(std::slice::from_ref(&tiflash)));
+        assert!(!TiFlashLabelFilter::AllTiFlashNodes.matches(std::slice::from_ref(&ordinary)));
+        assert!(TiFlashLabelFilter::AllNodes.matches(&[]));
+        assert!(TiFlashLabelFilter::AllNodes.matches(&[ordinary]));
+    }
+
+    #[test]
+    fn source_pd_region_meta_circuit_breaker_state_machine_and_error_classes() {
+        let base = Instant::now();
+        let settings = PdRegionMetaCircuitBreakerSettings {
+            error_rate_threshold_pct: 50,
+            min_qps_for_open: 1,
+            error_rate_window: Duration::from_secs(1),
+            cool_down_interval: Duration::from_secs(1),
+            half_open_success_count: 2,
+        };
+        let mut breaker = PdRegionMetaCircuitBreaker::new(settings, base);
+
+        let failed = breaker.on_request_at(base).unwrap();
+        PdRegionMetaCircuitBreaker::on_result(&failed, true);
+        assert!(matches!(
+            breaker.on_request_at(base + Duration::from_secs(2)),
+            Err(Error::CircuitBreakerOpen)
+        ));
+        assert!(matches!(
+            breaker.on_request_at(base + Duration::from_millis(2_500)),
+            Err(Error::CircuitBreakerOpen)
+        ));
+
+        let first_probe = breaker
+            .on_request_at(base + Duration::from_secs(4))
+            .unwrap();
+        PdRegionMetaCircuitBreaker::on_result(&first_probe, false);
+        let second_probe = breaker
+            .on_request_at(base + Duration::from_secs(4))
+            .unwrap();
+        PdRegionMetaCircuitBreaker::on_result(&second_probe, false);
+        assert!(breaker.on_request_at(base + Duration::from_secs(4)).is_ok());
+
+        for code in [
+            tonic::Code::DeadlineExceeded,
+            tonic::Code::Unavailable,
+            tonic::Code::ResourceExhausted,
+        ] {
+            assert!(is_pd_region_meta_overload(&Error::GrpcAPI(
+                tonic::Status::new(code, "overloaded")
+            )));
+        }
+        assert!(!is_pd_region_meta_overload(&Error::GrpcAPI(
+            tonic::Status::internal("ordinary PD error")
+        )));
     }
 
     #[tokio::test]

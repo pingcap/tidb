@@ -58,6 +58,10 @@ pub enum Error {
     /// A logical TiKV store has reached the configured in-flight request limit.
     #[error(transparent)]
     TokenLimit(#[from] crate::error::TokenLimitError),
+    /// PD's region-metadata circuit breaker is open and rejects this request
+    /// without contacting PD.
+    #[error("circuit breaker is open")]
+    CircuitBreakerOpen,
     #[error("There is no current_regions in the EpochNotMatch error")]
     NoCurrentRegions,
     #[error("The specified entry is not found in the region cache")]

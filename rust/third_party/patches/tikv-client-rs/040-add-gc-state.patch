@@ -1,8 +1,8 @@
 diff --git a/src/pd/cluster.rs b/src/pd/cluster.rs
-index 83e026f..b7916fd 100644
+index 83e026f..356136b 100644
 --- a/src/pd/cluster.rs
 +++ b/src/pd/cluster.rs
-@@ -221,6 +221,26 @@ impl Cluster {
+@@ -221,6 +221,28 @@ impl Cluster {
          req.send(&mut self.client, timeout).await
      }
  
@@ -18,7 +18,9 @@ index 83e026f..b7916fd 100644
 +        timeout: Duration,
 +    ) -> Result<pdpb::GcState> {
 +        let mut req = pd_request!(self.id, pdpb::GetGcStateRequest);
-+        req.keyspace_scope = keyspace_id.map(|id| pdpb::KeyspaceScope { keyspace_id: id });
++        req.keyspace_scope = keyspace_id.map(|id| pdpb::KeyspaceScope {
++            keyspace: Some(pdpb::keyspace_scope::Keyspace::KeyspaceId(id)),
++        });
 +        req.exclude_gc_barriers = exclude_gc_barriers;
 +        req.send(&mut self.client, timeout)
 +            .await?
@@ -29,7 +31,7 @@ index 83e026f..b7916fd 100644
      pub async fn load_keyspace(
          &mut self,
          keyspace: &str,
-@@ -574,6 +594,16 @@ impl PdMessage for pdpb::UpdateGcSafePointRequest {
+@@ -574,6 +596,16 @@ impl PdMessage for pdpb::UpdateGcSafePointRequest {
      }
  }
  
@@ -46,7 +48,7 @@ index 83e026f..b7916fd 100644
  #[async_trait]
  impl PdMessage for pdpb::SetExternalTimestampRequest {
      type Client = pdpb::pd_client::PdClient<Channel>;
-@@ -660,6 +690,12 @@ impl PdResponse for pdpb::UpdateGcSafePointResponse {
+@@ -660,6 +692,12 @@ impl PdResponse for pdpb::UpdateGcSafePointResponse {
      }
  }
  

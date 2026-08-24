@@ -1,6 +1,7 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::any::Any;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,6 +20,51 @@ use crate::request::{set_context_keyspace_id, ApiV2Codec};
 use crate::store::RegionWithLeader;
 use crate::Error;
 use crate::Result;
+
+/// Callback that can amend a fully typed physical request before dispatch.
+///
+/// This is the object-safe native form of client-go's
+/// `tikvrpc.ResourceGroupTagger func(*Request)`.
+#[allow(dead_code)]
+pub type ResourceGroupTagger = Arc<dyn Fn(&mut dyn Request) + Send + Sync>;
+
+/// A typed response paired with the address of the logical target store.
+///
+/// The address is the forwarded destination when proxy forwarding is active,
+/// matching client-go's `ResponseExt.Addr` contract.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
+pub struct ResponseExt<T> {
+    pub response: T,
+    pub address: String,
+}
+
+static DEFAULT_REQUEST_ORIGIN: AtomicI32 = AtomicI32::new(kvrpcpb::RequestOrigin::Unknown as i32);
+
+/// Sets the process-wide origin copied into otherwise-unset TiKV request contexts.
+///
+/// This is the typed Rust counterpart of client-go's
+/// `tikvrpc.SetDefaultRequestOrigin`.
+#[allow(dead_code)]
+pub fn set_default_request_origin(origin: kvrpcpb::RequestOrigin) {
+    DEFAULT_REQUEST_ORIGIN.store(origin as i32, Ordering::SeqCst);
+}
+
+/// Returns the process-wide default TiKV request origin.
+pub fn get_default_request_origin() -> kvrpcpb::RequestOrigin {
+    kvrpcpb::RequestOrigin::try_from(DEFAULT_REQUEST_ORIGIN.load(Ordering::SeqCst))
+        .unwrap_or(kvrpcpb::RequestOrigin::Unknown)
+}
+
+fn fill_default_request_origin(context: &mut kvrpcpb::Context) {
+    if context.request_origin == kvrpcpb::RequestOrigin::Unknown as i32 {
+        context.request_origin = get_default_request_origin() as i32;
+    }
+}
+
+pub(super) fn fill_context_default_request_origin(context: &mut Option<kvrpcpb::Context>) {
+    fill_default_request_origin(context.get_or_insert_with(kvrpcpb::Context::default));
+}
 
 macro_rules! streaming_response {
     ($name:ident, $item:ty) => {
@@ -57,10 +103,10 @@ macro_rules! streaming_response {
             }
 
             fn update_ru_v2(&mut self, response: &mut dyn Any) {
+                let read_rpc_count = i64::from(std::mem::take(&mut self.count_read_rpc));
                 if self.bypass_ru_v2 {
                     return;
                 }
-                let read_rpc_count = i64::from(std::mem::take(&mut self.count_read_rpc));
                 crate::config::update_tikv_ru_v2_from_exec_details_v2(
                     exec_details_v2_mut(response),
                     read_rpc_count,
@@ -127,15 +173,18 @@ impl CoprocessorStreamRequest {
     }
 
     fn wire_request(&self) -> coprocessor::Request {
-        let Some(codec) = self.api_v2_codec.as_ref() else {
-            return self.request.clone();
+        let mut request = if let Some(codec) = self.api_v2_codec.as_ref() {
+            let mut request = codec.encode_coprocessor_request(&self.request);
+            let context = request
+                .context
+                .get_or_insert_with(kvrpcpb::Context::default);
+            context.api_version = kvrpcpb::ApiVersion::V2 as i32;
+            set_context_keyspace_id(context, codec.keyspace_id());
+            request
+        } else {
+            self.request.clone()
         };
-        let mut request = codec.encode_coprocessor_request(&self.request);
-        let context = request
-            .context
-            .get_or_insert_with(kvrpcpb::Context::default);
-        context.api_version = kvrpcpb::ApiVersion::V2 as i32;
-        set_context_keyspace_id(context, codec.keyspace_id());
+        fill_context_default_request_origin(&mut request.context);
         request
     }
 }
@@ -163,15 +212,18 @@ impl BatchCoprocessorStreamRequest {
     }
 
     fn wire_request(&self) -> coprocessor::BatchRequest {
-        let Some(codec) = self.api_v2_codec.as_ref() else {
-            return self.request.clone();
+        let mut request = if let Some(codec) = self.api_v2_codec.as_ref() {
+            let mut request = codec.encode_batch_coprocessor_request(&self.request);
+            let context = request
+                .context
+                .get_or_insert_with(kvrpcpb::Context::default);
+            context.api_version = kvrpcpb::ApiVersion::V2 as i32;
+            set_context_keyspace_id(context, codec.keyspace_id());
+            request
+        } else {
+            self.request.clone()
         };
-        let mut request = codec.encode_batch_coprocessor_request(&self.request);
-        let context = request
-            .context
-            .get_or_insert_with(kvrpcpb::Context::default);
-        context.api_version = kvrpcpb::ApiVersion::V2 as i32;
-        set_context_keyspace_id(context, codec.keyspace_id());
+        fill_context_default_request_origin(&mut request.context);
         request
     }
 }
@@ -265,6 +317,20 @@ pub trait Request: Any + Sync + Send + 'static {
     /// streaming requests deliberately retain the no-context default.
     fn tikv_context(&self) -> Option<&kvrpcpb::Context> {
         None
+    }
+
+    /// Replaces the concrete protobuf context at the transport boundary.
+    ///
+    /// The boolean follows client-go's `AttachContext`: source commands which
+    /// do not accept a region context return false, while MPP and Empty store
+    /// commands accept the operation as an intentional no-op.
+    fn attach_context(&mut self, _context: kvrpcpb::Context) -> bool {
+        false
+    }
+
+    /// Source `tikvrpc.Request.GetStartTS` for logging and retry diagnostics.
+    fn start_timestamp(&self) -> u64 {
+        request_start_timestamp(self.as_any())
     }
 
     /// Source `tikvrpc.Request.GetSize()` for resource-control accounting.
@@ -376,6 +442,46 @@ pub trait Request: Any + Sync + Send + 'static {
     ) -> Result<Box<dyn Any>> {
         self.dispatch(client, timeout).await
     }
+}
+
+fn request_start_timestamp(request: &dyn Any) -> u64 {
+    macro_rules! timestamp_field {
+        ($type:ty, $field:ident) => {
+            if let Some(request) = request.downcast_ref::<$type>() {
+                return request.$field;
+            }
+        };
+    }
+
+    timestamp_field!(kvrpcpb::GetRequest, version);
+    timestamp_field!(kvrpcpb::ScanRequest, version);
+    timestamp_field!(kvrpcpb::PrewriteRequest, start_version);
+    timestamp_field!(kvrpcpb::CommitRequest, start_version);
+    timestamp_field!(kvrpcpb::CleanupRequest, start_version);
+    timestamp_field!(kvrpcpb::BatchGetRequest, version);
+    timestamp_field!(kvrpcpb::BatchRollbackRequest, start_version);
+    timestamp_field!(kvrpcpb::ScanLockRequest, max_version);
+    timestamp_field!(kvrpcpb::ResolveLockRequest, start_version);
+    timestamp_field!(kvrpcpb::PessimisticLockRequest, start_version);
+    timestamp_field!(kvrpcpb::PessimisticRollbackRequest, start_version);
+    timestamp_field!(kvrpcpb::TxnHeartBeatRequest, start_version);
+    timestamp_field!(kvrpcpb::CheckTxnStatusRequest, lock_ts);
+    timestamp_field!(kvrpcpb::CheckSecondaryLocksRequest, start_version);
+    timestamp_field!(kvrpcpb::FlashbackToVersionRequest, start_ts);
+    timestamp_field!(kvrpcpb::PrepareFlashbackToVersionRequest, start_ts);
+    timestamp_field!(kvrpcpb::FlushRequest, start_ts);
+    timestamp_field!(kvrpcpb::BufferBatchGetRequest, version);
+    timestamp_field!(coprocessor::Request, start_ts);
+    timestamp_field!(coprocessor::BatchRequest, start_ts);
+    timestamp_field!(kvrpcpb::MvccGetByStartTsRequest, start_ts);
+
+    if let Some(request) = request.downcast_ref::<CoprocessorStreamRequest>() {
+        return request.request.start_ts;
+    }
+    if let Some(request) = request.downcast_ref::<BatchCoprocessorStreamRequest>() {
+        return request.request.start_ts;
+    }
+    0
 }
 
 /// Returns the mutable execution details carried by a successful unary TiKV
@@ -501,6 +607,9 @@ fn with_forwarded_host<T>(
 
 macro_rules! impl_request {
     ($name: ident, $fun: ident, $label: literal) => {
+        impl_request!($name, $fun, $label, true);
+    };
+    ($name: ident, $fun: ident, $label: literal, $accepts_context: literal) => {
         #[async_trait]
         impl Request for kvrpcpb::$name {
             async fn dispatch(
@@ -508,7 +617,11 @@ macro_rules! impl_request {
                 client: &TikvClient<Channel>,
                 timeout: Duration,
             ) -> Result<Box<dyn Any>> {
-                let mut req = with_forwarded_host(self.clone().into_request(), "")?;
+                let mut wire_request = self.clone();
+                if $accepts_context {
+                    fill_context_default_request_origin(&mut wire_request.context);
+                }
+                let mut req = with_forwarded_host(wire_request.into_request(), "")?;
                 req.set_timeout(timeout);
                 client
                     .clone()
@@ -524,7 +637,11 @@ macro_rules! impl_request {
                 timeout: Duration,
                 forwarded_host: &str,
             ) -> Result<Box<dyn Any>> {
-                let mut req = with_forwarded_host(self.clone().into_request(), forwarded_host)?;
+                let mut wire_request = self.clone();
+                if $accepts_context {
+                    fill_context_default_request_origin(&mut wire_request.context);
+                }
+                let mut req = with_forwarded_host(wire_request.into_request(), forwarded_host)?;
                 req.set_timeout(timeout);
                 client
                     .clone()
@@ -699,6 +816,15 @@ macro_rules! impl_request {
                 self.context.as_ref()
             }
 
+            fn attach_context(&mut self, mut context: kvrpcpb::Context) -> bool {
+                if !$accepts_context {
+                    return false;
+                }
+                fill_default_request_origin(&mut context);
+                self.context = Some(context);
+                true
+            }
+
             fn encoded_request_size(&self) -> u64 {
                 self.encoded_len() as u64
             }
@@ -712,7 +838,7 @@ macro_rules! impl_request {
 /// metadata. This matches client-go's `AttachContext` exceptions for MPP and
 /// other store-scoped commands.
 macro_rules! impl_store_request {
-    ($ty:path, $fun:ident, $label:literal) => {
+    ($ty:path, $fun:ident, $label:literal, $accepts_context:literal) => {
         #[async_trait]
         impl Request for $ty {
             async fn dispatch(
@@ -759,6 +885,10 @@ macro_rules! impl_store_request {
             }
 
             fn set_api_version(&mut self, _api_version: kvrpcpb::ApiVersion) {}
+
+            fn attach_context(&mut self, _context: kvrpcpb::Context) -> bool {
+                $accepts_context
+            }
         }
     };
 }
@@ -865,20 +995,28 @@ impl_request!(SplitRegionRequest, split_region, "split_region");
 impl_request!(
     GetHealthFeedbackRequest,
     get_health_feedback,
-    "get_health_feedback"
+    "get_health_feedback",
+    false
 );
 impl_request!(
     BroadcastTxnStatusRequest,
     broadcast_txn_status,
-    "broadcast_txn_status"
+    "broadcast_txn_status",
+    false
 );
 
-impl_store_request!(mpp::CancelTaskRequest, cancel_mpp_task, "cancel_mpp_task");
-impl_store_request!(mpp::IsAliveRequest, is_alive, "is_alive");
+impl_store_request!(
+    mpp::CancelTaskRequest,
+    cancel_mpp_task,
+    "cancel_mpp_task",
+    true
+);
+impl_store_request!(mpp::IsAliveRequest, is_alive, "is_alive", true);
 impl_store_request!(
     kvrpcpb::TiFlashSystemTableRequest,
     get_ti_flash_system_table,
-    "get_tiflash_system_table"
+    "get_tiflash_system_table",
+    false
 );
 
 #[async_trait]
@@ -931,6 +1069,10 @@ impl Request for tikvpb::BatchCommandsEmptyRequest {
     }
 
     fn set_api_version(&mut self, _api_version: kvrpcpb::ApiVersion) {}
+
+    fn attach_context(&mut self, _context: kvrpcpb::Context) -> bool {
+        true
+    }
 }
 
 #[async_trait]
@@ -1044,7 +1186,9 @@ impl Request for coprocessor::Request {
         client: &TikvClient<Channel>,
         timeout: Duration,
     ) -> Result<Box<dyn Any>> {
-        let mut request = with_forwarded_host(self.clone().into_request(), "")?;
+        let mut wire_request = self.clone();
+        fill_context_default_request_origin(&mut wire_request.context);
+        let mut request = with_forwarded_host(wire_request.into_request(), "")?;
         request.set_timeout(timeout);
         client
             .clone()
@@ -1060,7 +1204,9 @@ impl Request for coprocessor::Request {
         timeout: Duration,
         forwarded_host: &str,
     ) -> Result<Box<dyn Any>> {
-        let mut request = with_forwarded_host(self.clone().into_request(), forwarded_host)?;
+        let mut wire_request = self.clone();
+        fill_context_default_request_origin(&mut wire_request.context);
+        let mut request = with_forwarded_host(wire_request.into_request(), forwarded_host)?;
         request.set_timeout(timeout);
         client
             .clone()
@@ -1138,6 +1284,12 @@ impl Request for coprocessor::Request {
 
     fn tikv_context(&self) -> Option<&kvrpcpb::Context> {
         self.context.as_ref()
+    }
+
+    fn attach_context(&mut self, mut context: kvrpcpb::Context) -> bool {
+        fill_default_request_origin(&mut context);
+        self.context = Some(context);
+        true
     }
 
     fn encoded_request_size(&self) -> u64 {
@@ -1239,6 +1391,10 @@ impl Request for CoprocessorStreamRequest {
 
     fn tikv_context(&self) -> Option<&kvrpcpb::Context> {
         self.request.tikv_context()
+    }
+
+    fn attach_context(&mut self, context: kvrpcpb::Context) -> bool {
+        self.request.attach_context(context)
     }
 
     fn encoded_request_size(&self) -> u64 {
@@ -1351,6 +1507,12 @@ impl Request for BatchCoprocessorStreamRequest {
         self.request.context.as_ref()
     }
 
+    fn attach_context(&mut self, mut context: kvrpcpb::Context) -> bool {
+        fill_default_request_origin(&mut context);
+        self.request.context = Some(context);
+        true
+    }
+
     fn encoded_request_size(&self) -> u64 {
         self.wire_request().encoded_len() as u64
     }
@@ -1416,6 +1578,10 @@ impl Request for MppStreamRequest {
 
     fn set_api_version(&mut self, _api_version: kvrpcpb::ApiVersion) {}
 
+    fn attach_context(&mut self, _context: kvrpcpb::Context) -> bool {
+        true
+    }
+
     fn encoded_request_size(&self) -> u64 {
         self.0.encoded_len() as u64
     }
@@ -1470,6 +1636,10 @@ impl Request for mpp::DispatchTaskRequest {
         if let Some(meta) = &mut self.meta {
             meta.api_version = api_version.into();
         }
+    }
+
+    fn attach_context(&mut self, _context: kvrpcpb::Context) -> bool {
+        true
     }
 
     fn set_keyspace_id(&mut self, keyspace_id: Option<u32>) {
@@ -1564,15 +1734,8 @@ mod tests {
     fn source_context_bearing_unary_requests_retain_full_context_metadata() {
         let mut register = kvrpcpb::RegisterLockObserverRequest::default();
         let mut remove = kvrpcpb::RemoveLockObserverRequest::default();
-        let mut health = kvrpcpb::GetHealthFeedbackRequest::default();
-        let mut broadcast = kvrpcpb::BroadcastTxnStatusRequest::default();
 
-        for request in [
-            &mut register as &mut dyn Request,
-            &mut remove,
-            &mut health,
-            &mut broadcast,
-        ] {
+        for request in [&mut register as &mut dyn Request, &mut remove] {
             assert_context_metadata(request);
             let context = request
                 .as_any()
@@ -1584,18 +1747,6 @@ mod tests {
                         .downcast_ref::<kvrpcpb::RemoveLockObserverRequest>()
                         .map(|request| request.context.as_ref())
                 })
-                .or_else(|| {
-                    request
-                        .as_any()
-                        .downcast_ref::<kvrpcpb::GetHealthFeedbackRequest>()
-                        .map(|request| request.context.as_ref())
-                })
-                .or_else(|| {
-                    request
-                        .as_any()
-                        .downcast_ref::<kvrpcpb::BroadcastTxnStatusRequest>()
-                        .map(|request| request.context.as_ref())
-                })
                 .flatten()
                 .expect("source context-bearing RPC");
             assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
@@ -1604,6 +1755,407 @@ mod tests {
             assert_eq!(context.priority, kvrpcpb::CommandPri::High as i32);
             assert_eq!(context.max_execution_duration_ms, 99);
         }
+    }
+
+    fn source_generated_context_requests() -> Vec<Box<dyn Request>> {
+        vec![
+            Box::new(kvrpcpb::GetRequest::default()),
+            Box::new(kvrpcpb::ScanRequest::default()),
+            Box::new(kvrpcpb::PrewriteRequest::default()),
+            Box::new(kvrpcpb::PessimisticLockRequest::default()),
+            Box::new(kvrpcpb::PessimisticRollbackRequest::default()),
+            Box::new(kvrpcpb::CommitRequest::default()),
+            Box::new(kvrpcpb::CleanupRequest::default()),
+            Box::new(kvrpcpb::BatchGetRequest::default()),
+            Box::new(kvrpcpb::BatchRollbackRequest::default()),
+            Box::new(kvrpcpb::ScanLockRequest::default()),
+            Box::new(kvrpcpb::ResolveLockRequest::default()),
+            Box::new(kvrpcpb::GcRequest::default()),
+            Box::new(kvrpcpb::DeleteRangeRequest::default()),
+            Box::new(kvrpcpb::RawGetRequest::default()),
+            Box::new(kvrpcpb::RawBatchGetRequest::default()),
+            Box::new(kvrpcpb::RawPutRequest::default()),
+            Box::new(kvrpcpb::RawBatchPutRequest::default()),
+            Box::new(kvrpcpb::RawDeleteRequest::default()),
+            Box::new(kvrpcpb::RawBatchDeleteRequest::default()),
+            Box::new(kvrpcpb::RawDeleteRangeRequest::default()),
+            Box::new(kvrpcpb::RawScanRequest::default()),
+            Box::new(kvrpcpb::RawGetKeyTtlRequest::default()),
+            Box::new(kvrpcpb::RawCasRequest::default()),
+            Box::new(kvrpcpb::RawChecksumRequest::default()),
+            Box::new(kvrpcpb::UnsafeDestroyRangeRequest::default()),
+            Box::new(kvrpcpb::RegisterLockObserverRequest::default()),
+            Box::new(kvrpcpb::CheckLockObserverRequest::default()),
+            Box::new(kvrpcpb::RemoveLockObserverRequest::default()),
+            Box::new(kvrpcpb::PhysicalScanLockRequest::default()),
+            Box::new(kvrpcpb::GetLockWaitInfoRequest::default()),
+            Box::new(coprocessor::Request::default()),
+            Box::new(BatchCoprocessorStreamRequest::new(
+                coprocessor::BatchRequest::default(),
+            )),
+            Box::new(kvrpcpb::MvccGetByKeyRequest::default()),
+            Box::new(kvrpcpb::MvccGetByStartTsRequest::default()),
+            Box::new(kvrpcpb::SplitRegionRequest::default()),
+            Box::new(kvrpcpb::TxnHeartBeatRequest::default()),
+            Box::new(kvrpcpb::CheckTxnStatusRequest::default()),
+            Box::new(kvrpcpb::CheckSecondaryLocksRequest::default()),
+            Box::new(kvrpcpb::FlashbackToVersionRequest::default()),
+            Box::new(kvrpcpb::PrepareFlashbackToVersionRequest::default()),
+            Box::new(kvrpcpb::FlushRequest::default()),
+            Box::new(kvrpcpb::BufferBatchGetRequest::default()),
+        ]
+    }
+
+    #[test]
+    fn source_generated_attach_context_matrix_is_complete() {
+        let mut requests = source_generated_context_requests();
+        assert_eq!(requests.len(), 42, "gen.sh command inventory drifted");
+        for (index, request) in requests.iter_mut().enumerate() {
+            assert!(request.attach_context(kvrpcpb::Context {
+                region_id: index as u64 + 1,
+                ..Default::default()
+            }));
+            assert_eq!(
+                request.tikv_context().map(|context| context.region_id),
+                Some(index as u64 + 1),
+                "{} did not retain its attached context",
+                request.label()
+            );
+        }
+
+        let mut cop_stream = CoprocessorStreamRequest::new(coprocessor::Request::default());
+        assert!(cop_stream.attach_context(kvrpcpb::Context {
+            region_id: 99,
+            ..Default::default()
+        }));
+        assert_eq!(cop_stream.tikv_context().unwrap().region_id, 99);
+
+        let mut accepted_no_ops: Vec<Box<dyn Request>> = vec![
+            Box::new(mpp::DispatchTaskRequest::default()),
+            Box::new(MppStreamRequest(
+                mpp::EstablishMppConnectionRequest::default(),
+            )),
+            Box::new(mpp::CancelTaskRequest::default()),
+            Box::new(mpp::IsAliveRequest::default()),
+            Box::new(tikvpb::BatchCommandsEmptyRequest::default()),
+        ];
+        assert!(accepted_no_ops
+            .iter_mut()
+            .all(|request| request.attach_context(kvrpcpb::Context::default())));
+
+        let mut rejected: Vec<Box<dyn Request>> = vec![
+            Box::new(kvrpcpb::StoreSafeTsRequest::default()),
+            Box::new(kvrpcpb::GetHealthFeedbackRequest::default()),
+            Box::new(kvrpcpb::BroadcastTxnStatusRequest::default()),
+            Box::new(kvrpcpb::CompactRequest::default()),
+            Box::new(kvrpcpb::TiFlashSystemTableRequest::default()),
+            Box::new(debugpb::GetRegionPropertiesRequest::default()),
+        ];
+        assert!(rejected
+            .iter_mut()
+            .all(|request| !request.attach_context(kvrpcpb::Context::default())));
+    }
+
+    #[test]
+    fn source_default_request_origin_fills_only_unknown_contexts() {
+        static ORIGIN_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ORIGIN_TEST.lock().unwrap();
+        let previous = get_default_request_origin();
+        struct ResetOrigin(kvrpcpb::RequestOrigin);
+        impl Drop for ResetOrigin {
+            fn drop(&mut self) {
+                set_default_request_origin(self.0);
+            }
+        }
+        let _reset = ResetOrigin(previous);
+
+        set_default_request_origin(kvrpcpb::RequestOrigin::TiDb);
+        for mut request in [
+            Box::new(kvrpcpb::GetRequest::default()) as Box<dyn Request>,
+            Box::new(kvrpcpb::ScanLockRequest::default()),
+            Box::new(kvrpcpb::CleanupRequest::default()),
+            Box::new(kvrpcpb::CheckTxnStatusRequest::default()),
+            Box::new(kvrpcpb::CheckSecondaryLocksRequest::default()),
+        ] {
+            assert!(request.attach_context(kvrpcpb::Context::default()));
+            assert_eq!(
+                request.tikv_context().unwrap().request_origin,
+                kvrpcpb::RequestOrigin::TiDb as i32
+            );
+        }
+
+        let get = kvrpcpb::GetRequest::default();
+        let batch = crate::store::BatchCommandRequest::from_store_request(&get)
+            .expect("Get is source-batchable")
+            .into_proto();
+        assert!(matches!(
+            batch.cmd,
+            Some(tikvpb::batch_commands_request::request::Cmd::Get(request))
+                if request.context.as_ref().unwrap().request_origin
+                    == kvrpcpb::RequestOrigin::TiDb as i32
+        ));
+
+        set_default_request_origin(kvrpcpb::RequestOrigin::Unknown);
+        let mut explicit = kvrpcpb::GetRequest::default();
+        assert!(explicit.attach_context(kvrpcpb::Context {
+            request_origin: kvrpcpb::RequestOrigin::TiDb as i32,
+            ..Default::default()
+        }));
+        assert_eq!(
+            explicit.context.unwrap().request_origin,
+            kvrpcpb::RequestOrigin::TiDb as i32
+        );
+    }
+
+    #[test]
+    fn source_attach_context_replaces_the_owned_request_snapshot() {
+        for mut request in [
+            Box::new(kvrpcpb::GetRequest::default()) as Box<dyn Request>,
+            Box::new(kvrpcpb::GetLockWaitInfoRequest::default()),
+        ] {
+            assert!(request.attach_context(kvrpcpb::Context {
+                region_id: 123,
+                api_version: kvrpcpb::ApiVersion::V2 as i32,
+                keyspace_name: "test-keyspace".to_owned(),
+                ..Default::default()
+            }));
+            let old_context = request.tikv_context().unwrap().clone();
+            assert!(request.attach_context(kvrpcpb::Context {
+                region_id: 789,
+                api_version: kvrpcpb::ApiVersion::V2 as i32,
+                keyspace_name: "next-test-keyspace".to_owned(),
+                ..Default::default()
+            }));
+            assert_eq!(old_context.region_id, 123);
+            assert_eq!(old_context.keyspace_name, "test-keyspace");
+            assert_eq!(request.tikv_context().unwrap().region_id, 789);
+            assert_eq!(
+                request.tikv_context().unwrap().keyspace_name,
+                "next-test-keyspace"
+            );
+        }
+    }
+
+    #[test]
+    fn source_tidb_51921_batch_snapshots_encode_after_relocation() {
+        let mut handles = Vec::new();
+        for (index, mut request) in source_generated_context_requests().into_iter().enumerate() {
+            let store_id = index as u64 + 1;
+            assert!(request.attach_context(kvrpcpb::Context {
+                region_id: store_id,
+                peer: Some(crate::proto::metapb::Peer {
+                    store_id,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }));
+            let Some(batch) = crate::store::BatchCommandRequest::from_store_request(&*request)
+            else {
+                continue;
+            };
+            assert_eq!(batch.store_id(), store_id);
+
+            assert!(request.attach_context(kvrpcpb::Context {
+                region_id: store_id + 1_000,
+                peer: Some(crate::proto::metapb::Peer {
+                    store_id: store_id + 1_000,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }));
+            assert_eq!(batch.store_id(), store_id);
+            handles.push(std::thread::spawn(move || {
+                batch.into_proto().encode_to_vec()
+            }));
+        }
+
+        assert_eq!(handles.len(), 29, "source batchable command matrix drifted");
+        assert!(handles
+            .into_iter()
+            .all(|handle| !handle.join().unwrap().is_empty()));
+    }
+
+    #[test]
+    fn source_get_start_ts_matrix_is_complete() {
+        let requests: Vec<(Box<dyn Request>, u64)> = vec![
+            (
+                Box::new(kvrpcpb::GetRequest {
+                    version: 1,
+                    ..Default::default()
+                }),
+                1,
+            ),
+            (
+                Box::new(kvrpcpb::ScanRequest {
+                    version: 2,
+                    ..Default::default()
+                }),
+                2,
+            ),
+            (
+                Box::new(kvrpcpb::PrewriteRequest {
+                    start_version: 3,
+                    ..Default::default()
+                }),
+                3,
+            ),
+            (
+                Box::new(kvrpcpb::CommitRequest {
+                    start_version: 4,
+                    ..Default::default()
+                }),
+                4,
+            ),
+            (
+                Box::new(kvrpcpb::CleanupRequest {
+                    start_version: 5,
+                    ..Default::default()
+                }),
+                5,
+            ),
+            (
+                Box::new(kvrpcpb::BatchGetRequest {
+                    version: 6,
+                    ..Default::default()
+                }),
+                6,
+            ),
+            (
+                Box::new(kvrpcpb::BatchRollbackRequest {
+                    start_version: 7,
+                    ..Default::default()
+                }),
+                7,
+            ),
+            (
+                Box::new(kvrpcpb::ScanLockRequest {
+                    max_version: 8,
+                    ..Default::default()
+                }),
+                8,
+            ),
+            (
+                Box::new(kvrpcpb::ResolveLockRequest {
+                    start_version: 9,
+                    ..Default::default()
+                }),
+                9,
+            ),
+            (
+                Box::new(kvrpcpb::PessimisticLockRequest {
+                    start_version: 10,
+                    ..Default::default()
+                }),
+                10,
+            ),
+            (
+                Box::new(kvrpcpb::PessimisticRollbackRequest {
+                    start_version: 11,
+                    ..Default::default()
+                }),
+                11,
+            ),
+            (
+                Box::new(kvrpcpb::TxnHeartBeatRequest {
+                    start_version: 12,
+                    ..Default::default()
+                }),
+                12,
+            ),
+            (
+                Box::new(kvrpcpb::CheckTxnStatusRequest {
+                    lock_ts: 13,
+                    ..Default::default()
+                }),
+                13,
+            ),
+            (
+                Box::new(kvrpcpb::CheckSecondaryLocksRequest {
+                    start_version: 14,
+                    ..Default::default()
+                }),
+                14,
+            ),
+            (
+                Box::new(kvrpcpb::FlashbackToVersionRequest {
+                    start_ts: 15,
+                    ..Default::default()
+                }),
+                15,
+            ),
+            (
+                Box::new(kvrpcpb::PrepareFlashbackToVersionRequest {
+                    start_ts: 16,
+                    ..Default::default()
+                }),
+                16,
+            ),
+            (
+                Box::new(kvrpcpb::FlushRequest {
+                    start_ts: 17,
+                    ..Default::default()
+                }),
+                17,
+            ),
+            (
+                Box::new(kvrpcpb::BufferBatchGetRequest {
+                    version: 18,
+                    ..Default::default()
+                }),
+                18,
+            ),
+            (
+                Box::new(coprocessor::Request {
+                    start_ts: 19,
+                    ..Default::default()
+                }),
+                19,
+            ),
+            (
+                Box::new(CoprocessorStreamRequest::new(coprocessor::Request {
+                    start_ts: 20,
+                    ..Default::default()
+                })),
+                20,
+            ),
+            (
+                Box::new(BatchCoprocessorStreamRequest::new(
+                    coprocessor::BatchRequest {
+                        start_ts: 21,
+                        ..Default::default()
+                    },
+                )),
+                21,
+            ),
+            (
+                Box::new(kvrpcpb::MvccGetByStartTsRequest {
+                    start_ts: 22,
+                    ..Default::default()
+                }),
+                22,
+            ),
+        ];
+        assert_eq!(requests.len(), 22);
+        for (request, expected) in requests {
+            assert_eq!(request.start_timestamp(), expected, "{}", request.label());
+        }
+        assert_eq!(kvrpcpb::RawGetRequest::default().start_timestamp(), 0);
+    }
+
+    #[test]
+    fn source_response_ext_and_resource_group_tagger_are_typed() {
+        let mut request = kvrpcpb::GetRequest::default();
+        let tagger: ResourceGroupTagger = Arc::new(|request| {
+            request.set_resource_group_tag(b"resource-tag".to_vec());
+        });
+        tagger(&mut request);
+        assert_eq!(request.context.unwrap().resource_group_tag, b"resource-tag");
+
+        let response = ResponseExt {
+            response: kvrpcpb::GetResponse::default(),
+            address: "logical-target:20160".to_owned(),
+        };
+        assert_eq!(response.address, "logical-target:20160");
     }
 
     #[test]
@@ -1763,5 +2315,33 @@ mod tests {
         let accumulated = details.drain_ru_v2().unwrap();
         assert_eq!(accumulated.read_rpc_count, 1);
         assert_eq!(accumulated.storage_processed_keys_get, 5);
+
+        let bypass_details = Arc::new(crate::RuDetails::new());
+        let mut bypass_stream = CoprocessorStreamResponse {
+            first: None,
+            stream: None,
+            timeout: Duration::from_secs(1),
+            ru_details: Some(bypass_details.clone()),
+            count_read_rpc: true,
+            bypass_ru_v2: true,
+        };
+        let mut bypass_response = coprocessor::Response {
+            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                ru_v2: Some(kvrpcpb::Ruv2 {
+                    storage_processed_keys_get: 2,
+                    storage_processed_keys_batch_get: 3,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        bypass_stream.update_ru_v2(&mut bypass_response);
+        assert!(!bypass_stream.count_read_rpc);
+        let bypass_ru = bypass_response.exec_details_v2.unwrap().ru_v2.unwrap();
+        assert_eq!(bypass_ru.read_rpc_count, 0);
+        assert_eq!(bypass_ru.storage_processed_keys_get, 2);
+        assert_eq!(bypass_ru.storage_processed_keys_batch_get, 3);
+        assert!(bypass_details.drain_ru_v2().is_none());
     }
 }

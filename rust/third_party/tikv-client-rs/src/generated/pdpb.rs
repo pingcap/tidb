@@ -90,6 +90,7 @@ pub struct Error {
     #[prost(string, tag = "2")]
     pub message: ::prost::alloc::string::String,
 }
+/// This message intentionally omits namespace/keyspace-related fields because API v2 never supported keyspaces when routing TSO requests through the PD API server.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TsoRequest {
     #[prost(message, optional, tag = "1")]
@@ -228,6 +229,7 @@ pub struct GetAllStoresResponse {
 pub struct GetRegionRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    /// Physical key bytes used for Region lookup.
     #[prost(bytes = "vec", tag = "2")]
     pub region_key: ::prost::alloc::vec::Vec<u8>,
     #[prost(bool, tag = "3")]
@@ -271,10 +273,10 @@ pub struct QueryRegionRequest {
     /// The region IDs to query.
     #[prost(uint64, repeated, tag = "3")]
     pub ids: ::prost::alloc::vec::Vec<u64>,
-    /// The region keys to query.
+    /// Physical key bytes to query.
     #[prost(bytes = "vec", repeated, tag = "4")]
     pub keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
-    /// The previous region keys to query.
+    /// Previous physical key bytes to query.
     #[prost(bytes = "vec", repeated, tag = "5")]
     pub prev_keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
@@ -313,12 +315,13 @@ pub struct RegionResponse {
 pub struct ScanRegionsRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    /// Physical start key bytes.
     #[prost(bytes = "vec", tag = "2")]
     pub start_key: ::prost::alloc::vec::Vec<u8>,
     /// no limit when limit \<= 0.
     #[prost(int32, tag = "3")]
     pub limit: i32,
-    /// end_key is +inf when it is empty.
+    /// Physical end key bytes. end_key is +inf when it is empty.
     #[prost(bytes = "vec", tag = "4")]
     pub end_key: ::prost::alloc::vec::Vec<u8>,
 }
@@ -354,9 +357,10 @@ pub struct ScanRegionsResponse {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct KeyRange {
+    /// Physical start key bytes.
     #[prost(bytes = "vec", tag = "1")]
     pub start_key: ::prost::alloc::vec::Vec<u8>,
-    /// end_key is +inf when it is empty.
+    /// Physical end key bytes. end_key is +inf when it is empty.
     #[prost(bytes = "vec", tag = "2")]
     pub end_key: ::prost::alloc::vec::Vec<u8>,
 }
@@ -366,7 +370,7 @@ pub struct BatchScanRegionsRequest {
     pub header: ::core::option::Option<RequestHeader>,
     #[prost(bool, tag = "2")]
     pub need_buckets: bool,
-    /// the given ranges must be in order.
+    /// Physical key ranges. The given ranges must be in order.
     #[prost(message, repeated, tag = "3")]
     pub ranges: ::prost::alloc::vec::Vec<KeyRange>,
     /// limit the total number of regions to scan.
@@ -574,6 +578,7 @@ pub struct Merge {
 pub struct SplitRegion {
     #[prost(enumeration = "CheckPolicy", tag = "1")]
     pub policy: i32,
+    /// Physical split key bytes.
     #[prost(bytes = "vec", repeated, tag = "2")]
     pub keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
@@ -849,19 +854,23 @@ pub struct StoreStats {
     #[prost(bool, tag = "32")]
     pub is_stopping: bool,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DfsStatScope {
     /// When true, the statistic is not tied to any keyspace.
     #[prost(bool, tag = "1")]
     pub is_global: bool,
     /// The keyspace of this statistic. Ignore when is_global is true.
+    /// NOTE: This field is only meaningful for V1/V2 compatibility. V3 should use keyspace_identities.
     #[prost(uint32, tag = "2")]
     pub keyspace_id: u32,
     /// The component that provides the statistic.
     #[prost(string, tag = "3")]
     pub component: ::prost::alloc::string::String,
+    /// V3 multi-keyspace statistic scope. Ignore when is_global is true.
+    #[prost(message, repeated, tag = "4")]
+    pub keyspace_identities: ::prost::alloc::vec::Vec<super::apipb::KeyspaceIdentity>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DfsStatItem {
     #[prost(message, optional, tag = "1")]
     pub scope: ::core::option::Option<DfsStatScope>,
@@ -1104,8 +1113,20 @@ pub struct UpdateServiceGcSafePointResponse {
 pub struct GetGcSafePointV2Request {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
-    #[prost(uint32, tag = "2")]
-    pub keyspace_id: u32,
+    #[prost(oneof = "get_gc_safe_point_v2_request::Keyspace", tags = "2, 3")]
+    pub keyspace: ::core::option::Option<get_gc_safe_point_v2_request::Keyspace>,
+}
+/// Nested message and enum types in `GetGCSafePointV2Request`.
+pub mod get_gc_safe_point_v2_request {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "3")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetGcSafePointV2Response {
@@ -1124,12 +1145,24 @@ pub struct WatchGcSafePointV2Request {
 /// SafePointEvent is for the rpc WatchGCSafePointV2.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SafePointEvent {
-    #[prost(uint32, tag = "1")]
-    pub keyspace_id: u32,
     #[prost(uint64, tag = "2")]
     pub safe_point: u64,
     #[prost(enumeration = "EventType", tag = "3")]
     pub r#type: i32,
+    #[prost(oneof = "safe_point_event::Keyspace", tags = "1, 4")]
+    pub keyspace: ::core::option::Option<safe_point_event::Keyspace>,
+}
+/// Nested message and enum types in `SafePointEvent`.
+pub mod safe_point_event {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "1")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity served by this event.
+        #[prost(message, tag = "4")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct WatchGcSafePointV2Response {
@@ -1144,10 +1177,22 @@ pub struct WatchGcSafePointV2Response {
 pub struct UpdateGcSafePointV2Request {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
-    #[prost(uint32, tag = "2")]
-    pub keyspace_id: u32,
     #[prost(uint64, tag = "3")]
     pub safe_point: u64,
+    #[prost(oneof = "update_gc_safe_point_v2_request::Keyspace", tags = "2, 4")]
+    pub keyspace: ::core::option::Option<update_gc_safe_point_v2_request::Keyspace>,
+}
+/// Nested message and enum types in `UpdateGCSafePointV2Request`.
+pub mod update_gc_safe_point_v2_request {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "4")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UpdateGcSafePointV2Response {
@@ -1160,8 +1205,6 @@ pub struct UpdateGcSafePointV2Response {
 pub struct UpdateServiceSafePointV2Request {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
-    #[prost(uint32, tag = "2")]
-    pub keyspace_id: u32,
     #[prost(bytes = "vec", tag = "3")]
     pub service_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(uint64, tag = "4")]
@@ -1173,6 +1216,20 @@ pub struct UpdateServiceSafePointV2Request {
     /// cluster garbage collection.
     #[prost(int64, tag = "5")]
     pub ttl: i64,
+    #[prost(oneof = "update_service_safe_point_v2_request::Keyspace", tags = "2, 6")]
+    pub keyspace: ::core::option::Option<update_service_safe_point_v2_request::Keyspace>,
+}
+/// Nested message and enum types in `UpdateServiceSafePointV2Request`.
+pub mod update_service_safe_point_v2_request {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "6")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UpdateServiceSafePointV2Response {
@@ -1192,10 +1249,22 @@ pub struct GetAllGcSafePointV2Request {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GcSafePointV2 {
-    #[prost(uint32, tag = "1")]
-    pub keyspace_id: u32,
     #[prost(uint64, tag = "2")]
     pub gc_safe_point: u64,
+    #[prost(oneof = "gc_safe_point_v2::Keyspace", tags = "1, 3")]
+    pub keyspace: ::core::option::Option<gc_safe_point_v2::Keyspace>,
+}
+/// Nested message and enum types in `GCSafePointV2`.
+pub mod gc_safe_point_v2 {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "1")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "3")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetAllGcSafePointV2Response {
@@ -1206,14 +1275,24 @@ pub struct GetAllGcSafePointV2Response {
     #[prost(int64, tag = "3")]
     pub revision: i64,
 }
-/// A wrapper over keyspace_id.
-/// When a field is not specified in proto3, its value will be regarded as 0; however, keyspace_id = 0 is regarded as a valid keyspace (which
-/// is the "DEFAULT" keyspace). To distinguish unspecified keyspace (NullKeyspace, 0xffffffff) and the default keyspace in some APIs as well
-/// as preventing potential misuse, we wrap the keyspace_id into a message type which is nullable.
+/// A wrapper over keyspace scope.
+/// keyspace_id is kept for V1/V2 compatibility. V3 should use keyspace_identity and reject
+/// missing/invalid namespace or keyspace IDs in tenant-scoped requests.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct KeyspaceScope {
-    #[prost(uint32, tag = "1")]
-    pub keyspace_id: u32,
+    #[prost(oneof = "keyspace_scope::Keyspace", tags = "1, 2")]
+    pub keyspace: ::core::option::Option<keyspace_scope::Keyspace>,
+}
+/// Nested message and enum types in `KeyspaceScope`.
+pub mod keyspace_scope {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Keyspace {
+        #[prost(uint32, tag = "1")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "2")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AdvanceGcSafePointRequest {
@@ -1485,6 +1564,7 @@ pub struct SyncMaxTsResponse {
 pub struct SplitRegionsRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    /// Physical split key bytes.
     #[prost(bytes = "vec", repeated, tag = "2")]
     pub split_keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
     #[prost(uint64, tag = "3")]
@@ -1503,6 +1583,7 @@ pub struct SplitRegionsResponse {
 pub struct SplitAndScatterRegionsRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<RequestHeader>,
+    /// Physical split key bytes.
     #[prost(bytes = "vec", repeated, tag = "2")]
     pub split_keys: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
     #[prost(string, tag = "3")]

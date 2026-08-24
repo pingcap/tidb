@@ -151,6 +151,15 @@ pub use config::RawApiVersion;
 #[doc(inline)]
 pub use config::TxnLocalLatches;
 #[doc(inline)]
+pub use proto::kvrpcpb::RequestOrigin;
+#[doc(inline)]
+pub use region_cache::{
+    change_pd_region_meta_circuit_breaker_settings, set_region_cache_ttl_secs,
+    set_region_cache_ttl_with_jitter, PdRegionMetaCircuitBreakerSettings, TiFlashLabelFilter,
+};
+#[doc(inline)]
+pub use store::{get_default_request_origin, set_default_request_origin};
+#[doc(inline)]
 pub use util::RuDetails;
 
 #[doc(inline)]

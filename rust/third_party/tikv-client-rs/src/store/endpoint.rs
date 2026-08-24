@@ -1,7 +1,7 @@
 //! Remote endpoint classification shared by TiKV request routing.
 //!
-//! This is the native mapping of client-go's `tikvrpc/endpoint.go`.  The
-//! command/request registry remains a separate unfinished `tikvrpc` slice.
+//! This is the native mapping of client-go's `tikvrpc/endpoint.go`; the
+//! complete package receipt is recorded in `doc/tikvrpc-source-artifact-audit.md`.
 
 use crate::proto::metapb;
 

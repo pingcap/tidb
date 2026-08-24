@@ -233,7 +233,9 @@ impl Cluster {
         timeout: Duration,
     ) -> Result<pdpb::GcState> {
         let mut req = pd_request!(self.id, pdpb::GetGcStateRequest);
-        req.keyspace_scope = keyspace_id.map(|id| pdpb::KeyspaceScope { keyspace_id: id });
+        req.keyspace_scope = keyspace_id.map(|id| pdpb::KeyspaceScope {
+            keyspace: Some(pdpb::keyspace_scope::Keyspace::KeyspaceId(id)),
+        });
         req.exclude_gc_barriers = exclude_gc_barriers;
         req.send(&mut self.client, timeout)
             .await?

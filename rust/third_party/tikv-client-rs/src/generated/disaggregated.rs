@@ -98,9 +98,6 @@ pub struct DisaggTaskMeta {
     /// the exectuor id
     #[prost(string, tag = "6")]
     pub executor_id: ::prost::alloc::string::String,
-    /// keyspace id of the request
-    #[prost(uint32, tag = "7")]
-    pub keyspace_id: u32,
     /// API version of the request
     #[prost(enumeration = "super::kvrpcpb::ApiVersion", tag = "8")]
     pub api_version: i32,
@@ -110,6 +107,20 @@ pub struct DisaggTaskMeta {
     /// This is the session alias between a client and tidb
     #[prost(string, tag = "11")]
     pub connection_alias: ::prost::alloc::string::String,
+    #[prost(oneof = "disagg_task_meta::Keyspace", tags = "7, 12")]
+    pub keyspace: ::core::option::Option<disagg_task_meta::Keyspace>,
+}
+/// Nested message and enum types in `DisaggTaskMeta`.
+pub mod disagg_task_meta {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id of the request. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "7")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity of the request.
+        #[prost(message, tag = "12")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DisaggReadError {

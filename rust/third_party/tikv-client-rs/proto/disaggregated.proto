@@ -1,6 +1,7 @@
 syntax = "proto3";
 package disaggregated;
 
+import "apipb.proto";
 import "coprocessor.proto";
 import "gogoproto/gogo.proto";
 import "kvrpcpb.proto";
@@ -81,7 +82,11 @@ message DisaggTaskMeta {
   uint64 local_query_id = 4; // unique local query_id if tidb don't restart.
   int64 task_id = 5; // if task id is -1 , it indicates a tidb task.
   string executor_id = 6; // the exectuor id
-  uint32 keyspace_id = 7; // keyspace id of the request
+  oneof keyspace {
+    uint32 keyspace_id = 7; // V1/V2 compatibility keyspace id of the request. V3 should use keyspace_identity.
+    // V3 keyspace identity of the request.
+    apipb.KeyspaceIdentity keyspace_identity = 12;
+  }
   kvrpcpb.APIVersion api_version = 8; // API version of the request
   uint64 connection_id = 10; // This is the session id between a client and tidb
   string connection_alias = 11; // This is the session alias between a client and tidb

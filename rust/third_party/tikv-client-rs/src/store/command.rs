@@ -91,6 +91,9 @@ pub enum CommandType {
 
 #[allow(dead_code)]
 impl CommandType {
+    /// Native spelling of client-go's `CmdGetKeyTTL = CmdRawGetKeyTTL` alias.
+    pub const GET_KEY_TTL: Self = Self::RawGetKeyTtl;
+
     /// Maps the stable Rust transport label back to client-go's dynamic
     /// command identity. Native-only or currently unsupported commands remain
     /// `None` and are reported as `Unknown`, matching `CmdType.String`'s
@@ -679,14 +682,16 @@ impl BatchCommandRequest {
     /// Converts an already-contextualized physical request into precisely the
     /// subset client-go admits through `ToBatchCommandsRequest`.
     pub(crate) fn from_store_request(request: &dyn super::Request) -> Option<Self> {
-        macro_rules! request_variant {
+        macro_rules! contextual_request_variant {
             ($($variant:ident($type:ty)),+ $(,)?) => {
                 $(if let Some(request) = request.as_any().downcast_ref::<$type>() {
-                    return Some(Self::$variant(request.clone()));
+                    let mut request = request.clone();
+                    super::request::fill_context_default_request_origin(&mut request.context);
+                    return Some(Self::$variant(request));
                 })+
             };
         }
-        request_variant!(
+        contextual_request_variant!(
             Get(kvrpcpb::GetRequest),
             Scan(kvrpcpb::ScanRequest),
             Prewrite(kvrpcpb::PrewriteRequest),
@@ -715,10 +720,26 @@ impl BatchCommandRequest {
             FlashbackToVersion(kvrpcpb::FlashbackToVersionRequest),
             PrepareFlashbackToVersion(kvrpcpb::PrepareFlashbackToVersionRequest),
             Flush(kvrpcpb::FlushRequest),
-            BufferBatchGet(kvrpcpb::BufferBatchGetRequest),
-            GetHealthFeedback(kvrpcpb::GetHealthFeedbackRequest),
-            BroadcastTxnStatus(kvrpcpb::BroadcastTxnStatusRequest)
+            BufferBatchGet(kvrpcpb::BufferBatchGetRequest)
         );
+        if let Some(request) = request
+            .as_any()
+            .downcast_ref::<tikvpb::BatchCommandsEmptyRequest>()
+        {
+            return Some(Self::Empty(request.clone()));
+        }
+        if let Some(request) = request
+            .as_any()
+            .downcast_ref::<kvrpcpb::GetHealthFeedbackRequest>()
+        {
+            return Some(Self::GetHealthFeedback(request.clone()));
+        }
+        if let Some(request) = request
+            .as_any()
+            .downcast_ref::<kvrpcpb::BroadcastTxnStatusRequest>()
+        {
+            return Some(Self::BroadcastTxnStatus(request.clone()));
+        }
         None
     }
 
@@ -1006,6 +1027,7 @@ mod tests {
         assert_eq!(CommandType::Empty as u16, 3125);
         assert_eq!(CommandType::Gc.name(), "GC");
         assert_eq!(CommandType::RawGetKeyTtl.name(), "RawGetKeyTTL");
+        assert_eq!(CommandType::GET_KEY_TTL, CommandType::RawGetKeyTtl);
         assert_eq!(CommandType::MvccGetByStartTs.name(), "MvccGetByStartTS");
         assert_eq!(CommandType::Empty.name(), "Unknown");
     }
@@ -1071,6 +1093,16 @@ mod tests {
         assert!(matches!(
             BatchCommandRequest::from_store_request(&get),
             Some(BatchCommandRequest::Get(request)) if request.key == b"key"
+        ));
+
+        let empty = tikvpb::BatchCommandsEmptyRequest {
+            test_id: 7,
+            delay_time: 11,
+        };
+        assert!(matches!(
+            BatchCommandRequest::from_store_request(&empty),
+            Some(BatchCommandRequest::Empty(request))
+                if request.test_id == 7 && request.delay_time == 11
         ));
 
         // client-go's ToBatchCommandsRequest switch deliberately excludes

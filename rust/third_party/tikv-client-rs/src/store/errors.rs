@@ -9,6 +9,21 @@ pub trait HasRegionError {
     fn region_error(&mut self) -> Option<crate::proto::errorpb::Error>;
 }
 
+/// A concrete response accepted by client-go's `GenRegionErrorResp` switch.
+///
+/// Rust's typed transport does not need a dynamic response wrapper: callers
+/// construct the response type selected by their request at compile time.
+#[allow(dead_code)]
+pub trait RegionErrorResponse: HasRegionError + Default {
+    fn set_region_error(&mut self, error: crate::proto::errorpb::Error);
+
+    fn from_region_error(error: crate::proto::errorpb::Error) -> Self {
+        let mut response = Self::default();
+        response.set_region_error(error);
+        response
+    }
+}
+
 // Those that can have multiple region errors
 pub trait HasRegionErrors {
     fn region_errors(&mut self) -> Option<Vec<crate::proto::errorpb::Error>>;
@@ -73,10 +88,68 @@ has_region_error!(kvrpcpb::RawBatchScanResponse);
 has_region_error!(kvrpcpb::RawCasResponse);
 has_region_error!(kvrpcpb::RawCoprocessorResponse);
 has_region_error!(kvrpcpb::RawChecksumResponse);
+has_region_error!(kvrpcpb::GetHealthFeedbackResponse);
+
+macro_rules! region_error_response {
+    ($($type:ty),+ $(,)?) => {
+        $(
+            impl RegionErrorResponse for $type {
+                fn set_region_error(&mut self, error: crate::proto::errorpb::Error) {
+                    self.region_error = Some(error);
+                }
+            }
+        )+
+    };
+}
+
+region_error_response!(
+    kvrpcpb::GetResponse,
+    kvrpcpb::ScanResponse,
+    kvrpcpb::PrewriteResponse,
+    kvrpcpb::PessimisticLockResponse,
+    kvrpcpb::PessimisticRollbackResponse,
+    kvrpcpb::CommitResponse,
+    kvrpcpb::CleanupResponse,
+    kvrpcpb::BatchGetResponse,
+    kvrpcpb::BatchRollbackResponse,
+    kvrpcpb::ScanLockResponse,
+    kvrpcpb::ResolveLockResponse,
+    kvrpcpb::GcResponse,
+    kvrpcpb::DeleteRangeResponse,
+    kvrpcpb::RawGetResponse,
+    kvrpcpb::RawBatchGetResponse,
+    kvrpcpb::RawPutResponse,
+    kvrpcpb::RawBatchPutResponse,
+    kvrpcpb::RawDeleteResponse,
+    kvrpcpb::RawBatchDeleteResponse,
+    kvrpcpb::RawDeleteRangeResponse,
+    kvrpcpb::RawScanResponse,
+    kvrpcpb::UnsafeDestroyRangeResponse,
+    kvrpcpb::RawGetKeyTtlResponse,
+    kvrpcpb::RawCasResponse,
+    kvrpcpb::RawChecksumResponse,
+    kvrpcpb::MvccGetByKeyResponse,
+    kvrpcpb::MvccGetByStartTsResponse,
+    kvrpcpb::SplitRegionResponse,
+    kvrpcpb::TxnHeartBeatResponse,
+    kvrpcpb::CheckTxnStatusResponse,
+    kvrpcpb::CheckSecondaryLocksResponse,
+    kvrpcpb::FlashbackToVersionResponse,
+    kvrpcpb::PrepareFlashbackToVersionResponse,
+    kvrpcpb::FlushResponse,
+    kvrpcpb::BufferBatchGetResponse,
+    kvrpcpb::GetHealthFeedbackResponse,
+);
 
 impl HasRegionError for coprocessor::Response {
     fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
         self.region_error.take()
+    }
+}
+
+impl RegionErrorResponse for coprocessor::Response {
+    fn set_region_error(&mut self, error: crate::proto::errorpb::Error) {
+        self.region_error = Some(error);
     }
 }
 
@@ -286,10 +359,76 @@ fn extract_errors(
 
 #[cfg(test)]
 mod test {
-    use super::HasKeyErrors;
+    use super::{HasKeyErrors, RegionErrorResponse};
     use crate::common::Error;
     use crate::internal_err;
+    use crate::proto::coprocessor;
     use crate::proto::kvrpcpb;
+
+    fn assert_synthetic_region_error<T>()
+    where
+        T: RegionErrorResponse,
+    {
+        let mut response = T::from_region_error(crate::proto::errorpb::Error::default());
+        assert!(response.region_error().is_some());
+        assert!(response.region_error().is_none());
+    }
+
+    #[test]
+    fn source_gen_region_error_response_matrix_is_complete() {
+        macro_rules! assert_responses {
+            ($($response:ty),+ $(,)?) => {{
+                let mut count = 0;
+                $(
+                    assert_synthetic_region_error::<$response>();
+                    count += 1;
+                )+
+                count
+            }};
+        }
+
+        let count = assert_responses!(
+            kvrpcpb::GetResponse,
+            kvrpcpb::ScanResponse,
+            kvrpcpb::PrewriteResponse,
+            kvrpcpb::PessimisticLockResponse,
+            kvrpcpb::PessimisticRollbackResponse,
+            kvrpcpb::CommitResponse,
+            kvrpcpb::CleanupResponse,
+            kvrpcpb::BatchGetResponse,
+            kvrpcpb::BatchRollbackResponse,
+            kvrpcpb::ScanLockResponse,
+            kvrpcpb::ResolveLockResponse,
+            kvrpcpb::GcResponse,
+            kvrpcpb::DeleteRangeResponse,
+            kvrpcpb::RawGetResponse,
+            kvrpcpb::RawBatchGetResponse,
+            kvrpcpb::RawPutResponse,
+            kvrpcpb::RawBatchPutResponse,
+            kvrpcpb::RawDeleteResponse,
+            kvrpcpb::RawBatchDeleteResponse,
+            kvrpcpb::RawDeleteRangeResponse,
+            kvrpcpb::RawScanResponse,
+            kvrpcpb::UnsafeDestroyRangeResponse,
+            kvrpcpb::RawGetKeyTtlResponse,
+            kvrpcpb::RawCasResponse,
+            kvrpcpb::RawChecksumResponse,
+            coprocessor::Response,
+            kvrpcpb::MvccGetByKeyResponse,
+            kvrpcpb::MvccGetByStartTsResponse,
+            kvrpcpb::SplitRegionResponse,
+            kvrpcpb::TxnHeartBeatResponse,
+            kvrpcpb::CheckTxnStatusResponse,
+            kvrpcpb::CheckSecondaryLocksResponse,
+            kvrpcpb::FlashbackToVersionResponse,
+            kvrpcpb::PrepareFlashbackToVersionResponse,
+            kvrpcpb::FlushResponse,
+            kvrpcpb::BufferBatchGetResponse,
+            kvrpcpb::GetHealthFeedbackResponse,
+        );
+        assert_eq!(count, 37);
+    }
+
     #[test]
     fn result_haslocks() {
         let mut resp: Result<_, Error> = Ok(kvrpcpb::CommitResponse::default());
