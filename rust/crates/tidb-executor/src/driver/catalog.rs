@@ -1137,7 +1137,19 @@ impl Catalog {
     /// its `DBInfo` by value) and this tier cannot, which is the one
     /// documented gap in the overlay.
     pub fn attach_local_temporary_tables(&mut self, tables: Vec<(String, String, KvTable)>) {
-        self.bump_metadata_version();
+        // The version bump is gated on an ACTUAL visibility change: this runs
+        // around EVERY statement via [`crate::txn`]'s overlay guard, and the
+        // common case is a session with NO temporary tables, where attaching
+        // inserts nothing. Bumping unconditionally moved the key-decode
+        // metadata epoch twice per statement, which rebuilt the whole
+        // TIDB_DECODE_KEY snapshot per statement (measured: ~60% of process
+        // CPU in its allocation trail under sysbench point_select). Go's row-
+        // decode caches hang off the INFOSCHEMA version, which a session
+        // mounting its own temp tables never moves either.
+        let changed = !tables.is_empty();
+        if changed {
+            self.bump_metadata_version();
+        }
         for (database, name, table) in tables {
             let Some(schema) = self.databases.get_mut(&database) else {
                 continue;
@@ -1160,7 +1172,9 @@ impl Catalog {
     /// that dropped the temporary table and created a permanent one under the
     /// same name keeps the new table rather than the resurrected old one.
     pub fn take_local_temporary_tables(&mut self) -> Vec<(String, String, KvTable)> {
-        self.bump_metadata_version();
+        // Same gate as [`Self::attach_local_temporary_tables`]: a session
+        // with no local temporary tables detaches nothing, so the key-decode
+        // metadata epoch must not move either.
         let mut slots = Vec::new();
         for (folded_database, schema) in &self.databases {
             for (folded_name, entry) in &schema.tables {
@@ -1170,6 +1184,9 @@ impl Catalog {
                     slots.push((folded_database.clone(), folded_name.clone()));
                 }
             }
+        }
+        if !slots.is_empty() {
+            self.bump_metadata_version();
         }
         let mut taken = Vec::with_capacity(slots.len());
         for (folded_database, folded_name) in slots {
