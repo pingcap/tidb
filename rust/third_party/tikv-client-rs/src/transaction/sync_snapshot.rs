@@ -1,8 +1,11 @@
 use crate::transaction::sync_client::safe_block_on;
 use crate::{
-    BoundRange, Key, KvPair, Priority, ReplicaReadAdjuster, ReplicaReadConfig, ReplicaReadType,
-    Result, RpcInterceptorHandle, RuDetails, Snapshot, Value,
+    BoundRange, GetOption, Key, KvPair, Priority, ReplicaReadAdjuster, ReplicaReadConfig,
+    ReplicaReadType, Result, RpcInterceptorHandle, RuDetails, Snapshot, Value, ValueEntry,
 };
+use std::collections::BTreeMap;
+use std::collections::VecDeque;
+use std::ops::Bound;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,6 +18,88 @@ pub struct SyncSnapshot {
     runtime: Arc<tokio::runtime::Runtime>,
 }
 
+/// Blocking counterpart of [`crate::SnapshotIterator`].
+pub struct SyncSnapshotIterator<'a> {
+    snapshot: &'a mut SyncSnapshot,
+    range: BoundRange,
+    reverse: bool,
+    batch_size: u32,
+    buffered: VecDeque<KvPair>,
+    exhausted: bool,
+    valid: bool,
+}
+
+impl<'a> SyncSnapshotIterator<'a> {
+    fn new(snapshot: &'a mut SyncSnapshot, range: BoundRange, reverse: bool) -> Self {
+        Self {
+            batch_size: snapshot.inner.iterator_batch_size(),
+            snapshot,
+            range,
+            reverse,
+            buffered: VecDeque::new(),
+            exhausted: false,
+            valid: true,
+        }
+    }
+
+    fn refill(&mut self) -> Result<()> {
+        if !self.valid || !self.buffered.is_empty() {
+            return Ok(());
+        }
+        if self.exhausted {
+            self.valid = false;
+            return Ok(());
+        }
+        let pairs = if self.reverse {
+            safe_block_on(
+                &self.snapshot.runtime,
+                self.snapshot
+                    .inner
+                    .scan_reverse(self.range.clone(), self.batch_size),
+            )?
+            .collect::<Vec<_>>()
+        } else {
+            safe_block_on(
+                &self.snapshot.runtime,
+                self.snapshot
+                    .inner
+                    .scan(self.range.clone(), self.batch_size),
+            )?
+            .collect::<Vec<_>>()
+        };
+        if pairs.is_empty() {
+            self.exhausted = true;
+            self.valid = false;
+            return Ok(());
+        }
+        self.exhausted = pairs.len() < self.batch_size as usize;
+        let last_key = pairs.last().expect("non-empty scan batch").key().clone();
+        if self.reverse {
+            self.range.to = Bound::Excluded(last_key);
+        } else {
+            self.range.from = Bound::Included(last_key.next_key());
+        }
+        self.buffered = pairs.into();
+        Ok(())
+    }
+
+    /// Fetch and return the next pair, or `None` after the scan is exhausted.
+    pub fn next(&mut self) -> Result<Option<KvPair>> {
+        self.refill()?;
+        Ok(self.buffered.pop_front())
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.valid
+    }
+
+    pub fn close(&mut self) {
+        self.buffered.clear();
+        self.exhausted = true;
+        self.valid = false;
+    }
+}
+
 impl SyncSnapshot {
     pub(crate) fn new(inner: Snapshot, runtime: Arc<tokio::runtime::Runtime>) -> Self {
         Self { inner, runtime }
@@ -23,6 +108,117 @@ impl SyncSnapshot {
     /// Set the priority for subsequent read requests.
     pub fn set_priority(&mut self, priority: Priority) {
         self.inner.set_priority(priority);
+    }
+
+    /// Set the TiKV scan sampling step for subsequent snapshot scans.
+    pub fn set_sample_step(&mut self, sample_step: u32) {
+        self.inner.set_sample_step(sample_step);
+    }
+
+    /// Return only keys from subsequent snapshot scans.
+    pub fn set_key_only(&mut self, key_only: bool) {
+        self.inner.set_key_only(key_only);
+    }
+
+    /// Set the maximum number of pairs requested by each TiKV scan RPC.
+    pub fn set_scan_batch_size(&mut self, batch_size: u32) {
+        self.inner.set_scan_batch_size(batch_size);
+    }
+
+    /// Attach runtime statistics to subsequent physical snapshot read RPCs.
+    pub fn set_runtime_stats(&mut self, stats: Option<Arc<crate::SnapshotRuntimeStats>>) {
+        self.inner.set_runtime_stats(stats);
+    }
+
+    /// Set retry variables for subsequent snapshot reads, matching client-go
+    /// `KVSnapshot.SetVars`.
+    pub fn set_variables(&mut self, variables: Arc<crate::Variables>) {
+        self.inner.set_variables(variables);
+    }
+
+    /// Allow reads to proceed through locks flushed by this pipelined transaction.
+    pub fn set_pipelined(&mut self, timestamp: u64) {
+        self.inner.set_pipelined(timestamp);
+    }
+
+    /// Set the deadline for each physical snapshot read. A zero duration
+    /// clears the override.
+    pub fn set_kv_read_timeout(&mut self, timeout: Duration) {
+        self.inner.set_kv_read_timeout(timeout);
+    }
+
+    /// Set the static TiKV resource-group tag for subsequent snapshot reads.
+    pub fn set_resource_group_tag(&mut self, resource_group_tag: Option<Vec<u8>>) {
+        self.inner.set_resource_group_tag(resource_group_tag);
+    }
+
+    /// Set the resource-group tag callback for subsequent snapshot reads.
+    pub fn set_resource_group_tagger(
+        &mut self,
+        resource_group_tagger: Option<crate::SnapshotResourceGroupTagger>,
+    ) {
+        self.inner.set_resource_group_tagger(resource_group_tagger);
+    }
+
+    /// Set the transaction and replica-read scope for subsequent snapshot
+    /// Get and BatchGet timestamp validation.
+    pub fn set_read_replica_scope(&mut self, scope: impl Into<String>) {
+        self.inner.set_read_replica_scope(scope);
+    }
+
+    /// Alias for [`Self::set_read_replica_scope`].
+    pub fn set_txn_scope(&mut self, scope: impl Into<String>) {
+        self.inner.set_txn_scope(scope);
+    }
+
+    /// Return the configured snapshot read deadline, if any.
+    pub fn kv_read_timeout(&self) -> Option<Duration> {
+        self.inner.kv_read_timeout()
+    }
+
+    /// Return the cumulative snapshot-cache hit count.
+    pub fn snap_cache_hit_count(&self) -> usize {
+        self.inner.snap_cache_hit_count()
+    }
+
+    /// Return the number of cached snapshot entries, including misses.
+    pub fn snap_cache_size(&self) -> usize {
+        self.inner.snap_cache_size()
+    }
+
+    /// Return a copy of the snapshot cache.
+    pub fn snap_cache(&self) -> BTreeMap<Key, ValueEntry> {
+        self.inner.snap_cache()
+    }
+
+    /// Seed snapshot-cache entries for the supplied keys.
+    pub fn update_snapshot_cache(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+        values: BTreeMap<Key, ValueEntry>,
+    ) {
+        self.inner.update_snapshot_cache(keys, values);
+    }
+
+    /// Remove cached snapshot entries for the supplied keys.
+    pub fn clean_snapshot_cache(&mut self, keys: impl IntoIterator<Item = impl Into<Key>>) {
+        self.inner.clean_snapshot_cache(keys);
+    }
+
+    /// Control whether TiKV should bypass cache population for subsequent
+    /// snapshot reads.
+    pub fn set_not_fill_cache(&mut self, not_fill_cache: bool) {
+        self.inner.set_not_fill_cache(not_fill_cache);
+    }
+
+    /// Set the TiKV isolation level used by subsequent snapshot reads.
+    pub fn set_isolation_level(&mut self, isolation_level: crate::proto::kvrpcpb::IsolationLevel) {
+        self.inner.set_isolation_level(isolation_level);
+    }
+
+    /// Set TiKV's scheduling task ID for subsequent snapshot reads.
+    pub fn set_task_id(&mut self, task_id: u64) {
+        self.inner.set_task_id(task_id);
     }
 
     /// Choose the TiKV replica-read type for subsequent snapshot reads.
@@ -38,6 +234,11 @@ impl SyncSnapshot {
     /// Mark subsequent snapshot reads as stale reads.
     pub fn set_stale_read(&mut self, stale_read: bool) {
         self.inner.set_stale_read(stale_read);
+    }
+
+    /// Mark this snapshot as a staleness read.
+    pub fn set_is_staleness_read_only(&mut self, stale_read: bool) {
+        self.inner.set_is_staleness_read_only(stale_read);
     }
 
     /// Replace store-label constraints used by subsequent replica selection.
@@ -90,6 +291,16 @@ impl SyncSnapshot {
         safe_block_on(&self.runtime, self.inner.get(key))
     }
 
+    /// Get a value plus optional commit timestamp using source `GetOption`
+    /// semantics.
+    pub fn get_with_options(
+        &mut self,
+        key: impl Into<Key>,
+        options: &[GetOption],
+    ) -> Result<Option<ValueEntry>> {
+        safe_block_on(&self.runtime, self.inner.get_with_options(key, options))
+    }
+
     /// Check whether the key exists.
     pub fn key_exists(&mut self, key: impl Into<Key>) -> Result<bool> {
         safe_block_on(&self.runtime, self.inner.key_exists(key))
@@ -101,6 +312,44 @@ impl SyncSnapshot {
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<impl Iterator<Item = KvPair>> {
         safe_block_on(&self.runtime, self.inner.batch_get(keys))
+    }
+
+    /// Batch-get values plus optional commit timestamps using source
+    /// `GetOption` semantics.
+    pub fn batch_get_with_options(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+        options: &[GetOption],
+    ) -> Result<BTreeMap<Key, ValueEntry>> {
+        safe_block_on(
+            &self.runtime,
+            self.inner.batch_get_with_options(keys, options),
+        )
+    }
+
+    /// Read values from the pipelined transaction buffer tier.
+    pub fn batch_get_from_buffer(
+        &mut self,
+        keys: impl IntoIterator<Item = impl Into<Key>>,
+    ) -> Result<impl Iterator<Item = KvPair>> {
+        safe_block_on(&self.runtime, self.inner.batch_get_from_buffer(keys))
+    }
+
+    /// Create and prefetch a blocking stateful forward scanner.
+    pub fn iter(&mut self, range: impl Into<BoundRange>) -> Result<SyncSnapshotIterator<'_>> {
+        let mut iterator = SyncSnapshotIterator::new(self, range.into(), false);
+        iterator.refill()?;
+        Ok(iterator)
+    }
+
+    /// Create and prefetch a blocking stateful reverse scanner.
+    pub fn iter_reverse(
+        &mut self,
+        range: impl Into<BoundRange>,
+    ) -> Result<SyncSnapshotIterator<'_>> {
+        let mut iterator = SyncSnapshotIterator::new(self, range.into(), true);
+        iterator.refill()?;
+        Ok(iterator)
     }
 
     /// Scan a range, return at most `limit` key-value pairs that lie in the range.

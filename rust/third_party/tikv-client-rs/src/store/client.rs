@@ -365,6 +365,17 @@ mod tests {
 pub trait KvClient {
     async fn dispatch(&self, req: &dyn Request) -> Result<Box<dyn Any>>;
 
+    /// Dispatch with an optional caller-specific deadline. Generic clients
+    /// retain their existing behavior; concrete RPC clients apply it to both
+    /// unary and batch transports.
+    async fn dispatch_with_timeout(
+        &self,
+        req: &dyn Request,
+        _timeout: Option<Duration>,
+    ) -> Result<Box<dyn Any>> {
+        self.dispatch(req).await
+    }
+
     /// Dispatches through a physical store while asking it to forward to the
     /// logical target. Generic clients retain direct dispatch by default.
     async fn dispatch_with_forwarded_host(
@@ -373,6 +384,19 @@ pub trait KvClient {
         _forwarded_host: &str,
     ) -> Result<Box<dyn Any>> {
         self.dispatch(req).await
+    }
+
+    /// Forwarding variant of [`Self::dispatch_with_timeout`].
+    async fn dispatch_with_timeout_and_forwarded_host(
+        &self,
+        req: &dyn Request,
+        timeout: Option<Duration>,
+        forwarded_host: &str,
+    ) -> Result<Box<dyn Any>> {
+        match timeout {
+            Some(_) => self.dispatch_with_timeout(req, timeout).await,
+            None => self.dispatch_with_forwarded_host(req, forwarded_host).await,
+        }
     }
 
     /// Installs the source `ClientEventListener` for this concrete transport.
@@ -559,6 +583,16 @@ impl KvRpcClient {
         request: &dyn Request,
         forwarded_host: &str,
     ) -> Result<Box<dyn Any>> {
+        self.dispatch_with_timeout_and_forwarded_host(request, None, forwarded_host)
+            .await
+    }
+
+    pub(crate) async fn dispatch_with_timeout_and_forwarded_host(
+        &self,
+        request: &dyn Request,
+        timeout: Option<Duration>,
+        forwarded_host: &str,
+    ) -> Result<Box<dyn Any>> {
         if let Some(connection) = self.connection.read().unwrap().clone() {
             if connection.closed.load(Ordering::Acquire) {
                 return Err(self.wrap_connection_error(crate::Error::GrpcAPI(
@@ -573,9 +607,14 @@ impl KvRpcClient {
             let mut submission = worker
                 .submit(batch_request, request.batch_priority(), forwarded_host)
                 .await;
-            let response = submission
-                .recv()
+            let timeout = timeout.unwrap_or(self.timeout);
+            let response = tokio::time::timeout(timeout, submission.recv())
                 .await
+                .map_err(|_| {
+                    crate::Error::GrpcAPI(tonic::Status::deadline_exceeded(
+                        "batch request deadline exceeded",
+                    ))
+                })?
                 .map_err(|_| {
                     crate::Error::StringError(
                         "BatchCommands worker stopped before responding".to_owned(),
@@ -585,8 +624,9 @@ impl KvRpcClient {
             return Ok(BatchCommandResponse::into_any(response));
         }
         let index = self.next_client_index();
+        let timeout = timeout.unwrap_or(self.timeout);
         request
-            .dispatch_with_forwarded_host(&self.rpc_clients[index], self.timeout, forwarded_host)
+            .dispatch_with_forwarded_host(&self.rpc_clients[index], timeout, forwarded_host)
             .await
             .map_err(|error| self.wrap_connection_error(error))
     }
@@ -616,6 +656,29 @@ impl KvClient for KvRpcClient {
         forwarded_host: &str,
     ) -> Result<Box<dyn Any>> {
         KvRpcClient::dispatch_with_forwarded_host(self, request, forwarded_host).await
+    }
+
+    async fn dispatch_with_timeout(
+        &self,
+        request: &dyn Request,
+        timeout: Option<Duration>,
+    ) -> Result<Box<dyn Any>> {
+        KvRpcClient::dispatch_with_timeout_and_forwarded_host(self, request, timeout, "").await
+    }
+
+    async fn dispatch_with_timeout_and_forwarded_host(
+        &self,
+        request: &dyn Request,
+        timeout: Option<Duration>,
+        forwarded_host: &str,
+    ) -> Result<Box<dyn Any>> {
+        KvRpcClient::dispatch_with_timeout_and_forwarded_host(
+            self,
+            request,
+            timeout,
+            forwarded_host,
+        )
+        .await
     }
 
     fn set_event_listener(&self, listener: Arc<dyn ClientEventListener>) {

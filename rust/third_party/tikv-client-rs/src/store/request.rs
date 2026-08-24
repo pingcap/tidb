@@ -39,6 +39,14 @@ pub trait Request: Any + Sync + Send + 'static {
     /// Set the API V2 keyspace name carried alongside the numeric identifier.
     fn set_keyspace_name(&mut self, _keyspace_name: Option<&str>) {}
     fn set_priority(&mut self, _priority: kvrpcpb::CommandPri) {}
+    /// Controls whether TiKV should bypass its data cache for this request.
+    fn set_not_fill_cache(&mut self, _not_fill_cache: bool) {}
+    /// Sets the isolation level carried in this request's TiKV context.
+    fn set_isolation_level(&mut self, _isolation_level: kvrpcpb::IsolationLevel) {}
+    /// Sets TiKV's scheduling task ID for this request.
+    fn set_task_id(&mut self, _task_id: u64) {}
+    /// Sets the source resource-group tag carried by this request's TiKV context.
+    fn set_resource_group_tag(&mut self, _resource_group_tag: Vec<u8>) {}
     /// Marks a request sent to a selected follower or learner. Leader reads,
     /// including leader-through-proxy forwarding, retain the default false.
     fn set_replica_read(&mut self, _replica_read: bool) {}
@@ -78,6 +86,16 @@ pub trait Request: Any + Sync + Send + 'static {
     fn max_execution_duration_ms(&self) -> u64 {
         0
     }
+
+    /// Transactions whose locks have been determined rolled back, or whose
+    /// commit timestamp is newer than this read, can be ignored by TiKV.
+    /// Context-free requests deliberately retain the no-op default.
+    fn set_resolved_locks(&mut self, _resolved_locks: Vec<u64>) {}
+
+    /// Transactions committed no later than this read may be read through by
+    /// TiKV without waiting for their secondary locks to be cleaned up.
+    /// Context-free requests deliberately retain the no-op default.
+    fn set_committed_locks(&mut self, _committed_locks: Vec<u64>) {}
 
     /// The TiKV context carried by a region-scoped request. Store-scoped and
     /// streaming requests deliberately retain the no-context default.
@@ -229,6 +247,30 @@ macro_rules! impl_request {
                 ctx.priority = priority.into();
             }
 
+            fn set_not_fill_cache(&mut self, not_fill_cache: bool) {
+                self.context
+                    .get_or_insert(kvrpcpb::Context::default())
+                    .not_fill_cache = not_fill_cache;
+            }
+
+            fn set_isolation_level(&mut self, isolation_level: kvrpcpb::IsolationLevel) {
+                self.context
+                    .get_or_insert(kvrpcpb::Context::default())
+                    .isolation_level = isolation_level.into();
+            }
+
+            fn set_task_id(&mut self, task_id: u64) {
+                self.context
+                    .get_or_insert(kvrpcpb::Context::default())
+                    .task_id = task_id;
+            }
+
+            fn set_resource_group_tag(&mut self, resource_group_tag: Vec<u8>) {
+                self.context
+                    .get_or_insert(kvrpcpb::Context::default())
+                    .resource_group_tag = resource_group_tag;
+            }
+
             fn set_replica_read(&mut self, replica_read: bool) {
                 let ctx = self.context.get_or_insert(kvrpcpb::Context::default());
                 ctx.replica_read = replica_read;
@@ -303,6 +345,18 @@ macro_rules! impl_request {
                 self.context
                     .as_ref()
                     .map_or(0, |context| context.max_execution_duration_ms)
+            }
+
+            fn set_resolved_locks(&mut self, resolved_locks: Vec<u64>) {
+                self.context
+                    .get_or_insert_with(kvrpcpb::Context::default)
+                    .resolved_locks = resolved_locks;
+            }
+
+            fn set_committed_locks(&mut self, committed_locks: Vec<u64>) {
+                self.context
+                    .get_or_insert_with(kvrpcpb::Context::default)
+                    .committed_locks = committed_locks;
             }
 
             fn tikv_context(&self) -> Option<&kvrpcpb::Context> {
@@ -835,6 +889,17 @@ mod tests {
         store_safe_ts.set_replica_read(true);
         store_safe_ts.set_busy_threshold_ms(123);
         assert!(store_safe_ts.key_range.is_none());
+    }
+
+    #[test]
+    fn source_snapshot_lock_hints_are_carried_by_context_requests() {
+        let mut get = kvrpcpb::GetRequest::default();
+        get.set_resolved_locks(vec![3, 1]);
+        get.set_committed_locks(vec![2]);
+
+        let context = get.context.unwrap();
+        assert_eq!(context.resolved_locks, [3, 1]);
+        assert_eq!(context.committed_locks, [2]);
     }
 
     #[test]

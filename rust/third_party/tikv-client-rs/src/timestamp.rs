@@ -4,8 +4,6 @@
 //! The lower 18 (PHYSICAL_SHIFT_BITS) bits are the logical part of the timestamp.
 //! The higher bits of the version are the physical part of the timestamp.
 
-use std::convert::TryInto;
-
 pub use crate::proto::pdpb::Timestamp;
 
 const PHYSICAL_SHIFT_BITS: i64 = 18;
@@ -26,16 +24,17 @@ pub trait TimestampExt: Sized {
 
 impl TimestampExt for Timestamp {
     fn version(&self) -> u64 {
-        ((self.physical << PHYSICAL_SHIFT_BITS) + self.logical)
-            .try_into()
-            .expect("Overflow converting timestamp to version")
+        let physical = u64::try_from(self.physical).expect("negative timestamp physical part");
+        let logical = u64::try_from(self.logical).expect("negative timestamp logical part");
+        (physical << PHYSICAL_SHIFT_BITS) | logical
     }
 
     fn from_version(version: u64) -> Self {
-        let version = version as i64;
         Self {
-            physical: version >> PHYSICAL_SHIFT_BITS,
-            logical: version & LOGICAL_MASK,
+            physical: i64::try_from(version >> PHYSICAL_SHIFT_BITS)
+                .expect("timestamp physical part exceeds i64"),
+            logical: i64::try_from(version & LOGICAL_MASK as u64)
+                .expect("timestamp logical part exceeds i64"),
             // Now we only support global transactions: suffix_bits: 0,
             ..Default::default()
         }
@@ -47,5 +46,15 @@ impl TimestampExt for Timestamp {
         } else {
             Some(Self::from_version(version))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Timestamp, TimestampExt};
+
+    #[test]
+    fn source_max_timestamp_sentinel_round_trips() {
+        assert_eq!(Timestamp::from_version(u64::MAX).version(), u64::MAX);
     }
 }

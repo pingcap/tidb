@@ -268,6 +268,9 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         Dispatch {
             request: self.request.clone_then_apply_shard(shard),
             kv_client: self.kv_client.clone(),
+            request_timeout: self.request_timeout,
+            retry_request_timeout: self.retry_request_timeout,
+            read_timestamp_validation: self.read_timestamp_validation.clone(),
             target: self.target.clone(),
             forwarded_host: self.forwarded_host.clone(),
             replica_read_config: self.replica_read_config.clone(),
@@ -320,6 +323,12 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
 
     fn mark_retry_request(&mut self) {
         self.request.set_is_retry_request();
+        if let Some(timeout) = self.retry_request_timeout {
+            self.request_timeout = Some(timeout);
+            self.request.set_max_execution_duration_ms(
+                u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+            );
+        }
     }
 
     fn mark_replica_data_not_ready(&mut self, peer_id: u64) {
@@ -685,6 +694,9 @@ mod test {
         let mut dispatch = Dispatch {
             request: kvrpcpb::GetRequest::default(),
             kv_client: None,
+            request_timeout: None,
+            retry_request_timeout: None,
+            read_timestamp_validation: None,
             target: String::new(),
             forwarded_host: String::new(),
             replica_read_config: ReplicaReadConfig {
@@ -741,6 +753,9 @@ mod test {
         let mut dispatch = Dispatch {
             request: kvrpcpb::GetRequest::default(),
             kv_client: None,
+            request_timeout: None,
+            retry_request_timeout: None,
+            read_timestamp_validation: None,
             target: String::new(),
             forwarded_host: String::new(),
             replica_read_config: ReplicaReadConfig::default(),

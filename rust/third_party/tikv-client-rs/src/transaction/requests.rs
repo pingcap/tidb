@@ -243,6 +243,10 @@ pub fn new_batch_get_request(keys: Vec<Vec<u8>>, timestamp: u64) -> kvrpcpb::Bat
     req
 }
 
+// client-go `txnkv/txnsnapshot.batchGetKeysByRegions` limits each physical
+// BatchGet request to this many keys after grouping them by region.
+const SNAPSHOT_BATCH_GET_SIZE: usize = 5120;
+
 impl_txn_v2_response!(
     kvrpcpb::BatchGetRequest,
     kvrpcpb::BatchGetResponse,
@@ -258,7 +262,40 @@ impl_txn_v2_response!(
     }
 );
 
-shardable_keys!(kvrpcpb::BatchGetRequest);
+impl Shardable for kvrpcpb::BatchGetRequest {
+    type Shard = Vec<Vec<u8>>;
+
+    fn shards(
+        &self,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
+        let mut keys = self.keys.clone();
+        keys.sort();
+        region_stream_for_keys(keys.into_iter(), pd_client.clone())
+            .flat_map(|result| match result {
+                Ok((keys, region)) => stream::iter(
+                    keys.chunks(SNAPSHOT_BATCH_GET_SIZE)
+                        .map(move |batch| Ok((batch.to_vec(), region.clone())))
+                        .collect::<Vec<_>>(),
+                )
+                .boxed(),
+                Err(error) => stream::iter(Err(error)).boxed(),
+            })
+            .boxed()
+    }
+
+    fn apply_shard(&mut self, shard: Self::Shard) {
+        self.keys = shard;
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.set_leader(&store.request_region())?;
+        self.set_replica_read(store.is_replica_read());
+        self.set_stale_read(store.stale_read);
+        self.set_busy_threshold_ms(store.busy_threshold_ms);
+        Ok(())
+    }
+}
 
 impl Merge<kvrpcpb::BatchGetResponse> for Collect {
     type Out = Vec<KvPair>;
@@ -278,6 +315,7 @@ pub fn new_scan_request(
     limit: u32,
     key_only: bool,
     reverse: bool,
+    sample_step: u32,
 ) -> kvrpcpb::ScanRequest {
     let mut req = kvrpcpb::ScanRequest::default();
     if !reverse {
@@ -291,6 +329,7 @@ pub fn new_scan_request(
     req.key_only = key_only;
     req.version = timestamp;
     req.reverse = reverse;
+    req.sample_step = sample_step;
     req
 }
 
@@ -370,8 +409,7 @@ pub fn new_prewrite_request(
     req.primary_lock = primary_lock;
     req.start_version = start_version;
     req.lock_ttl = lock_ttl;
-    // FIXME: Lite resolve lock is currently disabled
-    req.txn_size = u64::MAX;
+    req.txn_size = req.mutations.len() as u64;
 
     req
 }
@@ -436,6 +474,7 @@ impl Shardable for kvrpcpb::PrewriteRequest {
             self.try_one_pc = false;
         }
 
+        self.txn_size = shard.len() as u64;
         self.mutations = shard;
     }
 
@@ -1415,7 +1454,40 @@ impl_txn_v2_only_response!(
     }
 );
 
-shardable_keys!(kvrpcpb::BufferBatchGetRequest);
+impl Shardable for kvrpcpb::BufferBatchGetRequest {
+    type Shard = Vec<Vec<u8>>;
+
+    fn shards(
+        &self,
+        pd_client: &Arc<impl PdClient>,
+    ) -> BoxStream<'static, Result<(Self::Shard, RegionWithLeader)>> {
+        let mut keys = self.keys.clone();
+        keys.sort();
+        region_stream_for_keys(keys.into_iter(), pd_client.clone())
+            .flat_map(|result| match result {
+                Ok((keys, region)) => stream::iter(
+                    keys.chunks(SNAPSHOT_BATCH_GET_SIZE)
+                        .map(move |batch| Ok((batch.to_vec(), region.clone())))
+                        .collect::<Vec<_>>(),
+                )
+                .boxed(),
+                Err(error) => stream::iter(Err(error)).boxed(),
+            })
+            .boxed()
+    }
+
+    fn apply_shard(&mut self, shard: Self::Shard) {
+        self.keys = shard;
+    }
+
+    fn apply_store(&mut self, store: &RegionStore) -> Result<()> {
+        self.set_leader(&store.request_region())?;
+        self.set_replica_read(store.is_replica_read());
+        self.set_stale_read(store.stale_read);
+        self.set_busy_threshold_ms(store.busy_threshold_ms);
+        Ok(())
+    }
+}
 pair_locks!(kvrpcpb::BufferBatchGetResponse);
 
 impl Merge<kvrpcpb::BufferBatchGetResponse> for Collect {
@@ -1721,7 +1793,9 @@ impl Merge<kvrpcpb::UnsafeDestroyRangeResponse> for Collect {
 
 #[cfg(test)]
 mod tests {
-    use super::{SecondaryLocksStatus, TransactionStatus, TransactionStatusKind};
+    use super::{
+        new_prewrite_request, SecondaryLocksStatus, TransactionStatus, TransactionStatusKind,
+    };
     use crate::common::Error::PessimisticLockError;
     use crate::common::Error::ResolveLockError;
     use crate::proto::errorpb;
@@ -1730,11 +1804,15 @@ mod tests {
     use crate::request::Collect;
     use crate::request::CollectWithShard;
     use crate::request::ResponseWithShard;
+    use crate::request::Shardable;
     use crate::request::{ApiV1Codec, ApiV2Codec, KeyMode, KvRequest};
     use crate::store::Request;
     use crate::KvPair;
     use crate::Timestamp;
     use crate::TimestampExt;
+    use std::any::Any;
+    use std::sync::Arc;
+    use std::sync::Mutex;
 
     #[test]
     fn source_lock_resolver_caches_only_determined_statuses() {
@@ -1762,6 +1840,32 @@ mod tests {
             }
             .is_cacheable());
         }
+    }
+
+    #[tokio::test]
+    async fn source_snapshot_batch_get_batches_each_region_at_5120_keys() -> crate::Result<()> {
+        let batch_sizes = Arc::new(Mutex::new(Vec::new()));
+        let captured_sizes = Arc::clone(&batch_sizes);
+        let client = Arc::new(crate::mock::MockPdClient::new(
+            crate::mock::MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+                let request = request.downcast_ref::<kvrpcpb::BatchGetRequest>().unwrap();
+                captured_sizes.lock().unwrap().push(request.keys.len());
+                Ok(Box::new(kvrpcpb::BatchGetResponse::default()) as Box<dyn Any>)
+            }),
+        ));
+
+        let request = super::new_batch_get_request(vec![vec![11]; 5121], 1);
+        let plan =
+            crate::request::PlanBuilder::new(client, crate::request::Keyspace::Disable, request)
+                .retry_multi_region(crate::backoff::DEFAULT_REGION_BACKOFF)
+                .merge(crate::request::Collect)
+                .plan();
+        let _: Vec<KvPair> = crate::request::Plan::execute(&plan).await?;
+
+        let mut sizes = batch_sizes.lock().unwrap().clone();
+        sizes.sort_unstable();
+        assert_eq!(sizes, [1, 5120]);
+        Ok(())
     }
 
     fn secondary_lock(txn_id: u64, min_commit_ts: u64) -> kvrpcpb::LockInfo {
@@ -1873,6 +1977,35 @@ mod tests {
 
         assert_eq!(status.determine_commit_ts(7, 1).unwrap(), None);
         assert!(status.fallback_2pc);
+    }
+
+    #[test]
+    fn source_prewrite_txn_size_tracks_the_physical_request_shard() {
+        let mut request = new_prewrite_request(
+            vec![
+                kvrpcpb::Mutation {
+                    key: b"a".to_vec(),
+                    ..Default::default()
+                },
+                kvrpcpb::Mutation {
+                    key: b"b".to_vec(),
+                    ..Default::default()
+                },
+            ],
+            b"a".to_vec(),
+            1,
+            10,
+        );
+        assert_eq!(request.txn_size, 2);
+
+        <kvrpcpb::PrewriteRequest as Shardable>::apply_shard(
+            &mut request,
+            vec![kvrpcpb::Mutation {
+                key: b"b".to_vec(),
+                ..Default::default()
+            }],
+        );
+        assert_eq!(request.txn_size, 1);
     }
 
     #[test]

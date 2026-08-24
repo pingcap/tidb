@@ -11,6 +11,7 @@ use crate::interceptor::RpcInterceptorChain;
 use crate::kv::ReplicaReadConfig;
 use crate::pd::PdClient;
 use crate::request::plan::{CleanupLocks, RegionRetryState, RetryableAllStores};
+use crate::request::plan::{SnapshotLockBackoff, SnapshotRegionBackoff};
 use crate::request::shard::HasNextBatch;
 use crate::request::Dispatch;
 use crate::request::ExtractError;
@@ -33,6 +34,7 @@ use crate::store::HasRegionErrors;
 use crate::store::RegionStore;
 use crate::transaction::HasLocks;
 use crate::transaction::Priority;
+use crate::transaction::ReadLockContext;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::ResolveLocksOptions;
 use crate::Result;
@@ -73,6 +75,9 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
             plan: Dispatch {
                 request,
                 kv_client: None,
+                request_timeout: None,
+                retry_request_timeout: None,
+                read_timestamp_validation: None,
                 target: String::new(),
                 forwarded_host: String::new(),
                 replica_read_config: ReplicaReadConfig::default(),
@@ -105,6 +110,39 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
         self
     }
 
+    /// Set TiKV's cache-fill behavior carried by every shard and retry of
+    /// this request.
+    pub fn not_fill_cache(mut self, not_fill_cache: bool) -> Self {
+        self.plan.request.set_not_fill_cache(not_fill_cache);
+        self
+    }
+
+    /// Set TiKV's isolation level carried by every shard and retry of this
+    /// request.
+    pub fn isolation_level(
+        mut self,
+        isolation_level: crate::proto::kvrpcpb::IsolationLevel,
+    ) -> Self {
+        self.plan.request.set_isolation_level(isolation_level);
+        self
+    }
+
+    /// Set TiKV's scheduling task ID carried by every shard and retry of this
+    /// request.
+    pub fn task_id(mut self, task_id: u64) -> Self {
+        self.plan.request.set_task_id(task_id);
+        self
+    }
+
+    /// Set the source resource-group tag carried by every shard and retry.
+    /// `None` deliberately leaves the protobuf default untouched.
+    pub fn resource_group_tag(mut self, resource_group_tag: Option<Vec<u8>>) -> Self {
+        if let Some(resource_group_tag) = resource_group_tag {
+            self.plan.request.set_resource_group_tag(resource_group_tag);
+        }
+        self
+    }
+
     /// Select replicas for this read using client-go's region selector. The
     /// setting is retained through shard and retry clones; leader is default.
     pub fn replica_read(mut self, config: ReplicaReadConfig) -> Self {
@@ -117,6 +155,41 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
     pub(crate) fn max_execution_duration(mut self, duration: Duration) -> Self {
         let duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
         self.plan.request.set_max_execution_duration_ms(duration_ms);
+        self
+    }
+
+    /// Configure a source snapshot's initial and retry deadlines. The source
+    /// uses an optional `SetKVReadTimeout` override only for the initial Get
+    /// or BatchGet send; every resend returns to `retry_timeout`.
+    pub(crate) fn snapshot_read_timeout(
+        mut self,
+        timeout: Option<Duration>,
+        retry_timeout: Duration,
+    ) -> Self {
+        let timeout = timeout.unwrap_or(retry_timeout);
+        let duration_ms = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
+        self.plan.request.set_max_execution_duration_ms(duration_ms);
+        self.plan.request_timeout = Some(timeout);
+        self.plan.retry_request_timeout = Some(retry_timeout);
+        self
+    }
+
+    /// Validate every physical snapshot read timestamp before dispatch.
+    /// `None` preserves the behavior of manually constructed plans.
+    pub(crate) fn validate_read_timestamp(
+        mut self,
+        validator: Option<Arc<dyn crate::oracle::ReadTimestampValidator>>,
+        read_timestamp: u64,
+        stale_read: bool,
+        txn_scope: String,
+    ) -> Self {
+        self.plan.read_timestamp_validation =
+            validator.map(|validator| crate::request::plan::ReadTimestampValidation {
+                validator,
+                read_timestamp,
+                stale_read,
+                option: crate::oracle::OracleOption { txn_scope },
+            });
         self
     }
 
@@ -235,6 +308,22 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         P: Shardable,
         P::Result: HasLocks,
     {
+        self.resolve_lock_with_context(timestamp, backoff, keyspace, ResolveLocksContext::default())
+    }
+
+    /// If there is a lock error, resolve the lock and retry the request with
+    /// caller-owned resolver state.
+    pub(crate) fn resolve_lock_with_context(
+        self,
+        timestamp: Timestamp,
+        backoff: Backoff,
+        keyspace: Keyspace,
+        mut resolve_locks_context: ResolveLocksContext,
+    ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
+    where
+        P: Shardable,
+        P::Result: HasLocks,
+    {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
             plan: ResolveLock {
@@ -248,6 +337,69 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 resource_group_name: self.resource_group_name.clone(),
                 resource_control: self.resource_control.clone(),
                 ru_details: self.ru_details.clone(),
+                resolve_locks_context: {
+                    resolve_locks_context.rpc_interceptor = self.rpc_interceptor.clone();
+                    resolve_locks_context.resource_group_name = self.resource_group_name.clone();
+                    resolve_locks_context.resource_control = self.resource_control.clone();
+                    resolve_locks_context.ru_details = self.ru_details.clone();
+                    resolve_locks_context
+                },
+                read_lock_context: None,
+                snapshot_runtime_stats: None,
+                snapshot_lock_backoff: None,
+            },
+            keyspace_name: self.keyspace_name,
+            rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
+            phantom: PhantomData,
+        }
+    }
+
+    /// Resolve locks encountered by a snapshot read. Unlike a mutation,
+    /// client-go reissues the read with TiKV's resolved/committed-lock hints
+    /// instead of waiting for secondary-lock cleanup.
+    pub(crate) fn resolve_lock_for_read(
+        self,
+        timestamp: Timestamp,
+        backoff: Backoff,
+        keyspace: Keyspace,
+        read_lock_context: ReadLockContext,
+        mut resolve_locks_context: ResolveLocksContext,
+        snapshot_runtime_stats: Option<Arc<crate::SnapshotRuntimeStats>>,
+        snapshot_variables: Arc<crate::Variables>,
+    ) -> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
+    where
+        P: Shardable,
+        P::Result: HasLocks,
+    {
+        PlanBuilder {
+            pd_client: self.pd_client.clone(),
+            plan: ResolveLock {
+                inner: self.plan,
+                timestamp,
+                backoff,
+                pd_client: self.pd_client,
+                keyspace,
+                keyspace_name: self.keyspace_name.clone(),
+                rpc_interceptor: self.rpc_interceptor.clone(),
+                resource_group_name: self.resource_group_name.clone(),
+                resource_control: self.resource_control.clone(),
+                ru_details: self.ru_details.clone(),
+                resolve_locks_context: {
+                    resolve_locks_context.rpc_interceptor = self.rpc_interceptor.clone();
+                    resolve_locks_context.resource_group_name = self.resource_group_name.clone();
+                    resolve_locks_context.resource_control = self.resource_control.clone();
+                    resolve_locks_context.ru_details = self.ru_details.clone();
+                    resolve_locks_context
+                },
+                read_lock_context: Some(read_lock_context),
+                snapshot_lock_backoff: Some(SnapshotLockBackoff::new(
+                    snapshot_runtime_stats.clone(),
+                    snapshot_variables,
+                )),
+                snapshot_runtime_stats,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -363,6 +515,17 @@ where
         backoff: Backoff,
     ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC>, Targetted> {
         self.make_retry_multi_region(backoff, true)
+    }
+
+    /// Retry a snapshot read with the ordinary schedule while optionally
+    /// reporting source retry-class sleeps to snapshot runtime statistics.
+    pub(crate) fn retry_multi_region_with_snapshot_stats(
+        self,
+        backoff: Backoff,
+        stats: Option<Arc<crate::SnapshotRuntimeStats>>,
+        variables: Arc<crate::Variables>,
+    ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, SnapshotRegionBackoff>, Targetted> {
+        self.make_retry_multi_region(SnapshotRegionBackoff::new(backoff, stats, variables), false)
     }
 
     /// Use client-go's cumulative retry accounting for a request path that
@@ -521,6 +684,7 @@ mod tests {
     use super::*;
     use crate::mock::MockPdClient;
     use crate::proto::kvrpcpb;
+    use crate::request::Shardable;
 
     #[test]
     fn priority_is_written_before_requests_are_cloned_for_execution() {
@@ -540,6 +704,68 @@ mod tests {
         assert_eq!(
             cloned.context.as_ref().unwrap().priority,
             kvrpcpb::CommandPri::High as i32
+        );
+    }
+
+    #[test]
+    fn source_snapshot_read_timeout_sets_transport_and_tikv_deadlines() {
+        let timeout = Duration::from_millis(17);
+        let builder = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        )
+        .snapshot_read_timeout(Some(timeout), Duration::from_secs(30));
+
+        assert_eq!(builder.plan.request_timeout, Some(timeout));
+        assert_eq!(
+            builder.plan.retry_request_timeout,
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            builder
+                .plan
+                .request
+                .context
+                .as_ref()
+                .unwrap()
+                .max_execution_duration_ms,
+            17
+        );
+
+        let disabled = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        )
+        .snapshot_read_timeout(None, Duration::from_secs(30));
+        assert_eq!(disabled.plan.request_timeout, Some(Duration::from_secs(30)));
+        assert_eq!(
+            disabled.plan.retry_request_timeout,
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            disabled
+                .plan
+                .request
+                .context
+                .as_ref()
+                .unwrap()
+                .max_execution_duration_ms,
+            30_000
+        );
+
+        let mut retried = builder.plan;
+        retried.mark_retry_request();
+        assert_eq!(retried.request_timeout, Some(Duration::from_secs(30)));
+        assert_eq!(
+            retried
+                .request
+                .context
+                .as_ref()
+                .unwrap()
+                .max_execution_duration_ms,
+            30_000
         );
     }
 

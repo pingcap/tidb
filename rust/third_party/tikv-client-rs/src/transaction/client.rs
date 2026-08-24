@@ -10,6 +10,8 @@ use log::info;
 use crate::async_util::Cancellation;
 use crate::backoff::{DEFAULT_REGION_BACKOFF, DEFAULT_STORE_BACKOFF};
 use crate::config::Config;
+use crate::oracle::oracles::{PdOracle, PdOracleOptions};
+use crate::oracle::{OracleError, OracleOption, ReadTimestampValidator};
 use crate::pd::PdClient;
 use crate::pd::PdRpcClient;
 use crate::proto::pdpb::Timestamp;
@@ -74,6 +76,7 @@ fn delete_range_retry_backoffer(cancellation: Cancellation) -> RetryBackoffer {
 /// awaited to execute.
 pub struct Client {
     pd: Arc<PdRpcClient>,
+    read_timestamp_validator: Arc<PdReadTimestampValidator>,
     keyspace: Keyspace,
     /// Canonical API V2 keyspace metadata loaded from PD and sent in each
     /// request context, as client-go's codec does.
@@ -86,11 +89,39 @@ impl Clone for Client {
     fn clone(&self) -> Self {
         Self {
             pd: self.pd.clone(),
+            read_timestamp_validator: self.read_timestamp_validator.clone(),
             keyspace: self.keyspace,
             keyspace_name: self.keyspace_name.clone(),
             latches: self.latches.clone(),
             lock_resolver_context: self.lock_resolver_context.clone(),
         }
+    }
+}
+
+/// Owns the client-go-shaped PD read-timestamp validator for all snapshots
+/// derived from a transaction client. Dropping the last client or transaction
+/// reference closes the oracle's refresh worker.
+struct PdReadTimestampValidator(PdOracle);
+
+impl Drop for PdReadTimestampValidator {
+    fn drop(&mut self) {
+        use crate::oracle::Oracle;
+
+        self.0.close();
+    }
+}
+
+#[async_trait]
+impl ReadTimestampValidator for PdReadTimestampValidator {
+    async fn validate_read_timestamp(
+        &self,
+        read_timestamp: u64,
+        is_stale_read: bool,
+        option: &OracleOption,
+    ) -> std::result::Result<(), OracleError> {
+        self.0
+            .validate_read_timestamp(read_timestamp, is_stale_read, option)
+            .await
     }
 }
 
@@ -143,6 +174,11 @@ impl Client {
         debug!("creating new transactional client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), true).await?);
+        let read_timestamp_validator = Arc::new(PdReadTimestampValidator(
+            PdOracle::from_pd_client(pd.clone(), PdOracleOptions::default())
+                .await
+                .map_err(|error| crate::Error::StringError(error.to_string()))?,
+        ));
         let (keyspace, keyspace_name) = match config.keyspace {
             Some(name) => {
                 let keyspace = pd.load_keyspace(&build_keyspace_name(name)).await?;
@@ -152,6 +188,7 @@ impl Client {
         };
         Ok(Client {
             pd,
+            read_timestamp_validator,
             keyspace,
             keyspace_name,
             latches,
@@ -177,8 +214,14 @@ impl Client {
         debug!("creating new transactional client (api-v2-no-prefix)");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), true).await?);
+        let read_timestamp_validator = Arc::new(PdReadTimestampValidator(
+            PdOracle::from_pd_client(pd.clone(), PdOracleOptions::default())
+                .await
+                .map_err(|error| crate::Error::StringError(error.to_string()))?,
+        ));
         Ok(Client {
             pd,
+            read_timestamp_validator,
             keyspace: Keyspace::ApiV2NoPrefix,
             keyspace_name: None,
             latches,
@@ -488,14 +531,17 @@ impl Client {
     }
 
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
-        Transaction::new_with_latches_and_keyspace_name(
+        let mut transaction = Transaction::new_with_latches_and_keyspace_name(
             timestamp,
             self.pd.clone(),
             options,
             self.keyspace,
             self.keyspace_name.clone(),
             self.latches.clone(),
-        )
+        );
+        transaction.set_lock_resolver_context(self.lock_resolver_context.clone());
+        transaction.set_read_timestamp_validator(self.read_timestamp_validator.clone());
+        transaction
     }
 
     fn plan<Req: KvRequest>(

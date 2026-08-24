@@ -169,6 +169,36 @@ pub(crate) fn increment_store_limit_error(address: &str, store_id: u64) {
         .inc();
 }
 
+/// Source `TiKVLockResolverCounter`. The caller supplies the source shortcut
+/// label (for example `read_async_resolve_fallback`).
+pub(crate) fn increment_lock_resolver_action(action: &'static str) {
+    TIKV_LOCK_RESOLVER_ACTIONS
+        .with_label_values(&[action])
+        .inc();
+}
+
+/// Source `TiKVLockResolverAsyncRunningTasks`. Detached resolver tasks keep
+/// this gauge balanced on both normal completion and cancellation-safe drop.
+pub(crate) fn add_lock_resolver_async_running_tasks(kind: &'static str, delta: i64) {
+    TIKV_LOCK_RESOLVER_ASYNC_RUNNING_TASKS
+        .with_label_values(&[kind])
+        .add(delta as f64);
+}
+
+#[cfg(test)]
+pub(crate) fn lock_resolver_action_count(action: &'static str) -> u64 {
+    TIKV_LOCK_RESOLVER_ACTIONS
+        .with_label_values(&[action])
+        .get()
+}
+
+#[cfg(test)]
+pub(crate) fn lock_resolver_async_running_tasks(kind: &'static str) -> f64 {
+    TIKV_LOCK_RESOLVER_ASYNC_RUNNING_TASKS
+        .with_label_values(&[kind])
+        .get()
+}
+
 #[cfg(test)]
 pub(crate) fn store_limit_error_count(address: &str, store_id: u64) -> u64 {
     let store_id = store_id.to_string();
@@ -501,6 +531,18 @@ lazy_static::lazy_static! {
         "tikv_client_go_get_store_limit_token_error_total",
         "Store token is up to the limit, probably because the store is hot or unavailable",
         &["address", "store"]
+    )
+    .unwrap();
+    static ref TIKV_LOCK_RESOLVER_ACTIONS: IntCounterVec = register_int_counter_vec!(
+        "tikv_client_go_lock_resolver_actions_total",
+        "Counter of lock resolver actions.",
+        &["type"]
+    )
+    .unwrap();
+    static ref TIKV_LOCK_RESOLVER_ASYNC_RUNNING_TASKS: GaugeVec = register_gauge_vec!(
+        "tikv_client_go_lock_resolver_async_running_tasks",
+        "The number of running async resolve lock tasks in lock resolver.",
+        &["type"]
     )
     .unwrap();
     static ref TIKV_BATCH_REQUEST_STAGE_DURATION: HistogramVec = register_histogram_vec!(

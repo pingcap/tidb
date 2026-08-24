@@ -38,6 +38,7 @@ pub fn new_scan_request(
     limit: u32,
     key_only: bool,
     reverse: bool,
+    sample_step: u32,
 ) -> kvrpcpb::ScanRequest {
     let (start_key, end_key) = range.into_keys();
     requests::new_scan_request(
@@ -47,6 +48,7 @@ pub fn new_scan_request(
         limit,
         key_only,
         reverse,
+        sample_step,
     )
 }
 
