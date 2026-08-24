@@ -2051,6 +2051,8 @@ github.com/ks3sdklib/aws-sdk-go v1.2.9 h1:Eg0fM56r4Gjp9PiK1Bg9agJUxCAWCk236qq9DI
 github.com/ks3sdklib/aws-sdk-go v1.2.9/go.mod h1:xBNbOrxSnd36AQpZ8o99mGGu+blblUd9rI0MKGmeufo=
 github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0SNc=
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
+github.com/lcwangchao/client-go/v2 v2.0.0-alpha.0.20260819081436-3ac6a50b3b97 h1:iDH9+XgH1WUVlSECsHsE8q8s95kJVo77wgH6HLAPK/w=
+github.com/lcwangchao/client-go/v2 v2.0.0-alpha.0.20260819081436-3ac6a50b3b97/go.mod h1:lwCOaEEjaFKkUd7SdSkaTmZsMl7kRXKrnjEjLEY62T8=
 github.com/ldez/exptostd v0.4.5 h1:kv2ZGUVI6VwRfp/+bcQ6Nbx0ghFWcGIKInkG/oFn1aQ=
 github.com/ldez/exptostd v0.4.5/go.mod h1:QRjHRMXJrCTIm9WxVNH6VW7oN7KrGSht69bIRwvdFsM=
 github.com/ldez/grignotin v0.10.1 h1:keYi9rYsgbvqAZGI1liek5c+jv9UUjbvdj3Tbn5fn4o=
