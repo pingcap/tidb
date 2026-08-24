@@ -25,9 +25,11 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -36,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -65,6 +69,106 @@ func TestDoneTaskKeeper(t *testing.T) {
 	require.True(t, bytes.Equal(n.nextKey, kv.Key("h")))
 }
 
+<<<<<<< HEAD
+=======
+func TestBackfillRetryableErrors(t *testing.T) {
+	t.Run("index info not found is non-retryable for executor", func(t *testing.T) {
+		err := errors.Annotatef(errIndexInfoNotFound, "index info not found: %d", 1)
+		require.True(t, isIndexInfoNotFoundErr(err))
+		require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
+	})
+
+	t.Run("too many data files is non-retryable for scheduler", func(t *testing.T) {
+		err := fmt.Errorf(
+			"generate merge-sort plan failed: %w",
+			errdef.ErrTooManyDataFiles.GenWithStackByArgs(1000, 1, 250),
+		)
+		sch := &LitBackfillScheduler{}
+		require.False(t, sch.IsRetryableErr(err))
+		require.True(t, sch.IsRetryableErr(errors.New("temporary scheduler error")))
+	})
+}
+
+func TestBuildIndexConditionCheckerUsesFixedCollation(t *testing.T) {
+	origin := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(origin)
+
+	originBuildSimpleExpr := expression.BuildSimpleExpr
+	defer func() {
+		expression.BuildSimpleExpr = originBuildSimpleExpr
+	}()
+	expression.BuildSimpleExpr = func(ctx expression.BuildContext, _ ast.ExprNode, opts ...expression.BuildOption) (expression.Expression, error) {
+		var options expression.BuildOptions
+		for _, opt := range opts {
+			opt(&options)
+		}
+		if options.InputSchema == nil {
+			return expression.NewOne(), nil
+		}
+		constantTp := types.NewFieldTypeWithCollation(mysql.TypeVarchar, "utf8mb4_general_ci", 16)
+		return expression.NewFunction(
+			ctx,
+			ast.EQ,
+			types.NewFieldType(mysql.TypeTiny),
+			options.InputSchema.Columns[0],
+			&expression.Constant{Value: types.NewDatum("A"), RetType: constantTp},
+		)
+	}
+
+	colTp := types.NewFieldTypeWithCollation(mysql.TypeVarchar, "utf8mb4_general_ci", 16)
+	colInfo := &model.ColumnInfo{
+		ID:        1,
+		Offset:    0,
+		Name:      ast.NewCIStr("c0"),
+		FieldType: *colTp,
+		State:     model.StatePublic,
+	}
+	idxInfo := &model.IndexInfo{
+		ID:                  1,
+		Name:                ast.NewCIStr("idx"),
+		Columns:             []*model.IndexColumn{{Name: colInfo.Name, Offset: colInfo.Offset}},
+		State:               model.StatePublic,
+		ConditionExprString: "c0 = 'A'",
+	}
+	tblInfo := &model.TableInfo{
+		Name:    ast.NewCIStr("t"),
+		Columns: []*model.ColumnInfo{colInfo},
+		Indices: []*model.IndexInfo{idxInfo},
+	}
+
+	sctx := mock.NewContext()
+	exprCtx := sctx.ExprContext.IntoStatic()
+	copCtx, err := copr.NewCopContextSingleIndex(
+		exprCtx.Apply(exprstatic.WithNewCollationEnabled(false)),
+		sctx.GetSessionVars().StmtCtx.PushDownFlags(),
+		tblInfo,
+		idxInfo,
+		"",
+	)
+	require.NoError(t, err)
+	checker, err := buildIndexConditionChecker(copCtx, tblInfo, idxInfo)
+	require.NoError(t, err)
+	matched, err := checker(chunk.MutRowFromValues("a").ToRow())
+	require.NoError(t, err)
+	require.False(t, matched)
+
+	copCtx, err = copr.NewCopContextSingleIndex(
+		exprCtx.Apply(exprstatic.WithNewCollationEnabled(true)),
+		sctx.GetSessionVars().StmtCtx.PushDownFlags(),
+		tblInfo,
+		idxInfo,
+		"",
+	)
+	require.NoError(t, err)
+	checker, err = buildIndexConditionChecker(copCtx, tblInfo, idxInfo)
+	require.NoError(t, err)
+	matched, err = checker(chunk.MutRowFromValues("a").ToRow())
+	require.NoError(t, err)
+	require.True(t, matched)
+}
+
+>>>>>>> 6eff5759c9b (*: honor task collation across DXF encoding and expression paths (#69734))
 func TestPickBackfillType(t *testing.T) {
 	ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())
 	ingest.LitMemRoot = ingest.NewMemRootImpl(math.MaxInt64)
@@ -221,6 +325,7 @@ func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx
 		f.check(exprCtx)
 		ignoreFields = append(ignoreFields, "$.exprCtxState."+f.field)
 	}
+	ignoreFields = append(ignoreFields, "$.exprCtxState.newCollationEnabled")
 	deeptest.AssertDeepClonedEqual(t, expected, exprCtx, deeptest.WithIgnorePath(ignoreFields))
 
 	// check EvalContext
@@ -254,6 +359,10 @@ func newMockReorgSessCtx(store kv.Storage) sessionctx.Context {
 // compatible with newMockReorgSessCtx(nil).GetExprCtx() to make it safe to replace `mock.Context` usage.
 // After refactor, the TestReorgExprContext can be removed.
 func TestReorgExprContext(t *testing.T) {
+	origin := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(origin)
+
 	// test default expr context
 	store := &mockStorage{client: &mock.Client{}}
 	sctx := newMockReorgSessCtx(store)
@@ -265,26 +374,51 @@ func TestReorgExprContext(t *testing.T) {
 	defaultTypeCtx := evalCtx.TypeCtx()
 	defaultErrCtx := evalCtx.ErrCtx()
 
+	oldCollation := false
+	newCollation := true
+
 	// test expr context from DDLReorgMeta
-	for _, reorg := range []model.DDLReorgMeta{
+	for _, testCase := range []struct {
+		reorg                 model.DDLReorgMeta
+		expectedUseNewCollate bool
+	}{
 		{
-			SQLMode:           mysql.ModeStrictTransTables | mysql.ModeAllowInvalidDates,
-			Location:          &model.TimeZoneLocation{Name: "Asia/Tokyo"},
-			ReorgTp:           model.ReorgTypeIngest,
-			ResourceGroupName: "rg1",
+			reorg: model.DDLReorgMeta{
+				SQLMode:           mysql.ModeStrictTransTables | mysql.ModeAllowInvalidDates,
+				Location:          &model.TimeZoneLocation{Name: "Asia/Tokyo"},
+				ReorgTp:           model.ReorgTypeIngest,
+				ResourceGroupName: "rg1",
+				UseNewCollate:     &oldCollation,
+			},
+			expectedUseNewCollate: false,
 		},
 		{
-			SQLMode: mysql.ModeAllowInvalidDates,
-			// should load location from system value when reorg.Location is nil
-			Location:          nil,
-			ReorgTp:           model.ReorgTypeTxnMerge,
-			ResourceGroupName: "rg2",
+			reorg: model.DDLReorgMeta{
+				SQLMode: mysql.ModeAllowInvalidDates,
+				// should load location from system value when reorg.Location is nil
+				Location:          nil,
+				ReorgTp:           model.ReorgTypeTxnMerge,
+				ResourceGroupName: "rg2",
+				UseNewCollate:     &newCollation,
+			},
+			expectedUseNewCollate: true,
+		},
+		{
+			reorg: model.DDLReorgMeta{
+				SQLMode:           mysql.ModeAllowInvalidDates,
+				Location:          nil,
+				ReorgTp:           model.ReorgTypeTxnMerge,
+				ResourceGroupName: "rg3",
+			},
+			expectedUseNewCollate: true,
 		},
 	} {
+		reorg := testCase.reorg
 		sctx = newMockReorgSessCtx(store)
 		require.NoError(t, initSessCtx(sctx, &reorg))
 		ctx, err := newReorgExprCtxWithReorgMeta(&reorg, sctx.GetSessionVars().StmtCtx.WarnHandler)
 		require.NoError(t, err)
+		require.Equal(t, testCase.expectedUseNewCollate, ctx.NewCollationEnabled())
 		assertStaticExprContextEqual(t, sctx, ctx, ctx.GetStaticEvalCtx().GetWarnHandler())
 		evalCtx := ctx.GetEvalCtx()
 		tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -46,6 +47,7 @@ type exprCtxState struct {
 	connectionID               uint64
 	windowingUseHighPrecision  bool
 	groupConcatMaxLen          uint64
+	newCollationEnabled        bool
 }
 
 // ExprCtxOption is the option to create or update the `ExprContext`
@@ -141,6 +143,13 @@ func WithGroupConcatMaxLen(maxLen uint64) ExprCtxOption {
 	}
 }
 
+// WithNewCollationEnabled fixes the new-collation mode for expression building.
+func WithNewCollationEnabled(enabled bool) ExprCtxOption {
+	return func(s *exprCtxState) {
+		s.newCollationEnabled = enabled
+	}
+}
+
 // ExprContext implements the `exprctx.ExprContext` interface.
 // The "static" means comparing with `ExprContext`, its internal state does not relay on the session or other
 // complex contexts that keeps immutable for most fields.
@@ -163,6 +172,7 @@ func NewExprContext(opts ...ExprCtxOption) *ExprContext {
 			noopFuncsMode:              variable.TiDBOptOnOffWarn(vardef.DefTiDBEnableNoopFuncs),
 			windowingUseHighPrecision:  true,
 			groupConcatMaxLen:          vardef.DefGroupConcatMaxLen,
+			newCollationEnabled:        collate.NewCollationEnabled(),
 		},
 	}
 	for _, opt := range opts {
@@ -221,6 +231,11 @@ func (ctx *ExprContext) GetCharsetInfo() (string, string) {
 // GetDefaultCollationForUTF8MB4 implements the `ExprContext.GetDefaultCollationForUTF8MB4`.
 func (ctx *ExprContext) GetDefaultCollationForUTF8MB4() string {
 	return ctx.defaultCollationForUTF8MB4
+}
+
+// NewCollationEnabled implements the `ExprContext.NewCollationEnabled`.
+func (ctx *ExprContext) NewCollationEnabled() bool {
+	return ctx.newCollationEnabled
 }
 
 // GetBlockEncryptionMode implements the `ExprContext.GetBlockEncryptionMode`.
@@ -324,6 +339,7 @@ func MakeExprContextStatic(ctx exprctx.StaticConvertibleExprContext) *ExprContex
 		WithConnectionID(ctx.ConnectionID()),
 		WithWindowingUseHighPrecision(ctx.GetWindowingUseHighPrecision()),
 		WithGroupConcatMaxLen(ctx.GetGroupConcatMaxLen()),
+		WithNewCollationEnabled(ctx.NewCollationEnabled()),
 	)
 }
 

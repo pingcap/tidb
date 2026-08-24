@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -71,6 +72,11 @@ func (ctx *ExprContext) GetCharsetInfo() (string, string) {
 // GetDefaultCollationForUTF8MB4 returns the default collation of UTF8MB4.
 func (ctx *ExprContext) GetDefaultCollationForUTF8MB4() string {
 	return ctx.sctx.GetSessionVars().DefaultCollationForUTF8MB4
+}
+
+// NewCollationEnabled returns whether expression building should use new collation semantics.
+func (ctx *ExprContext) NewCollationEnabled() bool {
+	return collate.NewCollationEnabled()
 }
 
 // GetBlockEncryptionMode returns the variable block_encryption_mode
