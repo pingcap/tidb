@@ -922,23 +922,36 @@ fn a_sysvar_name_is_case_insensitive_but_the_column_header_keeps_its_case() {
 /// qualified name on the rewritten `Column` node, or `Columns` must be able
 /// to answer it for a path.
 #[test]
-fn an_overflow_names_its_class_but_not_yet_its_expression() {
+fn an_overflow_names_its_class_and_folded_constants_name_their_expression() {
     let mut session = Session::new();
     session.run("CREATE TABLE t (a BIGINT, b BIGINT)").unwrap();
     session
         .run("INSERT INTO t VALUES (9223372036854775807, 2)")
         .unwrap();
 
-    for sql in [
-        "SELECT 9223372036854775807 + 1",
-        "SELECT 9223372036854775807 * 2",
-        "SELECT a + b FROM t",
-        "SELECT a + 1 FROM t",
+    for (sql, folded_expression) in [
+        ("SELECT 9223372036854775807 + 1", "(9223372036854775807 + 1)"),
+        ("SELECT 9223372036854775807 * 2", "(9223372036854775807 * 2)"),
     ] {
         let error = session.run(sql).unwrap_err().to_mysql_error();
         assert_eq!(error.code, 1690, "{sql}");
         assert_eq!(&error.state, b"22003", "{sql}");
-        // DIVERGENCE (#181): Go appends ` in '<expr>'` here.
+        // Folded constants carry their expression exactly as Go does
+        // (captured live from Go nightly on the `+` case).
+        assert_eq!(
+            error.message,
+            format!("BIGINT value is out of range in '{folded_expression}'"),
+            "{sql}"
+        );
+    }
+
+    // DIVERGENCE (#181, open): runtime column arithmetic still reports the
+    // class only; Go renders the qualified expression, e.g.
+    // BIGINT value is out of range in '(ovx.t.a + ovx.t.b)'.
+    for sql in ["SELECT a + b FROM t", "SELECT a + 1 FROM t"] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1690, "{sql}");
+        assert_eq!(&error.state, b"22003", "{sql}");
         assert_eq!(error.message, "BIGINT value is out of range", "{sql}");
     }
 
@@ -947,9 +960,9 @@ fn an_overflow_names_its_class_but_not_yet_its_expression() {
         .unwrap_err()
         .to_mysql_error();
     assert_eq!(error.code, 1690);
-    // DIVERGENCE (#181): Go says `DOUBLE value is out of range in
-    // '(1e+308 + 1e+308)'` -- note `1e+308`, the VALUE's formatting, not the
-    // `1e308` the statement wrote.
+    // DIVERGENCE (#181, open) on the DOUBLE arm too: Go says DOUBLE value is
+    // out of range in '(1e+308 + 1e+308)' -- the VALUE spelling `1e+308`, not
+    // the statement's `1e308`. This tier still reports the class alone.
     assert_eq!(error.message, "DOUBLE value is out of range");
 }
 
