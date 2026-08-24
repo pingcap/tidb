@@ -966,6 +966,16 @@ pub(crate) fn run_insert_traced(
             _ => unreachable!("INSERT through a view is refused above"),
         }
     }
+    // Go `optimizeDupKeyCheckForNormalInsert` (`pkg/executor/insert.go`):
+    // only a NORMAL insert -- no REPLACE, no ON DUPLICATE KEY, no IGNORE --
+    // may defer its duplicate key check to the pessimistic lock / prewrite
+    // constraint check. The moment a statement must RESOLVE a conflict rather
+    // than report one, every prior read stays eager, exactly as Go keeps the
+    // in-place mode for those statements.
+    let lazy_dup_check = ctx.pessimistic_lazy_dup_check()
+        && !insert.replace
+        && insert.on_duplicate.is_empty()
+        && !insert.ignore;
     // Go resolves a conflict per row, before the row is written: REPLACE
     // deletes every row it collides with, ON DUPLICATE KEY UPDATE applies
     // its assignments to the first one, and IGNORE skips the row with the
@@ -992,12 +1002,19 @@ pub(crate) fn run_insert_traced(
                 continue;
             }
         }
-        let conflicts = match target(catalog, &database, &table_name).conflicting_handles(row, ctx)
-        {
-            Ok(conflicts) => conflicts,
-            Err(error) => {
-                handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
-                continue;
+        // A lazy normal insert reads nothing here -- Go's addRecord never
+        // resolves conflicts it only reports, and the deferred check needs no
+        // old-row handles.
+        let conflicts = if lazy_dup_check {
+            Vec::new()
+        } else {
+            match target(catalog, &database, &table_name).conflicting_handles(row, ctx)
+            {
+                Ok(conflicts) => conflicts,
+                Err(error) => {
+                    handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
+                    continue;
+                }
             }
         };
         if !conflicts.is_empty() {
@@ -1104,7 +1121,7 @@ pub(crate) fn run_insert_traced(
             0
         };
         if let Err(error) = target(catalog, &database, &table_name)
-            .insert_row_with_row_id(row, written_row_id, shard, ctx)
+            .insert_row_with_row_id_checked(row, written_row_id, shard, ctx, lazy_dup_check)
         {
             handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
             continue;

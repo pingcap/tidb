@@ -200,6 +200,24 @@ pub trait TableStorage: fmt::Debug + Send {
     /// `kv.ErrNotExist`.
     fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError>;
 
+    /// Reads one key from the statement's OWN staged writes only -- Go
+    /// `txn.GetMemBuffer().GetLocal`, the lazy insert duplicate check's read.
+    /// `Ok(empty)` is a staged tombstone; [`StorageError::NotFound`] means the
+    /// staged writes hold nothing for the key. A backend without a staged
+    /// write half has nothing local to consult beyond its ordinary read, so
+    /// this defaults to [`TableStorage::get`].
+    fn get_local(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
+        self.get(key)
+    }
+
+    /// Marks one key an INSERT whose existence was presumed absent -- Go
+    /// `kv.SetPresumeKeyNotExists`, which turns the commit's mutation into
+    /// `Op_Insert` so prewrite rejects a key that turns out to exist. A
+    /// backend without per-key flags ignores the mark.
+    fn mark_presume_key_not_exists(&mut self, key: &Key) {
+        let _ = key;
+    }
+
     /// Reads several keys at one backend request boundary. Backends that do
     /// not have a native batch operation retain correctness through the
     /// point-read fallback; cluster storage overrides this with TiKV's

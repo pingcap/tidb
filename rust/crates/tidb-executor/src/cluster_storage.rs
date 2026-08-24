@@ -232,6 +232,12 @@ impl StatementReadKeys {
 #[derive(Clone, Debug, Default)]
 pub struct MutationBuffer {
     staged: Arc<Mutex<BTreeMap<Key, Option<Vec<u8>>>>>,
+    /// Keys an INSERT staged presumed absent -- Go's per-key
+    /// `SetPresumeKeyNotExists` flag on the `MemBuffer`. The committer turns
+    /// a marked key into `Op_Insert`, so prewrite rejects it when a committed
+    /// version turns out to exist; the pessimistic lock step reads the same
+    /// set as Go's `KeysNeedToLock` reads its flags.
+    presume_not_exists: Arc<Mutex<BTreeSet<Key>>>,
 }
 
 impl MutationBuffer {
@@ -257,6 +263,23 @@ impl MutationBuffer {
     #[must_use]
     pub fn get(&self, key: &Key) -> Option<Option<Vec<u8>>> {
         self.lock().get(key).cloned()
+    }
+
+    /// Marks one staged key presumed absent (`kv.SetPresumeKeyNotExists`).
+    /// Only a key this buffer just STAGED is marked: Go sets the flag when
+    /// `AddRecord`'s lazy check finds no local entry, and never on a tombstone
+    /// overwrite, whose plain `Set` must stay one.
+    pub fn mark_presume_key_not_exists(&self, key: &Key) {
+        self.presume()
+            .insert(key.clone());
+    }
+
+    /// Drains every presumption mark, in no particular order. COMMIT consumes
+    /// this set to type its mutations; like Go's flags, which die with the
+    /// membuffer, a drained mark does not survive the publication attempt.
+    pub fn take_presume_not_exists(&self) -> BTreeSet<Key> {
+        let mut marks = self.presume();
+        std::mem::take(&mut *marks)
     }
 
     /// Every staged entry in `[start, end)`, in key order.
@@ -293,6 +316,7 @@ impl MutationBuffer {
     /// transaction ends.
     pub fn reset(&self) {
         self.lock().clear();
+        self.presume().clear();
     }
 
     /// Replaces the whole buffer with `entries`, which [`Self::staged`]
@@ -307,6 +331,18 @@ impl MutationBuffer {
         let mut staged = self.lock();
         staged.clear();
         staged.extend(entries);
+        // A statement rollback withdraws the statement's presumptions with
+        // its writes: only marks on keys the restored image still stages can
+        // name rows earlier statements of this transaction inserted.
+        let live: BTreeSet<Key> = staged.keys().cloned().collect();
+        let mut marks = self.presume();
+        *marks = marks.intersection(&live).cloned().collect();
+    }
+
+    fn presume(&self) -> std::sync::MutexGuard<'_, BTreeSet<Key>> {
+        self.presume_not_exists
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<Key, Option<Vec<u8>>>> {
@@ -502,6 +538,21 @@ impl TableStorage for ClusterTableStorage {
             Some(None) => Err(StorageError::NotFound),
             None => self.snapshot_get(key)?.ok_or(StorageError::NotFound),
         }
+    }
+
+    fn get_local(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
+        self.check_usable()?;
+        // Strictly the staged writes -- never the snapshot. An empty answer
+        // is a tombstone, the same shape Go's `GetLocal` hands back.
+        match self.buffer.get(key) {
+            Some(Some(value)) => Ok(value),
+            Some(None) => Ok(Vec::new()),
+            None => Err(StorageError::NotFound),
+        }
+    }
+
+    fn mark_presume_key_not_exists(&mut self, key: &Key) {
+        self.buffer.mark_presume_key_not_exists(key);
     }
 
     fn batch_get(&mut self, keys: &[Key]) -> Result<HashMap<Key, Vec<u8>>, StorageError> {
@@ -931,6 +982,117 @@ mod tests {
             snapshot,
             buffer,
         )
+    }
+
+    /// Go `AddRecord`'s two duplicate-check modes, against one committed row:
+    /// `pkg/table/tables/tables.go` reads the whole transaction IN PLACE (the
+    // snapshot included) and reports 1062, while the lazy pessimistic arm
+    /// reads ONLY `GetLocal`, reports nothing, and stages the row with
+    /// `kv.SetPresumeKeyNotExists` -- deferring the verdict to prewrite, whose
+    /// `Op_Insert` rejects a key that exists. This pins both arms and the no
+    /// cluster read property of the second.
+    #[test]
+    fn insert_dup_check_is_in_place_eagerly_and_local_only_lazily() {
+        use crate::kv_table::{KvColumn, KvTable};
+        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+
+        let record_key = Key::from_bytes(encode_row_key_with_handle(
+            42,
+            &RecordHandle::Int(1),
+        ));
+        let mut snapshot = MockSnapshot {
+            ..MockSnapshot::default()
+        };
+        snapshot.data.insert(
+            record_key.as_bytes().to_vec(),
+            b"committed row".to_vec(),
+        );
+        let snapshot = std::sync::Arc::new(std::sync::Mutex::new(snapshot));
+        let buffer = MutationBuffer::new();
+        let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&snapshot) as _;
+        let mut table = KvTable::with_storage(
+            42,
+            vec![KvColumn {
+                name: "a".to_owned(),
+                id: 1,
+                field_type: FieldType::new(FieldTypeCode::LongLong),
+                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                default_value: None,
+                origin_default: None,
+                comment: String::new(),
+                generated: None,
+            }],
+            Box::new(ClusterTableStorage::new(buffer.clone(), handle)),
+        );
+        let ctx = crate::StmtContext::default();
+        let row = [Datum::Int(7)];
+
+        // In place: the committed duplicate is reported at statement time,
+        // exactly Go's eager `txn.Get` arm finding the key.
+        let error = table
+            .insert_row_with_row_id_checked(&row, Some(1), 0, &ctx, false)
+            .unwrap_err();
+        assert!(matches!(error, crate::kv_table::KvTableError::DuplicateEntry { .. }));
+        assert!(buffer.take_presume_not_exists().is_empty());
+
+        // Lazy: the same statement reads nothing from the cluster, succeeds,
+        // and stages the row presumed absent for the commit to verify.
+        let error_count = snapshot.lock().unwrap().gets.len();
+        table
+            .insert_row_with_row_id_checked(&row, Some(1), 0, &ctx, true)
+            .unwrap();
+        assert_eq!(snapshot.lock().unwrap().gets.len(), error_count);
+        let marks = buffer.take_presume_not_exists();
+        assert!(marks.contains(&record_key));
+    }
+
+    #[test]
+    fn get_local_reads_only_the_staged_writes() {
+        let (mut store, snapshot, _buffer) = storage(&[(b"a", b"snap")]);
+        // A key only the SNAPSHOT holds is not local: Go `GetLocal` answers
+        // `ErrNotExist` without touching the cluster.
+        assert_eq!(store.get_local(&key(b"a")), Err(StorageError::NotFound));
+        assert!(snapshot.lock().unwrap().gets.is_empty());
+        // A staged value is the local answer, whatever the snapshot holds.
+        store.set(key(b"a"), b"mine".to_vec()).unwrap();
+        assert_eq!(store.get_local(&key(b"a")).unwrap(), b"mine".to_vec());
+        assert!(snapshot.lock().unwrap().gets.is_empty());
+        // A staged tombstone reads back EMPTY, not missing -- Go's
+        // `GetLocal` returning a zero-length value for a delete.
+        store.delete(key(b"a")).unwrap();
+        assert_eq!(store.get_local(&key(b"a")).unwrap(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn presumption_marks_follow_the_buffer_lifecycle() {
+        let buffer = MutationBuffer::new();
+        let first = key(b"k1");
+        let second = key(b"k2");
+        buffer.mark_presume_key_not_exists(&first);
+        buffer.set(first.clone(), b"v1".to_vec());
+        // The statement's savepoint: the mark and its write are both in.
+        let savepoint = buffer.staged();
+        // A second statement inserts another presumed-absent row ...
+        buffer.mark_presume_key_not_exists(&second);
+        buffer.set(second.clone(), b"v2".to_vec());
+        // ... which then FAILS and rolls back to the savepoint: the withdrawn
+        // write takes its presumption with it, while the earlier statement's
+        // mark -- on a key the restored image still stages -- survives.
+        buffer.restore(savepoint);
+        assert_eq!(buffer.take_presume_not_exists(), {
+            let mut set = std::collections::BTreeSet::new();
+            set.insert(first.clone());
+            set
+        });
+        // A drained mark does not survive publication: COMMIT consumes the
+        // set once, whatever the outcome it reports.
+        assert!(buffer.take_presume_not_exists().is_empty());
+        // And ending the transaction empties the buffer and every remaining
+        // presumption with it.
+        buffer.mark_presume_key_not_exists(&second);
+        buffer.reset();
+        assert!(buffer.take_presume_not_exists().is_empty());
     }
 
     #[test]

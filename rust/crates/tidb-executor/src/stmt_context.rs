@@ -398,6 +398,15 @@ pub struct StmtContext {
     /// default): whether referential integrity is enforced at all. A context
     /// with no session behind it enforces, as a stock session does.
     foreign_key_checks: bool,
+    /// Go `table.DupKeyCheckLazy`, which the session resolves from
+    /// `optimizeDupKeyCheckForNormalInsert` plus `getPessimisticLazyCheckMode`
+    /// (`pkg/executor/insert.go`): an INSERT inside an explicit PESSIMISTIC
+    /// transaction on a user connection checks duplicate record keys against
+    /// its own staged writes only -- Go `GetLocal`, never the snapshot -- and
+    /// stages each inserted row presumed absent, deferring the real existence
+    /// verdict to the pessimistic lock / prewrite constraint check. Default
+    /// OFF: every other statement keeps the in-place check.
+    pessimistic_lazy_dup_check: bool,
 
     /// Go `SessionVars.AllowRemoveAutoInc` (`@@tidb_allow_remove_auto_inc`,
     /// OFF by default), read by `ALTER TABLE ... MODIFY COLUMN`.
@@ -679,6 +688,7 @@ impl StmtContext {
             new_only_full_group_by_check: false,
             default_week_format: 0,
             foreign_key_checks: true,
+            pessimistic_lazy_dup_check: false,
             allow_remove_auto_inc: false,
             div_precision_increment: 4,
             cte_max_recursion_depth: 1000,
@@ -1352,6 +1362,22 @@ impl StmtContext {
     #[must_use]
     pub fn foreign_key_checks(&self) -> bool {
         self.foreign_key_checks
+    }
+
+    /// Marks this statement's INSERT a lazy duplicate check (Go
+    /// `DupKeyCheckLazy` under a pessimistic transaction): the row existence
+    /// read consults only the statement's own staged writes.
+    #[must_use]
+    pub fn with_pessimistic_lazy_dup_check(mut self, enabled: bool) -> Self {
+        self.pessimistic_lazy_dup_check = enabled;
+        self
+    }
+
+    /// Whether this statement's INSERT defers duplicate detection to the
+    /// commit's constraint check.
+    #[must_use]
+    pub fn pessimistic_lazy_dup_check(&self) -> bool {
+        self.pessimistic_lazy_dup_check
     }
 
     /// Sets `@@tidb_allow_remove_auto_inc` for this statement.

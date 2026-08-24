@@ -1558,11 +1558,22 @@ fn staged_mutations(
     buffer: &MutationBuffer,
 ) -> Result<(Vec<OptimisticMutation>, usize), OptimisticCoordinatorError> {
     let staged = buffer.staged();
+    // Keys an INSERT staged presumed absent (`kv.SetPresumeKeyNotExists`)
+    // prewrite as Go's own lazy inserts do: `Op_Insert`, which TiKV rejects
+    // when a committed version of the key turns out to exist. This is the
+    // deferred duplicate check landing -- Go `DupKeyCheckLazy` under a
+    // pessimistic transaction reports 1062 from exactly this mechanism
+    // (`twoPhaseCommitter.initKeysAndMutations` typing presume keys as
+    // insert).
+    let presumed_absent = buffer.take_presume_not_exists();
     let mut mutations = Vec::with_capacity(staged.len());
     let mut planned_bytes = 0usize;
     for (key, value) in staged {
         planned_bytes += key.as_bytes().len() + value.as_ref().map_or(0, Vec::len);
         let mutation = match value {
+            Some(value) if presumed_absent.contains(&key) => {
+                OptimisticMutation::insert(key.into_bytes(), value)
+            }
             Some(value) => OptimisticMutation::index_put(key.into_bytes(), value),
             None => OptimisticMutation::index_delete(key.into_bytes()),
         }

@@ -2279,32 +2279,37 @@ impl KvTable {
         shard: i64,
         ctx: &impl tidb_expr::Columns,
     ) -> Result<TableHandle, KvTableError> {
-        let explicit_handle = match row_id {
-            // Go rebases only for a NON-ZERO value (`if recordID != 0`); a
-            // stored zero under `NO_AUTO_VALUE_ON_ZERO` reaches the handle
-            // without moving the counter, which is why the next automatic row
-            // id after it is the counter's own next value.
-            Some(0) => Some(TableHandle::Int(0)),
-            Some(value) => {
-                // Go `rebaseImplicitRowID`, which rebases the SAME counter an
-                // AUTO_INCREMENT column allocates from -- one counter serves
-                // both, so writing a high row id also moves the auto column.
-                self.auto_id
-                    .rebase(value as u64)
-                    .map_err(|error| KvTableError::Storage(error.0))?;
-                Some(TableHandle::Int(value))
-            }
-            _ => None,
-        };
-        self.insert_row_at(row, explicit_handle, shard, ctx)
+        self.insert_row_in(row, row_id, shard, ctx, false)
     }
 
-    fn insert_row_at(
+    /// [`Self::insert_row_with_row_id`] for the INSERT executor, which names
+    /// the statement's duplicate-key mode. `lazy_dup_check` is Go
+    /// `DupKeyCheckLazy` (`pkg/executor/insert.go`'s
+    /// `optimizeDupKeyCheckForNormalInsert`, reached only by a NORMAL insert
+    /// under a pessimistic transaction): existence is consulted in the
+    /// statement's staged writes ONLY -- Go `GetLocal` -- and a miss stages
+    /// the row presumed absent (`kv.SetPresumeKeyNotExists`), deferring the
+    /// verdict to the commit's constraint check. The record key carries the
+    /// mark; unique secondary entries keep their own eager check, matching
+    /// nothing Go waives for them here.
+    pub fn insert_row_with_row_id_checked(
         &mut self,
         row: &[Datum],
-        explicit_handle: Option<TableHandle>,
+        row_id: Option<i64>,
         shard: i64,
         ctx: &impl tidb_expr::Columns,
+        lazy_dup_check: bool,
+    ) -> Result<TableHandle, KvTableError> {
+        self.insert_row_in(row, row_id, shard, ctx, lazy_dup_check)
+    }
+
+    fn insert_row_in(
+        &mut self,
+        row: &[Datum],
+        row_id: Option<i64>,
+        shard: i64,
+        ctx: &impl tidb_expr::Columns,
+        lazy_dup_check: bool,
     ) -> Result<TableHandle, KvTableError> {
         let zone = ctx.time_zone();
         // The generated columns are recomputed HERE, at the one place every
@@ -2325,12 +2330,49 @@ impl KvTable {
         // it from visible columns; a heap table derives it from `_tidb_rowid`,
         // which `FORCE AUTO_INCREMENT` can intentionally rewind -- or which
         // the statement wrote itself.
+        // Go `adjustImplicitRowID`: a written `_tidb_rowid` becomes the
+        // record handle (rebasing the shared id counter), anything else asks
+        // for an allocated one. See [`Self::insert_row_with_row_id`].
+        let explicit_handle = match row_id {
+            Some(0) => Some(TableHandle::Int(0)),
+            Some(value) => {
+                self.auto_id
+                    .rebase(value as u64)
+                    .map_err(|error| KvTableError::Storage(error.0))?;
+                Some(TableHandle::Int(value))
+            }
+            _ => None,
+        };
         let handle = match explicit_handle {
             Some(handle) => handle,
             None => self.handle_of_row(row, &zone, shard)?,
         };
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
-        if self.row_exists(&handle)? {
+        let physical_id = self.record_physical_id(row, ctx)?;
+        let key = Key::from_bytes(encode_row_key_with_handle(
+            physical_id,
+            &handle.record_handle(),
+        ));
+        // Go `AddRecord`'s duplicate check, in both of its modes. In place it
+        // reads the whole transaction (staged writes, then snapshot); lazily
+        // it reads the STAGED WRITES ONLY (`GetLocal`) and a miss marks the
+        // key presumed not exists so prewrite still rejects a real duplicate.
+        // A locally staged tombstone is neither: the row was deleted inside
+        // this transaction, and the reinsert overwrites it without any
+        // presumption -- Go's own `len(v) == 0` arm.
+        let duplicated = if lazy_dup_check {
+            match self.store.get_local(&key) {
+                Ok(value) => !value.is_empty(),
+                Err(StorageError::NotFound) => {
+                    self.store.mark_presume_key_not_exists(&key);
+                    false
+                }
+                Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
+            }
+        } else {
+            self.row_exists(&handle)?
+        };
+        if duplicated {
             return Err(KvTableError::DuplicateEntry {
                 value: if clustered {
                     clustered_key_text(self, row)
@@ -2345,11 +2387,6 @@ impl KvTable {
                 key: self.qualified_key("PRIMARY"),
             });
         }
-        let physical_id = self.record_physical_id(row, ctx)?;
-        let key = Key::from_bytes(encode_row_key_with_handle(
-            physical_id,
-            &handle.record_handle(),
-        ));
         // Go writes the row first, then its index entries; a duplicate on a
         // unique index aborts the statement.
         self.write_index_entries(row, &handle, physical_id, &zone)?;

@@ -865,6 +865,16 @@ impl Session {
         .with_auto_increment_step(increment, offset)
         .with_auto_increment_zero_explicit(has("NO_AUTO_VALUE_ON_ZERO"))
         .with_foreign_key_checks(self.foreign_key_checks())
+        // Go `optimizeDupKeyCheckForNormalInsert` + `getPessimisticLazyCheckMode`
+        // (`pkg/executor/insert.go`): a statement inside an explicit
+        // PESSIMISTIC transaction on a user connection checks inserted keys
+        // lazily -- staged writes only -- and defers the existence verdict to
+        // the commit. `txn_mode()` answers only while a transaction is open,
+        // which is Go's `InTxn()` guard; internal SQL carries no connection id.
+        .with_pessimistic_lazy_dup_check(
+            matches!(self.txn_mode(), Some(crate::SessionTxnMode::Pessimistic))
+                && self.connection_id.is_some_and(|id| id > 0),
+        )
         .with_allow_remove_auto_inc(self.allow_remove_auto_inc())
         .with_cte_max_recursion_depth(cte_depth)
         .with_join_reorder_threshold(join_reorder_threshold)
