@@ -149,7 +149,11 @@ impl Hasher for ExactIntHasher {
     }
 
     fn write_i128(&mut self, value: i128) {
-        self.hash.write(&value.to_be_bytes());
+        self.hash.write(&(value as i64).to_be_bytes());
+        let high = (value >> 64) as i64;
+        if high != 0 && high != -1 {
+            self.hash.write(&high.to_be_bytes());
+        }
     }
 }
 
