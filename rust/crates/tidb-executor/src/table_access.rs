@@ -162,6 +162,18 @@ pub trait TableAccess {
         false
     }
 
+    /// Offers Go's MaxMinEliminate endgame (`table_reader.go` builds
+    /// `TableReader <- Limit <- *FullScan keepOrder:true, desc`): promises
+    /// that this source's FIRST emitted row holds the extreme value of the
+    /// plain column at `order_offset`, so a `Limit(1)` directly above replaces
+    /// the root TopN. Go gates the rewrite on `checkColCanUseIndex` -- the
+    /// column must be what the storage order ranks -- and implementations
+    /// here must carry the equivalent proof before answering `true`.
+    fn accept_extreme_boundary(&mut self, order_offset: usize, desc: bool) -> bool {
+        let _ = (order_offset, desc);
+        false
+    }
+
     /// Offers Go's `PhysicalIndexLookUpReader.PushedLimit` to an ordered
     /// non-covering index lookup. Unlike a cop scan cap, the SQL offset is
     /// consumed from the index handle stream before table lookup tasks are

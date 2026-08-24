@@ -1737,6 +1737,42 @@ fn tpcc_condition_nine_eliminates_the_unique_district_aggregation() {
     assert!(cell(2, 4).contains("keep order:false"), "{}", cell(2, 4));
 }
 
+/// Go's MaxMinEliminate endgame may only answer `max(col)` from a bounded
+/// reverse walk when the ENTRIES rank by `col`. Over a clustered table whose
+/// secondary index ranks by other columns, the argument arrives through the
+/// common handle appended to the executor schema
+/// (`PhysicalIndexScan.ToPB` appends `ds.CommonHandleCols`) -- so the cop
+/// TopN lowers and the root TopN merges each region's local extreme. A
+/// bounded reverse read offered without Go's `checkColCanUseIndex` proof
+/// answered an arbitrary row as the extreme.
+#[test]
+fn max_min_over_a_clustered_column_the_index_does_not_rank_answers_the_true_extreme() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE ox (a VARCHAR(3) NOT NULL, b VARCHAR(8) NOT NULL, c INT NOT NULL, \
+         d VARCHAR(2), PRIMARY KEY(a,b,c) CLUSTERED, KEY k4(a,b,d))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO ox VALUES ('a01','20220101',3,'x'),\
+         ('a02','20220102',42,'y'),\
+         ('a03','20220103',7,'z')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    // The index ranks (a, b, d): the entry its reverse walk reaches FIRST is
+    // a03, whose row carries c = 7 -- not the true maximum 42. An unproven
+    // bounded read therefore answers 7; only the gated lowering answers 42.
+    let (_, rows) =
+        crate::run_select_meta_on("SELECT MAX(c), MIN(c) FROM ox", &catalog, &ctx).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][0], Datum::Int(42), "{rows:#?}");
+    assert_eq!(rows[0][1], Datum::Int(3), "{rows:#?}");
+}
+
 /// The other half of TPCC condition 09 is a grouped `history` derived table.
 /// Go retains that aggregation while rebuilding its indexed base-table read
 /// for each district probe.  The lookup path must therefore aggregate the

@@ -4193,17 +4193,38 @@ fn build_aggregation(
             // whole table into a root TopN. Offer the bounded order to the
             // scan source; when it declines (or the argument is not a plain
             // output column), fall back to the root TopN as before.
-            let pushed_remote = source
-                .table_access()
-                .is_some_and(|access| {
-                    // Go's MaxMinEliminate endgame
-                    // (\`table_reader.go\`: \`TableReader <- Limit <-
-                    // TableFullScan keepOrder:true, desc\`): the scan walks the
-                    // handle BACKWARD for max (forward for min) and its
-                    // cop-side Limit reads exactly one boundary key.
-                    access.accept_keep_order(elimination.desc)
-                        && access.accept_scan_limit(1)
+            // The bounded read may only be offered when THIS source ranks
+            // rows by the aggregate argument: Go gates the endgame on
+            // `checkColCanUseIndex`, and offering it blind answered an
+            // arbitrary row as the extreme (`max(dtlno)` over an index whose
+            // entries rank by other columns walked BACKWARD). When the proof
+            // fails, lower the cop TopN instead whenever TiKV can evaluate
+            // the sort column on the entries -- indexed or clustered-handle
+            // columns alike ride the executor schema
+            // (`PhysicalIndexScan.ToPB` appends `ds.CommonHandleCols`) -- and
+            // let the root TopN below merge the regions' local extremes.
+            let argument_offset = elimination
+                .argument
+                .as_column()
+                .and_then(|column| usize::try_from(column.index).ok());
+            let pushed_remote =
+                argument_offset.is_some_and(|order_offset| {
+                    source.table_access().is_some_and(|access| {
+                        access
+                            .accept_extreme_boundary(order_offset, elimination.desc)
+                    })
                 });
+            if !pushed_remote {
+                if let Some(order_offset) = argument_offset {
+                    let _ = source.table_access().is_some_and(|access| {
+                        access.accept_index_top_n(
+                            &[(order_offset, elimination.desc)],
+                            1,
+                        )
+                    });
+                }
+            }
+
             if pushed_remote {
                 if let Some(trace) = trace.as_deref_mut() {
                     trace.pushed_topn_reader(

@@ -1887,7 +1887,9 @@ impl IndexRangeSourceExec {
             // one), so every handle is ordinal 0.
             return Ok(remote
                 .next_handle()
-                .map_err(|_| ExecError::unsupported("remote index row failed to decode"))?
+                .map_err(|error| {
+                    ExecError::unsupported(format!("remote index row failed to decode: {error:?}"))
+                })?
                 .map(|handle| (handle, 0)));
         }
         loop {
@@ -2581,6 +2583,64 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         self.estimated_rows = Some(rows);
     }
 
+    /// Go `rule_max_min_eliminate.go`'s `checkColCanUseIndex`: the bounded
+    /// reverse read is offered only when the entries RANK by the argument --
+    /// the column is one of the index's whole-stored columns or of the
+    /// clustered handle, and every ordering column ranked before it is pinned
+    /// to one value across every range. A residual conjunct stays out too
+    /// (Go refuses on `RemainedConds`), and one range keeps the walk a single
+    /// ordered stream, which the LIMIT-1 cut below leans on.
+    fn accept_extreme_boundary(&mut self, order_offset: usize, desc: bool) -> bool {
+        if self.covering
+            || self.top_n.is_some()
+            || self.limit.is_some()
+            || self.partial_aggregate.is_some()
+            || !self.pushed.is_empty()
+            || self.ranges.len() != 1
+        {
+            return false;
+        }
+        let Some(index) = self
+            .table
+            .indexes()
+            .iter()
+            .find(|index| index.id == self.index_id)
+        else {
+            return false;
+        };
+        // A prefix key part stores a sort key, not the column: the entries no
+        // longer rank by that column once the prefix begins.
+        let mut ordered = index.ordered_column_offsets().to_vec();
+        for offset in self.table.common_handle_offsets() {
+            if !ordered.contains(offset) {
+                ordered.push(*offset);
+            }
+        }
+        if let Some(pk) = self.table.pk_handle_offset() {
+            if !ordered.contains(&pk) {
+                ordered.push(pk);
+            }
+        }
+        let Some(physical) = self.keep.get(order_offset) else {
+            return false;
+        };
+        let Some(rank) = ordered.iter().position(|offset| offset == physical) else {
+            return false;
+        };
+        if rank > 0 {
+            let range = &self.ranges[0];
+            let fixed = range.low.len() >= rank
+                && range.high.len() >= rank
+                && !range.low_exclusive
+                && !range.high_exclusive
+                && (0..rank).all(|i| range.low[i] == range.high[i]);
+            if !fixed {
+                return false;
+            }
+        }
+        self.accept_keep_order(desc) && self.accept_scan_limit(1)
+    }
+
     fn accept_partial_aggregate(
         &mut self,
         aggregate: &PushdownPartialAggregate,
@@ -2774,12 +2834,22 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
     }
 
     fn accept_index_top_n(&mut self, order_by: &[(usize, bool)], limit: u64) -> bool {
-        if self.covering
-            || !self.index_filter
-            || self.top_n.is_some()
+        // A covering declaration does not opt out: this tier reads the row
+        // through its lookup either way, so a region-reduced entry stream
+        // serves it exactly as it serves a double read.
+        if self.top_n.is_some()
             || self.table.has_dirty_content()
             || order_by.is_empty()
         {
+            return false;
+        }
+        // A coprocessor TopN requires every predicate to travel in the TiKV
+        // Selection (`cop_scan.rs` refuses otherwise), which the driver's
+        // index-filter acceptance proved; a source with no pushed conjuncts
+        // satisfies the same gate trivially -- Go's MaxMinElimination pushes
+        // a cop TopN for an unfiltered `max(pk_col)` over a secondary index
+        // whose entries carry the column through the clustered handle.
+        if !self.index_filter && !self.pushed.is_empty() {
             return false;
         }
         let Some(index) = self
@@ -2791,9 +2861,16 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
             return false;
         };
         if order_by.iter().any(|(offset, _)| {
-            self.keep
-                .get(*offset)
-                .is_none_or(|physical| !index.column_offsets.contains(physical))
+            self.keep.get(*offset).is_none_or(|physical| {
+                let indexed = index.ordered_column_offsets().contains(physical);
+                // The executor schema appends EVERY clustered-handle column
+                // after the index columns, so TiKV evaluates a sort key from
+                // the handle exactly as it evaluates one from the indexed
+                // prefix.
+                let handled = self.table.common_handle_offsets().contains(physical)
+                    || self.table.pk_handle_offset() == Some(*physical);
+                !indexed && !handled
+            })
         }) {
             return false;
         }
@@ -4543,6 +4620,95 @@ mod tests {
             ROWS as usize,
             "the sort saw the whole relation, as it must"
         );
+    }
+
+    /// Go `checkColCanUseIndex`: the MaxMinEliminate bounded reverse read is
+    /// only offered when the entries RANK by the aggregate argument. Over a
+    /// clustered table whose secondary index ranks (a, b, d), `c` arrives
+    /// through the common handle appended to the executor schema -- so the
+    /// boundary read is refused (the reverse walk reaches the `a03` entry
+    /// first, whose row need not hold the extreme) while the coprocessor TopN
+    /// accepts the same column, which its executor schema carries.
+    #[test]
+    fn an_extreme_over_a_handle_column_the_index_does_not_rank_lowers_the_cop_topn_instead() {
+        let mut table = KvTable::with_storage(
+            91,
+            vec![
+                column("a", 1),
+                column("b", 2),
+                column("c", 3),
+                column("d", 4),
+            ],
+            Box::new(MemTableStorage::default()),
+        );
+        table.set_common_handle_offsets(vec![0, 1, 2]);
+        table
+            .create_index_with_context(
+                crate::kv_table::KvIndex {
+                    id: 1,
+                    name: "k4".to_owned(),
+                    comment: String::new(),
+                    unique: false,
+                    column_offsets: vec![0, 1, 3],
+                    prefix_lengths: vec![
+                        crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                        3
+                    ],
+                    visible: true,
+                    global: false,
+                },
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap();
+        let mut exec = IndexRangeSourceExec::new_with_statement(
+            {
+                let mut schema_column = tidb_expr::column::Column::new(3, long());
+                schema_column.index = 0;
+                ExecutorMeta::new(
+                    tidb_expr::schema::Schema::new(vec![schema_column]),
+                    0,
+                    1,
+                    1024,
+                )
+            },
+            table.clone(),
+            1,
+            vec![IndexRange::full()],
+            crate::kv_table::RowDecodeContext::for_test_query_utc(),
+            crate::remote_scan::PushdownStatementContext::from_stmt(
+                &crate::StmtContext::for_query(),
+            ),
+        );
+        // The single output slot names stored column `c` (offset 2).
+        exec.read_table_columns(vec![2]);
+        use crate::table_access::TableAccess;
+        // `c` is not ranked by the entries before an unpinned prefix: refuse
+        // the bounded reverse read...
+        assert!(!exec.accept_extreme_boundary(0, true));
+        // ...but TiKV evaluates it from the appended handle columns, so the
+        // coprocessor TopN lowers and the root TopN merges the regions.
+        assert!(exec.accept_index_top_n(&[(0, true)], 1));
+        // The index's own leading column keeps Go's endgame read.
+        let mut exec = IndexRangeSourceExec::new_with_statement(
+            {
+                let mut schema_column = tidb_expr::column::Column::new(1, long());
+                schema_column.index = 0;
+                ExecutorMeta::new(
+                    tidb_expr::schema::Schema::new(vec![schema_column]),
+                    0,
+                    1,
+                    1024,
+                )
+            },
+            table,
+            1,
+            vec![IndexRange::full()],
+            crate::kv_table::RowDecodeContext::for_test_query_utc(),
+            crate::remote_scan::PushdownStatementContext::from_stmt(
+                &crate::StmtContext::for_query(),
+            ),
+        );
+        assert!(exec.accept_extreme_boundary(0, true));
     }
 
     /// Go answers a DESC order by walking the matching index range backwards,
