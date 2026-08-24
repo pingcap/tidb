@@ -39,18 +39,28 @@ use crate::cluster_catalog::{
 /// loader reads is served at the same `start_ts`.
 pub struct TransactionMetaSnapshot<'transaction, C, L, T> {
     transaction: &'transaction mut RealOptimisticTransaction<C, L, T>,
-    call: UnaryCallContext,
+    /// One read request's deadline. Go bounds each storage request, not the
+    /// statement issuing them: every cop task takes
+    /// `TiKVClient.CoprReqTimeout` (default 120s,
+    /// `pkg/store/copr/coprocessor.go:1791`) and client-go stamps its own
+    /// read timeout on every kv RPC -- thousands of requests in one ANALYZE
+    /// or catalog load race thousands of clocks, never one. So this is a
+    /// *template*, stamped fresh per `get`/`scan_prefix`; holding one context
+    /// for the whole load made the total budget equal to a single request's,
+    /// and a catalog-plus-full-scan read of a real cluster blew it before its
+    /// first page came back.
+    timeout: Duration,
 }
 
 impl<'transaction, C, L, T> TransactionMetaSnapshot<'transaction, C, L, T> {
-    /// Binds one transaction and the per-call deadline every read shares.
+    /// Binds one transaction and the per-request deadline every read stamps.
     pub fn new(
         transaction: &'transaction mut RealOptimisticTransaction<C, L, T>,
         timeout: Duration,
     ) -> Self {
         Self {
             transaction,
-            call: UnaryCallContext::with_timeout(timeout),
+            timeout,
         }
     }
 }
@@ -62,8 +72,9 @@ where
     T: TimestampSource,
 {
     fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
+        let call = UnaryCallContext::with_timeout(self.timeout);
         self.transaction
-            .snapshot_get(key, &self.call)
+            .snapshot_get(key, &call)
             .map(|result| result.value)
             .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
     }
@@ -74,8 +85,9 @@ where
                 "catalog prefix has no finite scan end".to_owned(),
             ));
         };
+        let call = UnaryCallContext::with_timeout(self.timeout);
         self.transaction
-            .snapshot_scan(prefix, &end, None, &self.call)
+            .snapshot_scan(prefix, &end, None, &call)
             .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
     }
 }

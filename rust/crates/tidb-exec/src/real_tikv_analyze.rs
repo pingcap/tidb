@@ -153,7 +153,6 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
     statement: &AnalyzeStatement,
     timeout: Duration,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
-    let call = UnaryCallContext::with_timeout(timeout);
     let mut transaction = opener
         .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
@@ -229,8 +228,20 @@ pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: Store
         bucket_count: write.bucket_count,
         topn_count: write.topn_count,
     };
+    // The commit mints its own deadline here rather than inheriting one from
+    // function entry: everything above it -- the catalog read, the previous
+    // statistics read and the row sample -- runs on per-request budgets
+    // (`TransactionMetaSnapshot`), but it lasts as long as the table is
+    // deep. A context stamped before that work shares ONE absolute deadline
+    // with the whole statement, so on a real table the prewrite arrived after
+    // its budget had already been spent by scanning -- `timed out after
+    // 0ms` at commit admission. Go never couples these:
+    // `SaveAnalyzeResultToStorage` commits through the two-phase
+    // committer, whose every action builds its context when it runs
+    // (`twoPhaseCommitter.execute`, pkg/store/tikv/2pc.go), not when
+    // the statement began.
     let outcome = transaction
-        .commit(write.mutations, &call)
+        .commit(write.mutations, &UnaryCallContext::with_timeout(timeout))
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     classify_commit_outcome(&outcome)?;
     Ok(receipt)
@@ -249,12 +260,41 @@ fn classify_commit_outcome(outcome: &OptimisticCommitOutcome) -> Result<(), Clus
 #[cfg(test)]
 mod tests {
     use super::{classify_commit_outcome, realtime_count_of, ClusterAnalyzeError};
+    use std::thread;
+    use std::time::Duration;
     use tidb_stats::row_sample_collector::adjusted_sample_rate;
+    use tidb_txnkv::rpc::UnaryCallContext;
     use tidb_txnkv::region::RegionBackoffKind;
     use tidb_txnkv::transaction::{
         OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction,
         TransactionCause,
     };
+
+    #[test]
+    fn the_commit_budget_is_minted_after_the_scan_not_before_it() {
+        // Regression for the ANALYZE commit that reached prewrite with
+        // {bt}timed out after 0ms{bt}: the commit used to inherit one
+        // {bt}UnaryCallContext{bt} stamped at function entry, so a
+        // table-sized sample consumed the whole statement budget before the
+        // commit was ever submitted -- on a 5.5M-row table the scan alone ran
+        // past the 300s deadline and every commit arrived expired. The
+        // commit must mint its budget where it is spent, the way
+        // {bt}MultiStatementTransaction::transaction_end_call{bt} already
+        // does for sessions.
+        let statement_budget = Duration::from_millis(50);
+        let inherited = UnaryCallContext::with_timeout(statement_budget);
+        // The sample of a deep table: far longer than one request's budget.
+        thread::sleep(statement_budget * 3);
+        assert!(
+            inherited.timeout().is_zero(),
+            "a context minted before the scan is exhausted by it"
+        );
+        let commit_call = UnaryCallContext::with_timeout(statement_budget);
+        assert!(
+            commit_call.timeout() > Duration::ZERO,
+            "the commit mints its own full budget at commit time"
+        );
+    }
 
     #[test]
     fn an_unbelievable_stored_row_count_reads_every_row_rather_than_none() {
