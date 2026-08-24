@@ -439,6 +439,16 @@ impl Column {
         MyDecimal::from_raw_bytes(bytes).expect("chunk decimal cell holds a valid MyDecimal")
     }
 
+    /// Reads a fixed decimal cell directly as an i128 coefficient and scale.
+    /// Values outside that representation return `None` so callers can fall
+    /// back to [`Self::get_my_decimal`] without changing SQL semantics.
+    #[must_use]
+    pub fn get_my_decimal_i128_scaled(&self, row_id: usize) -> Option<(i128, u32)> {
+        let start = row_id * MYDECIMAL_STRUCT_SIZE;
+        let data = self.data.read();
+        MyDecimal::i128_scaled_from_raw_bytes(&data[start..start + MYDECIMAL_STRUCT_SIZE])
+    }
+
     /// Go `GetTime`: the `types.Time` in the specific row.
     ///
     /// # Panics

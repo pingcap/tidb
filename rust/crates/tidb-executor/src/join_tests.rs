@@ -32,16 +32,64 @@ fn decimal(text: &str) -> Decimal {
     value
 }
 
-// NOTE (a0415625bb regression): this file's two compact-key tests
-// (`compact_count_join_key_and_decimal_comparison_are_bounded`,
-// `compact_binary_join_key_matches_go_pad_space_and_null_rules`) referenced
-// a `CompactBinaryKey`/`compact_binary_key`/`compact_join_decimal`
-// implementation that never made that commit, so tidb-executor's TEST BUILD
-// failed for every branch since. They are removed here to restore the
-// build; restore them together with their implementation from
-// a0415625bb's version of this file once the encoding lands. The third
-// test added by the same commit (`residual_hash_join_resumes...`) only
-// uses existing helpers and stays.
+#[test]
+fn compact_count_join_key_and_decimal_comparison_are_bounded() {
+    let short = CompactBinaryKey::from_bytes(b"0xabc").expect("short key fits");
+    assert_eq!(short.bytes.len(), 5);
+    assert_eq!(&short.bytes[..5], b"0xabc");
+    assert!(CompactBinaryKey::from_bytes(&[b'x'; COMPACT_BINARY_KEY_BYTES + 1]).is_none());
+
+    let lower = compact_join_decimal(
+        decimal("12.30")
+            .to_my_decimal()
+            .expect("decimal fits MyDecimal"),
+    );
+    let upper = compact_join_decimal(
+        decimal("12.31")
+            .to_my_decimal()
+            .expect("decimal fits MyDecimal"),
+    );
+    assert_eq!(compare_compact_join_decimal(lower, upper), Ordering::Less);
+    assert!(compact_matches(
+        2,
+        compare_compact_join_decimal(lower, upper)
+    ));
+    assert!(!compact_matches(
+        4,
+        compare_compact_join_decimal(lower, upper)
+    ));
+}
+
+#[test]
+fn compact_binary_join_key_matches_go_pad_space_and_null_rules() {
+    let field_type = FieldType::new(FieldTypeCode::Varchar)
+        .with_flen(42)
+        .with_collation(Collation::Utf8Mb4Bin);
+    let types = [field_type];
+    let mut chunk = Chunk::new(&types, 4, 4);
+    chunk.append_bytes(0, b"abc   ");
+    chunk.append_bytes(0, b"abc");
+    chunk.append_null(0);
+    let key = EquiKey {
+        left: 0,
+        right: 0,
+        class: KeyClass::Str(Collation::Utf8Mb4Bin),
+        null_safe: false,
+    };
+
+    let padded = JoinExec::<NoColumns>::compact_binary_key(&chunk, 0, &types, &key, |key| key.left)
+        .flatten()
+        .expect("non-NULL key");
+    let plain = JoinExec::<NoColumns>::compact_binary_key(&chunk, 1, &types, &key, |key| key.left)
+        .flatten()
+        .expect("non-NULL key");
+    assert_eq!(padded, plain, "utf8mb4_bin is PAD SPACE in Go");
+    assert_eq!(
+        JoinExec::<NoColumns>::compact_binary_key(&chunk, 2, &types, &key, |key| key.left),
+        Some(None),
+        "NULL is represented separately from an empty string"
+    );
+}
 
 #[test]
 fn decimal_residual_multiply_preserves_mysql_hidden_scale() {

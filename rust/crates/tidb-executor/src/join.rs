@@ -154,12 +154,14 @@
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_join::{
     BuildError, BuildTable, EquiKey, FastBytesMap, KeyClass, KeyError, equi_keys_equal_chunk_rows,
-    equi_keys_equal_row, exact_int_key_chunk, row_hash, row_hash_chunk, row_key, row_key_by,
+    equi_keys_equal_row, exact_int_key_chunk, fast_bytes_fingerprint, row_hash, row_hash_chunk,
+    row_key, row_key_by, IdentityU64Hasher,
 };
 use crate::mem_quota::StatementMemory;
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
+use std::hash::{BuildHasherDefault, Hash, Hasher};
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::list::List;
@@ -173,13 +175,22 @@ use tidb_expr::schema::Schema;
 use tidb_util::memory::{ArcAction, Tracker};
 
 const COMPACT_BINARY_KEY_BYTES: usize = 192;
+const COMPACT_BINARY_KEY_INLINE_BYTES: usize = 48;
 
 /// A bounded binary string key for the count-only residual join fast path.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct CompactBinaryKey {
-    len: u8,
-    bytes: [u8; COMPACT_BINARY_KEY_BYTES],
+    bytes: smallvec::SmallVec<[u8; COMPACT_BINARY_KEY_INLINE_BYTES]>,
 }
+
+impl Hash for CompactBinaryKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(fast_bytes_fingerprint(&self.bytes));
+    }
+}
+
+type CompactBinaryMap<V> =
+    HashMap<CompactBinaryKey, V, BuildHasherDefault<IdentityU64Hasher>>;
 
 #[derive(Clone, Copy)]
 enum CompactJoinDecimal {
@@ -192,12 +203,9 @@ impl CompactBinaryKey {
         if bytes.len() > COMPACT_BINARY_KEY_BYTES {
             return None;
         }
-        let mut key = Self {
-            len: bytes.len() as u8,
-            bytes: [0; COMPACT_BINARY_KEY_BYTES],
-        };
-        key.bytes[..bytes.len()].copy_from_slice(bytes);
-        Some(key)
+        Some(Self {
+            bytes: smallvec::SmallVec::from_slice(bytes),
+        })
     }
 }
 
@@ -3816,8 +3824,8 @@ impl<C: Columns> JoinExec<C> {
             KeyClass::Str(collation) => collation,
             _ => return Ok(None),
         };
-        let mut build_values: HashMap<CompactBinaryKey, Vec<CompactJoinDecimal>> =
-            HashMap::with_capacity(100_000);
+        let mut build_values: CompactBinaryMap<Vec<CompactJoinDecimal>> =
+            CompactBinaryMap::with_capacity_and_hasher(100_000, BuildHasherDefault::default());
         let build: &mut dyn Executor = if build_is_left {
             self.left.as_mut()
         } else {
@@ -3830,6 +3838,7 @@ impl<C: Columns> JoinExec<C> {
                 break;
             }
             for row_index in 0..chunk.num_rows() {
+                let physical_row = chunk.sel().map_or(row_index, |selection| selection[row_index]);
                 let row = chunk.get_row(row_index);
                 if row.is_null(build_offset) {
                     continue;
@@ -3846,7 +3855,17 @@ impl<C: Columns> JoinExec<C> {
                 build_values
                     .entry(key)
                     .or_default()
-                    .push(compact_join_decimal(row.get_my_decimal(build_offset)));
+                    .push(
+                        chunk
+                            .column(build_offset)
+                            .get_my_decimal_i128_scaled(physical_row)
+                            .map_or_else(
+                                || compact_join_decimal(row.get_my_decimal(build_offset)),
+                                |(coefficient, scale)| {
+                                    CompactJoinDecimal::Scaled(coefficient, scale)
+                                },
+                            ),
+                    );
             }
             self.memory.check()?;
             chunk.reset();
@@ -3864,6 +3883,9 @@ impl<C: Columns> JoinExec<C> {
                 break;
             }
             for row_index in 0..probe_chunk.num_rows() {
+                let physical_row = probe_chunk
+                    .sel()
+                    .map_or(row_index, |selection| selection[row_index]);
                 let row = probe_chunk.get_row(row_index);
                 if row.is_null(probe_offset) {
                     continue;
@@ -3880,7 +3902,13 @@ impl<C: Columns> JoinExec<C> {
                 let Some(values) = build_values.get(&key) else {
                     continue;
                 };
-                let probe_value = compact_join_decimal(row.get_my_decimal(probe_offset));
+                let probe_value = probe_chunk
+                    .column(probe_offset)
+                    .get_my_decimal_i128_scaled(physical_row)
+                    .map_or_else(
+                        || compact_join_decimal(row.get_my_decimal(probe_offset)),
+                        |(coefficient, scale)| CompactJoinDecimal::Scaled(coefficient, scale),
+                    );
                 for build_value in values {
                     let ordering = if build_on_left {
                         compare_compact_join_decimal(*build_value, probe_value)

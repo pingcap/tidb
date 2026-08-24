@@ -109,7 +109,7 @@ impl Hasher for FastBytesHasher {
 pub(crate) type FastBytesMap<V> = HashMap<Vec<u8>, V, BuildHasherDefault<FastBytesHasher>>;
 
 #[derive(Default)]
-struct IdentityU64Hasher(u64);
+pub(crate) struct IdentityU64Hasher(u64);
 
 impl Hasher for IdentityU64Hasher {
     fn finish(&self) -> u64 {
@@ -128,6 +128,29 @@ impl Hasher for IdentityU64Hasher {
 }
 
 type HashBuckets<V> = HashMap<u64, V, BuildHasherDefault<IdentityU64Hasher>>;
+
+/// Produces a cheap bucket fingerprint in machine-word chunks. Callers must
+/// retain and compare the complete key after a bucket hit because this value
+/// is not collision-free.
+pub(crate) fn fast_bytes_fingerprint(bytes: &[u8]) -> u64 {
+    let mut hash = (bytes.len() as u64).wrapping_mul(0x9e37_79b1_85eb_ca87);
+    let mut chunks = bytes.chunks_exact(8);
+    for chunk in &mut chunks {
+        let word = u64::from_le_bytes(chunk.try_into().expect("eight-byte chunk"));
+        hash ^= word.wrapping_mul(0xc2b2_ae3d_27d4_eb4f);
+        hash = hash
+            .rotate_left(27)
+            .wrapping_mul(0x1656_67b1_9e37_79f9);
+    }
+    let mut tail = 0_u64;
+    for (shift, byte) in chunks.remainder().iter().enumerate() {
+        tail |= u64::from(*byte) << (shift * 8);
+    }
+    hash ^= tail.wrapping_mul(0x85eb_ca77_c2b2_ae63);
+    hash ^= hash >> 33;
+    hash = hash.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    hash ^ (hash >> 33)
+}
 
 /// Hashes the complete integer equality key while retaining the exact
 /// `i128` value in the map. The ordinary hash-join table stores only Go's

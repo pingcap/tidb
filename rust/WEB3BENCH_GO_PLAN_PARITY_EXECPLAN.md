@@ -46,11 +46,18 @@ shapes remain on the existing general executor.
   analyzed-statistics Web3Bench result/EXPLAIN/performance matrix. Results
   remained exact for all deterministic queries and the operator skeletons
   remained aligned; R35's Projection receipt difference is still present.
-- [ ] Close the remaining EXPLAIN receipt differences before claiming full
-  plan-text parity or committing: Rust still exposes a Projection above the
-  R35 HashJoin where Go absorbs the `t2.*` output into the join, aggregate
-  `Column#N` identities differ, and several no-stats row estimates differ even
-  when the operator skeleton is the same.
+- [x] (2026-08-25) Rebased the Web3 work onto remote `b852a47ae3`, resolved
+  overlapping residual-join and index-lookup changes, passed the post-rebase
+  Rust checks, and pushed `6c6dd057c4` (`rust: optimize Web3Bench execution
+  paths`) to `hparser-integration` as a checkpoint.
+- [x] (2026-08-25) The latest deterministic 10x result matrix still matched Go
+  exactly. The most recent alternating one-client run reduced the earlier
+  multi-x gaps, but R34 (`1.72x`) and R35 (`1.36x`) remained slower than Go.
+- [ ] Rebuild from `6c6dd057c4` plus the current remote head and rerun the full
+  analyzed/no-stats acceptance matrix. Close every real performance regression
+  and the remaining EXPLAIN receipt differences before claiming Web3 complete:
+  R35's nested derived-table Projection, aggregate `Column#N` identities, and
+  several no-stats row estimates still require current evidence or fixes.
 
 ## Validation commands
 
@@ -60,14 +67,13 @@ The shared playground currently uses PD `127.0.0.1:14379`, TiKV
 `/tmp` in the current test session.  Targeted Rust checks are run from
 `rust/`:
 
-    cargo +1.97 check --manifest-path Cargo.toml -p tidb-executor
-    cargo +1.97 test --manifest-path Cargo.toml -p tidb-executor compact_count_join_key_and_decimal_comparison_are_bounded -- --nocapture
-    cargo +1.97 test --manifest-path Cargo.toml -p tidb-executor stream_agg_direct_decimal_sum_uses_the_fast_state_safely -- --nocapture
-    cargo +1.97 test --manifest-path Cargo.toml -p tidb-executor selection::tests -- --nocapture
+    cargo +nightly-2026-08-22 check -p tidb-exec -p tidb-executor -q
+    cargo +nightly-2026-08-22 test -p tidb-executor hash_agg --lib -q
+    cargo +nightly-2026-08-22 test -p tidb-executor join --lib -q
 
 Release binaries are rebuilt with:
 
-    cargo +1.97 build --manifest-path Cargo.toml --release -p tidb-server --bin tidb-server
+    cargo +nightly-2026-08-22 build --release -p tidb-server --bin tidb-server
 
 The acceptance matrix must record, for every Web3Bench query, Go/Rust plan
 text, result hash/row count, and alternating single-client latency.  The same
@@ -121,9 +127,9 @@ Post-review analyzed-statistics receipts (after the StreamAgg fix) are:
 
 ## Outcomes & Retrospective
 
-At the current checkpoint the R35 result is correct (`161859`). The post-review
-analyzed-statistics run measured Rust/Go median ratios from `0.99x` to `6.59x`
-(R34 is the largest gap); the earlier no-stats run ranged from `0.95x` to
-`3.57x`. R35 was about `0.163s` versus Go `0.107s` in the post-review run.
-These numbers are evidence for the current build only; they are not a
-push/acceptance receipt while the plan-text differences above remain open.
+At the current checkpoint the R35 result is correct (`161859`). The latest
+analyzed-statistics alternating run measured R34 at `1.72x` and R35 at `1.36x`
+of Go; this is a substantial improvement over the earlier `6.59x`/`1.52x`
+checkpoint but still fails the no-regression acceptance criterion. These
+numbers are evidence for the pre-final build only. The checkpoint was pushed
+to preserve the work, not to claim Web3 acceptance.

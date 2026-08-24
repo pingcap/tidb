@@ -79,7 +79,7 @@ mod spill;
 
 use crate::approx_count_distinct::ApproxCountDistinctSketch;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use crate::hash_join::FastBytesMap;
+use crate::hash_join::{FastBytesMap, IdentityU64Hasher, fast_bytes_fingerprint};
 use crate::mem_quota::StatementMemory;
 use spill::new_group_bytes;
 
@@ -285,6 +285,9 @@ enum DirectStringAgg {
 }
 
 const DIRECT_STRING_MAX_KEY_BYTES: usize = 192;
+
+type DirectStringBucketMap<V> =
+    HashMap<u64, V, BuildHasherDefault<IdentityU64Hasher>>;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum ParallelIntKey {
@@ -2186,6 +2189,12 @@ pub struct HashAggExec<C: HashAggContext> {
     /// moved into `groups` only when a new group is opened; repeated rows
     /// reuse this allocation instead of allocating one `Vec` per row.
     group_key_buffer: Vec<u8>,
+    /// Compact bucket index for the one-column binary string fast path. The
+    /// complete key stays in `direct_string_keys` and is compared after every
+    /// bucket hit, so a fingerprint collision cannot merge SQL groups.
+    direct_string_buckets: DirectStringBucketMap<usize>,
+    direct_string_collisions: DirectStringBucketMap<Vec<usize>>,
+    direct_string_keys: Vec<Vec<u8>>,
     group_collations: Vec<tidb_datatype::Collation>,
     /// The open groups' states, in first-seen order (Go's `groupKeys`). Group
     /// `g` occupies `g * agg_funcs.len()..(g + 1) * agg_funcs.len()` so the
@@ -2291,6 +2300,9 @@ impl<C: HashAggContext> HashAggExec<C> {
             child_returned_empty: true,
             groups: FastBytesMap::default(),
             group_key_buffer: Vec::new(),
+            direct_string_buckets: DirectStringBucketMap::default(),
+            direct_string_collisions: DirectStringBucketMap::default(),
+            direct_string_keys: Vec::new(),
             group_collations,
             ordered: Vec::new(),
             group_count: 0,
@@ -2450,6 +2462,73 @@ impl<C: HashAggContext> HashAggExec<C> {
                 | tidb_datatype::Collation::Utf8Mb40900Bin
         )
         .then_some((offset, collation))
+    }
+
+    fn direct_string_group_index(&self, fingerprint: u64, key: &[u8]) -> Option<usize> {
+        let primary = *self.direct_string_buckets.get(&fingerprint)?;
+        if self.direct_string_keys[primary] == key {
+            return Some(primary);
+        }
+        self.direct_string_collisions
+            .get(&fingerprint)
+            .and_then(|candidates| {
+                candidates
+                    .iter()
+                    .copied()
+                    .find(|index| self.direct_string_keys[*index] == key)
+            })
+    }
+
+    fn open_direct_string_group(&mut self, fingerprint: u64) -> (usize, i64) {
+        let idx = self.group_count;
+        let capacity = self.group_key_buffer.capacity();
+        let key = std::mem::replace(
+            &mut self.group_key_buffer,
+            Vec::with_capacity(capacity),
+        );
+        let bytes = new_group_bytes(key.len(), self.agg_funcs.len());
+        self.direct_string_keys.push(key);
+        match self.direct_string_buckets.entry(fingerprint) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(idx);
+            }
+            std::collections::hash_map::Entry::Occupied(_) => {
+                self.direct_string_collisions
+                    .entry(fingerprint)
+                    .or_default()
+                    .push(idx);
+            }
+        }
+        self.ordered
+            .extend(self.agg_funcs.iter().map(AggState::new));
+        self.group_count += 1;
+        (idx, bytes)
+    }
+
+    /// Reserve the direct group's hot-path containers once the first input
+    /// chunk arrives.  The pushed-down Web3Bench aggregate receives a bounded
+    /// partial result (about 80K groups here); growing three independent
+    /// vectors/maps one bucket at a time otherwise adds several rehash and
+    /// relocation rounds before the final TopN can run.
+    fn reserve_direct_string_groups(&mut self) {
+        if self.group_count != 0
+            || !self.direct_string_buckets.is_empty()
+            || !self.direct_string_keys.is_empty()
+        {
+            return;
+        }
+        let estimate = self
+            .child
+            .row_count()
+            .ok()
+            .flatten()
+            .unwrap_or(0)
+            .clamp(1024, 131_072) as usize;
+        self.direct_string_buckets.reserve(estimate);
+        self.direct_string_collisions.reserve(estimate / 64);
+        self.direct_string_keys.reserve(estimate);
+        self.ordered
+            .reserve(estimate.saturating_mul(self.agg_funcs.len()));
     }
 
     /// The Web3Bench grouped shape has one binary string key and only
@@ -2616,6 +2695,7 @@ impl<C: HashAggContext> HashAggExec<C> {
         offset: usize,
         collation: tidb_datatype::Collation,
     ) -> Result<Vec<usize>, ExecError> {
+        self.reserve_direct_string_groups();
         let mut deferred = Vec::new();
         for row_index in 0..rows {
             let row = chunk.get_row(row_index);
@@ -2642,25 +2722,18 @@ impl<C: HashAggContext> HashAggExec<C> {
                 self.group_key_buffer.push(1);
                 self.group_key_buffer.extend_from_slice(bytes);
             }
-            let idx = match self.groups.get(&self.group_key_buffer) {
-                Some(&idx) => idx,
+            let fingerprint = fast_bytes_fingerprint(&self.group_key_buffer);
+            let idx = match self
+                .direct_string_group_index(fingerprint, &self.group_key_buffer)
+            {
+                Some(idx) => idx,
                 None => {
                     if self.in_spill_mode.load(SeqCst) && self.group_count != 0 {
                         deferred.push(row_index);
                         continue;
                     }
-                    let idx = self.group_count;
-                    let capacity = self.group_key_buffer.capacity();
-                    let key = std::mem::replace(
-                        &mut self.group_key_buffer,
-                        Vec::with_capacity(capacity),
-                    );
-                    self.tracker
-                        .consume(new_group_bytes(key.len(), self.agg_funcs.len()));
-                    self.groups.insert(key, idx);
-                    self.ordered
-                        .extend(self.agg_funcs.iter().map(AggState::new));
-                    self.group_count += 1;
+                    let (idx, bytes) = self.open_direct_string_group(fingerprint);
+                    self.tracker.consume(bytes);
                     idx
                 }
             };
@@ -2685,6 +2758,7 @@ impl<C: HashAggContext> HashAggExec<C> {
         collation: tidb_datatype::Collation,
         specs: &[DirectStringAgg],
     ) -> Result<Vec<usize>, ExecError> {
+        self.reserve_direct_string_groups();
         let values = specs
             .iter()
             .map(|spec| match spec {
@@ -2731,29 +2805,22 @@ impl<C: HashAggContext> HashAggExec<C> {
                 self.group_key_buffer.push(1);
                 self.group_key_buffer.extend_from_slice(bytes);
             }
-            let idx = match self.groups.get(&self.group_key_buffer) {
-                Some(&idx) => idx,
+            let fingerprint = fast_bytes_fingerprint(&self.group_key_buffer);
+            let idx = match self
+                .direct_string_group_index(fingerprint, &self.group_key_buffer)
+            {
+                Some(idx) => idx,
                 None => {
                     if self.in_spill_mode.load(SeqCst) && self.group_count != 0 {
                         deferred.push(row_index);
                         continue;
                     }
-                    let idx = self.group_count;
-                    let capacity = self.group_key_buffer.capacity();
-                    let key = std::mem::replace(
-                        &mut self.group_key_buffer,
-                        Vec::with_capacity(capacity),
-                    );
-                    let bytes = new_group_bytes(key.len(), self.agg_funcs.len());
+                    let (idx, bytes) = self.open_direct_string_group(fingerprint);
                     if batch_tracking {
                         pending_tracker_bytes += bytes;
                     } else {
                         self.tracker.consume(bytes);
                     }
-                    self.groups.insert(key, idx);
-                    self.ordered
-                        .extend(self.agg_funcs.iter().map(AggState::new));
-                    self.group_count += 1;
                     idx
                 }
             };
@@ -2796,14 +2863,16 @@ impl<C: HashAggContext> HashAggExec<C> {
                         if source.is_null(physical_row) {
                             continue;
                         }
-                        let decimal = source.get_my_decimal(physical_row);
-                        if let Some((coefficient, scale)) = decimal.to_i128_scaled() {
+                        if let Some((coefficient, scale)) =
+                            source.get_my_decimal_i128_scaled(physical_row)
+                        {
                             if state.update_sum_decimal_fast(coefficient, scale) {
                                 continue;
                             }
                         }
                         // Overflow or a mixed representation is rare but must
                         // retain Go's exact fallback semantics.
+                        let decimal = source.get_my_decimal(physical_row);
                         let value = Datum::Decimal(Decimal::from_my_decimal(&decimal));
                         delta += state.update(Some(value), &[], Vec::new(), None)?;
                     }
@@ -3360,6 +3429,9 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
         self.child_returned_empty = true;
         self.groups.clear();
         self.group_key_buffer.clear();
+        self.direct_string_buckets.clear();
+        self.direct_string_collisions.clear();
+        self.direct_string_keys.clear();
         self.ordered.clear();
         self.group_count = 0;
         self.cursor = 0;
@@ -3524,6 +3596,9 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
 
     fn close(&mut self) -> Result<(), ExecError> {
         self.groups.clear();
+        self.direct_string_buckets.clear();
+        self.direct_string_collisions.clear();
+        self.direct_string_keys.clear();
         self.ordered.clear();
         self.group_count = 0;
         self.parallel_output.clear();
@@ -3888,7 +3963,7 @@ mod tests {
 
     #[test]
     fn bounded_integer_aggregate_keeps_low_quota_on_accounted_serial_path() {
-        let exec = HashAggExec::new(
+        let mut exec = HashAggExec::new(
             out_meta(1),
             vec![col(0)],
             vec![AggFunc::new(AggKind::Count, Some(col(1)))],
@@ -3906,7 +3981,9 @@ mod tests {
     }
 
     fn binary_varchar() -> FieldType {
-        FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Binary)
+        FieldType::new(FieldTypeCode::Varchar)
+            .with_flen(42)
+            .with_collation(Collation::Binary)
     }
 
     fn binary_string_source(values: &[Option<&[u8]>]) -> Box<dyn Executor> {
@@ -3947,6 +4024,66 @@ mod tests {
         );
         assert!(exec.direct_global_count_distinct_column().is_some());
         assert_eq!(run(exec), vec![vec![Datum::Int(2)]]);
+    }
+
+    #[test]
+    fn grouped_binary_strings_use_exact_compact_buckets() {
+        let field_type = binary_varchar();
+        let output_types = [field_type.clone(), long()];
+        let mut first_row = AggFunc::new(AggKind::FirstRow, Some(typed_col(0, field_type.clone())));
+        first_row.distinct = true;
+        let mut exec = HashAggExec::new(
+            out_meta_typed(&output_types),
+            vec![typed_col(0, field_type.clone())],
+            vec![first_row, AggFunc::new(AggKind::Count, None)],
+            binary_string_source(&[Some(b"alpha"), Some(b"beta"), Some(b"alpha"), None]),
+            NoColumns,
+            StatementMemory::default(),
+        );
+        assert!(exec.direct_string_group_column().is_some());
+
+        exec.open().unwrap();
+        let mut output = exec.new_chunk();
+        output.set_required_rows(1, exec.max_chunk_size());
+        exec.next(&mut output).unwrap();
+        assert_eq!(exec.direct_string_keys.len(), 3);
+        assert!(exec.groups.is_empty());
+        let mut rows = Vec::new();
+        loop {
+            rows.extend((0..output.num_rows()).map(|index| {
+                let row = output.get_row(index);
+                vec![
+                    row.get_datum(0, &output_types[0]),
+                    row.get_datum(1, &output_types[1]),
+                ]
+            }));
+            output.set_required_rows(exec.max_chunk_size() as isize, exec.max_chunk_size());
+            exec.next(&mut output).unwrap();
+            if output.num_rows() == 0 {
+                break;
+            }
+        }
+        assert_eq!(
+            rows,
+            vec![
+                vec![
+                    Datum::String(tidb_datatype::StringDatum::new(
+                        b"alpha".to_vec(),
+                        Collation::Binary,
+                    )),
+                    Datum::Int(2),
+                ],
+                vec![
+                    Datum::String(tidb_datatype::StringDatum::new(
+                        b"beta".to_vec(),
+                        Collation::Binary,
+                    )),
+                    Datum::Int(1),
+                ],
+                vec![Datum::Null, Datum::Int(1)],
+            ]
+        );
+        exec.close().unwrap();
     }
 
     fn decimal_with_shape(flen: i64, scale: i64) -> FieldType {

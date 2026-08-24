@@ -1524,6 +1524,46 @@ impl MyDecimal {
         Some((signed, self.digits_frac as u32))
     }
 
+    /// Reads the signed base-10 coefficient and scale directly from the
+    /// 40-byte Go `MyDecimal` chunk layout. This is equivalent to
+    /// [`Self::from_raw_bytes`] followed by [`Self::to_i128_scaled`], while
+    /// avoiding construction and zero-initialization of the nine-word
+    /// decimal buffer on fixed-scale aggregate hot paths.
+    pub fn i128_scaled_from_raw_bytes(bytes: &[u8]) -> Option<(i128, u32)> {
+        if bytes.len() != MYDECIMAL_STRUCT_SIZE || bytes[3] > 1 {
+            return None;
+        }
+        let digits_int = bytes[0] as i8;
+        let digits_frac = bytes[1] as i8;
+        let result_frac = bytes[2] as i8;
+        if digits_int < 0 || digits_frac < 0 || result_frac < 0 {
+            return None;
+        }
+        let integer_words = digits_to_words(i32::from(digits_int)) as usize;
+        let fraction_words = digits_to_words(i32::from(digits_frac)) as usize;
+        let used_words = integer_words.checked_add(fraction_words)?;
+        if used_words > MAX_WORD_BUF_LEN {
+            return None;
+        }
+        let mut magnitude = 0_i128;
+        for chunk in bytes[4..4 + used_words * 4].chunks_exact(4) {
+            let word = i32::from_ne_bytes(chunk.try_into().expect("four-byte decimal word"));
+            if !(0..WORD_BASE as i32).contains(&word) {
+                return None;
+            }
+            magnitude = magnitude
+                .checked_mul(i128::from(WORD_BASE))?
+                .checked_add(i128::from(word))?;
+        }
+        let fraction_padding = fraction_words * DIGITS_PER_WORD as usize
+            - usize::try_from(digits_frac).ok()?;
+        magnitude /= i128::from(POWERS10[fraction_padding]);
+        if bytes[3] == 1 {
+            magnitude = magnitude.checked_neg()?;
+        }
+        Some((magnitude, digits_frac as u32))
+    }
+
     /// The exact 40 bytes a Go chunk `NewDecimal` cell stores (Go copies the
     /// struct through `unsafe.Pointer`; this assembles the identical bytes
     /// field by field -- same layout, no `unsafe`).
@@ -1834,6 +1874,11 @@ mod tests {
                 Some((coefficient, scale)),
                 "{input}"
             );
+            assert_eq!(
+                MyDecimal::i128_scaled_from_raw_bytes(&value.to_raw_bytes()),
+                Some((coefficient, scale)),
+                "raw chunk cell: {input}"
+            );
         }
 
         let (too_wide, error) = MyDecimal::from_string(
@@ -1841,6 +1886,10 @@ mod tests {
         );
         assert_eq!(error, None);
         assert_eq!(too_wide.to_i128_scaled(), None);
+        assert_eq!(
+            MyDecimal::i128_scaled_from_raw_bytes(&too_wide.to_raw_bytes()),
+            None
+        );
     }
 
     #[test]
