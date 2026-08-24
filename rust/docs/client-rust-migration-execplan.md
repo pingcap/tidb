@@ -172,10 +172,12 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       target, correcting this plan's original assumption), `driver/
       mem_buffer.rs`'s `MemBufferBackend` trait (a genuinely clean, currently
       *unimplemented* seam for a future `tikv_client::transaction::unionstore`
-      adapter, but `unionstore`/`MemDb` are `mod`-private with every method
-      `pub(crate)` in the vendored crate — a broad visibility patch against a
-      file under the other agent's active development, not attempted this
-      session), and `rpc/unary.rs`/`rpc/transaction.rs` (map to client-go's
+      adapter — but blocked on two confirmed issues, not just visibility:
+      `unionstore`/`MemDb` are `mod`-private with every method `pub(crate)`,
+      AND `MemDb::remove_from_buffer` — a required `MemBufferBackend` method
+      — is a genuine `panic!("unimplemented")` stub in the vendored crate,
+      not yet ported from client-go at all), and `rpc/unary.rs`/
+      `rpc/transaction.rs` (map to client-go's
       `internal/client` BatchCommands transport, which the upstream ledger
       marks `in-progress` and explicitly incomplete — same category of
       finding as the PD failover one below). See `Surprises & Discoveries`
@@ -413,6 +415,34 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
   (every `MemDb`/`RbtMemDb` method `pub(crate)`);
   `third_party/tikv-client-rs/doc/client-go-parity-ledger.md` row
   `internal/unionstore`.
+- Observation: chasing the `MemBufferBackend` seam further this session
+  (checking whether the visibility patch alone would suffice) found a harder
+  blocker than visibility: `MemDb::remove_from_buffer` — a *required*
+  `MemBufferBackend` method with no default — has no real implementation in
+  the vendored crate. `third_party/tikv-client-rs/src/transaction/
+  unionstore.rs:369-371` is `pub(crate) fn remove_from_buffer(&mut self, key:
+  &[u8]) -> ! { self.art.remove_from_buffer(key) }`, and
+  `third_party/tikv-client-rs/src/transaction/art.rs:588-590` is
+  `pub(crate) fn remove_from_buffer(&mut self, _: &[u8]) -> ! {
+  panic!("unimplemented") }` — a genuine stub, not a design choice with a
+  different name. This is a concrete instance of the `internal/unionstore`
+  ledger row's own completeness claim being narrower than a first read
+  suggests: "complete" there evidently covers the row's *own* original
+  source/test inventory, and `RemoveFromBuffer` may not be part of that
+  package's Go source at all (client-go's real removal-from-buffer path may
+  live in a different file/package this session did not identify) — the
+  ledger's "complete" is a claim about one Go package's inventory, not a
+  blanket guarantee that every method a *different* Rust trait happens to
+  need is implemented. This changes the earlier recommendation: writing the
+  visibility patch now would produce an adapter that panics on a real,
+  non-rare code path (removing a key from the buffer within the same
+  transaction that inserted it — ordinary rollback-of-recent-write
+  behavior), which is worse than not integrating at all. Tabled for the same
+  reason as PD failover, on different evidence: confirmed missing
+  functionality, not just an access seam waiting to be opened.
+  Evidence: `third_party/tikv-client-rs/src/transaction/unionstore.rs`
+  lines 369-371; `third_party/tikv-client-rs/src/transaction/art.rs`
+  lines 588-590.
 
 ## Decision Log
 
