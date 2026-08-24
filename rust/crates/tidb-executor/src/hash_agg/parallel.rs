@@ -721,6 +721,19 @@ fn update_group<C: Columns>(
         }
         let mut extra_values = Vec::new();
         let input = eval_agg_input(func, ctx, row, &mut extra_values)?;
+        if let Some((coefficient, scale)) = input.decimal_coefficient {
+            if state.partial_update_with_coefficient(coefficient, scale) {
+                continue;
+            }
+            // The fast fold refused (overflow): replay via the complete
+            // path with the materialized datum.
+            let value = tidb_datatype::Datum::Decimal(tidb_datatype::Decimal::from_scaled_i128(
+                coefficient,
+                scale,
+            ));
+            delta += state.update(Some(value), &extra_values, Vec::new(), input.distinct_key)?;
+            continue;
+        }
         delta += state.update(input.value, &extra_values, Vec::new(), input.distinct_key)?;
     }
     tracker.consume(delta);

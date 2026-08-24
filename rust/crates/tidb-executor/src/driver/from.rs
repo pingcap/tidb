@@ -1194,14 +1194,11 @@ pub(crate) fn build_from(
             // the one scan.
             if ctx.static_partition_prune() && demand.partition_fan_out {
                 if let (Some(trace), TableEntry::Kv(kv)) = (trace.as_deref_mut(), entry) {
-                    let read = crate::driver::access::leaf_read_partitions(
-                        kv,
-                        &table_ref.partitions,
-                    );
+                    let read =
+                        crate::driver::access::leaf_read_partitions(kv, &table_ref.partitions);
                     let estimates =
                         crate::driver::access::surviving_partition_estimates(catalog, &read);
-                    let names: Vec<String> =
-                        read.iter().map(|(name, _)| name.clone()).collect();
+                    let names: Vec<String> = read.iter().map(|(name, _)| name.clone()).collect();
                     trace.partition_union(&names, &estimates);
                 }
             }
@@ -1365,7 +1362,11 @@ pub(crate) fn build_from(
                 })
                 .collect::<Vec<_>>();
             let trace_selectivity = trace_filter.as_ref().and_then(|predicate| match entry {
-                TableEntry::Kv(table) if catalog.table_statistics(table.stats_physical_id()).is_some() => {
+                TableEntry::Kv(table)
+                    if catalog
+                        .table_statistics(table.stats_physical_id())
+                        .is_some() =>
+                {
                     crate::driver::access::stats_selectivity_with_default_string_match_selectivity(
                         catalog,
                         table,
@@ -2389,7 +2390,7 @@ fn fallback_index_join_kind(
     right_row_size: f64,
     num_join_keys: usize,
 ) -> tidb_planner::plan_cost_ver2::IndexJoinKind {
-    use tidb_planner::plan_cost_ver2::{hash_build_cost, IndexJoinKind, Ver2Factors};
+    use tidb_planner::plan_cost_ver2::{IndexJoinKind, Ver2Factors, hash_build_cost};
     use tidb_planner::task_type::TaskType;
 
     let (outer_rows, outer_row_size, inner_row_size) = if decision.lookup_is_left {
@@ -3993,8 +3994,10 @@ fn build_join_with_choice(
     let mut conditions = match &join.on {
         Some(expr) => {
             let resolver = ScopeResolver { scope: &scope };
-            vec![rewrite_expr_resolved(expr, &resolver)
-                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?]
+            vec![
+                rewrite_expr_resolved(expr, &resolver)
+                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+            ]
         }
         None => Vec::new(),
     };
@@ -5205,16 +5208,17 @@ fn build_join_with_choice(
         // opposite direction, on the path Go bounds least: for TPCC's
         // `orders` probe (2 of 3 clustered-key columns, so not max-one-row)
         // it raised a per-outer-row estimate to `300000/1`, the whole table.
-        let estimated_access_rows = estimated_outer_rows
-            .zip(estimated_source_rows_one)
-            .map(|(outer, source)| {
-                let before_filter = if effective_filter_selectivity > 0.0 {
-                    source / effective_filter_selectivity.clamp(0.0, 1.0)
-                } else {
-                    source
-                };
-                outer * before_filter * outer_selectivity
-            });
+        let estimated_access_rows =
+            estimated_outer_rows
+                .zip(estimated_source_rows_one)
+                .map(|(outer, source)| {
+                    let before_filter = if effective_filter_selectivity > 0.0 {
+                        source / effective_filter_selectivity.clamp(0.0, 1.0)
+                    } else {
+                        source
+                    };
+                    outer * before_filter * outer_selectivity
+                });
         let estimated_index_join_rows = estimated_join_rows.map(|rows| {
             if outer_not_null.is_empty() {
                 rows.joined
@@ -5913,7 +5917,7 @@ pub(crate) fn qualified_scope_column(scope: &FromScope, current_db: &str, offset
 
 #[cfg(test)]
 mod join_schema_tests {
-    use super::{join_executor_schema, project_composite_lookup_source, FromScope};
+    use super::{FromScope, join_executor_schema, project_composite_lookup_source};
     use crate::driver::FromTable;
     use crate::executor::ExecutorMeta;
     use crate::mem_table::MemTableSourceExec;
