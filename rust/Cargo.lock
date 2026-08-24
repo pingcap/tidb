@@ -666,6 +666,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "etcd-client"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef5da6e9a6ae89f4a91f80ba1caae45a5a924397a19947e18f5121a43285e9bc"
+dependencies = [
+ "http",
+ "prost",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-build",
+ "tonic-prost",
+ "tonic-prost-build",
+ "tower",
+ "tower-service",
+]
+
+[[package]]
 name = "fail"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3260,6 +3278,7 @@ dependencies = [
 name = "tidb-pd-client"
 version = "0.0.0"
 dependencies = [
+ "etcd-client",
  "prost",
  "tidb-proto",
  "tikv-client",

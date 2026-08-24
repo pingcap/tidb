@@ -38,16 +38,16 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use tidb_proto::etcdserverpb::kv_client::KvClient;
-use tidb_proto::etcdserverpb::lease_client::LeaseClient;
+use etcd_client::{
+    Client as RawEtcdClient, ConnectOptions, DeleteOptions, Error as RawEtcdError, GetOptions,
+    PutOptions,
+};
 use tidb_proto::etcdserverpb::watch_client::WatchClient;
 use tidb_proto::etcdserverpb::{
-    watch_request::RequestUnion, DeleteRangeRequest, LeaseGrantRequest, LeaseKeepAliveRequest,
-    LeaseRevokeRequest, PutRequest, RangeRequest, WatchCreateRequest, WatchRequest,
+    watch_request::RequestUnion, WatchCreateRequest, WatchRequest,
 };
 use tidb_proto::mvccpb::event::EventType;
 use tokio::sync::watch;
-use tonic::transport::Channel;
 
 use crate::client::normalize_endpoints;
 use crate::{secure_endpoint, ClusterSecurity, PdClientError};
@@ -514,7 +514,7 @@ fn run_kv_worker(
     receiver: &mpsc::Receiver<EtcdCommand>,
     shutdown: &watch::Receiver<bool>,
 ) {
-    let mut clients: HashMap<String, Channel> = HashMap::new();
+    let mut clients: HashMap<String, RawEtcdClient> = HashMap::new();
     while let Ok(command) = receiver.recv() {
         match command {
             EtcdCommand::Close { reply } => {
@@ -552,15 +552,8 @@ fn run_kv_worker(
                     &mut clients,
                     timeout,
                     security,
-                    |runtime, channel| {
-                        let mut client = KvClient::new(channel);
-                        let request = PutRequest {
-                            key: key.clone(),
-                            value: value.clone(),
-                            ..Default::default()
-                        };
-                        runtime
-                            .block_on(client.put(with_deadline(request, timeout)))
+                    |runtime, mut client| {
+                        runtime.block_on(client.put(key.clone(), value.clone(), None))
                             .map(|_| ())
                     },
                 );
@@ -578,16 +571,10 @@ fn run_kv_worker(
                     &mut clients,
                     timeout,
                     security,
-                    |runtime, channel| {
-                        let mut client = KvClient::new(channel);
-                        let request = PutRequest {
-                            key: key.clone(),
-                            value: value.clone(),
-                            lease,
-                            ..Default::default()
-                        };
+                    |runtime, mut client| {
+                        let options = PutOptions::new().with_lease(lease);
                         runtime
-                            .block_on(client.put(with_deadline(request, timeout)))
+                            .block_on(client.put(key.clone(), value.clone(), Some(options)))
                             .map(|_| ())
                     },
                 );
@@ -600,40 +587,25 @@ fn run_kv_worker(
                     &mut clients,
                     timeout,
                     security,
-                    |runtime, channel| {
-                        let mut client = LeaseClient::new(channel);
-                        let request = LeaseGrantRequest {
-                            ttl: ttl_seconds,
-                            id: 0,
-                        };
+                    |runtime, mut client| {
                         runtime
-                            .block_on(client.lease_grant(with_deadline(request, timeout)))
-                            .map(|response| {
-                                let inner = response.into_inner();
-                                (inner.id, inner.ttl)
-                            })
+                            .block_on(client.lease_grant(ttl_seconds, None))
+                            .map(|response| (response.id(), response.ttl()))
                     },
                 );
                 let _ = reply.send(result);
             }
             EtcdCommand::LeaseRevoke { id, reply } => {
-                let result =
-                    across_endpoints(
-                        runtime,
-                        endpoints,
-                        &mut clients,
-                        timeout,
-                        security,
-                        |runtime, channel| {
-                            let mut client = LeaseClient::new(channel);
-                            runtime
-                                .block_on(client.lease_revoke(with_deadline(
-                                    LeaseRevokeRequest { id },
-                                    timeout,
-                                )))
-                                .map(|_| ())
-                        },
-                    );
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut clients,
+                    timeout,
+                    security,
+                    |runtime, mut client| {
+                        runtime.block_on(client.lease_revoke(id)).map(|_| ())
+                    },
+                );
                 let _ = reply.send(result);
             }
             EtcdCommand::LeaseKeepAliveOnce { id, reply } => {
@@ -643,19 +615,25 @@ fn run_kv_worker(
                     &mut clients,
                     timeout,
                     security,
-                    |runtime, channel| {
-                        let mut client = LeaseClient::new(channel);
-                        // Go `KeepAliveOnce`: one request on the stream, one
-                        // response read back.
+                    |runtime, mut client| {
+                        // `Client::lease_keep_alive` itself sends the first
+                        // request and validates the first response
+                        // (`ttl > 0`) internally, but does not hand that
+                        // response's TTL back to the caller. Go's
+                        // `KeepAliveOnce` is a single request/response
+                        // round trip; the closest equivalent on this crate's
+                        // public API sends one more request on the same
+                        // stream and reads its response for the TTL, which
+                        // is behaviorally equivalent (a freshly refreshed
+                        // lease TTL is returned) at the cost of one extra
+                        // round trip on this uncommon, non-hot-path call.
                         runtime.block_on(async {
-                            let outbound = tokio_stream::once(LeaseKeepAliveRequest { id });
-                            let mut request = tonic::Request::new(outbound);
-                            request.set_timeout(timeout);
-                            let mut inbound = client.lease_keep_alive(request).await?.into_inner();
-                            match inbound.message().await? {
-                                Some(response) => Ok(response.ttl),
-                                None => Err(tonic::Status::aborted(
-                                    "keepalive stream closed without a response",
+                            let (mut keeper, mut stream) = client.lease_keep_alive(id).await?;
+                            keeper.keep_alive().await?;
+                            match stream.message().await? {
+                                Some(response) => Ok(response.ttl()),
+                                None => Err(RawEtcdError::LeaseKeepAliveError(
+                                    "keepalive stream closed without a response".to_owned(),
                                 )),
                             }
                         })
@@ -670,21 +648,15 @@ fn run_kv_worker(
                     &mut clients,
                     timeout,
                     security,
-                    |runtime, channel| {
-                        let mut client = KvClient::new(channel);
-                        let request = RangeRequest {
-                            key: prefix.clone(),
-                            range_end: prefix_range_end(&prefix),
-                            ..Default::default()
-                        };
+                    |runtime, mut client| {
+                        let options = GetOptions::new().with_prefix();
                         runtime
-                            .block_on(client.range(with_deadline(request, timeout)))
-                            .map(|response| {
+                            .block_on(client.get(prefix.clone(), Some(options)))
+                            .map(|mut response| {
                                 response
-                                    .into_inner()
-                                    .kvs
+                                    .take_kvs()
                                     .into_iter()
-                                    .map(|kv| (kv.key, kv.value))
+                                    .map(|kv| kv.into_key_value())
                                     .collect()
                             })
                     },
@@ -698,15 +670,8 @@ fn run_kv_worker(
                     &mut clients,
                     timeout,
                     security,
-                    |runtime, channel| {
-                        let mut client = KvClient::new(channel);
-                        let request = DeleteRangeRequest {
-                            key: key.clone(),
-                            ..Default::default()
-                        };
-                        runtime
-                            .block_on(client.delete_range(with_deadline(request, timeout)))
-                            .map(|_| ())
+                    |runtime, mut client| {
+                        runtime.block_on(client.delete(key.clone(), None)).map(|_| ())
                     },
                 );
                 let _ = reply.send(result);
@@ -718,15 +683,10 @@ fn run_kv_worker(
                     &mut clients,
                     timeout,
                     security,
-                    |runtime, channel| {
-                        let mut client = KvClient::new(channel);
-                        let request = DeleteRangeRequest {
-                            key: prefix.clone(),
-                            range_end: prefix_range_end(&prefix),
-                            ..Default::default()
-                        };
+                    |runtime, mut client| {
+                        let options = DeleteOptions::new().with_prefix();
                         runtime
-                            .block_on(client.delete_range(with_deadline(request, timeout)))
+                            .block_on(client.delete(prefix.clone(), Some(options)))
                             .map(|_| ())
                     },
                 );
@@ -739,22 +699,12 @@ fn run_kv_worker(
                     &mut clients,
                     timeout,
                     security,
-                    |runtime, channel| {
-                        let mut client = KvClient::new(channel);
-                        let request = RangeRequest {
-                            key: key.clone(),
-                            limit: 1,
-                            ..Default::default()
-                        };
+                    |runtime, mut client| {
+                        let options = GetOptions::new().with_limit(1);
                         runtime
-                            .block_on(client.range(with_deadline(request, timeout)))
-                            .map(|response| {
-                                response
-                                    .into_inner()
-                                    .kvs
-                                    .into_iter()
-                                    .next()
-                                    .map(|kv| kv.value)
+                            .block_on(client.get(key.clone(), Some(options)))
+                            .map(|mut response| {
+                                response.take_kvs().into_iter().next().map(|kv| kv.into_key_value().1)
                             })
                     },
                 );
@@ -764,46 +714,25 @@ fn run_kv_worker(
     }
 }
 
-/// etcd's `WithPrefix` range end: the prefix with its LAST byte
-/// incremented, carry rippling left; an all-0xff prefix (or empty) opens
-/// the range to the keyspace end (`\0`).
-fn prefix_range_end(prefix: &[u8]) -> Vec<u8> {
-    let mut end = prefix.to_vec();
-    for i in (0..end.len()).rev() {
-        if end[i] < 0xff {
-            end[i] += 1;
-            end.truncate(i + 1);
-            return end;
-        }
-    }
-    vec![0]
-}
-
-fn with_deadline<T>(message: T, timeout: Duration) -> tonic::Request<T> {
-    let mut request = tonic::Request::new(message);
-    request.set_timeout(timeout);
-    request
-}
-
 /// Runs one call against the first endpoint that answers.
 ///
-/// A channel that failed is dropped rather than reused: etcd inside a
+/// A client that failed is dropped rather than reused: etcd inside a
 /// restarted PD gets a fresh connection on the next call instead of a
 /// permanently broken one.
 fn across_endpoints<T>(
     runtime: &tokio::runtime::Runtime,
     endpoints: &[String],
-    clients: &mut HashMap<String, Channel>,
+    clients: &mut HashMap<String, RawEtcdClient>,
     timeout: Duration,
     security: &ClusterSecurity,
-    mut call: impl FnMut(&tokio::runtime::Runtime, Channel) -> Result<T, tonic::Status>,
+    mut call: impl FnMut(&tokio::runtime::Runtime, RawEtcdClient) -> Result<T, RawEtcdError>,
 ) -> Result<T, EtcdError> {
     let mut last = None;
     for endpoint in endpoints {
         if !clients.contains_key(endpoint) {
-            match connect_channel(runtime, endpoint, timeout, security) {
-                Ok(channel) => {
-                    clients.insert(endpoint.clone(), channel);
+            match connect_etcd_client(runtime, endpoint, timeout, security) {
+                Ok(client) => {
+                    clients.insert(endpoint.clone(), client);
                 }
                 Err(error) => {
                     last = Some(error);
@@ -813,38 +742,68 @@ fn across_endpoints<T>(
         }
         let client = clients
             .get(endpoint)
-            .expect("the channel was just inserted")
+            .expect("the client was just inserted")
             .clone();
         match call(runtime, client) {
             Ok(value) => return Ok(value),
-            Err(status) => {
+            Err(error) => {
                 clients.remove(endpoint);
-                last = Some(EtcdError::Unreachable {
-                    endpoint: endpoint.clone(),
-                    code: format!("{:?}", status.code()),
-                    message: status.message().to_owned(),
-                });
+                last = Some(classify_rpc_error(endpoint, error));
             }
         }
     }
     Err(last.unwrap_or(EtcdError::NoEndpoint))
 }
 
-fn connect_channel(
+/// etcd routing identity stays plaintext-shaped
+/// ([`crate::security::secure_endpoint`]'s doc), but `etcd_client`'s own
+/// endpoint parser rejects an explicit `http://` prefix when TLS options are
+/// set ("TLS options are only supported with HTTPS URLs"); it derives the
+/// scheme itself from whether TLS is configured. Strip the prefix this
+/// crate's own normalization adds so `etcd_client` can make that choice.
+fn strip_scheme(endpoint: &str) -> &str {
+    endpoint.strip_prefix("http://").unwrap_or(endpoint)
+}
+
+fn classify_rpc_error(endpoint: &str, error: RawEtcdError) -> EtcdError {
+    match error {
+        RawEtcdError::GRpcStatus(status) => EtcdError::Unreachable {
+            endpoint: endpoint.to_owned(),
+            code: format!("{:?}", status.code()),
+            message: status.message().to_owned(),
+        },
+        other => EtcdError::Unreachable {
+            endpoint: endpoint.to_owned(),
+            code: "transport".to_owned(),
+            message: other.to_string(),
+        },
+    }
+}
+
+fn connect_etcd_client(
     runtime: &tokio::runtime::Runtime,
     endpoint: &str,
     timeout: Duration,
     security: &ClusterSecurity,
-) -> Result<Channel, EtcdError> {
-    let channel = secure_endpoint(endpoint, security)
-        .map_err(|error| EtcdError::InvalidEndpoint {
-            endpoint: endpoint.to_owned(),
-            message: error.to_string(),
-        })?
-        .connect_timeout(timeout)
-        .timeout(timeout);
+) -> Result<RawEtcdClient, EtcdError> {
+    let mut options = ConnectOptions::new()
+        .with_connect_timeout(timeout)
+        .with_timeout(timeout);
+    if let Some(tls) =
+        security
+            .client_tls_config()
+            .map_err(|error| EtcdError::InvalidEndpoint {
+                endpoint: endpoint.to_owned(),
+                message: error.to_string(),
+            })?
+    {
+        options = options.with_tls(tls);
+    }
     runtime
-        .block_on(channel.connect())
+        .block_on(RawEtcdClient::connect(
+            [strip_scheme(endpoint)],
+            Some(options),
+        ))
         .map_err(|error| EtcdError::Unreachable {
             endpoint: endpoint.to_owned(),
             code: "connect".to_owned(),
