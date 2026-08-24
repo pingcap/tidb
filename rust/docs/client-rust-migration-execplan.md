@@ -221,6 +221,16 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       see the matching commit. No user-facing report this check-in per the
       trigger's own "stay quiet unless something crosses a real threshold"
       instruction.
+- [x] (2026-08-24, user-flagged update) `internal/locate` reached `complete`
+      -- the named threshold. Investigated (not just status-checked):
+      partially helps Phase 1's PD-failover question (one of three gaps
+      closed in `retry_core!`), but its real substance is a strong new
+      Phase 2 lead for `tidb-txnkv/src/region/` + `region/cache/` via
+      `tikv_client::region_cache::RegionCache`. Not attempted this check-in
+      -- genuinely needs a dedicated session (own `region_cache.rs` and
+      `request::RetryableMultiRegion` deep-read, full type/method mapping
+      against `tidb-txnkv/region`'s ~9,100 lines and 5+ downstream
+      consumers). Full findings in `Surprises & Discoveries`.
 - [ ] Phase 3: rewire `tidb-distsql`'s RPC/region-retry layer onto the vendored
       crate's `request::Plan`/`Shardable`/retry framework, porting the
       documented parity fixes from `rust/docs/distsql-coprocessor-parity.md`.
@@ -237,6 +247,76 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
 
 ## Surprises & Discoveries
 
+- Observation (2026-08-24, user-flagged upstream update): `internal/locate`
+  reached `complete` upstream -- the exact threshold this plan's Decision Log
+  named for revisiting PD failover. Investigated what it actually covers,
+  and it is a more significant, more directly Phase-2-relevant finding than
+  its name suggested when this plan first cited it:
+
+  1. **Partial win for PD failover** (Phase 1's `client/failover.rs`
+     question): `pd::retry::RetryClient`'s `retry_core!` macro
+     (`third_party/tikv-client-rs/src/pd/retry.rs`) now has
+     `Err(Error::Unimplemented) => return Err(Error::Unimplemented)` --
+     exactly gap #2 from the original failover finding (the `GetGCState`
+     `Unimplemented` short-circuit). Gaps #1 (leader-vs-non-leader
+     `HeaderError` retry precedence) and #3 (membership refresh once before
+     retrying peers, not per-attempt) are still not present in `retry_core!`
+     -- it is still a blind `LEADER_CHANGE_RETRY`-bounded reconnect-and-retry
+     loop for every other error class. `client/failover.rs` is not yet
+     revisitable on this evidence alone.
+  2. **The real substance is a Phase 2 opportunity, not Phase 1**:
+     `internal/locate`'s Go source list (`region_cache.go`, `region_request.go`,
+     `replica_selector.go`, `store_cache.go`, `slow_score.go`) is client-go's
+     TiKV region/replica routing and retry layer -- the direct source
+     authority for `tidb-txnkv/src/region/` (6,375 lines) and
+     `src/region/cache/` (2,736 lines), not for `tidb-pd-client`'s PD-member
+     failover. The completion receipt's claim ("region coding and indexes,
+     TTL/GC/refresh, store discovery/liveness/health, replica and proxy
+     selection, sender retry/error precedence, runtime diagnostics, network
+     accounting, configurable PD region-meta circuit breaking... 17-artifact/
+     production-symbol/147-test/dependency/consumer mapping") lines up
+     structurally with what `tidb-txnkv/src/region/{background,bucket,
+     health_policy,recovery,replica_selector,request_selector,route,
+     slow_score,store_health,store_state,topology}.rs` and
+     `region/cache/{loader,lookup,replica_routing,scan,store_metadata}.rs`
+     already do. `third_party/tikv-client-rs/src/region_cache.rs`'s
+     `RegionCache<Client = RetryClient<Cluster>>` (2,700+ lines) is public
+     and has a broad, comparable method surface (`get_region_by_key`,
+     `batch_load_regions_with_key_range`, `update_leader`,
+     `invalidate_region_cache`, TiFlash store filtering, circuit breaker
+     config, etc.).
+  3. **Why this isn't a quick follow-up**: `RegionCache` is generic over and
+     directly calls `RetryClientTrait` (the same PD-retry trait from finding
+     1) for its own PD access -- so adopting it would pull Phase 1's PD
+     failover question back into scope, not leave it settled. It also
+     depends on a large, separate generic retry framework this session did
+     not investigate yet, `request::RetryableMultiRegion`
+     (`third_party/tikv-client-rs/src/request/plan.rs`, generic over
+     `Plan + Shardable` and `PdClient`), which is plausibly where "sender
+     retry/error precedence" actually lives (region_request.rs itself turned
+     out to be diagnostics/metrics labeling, not the retry decision function
+     -- `grep`ping it for a retry-decision function found nothing). And every
+     consumer of `tidb-txnkv::region::*` (`RegionWithLeader`, `Store`,
+     `RegionId`, `Key`, etc. are all client-rust's own types, not
+     `tidb-txnkv`'s `PdRegion`/`PdStore`/`Key`) would need retargeting --
+     `tidb-distsql`, `tidb-exec`, `tidb-executor`, `tidb-server`,
+     `tidb-unistore` per the original Phase 2 consumer research.
+  Verdict: genuinely the most promising Phase 2 lead so far -- unlike
+  `internal/client` (clear API-shape mismatch identified) this one has a
+  structurally comparable public surface -- but it needs its own dedicated
+  investigation session (read `region_cache.rs` and `request/plan.rs`'s
+  `RetryableMultiRegion` in full, map every `tidb-txnkv/region` public type/
+  method against them, re-check whether `retry_core!`'s remaining two gaps
+  matter for THIS layer's specific call pattern) before any code changes,
+  not something to start opportunistically off a status-word check.
+  Evidence: `third_party/tikv-client-rs/doc/client-go-parity-ledger.md` row
+  `internal/locate`; `third_party/tikv-client-rs/src/pd/retry.rs` lines
+  187-213 (`retry_core!`); `third_party/tikv-client-rs/src/region_cache.rs`
+  (public API scan); `third_party/tikv-client-rs/src/region_request.rs`
+  (searched for retry-decision logic, found only diagnostics labeling);
+  `third_party/tikv-client-rs/src/request/plan.rs` line 658
+  (`RetryableMultiRegion`, not yet read); `crates/tidb-txnkv/src/region/`
+  and `region/cache/` (file listing and `mod.rs` re-export surface).
 - Observation (2026-08-24, scheduled check-in via `trig_01MxJ7JyarpAxSeHQ9iTTjxJ`):
   `internal/client` (the BatchCommands transport layer -- the row this plan's
   Phase 2 notes named as blocking `tidb-txnkv/src/rpc/{unary,transaction}.rs`)
