@@ -281,19 +281,15 @@ func calculateStatementRUPlan(
 	operatorIndex int,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	calculator *statementRUCalculator,
-	operatorRUs ...map[int]statementRUOperatorRU,
+	operatorRUs map[int]statementRUOperatorRU,
 ) statementRUOperatorResult {
-	var ruCache map[int]statementRUOperatorRU
-	if len(operatorRUs) > 0 {
-		ruCache = operatorRUs[0]
-	}
 	return calculateStatementRUPlanChildFirst(
 		tree,
 		operatorIndex,
 		runtimeStatsColl,
 		calculator,
 		len(tree),
-		ruCache,
+		operatorRUs,
 	)
 }
 
