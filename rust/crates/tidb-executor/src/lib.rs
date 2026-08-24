@@ -44,6 +44,7 @@
 pub mod access_cost;
 pub mod access_path;
 pub mod admin_check;
+pub mod worker_pool;
 pub mod agg_spill;
 pub mod analyze;
 pub mod analyze_col_sampling;

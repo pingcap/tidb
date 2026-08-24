@@ -62,7 +62,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DiskError;
 use tidb_chunk::list::RowPtr;
@@ -903,7 +903,7 @@ pub(crate) struct BuildTable {
     /// Go v1's `outerMatchedStatus` / v2's row-table used flag. Present only
     /// when an outer join builds its preserved side, so the post-probe scan
     /// can emit build rows that never satisfied the complete ON condition.
-    matched: Option<Vec<Vec<u8>>>,
+    matched: Option<Mutex<Vec<Vec<u8>>>>,
     bucket_bytes: i64,
     /// Sum of the capacities of all bucket pointer vectors. Keeping this
     /// incrementally avoids walking every bucket after each input chunk.
@@ -941,7 +941,7 @@ impl BuildTable {
             rows: RowContainer::new(field_types, chunk_size, spill_storage),
             buckets: HashBuckets::default(),
             exact_int_buckets: use_exact_int.then(ExactIntBuckets::default),
-            matched: track_matches.then(Vec::new),
+            matched: track_matches.then(|| Mutex::new(Vec::<Vec<u8>>::new())),
             bucket_bytes: 0,
             bucket_pointer_capacity: 0,
             matched_bitmap_capacity: 0,
@@ -973,12 +973,15 @@ impl BuildTable {
                 .filter(|key| keys.len() == 1 && key.class == KeyClass::Int && !key.null_safe)
         });
         let chk_idx = u32::try_from(self.rows.num_chunks()).map_err(|_| BuildError::Key)?;
-        if let Some(matched) = &mut self.matched {
+        if let Some(matched) = &self.matched {
             let bitmap = vec![0; chunk.num_rows().div_ceil(8)];
             self.matched_bitmap_capacity = self
                 .matched_bitmap_capacity
                 .saturating_add(bitmap.capacity());
-            matched.push(bitmap);
+            matched
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(bitmap);
         }
         for row_idx in 0..chunk.num_rows() {
             let chunk_row = chunk.get_row(row_idx);
@@ -1063,12 +1066,12 @@ impl BuildTable {
     /// Marks one preserved build row as matched after every ON conjunct has
     /// succeeded. A hash-key collision or a rejected residual condition must
     /// not set this bit.
-    pub(crate) fn mark_matched(&mut self, ptr: RowPtr) {
-        let Some(chunk) = self
-            .matched
-            .as_mut()
-            .and_then(|chunks| chunks.get_mut(ptr.chk_idx as usize))
-        else {
+    pub(crate) fn mark_matched(&self, ptr: RowPtr) {
+        let Some(chunks) = self.matched.as_ref() else {
+            return;
+        };
+        let mut chunks = chunks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(chunk) = chunks.get_mut(ptr.chk_idx as usize) else {
             return;
         };
         let row = ptr.row_idx as usize;
@@ -1077,11 +1080,11 @@ impl BuildTable {
 
     /// Whether a preserved build row has produced at least one joined row.
     pub(crate) fn is_matched(&self, ptr: RowPtr) -> bool {
-        let Some(chunk) = self
-            .matched
-            .as_ref()
-            .and_then(|chunks| chunks.get(ptr.chk_idx as usize))
-        else {
+        let Some(chunks) = self.matched.as_ref() else {
+            return false;
+        };
+        let chunks = chunks.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(chunk) = chunks.get(ptr.chk_idx as usize) else {
             return false;
         };
         let row = ptr.row_idx as usize;
@@ -1201,6 +1204,8 @@ impl BuildTable {
             }))
             .saturating_add(self.matched.as_ref().map_or(0, |chunks| {
                 chunks
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .capacity()
                     .saturating_mul(std::mem::size_of::<Vec<u8>>())
                     + self.matched_bitmap_capacity

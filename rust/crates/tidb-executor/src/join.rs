@@ -190,8 +190,11 @@ pub enum JoinKind {
 /// The hash path's live state; absent until the first `next()`, and never
 /// created on the nested-loop fallback.
 struct HashState {
-    /// The materialized, indexed build side.
-    table: BuildTable,
+    /// The materialized, indexed build side. Shared with the persistent
+    /// pool's probe workers, which need `'static` tasks; every mutation
+    /// happens before the Arc is published (build time) or through the
+    /// matched bitmap's interior lock.
+    table: Arc<BuildTable>,
     /// The build side's column types, needed to read a row back out of the
     /// container (which stores bytes, not `Datum`s).
     build_types: Vec<FieldType>,
@@ -206,7 +209,8 @@ struct HashState {
     /// Products of a constant DECIMAL factor and a build-side DECIMAL column,
     /// keyed by the stable build-row address. `Some(None)` caches SQL NULL.
     /// This avoids repeating q17's `0.2 * AVG(...)` for every probe candidate.
-    decimal_mul_products: HashMap<RowPtr, Option<MyDecimal>>,
+    decimal_mul_products:
+        Arc<std::sync::RwLock<HashMap<RowPtr, Option<MyDecimal>>>>,
     /// Cursor for Go hash join's post-probe scan when the preserved side was
     /// built. `None` means the scan is complete (or was never needed).
     unmatched_build_scan: Option<RowPtr>,
@@ -2820,7 +2824,17 @@ impl<C: Columns> JoinExec<C> {
             && self
                 .hash
                 .as_ref()
-                .is_some_and(|hash| hash.parallel_exact_int_enabled && hash.table.has_exact_int())
+                .is_some_and(|hash| {
+                    let ok = hash.parallel_exact_int_enabled && hash.table.has_exact_int();
+                    if std::env::var("TIDB_DEBUG_PROBE").is_ok() {
+                        eprintln!(
+                            "[gate] kind={:?} residual_supported={residual_supported} int={} nullsafe={} enabled={} exact={}",
+                            self.kind, key.class == KeyClass::Int, !key.null_safe,
+                            hash.parallel_exact_int_enabled, hash.table.has_exact_int()
+                        );
+                    }
+                    ok
+                })
     }
 
     /// Build-side column holding the right operand of q17's cached decimal
@@ -2851,7 +2865,12 @@ impl<C: Columns> JoinExec<C> {
             .parallel_decimal_product_build_column()
             .expect("parallel decimal residual requires a build-side product");
         let hash = self.hash.as_mut().expect("hash table was built");
-        if !hash.decimal_mul_products.is_empty() {
+        if !hash
+            .decimal_mul_products
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
+        {
             return Ok(());
         }
         let mut ptr = hash.table.first_ptr();
@@ -2867,7 +2886,11 @@ impl<C: Columns> JoinExec<C> {
                     })
                     .map_err(|error| ExecError::SpillFailed(error.to_string()))??
             };
-            hash.decimal_mul_products.insert(current, product);
+            hash
+                .decimal_mul_products
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(current, product);
         }
         Ok(())
     }
@@ -3040,18 +3063,22 @@ impl<C: Columns> JoinExec<C> {
                 .hash
                 .as_ref()
                 .expect("parallel probe requires hash state");
-            let table = &hash.table;
-            let build_types = hash.build_types.as_slice();
-            let probe_types = probe_types.as_slice();
-            let decimal_products = &hash.decimal_mul_products;
+            // 'static snapshots for the persistent pool's tasks: the table is
+            // already behind an Arc, the type lists and the decimal fast-path
+            // are small owned values, and the product map is cloned as an Arc
+            // so workers read it without touching the executor.
+            let table = Arc::clone(&hash.table);
+            let build_types = hash.build_types.clone();
+            let probe_types = probe_types.to_vec();
+            let decimal_products = Arc::clone(&hash.decimal_mul_products);
             if worker_count == 1 {
                 let (input, output) = work.pop().expect("one worker item");
                 vec![(
                     0,
                     Self::probe_unique_exact_int_chunk(
-                        table,
-                        build_types,
-                        probe_types,
+                        &table,
+                        &build_types,
+                        &probe_types,
                         input,
                         output,
                         key_offset,
@@ -3059,56 +3086,53 @@ impl<C: Columns> JoinExec<C> {
                         kind,
                         builds_preserved,
                         decimal_mul_lt,
-                        decimal_products,
+                        &decimal_products,
                     ),
                 )]
             } else {
-                let mut lanes = (0..worker_count)
+                let mut lanes: Vec<Vec<(usize, (Chunk, Chunk))>> = (0..worker_count)
                     .map(|_| Vec::with_capacity(PARALLEL_PROBE_CHUNKS_PER_WORKER))
-                    .collect::<Vec<_>>();
+                    .collect();
                 for (index, item) in work.into_iter().enumerate() {
                     lanes[index % worker_count].push((index, item));
                 }
-                std::thread::scope(|scope| {
-                    let handles = lanes
-                        .into_iter()
-                        .map(|lane| {
-                            scope.spawn(move || {
-                                lane.into_iter()
-                                    .map(|(index, (input, output))| {
-                                        (
-                                            index,
-                                            Self::probe_unique_exact_int_chunk(
-                                                table,
-                                                build_types,
-                                                probe_types,
-                                                input,
-                                                output,
-                                                key_offset,
-                                                probe_is_left,
-                                                kind,
-                                                builds_preserved,
-                                                decimal_mul_lt,
-                                                decimal_products,
-                                            ),
-                                        )
-                                    })
-                                    .collect::<Vec<_>>()
-                            })
-                        })
-                        .collect::<Vec<_>>();
-                    let mut outcomes = Vec::with_capacity(PARALLEL_PROBE_CHUNKS_PER_WORKER);
-                    for handle in handles {
-                        let mut lane = handle.join().unwrap_or_else(|_| {
-                            vec![(
-                                0,
-                                Err(ExecError::internal("hash join probe worker panicked")),
-                            )]
-                        });
-                        outcomes.append(&mut lane);
-                    }
-                    outcomes
-                })
+                crate::worker_pool::map(
+                    lanes.into_iter().map(move |lane| {
+                        let table = Arc::clone(&table);
+                        let build_types = build_types.clone();
+                        let probe_types = probe_types.clone();
+                        let decimal_products = Arc::clone(&decimal_products);
+                        // The fast path is a tiny Copy-shaped struct; clone it
+                        // into the 'static task and lend it to the probe call.
+                        let decimal_mul_lt = decimal_mul_lt.cloned();
+                        move || {
+                            lane.into_iter()
+                                .map(|(index, (input, output))| {
+                                    (
+                                        index,
+                                        Self::probe_unique_exact_int_chunk(
+                                            &table,
+                                            &build_types,
+                                            &probe_types,
+                                            input,
+                                            output,
+                                            key_offset,
+                                            probe_is_left,
+                                            kind,
+                                            builds_preserved,
+                                            decimal_mul_lt.as_ref(),
+                                            &decimal_products,
+                                        ),
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                        }
+                    }),
+                    worker_count,
+                )
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
             }
         };
 
@@ -3165,7 +3189,7 @@ impl<C: Columns> JoinExec<C> {
         kind: JoinKind,
         builds_preserved: bool,
         decimal_mul_lt: Option<&DecimalMulLtFastPath>,
-        decimal_products: &HashMap<RowPtr, Option<MyDecimal>>,
+        decimal_products: &std::sync::RwLock<HashMap<RowPtr, Option<MyDecimal>>>,
     ) -> Result<ParallelProbeResult, ExecError> {
         output.reset();
         // A semi/anti join emits only the preserved LEFT columns; the other
@@ -3300,7 +3324,11 @@ impl<C: Columns> JoinExec<C> {
                                 left_types,
                                 right,
                                 right_types,
-                                decimal_products.get(&ptr).map(Option::as_ref),
+                                decimal_products
+                                    .read()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .get(&ptr)
+                                    .map(Option::as_ref),
                             )? {
                                 Self::append_joined_chunk_rows_order(
                                     &mut output,
@@ -3417,7 +3445,11 @@ impl<C: Columns> JoinExec<C> {
                                 left_types,
                                 right,
                                 right_types,
-                                decimal_products.get(&ptr).map(Option::as_ref),
+                                decimal_products
+                                    .read()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .get(&ptr)
+                                    .map(Option::as_ref),
                             )? {
                                 return Ok::<bool, ExecError>(false);
                             }
@@ -3533,13 +3565,13 @@ impl<C: Columns> JoinExec<C> {
         let build_buf = Chunk::new_with_capacity(&build_types, 1);
         let unmatched_build_scan = track_matches.then(|| table.first_ptr()).flatten();
         self.hash = Some(HashState {
-            table,
+            table: Arc::new(table),
             build_types,
             build_buf,
             probe_chunk,
             probe_row: 0,
             probe_done: false,
-            decimal_mul_products: HashMap::new(),
+            decimal_mul_products: Arc::new(std::sync::RwLock::new(HashMap::new())),
             unmatched_build_scan,
             parallel_probe_pending: VecDeque::new(),
             parallel_probe_input_reuse: Vec::new(),
@@ -3980,7 +4012,11 @@ impl<C: Columns> JoinExec<C> {
             for &ptr in candidates {
                 let cached_product = match (decimal_mul_lt, product_build_column) {
                     (Some(fast), Some(column)) => {
-                        if !hash.decimal_mul_products.contains_key(&ptr) {
+                        let mut products = hash
+                            .decimal_mul_products
+                            .write()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        if !products.contains_key(&ptr) {
                             let product = {
                                 let table = &hash.table;
                                 let build_types = &hash.build_types;
@@ -3996,9 +4032,9 @@ impl<C: Columns> JoinExec<C> {
                                     })
                                     .map_err(|error| ExecError::SpillFailed(error.to_string()))??
                             };
-                            hash.decimal_mul_products.insert(ptr, product);
+                            products.insert(ptr, product);
                         }
-                        Some(hash.decimal_mul_products.get(&ptr).copied().flatten())
+                        Some(products.get(&ptr).copied().flatten())
                     }
                     _ => None,
                 };
@@ -4444,6 +4480,9 @@ impl<C: Columns> Executor for JoinExec<C> {
             self.right.open()?;
         }
         self.emitted = false;
+        if std::env::var("TIDB_DEBUG_PROBE").is_ok() {
+            eprintln!("[open] resetting hash");
+        }
         self.hash = None;
         self.build_spilled = false;
         self.spilled_bytes = 0;
@@ -4474,8 +4513,16 @@ impl<C: Columns> Executor for JoinExec<C> {
     /// spill file), then take the spill action back off the session tracker
     /// so the next statement is not left with a dangling one.
     fn close(&mut self) -> Result<(), ExecError> {
+        // Go closes the hash row container here (deletes any spill file and
+        // releases its tracker charge). The state itself stays in place: the
+        // execution-path receipts it carries (probe-window counts) remain
+        // observable to focused regression tests after Close, exactly as they
+        // were before the pool-based probe.
         if let Some(hash) = self.hash.as_mut() {
-            hash.table.close();
+            if let Ok(mut table) = Arc::try_unwrap(Arc::clone(&hash.table)) {
+                table.close();
+                hash.table = Arc::new(table);
+            }
         }
         if let Some(mut state) = self.merge_state.take() {
             self.tracker.consume(-state.left.chunk_bytes);
