@@ -27,6 +27,7 @@
 //! here for dispatch, once in the driver's runner) -- a wiring simplification
 //! to remove when the driver's runners take parsed statements.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

@@ -1041,13 +1041,24 @@ mod tests {
         let session = Session::new();
         // Session bootstrap may create a normal context; isolate the fast
         // path assertion from that startup bookkeeping.
-        *session.tidb_decode_key_cache.borrow_mut() = None;
+        *session
+            .tidb_decode_key_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         let _fast = session.fast_statement_context(false, false);
-        assert!(session.tidb_decode_key_cache.borrow().is_none());
+        assert!(session
+            .tidb_decode_key_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_none());
 
         // The suppression is scoped to one context construction; ordinary
         // statements still retain the metadata required by TIDB_DECODE_KEY.
         let _normal = session.statement_context(false);
-        assert!(session.tidb_decode_key_cache.borrow().is_some());
+        assert!(session
+            .tidb_decode_key_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some());
     }
 }

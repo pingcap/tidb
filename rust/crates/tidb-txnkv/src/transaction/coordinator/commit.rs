@@ -154,7 +154,7 @@ where
                 })
                 .collect();
 
-            let results = match self.runtime.client().try_borrow_mut() {
+            let results = match self.runtime.client().try_lock() {
                 Ok(mut client) => client.publish_prewrites(&requests, call),
                 Err(_) => {
                     let error = "TiKV client is already borrowed while publishing Prewrite";
@@ -649,7 +649,7 @@ where
             };
             let mut context = self.write_context(route.context());
             context.is_retry_request = attempt > 0;
-            let published = match self.runtime.client().try_borrow_mut() {
+            let published = match self.runtime.client().try_lock() {
                 Ok(mut client) => client.publish_commit(route.address(), &request, &context, call),
                 Err(_) => PublishedCommand::BeforePublication(
                     "TiKV client is already borrowed while publishing primary Commit".to_owned(),
@@ -867,7 +867,7 @@ where
                     context: self.write_context(batch.context()),
                 });
             }
-            let results = match self.runtime.client().try_borrow_mut() {
+            let results = match self.runtime.client().try_lock() {
                 Ok(mut client) => client.publish_commits(&requests, &cleanup_call),
                 Err(_) => requests
                     .iter()
