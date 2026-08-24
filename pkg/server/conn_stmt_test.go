@@ -27,6 +27,12 @@ import (
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/server/internal/resultset"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+>>>>>>> 6331b8787b4 (server: detect client disconnects in explicit transactions (#70343))
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/arena"
@@ -35,6 +41,131 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+<<<<<<< HEAD
+=======
+type mockCursorRUV2ConsumptionReporter struct {
+	group     string
+	tikvRUV2  float64
+	tidbRUV2  float64
+	tiflashRU float64
+}
+
+func (*mockCursorRUV2ConsumptionReporter) ReportConsumption(_ string, _ *rmpb.Consumption) {}
+
+func (m *mockCursorRUV2ConsumptionReporter) ReportRUV2Consumption(resourceGroupName string, tikvRUV2, tidbRUV2, tiflashRUV2 float64) {
+	m.group = resourceGroupName
+	m.tikvRUV2 += tikvRUV2
+	m.tidbRUV2 += tidbRUV2
+	m.tiflashRU += tiflashRUV2
+}
+
+type mockCursorTrackerRecordSet struct{}
+
+func (*mockCursorTrackerRecordSet) Fields() []*resolve.ResultField { return nil }
+func (*mockCursorTrackerRecordSet) Next(context.Context, *chunk.Chunk) error {
+	return nil
+}
+func (*mockCursorTrackerRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
+	return chunk.New(nil, 0, 0)
+}
+func (*mockCursorTrackerRecordSet) Close() error { return nil }
+
+var _ sqlexec.RecordSet = &mockCursorTrackerRecordSet{}
+
+type executeStmtRecordSetSession struct {
+	sessionapi.Session
+	recordSet sqlexec.RecordSet
+}
+
+func (s *executeStmtRecordSetSession) ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error) {
+	return s.recordSet, nil
+}
+
+type connectionAliveCheckRecordSet struct {
+	check      func()
+	nextCalled bool
+}
+
+func (*connectionAliveCheckRecordSet) Fields() []*resolve.ResultField { return nil }
+
+func (rs *connectionAliveCheckRecordSet) Next(_ context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	rs.check()
+	rs.nextCalled = true
+	return nil
+}
+
+func (*connectionAliveCheckRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
+	return chunk.New(nil, 0, 0)
+}
+
+func (*connectionAliveCheckRecordSet) Close() error { return nil }
+
+var _ sqlexec.RecordSet = &connectionAliveCheckRecordSet{}
+
+type firstNextErrRecordSet struct{}
+
+func (*firstNextErrRecordSet) Fields() []*resolve.ResultField {
+	panic("Fields should not be called before the first successful Next")
+}
+
+func (*firstNextErrRecordSet) Next(context.Context, *chunk.Chunk) error {
+	return fmt.Errorf("first next failed")
+}
+
+func (*firstNextErrRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
+	return chunk.New(nil, 0, 0)
+}
+
+func (*firstNextErrRecordSet) Close() error { return nil }
+
+var _ sqlexec.RecordSet = &firstNextErrRecordSet{}
+
+type singleRowCursorRecordSet struct {
+	returned bool
+}
+
+func (*singleRowCursorRecordSet) Fields() []*resolve.ResultField {
+	return []*resolve.ResultField{{
+		Column:       &model.ColumnInfo{Name: ast.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)},
+		ColumnAsName: ast.NewCIStr("a"),
+	}}
+}
+
+func (rs *singleRowCursorRecordSet) Next(_ context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if rs.returned {
+		return nil
+	}
+	chk.AppendInt64(0, 1)
+	rs.returned = true
+	return nil
+}
+
+func (*singleRowCursorRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
+	return chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
+}
+
+func (*singleRowCursorRecordSet) Close() error { return nil }
+
+var _ sqlexec.RecordSet = &singleRowCursorRecordSet{}
+
+type failedWriteResponseWriter struct {
+	delay       time.Duration
+	failOnWrite int
+	writes      int
+}
+
+func (w *failedWriteResponseWriter) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writes == w.failOnWrite {
+		time.Sleep(w.delay)
+		return 0, mysql.ErrBadConn
+	}
+	return len(p), nil
+}
+
+>>>>>>> 6331b8787b4 (server: detect client disconnects in explicit transactions (#70343))
 func TestCursorExistsFlag(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := CreateMockServer(t, store)
@@ -240,6 +371,84 @@ func TestMemoryTrackForPrepareBinaryProtocol(t *testing.T) {
 		require.NoError(t, stmt.Close())
 	}
 	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
+}
+
+func TestShouldInstallConnectionAlive(t *testing.T) {
+	tests := []struct {
+		name       string
+		stmt       ast.StmtNode
+		autocommit bool
+		inTxn      bool
+		expected   bool
+	}{
+		{name: "autocommit DML", stmt: &ast.UpdateStmt{}, autocommit: true, expected: true},
+		{name: "explicit transaction DML", stmt: &ast.UpdateStmt{}, autocommit: true, inTxn: true, expected: true},
+		{name: "autocommit select", stmt: &ast.SelectStmt{}, autocommit: true, expected: true},
+		{name: "explicit transaction select", stmt: &ast.SelectStmt{}, autocommit: true, inTxn: true, expected: true},
+		{name: "autocommit do", stmt: &ast.DoStmt{}, autocommit: true, expected: true},
+		{name: "explicit transaction do", stmt: &ast.DoStmt{}, autocommit: true, inTxn: true, expected: true},
+		{name: "autocommit off do", stmt: &ast.DoStmt{}, expected: true},
+		{name: "set", stmt: &ast.SetStmt{}, autocommit: true, expected: true},
+		{name: "begin", stmt: &ast.BeginStmt{}, autocommit: true, expected: true},
+		{name: "explicit transaction DDL", stmt: &ast.CreateTableStmt{}, autocommit: true, inTxn: true, expected: false},
+		{name: "autocommit off DDL", stmt: &ast.CreateTableStmt{}, expected: false},
+		{name: "analyze", stmt: &ast.AnalyzeTableStmt{}, autocommit: true, expected: false},
+		{name: "load data", stmt: &ast.LoadDataStmt{}, autocommit: true, expected: false},
+		{name: "import into", stmt: &ast.ImportIntoStmt{}, autocommit: true, expected: false},
+		{name: "backup", stmt: &ast.BRIEStmt{Kind: ast.BRIEKindBackup}, autocommit: true, expected: false},
+		{name: "restore", stmt: &ast.BRIEStmt{Kind: ast.BRIEKindRestore}, autocommit: true, expected: false},
+		{name: "show BR job", stmt: &ast.BRIEStmt{Kind: ast.BRIEKindShowJob}, autocommit: true, expected: true},
+		{name: "commit", stmt: &ast.CommitStmt{}, autocommit: true, inTxn: true, expected: false},
+		{name: "rollback", stmt: &ast.RollbackStmt{}, autocommit: true, inTxn: true, expected: false},
+		{name: "trace select", stmt: &ast.TraceStmt{Stmt: &ast.SelectStmt{}}, autocommit: true, expected: true},
+		{name: "trace analyze", stmt: &ast.TraceStmt{Stmt: &ast.AnalyzeTableStmt{}}, autocommit: true, expected: false},
+		{name: "trace load data", stmt: &ast.TraceStmt{Stmt: &ast.LoadDataStmt{}}, autocommit: true, expected: false},
+		{name: "trace commit", stmt: &ast.TraceStmt{Stmt: &ast.CommitStmt{}}, autocommit: true, inTxn: true, expected: false},
+		{name: "trace rollback", stmt: &ast.TraceStmt{Stmt: &ast.RollbackStmt{}}, autocommit: true, inTxn: true, expected: false},
+		{name: "explain DDL", stmt: &ast.ExplainStmt{Stmt: &ast.AlterTableStmt{}}, autocommit: true, expected: true},
+		{name: "explain import into", stmt: &ast.ExplainStmt{Stmt: &ast.ImportIntoStmt{}}, autocommit: true, expected: true},
+		{name: "explain analyze select", stmt: &ast.ExplainStmt{Stmt: &ast.SelectStmt{}, Analyze: true}, autocommit: true, expected: true},
+		{name: "explain analyze DDL", stmt: &ast.ExplainStmt{Stmt: &ast.AlterTableStmt{}, Analyze: true}, autocommit: true, expected: false},
+		{name: "explain analyze import into", stmt: &ast.ExplainStmt{Stmt: &ast.ImportIntoStmt{}, Analyze: true}, autocommit: true, expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sessVars := variable.NewSessionVars(nil)
+			sessVars.SetStatusFlag(mysql.ServerStatusAutocommit, tt.autocommit)
+			sessVars.SetInTxn(tt.inTxn)
+			require.Equal(t, tt.expected, shouldInstallConnectionAlive(tt.stmt, sessVars))
+		})
+	}
+
+	t.Run("denylisted lazy result set", func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		srv := CreateMockServer(t, store)
+		srv.SetDomain(dom)
+		defer srv.Close()
+
+		conn := CreateMockConn(t, srv).(*mockConn)
+		defer conn.Close()
+		sessVars := conn.Context().GetSessionVars()
+		rs := &connectionAliveCheckRecordSet{
+			check: func() {
+				require.Nil(t, sessVars.SQLKiller.IsConnectionAlive.Load())
+			},
+		}
+		conn.Context().Session = &executeStmtRecordSetSession{
+			Session:   conn.Context().Session,
+			recordSet: rs,
+		}
+
+		_, err := conn.clientConn.handleStmt(
+			context.Background(),
+			&ast.BRIEStmt{Kind: ast.BRIEKindBackup},
+			nil,
+			true,
+		)
+		require.NoError(t, err)
+		require.True(t, rs.nextCalled)
+	})
 }
 
 func getExpectOutput(t *testing.T, originalConn *mockConn, writeFn func(conn *clientConn)) []byte {

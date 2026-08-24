@@ -182,6 +182,12 @@ go_test(
         "//pkg/server/internal/testutil",
         "//pkg/server/internal/util",
         "//pkg/session",
+<<<<<<< HEAD
+=======
+        "//pkg/session/sessionapi",
+        "//pkg/session/sessmgr",
+        "//pkg/sessionctx/vardef",
+>>>>>>> 6331b8787b4 (server: detect client disconnects in explicit transactions (#70343))
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
         "//pkg/statistics/handle/ddl/testutil",
