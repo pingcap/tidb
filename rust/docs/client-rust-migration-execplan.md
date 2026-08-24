@@ -149,13 +149,21 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       via `git diff` on those exact lines — zero diff). `prefix_range_end`
       was deleted (dead code once `etcd_client::{GetOptions,
       DeleteOptions}::with_prefix` compute it internally).
-- [ ] Phase 1, slice 2 (next): `client/requests.rs` -> delegate each method
-      to `tikv_client::pd::cluster::Cluster`, following slice 1's pattern
-      (keep `client/mod.rs`'s public sync API and `WorkerCommand` enum
-      exactly as-is; the integration point is inside `worker::run_worker`'s
-      command loop, same as `run_kv_worker` was for etcd). Read
-      `client/worker.rs` and `client/requests.rs` together before starting —
-      not yet done this session.
+- [x] (2026-08-24) Phase 1, slice 2 investigation: read `client/failover.rs`,
+      `client/requests.rs` fully, and `tikv_client::pd::{cluster,retry}` to
+      plan replacing them. **Conclusion: do not replace them** — see the
+      `Surprises & Discoveries` entry below for the concrete evidence. Unlike
+      `etcd.rs`, this is not a "found a narrow safe seam" outcome; it is
+      "read the replacement and confirmed it cannot reproduce required,
+      tested behavior." `client/failover.rs`, `client/requests.rs`,
+      `client/worker.rs`, `client/topology.rs`, `client/mod.rs`, and `tso.rs`
+      stay as they are: hand-rolled, but a faithful, extensively tested
+      transcreation of client-go's `pd_service_discovery.go`/
+      `tso_dispatcher.go` that current client-rust does not yet match.
+      Revisit if/when `third_party/tikv-client-rs/doc/client-go-parity-ledger.md`'s
+      `internal/locate` row (region/PD retry) reaches `complete` on a resync
+      — re-read that row's evidence before re-attempting, don't assume
+      `complete` alone means safe (see the same entry).
 - [ ] Phase 2: replace `tidb-txnkv` internals (region cache, RPC transport,
       2PC/lock-resolver engine, raw KV), porting the documented parity fixes
       from `rust/docs/two-phase-commit-vs-client-go.md`.
@@ -320,6 +328,37 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
   deliberately kept (not removed) in slice 1 for exactly this reason.
   Evidence: `crates/tidb-pd-client/src/etcd.rs` `watch_one_stream`,
   `run_watch_loop`, `WatchCounters` (unchanged by slice 1).
+- Observation: `client/failover.rs`'s failover policy is materially more
+  precise than `tikv_client::pd::retry::RetryClient`'s. Concrete
+  differences, each pinned by an existing `tidb-pd-client` test: (1)
+  `is_direct_failure`/`needs_failover_probe`/`is_retryable_endpoint_error`
+  classify errors into direct-transport-failure vs. header-error vs.
+  cluster-mismatch, and treat a *non-leader* endpoint's `HeaderError` as
+  retryable but a *leader*'s as not (`is_retryable_endpoint_error`'s
+  `endpoint != leader_endpoint` check) — pinned by
+  `region_and_store_transport_or_timeout_make_one_attempt_only` and
+  `store_mismatch_unusable_and_unknown_states_fail_closed_without_retry`. (2)
+  `get_gc_state_with_failover` short-circuits on `Unimplemented` rather than
+  probing every peer for a uniformly-old cluster — pinned by
+  `is_unimplemented` and the doc comment on that function. (3) membership
+  refresh happens *once* before retrying peers, not per-attempt. By contrast
+  `tikv_client::pd::retry::RetryClient`'s `retry_core!` macro
+  (`third_party/tikv-client-rs/src/pd/retry.rs`) is a blind
+  `LEADER_CHANGE_RETRY`-bounded loop that reconnects and retries on *any*
+  error with no classification at all — it has no equivalent of any of the
+  three behaviors above. Swapping to it would not "carry a general
+  correctness risk" (the framing that applied to the already-accepted 2PC/
+  coprocessor decision) — it would concretely and immediately fail
+  `region_and_store_transport_or_timeout_make_one_attempt_only`,
+  `store_mismatch_unusable_and_unknown_states_fail_closed_without_retry`,
+  and the `Unimplemented`-short-circuit behavior, because `RetryClient` has
+  no mechanism to reproduce them. This is a structural incompatibility
+  discovered by reading the actual replacement code and cross-referencing it
+  against specific existing tests, not a generic maturity concern.
+  Evidence: `crates/tidb-pd-client/src/client/failover.rs` (whole file, read
+  this session); `crates/tidb-pd-client/tests/pd_client_source.rs` test names
+  above; `third_party/tikv-client-rs/src/pd/retry.rs` lines 163-227
+  (`retry_core!`/`retry_mut!`/`retry!` macros, `RetryClient::connect`).
 
 ## Decision Log
 
@@ -389,6 +428,36 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
   explicitly porting forward every documented fix rather than starting from
   client-rust's un-audited behavior.
   Date/Author: 2026-08-24, user decision via this session.
+- Decision: do not replace `client/failover.rs`, `client/requests.rs`,
+  `client/worker.rs`, `client/topology.rs`, `client/mod.rs`'s PD connection/
+  failover orchestration, or `tso.rs`'s TSO batching, with
+  `tikv_client::pd::retry::RetryClient`/`oracle::PdOracle`. This is different
+  from the 2PC/coprocessor decision above: that one accepted a known,
+  general "less audited" risk on the user's explicit instruction. This one
+  is a structural finding — `RetryClient`'s retry loop cannot reproduce
+  three specific, already-tested behaviors (see the matching
+  `Surprises & Discoveries` entry) — so swapping would not be "replace
+  verified code with less-verified code," it would be "replace correct,
+  tested code with code that fails the tests," with no reasonable amount of
+  glue code closing the gap short of reimplementing the same policy on top
+  of `RetryClient` (which would not reduce hand-rolled logic at all, the
+  stated goal of this migration). Scope for these files going forward: leave
+  them as the faithful, tested client-go transcreation they already are;
+  revisit only if `internal/locate`'s upstream ledger entry reaches
+  `complete` AND its receipt specifically claims the retry/failover
+  behaviors this repo's tests require (check the receipt, not just the
+  status word).
+  Rationale: reading the actual replacement code and testing it against this
+  repo's own regression suite (in analysis, not by running a doomed rewrite)
+  is more informative than proceeding on the general risk-acceptance
+  precedent from the 2PC/coprocessor decision, because the two situations
+  are not the same kind of risk. AGENTS.md's "Correctness first" and "no
+  speculative behavior" both point the same direction here: don't discard
+  tested, correct failover policy for an implementation confirmed not to
+  have it.
+  Date/Author: 2026-08-24, this plan (technical finding, not a re-ask of the
+  user — same category of decision as the already-settled 2PC/coprocessor
+  one, but with concrete disqualifying evidence rather than general risk).
 
 ## Outcomes & Retrospective
 
