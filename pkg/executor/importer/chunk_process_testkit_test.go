@@ -26,10 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -47,6 +46,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func getCSVParser(ctx context.Context, t *testing.T, fileName string) mydump.Parser {
@@ -93,6 +93,7 @@ func TestFileChunkProcess(t *testing.T) {
 		},
 		&importer.LoadDataController{
 			ASTArgs:       &importer.ASTArgs{},
+			Table:         table,
 			InsertColumns: table.VisibleCols(),
 			FieldMappings: fieldMappings,
 		},
@@ -102,6 +103,8 @@ func TestFileChunkProcess(t *testing.T) {
 
 	t.Run("process success", func(t *testing.T) {
 		collector := &execute.TestCollector{}
+		core, observedLogs := observer.New(zap.InfoLevel)
+		chunkLogger := zap.New(core)
 
 		var dataKVCnt, indexKVCnt int
 		fileName := path.Join(tempDir, "test.csv")
@@ -141,16 +144,20 @@ func TestFileChunkProcess(t *testing.T) {
 				return nil
 			}).AnyTimes()
 
-		chunkInfo := &checkpoints.ChunkCheckpoint{
-			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
+		chunkInfo := &importer.Chunk{
+			EndOffset: int64(len(sourceData)),
+			RowIDMax:  10000,
 		}
 		checksum := verify.NewKVGroupChecksumWithKeyspace(nil)
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, checksum, collector,
+			chunkInfo, chunkLogger, diskQuotaLock, dataWriter, indexWriter, checksum, collector,
 		)
 		require.NoError(t, processor.Process(ctx))
 		require.True(t, ctrl.Satisfied())
+		processLogs := observedLogs.FilterMessage("process chunk start").All()
+		require.Len(t, processLogs, 1)
+		require.Equal(t, int64(len(sourceData)), processLogs[0].ContextMap()["chunkSize"])
 		checksumDataKVCnt, checksumIndexKVCnt := checksum.DataAndIndexSumKVS()
 		require.Equal(t, uint64(3), checksumDataKVCnt)
 		require.Equal(t, uint64(6), checksumIndexKVCnt)
@@ -181,8 +188,9 @@ func TestFileChunkProcess(t *testing.T) {
 		dataWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		indexWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
-		chunkInfo := &checkpoints.ChunkCheckpoint{
-			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
+		chunkInfo := &importer.Chunk{
+			EndOffset: int64(len(sourceData)),
+			RowIDMax:  10000,
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
@@ -209,8 +217,9 @@ func TestFileChunkProcess(t *testing.T) {
 		dataWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		indexWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
-		chunkInfo := &checkpoints.ChunkCheckpoint{
-			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
+		chunkInfo := &importer.Chunk{
+			EndOffset: int64(len(sourceData)),
+			RowIDMax:  10000,
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
@@ -233,8 +242,9 @@ func TestFileChunkProcess(t *testing.T) {
 		indexWriter := mock.NewMockEngineWriter(ctrl)
 		dataWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("data write error"))
 
-		chunkInfo := &checkpoints.ChunkCheckpoint{
-			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
+		chunkInfo := &importer.Chunk{
+			EndOffset: int64(len(sourceData)),
+			RowIDMax:  10000,
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
@@ -258,8 +268,9 @@ func TestFileChunkProcess(t *testing.T) {
 		dataWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 		indexWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("index write error"))
 
-		chunkInfo := &checkpoints.ChunkCheckpoint{
-			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
+		chunkInfo := &importer.Chunk{
+			EndOffset: int64(len(sourceData)),
+			RowIDMax:  10000,
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
@@ -271,7 +282,7 @@ func TestFileChunkProcess(t *testing.T) {
 }
 
 func TestNewIndexRouteWriterFactoryErr(t *testing.T) {
-	writer := importer.NewIndexRouteWriter(zap.NewNop(), func(indexID int64) (*external.Writer, error) {
+	writer := importer.NewIndexRouteWriter(zap.NewNop(), func(indexID int64) (*simplesst.Writer, error) {
 		return nil, errors.New("some err")
 	})
 	require.ErrorContains(t, writer.AppendRows(context.Background(), nil, kv.GroupedPairs{1: []common.KvPair{{}}}), "some err")

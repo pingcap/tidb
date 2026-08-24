@@ -152,6 +152,12 @@ func convertBinaryStringLiterals(text string, enc charset.Encoding, noBackslashE
 	i := 0             // scan position in utf8Text
 
 	for i < len(utf8Text) {
+		// Skip SQL comments so that quote characters inside comments are not
+		// mistaken for string-literal boundaries.
+		if skipped := skipComment(utf8Text, src, &i, &origIdx); skipped {
+			continue
+		}
+
 		if utf8Text[i] != '\'' && utf8Text[i] != '"' {
 			i++
 			continue
@@ -265,6 +271,93 @@ func convertBinaryStringLiterals(text string, enc charset.Encoding, noBackslashE
 		buf.Write(utf8Text[lastCopiedIdx:])
 	}
 	return buf.String()
+}
+
+// skipComment checks whether the current position in utf8Text is the start of
+// a SQL comment. If so it advances *i past the comment in utf8Text and returns
+// true. While scanning the comment bytes, it also advances *origIdx past any
+// quote bytes (' or ") found inside the comment so that the dual-index pairing
+// used by the caller for string-literal matching stays correct. Bytes that are
+// not quote characters do NOT advance *origIdx.
+//
+// Recognised comment forms:
+//   - "--" followed by Unicode whitespace or end-of-input: line comment to EOL
+//     (matches lexer startWithDash which uses unicode.IsSpace)
+//   - "#": line comment to EOL
+//   - "/*" ... "*/": block comment, UNLESS the opener is "/*!" or "/*+"
+//     which are MySQL executable/hint comments whose content is parsed as SQL
+//
+// TiDB-specific "/*T!" and MariaDB "/*M!" comments are always skipped here
+// because their executability depends on runtime feature gates that are not
+// available in the ast package. This is conservative: string literals inside
+// an actually-executed /*T![feature] block will not be hex-encoded by this
+// fallback path, but the primary litRange path handles them correctly.
+func skipComment(utf8Text, src []byte, i, origIdx *int) bool {
+	pos := *i
+	ch := utf8Text[pos]
+
+	// -- line comment (MySQL requires whitespace after --, checked via
+	// unicode.IsSpace to match the lexer's startWithDash predicate).
+	if ch == '-' && pos+1 < len(utf8Text) && utf8Text[pos+1] == '-' {
+		if pos+2 >= len(utf8Text) || unicode.IsSpace(rune(utf8Text[pos+2])) {
+			skipToEOL(utf8Text, src, i, origIdx)
+			return true
+		}
+	}
+
+	// # line comment
+	if ch == '#' {
+		skipToEOL(utf8Text, src, i, origIdx)
+		return true
+	}
+
+	// /* */ block comment — only /*! and /*+ are executable (MySQL syntax).
+	if ch == '/' && pos+1 < len(utf8Text) && utf8Text[pos+1] == '*' {
+		if pos+2 < len(utf8Text) {
+			next := utf8Text[pos+2]
+			if next == '!' || next == '+' {
+				// MySQL version comment or optimizer hint — content is SQL.
+				return false
+			}
+		}
+		skipToBlockEnd(utf8Text, src, i, origIdx)
+		return true
+	}
+
+	return false
+}
+
+// skipToEOL advances *i to past the newline (or EOF) and advances *origIdx
+// past any quote bytes encountered along the way, in a single pass.
+func skipToEOL(utf8Text, src []byte, i, origIdx *int) {
+	for *i < len(utf8Text) {
+		ch := utf8Text[*i]
+		if ch == '\'' || ch == '"' {
+			advanceOrigTo(src, origIdx, ch)
+		}
+		*i++
+		if ch == '\n' {
+			return
+		}
+	}
+}
+
+// skipToBlockEnd advances *i past the closing "*/" (or EOF) and advances
+// *origIdx past any quote bytes encountered along the way, in a single pass.
+func skipToBlockEnd(utf8Text, src []byte, i, origIdx *int) {
+	// Skip past the opening "/*".
+	*i += 2
+	for *i < len(utf8Text) {
+		ch := utf8Text[*i]
+		if ch == '\'' || ch == '"' {
+			advanceOrigTo(src, origIdx, ch)
+		}
+		if ch == '*' && *i+1 < len(utf8Text) && utf8Text[*i+1] == '/' {
+			*i += 2 // skip past "*/"
+			return
+		}
+		*i++
+	}
 }
 
 // advanceOrigTo scans src from *idx forward until it finds a byte equal to b.

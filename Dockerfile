@@ -16,7 +16,7 @@
 # production environment, please refer to https://github.com/PingCAP-QE/artifacts/blob/main/dockerfiles/cd/builders/tidb/Dockerfile.
 
 # Builder image
-FROM golang:1.25.8 as builder
+FROM golang:1.25.12@sha256:9006890ecba0a168034d99516084099ae3114d9f2b7d6572c77f2dde57ebc980 as builder
 WORKDIR /tidb
 
 COPY . .
@@ -27,7 +27,7 @@ ENV GOPROXY ${GOPROXY}
 RUN make server
 
 
-FROM quay.io/rockylinux/rockylinux:9-minimal
+FROM quay.io/rockylinux/rockylinux:9-minimal@sha256:c26c789bd9b2c9fd092109688dbac8bdab27e51651d8130d7e10220f8e07614a
 
 COPY --from=builder /tidb/bin/tidb-server /tidb-server
 

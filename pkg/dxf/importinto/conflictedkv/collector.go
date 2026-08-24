@@ -25,8 +25,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
@@ -91,7 +92,6 @@ type Collector struct {
 	kvGroup        string
 	handler        Handler
 	result         *CollectResult
-	hdlSet         *BoundedHandleSet
 	// total recorded file size is shared across collectors in one collect-conflicts
 	// subtask, to enforce one global hard limit.
 	sharedTotalFileSize *atomic.Int64
@@ -112,7 +112,7 @@ func NewCollector(
 	filenamePrefix string,
 	kvGroup string,
 	encoder *importer.TableKVEncoder,
-	globalSet, localSet *BoundedHandleSet,
+	globalSet, localSet *BoundedKeySet,
 	sharedTotalFileSize *atomic.Int64,
 	progressCollector execute.Collector,
 	trafficRec TrafficRecorder,
@@ -122,28 +122,32 @@ func NewCollector(
 	if sharedTotalFileSize == nil {
 		sharedTotalFileSize = &atomic.Int64{}
 	}
+	codec := store.GetCodec()
 	collector := &Collector{
 		logger:              logger,
 		store:               objStore,
 		filenamePrefix:      filenamePrefix,
 		kvGroup:             kvGroup,
-		result:              NewCollectResult(store.GetCodec().GetKeyspace()),
-		hdlSet:              localSet,
+		result:              NewCollectResult(codec.GetKeyspace()),
 		sharedTotalFileSize: sharedTotalFileSize,
 	}
-	base := NewBaseHandler(targetTbl, kvGroup, encoder, collector, progressCollector, logger)
+	base := NewBaseHandler(targetTbl, kvGroup, codec, encoder, collector, progressCollector, logger)
 	var h Handler
-	if kvGroup == external.DataKVGroup {
+	if kvGroup == globalsort.DataKVGroup {
 		h = NewDataKVHandler(base)
 	} else {
-		h = NewIndexKVHandler(base, NewLazyRefreshedSnapshot(store, trafficRec), NewHandleFilter(globalSet))
+		h = NewIndexKVHandler(
+			base,
+			NewLazyRefreshedSnapshot(store, trafficRec),
+			NewKeyFilter(globalSet, localSet),
+		)
 	}
 	collector.handler = h
 	return collector
 }
 
 // Run starts the collector to collect conflicted KV info.
-func (c *Collector) Run(ctx context.Context, ch chan *external.KVPair) (err error) {
+func (c *Collector) Run(ctx context.Context, ch chan *simplesst.KVPair) (err error) {
 	if err = c.handler.PreRun(); err != nil {
 		return err
 	}
@@ -151,20 +155,8 @@ func (c *Collector) Run(ctx context.Context, ch chan *external.KVPair) (err erro
 }
 
 // HandleEncodedRow handles the re-encoded row from conflict KV.
-func (c *Collector) HandleEncodedRow(ctx context.Context, handle tidbkv.Handle,
+func (c *Collector) HandleEncodedRow(ctx context.Context, _ tidbkv.Key,
 	row []types.Datum, kvPairs *kv.Pairs) error {
-	// every conflicted row from data KV group must be recorded, but for index KV
-	// group, they might come from the same row, so we only need to record it on
-	// the first time we meet it.
-	// currently, we use memory to do this check, if it's too large, we just skip
-	// the checking and skip later checksum.
-	//
-	// an alternative solution is to upload those handles to sort storage and
-	// check them in another pass later.
-	if c.kvGroup != external.DataKVGroup {
-		c.hdlSet.Add(handle)
-	}
-
 	if err := c.recordRowToFile(ctx, row); err != nil {
 		return err
 	}
@@ -224,7 +216,7 @@ func (c *Collector) switchFile(ctx context.Context) error {
 		zap.String("lastFileSize", units.BytesSize(float64(c.currFileSize))))
 	writer, err := c.store.Create(ctx, filename, &storeapi.WriterOption{
 		Concurrency: 20,
-		PartSize:    external.MinUploadPartSize,
+		PartSize:    simplesst.MinUploadPartSize,
 	})
 	if err != nil {
 		return errors.Trace(err)

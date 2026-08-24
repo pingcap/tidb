@@ -70,7 +70,7 @@ func TestLockAndUnlockTableStats(t *testing.T) {
 	)
 	require.NoError(t, err)
 	// Flush stats delta.
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 
 	tk.MustExec("unlock stats t")
 	rows = tk.MustQuery(selectTableLockSQL).Rows()
@@ -299,7 +299,7 @@ func TestUnlockPartitionedTableWouldUpdateGlobalCountCorrectly(t *testing.T) {
 	require.Equal(t, int64(0), tblStats.RealtimeCount)
 
 	// Dump stats delta to KV.
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	// Check the mysql.stats_table_locked is updated correctly.
 	rows := tk.MustQuery("select count, modify_count, table_id from mysql.stats_table_locked order by table_id").Rows()
 	require.Len(t, rows, 3)
@@ -329,7 +329,7 @@ func TestDeltaInLockInfoCanBeNegative(t *testing.T) {
 	tk.MustExec("insert into t(a, b) values(1,'a')")
 	tk.MustExec("insert into t(a, b) values(2,'b')")
 	// Dump stats delta to KV.
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	rows := tk.MustQuery(fmt.Sprint("select count, modify_count from mysql.stats_meta where table_id = ", tbl.ID)).Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "2", rows[0][0])
@@ -341,7 +341,7 @@ func TestDeltaInLockInfoCanBeNegative(t *testing.T) {
 	tk.MustExec("delete from t where a = 2")
 
 	// Dump stats delta to KV.
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	// Check the mysql.stats_table_locked is updated correctly.
 	rows = tk.MustQuery("select count, modify_count, table_id from mysql.stats_table_locked order by table_id").Rows()
 	require.Len(t, rows, 3)

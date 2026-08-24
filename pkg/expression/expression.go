@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
@@ -99,6 +100,10 @@ func WithCastExprTo(targetFt *types.FieldType) BuildOption {
 	return func(options *BuildOptions) {
 		options.TargetFieldType = targetFt
 	}
+}
+
+func getCollator(ctx BuildContext, collation string) collate.Collator {
+	return collate.GetCollatorWithCollate(ctx.NewCollationEnabled(), collation)
 }
 
 // BuildSimpleExpr builds a simple expression from an ast node.
@@ -1095,7 +1100,12 @@ func TableInfo2SchemaAndNames(ctx BuildContext, dbName ast.CIStr, tbl *model.Tab
 }
 
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
-func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
+func ColumnInfos2ColumnsAndNames(
+	ctx BuildContext,
+	dbName, tblName ast.CIStr,
+	colInfos []*model.ColumnInfo,
+	tblInfo *model.TableInfo,
+) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
@@ -1136,7 +1146,9 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, co
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
-			e, err := BuildSimpleExpr(ctx, expr, WithInputSchemaAndNames(mockSchema, names, tblInfo), WithAllowCastArray(true))
+			e, err := BuildSimpleExpr(ctx, expr,
+				WithInputSchemaAndNames(mockSchema, names, tblInfo),
+				WithAllowCastArray(true))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -1256,6 +1268,9 @@ func PropagateType(ctx EvalContext, evalType types.EvalType, args ...Expression)
 				newCol := col.Clone()
 				newCol.(*CorrelatedColumn).RetType = col.RetType.Clone()
 				args[0] = newCol
+			}
+			if con, ok := args[0].(*Constant); ok {
+				args[0] = con.Clone()
 			}
 			if args[0].GetType(ctx).GetType() == mysql.TypeNewDecimal {
 				if newDecimal > mysql.MaxDecimalScale {

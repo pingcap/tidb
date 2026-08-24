@@ -17,6 +17,8 @@ package globalstats_test
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -235,13 +237,13 @@ partition by range (a) (
 	checkHealthy(100, 100, 100)
 
 	tk.MustExec("insert into t values (1), (2)") // update p0
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 	checkModifyAndCount(2, 2, 2, 2, 0, 0)
 	checkHealthy(0, 0, 100)
 
 	tk.MustExec("insert into t values (11), (12), (13), (14)") // update p1
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 	checkModifyAndCount(6, 6, 2, 2, 4, 4)
 	checkHealthy(0, 0, 0)
@@ -251,7 +253,7 @@ partition by range (a) (
 	checkHealthy(100, 100, 100)
 
 	tk.MustExec("insert into t values (4), (5), (15), (16)") // update p0 and p1 together
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 	checkModifyAndCount(4, 10, 2, 4, 2, 6)
 	checkHealthy(33, 0, 50)
@@ -274,7 +276,7 @@ partition by range (a) (
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (6), (null), (11), (12), (13), (14), (15), (16), (17), (18), (19), (19)")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table t with 0 topn, 2 buckets")
 
 	tk.MustQuery("select modify_count, count from mysql.stats_meta order by table_id asc").Check(
@@ -306,16 +308,6 @@ partition by range (a) (
 func TestGlobalStatsData2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	testGlobalStats2(t, tk, dom)
-}
-
-func TestGlobalStatsData2WithConcurrency(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set global tidb_merge_partition_stats_concurrency=2")
-	defer func() {
-		tk.MustExec("set global tidb_merge_partition_stats_concurrency=1")
-	}()
 	testGlobalStats2(t, tk, dom)
 }
 
@@ -513,7 +505,7 @@ partition by range (a) (
 	err := statstestutil.HandleNextDDLEventWithTxn(dom.StatsHandle())
 	require.NoError(t, err)
 	tk.MustExec("insert into t values (1), (5), (null), (11), (15)")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
@@ -523,9 +515,9 @@ partition by range (a) (
 	// If we already have global-stats, we can get the latest global-stats by analyzing the newly added partition.
 	tk.MustExec("alter table t add partition (partition p2 values less than (30))")
 	tk.MustExec("insert t values (13), (14), (22), (23)")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table t partition p2") // it will success since p0 and p1 are both in ver2
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	do := dom
 	is := do.InfoSchema()
 	h := do.StatsHandle()
@@ -547,7 +539,7 @@ partition by range (a) (
 	require.Equal(t, int64(0), globalStats.ModifyCount)
 
 	tk.MustExec("alter table t drop partition p2;")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table t;")
 	globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// global.count = p0.count(3) + p1.count(4)
@@ -578,7 +570,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), " +
 		"(11), (21), (31), (41), (51)," +
 		"(12), (22), (32), (42), (52);")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustExec("analyze table t")
 	result := tk.MustQuery("show stats_meta where table_name = 't';").Rows()
@@ -590,7 +582,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	require.Equal(t, int64(15), globalStats.RealtimeCount)
 
 	tk.MustExec("alter table t truncate partition p2, p4;")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))
@@ -797,10 +789,11 @@ func TestGlobalStats(t *testing.T) {
 		"  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:a(a) range:(3,+inf], keep order:false"))
 
 	// When we turned on the switch, we found that pseudo-stats will be used in the plan instead of `Union`.
+	// The pseudo estimate is based on the stats_meta counts flushed before analyze.
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
-		"IndexReader 3333.33 root partition:all index:IndexRangeScan",
-		"└─IndexRangeScan 3333.33 cop[tikv] table:t, index:a(a) range:(3,+inf], keep order:false, stats:pseudo"))
+		"IndexReader 1.67 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 1.67 cop[tikv] table:t, index:a(a) range:(3,+inf], keep order:false, stats:pseudo"))
 
 	// Execute analyze again without error and can generate global-stats.
 	// And when executing related queries, neither Union nor pseudo-stats are used.
@@ -860,14 +853,17 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
 	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
 	<-h.DDLEventCh()
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table t")
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
 		Check(testkit.Rows("1", "2", "3", "15"))
+	// 4 rows actually match (b in {1,2,3,15}). All 6 distinct b values
+	// land in the global TopN, so the estimate comes from exact TopN
+	// membership rather than histogram-bucket interpolation.
 	tk.MustQuery("EXPLAIN format='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
-		Check(testkit.Rows("IndexReader 5.00 root partition:all index:IndexRangeScan",
-			"└─IndexRangeScan 5.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
+		Check(testkit.Rows("IndexReader 4.00 root partition:all index:IndexRangeScan",
+			"└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
 	// analyze table t index idx
 	tk.MustExec("drop table if exists t")
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
@@ -883,11 +879,11 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
 	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
 	<-h.DDLEventCh()
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table t index idx")
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	rows := tk.MustQuery("EXPLAIN FORMAT='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").Rows()
-	require.Equal(t, "5.00", rows[0][1])
+	require.Equal(t, "4.00", rows[0][1]) // see comment above; exact via TopN.
 
 	// analyze table t index
 	tk.MustExec("drop table if exists t")
@@ -904,12 +900,12 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
 	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
 	<-h.DDLEventCh()
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table t index")
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("EXPLAIN format='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").
-		Check(testkit.Rows("IndexReader 5.00 root partition:all index:IndexRangeScan",
-			"└─IndexRangeScan 5.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
+		Check(testkit.Rows("IndexReader 4.00 root partition:all index:IndexRangeScan",
+			"└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
 }
 
 func TestIssues24349(t *testing.T) {
@@ -918,21 +914,6 @@ func TestIssues24349(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	testKit.MustExec("set @@tidb_analyze_version=2")
-	defer testKit.MustExec("set @@tidb_analyze_version=default")
-	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
-	testIssues24349(t, testKit, store)
-}
-
-func TestIssues24349WithConcurrency(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	testKit.MustExec("set @@tidb_analyze_version=2")
-	testKit.MustExec("set global tidb_merge_partition_stats_concurrency=2")
-	defer testKit.MustExec("set @@tidb_analyze_version=default")
-	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
-	defer testKit.MustExec("set global tidb_merge_partition_stats_concurrency=1")
 	testIssues24349(t, testKit, store)
 }
 
@@ -940,15 +921,6 @@ func TestGlobalStatsAndSQLBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set global tidb_merge_partition_stats_concurrency=1")
-	testGlobalStatsAndSQLBinding(tk)
-}
-
-func TestGlobalStatsAndSQLBindingWithConcurrency(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set global tidb_merge_partition_stats_concurrency=2")
 	testGlobalStatsAndSQLBinding(tk)
 }
 
@@ -991,8 +963,209 @@ partitions 12;`)
 	require.NoError(t, err)
 	tk.MustExec("set @@tidb_enable_async_merge_global_stats=ON;")
 	tk.MustQuery("show warnings").Check(testkit.Rows(asyncMergeWarn))
-	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.GetAnalyzeOptionDefaultV2ForTest(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
+	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.AnalyzeOptionDefault(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
 	tk.MustExec("set @@tidb_enable_async_merge_global_stats=OFF;")
 	tk.MustQuery("show warnings").Check(testkit.Rows(asyncMergeWarn))
-	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.GetAnalyzeOptionDefaultV2ForTest(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
+	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.AnalyzeOptionDefault(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
+}
+
+func TestGlobalStatsMergeCombined(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Pin the session settings this test depends on: global stats /
+	// partition_name='global' and the bucket layout below assume V2
+	// analyze under dynamic prune mode. Defaults shift over time.
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (
+	a int primary key auto_increment,
+	b int not null default 1,
+	c int,
+	d varchar(255) not null default '',
+	e varchar(255),
+	key idx_ab(a,b),
+	key idx_be(b,e),
+	unique key uidx_cd(c,d) global,
+	key idx_d(d),
+	unique key uidx_e(e) global,
+	key idx_ec(e,c)
+) partition by hash (a) partitions 7`)
+	tk.MustExec(`insert into t (a) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)`)
+	// increase by 10 ^ 5 rows
+	tk.MustExec(`insert into t (a) select null from t, t t2, t t3, t t4, t t5`)
+
+	tk.MustExec(`analyze table t with 1 topn, 3 buckets`)
+	// Force a full stats cache refresh from storage so all columns/indexes are loaded.
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	// Column a and idx_ab have NDV ~= row_count and the per-partition
+	// TopN slot picks an arbitrary singleton each, leaving the global
+	// merge with 7 unrelated count=1 candidates competing for the
+	// 1-slot global TopN. analyze ran with an explicit `1 topn`, so the
+	// merge does not prune those singletons (the singleton filter is
+	// gated on numTopN == DefaultTopNValue, mirroring per-table
+	// analyze's allowPruning); one arbitrary count=1 value survives for
+	// a and idx_ab, matching an identical non-partitioned table.
+	// Columns b and d (and indexes covering them) saturate at one
+	// repeated value across all partitions, so their TopN entries
+	// survive with counts == total row count.
+	tk.MustQuery(`show stats_topn where table_name = 't' and partition_name = 'global'`).Sort().Check(testkit.Rows(""+
+		"test t global a 0 1 1",
+		"test t global b 0 1 100010",
+		"test t global d 0  100010",
+		"test t global idx_ab 1 (1, 1) 1",
+		"test t global idx_be 1 (1, NULL) 100010",
+		"test t global idx_d 1  100010",
+		"test t global idx_ec 1 (NULL, NULL) 100010",
+		"test t global uidx_cd 1 (NULL, ) 100010",
+		// uidx_e is not collected, due to #66236
+	))
+	tk.MustQuery(`show stats_topn where table_name = 't' and partition_name = 'p0'`).Sort().Check(testkit.Rows(""+
+		"test t p0 a 0 7 1",
+		"test t p0 b 0 1 14287",
+		"test t p0 d 0  14287",
+		"test t p0 idx_ab 1 (7, 1) 1",
+		"test t p0 idx_be 1 (1, NULL) 14287",
+		"test t p0 idx_d 1  14287",
+		"test t p0 idx_ec 1 (NULL, NULL) 14287",
+		"test t p0 uidx_cd 1 (NULL, ) 14287"))
+	// The RTL merge's overlap scan greedily consumes partition refs
+	// whose ranges straddle the cut point, so once the first global
+	// bucket fires it pulls in nearly all of bucket-1 mass from all 7
+	// partitions. The leftmost global bucket is then just the tail of
+	// values below the smallest partition lower bound.
+	// Value 1 is now in the global TopN (see the TopN check above), so
+	// it is excluded from the histogram: bucket-0 starts at lower bound
+	// 2 and each bucket's cumulative count is one lower than it would be
+	// if value 1 had stayed in the histogram.
+	tk.MustQuery(`show stats_buckets where table_name = 't' and partition_name = 'global'`).Sort().Check(testkit.Rows(""+
+		"test t global a 0 0 7 0 2 9 0",
+		"test t global a 0 1 33353 0 9 33355 0",
+		"test t global a 0 2 100009 1 33355 100010 0",
+		"test t global idx_ab 1 0 7 0 (2, 1) (9, 1) 0",
+		"test t global idx_ab 1 1 33353 0 (9, 1) (33355, 1) 0",
+		"test t global idx_ab 1 2 100009 1 (33355, 1) (100010, 1) 0"))
+	tk.MustQuery(`show stats_buckets where table_name = 't' and partition_name = 'p0'`).Sort().Check(testkit.Rows(""+
+		"test t p0 a 0 0 4763 1 14 33348 0",
+		"test t p0 a 0 1 9526 1 33355 66689 0",
+		"test t p0 a 0 2 14286 1 66696 100009 0",
+		"test t p0 idx_ab 1 0 4763 1 (14, 1) (33348, 1) 0",
+		"test t p0 idx_ab 1 1 9526 1 (33355, 1) (66689, 1) 0",
+		"test t p0 idx_ab 1 2 14286 1 (66696, 1) (100009, 1) 0"))
+	// For p1..p6 the exact bucket bounds depend on auto_increment +
+	// hash partitioning details that are not what this test is about.
+	// Pin only the structure: each partition has the expected number
+	// of column-a buckets. Bucket-shape correctness for the merge is
+	// covered by the unit-level cases in pkg/statistics.
+	for i := 1; i < 7; i++ {
+		part := fmt.Sprintf("p%d", i)
+		buckets := tk.MustQuery(fmt.Sprintf(
+			`show stats_buckets where table_name = 't' and partition_name = '%s' and column_name = 'a'`, part)).
+			Sort().Rows()
+		require.Lenf(t, buckets, 3, "partition %s column a should have 3 buckets", part)
+	}
+}
+
+// TestGlobalStatsMergePathConsistency verifies that the async and
+// blocking merge paths produce identical global stats for the same
+// input partitions.
+func TestGlobalStatsMergePathConsistency(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+
+	// 53 hash partitions, 5 data columns with diverse distributions.
+	tk.MustExec(`CREATE TABLE t (
+		id INT PRIMARY KEY AUTO_INCREMENT,
+		uniform_col INT NOT NULL,
+		skewed_col INT NOT NULL,
+		sparse_col INT,
+		bimodal_col INT NOT NULL,
+		str_col VARCHAR(64) NOT NULL,
+		KEY idx_uniform(uniform_col),
+		KEY idx_skewed(skewed_col),
+		KEY idx_bimodal(bimodal_col),
+		KEY idx_str(str_col)
+	) PARTITION BY HASH(id) PARTITIONS 53`)
+
+	// Seed 100 rows with varied distributions.
+	vals := make([]string, 0, 100)
+	for i := 1; i <= 100; i++ {
+		uniformCol := i % 97 // prime, avoids alignment with partition count
+		skewedCol := 0
+		if i%10 == 0 {
+			skewedCol = i%5 + 1
+		}
+		sparseCol := "NULL"
+		if i%3 != 0 {
+			sparseCol = strconv.Itoa(i % 50)
+		}
+		bimodalCol := i % 20
+		if i > 50 {
+			bimodalCol = 500 + i%20
+		}
+		strCol := fmt.Sprintf("v%04d_%s", i%80, strings.Repeat("x", i%17))
+		vals = append(vals, fmt.Sprintf("(%d,%d,%s,%d,'%s')",
+			uniformCol, skewedCol, sparseCol, bimodalCol, strCol))
+	}
+	tk.MustExec("INSERT INTO t (uniform_col, skewed_col, sparse_col, bimodal_col, str_col) VALUES " +
+		strings.Join(vals, ","))
+	// Double 7 times: 100 → 12800 rows (~241 per partition).
+	for range 7 {
+		tk.MustExec("INSERT INTO t (uniform_col, skewed_col, sparse_col, bimodal_col, str_col) " +
+			"SELECT uniform_col, skewed_col, sparse_col, bimodal_col, str_col FROM t")
+	}
+
+	analyzeOpts := "WITH 10 TOPN, 20 BUCKETS"
+
+	// --- Phase 1: Analyze with blocking merge ---
+	tk.MustExec("SET @@tidb_enable_async_merge_global_stats = OFF")
+	tk.MustExec("ANALYZE TABLE t " + analyzeOpts)
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	blockingTopN := tk.MustQuery("SHOW STATS_TOPN WHERE table_name = 't' AND partition_name = 'global'").Sort().Rows()
+	blockingBuckets := tk.MustQuery("SHOW STATS_BUCKETS WHERE table_name = 't' AND partition_name = 'global'").Sort().Rows()
+
+	// --- Phase 2: Analyze with async merge ---
+	tk.MustExec("SET @@tidb_enable_async_merge_global_stats = ON")
+	// show analyze status reports start_time in UTC (CONVERT_TZ to '+00:00'),
+	// so capture the cutoff in UTC. Phase 1 already left finished
+	// merge-global-stats rows; filtering by start_time >= preMerge ensures
+	// the wait below only counts rows produced by this Phase-2 analyze.
+	preMerge := time.Now().UTC().Format("2006-01-02 15:04:05")
+	tk.MustExec("ANALYZE TABLE t " + analyzeOpts)
+	// ANALYZE TABLE returns once partition-level stats are collected; the
+	// merge into global stats runs in the background. Wait for every
+	// "merge global stats" job from this run to finish before reading
+	// global TopN / buckets, otherwise the comparison below races against
+	// the merge.
+	require.Eventuallyf(t, func() bool {
+		rows := tk.MustQuery(fmt.Sprintf(
+			"show analyze status where job_info like 'merge global stats%%' and start_time >= '%s'",
+			preMerge)).Rows()
+		if len(rows) == 0 {
+			return false
+		}
+		for _, row := range rows {
+			if row[7] != "finished" {
+				return false
+			}
+		}
+		return true
+	}, 30*time.Second, 100*time.Millisecond, "async global merge jobs did not all finish")
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	asyncTopN := tk.MustQuery("SHOW STATS_TOPN WHERE table_name = 't' AND partition_name = 'global'").Sort().Rows()
+	asyncBuckets := tk.MustQuery("SHOW STATS_BUCKETS WHERE table_name = 't' AND partition_name = 'global'").Sort().Rows()
+
+	// Async and blocking must produce identical results.
+	require.NotEmpty(t, asyncTopN, "global TopN should not be empty")
+	require.NotEmpty(t, asyncBuckets, "global buckets should not be empty")
+	require.Equal(t, blockingTopN, asyncTopN,
+		"global TopN should be identical between async and blocking merge")
+	require.Equal(t, blockingBuckets, asyncBuckets,
+		"global buckets should be identical between async and blocking merge")
 }

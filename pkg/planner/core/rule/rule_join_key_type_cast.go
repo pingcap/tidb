@@ -303,7 +303,13 @@ func findCastInProj(proj *logicalop.LogicalProjection, col *expression.Column, e
 func classifyCastPair(leftInfo, rightInfo *projCastInfo) (intInfo, strInfo *projCastInfo) {
 	isSignedInt := func(info *projCastInfo) bool {
 		tp := info.origCol.GetType(nil)
-		return tp.EvalType() == types.ETInt && !mysql.HasUnsignedFlag(tp.GetFlag())
+		if tp.EvalType() != types.ETInt || mysql.HasUnsignedFlag(tp.GetFlag()) {
+			return false
+		}
+		// Keep BIGINT on the original DOUBLE-domain comparison path. Rewriting
+		// VARCHAR = BIGINT to integer equality changes the observable result once
+		// values cross DOUBLE's exact-integer boundary (for example 2^53 + 1).
+		return tp.GetType() != mysql.TypeLonglong
 	}
 	isStr := func(info *projCastInfo) bool {
 		return info.origCol.GetType(nil).EvalType().IsStringKind()

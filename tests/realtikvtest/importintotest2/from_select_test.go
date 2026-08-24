@@ -176,6 +176,6 @@ func (s *mockGCSSuite) TestDiskFullOnIngestFailFast() {
 	}
 	s.prepareAndUseDB("from_select")
 	s.tk.MustExec("create table dt(id int unsigned)")
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/diskFullOnIngest", `return(true)`)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/diskFullOnIngest", `return(true)`)
 	s.ErrorContains(s.tk.ExecToErr("import into dt from select 1"), "tikv disk full")
 }

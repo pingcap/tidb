@@ -278,7 +278,9 @@ func (s *PartitionProcessor) getUsedKeyPartitions(ctx base.PlanContext,
 	pi := tbl.Meta().Partition
 	partExpr := tbl.(base.PartitionTable).PartitionExpr()
 	partCols, colLen := partExpr.GetPartColumnsForKeyPartition(columns)
-	pe := &tables.ForKeyPruning{KeyPartCols: partCols}
+	// Copy the existing pruning state to preserve its captured collation mode.
+	pe := *partExpr.ForKeyPruning
+	pe.KeyPartCols = partCols
 	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx.GetRangerCtx(), conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, err
@@ -1691,6 +1693,9 @@ func opposite(op string) string {
 		return ast.GE
 	case ast.GE:
 		return ast.LE
+	case ast.NullEQ:
+		// Null-safe equality is symmetric, so flipping operands keeps the same operator.
+		return ast.NullEQ
 	}
 	panic("invalid input parameter" + op)
 }

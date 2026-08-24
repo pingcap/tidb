@@ -28,8 +28,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -203,16 +201,12 @@ func TestSampleIndexSizeRatio(t *testing.T) {
 	}
 
 	t.Run("parser_close_on_error", func(t *testing.T) {
-		newChunk := func() *checkpoints.ChunkCheckpoint {
-			return &checkpoints.ChunkCheckpoint{
-				FileMeta: mydump.SourceFileMeta{
-					Path:     "test.sql",
-					FileSize: 16,
-				},
-				Chunk: mydump.Chunk{
-					Offset:       1,
-					PrevRowIDMax: 1,
-				},
+		newChunk := func() *Chunk {
+			return &Chunk{
+				Path:         "test.sql",
+				FileSize:     16,
+				Offset:       1,
+				PrevRowIDMax: 1,
 			}
 		}
 

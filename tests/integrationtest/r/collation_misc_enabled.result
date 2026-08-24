@@ -147,14 +147,13 @@ create table t1(code varchar(32)) CHARSET=utf8 COLLATE=utf8_general_ci;
 create table t2(code varchar(32)) CHARSET=utf8 COLLATE=utf8_bin;
 explain format='plan_tree' select * from t1 join t2 on t1.code=t2.code and t1.code in ('1') and t2.code in ('1');
 id	task	access object	operator info
-Projection	root		cd_test_utf8mb4_0900_bin.t1.code, cd_test_utf8mb4_0900_bin.t2.code
-└─HashJoin	root		inner join, equal:[eq(cd_test_utf8mb4_0900_bin.t2.code, cd_test_utf8mb4_0900_bin.t1.code)]
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t2.code, "1")
-  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableReader(Probe)	root		data:Selection
-    └─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t1.code, "1"), not(isnull(cd_test_utf8mb4_0900_bin.t1.code))
-      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+HashJoin	root		inner join, equal:[eq(cd_test_utf8mb4_0900_bin.t1.code, cd_test_utf8mb4_0900_bin.t2.code)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t2.code, "1")
+│   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t1.code, "1"), not(isnull(cd_test_utf8mb4_0900_bin.t1.code))
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t1;
 drop table if exists t2;
 create table t1(id_ci varchar(10) charset utf8mb4 collate utf8mb4_general_ci, id_bin varchar(10) charset utf8mb4 collate utf8mb4_bin);
@@ -184,3 +183,40 @@ HashJoin	root		inner join, equal:[eq(cd_test_utf8mb4_0900_bin.t1.id_ci, cd_test_
 └─TableReader(Probe)	root		data:Selection
   └─Selection	cop[tikv]		not(isnull(cd_test_utf8mb4_0900_bin.t1.id_ci))
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists t;
+create table t (uuid varchar(36) charset utf8mb4 collate utf8mb4_general_ci, index idx_uuid(uuid));
+insert into t values ('7dce58ba-ba84-4297-94cf-c23cf3a39ed3');
+insert into t values ('ABC');
+insert into t values ('abc');
+explain format='plan_tree' select * from t where uuid = cast('7dce58ba-ba84-4297-94cf-c23cf3a39ed3' as binary);
+id	task	access object	operator info
+IndexReader	root		index:Selection
+└─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t.uuid, "7dce58ba-ba84-4297-94cf-c23cf3a39ed3")
+  └─IndexRangeScan	cop[tikv]	table:t, index:idx_uuid(uuid)	range:["\x007\x00D\x00C\x00E\x005\x008\x00B\x00A\x00-\x00B\x00A\x008\x004\x00-\x004\x002\x009\x007\x00-\x009\x004\x00C\x00F\x00-\x00C\x002\x003\x00C\x00F\x003\x00A\x003\x009\x00E\x00D\x003","\x007\x00D\x00C\x00E\x005\x008\x00B\x00A\x00-\x00B\x00A\x008\x004\x00-\x004\x002\x009\x007\x00-\x009\x004\x00C\x00F\x00-\x00C\x002\x003\x00C\x00F\x003\x00A\x003\x009\x00E\x00D\x003"], keep order:false, stats:pseudo
+explain format='plan_tree' select * from t where uuid = '7dce58ba-ba84-4297-94cf-c23cf3a39ed3';
+id	task	access object	operator info
+IndexReader	root		index:IndexRangeScan
+└─IndexRangeScan	cop[tikv]	table:t, index:idx_uuid(uuid)	range:["\x007\x00D\x00C\x00E\x005\x008\x00B\x00A\x00-\x00B\x00A\x008\x004\x00-\x004\x002\x009\x007\x00-\x009\x004\x00C\x00F\x00-\x00C\x002\x003\x00C\x00F\x003\x00A\x003\x009\x00E\x00D\x003","\x007\x00D\x00C\x00E\x005\x008\x00B\x00A\x00-\x00B\x00A\x008\x004\x00-\x004\x002\x009\x007\x00-\x009\x004\x00C\x00F\x00-\x00C\x002\x003\x00C\x00F\x003\x00A\x003\x009\x00E\x00D\x003"], keep order:false, stats:pseudo
+select * from t where uuid = cast('ABC' as binary);
+uuid
+ABC
+select * from t where uuid = cast('abc' as binary);
+uuid
+abc
+explain format='plan_tree' select * from t where uuid in (cast('ABC' as binary), cast('7dce58ba-ba84-4297-94cf-c23cf3a39ed3' as binary));
+id	task	access object	operator info
+IndexReader	root		index:Selection
+└─Selection	cop[tikv]		in(cd_test_utf8mb4_0900_bin.t.uuid, "ABC", "7dce58ba-ba84-4297-94cf-c23cf3a39ed3")
+  └─IndexRangeScan	cop[tikv]	table:t, index:idx_uuid(uuid)	range:["\x007\x00D\x00C\x00E\x005\x008\x00B\x00A\x00-\x00B\x00A\x008\x004\x00-\x004\x002\x009\x007\x00-\x009\x004\x00C\x00F\x00-\x00C\x002\x003\x00C\x00F\x003\x00A\x003\x009\x00E\x00D\x003","\x007\x00D\x00C\x00E\x005\x008\x00B\x00A\x00-\x00B\x00A\x008\x004\x00-\x004\x002\x009\x007\x00-\x009\x004\x00C\x00F\x00-\x00C\x002\x003\x00C\x00F\x003\x00A\x003\x009\x00E\x00D\x003"], ["\x00A\x00B\x00C","\x00A\x00B\x00C"], keep order:false, stats:pseudo
+select * from t where uuid in (cast('ABC' as binary), cast('7dce58ba-ba84-4297-94cf-c23cf3a39ed3' as binary));
+uuid
+7dce58ba-ba84-4297-94cf-c23cf3a39ed3
+ABC
+drop table t;
+create table t (uuid varchar(36) charset utf8mb4 collate utf8mb4_bin, index idx_uuid(uuid));
+insert into t values ('7dce58ba-ba84-4297-94cf-c23cf3a39ed3');
+explain format='plan_tree' select * from t where uuid = cast('7dce58ba-ba84-4297-94cf-c23cf3a39ed3' as binary);
+id	task	access object	operator info
+IndexReader	root		index:Selection
+└─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t.uuid, "7dce58ba-ba84-4297-94cf-c23cf3a39ed3")
+  └─IndexRangeScan	cop[tikv]	table:t, index:idx_uuid(uuid)	range:["7dce58ba-ba84-4297-94cf-c23cf3a39ed3","7dce58ba-ba84-4297-94cf-c23cf3a39ed3"], keep order:false, stats:pseudo

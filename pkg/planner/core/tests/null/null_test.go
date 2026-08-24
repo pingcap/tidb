@@ -33,6 +33,15 @@ func TestIssue54803(t *testing.T) {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     PARTITION BY HASH (col_68) PARTITIONS 5;
     `)
+	tk.MustQuery(`EXPLAIN format='plan_tree' SELECT col_68
+    FROM t1db47fc1
+    WHERE ISNULL(t1db47fc1.col_68)
+    GROUP BY t1db47fc1.col_68
+    HAVING ISNULL(t1db47fc1.col_68) OR t1db47fc1.col_68 IN (62, 200, 196, 99);
+    `).Check(testkit.Rows("HashAgg root  group by:test.t1db47fc1.col_68, funcs:firstrow(test.t1db47fc1.col_68)->test.t1db47fc1.col_68",
+		"└─TableReader root partition:p0 data:Selection",
+		"  └─Selection cop[tikv]  isnull(test.t1db47fc1.col_68)",
+		"    └─TableFullScan cop[tikv] table:t1db47fc1 keep order:false, stats:pseudo"))
 	tk.MustQuery(`EXPLAIN format='plan_tree' SELECT TRIM(t1db47fc1.col_68) AS r0
     FROM t1db47fc1
     WHERE ISNULL(t1db47fc1.col_68)
@@ -43,7 +52,7 @@ func TestIssue54803(t *testing.T) {
 		"└─Limit root  offset:0, count:106149535",
 		"  └─HashAgg root  group by:test.t1db47fc1.col_68, funcs:firstrow(test.t1db47fc1.col_68)->test.t1db47fc1.col_68",
 		"    └─TableReader root partition:p0 data:Selection",
-		"      └─Selection cop[tikv]  isnull(test.t1db47fc1.col_68), or(isnull(test.t1db47fc1.col_68), in(test.t1db47fc1.col_68, 62, 200, 196, 99))",
+		"      └─Selection cop[tikv]  isnull(test.t1db47fc1.col_68)",
 		"        └─TableFullScan cop[tikv] table:t1db47fc1 keep order:false, stats:pseudo"))
 	// Issue55299
 	tk.MustExec(`

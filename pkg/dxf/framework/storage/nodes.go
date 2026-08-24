@@ -18,17 +18,38 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
+
+var nodeResource atomic.Pointer[proto.NodeResource]
+
+// GetNodeResource gets the node resource.
+func GetNodeResource() *proto.NodeResource {
+	return nodeResource.Load()
+}
+
+// SetNodeResource sets the node resource.
+func SetNodeResource(rc *proto.NodeResource) {
+	nodeResource.Store(rc)
+}
+
+// GetDXFCPUCount returns the cpu count usable to DXF.
+func GetDXFCPUCount() int {
+	if rc := GetNodeResource(); rc != nil {
+		return rc.TotalCPU
+	}
+	return 0
+}
 
 // InitMeta insert the manager information into dist_framework_meta.
 func (mgr *TaskManager) InitMeta(ctx context.Context, tidbID string, role string) error {
@@ -43,7 +64,7 @@ func (*TaskManager) InitMetaSession(ctx context.Context, se sessionctx.Context, 
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	cpuCount := cpu.GetCPUCount()
+	cpuCount := GetDXFCPUCount()
 	_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
@@ -61,7 +82,7 @@ func (mgr *TaskManager) RecoverMeta(ctx context.Context, execID string, role str
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	cpuCount := cpu.GetCPUCount()
+	cpuCount := GetDXFCPUCount()
 	_, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
@@ -215,7 +236,7 @@ func (mgr *TaskManager) getCPUCountOfNodeByRole(
 	ctx context.Context,
 	se sessionctx.Context,
 	role string,
-	arbitarary bool,
+	arbitrary bool,
 ) (int, error) {
 	nodes, err := mgr.getAllNodesWithSession(ctx, se)
 	if err != nil {
@@ -226,7 +247,7 @@ func (mgr *TaskManager) getCPUCountOfNodeByRole(
 	}
 	var cpuCount int
 	for _, n := range nodes {
-		if !arbitarary && n.Role != role {
+		if !arbitrary && n.Role != role {
 			continue
 		}
 		if n.CPUCount > 0 {
@@ -238,4 +259,9 @@ func (mgr *TaskManager) getCPUCountOfNodeByRole(
 		return 0, errors.New("no managed node have enough resource for dist task")
 	}
 	return cpuCount, nil
+}
+
+func init() {
+	// domain initializes this at runtime. Keep a default for tests that don't start domain.
+	nodeResource.Store(proto.NewNodeResource(8, 16*units.GiB, 100*units.GiB))
 }

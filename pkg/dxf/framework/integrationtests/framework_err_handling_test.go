@@ -65,7 +65,7 @@ func TestOnTaskError(t *testing.T) {
 			},
 		)
 		testutil.RegisterExampleTask(t, testutil.GetPlanErrSchedulerExt(c.MockCtrl, c.TestContext),
-			executorExt, testutil.GetCommonCleanUpRoutine(c.MockCtrl))
+			executorExt, testutil.GetCommonCleaner(c.MockCtrl))
 		tm, err := storage.GetTaskManager()
 		require.NoError(t, err)
 		taskID, err := tm.CreateTask(c.Ctx, taskKey, proto.TaskTypeExample, c.Store.GetKeyspace(), 1, scope, 2, proto.ExtraParams{ManualRecovery: true}, nil)
@@ -83,7 +83,7 @@ func TestOnTaskError(t *testing.T) {
 		taskKey := "key3-1"
 		taskID := prepareForAwaitingResolutionTestFn(t, taskKey)
 		tk := testkit.NewTestKit(t, c.Store)
-		tk.MustExec(fmt.Sprintf("update mysql.tidb_background_subtask set state='pending' where state='failed' and task_key= %d", taskID))
+		tk.MustExec(fmt.Sprintf("update mysql.tidb_background_subtask set state='pending' where state='failed' and task_key= '%d'", taskID))
 		tk.MustExec(fmt.Sprintf("update mysql.tidb_global_task set state='running' where id = %d", taskID))
 		task := testutil.WaitTaskDone(c.Ctx, t, taskKey)
 		require.Equal(t, proto.TaskStateSucceed, task.State)

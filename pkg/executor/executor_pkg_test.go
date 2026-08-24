@@ -15,15 +15,22 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/join"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/inference"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -45,6 +52,140 @@ var (
 	InspectionSummaryRules = inspectionSummaryRules
 	InspectionRules        = inspectionRules
 )
+
+func TestFillEmbedTextValues(t *testing.T) {
+	sctx := mock.NewContext()
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("id"),
+				Offset:    0,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeLong),
+			},
+			{
+				ID:        2,
+				Name:      ast.NewCIStr("text"),
+				Offset:    1,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeVarchar),
+			},
+			{
+				ID:                  3,
+				Name:                ast.NewCIStr("vec"),
+				Offset:              2,
+				State:               model.StatePublic,
+				FieldType:           *types.NewFieldType(mysql.TypeTiDBVectorFloat32),
+				GeneratedExprString: "embed_text('mock/json', text)",
+				GeneratedStored:     true,
+				Dependences:         map[string]struct{}{"text": {}},
+			},
+		},
+	}
+	tbl, err := tables.TableFromMeta(autoid.NewAllocators(false), tblInfo)
+	require.NoError(t, err)
+
+	rows := [][]types.Datum{nil}
+	insertValues := &InsertValues{
+		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0),
+		Table:        tbl,
+		GenExprs:     []expression.Expression{nil},
+	}
+	generatedCols := insertValues.getEmbedTextGeneratedCols()
+	require.Len(t, generatedCols, 1)
+	require.Equal(t, 2, generatedCols[0].offset)
+	require.Same(t, tbl.Cols()[2], generatedCols[0].column)
+	require.True(t, insertValues.embedTextGeneratedColsInitialized)
+	require.Equal(t, generatedCols, insertValues.getEmbedTextGeneratedCols())
+
+	emptyRows, err := insertValues.fillEmbedTextValues(context.Background(), nil)
+	require.NoError(t, err)
+	require.Nil(t, emptyRows)
+
+	withoutGeneratedCols := &InsertValues{
+		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0),
+	}
+	plainRows := [][]types.Datum{types.MakeDatums(1, "plain")}
+	got, err := withoutGeneratedCols.fillEmbedTextValuesWithRowCount(context.Background(), plainRows, 1)
+	require.NoError(t, err)
+	require.Equal(t, plainRows, got)
+	require.True(t, withoutGeneratedCols.embedTextGeneratedColsInitialized)
+
+	if !kerneltype.IsNextGen() {
+		return
+	}
+	originalMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Premium))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+
+	modelExpr := &expression.Constant{
+		Value:   types.NewDatum("mock/json"),
+		RetType: types.NewFieldType(mysql.TypeString),
+	}
+	textExpr := &expression.Column{
+		Index:   1,
+		RetType: types.NewFieldType(mysql.TypeString),
+	}
+	optionsExpr := &expression.Constant{
+		Value:   types.NewDatum(`{"plus":1}`),
+		RetType: types.NewFieldType(mysql.TypeString),
+	}
+	embedExpr, err := expression.NewFunction(
+		sctx,
+		ast.EmbedText,
+		types.NewFieldType(mysql.TypeTiDBVectorFloat32),
+		modelExpr,
+		textExpr,
+		optionsExpr,
+	)
+	require.NoError(t, err)
+	insertValues = &InsertValues{
+		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0),
+		Table:        tbl,
+		GenExprs:     []expression.Expression{embedExpr},
+		rowCount:     4,
+	}
+	validRows := [][]types.Datum{
+		types.MakeDatums(1, "[1,2,3]", nil),
+		types.MakeDatums(2, "[4,5,6]", nil),
+		types.MakeDatums(3, nil, nil),
+		nil,
+	}
+	_, err = insertValues.fillEmbedTextValues(context.Background(), validRows)
+	require.ErrorContains(t, err, "EMBED_TEXT is only supported in starter deployment mode")
+
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	embedFn := inference.NewEmbedFn()
+	t.Cleanup(inference.SetDefaultEmbedFnForTest(embedFn))
+	got, err = insertValues.fillEmbedTextValuesWithRowCount(context.Background(), rows, 1)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Nil(t, got[0])
+
+	got, err = insertValues.fillEmbedTextValues(context.Background(), validRows)
+	require.NoError(t, err)
+	require.Equal(t, "[2,3,4]", got[0][2].GetVectorFloat32().String())
+	require.Equal(t, "[5,6,7]", got[1][2].GetVectorFloat32().String())
+	require.True(t, got[2][2].IsNull())
+	require.Nil(t, got[3])
+
+	invalidRows := [][]types.Datum{types.MakeDatums(3, "not-json", nil)}
+	_, err = insertValues.fillEmbedTextValuesWithRowCount(context.Background(), invalidRows, 3)
+	require.Error(t, err)
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = insertValues.fillEmbedTextValuesWithRowCount(canceledCtx, [][]types.Datum{
+		types.MakeDatums(4, "[4,5,6]", nil),
+	}, 4)
+	require.ErrorIs(t, err, context.Canceled)
+}
 
 func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 	indexRanges := make([]*ranger.Range, 0, 6)
@@ -130,6 +271,51 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 
 	require.Equal(t, 2*bytesConsumed1, bytesConsumed2)
 	require.Equal(t, int64(23640), bytesConsumed1)
+}
+
+func TestIndexReaderPartitionRangesUseMemoryTracker(t *testing.T) {
+	sctx := mock.NewContext()
+	partition0 := tables.MockTableFromMeta(&model.TableInfo{ID: 101})
+	partition1 := tables.MockTableFromMeta(&model.TableInfo{ID: 102})
+	rangeMemTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+	e := &IndexReaderExecutor{
+		indexReaderExecutorContext: newIndexReaderExecutorContext(sctx),
+		BaseExecutorV2:             exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 0),
+		index:                      &model.IndexInfo{ID: 1},
+		partitions:                 []table.PhysicalTable{partition0.(table.PhysicalTable), partition1.(table.PhysicalTable)},
+		ranges:                     []*ranger.Range{generateIndexRange(1, 1)},
+		rangeMemTracker:            rangeMemTracker,
+		dummy:                      true,
+	}
+
+	require.NoError(t, e.Open(context.Background()))
+	require.Greater(t, rangeMemTracker.BytesConsumed(), int64(0))
+	require.Nil(t, e.memTracker)
+}
+
+func TestIndexLookUpPartitionRangesUseMemoryTracker(t *testing.T) {
+	sctx := mock.NewContext()
+	partition0 := tables.MockTableFromMeta(&model.TableInfo{ID: 101})
+	partition1 := tables.MockTableFromMeta(&model.TableInfo{ID: 102})
+	rangeMemTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+	e := &IndexLookUpExecutor{
+		indexLookUpExecutorContext: newIndexLookUpExecutorContext(sctx),
+		BaseExecutorV2:             exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 0),
+		index:                      &model.IndexInfo{ID: 1},
+		prunedPartitions:           []table.PhysicalTable{partition0.(table.PhysicalTable), partition1.(table.PhysicalTable)},
+		partitionTableMode:         true,
+		ranges:                     []*ranger.Range{generateIndexRange(1, 1)},
+		rangeMemTracker:            rangeMemTracker,
+	}
+
+	require.NoError(t, e.buildTableKeyRanges())
+	require.Greater(t, rangeMemTracker.BytesConsumed(), int64(0))
+
+	executorMemTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+	e.rangeMemTracker = nil
+	e.memTracker = executorMemTracker
+	require.NoError(t, e.buildTableKeyRanges())
+	require.Greater(t, executorMemTracker.BytesConsumed(), int64(0))
 }
 
 func generateIndexRange(vals ...int64) *ranger.Range {
@@ -341,6 +527,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 		require.NotEmpty(t, c.stmt, c.name)
 		for _, stmt := range c.stmt {
 			msg := fmt.Sprintf("%d: %s, stmt: %T", i, c.name, stmt)
+			ctx.GetSessionVars().EnableStrictNotNullCheck = true
 			ctx.GetSessionVars().SQLMode = c.sqlMode
 			require.NoError(t, ResetContextOfStmt(ctx, stmt), msg)
 			ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
@@ -456,4 +643,99 @@ func TestAddUnchangedKeysForLockByRow_GlobalIndexNewTableID(t *testing.T) {
 	gotKeys := sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForXLock(nil)
 	require.Len(t, gotKeys, 1)
 	require.Equal(t, expectedKey, []byte(gotKeys[0]))
+}
+
+func TestStrictNotNullCheckForInsert(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.BindDomainAndSchValidator(&domain.Domain{}, nil)
+
+	cases := []struct {
+		name                     string
+		sqlMode                  mysql.SQLMode
+		enableStrictNotNullCheck bool
+		isSingleInsert           bool
+		expectBadNullLevel       errctx.Level
+		expectNoDefaultLevel     errctx.Level
+	}{
+		{
+			name:                     "non-strict,single-row,disable",
+			sqlMode:                  mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: false,
+			isSingleInsert:           true,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelWarn,
+		},
+		{
+			name:                     "strict,single-row,disable",
+			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: false,
+			isSingleInsert:           true,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelError,
+		},
+		{
+			name:                     "non-strict,single-row,enable",
+			sqlMode:                  mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: true,
+			isSingleInsert:           true,
+			expectBadNullLevel:       errctx.LevelError,
+			expectNoDefaultLevel:     errctx.LevelWarn,
+		},
+		{
+			name:                     "strict,single-row,enable",
+			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: true,
+			isSingleInsert:           true,
+			expectBadNullLevel:       errctx.LevelError,
+			expectNoDefaultLevel:     errctx.LevelError,
+		},
+		{
+			name:                     "non-strict,multi-row,disable",
+			sqlMode:                  mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: false,
+			isSingleInsert:           false,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelWarn,
+		},
+		{
+			name:                     "strict,multi-row,disable",
+			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: false,
+			isSingleInsert:           false,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelError,
+		},
+		{
+			name:                     "non-strict,multi-row,enable",
+			sqlMode:                  mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: true,
+			isSingleInsert:           false,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelWarn,
+		},
+		{
+			name:                     "strict,multi-row,enable",
+			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: true,
+			isSingleInsert:           false,
+			expectBadNullLevel:       errctx.LevelError,
+			expectNoDefaultLevel:     errctx.LevelError,
+		},
+	}
+
+	for _, c := range cases {
+		ctx.GetSessionVars().EnableStrictNotNullCheck = true
+		ctx.GetSessionVars().SQLMode = c.sqlMode
+		ctx.GetSessionVars().EnableStrictNotNullCheck = c.enableStrictNotNullCheck
+		stmt := &ast.InsertStmt{Lists: [][]ast.ExprNode{{}}}
+		if c.isSingleInsert {
+			stmt.Lists = make([][]ast.ExprNode, 1)
+		} else {
+			stmt.Lists = make([][]ast.ExprNode, 2)
+		}
+		require.NoError(t, ResetContextOfStmt(ctx, stmt), c.name)
+		ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
+		require.Equal(t, c.expectBadNullLevel, ec.LevelMap()[errctx.ErrGroupBadNull], "%s: BadNull level", c.name)
+		require.Equal(t, c.expectNoDefaultLevel, ec.LevelMap()[errctx.ErrGroupNoDefault], "%s: NoDefault level", c.name)
+	}
 }

@@ -79,7 +79,7 @@ type StatsUsage interface {
 
 	// DumpStatsDeltaToKV sweeps the whole list and updates the global map, then dumps the selected table deltas to KV.
 	// If tableIDs is empty, it dumps every table that held in the map.
-	DumpStatsDeltaToKV(dumpAll bool, tableIDs ...int64) error
+	DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) error
 
 	// DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 	DumpColStatsUsageToKV() error
@@ -263,6 +263,11 @@ type StatsCache interface {
 
 	// TriggerEvict triggers the cache to evict some items
 	TriggerEvict()
+
+	// WaitForAsyncUpdates blocks until buffered asynchronous cache writes are visible to later Get calls.
+	// Use it after adding new items when following reads depend on them. LFU/Ristretto admits
+	// non-resident items asynchronously; init stats calls this between load phases/chunks.
+	WaitForAsyncUpdates()
 }
 
 // StatsLockTable is the table info of which will be locked.

@@ -14,7 +14,11 @@
 
 package proto
 
-import "github.com/docker/go-units"
+import (
+	"math"
+
+	"github.com/docker/go-units"
+)
 
 // ManagedNode is a TiDB node that is managed by the framework.
 type ManagedNode struct {
@@ -41,6 +45,32 @@ func NewNodeResource(totalCPU int, totalMem int64, totalDisk uint64) *NodeResour
 		TotalMem:  totalMem,
 		TotalDisk: totalDisk,
 	}
+}
+
+// LimitDXFResource returns the resource available to DXF under the given percentage limit.
+func (nr *NodeResource) LimitDXFResource(limit int) *NodeResource {
+	usableCPU := getLimitedDXFCPU(nr.TotalCPU, limit)
+	if usableCPU == nr.TotalCPU || nr.TotalCPU <= 0 {
+		return NewNodeResource(nr.TotalCPU, nr.TotalMem, nr.TotalDisk)
+	}
+	usableMem := int64(float64(usableCPU) / float64(nr.TotalCPU) * float64(nr.TotalMem))
+	// this feature is for premium based cluster, in which we are only support
+	// global sort, there is no local disk. so we leave the disk as is.
+	return NewNodeResource(usableCPU, usableMem, nr.TotalDisk)
+}
+
+// getLimitedDXFCPU returns the CPU slots available to DXF under the given percentage limit.
+func getLimitedDXFCPU(totalCPU int, limit int) int {
+	if totalCPU <= 0 || limit >= 100 {
+		return totalCPU
+	}
+	// use CEIL might cause the real limit to be higher than the given limit.
+	// as DXF use slots or CPU cores as the unit of resource, that's acceptable.
+	usableCPU := int(math.Ceil(float64(totalCPU) * float64(limit) / 100))
+	if usableCPU < 1 {
+		return 1
+	}
+	return min(usableCPU, totalCPU)
 }
 
 // NodeResourceForTest is only used for test.

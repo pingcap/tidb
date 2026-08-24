@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -83,7 +82,6 @@ func TestIlike(t *testing.T) {
 			f, err := fc.getFunction(ctx, inputs)
 			require.NoError(t, err, comment)
 			f.SetCharsetAndCollation(charsetAndCollation[0], charsetAndCollation[1])
-			f.setCollator(collate.GetCollator(charsetAndCollation[1]))
 			r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			require.NoError(t, err, comment)
 			testutil.DatumEqual(t, types.NewDatum(tt.generalMatch), r, comment)
@@ -104,7 +102,6 @@ func TestIlike(t *testing.T) {
 			f, err := fc.getFunction(ctx, inputs)
 			require.NoError(t, err, comment)
 			f.SetCharsetAndCollation(charsetAndCollation[0], charsetAndCollation[1])
-			f.setCollator(collate.GetCollator(charsetAndCollation[1]))
 			r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			require.NoError(t, err, comment)
 			testutil.DatumEqual(t, types.NewDatum(tt.unicodeMatch), r, comment)
@@ -220,7 +217,6 @@ func TestVectorizedBuiltinIlikeForConstants(t *testing.T) {
 			f, err := funcs[ast.Ilike].getFunction(ctx, args)
 			require.NoError(t, err)
 			f.SetCharsetAndCollation(charset.CharsetUTF8MB4, "utf8mb4_general_ci")
-			f.setCollator(collate.GetCollator("utf8mb4_general_ci"))
 			require.True(t, f.vectorized() && f.isChildrenVectorized())
 
 			output := chunk.NewColumn(eType2FieldType(types.ETInt), len(tc.exprs))

@@ -111,7 +111,7 @@ func (s *MainBackupSender) SendAsync(
 ) {
 	go func() {
 		defer func() {
-			logutil.CL(ctx).Info("store backup goroutine exits", zap.Uint64("store", storeID))
+			logutil.CL(ctx).Debug("store backup goroutine exits", zap.Uint64("store", storeID))
 			close(respCh)
 		}()
 		err := startBackup(ctx, storeID, limiter, request, cli, concurrency, respCh)
@@ -145,8 +145,16 @@ func (l *MainBackupLoop) CollectStoreBackupsAsync(
 	globalCh chan *ResponseAndStore,
 ) {
 	go func() {
+		totalProducers := len(storeBackupChs)
+		allProducersExited := false
 		defer func() {
-			logutil.CL(ctx).Info("collect backups goroutine exits", zap.Uint64("round", round))
+			if allProducersExited {
+				logutil.CL(ctx).Info("all store backup goroutines exited",
+					zap.Uint64("round", round),
+					zap.Int("store-count", totalProducers))
+			} else {
+				logutil.CL(ctx).Debug("collect backups goroutine exits", zap.Uint64("round", round))
+			}
 			close(globalCh)
 		}()
 		cases := make([]reflect.SelectCase, 0)
@@ -171,6 +179,7 @@ func (l *MainBackupLoop) CollectStoreBackupsAsync(
 			case globalCh <- value.Interface().(*ResponseAndStore):
 			}
 		}
+		allProducersExited = true
 	}()
 }
 
@@ -292,7 +301,9 @@ mainLoop:
 					return err
 				}
 				elapsed := time.Since(startUpdate)
-				log.Info("update the incomplete ranges", zap.Duration("take", elapsed))
+				log.Debug("update the incomplete ranges",
+					zap.Int("incomplete-ranges", len(loop.BackupReq.SubRanges)),
+					zap.Duration("take", elapsed))
 				incompleteRangesUpdateTicker.Reset(max(5*elapsed, IncompleteRangesUpdateInterval))
 			case storeBackupInfo := <-loop.StateNotifier:
 				if storeBackupInfo.All {

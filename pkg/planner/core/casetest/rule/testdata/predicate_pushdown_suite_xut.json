@@ -95,17 +95,20 @@
       {
         "SQL": "select * from foo join bar on foo.a=bar.a where foo.a = rand();",
         "Plan": [
-          "Projection root  test.foo.a, test.foo.b, test.foo.c, test.bar.a, test.bar.b, test.bar.c",
-          "└─MergeJoin root  inner join, left key:test.bar.a, right key:test.foo.a",
-          "  ├─Selection(Build) root  eq(cast(test.foo.a, double BINARY), rand())",
-          "  │ └─TableReader root  data:TableFullScan",
-          "  │   └─TableFullScan cop[tikv] table:foo keep order:true, stats:pseudo",
-          "  └─TableReader(Probe) root  data:TableFullScan",
-          "    └─TableFullScan cop[tikv] table:bar keep order:true, stats:pseudo"
+          "MergeJoin root  inner join, left key:test.foo.a, right key:test.bar.a, other cond:eq(Column, Column)",
+          "├─Projection(Build) root  test.bar.a, test.bar.b, test.bar.c, rand()->Column",
+          "│ └─TableReader root  data:TableFullScan",
+          "│   └─TableFullScan cop[tikv] table:bar keep order:true, stats:pseudo",
+          "└─Projection(Probe) root  test.foo.a, test.foo.b, test.foo.c, cast(test.foo.a, double BINARY)->Column",
+          "  └─TableReader root  data:TableFullScan",
+          "    └─TableFullScan cop[tikv] table:foo keep order:true, stats:pseudo"
         ],
         "Result": null,
         "Warning": [
-          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to storage layer now."
+          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tikv now.",
+          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tikv now.",
+          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tikv now.",
+          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tikv now."
         ]
       },
       {

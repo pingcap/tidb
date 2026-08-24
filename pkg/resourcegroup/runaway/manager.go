@@ -427,9 +427,20 @@ func (rm *Manager) UpdateNewAndDoneWatch() error {
 		return err
 	}
 	s.syncOKCounter.Inc()
-	s.watchCPGauge.Set(float64(s.newWatchReader.CheckPoint))
-	s.doneCPGauge.Set(float64(s.deletionWatchReader.CheckPoint))
+	s.watchCPGauge.Set(checkpointGaugeValue(s.newWatchReader.CheckPoint))
+	s.doneCPGauge.Set(checkpointGaugeValue(s.deletionWatchReader.CheckPoint))
 	return nil
+}
+
+// checkpointGaugeValue reports a syncer CheckPoint in Unix milliseconds. A zero
+// time.Time (no scan has advanced the checkpoint yet) is reported as 0 rather
+// than `time.Time{}.UnixMilli() == -62135596800000`, which would dominate the
+// Grafana panel's y-axis on clusters that have never produced a watch row.
+func checkpointGaugeValue(checkpoint time.Time) float64 {
+	if checkpoint.IsZero() {
+		return 0
+	}
+	return float64(checkpoint.UnixMilli())
 }
 
 // doSync performs the actual sync work for watch and watch_done tables.
@@ -437,32 +448,33 @@ func (rm *Manager) doSync() error {
 	if !rm.runawaySyncer.checkWatchTableExist() {
 		return nil
 	}
-	for {
-		records, err := rm.runawaySyncer.getNewWatchRecords()
-		if err != nil {
-			return err
-		}
-		for _, r := range records {
-			rm.AddWatch(r)
-		}
-		if len(records) < watchSyncBatchLimit {
-			break
-		}
+	records, err := rm.runawaySyncer.getNewWatchRecords()
+	if err != nil {
+		return err
+	}
+	for _, r := range records {
+		rm.AddWatch(r)
+	}
+	// On the first sync (startup), skip the historical watch_done full-table
+	// scan. The in-memory watch list was empty before loading from the watch
+	// table above, and records already moved to watch_done are absent from the
+	// watch table (handleRunawayWatchDone moves them atomically in a single
+	// transaction), so scanning historical watch_done rows would only produce
+	// no-op removeWatch calls. The overlap window covers concurrent moves that
+	// commit between the watch snapshot and the done scan.
+	if rm.runawaySyncer.deletionWatchReader.CheckPoint.Equal(NullTime) {
+		rm.runawaySyncer.deletionWatchReader.CheckPoint =
+			rm.runawaySyncer.newWatchReader.UpperBound.Add(-watchSyncOverlap)
 	}
 	if !rm.runawaySyncer.checkWatchDoneTableExist() {
 		return nil
 	}
-	for {
-		doneRecords, err := rm.runawaySyncer.getNewWatchDoneRecords()
-		if err != nil {
-			return err
-		}
-		for _, r := range doneRecords {
-			rm.removeWatch(r)
-		}
-		if len(doneRecords) < watchSyncBatchLimit {
-			break
-		}
+	doneRecords, err := rm.runawaySyncer.getNewWatchDoneRecords()
+	if err != nil {
+		return err
+	}
+	for _, r := range doneRecords {
+		rm.removeWatch(r)
 	}
 	return nil
 }

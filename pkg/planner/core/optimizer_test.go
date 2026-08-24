@@ -16,6 +16,7 @@ package core
 
 import (
 	"math"
+	"math/bits"
 	"reflect"
 	"strings"
 	"testing"
@@ -24,14 +25,17 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -271,6 +275,38 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 
 // Test for core.handleFineGrainedShuffle()
 func TestHandleFineGrainedShuffle(t *testing.T) {
+	t.Run("refresh cached logical cores when tiflash restarts", func(t *testing.T) {
+		const staleAddr = "127.0.0.1:3933"
+		const validAddr = "127.0.0.2:3933"
+		copr.GlobalMPPServerInfoManager.Delete(staleAddr)
+		copr.GlobalMPPServerInfoManager.Delete(validAddr)
+		t.Cleanup(func() {
+			copr.GlobalMPPServerInfoManager.Delete(staleAddr)
+			copr.GlobalMPPServerInfoManager.Delete(validAddr)
+		})
+
+		copr.GlobalMPPServerInfoManager.Add(&copr.MPPServerInfo{
+			Address:         staleAddr,
+			LogicalCPUCount: 8,
+			StartTimestamp:  100,
+		})
+		copr.GlobalMPPServerInfoManager.Add(&copr.MPPServerInfo{
+			Address:         validAddr,
+			LogicalCPUCount: 16,
+			StartTimestamp:  200,
+		})
+
+		serversNeedingRefresh, minLogicalCores := splitTiFlashLogicalCoreCache([]infoschema.ServerInfo{
+			{Address: staleAddr, StartTimestamp: 101},
+			{Address: validAddr, StartTimestamp: 200},
+		})
+
+		require.Equal(t, uint64(16), minLogicalCores)
+		require.Len(t, serversNeedingRefresh, 1)
+		require.Equal(t, staleAddr, serversNeedingRefresh[0].Address)
+		require.Equal(t, int64(101), serversNeedingRefresh[0].StartTimestamp)
+	})
+
 	sortItem := property.SortItem{
 		Col:  nil,
 		Desc: true,
@@ -609,4 +645,29 @@ func TestCanTiFlashUseHashJoinV2(t *testing.T) {
 	hashJoin.IsNullEQ = append(hashJoin.IsNullEQ, true)
 	// can not use hash join v2 due to null eq
 	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+}
+
+func TestOptRuleListFlagAlignment(t *testing.T) {
+	// Each position in optRuleList is gated by the corresponding entry in
+	// optRuleFlags. Flag values are stable bitmasks, so a rule can be inserted
+	// into the execution order without changing existing flag values.
+	require.Equalf(t, len(optRuleList), len(optRuleFlags),
+		"optRuleList length (%d) does not match optRuleFlags length (%d); "+
+			"did you add a rule without a flag or vice versa?",
+		len(optRuleList), len(optRuleFlags))
+
+	seenFlags := make(map[uint64]struct{}, len(optRuleFlags))
+	for i, flag := range optRuleFlags {
+		require.NotZerof(t, flag, "optRuleFlags[%d] must not be zero", i)
+		require.Zerof(t, flag&(flag-1), "optRuleFlags[%d] must contain exactly one bit", i)
+		_, ok := seenFlags[flag]
+		require.Falsef(t, ok, "optRuleFlags[%d] duplicates flag %d", i, flag)
+		seenFlags[flag] = struct{}{}
+	}
+
+	numFlags := bits.Len64(rule.FlagFullTextIndexResolveReject)
+	require.Equalf(t, numFlags, len(seenFlags),
+		"unique optRuleFlags count (%d) does not match Flag* count (%d); "+
+			"did you add a flag without mapping it to a rule or vice versa?",
+		len(seenFlags), numFlags)
 }

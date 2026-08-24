@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/server/internal/testserverclient",
     visibility = ["//pkg/server:__subpackages__"],
     deps = [
+        "//pkg/config",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/meta/model",
@@ -17,6 +18,7 @@ go_library(
         "//pkg/testkit/testenv",
         "//pkg/testkit/testfailpoint",
         "//pkg/util",
+        "//pkg/util/logutil",
         "//pkg/util/versioninfo",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",

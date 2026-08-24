@@ -82,7 +82,6 @@ import (
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
-	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -260,12 +259,12 @@ type PlanBuilder struct {
 	// SelectLock need this information to locate the lock on partitions.
 	partitionedTable []table.PartitionedTable
 	// buildingViewStack is used to check whether there is a recursive view.
-	buildingViewStack set.StringSet
+	buildingViewStack map[schemaTableKey]struct{}
 	// ignoreTruncateErrForViewPredicateFolding narrows truncate relaxation to
 	// constant predicate folding while expanding a view.
 	ignoreTruncateErrForViewPredicateFolding bool
 	// renamingViewName is the name of the view which is being renamed.
-	renamingViewName string
+	renamingViewName schemaTableKey
 	// isCreateView indicates whether the query is create view.
 	isCreateView bool
 
@@ -327,6 +326,50 @@ type PlanBuilder struct {
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
+
+	// nonViableFTSMatch is set during build when the expression rewriter
+	// encounters a predicate-context MATCH...AGAINST whose native form
+	// (FTSMysqlMatchAgainst) cannot be executed — the matched columns lack a
+	// public FULLTEXT index on a TiFlash-backed table, or the modifier is not
+	// supported by pushdown. The flag is read by the alternative-rounds driver
+	// after the round to invalidate the round's plan and trigger the
+	// fts-like-fallback round (see optimize.go).
+	nonViableFTSMatch bool
+
+	// predicateMatchSeen is set during build when the expression rewriter
+	// encounters a direct-boolean-context MATCH...AGAINST (one whose 0/1 boolean
+	// result is consumed directly as a predicate). The alternative-rounds driver
+	// uses this to enable the fts-like-fallback round even when round 1's
+	// native plan is executable, so the LIKE-based plan can compete on cost.
+	predicateMatchSeen bool
+}
+
+// HasNonViableFTSMatch reports whether the most recent build round saw a
+// predicate-context MATCH...AGAINST that could not be served by the native
+// FTSMysqlMatchAgainst builtin. The caller (optimize.go) uses this to
+// invalidate the round's plan and trigger the fts-like-fallback round.
+func (b *PlanBuilder) HasNonViableFTSMatch() bool {
+	return b.nonViableFTSMatch
+}
+
+// MarkNonViableFTSMatch records that a predicate-context MATCH...AGAINST in
+// the current build cannot be served natively. See HasNonViableFTSMatch.
+func (b *PlanBuilder) MarkNonViableFTSMatch() {
+	b.nonViableFTSMatch = true
+}
+
+// HasPredicateMatch reports whether the most recent build round saw a
+// direct-boolean-context MATCH...AGAINST. The caller (optimize.go) uses this
+// to decide whether to run the fts-like-fallback round for cost competition,
+// independent of whether round 1's native plan is executable.
+func (b *PlanBuilder) HasPredicateMatch() bool {
+	return b.predicateMatchSeen
+}
+
+// MarkPredicateMatch records that the current build encountered a
+// direct-boolean-context MATCH...AGAINST. See HasPredicateMatch.
+func (b *PlanBuilder) MarkPredicateMatch() {
+	b.predicateMatchSeen = true
 }
 
 type handleColHelper struct {
@@ -1245,6 +1288,9 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 		unSupportedReason = "stale read is not supported"
 	} else if sessionVars.SnapshotTS != 0 {
 		unSupportedReason = "historical read is not supported"
+	} else if sessionVars.MaxKeysRead > 0 {
+		// https://github.com/tikv/tikv/pull/19518#discussion_r3263461617
+		unSupportedReason = "tidb_max_keys_read is set"
 	}
 
 	if unSupportedReason != "" {
@@ -2569,9 +2615,14 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 	for _, colInfo := range result {
 		shouldSkip := false
 		if colInfo.IsGenerated() {
-			// Check if any dependency is in the skip list
+			_, keep := mustAnalyze[colInfo.ID]
+			// Stored generated columns that must be analyzed are materialized in storage.
+			// They can be decoded directly without reading skipped base columns, while the
+			// skipped dependencies remain skipped.
+			decodableFromStorage := colInfo.GeneratedStored && keep
+			// Check if any dependency is in the skip list.
 			for depName := range colInfo.Dependences {
-				if _, exists := skipColNameMap[depName]; exists {
+				if _, exists := skipColNameMap[depName]; exists && !decodableFromStorage {
 					skipCol = append(skipCol, colInfo)
 					shouldSkip = true
 					break
@@ -2815,7 +2866,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 		tblColChoice, tblColList = pickColumnList(astColChoice, astColList, tblSavedColChoice, tblSavedColList)
 	}
 
-	tblFilledOpts := fillAnalyzeOptionsV2(tblOpts)
+	tblFilledOpts := fillAnalyzeOptions(tblOpts)
 
 	tblColsInfo, tblColList, err := b.getFullAnalyzeColumnsInfo(tbl, tblColChoice, tblColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 	if err != nil {
@@ -2860,7 +2911,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 			savedColChoice, savedColList := pickColumnList(parSavedColChoice, parSavedColList, tblSavedColChoice, tblSavedColList)
 			// then merge statement level options
 			mergedOpts := mergeAnalyzeOptions(astOpts, savedOpts)
-			filledMergedOpts := fillAnalyzeOptionsV2(mergedOpts)
+			filledMergedOpts := fillAnalyzeOptions(mergedOpts)
 			finalColChoice, mergedColList := pickColumnList(astColChoice, astColList, savedColChoice, savedColList)
 			finalColsInfo, finalColList, err := b.getFullAnalyzeColumnsInfo(tbl, finalColChoice, mergedColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 			if err != nil {
@@ -2885,7 +2936,9 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.TableInfo) (map[ast.AnalyzeOptionType]uint64, ast.ColumnChoice, []*model.ColumnInfo, error) {
 	analyzeOptions := map[ast.AnalyzeOptionType]uint64{}
 	exec := b.ctx.GetRestrictedSQLExecutor()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	// Deliberately not the analyze source: reading saved options is lightweight
+	// metadata work, not the heavy scan that background throttling targets.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select sample_num,sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id = %?", physicalID)
 	if err != nil {
 		return nil, ast.DefaultChoice, nil, err
@@ -3061,34 +3114,34 @@ func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tblInfo 
 var CMSketchSizeLimit = kv.TxnEntrySizeLimit.Load() / binary.MaxVarintLen32
 
 var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    100000,
-	ast.AnalyzeOptNumTopN:       100000,
+	ast.AnalyzeOptNumBuckets: vardef.MaxTiDBAnalyzeDefaultNumBuckets,
+	ast.AnalyzeOptNumTopN:    vardef.MaxTiDBAnalyzeDefaultNumTopN,
+	// CMSketch width/depth are legacy ANALYZE knobs kept only to validate
+	// explicit options for compatibility.
 	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
 	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
 	ast.AnalyzeOptNumSamples:    5000000,
 	ast.AnalyzeOptSampleRate:    math.Float64bits(1),
 }
 
+// AnalyzeOptionDefault returns the default analyze options.
 // TopN reduced from 500 to 100 due to concerns over large number of TopN values collected for customers with many tables.
 // 100 is more inline with other databases. 100-256 is also common for NumBuckets with other databases.
-var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    statistics.DefaultHistogramBuckets,
-	ast.AnalyzeOptNumTopN:       statistics.DefaultTopNValue,
-	ast.AnalyzeOptCMSketchWidth: 2048,
-	ast.AnalyzeOptCMSketchDepth: 5,
-	ast.AnalyzeOptNumSamples:    0,
-	ast.AnalyzeOptSampleRate:    math.Float64bits(-1),
-}
-
-// GetAnalyzeOptionDefaultV2ForTest returns the default analyze options for test.
-func GetAnalyzeOptionDefaultV2ForTest() map[ast.AnalyzeOptionType]uint64 {
-	return analyzeOptionDefaultV2
+func AnalyzeOptionDefault() map[ast.AnalyzeOptionType]uint64 {
+	return map[ast.AnalyzeOptionType]uint64{
+		ast.AnalyzeOptNumBuckets:    vardef.AnalyzeDefaultNumBuckets.Load(),
+		ast.AnalyzeOptNumTopN:       vardef.AnalyzeDefaultNumTopN.Load(),
+		ast.AnalyzeOptCMSketchWidth: 2048,
+		ast.AnalyzeOptCMSketchDepth: 5,
+		ast.AnalyzeOptNumSamples:    0,
+		ast.AnalyzeOptSampleRate:    math.Float64bits(-1),
+	}
 }
 
 // handleAnalyzeOptions validates analyze options and returns only the options
 // explicitly specified in the statement.
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
-	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefaultV2))
+	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionLimit))
 	sampleNum, sampleRate := uint64(0), 0.0
 	for _, opt := range opts {
 		datumValue := opt.Value.(*driver.ValueExpr).Datum
@@ -3129,9 +3182,10 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 	return optMap, nil
 }
 
-func fillAnalyzeOptionsV2(optMap map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
-	filledMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefaultV2))
-	for key, defaultVal := range analyzeOptionDefaultV2 {
+func fillAnalyzeOptions(optMap map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
+	defaults := AnalyzeOptionDefault()
+	filledMap := make(map[ast.AnalyzeOptionType]uint64, len(defaults))
+	for key, defaultVal := range defaults {
 		if val, ok := optMap[key]; ok {
 			filledMap[key] = val
 		} else {
@@ -3156,7 +3210,7 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (base.Plan, error) 
 	if err != nil {
 		return nil, err
 	}
-	filledOpts := fillAnalyzeOptionsV2(opts)
+	filledOpts := fillAnalyzeOptions(opts)
 
 	if as.IndexFlag {
 		if len(as.IndexNames) == 0 {
@@ -3671,6 +3725,14 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 
 	switch raw := node.(type) {
 	case *ast.FlushStmt:
+		if raw.Tp == ast.FlushStatsDelta {
+			if err := fillDefaultDBForStatsObjects(b.ctx, raw.FlushObjects); err != nil {
+				return nil, err
+			}
+			raw.DedupFlushObjects()
+			b.requireSelectPrivForStatsObjects(raw.FlushObjects)
+			break
+		}
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RELOAD")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ReloadPriv, "", "", "", err)
 	case *ast.AlterInstanceStmt:
@@ -4012,12 +4074,19 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 		}
 		colExpr := mockPlan.Schema().Columns[idx]
 
-		originalVal := b.allowBuildCastArray
-		b.allowBuildCastArray = true
-		expr, _, err := b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true)
-		b.allowBuildCastArray = originalVal
-		if err != nil {
-			return igc, err
+		var expr expression.Expression
+		// Fast path: pure value literals (e.g. GENERATED ALWAYS AS (NULL) VIRTUAL) contain no
+		// column references and need no rewriting. Skip the expensive Clone()+rewrite() for them.
+		if valExpr, ok := column.GeneratedExpr.Internal().(*driver.ValueExpr); ok {
+			expr = &expression.Constant{Value: valExpr.Datum, RetType: column.FieldType.Clone()}
+		} else {
+			originalVal := b.allowBuildCastArray
+			b.allowBuildCastArray = true
+			expr, _, err = b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true)
+			b.allowBuildCastArray = originalVal
+			if err != nil {
+				return igc, err
+			}
 		}
 
 		igc.Exprs = append(igc.Exprs, expr)
@@ -4665,15 +4734,9 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
 		}
 		importFromServer = objstore.IsLocal(u)
-		// for SEM v2, they are checked by configured rules.
 		if semv1.IsEnabled() {
 			if importFromServer {
 				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
-			}
-			if kerneltype.IsNextGen() && objstore.IsS3Like(u) {
-				if err := checkNextGenS3PathWithSem(u); err != nil {
-					return nil, err
-				}
 			}
 		}
 		// a nextgen cluster might be shared by multiple tenants, and they might
@@ -4681,6 +4744,9 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		// external ID can be used to restrict the access only to the current tenant.
 		// when SEM enabled, we need set it.
 		if kerneltype.IsNextGen() && sem.IsEnabled() && objstore.IsS3Like(u) {
+			if err := checkNextGenS3PathWithSem(u); err != nil {
+				return nil, err
+			}
 			values := u.Query()
 			values.Set(s3like.S3ExternalID, config.GetGlobalKeyspaceName())
 			u.RawQuery = values.Encode()
@@ -4818,11 +4884,11 @@ func (*PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) base.Plan {
 }
 
 func (b *PlanBuilder) buildRefreshStats(rs *ast.RefreshStatsStmt) (base.Plan, error) {
-	if err := fillDefaultDBForRefreshStats(b.ctx, rs); err != nil {
+	if err := fillDefaultDBForStatsObjects(b.ctx, rs.RefreshObjects); err != nil {
 		return nil, err
 	}
 	rs.Dedup()
-	b.requireSelectOrRestoreAdminPrivForRefreshStats(rs)
+	b.requireSelectOrRestoreAdminPrivForStatsObjects(rs.RefreshObjects)
 	p := &Simple{
 		Statement:    rs,
 		IsFromRemote: false,
@@ -4831,14 +4897,14 @@ func (b *PlanBuilder) buildRefreshStats(rs *ast.RefreshStatsStmt) (base.Plan, er
 	return p, nil
 }
 
-func fillDefaultDBForRefreshStats(ctx base.PlanContext, rs *ast.RefreshStatsStmt) error {
-	if len(rs.RefreshObjects) == 0 {
+func fillDefaultDBForStatsObjects(ctx base.PlanContext, objects []*ast.StatsObject) error {
+	if len(objects) == 0 {
 		return nil
 	}
 
 	currentDB := ctx.GetSessionVars().CurrentDB
-	for _, obj := range rs.RefreshObjects {
-		if obj.RefreshObjectScope != ast.RefreshObjectScopeTable {
+	for _, obj := range objects {
+		if obj.StatsObjectScope != ast.StatsObjectScopeTable {
 			continue
 		}
 		if obj.DBName.L != "" {
@@ -4852,9 +4918,9 @@ func fillDefaultDBForRefreshStats(ctx base.PlanContext, rs *ast.RefreshStatsStmt
 	return nil
 }
 
-func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForRefreshStats(rs *ast.RefreshStatsStmt) {
-	if len(rs.RefreshObjects) == 0 {
-		intest.Assert(len(rs.RefreshObjects) > 0, "RefreshStatsStmt.RefreshObjects should not be empty")
+func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForStatsObjects(objects []*ast.StatsObject) {
+	if len(objects) == 0 {
+		intest.Assert(len(objects) > 0, "stats objects should not be empty")
 		return
 	}
 
@@ -4866,10 +4932,19 @@ func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForRefreshStats(rs *ast.Ref
 		}
 	}
 
+	b.requireSelectPrivForStatsObjects(objects)
+}
+
+func (b *PlanBuilder) requireSelectPrivForStatsObjects(objects []*ast.StatsObject) {
+	if len(objects) == 0 {
+		intest.Assert(len(objects) > 0, "stats objects should not be empty")
+		return
+	}
+
 	user := b.ctx.GetSessionVars().User
-	for _, obj := range rs.RefreshObjects {
-		switch obj.RefreshObjectScope {
-		case ast.RefreshObjectScopeGlobal:
+	for _, obj := range objects {
+		switch obj.StatsObjectScope {
+		case ast.StatsObjectScopeGlobal:
 			var err error
 			if user != nil {
 				err = plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs("SELECT")
@@ -4878,19 +4953,18 @@ func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForRefreshStats(rs *ast.Ref
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, "", "", "", err)
 			return
-		case ast.RefreshObjectScopeDatabase:
+		case ast.StatsObjectScopeDatabase:
 			var err error
 			if user != nil {
 				err = plannererrors.ErrDBaccessDenied.GenWithStackByArgs(user.AuthUsername, user.AuthHostname, obj.DBName.O)
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, obj.DBName.L, "", "", err)
-		case ast.RefreshObjectScopeTable:
-			dbName := obj.DBName.L
+		case ast.StatsObjectScopeTable:
 			var err error
 			if user != nil {
 				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, obj.TableName.O)
 			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, obj.TableName.L, "", err)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, obj.DBName.L, obj.TableName.L, "", err)
 		}
 	}
 }
@@ -5373,7 +5447,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		}
 		b.isCreateView = true
 		b.capFlag |= canExpandAST | renameView
-		b.renamingViewName = v.ViewName.Schema.L + "." + v.ViewName.Name.L
+		b.renamingViewName = newSchemaTableKey(v.ViewName.Schema, v.ViewName.Name)
 		defer func() {
 			b.capFlag &= ^canExpandAST
 			b.capFlag &= ^renameView
@@ -5639,9 +5713,12 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (base.Plan, error) {
 	return p, nil
 }
 
-func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, explainBriefBinary string, analyze, explore bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl, sqlDigest string) (base.Plan, error) {
+func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, explainBriefBinary string, analyze, explore bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl, sqlDigest, replayerFile string) (base.Plan, error) {
 	format = strings.ToLower(format)
 	if format == types.ExplainFormatTrueCardCost && !analyze {
+		return nil, errors.Errorf("'explain format=%v' cannot work without 'analyze', please use 'explain analyze format=%v'", format, format)
+	}
+	if format == types.ExplainFormatRU && !analyze {
 		return nil, errors.Errorf("'explain format=%v' cannot work without 'analyze', please use 'explain analyze format=%v'", format, format)
 	}
 
@@ -5651,6 +5728,7 @@ func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, expl
 		Analyze:          analyze,
 		Explore:          explore,
 		SQLDigest:        sqlDigest,
+		ReplayerFile:     replayerFile,
 		ExecStmt:         execStmt,
 		BriefBinaryPlan:  explainBriefBinary,
 		RuntimeStatsColl: runtimeStats,
@@ -5683,7 +5761,7 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (base.Plan
 	if explainForFormat != types.ExplainFormatBrief && explainForFormat != types.ExplainFormatROW && explainForFormat != types.ExplainFormatVerbose {
 		return nil, errors.Errorf("explain format '%s' for connection is not supported now", explainForFormat)
 	}
-	return b.buildExplainPlan(targetPlan, explainForFormat, processInfo.BriefBinaryPlan, false, false, nil, processInfo.RuntimeStatsColl, "")
+	return b.buildExplainPlan(targetPlan, explainForFormat, processInfo.BriefBinaryPlan, false, false, nil, processInfo.RuntimeStatsColl, "", "")
 }
 
 // getHintedStmtThroughPlanDigest gets the hinted SQL like `select /*+ ... */ * from t where ...` from `stmt_summary`
@@ -5749,7 +5827,7 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 		}
 	}
 
-	return b.buildExplainPlan(targetPlan, explain.Format, "", explain.Analyze, explain.Explore, explain.Stmt, nil, explain.SQLDigest)
+	return b.buildExplainPlan(targetPlan, explain.Format, "", explain.Analyze, explain.Explore, explain.Stmt, nil, explain.SQLDigest, explain.ReplayerFile)
 }
 
 func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) (base.Plan, error) {
@@ -6071,8 +6149,9 @@ func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) base.Plan {
 		p.HistoricalStatsTS = calcTSForPlanReplayer(b.ctx, pc.HistoricalStatsInfo.TsExpr)
 	}
 
-	schema := newColumnsWithNames(1)
-	schema.Append(buildColumnWithName("", "File_token", mysql.TypeVarchar, 128))
+	schema := newColumnsWithNames(2)
+	schema.Append(buildColumnWithName("", "Item", mysql.TypeVarchar, 32))
+	schema.Append(buildColumnWithName("", "Value", mysql.TypeVarchar, mysql.MaxBlobWidth))
 	p.SetSchema(schema.col2Schema())
 	p.SetOutputNames(schema.names)
 	return p
@@ -6319,15 +6398,35 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 	return nil
 }
 
-// for nextgen import-into with SEM, we disallow user to set S3 external ID explicitly,
-// and we will use the keyspace name as the S3 external ID.
+// For nextgen IMPORT INTO with SEM, require explicit S3 authentication and
+// disallow explicit S3 external ID unless it is the keyspace name. The keyspace
+// name is used as the S3 external ID.
 func checkNextGenS3PathWithSem(u *url.URL) error {
 	values := u.Query()
-	for k := range values {
-		lowerK := strings.ToLower(k)
-		if lowerK == s3like.S3ExternalID {
-			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
+	expectedExternalID := config.GetGlobalKeyspaceName()
+	hasAccessKey := false
+	hasSecretAccessKey := false
+	hasRoleARN := false
+	for k, vs := range values {
+		normalizedK := objstore.NormalizeQueryParameterKey(k)
+		switch normalizedK {
+		case s3like.S3ExternalID:
+			for _, v := range vs {
+				if v != expectedExternalID {
+					return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
+				}
+			}
+		case s3like.S3AccessKey:
+			hasAccessKey = hasAccessKey || values.Get(k) != ""
+		case s3like.S3SecretAccessKey:
+			hasSecretAccessKey = hasSecretAccessKey || values.Get(k) != ""
+		case s3like.S3RoleARN:
+			hasRoleARN = hasRoleARN || values.Get(k) != ""
 		}
+	}
+
+	if !hasRoleARN && !(hasAccessKey && hasSecretAccessKey) {
+		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
 	}
 
 	return nil
@@ -6375,6 +6474,11 @@ func (b *PlanBuilder) checkSEMStmt(stmt ast.Node) error {
 
 	activeRoles := b.ctx.GetSessionVars().ActiveRoles
 	checker := privilege.GetPrivilegeManager(b.ctx)
+	if checker == nil {
+		// During bootstrap, the privilege manager is unavailable until the system
+		// privilege tables are initialized, so restricted bootstrap SQL cannot be checked yet.
+		return nil
+	}
 	hasPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_SQL_ADMIN", false)
 
 	if hasPriv {

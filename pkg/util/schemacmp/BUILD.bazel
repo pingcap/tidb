@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "schemacmp",
     srcs = [
+        "charset_collation.go",
         "lattice.go",
         "table.go",
         "type.go",
@@ -25,6 +26,7 @@ go_test(
     name = "schemacmp_test",
     timeout = "short",
     srcs = [
+        "charset_collation_test.go",
         "lattice_test.go",
         "table_test.go",
         "type_test.go",
@@ -33,14 +35,13 @@ go_test(
     deps = [
         ":schemacmp",
         "//pkg/ddl",
+        "//pkg/meta/metabuild",
         "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/planner",
-        "//pkg/sessionctx",
         "//pkg/types",
-        "//pkg/util/mock",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],

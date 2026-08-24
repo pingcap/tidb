@@ -26,7 +26,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCostOverflow(t *testing.T) {
+func TestFindBestTaskSuite(t *testing.T) {
+	t.Run("TestCostOverflow", testCostOverflow)
+	t.Run("TestEnforcedProperty", testEnforcedProperty)
+	t.Run("TestHintCannotFitProperty", testHintCannotFitProperty)
+}
+
+func testCostOverflow(t *testing.T) {
 	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
@@ -43,7 +49,7 @@ func TestCostOverflow(t *testing.T) {
 	require.False(t, task.Invalid())
 }
 
-func TestEnforcedProperty(t *testing.T) {
+func testEnforcedProperty(t *testing.T) {
 	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
@@ -80,7 +86,7 @@ func TestEnforcedProperty(t *testing.T) {
 	require.False(t, task.Invalid())
 }
 
-func TestHintCannotFitProperty(t *testing.T) {
+func testHintCannotFitProperty(t *testing.T) {
 	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()

@@ -267,9 +267,9 @@ node [style=filled, color=lightgrey]
 color=black
 label = "root"
 "StreamAgg_13" -> "Projection_36"
-"Projection_36" -> "HashJoin_35"
-"HashJoin_35" -> "IndexReader_24"
-"HashJoin_35" -> "IndexReader_28"
+"Projection_36" -> "HashJoin_29"
+"HashJoin_29" -> "IndexReader_24"
+"HashJoin_29" -> "IndexReader_28"
 }
 subgraph cluster23{
 node [style=filled, color=lightgrey]
@@ -290,13 +290,13 @@ label = "cop"
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
-digraph HashJoin_14 {
-subgraph cluster14{
+digraph HashJoin_8 {
+subgraph cluster8{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"HashJoin_14" -> "IndexReader_18"
-"HashJoin_14" -> "TableReader_20"
+"HashJoin_8" -> "IndexReader_18"
+"HashJoin_8" -> "TableReader_20"
 }
 subgraph cluster17{
 node [style=filled, color=lightgrey]

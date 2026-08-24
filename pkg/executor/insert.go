@@ -362,12 +362,17 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.collectRuntimeStatsEnabled() {
 		ctx = context.WithValue(ctx, autoid.AllocatorRuntimeStatsCtxKey, e.stats.AllocatorRuntimeStats)
 	}
+	e.recordRUV2RowsColMultiply = true
 
 	if !e.EmptyChildren() && e.Children(0) != nil {
 		return insertRowsFromSelect(ctx, e)
 	}
 	err := insertRows(ctx, e)
 	if err != nil {
+		// Rebase errors can bypass InsertValues.handleErr.
+		if autoid.IsRPCRetryLimitError(err) {
+			return err
+		}
 		terr, ok := errors.Cause(err).(*terror.Error)
 		if ok && len(e.OnDuplicate) == 0 && terr.Code() == errno.ErrAutoincReadFailed {
 			ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()

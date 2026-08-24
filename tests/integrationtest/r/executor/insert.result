@@ -2222,6 +2222,60 @@ INSERT IGNORE INTO t1 VALUES (127);
 show warnings;
 Level	Code	Message
 Warning	1062	Duplicate entry '\x00\x00\x7F' for key 't1.id'
+drop table if exists t1;
+create table t1 (id int primary key, col1 varchar(10) not null default '');
+set session sql_mode = '';
+set session tidb_enable_strict_not_null_check = off;
+insert into t1 values (1,null),(2,null);
+insert into t1 values (3, null);
+select * from t1;
+id	col1
+1	
+2	
+3	
+set session tidb_enable_strict_not_null_check = on;
+insert into t1 values (4,null),(5,null);
+insert into t1 values (6, null);
+Error 1048 (23000): Column 'col1' cannot be null
+select * from t1;
+id	col1
+1	
+2	
+3	
+4	
+5	
+set session sql_mode = 'STRICT_TRANS_TABLES';
+set session tidb_enable_strict_not_null_check = off;
+insert into t1 values (6,null),(7,null);
+insert into t1 values (8, null);
+select * from t1;
+id	col1
+1	
+2	
+3	
+4	
+5	
+6	
+7	
+8	
+set session tidb_enable_strict_not_null_check = on;
+insert into t1 values (9, null),(10,null);
+Error 1048 (23000): Column 'col1' cannot be null
+insert into t1 values (9, null);
+Error 1048 (23000): Column 'col1' cannot be null
+select * from t1;
+id	col1
+1	
+2	
+3	
+4	
+5	
+6	
+7	
+8	
+set session tidb_enable_strict_not_null_check = default;
+set session sql_mode = default;
+drop table t1;
 SET @old_time_zone = @@time_zone;
 SET @@time_zone = 'Europe/Amsterdam';
 SET @old_sql_mode = @@sql_mode;

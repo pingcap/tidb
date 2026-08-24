@@ -1097,7 +1097,7 @@ func (b *builtinLpadUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		runeLength := len([]rune(str))
 		padLength := len([]rune(padStr))
 
-		if targetLength < 0 || targetLength*4 > b.tp.GetFlen() {
+		if targetLength < 0 || targetLength > mysql.MaxBlobWidth || targetLength*4 > b.tp.GetFlen() {
 			result.AppendNull()
 			continue
 		}
@@ -2654,7 +2654,7 @@ func (b *builtinRpadUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		runeLength := len([]rune(str))
 		padLength := len([]rune(padStr))
 
-		if targetLength < 0 || targetLength*4 > b.tp.GetFlen() {
+		if targetLength < 0 || targetLength > mysql.MaxBlobWidth || targetLength*4 > b.tp.GetFlen() {
 			result.AppendNull()
 			continue
 		}

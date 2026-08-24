@@ -33,6 +33,62 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMaxParenthesesDepth(t *testing.T) {
+	p := parser.New()
+	nestedExpr := func(depth int) string {
+		return "select " + strings.Repeat("(", depth) + "1" + strings.Repeat(")", depth)
+	}
+	nestedFuncExpr := func(depth int) string {
+		return "select " + strings.Repeat("f(", depth) + "1" + strings.Repeat(")", depth)
+	}
+	nestedLeadingHint := func(depth int) string {
+		return "select /*+ LEADING(" + strings.Repeat("(", depth) + "t" + strings.Repeat(")", depth) + ") */ * from t"
+	}
+
+	_, err := p.ParseOneStmt(nestedExpr(10000), "", "")
+	require.NoError(t, err)
+
+	_, err = p.ParseOneStmt(nestedExpr(10001), "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
+
+	_, err = p.ParseOneStmt(nestedFuncExpr(10001), "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
+
+	_, err = p.ParseOneStmt(nestedLeadingHint(10000), "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
+}
+
+func TestMaxASTDepth(t *testing.T) {
+	p := parser.New()
+	nestedCaseExpr := func(depth int) string {
+		return "select " + strings.Repeat("case when true then ", depth) + "1" + strings.Repeat(" else 0 end", depth)
+	}
+	for _, tc := range []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "binary operation chain",
+			sql:  "select " + strings.Repeat("1+", 11000) + "1",
+		},
+		{
+			name: "unary operation chain",
+			sql:  "select " + strings.Repeat("!", 11000) + "1",
+		},
+		{
+			name: "case expression chain",
+			sql:  nestedCaseExpr(11000),
+		},
+	} {
+		_, err := p.ParseOneStmt(tc.sql, "", "")
+		require.Error(t, err, tc.name)
+		require.Contains(t, err.Error(), "AST nesting depth exceeds maximum", tc.name)
+	}
+}
+
 func TestSimple(t *testing.T) {
 	p := parser.New()
 
@@ -832,6 +888,8 @@ func TestDMLStmt(t *testing.T) {
 		{"select * from t1 join t2 left join t3 on t2.id = t3.id", true, "SELECT * FROM (`t1` JOIN `t2`) LEFT JOIN `t3` ON `t2`.`id`=`t3`.`id`"},
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3 on t3.id = t2.id", true, "SELECT * FROM (`t1` RIGHT JOIN `t2` ON `t1`.`id`=`t2`.`id`) LEFT JOIN `t3` ON `t3`.`id`=`t2`.`id`"},
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3", false, ""},
+		{"select * from t1 full join t2 on t1.a = t2.a", true, "SELECT * FROM `t1` AS `full` JOIN `t2` ON `t1`.`a`=`t2`.`a`"},
+		{"select * from t1 full outer join t2 on t1.a <=> t2.a", true, "SELECT * FROM `t1` FULL OUTER JOIN `t2` ON `t1`.`a`<=>`t2`.`a`"},
 		{"select * from t1 join t2 left join t3 using (id)", true, "SELECT * FROM (`t1` JOIN `t2`) LEFT JOIN `t3` USING (`id`)"},
 		{"select * from t1 right join t2 using (id) left join t3 using (id)", true, "SELECT * FROM (`t1` RIGHT JOIN `t2` USING (`id`)) LEFT JOIN `t3` USING (`id`)"},
 		{"select * from t1 right join t2 using (id) left join t3", false, ""},
@@ -916,6 +974,32 @@ func TestDMLStmt(t *testing.T) {
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c:=VALUES(a)+VALUES(b);", true, "INSERT INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},
 		{"INSERT IGNORE INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true, "INSERT IGNORE INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},
 		{"INSERT IGNORE INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c:=VALUES(a)+VALUES(b);", true, "INSERT IGNORE INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},
+
+		// for RETURNING clause
+		{"INSERT INTO t (a) VALUES (1) RETURNING *", true, "INSERT INTO `t` (`a`) VALUES (1) RETURNING *"},
+		{"INSERT INTO t (a) VALUES (1) RETURNING id", true, "INSERT INTO `t` (`a`) VALUES (1) RETURNING `id`"},
+		{"INSERT INTO t (a) VALUES (1) RETURNING id, name", true, "INSERT INTO `t` (`a`) VALUES (1) RETURNING `id`, `name`"},
+		{"INSERT INTO t2(id,animal) VALUES (1,'Dog'),(2,'Lion'),(3,'Tiger'),(4,'Leopard') RETURNING id,id+id,id&id,id||id", true, "INSERT INTO `t2` (`id`,`animal`) VALUES (1,_UTF8MB4'Dog'),(2,_UTF8MB4'Lion'),(3,_UTF8MB4'Tiger'),(4,_UTF8MB4'Leopard') RETURNING `id`, `id`+`id`, `id`&`id`, `id` OR `id`"},
+		{"INSERT INTO t (a) VALUES (1) ON DUPLICATE KEY UPDATE a=2 RETURNING id", true, "INSERT INTO `t` (`a`) VALUES (1) ON DUPLICATE KEY UPDATE `a`=2 RETURNING `id`"},
+		{"UPDATE t SET a=1 RETURNING *", true, "UPDATE `t` SET `a`=1 RETURNING *"},
+		{"UPDATE t SET a=1 WHERE id=1 RETURNING id, a", true, "UPDATE `t` SET `a`=1 WHERE `id`=1 RETURNING `id`, `a`"},
+		{"UPDATE t SET a=1 LIMIT 1 RETURNING *", true, "UPDATE `t` SET `a`=1 LIMIT 1 RETURNING *"},
+		{"DELETE FROM t RETURNING *", true, "DELETE FROM `t` RETURNING *"},
+		{"DELETE FROM t WHERE id=1 RETURNING id", true, "DELETE FROM `t` WHERE `id`=1 RETURNING `id`"},
+		{"DELETE FROM t ORDER BY id LIMIT 1 RETURNING *", true, "DELETE FROM `t` ORDER BY `id` LIMIT 1 RETURNING *"},
+
+		// for row alias in INSERT ... ON DUPLICATE KEY UPDATE (MySQL 8.0.19+)
+		{"INSERT INTO t (a,b,c) VALUES (1,2,3) AS new ON DUPLICATE KEY UPDATE c=new.a+new.b;", true, "INSERT INTO `t` (`a`,`b`,`c`) VALUES (1,2,3) AS `new` ON DUPLICATE KEY UPDATE `c`=`new`.`a`+`new`.`b`"},
+		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) AS new(m,n,p) ON DUPLICATE KEY UPDATE c=m+n;", true, "INSERT INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) AS `new`(`m`, `n`, `p`) ON DUPLICATE KEY UPDATE `c`=`m`+`n`"},
+		{"INSERT INTO t VALUES (1,2) AS new ON DUPLICATE KEY UPDATE b=new.b;", true, "INSERT INTO `t` VALUES (1,2) AS `new` ON DUPLICATE KEY UPDATE `b`=`new`.`b`"},
+		{"INSERT INTO t SET a=1,b=2 AS new ON DUPLICATE KEY UPDATE b=new.a+new.b;", true, "INSERT INTO `t` SET `a`=1,`b`=2 AS `new` ON DUPLICATE KEY UPDATE `b`=`new`.`a`+`new`.`b`"},
+		{"INSERT INTO t SET a=1,b=2 AS new(m,n) ON DUPLICATE KEY UPDATE b=m+n;", true, "INSERT INTO `t` SET `a`=1,`b`=2 AS `new`(`m`, `n`) ON DUPLICATE KEY UPDATE `b`=`m`+`n`"},
+		// row alias without ON DUPLICATE KEY UPDATE
+		{"INSERT INTO t VALUES (1,2) AS new;", true, "INSERT INTO `t` VALUES (1,2) AS `new`"},
+		{"INSERT INTO t VALUES (1,2) AS new(a,b);", true, "INSERT INTO `t` VALUES (1,2) AS `new`(`a`, `b`)"},
+		// row alias is not supported for REPLACE
+		{"REPLACE INTO t VALUES (1,2) AS new;", false, ""},
+		{"REPLACE INTO t SET a=1,b=2 AS new;", false, ""},
 
 		// for insert ... set
 		{"INSERT INTO t SET a=1,b=2", true, "INSERT INTO `t` SET `a`=1,`b`=2"},
@@ -1465,8 +1549,18 @@ func TestDBAStmt(t *testing.T) {
 		{"flush general logs", true, "FLUSH GENERAL LOGS"},
 		{"flush slow logs", true, "FLUSH SLOW LOGS"},
 		{"flush client_errors_summary", true, "FLUSH CLIENT_ERRORS_SUMMARY"},
-		{"flush stats_delta", true, "FLUSH STATS_DELTA"},
-		{"flush stats_delta cluster", true, "FLUSH STATS_DELTA CLUSTER"},
+		{"flush stats_delta", false, ""},
+		{"flush stats_delta cluster", true, "FLUSH STATS_DELTA `cluster`"},
+		{"flush stats_delta cluster cluster", true, "FLUSH STATS_DELTA `cluster` CLUSTER"},
+		{"flush stats_delta *.*", true, "FLUSH STATS_DELTA *.*"},
+		{"flush stats_delta *.* cluster", true, "FLUSH STATS_DELTA *.* CLUSTER"},
+		{"flush stats_delta db1.*", true, "FLUSH STATS_DELTA `db1`.*"},
+		{"flush stats_delta db1.* cluster", true, "FLUSH STATS_DELTA `db1`.* CLUSTER"},
+		{"flush stats_delta t1", true, "FLUSH STATS_DELTA `t1`"},
+		{"flush stats_delta db1.t1", true, "FLUSH STATS_DELTA `db1`.`t1`"},
+		{"flush stats_delta db1.t1 cluster", true, "FLUSH STATS_DELTA `db1`.`t1` CLUSTER"},
+		{"flush stats_delta db1.t1, db2.*", true, "FLUSH STATS_DELTA `db1`.`t1`, `db2`.*"},
+		{"flush stats_delta db1.t1, db2.* cluster", true, "FLUSH STATS_DELTA `db1`.`t1`, `db2`.* CLUSTER"},
 
 		// for call statement
 		{"call ", false, ""},
@@ -1686,6 +1780,18 @@ func TestBuiltin(t *testing.T) {
 
 		{"SELECT LEAST(), LEAST(1, 2, 3);", true, "SELECT LEAST(),LEAST(1, 2, 3)"},
 
+		{"SELECT INTERVAL()", false, ""},
+		{"SELECT INTERVAL(1)", false, ""},
+		{"SELECT INTERVAL(1, 0)", true, "SELECT INTERVAL(1, 0)"},
+		{"SELECT NOW() + INTERVAL(1+2) DAY `add`", true, "SELECT DATE_ADD(NOW(), INTERVAL (1+2) DAY) AS `add`"},
+		{"SELECT d + INTERVAL (q - 1) QUARTER", true, "SELECT DATE_ADD(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT d - INTERVAL (q - 1) QUARTER", true, "SELECT DATE_SUB(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT INTERVAL (q - 1) QUARTER + d", true, "SELECT DATE_ADD(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT ADDDATE(d, INTERVAL (q - 1) QUARTER)", true, "SELECT ADDDATE(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT SUBDATE(d, INTERVAL (q - 1) QUARTER)", true, "SELECT SUBDATE(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT ROW(ROW(1,2),3), ROW(1,ROW(2,3))", true, "SELECT ROW(ROW(1,2),3),ROW(1,ROW(2,3))"},
+		{"SELECT (1,2), ((1,2),3), (1,(2,3))", true, "SELECT ROW(1,2),ROW(ROW(1,2),3),ROW(1,ROW(2,3))"},
+		{"SELECT MAKEDATE(YEAR(d), 1) + INTERVAL (QUARTER(d) - 1) QUARTER", true, "SELECT DATE_ADD(MAKEDATE(YEAR(`d`), 1), INTERVAL (QUARTER(`d`)-1) QUARTER)"},
 		{"SELECT INTERVAL(1, 0, 1, 2)", true, "SELECT INTERVAL(1, 0, 1, 2)"},
 		{"SELECT (INTERVAL(1, 0, 1, 2)+5)*7+INTERVAL(1, 0, 1, 2)/2", true, "SELECT (INTERVAL(1, 0, 1, 2)+5)*7+INTERVAL(1, 0, 1, 2)/2"},
 		{"SELECT INTERVAL(0, (1*5)/2)+INTERVAL(5, 4, 3)", true, "SELECT INTERVAL(0, (1*5)/2)+INTERVAL(5, 4, 3)"},
@@ -2226,12 +2332,20 @@ func TestBuiltin(t *testing.T) {
 		{`select max(distinct all c1) from t;`, true, "SELECT MAX(DISTINCT `c1`) FROM `t`"},
 		{`select max(distinctrow all c1) from t;`, true, "SELECT MAX(DISTINCT `c1`) FROM `t`"},
 		{`select max(c2) from t;`, true, "SELECT MAX(`c2`) FROM `t`"},
+		{`select max_count(c1,c2) from t;`, false, ""},
+		{`select max_count(distinct c1) from t;`, false, ""},
+		{`select max_count(c2) from t;`, true, "SELECT MAX_COUNT(`c2`) FROM `t`"},
+		{`select max_count(all c1) from t;`, true, "SELECT MAX_COUNT(`c1`) FROM `t`"},
 		{`select min(c1,c2) from t;`, false, ""},
 		{`select min(distinct c1) from t;`, true, "SELECT MIN(DISTINCT `c1`) FROM `t`"},
 		{`select min(distinctrow c1) from t;`, true, "SELECT MIN(DISTINCT `c1`) FROM `t`"},
 		{`select min(distinct all c1) from t;`, true, "SELECT MIN(DISTINCT `c1`) FROM `t`"},
 		{`select min(distinctrow all c1) from t;`, true, "SELECT MIN(DISTINCT `c1`) FROM `t`"},
 		{`select min(c2) from t;`, true, "SELECT MIN(`c2`) FROM `t`"},
+		{`select min_count(c1,c2) from t;`, false, ""},
+		{`select min_count(distinct c1) from t;`, false, ""},
+		{`select min_count(c2) from t;`, true, "SELECT MIN_COUNT(`c2`) FROM `t`"},
+		{`select min_count(all c1) from t;`, true, "SELECT MIN_COUNT(`c1`) FROM `t`"},
 		{`select sum(c1,c2) from t;`, false, ""},
 		{`select sum(distinct c1) from t;`, true, "SELECT SUM(DISTINCT `c1`) FROM `t`"},
 		{`select sum(distinctrow c1) from t;`, true, "SELECT SUM(DISTINCT `c1`) FROM `t`"},
@@ -4364,6 +4478,55 @@ func TestErrorMsg(t *testing.T) {
 	require.EqualError(t, err, "[ddl:1273]Unknown collation: 'some_unknown_collation'")
 }
 
+func TestGroupConcatSeparatorCharsetCollation(t *testing.T) {
+	p := parser.New()
+	testCases := []struct {
+		sql     string
+		charset string
+		collate string
+		sep     string
+	}{
+		{
+			sql:     "select group_concat('x')",
+			charset: charset.CharsetLatin1,
+			collate: charset.CollationLatin1,
+			sep:     ",",
+		},
+		{
+			sql:     "select group_concat('x' separator ';')",
+			charset: charset.CharsetLatin1,
+			collate: charset.CollationLatin1,
+			sep:     ";",
+		},
+		{
+			sql:     "select group_concat('x')",
+			charset: mysql.DefaultCharset,
+			collate: mysql.DefaultCollationName,
+			sep:     ",",
+		},
+	}
+
+	for _, tc := range testCases {
+		stmt, err := p.ParseOneStmt(tc.sql, tc.charset, tc.collate)
+		require.NoError(t, err)
+
+		sel, ok := stmt.(*ast.SelectStmt)
+		require.True(t, ok)
+		require.Len(t, sel.Fields.Fields, 1)
+
+		agg, ok := sel.Fields.Fields[0].Expr.(*ast.AggregateFuncExpr)
+		require.True(t, ok)
+		require.Equal(t, ast.AggFuncGroupConcat, agg.F)
+		require.GreaterOrEqual(t, len(agg.Args), 2)
+
+		separator, ok := agg.Args[len(agg.Args)-1].(ast.ValueExpr)
+		require.True(t, ok)
+		require.Equal(t, tc.sep, separator.GetString())
+		require.Equal(t, tc.charset, separator.GetType().GetCharset())
+		require.Equal(t, tc.collate, separator.GetType().GetCollate())
+	}
+}
+
 func TestOptimizerHints(t *testing.T) {
 	p := parser.New()
 	// Test USE_INDEX
@@ -5247,6 +5410,37 @@ func TestPrivilege(t *testing.T) {
 		{"ALTER USER 'ttt' WITH MAX_CONNECTIONS_PER_HOUR 2;", true, "ALTER USER `ttt`@`%` WITH MAX_CONNECTIONS_PER_HOUR 2"},
 		{"ALTER USER 'ttt' WITH MAX_USER_CONNECTIONS 2;", true, "ALTER USER `ttt`@`%` WITH MAX_USER_CONNECTIONS 2"},
 		{"ALTER USER 'ttt'@'localhost' REQUIRE NONE WITH MAX_QUERIES_PER_HOUR 1 MAX_UPDATES_PER_HOUR 10 PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK;", true, "ALTER USER `ttt`@`localhost` REQUIRE NONE WITH MAX_QUERIES_PER_HOUR 1 MAX_UPDATES_PER_HOUR 10 PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"},
+		// Dual password (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD).
+		// MySQL 8.0 allows RETAIN only after a BY-form auth-option that carries
+		// a cleartext password. DISCARD is its own clause and never coexists
+		// with a same-spec auth-option.
+		{"ALTER USER 'u1'@'%' IDENTIFIED BY 'new' RETAIN CURRENT PASSWORD", true, "ALTER USER `u1`@`%` IDENTIFIED BY 'new' RETAIN CURRENT PASSWORD"},
+		{"ALTER USER 'u1'@'%' IDENTIFIED WITH 'mysql_native_password' BY 'new' RETAIN CURRENT PASSWORD", true, "ALTER USER `u1`@`%` IDENTIFIED WITH 'mysql_native_password' BY 'new' RETAIN CURRENT PASSWORD"},
+		{"ALTER USER 'u1'@'%' IDENTIFIED BY 'p2', 'u2'@'%' IDENTIFIED BY 'q2' RETAIN CURRENT PASSWORD", true, "ALTER USER `u1`@`%` IDENTIFIED BY 'p2', `u2`@`%` IDENTIFIED BY 'q2' RETAIN CURRENT PASSWORD"},
+		{"ALTER USER 'u1'@'%' IDENTIFIED BY 'p2' RETAIN CURRENT PASSWORD, 'u2'@'%' IDENTIFIED BY 'q2'", true, "ALTER USER `u1`@`%` IDENTIFIED BY 'p2' RETAIN CURRENT PASSWORD, `u2`@`%` IDENTIFIED BY 'q2'"},
+		{"ALTER USER 'u1'@'%' DISCARD OLD PASSWORD", true, "ALTER USER `u1`@`%` DISCARD OLD PASSWORD"},
+		{"ALTER USER 'u1'@'%' DISCARD OLD PASSWORD, 'u2'@'%'", true, "ALTER USER `u1`@`%` DISCARD OLD PASSWORD, `u2`@`%`"},
+		{"SET PASSWORD = 'new' RETAIN CURRENT PASSWORD", true, "SET PASSWORD='new' RETAIN CURRENT PASSWORD"},
+		{"SET PASSWORD FOR 'u1'@'%' = 'new' RETAIN CURRENT PASSWORD", true, "SET PASSWORD FOR `u1`@`%`='new' RETAIN CURRENT PASSWORD"},
+		// Negative: RETAIN with the WITH plugin AS '<hash>' form is rejected
+		// (MySQL ER_NO_SUCH_USER would reject at runtime; we reject at parse).
+		{"ALTER USER 'u1'@'%' IDENTIFIED WITH 'mysql_native_password' AS '*B50FBDB37F1256824274912F2A1CE648082C3F1F' RETAIN CURRENT PASSWORD", false, ""},
+		// Negative: RETAIN with no auth-option at all has no password to retain.
+		{"ALTER USER 'u1'@'%' RETAIN CURRENT PASSWORD", false, ""},
+		// Negative: bare IDENTIFIED WITH plugin (no BY ...) leaves no password
+		// to promote to the secondary slot, so RETAIN is rejected.
+		{"ALTER USER 'u1'@'%' IDENTIFIED WITH 'mysql_native_password' RETAIN CURRENT PASSWORD", false, ""},
+		// Negative: CREATE USER does not accept RETAIN or DISCARD per MySQL grammar.
+		{"CREATE USER 'u1'@'%' IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD", false, ""},
+		{"CREATE USER 'u1'@'%' DISCARD OLD PASSWORD", false, ""},
+		// Negative: DISCARD coexisting with an auth-option is invalid.
+		{"ALTER USER 'u1'@'%' IDENTIFIED BY 'p1' DISCARD OLD PASSWORD", false, ""},
+		// MySQL 8.0 user_func_auth_option permits dual-password clauses on the
+		// current-user form. Parser accepts them; the executor stub returns
+		// ER_NOT_SUPPORTED_YET until the behavior PR lands.
+		{"ALTER USER USER() IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD", true, "ALTER USER USER() IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD"},
+		{"ALTER USER USER() DISCARD OLD PASSWORD", true, "ALTER USER USER() DISCARD OLD PASSWORD"},
+		{"ALTER USER IF EXISTS USER() IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD", true, "ALTER USER IF EXISTS USER() IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD"},
 		{`DROP USER 'root'@'localhost', 'root1'@'localhost'`, true, "DROP USER `root`@`localhost`, `root1`@`localhost`"},
 		{`DROP USER IF EXISTS 'root'@'localhost'`, true, "DROP USER IF EXISTS `root`@`localhost`"},
 		{`RENAME USER 'root'@'localhost' TO 'root'@'%'`, true, "RENAME USER `root`@`localhost` TO `root`@`%`"},
@@ -5329,6 +5523,40 @@ func TestPrivilegeMariaDBDisabled(t *testing.T) {
 	// Test with additional MariaDB syntax DISABLED (arg three for RunTest==false)
 	table := []testCase{
 		{"GRANT BINLOG MONITOR ON *.* TO 'user1'@'localhost'", false, "GRANT REPLICATION CLIENT ON *.* TO `user1`@`localhost`"},
+	}
+	RunTest(t, table, false, false)
+}
+
+func TestSystemVersionedColumnMariaDBEnabled(t *testing.T) {
+	// MariaDB system-versioned table period columns. Accepted only when the
+	// parser is in MariaDB mode. Restore emits the canonical form
+	// `GENERATED ALWAYS AS ROW {START|END}` even when the input omitted the
+	// `GENERATED ALWAYS` prefix (normalisation, not byte-for-byte lossless).
+	table := []testCase{
+		{"CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW START)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) GENERATED ALWAYS AS ROW START)"},
+		{"CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW END)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) GENERATED ALWAYS AS ROW END)"},
+		{"CREATE TABLE t (a TIMESTAMP(6) NOT NULL GENERATED ALWAYS AS ROW START)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) NOT NULL GENERATED ALWAYS AS ROW START)"},
+		// Bare `AS ROW START/END` (no `GENERATED ALWAYS`) parses and gets
+		// canonicalised on restore.
+		{"CREATE TABLE t (a TIMESTAMP(6) AS ROW START)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) GENERATED ALWAYS AS ROW START)"},
+		{"CREATE TABLE t (a TIMESTAMP(6) AS ROW END)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) GENERATED ALWAYS AS ROW END)"},
+		// ALTER TABLE ... MODIFY/CHANGE must accept the same column option
+		// so the CREATE/ADD and MODIFY/CHANGE code paths stay consistent.
+		{"ALTER TABLE t MODIFY COLUMN a TIMESTAMP(6) GENERATED ALWAYS AS ROW START", true, "ALTER TABLE `t` MODIFY COLUMN `a` TIMESTAMP(6) GENERATED ALWAYS AS ROW START"},
+		{"ALTER TABLE t CHANGE COLUMN a a TIMESTAMP(6) GENERATED ALWAYS AS ROW END", true, "ALTER TABLE `t` CHANGE COLUMN `a` `a` TIMESTAMP(6) GENERATED ALWAYS AS ROW END"},
+		{"ALTER TABLE t ADD COLUMN a TIMESTAMP(6) GENERATED ALWAYS AS ROW START", true, "ALTER TABLE `t` ADD COLUMN `a` TIMESTAMP(6) GENERATED ALWAYS AS ROW START"},
+	}
+	RunTest(t, table, false, true)
+}
+
+func TestSystemVersionedColumnMariaDBDisabled(t *testing.T) {
+	// MariaDB system-versioned period columns must be rejected when MariaDB
+	// mode is off so MySQL-strict parsing is unaffected, on every DDL path.
+	table := []testCase{
+		{"CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW START)", false, ""},
+		{"CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW END)", false, ""},
+		{"ALTER TABLE t MODIFY COLUMN a TIMESTAMP(6) GENERATED ALWAYS AS ROW START", false, ""},
+		{"ALTER TABLE t CHANGE COLUMN a a TIMESTAMP(6) GENERATED ALWAYS AS ROW END", false, ""},
 	}
 	RunTest(t, table, false, false)
 }
@@ -8028,22 +8256,66 @@ func TestVector(t *testing.T) {
 func TestExplainExplore(t *testing.T) {
 	cases := []testCase{
 		{`explain explore 'digestxxx'`, true, `EXPLAIN EXPLORE 'digestxxx'`},
+		{`explain explore replayer '/tmp/replayer.zip'`, true, `EXPLAIN EXPLORE REPLAYER '/tmp/replayer.zip'`},
 		{`explain explore select 1 from t`, true, "EXPLAIN EXPLORE SELECT 1 FROM `t`"},
 		{`explain explore select 1 from t1, t2`, true, "EXPLAIN EXPLORE SELECT 1 FROM (`t1`) JOIN `t2`"},
 		{`explain explore select 1 from t where t1.a > (select max(a) from t2)`, true, "EXPLAIN EXPLORE SELECT 1 FROM `t` WHERE `t1`.`a`>(SELECT MAX(`a`) FROM `t2`)"},
 	}
 	RunTest(t, cases, false, false)
+
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(`explain explore replayer '/tmp/replayer.zip'`, "", "")
+	require.NoError(t, err)
+	explain, ok := stmt.(*ast.ExplainStmt)
+	require.True(t, ok)
+	require.True(t, explain.Explore)
+	require.Equal(t, "/tmp/replayer.zip", explain.ReplayerFile)
+	require.Empty(t, explain.SQLDigest)
+	require.Nil(t, explain.Stmt)
 }
 
 // TestCompatMariaDB is to test for MariaDB specific table options
 func TestCompatMariaDB(t *testing.T) {
 	cases := []testCase{
+		{`CREATE TABLE uuid (uuid int)`, true, "CREATE TABLE `uuid` (`uuid` INT)"},
+		{`CREATE TABLE t1 (a TEXT DEFAULT UUID())`, true, "CREATE TABLE `t1` (`a` TEXT DEFAULT (UUID()))"},
+		{`CREATE TABLE t1 (pk varchar(36) DEFAULT uuid())`, true, "CREATE TABLE `t1` (`pk` VARCHAR(36) DEFAULT (UUID()))"},
+		{`CREATE TABLE t1 AS SELECT uuid(), length(uuid())`, true, "CREATE TABLE `t1` AS SELECT UUID(),LENGTH(UUID())"},
+		{`CREATE TABLE t4 (a INT(11) DEFAULT NULL, b BIGINT(20) DEFAULT uuid_short()) SELECT * FROM t3`, true, "CREATE TABLE `t4` (`a` INT(11) DEFAULT NULL,`b` BIGINT(20) DEFAULT (UUID_SHORT())) AS SELECT * FROM `t3`"},
 		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_CHECKSUM=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_CHECKSUM = 1"},
 		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_COMPRESSED=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_COMPRESSED = 1"},
 		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_COMPRESSION_LEVEL=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_COMPRESSION_LEVEL = 1"},
 		{`CREATE TABLE t (id int PRIMARY KEY) TRANSACTIONAL=0`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) TRANSACTIONAL = 0"},
 		{`CREATE TABLE t (id int PRIMARY KEY) IETF_QUOTES=YES`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) IETF_QUOTES = YES"},
 		{`CREATE TABLE t (id int PRIMARY KEY) SEQUENCE=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) SEQUENCE = 1"},
+	}
+	RunTest(t, cases, false, false)
+}
+
+func TestUUIDTypeMariaDBEnabled(t *testing.T) {
+	cases := []testCase{
+		{`CREATE TABLE t (id UUID)`, true, "CREATE TABLE `t` (`id` CHAR(36))"},
+		{`CREATE TABLE t1 (a UUID, b VARCHAR(32) NOT NULL)`, true, "CREATE TABLE `t1` (`a` CHAR(36),`b` VARCHAR(32) NOT NULL)"},
+		{`CREATE TABLE uuid (uuid UUID NOT NULL DEFAULT UUID())`, true, "CREATE TABLE `uuid` (`uuid` CHAR(36) NOT NULL DEFAULT (UUID()))"},
+	}
+	RunTest(t, cases, false, true)
+}
+
+func TestUUIDKeywordCompatibility(t *testing.T) {
+	cases := []testCase{
+		{`SELECT uuid FROM t`, true, "SELECT `uuid` FROM `t`"},
+		{`SELECT uuid.uuid FROM uuid`, true, "SELECT `uuid`.`uuid` FROM `uuid`"},
+		{`SELECT 1 AS uuid`, true, "SELECT 1 AS `uuid`"},
+		{`SELECT * FROM t AS uuid`, true, "SELECT * FROM `t` AS `uuid`"},
+		{`ALTER TABLE t ADD COLUMN uuid INT`, true, "ALTER TABLE `t` ADD COLUMN `uuid` INT"},
+		{`CREATE TABLE t (uuid INT, KEY uuid (uuid))`, true, "CREATE TABLE `t` (`uuid` INT,INDEX `uuid`(`uuid`))"},
+	}
+	RunTest(t, cases, false, false)
+}
+
+func TestUUIDTypeMariaDBDisabled(t *testing.T) {
+	cases := []testCase{
+		{`CREATE TABLE t (id UUID)`, false, ""},
 	}
 	RunTest(t, cases, false, false)
 }

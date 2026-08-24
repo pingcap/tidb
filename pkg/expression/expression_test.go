@@ -139,6 +139,19 @@ func TestConstant(t *testing.T) {
 	require.True(t, NewZero().Decorrelate(nil).Equal(ctx, NewZero()))
 	require.Equal(t, []byte{0x0, 0x8, 0x0}, NewZero().HashCode())
 	require.False(t, NewZero().Equal(ctx, NewOne()))
+
+	decTp := types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(5).SetDecimal(2).BuildP()
+	con := &Constant{
+		Value:   types.NewDecimalDatum(types.NewDecFromStringForTest("0.99")),
+		RetType: decTp,
+	}
+	args := []Expression{con}
+	PropagateType(ctx.GetEvalCtx(), types.ETReal, args...)
+	require.NotSame(t, con, args[0])
+	require.Equal(t, 5, con.RetType.GetFlen())
+	require.Equal(t, 2, con.RetType.GetDecimal())
+	require.Equal(t, 48, args[0].GetType(ctx.GetEvalCtx()).GetFlen())
+	require.Equal(t, 30, args[0].GetType(ctx.GetEvalCtx()).GetDecimal())
 }
 
 func TestIsBinaryLiteral(t *testing.T) {

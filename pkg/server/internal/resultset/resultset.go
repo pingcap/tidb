@@ -59,8 +59,8 @@ type tidbResultSet struct {
 	preparedStmt *core.PlanCacheStmt
 	cursorRUV2   *CursorRUV2Tracker
 	columns      []*column.Info
-	// finishLock is a mutex used to synchronize access to the `Next`,`Finish` and `Close` functions of the adapter.
-	// It ensures that only one goroutine can access the `Next`,`Finish` and `Close` functions at a time, preventing race conditions.
+	// finishLock is a mutex used to synchronize access to the `NewChunk`, `Next`, `Finish` and `Close` functions of the adapter.
+	// It ensures that only one goroutine can access the result set lifecycle at a time, preventing race conditions.
 	// When we terminate the current SQL externally (e.g., kill query), an additional goroutine would be used to call the `Finish` function.
 	finishLock sync.Mutex
 	closed     int32
@@ -100,6 +100,7 @@ func NewCursorRUV2Tracker(
 		ruDetails:         ruDetails,
 		weights:           weights,
 	}
+	execdetails.SyncRUV2MetricsFromRUDetails(tracker.metrics, tracker.ruDetails)
 	if metrics != nil {
 		tracker.reportedTiDBRU = metrics.CalculateRUValues(weights)
 	}
@@ -126,6 +127,7 @@ func (t *CursorRUV2Tracker) reportDelta() {
 
 	var currentTiDBRU float64
 	if t.metrics != nil {
+		execdetails.SyncRUV2MetricsFromRUDetails(t.metrics, t.ruDetails)
 		currentTiDBRU = t.metrics.CalculateRUValues(t.weights)
 	}
 	currentTiKVRUV2 := t.reportedTiKVRUV2
@@ -175,6 +177,8 @@ func ReportCursorRUV2Delta(rs ResultSet, resultChunkCellsDelta int64) {
 }
 
 func (trs *tidbResultSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
+	trs.finishLock.Lock()
+	defer trs.finishLock.Unlock()
 	return trs.recordSet.NewChunk(alloc)
 }
 

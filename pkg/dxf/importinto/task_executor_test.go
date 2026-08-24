@@ -23,9 +23,10 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 type StoreWithKS struct {
@@ -38,13 +39,18 @@ func (s *StoreWithKS) GetKeyspace() string {
 }
 
 func TestImportTaskExecutor(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	ctx := context.Background()
+	param := taskexecutor.NewParamForTest(nil, nil, nil, ":4000")
+	param.TaskRuntime = newMockRuntime(ctrl, &StoreWithKS{}, nil)
 	executor := NewImportExecutor(
 		ctx,
 		&proto.Task{
 			TaskBase: proto.TaskBase{ID: 1},
 		},
-		taskexecutor.NewParamForTest(nil, nil, nil, ":4000", &StoreWithKS{}),
+		param,
 	).(*importExecutor)
 
 	require.NotNil(t, executor.BaseTaskExecutor.Extension)
@@ -70,14 +76,43 @@ func TestImportTaskExecutor(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestImportTaskExecutorUsesTaskRuntimeStoreWithoutExtraLookup(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	ctx := context.Background()
+	taskStore := &StoreWithKS{ks: "task_ks"}
+	param := taskexecutor.NewParamForTest(nil, nil, nil, ":4000")
+	param.TaskRuntime = newMockRuntime(ctrl, taskStore, nil)
+	executor := NewImportExecutor(
+		ctx,
+		&proto.Task{
+			TaskBase: proto.TaskBase{ID: 2},
+		},
+		param,
+	).(*importExecutor)
+
+	taskMeta := []byte(`{"Plan":{"TableInfo":{}}}`)
+	stepExecutor, err := executor.GetStepExecutor(&proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:       2,
+			Step:     proto.ImportStepImport,
+			Keyspace: "another_ks",
+		},
+		Meta: taskMeta,
+	})
+	require.NoError(t, err)
+	require.Same(t, taskStore, stepExecutor.(*importStepExecutor).store)
+}
+
 func TestGetOnDupForKVGroup(t *testing.T) {
 	t.Run("data-kv-group", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(nil, external.DataKVGroup, importer.OnDupKeyModeCapture)
+		onDup, err := getOnDupForKVGroup(nil, globalsort.DataKVGroup, importer.OnDupKeyModeCapture)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyRecord, onDup)
 	})
 	t.Run("data-kv-group-error", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(nil, external.DataKVGroup, importer.OnDupKeyModeError)
+		onDup, err := getOnDupForKVGroup(nil, globalsort.DataKVGroup, importer.OnDupKeyModeError)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyError, onDup)
 	})
@@ -88,28 +123,28 @@ func TestGetOnDupForKVGroup(t *testing.T) {
 	}
 
 	t.Run("unique-index", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(1), importer.OnDupKeyModeCapture)
+		onDup, err := getOnDupForKVGroup(indicesGenKV, globalsort.IndexID2KVGroup(1), importer.OnDupKeyModeCapture)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyRecord, onDup)
 	})
 	t.Run("unique-index-error", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(1), importer.OnDupKeyModeError)
+		onDup, err := getOnDupForKVGroup(indicesGenKV, globalsort.IndexID2KVGroup(1), importer.OnDupKeyModeError)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyError, onDup)
 	})
 
 	t.Run("non-unique-index", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(2), importer.OnDupKeyModeCapture)
+		onDup, err := getOnDupForKVGroup(indicesGenKV, globalsort.IndexID2KVGroup(2), importer.OnDupKeyModeCapture)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyRemove, onDup)
 
-		onDup, err = getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(2), importer.OnDupKeyModeError)
+		onDup, err = getOnDupForKVGroup(indicesGenKV, globalsort.IndexID2KVGroup(2), importer.OnDupKeyModeError)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyError, onDup)
 	})
 
 	t.Run("unknown-index", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(3), importer.OnDupKeyModeCapture)
+		onDup, err := getOnDupForKVGroup(indicesGenKV, globalsort.IndexID2KVGroup(3), importer.OnDupKeyModeCapture)
 		require.Error(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyIgnore, onDup)
 		require.ErrorContains(t, err, "unknown index 3")

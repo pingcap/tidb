@@ -1078,6 +1078,7 @@ func TestLocate(t *testing.T) {
 		require.NotNil(t, f)
 		require.Equalf(t, c["Want"][0], got, "[%d]: args: %v", i, c["Args"])
 	}
+
 	// 2. Test LOCATE with binary input
 	tbl2 := []struct {
 		Args []any
@@ -1764,6 +1765,8 @@ func TestLpad(t *testing.T) {
 		{"中文", 1, "a", "中"},
 		{"中文", -5, "字符", nil},
 		{"中文", 10, "", ""},
+		// #42770: unreasonably large length should return NULL, not panic
+		{"1", 4611686018427387904, "1", nil},
 	}
 	fc := funcs[ast.Lpad]
 	for _, test := range tests {
@@ -1804,6 +1807,8 @@ func TestRpad(t *testing.T) {
 		{"中文", 1, "a", "中"},
 		{"中文", -5, "字符", nil},
 		{"中文", 10, "", ""},
+		// #42770: unreasonably large length should return NULL, not panic
+		{"1", 4611686018427387904, "1", nil},
 	}
 	fc := funcs[ast.Rpad]
 	for _, test := range tests {

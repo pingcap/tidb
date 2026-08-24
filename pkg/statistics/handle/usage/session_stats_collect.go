@@ -62,10 +62,10 @@ type TimeCostRecorderForTest interface {
 
 // needDumpStatsDelta checks whether to dump stats delta.
 // 1. If the table doesn't exist or is a mem table or system table, then return false.
-// 2. If the mode is DumpAll, then return true.
+// 2. If forceDump is true, then return true.
 // 3. If the stats delta haven't been dumped in the past hour, then return true.
 // 4. If the table stats is pseudo or empty or `Modify Count / Table Count` exceeds the threshold.
-func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bool, id int64, item variable.TableDelta, currentTime time.Time) bool {
+func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, forceDump bool, id int64, item variable.TableDelta, currentTime time.Time) bool {
 	tableItem, ok := s.statsHandle.TableItemByID(is, id)
 	if !ok {
 		return false
@@ -73,7 +73,7 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 	if metadef.IsMemOrSysDB(tableItem.DBName.L) {
 		return false
 	}
-	if dumpAll {
+	if forceDump {
 		return true
 	}
 	intest.Assert(!item.InitTime.IsZero(), "InitTime should be initialized before evaluating dump conditions")
@@ -97,9 +97,10 @@ const (
 )
 
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then dumps the selected table deltas to KV.
-// If the mode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
+// If forceDump is false, it dumps only eligible table deltas: ones that have not been dumped for a while,
+// or whose stats are missing/empty, or whose `Modify Count / Table Count` exceeds the ratio threshold.
 // If tableIDs is empty, it dumps every table that held in map to KV.
-func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool, tableIDs ...int64) error {
+func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) error {
 	defer util.Recover(metrics.LabelStats, "DumpStatsDeltaToKV", nil, false)
 	start := time.Now()
 	defer func() {
@@ -142,7 +143,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool, tableIDs ...int64) err
 					item.InitTime = batchStart
 					deltaMap[id] = item
 				}
-				needDump := s.needDumpStatsDelta(is, dumpAll, id, item, batchStart)
+				needDump := s.needDumpStatsDelta(is, forceDump, id, item, batchStart)
 				if !needDump {
 					continue
 				}

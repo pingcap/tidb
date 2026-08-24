@@ -32,6 +32,7 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/golang/snappy"
 	"github.com/klauspost/compress/zstd"
+	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -295,7 +296,7 @@ func (s *mockGCSSuite) getCompressedData(compression mydump.Compression, data []
 }
 
 func (s *mockGCSSuite) getParquetData() []byte {
-	pc := []mydump.ParquetColumn{
+	pc := []testutils.ParquetColumn{
 		{
 			Name:      "a",
 			Type:      parquet.Types.Int32,
@@ -315,7 +316,7 @@ func (s *mockGCSSuite) getParquetData() []byte {
 	}
 
 	tmpDir := s.T().TempDir()
-	s.Require().NoError(mydump.WriteParquetFile(tmpDir, "test.parquet", pc, 2))
+	s.Require().NoError(testutils.WriteParquetFile(tmpDir, "test.parquet", pc, 2))
 	data, err := os.ReadFile(filepath.Join(tmpDir, "test.parquet"))
 	s.Require().NoError(err)
 	s.NotEmpty(data)

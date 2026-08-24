@@ -46,7 +46,17 @@ func randomPlanCacheValue(types []*types.FieldType) *PlanCacheValue {
 	}
 }
 
-func TestLRUPCPut(t *testing.T) {
+func TestLRUPlanCacheSuite(t *testing.T) {
+	t.Run("TestLRUPCPut", testLRUPCPut)
+	t.Run("TestLRUPCGet", testLRUPCGet)
+	t.Run("TestLRUPCDelete", testLRUPCDelete)
+	t.Run("TestLRUPCDeleteAll", testLRUPCDeleteAll)
+	t.Run("TestLRUPCSetCapacity", testLRUPCSetCapacity)
+	t.Run("TestLRUPlanCacheRegressionCases", testLRUPlanCacheRegressionCases)
+	t.Run("TestLRUPlanCacheMemoryUsage", testLRUPlanCacheMemoryUsage)
+}
+
+func testLRUPCPut(t *testing.T) {
 	// test initialize
 	mockCtx := coretestsdk.MockContext()
 	mockCtx.GetSessionVars().EnablePlanCacheForParamLimit = true
@@ -127,7 +137,7 @@ func TestLRUPCPut(t *testing.T) {
 	require.Nil(t, root)
 }
 
-func TestLRUPCGet(t *testing.T) {
+func testLRUPCGet(t *testing.T) {
 	mockCtx := coretestsdk.MockContext()
 	mockCtx.GetSessionVars().EnablePlanCacheForParamLimit = true
 	defer func() {
@@ -183,7 +193,7 @@ func TestLRUPCGet(t *testing.T) {
 	}
 }
 
-func TestLRUPCDelete(t *testing.T) {
+func testLRUPCDelete(t *testing.T) {
 	mockCtx := coretestsdk.MockContext()
 	mockCtx.GetSessionVars().EnablePlanCacheForParamLimit = true
 	defer func() {
@@ -221,7 +231,7 @@ func TestLRUPCDelete(t *testing.T) {
 	require.True(t, exists)
 }
 
-func TestLRUPCDeleteAll(t *testing.T) {
+func testLRUPCDeleteAll(t *testing.T) {
 	ctx := coretestsdk.MockContext()
 	lru := NewLRUPlanCache(3, 0, 0, ctx, false)
 	defer func() {
@@ -254,7 +264,7 @@ func TestLRUPCDeleteAll(t *testing.T) {
 	}
 }
 
-func TestLRUPCSetCapacity(t *testing.T) {
+func testLRUPCSetCapacity(t *testing.T) {
 	ctx := coretestsdk.MockContext()
 	lru := NewLRUPlanCache(5, 0, 0, ctx, false)
 	defer func() {
@@ -323,7 +333,7 @@ func TestLRUPCSetCapacity(t *testing.T) {
 	require.ErrorContains(t, err, "capacity of LRU cache should be at least 1")
 }
 
-func TestLRUPlanCacheRegressionCases(t *testing.T) {
+func testLRUPlanCacheRegressionCases(t *testing.T) {
 	t.Run("put-with-mem-guard", func(t *testing.T) {
 		ctx := coretestsdk.MockContext()
 		lru := NewLRUPlanCache(3, 0.1, 1, ctx, false)
@@ -370,7 +380,7 @@ func TestLRUPlanCacheRegressionCases(t *testing.T) {
 	})
 }
 
-func TestLRUPlanCacheMemoryUsage(t *testing.T) {
+func testLRUPlanCacheMemoryUsage(t *testing.T) {
 	pTypes := []*types.FieldType{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)}
 	ctx := coretestsdk.MockContext()
 	defer func() {

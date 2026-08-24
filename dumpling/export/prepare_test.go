@@ -273,6 +273,10 @@ func TestConfigValidation(t *testing.T) {
 	conf.Where = ""
 	require.NoError(t, validateSpecifiedSQL(conf))
 
+	conf.Partitions = []string{"p1", "p2"}
+	require.EqualError(t, validateSpecifiedSQL(conf), "can't specify both --sql and --partitions at the same time")
+	conf.Partitions = nil
+
 	conf.FileType = FileFormatSQLTextString
 	err := adjustFileFormat(conf)
 	require.Error(t, err)

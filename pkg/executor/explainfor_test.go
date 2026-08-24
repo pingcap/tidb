@@ -20,13 +20,16 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,11 +78,28 @@ func TestExplainFor(t *testing.T) {
 				buf.WriteString(fmt.Sprintf("%v", v))
 			}
 		}
-		require.Regexp(t, `TableReader(?:_\d+)? 10000\.00 0 root  time:0s, open:0s, close:0s, loops:0(?:, RU:\d+\.\d+)? data:TableFullScan(?:_\d+)? N/A N/A\n`+
+		require.Regexp(t, `TableReader(?:_\d+)? 10000\.00 0 root  time:[^ ]+.* data:TableFullScan(?:_\d+)? N/A N/A\n`+
 			`└─TableFullScan(?:_\d+)? 10000\.00 0 cop\[tikv\] table:t1 .* keep order:false, stats:pseudo N/A N/A`,
 			buf.String())
 	}
 	tkRoot.MustQuery("select * from t1;")
+	tkRootProcess = tkRoot.Session().ShowProcess()
+	require.NotEmpty(t, tkRootProcess.BriefBinaryPlan)
+	targetPlan, ok := tkRootProcess.Plan.(base.Plan)
+	require.True(t, ok)
+	statsColl := execdetails.NewRuntimeStatsColl(nil)
+	statsColl.GetBasicRuntimeStats(targetPlan.ID(), true).Record(time.Millisecond, 7)
+	// Keep the binary snapshot stale while replacing RuntimeStatsColl to verify live stats rendering.
+	processWithLiveStats := *tkRootProcess
+	processWithLiveStats.RuntimeStatsColl = statsColl
+	ps = []*sessmgr.ProcessInfo{&processWithLiveStats}
+	tkStatsExplain := testkit.NewTestKit(t, store)
+	tkStatsExplain.MustExec("use test")
+	tkStatsExplain.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	rows := tkStatsExplain.MustQuery(fmt.Sprintf("explain for connection %d", processWithLiveStats.ID)).Rows()
+	require.Len(t, rows, 2)
+	require.Len(t, rows[0], 9)
+	require.Equal(t, "7", rows[0][2])
 	check()
 	tkRoot.MustQuery("explain analyze format = 'brief' select * from t1;")
 	check()
@@ -92,6 +112,71 @@ func TestExplainFor(t *testing.T) {
 	ps = []*sessmgr.ProcessInfo{tkRootProcess}
 	tkRoot.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tkRoot.MustExec(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
+
+	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=0")
+	tkRoot.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+	tkRoot.MustExec("drop table if exists t_explain_for_nonprep")
+	tkRoot.MustExec("create table t_explain_for_nonprep(status int)")
+	tkRoot.MustExec("insert into t_explain_for_nonprep values (1)")
+	tkExplain := testkit.NewTestKit(t, store)
+	tkExplain.MustExec("use test")
+
+	// The cached non-prepared plan keeps parameterized predicates in the recorded ProcessInfo plan.
+	queryDone := make(chan error, 1)
+	querySQL := "select status, sleep(1) from t_explain_for_nonprep where status=1"
+	go func() {
+		queryDone <- tkRoot.QueryToErr(querySQL)
+	}()
+	require.Eventually(t, func() bool {
+		pi := tkRoot.Session().ShowProcess()
+		return pi != nil && strings.Contains(pi.Info, "sleep(1)")
+	}, 5*time.Second, 50*time.Millisecond)
+
+	tkRootProcess = tkRoot.Session().ShowProcess()
+	ps = []*sessmgr.ProcessInfo{tkRootProcess}
+	tkExplain.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
+
+	require.NoError(t, <-queryDone)
+
+	tkRootProcess = tkRoot.Session().ShowProcess()
+	ps = []*sessmgr.ProcessInfo{tkRootProcess}
+	tkExplain.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
+
+	tkRoot.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tkRoot.MustExec("drop table if exists t_explain_for_prep")
+	tkRoot.MustExec("create table t_explain_for_prep(status int)")
+	tkRoot.MustExec("insert into t_explain_for_prep values (1)")
+	tkRoot.MustExec("prepare stmt_explain_for_connection from 'select status, sleep(1) from t_explain_for_prep where status = ?'")
+	tkRoot.MustExec("set @status = 1")
+	tkRoot.MustQuery("execute stmt_explain_for_connection using @status").Check(testkit.Rows("1 0"))
+	tkRoot.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	// Prepared plan cache also records BriefBinaryPlan through Execute.Plan, so the decode-only path
+	// should stay valid for both running and finished EXPLAIN FOR CONNECTION.
+	queryDone = make(chan error, 1)
+	querySQL = "execute stmt_explain_for_connection using @status"
+	go func() {
+		queryDone <- tkRoot.QueryToErr(querySQL)
+	}()
+	require.Eventually(t, func() bool {
+		pi := tkRoot.Session().ShowProcess()
+		return pi != nil && strings.Contains(pi.Info, "stmt_explain_for_connection")
+	}, 5*time.Second, 50*time.Millisecond)
+
+	tkRootProcess = tkRoot.Session().ShowProcess()
+	ps = []*sessmgr.ProcessInfo{tkRootProcess}
+	tkExplain.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
+
+	require.NoError(t, <-queryDone)
+	tkRoot.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tkRootProcess = tkRoot.Session().ShowProcess()
+	ps = []*sessmgr.ProcessInfo{tkRootProcess}
+	tkExplain.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 }
 
 func TestExplainForVerbose(t *testing.T) {

@@ -19,6 +19,7 @@ import (
 	"container/list"
 	"fmt"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -52,7 +53,7 @@ func newInduceSsbde(beginTime int64, endTime int64) *stmtSummaryByDigestElement 
 // generate new StmtDigestKey and stmtSummaryByDigest
 func generateStmtSummaryByDigestKeyValue(schema string, beginTime int64, endTime int64) (*StmtDigestKey, *stmtSummaryByDigest) {
 	key := &StmtDigestKey{}
-	key.Init(schema, "", "", "", "")
+	key.Init(schema, "", "", "", "", "")
 	value := newInduceSsbd(beginTime, endTime)
 	return key, value
 }
@@ -191,7 +192,7 @@ func TestSimpleStmtSummaryByDigestEvicted(t *testing.T) {
 	require.Equal(t, "{begin: 8, end: 9, count: 1}, {begin: 5, end: 6, count: 1}, {begin: 2, end: 3, count: 1}", getAllEvicted(ssbde))
 
 	evictedKey = &StmtDigestKey{}
-	evictedKey.Init("b", "", "", "", "")
+	evictedKey.Init("b", "", "", "", "", "")
 	ssbde.AddEvicted(evictedKey, evictedValue, 4)
 	require.Equal(t, "{begin: 8, end: 9, count: 2}, {begin: 5, end: 6, count: 2}, {begin: 2, end: 3, count: 2}, {begin: 1, end: 2, count: 1}", getAllEvicted(ssbde))
 
@@ -376,6 +377,8 @@ func TestAddInfo(t *testing.T) {
 			maxRocksdbBlockReadCount:     3,
 			sumRocksdbBlockReadByte:      4,
 			maxRocksdbBlockReadByte:      4,
+			sumIARemoteReadSegmentCount:  8,
+			maxIARemoteReadSegmentCount:  3,
 
 			// txn
 			commitCount:          8,
@@ -474,6 +477,8 @@ func TestAddInfo(t *testing.T) {
 			maxRocksdbBlockReadCount:     3,
 			sumRocksdbBlockReadByte:      4,
 			maxRocksdbBlockReadByte:      4,
+			sumIARemoteReadSegmentCount:  8,
+			maxIARemoteReadSegmentCount:  5,
 
 			// txn
 			commitCount:          8,
@@ -579,6 +584,8 @@ func TestAddInfo(t *testing.T) {
 			maxRocksdbBlockReadCount:     3,
 			sumRocksdbBlockReadByte:      8,
 			maxRocksdbBlockReadByte:      4,
+			sumIARemoteReadSegmentCount:  16,
+			maxIARemoteReadSegmentCount:  5,
 
 			// txn
 			commitCount:          16,
@@ -647,4 +654,40 @@ func getEvicted(ssbdee *stmtSummaryByDigestEvictedElement) string {
 	buf := bytes.NewBuffer(nil)
 	buf.WriteString(fmt.Sprintf("{begin: %v, end: %v, count: %v}", ssbdee.beginTime, ssbdee.endTime, ssbdee.count))
 	return buf.String()
+}
+
+// TestToEvictedCountDatumConcurrent verifies that ToEvictedCountDatum is safe
+// to call concurrently with AddEvicted (V1-11 data race fix).
+func TestToEvictedCountDatumConcurrent(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	ssMap.Clear()
+	now := time.Now().Unix()
+	interval := ssMap.refreshInterval()
+	ssMap.beginTimeForCurInterval = now + interval
+
+	err := ssMap.summaryMap.SetCapacity(1)
+	require.NoError(t, err)
+	ssMap.Clear()
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			sei := generateAnyExecInfo()
+			sei.SchemaName = fmt.Sprintf("schema_%d", i)
+			ssMap.AddStatement(sei)
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			_ = ssMap.ToEvictedCountDatum()
+		}
+	}()
+
+	wg.Wait()
 }

@@ -14,8 +14,10 @@
 
 package rule
 
-// Note: The order of flags is same as the order of optRule in the list.
-// Do not mess up the order.
+// These flags are process-local optimizer rule bitmasks; their numeric values are
+// not persisted or sent over the wire. Append new flags at the end to avoid
+// unnecessary renumbering. The rule execution order is defined by optRuleList
+// and its explicit flag mapping.
 const (
 	FlagGcSubstitute uint64 = 1 << iota
 	FlagPruneColumns
@@ -28,7 +30,6 @@ const (
 	FlagEliminateProjection
 	FlagMaxMinEliminate
 	FlagConstantPropagation
-	FlagConvertOuterToInnerJoin
 	FlagPredicatePushDown
 	FlagJoinKeyTypeCast
 	FlagEliminateOuterJoin
@@ -42,11 +43,16 @@ const (
 	FlagSyncWaitStatsLoadPoint
 	FlagJoinReOrder
 	FlagOuterJoinToSemiJoin
+	FlagCorrelate
 	FlagPruneColumnsAgain
 	FlagPushDownSequence
 	FlagEliminateUnionAllDualItem
 	FlagEmptySelectionEliminator
 	FlagResolveExpand
+	FlagFullTextIndexResolveWhere
+	FlagFullTextIndexResolveTopN
+	FlagFullTextIndexResolveProjection
+	FlagFullTextIndexResolveReject
 )
 
 func setPredicatePushDownFlag(u uint64) uint64 {

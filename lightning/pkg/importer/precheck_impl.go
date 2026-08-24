@@ -32,15 +32,17 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -51,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
+	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -677,7 +680,7 @@ func (ci *checkpointCheckItem) Check(ctx context.Context) (*precheck.CheckResult
 }
 
 // checkpointIsValid checks whether we can start this import with this checkpoint.
-func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*checkpoints.TidbDBInfo) ([]string, error) {
+func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*importdef.DBInfo) ([]string, error) {
 	msgs := make([]string, 0)
 	uniqueName := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 	tableCheckPoint, err := ci.checkpointsDB.Get(ctx, uniqueName)
@@ -770,16 +773,28 @@ type CDCPITRCheckItem struct {
 	cfg           *config.Config
 	Instruction   string
 	pdAddrsGetter func(context.Context) []string
+	keyspaceName  string
 	// used in test
 	etcdCli *clientv3.Client
 }
 
+var newPDClientWithAPIContext = pd.NewClientWithAPIContext
+
 // NewCDCPITRCheckItem creates a checker to check downstream has enabled CDC or PiTR.
 func NewCDCPITRCheckItem(cfg *config.Config, pdAddrsGetter func(context.Context) []string) precheck.Checker {
+	return newCDCPITRCheckItemWithKeyspaceName(cfg, pdAddrsGetter, cfg.TikvImporter.KeyspaceName)
+}
+
+func newCDCPITRCheckItemWithKeyspaceName(
+	cfg *config.Config,
+	pdAddrsGetter func(context.Context) []string,
+	keyspaceName string,
+) precheck.Checker {
 	return &CDCPITRCheckItem{
 		cfg:           cfg,
 		Instruction:   "local backend is not compatible with them. Please switch to tidb backend then try again.",
 		pdAddrsGetter: pdAddrsGetter,
+		keyspaceName:  keyspaceName,
 	}
 }
 
@@ -792,16 +807,14 @@ func dialEtcdWithCfg(
 	ctx context.Context,
 	cfg *config.Config,
 	addrs []string,
+	keyspaceName string,
 ) (*clientv3.Client, error) {
-	cfg2, err := cfg.ToTLS()
+	tlsCfg, err := cfg.ToTLS()
 	if err != nil {
 		return nil, err
 	}
-	tlsConfig := cfg2.TLSConfig()
-
-	return clientv3.New(clientv3.Config{
-		TLS:              tlsConfig,
-		Endpoints:        addrs,
+	etcdCfg := clientv3.Config{
+		TLS:              tlsCfg.TLSConfig(),
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
@@ -809,8 +822,11 @@ func dialEtcdWithCfg(
 			grpc.WithBlock(),
 			grpc.WithReturnConnectionError(),
 		},
-		Context: ctx,
-	})
+	}
+	return metaservice.DialEtcdClient(
+		ctx, keyspaceName, addrs, tlsCfg.ToPDSecurityOption(),
+		newPDClientWithAPIContext, componentName, nil, etcdCfg,
+	)
 }
 
 // Check implements Checker interface.
@@ -828,7 +844,7 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*precheck.CheckResult, e
 
 	if ci.etcdCli == nil {
 		var err error
-		ci.etcdCli, err = dialEtcdWithCfg(ctx, ci.cfg, ci.pdAddrsGetter(ctx))
+		ci.etcdCli, err = dialEtcdWithCfg(ctx, ci.cfg, ci.pdAddrsGetter(ctx), ci.keyspaceName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -938,7 +954,7 @@ func (ci *schemaCheckItem) Check(ctx context.Context) (*precheck.CheckResult, er
 }
 
 // SchemaIsValid checks the import file and cluster schema is match.
-func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*checkpoints.TidbDBInfo) ([]string, error) {
+func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*importdef.DBInfo) ([]string, error) {
 	if len(tableInfo.DataFiles) == 0 {
 		logutil.Logger(ctx).Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
 		return nil, nil

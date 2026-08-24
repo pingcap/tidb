@@ -122,13 +122,20 @@ func FlattenTreePushDownPlan(p base.PhysicalPlan) ([]base.PhysicalPlan, map[int]
 
 // GetTblStats returns the tbl-stats of this plan, which contains all columns before pruning.
 func GetTblStats(copTaskPlan base.PhysicalPlan) *statistics.HistColl {
+	if copTaskPlan == nil {
+		return nil
+	}
 	switch x := copTaskPlan.(type) {
 	case *PhysicalTableScan:
 		return x.TblColHists
 	case *PhysicalIndexScan:
 		return x.TblColHists
 	default:
-		return GetTblStats(copTaskPlan.Children()[0])
+		children := copTaskPlan.Children()
+		if len(children) == 0 {
+			return nil
+		}
+		return GetTblStats(children[0])
 	}
 }
 

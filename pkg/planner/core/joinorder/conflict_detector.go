@@ -799,6 +799,10 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 	}
 	join.EqualConditions = alignedEQConds
 	for _, cond := range alignedNonEQConds {
+		if expression.IsMutableEffectsExpr(cond) {
+			join.OtherConditions = append(join.OtherConditions, cond)
+			continue
+		}
 		fromLeft := expression.ExprFromSchema(cond, left.Schema())
 		fromRight := expression.ExprFromSchema(cond, right.Schema())
 		if fromLeft && !fromRight {

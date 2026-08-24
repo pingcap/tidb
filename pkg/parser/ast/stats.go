@@ -362,7 +362,7 @@ func (n *UnlockStatsStmt) Accept(v Visitor) (Node, bool) {
 type RefreshStatsStmt struct {
 	stmtNode
 
-	RefreshObjects []*RefreshObject
+	RefreshObjects []*StatsObject
 	// RefreshMode is non-nil when a refresh strategy is explicitly specified.
 	RefreshMode *RefreshStatsMode
 	// IsClusterWide indicates whether the refresh operation is for the entire cluster.
@@ -421,21 +421,34 @@ func (n *RefreshStatsStmt) Accept(v Visitor) (Node, bool) {
 }
 
 func (n *RefreshStatsStmt) Dedup() {
-	if len(n.RefreshObjects) == 0 {
-		return
+	n.RefreshObjects = dedupStatsObjects(n.RefreshObjects)
+}
+
+// DedupFlushObjects removes duplicate or shadowed scoped objects for FLUSH STATS_DELTA.
+func (n *FlushStmt) DedupFlushObjects() {
+	n.FlushObjects = dedupStatsObjects(n.FlushObjects)
+}
+
+func dedupStatsObjects(objects []*StatsObject) []*StatsObject {
+	if len(objects) == 0 {
+		return objects
+	}
+
+	type tableKey struct {
+		dbName    string
+		tableName string
 	}
 
 	dbSeen := make(map[string]struct{})
-	tableSeen := make(map[string]struct{})
-	result := make([]*RefreshObject, 0, len(n.RefreshObjects))
+	tableSeen := make(map[tableKey]struct{})
+	result := make([]*StatsObject, 0, len(objects))
 
-	for _, obj := range n.RefreshObjects {
-		switch obj.RefreshObjectScope {
+	for _, obj := range objects {
+		switch obj.StatsObjectScope {
 		// Global scope supersedes everything else. Keep the first global target only.
-		case RefreshObjectScopeGlobal:
-			n.RefreshObjects = []*RefreshObject{obj}
-			return
-		case RefreshObjectScopeDatabase:
+		case StatsObjectScopeGlobal:
+			return []*StatsObject{obj}
+		case StatsObjectScopeDatabase:
 			dbKey := obj.DBName.L
 			if _, exists := dbSeen[dbKey]; exists {
 				continue
@@ -445,10 +458,10 @@ func (n *RefreshStatsStmt) Dedup() {
 			// Remove tables from the same database that might have been added earlier.
 			filtered := result[:0]
 			for _, existing := range result {
-				if existing.RefreshObjectScope == RefreshObjectScopeTable {
+				if existing.StatsObjectScope == StatsObjectScopeTable {
 					existingDBKey := existing.DBName.L
 					if existingDBKey != "" && existingDBKey == dbKey {
-						tblKey := existingDBKey + "." + existing.TableName.L
+						tblKey := tableKey{dbName: existingDBKey, tableName: existing.TableName.L}
 						delete(tableSeen, tblKey)
 						continue
 					}
@@ -456,15 +469,14 @@ func (n *RefreshStatsStmt) Dedup() {
 				filtered = append(filtered, existing)
 			}
 			result = append(filtered, obj)
-
-		case RefreshObjectScopeTable:
+		case StatsObjectScopeTable:
 			dbKey := obj.DBName.L
 			if dbKey != "" {
 				if _, exists := dbSeen[dbKey]; exists {
 					continue
 				}
 			}
-			tblKey := dbKey + "." + obj.TableName.L
+			tblKey := tableKey{dbName: dbKey, tableName: obj.TableName.L}
 			if _, exists := tableSeen[tblKey]; exists {
 				continue
 			}
@@ -473,42 +485,42 @@ func (n *RefreshStatsStmt) Dedup() {
 		}
 	}
 
-	n.RefreshObjects = result
+	return result
 }
 
-type RefreshObjectScopeType int
+type StatsObjectScopeType int
 
 const (
-	// RefreshObjectScopeTable is the scope of a table.
-	RefreshObjectScopeTable RefreshObjectScopeType = iota + 1
-	// RefreshObjectScopeDatabase is the scope of a database.
-	RefreshObjectScopeDatabase
-	// RefreshObjectScopeGlobal is the scope of all databases.
-	RefreshObjectScopeGlobal
+	// StatsObjectScopeTable is the scope of a table.
+	StatsObjectScopeTable StatsObjectScopeType = iota + 1
+	// StatsObjectScopeDatabase is the scope of a database.
+	StatsObjectScopeDatabase
+	// StatsObjectScopeGlobal is the scope of all databases.
+	StatsObjectScopeGlobal
 )
 
-type RefreshObject struct {
-	RefreshObjectScope RefreshObjectScopeType
-	DBName             CIStr
-	TableName          CIStr
+type StatsObject struct {
+	StatsObjectScope StatsObjectScopeType
+	DBName           CIStr
+	TableName        CIStr
 }
 
-func (o *RefreshObject) Restore(ctx *format.RestoreCtx) error {
-	switch o.RefreshObjectScope {
-	case RefreshObjectScopeTable:
+func (o *StatsObject) Restore(ctx *format.RestoreCtx) error {
+	switch o.StatsObjectScope {
+	case StatsObjectScopeTable:
 		if o.DBName.O != "" {
 			ctx.WriteName(o.DBName.O)
 			ctx.WritePlain(".")
 		}
 		ctx.WriteName(o.TableName.O)
-	case RefreshObjectScopeDatabase:
+	case StatsObjectScopeDatabase:
 		ctx.WriteName(o.DBName.O)
 		ctx.WritePlain(".*")
-	case RefreshObjectScopeGlobal:
+	case StatsObjectScopeGlobal:
 		ctx.WritePlain("*.*")
 	default:
 		// This should never happen.
-		return errors.Errorf("invalid refresh object scope: %d", o.RefreshObjectScope)
+		return errors.Errorf("invalid stats object scope: %d", o.StatsObjectScope)
 	}
 	return nil
 }

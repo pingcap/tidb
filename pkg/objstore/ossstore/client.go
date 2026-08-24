@@ -135,6 +135,7 @@ func (c *client) GetObject(ctx context.Context, file string, startOffset, endOff
 
 func (c *client) PutObject(ctx context.Context, file string, data []byte) error {
 	key := c.ObjectKey(file)
+	s3like.RecordAPICall(s3like.BackendOSS, s3like.APICallPutObject)
 	_, err := c.svc.PutObject(ctx, &oss.PutObjectRequest{
 		Body:   bytes.NewReader(data),
 		Bucket: oss.Ptr(c.options.Bucket),
@@ -177,6 +178,7 @@ func (c *client) IsObjectExists(ctx context.Context, name string) (bool, error) 
 		Bucket: oss.Ptr(c.Bucket),
 		Key:    oss.Ptr(key),
 	}
+	s3like.RecordAPICall(s3like.BackendOSS, s3like.APICallHeadObjects)
 	_, err := c.svc.HeadObject(ctx, input)
 	if err != nil {
 		var svcErr *oss.ServiceError
@@ -196,6 +198,7 @@ func (c *client) HeadObject(ctx context.Context, name string) (*s3like.HeadObjec
 		Bucket: oss.Ptr(c.Bucket),
 		Key:    oss.Ptr(key),
 	}
+	s3like.RecordAPICall(s3like.BackendOSS, s3like.APICallHeadObjects)
 	_, err := c.svc.HeadObject(ctx, input)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -216,6 +219,7 @@ func (c *client) ListObjects(ctx context.Context, extraPrefix, startAfter string
 		ContinuationToken: continuationToken,
 		StartAfter:        startAfterKey,
 	}
+	s3like.RecordAPICall(s3like.BackendOSS, s3like.APICallListObjects)
 	res, err := c.svc.ListObjectsV2(ctx, req)
 	if err != nil {
 		return nil, errors.Trace(err)

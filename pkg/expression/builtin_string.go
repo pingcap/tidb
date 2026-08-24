@@ -1026,7 +1026,7 @@ func (b *builtinStrcmpSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	res := types.CompareString(left, right, b.collation)
+	res := b.collator().Compare(left, right)
 	return int64(res), false, nil
 }
 
@@ -1593,7 +1593,7 @@ func (b *builtinLocate2ArgsUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int
 		return 1, false, nil
 	}
 
-	return locateStringWithCollation(str, subStr, b.collation), false, nil
+	return locateStringWithCollator(str, subStr, b.collator()), false, nil
 }
 
 type builtinLocate3ArgsSig struct {
@@ -1684,7 +1684,7 @@ func (b *builtinLocate3ArgsUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int
 	}
 	slice := string([]rune(str)[pos:])
 
-	idx := locateStringWithCollation(slice, subStr, b.collation)
+	idx := locateStringWithCollator(slice, subStr, b.collator())
 	if idx != 0 {
 		return pos + idx, false, nil
 	}
@@ -2257,7 +2257,7 @@ func (b *builtinLpadUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string,
 	}
 	padLength := len([]rune(padStr))
 
-	if targetLength < 0 || targetLength*4 > b.tp.GetFlen() {
+	if targetLength < 0 || targetLength > mysql.MaxBlobWidth || targetLength*4 > b.tp.GetFlen() {
 		return "", true, nil
 	}
 	if runeLength < targetLength && padLength == 0 {
@@ -2387,7 +2387,7 @@ func (b *builtinRpadUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string,
 	}
 	padLength := len([]rune(padStr))
 
-	if targetLength < 0 || targetLength*4 > b.tp.GetFlen() {
+	if targetLength < 0 || targetLength > mysql.MaxBlobWidth || targetLength*4 > b.tp.GetFlen() {
 		return "", true, nil
 	}
 	if runeLength < targetLength && padLength == 0 {
@@ -4260,7 +4260,13 @@ func (c *weightStringFunctionClass) getFunction(ctx BuildContext, args []Express
 		sig = &builtinWeightStringNullSig{bf}
 	} else {
 		maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
-		sig = &builtinWeightStringSig{bf, padding, length, maxAllowedPacket}
+		sig = &builtinWeightStringSig{
+			baseBuiltinFunc:  bf,
+			padding:          padding,
+			length:           length,
+			maxAllowedPacket: maxAllowedPacket,
+			weightCollator:   getCollator(ctx, bf.args[0].GetType(ctx.GetEvalCtx()).GetCollate()),
+		}
 	}
 	return sig, nil
 }
@@ -4291,6 +4297,8 @@ type builtinWeightStringSig struct {
 	padding          weightStringPadding
 	length           int
 	maxAllowedPacket uint64
+	// WEIGHT_STRING uses the first argument's collation, independently of its return type metadata.
+	weightCollator collate.Collator
 }
 
 func (b *builtinWeightStringSig) Clone() builtinFunc {
@@ -4299,6 +4307,7 @@ func (b *builtinWeightStringSig) Clone() builtinFunc {
 	newSig.padding = b.padding
 	newSig.length = b.length
 	newSig.maxAllowedPacket = b.maxAllowedPacket
+	newSig.weightCollator = b.weightCollator.Clone()
 	return newSig
 }
 
@@ -4327,7 +4336,7 @@ func (b *builtinWeightStringSig) evalString(ctx EvalContext, row chunk.Row) (str
 			}
 			str += strings.Repeat(" ", b.length-lenRunes)
 		}
-		ctor = collate.GetCollator(b.args[0].GetType(ctx).GetCollate())
+		ctor = b.weightCollator
 	case weightStringPaddingAsBinary:
 		lenStr := len(str)
 		if b.length < lenStr {
@@ -4343,7 +4352,7 @@ func (b *builtinWeightStringSig) evalString(ctx EvalContext, row chunk.Row) (str
 		}
 		ctor = collate.GetCollator(charset.CollationBin)
 	case weightStringPaddingNone:
-		ctor = collate.GetCollator(b.args[0].GetType(ctx).GetCollate())
+		ctor = b.weightCollator
 	default:
 		return "", false, ErrIncorrectType.GenWithStackByArgs(ast.WeightString, string(b.padding))
 	}

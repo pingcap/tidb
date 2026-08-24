@@ -435,26 +435,26 @@ func TestCollectCapacity(t *testing.T) {
 
 	topsqlstate.GlobalState.MaxCollect.Store(10000)
 	registerSQL(5000)
-	require.Equal(t, int64(5000), tsr.normalizedSQLMap.length.Load())
+	require.Equal(t, int64(5000), tsr.normalizedSQLMap.size())
 	registerPlan(1000)
-	require.Equal(t, int64(1000), tsr.normalizedPlanMap.length.Load())
+	require.Equal(t, int64(1000), tsr.normalizedPlanMap.size())
 
 	registerSQL(20000)
-	require.Equal(t, int64(10000), tsr.normalizedSQLMap.length.Load())
+	require.Equal(t, int64(10000), tsr.normalizedSQLMap.size())
 	registerPlan(20000)
-	require.Equal(t, int64(10000), tsr.normalizedPlanMap.length.Load())
+	require.Equal(t, int64(10000), tsr.normalizedPlanMap.size())
 
 	topsqlstate.GlobalState.MaxCollect.Store(20000)
 	registerSQL(50000)
-	require.Equal(t, int64(20000), tsr.normalizedSQLMap.length.Load())
+	require.Equal(t, int64(20000), tsr.normalizedSQLMap.size())
 	registerPlan(50000)
-	require.Equal(t, int64(20000), tsr.normalizedPlanMap.length.Load())
+	require.Equal(t, int64(20000), tsr.normalizedPlanMap.size())
 
 	topsqlstate.GlobalState.MaxStatementCount.Store(5000)
 	tsr.processCPUTimeData(1, genRecord(20000))
 	require.Equal(t, 5001, len(tsr.collecting.records))
-	require.Equal(t, int64(20000), tsr.normalizedSQLMap.length.Load())
-	require.Equal(t, int64(20000), tsr.normalizedPlanMap.length.Load())
+	require.Equal(t, int64(20000), tsr.normalizedSQLMap.size())
+	require.Equal(t, int64(20000), tsr.normalizedPlanMap.size())
 }
 
 func TestCollectInternal(t *testing.T) {
@@ -813,6 +813,8 @@ func TestProcessStmtStatsData(t *testing.T) {
 // when internal channels are full, reporter should drop fast (no panic/hang)
 // and account drops via the corresponding metrics counters.
 func TestReporterChannelsFullDropsAndMetrics(t *testing.T) {
+	const expectedReportBufferSize = 2
+
 	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 	t.Cleanup(tsr.Close)
 
@@ -844,26 +846,85 @@ func TestReporterChannelsFullDropsAndMetrics(t *testing.T) {
 	require.Equal(t, 2, len(tsr.collectRUIncrementsChan))
 	require.InDelta(t, 1.0, readCounter(t, reporter_metrics.IgnoreCollectRUChannelFullCounter)-beforeCollectRUDrop, 1e-9)
 
-	beforeReportDrop := readCounter(t, reporter_metrics.IgnoreReportChannelFullCounter)
 	origInterval := topsqlstate.GetTopRUItemInterval()
 	topsqlstate.SetTopRUItemInterval(tipb.ItemInterval_ITEM_INTERVAL_60S)
 	t.Cleanup(func() {
 		topsqlstate.SetTopRUItemInterval(tipb.ItemInterval(origInterval))
 	})
 
-	tsr.reportCollectedDataChan <- collectedData{} // fill reportCollectedDataChan (buffer=1)
-	doneReport := make(chan struct{})
-	go func() {
-		tsr.takeDataAndSendToReportChan(60) // should drop immediately when report channel is full
-		close(doneReport)
-	}()
-	select {
-	case <-doneReport:
-	case <-time.After(time.Second):
-		t.Fatal("takeDataAndSendToReportChan should not block when reportCollectedDataChan is full")
+	origMaxStatementCount := topsqlstate.GlobalState.MaxStatementCount.Load()
+	topsqlstate.GlobalState.MaxStatementCount.Store(1)
+	t.Cleanup(func() {
+		topsqlstate.GlobalState.MaxStatementCount.Store(origMaxStatementCount)
+	})
+
+	boundedSQLDigests := [][]byte{[]byte("bounded-sql-1"), []byte("bounded-sql-2"), []byte("bounded-sql-3")}
+	boundedPlanDigests := [][]byte{[]byte("bounded-plan-1"), []byte("bounded-plan-2"), []byte("bounded-plan-3")}
+
+	require.Equal(t, expectedReportBufferSize, cap(tsr.reportCollectedDataChan))
+	for i := range expectedReportBufferSize {
+		reportEnd := uint64((i + 1) * defaultReportInterval)
+		tsr.RegisterSQL(boundedSQLDigests[i], fmt.Sprintf("select %d", i+1), false)
+		tsr.RegisterPlan(boundedPlanDigests[i], fmt.Sprintf("point_get_%d", i+1), false)
+		tsr.processCPUTimeData(reportEnd-1, cpuRecords{{
+			SQLDigest:  boundedSQLDigests[i],
+			PlanDigest: boundedPlanDigests[i],
+			CPUTimeMs:  uint32(i + 1),
+		}})
+		tsr.ruAggregator.addBatch(ruBatch{
+			timestamp: reportEnd - 1,
+			data:      ruData,
+			version:   rmclient.DefaultRUVersion,
+		})
+		tsr.takeDataAndSendToReportChan(reportEnd)
 	}
-	require.Equal(t, 1, len(tsr.reportCollectedDataChan))
+	require.Equal(t, cap(tsr.reportCollectedDataChan), len(tsr.reportCollectedDataChan))
+
+	beforeReportDrop := readCounter(t, reporter_metrics.IgnoreReportChannelFullCounter)
+	beforeBackpressureDrop := readCounter(t, reporter_metrics.IgnoreReportDataByBackpressureCounter)
+	dropReportEnd := uint64((expectedReportBufferSize + 1) * defaultReportInterval)
+	tsr.RegisterSQL(boundedSQLDigests[2], "select 3", false)
+	tsr.RegisterPlan(boundedPlanDigests[2], "point_get_3", false)
+	tsr.processCPUTimeData(dropReportEnd-1, cpuRecords{
+		{SQLDigest: boundedSQLDigests[2], PlanDigest: boundedPlanDigests[2], CPUTimeMs: 2},
+		{SQLDigest: []byte("evicted-sql"), PlanDigest: []byte("evicted-plan"), CPUTimeMs: 1},
+	})
+	tsr.ruAggregator.addBatch(ruBatch{
+		timestamp: dropReportEnd - 1,
+		data:      ruData,
+		version:   rmclient.DefaultRUVersion,
+	})
+	tsr.takeDataAndSendToReportChan(dropReportEnd)
+
+	require.Empty(t, tsr.collecting.records)
+	require.Empty(t, tsr.collecting.evicted)
+	tsr.ruAggregator.mu.Lock()
+	bucketCount := len(tsr.ruAggregator.buckets)
+	tsr.ruAggregator.mu.Unlock()
+	require.Zero(t, bucketCount)
 	require.InDelta(t, 1.0, readCounter(t, reporter_metrics.IgnoreReportChannelFullCounter)-beforeReportDrop, 1e-9)
+	require.InDelta(t, 1.0, readCounter(t, reporter_metrics.IgnoreReportDataByBackpressureCounter)-beforeBackpressureDrop, 1e-9)
+
+	for range expectedReportBufferSize {
+		queued := <-tsr.reportCollectedDataChan
+		require.Len(t, queued.collected.getReportRecords(), 1)
+		require.Len(t, queued.normalizedSQLMap.toProto(keyspaceName), 1)
+		require.Len(t, queued.normalizedPlanMap.toProto(keyspaceName, tsr.decodePlan, tsr.compressPlan), 1)
+		require.NotEmpty(t, queued.ruRecords)
+	}
+
+	recoveryReportEnd := dropReportEnd + uint64(defaultReportInterval)
+	recoveryTimestamp := recoveryReportEnd - 1
+	tsr.processCPUTimeData(recoveryTimestamp, cpuRecords{{
+		SQLDigest:  boundedSQLDigests[2],
+		PlanDigest: boundedPlanDigests[2],
+		CPUTimeMs:  1,
+	}})
+	tsr.takeDataAndSendToReportChan(recoveryReportEnd)
+	recovered := <-tsr.reportCollectedDataChan
+	require.Len(t, recovered.collected.getReportRecords(), 1)
+	require.Len(t, recovered.normalizedSQLMap.toProto(keyspaceName), 1)
+	require.Len(t, recovered.normalizedPlanMap.toProto(keyspaceName, tsr.decodePlan, tsr.compressPlan), 1)
 }
 
 // TestReporterBackpressureAndDropScenario covers the reporter backpressure
@@ -923,9 +984,10 @@ func TestReporterBackpressureAndDropScenario(t *testing.T) {
 	}
 
 	beforeDrop := readCounter(t, reporter_metrics.IgnoreReportChannelFullCounter)
-	sendBatch(1, 60)   // fill reportCollectedDataChan (buffer=1)
-	sendBatch(61, 120) // drop under backpressure (no report worker consuming yet)
-	require.Equal(t, 1, len(tsr.reportCollectedDataChan))
+	sendBatch(1, 60)
+	sendBatch(61, 120)  // fill reportCollectedDataChan (buffer=2)
+	sendBatch(121, 180) // drop under backpressure (no report worker consuming yet)
+	require.Equal(t, cap(tsr.reportCollectedDataChan), len(tsr.reportCollectedDataChan))
 	require.InDelta(t, 1.0, readCounter(t, reporter_metrics.IgnoreReportChannelFullCounter)-beforeDrop, 1e-9)
 
 	reportWorkerDone := make(chan struct{})
@@ -934,21 +996,22 @@ func TestReporterBackpressureAndDropScenario(t *testing.T) {
 		close(reportWorkerDone)
 	}()
 
-	var firstPayload *ReportData
-	select {
-	case firstPayload = <-sinkCh:
-	case <-time.After(time.Second):
-		t.Fatal("reporter should recover and send payload after consumer resumes")
+	for range cap(tsr.reportCollectedDataChan) {
+		select {
+		case payload := <-sinkCh:
+			require.NotNil(t, payload)
+			require.NotEmpty(t, payload.RURecords)
+			require.Empty(t, payload.DataRecords, "TopSQL shared path should remain untouched in RU-only scenario")
+		case <-time.After(time.Second):
+			t.Fatal("reporter should recover and send buffered payloads after consumer resumes")
+		}
 	}
-	require.NotNil(t, firstPayload)
-	require.NotEmpty(t, firstPayload.RURecords)
-	require.Empty(t, firstPayload.DataRecords, "TopSQL shared path should remain untouched in RU-only scenario")
 	require.Eventually(t, func() bool {
 		return len(tsr.reportCollectedDataChan) == 0
 	}, time.Second, 10*time.Millisecond)
 
 	dropAfterRecover := readCounter(t, reporter_metrics.IgnoreReportChannelFullCounter)
-	sendBatch(121, 180)
+	sendBatch(181, 240)
 	var secondPayload *ReportData
 	select {
 	case secondPayload = <-sinkCh:
@@ -1025,10 +1088,26 @@ func TestTopRUPipelineInProcessIntegration(t *testing.T) {
 		},
 	}, rmclient.DefaultRUVersion)
 
+	hotKeyInBucket := makeKey(hotKey.SQLDigest, hotKey.PlanDigest)
 	require.Eventually(t, func() bool {
+		if len(tsr.collectRUIncrementsChan) != 0 {
+			return false
+		}
 		tsr.ruAggregator.mu.Lock()
 		defer tsr.ruAggregator.mu.Unlock()
-		return len(tsr.ruAggregator.buckets) > 0
+		bucket, ok := tsr.ruAggregator.buckets[0]
+		if !ok || bucket.collecting == nil {
+			return false
+		}
+		hotUserCollecting, ok := bucket.collecting.users[hotKey.User]
+		if !ok {
+			return false
+		}
+		hotRec, ok := hotUserCollecting.records[hotKeyInBucket]
+		if !ok || len(hotRec.items) == 0 {
+			return false
+		}
+		return hotRec.items[0].execCount == 3 && hotRec.items[0].totalRU == 17
 	}, time.Second, 10*time.Millisecond)
 
 	tsr.takeDataAndSendToReportChan(60)
@@ -1423,7 +1502,9 @@ func BenchmarkReporterScenarios(b *testing.B) {
 		b.Run("drop_path", func(b *testing.B) {
 			tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 			b.Cleanup(tsr.Close)
-			tsr.reportCollectedDataChan <- collectedData{} // keep channel full to trigger drop path
+			for range cap(tsr.reportCollectedDataChan) {
+				tsr.reportCollectedDataChan <- collectedData{} // keep channel full to trigger drop path
+			}
 
 			beforeDrop := readCounterValue(reporter_metrics.IgnoreReportChannelFullCounter)
 			b.ResetTimer()

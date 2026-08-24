@@ -111,6 +111,11 @@ func (c *TestDXFContext) init(nodeNum, cpuCount int, reduceCheckInterval bool) {
 	}
 	// all nodes are isometric
 	c.mockCPUNum = cpuCount
+	originNodeResource := storage.GetNodeResource()
+	storage.SetNodeResource(proto.NewNodeResource(cpuCount, 32*units.GB, 100*units.GB))
+	c.T.Cleanup(func() {
+		storage.SetNodeResource(originNodeResource)
+	})
 	term := fmt.Sprintf("return(%d)", cpuCount)
 	testfailpoint.Enable(c.T, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", term)
 	testfailpoint.Enable(c.T, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")

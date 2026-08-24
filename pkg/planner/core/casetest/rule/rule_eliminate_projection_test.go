@@ -24,7 +24,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestWithApply(t *testing.T) {
+func TestEliminateProjectionSuite(t *testing.T) {
+	t.Run("TestWithApply", testWithApply)
+	t.Run("TestElinimateProjectionWithExpressionIndex", testElinimateProjectionWithExpressionIndex)
+}
+
+func testWithApply(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -61,7 +66,7 @@ from temp where id = 1`,
 	}
 }
 
-func TestElinimateProjectionWithExpressionIndex(t *testing.T) {
+func testElinimateProjectionWithExpressionIndex(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	newCfg.Experimental.AllowsExpressionIndex = true

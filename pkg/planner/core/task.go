@@ -52,6 +52,7 @@ var HeavyFunctionNameMap = map[string]struct{}{
 	"vec_negative_inner_product": {},
 	"vec_dims":                   {},
 	"vec_l2_norm":                {},
+	"fts_match_word":             {},
 }
 
 func attachPlan2Task(p base.PhysicalPlan, t base.Task) base.Task {
@@ -464,24 +465,32 @@ func attach2TaskForMpp4PhysicalHashJoin(pp base.PhysicalPlan, tasks ...base.Task
 	// for broadcast inner join, it should be the non-broadcast side, since broadcast side is always the build side, so
 	// just use the probe side is ok.
 	// for hash inner join, both side is ok, by default, we use the probe side
-	// for outer join, it should always be the outer side of the join
+	// for left/right outer join, it should always be the outer side of the join
 	// for semi join, it should be the left side(the same as left out join)
-	outerTaskIndex := 1 - p.InnerChildIdx
-	if p.JoinType != base.InnerJoin {
-		if p.JoinType == base.RightOuterJoin {
-			outerTaskIndex = 1
-		} else {
-			outerTaskIndex = 0
+	// for full outer join, both sides are preserved, so neither side's partition property
+	// can be passed to the join result. Use AnyType instead.
+	partTp := property.AnyType
+	var hashCols []*property.MPPPartitionColumn
+	if p.JoinType != base.FullOuterJoin {
+		outerTaskIndex := 1 - p.InnerChildIdx
+		if p.JoinType != base.InnerJoin {
+			if p.JoinType == base.RightOuterJoin {
+				outerTaskIndex = 1
+			} else {
+				outerTaskIndex = 0
+			}
 		}
-	}
-	// can not use the task from tasks because it maybe updated.
-	outerTask := lTask
-	if outerTaskIndex == 1 {
-		outerTask = rTask
+		// can not use the task from tasks because it maybe updated.
+		outerTask := lTask
+		if outerTaskIndex == 1 {
+			outerTask = rTask
+		}
+		partTp = outerTask.GetPartitionType()
+		hashCols = outerTask.GetHashCols()
 	}
 	task := physicalop.NewMppTask(p,
-		outerTask.GetPartitionType(),
-		outerTask.GetHashCols(),
+		partTp,
+		hashCols,
 		nil, rTask.GetWarnings(), lTask.GetWarnings())
 	// Current TiFlash doesn't support receive Join executors' schema info directly from TiDB.
 	// Instead, it calculates Join executors' output schema using algorithm like BuildPhysicalJoinSchema which
@@ -1269,6 +1278,23 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 		}
 	}
 	if copTask, ok := t.(*physicalop.CopTask); ok && needPushDown && canPushDownToTiKV(p, copTask) && len(copTask.RootTaskConds) == 0 {
+		// Handle IndexMerge with advisory sort items when some (but not all)
+		// partial paths satisfy the sort order. When all paths satisfy, the
+		// existing Limit pushdown via attach2Task4PhysicalLimit gives a better plan.
+		if len(copTask.IdxMergePartPlans) > 0 && !copTask.IndexPlanFinished && !copTask.IdxMergeIsIntersection &&
+			copTask.IdxMergeMatchWithAdvisorySortItems {
+			intest.Assert(len(copTask.IdxMergePartPlans) == len(copTask.IdxMergePartPlansMatchResults))
+			allSatisfy := true
+			for _, result := range copTask.IdxMergePartPlansMatchResults {
+				if !result.Matched() {
+					allSatisfy = false
+					break
+				}
+			}
+			if !allSatisfy {
+				return handleAdvisorySortItemsForIndexMerge(p, copTask)
+			}
+		}
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *physicalop.PhysicalTopN
@@ -1292,6 +1318,17 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 				// Keep TopN at root when the order-by columns cannot be resolved against the
 				// index plan but the reader still has no table-side after finishing the index plan.
 				// This can happen when a virtual generated column is covered by an expression index.
+				rootTask := t.ConvertToRootTask(p.SCtx())
+				if len(p.GetPartitionBy()) > 0 {
+					return t
+				}
+				return attachPlan2Task(p, rootTask)
+			}
+			if containVirtualColumn(p, copTask.TablePlan.Schema().Columns) {
+				// Keep TopN at root when it would be pushed to the table/probe side of an
+				// IndexLookUp on a virtual generated column. The build/index side may not
+				// preserve the global order in this case, so a probe-side partial TopN can
+				// stop too early and return wrong rows.
 				rootTask := t.ConvertToRootTask(p.SCtx())
 				if len(p.GetPartitionBy()) > 0 {
 					return t
@@ -1422,6 +1459,55 @@ func handlePartialOrderTopN(p *physicalop.PhysicalTopN, copTask *physicalop.CopT
 func estimateMaxXForPartialOrder() uint64 {
 	// TODO: implement it by TopN/buckets and adjust it by session variable.
 	return 0
+}
+
+// handleAdvisorySortItemsForIndexMerge handles TopN pushdown when IndexMerge
+// has advisory sort items satisfaction info. It pushes Limit to partial paths
+// that satisfy the sort order and TopN to those that don't, then keeps a root
+// TopN for final merge.
+func handleAdvisorySortItemsForIndexMerge(p *physicalop.PhysicalTopN, copTask *physicalop.CopTask) base.Task {
+	newCount := p.Offset + p.Count
+
+	cols := make([]*expression.Column, 0, len(p.ByItems))
+	for _, item := range p.ByItems {
+		cols = append(cols, expression.ExtractColumns(item.Expr)...)
+	}
+	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
+	for _, expr := range p.GetPartitionBy() {
+		newPartitionBy = append(newPartitionBy, expr.Clone())
+	}
+
+	for i, partialPlan := range copTask.IdxMergePartPlans {
+		if copTask.IdxMergePartPlansMatchResults[i].Matched() {
+			// This partial path satisfies the sort order, push Limit.
+			childProfile := partialPlan.StatsInfo()
+			stats := property.DeriveLimitStats(childProfile, float64(newCount))
+			pushedDownLimit := physicalop.PhysicalLimit{
+				Count:       newCount,
+				PartitionBy: newPartitionBy,
+			}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+			pushedDownLimit.SetChildren(partialPlan)
+			pushedDownLimit.SetSchema(partialPlan.Schema())
+			copTask.IdxMergePartPlans[i] = pushedDownLimit
+		} else if canPushToIndexPlan(partialPlan, cols) {
+			// This partial path does not satisfy the sort order, push TopN.
+			pushedDownTopN, _ := getPushedDownTopN(p, partialPlan, copTask.GetStoreType())
+			copTask.IdxMergePartPlans[i] = pushedDownTopN
+		}
+	}
+
+	// Push TopN to the table plan side if it exists.
+	if copTask.TablePlan != nil {
+		pushedDownTopN, _ := getPushedDownTopN(p, copTask.TablePlan, copTask.GetStoreType())
+		copTask.TablePlan = pushedDownTopN
+	}
+
+	// Keep the root TopN as the final merge layer.
+	rootTask := copTask.ConvertToRootTask(p.SCtx())
+	if len(p.GetPartitionBy()) > 0 {
+		return rootTask
+	}
+	return attachPlan2Task(p, rootTask)
 }
 
 // attach2Task4PhysicalProjection implements PhysicalPlan interface.
@@ -1639,6 +1725,15 @@ func attach2TaskForMpp1Phase(p *physicalop.PhysicalHashAgg, mpp *physicalop.MppT
 		attachPlan2Task(proj, mpp)
 	}
 	return mpp
+}
+
+func containsMaxMinCountAgg(aggFuncs []*aggregation.AggFuncDesc) bool {
+	for _, aggFunc := range aggFuncs {
+		if aggregation.IsMaxMinCount(aggFunc.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 // scaleStats4GroupingSets scale the derived stats because the lower source has been expanded.
@@ -2009,6 +2104,21 @@ func attach2TaskForMpp(p *physicalop.PhysicalHashAgg, tasks ...base.Task) base.T
 		attachPlan2Task(finalAgg, t)
 		return t
 	case physicalop.MppScalar:
+		if containsMaxMinCountAgg(p.AggFuncs) {
+			prop := &property.PhysicalProperty{
+				TaskTp:         property.MppTaskType,
+				ExpectedCnt:    math.MaxFloat64,
+				MPPPartitionTp: property.SinglePartitionType,
+			}
+			if property.NeedEnforceExchanger(mpp.GetPartitionType(), mpp.HashCols, prop, nil) {
+				newMpp := mpp.EnforceExchanger(prop, nil)
+				if newMpp.Invalid() {
+					return newMpp
+				}
+				mpp = newMpp
+			}
+			return attach2TaskForMpp1Phase(p, mpp)
+		}
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.SinglePartitionType}
 		if !property.NeedEnforceExchanger(mpp.GetPartitionType(), mpp.HashCols, prop, nil) {
 			// On the one hand: when the low layer already satisfied the single partition layout, just do the all agg computation in the single node.

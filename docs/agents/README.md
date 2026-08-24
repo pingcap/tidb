@@ -13,7 +13,6 @@ This directory is the single top-level home for agent-facing documentation.
   - `docs/agents/dxf/`
   - `docs/agents/executor/`
   - `docs/agents/import-into/`
-  - `docs/agents/planner/`
 
 ## Maintenance
 

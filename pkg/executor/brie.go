@@ -226,6 +226,10 @@ func (bq *brieQueue) clearTask(sc *stmtctx.StatementContext) {
 
 	bq.tasks.Range(func(key, value any) bool {
 		item := value.(*brieQueueItem)
+		// Unfinished tasks keep finishTime zero; do not GC them.
+		if item.info.finishTime.IsZero() {
+			return true
+		}
 		if d := currTime.Sub(sc.TypeCtx(), &item.info.finishTime); d.Compare(outdatedDuration) > 0 {
 			bq.tasks.Delete(key)
 		}
@@ -234,7 +238,7 @@ func (bq *brieQueue) clearTask(sc *stmtctx.StatementContext) {
 }
 
 func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
-	sc := stmtctx.NewStmtCtxWithTimeZone(b.ctx.GetSessionVars().Location())
+	sc := stmtctx.NewStmtCtxWithTimeZone(b.sctx.GetSessionVars().Location())
 	t, err := types.ParseTime(sc.TypeCtx(), ts, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return 0, err
@@ -249,27 +253,27 @@ func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
 func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) exec.Executor {
 	if s.Kind == ast.BRIEKindShowBackupMeta {
 		return execOnce(&showMetaExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, schema, 0),
+			BaseExecutor: exec.NewBaseExecutor(b.sctx, schema, 0),
 			showConfig:   buildShowMetadataConfigFrom(s),
 		})
 	}
 
 	if s.Kind == ast.BRIEKindShowQuery {
 		return execOnce(&showQueryExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, schema, 0),
+			BaseExecutor: exec.NewBaseExecutor(b.sctx, schema, 0),
 			targetID:     uint64(s.JobID),
 		})
 	}
 
 	if s.Kind == ast.BRIEKindCancelJob {
 		return &cancelJobExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, schema, 0),
+			BaseExecutor: exec.NewBaseExecutor(b.sctx, schema, 0),
 			targetID:     uint64(s.JobID),
 		}
 	}
 
 	e := &BRIEExec{
-		BaseExecutor: exec.NewBaseExecutor(b.ctx, schema, 0),
+		BaseExecutor: exec.NewBaseExecutor(b.sctx, schema, 0),
 		info: &brieTaskInfo{
 			kind: s.Kind,
 		},
@@ -575,6 +579,24 @@ func (e *showMetaExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+// cancelBRIEOnKill cancels the BRIE task when HandleSignal is QueryInterrupted.
+func cancelBRIEOnKill(taskCtx context.Context, sctx sessionctx.Context, tickCh <-chan time.Time, cancelTask func()) {
+	for {
+		select {
+		case _, ok := <-tickCh:
+			if !ok {
+				return
+			}
+			if exeerrors.ErrQueryInterrupted.Equal(sctx.GetSessionVars().SQLKiller.HandleSignal()) {
+				cancelTask()
+				return
+			}
+		case <-taskCtx.Done():
+			return
+		}
+	}
+}
+
 // Next implements the Executor Next interface.
 func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
@@ -596,37 +618,32 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			failpoint.Return(taskCtx.Err())
 		}
 	})
-	// manually monitor the Killed status...
 	go func() {
 		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if e.Ctx().GetSessionVars().SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted {
-					bq.cancelTask(taskID)
-					return
-				}
-			case <-taskCtx.Done():
-				return
-			}
-		}
+		cancelBRIEOnKill(taskCtx, e.Ctx(), ticker.C, func() {
+			bq.cancelTask(taskID)
+		})
 	}()
 
 	progress, err := bq.acquireTask(taskCtx, taskID)
 	if err != nil {
+		err = mapBRIEErr(e.Ctx(), err, nil)
+		e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
+		e.info.message = err.Error()
 		return err
 	}
 	defer bq.releaseTask()
+	failpoint.InjectCall("beforeRunBRIETask")
 
 	e.info.execTime = types.CurrentTime(mysql.TypeDatetime)
 	glue := &tidbGlue{se: e.Ctx(), progress: progress, info: e.info}
 
 	switch e.info.kind {
 	case ast.BRIEKindBackup:
-		err = handleBRIEError(task.RunBackup(taskCtx, glue, "Backup", e.backupCfg), exeerrors.ErrBRIEBackupFailed)
+		err = mapBRIEErr(e.Ctx(), task.RunBackup(taskCtx, glue, "Backup", e.backupCfg), exeerrors.ErrBRIEBackupFailed)
 	case ast.BRIEKindRestore:
-		err = handleBRIEError(task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), exeerrors.ErrBRIERestoreFailed)
+		err = mapBRIEErr(e.Ctx(), task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), exeerrors.ErrBRIERestoreFailed)
 	default:
 		err = errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}
@@ -659,6 +676,23 @@ func handleBRIEError(err error, terror *terror.Error) error {
 		return nil
 	}
 	return terror.GenWithStackByArgs(err)
+}
+
+// mapBRIEErr maps a BRIE task error to the client-visible result.
+// KILL (QueryInterrupted) becomes 1317. Non-KILL failures still go through
+// handleBRIEError when brieErr is non-nil, including CANCEL BR JOB which
+// cancels taskCtx without setting SQLKiller (8124/8125).
+func mapBRIEErr(sctx sessionctx.Context, err error, brieErr *terror.Error) error {
+	if err == nil {
+		return nil
+	}
+	if exeerrors.ErrQueryInterrupted.Equal(sctx.GetSessionVars().SQLKiller.HandleSignal()) {
+		return exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
+	}
+	if brieErr == nil {
+		return err
+	}
+	return handleBRIEError(err, brieErr)
 }
 
 func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {

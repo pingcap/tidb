@@ -137,7 +137,7 @@ func checkDropColumnForStatePublic(colInfo *model.ColumnInfo) (err error) {
 	return nil
 }
 
-func onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+func (w *worker) onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	tblInfo, colInfo, idxInfos, ifExists, err := checkDropColumn(jobCtx, job)
 	if err != nil {
 		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {
@@ -211,6 +211,13 @@ func onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != colInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
+		}
+
+		// Clean up masking policies associated with the dropped column.
+		if !job.IsRollingback() {
+			if err := w.dropMaskingPoliciesOnColumn(jobCtx, tblInfo.ID, colInfo.ID); err != nil {
+				return ver, errors.Wrapf(err, "failed to drop masking policies on column %d of table %d", colInfo.ID, tblInfo.ID)
+			}
 		}
 
 		// Finish this job.
