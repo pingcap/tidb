@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -38,7 +39,10 @@ import (
 // CPU. Unlike Dump, every schema file is uniformly small (render text off an
 // already-fetched TableInfo, then a small PUT), so there's no bandwidth-bound
 // case to protect against, and this can go well past Dump's countCapMultiplier.
-const schemaConcurrencyMultiplier = 8
+// Aliased from scheduler.ExportSchemaConcurrencyMultiplier (the single source
+// of truth, since CalcRequiredSlotsForExport also derives its table-count
+// bound from it) so call sites below don't need the package qualifier.
+const schemaConcurrencyMultiplier = scheduler.ExportSchemaConcurrencyMultiplier
 
 // ShowCreateTableFunc and ShowCreateDatabaseFunc render CREATE TABLE/DATABASE
 // text byte-identical to SHOW CREATE TABLE/DATABASE. pkg/dxf/export can't

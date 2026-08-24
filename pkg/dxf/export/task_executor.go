@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -36,8 +37,11 @@ import (
 // countCapMultiplier sizes the hard cap on concurrently running chunks
 // relative to node CPU: small chunks are PUT-latency-bound rather than
 // bandwidth-bound, so they can usefully run at well above 1x cores before
-// hitting diminishing returns.
-const countCapMultiplier = 4
+// hitting diminishing returns. Aliased from scheduler.ExportDumpConcurrencyMultiplier
+// (the single source of truth, since CalcRequiredSlotsForExport also derives
+// its table-count bound from it) so call sites below don't need the package
+// qualifier.
+const countCapMultiplier = scheduler.ExportDumpConcurrencyMultiplier
 
 type exportTaskExecutor struct {
 	*taskexecutor.BaseTaskExecutor
