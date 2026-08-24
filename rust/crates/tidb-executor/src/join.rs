@@ -2244,6 +2244,12 @@ impl<C: Columns> JoinExec<C> {
         group.reset();
         side.group_len = 0;
         side.key.clear();
+        // A single signed-int join key reads the typed i64 cell directly,
+        // skipping the per-row Vec<Datum> allocation and generic compare.
+        let int_key = key_offsets.len() == 1
+            && types[key_offsets[0]].code() == tidb_datatype::FieldTypeCode::LongLong
+            && !types[key_offsets[0]].is_unsigned();
+        let mut cached_i64: i64 = 0;
         loop {
             if side.row >= side.chunk.num_rows() {
                 if side.done {
@@ -2262,6 +2268,23 @@ impl<C: Columns> JoinExec<C> {
                 }
             }
             let row = side.chunk.get_row(side.row);
+            if int_key {
+                let null = row.is_null(key_offsets[0]);
+                let value = if null {
+                    0i64
+                } else {
+                    row.get_int64(key_offsets[0])
+                };
+                if side.group_len == 0 {
+                    cached_i64 = value;
+                } else if value != cached_i64 || null {
+                    break;
+                }
+                group.append(row, tracker, memory)?;
+                side.group_len += 1;
+                side.row += 1;
+                continue;
+            }
             let key: Vec<Datum> = key_offsets
                 .iter()
                 .map(|&at| row.get_datum(at, &types[at]))
@@ -2803,6 +2826,7 @@ impl<C: Columns> JoinExec<C> {
         let [key] = self.keys.as_slice() else {
             return false;
         };
+
         let residual_supported = self.residual_conditions.is_empty()
             || (self.kind == JoinKind::Inner
                 && self.residual_decimal_mul_lt.is_some()
