@@ -2355,10 +2355,33 @@ impl PlanTrace {
         select: &tidb_ast::SelectStmt,
         qualify: &Qualifier<'_>,
     ) {
+        // Two shapes make the final aggregate read an upstream COLUMN:
+        // `InjectProjBelowAgg`'s Projection below it, and a TiKV partial
+        // aggregate whose result arrives through the reader (q18's
+        // `sum(Column#67)` over `data:StreamAgg`). Otherwise the written
+        // expression stays on the operator.
+        // At this point the stack top is whatever the aggregate's child is:
+        // an injected Projection, or the reader carrying a TiKV partial
+        // aggregate (`data:StreamAgg`). Either makes Go print projected
+        // columns; anything else keeps the written expression.
+        if std::env::var("TIDB_DEBUG_TRACE").is_ok() {
+            if let Some(child) = self.stack.last() {
+                eprintln!(
+                    "[fgsa] child={} info={}",
+                    child.name,
+                    &child.info[..child.info.len().min(40)]
+                );
+            }
+        }
+        let projected = self.stack.last().is_some_and(|child| {
+            child.name == "Projection"
+                || (child.name == "TableReader" && child.info.starts_with("data:StreamAgg"))
+                || (child.name == "IndexReader" && child.info.starts_with("index:StreamAgg"))
+        });
         self.wrap(
             "StreamAgg",
             Est::Inherit,
-            grouped_aggregate_info(select, qualify, true, true),
+            grouped_aggregate_info_with(select, qualify, false, true, projected),
         );
     }
 
@@ -5734,6 +5757,21 @@ fn grouped_aggregate_info(
     partial_inputs: bool,
     include_first_row: bool,
 ) -> String {
+    grouped_aggregate_info_with(select, qualify, partial_inputs, include_first_row, false)
+}
+
+/// [`grouped_aggregate_info`] with control over the projected-argument
+/// rendering: a ROOT aggregate whose scalar argument `InjectProjBelowAgg`
+/// lifted into a Projection below prints the projected column, never the
+/// written expression.
+#[allow(clippy::too_many_arguments)]
+fn grouped_aggregate_info_with(
+    select: &tidb_ast::SelectStmt,
+    qualify: &Qualifier<'_>,
+    partial_inputs: bool,
+    include_first_row: bool,
+    project_scalar_args: bool,
+) -> String {
     let mut groups = select
         .group_by
         .iter()
@@ -5785,6 +5823,11 @@ fn grouped_aggregate_info(
             let input = format!("Column#{partial_index}");
             partial_index += 1;
             input
+        } else if project_scalar_args {
+            // Both shapes feed the aggregate an upstream column: the
+            // injected projection of a scalar argument, and a TiKV partial
+            // aggregate's result arriving through its reader.
+            format!("Column#{aggregate_index}")
         } else {
             args.first()
                 .map_or_else(|| "1".to_owned(), |arg| qualify.expr(arg))

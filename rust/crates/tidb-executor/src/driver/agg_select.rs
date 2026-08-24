@@ -4427,6 +4427,9 @@ fn build_aggregation(
                 {
                     trace.refuse("partial grouped StreamAgg child is not a bare scan");
                 }
+                if std::env::var("TIDB_DEBUG_TRACE").is_ok() {
+                    eprintln!("[trace] q18-path=partial_grouped_stream");
+                }
                 trace.final_grouped_stream_agg(traced_select, &qualify);
             } else if grouped_stream_ordered {
                 if let Some((expressions, injected_for_scalar)) =
