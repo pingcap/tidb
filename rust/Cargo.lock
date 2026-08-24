@@ -2655,6 +2655,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "smallvec",
  "stacker",
  "tidb-ast",
  "tidb-chunk",
