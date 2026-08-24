@@ -62,6 +62,7 @@ func TestCheckKeyspaceEnabled(t *testing.T) {
 		keyspacepb.KeyspaceState_ARCHIVED,
 	} {
 		err := checkKeyspaceEnabled(&keyspacepb.KeyspaceMeta{Name: "ks1", State: state})
-		require.ErrorContains(t, err, "keyspace ks1 is not enabled", state.String())
+		require.ErrorContains(t, err, "keyspace ks1 is not enabled")
+		require.ErrorContains(t, err, "current state "+state.String())
 	}
 }
