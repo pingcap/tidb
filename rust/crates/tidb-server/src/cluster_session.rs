@@ -43,7 +43,7 @@ use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
 use tidb_exec::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_executor::access_cost::TableStatistics;
 use tidb_executor::cluster_storage::ClusterTableStorage;
-use tidb_executor::driver::{Catalog, ViewDef};
+use tidb_executor::driver::{SequenceDef, Catalog, ViewDef};
 use tidb_executor::kv_table::{KvColumn, KvIndex, KvTable, TableAutoId};
 use tidb_executor::storage::TableStorage;
 use tidb_model::{GoShared, SchemaState, TableInfo};
@@ -70,6 +70,20 @@ pub trait TableAutoIds: std::fmt::Debug + Send + Sync {
 
     /// The live, distinct AUTO_RANDOM allocator for `table`.
     fn random_allocator_for(&self, db_id: i64, table: &TableInfo) -> TableAutoId;
+
+    /// The live allocator for a SEQUENCE stored in this database, so the
+    /// sequence can be loaded into the catalog rather than skipped. Go keeps
+    /// the counter in meta keys of its own (`SequenceValue`/`SequenceCycle`),
+    /// exactly like an auto-increment counter, and keeps the allocator ALIVE
+    /// for as long as the node -- one reserved cache batch belongs to whoever
+    /// reserved it, so rebuilding it per catalog reload would throw away the
+    /// ids it still held. The default of `None` is the tier that has no
+    /// sequence counter at all.
+    ///
+    /// `table` is a stored `TableInfo` whose `sequence` field is set.
+    fn sequence_allocator_for(&self, _db_id: i64, _table: &TableInfo) -> Option<SequenceDef> {
+        None
+    }
 }
 
 /// Counters that live in this process and start at zero, one per table id.
@@ -343,6 +357,23 @@ pub fn cluster_session_catalog_with_templates(
                     Err(reason) => skipped.push(SkippedTable {
                         name: format!("{schema}.{name}"),
                         reason,
+                    }),
+                }
+                continue;
+            }
+            if table.is_sequence() {
+                // Go loads every PUBLIC sequence into the infoschema
+                // (`infoschema.loadSequence`); SHOW TABLES lists it and
+                // NEXTVAL/LASTVAL/SETVAL resolve against it. Skipping it here
+                // is what made `SELECT nextval(...)` answer 1146 on this tier.
+                match auto_ids.sequence_allocator_for(database.info.id, table) {
+                    Some(sequence) => catalog
+                        .register_sequence_in(&schema, table.name.original(), sequence)
+                        .expect("the schema was created just above this loop"),
+                    None => skipped.push(SkippedTable {
+                        name: format!("{schema}.{}", table.name.original()),
+                        reason: "it is a sequence and this tier has no sequence counter"
+                            .to_owned(),
                     }),
                 }
                 continue;

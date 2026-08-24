@@ -29,7 +29,7 @@
 //! [`DEFAULT_AUTO_ID_STEP`]: tidb_executor::kv_table::DEFAULT_AUTO_ID_STEP
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tidb_pd_client::PdClient;
 use tidb_txnkv::rpc::TonicCoprocessorClient;
@@ -37,7 +37,10 @@ use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoa
 use tidb_txnkv::PdRegionLoader;
 
 use tidb_exec::cluster_auto_id::ClusterAutoIdStore;
+use tidb_exec::cluster_sequence::ClusterSequenceCounter;
 use tidb_executor::kv_table::{TableAutoId, DEFAULT_AUTO_ID_STEP};
+use tidb_executor::sequence::{SequenceAllocator, SequenceInfo as SeqCounterInfo};
+use tidb_executor::driver::SequenceDef;
 use tidb_model::TableInfo;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
@@ -59,6 +62,10 @@ where
     opener: RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
     allocators: Mutex<HashMap<(i64, bool), (AllocatorMark, TableAutoId)>>,
+    /// The same lifetime rule for SEQUENCE allocators: one per sequence table
+    /// id for as long as the node runs, so a reserved cache batch is never
+    /// abandoned by a catalog rebuild.
+    sequences: Mutex<HashMap<i64, SequenceDef>>,
 }
 
 impl<C, L, P> std::fmt::Debug for ClusterTableAutoIds<C, L, P>
@@ -90,9 +97,49 @@ where
             opener,
             timeout,
             allocators: Mutex::new(HashMap::new()),
+            sequences: Mutex::new(HashMap::new()),
         }
     }
+
+    /// The live allocator for one stored SEQUENCE.
+    ///
+    /// Go `NewSequenceAllocator` is built from the stored `SequenceInfo` and
+    /// reserves through the meta keys [`ClusterSequenceCounter`] owns. The
+    /// FIRST call reads nothing: the counter's whole state -- batch end and
+    /// cycle round -- is read inside each reservation transaction, which is
+    /// what keeps this node consistent with its peers even though the
+    /// allocator object itself never re-reads between reservations.
+    fn sequence(&self, db_id: i64, table: &TableInfo) -> SequenceDef {
+        let mut sequences = self.sequences.lock().expect("sequence registry poisoned");
+        if let Some(held) = sequences.get(&table.id) {
+            return held.clone();
+        }
+        let stored_sequence = table
+            .sequence
+            .as_ref()
+            .map(|shared| shared.read().clone())
+            .unwrap_or_default();
+        let info = SeqCounterInfo {
+            start: stored_sequence.start,
+            increment: stored_sequence.increment,
+            min_value: stored_sequence.min_value,
+            max_value: stored_sequence.max_value,
+            cache_value: stored_sequence.cache_value,
+            cache: stored_sequence.cache,
+            cycle: stored_sequence.cycle,
+        };
+        let counter =
+            ClusterSequenceCounter::new(self.opener.clone(), db_id, table.id, self.timeout);
+        let def = SequenceDef {
+            name: table.name.original().to_owned(),
+            allocator: SequenceAllocator::over_counter(info, counter.shared()),
+        };
+        sequences.insert(table.id, def.clone());
+        def
+    }
 }
+
+
 
 impl<C, L, P> TableAutoIds for ClusterTableAutoIds<C, L, P>
 where
@@ -106,6 +153,10 @@ where
 
     fn random_allocator_for(&self, db_id: i64, table: &TableInfo) -> TableAutoId {
         self.allocator(db_id, table, true)
+    }
+
+    fn sequence_allocator_for(&self, db_id: i64, table: &TableInfo) -> Option<SequenceDef> {
+        Some(self.sequence(db_id, table))
     }
 }
 
