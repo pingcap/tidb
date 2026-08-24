@@ -79,6 +79,16 @@ func fileName(db, table string, ordinal, file int) string {
 	return fmt.Sprintf("%s.%s.%07d%04d.csv", db, table, ordinal, file)
 }
 
+// schemaFileName mirrors Dumpling's per-table schema file naming.
+func schemaFileName(db, table string) string {
+	return fmt.Sprintf("%s.%s-schema.sql", db, table)
+}
+
+// dbCreateFileName mirrors Dumpling's per-database CREATE DATABASE file naming.
+func dbCreateFileName(db string) string {
+	return fmt.Sprintf("%s-schema-create.sql", db)
+}
+
 // rowEncoder turns a chunk.Row into the per-column raw byte values csvfile
 // expects. FormatValueText reuses a shared buffer, so each value is copied into
 // a stable row buffer before the row is sliced out of it.

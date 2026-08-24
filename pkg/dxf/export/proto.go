@@ -67,6 +67,7 @@ func (m *TaskMeta) dbFirstTableIdxs() map[int]struct{} {
 
 // tableRef pairs a table's database name with its resolved schema.
 type tableRef struct {
+	dbID      int64
 	dbName    string
 	tableInfo *model.TableInfo
 }
@@ -82,7 +83,7 @@ func (m *TaskMeta) tableRefs(tableInfos map[int64]*model.TableInfo) ([]tableRef,
 			if !ok {
 				return nil, errors.Errorf("export: table %d not found in snapshot infoschema", tid)
 			}
-			refs = append(refs, tableRef{dbName: db.DBName, tableInfo: tblInfo})
+			refs = append(refs, tableRef{dbID: db.DBID, dbName: db.DBName, tableInfo: tblInfo})
 		}
 	}
 	return refs, nil
