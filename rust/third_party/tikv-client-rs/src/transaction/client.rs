@@ -383,6 +383,8 @@ impl Client {
                 self.keyspace,
                 self.keyspace_name.as_deref(),
                 None,
+                None,
+                None,
             )
             .await?;
             live_locks = resolved_locks.truncate_keyspace(self.keyspace);

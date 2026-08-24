@@ -54,6 +54,20 @@ pub trait Request: Any + Sync + Send + 'static {
     fn batch_priority(&self) -> u64 {
         0
     }
+    /// Resource-group identity carried in TiKV's request context.
+    fn resource_group_name(&self) -> Option<&str> {
+        None
+    }
+    /// Sets the request's resource-group identity.
+    fn set_resource_group_name(&mut self, _resource_group_name: &str) {}
+    /// Sets source resource-control penalty returned by PD admission.
+    fn set_resource_control_penalty(
+        &mut self,
+        _penalty: Option<crate::proto::resource_manager::Consumption>,
+    ) {
+    }
+    /// Applies resource-group priority only when the caller has not supplied one.
+    fn set_resource_control_priority_if_unset(&mut self, _priority: u64) {}
     /// Set TiKV's server-side maximum execution duration.
     ///
     /// Requests without a `Context` deliberately retain the no-op default.
@@ -240,6 +254,44 @@ macro_rules! impl_request {
                     .as_ref()
                     .and_then(|context| context.resource_control_context.as_ref())
                     .map_or(0, |resource_control| resource_control.override_priority)
+            }
+
+            fn resource_group_name(&self) -> Option<&str> {
+                self.context
+                    .as_ref()
+                    .and_then(|context| context.resource_control_context.as_ref())
+                    .map(|resource_control| resource_control.resource_group_name.as_str())
+                    .filter(|resource_group_name| !resource_group_name.is_empty())
+            }
+
+            fn set_resource_group_name(&mut self, resource_group_name: &str) {
+                self.context
+                    .get_or_insert_with(kvrpcpb::Context::default)
+                    .resource_control_context
+                    .get_or_insert_with(kvrpcpb::ResourceControlContext::default)
+                    .resource_group_name = resource_group_name.to_owned();
+            }
+
+            fn set_resource_control_penalty(
+                &mut self,
+                penalty: Option<crate::proto::resource_manager::Consumption>,
+            ) {
+                self.context
+                    .get_or_insert_with(kvrpcpb::Context::default)
+                    .resource_control_context
+                    .get_or_insert_with(kvrpcpb::ResourceControlContext::default)
+                    .penalty = penalty;
+            }
+
+            fn set_resource_control_priority_if_unset(&mut self, priority: u64) {
+                let resource_control = self
+                    .context
+                    .get_or_insert_with(kvrpcpb::Context::default)
+                    .resource_control_context
+                    .get_or_insert_with(kvrpcpb::ResourceControlContext::default);
+                if resource_control.override_priority == 0 {
+                    resource_control.override_priority = priority;
+                }
             }
 
             fn set_max_execution_duration_ms(&mut self, duration_ms: u64) {

@@ -25,6 +25,7 @@ use crate::request::ResolveLock;
 use crate::request::RetryableMultiRegion;
 use crate::request::Shardable;
 use crate::request::{DefaultProcessor, StoreRequest};
+use crate::resource_control::ResourceGroupControllerHandle;
 use crate::retry::RetryBackoffer;
 use crate::store::HasKeyErrors;
 use crate::store::HasRegionError;
@@ -43,6 +44,9 @@ pub struct PlanBuilder<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> {
     plan: P,
     keyspace_name: Option<String>,
     rpc_interceptor: Option<RpcInterceptorChain>,
+    resource_group_name: Option<String>,
+    resource_control: Option<ResourceGroupControllerHandle>,
+    ru_details: Option<Arc<crate::RuDetails>>,
     phantom: PhantomData<Ph>,
 }
 
@@ -75,12 +79,22 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 replica_selector_state: crate::locate::ReplicaSelectorState::default(),
                 store_health: None,
                 record_client_side_slow_score: false,
+                resource_control_replica_number: 1,
+                resource_control_access_location: crate::kv::AccessLocationType::Unknown,
+                predicted_read_bytes: 0,
+                ru_details: None,
+                store_token_count: Arc::new(std::sync::atomic::AtomicI64::new(0)),
+                store_token_store_id: 0,
                 interceptor: None,
+                resource_control: None,
                 response_codec,
                 v1_response_codec,
             },
             keyspace_name: None,
             rpc_interceptor: None,
+            resource_group_name: None,
+            resource_control: None,
+            ru_details: None,
             phantom: PhantomData,
         }
     }
@@ -133,9 +147,69 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
         self
     }
 
+    /// Assign this request and all of its physical shard/retry clones to a
+    /// resource group. Admission only becomes active when a controller is
+    /// attached with [`Self::resource_control`].
+    pub fn resource_group(mut self, resource_group_name: impl AsRef<str>) -> Self {
+        self.plan
+            .request
+            .set_resource_group_name(resource_group_name.as_ref());
+        self.resource_group_name = Some(resource_group_name.as_ref().to_owned());
+        self
+    }
+
+    /// Attach a PD resource-group controller to every physical TiKV RPC.
+    ///
+    /// The controller runs before normal RPC interceptors, fills TiKV's
+    /// penalty and fallback priority, and settles only non-error responses.
+    pub fn resource_control(mut self, controller: ResourceGroupControllerHandle) -> Self {
+        self.plan.resource_control = Some(controller.clone());
+        self.resource_control = Some(controller);
+        self
+    }
+
+    /// Attach the optional source `tikvrpc.Request.PredictedReadBytes` hint.
+    /// PD's resource controller uses it only for eligible coprocessor reads.
+    pub fn predicted_read_bytes(mut self, predicted_read_bytes: u64) -> Self {
+        self.plan.predicted_read_bytes = predicted_read_bytes;
+        self
+    }
+
+    /// Attach source-compatible resource-unit accounting to every physical
+    /// dispatch produced by this plan.
+    pub fn ru_details(mut self, ru_details: Arc<crate::RuDetails>) -> Self {
+        self.plan.ru_details = Some(ru_details.clone());
+        self.ru_details = Some(ru_details);
+        self
+    }
+
     pub(crate) fn rpc_interceptor_option(self, interceptor: Option<RpcInterceptorChain>) -> Self {
         match interceptor {
             Some(interceptor) => self.rpc_interceptor(interceptor),
+            None => self,
+        }
+    }
+
+    pub(crate) fn resource_group_option(self, resource_group_name: Option<&str>) -> Self {
+        match resource_group_name {
+            Some(resource_group_name) => self.resource_group(resource_group_name),
+            None => self,
+        }
+    }
+
+    pub(crate) fn resource_control_option(
+        self,
+        controller: Option<ResourceGroupControllerHandle>,
+    ) -> Self {
+        match controller {
+            Some(controller) => self.resource_control(controller),
+            None => self,
+        }
+    }
+
+    pub(crate) fn ru_details_option(self, ru_details: Option<Arc<crate::RuDetails>>) -> Self {
+        match ru_details {
+            Some(ru_details) => self.ru_details(ru_details),
             None => self,
         }
     }
@@ -171,9 +245,15 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 keyspace,
                 keyspace_name: self.keyspace_name.clone(),
                 rpc_interceptor: self.rpc_interceptor.clone(),
+                resource_group_name: self.resource_group_name.clone(),
+                resource_control: self.resource_control.clone(),
+                ru_details: self.ru_details.clone(),
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
             phantom: PhantomData,
         }
     }
@@ -189,6 +269,10 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         P: Shardable + NextBatch,
         P::Result: HasLocks + HasNextBatch + HasRegionError + HasKeyErrors,
     {
+        let mut ctx = ctx;
+        if ctx.ru_details.is_none() {
+            ctx.ru_details = self.ru_details.clone();
+        }
         PlanBuilder {
             pd_client: self.pd_client.clone(),
             plan: CleanupLocks {
@@ -201,9 +285,14 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 keyspace,
                 keyspace_name: self.keyspace_name.clone(),
                 rpc_interceptor: self.rpc_interceptor.clone(),
+                resource_group_name: self.resource_group_name.clone(),
+                resource_control: self.resource_control.clone(),
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
             phantom: PhantomData,
         }
     }
@@ -224,6 +313,9 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
             phantom: PhantomData,
         }
     }
@@ -244,6 +336,9 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
             phantom: PhantomData,
         }
     }
@@ -294,6 +389,9 @@ where
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
             phantom: PhantomData,
         }
     }
@@ -311,6 +409,9 @@ impl<PdC: PdClient, R: KvRequest> PlanBuilder<PdC, Dispatch<R>, NoTarget> {
             self.pd_client,
             self.keyspace_name,
             self.rpc_interceptor,
+            self.resource_group_name,
+            self.resource_control,
+            self.ru_details,
         )
     }
 }
@@ -332,6 +433,9 @@ where
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
             phantom: PhantomData,
         }
     }
@@ -350,6 +454,9 @@ where
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
             phantom: PhantomData,
         }
     }
@@ -365,6 +472,9 @@ where
             plan: ExtractError { inner: self.plan },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
             phantom: self.phantom,
         }
     }
@@ -376,6 +486,9 @@ fn set_single_region_store<PdC: PdClient, R: KvRequest>(
     pd_client: Arc<PdC>,
     keyspace_name: Option<String>,
     rpc_interceptor: Option<RpcInterceptorChain>,
+    resource_group_name: Option<String>,
+    resource_control: Option<ResourceGroupControllerHandle>,
+    ru_details: Option<Arc<crate::RuDetails>>,
 ) -> Result<PlanBuilder<PdC, Dispatch<R>, Targetted>> {
     plan.request.set_leader(&store.request_region())?;
     plan.kv_client = Some(store.client);
@@ -388,6 +501,9 @@ fn set_single_region_store<PdC: PdClient, R: KvRequest>(
         pd_client,
         keyspace_name,
         rpc_interceptor,
+        resource_group_name,
+        resource_control,
+        ru_details,
         phantom: PhantomData,
     })
 }
@@ -452,6 +568,43 @@ mod tests {
         let request = builder.plan.request;
         assert_eq!(request.context.as_ref().unwrap().keyspace_name, "tenant");
         assert_eq!(request.clone().context.unwrap().keyspace_name, "tenant");
+    }
+
+    #[test]
+    fn resource_unit_details_are_retained_by_dispatch() {
+        let details = Arc::new(crate::RuDetails::new());
+        let builder = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        )
+        .ru_details(details.clone());
+
+        assert!(Arc::ptr_eq(
+            builder.plan.ru_details.as_ref().unwrap(),
+            &details
+        ));
+    }
+
+    #[test]
+    fn resource_unit_details_are_retained_by_lock_resolution() {
+        let details = Arc::new(crate::RuDetails::new());
+        let builder = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        )
+        .ru_details(details.clone())
+        .resolve_lock(
+            Timestamp::default(),
+            Backoff::no_jitter_backoff(0, 0, 1),
+            Keyspace::Disable,
+        );
+
+        assert!(Arc::ptr_eq(
+            builder.plan.ru_details.as_ref().unwrap(),
+            &details
+        ));
     }
 
     #[test]

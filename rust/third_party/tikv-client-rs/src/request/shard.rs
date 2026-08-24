@@ -274,7 +274,14 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
             replica_selector_state: self.replica_selector_state.clone(),
             store_health: self.store_health.clone(),
             record_client_side_slow_score: self.record_client_side_slow_score,
+            resource_control_replica_number: self.resource_control_replica_number,
+            resource_control_access_location: self.resource_control_access_location,
+            predicted_read_bytes: self.predicted_read_bytes,
+            ru_details: self.ru_details.clone(),
+            store_token_count: self.store_token_count.clone(),
+            store_token_store_id: self.store_token_store_id,
             interceptor: self.interceptor.clone(),
+            resource_control: self.resource_control.clone(),
             response_codec: self.response_codec,
             v1_response_codec: self.v1_response_codec,
         }
@@ -286,6 +293,10 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         self.forwarded_host = store.forwarded_host.clone();
         self.store_health = store.health_status.clone();
         self.record_client_side_slow_score = store.record_client_side_slow_score;
+        self.resource_control_replica_number = store.resource_control_replica_number;
+        self.resource_control_access_location = store.resource_control_access_location;
+        self.store_token_count = store.store_token_count.clone();
+        self.store_token_store_id = store.target_peer.as_ref().map_or(0, |peer| peer.store_id);
         if store.busy_threshold_disabled {
             self.replica_selector_state.disable_busy_threshold();
         }
@@ -640,7 +651,7 @@ mod test {
     use rand::Rng;
 
     use super::{Batchable, Shardable};
-    use crate::kv::{ReplicaReadConfig, ReplicaReadType};
+    use crate::kv::{AccessLocationType, ReplicaReadConfig, ReplicaReadType};
     use crate::locate::ReplicaSelectorState;
     use crate::mock::MockKvClient;
     use crate::proto::kvrpcpb;
@@ -685,7 +696,14 @@ mod test {
             replica_selector_state: ReplicaSelectorState::default(),
             store_health: None,
             record_client_side_slow_score: false,
+            resource_control_replica_number: 1,
+            resource_control_access_location: AccessLocationType::Unknown,
+            predicted_read_bytes: 0,
+            ru_details: None,
+            store_token_count: Arc::new(std::sync::atomic::AtomicI64::new(0)),
+            store_token_store_id: 0,
             interceptor: None,
+            resource_control: None,
             response_codec: None,
             v1_response_codec: None,
         };
@@ -729,7 +747,14 @@ mod test {
             replica_selector_state: ReplicaSelectorState::default(),
             store_health: None,
             record_client_side_slow_score: false,
+            resource_control_replica_number: 1,
+            resource_control_access_location: AccessLocationType::Unknown,
+            predicted_read_bytes: 0,
+            ru_details: None,
+            store_token_count: Arc::new(std::sync::atomic::AtomicI64::new(0)),
+            store_token_store_id: 0,
             interceptor: None,
+            resource_control: None,
             response_codec: None,
             v1_response_codec: None,
         };
@@ -738,6 +763,11 @@ mod test {
         assert_eq!(dispatch.request.context.unwrap().buckets_version, 9);
         assert_eq!(dispatch.target, "proxy:20160");
         assert_eq!(dispatch.forwarded_host, "leader:20160");
+        assert_eq!(dispatch.store_token_store_id, 3);
+        assert!(Arc::ptr_eq(
+            &dispatch.store_token_count,
+            &store.store_token_count
+        ));
     }
 
     #[test]

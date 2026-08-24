@@ -55,6 +55,9 @@ pub enum Error {
         "The operation is not supported in current mode, please consider using RawClient with or without atomic mode"
     )]
     UnsupportedMode,
+    /// A logical TiKV store has reached the configured in-flight request limit.
+    #[error(transparent)]
+    TokenLimit(#[from] crate::error::TokenLimitError),
     #[error("There is no current_regions in the EpochNotMatch error")]
     NoCurrentRegions,
     #[error("The specified entry is not found in the region cache")]

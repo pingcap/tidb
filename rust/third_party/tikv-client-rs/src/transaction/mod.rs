@@ -37,6 +37,7 @@ pub(crate) mod range_task;
 mod rbt;
 mod requests;
 pub(crate) use lock::reject_shared_locks;
+pub(crate) use lock::resolve_locks_with_ru_details;
 pub use lock::LockResolver;
 pub use lock::ResolveLocksContext;
 pub use lock::ResolveLocksOptions;

@@ -1,7 +1,7 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -379,8 +379,10 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     kv_client_versions: Arc<RwLock<HashMap<String, u64>>>,
     kv_client_lifecycle: Arc<Mutex<()>>,
     kv_client_closed: Arc<AtomicBool>,
+    store_token_counts: Arc<std::sync::Mutex<HashMap<StoreId, Arc<AtomicI64>>>>,
     enable_codec: bool,
     enable_forwarding: bool,
+    zone_label: String,
     security_mgr: Arc<SecurityManager>,
     store_liveness_timeout: Duration,
     region_cache: Arc<RegionCache<RetryClient<Cl>>>,
@@ -441,6 +443,15 @@ where
     KvC: KvConnect + Send + Sync + 'static,
     RetryClient<Cl>: RetryClientTrait + Send + Sync + 'static,
 {
+    fn store_token_count(&self, store_id: StoreId) -> Arc<AtomicI64> {
+        self.store_token_counts
+            .lock()
+            .unwrap()
+            .entry(store_id)
+            .or_insert_with(|| Arc::new(AtomicI64::new(0)))
+            .clone()
+    }
+
     /// Builds the physical route selected by `internal/locate` state.
     ///
     /// The request context always names `target_peer`. If `proxy_peer` is
@@ -470,12 +481,15 @@ where
         kv_client.set_event_listener(self.region_cache.client_event_listener());
 
         let health_status = self.region_cache.store_health_status(target_peer.store_id);
+        let store_token_count = self.store_token_count(target_peer.store_id);
         let physical_store_id = physical_store.id;
         let physical_endpoint_type = crate::store::EndpointType::from_store(&physical_store);
         let mut route = RegionStore::new(region, Arc::new(kv_client))
             .with_target(physical_store.address)
             .with_physical_store(physical_store_id, physical_endpoint_type)
-            .with_target_peer(target_peer);
+            .with_target_peer(target_peer)
+            .with_resource_control_access_location(&self.zone_label, &target_store)
+            .with_store_token_count(store_token_count);
         if let Some(health_status) = health_status {
             route = route.with_health_status(health_status);
         }
@@ -1057,15 +1071,19 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         let kv_client_versions = Default::default();
         let kv_client_lifecycle = Default::default();
         let kv_client_closed = Default::default();
+        let store_token_counts = Default::default();
+        crate::kv::STORE_LIMIT.store(config.tikv_client.store_limit, Ordering::Relaxed);
         Ok(PdRpcClient {
             pd: pd.clone(),
             kv_client_cache,
             kv_client_versions,
             kv_client_lifecycle,
             kv_client_closed,
+            store_token_counts,
             kv_connect: kv_connect(security_mgr.clone()),
             enable_codec,
             enable_forwarding: config.enable_forwarding,
+            zone_label: config.zone_label,
             security_mgr,
             store_liveness_timeout,
             region_cache: Arc::new(RegionCache::new(pd)),

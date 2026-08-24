@@ -1,6 +1,7 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::marker::PhantomData;
+use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -18,7 +19,7 @@ use tokio::time::sleep;
 use crate::async_util::Cancellation;
 use crate::backoff::Backoff;
 use crate::interceptor::RpcInterceptorChain;
-use crate::kv::ReplicaReadConfig;
+use crate::kv::{AccessLocationType, ReplicaReadConfig};
 use crate::locate::ReplicaSelectorState;
 use crate::pd::PdClient;
 use crate::proto::errorpb;
@@ -31,6 +32,7 @@ use crate::request::shard::HasNextBatch;
 use crate::request::NextBatch;
 use crate::request::Shardable;
 use crate::request::{KvRequest, StoreRequest};
+use crate::resource_control::ResourceGroupControllerHandle;
 use crate::retry::{
     RetryBackoffer, RetryConfig, BO_IS_WITNESS, BO_MAX_REGION_NOT_INITIALIZED,
     BO_MAX_TS_NOT_SYNCED, BO_REGION_MISS, BO_REGION_RECOVERY_IN_PROGRESS, BO_REGION_SCHEDULING,
@@ -43,7 +45,7 @@ use crate::store::HasRegionErrors;
 use crate::store::KvClient;
 use crate::store::RegionStore;
 use crate::store::{HasKeyErrors, Store};
-use crate::transaction::resolve_locks;
+use crate::transaction::resolve_locks_with_ru_details;
 use crate::transaction::HasLocks;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::ResolveLocksOptions;
@@ -81,8 +83,17 @@ pub struct Dispatch<Req: KvRequest> {
     pub(crate) replica_selector_state: ReplicaSelectorState,
     pub(crate) store_health: Option<Arc<crate::locate::StoreHealthStatus>>,
     pub(crate) record_client_side_slow_score: bool,
+    pub(crate) resource_control_replica_number: i64,
+    pub(crate) resource_control_access_location: AccessLocationType,
+    pub(crate) predicted_read_bytes: u64,
+    pub(crate) ru_details: Option<Arc<crate::RuDetails>>,
+    pub(crate) store_token_count: Arc<AtomicI64>,
+    pub(crate) store_token_store_id: StoreId,
     /// Optional transaction-level decorator for this physical RPC.
     pub interceptor: Option<RpcInterceptorChain>,
+    /// Optional client-go-compatible resource-group controller applied before
+    /// the user interceptor and settled after a successful response.
+    pub resource_control: Option<ResourceGroupControllerHandle>,
     pub response_codec: Option<super::keyspace::ApiV2Codec>,
     pub v1_response_codec: Option<super::keyspace::ApiV1Codec>,
 }
@@ -92,6 +103,47 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
     type Result = Req::Response;
 
     async fn execute(&self) -> Result<Self::Result> {
+        let store_token_limit = crate::kv::STORE_LIMIT.load(std::sync::atomic::Ordering::Relaxed);
+        let store_token_addr = if self.forwarded_host.is_empty() {
+            self.target.as_str()
+        } else {
+            self.forwarded_host.as_str()
+        };
+        let _store_token = (store_token_limit > 0)
+            .then(|| {
+                crate::store::StoreToken::acquire(
+                    self.store_token_count.clone(),
+                    self.store_token_store_id,
+                    store_token_addr,
+                    store_token_limit,
+                )
+            })
+            .transpose()?;
+        let mut request = self.request.clone();
+        let resource_control = self
+            .resource_control
+            .clone()
+            .or_else(crate::resource_control::global_controller);
+        let selected_resource_control = resource_control.as_ref().and_then(|controller| {
+            crate::resource_control::select(
+                controller,
+                &request,
+                self.resource_control_replica_number,
+                self.resource_control_access_location,
+                self.predicted_read_bytes,
+            )
+        });
+        if let Some(selected) = &selected_resource_control {
+            let result = selected
+                .controller
+                .on_request_wait(&selected.resource_group_name, selected.request)
+                .await?;
+            if let Some(ru_details) = &self.ru_details {
+                ru_details.update(&result.consumption, result.wait_duration);
+            }
+            request.set_resource_control_penalty(result.penalty);
+            request.set_resource_control_priority_if_unset(result.priority);
+        }
         let stats = tikv_stats(self.request.label());
         let client = self
             .kv_client
@@ -101,18 +153,34 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
         let next = Box::new(|| {
             Box::pin(async {
                 client
-                    .dispatch_with_forwarded_host(&self.request, &self.forwarded_host)
+                    .dispatch_with_forwarded_host(&request, &self.forwarded_host)
                     .await
             }) as futures::future::BoxFuture<'_, crate::interceptor::RpcDispatchResult>
         });
         let started_at = Instant::now();
         let result = match &self.interceptor {
-            Some(interceptor) => {
-                interceptor
-                    .dispatch(&self.target, &self.request, next)
-                    .await
-            }
+            Some(interceptor) => interceptor.dispatch(&self.target, &request, next).await,
             None => next().await,
+        };
+        let result = match result {
+            Ok(response) => {
+                if let Some(selected) = selected_resource_control {
+                    let response_info =
+                        crate::resource_control::ResponseInfo::from_dispatch_response(
+                            response.as_ref(),
+                        );
+                    let settlement = selected.controller.on_response_wait(
+                        &selected.resource_group_name,
+                        selected.request,
+                        response_info,
+                    )?;
+                    if let Some(ru_details) = &self.ru_details {
+                        ru_details.update(&settlement.consumption, settlement.wait_duration);
+                    }
+                }
+                Ok(response)
+            }
+            Err(error) => Err(error),
         };
         if self.record_client_side_slow_score {
             if let Some(health_status) = &self.store_health {
@@ -1329,6 +1397,9 @@ pub struct ResolveLock<P: Plan, PdC: PdClient> {
     pub keyspace: Keyspace,
     pub keyspace_name: Option<String>,
     pub rpc_interceptor: Option<RpcInterceptorChain>,
+    pub resource_group_name: Option<String>,
+    pub resource_control: Option<ResourceGroupControllerHandle>,
+    pub ru_details: Option<Arc<crate::RuDetails>>,
 }
 
 impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
@@ -1341,6 +1412,9 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
             keyspace: self.keyspace,
             keyspace_name: self.keyspace_name.clone(),
             rpc_interceptor: self.rpc_interceptor.clone(),
+            resource_group_name: self.resource_group_name.clone(),
+            resource_control: self.resource_control.clone(),
+            ru_details: self.ru_details.clone(),
         }
     }
 }
@@ -1372,13 +1446,16 @@ where
             clone.disable_stale_read_after_lock();
 
             let pd_client = self.pd_client.clone();
-            let live_locks = resolve_locks(
+            let live_locks = resolve_locks_with_ru_details(
                 locks,
                 self.timestamp.clone(),
                 pd_client.clone(),
                 self.keyspace,
                 self.keyspace_name.as_deref(),
                 self.rpc_interceptor.clone(),
+                self.resource_group_name.as_deref(),
+                self.resource_control.clone(),
+                self.ru_details.clone(),
             )
             .await?;
             if live_locks.is_empty() {
@@ -1448,6 +1525,8 @@ pub struct CleanupLocks<P: Plan, PdC: PdClient> {
     pub keyspace: Keyspace,
     pub keyspace_name: Option<String>,
     pub rpc_interceptor: Option<RpcInterceptorChain>,
+    pub resource_group_name: Option<String>,
+    pub resource_control: Option<ResourceGroupControllerHandle>,
     pub backoff: Backoff,
 }
 
@@ -1462,6 +1541,8 @@ impl<P: Plan, PdC: PdClient> Clone for CleanupLocks<P, PdC> {
             keyspace: self.keyspace,
             keyspace_name: self.keyspace_name.clone(),
             rpc_interceptor: self.rpc_interceptor.clone(),
+            resource_group_name: self.resource_group_name.clone(),
+            resource_control: self.resource_control.clone(),
             backoff: self.backoff.clone(),
         }
     }
@@ -1479,6 +1560,8 @@ where
         let mut inner = self.inner.clone();
         let mut context = self.ctx.clone();
         context.rpc_interceptor = self.rpc_interceptor.clone();
+        context.resource_group_name = self.resource_group_name.clone();
+        context.resource_control = self.resource_control.clone();
         let mut lock_resolver = crate::transaction::LockResolver::new(context);
         let region = &self.store.as_ref().unwrap().region_with_leader;
         let mut has_more_batch = true;
@@ -2455,6 +2538,9 @@ mod test {
                 keyspace: Keyspace::Disable,
                 keyspace_name: None,
                 rpc_interceptor: None,
+                resource_group_name: None,
+                resource_control: None,
+                ru_details: None,
             },
             pd_client: Arc::new(MockPdClient::default()),
             backoff: Backoff::no_backoff(),

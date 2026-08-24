@@ -159,6 +159,24 @@ pub(crate) fn increment_stale_region_from_pd() {
     TIKV_STALE_REGION_FROM_PD.inc();
 }
 
+/// Source `TiKVStoreLimitErrorCounter`. The address identifies the logical
+/// TiKV store selected for the region request, even when transport forwards
+/// through another store.
+pub(crate) fn increment_store_limit_error(address: &str, store_id: u64) {
+    let store_id = store_id.to_string();
+    TIKV_STORE_LIMIT_ERROR_COUNTER
+        .with_label_values(&[address, &store_id])
+        .inc();
+}
+
+#[cfg(test)]
+pub(crate) fn store_limit_error_count(address: &str, store_id: u64) -> u64 {
+    let store_id = store_id.to_string();
+    TIKV_STORE_LIMIT_ERROR_COUNTER
+        .with_label_values(&[address, &store_id])
+        .get()
+}
+
 #[cfg(test)]
 pub(crate) fn range_task_stat(task_type: &'static str, result: &'static str) -> f64 {
     TIKV_RANGE_TASK_STATS
@@ -477,6 +495,12 @@ lazy_static::lazy_static! {
     static ref TIKV_STALE_REGION_FROM_PD: IntCounter = register_int_counter!(
         "tikv_client_go_stale_region_from_pd",
         "Counter of stale region from PD"
+    )
+    .unwrap();
+    static ref TIKV_STORE_LIMIT_ERROR_COUNTER: IntCounterVec = register_int_counter_vec!(
+        "tikv_client_go_get_store_limit_token_error_total",
+        "Store token is up to the limit, probably because the store is hot or unavailable",
+        &["address", "store"]
     )
     .unwrap();
     static ref TIKV_BATCH_REQUEST_STAGE_DURATION: HistogramVec = register_histogram_vec!(

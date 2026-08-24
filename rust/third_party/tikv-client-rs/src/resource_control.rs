@@ -1,17 +1,23 @@
 //! Native deterministic accounting from client-go's `internal/resourcecontrol`.
 
+use std::any::Any;
+use std::sync::Arc;
+use std::sync::OnceLock;
+use std::sync::RwLock;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use prost::Message;
 
 use crate::kv::AccessLocationType;
-use crate::proto::{coprocessor, kvrpcpb};
+use crate::proto::{coprocessor, kvrpcpb, resource_manager};
 use crate::store::Request;
+use crate::Result;
 
 /// Source RU pre-charge inputs independent of the unfinished dynamic request
 /// wrapper. A write byte count of `None` denotes a read request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct RequestInfo {
+pub struct RequestInfo {
     pub write_bytes: Option<u64>,
     pub store_id: u64,
     pub replica_number: i64,
@@ -166,7 +172,7 @@ fn should_bypass(request: &dyn Request) -> bool {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ResponseInfo {
+pub struct ResponseInfo {
     pub read_bytes: u64,
     pub kv_cpu: Duration,
     pub response_size: u64,
@@ -223,6 +229,23 @@ impl ResponseInfo {
         }
     }
 
+    /// Extracts source response accounting from an erased physical RPC response.
+    /// Unsupported commands deliberately settle with zero values, matching
+    /// client-go's `MakeResponseInfo` default case.
+    pub(crate) fn from_dispatch_response(response: &dyn Any) -> Self {
+        if let Some(response) = response.downcast_ref::<coprocessor::Response>() {
+            Self::from_response(Response::Cop(response))
+        } else if let Some(response) = response.downcast_ref::<kvrpcpb::GetResponse>() {
+            Self::from_response(Response::Get(response))
+        } else if let Some(response) = response.downcast_ref::<kvrpcpb::BatchGetResponse>() {
+            Self::from_response(Response::BatchGet(response))
+        } else if let Some(response) = response.downcast_ref::<kvrpcpb::ScanResponse>() {
+            Self::from_response(Response::Scan(response))
+        } else {
+            Self::default()
+        }
+    }
+
     fn from_details(details: Option<&kvrpcpb::ExecDetailsV2>, size: usize) -> Self {
         Self {
             read_bytes: details
@@ -233,6 +256,124 @@ impl ResponseInfo {
             response_size: size as u64,
         }
     }
+}
+
+/// Result of source PD admission before a physical TiKV RPC.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RequestWaitResult {
+    pub consumption: resource_manager::Consumption,
+    pub penalty: Option<resource_manager::Consumption>,
+    pub wait_duration: Duration,
+    pub priority: u64,
+}
+
+/// Result of source PD settlement after a physical TiKV RPC response.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ResponseWaitResult {
+    pub consumption: resource_manager::Consumption,
+    pub wait_duration: Duration,
+}
+
+/// PD-backed resource-group admission and settlement controller.
+///
+/// This is the native counterpart of client-go's
+/// `ResourceGroupKVInterceptor`. Implementations may wait for tokens and
+/// return an error before dispatch; a successful TiKV response is always
+/// settled through [`ResourceGroupController::on_response_wait`].
+#[async_trait]
+pub trait ResourceGroupController: Send + Sync {
+    async fn on_request_wait(
+        &self,
+        resource_group_name: &str,
+        request: RequestInfo,
+    ) -> Result<RequestWaitResult>;
+
+    fn on_response_wait(
+        &self,
+        resource_group_name: &str,
+        request: RequestInfo,
+        response: ResponseInfo,
+    ) -> Result<ResponseWaitResult>;
+
+    /// Background work is charged and reported by TiKV itself, so client-go
+    /// bypasses controller-side admission and settlement for it.
+    fn is_background_request(&self, _resource_group_name: &str, _request_source: &str) -> bool {
+        false
+    }
+}
+
+pub type ResourceGroupControllerHandle = Arc<dyn ResourceGroupController>;
+
+#[derive(Default)]
+struct GlobalResourceControl {
+    enabled: bool,
+    controller: Option<ResourceGroupControllerHandle>,
+}
+
+fn global_resource_control() -> &'static RwLock<GlobalResourceControl> {
+    static RESOURCE_CONTROL: OnceLock<RwLock<GlobalResourceControl>> = OnceLock::new();
+    RESOURCE_CONTROL.get_or_init(|| RwLock::new(GlobalResourceControl::default()))
+}
+
+/// Enables the process-wide source-compatible resource-control dispatch path.
+pub fn enable_resource_control() {
+    global_resource_control().write().unwrap().enabled = true;
+}
+
+/// Disables the process-wide source-compatible resource-control dispatch path.
+pub fn disable_resource_control() {
+    global_resource_control().write().unwrap().enabled = false;
+}
+
+/// Installs the controller used by enabled process-wide resource control.
+pub fn set_resource_control_interceptor(controller: ResourceGroupControllerHandle) {
+    global_resource_control().write().unwrap().controller = Some(controller);
+}
+
+/// Removes the controller used by process-wide resource control.
+pub fn unset_resource_control_interceptor() {
+    global_resource_control().write().unwrap().controller = None;
+}
+
+pub(crate) fn global_controller() -> Option<ResourceGroupControllerHandle> {
+    let resource_control = global_resource_control().read().unwrap();
+    resource_control
+        .enabled
+        .then(|| resource_control.controller.clone())
+        .flatten()
+}
+
+pub(crate) struct SelectedResourceControl {
+    pub resource_group_name: String,
+    pub controller: ResourceGroupControllerHandle,
+    pub request: RequestInfo,
+}
+
+pub(crate) fn select(
+    controller: &ResourceGroupControllerHandle,
+    request: &dyn Request,
+    replica_number: i64,
+    access_location: AccessLocationType,
+    predicted_read_bytes: u64,
+) -> Option<SelectedResourceControl> {
+    let resource_group_name = request.resource_group_name()?;
+    let request_source = request
+        .tikv_context()
+        .map_or("", |context| context.request_source.as_str());
+    if controller.is_background_request(resource_group_name, request_source) {
+        return None;
+    }
+    let mut request_info = RequestInfo::from_store_request(request);
+    request_info.replica_number = replica_number;
+    request_info.access_location = access_location;
+    if !request_info.is_write() {
+        request_info.predicted_read_bytes = predicted_read_bytes;
+    }
+    (!request_info.bypass).then_some(SelectedResourceControl {
+        resource_group_name: resource_group_name.to_owned(),
+        controller: controller.clone(),
+        request: request_info,
+    })
 }
 
 fn scan_read_bytes(detail: &kvrpcpb::ScanDetailV2) -> u64 {
@@ -263,6 +404,28 @@ fn kv_cpu(
 #[cfg(test)]
 mod test {
     use super::*;
+
+    struct NoopController;
+
+    #[async_trait]
+    impl ResourceGroupController for NoopController {
+        async fn on_request_wait(
+            &self,
+            _: &str,
+            _: RequestInfo,
+        ) -> crate::Result<RequestWaitResult> {
+            Ok(RequestWaitResult::default())
+        }
+
+        fn on_response_wait(
+            &self,
+            _: &str,
+            _: RequestInfo,
+            _: ResponseInfo,
+        ) -> crate::Result<ResponseWaitResult> {
+            Ok(ResponseWaitResult::default())
+        }
+    }
 
     #[test]
     fn source_response_info_accounts_for_cop_tasks() {
@@ -393,6 +556,55 @@ mod test {
         assert!(RequestInfo::from_store_request(&raw_delete).is_write());
         let raw_batch_delete = kvrpcpb::RawBatchDeleteRequest::default();
         assert!(!RequestInfo::from_store_request(&raw_batch_delete).is_write());
+    }
+
+    #[test]
+    fn source_resource_control_selection_uses_routed_replica_and_zone() {
+        let request = kvrpcpb::GetRequest {
+            context: Some(kvrpcpb::Context {
+                resource_control_context: Some(kvrpcpb::ResourceControlContext {
+                    resource_group_name: "rg".to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let controller: ResourceGroupControllerHandle = Arc::new(NoopController);
+        let selected = select(
+            &controller,
+            &request,
+            3,
+            AccessLocationType::CrossZone,
+            256 * 1024,
+        )
+        .unwrap();
+        assert_eq!(selected.request.replica_number, 3);
+        assert_eq!(
+            selected.request.access_location,
+            AccessLocationType::CrossZone
+        );
+        assert_eq!(selected.request.predicted_read_bytes, 256 * 1024);
+
+        let write = kvrpcpb::PrewriteRequest {
+            context: Some(kvrpcpb::Context {
+                resource_control_context: Some(kvrpcpb::ResourceControlContext {
+                    resource_group_name: "rg".to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let selected = select(
+            &controller,
+            &write,
+            3,
+            AccessLocationType::CrossZone,
+            256 * 1024,
+        )
+        .unwrap();
+        assert_eq!(selected.request.predicted_read_bytes, 0);
     }
 
     #[test]

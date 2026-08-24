@@ -212,6 +212,13 @@ pub use crate::raw::RawChecksum;
 #[doc(inline)]
 pub use crate::request::RetryOptions;
 #[doc(inline)]
+pub use crate::resource_control::{
+    disable_resource_control, enable_resource_control, set_resource_control_interceptor,
+    unset_resource_control_interceptor, RequestInfo as ResourceControlRequestInfo,
+    RequestWaitResult, ResourceGroupController, ResourceGroupControllerHandle,
+    ResponseInfo as ResourceControlResponseInfo, ResponseWaitResult,
+};
+#[doc(inline)]
 pub use crate::timestamp::Timestamp;
 #[doc(inline)]
 pub use crate::timestamp::TimestampExt;

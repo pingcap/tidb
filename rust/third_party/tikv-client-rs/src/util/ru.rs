@@ -1,12 +1,17 @@
 // Copyright 2026 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::sync::Mutex;
+use std::time::Duration;
 
 use crate::proto::kvrpcpb::{ExecutorInputs, Ruv2};
+use crate::proto::resource_manager::Consumption;
 
 /// Concurrent resource-unit details accumulated by TiKV responses.
 #[derive(Debug, Default)]
 pub struct RuDetails {
+    read_ru: Mutex<f64>,
+    write_ru: Mutex<f64>,
+    ru_wait_duration: Mutex<Duration>,
     tikv_ru_v2: Mutex<f64>,
     raw_ru_v2: Mutex<Option<Ruv2>>,
 }
@@ -18,6 +23,29 @@ impl RuDetails {
 
     pub fn tikv_ru_v2(&self) -> f64 {
         *self.tikv_ru_v2.lock().unwrap()
+    }
+
+    /// Source `RUDetails.RRU`.
+    pub fn read_ru(&self) -> f64 {
+        *self.read_ru.lock().unwrap()
+    }
+
+    /// Source `RUDetails.WRU`.
+    pub fn write_ru(&self) -> f64 {
+        *self.write_ru.lock().unwrap()
+    }
+
+    /// Source `RUDetails.RUWaitDuration`.
+    pub fn ru_wait_duration(&self) -> Duration {
+        *self.ru_wait_duration.lock().unwrap()
+    }
+
+    /// Source `RUDetails.Update`: accumulate resource-controller consumption
+    /// and the time spent waiting for resource tokens.
+    pub fn update(&self, consumption: &Consumption, wait_duration: Duration) {
+        *self.read_ru.lock().unwrap() += consumption.r_r_u;
+        *self.write_ru.lock().unwrap() += consumption.w_r_u;
+        *self.ru_wait_duration.lock().unwrap() += wait_duration;
     }
 
     pub fn add_tikv_ru_v2(&self, delta: f64) {
@@ -88,5 +116,34 @@ fn merge_ru_v2(dst: &mut Ruv2, src: &Ruv2) {
         dst.tikv_coprocessor_executor_work_total_batch_fast_hash_aggr = dst
             .tikv_coprocessor_executor_work_total_batch_fast_hash_aggr
             .wrapping_add(src.tikv_coprocessor_executor_work_total_batch_fast_hash_aggr);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_resource_consumption_updates_accumulate() {
+        let details = RuDetails::new();
+        details.update(
+            &Consumption {
+                r_r_u: 1.5,
+                w_r_u: 2.25,
+                ..Default::default()
+            },
+            Duration::from_millis(3),
+        );
+        details.update(
+            &Consumption {
+                r_r_u: 0.5,
+                w_r_u: 0.75,
+                ..Default::default()
+            },
+            Duration::from_millis(5),
+        );
+        assert_eq!(details.read_ru(), 2.0);
+        assert_eq!(details.write_ru(), 3.0);
+        assert_eq!(details.ru_wait_duration(), Duration::from_millis(8));
     }
 }
