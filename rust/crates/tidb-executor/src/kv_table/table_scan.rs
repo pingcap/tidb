@@ -964,6 +964,14 @@ impl KvTable {
         if columns.len() != index.column_offsets.len() {
             return Ok(None);
         }
+        // Go `checkCoverIndex` again: a unique flag over PARTIAL-key ranges
+        // asks TiKV for a unique get the range does not name.
+        let declared_unique = index.unique
+            && ranges.iter().all(|range| {
+                range.low.len() == index.column_offsets.len()
+                    && !range.low.iter().any(|datum| matches!(datum, Datum::Null))
+                    && !range.high.iter().any(|datum| matches!(datum, Datum::Null))
+            });
         let encode = |values: &[Datum]| -> Result<Vec<u8>, KvTableError> {
             tidb_codec::encode_key_in_timezone(zone, values)
                 .map_err(|error| KvTableError::Encode(format!("{error:?}")))
@@ -1032,7 +1040,7 @@ impl KvTable {
             table_id: self.table_id,
             index: Some(PushdownIndexScan {
                 index_id,
-                declared_unique: index.unique,
+                declared_unique,
                 index_column_count: index.column_offsets.len(),
                 desc: false,
             }),
@@ -1218,11 +1226,22 @@ impl KvTable {
             }
             key_ranges.push((low, high));
         }
+        // Go `checkCoverIndex` (`physical_index_scan.go`): the coprocessor's
+        // Unique flag travels only when EVERY range names the FULL index key
+        // -- a prefix range of a unique index is not a unique get, and
+        // telling TiKV it is makes the region treat the partial-key span as
+        // a unique lookup that binds no handle and answer nothing.
+        let declared_unique = index.unique
+            && ranges.iter().all(|range| {
+                range.low.len() == index.column_offsets.len()
+                    && !range.low.iter().any(|datum| matches!(datum, Datum::Null))
+                    && !range.high.iter().any(|datum| matches!(datum, Datum::Null))
+            });
         let request = PushdownScanRequest {
             table_id: self.table_id,
             index: Some(PushdownIndexScan {
                 index_id,
-                declared_unique: index.unique,
+                declared_unique,
                 index_column_count: index.column_offsets.len(),
                 desc,
             }),
@@ -2092,6 +2111,7 @@ impl Drop for RemoteRowCursor {
 }
 
 /// A handle-only view of a remote TiKV index scan.
+
 pub struct RemoteIndexHandleCursor {
     inner: Box<dyn PushdownRowStream>,
     handle_indices: Vec<usize>,
