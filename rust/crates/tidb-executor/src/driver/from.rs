@@ -786,9 +786,12 @@ pub(crate) fn build_from(
     // stack grows at every frame; this is that semantics per join level,
     // with the red zone sized for one build_from + build_join_with_choice +
     // build_join round.
-    stacker::maybe_grow(2 * 1024 * 1024, 16 * 1024 * 1024, move || {
+    let top = composite_inner_memo::enter_statement();
+    let result = stacker::maybe_grow(2 * 1024 * 1024, 16 * 1024 * 1024, move || {
         build_from_inner(node, catalog, current_db, ctx, trace, demand, required)
-    })
+    });
+    composite_inner_memo::exit_statement(top);
+    result
 }
 
 fn build_from_inner(
@@ -800,6 +803,8 @@ fn build_from_inner(
     demand: crate::driver::leaf_demand::FromDemand<'_>,
     required: &tidb_planner::physical_property::PhysicalProperty,
 ) -> Result<(Box<dyn Executor>, FromScope, Delivered), DriverError> {
+    #[cfg(feature = "plan_counts")]
+    plan_counts::BUILD_ENTRIES.with(|c| c.set(c.get() + 1));
     // Go's `findBestTask(prop)` asks a child for a plan that SATISFIES the
     // property and lets the child answer with the path that does. This tier
     // cannot re-plan a built child, so it answers the same question from the
@@ -4635,6 +4640,49 @@ fn build_join_with_choice(
         let checkpoint = demand
             .rows
             .map(crate::driver::join_reorder::RowSource::filter_consumption_checkpoint);
+        #[cfg(feature = "plan_counts")]
+        {
+            use std::cell::RefCell;
+            use std::collections::HashMap;
+            let key = (
+                std::ptr::from_ref(target) as usize,
+                decision.table.table_id as u64,
+                probe_rows.left.to_bits(),
+                probe_rows.joined.to_bits(),
+                decision.lookup_is_left,
+                decision.probe_parts.len() as u8,
+            );
+            plan_counts::MEMO.with(|memo| {
+                let mut map = memo.borrow_mut();
+                if map.contains_key(&key) {
+                    *map.get_mut(&key).unwrap() += 1;
+                    plan_counts::MEMO_HITS.with(|c| c.set(c.get() + 1));
+                } else {
+                    map.insert(key, 0);
+                    plan_counts::MEMO_MISSES.with(|c| c.set(c.get() + 1));
+                }
+            });
+        }
+        // Go prices a repeated composite-inner request out of its task cache;
+        // here the identical rebuild is skipped and its recorded candidate is
+        // reused. Everything the rebuild would observe -- catalog, statistics,
+        // pushed filters (the receipt below is restored either way), session
+        // variables -- is fixed within one statement, and the key pins every
+        // input this build reads that can differ between two requests.
+        let memo_key = (
+            std::ptr::from_ref(target) as usize,
+            decision.table.table_id,
+            probe_rows.left.to_bits(),
+            probe_rows.joined.to_bits(),
+            probe_rows.right.to_bits(),
+            decision.lookup_is_left,
+            decision.probe_parts.len(),
+            decision.filter_exprs.len(),
+        );
+        if let Some(cached) = composite_inner_memo::get(&memo_key) {
+            composite_inner_candidates[decision_index] = cached;
+            continue;
+        }
         let (_, _, delivered) = build_from(
             target,
             catalog,
@@ -4644,6 +4692,7 @@ fn build_join_with_choice(
             runtime_demand,
             &tidb_planner::physical_property::PhysicalProperty::default(),
         )?;
+        composite_inner_memo::put(memo_key, delivered.candidate.clone());
         composite_inner_candidates[decision_index] = delivered.candidate;
         if let (Some(rows), Some(checkpoint)) = (demand.rows, checkpoint) {
             rows.restore_filter_consumption(checkpoint);
@@ -6363,3 +6412,79 @@ pub(crate) fn extra_handle_column(entry: &TableEntry) -> Option<(String, FieldTy
             .with_flags(tidb_datatype::FieldTypeFlags::NOT_NULL),
     ))
 }
+
+/// Go's `findBestTask` caches every child task per (plan, property)
+/// (`baseLogicalPlan.taskMap`), so a composite inner child that several
+/// ancestor sites ask for is planned once and shared; the per-site
+/// enumeration then costs a polynomial number of distinct plans. This tier
+/// rebuilds executors instead of planning logical nodes, so the equivalent
+/// sharing needs its own memo: a composite-inner rebuild is pure with respect
+/// to (subtree identity, runtime lookup, row scaling, pushed-filter receipt),
+/// which makes its `Delivered::candidate` cacheable per statement. The cache
+/// lives for exactly one top-level `build_from` -- node pointers are stable
+/// within one statement's tree and may be reused across statements, so
+/// entries never outlive the tree they were keyed by.
+pub(crate) mod composite_inner_memo {
+    use std::cell::{Cell, RefCell};
+    use std::collections::HashMap;
+
+    use tidb_planner::candidate_cost::Candidate;
+
+    /// Identifies one rebuild request: which subtree is being rebuilt, which
+    /// leaf inside it becomes the shared probe and at what row scaling. Two
+    /// requests with equal keys run the same deterministic build over the
+    /// same pushed predicates and observe the same restored
+    /// filter-consumption receipt, so their candidates are interchangeable.
+    type Key = (
+        usize, // the rebuilt subtree (node identity within one statement)
+        i64,   // probed table
+        u64,   // outer-row scaling bits
+        u64,   // joined-row scaling bits
+        u64,   // inner-row scaling bits
+        bool,  // which side carries the lookup
+        usize, // probe key parts
+        usize, // residual filter count
+    );
+
+    thread_local! {
+        static ENTRIES: RefCell<HashMap<Key, Option<Candidate>>> =
+            RefCell::new(HashMap::new());
+        /// Nesting level of `build_from`, to recognise the one top-level call
+        /// whose boundaries delimit a statement's tree.
+        static DEPTH: Cell<u32> = const { Cell::new(0) };
+    }
+
+    /// Drops every entry. Called only at a top-level `build_from` boundary:
+    /// inside one statement the entries stay valid because each key's subtree
+    /// is built deterministically from unchanged inputs.
+    pub fn enter_statement() -> bool {
+        DEPTH.with(|depth| {
+            let nested = depth.get() > 0;
+            depth.set(depth.get() + 1);
+            if !nested {
+                ENTRIES.with(|entries| entries.borrow_mut().clear());
+            }
+            !nested
+        })
+    }
+
+    /// Pops the nesting level; the caller passes [`enter_statement`]'s answer.
+    pub fn exit_statement(top: bool) {
+        if top {
+            ENTRIES.with(|entries| entries.borrow_mut().clear());
+        }
+        DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+
+    /// Returns the cached candidate for `key`, if a previous rebuild of the
+    /// same request already produced one.
+    pub fn get(key: &Key) -> Option<Option<Candidate>> {
+        ENTRIES.with(|entries| entries.borrow().get(key).cloned())
+    }
+
+    /// Records what one rebuild produced, under the key it was requested by.
+    pub fn put(key: Key, candidate: Option<Candidate>) {
+        ENTRIES.with(|entries| entries.borrow_mut().insert(key, candidate));
+    }
+}
+
