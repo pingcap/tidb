@@ -858,16 +858,34 @@ fn merge_state(dst: &mut AggState, mut src: AggState, src_is_first: bool) -> Res
             *dst_sum = dst_sum.wrapping_add(src_sum);
             *dst_count = dst_count.wrapping_add(src_count);
         }
-        (Partial::SumDecimal(None), Partial::SumDecimalFast { sum, scale }) => {
-            dst.partial = Partial::SumDecimalFast {
-                sum: sum,
-                scale: scale,
-            };
+        (
+            Partial::SumDecimalFast {
+                sum: dst_sum,
+                scale: dst_scale,
+            },
+            Partial::SumDecimalFast {
+                sum: src_sum,
+                scale: src_scale,
+            },
+        ) if dst_scale == &src_scale => {
+            *dst_sum = dst_sum.wrapping_add(src_sum);
         }
-        (Partial::SumDecimalFast { .. }, Partial::SumDecimal(None)) => {
-            // The accumulator already holds the folded total; an empty
-            // partial contributes nothing.
+        (state @ Partial::SumDecimalFast { .. }, Partial::SumDecimal(None)) => {
+            // An empty partial contributes nothing to a Fast accumulator.
+            let _ = state;
         }
+        // A Fast state adopting an empty partial, or vice versa: the empty
+        // side contributes nothing.
+        (Partial::SumDecimal(None), Partial::SumDecimalFast { .. }) => {
+            // dst keeps its own accumulator; nothing to add.
+        }
+        (state @ Partial::SumDecimalFast { .. }, Partial::SumDecimal(None)) => {
+            let _ = state;
+            // dst's materialized Decimal already holds the total.
+        }
+        // Mixed Fast/materialized states arise only after an overflow
+        // replay materialized BOTH sides into SumDecimal(Some); they take
+        // the exact merge arm below. A lone mismatch is unreachable.
         (Partial::Bit { acc: dst_acc, op }, Partial::Bit { acc: src_acc, .. }) => match op {
             BitOp::And => *dst_acc &= src_acc,
             BitOp::Or => *dst_acc |= src_acc,
