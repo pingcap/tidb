@@ -162,12 +162,8 @@ func (n *CreateDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *CreateDatabaseStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*CreateDatabaseStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // AlterDatabaseStmt is a statement to change the structure of a database.
@@ -212,12 +208,8 @@ func (n *AlterDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *AlterDatabaseStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*AlterDatabaseStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 func (n *AlterDatabaseStmt) isAllPlacementOptions() bool {
@@ -252,12 +244,8 @@ func (n *DropDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *DropDatabaseStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*DropDatabaseStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // FlashBackDatabaseStmt is a statement to restore a database and all tables in the database.
@@ -281,12 +269,8 @@ func (n *FlashBackDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *FlashBackDatabaseStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*FlashBackDatabaseStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // IndexPartSpecifications is used for parsing index column name or index expression from SQL.
@@ -332,25 +316,20 @@ func (n *IndexPartSpecification) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*IndexPartSpecification)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Expr = node.(ExprNode)
-		}
+		n.Expr = node.(ExprNode)
 		return v.Leave(n)
 	}
 	node, ok := n.Column.Accept(v)
 	if !ok {
 		return n, false
 	}
-	if replaceNode {
-		n.Column = node.(*ColumnName)
-	}
+	n.Column = node.(*ColumnName)
 	return v.Leave(n)
 }
 
@@ -432,40 +411,31 @@ func (n *ReferenceDef) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ReferenceDef)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.Table != nil {
 		node, ok := n.Table.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Table = node.(*TableName)
-		}
+		n.Table = node.(*TableName)
 	}
 	for i, val := range n.IndexPartSpecifications {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.IndexPartSpecifications[i] = node.(*IndexPartSpecification)
-		}
+		n.IndexPartSpecifications[i] = node.(*IndexPartSpecification)
 	}
 	onDelete, ok := n.OnDelete.Accept(v)
 	if !ok {
 		return n, false
 	}
-	if replaceNode {
-		n.OnDelete = onDelete.(*OnDeleteOpt)
-	}
+	n.OnDelete = onDelete.(*OnDeleteOpt)
 	onUpdate, ok := n.OnUpdate.Accept(v)
 	if !ok {
 		return n, false
 	}
-	if replaceNode {
-		n.OnUpdate = onUpdate.(*OnUpdateOpt)
-	}
+	n.OnUpdate = onUpdate.(*OnUpdateOpt)
 	return v.Leave(n)
 }
 
@@ -486,12 +456,8 @@ func (n *OnDeleteOpt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *OnDeleteOpt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*OnDeleteOpt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // OnUpdateOpt is used for optional on update clause.
@@ -511,12 +477,8 @@ func (n *OnUpdateOpt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *OnUpdateOpt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*OnUpdateOpt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // ColumnOptionType is the type for ColumnOption.
@@ -721,16 +683,13 @@ func (n *ColumnOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ColumnOption)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Expr = node.(ExprNode)
-		}
+		n.Expr = node.(ExprNode)
 	}
 	return v.Leave(n)
 }
@@ -928,16 +887,13 @@ func (n *IndexOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*IndexOption)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.SplitOpt != nil {
 		node, ok := n.SplitOpt.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.SplitOpt = node.(*SplitOption)
-		}
+		n.SplitOpt = node.(*SplitOption)
 	}
 	return v.Leave(n)
 }
@@ -1097,43 +1053,34 @@ func (n *Constraint) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*Constraint)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, val := range n.Keys {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Keys[i] = node.(*IndexPartSpecification)
-		}
+		n.Keys[i] = node.(*IndexPartSpecification)
 	}
 	if n.Refer != nil {
 		node, ok := n.Refer.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Refer = node.(*ReferenceDef)
-		}
+		n.Refer = node.(*ReferenceDef)
 	}
 	if n.Option != nil {
 		node, ok := n.Option.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Option = node.(*IndexOption)
-		}
+		n.Option = node.(*IndexOption)
 	}
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Expr = node.(ExprNode)
-		}
+		n.Expr = node.(ExprNode)
 	}
 	return v.Leave(n)
 }
@@ -1178,19 +1125,14 @@ func (n *ColumnDef) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Name = node.(*ColumnName)
-	}
+	n.Name = node.(*ColumnName)
 	for i, val := range n.Options {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Options[i] = node.(*ColumnOption)
-		}
+		n.Options[i] = node.(*ColumnOption)
 	}
 	return v.Leave(n)
 }
@@ -1353,73 +1295,56 @@ func (n *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Table = node.(*TableName)
-	}
+	n.Table = node.(*TableName)
 	if n.ReferTable != nil {
 		node, ok = n.ReferTable.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.ReferTable = node.(*TableName)
-		}
+		n.ReferTable = node.(*TableName)
 	}
 	for i, val := range n.Cols {
 		node, ok = val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Cols[i] = node.(*ColumnDef)
-		}
+		n.Cols[i] = node.(*ColumnDef)
 	}
 	for i, val := range n.Constraints {
 		node, ok = val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Constraints[i] = node.(*Constraint)
-		}
+		n.Constraints[i] = node.(*Constraint)
 	}
 	for i, val := range n.SplitIndex {
 		node, ok = val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.SplitIndex[i] = node.(*SplitIndexOption)
-		}
+		n.SplitIndex[i] = node.(*SplitIndexOption)
 	}
 	if n.Select != nil {
 		node, ok := n.Select.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Select = node.(ResultSetNode)
-		}
+		n.Select = node.(ResultSetNode)
 	}
 	if n.Partition != nil {
 		node, ok := n.Partition.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Partition = node.(*PartitionOptions)
-		}
+		n.Partition = node.(*PartitionOptions)
 	}
 	for i, option := range n.Options {
 		node, ok = option.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Options[i] = node.(*TableOption)
-		}
+		n.Options[i] = node.(*TableOption)
 	}
 
 	return v.Leave(n)
@@ -1473,16 +1398,13 @@ func (n *DropTableStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropTableStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Tables[i] = node.(*TableName)
-		}
+		n.Tables[i] = node.(*TableName)
 	}
 	return v.Leave(n)
 }
@@ -1510,12 +1432,8 @@ func (n *DropPlacementPolicyStmt) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *DropPlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*DropPlacementPolicyStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 type DropResourceGroupStmt struct {
@@ -1540,12 +1458,8 @@ func (n *DropResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *DropResourceGroupStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*DropResourceGroupStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 type OptimizeTableStmt struct {
@@ -1574,12 +1488,8 @@ func (n *OptimizeTableStmt) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *OptimizeTableStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*OptimizeTableStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // DropSequenceStmt is a statement to drop a Sequence.
@@ -1615,16 +1525,13 @@ func (n *DropSequenceStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropSequenceStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, val := range n.Sequences {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Sequences[i] = node.(*TableName)
-		}
+		n.Sequences[i] = node.(*TableName)
 	}
 	return v.Leave(n)
 }
@@ -1659,16 +1566,12 @@ func (n *RenameTableStmt) Accept(v Visitor) (Node, bool) {
 	}
 	n = newNode.(*RenameTableStmt)
 
-	replaceNode := shouldReplaceNode(v)
-
 	for i, t := range n.TableToTables {
 		node, ok := t.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.TableToTables[i] = node.(*TableToTable)
-		}
+		n.TableToTables[i] = node.(*TableToTable)
 	}
 
 	return v.Leave(n)
@@ -1704,18 +1607,13 @@ func (n *TableToTable) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.OldTable = node.(*TableName)
-	}
+	n.OldTable = node.(*TableName)
 	node, ok = n.NewTable.Accept(v)
 	if !ok {
 		return n, false
 	}
-	if replaceNode {
-		n.NewTable = node.(*TableName)
-	}
+	n.NewTable = node.(*TableName)
 	return v.Leave(n)
 }
 
@@ -1803,18 +1701,13 @@ func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.ViewName = node.(*TableName)
-	}
+	n.ViewName = node.(*TableName)
 	selnode, ok := n.Select.Accept(v)
 	if !ok {
 		return n, false
 	}
-	if replaceNode {
-		n.Select = selnode.(StmtNode)
-	}
+	n.Select = selnode.(StmtNode)
 	return v.Leave(n)
 }
 
@@ -1854,12 +1747,8 @@ func (n *CreatePlacementPolicyStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *CreatePlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*CreatePlacementPolicyStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // MaskingPolicyState represents the optional ENABLE/DISABLE state of a masking policy.
@@ -1989,34 +1878,27 @@ func (n *CreateMaskingPolicyStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CreateMaskingPolicyStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.Table != nil {
 		node, ok := n.Table.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Table = node.(*TableName)
-		}
+		n.Table = node.(*TableName)
 	}
 	if n.Column != nil {
 		node, ok := n.Column.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Column = node.(*ColumnName)
-		}
+		n.Column = node.(*ColumnName)
 	}
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Expr = node.(ExprNode)
-		}
+		n.Expr = node.(ExprNode)
 	}
 	return v.Leave(n)
 }
@@ -2057,12 +1939,8 @@ func (n *CreateResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *CreateResourceGroupStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*CreateResourceGroupStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // CreateSequenceStmt is a statement to create a Sequence.
@@ -2112,11 +1990,8 @@ func (n *CreateSequenceStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Name = node.(*TableName)
-	}
+	n.Name = node.(*TableName)
 	return v.Leave(n)
 }
 
@@ -2151,12 +2026,8 @@ func (n *IndexLockAndAlgorithm) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *IndexLockAndAlgorithm) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*IndexLockAndAlgorithm)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // IndexKeyType is the type for index key.
@@ -2257,37 +2128,28 @@ func (n *CreateIndexStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Table = node.(*TableName)
-	}
+	n.Table = node.(*TableName)
 	for i, val := range n.IndexPartSpecifications {
 		node, ok = val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.IndexPartSpecifications[i] = node.(*IndexPartSpecification)
-		}
+		n.IndexPartSpecifications[i] = node.(*IndexPartSpecification)
 	}
 	if n.IndexOption != nil {
 		node, ok := n.IndexOption.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.IndexOption = node.(*IndexOption)
-		}
+		n.IndexOption = node.(*IndexOption)
 	}
 	if n.LockAlg != nil {
 		node, ok := n.LockAlg.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.LockAlg = node.(*IndexLockAndAlgorithm)
-		}
+		n.LockAlg = node.(*IndexLockAndAlgorithm)
 	}
 	return v.Leave(n)
 }
@@ -2338,19 +2200,14 @@ func (n *DropIndexStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Table = node.(*TableName)
-	}
+	n.Table = node.(*TableName)
 	if n.LockAlg != nil {
 		node, ok := n.LockAlg.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.LockAlg = node.(*IndexLockAndAlgorithm)
-		}
+		n.LockAlg = node.(*IndexLockAndAlgorithm)
 	}
 	return v.Leave(n)
 }
@@ -2375,16 +2232,13 @@ func (n *LockTablesStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*LockTablesStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	for i := range n.TableLocks {
 		node, ok := n.TableLocks[i].Table.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.TableLocks[i].Table = node.(*TableName)
-		}
+		n.TableLocks[i].Table = node.(*TableName)
 	}
 	return v.Leave(n)
 }
@@ -2411,8 +2265,8 @@ type UnlockTablesStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *UnlockTablesStmt) Accept(v Visitor) (Node, bool) {
-	_, _ = v.Enter(n)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // Restore implements Node interface.
@@ -2435,16 +2289,13 @@ func (n *CleanupTableLockStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CleanupTableLockStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	for i := range n.Tables {
 		node, ok := n.Tables[i].Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Tables[i] = node.(*TableName)
-		}
+		n.Tables[i] = node.(*TableName)
 	}
 	return v.Leave(n)
 }
@@ -2481,18 +2332,13 @@ func (n *RepairTableStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Table = node.(*TableName)
-	}
+	n.Table = node.(*TableName)
 	node, ok = n.CreateStmt.Accept(v)
 	if !ok {
 		return n, false
 	}
-	if replaceNode {
-		n.CreateStmt = node.(*CreateTableStmt)
-	}
+	n.CreateStmt = node.(*CreateTableStmt)
 	return v.Leave(n)
 }
 
@@ -2802,11 +2648,8 @@ func (n *ResourceGroupRunawayActionOption) Restore(ctx *format.RestoreCtx) error
 
 // Accept implements Node Accept interface.
 func (n *ResourceGroupRunawayActionOption) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // ResourceGroupRunawayWatchOption is used for parsing the resource group runaway watch.
@@ -3377,25 +3220,20 @@ func (n *TableOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*TableOption)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.Value != nil {
 		node, ok := n.Value.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Value = node.(ValueExpr)
-		}
+		n.Value = node.(ValueExpr)
 	}
 	if n.TimeUnitValue != nil {
 		node, ok := n.TimeUnitValue.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.TimeUnitValue = node.(*TimeUnitExpr)
-		}
+		n.TimeUnitValue = node.(*TimeUnitExpr)
 	}
 	return v.Leave(n)
 }
@@ -3509,16 +3347,13 @@ func (n *ColumnPosition) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ColumnPosition)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.RelativeColumn != nil {
 		node, ok := n.RelativeColumn.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.RelativeColumn = node.(*ColumnName)
-		}
+		n.RelativeColumn = node.(*ColumnName)
 	}
 	return v.Leave(n)
 }
@@ -4354,109 +4189,86 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*AlterTableSpec)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.Constraint != nil {
 		node, ok := n.Constraint.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Constraint = node.(*Constraint)
-		}
+		n.Constraint = node.(*Constraint)
 	}
 	if n.NewTable != nil {
 		node, ok := n.NewTable.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.NewTable = node.(*TableName)
-		}
+		n.NewTable = node.(*TableName)
 	}
 	if n.SplitIndex != nil {
 		node, ok := n.SplitIndex.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.SplitIndex = node.(*SplitIndexOption)
-		}
+		n.SplitIndex = node.(*SplitIndexOption)
 	}
 	for i, col := range n.NewColumns {
 		node, ok := col.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.NewColumns[i] = node.(*ColumnDef)
-		}
+		n.NewColumns[i] = node.(*ColumnDef)
 	}
 	for i, constraint := range n.NewConstraints {
 		node, ok := constraint.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.NewConstraints[i] = node.(*Constraint)
-		}
+		n.NewConstraints[i] = node.(*Constraint)
 	}
 	if n.OldColumnName != nil {
 		node, ok := n.OldColumnName.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.OldColumnName = node.(*ColumnName)
-		}
+		n.OldColumnName = node.(*ColumnName)
 	}
 	if n.Position != nil {
 		node, ok := n.Position.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Position = node.(*ColumnPosition)
-		}
+		n.Position = node.(*ColumnPosition)
 	}
 	if n.MaskingPolicyColumn != nil {
 		node, ok := n.MaskingPolicyColumn.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.MaskingPolicyColumn = node.(*ColumnName)
-		}
+		n.MaskingPolicyColumn = node.(*ColumnName)
 	}
 	if n.MaskingPolicyExpr != nil {
 		node, ok := n.MaskingPolicyExpr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.MaskingPolicyExpr = node.(ExprNode)
-		}
+		n.MaskingPolicyExpr = node.(ExprNode)
 	}
 	if n.Partition != nil {
 		node, ok := n.Partition.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Partition = node.(*PartitionOptions)
-		}
+		n.Partition = node.(*PartitionOptions)
 	}
 	for i, option := range n.Options {
 		node, ok := option.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Options[i] = node.(*TableOption)
-		}
+		n.Options[i] = node.(*TableOption)
 	}
 	for _, def := range n.PartDefinitions {
-		if !def.acceptInPlace(v) {
+		if !def.acceptWithVisitor(v) {
 			return n, false
 		}
 	}
@@ -4533,19 +4345,14 @@ func (n *AlterTableStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Table = node.(*TableName)
-	}
+	n.Table = node.(*TableName)
 	for i, val := range n.Specs {
 		node, ok = val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Specs[i] = node.(*AlterTableSpec)
-		}
+		n.Specs[i] = node.(*AlterTableSpec)
 	}
 	return v.Leave(n)
 }
@@ -4578,11 +4385,8 @@ func (n *TruncateTableStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Table = node.(*TableName)
-	}
+	n.Table = node.(*TableName)
 	return v.Leave(n)
 }
 
@@ -4623,7 +4427,8 @@ func (spd *SubPartitionDefinition) Restore(ctx *format.RestoreCtx) error {
 
 type PartitionDefinitionClause interface {
 	restore(ctx *format.RestoreCtx) error
-	acceptInPlace(v Visitor) bool
+	acceptWithVisitor(v Visitor) bool
+	walkInPlace(v InPlaceVisitor) bool
 	// Validate checks if the clause is consistent with the given options.
 	// `pt` can be 0 and `columns` can be -1 to skip checking the clause against
 	// the partition type or number of columns in the expression list.
@@ -4636,7 +4441,11 @@ func (*PartitionDefinitionClauseNone) restore(_ *format.RestoreCtx) error {
 	return nil
 }
 
-func (*PartitionDefinitionClauseNone) acceptInPlace(_ Visitor) bool {
+func (*PartitionDefinitionClauseNone) acceptWithVisitor(_ Visitor) bool {
+	return true
+}
+
+func (*PartitionDefinitionClauseNone) walkInPlace(_ InPlaceVisitor) bool {
 	return true
 }
 
@@ -4672,16 +4481,22 @@ func (n *PartitionDefinitionClauseLessThan) restore(ctx *format.RestoreCtx) erro
 	return nil
 }
 
-func (n *PartitionDefinitionClauseLessThan) acceptInPlace(v Visitor) bool {
-	replaceNode := shouldReplaceNode(v)
+func (n *PartitionDefinitionClauseLessThan) acceptWithVisitor(v Visitor) bool {
 
 	for i, expr := range n.Exprs {
 		newExpr, ok := expr.Accept(v)
 		if !ok {
 			return false
 		}
-		if replaceNode {
-			n.Exprs[i] = newExpr.(ExprNode)
+		n.Exprs[i] = newExpr.(ExprNode)
+	}
+	return true
+}
+
+func (n *PartitionDefinitionClauseLessThan) walkInPlace(v InPlaceVisitor) bool {
+	for _, expr := range n.Exprs {
+		if !acceptInPlaceNode(expr, v) {
+			return false
 		}
 	}
 	return true
@@ -4747,8 +4562,7 @@ func (n *PartitionDefinitionClauseIn) restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-func (n *PartitionDefinitionClauseIn) acceptInPlace(v Visitor) bool {
-	replaceNode := shouldReplaceNode(v)
+func (n *PartitionDefinitionClauseIn) acceptWithVisitor(v Visitor) bool {
 
 	for _, valList := range n.Values {
 		for j, val := range valList {
@@ -4756,8 +4570,17 @@ func (n *PartitionDefinitionClauseIn) acceptInPlace(v Visitor) bool {
 			if !ok {
 				return false
 			}
-			if replaceNode {
-				valList[j] = newVal.(ExprNode)
+			valList[j] = newVal.(ExprNode)
+		}
+	}
+	return true
+}
+
+func (n *PartitionDefinitionClauseIn) walkInPlace(v InPlaceVisitor) bool {
+	for _, valList := range n.Values {
+		for _, val := range valList {
+			if !acceptInPlaceNode(val, v) {
+				return false
 			}
 		}
 	}
@@ -4824,7 +4647,11 @@ func (n *PartitionDefinitionClauseHistory) restore(ctx *format.RestoreCtx) error
 	return nil
 }
 
-func (*PartitionDefinitionClauseHistory) acceptInPlace(_ Visitor) bool {
+func (*PartitionDefinitionClauseHistory) acceptWithVisitor(_ Visitor) bool {
+	return true
+}
+
+func (*PartitionDefinitionClauseHistory) walkInPlace(_ InPlaceVisitor) bool {
 	return true
 }
 
@@ -4857,8 +4684,12 @@ func (n *PartitionDefinition) Comment() (string, bool) {
 	return "", false
 }
 
-func (n *PartitionDefinition) acceptInPlace(v Visitor) bool {
-	return n.Clause.acceptInPlace(v)
+func (n *PartitionDefinition) acceptWithVisitor(v Visitor) bool {
+	return n.Clause.acceptWithVisitor(v)
+}
+
+func (n *PartitionDefinition) walkInPlace(v InPlaceVisitor) bool {
+	return n.Clause.walkInPlace(v)
 }
 
 // Restore implements Node interface.
@@ -5022,26 +4853,33 @@ func (n *PartitionMethod) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// acceptInPlace is like Node.Accept but does not allow replacing the node itself.
-func (n *PartitionMethod) acceptInPlace(v Visitor) bool {
-	replaceNode := shouldReplaceNode(v)
+// acceptWithVisitor is like Node.Accept but does not allow replacing the node itself.
+func (n *PartitionMethod) acceptWithVisitor(v Visitor) bool {
 
 	if n.Expr != nil {
 		expr, ok := n.Expr.Accept(v)
 		if !ok {
 			return false
 		}
-		if replaceNode {
-			n.Expr = expr.(ExprNode)
-		}
+		n.Expr = expr.(ExprNode)
 	}
 	for i, colName := range n.ColumnNames {
 		newColName, ok := colName.Accept(v)
 		if !ok {
 			return false
 		}
-		if replaceNode {
-			n.ColumnNames[i] = newColName.(*ColumnName)
+		n.ColumnNames[i] = newColName.(*ColumnName)
+	}
+	return true
+}
+
+func (n *PartitionMethod) walkInPlace(v InPlaceVisitor) bool {
+	if n.Expr != nil && !acceptInPlaceNode(n.Expr, v) {
+		return false
+	}
+	for _, colName := range n.ColumnNames {
+		if !acceptInPlaceNode(colName, v) {
+			return false
 		}
 	}
 	return true
@@ -5172,14 +5010,14 @@ func (n *PartitionOptions) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*PartitionOptions)
-	if !n.PartitionMethod.acceptInPlace(v) {
+	if !n.PartitionMethod.acceptWithVisitor(v) {
 		return n, false
 	}
-	if n.Sub != nil && !n.Sub.acceptInPlace(v) {
+	if n.Sub != nil && !n.Sub.acceptWithVisitor(v) {
 		return n, false
 	}
 	for _, def := range n.Definitions {
-		if !def.acceptInPlace(v) {
+		if !def.acceptWithVisitor(v) {
 			return n, false
 		}
 	}
@@ -5220,16 +5058,13 @@ func (n *RecoverTableStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*RecoverTableStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.Table != nil {
 		node, ok := n.Table.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Table = node.(*TableName)
-		}
+		n.Table = node.(*TableName)
 	}
 	return v.Leave(n)
 }
@@ -5282,7 +5117,6 @@ func (n *FlashBackToTimestampStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*FlashBackToTimestampStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	if len(n.Tables) != 0 {
 		for i, val := range n.Tables {
@@ -5290,9 +5124,7 @@ func (n *FlashBackToTimestampStmt) Accept(v Visitor) (Node, bool) {
 			if !ok {
 				return n, false
 			}
-			if replaceNode {
-				n.Tables[i] = node.(*TableName)
-			}
+			n.Tables[i] = node.(*TableName)
 		}
 	}
 
@@ -5301,9 +5133,7 @@ func (n *FlashBackToTimestampStmt) Accept(v Visitor) (Node, bool) {
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.FlashbackTS = node.(ExprNode)
-		}
+		n.FlashbackTS = node.(ExprNode)
 	}
 	return v.Leave(n)
 }
@@ -5337,16 +5167,13 @@ func (n *FlashBackTableStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*FlashBackTableStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.Table != nil {
 		node, ok := n.Table.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Table = node.(*TableName)
-		}
+		n.Table = node.(*TableName)
 	}
 	return v.Leave(n)
 }
@@ -5370,12 +5197,8 @@ func (n *AttributesSpec) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *AttributesSpec) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*AttributesSpec)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 type StatsOptionsSpec struct {
@@ -5397,12 +5220,8 @@ func (n *StatsOptionsSpec) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *StatsOptionsSpec) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*StatsOptionsSpec)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // AlterPlacementPolicyStmt is a statement to alter placement policy option.
@@ -5437,12 +5256,8 @@ func (n *AlterPlacementPolicyStmt) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *AlterPlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*AlterPlacementPolicyStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 func CheckAppend(ops []*ResourceGroupOption, newOp *ResourceGroupOption) bool {
@@ -5508,12 +5323,8 @@ func (n *AlterResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *AlterResourceGroupStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*AlterResourceGroupStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // AlterSequenceStmt is a statement to alter sequence option.
@@ -5554,11 +5365,8 @@ func (n *AlterSequenceStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Name = node.(*TableName)
-	}
+	n.Name = node.(*TableName)
 	return v.Leave(n)
 }
 

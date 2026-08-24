@@ -21,10 +21,13 @@ import (
 	goformat "go/format"
 	goparser "go/parser"
 	"go/token"
+	"os"
+	"sort"
 	"strings"
 	"testing"
 
 	parserast "github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/test_driver"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,6 +60,27 @@ func (v *testVisitor) Enter(n parserast.Node) (parserast.Node, bool) {
 
 func (v *testVisitor) Leave(n parserast.Node) (parserast.Node, bool) {
 	return v.leave(n)
+}
+
+type unsupportedExternalNode struct {
+	parserast.Node
+	child       parserast.Node
+	acceptCalls int
+}
+
+func (n *unsupportedExternalNode) Accept(v parserast.Visitor) (parserast.Node, bool) {
+	n.acceptCalls++
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*unsupportedExternalNode)
+	child, ok := n.child.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.child = child
+	return v.Leave(n)
 }
 
 type benchmarkVisitor struct{}
@@ -159,6 +183,18 @@ func newBenchmarkSelect(replaceableNodes int) *parserast.SelectStmt {
 }
 
 func TestWalk(t *testing.T) {
+	t.Run("benchmark_master_fixture_matches", func(t *testing.T) {
+		candidateSource, err := traversalSources.ReadFile("visitor_test.go")
+		require.NoError(t, err)
+		masterSource, err := os.ReadFile("testdata/visitor_benchmark_master_test.go")
+		require.NoError(t, err)
+
+		require.Equal(t,
+			normalizedFunction(t, "visitor_test.go", candidateSource, "newBenchmarkSelect"),
+			normalizedFunction(t, "visitor_benchmark_master_test.go", masterSource, "newBenchmarkSelect"),
+		)
+	})
+
 	t.Run("traversal_order", func(t *testing.T) {
 		leafA := &parserast.DefaultExpr{}
 		leafB := &parserast.DefaultExpr{}
@@ -275,6 +311,103 @@ func TestWalk(t *testing.T) {
 		require.Equal(t, parserast.NewCIStr("changed"), column.Name)
 	})
 
+	t.Run("value_stored_child_mutates_original_storage", func(t *testing.T) {
+		root := &parserast.SelectStmt{WindowSpecs: []parserast.WindowSpec{{}}}
+		visitor := &testInPlaceVisitor{
+			enter: func(n parserast.Node) bool {
+				if spec, ok := n.(*parserast.WindowSpec); ok {
+					spec.OnlyAlias = true
+				}
+				return false
+			},
+			leave: func(parserast.Node) bool {
+				return true
+			},
+		}
+
+		require.True(t, parserast.Walk(root, visitor))
+		require.True(t, root.WindowSpecs[0].OnlyAlias)
+	})
+
+	t.Run("package_local_composite_is_allocation_free", func(t *testing.T) {
+		root := newBenchmarkSelect(100)
+		visitor := &benchmarkInPlaceVisitor{}
+		var ok bool
+		allocations := testing.AllocsPerRun(100, func() {
+			ok = parserast.Walk(root, visitor)
+		})
+		require.True(t, ok)
+		require.Zero(t, allocations)
+	})
+
+	t.Run("unsupported_external_node_owns_adapter_fallback_subtree", func(t *testing.T) {
+		leaf := &parserast.DefaultExpr{}
+		child := &parserast.ParenthesesExpr{Expr: leaf}
+		root := &unsupportedExternalNode{Node: &parserast.DefaultExpr{}, child: child}
+
+		var events []string
+		visitor := &testInPlaceVisitor{
+			enter: func(n parserast.Node) bool {
+				events = append(events, "enter "+walkFallbackNodeName(n, root, child, leaf))
+				return false
+			},
+			leave: func(n parserast.Node) bool {
+				events = append(events, "leave "+walkFallbackNodeName(n, root, child, leaf))
+				return true
+			},
+		}
+
+		require.True(t, parserast.Walk(root, visitor))
+		require.Equal(t, 1, root.acceptCalls)
+		require.Equal(t, []string{
+			"enter external",
+			"enter child",
+			"enter leaf",
+			"leave leaf",
+			"leave child",
+			"leave external",
+		}, events)
+	})
+
+	t.Run("parser_driver_nodes", func(t *testing.T) {
+		testCases := []struct {
+			name string
+			node parserast.Node
+		}{
+			{name: "test_driver_value_expr", node: &test_driver.ValueExpr{}},
+			{name: "test_driver_param_marker_expr", node: &test_driver.ParamMarkerExpr{}},
+		}
+
+		for _, testCase := range testCases {
+			t.Run(testCase.name, func(t *testing.T) {
+				var events []string
+				visitor := &testInPlaceVisitor{
+					enter: func(node parserast.Node) bool {
+						require.Same(t, testCase.node, node)
+						events = append(events, "enter")
+						return true
+					},
+					leave: func(node parserast.Node) bool {
+						require.Same(t, testCase.node, node)
+						events = append(events, "leave")
+						return true
+					},
+				}
+
+				require.True(t, parserast.Walk(testCase.node, visitor))
+				require.Equal(t, []string{"enter", "leave"}, events)
+
+				allocationVisitor := &benchmarkInPlaceVisitor{}
+				var ok bool
+				allocations := testing.AllocsPerRun(100, func() {
+					ok = parserast.Walk(testCase.node, allocationVisitor)
+				})
+				require.True(t, ok)
+				require.Zero(t, allocations)
+			})
+		}
+	})
+
 	t.Run("existing_visitor_replaces_child", func(t *testing.T) {
 		original := &parserast.DefaultExpr{}
 		replacement := &parserast.DefaultExpr{}
@@ -294,6 +427,34 @@ func TestWalk(t *testing.T) {
 		_, ok := root.Accept(visitor)
 		require.True(t, ok)
 		require.Same(t, replacement, root.Expr)
+	})
+
+	t.Run("column_name_leaf_inline_matches_visitor_semantics", func(t *testing.T) {
+		for _, scenario := range []string{
+			"normal",
+			"skip_root",
+			"replace_root",
+			"replace_leaf_on_enter",
+			"stop_at_leaf",
+			"overwrite_parent_slot",
+			"replace_and_stop_at_root_leave",
+		} {
+			t.Run(scenario, func(t *testing.T) {
+				reference := runColumnNameLeafScenario(scenario, true)
+				actual := runColumnNameLeafScenario(scenario, false)
+				require.Equal(t, reference, actual)
+				switch scenario {
+				case "replace_leaf_on_enter":
+					require.Contains(t, actual.events, "leave entered")
+					require.Equal(t, "returned", actual.storedName)
+				case "stop_at_leaf":
+					require.False(t, actual.ok)
+					require.Equal(t, "original", actual.storedName)
+				case "overwrite_parent_slot":
+					require.Equal(t, "returned", actual.storedName, "successful traversal must unconditionally overwrite callback mutation")
+				}
+			})
+		}
 	})
 
 	t.Run("existing_visitor_replaces_table_hints", func(t *testing.T) {
@@ -357,6 +518,126 @@ func TestWalk(t *testing.T) {
 	})
 }
 
+func normalizedFunction(t *testing.T, filename string, source []byte, name string) string {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := goparser.ParseFile(fset, filename, source, 0)
+	require.NoError(t, err)
+	for _, decl := range file.Decls {
+		function, ok := decl.(*goast.FuncDecl)
+		if !ok || function.Name.Name != name {
+			continue
+		}
+		function.Doc = nil
+		var normalized bytes.Buffer
+		require.NoError(t, goformat.Node(&normalized, fset, function))
+		return normalized.String()
+	}
+	require.FailNow(t, "function not found", "%s does not define %s", filename, name)
+	return ""
+}
+
+type columnNameLeafOutcome struct {
+	events     []string
+	result     string
+	ok         bool
+	storedName string
+}
+
+func runColumnNameLeafScenario(scenario string, reference bool) columnNameLeafOutcome {
+	original := &parserast.ColumnName{Name: parserast.NewCIStr("original")}
+	alternate := &parserast.ColumnName{Name: parserast.NewCIStr("alternate")}
+	entered := &parserast.ColumnName{Name: parserast.NewCIStr("entered")}
+	returned := &parserast.ColumnName{Name: parserast.NewCIStr("returned")}
+	callbackMutation := &parserast.ColumnName{Name: parserast.NewCIStr("callback_mutation")}
+	root := &parserast.ColumnNameExpr{Name: original}
+	alternateRoot := &parserast.ColumnNameExpr{Name: alternate}
+	activeRoot := root
+
+	label := func(n parserast.Node) string {
+		switch n {
+		case root:
+			return "root"
+		case alternateRoot:
+			return "alternate root"
+		case original:
+			return "original"
+		case alternate:
+			return "alternate"
+		case entered:
+			return "entered"
+		case returned:
+			return "returned"
+		case callbackMutation:
+			return "callback mutation"
+		default:
+			return fmt.Sprintf("unexpected %T", n)
+		}
+	}
+	var events []string
+	visitor := &testVisitor{
+		enter: func(n parserast.Node) (parserast.Node, bool) {
+			events = append(events, "enter "+label(n))
+			switch {
+			case scenario == "skip_root" && n == root:
+				activeRoot = alternateRoot
+				return alternateRoot, true
+			case scenario == "replace_root" && n == root:
+				activeRoot = alternateRoot
+				return alternateRoot, false
+			case scenario == "replace_leaf_on_enter" && n == original:
+				return entered, true
+			default:
+				return n, false
+			}
+		},
+		leave: func(n parserast.Node) (parserast.Node, bool) {
+			events = append(events, "leave "+label(n))
+			switch {
+			case scenario == "replace_leaf_on_enter" && n == entered:
+				return returned, true
+			case scenario == "stop_at_leaf" && n == original:
+				return returned, false
+			case scenario == "overwrite_parent_slot" && n == original:
+				activeRoot.Name = callbackMutation
+				return returned, true
+			case scenario == "replace_and_stop_at_root_leave" && n == root:
+				return alternateRoot, false
+			default:
+				return n, true
+			}
+		},
+	}
+
+	var result parserast.Node
+	var ok bool
+	if reference {
+		result, ok = acceptColumnNameExprReference(root, visitor)
+	} else {
+		result, ok = root.Accept(visitor)
+	}
+	return columnNameLeafOutcome{
+		events:     events,
+		result:     label(result),
+		ok:         ok,
+		storedName: label(activeRoot.Name),
+	}
+}
+
+func acceptColumnNameExprReference(n *parserast.ColumnNameExpr, v parserast.Visitor) (parserast.Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*parserast.ColumnNameExpr)
+	node, ok := n.Name.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Name = node.(*parserast.ColumnName)
+	return v.Leave(n)
+}
+
 func walkNodeName(n parserast.Node, root, unary, leafA, leafB, leafC parserast.Node) string {
 	switch n {
 	case root:
@@ -374,6 +655,19 @@ func walkNodeName(n parserast.Node, root, unary, leafA, leafB, leafC parserast.N
 	}
 }
 
+func walkFallbackNodeName(n parserast.Node, root, child, leaf parserast.Node) string {
+	switch n {
+	case root:
+		return "external"
+	case child:
+		return "child"
+	case leaf:
+		return "leaf"
+	default:
+		return fmt.Sprintf("unexpected %T", n)
+	}
+}
+
 type writebackCandidate struct {
 	file     string
 	line     int
@@ -383,14 +677,23 @@ type writebackCandidate struct {
 	guarded  bool
 }
 
+type leafAcceptMethod struct {
+	file     string
+	line     int
+	receiver string
+	decl     *goast.FuncDecl
+}
+
 func TestWalkWritebackInventory(t *testing.T) {
 	entries, err := traversalSources.ReadDir(".")
 	require.NoError(t, err)
 
-	var acceptCount, acceptInPlaceCount int
-	var functionsWithWritebacks, cachedFunctions int
+	var acceptCount, acceptWithVisitorCount int
+	var functionsWithWritebacks int
 	var candidates []writebackCandidate
 	var cacheIssues []string
+	var forbiddenSymbols []string
+	var leafAcceptMethods []leafAcceptMethod
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -403,6 +706,17 @@ func TestWalkWritebackInventory(t *testing.T) {
 		fset := token.NewFileSet()
 		file, err := goparser.ParseFile(fset, name, source, 0)
 		require.NoError(t, err)
+		goast.Inspect(file, func(node goast.Node) bool {
+			identifier, ok := node.(*goast.Ident)
+			if !ok {
+				return true
+			}
+			switch identifier.Name {
+			case "shouldReplaceNode", "inPlaceVisitorMarker", "inPlaceVisitor":
+				forbiddenSymbols = append(forbiddenSymbols, fmt.Sprintf("%s:%d %s", name, fset.Position(identifier.Pos()).Line, identifier.Name))
+			}
+			return true
+		})
 		for _, decl := range file.Decls {
 			function, ok := decl.(*goast.FuncDecl)
 			if !ok || function.Recv == nil || function.Body == nil {
@@ -412,8 +726,16 @@ func TestWalkWritebackInventory(t *testing.T) {
 			switch function.Name.Name {
 			case "Accept":
 				acceptCount++
-			case "acceptInPlace":
-				acceptInPlaceCount++
+				if !hasChildTraversalCall(function.Body) {
+					leafAcceptMethods = append(leafAcceptMethods, leafAcceptMethod{
+						file:     name,
+						line:     fset.Position(function.Pos()).Line,
+						receiver: renderExpr(t, fset, function.Recv.List[0].Type),
+						decl:     function,
+					})
+				}
+			case "acceptWithVisitor":
+				acceptWithVisitorCount++
 			default:
 				continue
 			}
@@ -435,39 +757,224 @@ func TestWalkWritebackInventory(t *testing.T) {
 			topLevelCaches, cacheCalls, cacheWrites := inspectReplacementModeCache(function.Body)
 			if len(functionCandidates) > 0 {
 				functionsWithWritebacks++
-				if topLevelCaches == 1 && cacheCalls == 1 && cacheWrites == 1 {
-					cachedFunctions++
-				} else {
-					cacheIssues = append(cacheIssues, fmt.Sprintf(
-						"%s (%s).%s: top-level caches=%d calls=%d writes=%d",
-						name, receiver, function.Name.Name, topLevelCaches, cacheCalls, cacheWrites,
-					))
-				}
-			} else if topLevelCaches != 0 || cacheCalls != 0 || cacheWrites != 0 {
+			}
+			if topLevelCaches != 0 || cacheCalls != 0 || cacheWrites != 0 {
 				cacheIssues = append(cacheIssues, fmt.Sprintf(
-					"%s (%s).%s caches replacement mode without writebacks",
-					name, receiver, function.Name.Name,
+					"%s (%s).%s: top-level caches=%d calls=%d writes=%d",
+					name, receiver, function.Name.Name, topLevelCaches, cacheCalls, cacheWrites,
 				))
 			}
 		}
 	}
 
+	t.Run("leaf_accept_fast_path", func(t *testing.T) {
+		sort.Slice(leafAcceptMethods, func(i, j int) bool {
+			if leafAcceptMethods[i].file != leafAcceptMethods[j].file {
+				return leafAcceptMethods[i].file < leafAcceptMethods[j].file
+			}
+			return leafAcceptMethods[i].line < leafAcceptMethods[j].line
+		})
+		require.Len(t, leafAcceptMethods, 72)
+
+		var issues []string
+		for _, method := range leafAcceptMethods {
+			if !isLeafAcceptFastPath(method.decl) {
+				issues = append(issues, fmt.Sprintf("%s:%d %s", method.file, method.line, method.receiver))
+			}
+		}
+		require.Empty(t, issues, "leaf Accept methods without the fast path: %s", strings.Join(issues, ", "))
+	})
+
+	t.Run("hot_in_place_dispatch_fast_path", func(t *testing.T) {
+		source, err := traversalSources.ReadFile("ast.go")
+		require.NoError(t, err)
+		require.ElementsMatch(t,
+			[]string{"ColumnNameExpr", "DefaultExpr", "SelectStmt"},
+			inPlaceDispatchFastPaths(t, source),
+		)
+	})
+
+	t.Run("column_name_expr_inlines_leaf_traversal", func(t *testing.T) {
+		source, err := traversalSources.ReadFile("expressions.go")
+		require.NoError(t, err)
+		require.True(t, columnNameExprHasInlinedLeafTraversal(t, source))
+	})
+
 	require.Equal(t, 213, acceptCount)
-	require.Equal(t, 6, acceptInPlaceCount)
-	require.Equal(t, 219, acceptCount+acceptInPlaceCount)
+	require.Equal(t, 6, acceptWithVisitorCount)
+	require.Equal(t, 219, acceptCount+acceptWithVisitorCount)
 	require.Equal(t, 140, functionsWithWritebacks)
-	require.Equal(t, 140, cachedFunctions, "replacement-mode cache issues: %s", formatCacheIssues(cacheIssues))
 	require.Empty(t, cacheIssues, "replacement-mode cache issues: %s", formatCacheIssues(cacheIssues))
+	require.Empty(t, forbiddenSymbols, "removed in-place replacement symbols remain: %s", strings.Join(forbiddenSymbols, ", "))
 	require.Len(t, candidates, 271, "writeback candidates: %s", formatWritebackCandidates(candidates))
 
-	var unguarded []writebackCandidate
+	var guarded []writebackCandidate
 	for _, candidate := range candidates {
-		if !candidate.guarded {
-			unguarded = append(unguarded, candidate)
+		if candidate.guarded {
+			guarded = append(guarded, candidate)
 		}
 	}
-	require.Empty(t, unguarded, "unguarded writebacks: %s", formatWritebackCandidates(unguarded))
-	require.Equal(t, 271, len(candidates)-len(unguarded), "guarded writebacks: %s", formatWritebackCandidates(candidates))
+	require.Empty(t, guarded, "guarded writebacks: %s", formatWritebackCandidates(guarded))
+	require.Equal(t, 271, len(candidates)-len(guarded), "unguarded writebacks: %s", formatWritebackCandidates(candidates))
+}
+
+func inPlaceDispatchFastPaths(t *testing.T, source []byte) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := goparser.ParseFile(fset, "ast.go", source, 0)
+	require.NoError(t, err)
+	for _, decl := range file.Decls {
+		function, ok := decl.(*goast.FuncDecl)
+		if !ok || function.Name.Name != "acceptInPlaceNode" {
+			continue
+		}
+		var fastPaths []string
+		goast.Inspect(function.Body, func(node goast.Node) bool {
+			clause, ok := node.(*goast.CaseClause)
+			if !ok {
+				return true
+			}
+			for _, expr := range clause.List {
+				pointer, ok := expr.(*goast.StarExpr)
+				if !ok {
+					continue
+				}
+				name, ok := pointer.X.(*goast.Ident)
+				if ok {
+					fastPaths = append(fastPaths, name.Name)
+				}
+			}
+			return true
+		})
+		return fastPaths
+	}
+	require.FailNow(t, "acceptInPlaceNode not found")
+	return nil
+}
+
+func columnNameExprHasInlinedLeafTraversal(t *testing.T, source []byte) bool {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := goparser.ParseFile(fset, "expressions.go", source, 0)
+	require.NoError(t, err)
+	for _, decl := range file.Decls {
+		function, ok := decl.(*goast.FuncDecl)
+		if !ok || function.Recv == nil || function.Name.Name != "Accept" {
+			continue
+		}
+		pointer, ok := function.Recv.List[0].Type.(*goast.StarExpr)
+		if !ok || !isIdentifierNamed(pointer.X, "ColumnNameExpr") {
+			continue
+		}
+		statements := function.Body.List
+		for i := 0; i+3 < len(statements); i++ {
+			enter, ok := statements[i].(*goast.AssignStmt)
+			if !ok || enter.Tok != token.DEFINE || len(enter.Lhs) != 2 || len(enter.Rhs) != 1 ||
+				!isIdentifierNamed(enter.Lhs[0], "newName") || !isIdentifierNamed(enter.Lhs[1], "_") ||
+				!isVisitorSelectorCall(enter.Rhs[0], "Enter", "n.Name") {
+				continue
+			}
+			leave, ok := statements[i+1].(*goast.AssignStmt)
+			if !ok || leave.Tok != token.DEFINE || len(leave.Lhs) != 2 || len(leave.Rhs) != 1 ||
+				!isIdentifierNamed(leave.Lhs[0], "node") || !isIdentifierNamed(leave.Lhs[1], "ok") ||
+				!isVisitorSelectorCall(leave.Rhs[0], "Leave", "newName") {
+				continue
+			}
+			check, ok := statements[i+2].(*goast.IfStmt)
+			if !ok || check.Init != nil || check.Else != nil || renderExpr(t, fset, check.Cond) != "!ok" || len(check.Body.List) != 1 {
+				continue
+			}
+			stop, ok := check.Body.List[0].(*goast.ReturnStmt)
+			if !ok || len(stop.Results) != 2 || renderExpr(t, fset, stop.Results[0]) != "n" || renderExpr(t, fset, stop.Results[1]) != "false" {
+				continue
+			}
+			writeback, ok := statements[i+3].(*goast.AssignStmt)
+			if ok && writeback.Tok == token.ASSIGN && len(writeback.Lhs) == 1 && len(writeback.Rhs) == 1 &&
+				renderExpr(t, fset, writeback.Lhs[0]) == "n.Name" && renderExpr(t, fset, writeback.Rhs[0]) == "node.(*ColumnName)" {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+func isVisitorSelectorCall(expr goast.Expr, method, argument string) bool {
+	call, ok := expr.(*goast.CallExpr)
+	if !ok || len(call.Args) != 1 || expressionStringForTest(call.Args[0]) != argument {
+		return false
+	}
+	selector, ok := call.Fun.(*goast.SelectorExpr)
+	return ok && selector.Sel.Name == method && isIdentifierNamed(selector.X, "v")
+}
+
+func expressionStringForTest(expr goast.Expr) string {
+	var buffer bytes.Buffer
+	if err := goformat.Node(&buffer, token.NewFileSet(), expr); err != nil {
+		return ""
+	}
+	return buffer.String()
+}
+
+func hasChildTraversalCall(body *goast.BlockStmt) bool {
+	var found bool
+	goast.Inspect(body, func(node goast.Node) bool {
+		call, ok := node.(*goast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*goast.SelectorExpr)
+		if ok {
+			switch selector.Sel.Name {
+			case "Accept", "acceptWithVisitor":
+				found = true
+				return false
+			case "Enter":
+				if len(call.Args) == 1 {
+					if _, childSelector := call.Args[0].(*goast.SelectorExpr); childSelector {
+						found = true
+						return false
+					}
+				}
+			}
+		}
+		return true
+	})
+	return found
+}
+
+func isLeafAcceptFastPath(function *goast.FuncDecl) bool {
+	if len(function.Recv.List) != 1 || len(function.Recv.List[0].Names) != 1 || len(function.Body.List) != 2 {
+		return false
+	}
+	receiverName := function.Recv.List[0].Names[0].Name
+
+	assignment, ok := function.Body.List[0].(*goast.AssignStmt)
+	if !ok || assignment.Tok != token.DEFINE || len(assignment.Lhs) != 2 || len(assignment.Rhs) != 1 {
+		return false
+	}
+	newNode, ok := assignment.Lhs[0].(*goast.Ident)
+	if !ok || newNode.Name != "newNode" || !isIdentifierNamed(assignment.Lhs[1], "_") ||
+		!isVisitorCall(assignment.Rhs[0], "Enter", receiverName) {
+		return false
+	}
+
+	returnStatement, ok := function.Body.List[1].(*goast.ReturnStmt)
+	return ok && len(returnStatement.Results) == 1 && isVisitorCall(returnStatement.Results[0], "Leave", newNode.Name)
+}
+
+func isVisitorCall(expr goast.Expr, method, argument string) bool {
+	call, ok := expr.(*goast.CallExpr)
+	if !ok || len(call.Args) != 1 || !isIdentifierNamed(call.Args[0], argument) {
+		return false
+	}
+	selector, ok := call.Fun.(*goast.SelectorExpr)
+	return ok && selector.Sel.Name == method && isIdentifierNamed(selector.X, "v")
+}
+
+func isIdentifierNamed(expr goast.Expr, name string) bool {
+	identifier, ok := expr.(*goast.Ident)
+	return ok && identifier.Name == name
 }
 
 func inspectReplacementModeCache(body *goast.BlockStmt) (topLevelCaches, cacheCalls, cacheWrites int) {

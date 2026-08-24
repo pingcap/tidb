@@ -166,11 +166,8 @@ func (n *TraceStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Stmt = node.(StmtNode)
-	}
+	n.Stmt = node.(StmtNode)
 	return v.Leave(n)
 }
 
@@ -199,12 +196,8 @@ func (n *ExplainForStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *ExplainForStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*ExplainForStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // ExplainStmt is a statement to provide information about how is SQL statement executed
@@ -278,16 +271,13 @@ func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ExplainStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.Stmt != nil {
 		node, ok := n.Stmt.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Stmt = node.(StmtNode)
-		}
+		n.Stmt = node.(StmtNode)
 	}
 	return v.Leave(n)
 }
@@ -420,16 +410,12 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(n)
 	}
 
-	replaceNode := shouldReplaceNode(v)
-
 	if n.HistoricalStatsInfo != nil {
 		info, ok := n.HistoricalStatsInfo.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.HistoricalStatsInfo = info.(*AsOfClause)
-		}
+		n.HistoricalStatsInfo = info.(*AsOfClause)
 	}
 
 	if n.Stmt == nil {
@@ -438,9 +424,7 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 			if !ok {
 				return n, false
 			}
-			if replaceNode {
-				n.Where = node.(ExprNode)
-			}
+			n.Where = node.(ExprNode)
 		}
 
 		if n.OrderBy != nil {
@@ -448,9 +432,7 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 			if !ok {
 				return n, false
 			}
-			if replaceNode {
-				n.OrderBy = node.(*OrderByClause)
-			}
+			n.OrderBy = node.(*OrderByClause)
 		}
 
 		if n.Limit != nil {
@@ -458,9 +440,7 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 			if !ok {
 				return n, false
 			}
-			if replaceNode {
-				n.Limit = node.(*Limit)
-			}
+			n.Limit = node.(*Limit)
 		}
 		return v.Leave(n)
 	}
@@ -469,9 +449,7 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	if replaceNode {
-		n.Stmt = node.(StmtNode)
-	}
+	n.Stmt = node.(StmtNode)
 	return v.Leave(n)
 }
 
@@ -603,12 +581,8 @@ func (n *TrafficStmt) SecureText() string {
 
 // Accept implements Node Accept interface.
 func (n *TrafficStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*TrafficStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 type CompactReplicaKind string
@@ -668,11 +642,8 @@ func (n *CompactTableStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Table = node.(*TableName)
-	}
+	n.Table = node.(*TableName)
 	return v.Leave(n)
 }
 
@@ -712,16 +683,13 @@ func (n *PrepareStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*PrepareStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.SQLVar != nil {
 		node, ok := n.SQLVar.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.SQLVar = node.(*VariableExpr)
-		}
+		n.SQLVar = node.(*VariableExpr)
 	}
 	return v.Leave(n)
 }
@@ -743,12 +711,8 @@ func (n *DeallocateStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *DeallocateStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*DeallocateStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // Prepared represents a prepared statement.
@@ -799,16 +763,13 @@ func (n *ExecuteStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ExecuteStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, val := range n.UsingVars {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.UsingVars[i] = node.(ExprNode)
-		}
+		n.UsingVars[i] = node.(ExprNode)
 	}
 	return v.Leave(n)
 }
@@ -853,16 +814,12 @@ func (n *BeginStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 
-	replaceNode := shouldReplaceNode(v)
-
 	if n.AsOf != nil {
 		node, ok := n.AsOf.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.AsOf = node.(*AsOfClause)
-		}
+		n.AsOf = node.(*AsOfClause)
 	}
 
 	n = newNode.(*BeginStmt)
@@ -886,12 +843,8 @@ func (n *BinlogStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *BinlogStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*BinlogStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // CompletionType defines completion_type used in COMMIT and ROLLBACK statements
@@ -934,12 +887,8 @@ func (n *CommitStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *CommitStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*CommitStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // RollbackStmt is a statement to roll back the current transaction.
@@ -967,12 +916,8 @@ func (n *RollbackStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *RollbackStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*RollbackStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // UseStmt is a statement to use the DBName database as the current database.
@@ -992,12 +937,8 @@ func (n *UseStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *UseStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*UseStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 const (
@@ -1096,11 +1037,8 @@ func (n *VariableAssignment) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Value = node.(ExprNode)
-	}
+	n.Value = node.(ExprNode)
 	return v.Leave(n)
 }
 
@@ -1232,16 +1170,13 @@ func (n *FlushStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*FlushStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, t := range n.Tables {
 		node, ok := t.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Tables[i] = node.(*TableName)
-		}
+		n.Tables[i] = node.(*TableName)
 	}
 	return v.Leave(n)
 }
@@ -1290,12 +1225,8 @@ func (n *KillStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *KillStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*KillStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // SavepointStmt is the statement of SAVEPOINT.
@@ -1315,8 +1246,7 @@ func (n *SavepointStmt) Restore(ctx *format.RestoreCtx) error {
 // Accept implements Node Accept interface.
 func (n *SavepointStmt) Accept(v Visitor) (Node, bool) {
 	newNode, _ := v.Enter(n)
-	n = newNode.(*SavepointStmt)
-	return v.Leave(n)
+	return v.Leave(newNode)
 }
 
 // ReleaseSavepointStmt is the statement of RELEASE SAVEPOINT.
@@ -1336,8 +1266,7 @@ func (n *ReleaseSavepointStmt) Restore(ctx *format.RestoreCtx) error {
 // Accept implements Node Accept interface.
 func (n *ReleaseSavepointStmt) Accept(v Visitor) (Node, bool) {
 	newNode, _ := v.Enter(n)
-	n = newNode.(*ReleaseSavepointStmt)
-	return v.Leave(n)
+	return v.Leave(newNode)
 }
 
 // SetStmt is the statement to set variables.
@@ -1368,16 +1297,13 @@ func (n *SetStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SetStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, val := range n.Variables {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Variables[i] = node.(*VariableAssignment)
-		}
+		n.Variables[i] = node.(*VariableAssignment)
 	}
 	return v.Leave(n)
 }
@@ -1424,11 +1350,8 @@ func (n *SetConfigStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Value = node.(ExprNode)
-	}
+	n.Value = node.(ExprNode)
 	return v.Leave(n)
 }
 
@@ -1446,12 +1369,8 @@ func (n *SetSessionStatesStmt) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *SetSessionStatesStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*SetSessionStatesStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 /*
@@ -1518,12 +1437,8 @@ func (n *SetPwdStmt) SecureText() string {
 
 // Accept implements Node Accept interface.
 func (n *SetPwdStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*SetPwdStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // SetRoleStmtType is the type for FLUSH statement.
@@ -1572,12 +1487,8 @@ func (n *SetRoleStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *SetRoleStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*SetRoleStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 type SetDefaultRoleStmt struct {
@@ -1623,12 +1534,8 @@ func (n *SetDefaultRoleStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *SetDefaultRoleStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*SetDefaultRoleStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // UserSpec is used for parsing create user statement.
@@ -1990,12 +1897,8 @@ func (n *CreateUserStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *CreateUserStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*CreateUserStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // SecureText implements SensitiveStatement interface.
@@ -2124,12 +2027,8 @@ func (n *AlterUserStmt) SecureText() string {
 
 // Accept implements Node Accept interface.
 func (n *AlterUserStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*AlterUserStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // AlterInstanceStmt modifies instance.
@@ -2155,12 +2054,8 @@ func (n *AlterInstanceStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *AlterInstanceStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*AlterInstanceStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // AlterRangeStmt modifies range configuration.
@@ -2183,12 +2078,8 @@ func (n *AlterRangeStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *AlterRangeStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*AlterRangeStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // DropUserStmt creates user account.
@@ -2224,12 +2115,8 @@ func (n *DropUserStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *DropUserStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*DropUserStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 type StringOrUserVar struct {
@@ -2256,16 +2143,13 @@ func (n *StringOrUserVar) Accept(v Visitor) (node Node, ok bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*StringOrUserVar)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.UserVar != nil {
 		node, ok = n.UserVar.Accept(v)
 		if !ok {
 			return node, false
 		}
-		if replaceNode {
-			n.UserVar = node.(*VariableExpr)
-		}
+		n.UserVar = node.(*VariableExpr)
 	}
 	return v.Leave(n)
 }
@@ -2333,12 +2217,8 @@ func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *RecommendIndexStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*RecommendIndexStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // CreateBindingStmt creates sql binding hint.
@@ -2387,32 +2267,25 @@ func (n *CreateBindingStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CreateBindingStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.OriginNode != nil {
 		origNode, ok := n.OriginNode.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.OriginNode = origNode.(StmtNode)
-		}
+		n.OriginNode = origNode.(StmtNode)
 		hintedNode, ok := n.HintedNode.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.HintedNode = hintedNode.(StmtNode)
-		}
+		n.HintedNode = hintedNode.(StmtNode)
 	} else {
 		for i, digest := range n.PlanDigests {
 			newDigest, ok := digest.Accept(v)
 			if !ok {
 				return n, false
 			}
-			if replaceNode {
-				n.PlanDigests[i] = newDigest.(*StringOrUserVar)
-			}
+			n.PlanDigests[i] = newDigest.(*StringOrUserVar)
 		}
 	}
 	return v.Leave(n)
@@ -2466,7 +2339,6 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropBindingStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.OriginNode != nil {
 		//  OriginNode is nil means we build drop binding by sql digest
@@ -2474,17 +2346,13 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.OriginNode = origNode.(StmtNode)
-		}
+		n.OriginNode = origNode.(StmtNode)
 		if n.HintedNode != nil {
 			hintedNode, ok := n.HintedNode.Accept(v)
 			if !ok {
 				return n, false
 			}
-			if replaceNode {
-				n.HintedNode = hintedNode.(StmtNode)
-			}
+			n.HintedNode = hintedNode.(StmtNode)
 		}
 	} else {
 		for i, digest := range n.SQLDigests {
@@ -2492,9 +2360,7 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 			if !ok {
 				return n, false
 			}
-			if replaceNode {
-				n.SQLDigests[i] = newDigest.(*StringOrUserVar)
-			}
+			n.SQLDigests[i] = newDigest.(*StringOrUserVar)
 		}
 	}
 	return v.Leave(n)
@@ -2552,7 +2418,6 @@ func (n *SetBindingStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SetBindingStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.OriginNode != nil {
 		// OriginNode is nil means we set binding stmt by sql digest
@@ -2560,17 +2425,13 @@ func (n *SetBindingStmt) Accept(v Visitor) (Node, bool) {
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.OriginNode = origNode.(StmtNode)
-		}
+		n.OriginNode = origNode.(StmtNode)
 		if n.HintedNode != nil {
 			hintedNode, ok := n.HintedNode.Accept(v)
 			if !ok {
 				return n, false
 			}
-			if replaceNode {
-				n.HintedNode = hintedNode.(StmtNode)
-			}
+			n.HintedNode = hintedNode.(StmtNode)
 		}
 	}
 	return v.Leave(n)
@@ -2650,19 +2511,14 @@ func (n *CreateStatisticsStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Table = node.(*TableName)
-	}
+	n.Table = node.(*TableName)
 	for i, col := range n.Columns {
 		node, ok = col.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Columns[i] = node.(*ColumnName)
-		}
+		n.Columns[i] = node.(*ColumnName)
 	}
 	return v.Leave(n)
 }
@@ -2686,12 +2542,8 @@ func (n *DropStatisticsStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *DropStatisticsStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*DropStatisticsStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // DoStmt is the struct for DO statement.
@@ -2722,16 +2574,13 @@ func (n *DoStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DoStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, val := range n.Exprs {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Exprs[i] = node.(ExprNode)
-		}
+		n.Exprs[i] = node.(ExprNode)
 	}
 	return v.Leave(n)
 }
@@ -3092,16 +2941,13 @@ func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*AdminStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Tables[i] = node.(*TableName)
-		}
+		n.Tables[i] = node.(*TableName)
 	}
 
 	if n.Where != nil {
@@ -3109,9 +2955,7 @@ func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Where = node.(ExprNode)
-		}
+		n.Where = node.(ExprNode)
 	}
 
 	return v.Leave(n)
@@ -3190,16 +3034,13 @@ func (n *PrivElem) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*PrivElem)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, val := range n.Cols {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Cols[i] = node.(*ColumnName)
-		}
+		n.Cols[i] = node.(*ColumnName)
 	}
 	return v.Leave(n)
 }
@@ -3328,16 +3169,13 @@ func (n *RevokeStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*RevokeStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, val := range n.Privs {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Privs[i] = node.(*PrivElem)
-		}
+		n.Privs[i] = node.(*PrivElem)
 	}
 	return v.Leave(n)
 }
@@ -3375,12 +3213,8 @@ func (n *RevokeRoleStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *RevokeRoleStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*RevokeRoleStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // GrantStmt is the struct for GRANT statement.
@@ -3464,16 +3298,13 @@ func (n *GrantStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*GrantStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, val := range n.Privs {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Privs[i] = node.(*PrivElem)
-		}
+		n.Privs[i] = node.(*PrivElem)
 	}
 	return v.Leave(n)
 }
@@ -3489,12 +3320,8 @@ type GrantProxyStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *GrantProxyStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*GrantProxyStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // Restore implements Node interface.
@@ -3528,12 +3355,8 @@ type GrantRoleStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *GrantRoleStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*GrantRoleStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // Restore implements Node interface.
@@ -3586,12 +3409,8 @@ func (n *ShutdownStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *ShutdownStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*ShutdownStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // RestartStmt is a statement to restart the TiDB server.
@@ -3608,12 +3427,8 @@ func (n *RestartStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *RestartStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*RestartStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // HelpStmt is a statement for server side help
@@ -3633,12 +3448,8 @@ func (n *HelpStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *HelpStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*HelpStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // RenameUserStmt is a statement to rename a user.
@@ -3671,16 +3482,12 @@ func (n *RenameUserStmt) Accept(v Visitor) (Node, bool) {
 	}
 	n = newNode.(*RenameUserStmt)
 
-	replaceNode := shouldReplaceNode(v)
-
 	for i, t := range n.UserToUsers {
 		node, ok := t.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.UserToUsers[i] = node.(*UserToUser)
-		}
+		n.UserToUsers[i] = node.(*UserToUser)
 	}
 	return v.Leave(n)
 }
@@ -3706,12 +3513,8 @@ func (n *UserToUser) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *UserToUser) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*UserToUser)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 type BRIEKind uint8
@@ -3970,16 +3773,13 @@ func (n *BRIEStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*BRIEStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Tables[i] = node.(*TableName)
-		}
+		n.Tables[i] = node.(*TableName)
 	}
 	return v.Leave(n)
 }
@@ -4435,12 +4235,8 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *TableOptimizerHint) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*TableOptimizerHint)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // TextString represent a string, it can be a binary literal.
@@ -4476,12 +4272,8 @@ func (n *SetResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *SetResourceGroupStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*SetResourceGroupStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // CalibrateResourceType is the type for CalibrateResource statement.
@@ -4605,16 +4397,13 @@ func (n *DynamicCalibrateResourceOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DynamicCalibrateResourceOption)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.Ts != nil {
 		node, ok := n.Ts.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Ts = node.(ExprNode)
-		}
+		n.Ts = node.(ExprNode)
 	}
 	return v.Leave(n)
 }
@@ -4647,8 +4436,7 @@ func (n *DropQueryWatchStmt) Restore(ctx *format.RestoreCtx) error {
 // Accept implements Node Accept interface.
 func (n *DropQueryWatchStmt) Accept(v Visitor) (Node, bool) {
 	newNode, _ := v.Enter(n)
-	n = newNode.(*DropQueryWatchStmt)
-	return v.Leave(n)
+	return v.Leave(newNode)
 }
 
 // AddQueryWatchStmt is a statement to add a runaway watch item.
@@ -4718,34 +4506,27 @@ func (n *QueryWatchOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*QueryWatchOption)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.ResourceGroupOption != nil && n.ResourceGroupOption.GroupNameExpr != nil {
 		node, ok := n.ResourceGroupOption.GroupNameExpr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.ResourceGroupOption.GroupNameExpr = node.(ExprNode)
-		}
+		n.ResourceGroupOption.GroupNameExpr = node.(ExprNode)
 	}
 	if n.ActionOption != nil {
 		node, ok := n.ActionOption.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.ActionOption = node.(*ResourceGroupRunawayActionOption)
-		}
+		n.ActionOption = node.(*ResourceGroupRunawayActionOption)
 	}
 	if n.TextOption != nil {
 		node, ok := n.TextOption.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.TextOption = node.(*QueryWatchTextOption)
-		}
+		n.TextOption = node.(*QueryWatchTextOption)
 	}
 	return v.Leave(n)
 }
@@ -4812,16 +4593,13 @@ func (n *QueryWatchTextOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*QueryWatchTextOption)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.PatternExpr != nil {
 		node, ok := n.PatternExpr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.PatternExpr = node.(ExprNode)
-		}
+		n.PatternExpr = node.(ExprNode)
 	}
 	return v.Leave(n)
 }

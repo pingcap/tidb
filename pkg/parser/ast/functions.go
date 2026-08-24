@@ -600,16 +600,13 @@ func (n *FuncCallExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*FuncCallExpr)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, val := range n.Args {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Args[i] = node.(ExprNode)
-		}
+		n.Args[i] = node.(ExprNode)
 	}
 	return v.Leave(n)
 }
@@ -669,11 +666,8 @@ func (n *JSONSumCrc32Expr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Expr = node.(ExprNode)
-	}
+	n.Expr = node.(ExprNode)
 	return v.Leave(n)
 }
 
@@ -753,11 +747,8 @@ func (n *FuncCastExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Expr = node.(ExprNode)
-	}
+	n.Expr = node.(ExprNode)
 	return v.Leave(n)
 }
 
@@ -809,11 +800,8 @@ func (n *TrimDirectionExpr) Format(w io.Writer) {
 
 // Accept implements Node Accept interface.
 func (n *TrimDirectionExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // DateArithType is type for DateArith type.
@@ -947,25 +935,20 @@ func (n *AggregateFuncExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*AggregateFuncExpr)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, val := range n.Args {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Args[i] = node.(ExprNode)
-		}
+		n.Args[i] = node.(ExprNode)
 	}
 	if n.Order != nil {
 		node, ok := n.Order.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Order = node.(*OrderByClause)
-		}
+		n.Order = node.(*OrderByClause)
 	}
 	return v.Leave(n)
 }
@@ -1057,24 +1040,19 @@ func (n *WindowFuncExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*WindowFuncExpr)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, val := range n.Args {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Args[i] = node.(ExprNode)
-		}
+		n.Args[i] = node.(ExprNode)
 	}
 	node, ok := n.Spec.Accept(v)
 	if !ok {
 		return n, false
 	}
-	if replaceNode {
-		n.Spec = *node.(*WindowSpec)
-	}
+	n.Spec = *node.(*WindowSpec)
 	return v.Leave(n)
 }
 
@@ -1218,11 +1196,8 @@ func (n *TimeUnitExpr) Format(w io.Writer) {
 
 // Accept implements Node Accept interface.
 func (n *TimeUnitExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // GetFormatSelectorType is the type for the first argument of GET_FORMAT() function.
@@ -1271,9 +1246,6 @@ func (n *GetFormatSelectorExpr) Format(w io.Writer) {
 
 // Accept implements Node Accept interface.
 func (n *GetFormatSelectorExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }

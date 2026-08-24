@@ -168,6 +168,14 @@ type InPlaceVisitor interface {
 	Leave(n Node) (ok bool)
 }
 
+type inPlaceAccepting interface {
+	acceptInPlace(InPlaceVisitor) bool
+}
+
+type externalInPlaceAccepting interface {
+	AcceptInPlace(InPlaceVisitor) bool
+}
+
 type inPlaceVisitorAdapter struct {
 	visitor InPlaceVisitor
 }
@@ -182,25 +190,44 @@ func (v *inPlaceVisitorAdapter) Leave(n Node) (Node, bool) {
 	return n, v.visitor.Leave(n)
 }
 
-type inPlaceVisitorMarker interface {
-	inPlaceVisitor()
-}
-
-func (*inPlaceVisitorAdapter) inPlaceVisitor() {}
-
-func shouldReplaceNode(visitor Visitor) bool {
-	_, inPlace := visitor.(inPlaceVisitorMarker)
-	return !inPlace
-}
-
 // Walk visits node using Node.Accept's traversal order and control flow.
-// The in-place adapter never replaces nodes. TiDB AST Node.Accept implementations
-// skip framework child writebacks for Walk after their writebacks are guarded;
-// out-of-tree Node.Accept implementations define their own behavior. Callback
-// mutations and synchronization with concurrent access are the caller's responsibility.
+// External nodes can opt into direct, write-free traversal by implementing
+// AcceptInPlace(InPlaceVisitor) bool with equivalent traversal behavior.
+// Unsupported nodes fall back to their legacy Accept implementation for the
+// entire subtree they own. Callback mutations and synchronization with
+// concurrent access are the caller's responsibility.
 func Walk(node Node, visitor InPlaceVisitor) bool {
+	return acceptInPlaceNode(node, visitor)
+}
+
+func acceptInPlaceNode(node Node, visitor InPlaceVisitor) bool {
+	switch node := node.(type) {
+	case *ColumnNameExpr:
+		return node.acceptInPlace(visitor)
+	case *DefaultExpr:
+		return node.acceptInPlace(visitor)
+	case *SelectStmt:
+		return node.acceptInPlace(visitor)
+	}
+	if accepting, ok := node.(inPlaceAccepting); ok {
+		return accepting.acceptInPlace(visitor)
+	}
+	if accepting, ok := node.(externalInPlaceAccepting); ok {
+		return accepting.AcceptInPlace(visitor)
+	}
 	_, ok := node.Accept(&inPlaceVisitorAdapter{visitor: visitor})
 	return ok
+}
+
+func acceptInPlaceExprNode(node ExprNode, visitor InPlaceVisitor) bool {
+	switch node := node.(type) {
+	case *ColumnNameExpr:
+		return node.acceptInPlace(visitor)
+	case *DefaultExpr:
+		return node.acceptInPlace(visitor)
+	default:
+		return acceptInPlaceNode(node, visitor)
+	}
 }
 
 // GetStmtLabel generates a label for a statement.

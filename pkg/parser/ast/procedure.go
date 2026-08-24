@@ -130,12 +130,8 @@ func (n *StoreParameter) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *StoreParameter) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*StoreParameter)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // ProcedureDecl represents the internal variables of stored procedure .
@@ -173,16 +169,13 @@ func (n *ProcedureDecl) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ProcedureDecl)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.DeclDefault != nil {
 		node, ok := n.DeclDefault.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.DeclDefault = node.(ExprNode)
-		}
+		n.DeclDefault = node.(ExprNode)
 	}
 	return v.Leave(n)
 }
@@ -223,16 +216,13 @@ func (n *ProcedureBlock) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ProcedureBlock)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, ProcedureVar := range n.ProcedureVars {
 		node, ok := ProcedureVar.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.ProcedureVars[i] = node.(DeclNode)
-		}
+		n.ProcedureVars[i] = node.(DeclNode)
 	}
 	// Store Procedure doesn't check the justifiability for statements, so don't traverse ProcedureProcStmts.
 	return v.Leave(n)
@@ -283,24 +273,19 @@ func (n *ProcedureInfo) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ProcedureInfo)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, ProcedureParam := range n.ProcedureParam {
 		node, ok := ProcedureParam.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.ProcedureParam[i] = node.(*StoreParameter)
-		}
+		n.ProcedureParam[i] = node.(*StoreParameter)
 	}
 	node, ok := n.ProcedureBody.Accept(v)
 	if !ok {
 		return n, false
 	}
-	if replaceNode {
-		n.ProcedureBody = node.(StmtNode)
-	}
+	n.ProcedureBody = node.(StmtNode)
 	return v.Leave(n)
 }
 
@@ -327,12 +312,8 @@ func (n *DropProcedureStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node interface.
 func (n *DropProcedureStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*DropProcedureStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // ProcedureIfInfo stores the `if statement` of procedure.
@@ -363,11 +344,8 @@ func (n *ProcedureIfInfo) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.IfBody = node.(*ProcedureIfBlock)
-	}
+	n.IfBody = node.(*ProcedureIfBlock)
 	return v.Leave(n)
 }
 
@@ -398,11 +376,8 @@ func (n *ProcedureElseIfBlock) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.ProcedureIfStmt = node.(*ProcedureIfBlock)
-	}
+	n.ProcedureIfStmt = node.(*ProcedureIfBlock)
 	return v.Leave(n)
 }
 
@@ -427,12 +402,8 @@ func (n *ProcedureElseBlock) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements ProcedureElseBlock Accept interface.
 func (n *ProcedureElseBlock) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*ProcedureElseBlock)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // ProcedureIfBlock stores `expr ... else if ... else ...` statement in procedure.
@@ -473,16 +444,13 @@ func (n *ProcedureIfBlock) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ProcedureIfBlock)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.IfExpr != nil {
 		node, ok := n.IfExpr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.IfExpr = node.(ExprNode)
-		}
+		n.IfExpr = node.(ExprNode)
 	}
 
 	if n.ProcedureElseStmt != nil {
@@ -490,9 +458,7 @@ func (n *ProcedureIfBlock) Accept(v Visitor) (Node, bool) {
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.ProcedureElseStmt = node.(StmtNode)
-		}
+		n.ProcedureElseStmt = node.(StmtNode)
 	}
 	return v.Leave(n)
 }
@@ -530,16 +496,13 @@ func (n *SimpleWhenThenStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SimpleWhenThenStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Expr = node.(ExprNode)
-		}
+		n.Expr = node.(ExprNode)
 	}
 	// Store Procedure do not check sql justifiability, so don't traverse ProcedureStmts.
 	return v.Leave(n)
@@ -594,20 +557,15 @@ func (n *SimpleCaseStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Condition = node.(ExprNode)
-	}
+	n.Condition = node.(ExprNode)
 
 	for i, stmt := range n.WhenCases {
 		node, ok := stmt.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.WhenCases[i] = node.(*SimpleWhenThenStmt)
-		}
+		n.WhenCases[i] = node.(*SimpleWhenThenStmt)
 	}
 
 	if n.ElseCases != nil {
@@ -616,9 +574,7 @@ func (n *SimpleCaseStmt) Accept(v Visitor) (Node, bool) {
 			if !ok {
 				return n, false
 			}
-			if replaceNode {
-				n.ElseCases[i] = node.(StmtNode)
-			}
+			n.ElseCases[i] = node.(StmtNode)
 		}
 	}
 	return v.Leave(n)
@@ -657,16 +613,13 @@ func (n *SearchWhenThenStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SearchWhenThenStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	if n.Expr != nil {
 		node, ok := n.Expr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Expr = node.(ExprNode)
-		}
+		n.Expr = node.(ExprNode)
 	}
 	// Store Procedure do not check sql justifiability, so don't traverse ProcedureStmts.
 	return v.Leave(n)
@@ -713,16 +666,12 @@ func (n *SearchCaseStmt) Accept(v Visitor) (Node, bool) {
 	}
 	n = newNode.(*SearchCaseStmt)
 
-	replaceNode := shouldReplaceNode(v)
-
 	for i, stmt := range n.WhenCases {
 		node, ok := stmt.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.WhenCases[i] = node.(*SearchWhenThenStmt)
-		}
+		n.WhenCases[i] = node.(*SearchWhenThenStmt)
 	}
 	// Store Procedure do not check sql justifiability, so don't traverse ElseCases.
 	return v.Leave(n)
@@ -763,25 +712,19 @@ func (n *ProcedureRepeatStmt) Accept(v Visitor) (Node, bool) {
 	}
 	n = newNode.(*ProcedureRepeatStmt)
 
-	replaceNode := shouldReplaceNode(v)
-
 	for i, stmt := range n.Body {
 		node, ok := stmt.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Body[i] = node.(StmtNode)
-		}
+		n.Body[i] = node.(StmtNode)
 	}
 
 	node, ok := n.Condition.Accept(v)
 	if !ok {
 		return n, false
 	}
-	if replaceNode {
-		n.Condition = node.(ExprNode)
-	}
+	n.Condition = node.(ExprNode)
 
 	return v.Leave(n)
 }
@@ -825,20 +768,15 @@ func (n *ProcedureWhileStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Condition = node.(ExprNode)
-	}
+	n.Condition = node.(ExprNode)
 
 	for i, stmt := range n.Body {
 		node, ok := stmt.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Body[i] = node.(StmtNode)
-		}
+		n.Body[i] = node.(StmtNode)
 	}
 	return v.Leave(n)
 }
@@ -865,12 +803,8 @@ func (n *ProcedureCursor) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements ProcedureCursor Accept interface.
 func (n *ProcedureCursor) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*ProcedureCursor)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // ProcedureErrorControl stored procedure handler statement.
@@ -916,16 +850,13 @@ func (n *ProcedureErrorControl) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ProcedureErrorControl)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, errorInfo := range n.ErrorCon {
 		node, ok := errorInfo.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.ErrorCon[i] = node.(ErrNode)
-		}
+		n.ErrorCon[i] = node.(ErrNode)
 	}
 	return v.Leave(n)
 }
@@ -946,12 +877,8 @@ func (n *ProcedureOpenCur) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements ProcedureOpenCur Accept interface.
 func (n *ProcedureOpenCur) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*ProcedureOpenCur)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // ProcedureCloseCur store close cursor statement.
@@ -970,12 +897,8 @@ func (n *ProcedureCloseCur) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements ProcedureCloseCur Accept interface.
 func (n *ProcedureCloseCur) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*ProcedureCloseCur)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // ProcedureFetchInto store cursor read data command.
@@ -1002,12 +925,8 @@ func (n *ProcedureFetchInto) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements ProcedureFetchInto Accept interface.
 func (n *ProcedureFetchInto) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*ProcedureFetchInto)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // ProcedureErrorVal store procedure handler error code.
@@ -1025,12 +944,8 @@ func (n *ProcedureErrorVal) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements ProcedureErrorVal Accept interface.
 func (n *ProcedureErrorVal) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*ProcedureErrorVal)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // ProcedureErrorState store procedure handler SQLSTATE string.
@@ -1049,12 +964,8 @@ func (n *ProcedureErrorState) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements ProcedureErrorState Accept interface.
 func (n *ProcedureErrorState) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*ProcedureErrorState)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // ProcedureErrorCon stores procedure handler status info.
@@ -1079,12 +990,8 @@ func (n *ProcedureErrorCon) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements ProcedureErrorCon Accept interface.
 func (n *ProcedureErrorCon) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*ProcedureErrorCon)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // ProcedureLabelBlock stored procedure block label statement.
@@ -1124,11 +1031,8 @@ func (n *ProcedureLabelBlock) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Block = node.(*ProcedureBlock)
-	}
+	n.Block = node.(*ProcedureBlock)
 	// Store Procedure do not check sql justifiability, so don't traverse 	ProcedureProcStmts.
 	return v.Leave(n)
 }
@@ -1190,11 +1094,8 @@ func (n *ProcedureLabelLoop) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	replaceNode := shouldReplaceNode(v)
 
-	if replaceNode {
-		n.Block = node.(StmtNode)
-	}
+	n.Block = node.(StmtNode)
 	// Store Procedure do not check sql justifiability, so don't traverse 	ProcedureProcStmts.
 	return v.Leave(n)
 }
@@ -1240,10 +1141,6 @@ func (n *ProcedureJump) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements ProcedureJump Accept interface.
 func (n *ProcedureJump) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*ProcedureJump)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }

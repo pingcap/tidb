@@ -187,16 +187,13 @@ func (n *AnalyzeTableStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*AnalyzeTableStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, val := range n.TableNames {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.TableNames[i] = node.(*TableName)
-		}
+		n.TableNames[i] = node.(*TableName)
 	}
 	return v.Leave(n)
 }
@@ -248,16 +245,13 @@ func (n *DropStatsStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropStatsStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Tables[i] = node.(*TableName)
-		}
+		n.Tables[i] = node.(*TableName)
 	}
 	return v.Leave(n)
 }
@@ -278,12 +272,8 @@ func (n *LoadStatsStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Accept implements Node Accept interface.
 func (n *LoadStatsStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*LoadStatsStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 // LockStatsStmt is the statement node for lock table statistic
@@ -314,16 +304,13 @@ func (n *LockStatsStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*LockStatsStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Tables[i] = node.(*TableName)
-		}
+		n.Tables[i] = node.(*TableName)
 	}
 	return v.Leave(n)
 }
@@ -356,16 +343,13 @@ func (n *UnlockStatsStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*UnlockStatsStmt)
-	replaceNode := shouldReplaceNode(v)
 
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
-		if replaceNode {
-			n.Tables[i] = node.(*TableName)
-		}
+		n.Tables[i] = node.(*TableName)
 	}
 	return v.Leave(n)
 }
@@ -428,12 +412,8 @@ func (n *RefreshStatsStmt) Restore(ctx *format.RestoreCtx) error {
 }
 
 func (n *RefreshStatsStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*RefreshStatsStmt)
-	return v.Leave(n)
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
 }
 
 func (n *RefreshStatsStmt) Dedup() {
