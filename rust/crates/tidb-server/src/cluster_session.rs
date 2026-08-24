@@ -275,7 +275,15 @@ pub fn cluster_session_catalog(
     auto_ids: &dyn TableAutoIds,
 ) -> ClusterSessionCatalog {
     let mut templates = StatsTemplates::default();
-    cluster_session_catalog_with_templates(loaded, storage, stats, auto_ids, &mut templates)
+    cluster_session_catalog_with_templates(
+        loaded,
+        storage,
+        stats,
+        auto_ids,
+        &mut templates,
+        storage,
+        None,
+    )
 }
 
 /// Per-snapshot planner statistics shared by every session opened against the
@@ -323,13 +331,59 @@ impl StatsTemplates {
     }
 }
 
+/// One schema version's worth of fully built [`KvTable`]s, reused by every
+/// session opened against it.
+///
+/// Building a loaded table means materializing every column's owned name,
+/// default and collation strings plus its index entries -- measured at ~30MB
+/// retained across the hzbank schema's ~700 tables, PER CONNECTION, which is
+/// what ran a busy node into its container memory ceiling. Go builds one
+/// `table.Table` per `TableInfo` inside the shared `infoschema` and sessions
+/// hold pointers; this cache is that single build. The cached tables are
+/// never executed: a session CLONES its table (columns/indexes are already
+/// `Arc`-shared) and swaps in its own storage seam through
+/// [`KvTable::replace_storage`], so staging stays session-private exactly as
+/// before.
+///
+/// The set belongs to ONE schema version; [`KvTableTemplates::reuse`] drops
+/// it whenever the reloader publishes a different one.
+#[derive(Default)]
+pub struct KvTableTemplates {
+    schema_version: i64,
+    tables: std::collections::HashMap<(String, String), KvTable>,
+}
+
+impl KvTableTemplates {
+    /// Drops the cache unless `loaded` is the schema version it was built
+    /// from. Call once per catalog build, before any lookup.
+    pub fn reuse(&mut self, loaded: &ClusterCatalog) {
+        if self.schema_version != loaded.schema_version {
+            self.tables.clear();
+            self.schema_version = loaded.schema_version;
+        }
+    }
+
+    fn get(&self, schema: &str, name: &str) -> Option<&KvTable> {
+        self.tables.get(&(schema.to_owned(), name.to_owned()))
+    }
+
+    fn insert(&mut self, schema: &str, name: &str, table: KvTable) {
+        self.tables.insert((schema.to_owned(), name.to_owned()), table);
+    }
+}
+
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn cluster_session_catalog_with_templates(
     loaded: &ClusterCatalog,
     storage: &ClusterTableStorage,
     stats: &StatsSnapshot,
     auto_ids: &dyn TableAutoIds,
-    templates: &mut StatsTemplates,
+    stats_templates: &mut StatsTemplates,
+    // Neutral storage over which CACHED-MISS tables are built for the
+    // template set; sessions rebind their own seam afterwards either way.
+    template_storage: &ClusterTableStorage,
+    mut kv_templates: Option<&mut KvTableTemplates>,
 ) -> ClusterSessionCatalog {
     let mut catalog = Catalog::default();
     let mut skipped = Vec::new();
@@ -382,8 +436,24 @@ pub fn cluster_session_catalog_with_templates(
                 db_id: database.info.id,
                 ids: auto_ids,
             };
-            match cluster_table(table, storage, &auto) {
-                Ok(kv_table) => {
+            // A cached template clone carries neutral storage and valid
+            // process-wide allocator handles; only the store needs rebinding.
+            let built = match kv_templates
+                .as_ref()
+                .and_then(|c| c.get(&schema, table.name.original()))
+            {
+                Some(template) => Ok(template.clone()),
+                None => {
+                    let fresh = cluster_table(table, template_storage, &auto);
+                    if let (Ok(fresh), Some(cache)) = (&fresh, kv_templates.as_deref_mut()) {
+                        cache.insert(&schema, table.name.original(), fresh.clone());
+                    }
+                    fresh
+                }
+            };
+            match built {
+                Ok(mut kv_table) => {
+                    kv_table.replace_storage(storage.clone_box());
                     // A table the cluster reports as never analyzed
                     // (`TableStatsState::Pseudo`) or one this node has not
                     // loaded yet is left OUT of the map, which is exactly what
@@ -391,7 +461,7 @@ pub fn cluster_session_catalog_with_templates(
                     if let Some(loaded_stats) =
                         stats.get(&table.id).and_then(TableStatsState::loaded)
                     {
-                        let statistics = templates.get_or_build(table.id, || {
+                        let statistics = stats_templates.get_or_build(table.id, || {
                             planner_statistics(loaded_stats, table)
                         });
                         catalog.set_table_statistics(table.id, statistics);

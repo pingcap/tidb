@@ -681,6 +681,20 @@ impl KvTable {
     /// The mutable view a DDL takes of the shared column metadata --
     /// Go's "build a new TableInfo": the first mutation after a share
     /// copies, an unshared table edits in place.
+    /// Replaces the byte store of this table copy with `store`, keeping every
+    /// other binding (columns, indexes, allocators) untouched.
+    ///
+    /// This is the session-rebinding seam for SHARED table templates: a
+    /// factory builds each loaded table once per schema version over neutral
+    /// storage, and every connection clones that template and swaps in its own
+    /// [`TableStorage`] -- the snapshot slot and staged-write buffer its
+    /// statements read and write through. Go reaches the same shape by giving
+    /// each session pointers to one shared `table.Table`; this tier's tables
+    /// own their store by value, so the rebinding is an explicit swap.
+    pub fn replace_storage(&mut self, store: Box<dyn TableStorage>) {
+        self.store = store;
+    }
+
     pub fn columns_mut(&mut self) -> &mut Vec<KvColumn> {
         std::sync::Arc::make_mut(&mut self.columns)
     }

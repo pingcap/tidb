@@ -193,8 +193,8 @@ use tidb_exec::cluster_table_storage::LockKeysOutcome;
 use crate::cluster_account_seam::ClusterAccountWriter;
 use crate::cluster_analyze_seam::ClusterAnalyze;
 use crate::cluster_session::{
-    cluster_session_catalog, cluster_session_catalog_with_templates, StatsTemplates,
-    SkippedTable, TableAutoIds,
+    cluster_session_catalog, cluster_session_catalog_with_templates, KvTableTemplates,
+    SkippedTable, TableAutoIds, StatsTemplates,
 };
 use crate::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::pipeline_session::MaterializedResultSetSource;
@@ -394,6 +394,12 @@ pub struct ClusterSessionFactory {
     /// session opened against it, the way Go's domain-level `StatsHandle`
     /// serves one `statistics.Table` per table to all sessions.
     session_stats_cache: Arc<Mutex<StatsTemplates>>,
+    /// Fully built tables of one schema version, shared by every session
+    /// opened against it -- Go's one `table.Table` per `TableInfo` inside the
+    /// shared `infoschema`. A session clones its table and swaps in its own
+    /// storage seam, so building ~700 restored tables happens once per DDL
+    /// instead of once per CONNECTION (~30MB retained each before this).
+    session_kv_cache: Arc<Mutex<KvTableTemplates>>,
 }
 
 impl ClusterSessionFactory {
@@ -439,6 +445,7 @@ impl ClusterSessionFactory {
             mem_arbitrator: None,
             schema_pins: Arc::new(schema_sync::SchemaPinRegistry::default()),
             session_stats_cache: Arc::new(Mutex::new(StatsTemplates::default())),
+            session_kv_cache: Arc::new(Mutex::new(KvTableTemplates::default())),
         }
     }
 
@@ -542,12 +549,23 @@ impl QuerySessionFactory for ClusterSessionFactory {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         templates.reuse(&statistics);
+        // One fully built table set per schema version, shared the same way:
+        // each session clones its tables (columns/indexes are Arc-shared) and
+        // swaps in only its own storage seam below.
+        let template_storage = detached_storage();
+        let mut kv_templates = self
+            .session_kv_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        kv_templates.reuse(&loaded);
         let built = cluster_session_catalog_with_templates(
             &loaded,
             &storage,
             &statistics,
             self.auto_ids.as_ref(),
             &mut templates,
+            &template_storage,
+            Some(&mut kv_templates),
         );
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
         session.set_advisory_lock_service(Arc::new(transactions::ClusterAdvisoryLockService::new(
