@@ -54,6 +54,7 @@ func Build(sctx sessionctx.Context, v *physicalop.PhysicalWindow, childExec exec
 	}
 	windowFuncs := make([]aggfuncs.AggFunc, 0, len(v.WindowFuncDescs))
 	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
+	initialPartialResultMemUsage := int64(0)
 	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
 	exprCtx := sctx.GetExprCtx()
 	for _, desc := range v.WindowFuncDescs {
@@ -63,10 +64,12 @@ func Build(sctx sessionctx.Context, v *physicalop.PhysicalWindow, childExec exec
 		}
 		agg := aggfuncs.BuildWindowFunctions(exprCtx, aggDesc, resultColIdx, orderByCols)
 		windowFuncs = append(windowFuncs, agg)
-		partialResult, _ := agg.AllocPartialResult()
+		partialResult, memDelta := agg.AllocPartialResult()
 		partialResults = append(partialResults, partialResult)
+		initialPartialResultMemUsage += memDelta
 		resultColIdx++
 	}
+	memTracker := newWindowMemoryTracker(initialPartialResultMemUsage, len(windowFuncs))
 
 	if forcePipelined || sctx.GetSessionVars().EnablePipelinedWindowExec {
 		exec := &PipelinedWindowExec{
@@ -75,6 +78,7 @@ func Build(sctx sessionctx.Context, v *physicalop.PhysicalWindow, childExec exec
 			numWindowFuncs: len(v.WindowFuncDescs),
 			windowFuncs:    windowFuncs,
 			partialResults: partialResults,
+			memTracker:     memTracker,
 		}
 		exec.slidingWindowFuncs = make([]aggfuncs.SlidingWindowAggFunc, len(exec.windowFuncs))
 		for i, windowFunc := range exec.windowFuncs {
@@ -112,6 +116,7 @@ func Build(sctx sessionctx.Context, v *physicalop.PhysicalWindow, childExec exec
 		processor = &aggWindowProcessor{
 			windowFuncs:    windowFuncs,
 			partialResults: partialResults,
+			memTracker:     memTracker,
 		}
 	} else if v.Frame.Type == ast.Rows {
 		processor = &rowFrameWindowProcessor{
@@ -119,6 +124,7 @@ func Build(sctx sessionctx.Context, v *physicalop.PhysicalWindow, childExec exec
 			partialResults: partialResults,
 			start:          v.Frame.Start,
 			end:            v.Frame.End,
+			memTracker:     memTracker,
 		}
 	} else {
 		cmpResult := int64(-1)
@@ -132,6 +138,7 @@ func Build(sctx sessionctx.Context, v *physicalop.PhysicalWindow, childExec exec
 			end:               v.Frame.End,
 			orderByCols:       orderByCols,
 			expectedCmpResult: cmpResult,
+			memTracker:        memTracker,
 		}
 		if err := tmpProcessor.start.UpdateCompareCols(sctx, orderByCols); err != nil {
 			return nil, err
@@ -146,5 +153,6 @@ func Build(sctx sessionctx.Context, v *physicalop.PhysicalWindow, childExec exec
 		processor:      processor,
 		groupChecker:   vecgroupchecker.NewVecGroupChecker(sctx.GetExprCtx().GetEvalCtx(), sctx.GetSessionVars().EnableVectorizedExpression, groupByItems),
 		numWindowFuncs: len(v.WindowFuncDescs),
+		memTracker:     memTracker,
 	}, nil
 }

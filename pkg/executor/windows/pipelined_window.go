@@ -16,6 +16,7 @@ package windows
 
 import (
 	"context"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
@@ -34,6 +35,8 @@ type dataInfo struct {
 	accumulated uint64
 }
 
+const dataInfoSize = int64(unsafe.Sizeof(dataInfo{}))
+
 // PipelinedWindowExec is the executor for window functions.
 type PipelinedWindowExec struct {
 	exec.BaseExecutor
@@ -41,14 +44,16 @@ type PipelinedWindowExec struct {
 	windowFuncs        []aggfuncs.AggFunc
 	slidingWindowFuncs []aggfuncs.SlidingWindowAggFunc
 	partialResults     []aggfuncs.PartialResult
+	memTracker         *windowMemoryTracker
 	start              *logicalop.FrameBound
 	end                *logicalop.FrameBound
 	groupChecker       *vecgroupchecker.VecGroupChecker
 
 	// childResult stores the child chunk. Note that even if remaining is 0, e.rows might still references rows in data[0].chk after returned it to upper executor, since there is no guarantee what the upper executor will do to the returned chunk, it might destroy the data (as in the benchmark test, it reused the chunk to pull data, and it will be chk.Reset(), causing panicking). So dataIdx, accumulated and dropped are added to ensure that chunk will only be returned if there is no row reference.
-	childResult *chunk.Chunk
-	data        []dataInfo
-	dataIdx     int
+	childResult  *chunk.Chunk
+	data         []dataInfo
+	dataIdx      int
+	dataMemUsage int64
 
 	// done indicates the child executor is drained or something unexpected happened.
 	done         bool
@@ -70,6 +75,7 @@ type PipelinedWindowExec struct {
 
 	// rows keeps rows starting from curStartRow
 	rows                     []chunk.Row
+	rowsMemUsage             int64
 	rowCnt                   uint64
 	whole                    bool
 	isRangeFrame             bool
@@ -85,6 +91,14 @@ type OrderedWindowExec struct {
 
 // Close implements the Executor Close interface.
 func (e *PipelinedWindowExec) Close() error {
+	e.memTracker.resetAllPartialResults(e.windowFuncs, e.partialResults)
+	e.childResult = nil
+	e.data = nil
+	e.rows = nil
+	e.dataMemUsage = 0
+	e.rowsMemUsage = 0
+	e.groupChecker.Reset()
+	e.memTracker.close()
 	return errors.Trace(e.BaseExecutor.Close())
 }
 
@@ -98,10 +112,15 @@ func (e *PipelinedWindowExec) Open(ctx context.Context) (err error) {
 
 // OpenSelf initializes the executor state without opening children.
 func (e *PipelinedWindowExec) OpenSelf() error {
+	e.memTracker.open(e.ID(), e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 	e.done, e.newPartition, e.whole, e.initializedSlidingWindow = false, false, false, false
 	e.dataIdx, e.curRowIdx, e.dropped, e.rowToConsume, e.accumulated = 0, 0, 0, 0, 0
 	e.lastStartRow, e.lastEndRow, e.stagedStartRow, e.stagedEndRow, e.rowStart, e.rowCnt = 0, 0, 0, 0, 0, 0
-	e.rows, e.data = make([]chunk.Row, 0), make([]dataInfo, 0)
+	e.rows, e.data = nil, nil
+	e.rowsMemUsage, e.dataMemUsage = 0, 0
+	e.childResult = nil
+	e.groupChecker.Reset()
+	e.memTracker.resetAllPartialResults(e.windowFuncs, e.partialResults)
 	return nil
 }
 
@@ -156,7 +175,10 @@ func (e *PipelinedWindowExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 
 		// e.p is ready to produce data
 		if len(e.data) > e.dataIdx && e.data[e.dataIdx].remaining != 0 {
-			produced, err := e.produce(e.Ctx(), e.data[e.dataIdx].chk, e.data[e.dataIdx].remaining)
+			resultChk := e.data[e.dataIdx].chk
+			oldMemUsage := resultChk.MemoryUsage()
+			produced, err := e.produce(e.Ctx(), resultChk, e.data[e.dataIdx].remaining)
+			e.memTracker.consume(resultChk.MemoryUsage() - oldMemUsage)
 			if err != nil {
 				return err
 			}
@@ -167,9 +189,19 @@ func (e *PipelinedWindowExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 		}
 	}
 	if len(e.data) > 0 {
-		chk.SwapColumns(e.data[0].chk)
+		resultChk := e.data[0].chk
+		// The output chunk takes ownership of the referenced input columns here.
+		// Stop charging them to Window before swapping the column pointers.
+		e.memTracker.consume(-resultChk.MemoryUsage())
+		chk.SwapColumns(resultChk)
+		e.data[0] = dataInfo{}
 		e.data = e.data[1:]
 		e.dataIdx--
+		if len(e.data) == 0 {
+			e.data = nil
+			e.memTracker.consume(-e.dataMemUsage)
+			e.dataMemUsage = 0
+		}
 	}
 	return nil
 }
@@ -203,8 +235,14 @@ func (e *PipelinedWindowExec) getRowsInPartition(ctx context.Context) (err error
 	}
 	begin, end := e.groupChecker.GetNextGroup()
 	e.rowToConsume += uint64(end - begin)
+	oldRowsCap := cap(e.rows)
 	for i := begin; i < end; i++ {
 		e.rows = append(e.rows, e.childResult.GetRow(i))
+	}
+	if cap(e.rows) != oldRowsCap {
+		newMemUsage := int64(cap(e.rows)) * aggfuncs.DefRowSize
+		e.memTracker.consume(newMemUsage - e.rowsMemUsage)
+		e.rowsMemUsage = newMemUsage
 	}
 	return
 }
@@ -229,7 +267,16 @@ func (e *PipelinedWindowExec) fetchChild(ctx context.Context) (eof bool, err err
 		return false, err
 	}
 	e.accumulated += uint64(numRows)
+	oldDataCap := cap(e.data)
 	e.data = append(e.data, dataInfo{chk: resultChk, remaining: uint64(numRows), accumulated: e.accumulated})
+	// resultChk references the input columns in childResult. Charge only the
+	// retained result chunk so shared column buffers are not counted twice.
+	e.memTracker.consume(resultChk.MemoryUsage())
+	if cap(e.data) != oldDataCap {
+		newMemUsage := int64(cap(e.data)) * dataInfoSize
+		e.memTracker.consume(newMemUsage - e.dataMemUsage)
+		e.dataMemUsage = newMemUsage
+	}
 
 	e.childResult = childResult
 	return false, nil
@@ -372,7 +419,7 @@ func (e *PipelinedWindowExec) produce(ctx sessionctx.Context, chk *chunk.Chunk, 
 		if start >= end {
 			for i, wf := range e.windowFuncs {
 				if !e.emptyFrame {
-					wf.ResetPartialResult(e.partialResults[i])
+					e.memTracker.resetPartialResult(i, wf, e.partialResults[i])
 				}
 				err = wf.AppendFinalResult2Chunk(ctx.GetExprCtx().GetEvalCtx(), e.partialResults[i], chk)
 				if err != nil {
@@ -397,9 +444,8 @@ func (e *PipelinedWindowExec) produce(ctx sessionctx.Context, chk *chunk.Chunk, 
 							// Store start inside MaxMinSlidingWindowAggFunc.windowInfo
 							minMaxSlidingWindowAggFunc.SetWindowStart(start)
 						}
-						// TODO(zhifeng): track memory usage here
-						wf.ResetPartialResult(e.partialResults[i])
-						_, err = wf.UpdatePartialResult(ctx.GetExprCtx().GetEvalCtx(), e.getRows(start, end), e.partialResults[i])
+						e.memTracker.resetPartialResult(i, wf, e.partialResults[i])
+						err = e.memTracker.updatePartialResult(i, wf, ctx, e.getRows(start, end), e.partialResults[i])
 					}
 				}
 				if err != nil {
@@ -461,7 +507,5 @@ func (e *PipelinedWindowExec) reset() {
 	e.rowStart = 0
 	e.rowCnt = 0
 	e.initializedSlidingWindow = false
-	for i, windowFunc := range e.windowFuncs {
-		windowFunc.ResetPartialResult(e.partialResults[i])
-	}
+	e.memTracker.resetAllPartialResults(e.windowFuncs, e.partialResults)
 }
