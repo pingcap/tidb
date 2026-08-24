@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::merge_path_tests::as_multiset;
-use super::tests::{eq_on, join_with_memory, run, NoColumns};
+use super::tests::{NoColumns, eq_on, join_with_memory, run};
 use super::*;
 use crate::mem_quota::{OomAction, StatementMemory};
 

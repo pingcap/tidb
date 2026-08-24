@@ -15,10 +15,10 @@
 use super::*;
 use tidb_ast::CiString;
 use tidb_datatype::FieldTypeCode;
+pub(super) use tidb_expr::NoColumns;
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 use tidb_expr::scalar_function::ScalarFunction;
-pub(super) use tidb_expr::NoColumns;
 
 const CHUNK: usize = 1024;
 
