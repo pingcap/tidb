@@ -16,6 +16,7 @@ package conflictrows
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -83,6 +84,29 @@ func requireTestFileExists(t *testing.T, store storeapi.Storage, name string, wa
 	exists, err := store.FileExists(context.Background(), name)
 	require.NoError(t, err)
 	require.Equal(t, want, exists, name)
+}
+
+func requireLoggedCleanupStats(t *testing.T, value any) (cleanupStats, map[string]json.RawMessage) {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	require.NoError(t, err)
+	var logged cleanupStats
+	require.NoError(t, json.Unmarshal(encoded, &logged))
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(encoded, &fields))
+	return logged, fields
+}
+
+func requireLoggedCountWithSamples(t *testing.T, value json.RawMessage, want *countWithSamples) {
+	t.Helper()
+	var logged countWithSamples
+	require.NoError(t, json.Unmarshal(value, &logged))
+	require.Equal(t, want, &logged)
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(value, &fields))
+	require.Len(t, fields, 2)
+	require.Contains(t, fields, "count")
+	require.Contains(t, fields, "samples")
 }
 
 func failedImportInfo(taskID int64) *storage.TaskCleanupInfo {
@@ -169,12 +193,10 @@ func TestCleanFiles(t *testing.T) {
 				name:              "missing task",
 				shouldDeleteFiles: true,
 				wantStats: cleanupStats{
-					candidateTasks:        1,
-					deletedTasks:          1,
-					missingTasks:          1,
-					missingTaskFiles:      2,
-					firstMissingTaskIDs:   []int64{1},
-					firstMissingTaskFiles: files,
+					CandidateTasks:   1,
+					DeletedTasks:     1,
+					MissingTasks:     &countWithSamples{Count: 1, Samples: []string{"1"}},
+					MissingTaskFiles: &countWithSamples{Count: 2, Samples: files},
 				},
 			},
 			{
@@ -182,10 +204,9 @@ func TestCleanFiles(t *testing.T) {
 				info:              &storage.TaskCleanupInfo{Type: proto.TaskTypeExample},
 				shouldDeleteFiles: true,
 				wantStats: cleanupStats{
-					candidateTasks:              1,
-					deletedTasks:                1,
-					nonImportIntoTaskFiles:      2,
-					firstNonImportIntoTaskFiles: files,
+					CandidateTasks:         1,
+					DeletedTasks:           1,
+					NonImportIntoTaskFiles: &countWithSamples{Count: 2, Samples: files},
 				},
 			},
 			{
@@ -193,16 +214,16 @@ func TestCleanFiles(t *testing.T) {
 				info:              &storage.TaskCleanupInfo{Type: proto.ImportInto},
 				shouldDeleteFiles: true,
 				wantStats: cleanupStats{
-					candidateTasks: 1,
-					deletedTasks:   1,
+					CandidateTasks: 1,
+					DeletedTasks:   1,
 				},
 			},
 			{
 				name: "retain task",
 				info: &storage.TaskCleanupInfo{Type: proto.ImportInto},
 				wantStats: cleanupStats{
-					candidateTasks: 1,
-					retainedTasks:  1,
+					CandidateTasks: 1,
+					RetainedTasks:  1,
 				},
 			},
 		}
@@ -214,6 +235,29 @@ func TestCleanFiles(t *testing.T) {
 				require.Equal(t, testCase.wantStats, stats)
 			})
 		}
+	})
+
+	t.Run("empty stats are logged as an empty object", func(t *testing.T) {
+		core, logs := observer.New(zap.InfoLevel)
+		restoreLog := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{Level: zap.NewAtomicLevelAt(zap.InfoLevel)})
+		t.Cleanup(restoreLog)
+
+		stats, err := cleanFiles(context.Background(), objstore.NewMemStorage(), taskInfoGetterFunc(
+			func(context.Context, []int64) (map[int64]*storage.TaskCleanupInfo, error) {
+				require.FailNow(t, "metadata lookup should not run")
+				return nil, nil
+			}), now)
+		require.NoError(t, err)
+		require.Equal(t, cleanupStats{}, stats)
+
+		entries := logs.All()
+		require.Len(t, entries, 1)
+		require.Equal(t, "finished conflict-row file cleanup", entries[0].Message)
+		fields := entries[0].ContextMap()
+		require.Len(t, fields, 1)
+		require.Contains(t, fields, "stats")
+		_, loggedFields := requireLoggedCleanupStats(t, fields["stats"])
+		require.Empty(t, loggedFields)
 	})
 
 	t.Run("mixed decisions", func(t *testing.T) {
@@ -241,14 +285,14 @@ func TestCleanFiles(t *testing.T) {
 
 		stats, err := cleanFiles(context.Background(), store, getter, now)
 		require.NoError(t, err)
-		require.Equal(t, int64(4), stats.candidateTasks)
-		require.Equal(t, int64(1), stats.retainedTasks)
-		require.Equal(t, int64(3), stats.deletedTasks)
-		require.Equal(t, int64(4), stats.deletedFiles)
-		require.Zero(t, stats.missingTasks)
-		require.Equal(t, int64(1), stats.nonImportIntoTaskFiles)
-		require.Equal(t, int64(1), stats.unparsedTaskIDFiles)
-		require.Zero(t, stats.failures)
+		require.Equal(t, int64(4), stats.CandidateTasks)
+		require.Equal(t, int64(1), stats.RetainedTasks)
+		require.Equal(t, int64(3), stats.DeletedTasks)
+		require.Equal(t, int64(4), stats.DeletedFiles)
+		require.Nil(t, stats.MissingTasks)
+		require.Equal(t, int64(1), stats.NonImportIntoTaskFiles.Count)
+		require.Equal(t, int64(1), stats.UnparsedTaskIDFiles.Count)
+		require.Zero(t, stats.Failures)
 		require.Equal(t, storagePrefix, store.walkOptions[0].SubDir)
 		requireTestFileExists(t, store, files[0], false)
 		requireTestFileExists(t, store, files[1], true)
@@ -277,7 +321,7 @@ func TestCleanFiles(t *testing.T) {
 		stats, err := cleanFiles(context.Background(), store, getter, now)
 		require.NoError(t, err)
 		require.Equal(t, []int{maxTaskIDsPerFlush + 1}, lookupSizes)
-		require.Equal(t, int64(maxTaskIDsPerFlush+1), stats.deletedFiles)
+		require.Equal(t, int64(maxTaskIDsPerFlush+1), stats.DeletedFiles)
 		require.Len(t, store.deleteCalls, 1)
 		require.Len(t, store.deleteCalls[0], maxTaskIDsPerFlush+1)
 	})
@@ -296,7 +340,7 @@ func TestCleanFiles(t *testing.T) {
 		stats, err := cleanFiles(context.Background(), store, getter, now)
 		require.NoError(t, err)
 		require.Equal(t, []int{1}, lookupSizes)
-		require.Equal(t, int64(maxObjectsPerFlush+1), stats.deletedFiles)
+		require.Equal(t, int64(maxObjectsPerFlush+1), stats.DeletedFiles)
 		require.Len(t, store.deleteCalls, 1)
 		require.Len(t, store.deleteCalls[0], maxObjectsPerFlush+1)
 	})
@@ -327,8 +371,8 @@ func TestCleanFiles(t *testing.T) {
 
 		stats, err := cleanFiles(context.Background(), store, getter, now)
 		require.ErrorIs(t, err, lookupErr)
-		require.Equal(t, int64(maxTaskIDsPerFlush+1), stats.deletedFiles)
-		require.Equal(t, int64(1), stats.failures)
+		require.Equal(t, int64(maxTaskIDsPerFlush+1), stats.DeletedFiles)
+		require.Equal(t, int64(1), stats.Failures)
 
 		getter = func(_ context.Context, taskIDs []int64) (map[int64]*storage.TaskCleanupInfo, error) {
 			result := make(map[int64]*storage.TaskCleanupInfo, len(taskIDs))
@@ -343,7 +387,7 @@ func TestCleanFiles(t *testing.T) {
 		}
 		stats, err = cleanFiles(context.Background(), store, getter, now)
 		require.NoError(t, err)
-		require.Zero(t, stats.deletedFiles)
+		require.Zero(t, stats.DeletedFiles)
 		requireTestFileExists(t, store, "conflicted-rows/999/retain", true)
 	})
 
@@ -364,23 +408,22 @@ func TestCleanFiles(t *testing.T) {
 
 		stats, err := cleanFiles(context.Background(), store, getter, now)
 		require.ErrorIs(t, err, deleteErr)
-		require.Equal(t, int64(1), stats.candidateTasks)
-		require.Zero(t, stats.retainedTasks)
-		require.Equal(t, int64(1), stats.deletedTasks)
-		require.Equal(t, int64(maxObjectsPerFlush+1), stats.deletedFiles)
-		require.Zero(t, stats.missingTasks)
-		require.Empty(t, stats.firstMissingTaskIDs)
-		require.Equal(t, int64(1), stats.failures)
+		require.Equal(t, int64(1), stats.CandidateTasks)
+		require.Zero(t, stats.RetainedTasks)
+		require.Equal(t, int64(1), stats.DeletedTasks)
+		require.Equal(t, int64(maxObjectsPerFlush+1), stats.DeletedFiles)
+		require.Nil(t, stats.MissingTasks)
+		require.Equal(t, int64(1), stats.Failures)
 
 		store.failDeleteAt = 0
 		stats, err = cleanFiles(context.Background(), store, getter, now)
 		require.NoError(t, err)
-		require.Equal(t, int64(1), stats.deletedFiles)
-		require.Equal(t, int64(1), stats.missingTasks)
-		require.Equal(t, int64(1), stats.missingTaskFiles)
+		require.Equal(t, int64(1), stats.DeletedFiles)
+		require.Equal(t, int64(1), stats.MissingTasks.Count)
+		require.Equal(t, int64(1), stats.MissingTaskFiles.Count)
 	})
 
-	t.Run("missing metadata warning is bounded", func(t *testing.T) {
+	t.Run("missing metadata diagnostics are bounded", func(t *testing.T) {
 		core, logs := observer.New(zap.InfoLevel)
 		restoreLog := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{Level: zap.NewAtomicLevelAt(zap.InfoLevel)})
 		t.Cleanup(restoreLog)
@@ -394,25 +437,34 @@ func TestCleanFiles(t *testing.T) {
 				return map[int64]*storage.TaskCleanupInfo{}, nil
 			}), now)
 		require.NoError(t, err)
-		require.Equal(t, int64(20), stats.candidateTasks)
-		require.Zero(t, stats.retainedTasks)
-		require.Equal(t, int64(20), stats.deletedTasks)
-		require.Equal(t, int64(20), stats.deletedFiles)
-		require.Equal(t, int64(20), stats.missingTasks)
-		require.Equal(t, int64(20), stats.missingTaskFiles)
-		require.Len(t, stats.firstMissingTaskIDs, maxLoggedMissingTaskIDs)
-		require.Equal(t, []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}, stats.firstMissingTaskIDs)
-		require.Len(t, stats.firstMissingTaskFiles, maxLoggedUnexpectedFiles)
+		require.Equal(t, int64(20), stats.CandidateTasks)
+		require.Zero(t, stats.RetainedTasks)
+		require.Equal(t, int64(20), stats.DeletedTasks)
+		require.Equal(t, int64(20), stats.DeletedFiles)
+		require.Equal(t, int64(20), stats.MissingTasks.Count)
+		require.Equal(t, int64(20), stats.MissingTaskFiles.Count)
+		require.Len(t, stats.MissingTasks.Samples, maxLoggedSamples)
+		require.Equal(t,
+			[]string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"},
+			stats.MissingTasks.Samples)
+		require.Len(t, stats.MissingTaskFiles.Samples, maxLoggedSamples)
 
-		warningLogs := logs.FilterMessage("conflict-row cleanup deleted objects without task metadata").All()
-		require.Len(t, warningLogs, 1)
-		require.Equal(t, int64(20), warningLogs[0].ContextMap()["missing-tasks"])
-		require.Len(t, warningLogs[0].ContextMap()["file-samples"], maxLoggedUnexpectedFiles)
-		summaryLogs := logs.FilterMessage("finished conflict-row file cleanup").All()
-		require.Len(t, summaryLogs, 1)
-		require.Equal(t, int64(20), summaryLogs[0].ContextMap()["candidate-tasks"])
-		require.Equal(t, int64(20), summaryLogs[0].ContextMap()["missing-tasks"])
-		require.Equal(t, int64(20), summaryLogs[0].ContextMap()["missing-task-files"])
+		entries := logs.All()
+		require.Len(t, entries, 1)
+		require.Equal(t, zap.InfoLevel, entries[0].Level)
+		require.Equal(t, "finished conflict-row file cleanup", entries[0].Message)
+		fields := entries[0].ContextMap()
+		require.Len(t, fields, 1)
+		loggedStats, loggedFields := requireLoggedCleanupStats(t, fields["stats"])
+		require.Equal(t, int64(20), loggedStats.CandidateTasks)
+		require.Equal(t, int64(20), loggedStats.DeletedTasks)
+		require.Equal(t, int64(20), loggedStats.DeletedFiles)
+		requireLoggedCountWithSamples(t, loggedFields["missing-tasks"], stats.MissingTasks)
+		requireLoggedCountWithSamples(t, loggedFields["missing-task-files"], stats.MissingTaskFiles)
+		require.NotContains(t, loggedFields, "retained-tasks")
+		require.NotContains(t, loggedFields, "non-import-into-task-files")
+		require.NotContains(t, loggedFields, "unparsed-task-id-files")
+		require.NotContains(t, loggedFields, "failures")
 	})
 
 	t.Run("unexpected file diagnostics are bounded", func(t *testing.T) {
@@ -435,20 +487,32 @@ func TestCleanFiles(t *testing.T) {
 
 		stats, err := cleanFiles(context.Background(), store, getter, now)
 		require.NoError(t, err)
-		require.Equal(t, int64(1), stats.candidateTasks)
-		require.Equal(t, int64(1), stats.deletedTasks)
-		require.Equal(t, int64(40), stats.deletedFiles)
-		require.Equal(t, int64(20), stats.nonImportIntoTaskFiles)
-		require.Equal(t, int64(20), stats.unparsedTaskIDFiles)
-		require.Len(t, stats.firstNonImportIntoTaskFiles, maxLoggedUnexpectedFiles)
-		require.Len(t, stats.firstUnparsedTaskIDFiles, maxLoggedUnexpectedFiles)
+		require.Equal(t, int64(1), stats.CandidateTasks)
+		require.Equal(t, int64(1), stats.DeletedTasks)
+		require.Equal(t, int64(40), stats.DeletedFiles)
+		require.Equal(t, int64(20), stats.NonImportIntoTaskFiles.Count)
+		require.Equal(t, int64(20), stats.UnparsedTaskIDFiles.Count)
+		require.Len(t, stats.NonImportIntoTaskFiles.Samples, maxLoggedSamples)
+		require.Len(t, stats.UnparsedTaskIDFiles.Samples, maxLoggedSamples)
 
-		nonImportLogs := logs.FilterMessage("conflict-row cleanup deleted objects for non-import-into tasks").All()
-		require.Len(t, nonImportLogs, 1)
-		require.Len(t, nonImportLogs[0].ContextMap()["file-samples"], maxLoggedUnexpectedFiles)
-		unparsedLogs := logs.FilterMessage("conflict-row cleanup deleted objects with unparsed task IDs").All()
-		require.Len(t, unparsedLogs, 1)
-		require.Len(t, unparsedLogs[0].ContextMap()["file-samples"], maxLoggedUnexpectedFiles)
+		entries := logs.All()
+		require.Len(t, entries, 1)
+		require.Equal(t, zap.InfoLevel, entries[0].Level)
+		require.Equal(t, "finished conflict-row file cleanup", entries[0].Message)
+		fields := entries[0].ContextMap()
+		require.Len(t, fields, 1)
+		loggedStats, loggedFields := requireLoggedCleanupStats(t, fields["stats"])
+		require.Equal(t, int64(1), loggedStats.CandidateTasks)
+		require.Equal(t, int64(1), loggedStats.DeletedTasks)
+		require.Equal(t, int64(40), loggedStats.DeletedFiles)
+		requireLoggedCountWithSamples(t,
+			loggedFields["non-import-into-task-files"], stats.NonImportIntoTaskFiles)
+		requireLoggedCountWithSamples(t,
+			loggedFields["unparsed-task-id-files"], stats.UnparsedTaskIDFiles)
+		require.NotContains(t, loggedFields, "retained-tasks")
+		require.NotContains(t, loggedFields, "missing-tasks")
+		require.NotContains(t, loggedFields, "missing-task-files")
+		require.NotContains(t, loggedFields, "failures")
 	})
 
 	t.Run("unparsed files respect the object bound", func(t *testing.T) {
@@ -463,9 +527,9 @@ func TestCleanFiles(t *testing.T) {
 				return nil, nil
 			}), now)
 		require.NoError(t, err)
-		require.Zero(t, stats.candidateTasks)
-		require.Equal(t, int64(maxObjectsPerFlush+1), stats.unparsedTaskIDFiles)
-		require.Equal(t, int64(maxObjectsPerFlush+1), stats.deletedFiles)
+		require.Zero(t, stats.CandidateTasks)
+		require.Equal(t, int64(maxObjectsPerFlush+1), stats.UnparsedTaskIDFiles.Count)
+		require.Equal(t, int64(maxObjectsPerFlush+1), stats.DeletedFiles)
 		require.Len(t, store.deleteCalls, 1)
 		require.Len(t, store.deleteCalls[0], maxObjectsPerFlush+1)
 	})
@@ -481,7 +545,7 @@ func TestCleanFiles(t *testing.T) {
 				return nil, nil
 			}), now)
 		require.ErrorIs(t, err, context.Canceled)
-		require.Equal(t, int64(1), stats.failures)
+		require.Equal(t, int64(1), stats.Failures)
 	})
 }
 
@@ -498,12 +562,6 @@ func TestCleanExpiredFiles(t *testing.T) {
 
 		err := CleanExpiredFiles(context.Background(), nil, credentialURI)
 		require.Error(t, err)
-		for _, entry := range logs.All() {
-			require.NotContains(t, entry.Message+fmt.Sprint(entry.ContextMap()), credentialURI)
-			require.NotContains(t, entry.Message+fmt.Sprint(entry.ContextMap()), "secret")
-		}
-		summaryLogs := logs.FilterMessage("finished conflict-row file cleanup").All()
-		require.Len(t, summaryLogs, 1)
-		require.Equal(t, int64(1), summaryLogs[0].ContextMap()["failures"])
+		require.Empty(t, logs.All())
 	})
 }

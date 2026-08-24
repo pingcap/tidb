@@ -32,11 +32,10 @@ import (
 const (
 	// Conflict-row files are retained for one week. Keep this hardcoded until
 	// customer feedback shows that a configurable retention period is needed.
-	retention                = 7 * 24 * time.Hour
-	maxTaskIDsPerFlush       = 128
-	maxObjectsPerFlush       = 1000
-	maxLoggedMissingTaskIDs  = 16
-	maxLoggedUnexpectedFiles = 16
+	retention          = 7 * 24 * time.Hour
+	maxTaskIDsPerFlush = 128
+	maxObjectsPerFlush = 1000
+	maxLoggedSamples   = 16
 )
 
 // TaskInfoGetter provides task metadata needed to decide conflict-row retention.
@@ -44,25 +43,57 @@ type TaskInfoGetter interface {
 	GetTaskCleanupInfoByIDs(context.Context, []int64) (map[int64]*storage.TaskCleanupInfo, error)
 }
 
+// countWithSamples uses exported fields so zap.Any can encode them using their JSON tags.
+type countWithSamples struct {
+	Count   int64    `json:"count,omitempty"`
+	Samples []string `json:"samples,omitempty"`
+}
+
+func (cs *countWithSamples) appendSamples(samples []string) {
+	remaining := maxLoggedSamples - len(cs.Samples)
+	if remaining <= 0 {
+		return
+	}
+	cs.Samples = append(cs.Samples, samples[:min(remaining, len(samples))]...)
+}
+
+func recordCountWithSamples(cs **countWithSamples, samples ...string) {
+	if len(samples) == 0 {
+		return
+	}
+	if *cs == nil {
+		*cs = &countWithSamples{}
+	}
+	(*cs).Count += int64(len(samples))
+	(*cs).appendSamples(samples)
+}
+
+func mergeCountWithSamples(cs **countWithSamples, completed *countWithSamples) {
+	if completed == nil {
+		return
+	}
+	if *cs == nil {
+		*cs = &countWithSamples{}
+	}
+	(*cs).Count += completed.Count
+	(*cs).appendSamples(completed.Samples)
+}
+
+// cleanupStats uses exported fields so zap.Any can encode them using their JSON tags.
 type cleanupStats struct {
-	candidateTasks              int64
-	retainedTasks               int64
-	deletedTasks                int64
-	deletedFiles                int64
-	missingTasks                int64
-	missingTaskFiles            int64
-	nonImportIntoTaskFiles      int64
-	unparsedTaskIDFiles         int64
-	failures                    int64
-	firstMissingTaskIDs         []int64
-	firstMissingTaskFiles       []string
-	firstNonImportIntoTaskFiles []string
-	firstUnparsedTaskIDFiles    []string
+	CandidateTasks         int64             `json:"candidate-tasks,omitempty"`
+	RetainedTasks          int64             `json:"retained-tasks,omitempty"`
+	DeletedTasks           int64             `json:"deleted-tasks,omitempty"`
+	DeletedFiles           int64             `json:"deleted-files,omitempty"`
+	MissingTasks           *countWithSamples `json:"missing-tasks,omitempty"`
+	MissingTaskFiles       *countWithSamples `json:"missing-task-files,omitempty"`
+	NonImportIntoTaskFiles *countWithSamples `json:"non-import-into-task-files,omitempty"`
+	UnparsedTaskIDFiles    *countWithSamples `json:"unparsed-task-id-files,omitempty"`
+	Failures               int64             `json:"failures,omitempty"`
 }
 
 func (stats *cleanupStats) recordUnparsedTaskIDFiles(files []string) {
-	stats.unparsedTaskIDFiles += int64(len(files))
-	stats.firstUnparsedTaskIDFiles = appendFirstFiles(stats.firstUnparsedTaskIDFiles, files)
+	recordCountWithSamples(&stats.UnparsedTaskIDFiles, files...)
 }
 
 func (stats *cleanupStats) recordTask(
@@ -71,7 +102,7 @@ func (stats *cleanupStats) recordTask(
 	info *storage.TaskCleanupInfo,
 	shouldDeleteFiles bool,
 ) {
-	stats.candidateTasks++
+	stats.CandidateTasks++
 	switch {
 	case info == nil:
 		// Conflict-row files should not outlive their task metadata. This is
@@ -82,48 +113,32 @@ func (stats *cleanupStats) recordTask(
 		// files cannot belong to IMPORT INTO, so record samples before deletion.
 		stats.recordNonImportIntoTask(files)
 	case shouldDeleteFiles:
-		stats.deletedTasks++
+		stats.DeletedTasks++
 	default:
-		stats.retainedTasks++
+		stats.RetainedTasks++
 	}
 }
 
 func (stats *cleanupStats) recordMissingTask(taskID int64, files []string) {
-	stats.missingTasks++
-	stats.missingTaskFiles += int64(len(files))
-	stats.deletedTasks++
-	if len(stats.firstMissingTaskIDs) < maxLoggedMissingTaskIDs {
-		stats.firstMissingTaskIDs = append(stats.firstMissingTaskIDs, taskID)
-	}
-	stats.firstMissingTaskFiles = appendFirstFiles(stats.firstMissingTaskFiles, files)
+	recordCountWithSamples(&stats.MissingTasks, strconv.FormatInt(taskID, 10))
+	recordCountWithSamples(&stats.MissingTaskFiles, files...)
+	stats.DeletedTasks++
 }
 
 func (stats *cleanupStats) recordNonImportIntoTask(files []string) {
-	stats.nonImportIntoTaskFiles += int64(len(files))
-	stats.deletedTasks++
-	stats.firstNonImportIntoTaskFiles = appendFirstFiles(stats.firstNonImportIntoTaskFiles, files)
+	recordCountWithSamples(&stats.NonImportIntoTaskFiles, files...)
+	stats.DeletedTasks++
 }
 
 func (stats *cleanupStats) mergeCompletedFlush(completed cleanupStats) {
-	stats.candidateTasks += completed.candidateTasks
-	stats.retainedTasks += completed.retainedTasks
-	stats.deletedTasks += completed.deletedTasks
-	stats.deletedFiles += completed.deletedFiles
-	stats.missingTasks += completed.missingTasks
-	stats.missingTaskFiles += completed.missingTaskFiles
-	stats.nonImportIntoTaskFiles += completed.nonImportIntoTaskFiles
-	stats.unparsedTaskIDFiles += completed.unparsedTaskIDFiles
-	missingIDCapacity := maxLoggedMissingTaskIDs - len(stats.firstMissingTaskIDs)
-	stats.firstMissingTaskIDs = append(
-		stats.firstMissingTaskIDs,
-		completed.firstMissingTaskIDs[:min(missingIDCapacity, len(completed.firstMissingTaskIDs))]...,
-	)
-	stats.firstMissingTaskFiles = appendFirstFiles(
-		stats.firstMissingTaskFiles, completed.firstMissingTaskFiles)
-	stats.firstNonImportIntoTaskFiles = appendFirstFiles(
-		stats.firstNonImportIntoTaskFiles, completed.firstNonImportIntoTaskFiles)
-	stats.firstUnparsedTaskIDFiles = appendFirstFiles(
-		stats.firstUnparsedTaskIDFiles, completed.firstUnparsedTaskIDFiles)
+	stats.CandidateTasks += completed.CandidateTasks
+	stats.RetainedTasks += completed.RetainedTasks
+	stats.DeletedTasks += completed.DeletedTasks
+	stats.DeletedFiles += completed.DeletedFiles
+	mergeCountWithSamples(&stats.MissingTasks, completed.MissingTasks)
+	mergeCountWithSamples(&stats.MissingTaskFiles, completed.MissingTaskFiles)
+	mergeCountWithSamples(&stats.NonImportIntoTaskFiles, completed.NonImportIntoTaskFiles)
+	mergeCountWithSamples(&stats.UnparsedTaskIDFiles, completed.UnparsedTaskIDFiles)
 }
 
 func parseTaskID(name string) (int64, bool) {
@@ -169,9 +184,9 @@ func cleanFiles(
 ) (stats cleanupStats, err error) {
 	defer func() {
 		if err != nil {
-			stats.failures++
+			stats.Failures++
 		}
-		logCleanupResult(stats)
+		logutil.BgLogger().Info("finished conflict-row file cleanup", zap.Any("stats", stats))
 	}()
 
 	taskFiles := make(map[int64][]string, maxTaskIDsPerFlush)
@@ -211,7 +226,7 @@ func cleanFiles(
 			if err := store.DeleteFiles(ctx, filesToDelete); err != nil {
 				return err
 			}
-			flushStats.deletedFiles = int64(len(filesToDelete))
+			flushStats.DeletedFiles = int64(len(filesToDelete))
 		}
 		stats.mergeCompletedFlush(flushStats)
 
@@ -247,45 +262,6 @@ func cleanFiles(
 	return stats, nil
 }
 
-func appendFirstFiles(firstFiles, files []string) []string {
-	remaining := maxLoggedUnexpectedFiles - len(firstFiles)
-	if remaining <= 0 {
-		return firstFiles
-	}
-	return append(firstFiles, files[:min(remaining, len(files))]...)
-}
-
-func logCleanupResult(stats cleanupStats) {
-	logger := logutil.BgLogger()
-	if stats.missingTasks > 0 {
-		logger.Warn("conflict-row cleanup deleted objects without task metadata",
-			zap.Int64("missing-tasks", stats.missingTasks),
-			zap.Int64("file-count", stats.missingTaskFiles),
-			zap.Int64s("task-ids", stats.firstMissingTaskIDs),
-			zap.Strings("file-samples", stats.firstMissingTaskFiles))
-	}
-	if stats.nonImportIntoTaskFiles > 0 {
-		logger.Warn("conflict-row cleanup deleted objects for non-import-into tasks",
-			zap.Int64("file-count", stats.nonImportIntoTaskFiles),
-			zap.Strings("file-samples", stats.firstNonImportIntoTaskFiles))
-	}
-	if stats.unparsedTaskIDFiles > 0 {
-		logger.Warn("conflict-row cleanup deleted objects with unparsed task IDs",
-			zap.Int64("file-count", stats.unparsedTaskIDFiles),
-			zap.Strings("file-samples", stats.firstUnparsedTaskIDFiles))
-	}
-	logger.Info("finished conflict-row file cleanup",
-		zap.Int64("candidate-tasks", stats.candidateTasks),
-		zap.Int64("retained-tasks", stats.retainedTasks),
-		zap.Int64("deleted-tasks", stats.deletedTasks),
-		zap.Int64("deleted-files", stats.deletedFiles),
-		zap.Int64("missing-tasks", stats.missingTasks),
-		zap.Int64("missing-task-files", stats.missingTaskFiles),
-		zap.Int64("non-import-into-task-files", stats.nonImportIntoTaskFiles),
-		zap.Int64("unparsed-task-id-files", stats.unparsedTaskIDFiles),
-		zap.Int64("failures", stats.failures))
-}
-
 // CleanExpiredFiles cleans conflict-row files based on task metadata and the retention policy.
 func CleanExpiredFiles(ctx context.Context, infoGetter TaskInfoGetter, cloudStorageURI string) error {
 	if cloudStorageURI == "" {
@@ -293,7 +269,6 @@ func CleanExpiredFiles(ctx context.Context, infoGetter TaskInfoGetter, cloudStor
 	}
 	sortStore, err := importer.GetSortStore(ctx, cloudStorageURI)
 	if err != nil {
-		logCleanupResult(cleanupStats{failures: 1})
 		return err
 	}
 	defer sortStore.Close()
