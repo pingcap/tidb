@@ -849,14 +849,25 @@ impl KvTable {
                 }
             })
             .collect();
-        let common_primary = crate::handle_range::common_handle_primary(self);
+        // Go's PhysicalTableScan.ToPB names the clustered primary's column
+        // ids on every table scan over a common-handle table, whether or not
+        // the catalog stores that key as an index. This tier stores no KvIndex
+        // for a clustered key, so the stored-index lookup answers None for
+        // exactly the tables TiKV then cannot decode: the PK columns live in
+        // the record KEY, and with no primary_column_ids TiKV leaves their
+        // slots unfilled and rejects the NOT NULL row as corrupted. The
+        // synthesized metadata (see handle_range::clustered_primary_metadata)
+        // is the same reconstruction the row-cursor builder above sends.
+        let common_primary = crate::handle_range::clustered_primary_metadata(self);
         let primary_column_ids = common_primary
+            .as_ref()
             .into_iter()
             .flat_map(|index| index.column_offsets.iter())
             .filter_map(|offset| self.columns.get(*offset))
             .map(|column| column.id)
             .collect();
         let primary_prefix_column_ids = common_primary
+            .as_ref()
             .into_iter()
             .flat_map(|index| {
                 index
