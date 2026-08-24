@@ -449,6 +449,11 @@ struct ParallelIntCountGroup {
 struct AggInput {
     value: Option<Datum>,
     distinct_key: Option<Vec<u8>>,
+    /// A DECIMAL cell's `(signed coefficient, scale)` read straight from the
+    /// chunk, set only for a non-DISTINCT SUM over a bare DECIMAL column.
+    /// The fold consumes this INSTEAD of `value`, skipping the Datum and its
+    /// `Decimal` build entirely.
+    decimal_coefficient: Option<(i128, u32)>,
 }
 
 impl AggFunc {
@@ -630,6 +635,13 @@ impl AggState {
     /// Folds one DECIMAL cell coefficient into the fixed-scale SUM
     /// accumulator. Returns `false` when this state cannot take it (DISTINCT
     /// or an i128 overflow) and the caller must use the complete path.
+    /// Folds a DECIMAL cell coefficient (read straight from the chunk)
+    /// into this state. Returns `false` when the caller must replay the row
+    /// through the complete path.
+    fn partial_update_with_coefficient(&mut self, coefficient: i128, scale: u32) -> bool {
+        self.partial.update_with_coefficient(coefficient, scale)
+    }
+
     fn update_sum_decimal_fast(&mut self, coefficient: i128, scale: u32) -> bool {
         if self.seen.is_some() {
             return false;
@@ -1028,6 +1040,35 @@ impl Partial {
         };
         if let Some((sum, count)) = replacement {
             *self = Partial::AvgDecimal { sum, count };
+        }
+    }
+
+    /// Folds one DECIMAL cell coefficient into the fixed-scale SUM
+    /// accumulator. Returns `false` when this state cannot take it (an i128
+    /// overflow) and the caller must replay via the complete path.
+    fn update_with_coefficient(&mut self, coefficient: i128, scale: u32) -> bool {
+        match &mut *self {
+            Partial::SumDecimal(None) => {
+                *self = Partial::SumDecimalFast {
+                    sum: coefficient,
+                    scale,
+                };
+                true
+            }
+            Partial::SumDecimalFast {
+                sum,
+                scale: current_scale,
+            } if *current_scale == scale => match sum.checked_add(coefficient) {
+                Some(total) => {
+                    *sum = total;
+                    true
+                }
+                None => {
+                    self.materialize_sum_fast();
+                    false
+                }
+            },
+            _ => false,
         }
     }
 
@@ -1783,6 +1824,11 @@ impl<C: Columns> StreamAggExec<C> {
             let mut sort_key = Vec::with_capacity(func.order_by.len());
             for (expr, _) in &func.order_by {
                 sort_key.push(expr.eval(ctx, row)?);
+            }
+            if let Some((coefficient, scale)) = input.decimal_coefficient {
+                if states[index].partial_update_with_coefficient(coefficient, scale) {
+                    continue;
+                }
             }
             states[index].update(input.value, &extra_values, sort_key, input.distinct_key)?;
         }
@@ -2782,6 +2828,7 @@ impl<C: HashAggContext> HashAggExec<C> {
                 let input = AggInput {
                     value,
                     distinct_key: None,
+                    decimal_coefficient: None,
                 };
                 let sort_key = Vec::new();
                 delta += state.update(input.value, &extra, sort_key, input.distinct_key)?;
@@ -2794,6 +2841,11 @@ impl<C: HashAggContext> HashAggExec<C> {
             let mut sort_key = Vec::with_capacity(f.order_by.len());
             for (expr, _) in &f.order_by {
                 sort_key.push(expr.eval(&self.ctx, row)?);
+            }
+            if let Some((coefficient, scale)) = input.decimal_coefficient {
+                if state.partial_update_with_coefficient(coefficient, scale) {
+                    continue;
+                }
             }
             delta += state.update(input.value, &extra_values, sort_key, input.distinct_key)?;
         }
@@ -3008,6 +3060,47 @@ fn eval_agg_input<C: Columns>(
     row: tidb_chunk::row::Row<'_>,
     extra_values: &mut Vec<Datum>,
 ) -> Result<AggInput, ExecError> {
+    // A non-DISTINCT SUM over a bare DECIMAL column reads the raw MyDecimal
+    // words directly and returns the i128 coefficient -- skipping the Datum
+    // materialization whose NewDecimal arm converts via an ASCII digit
+    // round trip (`Decimal::from_my_decimal`). The fold consumes
+    // `decimal_coefficient` without building a `Decimal`.
+    if matches!(f.kind, AggKind::Sum)
+        && !f.distinct
+        && f.extra_args.is_empty()
+        && f.order_by.is_empty()
+    {
+        if let Some(Expression::Column(column)) = &f.arg {
+            let index = usize::try_from(column.index)
+                .map_err(|_| ExecError::unsupported("a SUM argument column has no valid offset"))?;
+            if !row.is_null(index) {
+                let is_decimal = column
+                    .get_static_type()
+                    .is_some_and(|ty| ty.code() == tidb_datatype::FieldTypeCode::NewDecimal);
+                if is_decimal {
+                    if let Some((coefficient, scale)) = row
+                        .chunk()
+                        .expect("row has chunk")
+                        .column(index)
+                        .get_my_decimal(row.idx())
+                        .to_i128_scaled()
+                    {
+                        return Ok(AggInput {
+                            value: None,
+                            distinct_key: None,
+                            decimal_coefficient: Some((coefficient, scale)),
+                        });
+                    }
+                }
+            } else {
+                return Ok(AggInput {
+                    value: Some(Datum::Null),
+                    distinct_key: None,
+                    decimal_coefficient: None,
+                });
+            }
+        }
+    }
     let (value, distinct_key) = if f.extra_args.is_empty()
         && !matches!(
             f.kind,
@@ -3114,6 +3207,7 @@ fn eval_agg_input<C: Columns>(
     Ok(AggInput {
         value,
         distinct_key,
+        decimal_coefficient: None,
     })
 }
 
