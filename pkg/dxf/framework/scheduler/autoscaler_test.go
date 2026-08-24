@@ -87,6 +87,66 @@ func TestCalcMaxNodeCountByDataSize(t *testing.T) {
 	}
 }
 
+func TestCalcMaxNodeCountForExport(t *testing.T) {
+	tests := []struct {
+		name          string
+		dataSize      int64
+		tableCount    int64
+		cores         int
+		amplifyFactor float64
+		expected      int
+	}{
+		{"trivial", 0, 0, 8, 1.0, 1},
+		{"baseline export bytes, table count doesn't add a node", int64(baseDataSizeForExport), 1, 8, 1.0, 1},
+		{"5TiB single table, 8c", 5 * units.TiB, 1, 8, 1.0, 7},
+		// same bytes as the 300k-table case below, but table count alone
+		// doesn't need a second node until baseTableCountForExport.
+		{"100k tiny tables, 7c: bytes and count both trivial", 100_000 * units.KiB, 100_000, 7, 1.0, 1},
+		{"300k tiny tables, 8c: still one node", 300_000 * units.KiB, 300_000, 8, 1.0, 1},
+		{"1.2M tiny tables, 8c: at the count threshold, still one node", 1_200_000 * units.KiB, 1_200_000, 8, 1.0, 1},
+		{"2.4M tiny tables, 8c: table count alone now needs a 2nd node", 2_400_000 * units.KiB, 2_400_000, 8, 1.0, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calc := NewRCCalc(tt.dataSize, tt.cores, 0, &schstatus.TuneFactors{AmplifyFactor: tt.amplifyFactor})
+			got := calc.CalcMaxNodeCountForExport(tt.tableCount)
+			require.Equal(t, tt.expected, got,
+				fmt.Sprintf("dataSize:%d tableCount:%d cores:%d", tt.dataSize, tt.tableCount, tt.cores))
+		})
+	}
+}
+
+func TestCalcRequiredSlotsForExport(t *testing.T) {
+	tests := []struct {
+		name          string
+		dataSize      int64
+		tableCount    int64
+		cores         int
+		amplifyFactor float64
+		expected      int
+	}{
+		{"trivial", 0, 0, 8, 1.0, 4},
+		// same total bytes as a 100k-table export (~97.7MiB), but 100k tables
+		// alone doesn't need to be pulled above the bytes-driven floor: it
+		// already finishes well inside the 30-minute SLA at 1 slot.
+		{"100k tiny tables, 7c: under SLA even at 1 slot, no change", 100_000 * units.KiB, 100_000, 7, 1.0, 1},
+		// this is the case the bytes-only formula got wrong: bytes are
+		// trivial, but 300k tables at 1 slot would blow the 30-minute SLA
+		// (see CalcMaxNodeCountForExport's doc comment), so slots must rise.
+		{"300k tiny tables, 8c: bytes-only formula would wrongly floor at 1", 300_000 * units.KiB, 300_000, 8, 1.0, 2},
+		{"1.2M tiny tables, 8c: count term saturates the node", 1_200_000 * units.KiB, 1_200_000, 8, 1.0, 8},
+		{"amplifyFactor doubles the count-driven term too", 300_000 * units.KiB, 300_000, 8, 2.0, 4},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calc := NewRCCalc(tt.dataSize, tt.cores, 0, &schstatus.TuneFactors{AmplifyFactor: tt.amplifyFactor})
+			got := calc.CalcRequiredSlotsForExport(tt.tableCount)
+			require.Equal(t, tt.expected, got,
+				fmt.Sprintf("dataSize:%d tableCount:%d cores:%d", tt.dataSize, tt.tableCount, tt.cores))
+		})
+	}
+}
+
 func TestCalcRequiredSlotsByDataSize(t *testing.T) {
 	tests := []struct {
 		dataSize int64
