@@ -25,6 +25,8 @@
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
+use std::sync::atomic::Ordering;
+use tokio::sync::watch;
 use bytes::{Buf, BufMut};
 use tidb_pd_client::ClusterSecurity;
 use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
@@ -245,19 +247,59 @@ enum UnaryCallOutcome {
 
 /// Synchronous capability for the sole shared unary and BatchCommands transport.
 pub(super) struct RawTransportClient {
-    handle: Option<TransportHandle>,
-    owner: Option<TransportRuntime>,
+    /// One command sender PER shard. Go shares one ClientConn across
+    /// goroutines and lets gRPC multiplex concurrent RPCs from every core;
+    /// this client's admission serializes through its worker thread, so a
+    /// single instance caps the whole process at one thread's command rate.
+    /// Each shard is a complete independent runtime -- own worker thread,
+    /// own tokio runtime, own channel pool and batch state -- so admitting
+    /// from several shards multiplies exactly that capacity while every
+    /// completion stays inside its own shard.
+    routes: Vec<TransportHandle>,
+    /// Shared clone cursor: every clone of the process owner claims the next
+    /// shard, so concurrent sessions spread across the fleet.
+    next_route: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Which shard THIS handle serves. Every CLONE of the process owner pins
+    /// itself to the next shard (round robin over an atomic cursor), and a
+    /// session keeps its shard for life: all of one session's commands --
+    /// submits, events, generations, recovery -- then touch one channel pool
+    /// exactly as a single-runtime transport did, which is what keeps
+    /// per-channel identities (`physical_channel_version, retirement,
+    /// forwarding) as true per session as they ever were. Only ACROSS
+    /// sessions does the fleet of workers multiply the command rate.
+    route: usize,
+    owner: Option<Vec<TransportRuntime>>,
     shutdown_cancellation: TransportShutdownCancellation,
 }
 
 impl Clone for RawTransportClient {
     fn clone(&self) -> Self {
+        // A clone is a NEW session lease over the same process authorities.
+        // Pinning it to the next shard spreads sessions across the fleet; a
+        // process owner (which never clones) always serves from shard 0.
+        let route = self.next_route.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % self.routes.len().max(1);
         Self {
-            handle: self.handle.clone(),
+            routes: self.routes.clone(),
+            next_route: std::sync::Arc::clone(&self.next_route),
+            route,
             owner: None,
             shutdown_cancellation: TransportShutdownCancellation::detached(),
         }
     }
+}
+
+/// Shards built when the environment does not name a count. Four keeps each
+/// worker's per-command cost far below saturation at TiDB-scale write rates;
+/// sixteen is the sanity ceiling.
+const DEFAULT_TRANSPORT_SHARDS: usize = 4;
+const MAX_TRANSPORT_SHARDS: usize = 16;
+
+fn transport_shard_count() -> usize {
+    std::env::var("TIKV_TRANSPORT_SHARDS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_TRANSPORT_SHARDS)
+        .clamp(1, MAX_TRANSPORT_SHARDS)
 }
 
 impl RawTransportClient {
@@ -267,15 +309,44 @@ impl RawTransportClient {
 
     /// Builds the transport with cluster TLS material applied to every TiKV
     /// channel. Plaintext security keeps [`Self::new`]'s `http://` behavior.
+    ///
+    /// Every shard gets its OWN worker thread, tokio runtime, channel pool,
+    /// and batch state; all shards share ONE top-level shutdown watch, so a
+    /// single cancellation still stops every worker at once.
     pub(super) fn with_security(
         security: Arc<ClusterSecurity>,
     ) -> Result<Self, DirectUnaryClientError> {
-        let owner = TransportRuntime::new(security)?;
+        let shards = transport_shard_count();
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let cancellation = TransportShutdownCancellation::from_sender(shutdown);
+        let mut routes = Vec::with_capacity(shards);
+        let mut owners = Vec::with_capacity(shards);
+        for _ in 0..shards {
+            let owner = TransportRuntime::new_with_shutdown_receiver(
+                Arc::clone(&security),
+                shutdown_rx.clone(),
+            )?;
+            routes.push(owner.handle());
+            owners.push(owner);
+        }
         Ok(Self {
-            handle: Some(owner.handle()),
-            shutdown_cancellation: owner.shutdown_cancellation(),
-            owner: Some(owner),
+            routes,
+            // The process owner itself serves from shard 0; every clone claims
+            // the next shard from the shared cursor.
+            next_route: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(
+                1 % shards.max(1),
+            )),
+            route: 0,
+            shutdown_cancellation: cancellation,
+            owner: Some(owners),
         })
+    }
+
+    /// This handle's shard, or `Closed once shutdown has drained it.
+    fn route(&self) -> Result<&TransportHandle, DirectUnaryClientError> {
+        self.routes
+            .get(self.route)
+            .ok_or(DirectUnaryClientError::Closed)
     }
 
     pub(super) const fn is_owner(&self) -> bool {
@@ -291,7 +362,7 @@ impl RawTransportClient {
         if call.cancellation().is_cancelled() {
             return Err(DirectUnaryClientError::CallerCancelled);
         }
-        self.handle()?.unary_send(address, request, call)
+        self.route()?.unary_send(address, request, call)
     }
 
     pub(super) fn submit_batch(
@@ -299,7 +370,7 @@ impl RawTransportClient {
         address: &str,
         entries: Vec<BatchCommandEntry>,
     ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
-        self.handle()?.batch_submit(address, entries)
+        self.route()?.batch_submit(address, entries)
     }
 
     pub(super) fn submit_batch_with_call(
@@ -308,12 +379,20 @@ impl RawTransportClient {
         entries: Vec<BatchCommandEntry>,
         call: &UnaryCallContext,
     ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
-        self.handle()?
+        self.route()?
             .batch_submit_with_call(address, entries, call)
     }
 
     pub(super) fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
-        self.handle()?.close_address(address)
+        // A poisoned address is closed on EVERY shard: recovery reconnects
+        // each of them, so no shard keeps serving from the bad generation.
+        let mut result = Ok(());
+        for handle in &self.routes {
+            if let Err(error) = handle.close_address(address) {
+                result = Err(result.err().unwrap_or(error));
+            }
+        }
+        result
     }
 
     pub(super) fn close_address_version(
@@ -321,7 +400,16 @@ impl RawTransportClient {
         address: &str,
         version: u64,
     ) -> Result<(), DirectUnaryClientError> {
-        self.handle()?.close_address_version(address, version)
+        // Generations are PER SHARD, and that is what makes the version guard
+        // correct here: each shard closes its own channel iff THAT shard's
+        // generation matches the stale one being reported.
+        let mut result = Ok(());
+        for handle in &self.routes {
+            if let Err(error) = handle.close_address_version(address, version) {
+                result = Err(result.err().unwrap_or(error));
+            }
+        }
+        result
     }
 
     pub(super) fn liveness(
@@ -329,12 +417,13 @@ impl RawTransportClient {
         address: &str,
         timeout: Duration,
     ) -> Result<StoreLiveness, DirectUnaryClientError> {
-        self.handle()?.liveness(address, timeout)
+        // Any shard answers "is this store reachable": they all speak to the
+        // same store through identically-configured channels.
+        self.route()?.liveness(address, timeout)
     }
 
     pub(super) fn inspect(&self, address: &str) -> (Option<u64>, usize) {
-        self.handle()
-            .map_or((None, 0), |handle| handle.inspect(address))
+        self.routes.first().map_or((None, 0), |handle| handle.inspect(address))
     }
 
     pub(super) fn inspect_batch(
@@ -342,7 +431,7 @@ impl RawTransportClient {
         address: &str,
         forwarded_host: Option<&str>,
     ) -> (Option<u64>, u64) {
-        self.handle().map_or((None, 0), |handle| {
+        self.routes.first().map_or((None, 0), |handle| {
             handle.inspect_batch(address, forwarded_host)
         })
     }
@@ -352,18 +441,22 @@ impl RawTransportClient {
     }
 
     pub(super) fn shutdown(&mut self) -> Result<(), DirectUnaryClientError> {
+        // One top-level cancel reaches every shard's worker watch.
         self.shutdown_cancellation.cancel();
-        self.handle.take();
-        if let Some(mut owner) = self.owner.take() {
-            owner.shutdown()
-        } else {
-            Ok(())
+        let mut result = Ok(());
+        if let Some(mut owners) = self.owner.take() {
+            for mut owner in owners.drain(..) {
+                // Each shard's own orderly close: Close command, acknowledgement,
+                // worker join. The first error wins; later shards still close.
+                if let Err(error) = owner.shutdown() {
+                    result = Err(result.err().unwrap_or(error));
+                }
+            }
         }
+        self.routes.clear();
+        result
     }
 
-    fn handle(&self) -> Result<&TransportHandle, DirectUnaryClientError> {
-        self.handle.as_ref().ok_or(DirectUnaryClientError::Closed)
-    }
 }
 
 /// Immutable in-flight ownership split from the worker-owned channel pool.

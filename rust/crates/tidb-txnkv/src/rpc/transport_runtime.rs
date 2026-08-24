@@ -98,6 +98,13 @@ pub struct TransportShutdownCancellation {
 }
 
 impl TransportShutdownCancellation {
+    /// Builds one cancellation from its own watch sender, for an owner that
+    /// fans ONE watch out to every shard of a sharded transport.
+    #[must_use]
+    pub(super) fn from_sender(shutdown: watch::Sender<bool>) -> Self {
+        Self { shutdown }
+    }
+
     /// Interrupts runtime-owned operations before orderly close is queued.
     pub fn cancel(&self) {
         let _ = self.shutdown.send(true);
@@ -111,9 +118,22 @@ impl TransportShutdownCancellation {
 
 impl TransportRuntime {
     pub(super) fn new(security: Arc<ClusterSecurity>) -> Result<Self, DirectUnaryClientError> {
+        let (_shutdown, shutdown_rx) = watch::channel(false);
+        Self::new_with_shutdown_receiver(security, shutdown_rx)
+    }
+
+    /// One SHARD of a sharded transport: identical to [`Self::new], except
+    /// the worker listens on the CALLER's shutdown watch instead of a private
+    /// one, so one top-level cancellation stops every shard at once. This
+    /// runtime's own `cancellation stays wired to a sender nobody else holds,
+    /// which keeps this shard's orderly-close path (`Self::shutdown) intact.
+    pub(super) fn new_with_shutdown_receiver(
+        security: Arc<ClusterSecurity>,
+        shutdown_rx: watch::Receiver<bool>,
+    ) -> Result<Self, DirectUnaryClientError> {
         let (commands, receiver) = mpsc::channel();
         let worker_commands = commands.clone();
-        let (shutdown, shutdown_rx) = watch::channel(false);
+        let (shutdown, _private_rx) = watch::channel(false);
         let cancellation = TransportShutdownCancellation { shutdown };
         let (ready_tx, ready_rx) = mpsc::channel();
         let worker = std::thread::spawn(move || {
