@@ -26,6 +26,7 @@ mod etint_argument;
 mod go_arithmetic_values;
 mod go_control_op_math_values;
 mod go_string_values;
+mod go_time_values;
 mod etstring_argument;
 mod evaluator_binop;
 mod math;

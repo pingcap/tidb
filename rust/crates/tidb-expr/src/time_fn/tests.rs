@@ -439,9 +439,17 @@ fn go_time_vectors_cover_duration_scale_and_clamp() {
         sec_to_time(&[Datum::new_string("123.4".to_string())]).unwrap(),
         Datum::new_string("00:02:03.400000".to_string())
     );
+    // Go's TestSecToTime pins this row with the constant's field type set
+    // to DECIMAL 1 (`SetDecimal(1)`): an SQL literal 86401.4 IS a DECIMAL,
+    // so the port represents it as one; a bare Real carries no scale and
+    // answers Go's unspecified default of six digits.
     assert_eq!(
-        sec_to_time(&[Datum::Real(86_401.4)]).unwrap(),
+        sec_to_time(&[Datum::Decimal(crate::Decimal::from_literal("86401.4"))]).unwrap(),
         Datum::new_string("24:00:01.4".to_string())
+    );
+    assert_eq!(
+        sec_to_time(&[Datum::Real(86_401.543_21)]).unwrap(),
+        Datum::new_string("24:00:01.543210".to_string())
     );
     assert_eq!(
         maketime(&[
@@ -510,9 +518,12 @@ fn sec_to_time_source_vectors() {
         (Datum::Int(2_378), "00:39:38"),
         (Datum::Int(3_864_000), "838:59:59"),
         (Datum::Int(-3_864_000), "-838:59:59"),
-        (Datum::Real(86_401.4), "24:00:01.4"),
-        (Datum::Real(-86_401.4), "-24:00:01.4"),
-        (Datum::Real(86_401.543_21), "24:00:01.54321"),
+        // Go sets the constant's field-type decimal per row
+        // (`SetDecimal(test.inputDecimal)`): 1, 1, then 5. A DECIMAL datum
+        // carries that scale; a bare Real would be the unspecified case.
+        (Datum::Decimal(crate::Decimal::from_literal("86401.4")), "24:00:01.4"),
+        (Datum::Decimal(crate::Decimal::from_literal("-86401.4")), "-24:00:01.4"),
+        (Datum::Decimal(crate::Decimal::from_literal("86401.54321")), "24:00:01.54321"),
         (string_datum("123.4"), "00:02:03.400000"),
         (string_datum("123.4567891"), "00:02:03.456789"),
         (string_datum("123"), "00:02:03.000000"),
@@ -521,6 +532,8 @@ fn sec_to_time_source_vectors() {
         (string_datum("1e-5"), "00:00:00.000010"),
         (string_datum("1e-6"), "00:00:00.000001"),
         (string_datum("1e-7"), "00:00:00.000000"),
+        // inputDecimal = -1 (unspecified) -> MaxFsp.
+        (Datum::Real(86_401.543_21), "24:00:01.543210"),
     ] {
         assert_eq!(
             sec_to_time(std::slice::from_ref(&input)).unwrap(),

@@ -662,26 +662,53 @@ fn last_day(vals: &[Datum]) -> Result<Datum, EvalError> {
     }))
 }
 
+/// Go `RoundFloat` + the int cast (`pkg/types/helper.go:30`,
+/// `convert.go:109-122`): round half-to-even, then truncate the (already
+/// integral) value.
+fn round_float_to_i64(value: f64) -> i64 {
+    let rounded = value.round_ties_even();
+    if rounded >= i64::MAX as f64 {
+        i64::MAX
+    } else if rounded <= i64::MIN as f64 {
+        i64::MIN
+    } else {
+        rounded as i64
+    }
+}
+
 fn int_arg(value: &Datum) -> Result<Option<i64>, EvalError> {
     match value {
         Datum::Null => Ok(None),
         Datum::Int(v) => Ok(Some(*v)),
         Datum::UInt(v) => Ok(Some(*v as i64)),
         Datum::Decimal(v) => Ok(Some(v.round_to_i64().ok_or(EvalError::IntOverflow)?)),
-        Datum::Real(v) => Ok(Some(*v as i64)),
+        // Go converts a float argument to the signatures' ETInt through
+        // `types.ConvertFloatToInt`, which rounds HALF-TO-EVEN
+        // (`pkg/types/helper.go:30`: `RoundFloat = math.RoundToEven`) --
+        // `makedate(71.1, 1.89)` is day 2, not day 1. Truncating here
+        // answered 1971-01-01 where Go answers 1971-01-02.
+        Datum::Real(v) => Ok(Some(round_float_to_i64(*v))),
+        // Go's string-to-ETInt coercion for a STRING CONSTANT reads the
+        // valid numeric PREFIX and truncates at the dot
+        // (`getValidIntPrefix` -> `floatStrToIntStr`'s integer half; the
+        // source table itself is the proof: MAKETIME(0, "58.5", 0) answers
+        // 00:58:00 and MAKETIME(0, "59.5", 1) answers 00:59:01 -- both
+        // TRUNCATED -- while the REAL 59.5 rounds to 60 and refuses).
         Datum::String(v) => Ok(Some(
             v.as_utf8()
                 .map_err(|_| EvalError::Unsupported("invalid UTF-8 string datum"))?
                 .trim()
                 .parse::<f64>()
-                .unwrap_or(0.0) as i64,
+                .map(|value| value.trunc() as i64)
+                .unwrap_or(0),
         )),
         Datum::Bytes(v) => Ok(Some(
             std::str::from_utf8(v)
                 .map_err(|_| EvalError::Unsupported("invalid UTF-8 byte datum"))?
                 .trim()
                 .parse::<f64>()
-                .unwrap_or(0.0) as i64,
+                .map(|value| value.trunc() as i64)
+                .unwrap_or(0),
         )),
         Datum::MinNotNull | Datum::MaxValue => {
             Err(EvalError::Unsupported("range sentinel time argument"))
@@ -957,14 +984,14 @@ fn duration_precision(value: &Datum) -> Result<usize, EvalError> {
             .to_string()
             .split_once('.')
             .map_or(0, |(_, f)| f.len().min(6)),
-        Datum::Real(v) => v
-            .to_string()
-            .split_once('.')
-            .map_or(0, |(_, f)| f.len().min(6)),
-        Datum::Float32(v) => v
-            .to_string()
-            .split_once('.')
-            .map_or(0, |(_, f)| f.len().min(6)),
+        // Go's makeTimeFunctionClass.getFunction
+        // (`builtin_time.go:5587-5597`): an ETReal/ETDecimal argument takes
+        // its field type's decimal, with >6 and Unspecified both clamping to
+        // 6. A datum-level port cannot see the column's declared scale, and
+        // the CONSTANT every test passes carries UnspecifiedLength -- so a
+        // real argument answers 6 here, which is exactly what the source
+        // table shows (MAKETIME(12,15,30.3000001) -> ...300000).
+        Datum::Real(_) | Datum::Float32(_) => 6,
         Datum::Duration(value) => {
             usize::try_from(value.fsp()).expect("duration FSP is nonnegative")
         }
@@ -991,13 +1018,40 @@ fn format_duration(seconds: f64, fsp: usize) -> String {
     let whole = seconds.trunc() as i64;
     let hour = whole / 3600;
     let minute = whole / 60 % 60;
-    let second = whole % 60;
+    let mut second = whole % 60;
     if fsp == 0 {
         return format!("{sign}{hour:02}:{minute:02}:{second:02}");
     }
-    let divisor = 10_i64.pow((6 - fsp) as u32);
-    let fraction = ((seconds.fract() * 1_000_000.0).round() as i64 / divisor)
-        .clamp(0, 10_i64.pow(fsp as u32) - 1);
+    // Go reaches this text through `fmt.Sprintf("%v", second)` followed by
+    // `ParseDuration`, whose fraction rounding works on the DECIMAL DIGITS
+    // and carries half-up at the requested precision
+    // (`Duration.RoundFrac`: Go's time.Round is half-away-from-zero).
+    // Doing the arithmetic in f64 first re-derives 30.0000005 as
+    // ...4999996µs and loses the digit -- so round off the SHORTEST decimal
+    // rendering instead.
+        // Go formats the REAL second value with %v (shortest repr): 30.1 stays
+    // "30.1", 30.0000005 stays "30.0000005".
+    let digits = format!("{seconds}");
+    let mut digits_fraction = match digits.split_once('.') {
+        Some((_, fraction)) => fraction.to_owned(),
+        None => String::new(),
+    };
+    // Round half-up at the requested precision off the FIRST DISCARDED
+    // digit, carrying into the whole part when the fraction overflows.
+    let round_up = digits_fraction.len() > fsp
+        && digits_fraction.as_bytes()[fsp] >= b'5';
+    digits_fraction.truncate(fsp);
+    while digits_fraction.len() < fsp {
+        digits_fraction.push('0');
+    }
+    let mut fraction: i64 = digits_fraction.parse().unwrap_or(0);
+    if round_up {
+        fraction += 1;
+        if fraction >= 10_i64.pow(fsp as u32) {
+            fraction = 0;
+            second += 1;
+        }
+    }
     format!("{sign}{hour:02}:{minute:02}:{second:02}.{fraction:0fsp$}")
 }
 
