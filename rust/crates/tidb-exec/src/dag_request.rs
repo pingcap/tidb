@@ -651,14 +651,23 @@ fn aggregation_to_pb(
         return Err(DagRequestBuildError::EmptyAggregation);
     }
     Ok(Executor {
-        tp: Some(ExecType::TypeAggregation as i32),
+        tp: Some(if streamed {
+            ExecType::TypeStreamAgg
+        } else {
+            ExecType::TypeAggregation
+        } as i32),
         tbl_scan: None,
         idx_scan: None,
         selection: None,
         aggregation: Some(Aggregation {
             group_by: group_by.to_vec(),
             agg_func: functions.to_vec(),
-            streamed: Some(streamed),
+            // Go's PhysicalHashAgg/PhysicalStreamAgg list-form protobuf does
+            // not set Aggregation.streamed; the executor type is the mode
+            // discriminator. Preserve that wire shape and only use the flag
+            // when a caller explicitly needs the tree-form compatibility
+            // field (the list-form path never does).
+            streamed: streamed.then_some(true),
         }),
         top_n: None,
         limit: None,

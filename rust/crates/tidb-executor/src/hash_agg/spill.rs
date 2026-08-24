@@ -144,7 +144,8 @@ impl<C: HashAggContext> HashAggExec<C> {
         // the general partial/final worker pipeline takes every other
         // eligible aggregation, and the round machinery below is the serial
         // implementation.
-        if let Some((group_column, group_unsigned, specs)) = self.parallel_int_agg_specs() {
+        let int_specs = self.parallel_int_agg_specs();
+        if let Some((group_column, group_unsigned, specs)) = int_specs {
             return self.execute_parallel_int_agg(group_column, group_unsigned, &specs);
         }
         if self.pipeline_mode {

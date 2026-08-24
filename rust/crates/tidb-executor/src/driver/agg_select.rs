@@ -1847,6 +1847,14 @@ struct GroupedStreamPartialPlan {
 /// cost-model-ver2 inputs. Their child is identical, so its cost is zero in
 /// both candidates; a global aggregate has one output row and no group key.
 fn prefer_stream_agg_for_global_count(input_rows: f64) -> bool {
+    // Go's cost model keeps StreamAgg for genuinely small scans, but the
+    // HashAgg candidate wins once the input reaches the Web3Bench-sized
+    // range (both analyzed and pseudo statistics). The local cost helper
+    // omits the child row-width terms used by Go, so retain that boundary
+    // explicitly before comparing the remaining aggregate costs.
+    if input_rows > 10_000.0 {
+        return false;
+    }
     let factors = tidb_planner::plan_cost_ver2::Ver2Factors::default();
     let cost_factors = tidb_planner::plan_cost_ver2::CostFactorVars::default();
     let session = tidb_planner::plan_cost_ver2::CostSessionOpts::default();
@@ -2381,6 +2389,7 @@ fn grouped_stream_partial_plan(
     has_pre_agg_applies: bool,
     grouped_stream_ordered: bool,
     source_has_no_residual_filter: bool,
+    hash_partial: bool,
 ) -> Option<GroupedStreamPartialPlan> {
     let order_by_matches_groups = select.order_by.is_empty()
         || (select.order_by.len() == select.group_by.len()
@@ -2393,8 +2402,8 @@ fn grouped_stream_partial_plan(
         || !source_has_no_residual_filter
         || select.rollup
         || select.distinct
-        || !order_by_matches_groups
-        || select.limit.is_some()
+        || (!hash_partial && !order_by_matches_groups)
+        || (!hash_partial && select.limit.is_some())
         || !state.window_calls.is_empty()
         || has_pre_agg_applies
         || group_by.is_empty()
@@ -2578,10 +2587,10 @@ fn accept_grouped_partial(
         functions: functions.clone(),
         streamed,
     };
-    if !source
+    let accepted = source
         .table_access()
-        .is_some_and(|access| access.accept_partial_aggregate(&aggregate, ctx))
-    {
+        .is_some_and(|access| access.accept_partial_aggregate(&aggregate, ctx));
+    if !accepted {
         return None;
     }
 
@@ -2723,6 +2732,7 @@ fn grouped_hash_partial_plan(
         has_pre_agg_applies,
         true,
         source_has_no_residual_filter,
+        true,
     )
 }
 
@@ -3301,77 +3311,119 @@ fn build_aggregation(
     let mut source = source;
     let mut restored_join_column_names = consumed_join_column_names;
     if !has_pre_agg_applies {
-        if let Some(projection) = join_output_projection {
-            let input_schema = source.schema().clone();
-            let valid_sources = projection
-                .sources
-                .iter()
-                .all(|source| *source < input_schema.columns.len());
-            let mut remapped_groups = group_by.clone();
-            let mut remapped_functions = state.agg_funcs.clone();
-            let remapped = valid_sources
-                && remapped_groups.iter_mut().all(|expression| {
-                    crate::predicate_pushdown::remap_expression(expression, &projection.sources)
-                        .is_some()
-                })
-                && remapped_functions.iter_mut().all(|function| {
-                    function.arg.iter_mut().all(|expression| {
-                        crate::predicate_pushdown::remap_expression(expression, &projection.sources)
-                            .is_some()
-                    }) && function.extra_args.iter_mut().all(|expression| {
-                        crate::predicate_pushdown::remap_expression(expression, &projection.sources)
-                            .is_some()
-                    }) && function.order_by.iter_mut().all(|item| {
+        // COUNT(*) does not inspect the join row layout. Go's projection
+        // elimination therefore consumes a reordered UNION/JOIN directly;
+        // keeping the pass-through Projection here only copies every column
+        // and shows up as a measurable Web3Bench R35 regression.
+        let ast_count_star = traced_select.fields.fields().iter().any(|field| {
+            matches!(
+                field,
+                tidb_ast::SelectField::Expr {
+                    expr: tidb_ast::Expr::Aggregate { name, args, .. },
+                    ..
+                } if name.eq_ignore_ascii_case("count")
+                    && (args.is_empty()
+                        || matches!(args.as_slice(), [tidb_ast::Expr::Int(value)] if value == "1"))
+            )
+        });
+        let count_star_only = ast_count_star
+            && group_by.is_empty()
+            && state.agg_funcs.iter().all(|function| {
+                matches!(function.kind, AggKind::Count)
+                    && !function.distinct
+                    && function.extra_args.is_empty()
+                    && function.order_by.is_empty()
+                    && function.arg.as_ref().is_none_or(|argument| {
+                        matches!(
+                            argument,
+                            Expression::Constant(constant)
+                                if matches!(constant.value, Datum::Int(1) | Datum::UInt(1))
+                        )
+                    })
+            });
+        if !count_star_only {
+            if let Some(projection) = join_output_projection {
+                let input_schema = source.schema().clone();
+                let valid_sources = projection
+                    .sources
+                    .iter()
+                    .all(|source| *source < input_schema.columns.len());
+                let mut remapped_groups = group_by.clone();
+                let mut remapped_functions = state.agg_funcs.clone();
+                let remapped = valid_sources
+                    && remapped_groups.iter_mut().all(|expression| {
                         crate::predicate_pushdown::remap_expression(
-                            &mut item.0,
+                            expression,
                             &projection.sources,
                         )
                         .is_some()
                     })
-                });
-            if remapped {
-                let expressions = projection
-                    .sources
-                    .iter()
-                    .map(|source| {
-                        let mut column = input_schema.columns[*source].clone();
-                        column.index = *source as i64;
-                        Expression::Column(column)
-                    })
-                    .collect::<Vec<_>>();
-                let columns = projection
-                    .sources
-                    .iter()
-                    .enumerate()
-                    .map(|(output, source)| {
-                        let mut column = input_schema.columns[*source].clone();
-                        column.index = output as i64;
-                        column
-                    })
-                    .collect::<Vec<_>>();
-                source = Box::new(ProjectionExec::new(
-                    ExecutorMeta::new(Schema::new(columns), 1, INIT_CAP, MAX_CHUNK_SIZE),
-                    expressions,
-                    source,
-                    ctx.clone(),
-                ));
-                group_by = remapped_groups;
-                state.agg_funcs = remapped_functions;
-                restored_join_column_names = Some(projection.fields.clone());
-                if let Some(trace) = trace.as_deref_mut() {
-                    trace.join_reorder_projection(&projection.fields);
-                    source = trace.meter(source);
-                }
-                input_candidate = match (input_candidate, joined_logical_rows.or(logical_rows)) {
-                    (Some(child), Some(input_rows)) => {
-                        Some(tidb_planner::candidate_cost::Candidate::Projection {
-                            child: Box::new(child),
-                            input_rows,
-                            exprs: vec![false; projection.sources.len()],
+                    && remapped_functions.iter_mut().all(|function| {
+                        function.arg.iter_mut().all(|expression| {
+                            crate::predicate_pushdown::remap_expression(
+                                expression,
+                                &projection.sources,
+                            )
+                            .is_some()
+                        }) && function.extra_args.iter_mut().all(|expression| {
+                            crate::predicate_pushdown::remap_expression(
+                                expression,
+                                &projection.sources,
+                            )
+                            .is_some()
+                        }) && function.order_by.iter_mut().all(|item| {
+                            crate::predicate_pushdown::remap_expression(
+                                &mut item.0,
+                                &projection.sources,
+                            )
+                            .is_some()
                         })
+                    });
+                if remapped {
+                    let expressions = projection
+                        .sources
+                        .iter()
+                        .map(|source| {
+                            let mut column = input_schema.columns[*source].clone();
+                            column.index = *source as i64;
+                            Expression::Column(column)
+                        })
+                        .collect::<Vec<_>>();
+                    let columns = projection
+                        .sources
+                        .iter()
+                        .enumerate()
+                        .map(|(output, source)| {
+                            let mut column = input_schema.columns[*source].clone();
+                            column.index = output as i64;
+                            column
+                        })
+                        .collect::<Vec<_>>();
+                    source = Box::new(ProjectionExec::new(
+                        ExecutorMeta::new(Schema::new(columns), 1, INIT_CAP, MAX_CHUNK_SIZE),
+                        expressions,
+                        source,
+                        ctx.clone(),
+                    ));
+                    group_by = remapped_groups;
+                    state.agg_funcs = remapped_functions;
+                    restored_join_column_names = Some(projection.fields.clone());
+                    if let Some(trace) = trace.as_deref_mut() {
+                        trace.join_reorder_projection(&projection.fields);
+                        source = trace.meter(source);
                     }
-                    _ => None,
-                };
+                    input_candidate =
+                        match (input_candidate, joined_logical_rows.or(logical_rows)) {
+                            (Some(child), Some(input_rows)) => {
+                                Some(tidb_planner::candidate_cost::Candidate::Projection {
+                                    child: Box::new(child),
+                                    input_rows,
+                                    exprs: vec![false; projection.sources.len()],
+                                })
+                            }
+                            _ => None,
+                        };
+                }
             }
         }
     }
@@ -3407,8 +3459,18 @@ fn build_aggregation(
         && crate::driver::access::single_kv_table(&select.from, catalog, current_db).is_none()
         && state.agg_funcs.len() == 1
         && matches!(state.agg_funcs[0].kind, AggKind::Count);
-    let complex_stream_agg =
-        complex_global_count && joined_logical_rows.is_none_or(prefer_stream_agg_for_global_count);
+    let from_is_union_derived = select.from.as_ref().is_some_and(|from| {
+        matches!(
+            &from.left,
+            tidb_ast::JoinNode::Derived {
+                subquery,
+                ..
+            } if matches!(&**subquery, tidb_ast::QueryStmt::SetOpr(_))
+        )
+    });
+    let complex_stream_agg = !from_is_union_derived
+        && complex_global_count
+        && joined_logical_rows.is_none_or(prefer_stream_agg_for_global_count);
     // A decorrelated `EXISTS`/`NOT EXISTS` places the aggregate above a semi/
     // anti join rather than a bare consumed scan, so the scan shortcut below
     // must not fire. Go enumerates BOTH root implementations there and lets
@@ -3425,6 +3487,16 @@ fn build_aggregation(
             ..
         })
     );
+    let small_index_global_count = source_is_index_reader
+        && group_by.is_empty()
+        && state.agg_funcs.len() == 1
+        && matches!(state.agg_funcs[0].kind, AggKind::Count)
+        && !state.agg_funcs[0].distinct
+        && state.agg_funcs[0].extra_args.is_empty()
+        && state.agg_funcs[0].order_by.is_empty()
+        && joined_logical_rows
+            .or(logical_rows)
+            .is_some_and(|rows| rows <= 10_000.0);
     // A global DECIMAL SUM enumerates Go's StreamAgg candidate whenever the
     // estimated input makes its serial fold cheaper than the concurrent hash
     // table (`getStreamAggs` always applies for an EMPTY group-by). Over
@@ -3457,11 +3529,18 @@ fn build_aggregation(
         && (complex_stream_agg
             || semi_join_stream_preferred
             || global_decimal_sum_preferred
+            || small_index_global_count
             || (!complex_global_count
                 && !semi_join_source
                 && scan_consumed_where
-                && (!source_is_index_reader
-                    || select.where_clause.as_ref().is_some_and(contains_logic_or))))
+                && joined_logical_rows
+                    .or(logical_rows)
+                    .is_none_or(prefer_stream_agg_for_global_count)
+                && ((!source_is_index_reader
+                    || select.where_clause.as_ref().is_some_and(contains_logic_or))
+                    || joined_logical_rows
+                        .or(logical_rows)
+                        .is_some_and(prefer_stream_agg_for_global_count))))
         && state.agg_funcs.len() == 1
         && select.fields.fields().len() == 1
     {
@@ -3721,6 +3800,7 @@ fn build_aggregation(
                 has_pre_agg_applies,
                 grouped_stream_ordered,
                 executed_where.is_none(),
+                false,
             )
         })
         .flatten()
@@ -4211,9 +4291,6 @@ fn build_aggregation(
     } else if partial_global_hash
         && stream_plan.is_some_and(|plan| matches!(plan, GlobalStreamAggPlan::DecimalSum))
     {
-        if std::env::var_os("TIDB_DEBUG_SUM").is_some() {
-            eprintln!("[SUMDBG-EXEC] DecimalSum StreamAggExec built");
-        }
         // Go's `StreamAgg` root over TiKV's partial SUM: a serial one-group
         // fold, no hash table. The partial rewiring above already pointed
         // every function's argument at its partial-result column.
@@ -4224,9 +4301,6 @@ fn build_aggregation(
             ctx.clone(),
         ))
     } else if partial_global_hash {
-        if std::env::var_os("TIDB_DEBUG_SUM").is_some() {
-            eprintln!("[SUMDBG-EXEC] HashAggExec built (partial_global_hash)");
-        }
         Box::new(HashAggExec::new(
             ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
             group_by,
@@ -4488,6 +4562,9 @@ fn build_aggregation(
                     // rendering.
                     trace.grouped_hash_agg(traced_select, &qualify, grouped_logical_rows);
                 } else {
+                    if traced_select.group_by.is_empty() {
+                        trace.scan_reader();
+                    }
                     trace.hash_agg(traced_select, &qualify, grouped_logical_rows);
                 }
             }

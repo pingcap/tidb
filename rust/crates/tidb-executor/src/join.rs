@@ -166,11 +166,83 @@ use tidb_chunk::list::List;
 use tidb_chunk::list::RowPtr;
 use tidb_chunk::row::Row;
 use tidb_chunk::row_container::RowContainer;
-use tidb_datatype::{Collation, Datum, Decimal, EvalType, FieldType, MyDecimal};
+use tidb_datatype::{Collation, Datum, Decimal, EvalType, FieldType, FieldTypeCode, MyDecimal};
 use tidb_expr::Columns;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_util::memory::{ArcAction, Tracker};
+
+const COMPACT_BINARY_KEY_BYTES: usize = 192;
+
+/// A bounded binary string key for the count-only residual join fast path.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct CompactBinaryKey {
+    len: u8,
+    bytes: [u8; COMPACT_BINARY_KEY_BYTES],
+}
+
+#[derive(Clone, Copy)]
+enum CompactJoinDecimal {
+    Scaled(i128, u32),
+    Native(MyDecimal),
+}
+
+impl CompactBinaryKey {
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() > COMPACT_BINARY_KEY_BYTES {
+            return None;
+        }
+        let mut key = Self {
+            len: bytes.len() as u8,
+            bytes: [0; COMPACT_BINARY_KEY_BYTES],
+        };
+        key.bytes[..bytes.len()].copy_from_slice(bytes);
+        Some(key)
+    }
+}
+
+fn compact_join_decimal(value: MyDecimal) -> CompactJoinDecimal {
+    value
+        .to_i128_scaled()
+        .map_or(CompactJoinDecimal::Native(value), |(coefficient, scale)| {
+            CompactJoinDecimal::Scaled(coefficient, scale)
+        })
+}
+
+fn compare_compact_join_decimal(left: CompactJoinDecimal, right: CompactJoinDecimal) -> Ordering {
+    match (left, right) {
+        (
+            CompactJoinDecimal::Scaled(left, left_scale),
+            CompactJoinDecimal::Scaled(right, right_scale),
+        ) if left_scale == right_scale => left.cmp(&right),
+        (CompactJoinDecimal::Native(left), CompactJoinDecimal::Native(right)) => {
+            left.compare(&right)
+        }
+        (CompactJoinDecimal::Scaled(left, scale), CompactJoinDecimal::Native(right)) => {
+            Decimal::from_scaled_i128(left, scale).cmp(&Decimal::from_my_decimal(&right))
+        }
+        (CompactJoinDecimal::Native(left), CompactJoinDecimal::Scaled(right, scale)) => {
+            Decimal::from_my_decimal(&left).cmp(&Decimal::from_scaled_i128(right, scale))
+        }
+        (
+            CompactJoinDecimal::Scaled(left, left_scale),
+            CompactJoinDecimal::Scaled(right, right_scale),
+        ) => Decimal::from_scaled_i128(left, left_scale)
+            .cmp(&Decimal::from_scaled_i128(right, right_scale)),
+    }
+}
+
+fn compact_matches(op: u8, ordering: Ordering) -> bool {
+    match op {
+        0 => ordering == Ordering::Equal,
+        1 => ordering != Ordering::Equal,
+        2 => ordering == Ordering::Less,
+        3 => ordering != Ordering::Greater,
+        4 => ordering == Ordering::Greater,
+        5 => ordering != Ordering::Less,
+        _ => unreachable!(),
+    }
+}
 
 /// Which side, if any, keeps rows that match nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -205,15 +277,11 @@ struct HashState {
     /// The chunk the probe child streams into, and how far it is consumed.
     probe_chunk: Chunk,
     probe_row: usize,
-    /// The build-candidate cursor WITHIN `hash.probe_row`'s candidate list.
-    /// A residual join can fill the caller's chunk mid-list; Go resumes that
-    /// list on the next `Next` (`hashJoinExec.Next` re-enters the same probe
-    /// row), so losing the cursor dropped every remaining match of the row --
-    /// one lost output row per full-chunk boundary.
-    probe_candidate: usize,
-    /// The current probe row's candidate list, materialized once when the
-    /// cursor is at zero so a resumed row does not re-probe the hash table.
+    /// Residual hash joins may have more candidates than fit in one output
+    /// chunk. Keep the candidate cursor across `next()` calls so a full
+    /// output chunk does not discard the remainder of the current probe row.
     probe_candidates: Vec<RowPtr>,
+    probe_candidate_idx: usize,
     probe_done: bool,
     /// Products of a constant DECIMAL factor and a build-side DECIMAL column,
     /// keyed by the stable build-row address. `Some(None)` caches SQL NULL.
@@ -3501,6 +3569,285 @@ impl<C: Columns> JoinExec<C> {
     /// container's trackers off this operator's, register the spill action on
     /// the SESSION tracker when `tidb_enable_tmp_storage_on_oom` allows it,
     /// then feed the child's chunks in.
+    /// Builds the bounded binary key used by the compact residual-join path.
+    /// `None` means the column is not a supported string shape; `Some(None)`
+    /// preserves SQL NULL's non-matching key semantics.
+    #[cfg(test)]
+    fn compact_binary_key<F: Fn(&EquiKey) -> usize>(
+        chunk: &Chunk,
+        row_index: usize,
+        types: &[FieldType],
+        key: &EquiKey,
+        offset: F,
+    ) -> Option<Option<CompactBinaryKey>> {
+        let column = offset(key);
+        let field_type = types.get(column)?;
+        if !matches!(
+            field_type.code(),
+            FieldTypeCode::String
+                | FieldTypeCode::VarString
+                | FieldTypeCode::Varchar
+                | FieldTypeCode::TinyBlob
+                | FieldTypeCode::MediumBlob
+                | FieldTypeCode::LongBlob
+                | FieldTypeCode::Blob
+        ) {
+            return None;
+        }
+        let row = chunk.get_row(row_index);
+        if row.is_null(column) {
+            return Some(None);
+        }
+        let bytes = row.get_bytes(column);
+        let bytes = bytes.as_ref();
+        let bytes = match key.class {
+            KeyClass::Str(Collation::Utf8Mb4Bin) => {
+                let len = bytes
+                    .iter()
+                    .rposition(|byte| *byte != b' ')
+                    .map_or(0, |index| index + 1);
+                &bytes[..len]
+            }
+            _ => bytes,
+        };
+        CompactBinaryKey::from_bytes(bytes).map(Some)
+    }
+
+    /// Counts the Web3Bench one-key DECIMAL residual join without materializing
+    /// joined rows. Unsupported shapes return `None` and use the normal path.
+    fn compact_count_rows(&mut self) -> Result<Option<u64>, ExecError> {
+        if self.kind != JoinKind::Inner
+            || self.keys.len() != 1
+            || self.index_lookup.is_some()
+            || self.merge.is_some()
+            || self.residual_conditions.len() != 1
+        {
+            return Ok(None);
+        }
+        let Expression::ScalarFunction(function) = &self.residual_conditions[0] else {
+            return Ok(None);
+        };
+        let [Expression::Column(left), Expression::Column(right)] = function.args.as_slice()
+        else {
+            return Ok(None);
+        };
+        let left_width = self.left.ret_field_types().len();
+        let build_is_left = !self.outer_is_left();
+        let side_offset = |index: i64| -> Option<(bool, usize)> {
+            let index = usize::try_from(index).ok()?;
+            Some(if index < left_width {
+                (build_is_left, index)
+            } else {
+                (!build_is_left, index - left_width)
+            })
+        };
+        let Some((left_is_build, left_offset)) = side_offset(left.index) else {
+            return Ok(None);
+        };
+        let Some((right_is_build, right_offset)) = side_offset(right.index) else {
+            return Ok(None);
+        };
+        if left_is_build == right_is_build {
+            return Ok(None);
+        }
+        let (build_offset, probe_offset, build_on_left) = if left_is_build {
+            (left_offset, right_offset, true)
+        } else {
+            (right_offset, left_offset, false)
+        };
+        let build_types = if build_is_left {
+            self.left.ret_field_types().to_vec()
+        } else {
+            self.right.ret_field_types().to_vec()
+        };
+        let probe_types = if build_is_left {
+            self.right.ret_field_types().to_vec()
+        } else {
+            self.left.ret_field_types().to_vec()
+        };
+        if build_types.get(build_offset).map(FieldType::code)
+            != Some(FieldTypeCode::NewDecimal)
+            || probe_types.get(probe_offset).map(FieldType::code) != Some(FieldTypeCode::NewDecimal)
+        {
+            return Ok(None);
+        }
+        let key = &self.keys[0];
+        if !matches!(
+            key.class,
+            KeyClass::Str(Collation::Binary | Collation::Utf8Mb4Bin | Collation::Utf8Mb40900Bin)
+        ) || key.null_safe
+        {
+            return Ok(None);
+        }
+        let bytes_per_char = match key.class {
+            KeyClass::Str(Collation::Binary) => 1,
+            KeyClass::Str(Collation::Utf8Mb4Bin | Collation::Utf8Mb40900Bin) => 4,
+            _ => return Ok(None),
+        };
+        for ty in [
+            build_types.get(if build_is_left { key.left } else { key.right }),
+            probe_types.get(if build_is_left { key.right } else { key.left }),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if ty.flen().checked_mul(bytes_per_char).is_none_or(|width| {
+                width < 0 || width > COMPACT_BINARY_KEY_BYTES as i64
+            }) {
+                return Ok(None);
+            }
+        }
+        let name = function.func_name.lowercase();
+        let op = if name == "eq" {
+            0
+        } else if name == "ne" {
+            1
+        } else if name == "lt" {
+            2
+        } else if name == "le" {
+            3
+        } else if name == "gt" {
+            4
+        } else if name == "ge" {
+            5
+        } else {
+            return Ok(None);
+        };
+        let compact_key = |chunk: &Chunk,
+                           row_index: usize,
+                           types: &[FieldType],
+                           offset: usize,
+                           collation: Collation|
+         -> Result<Option<CompactBinaryKey>, ExecError> {
+            let Some(ty) = types.get(offset) else {
+                return Err(ExecError::unsupported(
+                    "compact join key column is outside the child schema",
+                ));
+            };
+            if !matches!(
+                ty.code(),
+                FieldTypeCode::String
+                    | FieldTypeCode::VarString
+                    | FieldTypeCode::Varchar
+                    | FieldTypeCode::TinyBlob
+                    | FieldTypeCode::MediumBlob
+                    | FieldTypeCode::LongBlob
+                    | FieldTypeCode::Blob
+            ) {
+                return Err(ExecError::unsupported(
+                    "compact join key requires a binary string column",
+                ));
+            }
+            let row = chunk.get_row(row_index);
+            if row.is_null(offset) {
+                return Ok(None);
+            }
+            let bytes = row.get_bytes(offset);
+            let bytes = bytes.as_ref();
+            let bytes = if matches!(collation, Collation::Utf8Mb4Bin) {
+                let len = bytes
+                    .iter()
+                    .rposition(|byte| *byte != b' ')
+                    .map_or(0, |index| index + 1);
+                &bytes[..len]
+            } else {
+                bytes
+            };
+            CompactBinaryKey::from_bytes(bytes).map_or_else(
+                || {
+                    Err(ExecError::unsupported(
+                        "compact join key exceeds its declared width",
+                    ))
+                },
+                |key| Ok(Some(key)),
+            )
+        };
+        let collation = match key.class {
+            KeyClass::Str(collation) => collation,
+            _ => return Ok(None),
+        };
+        let mut build_values: HashMap<CompactBinaryKey, Vec<CompactJoinDecimal>> =
+            HashMap::with_capacity(100_000);
+        let build: &mut dyn Executor = if build_is_left {
+            self.left.as_mut()
+        } else {
+            self.right.as_mut()
+        };
+        let mut chunk = build.new_chunk();
+        loop {
+            build.next(&mut chunk)?;
+            if chunk.num_rows() == 0 {
+                break;
+            }
+            for row_index in 0..chunk.num_rows() {
+                let row = chunk.get_row(row_index);
+                if row.is_null(build_offset) {
+                    continue;
+                }
+                let Some(key) = compact_key(
+                    &chunk,
+                    row_index,
+                    &build_types,
+                    if build_is_left { self.keys[0].left } else { self.keys[0].right },
+                    collation,
+                )? else {
+                    continue;
+                };
+                build_values
+                    .entry(key)
+                    .or_default()
+                    .push(compact_join_decimal(row.get_my_decimal(build_offset)));
+            }
+            self.memory.check()?;
+            chunk.reset();
+        }
+        let probe: &mut dyn Executor = if build_is_left {
+            self.right.as_mut()
+        } else {
+            self.left.as_mut()
+        };
+        let mut probe_chunk = probe.new_chunk();
+        let mut total = 0_u64;
+        loop {
+            probe.next(&mut probe_chunk)?;
+            if probe_chunk.num_rows() == 0 {
+                break;
+            }
+            for row_index in 0..probe_chunk.num_rows() {
+                let row = probe_chunk.get_row(row_index);
+                if row.is_null(probe_offset) {
+                    continue;
+                }
+                let Some(key) = compact_key(
+                    &probe_chunk,
+                    row_index,
+                    &probe_types,
+                    if build_is_left { self.keys[0].right } else { self.keys[0].left },
+                    collation,
+                )? else {
+                    continue;
+                };
+                let Some(values) = build_values.get(&key) else {
+                    continue;
+                };
+                let probe_value = compact_join_decimal(row.get_my_decimal(probe_offset));
+                for build_value in values {
+                    let ordering = if build_on_left {
+                        compare_compact_join_decimal(*build_value, probe_value)
+                    } else {
+                        compare_compact_join_decimal(probe_value, *build_value)
+                    };
+                    if compact_matches(op, ordering) {
+                        total = total.saturating_add(1);
+                    }
+                }
+            }
+            self.memory.check()?;
+            probe_chunk.reset();
+        }
+        Ok(Some(total))
+    }
+
     fn build_table(&mut self) -> Result<(), ExecError> {
         if self.hash.is_some() {
             return Ok(());
@@ -3579,8 +3926,8 @@ impl<C: Columns> JoinExec<C> {
             build_buf,
             probe_chunk,
             probe_row: 0,
-            probe_candidate: 0,
             probe_candidates: Vec::new(),
+            probe_candidate_idx: 0,
             probe_done: false,
             decimal_mul_products: Arc::new(std::sync::RwLock::new(HashMap::new())),
             unmatched_build_scan,
@@ -3999,130 +4346,128 @@ impl<C: Columns> JoinExec<C> {
         let condition_evals = &self.condition_evals;
         let condition_chunk = &mut self.condition_chunk;
         loop {
+            if req.is_full() {
+                return Ok(());
+            }
+            let (probe_index, ptr) = {
+                let Some(hash) = self.hash.as_mut() else {
+                    return Ok(());
+                };
+                if hash.probe_row >= hash.probe_chunk.num_rows() {
+                    return Ok(());
+                }
+                if hash.probe_candidate_idx >= hash.probe_candidates.len() {
+                    let probe_index = hash.probe_row;
+                    let probe_row = hash.probe_chunk.get_row(probe_index);
+                    let exact_key = exact_int.and_then(|key| {
+                        exact_int_key_chunk(probe_row, offset(key), &probe_types[offset(key)])
+                    });
+                    let key = if exact_int.is_some() {
+                        None
+                    } else {
+                        row_hash_chunk(&keys, probe_row, probe_types, offset)
+                            .map_err(key_error)?
+                    };
+                    hash.probe_candidates = if exact_int.is_some() {
+                        exact_key
+                            .map_or_else(Vec::new, |key| hash.table.probe_exact_int(key).to_vec())
+                    } else {
+                        key.map_or_else(Vec::new, |key| hash.table.probe(key).to_vec())
+                    };
+                    hash.probe_candidate_idx = 0;
+                    if hash.probe_candidates.is_empty() {
+                        hash.probe_row += 1;
+                        continue;
+                    }
+                }
+                (
+                    hash.probe_row,
+                    hash.probe_candidates[hash.probe_candidate_idx],
+                )
+            };
             let Some(hash) = self.hash.as_mut() else {
                 return Ok(());
             };
-            if hash.probe_row >= hash.probe_chunk.num_rows() || req.is_full() {
-                return Ok(());
-            }
-            let probe_index = hash.probe_row;
-            // The candidate cursor survives a full caller chunk: Go's
-            // `Next` re-enters the SAME probe row and walks its remaining
-            // build matches, so a chunk boundary must not skip any.
-            if hash.probe_candidate == 0 {
-                let probe_row = hash.probe_chunk.get_row(probe_index);
-                let exact_key = exact_int.and_then(|key| {
-                    exact_int_key_chunk(probe_row, offset(key), &probe_types[offset(key)])
-                });
-                let key = if exact_int.is_some() {
-                    None
-                } else {
-                    row_hash_chunk(&keys, probe_row, probe_types, offset).map_err(key_error)?
-                };
-                // shadowed below by the row borrow; keep the candidates list
-
-                let candidates: &[RowPtr] = if exact_int.is_some() {
-                    exact_key.map_or(&[], |key| hash.table.probe_exact_int(key))
-                } else {
-                    key.map_or(&[], |key| hash.table.probe(key))
-                };
-                hash.probe_candidates.clear();
-                hash.probe_candidates.extend_from_slice(candidates);
-            }
             let probe_row = hash.probe_chunk.get_row(probe_index);
-            let candidates: &[RowPtr] = &hash.probe_candidates;
-            for &ptr in &candidates[hash.probe_candidate..] {
-                let cached_product = match (decimal_mul_lt, product_build_column) {
-                    (Some(fast), Some(column)) => {
-                        let mut products = hash
-                            .decimal_mul_products
-                            .write()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        if !products.contains_key(&ptr) {
-                            let product = {
-                                let table = &hash.table;
-                                let build_types = &hash.build_types;
-                                let build_buf = &mut hash.build_buf;
-                                table
-                                    .with_row(ptr, build_buf, |build_row| {
-                                        Self::decimal_mul_product(
-                                            fast,
-                                            build_row,
-                                            build_types,
-                                            column,
-                                        )
-                                    })
-                                    .map_err(|error| ExecError::SpillFailed(error.to_string()))??
-                            };
-                            products.insert(ptr, product);
-                        }
-                        Some(products.get(&ptr).copied().flatten())
-                    }
-                    _ => None,
-                };
-                let table = &hash.table;
-                let build_types = &hash.build_types;
-                let build_buf = &mut hash.build_buf;
-                table
-                    .with_row(ptr, build_buf, |build_row| {
-                        let (left, left_types, right, right_types) = if probe_is_left {
-                            (probe_row, probe_types, build_row, build_types.as_slice())
-                        } else {
-                            (build_row, build_types.as_slice(), probe_row, probe_types)
+            let cached_product = match (decimal_mul_lt, product_build_column) {
+                (Some(fast), Some(column)) => {
+                    let mut products = hash
+                        .decimal_mul_products
+                        .write()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    if !products.contains_key(&ptr) {
+                        let product = {
+                            let table = &hash.table;
+                            let build_types = &hash.build_types;
+                            let build_buf = &mut hash.build_buf;
+                            table
+                                .with_row(ptr, build_buf, |build_row| {
+                                    Self::decimal_mul_product(fast, build_row, build_types, column)
+                                })
+                                .map_err(|error| ExecError::SpillFailed(error.to_string()))??
                         };
-                        if exact_int.is_none()
-                            && !equi_keys_equal_chunk_rows(
-                                &keys,
+                        products.insert(ptr, product);
+                    }
+                    Some(products.get(&ptr).copied().flatten())
+                }
+                _ => None,
+            };
+            let table = &hash.table;
+            let build_types = &hash.build_types;
+            let build_buf = &mut hash.build_buf;
+            table
+                .with_row(ptr, build_buf, |build_row| {
+                    let (left, left_types, right, right_types) = if probe_is_left {
+                        (probe_row, probe_types, build_row, build_types.as_slice())
+                    } else {
+                        (build_row, build_types.as_slice(), probe_row, probe_types)
+                    };
+                    if exact_int.is_none()
+                        && !equi_keys_equal_chunk_rows(
+                            &keys,
+                            left,
+                            left_types,
+                            right,
+                            right_types,
+                        )
+                        .map_err(key_error)?
+                        || !(match decimal_mul_lt {
+                            Some(fast) => Self::matches_decimal_mul_lt(
+                                condition_evals,
+                                fast,
                                 left,
                                 left_types,
                                 right,
                                 right_types,
-                            )
-                            .map_err(key_error)?
-                            || !(match decimal_mul_lt {
-                                Some(fast) => Self::matches_decimal_mul_lt(
-                                    condition_evals,
-                                    fast,
-                                    left,
-                                    left_types,
-                                    right,
-                                    right_types,
-                                    cached_product.as_ref().map(Option::as_ref),
-                                )?,
-                                None => Self::matches_chunk_rows(
-                                    ctx,
-                                    conditions,
-                                    condition_evals,
-                                    condition_chunk,
-                                    left,
-                                    right,
-                                )?,
-                            })
-                        {
-                            return Ok::<(), ExecError>(());
-                        }
-                        Self::append_joined_chunk_rows_order(
-                            req,
-                            probe_is_left,
-                            probe_row,
-                            build_row,
-                        );
-                        Ok::<(), ExecError>(())
-                    })
-                    .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
-                hash.probe_candidate += 1;
-                if req.is_full() {
-                    break;
-                }
-            }
-            if hash.probe_candidate >= candidates.len() {
-                // The whole candidate list is drained: move to the next row
-                // and reset the cursor for its fresh probe.
-                hash.probe_candidate = 0;
+                                cached_product.as_ref().map(Option::as_ref),
+                            )?,
+                            None => Self::matches_chunk_rows(
+                                ctx,
+                                conditions,
+                                condition_evals,
+                                condition_chunk,
+                                left,
+                                right,
+                            )?,
+                        })
+                    {
+                        return Ok::<(), ExecError>(());
+                    }
+                    Self::append_joined_chunk_rows_order(
+                        req,
+                        probe_is_left,
+                        probe_row,
+                        build_row,
+                    );
+                    Ok::<(), ExecError>(())
+                })
+                .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
+            let hash = self.hash.as_mut().expect("hash state exists");
+            hash.probe_candidate_idx += 1;
+            if hash.probe_candidate_idx >= hash.probe_candidates.len() {
                 hash.probe_candidates.clear();
+                hash.probe_candidate_idx = 0;
                 hash.probe_row += 1;
-            } else {
-                // Stopped mid-list with a full chunk; resume here next call.
             }
         }
     }
@@ -4617,6 +4962,10 @@ impl<C: Columns> Executor for JoinExec<C> {
 
     fn new_chunk(&self) -> Chunk {
         self.meta.new_chunk()
+    }
+
+    fn row_count(&mut self) -> Result<Option<u64>, ExecError> {
+        self.compact_count_rows()
     }
 
     fn consumes_where(&self) -> bool {

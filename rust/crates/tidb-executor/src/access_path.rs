@@ -2404,19 +2404,6 @@ impl Executor for IndexRangeSourceExec {
             } else {
                 &[]
             };
-        self.remote_index = self
-            .table
-            .pushdown_index_handle_cursor(
-                self.index_id,
-                &self.ranges,
-                &self.keep,
-                lowered,
-                self.top_n.as_ref(),
-                self.decode_context.zone(),
-                &self.statement,
-                self.descending,
-            )
-            .map_err(|_| ExecError::unsupported("remote index scan failed to open"))?;
         if let Some(aggregate) = self.partial_aggregate.as_ref() {
             self.partial_remote = self
                 .table
@@ -2432,6 +2419,25 @@ impl Executor for IndexRangeSourceExec {
                 .map_err(|error| {
                     ExecError::unsupported(format!("index aggregate request failed: {error:?}"))
                 })?;
+        }
+        // A successful partial aggregate replaces the ordinary index stream;
+        // opening both would issue two full coprocessor requests. If the
+        // aggregate shape is refused, retain the ordinary index stream for
+        // the local partial fallback and the normal lookup path.
+        if self.partial_remote.is_none() {
+            self.remote_index = self
+                .table
+                .pushdown_index_handle_cursor(
+                    self.index_id,
+                    &self.ranges,
+                    &self.keep,
+                    lowered,
+                    self.top_n.as_ref(),
+                    self.decode_context.zone(),
+                    &self.statement,
+                    self.descending,
+                )
+                .map_err(|_| ExecError::unsupported("remote index scan failed to open"))?;
         }
         self.lookup_pipeline = Some(LookupPipeline {
             inflight: VecDeque::new(),

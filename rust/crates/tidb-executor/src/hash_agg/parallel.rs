@@ -316,6 +316,16 @@ impl<C: HashAggContext> HashAggExec<C> {
     /// Requires `C: HashAggContext` so the context-capability constant
     /// participates in the decision at `Open` time.
     pub(super) fn pipeline_eligibility(&self) -> Option<(usize, usize)> {
+        // The binary-string Web3Bench shape has a columnar serial fold that
+        // is cheaper than materializing per-worker expression rows. Keep it
+        // on that path even when the session falls back to the default
+        // worker concurrency; this also makes the single-concurrency result
+        // independent of whether the two hash-agg variables were set.
+        if self.direct_string_group_column().is_some()
+            && self.direct_string_aggregate_specs().is_some()
+        {
+            return None;
+        }
         // The Datum-flattened output buffer cannot carry zero-width virtual
         // rows; GROUP BY without aggregates stays serial.
         if self.agg_funcs.is_empty() {

@@ -97,8 +97,8 @@ use tidb_codec::{
     encode_varint,
 };
 use tidb_datatype::{
-    BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, EvalType, FieldType, MAX_DECIMAL_SCALE,
-    TimeType, UNSPECIFIED_LENGTH,
+    BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, EvalType, FieldType, FieldTypeCode,
+    MAX_DECIMAL_SCALE, TimeType, UNSPECIFIED_LENGTH,
 };
 use tidb_expr::Columns;
 use tidb_expr::compare_datums;
@@ -275,6 +275,16 @@ enum ParallelIntAggSpec {
         field_type: FieldType,
     },
 }
+
+#[derive(Clone)]
+enum DirectStringAgg {
+    Count(Option<usize>),
+    FinalCount(usize),
+    Sum(usize),
+    FirstRow { column: usize, field_type: FieldType },
+}
+
+const DIRECT_STRING_MAX_KEY_BYTES: usize = 192;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum ParallelIntKey {
@@ -713,6 +723,17 @@ impl AggState {
         if input_is_non_null {
             *count += 1;
         }
+        true
+    }
+
+    fn update_final_count_fast(&mut self, value: i64) -> bool {
+        if self.seen.is_some() {
+            return false;
+        }
+        let Partial::FinalCount(total) = &mut self.partial else {
+            return false;
+        };
+        *total = total.wrapping_add(value);
         true
     }
 
@@ -1859,22 +1880,50 @@ impl<C: Columns> Executor for StreamAggExec<C> {
         if self.emitted {
             return Ok(());
         }
-        loop {
-            self.child.next(&mut self.child_chunk)?;
-            let rows = self.child_chunk.num_rows();
-            if rows == 0 {
-                break;
+        // A global COUNT(*)/COUNT(1) only needs the exact child cardinality.
+        // Go's stream aggregate uses this route for a count-only parent,
+        // avoiding materialization when the child is a derived join/UNION.
+        let count_all_rows = self.agg_funcs.len() == 1
+            && matches!(self.agg_funcs[0].kind, AggKind::Count)
+            && !self.agg_funcs[0].distinct
+            && self.agg_funcs[0].extra_args.is_empty()
+            && self.agg_funcs[0].order_by.is_empty()
+            && match self.agg_funcs[0].arg.as_ref() {
+                None => true,
+                Some(Expression::Constant(constant)) => {
+                    matches!(constant.value, Datum::Int(1) | Datum::UInt(1))
+                }
+                Some(_) => false,
+            };
+        let mut counted = false;
+        if count_all_rows {
+            if let Some(count) = self.child.row_count()? {
+                let count = i64::try_from(count)
+                    .map_err(|_| ExecError::unsupported("COUNT exceeds signed BIGINT"))?;
+                self.states = vec![AggState::new(&self.agg_funcs[0])];
+                self.states[0].partial = Partial::Count(count);
+                self.child_returned_empty = count == 0;
+                counted = true;
             }
-            self.child_returned_empty = false;
-            for row_index in 0..rows {
-                Self::update_row(
-                    &self.agg_funcs,
-                    &self.ctx,
-                    &mut self.states,
-                    self.child_chunk.get_row(row_index),
-                )?;
+        }
+        if !counted {
+            loop {
+                self.child.next(&mut self.child_chunk)?;
+                let rows = self.child_chunk.num_rows();
+                if rows == 0 {
+                    break;
+                }
+                self.child_returned_empty = false;
+                for row_index in 0..rows {
+                    Self::update_row(
+                        &self.agg_funcs,
+                        &self.ctx,
+                        &mut self.states,
+                        self.child_chunk.get_row(row_index),
+                    )?;
+                }
+                self.child_chunk.reset();
             }
-            self.child_chunk.reset();
         }
         if self.agg_funcs.is_empty() {
             req.set_num_virtual_rows(1);
@@ -2364,6 +2413,423 @@ impl<C: HashAggContext> HashAggExec<C> {
         Some((group_index, group_type.is_unsigned(), specs))
     }
 
+    /// Returns the direct binary string GROUP BY shape used by Web3Bench.
+    /// Binary collations can use the source bytes as the hash key; all other
+    /// collations stay on the complete collation-aware expression path.
+    fn direct_string_group_column(&self) -> Option<(usize, tidb_datatype::Collation)> {
+        if self.group_by.len() != 1 {
+            return None;
+        }
+        let column = self.group_by[0].as_column()?;
+        let offset = usize::try_from(column.index).ok()?;
+        let field_type = column.get_static_type()?;
+        if !matches!(
+            field_type.code(),
+            FieldTypeCode::String | FieldTypeCode::VarString | FieldTypeCode::Varchar
+        ) {
+            return None;
+        }
+        let collation = expr_collation(&self.group_by[0]);
+        let bytes_per_char = match collation {
+            tidb_datatype::Collation::Binary => 1,
+            tidb_datatype::Collation::Utf8Mb4Bin
+            | tidb_datatype::Collation::Utf8Mb40900Bin => 4,
+            _ => return None,
+        };
+        if field_type
+            .flen()
+            .checked_mul(bytes_per_char)
+            .is_none_or(|width| width < 0 || width as usize > DIRECT_STRING_MAX_KEY_BYTES)
+        {
+            return None;
+        }
+        matches!(
+            collation,
+            tidb_datatype::Collation::Binary
+                | tidb_datatype::Collation::Utf8Mb4Bin
+                | tidb_datatype::Collation::Utf8Mb40900Bin
+        )
+        .then_some((offset, collation))
+    }
+
+    /// The Web3Bench grouped shape has one binary string key and only
+    /// column-based COUNT/SUM functions.  Keep this descriptor narrow: the
+    /// columnar fold below deliberately bypasses expression evaluation, so a
+    /// computed argument, DISTINCT, or an order-sensitive aggregate must stay
+    /// on the complete Go-compatible path.
+    fn direct_string_aggregate_specs(&self) -> Option<Vec<DirectStringAgg>> {
+        if self.agg_funcs.is_empty() {
+            return None;
+        }
+        self.agg_funcs
+            .iter()
+            .map(|func| {
+                if func.distinct || !func.extra_args.is_empty() || !func.order_by.is_empty() {
+                    return None;
+                }
+                match func.kind {
+                    AggKind::Count => {
+                        let column = match func.arg.as_ref() {
+                            None => None,
+                            Some(expr) => Some(usize::try_from(expr.as_column()?.index).ok()?),
+                        };
+                        Some(DirectStringAgg::Count(column))
+                    }
+                    AggKind::FinalCount => {
+                        let column = func.arg.as_ref()?.as_column()?;
+                        if column.get_static_type()?.is_unsigned() {
+                            return None;
+                        }
+                        Some(DirectStringAgg::FinalCount(
+                            usize::try_from(column.index).ok()?,
+                        ))
+                    }
+                    AggKind::Sum => {
+                        let column = func.arg.as_ref()?.as_column()?;
+                        let field_type = column.get_static_type()?;
+                        (field_type.code() == FieldTypeCode::NewDecimal).then_some(
+                            DirectStringAgg::Sum(usize::try_from(column.index).ok()?),
+                        )
+                    }
+                    AggKind::FirstRow => {
+                        let column = func.arg.as_ref()?.as_column()?;
+                        Some(DirectStringAgg::FirstRow {
+                            column: usize::try_from(column.index).ok()?,
+                            field_type: column.get_static_type()?.clone(),
+                        })
+                    }
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    /// Returns the narrow global `COUNT(DISTINCT string_column)` shape. The
+    /// generic aggregate path evaluates a `Datum` and re-encodes it for every
+    /// row; a binary string column can use its chunk bytes directly instead.
+    fn direct_global_count_distinct_column(
+        &self,
+    ) -> Option<(usize, tidb_datatype::Collation)> {
+        if !self.group_by.is_empty() || self.agg_funcs.len() != 1 {
+            return None;
+        }
+        let function = &self.agg_funcs[0];
+        if !matches!(function.kind, AggKind::Count)
+            || !function.distinct
+            || !function.extra_args.is_empty()
+            || !function.order_by.is_empty()
+        {
+            return None;
+        }
+        let column = function.arg.as_ref()?.as_column()?;
+        let offset = usize::try_from(column.index).ok()?;
+        let field_type = column.get_static_type()?;
+        if !matches!(
+            field_type.code(),
+            FieldTypeCode::String
+                | FieldTypeCode::VarString
+                | FieldTypeCode::Varchar
+                | FieldTypeCode::TinyBlob
+                | FieldTypeCode::MediumBlob
+                | FieldTypeCode::LongBlob
+                | FieldTypeCode::Blob
+        ) {
+            return None;
+        }
+        let collation = expr_collation(function.arg.as_ref()?);
+        matches!(
+            collation,
+            tidb_datatype::Collation::Binary
+                | tidb_datatype::Collation::Utf8Mb4Bin
+                | tidb_datatype::Collation::Utf8Mb40900Bin
+        )
+        .then_some((offset, collation))
+    }
+
+    /// Drains a global binary-string DISTINCT COUNT without constructing one
+    /// `Datum`/hash encoding per input row. NULLs are excluded by COUNT;
+    /// `utf8mb4_bin` keeps the same PAD SPACE normalization as the grouped
+    /// direct-string path above.
+    fn execute_direct_global_count_distinct(
+        &mut self,
+        offset: usize,
+        collation: tidb_datatype::Collation,
+    ) -> Result<(), ExecError> {
+        self.ordered.clear();
+        self.ordered
+            .extend(self.agg_funcs.iter().map(AggState::new));
+        self.group_count = 1;
+        loop {
+            self.child_chunk.reset();
+            self.child.next(&mut self.child_chunk)?;
+            let rows = self.child_chunk.num_rows();
+            if rows == 0 {
+                break;
+            }
+            self.child_returned_empty = false;
+            let column = self.child_chunk.column(offset);
+            for row_index in 0..rows {
+                let physical_row = self
+                    .child_chunk
+                    .sel()
+                    .map_or(row_index, |selection| selection[row_index]);
+                if column.is_null(physical_row) {
+                    continue;
+                }
+                let raw = column.get_bytes(physical_row);
+                let raw = raw.as_ref();
+                let key = if matches!(collation, tidb_datatype::Collation::Utf8Mb4Bin) {
+                    let len = raw
+                        .iter()
+                        .rposition(|byte| *byte != b' ')
+                        .map_or(0, |index| index + 1);
+                    raw[..len].to_vec()
+                } else {
+                    raw.to_vec()
+                };
+                let key_len = i64::try_from(key.len()).unwrap_or(i64::MAX);
+                let (map_delta, inserted) = self.ordered[0]
+                    .seen
+                    .as_mut()
+                    .expect("direct DISTINCT COUNT always owns a seen set")
+                    .insert(key);
+                if inserted {
+                    if let Partial::Count(count) = &mut self.ordered[0].partial {
+                        *count += 1;
+                    }
+                    self.tracker.consume(key_len + map_delta);
+                }
+            }
+        }
+        self.executed = true;
+        self.prepared = true;
+        Ok(())
+    }
+
+    /// Folds a direct binary string grouping key without constructing a
+    /// Datum/collation key for every row. The leading tag keeps NULL distinct
+    /// from the empty string; UTF8MB4 binary retains MySQL PAD SPACE.
+    fn fold_direct_string_group(
+        &mut self,
+        chunk: &Chunk,
+        rows: usize,
+        offset: usize,
+        collation: tidb_datatype::Collation,
+    ) -> Result<Vec<usize>, ExecError> {
+        let mut deferred = Vec::new();
+        for row_index in 0..rows {
+            let row = chunk.get_row(row_index);
+            self.group_key_buffer.clear();
+            if row.is_null(offset) {
+                self.group_key_buffer.push(0);
+            } else {
+                let bytes = row.get_bytes(offset);
+                let bytes = bytes.as_ref();
+                let bytes = if matches!(collation, tidb_datatype::Collation::Utf8Mb4Bin) {
+                    let len = bytes
+                        .iter()
+                        .rposition(|byte| *byte != b' ')
+                        .map_or(0, |index| index + 1);
+                    &bytes[..len]
+                } else {
+                    bytes
+                };
+                if bytes.len() > DIRECT_STRING_MAX_KEY_BYTES {
+                    return Err(ExecError::unsupported(
+                        "direct string aggregate key exceeds its declared width",
+                    ));
+                }
+                self.group_key_buffer.push(1);
+                self.group_key_buffer.extend_from_slice(bytes);
+            }
+            let idx = match self.groups.get(&self.group_key_buffer) {
+                Some(&idx) => idx,
+                None => {
+                    if self.in_spill_mode.load(SeqCst) && self.group_count != 0 {
+                        deferred.push(row_index);
+                        continue;
+                    }
+                    let idx = self.group_count;
+                    let capacity = self.group_key_buffer.capacity();
+                    let key = std::mem::replace(
+                        &mut self.group_key_buffer,
+                        Vec::with_capacity(capacity),
+                    );
+                    self.tracker
+                        .consume(new_group_bytes(key.len(), self.agg_funcs.len()));
+                    self.groups.insert(key, idx);
+                    self.ordered
+                        .extend(self.agg_funcs.iter().map(AggState::new));
+                    self.group_count += 1;
+                    idx
+                }
+            };
+            let delta = self.update_group(idx, row)?;
+            if delta != 0 {
+                self.tracker.consume(delta);
+            }
+        }
+        Ok(deferred)
+    }
+
+    /// Columnar counterpart of [`Self::fold_direct_string_group`].  Go's
+    /// vectorized aggregate updates read COUNT null bits and DECIMAL
+    /// coefficients directly from the chunk columns; doing the same avoids
+    /// constructing a `Row`, evaluating two column expressions, and decoding
+    /// a decimal for every Web3Bench transaction.
+    fn fold_direct_string_group_columnar(
+        &mut self,
+        chunk: &Chunk,
+        rows: usize,
+        offset: usize,
+        collation: tidb_datatype::Collation,
+        specs: &[DirectStringAgg],
+    ) -> Result<Vec<usize>, ExecError> {
+        let values = specs
+            .iter()
+            .map(|spec| match spec {
+                DirectStringAgg::Count(Some(index))
+                | DirectStringAgg::FinalCount(index)
+                | DirectStringAgg::Sum(index)
+                | DirectStringAgg::FirstRow { column: index, .. } => {
+                    Some(chunk.column(*index))
+                }
+                DirectStringAgg::Count(None) => None,
+            })
+            .collect::<Vec<_>>();
+        let key_column = chunk.column(offset);
+        // The normal statement budget is far above the spill threshold. In
+        // that case defer the tracker walk until the chunk boundary instead
+        // of traversing the global memory-arbitrator tree for every group.
+        // Small quotas retain per-group accounting so spill/cancellation
+        // still observes Go's mid-chunk behavior.
+        let batch_tracking = self.memory.quota() == 0 || self.memory.quota() >= 256 * 1024 * 1024;
+        let mut pending_tracker_bytes = 0;
+        let mut deferred = Vec::new();
+        for row_index in 0..rows {
+            let physical_row = chunk.sel().map_or(row_index, |selection| selection[row_index]);
+            self.group_key_buffer.clear();
+            if key_column.is_null(physical_row) {
+                self.group_key_buffer.push(0);
+            } else {
+                let bytes = key_column.get_bytes(physical_row);
+                let bytes = bytes.as_ref();
+                let bytes = if matches!(collation, tidb_datatype::Collation::Utf8Mb4Bin) {
+                    let len = bytes
+                        .iter()
+                        .rposition(|byte| *byte != b' ')
+                        .map_or(0, |index| index + 1);
+                    &bytes[..len]
+                } else {
+                    bytes
+                };
+                if bytes.len() > DIRECT_STRING_MAX_KEY_BYTES {
+                    return Err(ExecError::unsupported(
+                        "direct string aggregate key exceeds its declared width",
+                    ));
+                }
+                self.group_key_buffer.push(1);
+                self.group_key_buffer.extend_from_slice(bytes);
+            }
+            let idx = match self.groups.get(&self.group_key_buffer) {
+                Some(&idx) => idx,
+                None => {
+                    if self.in_spill_mode.load(SeqCst) && self.group_count != 0 {
+                        deferred.push(row_index);
+                        continue;
+                    }
+                    let idx = self.group_count;
+                    let capacity = self.group_key_buffer.capacity();
+                    let key = std::mem::replace(
+                        &mut self.group_key_buffer,
+                        Vec::with_capacity(capacity),
+                    );
+                    let bytes = new_group_bytes(key.len(), self.agg_funcs.len());
+                    if batch_tracking {
+                        pending_tracker_bytes += bytes;
+                    } else {
+                        self.tracker.consume(bytes);
+                    }
+                    self.groups.insert(key, idx);
+                    self.ordered
+                        .extend(self.agg_funcs.iter().map(AggState::new));
+                    self.group_count += 1;
+                    idx
+                }
+            };
+            let group_offset = idx * self.agg_funcs.len();
+            let mut delta = 0;
+            for (function_index, spec) in specs.iter().enumerate() {
+                let state = &mut self.ordered[group_offset + function_index];
+                match spec {
+                    DirectStringAgg::Count(column) => {
+                        let non_null = column.is_none_or(|_column| {
+                            !values[function_index]
+                                .as_ref()
+                                .expect("COUNT column installed")
+                                .is_null(physical_row)
+                        });
+                        if !state.update_count_fast(non_null) {
+                            return Err(ExecError::unsupported(
+                                "direct string COUNT state is not a plain count",
+                            ));
+                        }
+                    }
+                    DirectStringAgg::FinalCount(_column) => {
+                        let source = values[function_index]
+                            .as_ref()
+                            .expect("final COUNT column installed");
+                        if source.is_null(physical_row) {
+                            continue;
+                        }
+                        let value = source.get_int64(physical_row);
+                        if !state.update_final_count_fast(value) {
+                            return Err(ExecError::unsupported(
+                                "direct string final COUNT state is not a final count",
+                            ));
+                        }
+                    }
+                    DirectStringAgg::Sum(_column) => {
+                        let source = values[function_index]
+                            .as_ref()
+                            .expect("SUM column installed");
+                        if source.is_null(physical_row) {
+                            continue;
+                        }
+                        let decimal = source.get_my_decimal(physical_row);
+                        if let Some((coefficient, scale)) = decimal.to_i128_scaled() {
+                            if state.update_sum_decimal_fast(coefficient, scale) {
+                                continue;
+                            }
+                        }
+                        // Overflow or a mixed representation is rare but must
+                        // retain Go's exact fallback semantics.
+                        let value = Datum::Decimal(Decimal::from_my_decimal(&decimal));
+                        delta += state.update(Some(value), &[], Vec::new(), None)?;
+                    }
+                    DirectStringAgg::FirstRow { column, field_type } => {
+                        if !state.has_first_row() {
+                            let row = chunk.get_row(row_index);
+                            let value = row.get_datum(*column, field_type);
+                            delta += state.update(Some(value), &[], Vec::new(), None)?;
+                        }
+                    }
+                }
+            }
+            if delta != 0 {
+                if batch_tracking {
+                    pending_tracker_bytes += delta;
+                } else {
+                    self.tracker.consume(delta);
+                }
+            }
+        }
+        if pending_tracker_bytes != 0 {
+            self.tracker.consume(pending_tracker_bytes);
+        }
+        Ok(deferred)
+    }
+
     fn parallel_int_agg_chunk(
         chunks: Vec<(Chunk, usize)>,
         group_column: usize,
@@ -2630,6 +3096,14 @@ impl<C: HashAggContext> HashAggExec<C> {
     /// returning the bytes the group table grew by and the rows this round
     /// refused to open a group for (Go's `sel`).
     fn fold_chunk(&mut self, chunk: &Chunk, rows: usize) -> Result<Vec<usize>, ExecError> {
+        if let Some((offset, collation)) = self.direct_string_group_column() {
+            if let Some(specs) = self.direct_string_aggregate_specs() {
+                return self.fold_direct_string_group_columnar(
+                    chunk, rows, offset, collation, &specs,
+                );
+            }
+            return self.fold_direct_string_group(chunk, rows, offset, collation);
+        }
         let mut sel: Vec<usize> = Vec::new();
         for r in 0..rows {
             let row = chunk.get_row(r);
@@ -2997,6 +3471,43 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
             }
             if self.executed {
                 return Ok(());
+            }
+            // A global COUNT(*)/COUNT(1) can consume an exact child
+            // cardinality directly. This is the same shortcut as Go's
+            // aggregate executor and lets a derived join answer COUNT
+            // without materializing its joined rows.
+            if self.group_by.is_empty()
+                && self.agg_funcs.len() == 1
+                && matches!(self.agg_funcs[0].kind, AggKind::Count)
+                && !self.agg_funcs[0].distinct
+                && self.agg_funcs[0].extra_args.is_empty()
+                && self.agg_funcs[0].order_by.is_empty()
+            {
+                let counts_all_rows = match self.agg_funcs[0].arg.as_ref() {
+                    None => true,
+                    Some(Expression::Constant(constant)) => {
+                        matches!(constant.value, Datum::Int(1) | Datum::UInt(1))
+                    }
+                    Some(_) => false,
+                };
+                if counts_all_rows {
+                    if let Some(count) = self.child.row_count()? {
+                        let count = i64::try_from(count)
+                            .map_err(|_| ExecError::unsupported("COUNT exceeds signed BIGINT"))?;
+                        let mut state = AggState::new(&self.agg_funcs[0]);
+                        state.partial = Partial::Count(count);
+                        self.ordered.push(state);
+                        self.group_count = 1;
+                        self.child_returned_empty = count == 0;
+                        self.executed = true;
+                        self.prepared = true;
+                        continue;
+                    }
+                }
+            }
+            if let Some((offset, collation)) = self.direct_global_count_distinct_column() {
+                self.execute_direct_global_count_distinct(offset, collation)?;
+                continue;
             }
             self.execute()?;
             // No group-by and no data: one empty group, so a global COUNT is 0.
@@ -3392,6 +3903,50 @@ mod tests {
 
     fn decimal() -> FieldType {
         FieldType::new(tidb_datatype::FieldTypeCode::NewDecimal)
+    }
+
+    fn binary_varchar() -> FieldType {
+        FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Binary)
+    }
+
+    fn binary_string_source(values: &[Option<&[u8]>]) -> Box<dyn Executor> {
+        let field_type = binary_varchar();
+        let mut data = Chunk::new_with_capacity(std::slice::from_ref(&field_type), values.len());
+        for value in values {
+            match value {
+                Some(value) => data.append_bytes(0, value),
+                None => data.append_null(0),
+            }
+        }
+        let mut column = Column::new(1, field_type.clone());
+        column.index = 0;
+        Box::new(OneChunkSource {
+            meta: ExecutorMeta::new(Schema::new(vec![column]), 0, values.len(), 1024),
+            data: Some(data),
+        })
+    }
+
+    #[test]
+    fn global_binary_count_distinct_uses_direct_bytes() {
+        let field_type = binary_varchar();
+        let agg = AggFunc {
+            kind: AggKind::Count,
+            arg: Some(typed_col(0, field_type)),
+            extra_args: Vec::new(),
+            distinct: true,
+            order_by: Vec::new(),
+            arg_orig_name: String::new(),
+        };
+        let exec = HashAggExec::new(
+            out_meta(1),
+            vec![],
+            vec![agg],
+            binary_string_source(&[Some(b"a"), Some(b"b"), Some(b"a"), None]),
+            NoColumns,
+            StatementMemory::default(),
+        );
+        assert!(exec.direct_global_count_distinct_column().is_some());
+        assert_eq!(run(exec), vec![vec![Datum::Int(2)]]);
     }
 
     fn decimal_with_shape(flen: i64, scale: i64) -> FieldType {

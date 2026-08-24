@@ -992,7 +992,9 @@ impl KvTable {
         if index.column_offsets.is_empty()
             || !matches!(
                 aggregate,
-                PushdownPartialAggregate::Count { .. } | PushdownPartialAggregate::Global { .. }
+                PushdownPartialAggregate::Count { .. }
+                    | PushdownPartialAggregate::Global { .. }
+                    | PushdownPartialAggregate::Grouped { .. }
             )
         {
             return Ok(None);
@@ -1047,25 +1049,44 @@ impl KvTable {
             return Ok(None);
         }
         let mut remote_aggregate = aggregate.clone();
+        // The planner's aggregate offsets name the scan's pruned schema;
+        // the covering index request exposes index columns in index order.
+        // Keep the same remapping Go's `PhysicalIndexReader.ToPB` applies to
+        // aggregate arguments and group keys.
+        // Keep one slot per physical index column. A sentinel represents an
+        // index-only column absent from the pruned source schema; it preserves
+        // the physical position while still letting offset remapping find
+        // every aggregate/predicate column that IS present.
+        let index_keep = index
+            .column_offsets
+            .iter()
+            .map(|offset| {
+                scan_keep
+                    .iter()
+                    .position(|kept| kept == offset)
+                    .unwrap_or(usize::MAX)
+            })
+            .collect::<Vec<_>>();
+        let mut remote_predicates = predicates.to_vec();
+        for predicate in &mut remote_predicates {
+            if crate::predicate_pushdown::remap_scan_predicate(predicate, &index_keep).is_none() {
+                return Ok(None);
+            }
+        }
+        let remap = |offset: &mut usize| {
+            *offset = index_keep.iter().position(|kept| *kept == *offset)?;
+            Some(())
+        };
         match &mut remote_aggregate {
             PushdownPartialAggregate::Count { input_offset, .. } => {
                 if input_offset.is_some() {
-                    *input_offset = Some(0);
+                    let offset = input_offset.as_mut().expect("checked above");
+                    if remap(offset).is_none() {
+                        return Ok(None);
+                    }
                 }
             }
             PushdownPartialAggregate::Global { functions } => {
-                // The aggregate expression is indexed in the source schema
-                // after column pruning, while `index.column_offsets` names
-                // the original table schema. Translate through the source's
-                // current `keep` vector before lowering it over index keys.
-                let index_keep = index
-                    .column_offsets
-                    .iter()
-                    .filter_map(|offset| scan_keep.iter().position(|kept| kept == offset))
-                    .collect::<Vec<_>>();
-                if index_keep.len() != index.column_offsets.len() {
-                    return Ok(None);
-                }
                 for function in functions {
                     if let Some(input) = function.input.as_mut() {
                         // An argument naming a column the index does not
@@ -1075,6 +1096,28 @@ impl KvTable {
                         // so the scan falls back to the local path instead
                         // of failing a statement Go accepts.
                         if crate::predicate_pushdown::remap_expression(input, &index_keep).is_none()
+                        {
+                            return Ok(None);
+                        }
+                    }
+                }
+            }
+            PushdownPartialAggregate::Grouped {
+                group_offsets,
+                functions,
+                ..
+            } => {
+                for offset in group_offsets {
+                    remap(offset).ok_or_else(|| {
+                        KvTableError::Encode(
+                            "a grouped aggregate key is not covered by the index".to_owned(),
+                        )
+                    })?;
+                }
+                for function in functions {
+                    if let Some(input) = function.input.as_mut() {
+                        if crate::predicate_pushdown::remap_expression(input, &index_keep)
+                            .is_none()
                         {
                             return Ok(None);
                         }
@@ -1095,7 +1138,7 @@ impl KvTable {
             handle_index: None,
             primary_column_ids: Vec::new(),
             primary_prefix_column_ids: Vec::new(),
-            predicates: predicates.to_vec(),
+            predicates: remote_predicates,
             output_offsets: None,
             topn: None,
             limit: None,

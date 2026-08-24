@@ -737,7 +737,7 @@ fn remapped_offset(offset: u32, keep: &[usize]) -> Option<u32> {
         .and_then(|offset| u32::try_from(offset).ok())
 }
 
-fn remap_scan_predicate(predicate: &mut ScanPredicate, keep: &[usize]) -> Option<()> {
+pub(crate) fn remap_scan_predicate(predicate: &mut ScanPredicate, keep: &[usize]) -> Option<()> {
     match predicate {
         ScanPredicate::Compare(comparison) => {
             comparison.column_offset = remapped_offset(comparison.column_offset, keep)?;
