@@ -862,6 +862,30 @@ pub(crate) fn commit_fast_path_source(
     // table just the same. Committing the dual here supersedes every access
     // path below, exactly as Go's whole-`DataSource`-to-dual replacement does.
     if let Some(where_clause) = select.where_clause.as_ref() {
+        // Go's `EvaluateExprWithNull` (predicate pushdown over a zero-row
+        // child profile) replaces a scalar-subquery column whose subquery
+        // returned no row by NULL; a comparison against it is NULL for every
+        // row, so the WHERE admits nothing and the table plans as a Dual.
+        // The eager scalar evaluation already recorded that NULL here.
+        if null_scalar_comparison_contradiction(scope, where_clause) {
+            logical_rows = Some(
+                crate::access_cost::realtime_row_count(statistics.map(AsRef::as_ref))
+                    * stats_selectivity_with_default_string_match_selectivity(
+                        catalog,
+                        &table,
+                        scope,
+                        select.where_clause.as_ref(),
+                        ctx.default_string_match_selectivity(),
+                    )
+                    .unwrap_or(1.0),
+            );
+            install_contradiction_dual(&columns, from_source, trace.as_deref_mut());
+            return Ok(AccessPathCommit {
+                consumed_where: true,
+                logical_rows,
+                ..AccessPathCommit::default()
+            });
+        }
         if crate::index_range::where_is_unsatisfiable(&columns, where_clause, zone) {
             logical_rows = Some(
                 crate::access_cost::realtime_row_count(statistics.map(AsRef::as_ref))
@@ -2147,6 +2171,55 @@ pub(crate) fn surviving_partition_estimates(
             }
         })
         .collect()
+}
+
+/// Whether `expr` names a scalar-subquery plan column whose eager
+/// evaluation recorded a NULL (Go's `EvaluateExprWithNull` replacement).
+fn null_scalar_column(
+    scope: &super::from::FromScope,
+    expr: &tidb_ast::Expr,
+) -> bool {
+    let tidb_ast::Expr::Column(path) = expr else {
+        return false;
+    };
+    if path.first().map(String::as_str) != Some(super::from::SCALAR_QUERY_SCOPE) {
+        return false;
+    }
+    let Some(name) = path.get(1).map(String::as_str) else {
+        return false;
+    };
+    scope
+        .plan_columns
+        .iter()
+        .any(|column| column.name == name && column.value.as_ref().is_some_and(Datum::is_null))
+}
+
+/// Whether any comparison conjunct compares a column against an eagerly
+/// evaluated scalar-subquery column whose value is NULL. Such a comparison is
+/// NULL for every row -- never true -- so the WHERE admits nothing.
+fn null_scalar_comparison_contradiction(
+    scope: &super::from::FromScope,
+    where_clause: &tidb_ast::Expr,
+) -> bool {
+    let mut conjuncts = Vec::new();
+    collect_conjuncts(where_clause, &mut conjuncts);
+    conjuncts.iter().any(|conjunct| {
+        let tidb_ast::Expr::Binary(op, left, right) = conjunct else {
+            return false;
+        };
+        matches!(
+            op,
+            tidb_ast::BinaryOp::Gt
+                | tidb_ast::BinaryOp::Ge
+                | tidb_ast::BinaryOp::Lt
+                | tidb_ast::BinaryOp::Le
+                | tidb_ast::BinaryOp::Eq
+                | tidb_ast::BinaryOp::Ne
+                | tidb_ast::BinaryOp::NullEq
+        ) && [left.as_ref(), right.as_ref()]
+            .into_iter()
+            .any(|side| null_scalar_column(scope, side))
+    })
 }
 
 /// Installs a zero-row [`TableDualExec`] for a contradictory `WHERE` and

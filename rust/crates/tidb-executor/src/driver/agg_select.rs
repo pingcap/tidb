@@ -92,6 +92,9 @@ struct AggPipelineState {
     pre_agg_scope: Option<FromScope>,
     /// `HAVING` with its aggregates hoisted, over the aggregation's output.
     having_expr: Option<tidb_ast::Expr>,
+    /// The HAVING collapsed to a zero-row dual (Go's whole-tree `TableDual`
+    /// replacement for a comparison against a NULL eager scalar).
+    having_collapsed_dual: bool,
     /// `ORDER BY` with its aggregates hoisted, as `(expr, desc)`.
     order_by_exprs: Vec<(tidb_ast::Expr, bool)>,
     /// The physical aggregate was reordered to TiKV's partial grouped-SUM
@@ -541,7 +544,7 @@ pub(crate) fn run_aggregate_select(
 
     // Stage 7: HAVING over the aggregation's (+ Applies') output rows.
     let out_schema = root.schema().clone();
-    let root = build_having_stage(root, &state, &out_schema, ctx, trace.as_deref_mut())?;
+    let root = build_having_stage(root, &mut state, &out_schema, ctx, trace.as_deref_mut())?;
 
     // Stage 8: the window operator, between HAVING and ORDER BY.
     state.window_base = state.names.len();
@@ -1736,6 +1739,7 @@ fn hoist_having_and_order_by(
     }
 
     state.having_expr = having_expr;
+    state.having_collapsed_dual = false;
     state.order_by_exprs = order_by_exprs;
     Ok(())
 }
@@ -4644,9 +4648,38 @@ fn build_apply_chain(
 /// Mirrors Go's Selection above the Aggregation. Built after the Applies, so
 /// the predicate can read an `__apply_N` column by name exactly like an
 /// aggregate output.
+/// Whether a resolved predicate is a comparison against a constant NULL —
+/// Go's `EvaluateExprWithNull` outcome when a scalar subquery over a zero-row
+/// input folded to NULL. Such a predicate is NULL for every row.
+fn predicate_is_always_null_comparison(predicate: &Expression) -> bool {
+    fn visit(expr: &Expression) -> bool {
+        match expr {
+            Expression::ScalarFunction(func) => {
+                let comparison = matches!(
+                    func.func_name.lowercase().as_bytes(),
+                    b"gt" | b"ge" | b"lt" | b"le" | b"eq" | b"ne" | b"nulleq"
+                );
+                if comparison
+                    && func.args.iter().any(|arg| {
+                        matches!(
+                            arg,
+                            Expression::Constant(constant) if constant.value.is_null()
+                        )
+                    })
+                {
+                    return true;
+                }
+                func.args.iter().any(visit)
+            }
+            _ => false,
+        }
+    }
+    visit(predicate)
+}
+
 fn build_having_stage(
     root: Box<dyn Executor>,
-    state: &AggPipelineState,
+    state: &mut AggPipelineState,
     out_schema: &Schema,
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
@@ -4657,6 +4690,23 @@ fn build_having_stage(
     if let Some(having) = &state.having_expr {
         let predicate = rewrite_expr_resolved(having, &agg_resolver)
             .map_err(|e| super::eval_error_in_clause(e, "having clause"))?;
+        // Go's `EvaluateExprWithNull` folds a HAVING comparison against an
+        // eagerly-evaluated scalar subquery that returned NULL into a
+        // contradiction and plans the whole aggregation as a `TableDual` —
+        // the aggregate tree reads no rows at all. Mirror that collapse:
+        // the executor below still answers correctly, but EXPLAIN must show
+        // the dual Go shows.
+        if predicate_is_always_null_comparison(&predicate) {
+            state.having_collapsed_dual = true;
+            let exec = crate::table_dual::TableDualExec::new(
+                ExecutorMeta::new(out_schema.clone(), 0, INIT_CAP, MAX_CHUNK_SIZE),
+                0,
+            );
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.empty_range_table_dual();
+            }
+            return Ok(Box::new(exec));
+        }
         root = Box::new(SelectionExec::new(
             ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
             vec![predicate.clone()],
@@ -4780,7 +4830,10 @@ fn build_order_and_limit(
         catalog: None,
     };
     let mut fused_topn = false;
-    if !state.order_by_exprs.is_empty() {
+    // A HAVING collapsed to a `TableDual` (the NULL-scalar contradiction)
+    // ends the pipeline the way Go's whole-tree dual replacement does: no
+    // sort runs above a source that yields nothing.
+    if !state.having_collapsed_dual && !state.order_by_exprs.is_empty() {
         let mut by_items = Vec::with_capacity(state.order_by_exprs.len());
         for (expr, desc) in &state.order_by_exprs {
             by_items.push(SortByItem {
