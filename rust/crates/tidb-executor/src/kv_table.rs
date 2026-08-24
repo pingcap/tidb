@@ -429,6 +429,14 @@ pub struct KvTable {
     /// How many of the TRAILING entries of `columns` are hidden (Go
     /// `ColumnInfo.Hidden`). Zero for every table with no expression index.
     hidden_columns: usize,
+    /// Go `model.IndexInfo.MVIndex`, carried as the SOURCE column each
+    /// multi-valued index's single ARRAY key part was built over
+    /// (`ColumnInfo.Dependences`, which DDL's `buildHiddenColumnInfoWithCheck`
+    /// fills from the indexed expression). Keyed by index id. Empty unless a
+    /// loader or DDL recorded a multi-valued part; an entry is what lets the
+    /// planner rewrite `(v MEMBER OF (source))` onto this index's stored
+    /// element keys.
+    mv_key_part_sources: std::collections::BTreeMap<i64, String>,
     /// The byte store, reached through the [`TableStorage`] seam (module
     /// doc), so a TiKV-backed backend replaces it without touching this file.
     store: Box<dyn TableStorage>,
@@ -744,6 +752,7 @@ impl KvTable {
             name: String::new(),
             columns: std::sync::Arc::new(columns),
             hidden_columns: 0,
+            mv_key_part_sources: std::collections::BTreeMap::new(),
             store,
             pk_handle_offset: None,
             indexes: std::sync::Arc::new(Vec::new()),
@@ -836,6 +845,7 @@ impl KvTable {
             self.use_new_collation,
         );
         copy.hidden_columns = self.hidden_columns;
+        copy.mv_key_part_sources = self.mv_key_part_sources.clone();
         copy.pk_handle_offset = self.pk_handle_offset;
         copy.indexes = self.indexes.clone();
         copy.common_handle_offsets = self.common_handle_offsets.clone();
@@ -2182,6 +2192,23 @@ impl KvTable {
     /// *chooses* an access path -- the cost-based index candidates and the
     /// unique-index point-get paths -- goes through here, so an index the
     /// planner must not pick is excluded once rather than at each chooser.
+    /// The source column the multi-valued index `index_id`'s single ARRAY
+    /// key part indexes, when one was recorded (`model.IndexInfo.MVIndex`
+    /// plus that part's hidden column's `Dependences`). `None` for every
+    /// ordinary index and every multi-valued index whose stored expression
+    /// did not name exactly one column.
+    #[must_use]
+    pub fn mv_key_part_source(&self, index_id: i64) -> Option<&str> {
+        self.mv_key_part_sources.get(&index_id).map(String::as_str)
+    }
+
+    /// Records the source column of a multi-valued index's ARRAY key part.
+    /// Loaders and DDL call this once per multi-valued index they admit;
+    /// recording nothing leaves the index unplannable, never misplannable.
+    pub fn set_mv_key_part_source(&mut self, index_id: i64, source: String) {
+        self.mv_key_part_sources.insert(index_id, source);
+    }
+
     pub fn plan_indexes(&self) -> impl Iterator<Item = &KvIndex> {
         self.indexes.iter().filter(|index| index.visible)
     }

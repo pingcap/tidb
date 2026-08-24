@@ -788,6 +788,35 @@ pub(crate) fn cluster_table(
             continue;
         }
         kv_table.add_index(kv_index(&index, &columns)?);
+        // Go `model.IndexInfo.MVIndex`: DDL set the flag when exactly one key
+        // part is an ARRAY-typed hidden column, and that column's
+        // `Dependences` names the source it indexes
+        // (`buildHiddenColumnInfoWithCheck`, `pkg/ddl/create_table.go`). The
+        // pair is what lets a reader rewrite `(v MEMBER OF (source))` onto
+        // this index's stored element keys; anything else about the shape is
+        // recorded as absent rather than guessed.
+        let array_part = index.columns.iter_deref().find_map(|part| {
+            let part = part.read();
+            let name = part.name.lowercase().to_owned();
+            let position = columns
+                .iter()
+                .position(|column| column.read().name.lowercase() == name.as_str())?;
+            let column = columns[position].read();
+            let dependences = column.field_type.is_array().then(|| {
+                let mut names = column.dependences.snapshot();
+                names.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+                names
+            })?;
+            Some(dependences)
+        });
+        if let Some(dependences) = array_part {
+            if dependences.len() == 1 {
+                kv_table.set_mv_key_part_source(
+                    index.id,
+                    dependences[0].to_utf8_lossy_go(),
+                );
+            }
+        }
     }
     if let Some(spec) = partition_spec {
         kv_table.set_partition(spec);
