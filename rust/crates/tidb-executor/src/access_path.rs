@@ -133,6 +133,35 @@ pub enum StatementReadShape {
 /// read from ONE walker, so an EXECUTE template (`?` markers against
 /// `params`) and an already-bound tree classify identically.
 #[must_use]
+
+/// The pre-lock keys for one single-table locking SELECT: the encoded row
+/// keys its WHERE pins. Everything else declines -- Go's `SelectLockExec`
+/// handles multi-table / non-point shapes through the ordinary executor's
+/// own locking walk.
+fn locking_select_point_keys(
+    select: &tidb_ast::SelectStmt,
+    catalog: &crate::driver::Catalog,
+    current_db: &str,
+    params: &[Datum],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<Vec<Vec<u8>>> {
+    use crate::driver::access::{sole_table_ref, point_write_prelock_keys};
+    // `Join.right == None` is the single-table wrapper the parser produces.
+    if select.from.as_ref().is_some_and(|join| join.right.is_some()) {
+        return None;
+    }
+    let table_ref = sole_table_ref(&select.from)?;
+    let (database, table_name) = match table_ref.name.as_slice() {
+        [name] if !current_db.is_empty() => (current_db, name.as_str()),
+        [database, name] => (database.as_str(), name.as_str()),
+        _ => return None,
+    };
+    let Some(crate::driver::TableEntry::Kv(table)) = catalog.get_in(database, table_name) else {
+        return None;
+    };
+    Some(point_write_prelock_keys(table, select.where_clause.as_ref()?, params, zone))
+}
+
 pub fn pessimistic_write_point_keys(
     stmt: &tidb_ast::Stmt,
     params: &[Datum],
@@ -140,6 +169,21 @@ pub fn pessimistic_write_point_keys(
     current_db: &str,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Vec<Vec<u8>> {
+    // A locking SELECT (`SELECT ... FOR UPDATE`) pre-locks exactly like a
+    // point write: Go's `SelectLockExec` acquires the pessimistic locks when
+    // the rows are read (`pkg/executor/executor.go` -> `LockKeys` with
+    // `InitReturnValues`), which serializes a counter read such as TPC-C
+    // new_order's `SELECT d_next_o_id ... FOR UPDATE`. Without that lock two
+    // transactions read one `d_next_o_id` and one of their inserts fails the
+    // prewrite not-exists assertion at COMMIT.
+    if let tidb_ast::Stmt::Query(query) = stmt {
+        let tidb_ast::QueryStmt::Select(select) = &**query else {
+            return Vec::new();
+        };
+        if let Some(keys) = locking_select_point_keys(select, catalog, current_db, params, zone) {
+            return keys;
+        }
+    }
     let tidb_ast::Stmt::Dml(dml) = stmt else {
         return Vec::new();
     };
