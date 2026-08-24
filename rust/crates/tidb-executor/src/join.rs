@@ -363,6 +363,10 @@ struct MergeSide {
     group_len: usize,
     /// The key of the current group.
     key: Vec<Datum>,
+    /// Typed single-BIGINT key of the CURRENT row, when the merge key is one
+    /// non-null-safe integer column: `None` until first read, then the row's
+    /// `Option<i64>` (SQL NULL inside). Skips per-row `Vec<Datum>` building.
+    int_key_cache: Option<Option<i64>>,
 }
 
 impl MergeSide {
@@ -377,6 +381,7 @@ impl MergeSide {
             group_end: 0,
             group_len: 0,
             key: Vec::new(),
+            int_key_cache: None,
         }
     }
 }
@@ -2343,14 +2348,42 @@ impl<C: Columns> JoinExec<C> {
                 }
             }
             let row = side.chunk.get_row(side.row);
-            let key: Vec<Datum> = key_offsets
-                .iter()
-                .map(|&at| row.get_datum(at, &types[at]))
-                .collect();
-            if side.group_len == 0 {
-                side.key = key;
-            } else if merge_key_cmp(&side.key, &key, false)? != Ordering::Equal {
-                break;
+            // Single-BIGINT-key fast path: read the typed cell directly and
+            // keep it in the cache instead of materializing a fresh
+            // `Vec<Datum>` per row. The cache holds the CURRENT row's key —
+            // `Option<i64>` so a SQL NULL compares as its own group value,
+            // and two NULLs sort together exactly as the general path's
+            // `Datum` ordering does.
+            if key_offsets.len() == 1 && side.int_key_cache.is_some() {
+                let at = key_offsets[0];
+                let current = if row.is_null(at) {
+                    None
+                } else {
+                    Some(row.get_int64(at))
+                };
+                // The outer `Option` only marks "typed mode"; the group
+                // boundary compare uses the row-level `Option<i64>`.
+                let previous = side.int_key_cache.replace(current).unwrap_or(None);
+                if side.group_len == 0 {
+                    // Seed the group's stored key so callers that read
+                    // `side.key` still see it.
+                    side.key = vec![match current {
+                        Some(value) => Datum::Int(value),
+                        None => Datum::Null,
+                    }];
+                } else if current != previous {
+                    break;
+                }
+            } else {
+                let key: Vec<Datum> = key_offsets
+                    .iter()
+                    .map(|&at| row.get_datum(at, &types[at]))
+                    .collect();
+                if side.group_len == 0 {
+                    side.key = key;
+                } else if merge_key_cmp(&side.key, &key, false)? != Ordering::Equal {
+                    break;
+                }
             }
             group.append(row, tracker, memory)?;
             side.group_len += 1;
@@ -2573,8 +2606,25 @@ impl<C: Columns> JoinExec<C> {
             }
             let inner_scratch_bytes =
                 inner_group.staging.memory_usage() + inner_group.read_back.memory_usage();
-            let left = MergeSide::new(self.left.new_chunk());
-            let right = MergeSide::new(self.right.new_chunk());
+            let mut left = MergeSide::new(self.left.new_chunk());
+            let mut right = MergeSide::new(self.right.new_chunk());
+            // A single non-nullable-safe integer key pair reads typed i64s
+            // directly in `fetch_inner_group`/`fetch_outer_group`, skipping
+            // one `Vec<Datum>` per row on shapes like q12's 1.5M-row build.
+            if left_keys.len() == 1 {
+                let lt = &left_types[left_keys[0]];
+                let rt = &right_types[right_keys[0]];
+                let signed_int = |ft: &FieldType| {
+                    ft.code() == tidb_datatype::FieldTypeCode::LongLong
+                        && ft.flags() & tidb_datatype::FieldTypeFlags::UNSIGNED == 0
+                };
+                if signed_int(lt) {
+                    left.int_key_cache = Some(None);
+                }
+                if signed_int(rt) {
+                    right.int_key_cache = Some(None);
+                }
+            }
             let input_bytes = left.chunk_bytes + right.chunk_bytes;
             self.merge_state = Some(MergeState {
                 left,
