@@ -231,6 +231,18 @@ where
     /// Refreshes the primary lock's TTL for as long as a pessimistic
     /// transaction holds it; `None` until the first lock is taken.
     keep_alive: Option<LockKeepAlive>,
+    /// Row values TiKV returned WITH a pessimistic lock, keyed by encoded key.
+    ///
+    /// This is Go's `TxnCtx.SetPessimisticLockCache`
+    /// (`pkg/executor/point_get.go:620`, filled from `lockCtx.IterateValuesNotLocked`):
+    /// a DML whose row it is about to modify asks its PessimisticLock request to carry
+    /// the row back (`InitReturnValues`, `pkg/executor/point_get.go:614`), and every later
+    /// read of that key answers from this cache instead of storage. The entries live as
+    /// long as the locks do — the transaction holds them until COMMIT — so a value answered
+    /// here cannot go stale behind the transaction's back; [`Self::read_at_snapshot`] reads
+    /// buffer-then-cache-then-snapshot exactly like Go's `PointGetExecutor.get`
+    /// (`pkg/executor/point_get.go:656`: memBuffer, lock cache, store).
+    lock_values: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
     opener: RealOptimisticTransactionOpener<C, L, P>,
 }
 
@@ -282,6 +294,7 @@ where
             buffer: TransactionMutationBuffer::new(),
             timeout,
             keep_alive: None,
+            lock_values: BTreeMap::new(),
             opener: opener.clone(),
         })
     }
@@ -638,6 +651,33 @@ where
         handles: &[i64],
         wait: ReadLockWait,
     ) -> Result<(), TransactionStatementError> {
+        self.lock_handles_impl(handles, wait, false)
+    }
+
+    /// [`Self::lock_handles`], asking TiKV to return each locked row with its
+    /// lock and caching what comes back.
+    ///
+    /// This is Go's point-write fold (`pkg/executor/point_get.go:612-624`,
+    /// `PointGetExecutor.getAndLock`): `lockCtx.InitReturnValues(1)` marks the
+    /// PessimisticLock request, the response lands in
+    /// `TxnCtx.SetPessimisticLockCache`, and the statement's one row read then
+    /// answers from that cache — ONE round trip for lock plus read. The planner's
+    /// snapshot read sees the cache through [`Self::read_at_snapshot`], so a point
+    /// `UPDATE`/`DELETE` no longer pays a separate kv_get before rewriting its row.
+    pub fn lock_handles_returning_values(
+        &mut self,
+        handles: &[i64],
+        wait: ReadLockWait,
+    ) -> Result<(), TransactionStatementError> {
+        self.lock_handles_impl(handles, wait, true)
+    }
+
+    fn lock_handles_impl(
+        &mut self,
+        handles: &[i64],
+        wait: ReadLockWait,
+        return_values: bool,
+    ) -> Result<(), TransactionStatementError> {
         if handles.is_empty() {
             return Ok(());
         }
@@ -653,7 +693,7 @@ where
                 encode_row_key_with_handle(self.table.table_id(), &RecordHandle::Int(*handle))
             })
             .collect::<Vec<_>>();
-        self.lock_keys(&keys, wait)
+        self.lock_keys_with_values(&keys, wait, return_values)
     }
 
     /// Acquires exclusive pessimistic locks on already-encoded DML keys.
@@ -665,6 +705,15 @@ where
         &mut self,
         keys: &[Vec<u8>],
         wait: ReadLockWait,
+    ) -> Result<(), TransactionStatementError> {
+        self.lock_keys_with_values(keys, wait, false)
+    }
+
+    fn lock_keys_with_values(
+        &mut self,
+        keys: &[Vec<u8>],
+        wait: ReadLockWait,
+        return_values: bool,
     ) -> Result<(), TransactionStatementError> {
         let wait = match wait {
             // Go maps a plain `FOR UPDATE` to `@@innodb_lock_wait_timeout`,
@@ -688,14 +737,37 @@ where
             // must be allowed to observe and delete a duplicate rather than
             // fail at lock time; ordinary INSERT retains its NotExist
             // assertion at Prewrite.
-            let retry_reason = match transaction.acquire_locks(keys, &BTreeSet::new(), wait, &call)
-            {
-                Ok(acquired) if acquired.locked_with_conflict.is_empty() => break acquired,
-                // Fair locking: TiKV granted the locks despite a newer
-                // committed version. The locks stay — that is the whole point,
-                // the retry needs no second PessimisticLock — but the statement
-                // must be recomputed at a timestamp that can see that version.
+            //
+            // With `return_values`, TiKV answers each locked key's current row
+            // IN the PessimisticLock response — Go's `KeyReturningValue`
+            // request flag, set from `InitReturnValues` when an executor needs
+            // the row it is about to modify (`pkg/executor/point_get.go:614`).
+            let retry_reason = match if return_values {
+                transaction
+                    .acquire_locks_returning_values(keys, &BTreeSet::new(), wait, &call)
+            } else {
+                transaction.acquire_locks(keys, &BTreeSet::new(), wait, &call)
+            } {
                 Ok(acquired) => {
+                    // Cache whatever rows rode back BEFORE deciding what the
+                    // acquisition means: both exits below KEEP these locks (a
+                    // clean break, or fair locking's grant-despite-conflict),
+                    // so the values stay valid either way. Conflict-granted
+                    // keys answer no value — Go recomputes such a statement
+                    // from a newer snapshot, and so does this one.
+                    self.lock_values.extend(
+                        acquired
+                            .values
+                            .iter()
+                            .map(|(key, value)| (key.clone(), value.clone())),
+                    );
+                    if acquired.locked_with_conflict.is_empty() {
+                        break acquired;
+                    }
+                    // Fair locking: TiKV granted the locks despite a newer
+                    // committed version. The locks stay — that is the whole point,
+                    // the retry needs no second PessimisticLock — but the statement
+                    // must be recomputed at a timestamp that can see that version.
                     let (key, conflict_commit_ts) = acquired
                         .locked_with_conflict
                         .iter()
@@ -894,6 +966,19 @@ where
                 | OptimisticMutationKind::MetaPut => Some(staged.value().to_vec()),
                 OptimisticMutationKind::LockOnly => unreachable!("filtered above"),
             });
+        }
+        // Go `PointGetExecutor.get`'s order (`pkg/executor/point_get.go:656-680`):
+        // the transaction's own staged write decides first; then a row TiKV
+        // answered WITH a pessimistic lock — the transaction holds that lock, so
+        // nobody else can have changed it; only an unstaged, never-locked key
+        // falls through to storage. A pessimistic statement's retry reads its
+        // current for-update timestamp, not the transaction's original start
+        // snapshot: the latter remains the Prewrite start version, but using it
+        // here after a lock conflict would recompute the same stale mutation.
+        if self.mode.is_pessimistic() {
+            if let Some(cached) = self.lock_values.get(key) {
+                return Ok(cached.clone());
+            }
         }
         let value = match &mut self.open {
             OpenTransaction::Optimistic(transaction) => transaction.snapshot_get(key, call)?.value,
