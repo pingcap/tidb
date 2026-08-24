@@ -209,6 +209,18 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       a stub. Patches 030/040 needed rebasing this check-in (upstream moved
       twice and broke two of the four maintained patches) — routine
       maintenance, see the matching commit.
+- [ ] (2026-08-24, scheduled check-in, quiet) `internal/locate` moved
+      `seed` -> `in-progress` (real movement, e.g. `get_store` now returns
+      `Option<metapb::Store>` to represent a tombstoned store rather than
+      erroring). Does not cross the Decision Log's threshold for revisiting
+      PD failover (`complete`, with a receipt actually covering the specific
+      behaviors this repo's tests require — not just "less seed"). `tikv`,
+      `txnkv/transaction`, `txnkv/txnlock`, `txnkv/txnsnapshot` still `seed`;
+      `remove_from_buffer` still a stub. All four patches needed rebasing
+      again (upstream moved twice more) — same routine maintenance pattern,
+      see the matching commit. No user-facing report this check-in per the
+      trigger's own "stay quiet unless something crosses a real threshold"
+      instruction.
 - [ ] Phase 3: rewire `tidb-distsql`'s RPC/region-retry layer onto the vendored
       crate's `request::Plan`/`Shardable`/retry framework, porting the
       documented parity fixes from `rust/docs/distsql-coprocessor-parity.md`.
