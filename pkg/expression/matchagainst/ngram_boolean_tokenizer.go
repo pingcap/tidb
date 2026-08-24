@@ -68,7 +68,7 @@ func newNgramScanState(input string) *ngramScanState {
 }
 
 func isNgramWordChar(ch rune) bool {
-	return unicode.IsLetter(ch) || unicode.IsDigit(ch) || ch == '_'
+	return unicode.IsLetter(ch) || unicode.IsNumber(ch) || ch == '_'
 }
 
 func isNgramUnsupportedOp(ch rune) bool {

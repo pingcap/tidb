@@ -437,7 +437,7 @@ func normalizeBooleanClause(clause matchagainst.BooleanClause, config AnalyzerCo
 
 	switch x := clause.Expr.(type) {
 	case *matchagainst.BooleanTerm:
-		return normalizeBooleanTerm(x, config, analyzer)
+		return normalizeBooleanTerm(x, clause.Modifier, config, analyzer)
 	case *matchagainst.BooleanPhrase:
 		return normalizeBooleanPhrase(x, config, analyzer)
 	case *matchagainst.BooleanGroup:
@@ -447,12 +447,17 @@ func normalizeBooleanClause(clause matchagainst.BooleanClause, config AnalyzerCo
 	}
 }
 
-func normalizeBooleanTerm(term *matchagainst.BooleanTerm, config AnalyzerConfig, analyzer Analyzer) (queryNode, error) {
+func normalizeBooleanTerm(
+	term *matchagainst.BooleanTerm,
+	modifier matchagainst.BooleanModifier,
+	config AnalyzerConfig,
+	analyzer Analyzer,
+) (queryNode, error) {
 	if term == nil || term.Ignored {
 		return nil, nil
 	}
 	if term.Wildcard {
-		return normalizePrefixTerm(term.Text(), config), nil
+		return normalizePrefixTerm(term.Text(), modifier, config, analyzer)
 	}
 
 	tokens, err := analyzer.Analyze(term.Text())
@@ -469,16 +474,11 @@ func normalizeBooleanTerm(term *matchagainst.BooleanTerm, config AnalyzerConfig,
 		case 1:
 			return termNode{token: tokens[0].Text}, nil
 		default:
-			// The analyzer split one boolean term into several words, as it
-			// does for `foo.bar`. Require all of them: a document matching the
-			// original term contains every word it analyzed into. Returning
-			// nothing here instead made the enclosing query match no document
-			// at all.
-			must := make([]queryNode, 0, len(tokens))
+			children := make([]queryNode, 0, len(tokens))
 			for _, token := range tokens {
-				must = append(must, termNode{token: token.Text})
+				children = append(children, termNode{token: token.Text})
 			}
-			return groupNode{must: must}, nil
+			return combineBooleanTermNodes(children, modifier), nil
 		}
 	case model.FullTextParserTypeNgramV1:
 		return buildPhraseNode(tokens), nil
@@ -501,30 +501,67 @@ func normalizeBooleanPhrase(phrase *matchagainst.BooleanPhrase, config AnalyzerC
 	return buildPhraseNode(tokens), nil
 }
 
-func normalizePrefixTerm(text string, config AnalyzerConfig) queryNode {
+func normalizePrefixTerm(
+	text string,
+	modifier matchagainst.BooleanModifier,
+	config AnalyzerConfig,
+	analyzer Analyzer,
+) (queryNode, error) {
 	sourceTokens := PreserveUnderscoreTokenize(text)
-	if len(sourceTokens) != 1 {
-		return nil
+	if len(sourceTokens) == 0 {
+		return nil, nil
 	}
 
 	parserInfo := parserInfoFromConfig(config)
 	switch config.ParserType {
 	case model.FullTextParserTypeStandardV1:
-		token := sourceTokens[0]
-		if charLen(token.Text) > parserInfo.innodbFtMaxTokenSize {
-			return nil
+		children := make([]queryNode, 0, len(sourceTokens))
+		for _, sourceToken := range sourceTokens[:len(sourceTokens)-1] {
+			tokens, err := analyzer.Analyze(sourceToken.Text)
+			if err != nil {
+				return nil, err
+			}
+			for _, token := range tokens {
+				children = append(children, termNode{token: token.Text})
+			}
 		}
-		return prefixNode{prefix: strings.ToLower(token.Text)}
+
+		// MySQL applies '*' to only the last word of a split term. The
+		// wildcard also keeps that word when it is shorter than the normal
+		// minimum token size or is a stopword.
+		tail := sourceTokens[len(sourceTokens)-1]
+		if charLen(tail.Text) <= parserInfo.innodbFtMaxTokenSize {
+			children = append(children, prefixNode{prefix: strings.ToLower(tail.Text)})
+		}
+		return combineBooleanTermNodes(children, modifier), nil
 	case model.FullTextParserTypeNgramV1:
-		tokens := ngramFilter(sourceTokens, parserInfo.ngramTokenSize, parserInfo.ngramTokenSize)
-		tokens = lowerFilter(tokens)
-		if len(tokens) != 1 {
-			return nil
+		if len(sourceTokens) != 1 {
+			return nil, nil
 		}
-		return prefixNode{prefix: tokens[0].Text}
+		if charLen(sourceTokens[0].Text) < parserInfo.ngramTokenSize {
+			return prefixNode{prefix: strings.ToLower(sourceTokens[0].Text)}, nil
+		}
+		tokens, err := analyzer.Analyze(text)
+		if err != nil {
+			return nil, err
+		}
+		return buildPhraseNode(tokens), nil
 	default:
-		return nil
+		return nil, fmt.Errorf("unsupported fulltext parser type: %s", config.ParserType)
 	}
+}
+
+func combineBooleanTermNodes(children []queryNode, modifier matchagainst.BooleanModifier) queryNode {
+	switch len(children) {
+	case 0:
+		return nil
+	case 1:
+		return children[0]
+	}
+	if modifier == matchagainst.BooleanModifierMust {
+		return groupNode{must: children}
+	}
+	return groupNode{should: children}
 }
 
 func buildPhraseNode(tokens []Token) queryNode {
