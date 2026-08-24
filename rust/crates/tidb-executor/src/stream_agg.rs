@@ -23,14 +23,14 @@ use std::sync::Arc;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
+use tidb_expr::Columns;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
 use tidb_util::memory::Tracker;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_agg::{
-    eval_agg_input, expr_collation, group_concat_max_len, group_key_part, AggFunc, AggState,
+    AggFunc, AggState, eval_agg_input, expr_collation, group_concat_max_len, group_key_part,
 };
 use crate::mem_quota::StatementMemory;
 
@@ -42,6 +42,10 @@ pub struct StreamAggExec<C: Columns> {
     meta: ExecutorMeta,
     group_by: Vec<Expression>,
     agg_funcs: Vec<AggFunc>,
+    /// Set when the aggregate is exactly one non-DISTINCT SUM over a bare
+    /// DECIMAL column: the hot global-aggregation shape (TPC-H q17) folds the
+    /// raw cell coefficient directly, skipping per-row Datum materialization.
+    decimal_sum_column: Option<usize>,
     child: Box<dyn Executor>,
     ctx: C,
     child_chunk: Chunk,
@@ -73,10 +77,29 @@ impl<C: Columns> StreamAggExec<C> {
         let child_chunk = child.new_chunk();
         let tracker = memory.operator_tracker(meta.id());
         let truncated = vec![false; agg_funcs.len()];
+        let decimal_sum_column = (agg_funcs.len() == 1
+            && matches!(agg_funcs[0].kind, AggKind::Sum)
+            && !agg_funcs[0].distinct
+            && agg_funcs[0].extra_args.is_empty()
+            && agg_funcs[0].order_by.is_empty())
+        .then(|| {
+            agg_funcs[0]
+                .arg
+                .as_ref()
+                .and_then(Expression::as_column)
+                .filter(|column| {
+                    column
+                        .get_static_type()
+                        .is_some_and(|ty| ty.code() == tidb_datatype::FieldTypeCode::NewDecimal)
+                })
+                .and_then(|column| usize::try_from(column.index).ok())
+        })
+        .flatten();
         Self {
             meta,
             group_by,
             agg_funcs,
+            decimal_sum_column,
             child,
             ctx,
             child_chunk,
@@ -152,6 +175,26 @@ impl<C: Columns> StreamAggExec<C> {
         }
         if self.current_key.is_none() {
             self.start_group(key);
+        }
+        // The global DECIMAL-SUM hot shape folds the raw cell coefficient:
+        // no Datum, no `Decimal` build (Go's `sum4Decimal` also reads the
+        // MyDecimal words directly).
+        if let Some(index) = self.decimal_sum_column {
+            let column = chunk.column(index);
+            if !column.is_null(self.row_cursor) {
+                if let Some((coefficient, scale)) =
+                    column.get_my_decimal(self.row_cursor).to_i128_scaled()
+                {
+                    if self.states[0].update_sum_decimal_fast(coefficient, scale) {
+                        self.row_cursor += 1;
+                        return Ok(false);
+                    }
+                }
+            } else {
+                // A NULL input contributes nothing to the sum.
+                self.row_cursor += 1;
+                return Ok(false);
+            }
         }
         let row = chunk.get_row(self.row_cursor);
         for c in 0..self.agg_funcs.len() {
@@ -302,8 +345,8 @@ impl<C: Columns> Executor for StreamAggExec<C> {
 mod tests {
     use super::*;
     use tidb_datatype::{Datum, Decimal, FieldTypeCode};
-    use tidb_expr::column::Column;
     use tidb_expr::NoColumns;
+    use tidb_expr::column::Column;
 
     use crate::hash_agg::AggKind;
 
