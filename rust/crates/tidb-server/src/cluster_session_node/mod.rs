@@ -194,7 +194,7 @@ use crate::cluster_account_seam::ClusterAccountWriter;
 use crate::cluster_analyze_seam::ClusterAnalyze;
 use crate::cluster_session::{
     cluster_session_catalog, cluster_session_catalog_with_templates, KvTableTemplates,
-    SkippedTable, TableAutoIds, StatsTemplates,
+    SkippedTable, StatsTemplates, TableAutoIds,
 };
 use crate::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::pipeline_session::MaterializedResultSetSource;
@@ -947,10 +947,9 @@ impl ClusterServerSession {
             // `for_update_ts`.
             if !prelock_keys.is_empty() {
                 let outcome = match self.explicit.as_ref() {
-                    Some(transaction) => Some(
-                        transaction
-                            .lock_staged_keys_with_values(prelock_keys.to_vec()),
-                    ),
+                    Some(transaction) => {
+                        Some(transaction.lock_staged_keys_with_values(prelock_keys.to_vec()))
+                    }
                     None => None,
                 };
                 match outcome {
@@ -1954,15 +1953,32 @@ impl QuerySession for ClusterServerSession {
         // A write declares nothing. Its read-before-write reaches the snapshot
         // as the same `get` a point-get SELECT issues, which is exactly why the
         // declaration is made from the statement rather than from the read.
-        let affected_rows = self.with_statement(StatementReadShape::Unknown, move |session| {
-            match session.run(&owned).map_err(map_error)? {
+        //
+        // Go's pessimistic point write also folds its row read INTO its lock
+        // (`PointGetExecutor.getAndLock`, `pkg/executor/point_get.go:612-624`)
+        // -- and the text protocol carries that fold too, because a client-side
+        // prepared driver (Connector/J without `useServerPrepStmts`) sends the
+        // very statements the prepared path folds as plain COM_QUERY. The
+        // classified keys are locked WITH their rows before any read exists;
+        // the statement's read then answers from the lock response exactly as
+        // in [`Self::execute_general`]'s prepared arm.
+        let prelock_keys = match self.explicit.as_ref() {
+            Some(transaction) if transaction.is_pessimistic() => {
+                self.session.text_statement_prelock_keys(sql)
+            }
+            _ => Vec::new(),
+        };
+        let affected_rows = self.with_prelocked_statement(
+            StatementReadShape::Unknown,
+            prelock_keys,
+            move |session| match session.run(&owned).map_err(map_error)? {
                 StmtResult::Affected(count) => Ok(count),
                 StmtResult::Done(_) => Ok(0),
                 StmtResult::Rows(_) => Err(SqlQueryError::unknown(
                     "a write statement unexpectedly produced rows",
                 )),
-            }
-        })?;
+            },
+        )?;
         Ok(Some(WriteOutcome {
             affected_rows,
             last_insert_id: self.session.statement_insert_id(),
@@ -2324,10 +2340,24 @@ impl QuerySession for ClusterServerSession {
         }
         let owned = sql.to_owned();
         let shape = self.session.statement_read_shape(sql, &[]);
+        // Go's `SELECT ... FOR UPDATE` on a clustered handle-pinned row folds
+        // its lock INTO its one row read (`TryFastPlan` -> `PointGetPlan` with
+        // `Lock=true`, executed by `getAndLock`). The text protocol reaches
+        // this path for such reads whenever the driver prepares client-side,
+        // so classify the same shape the prepared path classifies and let the
+        // statement's read answer from the lock response. Empty output (a
+        // scan-shaped WHERE, FOR SHARE, NOWAIT, or no pessimistic transaction)
+        // keeps today's read-then-lock order untouched.
+        let prelock_keys = match self.explicit.as_ref() {
+            Some(transaction) if transaction.is_pessimistic() => {
+                self.session.text_statement_prelock_keys(sql)
+            }
+            _ => Vec::new(),
+        };
         // The rows are materialized inside the statement's snapshot, because
         // the snapshot's read transaction ends when the statement does; a lazy
         // source would be reading through a finished transaction.
-        let source = self.with_statement(shape, move |session| {
+        let source = self.with_prelocked_statement(shape, prelock_keys, move |session| {
             let output = session.run_with_columns(&owned).map_err(map_error)?;
             Ok(match output {
                 StmtOutput::Rows { columns, rows } => MaterializedResultSetSource::new(

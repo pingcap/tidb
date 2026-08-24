@@ -202,21 +202,122 @@ pub fn pessimistic_write_point_keys(
         },
         _ => return Vec::new(),
     };
+    let Some(table) = single_table_entry(table_ref, catalog, current_db) else {
+        return Vec::new();
+    };
+    crate::driver::access::point_write_prelock_keys(&table, where_clause, params, zone)
+}
+
+/// The record keys one pessimistic point locking read locks BEFORE it runs.
+///
+/// Go folds a `SELECT ... FOR UPDATE` whose whole read is one clustered
+/// handle-pinned row into its own lock exactly as it folds a point write:
+/// `TryFastPlan` builds a `PointGetPlan` with `Lock=true`, and the
+/// `PointGetExecutor`'s lock arm asks TiKV to answer the row WITH the lock
+/// (`getAndLock`, `pkg/executor/point_get.go`). This is that statement
+/// shape's classifier: a single-table `SELECT FOR UPDATE` whose WHERE pins
+/// every clustered-primary-key column returns the row's encoded record keys;
+/// everything else returns an empty vector and keeps today's read-then-lock
+/// order.
+///
+/// The refusals mirror the write arm plus two read-only ones:
+///
+/// * `FOR SHARE` keeps today's path -- its lock strength differs and no
+///   measured workload pays for folding it yet.
+/// * A non-default wait (`NOWAIT` / `SKIP LOCKED` / `WAIT n`) keeps today's
+///   path, because the pre-lock acquires with the session's lock-wait timeout
+///   and would silently turn a fail-fast wait into a blocking one.
+#[must_use]
+pub fn pessimistic_read_lock_point_keys(
+    stmt: &tidb_ast::Stmt,
+    catalog: &crate::driver::Catalog,
+    current_db: &str,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Vec<Vec<u8>> {
+    let tidb_ast::Stmt::Query(query) = stmt else {
+        return Vec::new();
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+        return Vec::new();
+    };
+    // Go's TryFastPlan refuses every query whose root plan is not a bare
+    // point get; these syntactic guards refuse the same shapes before any
+    // planning exists. An ORDER BY over the source needs a Sort this fold
+    // must not presume away.
+    if select.kind != tidb_ast::SelectStatementKind::Select
+        || select.with.is_some()
+        || !select.hints.is_empty()
+        || select.distinct
+        || !select.group_by.is_empty()
+        || select.rollup
+        || select.having.is_some()
+        || !select.windows.is_empty()
+        || !select.order_by.is_empty()
+        || select.limit.is_some()
+        || select.lock.is_none()
+    {
+        return Vec::new();
+    }
+    let lock = select.lock.as_ref().expect("checked above");
+    if lock.kind != tidb_ast::LockKind::Update || lock.wait != tidb_ast::LockWait::Default {
+        return Vec::new();
+    }
+    // One table, no join: `FROM t` parses as the single-table wrapper.
+    let Some(from) = &select.from else {
+        return Vec::new();
+    };
+    if from.right.is_some() || from.on.is_some() || !from.using.is_empty() || from.natural {
+        return Vec::new();
+    }
+    let tidb_ast::JoinNode::Table(table_ref) = &from.left else {
+        return Vec::new();
+    };
+    let Some(where_clause) = &select.where_clause else {
+        return Vec::new();
+    };
+    let Some(table) = single_table_entry(table_ref, catalog, current_db) else {
+        return Vec::new();
+    };
+    crate::driver::access::point_write_prelock_keys(&table, where_clause, &[], zone)
+}
+
+/// Both pre-lock arms at once, for a caller holding only SQL text: the write
+/// arm ([`pessimistic_write_point_keys`]) and the locking-read arm
+/// ([`pessimistic_read_lock_point_keys`]). Empty output means "no fold".
+#[must_use]
+pub fn pessimistic_statement_prelock_keys(
+    stmt: &tidb_ast::Stmt,
+    catalog: &crate::driver::Catalog,
+    current_db: &str,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Vec<Vec<u8>> {
+    let keys = pessimistic_write_point_keys(stmt, &[], catalog, current_db, zone);
+    if !keys.is_empty() {
+        return keys;
+    }
+    pessimistic_read_lock_point_keys(stmt, catalog, current_db, zone)
+}
+
+/// Resolves one single-table reference to its KV table, refusing partitioned
+/// tables: which record key one handle names then depends on pruning this
+/// predicate does not do. A refusal costs one extra round trip, never a wrong
+/// lock.
+fn single_table_entry(
+    table_ref: &tidb_ast::TableRef,
+    catalog: &crate::driver::Catalog,
+    current_db: &str,
+) -> Option<crate::kv_table::KvTable> {
     let (database, table_name) = match table_ref.name.as_slice() {
         [name] if !current_db.is_empty() => (current_db, name.as_str()),
         [database, name] => (database.as_str(), name.as_str()),
-        _ => return Vec::new(),
+        _ => return None,
     };
-    let Some(crate::driver::TableEntry::Kv(table)) = catalog.get_in(database, table_name) else {
-        return Vec::new();
-    };
-    // A partitioned table routes a row to its partition; which record key one
-    // handle names then depends on pruning this predicate does not do. A
-    // refusal costs one extra round trip, never a wrong lock.
-    if table.partition().is_some() {
-        return Vec::new();
+    match catalog.get_in(database, table_name) {
+        Some(crate::driver::TableEntry::Kv(table)) if table.partition().is_none() => {
+            Some(table.clone())
+        }
+        _ => None,
     }
-    crate::driver::access::point_write_prelock_keys(table, where_clause, params, zone)
 }
 
 /// Whether `stmt` is a statement whose WHOLE read is one point get on the
@@ -768,7 +869,6 @@ impl HandleSourceExec {
     }
 }
 
-
 /// Moves one prefetched row out of the stored preload for `index`.
 fn preloaded_ref<'a>(
     preloaded: &'a mut Option<Vec<Option<Vec<Datum>>>>,
@@ -795,9 +895,9 @@ impl Executor for HandleSourceExec {
                 self.physical_ids.as_deref(),
                 &self.decode_context,
             )
-            .map_err(|error| ExecError::unsupported(format!(
-                "table bytes failed to decode: {error:?}"
-            )))?;
+            .map_err(|error| {
+                ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+            })?;
         self.preloaded = Some(rows);
         Ok(())
     }
@@ -806,9 +906,10 @@ impl Executor for HandleSourceExec {
         req.reset();
         let cap = self.meta.max_chunk_size();
         // The prefetch at `open` owns the reads; `Next` only serves rows.
-        let preloaded = self.preloaded.take().unwrap_or_else(|| {
-            vec![None; self.handles.len()]
-        });
+        let preloaded = self
+            .preloaded
+            .take()
+            .unwrap_or_else(|| vec![None; self.handles.len()]);
         self.preloaded = Some(preloaded);
         while req.num_rows() < cap {
             if self.cursor >= self.handles.len() {
@@ -819,10 +920,9 @@ impl Executor for HandleSourceExec {
             self.cursor += 1;
             // A handle with no row is Go's point get that finds nothing: the
             // plan is right, the row is simply absent.
-            let row = preloaded_ref(&mut self.preloaded, index)
-                .map_err(|error| {
-                    ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
-                })?;
+            let row = preloaded_ref(&mut self.preloaded, index).map_err(|error| {
+                ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+            })?;
             if let Some(row) = row {
                 let borrowed = visible_of(&self.table, &row);
                 let owned;
@@ -1479,7 +1579,9 @@ impl IndexRangeSourceExec {
                     // The remote answers only the rows that survived its
                     // filter, so its own handles are the ones to keep.
                     self.lookup_handles = if self.extra_handle_slot.is_some() {
-                        rows.iter().map(|(handle, _)| Some(handle.clone())).collect()
+                        rows.iter()
+                            .map(|(handle, _)| Some(handle.clone()))
+                            .collect()
                     } else {
                         Vec::new()
                     };
@@ -1629,10 +1731,8 @@ impl IndexRangeSourceExec {
                         true,
                     )
                     .map_err(|error| {
-                            ExecError::unsupported(format!(
-                                "index range is not scannable: {error:?}"
-                            ))
-                        })?,
+                        ExecError::unsupported(format!("index range is not scannable: {error:?}"))
+                    })?,
             );
         }
     }
@@ -1772,17 +1872,17 @@ impl IndexRangeSourceExec {
                                 })?;
                                 *sum = Some(sum.unwrap_or(0.0) + addend.value);
                             }
-                            (PartialValue::Extreme {
+                            (
+                                PartialValue::Extreme {
                                     value,
                                     is_max,
                                     collation,
-                                }, Some(candidate)) => {
+                                },
+                                Some(candidate),
+                            ) => {
                                 let replace = value.as_ref().is_none_or(|current| {
                                     crate::remote_scan::extreme_replaces(
-                                        &candidate,
-                                        current,
-                                        *is_max,
-                                        *collation,
+                                        &candidate, current, *is_max, *collation,
                                     )
                                 });
                                 if replace {
@@ -1950,17 +2050,17 @@ impl IndexRangeSourceExec {
                                     })?;
                                     *sum = Some(sum.unwrap_or(0.0) + addend.value);
                                 }
-                                (PartialValue::Extreme {
+                                (
+                                    PartialValue::Extreme {
                                         value,
                                         is_max,
                                         collation,
-                                    }, Some(candidate)) => {
+                                    },
+                                    Some(candidate),
+                                ) => {
                                     let replace = value.as_ref().is_none_or(|current| {
                                         crate::remote_scan::extreme_replaces(
-                                            &candidate,
-                                            current,
-                                            *is_max,
-                                            *collation,
+                                            &candidate, current, *is_max, *collation,
                                         )
                                     });
                                     if replace {
@@ -2555,10 +2655,8 @@ impl IndexMergeSourceExec {
                 self.table
                     .index_ranges_cursor(*index_id, ranges, self.decode_context.zone())
                     .map_err(|error| {
-                            ExecError::unsupported(format!(
-                                "index range is not scannable: {error:?}"
-                            ))
-                        })?,
+                        ExecError::unsupported(format!("index range is not scannable: {error:?}"))
+                    })?,
             );
         }
     }
@@ -2573,10 +2671,8 @@ impl IndexMergeSourceExec {
             .table
             .index_ranges_cursor(index_id, ranges, self.decode_context.zone())
             .map_err(|error| {
-                            ExecError::unsupported(format!(
-                                "index range is not scannable: {error:?}"
-                            ))
-                        })?;
+                ExecError::unsupported(format!("index range is not scannable: {error:?}"))
+            })?;
         while let Some(handle) = cursor
             .next_handle()
             .map_err(|_| ExecError::unsupported("index bytes failed to decode"))?
@@ -3094,10 +3190,10 @@ impl IndexJoinLookupExec {
                         self.table
                             .index_range_cursor(*index_id, &range, self.decode_context.zone())
                             .map_err(|error| {
-                            ExecError::unsupported(format!(
-                                "index range is not scannable: {error:?}"
-                            ))
-                        })?,
+                                ExecError::unsupported(format!(
+                                    "index range is not scannable: {error:?}"
+                                ))
+                            })?,
                     );
                 }
                 LookupObject::Handle => {

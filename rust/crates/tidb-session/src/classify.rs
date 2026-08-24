@@ -227,6 +227,35 @@ impl Session {
         )
     }
 
+    /// The record keys a text-protocol statement locks BEFORE it runs: both
+    /// pre-lock arms ([`tidb_executor::access_path::pessimistic_statement_prelock_keys`])
+    /// over one parse of the statement. A statement that is not a pessimistic
+    /// point write or a pessimistic point locking read classifies as an empty
+    /// key set and keeps today's read-then-lock order.
+    #[must_use]
+    pub fn text_statement_prelock_keys(&self, sql: &str) -> Vec<Vec<u8>> {
+        let Ok(stmt) = self.parse(sql) else {
+            return Vec::new();
+        };
+        self.statement_prelock_keys(&stmt)
+    }
+
+    /// [`Self::text_statement_prelock_keys`] over an already-parsed
+    /// statement.
+    #[must_use]
+    pub fn statement_prelock_keys(&self, stmt: &Stmt) -> Vec<Vec<u8>> {
+        let catalog = self
+            .catalog
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        tidb_executor::access_path::pessimistic_statement_prelock_keys(
+            stmt,
+            &catalog,
+            self.current_database(),
+            &self.session_time_zone(),
+        )
+    }
+
     /// Classifies the narrow prepared clustered-handle point read directly
     /// from its retained template and execute values.  Unlike
     /// [`Self::statement_read_shape_parsed`], this path does not clone and

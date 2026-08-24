@@ -1449,10 +1449,16 @@ fn a_prepared_point_update_locks_its_row_before_reading_it() {
     let mut first = factory
         .open_session(session_context(90))
         .expect("session opens");
-    rows(&mut first, "CREATE TABLE test.fold (id int primary key, v int)");
+    rows(
+        &mut first,
+        "CREATE TABLE test.fold (id int primary key, v int)",
+    );
     rows(&mut first, "INSERT INTO test.fold VALUES (1, 10)");
 
-    assert_eq!(first.control_transaction("BEGIN").expect("begin"), Some(true));
+    assert_eq!(
+        first.control_transaction("BEGIN").expect("begin"),
+        Some(true)
+    );
     let statement = first
         .prepare_general("UPDATE test.fold SET v = v + 5 WHERE id = ?")
         .expect("prepare");
@@ -1500,6 +1506,133 @@ fn a_prepared_point_update_locks_its_row_before_reading_it() {
     );
 }
 
+/// The same fold over the TEXT protocol: a client-side prepared driver
+/// (Connector/J without `useServerPrepStmts`) sends the point `UPDATE` as
+/// plain COM_QUERY, so the write-path classification must fire there too.
+/// Behavioral assertion as above -- the row is locked BEFORE the statement
+/// reads it, so a contender blocks mid-transaction.
+#[test]
+fn a_text_point_update_locks_its_row_before_reading_it() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut first = factory
+        .open_session(session_context(96))
+        .expect("session opens");
+    rows(
+        &mut first,
+        "CREATE TABLE test.foldtxt (id int primary key, v int)",
+    );
+    rows(&mut first, "INSERT INTO test.foldtxt VALUES (1, 10)");
+
+    assert_eq!(
+        first.control_transaction("BEGIN").expect("begin"),
+        Some(true)
+    );
+    let affected = {
+        let out = rows(&mut first, "UPDATE test.foldtxt SET v = v + 5 WHERE id = 1");
+        out.len()
+    };
+    let _ = affected;
+
+    // A contender on the same row must block until this transaction commits:
+    // the lock predates the statement's own read.
+    let second = std::thread::scope(|scope| {
+        let contender = scope.spawn(|| {
+            let mut second = factory
+                .open_session(session_context(97))
+                .expect("session opens");
+            assert_eq!(
+                second.control_transaction("BEGIN").expect("begin"),
+                Some(true)
+            );
+            rows(
+                &mut second,
+                "UPDATE test.foldtxt SET v = v + 100 WHERE id = 1",
+            );
+            second.control_transaction("COMMIT").expect("commit");
+        });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        first.control_transaction("COMMIT").expect("commit");
+        contender.join()
+    });
+    second.expect("the contending transaction commits after waiting the prelock out");
+
+    let mut after = factory
+        .open_session(session_context(98))
+        .expect("session opens");
+    assert_eq!(
+        displayed(rows(&mut after, "SELECT v FROM test.foldtxt WHERE id = 1")),
+        [["115"]],
+        "+5 landed from the lock-carrying read, then +100 from the winner that re-read it"
+    );
+}
+
+/// Go's `SELECT ... FOR UPDATE` on one clustered handle-pinned row folds its
+/// read INTO its lock (`TryFastPlan` -> `PointGetPlan(Lock=true)` ->
+/// `getAndLock`). The text path classifies the same shape: the locking read's
+/// row answers from the PessimisticLock response, and a contender on the row
+/// blocks for the transaction's lifetime. The read-your-own-lock image is
+/// also what a later statement in the same transaction must compute from.
+#[test]
+fn a_text_select_for_update_folds_its_read_into_its_lock() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut first = factory
+        .open_session(session_context(99))
+        .expect("session opens");
+    rows(
+        &mut first,
+        "CREATE TABLE test.foldsel (id int primary key, v int)",
+    );
+    rows(&mut first, "INSERT INTO test.foldsel VALUES (1, 10)");
+
+    assert_eq!(
+        first.control_transaction("BEGIN").expect("begin"),
+        Some(true)
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut first,
+            "SELECT v FROM test.foldsel WHERE id = 1 FOR UPDATE"
+        )),
+        [["10"]],
+        "the locking read answers its row"
+    );
+
+    // The row is already locked by the statement itself: a contender's update
+    // waits for this transaction to end.
+    let second = std::thread::scope(|scope| {
+        let contender = scope.spawn(|| {
+            let mut second = factory
+                .open_session(session_context(100))
+                .expect("session opens");
+            assert_eq!(
+                second.control_transaction("BEGIN").expect("begin"),
+                Some(true)
+            );
+            rows(
+                &mut second,
+                "UPDATE test.foldsel SET v = v + 100 WHERE id = 1",
+            );
+            second.control_transaction("COMMIT").expect("commit");
+        });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        rows(&mut first, "UPDATE test.foldsel SET v = v + 5 WHERE id = 1");
+        first.control_transaction("COMMIT").expect("commit");
+        contender.join()
+    });
+    second.expect("the contending transaction commits after the folding reader commits");
+
+    let mut after = factory
+        .open_session(session_context(101))
+        .expect("session opens");
+    assert_eq!(
+        displayed(rows(&mut after, "SELECT v FROM test.foldsel WHERE id = 1")),
+        [["115"]],
+        "+5 from the folded reader, then +100 from the winner that re-read it"
+    );
+}
+
 /// The prelock joins the failed-statement release list: an EXECUTE that fails
 /// AFTER its row was locked (a strict-mode cast error during the assignment)
 /// must give the lock back AND drop its cached row image, so a contender can
@@ -1519,7 +1652,10 @@ fn a_failed_prelocked_update_releases_its_row() {
     );
     rows(&mut first, "INSERT INTO test.foldfail VALUES (1, 10)");
 
-    assert_eq!(first.control_transaction("BEGIN").expect("begin"), Some(true));
+    assert_eq!(
+        first.control_transaction("BEGIN").expect("begin"),
+        Some(true)
+    );
     let statement = first
         .prepare_general("UPDATE test.foldfail SET v = 'not-a-number' WHERE id = ?")
         .expect("prepare");
@@ -1547,7 +1683,10 @@ fn a_failed_prelocked_update_releases_its_row() {
     let mut second = factory
         .open_session(session_context(94))
         .expect("session opens");
-    assert_eq!(second.control_transaction("BEGIN").expect("begin"), Some(true));
+    assert_eq!(
+        second.control_transaction("BEGIN").expect("begin"),
+        Some(true)
+    );
     rows(&mut second, "UPDATE test.foldfail SET v = 99 WHERE id = 1");
     second.control_transaction("COMMIT").expect("commit");
 
