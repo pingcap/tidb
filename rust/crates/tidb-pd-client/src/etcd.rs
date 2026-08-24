@@ -39,18 +39,13 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use etcd_client::{
-    Client as RawEtcdClient, ConnectOptions, DeleteOptions, Error as RawEtcdError, GetOptions,
-    PutOptions,
+    Client as RawEtcdClient, ConnectOptions, DeleteOptions, Error as RawEtcdError, EventType,
+    GetOptions, PutOptions,
 };
-use tidb_proto::etcdserverpb::watch_client::WatchClient;
-use tidb_proto::etcdserverpb::{
-    watch_request::RequestUnion, WatchCreateRequest, WatchRequest,
-};
-use tidb_proto::mvccpb::event::EventType;
 use tokio::sync::watch;
 
 use crate::client::normalize_endpoints;
-use crate::{secure_endpoint, ClusterSecurity, PdClientError};
+use crate::{ClusterSecurity, PdClientError};
 
 /// Exact generated method path for the schema-version PUT.
 pub const ETCD_PUT_PATH: &str = "/etcdserverpb.KV/Put";
@@ -780,25 +775,42 @@ fn classify_rpc_error(endpoint: &str, error: RawEtcdError) -> EtcdError {
     }
 }
 
+/// Builds the TLS half of [`ConnectOptions`] from this crate's shared
+/// [`ClusterSecurity`], leaving timeouts to the caller: a one-shot KV call
+/// wants a bounded per-request timeout (`ConnectOptions::with_timeout`), but
+/// a long-lived watch stream must not have one -- a `grpc-timeout` deadline
+/// applies to the whole streaming RPC's lifetime, not just its first
+/// message, so applying it here would silently kill every watch after
+/// `timeout` elapsed.
+fn etcd_connect_options_with_tls(
+    endpoint: &str,
+    security: &ClusterSecurity,
+    options: ConnectOptions,
+) -> Result<ConnectOptions, EtcdError> {
+    match security
+        .client_tls_config()
+        .map_err(|error| EtcdError::InvalidEndpoint {
+            endpoint: endpoint.to_owned(),
+            message: error.to_string(),
+        })? {
+        Some(tls) => Ok(options.with_tls(tls)),
+        None => Ok(options),
+    }
+}
+
 fn connect_etcd_client(
     runtime: &tokio::runtime::Runtime,
     endpoint: &str,
     timeout: Duration,
     security: &ClusterSecurity,
 ) -> Result<RawEtcdClient, EtcdError> {
-    let mut options = ConnectOptions::new()
-        .with_connect_timeout(timeout)
-        .with_timeout(timeout);
-    if let Some(tls) =
-        security
-            .client_tls_config()
-            .map_err(|error| EtcdError::InvalidEndpoint {
-                endpoint: endpoint.to_owned(),
-                message: error.to_string(),
-            })?
-    {
-        options = options.with_tls(tls);
-    }
+    let options = etcd_connect_options_with_tls(
+        endpoint,
+        security,
+        ConnectOptions::new()
+            .with_connect_timeout(timeout)
+            .with_timeout(timeout),
+    )?;
     runtime
         .block_on(RawEtcdClient::connect(
             [strip_scheme(endpoint)],
@@ -1018,35 +1030,18 @@ async fn watch_one_stream(
     stats: &WatchCounters,
     shutdown: &mut watch::Receiver<bool>,
 ) -> bool {
-    let Ok(channel) = secure_endpoint(endpoint, security) else {
-        return false;
-    };
-    let Ok(channel) = channel.connect_timeout(timeout).connect().await else {
-        return false;
-    };
-    let mut client = WatchClient::new(channel);
-    // The request sender is held for the life of the stream: dropping it would
-    // half-close the bidi call and end the watch.
-    let (requests, request_rx) = tokio::sync::mpsc::channel(1);
-    if requests
-        .send(WatchRequest {
-            request_union: Some(RequestUnion::CreateRequest(WatchCreateRequest {
-                key: key.to_vec(),
-                ..Default::default()
-            })),
-        })
-        .await
-        .is_err()
-    {
-        return false;
-    }
-    let Ok(response) = client
-        .watch(tokio_stream::wrappers::ReceiverStream::new(request_rx))
-        .await
+    let Ok(options) =
+        etcd_connect_options_with_tls(endpoint, security, ConnectOptions::new().with_connect_timeout(timeout))
     else {
         return false;
     };
-    let mut stream = response.into_inner();
+    let Ok(mut client) = RawEtcdClient::connect([strip_scheme(endpoint)], Some(options)).await
+    else {
+        return false;
+    };
+    let Ok(mut stream) = client.watch(key.to_vec(), None).await else {
+        return false;
+    };
     stats.streams.fetch_add(1, Ordering::AcqRel);
     loop {
         let message = tokio::select! {
@@ -1056,14 +1051,15 @@ async fn watch_one_stream(
         let Ok(Some(response)) = message else {
             return true;
         };
-        if response.canceled {
+        if response.canceled() {
             return true;
         }
-        for event in response.events {
-            let deleted = event.r#type == EventType::Delete as i32;
-            let (value, mod_revision) = event
-                .kv
-                .map_or_else(|| (Vec::new(), 0), |kv| (kv.value, kv.mod_revision));
+        for event in response.events() {
+            let deleted = event.event_type() == EventType::Delete;
+            let (value, mod_revision) = event.kv().map_or_else(
+                || (Vec::new(), 0),
+                |kv| (kv.value().to_vec(), kv.mod_revision()),
+            );
             stats.events.fetch_add(1, Ordering::AcqRel);
             on_event(&EtcdWatchEvent {
                 deleted,
