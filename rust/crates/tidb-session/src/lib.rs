@@ -359,6 +359,13 @@ pub struct Session {
     /// Suppresses the metadata snapshot while a narrow fast path builds a
     /// statement context that cannot evaluate `TIDB_DECODE_KEY`.
     skip_tidb_decode_key_snapshot: Cell<bool>,
+    /// Go `getPessimisticLazyCheckMode`'s lazy arm: set while an EXPLICIT
+    /// pessimistic transaction is open (its `tidb_constraint_check_in_place_
+    /// pessimistic` is OFF by default), so INSERT duplicate checks defer to
+    /// the prewrite assertion instead of an eager existence read. The
+    /// cluster-session owner flips it per statement; the wire session only
+    /// carries it into each statement context.
+    pessimistic_lazy_dup_check: Cell<bool>,
     /// One connection-wide memory/disk tracker pair. Every statement gets a
     /// fresh child below these roots, so an open cursor remains counted when
     /// the client starts its next command.
@@ -639,6 +646,7 @@ impl Default for Session {
             server_start_timestamp: None,
             tidb_decode_key_cache: RefCell::new(None),
             skip_tidb_decode_key_snapshot: Cell::new(false),
+            pessimistic_lazy_dup_check: Cell::new(false),
             session_memory: tidb_executor::SessionMemory::new(
                 tidb_util::memory::DEF_MEM_QUOTA_QUERY,
                 tidb_executor::OomAction::Cancel,
@@ -770,6 +778,14 @@ pub mod vars;
 pub use vars::{GlobalSysvars, SessionVars, VarError};
 
 impl Session {
+    /// Go `sessionVars.InTxn()` + the open txn's mode, folded into the flag
+    /// `getPessimisticLazyCheckMode` reads: set while an EXPLICIT pessimistic
+    /// transaction is open, cleared otherwise. The insert executor defers its
+    /// duplicate check to prewrite only when this is ON.
+    pub fn set_pessimistic_lazy_dup_check(&self, on: bool) {
+        self.pessimistic_lazy_dup_check.set(on);
+    }
+
     /// Starts the cancellation lifetime for the next wire command.
     #[must_use]
     pub fn begin_query_cancellation(&self) -> tidb_executor::StatementCancellation {

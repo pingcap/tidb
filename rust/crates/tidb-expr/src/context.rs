@@ -462,6 +462,17 @@ pub trait Columns {
     /// Returns the referenced column, matched by its final name segment.
     fn get(&self, path: &[String]) -> Option<Datum>;
 
+    /// Go `SessionVars.ConstraintCheckInPlacePessimistic` read at the insert
+    /// executor: when the statement runs inside an explicit pessimistic
+    /// transaction with that variable OFF (the default), an INSERT's
+    /// duplicate check is DEFERRED to prewrite (`DupKeyCheckInPrewrite`),
+    /// so the writer skips its eager existence read and TiKV asserts
+    /// not-exists at prewrite instead. Write paths consult this to pick the
+    /// mode; every non-insert reader inherits the default (false = eager).
+    fn pessimistic_lazy_dup_check(&self) -> bool {
+        false
+    }
+
     /// The statement's connection charset/collation used by implicit casts.
     /// Go reads this from `BuildContext.GetCharsetInfo`; keeping it on the
     /// evaluation context prevents a cast built for one session from silently

@@ -279,6 +279,12 @@ pub struct StmtContext {
     /// promotes a SINGLE-ROW insert to an error even without a strict mode,
     /// and `IGNORE` overrides that promotion too.
     ignore_err: bool,
+    /// Go `getPessimisticLazyCheckMode`'s lazy arm: the statement runs inside
+    /// an explicit pessimistic transaction whose
+    /// `tidb_constraint_check_in_place_pessimistic` is OFF, so an INSERT's
+    /// duplicate check defers to the prewrite assertion and skips its eager
+    /// existence read.
+    pessimistic_lazy_dup_check: bool,
     /// Go `SessionVars.SQLMode`'s three temporal bits; see
     /// [`crate::zero_date`]. They ride the context rather than being derived
     /// from `strict` because each answers a different question and TiDB's
@@ -644,6 +650,7 @@ impl StmtContext {
             strict,
             strict_sql_mode: strict,
             ignore_err,
+            pessimistic_lazy_dup_check: false,
             date_modes: crate::zero_date::DateModes::default(),
             current_db: None,
             version: None,
@@ -1577,6 +1584,17 @@ impl StmtContext {
         self.ignore_err
     }
 
+    /// Go `getPessimisticLazyCheckMode`'s lazy arm: see the field doc.
+    pub fn pessimistic_lazy_dup_check(&self) -> bool {
+        self.pessimistic_lazy_dup_check
+    }
+
+    #[must_use]
+    pub fn with_pessimistic_lazy_dup_check(mut self, on: bool) -> Self {
+        self.pessimistic_lazy_dup_check = on;
+        self
+    }
+
     /// The statement's `time_zone`: Go's `SessionVars.Location()`, which
     /// `types.Context` carries and the storage codecs convert `TIMESTAMP`
     /// values with. Inherent so the storage seam can ask for it without
@@ -2034,6 +2052,10 @@ impl Drop for CopEvalGuard<'_> {
 impl Columns for StmtContext {
     fn get(&self, _: &[String]) -> Option<Datum> {
         None
+    }
+
+    fn pessimistic_lazy_dup_check(&self) -> bool {
+        self.pessimistic_lazy_dup_check
     }
 
     fn connection_charset_info(&self) -> (&str, &str) {

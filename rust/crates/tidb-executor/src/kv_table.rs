@@ -2330,7 +2330,14 @@ impl KvTable {
             None => self.handle_of_row(row, &zone, shard)?,
         };
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
-        if self.row_exists(&handle)? {
+        // Go `getPessimisticLazyCheckMode`: inside an explicit pessimistic
+        // transaction whose `tidb_constraint_check_in_place_pessimistic` is
+        // OFF, the duplicate check DEFERS to prewrite -- TiKV asserts
+        // not-exists on the Op_Insert mutation -- and this read is skipped.
+        // The staged row must then be marked as an asserted insert so the
+        // buffer's commit conversion emits the assertion (see
+        // `MutationBuffer::set_insert`).
+        if !ctx.pessimistic_lazy_dup_check() && self.row_exists(&handle)? {
             return Err(KvTableError::DuplicateEntry {
                 value: if clustered {
                     clustered_key_text(self, row)
@@ -2353,9 +2360,16 @@ impl KvTable {
         // Go writes the row first, then its index entries; a duplicate on a
         // unique index aborts the statement.
         self.write_index_entries(row, &handle, physical_id, &zone)?;
-        self.store
-            .set(key, value)
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        // The lazy arm's deferred duplicate check needs this staged Put to
+        // reach prewrite as an asserted Op_Insert. `TableStorage::set_insert`
+        // defaults to a plain set on backends that do not carry assertion
+        // marks; the cluster backend marks the key so `staged_mutations`
+        // emits the not-exists-asserted mutation.
+        if ctx.pessimistic_lazy_dup_check() {
+            self.store.set_insert(key, value);
+        } else {
+            self.store.set(key, value);
+        }
         self.dirty_content = true;
         Ok(handle)
     }

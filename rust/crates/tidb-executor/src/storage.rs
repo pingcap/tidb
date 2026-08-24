@@ -221,6 +221,14 @@ pub trait TableStorage: fmt::Debug + Send {
     /// Writes one key, Go `kv.Mutator.Set`.
     fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), StorageError>;
 
+    /// Stages a Put whose duplicate check was deferred to prewrite: backends
+    /// that carry assertion marks record them (the cluster backend marks the
+    /// key so `staged_mutations` emits an asserted Insert mutation); the
+    /// default stages a plain Put.
+    fn set_insert(&mut self, key: Key, value: Vec<u8>) {
+        let _ = self.set(key, value);
+    }
+
     /// Removes one key, Go `kv.Mutator.Delete`. Removing an absent key
     /// succeeds, as it does in Go.
     fn delete(&mut self, key: Key) -> Result<(), StorageError>;

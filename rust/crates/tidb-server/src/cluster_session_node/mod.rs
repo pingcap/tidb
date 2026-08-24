@@ -923,6 +923,17 @@ impl ClusterServerSession {
         let mut retries: u32 = 0;
         const MAX_PESSIMISTIC_STATEMENT_RETRIES: u32 = 256;
         let result = loop {
+            // Go `getPessimisticLazyCheckMode`: an EXPLICIT pessimistic
+            // transaction with `tidb_constraint_check_in_place_pessimistic=OFF`
+            // defers INSERT duplicate checks to the prewrite assertion, so its
+            // multi-row inserts skip N sequential existence reads. The flag is
+            // per-attempt and re-derived here, exactly like the read timestamp.
+            let pessimistic_explicit = matches!(
+                self.explicit.as_ref().map(|txn| txn.is_pessimistic()),
+                Some(true)
+            );
+            self.session
+                .set_pessimistic_lazy_dup_check(pessimistic_explicit);
             // Go's pessimistic point write takes its row lock DURING execution
             // (`PointGetExecutor.getAndLock`, `pkg/executor/point_get.go:549`),
             // asking TiKV to answer the row WITH the lock (`InitReturnValues`,
