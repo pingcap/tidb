@@ -232,12 +232,6 @@ impl StatementReadKeys {
 #[derive(Clone, Debug, Default)]
 pub struct MutationBuffer {
     staged: Arc<Mutex<BTreeMap<Key, Option<Vec<u8>>>>>,
-    /// Keys staged through [`Self::set_insert`]: their Prewrite mutation must
-    /// carry the not-exists assertion (client-go's `PresumeNotExists` flag
-    /// becomes `Op_Insert` in `initKeysAndMutations`), which is what lets an
-    /// explicit pessimistic INSERT skip its eager duplicate read and let TiKV
-    /// assert at prewrite instead.
-    inserted: Arc<Mutex<std::collections::BTreeSet<Key>>>,
 }
 
 impl MutationBuffer {
@@ -250,23 +244,6 @@ impl MutationBuffer {
     /// Stages a write, replacing any earlier staged value or tombstone.
     pub fn set(&self, key: Key, value: Vec<u8>) {
         self.lock().insert(key, Some(value));
-    }
-
-    /// Stages a row whose duplicate check was DEFERRED to prewrite: the value
-    /// stages like any Put and the key is marked so `staged_mutations` emits
-    /// the not-exists-asserted Insert mutation. Go's lazy mode sets the same
-    /// fact as a membuf key flag (`PresumeNotExists`) in
-    /// `pkg/executor/insert.go`'s pessimistic lazy mode.
-    pub fn set_insert(&self, key: Key, value: Vec<u8>) {
-        self.lock().insert(key.clone(), Some(value));
-        self.lock_inserted().insert(key);
-    }
-
-    /// Drops the insert marks for keys a ROLLBACK TO SAVEPOINT restored away,
-    /// keeping the marks of everything still staged.
-    pub fn retain_inserted(&self, keep: &dyn Fn(&Key) -> bool) {
-        let mut inserted = self.lock_inserted();
-        inserted.retain(keep);
     }
 
     /// Stages a delete as a tombstone, so the read path stops seeing the
@@ -337,18 +314,6 @@ impl MutationBuffer {
         // staged bytes are still exactly what was written before that, and the
         // transaction is going to be rolled back by its owner either way.
         self.staged
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-    }
-
-    /// The keys staged through [`Self::set_insert`], for the commit
-    /// conversion that must emit their not-exists assertions.
-    pub fn inserted_keys(&self) -> std::collections::BTreeSet<Key> {
-        self.lock_inserted().clone()
-    }
-
-    fn lock_inserted(&self) -> std::sync::MutexGuard<'_, std::collections::BTreeSet<Key>> {
-        self.inserted
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
     }
@@ -576,11 +541,6 @@ impl TableStorage for ClusterTableStorage {
         self.check_usable()?;
         self.buffer.set(key, value);
         Ok(())
-    }
-
-    fn set_insert(&mut self, key: Key, value: Vec<u8>) {
-        self.check_usable();
-        self.buffer.set_insert(key, value);
     }
 
     fn delete(&mut self, key: Key) -> Result<(), StorageError> {

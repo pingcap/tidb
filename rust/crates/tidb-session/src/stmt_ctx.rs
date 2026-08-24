@@ -689,17 +689,6 @@ impl Session {
         let zone = self.session_time_zone();
         let clock = self.statement_clock(&zone);
         let allow_write_row_id = snapshot.allow_write_row_id;
-        // Go `getPessimisticLazyCheckMode`: lazy requires
-        // `tidb_constraint_check_in_place_pessimistic = OFF` (the default).
-        let in_place_pessimistic = match self
-            .vars
-            .get_system(tidb_vardef::tidb_vars::TIDB_CONSTRAINT_CHECK_IN_PLACE_PESSIMISTIC)
-        {
-            Ok(value) => matches!(value.as_str(), "ON" | "on" | "1"),
-            Err(_) => false,
-        };
-        let pessimistic_lazy_dup_check =
-            self.pessimistic_lazy_dup_check.get() && !in_place_pessimistic;
         let sysdate_is_now = snapshot.sysdate_is_now;
         let has = |flag: &str| {
             snapshot
@@ -835,7 +824,6 @@ impl Session {
             has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"),
             ignore_err,
         )
-        .with_pessimistic_lazy_dup_check(self.pessimistic_lazy_dup_check.get())
         .with_date_modes(date_modes)
         .with_planned_apply_channel(Rc::clone(&self.planned_apply))
         .with_allow_write_row_id(allow_write_row_id)
