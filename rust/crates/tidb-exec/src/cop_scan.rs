@@ -791,24 +791,49 @@ where
         )
         .map_err(|error| error.to_string())?;
     let mut iter = result.into_select_iter(Vec::new());
+    let trace = std::env::var("BANK_RPC_TRACE").is_ok();
+    let started = std::time::Instant::now();
+    let (mut batches_n, mut rows_n, mut fetch_ms, mut send_wait_ms) =
+        (0u64, 0u64, 0u64, 0u64);
     loop {
+        let t0 = std::time::Instant::now();
         let batch = iter
             .next_chunk_with_required_rows(BATCH_ROWS)
             .map_err(|error| error.to_string())?;
+        fetch_ms += (t0.elapsed().as_secs_f64() * 1000.0).round() as u64;
         let Some(batch) = batch else {
             break;
         };
+        batches_n += 1;
         if batch.row.num_rows() != 0 {
             let sent = batch.row.num_rows() as u64;
+            rows_n += sent;
             // A consumer that stopped pulling -- an early-stopping `LIMIT`, or
             // a failed statement -- drops its receiver, and this is where the
             // scan learns it: the rest of the relation is never read.
+            let s0 = std::time::Instant::now();
             let send_result = rows.send(Ok(batch.row));
+            send_wait_ms += (s0.elapsed().as_secs_f64() * 1000.0).round() as u64;
             if send_result.is_err() {
                 break;
             }
             node_rows.fetch_add(sent, Ordering::Relaxed);
+            if trace && batches_n <= 5 {
+                eprintln!(
+                    "[scan-trace] batch#{batches_n} rows={sent} fetch_ms={} total_ms={}",
+                    (t0.elapsed().as_secs_f64() * 1000.0).round(),
+                    started.elapsed().as_secs_f64() * 1000.0
+                );
+            }
         }
+    }
+    if trace {
+        eprintln!(
+            "[scan-trace] done batches={batches_n} rows={rows_n} elapsed_ms={} fetch_ms={} send_wait_ms={}",
+            started.elapsed().as_secs_f64() * 1000.0,
+            fetch_ms,
+            send_wait_ms
+        );
     }
     iter.close();
     Ok(())
