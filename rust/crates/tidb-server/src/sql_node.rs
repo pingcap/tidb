@@ -1582,6 +1582,25 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             // the terminal channel is polled on every iteration -- not only
             // while the loop idles inside accept.
             poll_terminal(&terminal_workers)?;
+            // Reap dedicated threads whose client has gone: a joinable
+            // thread's stack stays MAPPED until `join`, so deferring every
+            // join to the drain would hold one dead stack per finished
+            // connection -- tens of thousands of VMAs under connection
+            // churn, exactly what Go never retains when a goroutine ends.
+            dedicated_workers = dedicated_workers
+                .drain(..)
+                .filter_map(|mut handle| {
+                    if handle.join.is_finished() {
+                        // A panic already surfaced through the terminal guard,
+                        // so the join outcome itself needs no handling: the
+                        // point is releasing the dead thread's stack.
+                        let _ = handle.join.join();
+                        None
+                    } else {
+                        Some(handle)
+                    }
+                })
+                .collect();
             // Go ACCEPTS first and checks capacity after
             // (`server.go`'s `onConn` -> `checkConnectionCount`):
             //
