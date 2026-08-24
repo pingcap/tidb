@@ -206,6 +206,27 @@ impl Session {
         )
     }
 
+    /// The record keys a pessimistic point write locks BEFORE it runs -- the
+    /// session-layer entry to [`tidb_executor::access_path::pessimistic_write_point_keys`].
+    /// An EXECUTE template resolves its `?` markers against `params`; an
+    /// already-bound tree carries constants and takes an empty slice. Empty
+    /// output means "no fold": the statement keeps today's read-then-lock
+    /// order.
+    #[must_use]
+    pub fn pessimistic_write_point_keys(&self, stmt: &Stmt, params: &[Datum]) -> Vec<Vec<u8>> {
+        let catalog = self
+            .catalog
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        tidb_executor::access_path::pessimistic_write_point_keys(
+            stmt,
+            params,
+            &catalog,
+            self.current_database(),
+            &self.session_time_zone(),
+        )
+    }
+
     /// Classifies the narrow prepared clustered-handle point read directly
     /// from its retained template and execute values.  Unlike
     /// [`Self::statement_read_shape_parsed`], this path does not clone and

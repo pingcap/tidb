@@ -1430,3 +1430,133 @@ fn begin_inside_a_transaction_implicitly_commits_it() {
         "the abandoned transaction's write was committed, not discarded"
     );
 }
+
+/// Go's pessimistic point write folds its row read INTO its lock:
+/// `PointGetExecutor.getAndLock` (`pkg/executor/point_get.go:549`) locks with
+/// `InitReturnValues(1)` (line 614) and reads the row from the answer, cached
+/// in `TxnCtx.SetPessimisticLockCache`. This session's EXECUTE path does the
+/// fold: the classified row is locked WITH its value BEFORE the snapshot is
+/// bound, so the statement's one read is answered from the lock response. The
+/// assertions here are behavioral, not counters: the pre-lock must REALLY
+/// hold the row (a contender blocks mid-transaction), the second update of
+/// the same row must compute from its own staged write, and COMMIT persists.
+#[test]
+fn a_prepared_point_update_locks_its_row_before_reading_it() {
+    use tidb_protocol::PreparedValue;
+
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut first = factory
+        .open_session(session_context(90))
+        .expect("session opens");
+    rows(&mut first, "CREATE TABLE test.fold (id int primary key, v int)");
+    rows(&mut first, "INSERT INTO test.fold VALUES (1, 10)");
+
+    assert_eq!(first.control_transaction("BEGIN").expect("begin"), Some(true));
+    let statement = first
+        .prepare_general("UPDATE test.fold SET v = v + 5 WHERE id = ?")
+        .expect("prepare");
+    let affected = match first
+        .execute_general(&statement, &[PreparedValue::SignedLongLong(1)])
+        .expect("execute")
+    {
+        crate::sql_node::GeneralExecuteOutcome::Write(outcome) => outcome.affected_rows,
+        crate::sql_node::GeneralExecuteOutcome::Rows(_) => {
+            panic!("an UPDATE answers OK, not with a result set")
+        }
+    };
+    assert_eq!(affected, 1);
+
+    // The lock was taken BEFORE the statement read anything, so a contender
+    // on the same row must block until this transaction commits -- exactly
+    // the interleaving
+    // [`racing_pessimistic_updates_both_commit_with_serial_effect`] pins for
+    // the post-run lock step, now exercised by the PRE-lock.
+    let second = std::thread::scope(|scope| {
+        let contender = scope.spawn(|| {
+            let mut second = factory
+                .open_session(session_context(91))
+                .expect("session opens");
+            assert_eq!(
+                second.control_transaction("BEGIN").expect("begin"),
+                Some(true)
+            );
+            rows(&mut second, "UPDATE test.fold SET v = v + 100 WHERE id = 1");
+            second.control_transaction("COMMIT").expect("commit");
+        });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        first.control_transaction("COMMIT").expect("commit");
+        contender.join()
+    });
+    second.expect("the contending transaction commits after waiting the prelock out");
+
+    let mut after = factory
+        .open_session(session_context(92))
+        .expect("session opens");
+    assert_eq!(
+        displayed(rows(&mut after, "SELECT v FROM test.fold WHERE id = 1")),
+        [["115"]],
+        "+5 landed from the lock-carrying read, then +100 from the winner that re-read it"
+    );
+}
+
+/// The prelock joins the failed-statement release list: an EXECUTE that fails
+/// AFTER its row was locked (a strict-mode cast error during the assignment)
+/// must give the lock back AND drop its cached row image, so a contender can
+/// take the row immediately (`OnPessimisticStmtEnd(isSuccessful=false)`).
+#[test]
+fn a_failed_prelocked_update_releases_its_row() {
+    use tidb_protocol::PreparedValue;
+
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut first = factory
+        .open_session(session_context(93))
+        .expect("session opens");
+    rows(
+        &mut first,
+        "CREATE TABLE test.foldfail (id int primary key, v int)",
+    );
+    rows(&mut first, "INSERT INTO test.foldfail VALUES (1, 10)");
+
+    assert_eq!(first.control_transaction("BEGIN").expect("begin"), Some(true));
+    let statement = first
+        .prepare_general("UPDATE test.foldfail SET v = 'not-a-number' WHERE id = ?")
+        .expect("prepare");
+    // The execute outcome borrows the session for its row source, so the
+    // error check happens inside a scope that ends before the rollback.
+    let failed = {
+        let outcome = first.execute_general(&statement, &[PreparedValue::SignedLongLong(1)]);
+        outcome.is_err()
+    };
+    if !failed {
+        // A non-strict node coerces instead of failing; then there is no
+        // post-lock failure to exercise and the release behavior above is
+        // covered by the transaction-end path instead.
+        first.control_transaction("ROLLBACK").expect("rollback");
+        return;
+    }
+    // The statement failed after its prelock; the transaction stays open.
+    assert_eq!(
+        first.control_transaction("ROLLBACK").expect("rollback"),
+        Some(false)
+    );
+
+    // A contender takes the released row immediately: had the prelock leaked,
+    // this would block for the lock-wait timeout instead of completing.
+    let mut second = factory
+        .open_session(session_context(94))
+        .expect("session opens");
+    assert_eq!(second.control_transaction("BEGIN").expect("begin"), Some(true));
+    rows(&mut second, "UPDATE test.foldfail SET v = 99 WHERE id = 1");
+    second.control_transaction("COMMIT").expect("commit");
+
+    let mut after = factory
+        .open_session(session_context(95))
+        .expect("session opens");
+    assert_eq!(
+        displayed(rows(&mut after, "SELECT v FROM test.foldfail WHERE id = 1")),
+        [["99"]],
+        "the failed statement left neither its lock nor its staged write behind"
+    );
+}

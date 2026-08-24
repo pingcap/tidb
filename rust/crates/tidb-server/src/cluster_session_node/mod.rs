@@ -758,9 +758,24 @@ impl ClusterServerSession {
         shape: StatementReadShape,
         run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
+        self.with_prelocked_statement(shape, Vec::new(), run)
+    }
+
+    /// [`Self::with_statement`] for a statement whose point-write keys are
+    /// already known: they are locked WITH their rows before the snapshot is
+    /// bound, so the statement's own read answers from the lock response
+    /// instead of storage (Go's `InitReturnValues`/
+    /// `SetPessimisticLockCache` fold, `pkg/executor/point_get.go:612-624`).
+    /// An empty key set is the ordinary lifecycle.
+    fn with_prelocked_statement<T>(
+        &mut self,
+        shape: StatementReadShape,
+        prelock_keys: Vec<Vec<u8>>,
+        run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
+    ) -> Result<T, SqlQueryError> {
         self.rebuild_catalog_if_stale();
         self.begin_if_autocommit_off()?;
-        self.with_bound_statement(shape, run)
+        self.with_bound_statement(shape, &prelock_keys, run)
     }
 
     /// [`Self::with_statement`] for work the CLIENT did not ask to run: the
@@ -787,13 +802,14 @@ impl ClusterServerSession {
         run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         self.rebuild_catalog_if_stale();
-        self.with_bound_statement(shape, run)
+        self.with_bound_statement(shape, &[], run)
     }
 
     /// The statement lifecycle proper: savepoint, attempt, replay budget.
     fn with_bound_statement<T>(
         &mut self,
         shape: StatementReadShape,
+        prelock_keys: &[Vec<u8>],
         mut run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         // Go's MDL considers a RUNNING statement a user of its schema
@@ -805,7 +821,7 @@ impl ClusterServerSession {
         let savepoint = self.buffer.staged();
         let mut retried: u32 = 0;
         let outcome = loop {
-            match self.attempt_statement(shape, savepoint.clone(), &mut run) {
+            match self.attempt_statement(shape, savepoint.clone(), &prelock_keys, &mut run) {
                 Ok(value) => break Ok(value),
                 Err(error) => {
                     if !self.may_retry_autocommit_statement(&error, retried) {
@@ -840,6 +856,7 @@ impl ClusterServerSession {
         &mut self,
         shape: StatementReadShape,
         savepoint: BufferImage,
+        prelock_keys: &[Vec<u8>],
         run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         let autocommit = self.explicit.is_none();
@@ -850,7 +867,7 @@ impl ClusterServerSession {
         // back by its publication after the read handle is gone. Autocommit
         // publishes THERE, not at a fresh one: see `StatementReadTs`.
         let read_ts = transactions::StatementReadTs::new(self.session.current_tso());
-        let result = self.attempt_statement_inner(shape, &savepoint, run, &read_ts);
+        let result = self.attempt_statement_inner(shape, &savepoint, prelock_keys, run, &read_ts);
         // The TSO clear is statement TEARDOWN, not a success step: every exit
         // of the attempt -- including the `?`s inside the loop -- must leave
         // no failed statement's timestamp published, or `SET @x =
@@ -868,6 +885,7 @@ impl ClusterServerSession {
         &mut self,
         shape: StatementReadShape,
         savepoint: &BufferImage,
+        prelock_keys: &[Vec<u8>],
         run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
         read_ts: &transactions::StatementReadTs,
     ) -> Result<T, SqlQueryError> {
@@ -887,6 +905,68 @@ impl ClusterServerSession {
         let mut retries: u32 = 0;
         const MAX_PESSIMISTIC_STATEMENT_RETRIES: u32 = 256;
         let result = loop {
+            // Go's pessimistic point write takes its row lock DURING execution
+            // (`PointGetExecutor.getAndLock`, `pkg/executor/point_get.go:549`),
+            // asking TiKV to answer the row WITH the lock (`InitReturnValues`,
+            // line 614) so the executor's one read costs no separate get. This
+            // is that fold's session half: lock the classified keys BEFORE any
+            // read exists, and the statement's row read is served from the
+            // lock response through the transaction worker's value cache.
+            // Every round re-attempts until the lock stands: a fair-locking
+            // conflict keeps its locks (the next attempt here is answered
+            // without an RPC by the worker's held-key filter), while a rolled-
+            // back conflict genuinely needs the fresh acquisition at the new
+            // `for_update_ts`.
+            if !prelock_keys.is_empty() {
+                let outcome = match self.explicit.as_ref() {
+                    Some(transaction) => Some(
+                        transaction
+                            .lock_staged_keys_with_values(prelock_keys.to_vec()),
+                    ),
+                    None => None,
+                };
+                match outcome {
+                    None => {}
+                    Some(Ok(LockKeysOutcome::Locked { newly_locked, .. })) => {
+                        // A FAILED statement releases exactly what its rounds
+                        // added (Go `OnPessimisticStmtEnd(isSuccessful=false)`);
+                        // a pre-locked key joins the same list as a post-run
+                        // delta key, so a duplicate-key failure AFTER the lock
+                        // cannot leak the row lock it took first.
+                        statement_locked.extend(newly_locked);
+                    }
+                    Some(Ok(LockKeysOutcome::RetryStatement {
+                        for_update_ts,
+                        newly_locked,
+                        ..
+                    })) => {
+                        // Fair locking's retained locks stay owned by this
+                        // statement until it ends, whichever way it ends.
+                        statement_locked.extend(newly_locked);
+                        if retries >= MAX_PESSIMISTIC_STATEMENT_RETRIES {
+                            break Err(SqlQueryError::unknown(
+                                "pessimistic lock retry limit reached",
+                            ));
+                        }
+                        retries += 1;
+                        // Nothing is staged yet -- this round never ran -- so
+                        // only the read timestamp moves; the next round's lock
+                        // attempt re-runs at it.
+                        retry_read_ts = Some(for_update_ts);
+                        continue;
+                    }
+                    // Statement-scoped 1205/1213 family and transaction-fatal
+                    // errors surface exactly as they do from the post-run lock
+                    // step; nothing needs rolling back, nothing was staged.
+                    Some(Ok(LockKeysOutcome::StatementError(error))) => {
+                        break Err(transactions::sql_error(error))
+                    }
+                    Some(Ok(LockKeysOutcome::TransactionError(error))) => {
+                        break Err(transactions::sql_error(error))
+                    }
+                    Some(Err(error)) => break Err(SqlQueryError::unknown(error)),
+                }
+            }
             let snapshot = match self.explicit.as_ref() {
                 // The transaction's timestamp is already spent; its
                 // per-statement read handle costs nothing, so there is
@@ -2061,7 +2141,28 @@ impl QuerySession for ClusterServerSession {
                 |bound| self.session.statement_read_shape_bound(bound),
             )
         };
-        let output = self.with_statement(shape, move |session| {
+        // Go's pessimistic point write folds its row read INTO its lock
+        // (`PointGetExecutor.getAndLock` asks TiKV to answer the row with the
+        // lock, `pkg/executor/point_get.go:612-624`, and caches it in
+        // `TxnCtx.SetPessimisticLockCache`). Classify this statement once,
+        // from whichever tree the fast paths left: a bound one carries
+        // constants, an unbound template resolves its `?` markers against the
+        // execute parameters -- the same walker reads both. Empty output (a
+        // scan-shaped WHERE, a non-pessimistic or autocommit statement) keeps
+        // today's read-then-lock order untouched.
+        let prelock_keys = match self.explicit.as_ref() {
+            Some(transaction) if transaction.is_pessimistic() => {
+                if let Some(bound) = bound_template.as_ref() {
+                    self.session.pessimistic_write_point_keys(bound, &[])
+                } else if let Some(template) = retained {
+                    self.session.pessimistic_write_point_keys(template, &params)
+                } else {
+                    Vec::new()
+                }
+            }
+            _ => Vec::new(),
+        };
+        let output = self.with_prelocked_statement(shape, prelock_keys, move |session| {
             if fast {
                 if let Some(cached) = cached_point_get_plan
                     .as_ref()

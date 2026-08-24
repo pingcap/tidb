@@ -4648,6 +4648,19 @@ pub(crate) fn name_value_pairs(
     pairs: &mut Vec<NameValuePair>,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> bool {
+    point_equal_pairs(expr, pairs, zone, &[])
+}
+
+/// [`Self::name_value_pairs`]-shaped walker that ALSO resolves `?` markers
+/// against EXECUTE parameters, so one implementation decides the point-pin
+/// rule for a bound tree and for a PREPARE template alike. A template whose
+/// marker position is unfilled refuses, exactly like a non-literal.
+pub(crate) fn point_equal_pairs(
+    expr: &tidb_ast::Expr,
+    pairs: &mut Vec<NameValuePair>,
+    zone: &tidb_datatype::SessionTimeZone,
+    params: &[Datum],
+) -> bool {
     use tidb_ast::{BinaryOp, Expr};
     fn unparenthesized(expr: &Expr) -> &Expr {
         match expr {
@@ -4656,16 +4669,17 @@ pub(crate) fn name_value_pairs(
         }
     }
     match expr {
-        Expr::Paren(inner) => name_value_pairs(inner, pairs, zone),
+        Expr::Paren(inner) => point_equal_pairs(inner, pairs, zone, params),
         Expr::Binary(BinaryOp::LogicAnd, lhs, rhs) => {
-            name_value_pairs(lhs, pairs, zone) && name_value_pairs(rhs, pairs, zone)
+            point_equal_pairs(lhs, pairs, zone, params)
+                && point_equal_pairs(rhs, pairs, zone, params)
         }
         Expr::Binary(BinaryOp::Eq, lhs, rhs) => {
             // Stripped on both sides for the reason the arm above recurses
             // through `Expr::Paren`: parentheses are syntax, and Go has
             // unwrapped them before a point-get key is ever looked for, so
             // `(a)=1` names the same key that `a=1` does.
-            let (column, value) = match (unparenthesized(lhs), unparenthesized(rhs)) {
+            let (column, value_expr) = match (unparenthesized(lhs), unparenthesized(rhs)) {
                 (Expr::Column(path), other) => (path, other),
                 (other, Expr::Column(path)) => (path, other),
                 _ => return false,
@@ -4673,19 +4687,29 @@ pub(crate) fn name_value_pairs(
             let Some(name) = column.last() else {
                 return false;
             };
-            // Only a literal qualifies; anything needing evaluation against a
-            // row is not a point-get key.
-            let Ok(value) = rewrite_expr_resolved(
-                value,
-                &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
-            ) else {
-                return false;
-            };
-            let Expression::Constant(constant) = value else {
-                return false;
-            };
-            let Ok(value) = constant.eval() else {
-                return false;
+            // A `?` marker IS a literal once its parameter arrived; every
+            // other shape must resolve to a constant exactly as
+            // [`name_value_pairs`] demands — anything needing evaluation
+            // against a row is not a point-get key.
+            let value = if let Expr::ParamMarker { order, .. } = unparenthesized(value_expr) {
+                let Some(datum) = params.get(*order) else {
+                    return false;
+                };
+                datum.clone()
+            } else {
+                let Ok(value) = rewrite_expr_resolved(
+                    value_expr,
+                    &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
+                ) else {
+                    return false;
+                };
+                let Expression::Constant(constant) = value else {
+                    return false;
+                };
+                let Ok(value) = constant.eval() else {
+                    return false;
+                };
+                value
             };
             pairs.push(NameValuePair {
                 column: name.clone(),
@@ -5138,6 +5162,99 @@ fn prepared_name_value_pairs(
         }
         _ => false,
     }
+}
+
+/// The record keys one single-table point `UPDATE`/`DELETE` locks BEFORE it
+/// runs, so its row read folds into the lock that demands it.
+///
+/// Go's pessimistic point write takes this fold for granted:
+/// `tryUpdatePointPlan`/`tryDeletePointPlan` (`pkg/planner/core/point_get_plan.go`)
+/// pin ONE row by handle equality, and `PointGetExecutor.getAndLock`
+/// (`pkg/executor/point_get.go:549`) asks that lock to carry the row back
+/// (`InitReturnValues(1)`, line 614) instead of issuing a separate get. This
+/// function is the plan-shape half of that fold: it accepts exactly the writes
+/// whose whole read is one handle-pinned row — the conjunction rule
+/// [`name_value_pairs`] enforces for reads, with `?` markers resolved against
+/// EXECUTE parameters — and returns the encoded record keys for the pinned
+/// rows. Anything else (an `OR`, a range, an index-pinned row, a multi-table
+/// write, an unfilled marker) returns an empty vector and keeps today's
+/// read-then-lock order.
+///
+/// Accepting is safe in exactly one direction, and it is the right one: a
+/// statement accepted here reads at most the rows its pinned keys name, so
+/// pre-locking them can never miss a row the statement would have read
+/// unlocked. Refusing merely costs the extra round trip the fold removes.
+pub(crate) fn point_write_prelock_keys(
+    table: &KvTable,
+    where_clause: &tidb_ast::Expr,
+    params: &[Datum],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Vec<Vec<u8>> {
+    let mut pairs = Vec::new();
+    if !point_equal_pairs(where_clause, &mut pairs, zone, params) || pairs.is_empty() {
+        return Vec::new();
+    }
+    // The column list is the table's own (all columns, in order), because the
+    // domain conversion and the handle offsets below both index into it --
+    // the same list [`super::access_path`] builds for a write's own read-path
+    // decision (`write_read_path`).
+    let columns: Vec<(String, tidb_datatype::FieldType)> = table
+        .columns
+        .iter()
+        .map(|column| (column.name.clone(), column.field_type.clone()))
+        .collect();
+    if !convert_pairs_to_column_domain(&mut pairs, &columns) {
+        return Vec::new();
+    }
+    let handle = if let Some(handle_offset) = table.pk_handle_offset() {
+        let handle_column = &columns[handle_offset].0;
+        if pairs.len() == 1 && pairs[0].column.eq_ignore_ascii_case(handle_column) {
+            match pairs[0].value {
+                Datum::Int(value) => Some(TableHandle::Int(value)),
+                Datum::UInt(value) => Some(TableHandle::Int(value as i64)),
+                _ => return Vec::new(),
+            }
+        } else {
+            // A handle equality among other conjuncts refuses outright, as
+            // [`try_point_get`] does: the fast point plan is off and the
+            // ordinary planner filters, which this pre-lock must not guess
+            // about.
+            return Vec::new();
+        }
+    } else {
+        // A clustered composite primary key IS the record key: every handle
+        // column pinned is one known row, same as [`try_point_get`]'s common
+        // arm. A partial pin refuses.
+        let common_offsets = table.common_handle_offsets();
+        if common_offsets.is_empty() || common_offsets.len() != pairs.len() {
+            return Vec::new();
+        }
+        let mut values = Vec::with_capacity(common_offsets.len());
+        for offset in common_offsets {
+            let Some((name, _)) = columns.get(*offset) else {
+                return Vec::new();
+            };
+            let Some(pair) = pairs
+                .iter()
+                .find(|pair| pair.column.eq_ignore_ascii_case(name))
+            else {
+                return Vec::new();
+            };
+            values.push(pair.value.clone());
+        }
+        let Ok(encoded) = tidb_codec::encode_key_in_timezone(zone, &values) else {
+            return Vec::new();
+        };
+        Some(TableHandle::Common(encoded))
+    };
+    let Some(handle) = handle else { return Vec::new() };
+    table
+        .record_physical_ids()
+        .into_iter()
+        .map(|id| {
+            tidb_codec::table_key::encode_row_key_with_handle(id, &handle.record_handle())
+        })
+        .collect()
 }
 
 /// The row order a committed index access path produces, for the `ORDER BY`

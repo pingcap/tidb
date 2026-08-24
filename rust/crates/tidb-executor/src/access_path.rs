@@ -121,6 +121,60 @@ pub enum StatementReadShape {
     AutocommitWrite,
 }
 
+/// The record keys one pessimistic point write locks BEFORE it runs.
+///
+/// The entry the cluster-session layer calls with the statement it is about to
+/// execute: a single-table `UPDATE`/`DELETE` whose whole read is one
+/// handle-pinned row returns that row's encoded record keys (Go's
+/// `tryUpdatePointPlan`/`tryDeletePointPlan` shape, folded with
+/// `InitReturnValues`/`SetPessimisticLockCache`,
+/// `pkg/executor/point_get.go:612-624`); everything else returns an empty
+/// vector and keeps today's read-then-lock order. Both statement shapes are
+/// read from ONE walker, so an EXECUTE template (`?` markers against
+/// `params`) and an already-bound tree classify identically.
+#[must_use]
+pub fn pessimistic_write_point_keys(
+    stmt: &tidb_ast::Stmt,
+    params: &[Datum],
+    catalog: &crate::driver::Catalog,
+    current_db: &str,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Vec<Vec<u8>> {
+    let tidb_ast::Stmt::Dml(dml) = stmt else {
+        return Vec::new();
+    };
+    let (table_ref, where_clause) = match dml.as_ref() {
+        tidb_ast::DmlStmt::Update(update) => match (&update.kind, update.where_clause.as_ref()) {
+            (tidb_ast::UpdateKind::Single(table_ref), Some(where_clause)) => {
+                (table_ref, where_clause)
+            }
+            _ => return Vec::new(),
+        },
+        tidb_ast::DmlStmt::Delete(delete) => match (&delete.kind, delete.where_clause.as_ref()) {
+            (tidb_ast::DeleteKind::Single(table_ref), Some(where_clause)) => {
+                (table_ref, where_clause)
+            }
+            _ => return Vec::new(),
+        },
+        _ => return Vec::new(),
+    };
+    let (database, table_name) = match table_ref.name.as_slice() {
+        [name] if !current_db.is_empty() => (current_db, name.as_str()),
+        [database, name] => (database.as_str(), name.as_str()),
+        _ => return Vec::new(),
+    };
+    let Some(crate::driver::TableEntry::Kv(table)) = catalog.get_in(database, table_name) else {
+        return Vec::new();
+    };
+    // A partitioned table routes a row to its partition; which record key one
+    // handle names then depends on pruning this predicate does not do. A
+    // refusal costs one extra round trip, never a wrong lock.
+    if table.partition().is_some() {
+        return Vec::new();
+    }
+    crate::driver::access::point_write_prelock_keys(table, where_clause, params, zone)
+}
+
 /// Whether `stmt` is a statement whose WHOLE read is one point get on the
 /// clustered handle -- the plan-shape half of Go's
 /// `IsPointGetWithPKOrUniqueKeyByAutoCommit`
