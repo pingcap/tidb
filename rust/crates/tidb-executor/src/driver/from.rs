@@ -4691,6 +4691,16 @@ fn build_join_with_choice(
     // carry the pre-filter scan cardinality, while RowSource already owns the
     // exact left/right rows after those predicates. Keep the access cost and
     // replace only the logical receipt used by Merge/Hash/Index costing.
+    //
+    // The INDEX family keeps the child's own receipt instead: go prices an
+    // IndexJoin's BUILD side at the physical OUTER plan's row count -- an
+    // `IndexMerge` partial carries its real CountAfterAccess (`stats.go:250`
+    // skips `adjustCountAfterAccess` for partials), so a member-of-driven
+    // outer costs thousands of lookups, not the logical source's default-
+    // selectivity millions. The normalized receipt below would erase exactly
+    // that fact, so the raw children are captured before it runs.
+    let raw_alternative_left_candidate = alternative_left_candidate.clone();
+    let raw_alternative_right_candidate = alternative_right_candidate.clone();
     let mut ordered_left_candidate = left_delivered.candidate.clone();
     let mut ordered_right_candidate = right_delivered.candidate.clone();
     if !semi_join {
@@ -4752,9 +4762,9 @@ fn build_join_with_choice(
             if let Some(rows) = estimated_join_rows {
                 for (decision_index, decision) in index_joins.iter().enumerate() {
                     let outer = if decision.lookup_is_left {
-                        alternative_right_candidate.clone()
+                        raw_alternative_right_candidate.clone()
                     } else {
-                        alternative_left_candidate.clone()
+                        raw_alternative_left_candidate.clone()
                     };
                     if let Some(outer) = outer {
                         let kinds: &[tidb_planner::plan_cost_ver2::IndexJoinKind] =
@@ -4935,7 +4945,7 @@ fn build_join_with_choice(
             );
             eprintln!(
                 "JOIN_CANDIDATE {choice:?} cost={:?} rows={:.2}\n{candidate:#?}",
-                costed.cost, costed.rows
+                costed.cost.value(), costed.rows
             );
         }
     }
