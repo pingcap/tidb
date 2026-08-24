@@ -3827,6 +3827,34 @@ impl PlanTrace {
         }
     }
 
+    /// The Projection Go's `InjectProjBelowAgg` injects BELOW a global
+    /// StreamAgg whose argument is a scalar expression: it evaluates the
+    /// written expression once per row so the aggregate folds a column.
+    pub(crate) fn injected_below_agg_projection(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+    ) {
+        // Each hoisted aggregate's ARGUMENT becomes the projected column:
+        // Go prints e.g. `Projection mul(l_price, minus(1, l_disc))->Col#?`
+        // directly below `StreamAgg funcs:sum(Col#?)->Col#?`.
+        let mut lines = Vec::new();
+        for field in select.fields.fields() {
+            if let tidb_ast::SelectField::Expr { expr, .. } = field {
+                for aggregate in aggregate_exprs(expr) {
+                    if let tidb_ast::Expr::Aggregate { args, .. } = &aggregate {
+                        if let Some(arg) = args.first() {
+                            lines.push(format!("{}->Column#0", qualify.expr(arg)));
+                        }
+                    }
+                }
+            }
+        }
+        if !lines.is_empty() {
+            self.wrap("Projection", Est::Inherit, lines.join(", "));
+        }
+    }
+
     /// The visible Projection retained above an Aggregation after Go's
     /// `Aggregation -> Projection` pushdown arm removed the child Projection.
     /// Plain fields now read aggregation result columns; scalar expressions
