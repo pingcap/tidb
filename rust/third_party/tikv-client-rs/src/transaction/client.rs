@@ -31,7 +31,7 @@ use crate::transaction::lowering::new_delete_range_request;
 use crate::transaction::lowering::new_scan_lock_request;
 use crate::transaction::lowering::new_unsafe_destroy_range_request;
 use crate::transaction::range_task::{RangeTaskHandler, Runner, TaskStat};
-use crate::transaction::resolve_locks;
+use crate::transaction::resolve_locks_with_context;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::Snapshot;
 use crate::transaction::Transaction;
@@ -79,6 +79,7 @@ pub struct Client {
     /// request context, as client-go's codec does.
     keyspace_name: Option<String>,
     latches: Option<Arc<LatchesScheduler>>,
+    lock_resolver_context: ResolveLocksContext,
 }
 
 impl Clone for Client {
@@ -88,6 +89,7 @@ impl Clone for Client {
             keyspace: self.keyspace,
             keyspace_name: self.keyspace_name.clone(),
             latches: self.latches.clone(),
+            lock_resolver_context: self.lock_resolver_context.clone(),
         }
     }
 }
@@ -153,6 +155,7 @@ impl Client {
             keyspace,
             keyspace_name,
             latches,
+            lock_resolver_context: ResolveLocksContext::default(),
         })
     }
 
@@ -179,6 +182,7 @@ impl Client {
             keyspace: Keyspace::ApiV2NoPrefix,
             keyspace_name: None,
             latches,
+            lock_resolver_context: ResolveLocksContext::default(),
         })
     }
 
@@ -328,7 +332,7 @@ impl Client {
     ) -> Result<CleanupLocksResult> {
         debug!("invoking cleanup async commit locks");
         // scan all locks with ts <= safepoint
-        let ctx = ResolveLocksContext::default();
+        let ctx = self.lock_resolver_context.clone();
         let backoff = Backoff::equal_jitter_backoff(100, 10000, 50);
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
         let req = new_scan_lock_request(range, safepoint, options.batch_size);
@@ -376,15 +380,13 @@ impl Client {
 
         let mut live_locks = locks;
         loop {
-            let resolved_locks = resolve_locks(
+            let resolved_locks = resolve_locks_with_context(
                 live_locks.encode_keyspace(self.keyspace, KeyMode::Txn),
                 timestamp.clone(),
                 self.pd.clone(),
                 self.keyspace,
                 self.keyspace_name.as_deref(),
-                None,
-                None,
-                None,
+                self.lock_resolver_context.clone(),
             )
             .await?;
             live_locks = resolved_locks.truncate_keyspace(self.keyspace);

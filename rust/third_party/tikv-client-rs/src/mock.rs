@@ -81,6 +81,8 @@ pub struct MockCluster;
 pub struct MockPdClient {
     client: MockKvClient,
     #[new(default)]
+    timestamp: Arc<Mutex<Timestamp>>,
+    #[new(default)]
     epoch_not_match_regions: Arc<Mutex<Vec<RegionWithLeader>>>,
     #[new(default)]
     invalidated_regions: Arc<Mutex<Vec<RegionVerId>>>,
@@ -113,9 +115,14 @@ impl KvConnect for MockKvConnect {
 }
 
 impl MockPdClient {
+    pub(crate) fn set_timestamp(&self, timestamp: Timestamp) {
+        *self.timestamp.lock().unwrap() = timestamp;
+    }
+
     pub fn default() -> MockPdClient {
         MockPdClient {
             client: MockKvClient::default(),
+            timestamp: Arc::default(),
             epoch_not_match_regions: Arc::default(),
             invalidated_regions: Arc::default(),
             closed_client_addresses: Arc::default(),
@@ -244,7 +251,7 @@ impl PdClient for MockPdClient {
     }
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
-        Ok(Timestamp::default())
+        Ok(self.timestamp.lock().unwrap().clone())
     }
 
     async fn update_safepoint(self: Arc<Self>, _safepoint: u64) -> Result<bool> {

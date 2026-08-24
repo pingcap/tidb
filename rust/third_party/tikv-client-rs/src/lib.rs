@@ -244,3 +244,4 @@ pub use crate::transaction::SyncTransactionClient;
 pub use crate::transaction::Transaction;
 #[doc(inline)]
 pub use crate::transaction::TransactionOptions;
+pub use crate::transaction::{extract_lock_from_key_error, extract_locks_from_key_error};
