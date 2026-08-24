@@ -627,9 +627,35 @@ impl AggState {
         Ok(delta)
     }
 
-    /// Folds a fixed-scale decimal AVG input without materializing a Decimal.
-    /// Returns `false` when the existing state or scale cannot use the fast
-    /// representation; the caller then falls back to the complete path.
+    /// Folds one DECIMAL cell coefficient into the fixed-scale SUM
+    /// accumulator. Returns `false` when this state cannot take it (DISTINCT
+    /// or an i128 overflow) and the caller must use the complete path.
+    fn update_sum_decimal_fast(&mut self, coefficient: i128, scale: u32) -> bool {
+        if self.seen.is_some() {
+            return false;
+        }
+        match &mut self.partial {
+            Partial::SumDecimal(None) => {
+                self.partial = Partial::SumDecimalFast {
+                    sum: coefficient,
+                    scale,
+                };
+                true
+            }
+            Partial::SumDecimalFast {
+                sum,
+                scale: current_scale,
+            } if *current_scale == scale => match sum.checked_add(coefficient) {
+                Some(total) => {
+                    *sum = total;
+                    true
+                }
+                None => false,
+            },
+            _ => false,
+        }
+    }
+
     fn update_avg_decimal_fast(&mut self, coefficient: i128, scale: u32, count: i64) -> bool {
         if self.seen.is_some() || count < 0 {
             return false;
@@ -984,6 +1010,12 @@ impl Partial {
                 values: Vec::new(),
                 percent: *percent,
             },
+        }
+    }
+
+    fn materialize_sum_fast(&mut self) {
+        if let Partial::SumDecimalFast { sum, scale } = self {
+            *self = Partial::SumDecimal(Some(Decimal::from_scaled_i128(*sum, *scale)));
         }
     }
 
@@ -2704,6 +2736,35 @@ impl<C: HashAggContext> HashAggExec<C> {
                             }
                             state.partial.materialize_avg_fast();
                         }
+                    }
+                }
+            }
+            // A fixed-scale DECIMAL SUM folds the raw cell coefficient the
+            // same way MIN/MAX and AVG do: no Datum, no `Decimal` build per
+            // row. A differing scale or an overflow falls back to the
+            // complete path, which materializes and replays the row.
+            if matches!(f.kind, AggKind::Sum)
+                && !f.distinct
+                && f.extra_args.is_empty()
+                && f.order_by.is_empty()
+            {
+                let column = f.arg.as_ref().and_then(Expression::as_column);
+                let decimal_column = column.filter(|column| {
+                    column
+                        .get_static_type()
+                        .is_some_and(|ty| ty.code() == tidb_datatype::FieldTypeCode::NewDecimal)
+                });
+                if let Some(column) = decimal_column {
+                    if row.is_null(column.index as usize) {
+                        continue;
+                    }
+                    if let Some((coefficient, scale)) =
+                        row.get_my_decimal(column.index as usize).to_i128_scaled()
+                    {
+                        if state.update_sum_decimal_fast(coefficient, scale) {
+                            continue;
+                        }
+                        state.partial.materialize_sum_fast();
                     }
                 }
             }
