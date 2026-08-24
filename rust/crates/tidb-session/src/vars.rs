@@ -618,6 +618,9 @@ impl SessionVars {
         self.systems = systems;
         self.globals = globals;
         self.optimizer_fix_control = optimizer_fix_control;
+        // The wholesale replacement above is a mutation like any other; the
+        // parsed-product caches keyed on `generation` must not survive it.
+        self.generation += 1;
         Ok(())
     }
 

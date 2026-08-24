@@ -46,6 +46,16 @@ use tidb_session::process::ProcessKillTarget;
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 const STANDALONE_SERVER_ID: u64 = 1;
+// A connection worker runs the planner, whose recursion is guarded by
+// `stacker::maybe_grow(red_zone = 2 MB, segment = 16 MB)`. On the default
+// 2 MB thread stack the red-zone check fails on EVERY select, so each
+// statement mmap'ed and munmap'ed a fresh 16 MB segment -- measured at ~11%
+// of the serving thread under sysbench point selects. Go never pays this
+// because a goroutine's grown stack PERSISTS for the goroutine's life; a
+// large reserved stack is that semantics for a dedicated thread (reserved
+// address space, committed only as touched), leaving `maybe_grow` as the
+// safety net for genuinely deep plans.
+const SQL_WORKER_STACK_BYTES: usize = 32 * 1024 * 1024;
 
 /// Cloneable process shutdown signal for the sole production accept loop.
 #[derive(Clone, Debug, Default)]
@@ -1677,6 +1687,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
                     );
                     match std::thread::Builder::new()
                         .name(format!("tidb-sql-connection-{index}"))
+                        .stack_size(SQL_WORKER_STACK_BYTES)
                         .spawn(job)
                     {
                         Ok(join) => dedicated_workers.push(WorkerHandle { index, join }),
@@ -1805,6 +1816,7 @@ fn spawn_workers<F: QuerySessionFactory>(
     spawn_workers_with(count, factory, users, tracker, connection, |index, job| {
         std::thread::Builder::new()
             .name(format!("tidb-sql-connection-{index}"))
+            .stack_size(SQL_WORKER_STACK_BYTES)
             .spawn(job)
     })
 }

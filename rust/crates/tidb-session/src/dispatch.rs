@@ -609,7 +609,7 @@ impl Session {
     /// autocommit records nothing (`IsAutoCommitTxn && IsReadOnly` returns
     /// before the store), so the hot point-read path pays nothing here
     /// either.
-    fn record_mdl_related_tables(&mut self, stmt: &Stmt) {
+    fn record_mdl_related_tables(&mut self, stmt: &Stmt, names: &[(String, String)]) {
         let Some(sink) = self.mdl_related_tables.clone() else {
             return;
         };
@@ -623,7 +623,6 @@ impl Session {
         }
         let version = self.cluster_schema_version_now();
         let current_db = self.current_database().to_owned();
-        let names = crate::binding::collect_table_names(stmt);
         let catalog = match self.lock_catalog() {
             Ok(catalog) => catalog,
             Err(_) => {
@@ -631,7 +630,7 @@ impl Session {
                 return;
             }
         };
-        for (db, table) in &names {
+        for (db, table) in names {
             let db = if db.is_empty() { &current_db } else { db };
             match catalog.stored_table_id(db, table) {
                 Some(table_id) => sink.record_table(table_id, version),
@@ -721,12 +720,18 @@ impl Session {
         prepared: bool,
         cached_point_get: Option<tidb_executor::PreparedPointGetExecution>,
     ) -> Result<StmtOutput, DriverError> {
-        self.record_mdl_related_tables(&stmt);
+        // Go's `Preprocess` walks the AST once per statement and answers
+        // every table-shaped question from that pass (`preprocess.go`); the
+        // three consumers below share this one walk instead of each cloning
+        // and re-walking the statement.
+        let mut stmt = stmt;
+        let scan = crate::binding::scan_statement_tables(&mut stmt);
+        self.record_mdl_related_tables(&stmt, &scan.names);
         // A statement whose table references carry `AS OF TIMESTAMP` runs
         // against the store's history -- Go's stale statement
         // (`StalenessTxnContextProvider` for one statement). Intercepted at
         // this one funnel so text and prepared spellings share the rules.
-        if !self.in_transaction() {
+        if scan.has_as_of && !self.in_transaction() {
             if let Some(output) = self.execute_as_of_statement(&stmt)? {
                 return Ok(output);
             }
@@ -738,9 +743,8 @@ impl Session {
         let query_reads_stored_table =
             matches!(stmt, Stmt::Query(_)) && !self.in_transaction() && {
                 let current_db = self.current_database().to_owned();
-                let names = crate::binding::collect_table_names(&stmt);
                 match self.lock_catalog() {
-                    Ok(catalog) => names.iter().any(|(db, table)| {
+                    Ok(catalog) => scan.names.iter().any(|(db, table)| {
                         let db = if db.is_empty() { &current_db } else { db };
                         catalog.stored_table_id(db, table).is_some()
                     }),
