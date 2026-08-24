@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/filter"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -96,9 +97,35 @@ type cacheableChecker struct {
 func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.SelectStmt:
-		if node.With != nil {
-			// Record the CTE visibility boundary for this query block.
-			checker.withScopeOffset = append(checker.withScopeOffset, len(checker.cteCanUsed))
+		checker.enterWithScope(node.With)
+		for _, hints := range node.TableHints {
+			if hints.HintName.L == h.HintIgnorePlanCache {
+				checker.cacheable = false
+				checker.reason = "ignore plan cache by hint"
+				return in, true
+			}
+		}
+	case *ast.SetOprStmt:
+		checker.enterWithScope(node.With)
+	case *ast.SetOprSelectList:
+		checker.enterWithScope(node.With)
+	case *ast.DeleteStmt:
+		checker.enterWithScope(node.With)
+		for _, hints := range node.TableHints {
+			if hints.HintName.L == h.HintIgnorePlanCache {
+				checker.cacheable = false
+				checker.reason = "ignore plan cache by hint"
+				return in, true
+			}
+		}
+	case *ast.UpdateStmt:
+		checker.enterWithScope(node.With)
+		for _, hints := range node.TableHints {
+			if hints.HintName.L == h.HintIgnorePlanCache {
+				checker.cacheable = false
+				checker.reason = "ignore plan cache by hint"
+				return in, true
+			}
 		}
 	case *ast.InsertStmt:
 		if node.Select == nil {
@@ -110,6 +137,13 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			if nRows*nCols > checker.maxNumParam { // to save memory
 				checker.cacheable = false
 				checker.reason = "too many values in the insert statement"
+				return in, true
+			}
+		}
+		for _, hints := range node.TableHints {
+			if hints.HintName.L == h.HintIgnorePlanCache {
+				checker.cacheable = false
+				checker.reason = "ignore plan cache by hint"
 				return in, true
 			}
 		}
@@ -206,16 +240,38 @@ func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch node := in.(type) {
 	case *ast.CommonTableExpression:
 		if !node.IsRecursive {
-			// Non-recursive CTE becomes visible only after its definition has been fully traversed.
+			// Non-recursive CTE becomes visible only after its definition is fully traversed.
 			checker.cteCanUsed = append(checker.cteCanUsed, node.Name.L)
 		}
 	case *ast.SelectStmt:
 		if node.With != nil {
-			// Leave query-block WITH scope and restore CTE visibility from outer context.
+			checker.leaveWithScope()
+		}
+	case *ast.SetOprStmt:
+		if node.With != nil {
+			checker.leaveWithScope()
+		}
+	case *ast.SetOprSelectList:
+		if node.With != nil {
+			checker.leaveWithScope()
+		}
+	case *ast.DeleteStmt:
+		if node.With != nil {
+			checker.leaveWithScope()
+		}
+	case *ast.UpdateStmt:
+		if node.With != nil {
 			checker.leaveWithScope()
 		}
 	}
 	return in, checker.cacheable
+}
+
+func (checker *cacheableChecker) enterWithScope(with *ast.WithClause) {
+	if with != nil {
+		// Record the CTE visibility boundary for this query block.
+		checker.withScopeOffset = append(checker.withScopeOffset, len(checker.cteCanUsed))
+	}
 }
 
 func (checker *cacheableChecker) leaveWithScope() {

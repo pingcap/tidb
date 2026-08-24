@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
@@ -66,28 +67,38 @@ func containUsePlanCacheHintInSQLOrBinding(sctx sessionctx.Context, stmt ast.Stm
 
 // getPlanFromNonPreparedPlanCache tries to get an available cached plan from the NonPrepared Plan Cache for this stmt.
 func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (p base.Plan, ns types.NameSlice, ok bool, err error) {
-	stmtCtx := sctx.GetSessionVars().StmtCtx
+	vars := sctx.GetSessionVars()
+	stmtCtx := vars.StmtCtx
 	stmt, isStmtNode := node.Node.(ast.StmtNode)
 	_, isExplain := stmt.(*ast.ExplainStmt)
-	if !sctx.GetSessionVars().EnableNonPreparedPlanCache || // disabled
+	if !vars.EnableNonPreparedPlanCache || // disabled
 		!isStmtNode ||
+		stmtCtx.EnableOptimizerCETrace || stmtCtx.EnableOptimizeTrace || // in trace
 		stmtCtx.InRestrictedSQL || // is internal SQL
 		isExplain || // explain external
-		!sctx.GetSessionVars().DisableTxnAutoRetry || // txn-auto-retry
-		sctx.GetSessionVars().InMultiStmts { // in multi-stmt
+		!vars.DisableTxnAutoRetry || // txn-auto-retry
+		vars.InMultiStmts || // in multi-stmt
+		(stmtCtx.InExplainStmt && stmtCtx.ExplainFormat != types.ExplainFormatPlanCache) { // in explain internal
 		return nil, nil, false, nil
 	}
-	if sctx.GetSessionVars().PlanCacheStrategy == vardef.TiDBPlanCacheStrategyHintOnly &&
+	if vars.PlanCacheStrategy == vardef.TiDBPlanCacheStrategyHintOnly &&
 		!containUsePlanCacheHintInSQLOrBinding(sctx, stmt) {
 		if !isExplain && stmtCtx.InExplainStmt && stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
 			stmtCtx.AppendWarning(errors.NewNoStackErrorf("skip non-prepared plan-cache: %s", nonPreparedPlanCacheHintOnlyNoHintReason))
 		}
 		return nil, nil, false, nil
 	}
+	if vars.EnableNonPreparedPlanCacheUnifiedCacheabilityCheck {
+		return getPlanFromNonPreparedPlanCacheUnified(ctx, sctx, stmt, is)
+	}
+	return getPlanFromNonPreparedPlanCacheLegacy(ctx, sctx, stmt, is)
+}
 
+func getPlanFromNonPreparedPlanCacheLegacy(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (p base.Plan, ns types.NameSlice, ok bool, err error) {
+	stmtCtx := sctx.GetSessionVars().StmtCtx
 	ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
 	if !ok {
-		if !isExplain && stmtCtx.InExplainStmt && stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
+		if stmtCtx.InExplainStmt && stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
 			stmtCtx.AppendWarning(errors.NewNoStackErrorf("skip non-prepared plan-cache: %s", reason))
 		}
 		return nil, nil, false, nil
@@ -101,6 +112,9 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		ctx.Value(core.PlanCacheKeyTestIssue43667{}).(func(stmt ast.StmtNode))(stmt)
 	}
 	val := sctx.GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
+	if intest.InTest && ctx.Value(core.PlanCacheKeyTestNonPreparedStmtLookup{}) != nil {
+		ctx.Value(core.PlanCacheKeyTestNonPreparedStmtLookup{}).(func(bool))(val != nil)
+	}
 	paramExprs := core.Params2Expressions(paramsVals)
 
 	if val == nil {
@@ -135,6 +149,105 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	}
 
 	return cachedPlan, names, true, nil
+}
+
+func getPlanFromNonPreparedPlanCacheUnified(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (p base.Plan, ns types.NameSlice, ok bool, err error) {
+	vars := sctx.GetSessionVars()
+	stmtCtx := vars.StmtCtx
+	if allowed, reason := nonPreparedPlanCacheDMLAllowed(vars, stmt); !allowed {
+		recordNonPreparedPlanCacheBypass(stmtCtx, reason, false)
+		return nil, nil, false, nil
+	}
+	if intest.InTest && ctx.Value(core.PlanCacheKeyTestNonPreparedParam{}) != nil {
+		ctx.Value(core.PlanCacheKeyTestNonPreparedParam{}).(func(ast.StmtNode))(stmt)
+	}
+
+	result, supported, reason, err := core.ParameterizeForNonPreparedPlanCache(sctx.GetPlanCtx(), stmt)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if !supported {
+		recordNonPreparedPlanCacheBypass(stmtCtx, reason, true)
+		return nil, nil, false, nil
+	}
+	if intest.InTest && ctx.Value(core.PlanCacheKeyTestNonPreparedParamSQL{}) != nil {
+		ctx.Value(core.PlanCacheKeyTestNonPreparedParamSQL{}).(func(*string))(&result.ParamSQL)
+	}
+	if intest.InTest && ctx.Value(core.PlanCacheKeyTestIssue43667{}) != nil {
+		ctx.Value(core.PlanCacheKeyTestIssue43667{}).(func(stmt ast.StmtNode))(stmt)
+	}
+
+	paramExprs := core.Params2Expressions(result.ParamValues)
+	value := vars.GetNonPreparedPlanCacheStmt(result.ParamSQL)
+	if intest.InTest && ctx.Value(core.PlanCacheKeyTestNonPreparedStmtLookup{}) != nil {
+		ctx.Value(core.PlanCacheKeyTestNonPreparedStmtLookup{}).(func(bool))(value != nil)
+	}
+	var cachedStmt *core.PlanCacheStmt
+	var paramStmt ast.StmtNode
+	if value == nil {
+		paramStmt, err = core.ParseParameterizedSQL(sctx, result.ParamSQL)
+		if err != nil {
+			recordNonPreparedPlanCacheBypass(stmtCtx, "failed to parse parameterized SQL", true)
+			return nil, nil, false, nil
+		}
+	} else {
+		cachedStmt = value.(*core.PlanCacheStmt)
+		paramStmt = cachedStmt.PreparedAst.Stmt
+	}
+
+	cacheable, reason := core.IsASTCacheable(ctx, sctx.GetPlanCtx(), paramStmt, is)
+	if !cacheable {
+		recordNonPreparedPlanCacheBypass(stmtCtx, reason, true)
+		return nil, nil, false, nil
+	}
+
+	if cachedStmt == nil {
+		if err := core.SetParameterValuesIntoSCtx(sctx.GetPlanCtx(), true, nil, paramExprs); err != nil {
+			return nil, nil, false, err
+		}
+		cachedStmt, _, _, err = core.GeneratePlanCacheStmtWithAST(ctx, sctx, false, result.ParamSQL, paramStmt, is)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if !cachedStmt.StmtCacheable {
+			recordNonPreparedPlanCacheBypass(stmtCtx, cachedStmt.UncacheableReason, true)
+			return nil, nil, false, nil
+		}
+		vars.AddNonPreparedPlanCacheStmt(result.ParamSQL, cachedStmt)
+	}
+
+	cachedPlan, names, err := core.GetPlanFromPlanCache(ctx, sctx, true, is, cachedStmt, paramExprs)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if intest.InTest && ctx.Value(core.PlanCacheKeyTestIssue47133{}) != nil {
+		ctx.Value(core.PlanCacheKeyTestIssue47133{}).(func(names []*types.FieldName))(names)
+	}
+	return cachedPlan, names, true, nil
+}
+
+func nonPreparedPlanCacheDMLAllowed(vars *variable.SessionVars, stmt ast.StmtNode) (bool, string) {
+	if vars.EnableNonPreparedPlanCacheForDML {
+		return true, ""
+	}
+	switch stmt := stmt.(type) {
+	case *ast.SelectStmt:
+		if stmt.LockInfo == nil {
+			return true, ""
+		}
+	case *ast.SetOprStmt:
+		return true, ""
+	}
+	return false, "not a SELECT statement"
+}
+
+func recordNonPreparedPlanCacheBypass(stmtCtx *stmtctx.StatementContext, reason string, countUnsupported bool) {
+	if countUnsupported {
+		core_metrics.GetNonPrepPlanCacheUnsupportedCounter().Inc()
+	}
+	if stmtCtx.InExplainStmt && stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
+		stmtCtx.AppendWarning(errors.NewNoStackErrorf("skip non-prepared plan-cache: %s", reason))
+	}
 }
 
 // Optimize does optimization and creates a Plan.

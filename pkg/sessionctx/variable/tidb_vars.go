@@ -20,7 +20,6 @@ import (
 
 	"go.uber.org/atomic"
 )
-
 var (
 	// SetMemQuotaAnalyze is the func registered by global/subglobal tracker to set memory quota.
 	SetMemQuotaAnalyze func(quota int64) = nil

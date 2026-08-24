@@ -365,6 +365,81 @@ func TestCacheable(t *testing.T) {
 		},
 	}
 	require.True(t, core.Cacheable(stmt, is))
+
+	// A CTE reference is not a physical table, but physical tables referenced by
+	// the CTE definition must still be checked. A non-recursive CTE is not visible
+	// inside its own definition.
+	cteStmt, err := parser.New().ParseOneStmt("with cte as (select * from test.t3) select * from cte", "", "")
+	require.NoError(t, err)
+	cacheable, reason := core.CacheableWithCtx(tk.Session().GetPlanCtx(), cteStmt, is)
+	require.True(t, cacheable, reason)
+
+	cteStmt, err = parser.New().ParseOneStmt("with missing as (select * from missing) select * from missing", "", "")
+	require.NoError(t, err)
+	cacheable, _ = core.CacheableWithCtx(tk.Session().GetPlanCtx(), cteStmt, is)
+	require.False(t, cacheable)
+
+	tk.MustExec("create temporary table nested_shadow(a int)")
+	cteCases := []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "recursive self reference",
+			sql:  "with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 3) select n from cte",
+		},
+		{
+			name: "sibling reference",
+			sql:  "with first_cte as (select * from test.t3), second_cte as (select * from first_cte) select * from second_cte",
+		},
+		{
+			name: "nested scope",
+			sql:  "with outer_cte as (select * from test.t3) select * from (with inner_cte as (select 1 as a) select * from inner_cte) as nested_result",
+		},
+		{
+			name: "nested same-name shadowing",
+			sql:  "with shadow_cte as (select * from test.t3) select * from (with shadow_cte as (select 1 as a) select * from shadow_cte) as nested_result",
+		},
+		{
+			name: "nested cte shadows temporary table",
+			sql:  "with outer_cte as (select * from test.t3) select * from (with nested_shadow as (select 1 as a) select * from nested_shadow) as nested_result",
+		},
+	}
+	for _, testCase := range cteCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			stmt, err := parser.New().ParseOneStmt(testCase.sql, "", "")
+			require.NoError(t, err)
+			cacheable, reason := core.IsASTCacheable(context.Background(), tk.Session().GetPlanCtx(), stmt, is)
+			require.True(t, cacheable, "query: %s, reason: %s", testCase.sql, reason)
+		})
+	}
+}
+
+func TestIssue49166(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (c int)`)
+	tk.MustContainErrMsg(`prepare stmt from "select c from t limit 1 into outfile 'text'"`, "This command is not supported in the prepared statement protocol yet")
+}
+
+func TestCacheableDMLCTE(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
+
+	queries := []string{
+		"with cte(a) as (select 36) update t set a = 1 where a in (select a from cte)",
+		"with cte(a) as (select 36) delete from t where a in (select a from cte)",
+	}
+	for _, query := range queries {
+		stmt, err := parser.New().ParseOneStmt(query, "", "")
+		require.NoError(t, err)
+		cacheable, reason := core.IsASTCacheable(context.Background(), tk.Session().GetPlanCtx(), stmt, is)
+		require.True(t, cacheable, "query: %s, reason: %s", query, reason)
+	}
 }
 
 func TestNonPreparedPlanCacheable(t *testing.T) {
@@ -576,4 +651,153 @@ func BenchmarkNonPreparedPlanCacheableChecker(b *testing.B) {
 			b.Fatal()
 		}
 	}
+}
+
+func BenchmarkUnifiedNonPreparedPlanCacheabilityCheck(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, key(a))")
+
+	stmt, err := parser.New().ParseOneStmt("select a, count(*) from t where a>1 and b<2 group by a having count(*)>3", "", "")
+	require.NoError(b, err)
+	sctx := tk.Session()
+	result, supported, reason, err := core.ParameterizeForNonPreparedPlanCache(sctx.GetPlanCtx(), stmt)
+	require.NoError(b, err)
+	require.True(b, supported, reason)
+	paramStmt, err := core.ParseParameterizedSQL(sctx, result.ParamSQL)
+	require.NoError(b, err)
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		_, supported, _, err = core.ParameterizeForNonPreparedPlanCache(sctx.GetPlanCtx(), stmt)
+		if err != nil || !supported {
+			b.Fatal(err)
+		}
+		cacheable, _ := core.IsASTCacheable(context.Background(), sctx.GetPlanCtx(), paramStmt, is)
+		if !cacheable {
+			b.Fatal("parameterized statement is not cacheable")
+		}
+	}
+}
+
+func BenchmarkUnifiedNonPreparedPlanCacheabilityCheckStatementLRUHit(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, key(a))")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+
+	// Warm the statement carrier and the plan cache. The second execution must
+	// be a real statement-LRU hit, which also reruns the unified AST checker.
+	tk.MustQuery("select count(*) from t where a > 0")
+	if tk.Session().GetSessionVars().FoundInPlanCache {
+		b.Fatal("first execution unexpectedly hit the plan cache")
+	}
+	tk.MustQuery("select count(*) from t where a > 1")
+	if !tk.Session().GetSessionVars().FoundInPlanCache {
+		b.Fatal("second execution did not hit the plan cache")
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		tk.MustQuery("select count(*) from t where a > 2")
+	}
+}
+
+func BenchmarkUnifiedNonPreparedPlanCacheabilityCheckStatementLRUHitReject(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table tp (a int, b int, key(a)) partition by range (a) (
+		partition p0 values less than (10), partition p1 values less than maxvalue)`)
+	tk.MustExec("insert into tp values (1, 1), (11, 11)")
+	tk.MustExec("analyze table tp")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+	tk.MustExec("set tidb_partition_prune_mode=dynamic")
+
+	tk.MustQuery("select b from tp where a > 0")
+	if tk.Session().GetSessionVars().FoundInPlanCache {
+		b.Fatal("first execution unexpectedly hit the plan cache")
+	}
+	tk.MustQuery("select b from tp where a > 1")
+	if !tk.Session().GetSessionVars().FoundInPlanCache {
+		b.Fatal("second execution did not hit the plan cache")
+	}
+
+	// Keep the statement carrier, but make the current InfoSchema/session state
+	// reject it in the public checker on every statement-LRU lookup.
+	tk.MustExec("set tidb_partition_prune_mode=static")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		tk.MustQuery("select b from tp where a > 2")
+		if tk.Session().GetSessionVars().FoundInPlanCache {
+			b.Fatal("static partition pruning unexpectedly hit the plan cache")
+		}
+	}
+}
+
+func BenchmarkUnifiedNonPreparedPlanCacheabilityCheckUnknownLiteralContext(b *testing.B) {
+	bench := func(b *testing.B, unknownContext bool) {
+		store := testkit.CreateMockStore(b)
+		tk := testkit.NewTestKit(b, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t (a int, key(a))")
+		tk.MustExec("insert into t values (1), (2), (3)")
+		tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+		tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+
+		identities := make(map[string]struct{})
+		statementLRUHits := 0
+		planCacheHits := 0
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			var sql string
+			if unknownContext {
+				// Literals in the projection are not selected by the context-aware
+				// parameterizer and therefore remain part of ParamSQL identity.
+				sql = fmt.Sprintf("select %d as preserved_literal, a from t where a > 0 order by a", i)
+			} else {
+				sql = fmt.Sprintf("select a from t where a > %d order by a", i)
+			}
+
+			stmt, err := parser.New().ParseOneStmt(sql, "", "")
+			if err != nil {
+				b.Fatal(err)
+			}
+			result, supported, reason, err := core.ParameterizeForNonPreparedPlanCache(tk.Session().GetPlanCtx(), stmt)
+			if err != nil || !supported {
+				b.Fatalf("parameterize failed: supported=%v reason=%s err=%v", supported, reason, err)
+			}
+			identities[result.ParamSQL] = struct{}{}
+			lookupCtx := context.WithValue(context.Background(), core.PlanCacheKeyTestNonPreparedStmtLookup{}, func(found bool) {
+				if found {
+					statementLRUHits++
+				}
+			})
+			tk.MustQueryWithContext(lookupCtx, sql)
+			if tk.Session().GetSessionVars().FoundInPlanCache {
+				planCacheHits++
+			}
+		}
+		b.StopTimer()
+		b.ReportMetric(float64(len(identities)), "paramsql_identities")
+		b.ReportMetric(float64(statementLRUHits)/float64(b.N), "statement_lru_hits/op")
+		b.ReportMetric(float64(planCacheHits)/float64(b.N), "plan_cache_hits/op")
+	}
+
+	b.Run("unknown_context_preserve", func(b *testing.B) {
+		bench(b, true)
+	})
+	b.Run("filter_parameterize", func(b *testing.B) {
+		bench(b, false)
+	})
 }

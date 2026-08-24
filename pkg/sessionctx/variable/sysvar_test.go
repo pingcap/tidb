@@ -1793,6 +1793,26 @@ func TestTiDBOptTxnAutoRetry(t *testing.T) {
 	}
 }
 
+func TestNonPreparedPlanCacheUnifiedCacheabilityCheckSysVar(t *testing.T) {
+	sv := GetSysVar(vardef.TiDBEnableNonPreparedPlanCacheUnifiedCacheabilityCheck)
+	require.NotNil(t, sv)
+	require.True(t, sv.HasGlobalScope())
+	require.True(t, sv.HasSessionScope())
+	require.Equal(t, vardef.Off, sv.Value)
+	require.False(t, sv.IsHintUpdatableVerified)
+
+	vars := NewSessionVars(nil)
+	require.False(t, vars.EnableNonPreparedPlanCacheUnifiedCacheabilityCheck)
+	value, err := sv.Validate(vars, "ON", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, value)
+	require.NoError(t, sv.SetSessionFromHook(vars, value))
+	require.True(t, vars.EnableNonPreparedPlanCacheUnifiedCacheabilityCheck)
+	value, ok := vars.GetSystemVar(vardef.TiDBEnableNonPreparedPlanCacheUnifiedCacheabilityCheck)
+	require.True(t, ok)
+	require.Equal(t, vardef.On, value)
+}
+
 func TestTiDBLowResTSOUpdateInterval(t *testing.T) {
 	sv := GetSysVar(vardef.TiDBLowResolutionTSOUpdateInterval)
 	vars := NewSessionVars(nil)

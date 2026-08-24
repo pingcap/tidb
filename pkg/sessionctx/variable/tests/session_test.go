@@ -660,6 +660,89 @@ func TestNonPreparedPlanCacheStmt(t *testing.T) {
 	sessVars.AddNonPreparedPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
 	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
 	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
+
+	legacyStmt := new(plannercore.PlanCacheStmt)
+	sessVars.AddNonPreparedPlanCacheStmt(sql1, legacyStmt)
+	require.Same(t, legacyStmt, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+
+	testContextChange := func(change, restore func()) {
+		change()
+		require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+		restore()
+		require.Same(t, legacyStmt, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	}
+
+	originalDB := sessVars.CurrentDB
+	testContextChange(func() { sessVars.CurrentDB = "another_db" }, func() { sessVars.CurrentDB = originalDB })
+
+	originalSQLMode := sessVars.SQLMode
+	testContextChange(func() { sessVars.SQLMode = mysql.ModeANSIQuotes }, func() { sessVars.SQLMode = originalSQLMode })
+
+	originalCharset, originalCollation := sessVars.GetCharsetInfo()
+	require.NoError(t, sessVars.SetSystemVar(vardef.CharacterSetConnection, "latin1"))
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	require.NoError(t, sessVars.SetSystemVar(vardef.CharacterSetConnection, originalCharset))
+	require.NoError(t, sessVars.SetSystemVar(vardef.CollationConnection, originalCollation))
+	require.Same(t, legacyStmt, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+
+	require.NoError(t, sessVars.SetSystemVar(vardef.CollationConnection, "utf8mb4_general_ci"))
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	require.NoError(t, sessVars.SetSystemVar(vardef.CollationConnection, originalCollation))
+	require.Same(t, legacyStmt, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+
+	require.NoError(t, sessVars.SetSystemVar(vardef.CharacterSetClient, "latin1"))
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	require.NoError(t, sessVars.SetSystemVar(vardef.CharacterSetClient, mysql.DefaultCharset))
+	require.Same(t, legacyStmt, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+
+	originalWindowFunction := sessVars.EnableWindowFunction
+	testContextChange(func() { sessVars.EnableWindowFunction = !originalWindowFunction }, func() { sessVars.EnableWindowFunction = originalWindowFunction })
+
+	originalStrictDoubleCheck := sessVars.EnableStrictDoubleTypeCheck
+	testContextChange(func() { sessVars.EnableStrictDoubleTypeCheck = !originalStrictDoubleCheck }, func() { sessVars.EnableStrictDoubleTypeCheck = originalStrictDoubleCheck })
+
+	sessVars.EnableNonPreparedPlanCacheUnifiedCacheabilityCheck = true
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	unifiedStmt := new(plannercore.PlanCacheStmt)
+	sessVars.AddNonPreparedPlanCacheStmt(sql1, unifiedStmt)
+	require.Same(t, unifiedStmt, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	sessVars.EnableNonPreparedPlanCacheUnifiedCacheabilityCheck = false
+	require.Same(t, legacyStmt, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	sessVars.EnableNonPreparedPlanCacheUnifiedCacheabilityCheck = true
+	require.Same(t, unifiedStmt, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+}
+
+func TestNonPreparedPlanCacheStmtLRUCapacityAndKeyIsolation(t *testing.T) {
+	sessVars := variable.NewSessionVars(nil)
+	sessVars.SessionPlanCacheSize = 2
+	stmt1, stmt2, stmt3 := new(plannercore.PlanCacheStmt), new(plannercore.PlanCacheStmt), new(plannercore.PlanCacheStmt)
+	sql1 := "select * from t where a>?"
+	sql2 := "select * from t where a<?"
+	sql3 := "select * from t where a=?"
+
+	sessVars.AddNonPreparedPlanCacheStmt(sql1, stmt1)
+	sessVars.AddNonPreparedPlanCacheStmt(sql2, stmt2)
+	// Touch sql1 so sql2 is the least recently used entry.
+	require.Same(t, stmt1, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	sessVars.AddNonPreparedPlanCacheStmt(sql3, stmt3)
+	require.Same(t, stmt1, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
+	require.Same(t, stmt3, sessVars.GetNonPreparedPlanCacheStmt(sql3))
+
+	keyIsolationVars := variable.NewSessionVars(nil)
+	keyIsolationVars.SessionPlanCacheSize = 2
+	legacyStmt := new(plannercore.PlanCacheStmt)
+	keyIsolationVars.AddNonPreparedPlanCacheStmt(sql1, legacyStmt)
+	require.Same(t, legacyStmt, keyIsolationVars.GetNonPreparedPlanCacheStmt(sql1))
+
+	keyIsolationVars.EnableNonPreparedPlanCacheUnifiedCacheabilityCheck = true
+	require.Nil(t, keyIsolationVars.GetNonPreparedPlanCacheStmt(sql1))
+	unifiedStmt := new(plannercore.PlanCacheStmt)
+	keyIsolationVars.AddNonPreparedPlanCacheStmt(sql1, unifiedStmt)
+	require.Same(t, unifiedStmt, keyIsolationVars.GetNonPreparedPlanCacheStmt(sql1))
+
+	keyIsolationVars.EnableNonPreparedPlanCacheUnifiedCacheabilityCheck = false
+	require.Same(t, legacyStmt, keyIsolationVars.GetNonPreparedPlanCacheStmt(sql1))
 }
 
 func TestHookContext(t *testing.T) {

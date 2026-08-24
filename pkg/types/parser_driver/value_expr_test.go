@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -50,6 +51,40 @@ func TestValueExprRestore(t *testing.T) {
 			err := expr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 			require.NoError(t, err)
 			require.Equalf(t, test.expect, sb.String(), "datum: %#v", test.datum)
+		})
+	}
+}
+
+func TestValueExprRestorePreservesBinaryLiteralToken(t *testing.T) {
+	for _, test := range []struct {
+		token     string
+		canonical string
+	}{
+		{token: "b'0001'", canonical: "b'1'"},
+		{token: "B'0001'", canonical: "b'1'"},
+		{token: "0b0001", canonical: "b'1'"},
+		{token: "X'0A'", canonical: "x'0a'"},
+		{token: "x'0A'", canonical: "x'0a'"},
+		{token: "0x0A", canonical: "x'0a'"},
+	} {
+		t.Run(test.token, func(t *testing.T) {
+			var err error
+			var value any
+			if test.token[0] == 'b' || test.token[0] == 'B' || test.token[:2] == "0b" {
+				value, err = ast.NewBitLiteral(test.token)
+			} else {
+				value, err = ast.NewHexLiteral(test.token)
+			}
+			require.NoError(t, err)
+			expr := ast.NewValueExpr(value, "", "")
+			var sb strings.Builder
+			err = expr.Restore(format.NewRestoreCtx(format.RestoreForNonPrepPlanCache, &sb))
+			require.NoError(t, err)
+			require.Equal(t, test.token, sb.String())
+			sb.Reset()
+			err = expr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+			require.NoError(t, err)
+			require.Equal(t, test.canonical, sb.String())
 		})
 	}
 }

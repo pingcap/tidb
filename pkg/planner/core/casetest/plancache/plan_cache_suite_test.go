@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
@@ -40,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
+	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -326,6 +329,1836 @@ func TestNonPreparedPlanCacheBasically(t *testing.T) {
 		tk.MustQuery(query).Sort().Check(resultNormal.Rows())                  // equal to the result without plan-cache
 		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // this plan is from plan-cache
 	}
+}
+
+type unifiedPlanCacheFieldMetadata struct {
+	columnName   string
+	columnAsName string
+	tableAsName  string
+	dbName       string
+	fieldType    byte
+	flen         int
+	decimal      int
+	charset      string
+	collation    string
+	flag         uint
+}
+
+type unifiedPlanCacheQueryObservation struct {
+	rows         [][]string
+	fields       []unifiedPlanCacheFieldMetadata
+	warnings     [][]any
+	affectedRows uint64
+	cacheHit     bool
+}
+
+func observeUnifiedPlanCacheQuery(t *testing.T, tk *testkit.TestKit, sql string) unifiedPlanCacheQueryObservation {
+	return observeUnifiedPlanCacheQueryWithContext(context.Background(), t, tk, sql)
+}
+
+func observeUnifiedPlanCacheQueryWithContext(
+	ctx context.Context,
+	t *testing.T,
+	tk *testkit.TestKit,
+	sql string,
+) unifiedPlanCacheQueryObservation {
+	rs, err := tk.ExecWithContext(ctx, sql)
+	require.NoError(t, err, sql)
+	require.NotNil(t, rs, sql)
+
+	fields := make([]unifiedPlanCacheFieldMetadata, 0, len(rs.Fields()))
+	for _, field := range rs.Fields() {
+		require.NotNil(t, field.Column, sql)
+		fieldType := &field.Column.FieldType
+		fields = append(fields, unifiedPlanCacheFieldMetadata{
+			columnName:   field.Column.Name.O,
+			columnAsName: field.ColumnAsName.O,
+			tableAsName:  field.TableAsName.O,
+			dbName:       field.DBName.O,
+			fieldType:    fieldType.GetType(),
+			flen:         fieldType.GetFlen(),
+			decimal:      fieldType.GetDecimal(),
+			charset:      fieldType.GetCharset(),
+			collation:    fieldType.GetCollate(),
+			flag:         fieldType.GetFlag(),
+		})
+	}
+
+	rows, err := session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
+	require.NoError(t, err, sql)
+	observation := unifiedPlanCacheQueryObservation{
+		rows:         rows,
+		fields:       fields,
+		affectedRows: tk.Session().AffectedRows(),
+		cacheHit:     tk.Session().GetSessionVars().FoundInPlanCache,
+	}
+	observation.warnings = tk.MustQuery("show warnings").Rows()
+	return observation
+}
+
+func requireUnifiedPlanCacheQueryEqual(t *testing.T, expected, actual unifiedPlanCacheQueryObservation, message string) {
+	require.Equal(t, expected.rows, actual.rows, message+": rows")
+	require.Equal(t, expected.fields, actual.fields, message+": fields")
+	require.Equal(t, expected.warnings, actual.warnings, message+": warnings")
+	require.Equal(t, expected.affectedRows, actual.affectedRows, message+": affected rows")
+}
+
+func observeUnifiedPlanCacheQueryAndParamSQL(
+	t *testing.T,
+	tk *testkit.TestKit,
+	sql string,
+) (unifiedPlanCacheQueryObservation, string) {
+	var paramSQL string
+	captureParamSQL := func(stmt ast.StmtNode) {
+		result, supported, reason, err := plannercore.ParameterizeForNonPreparedPlanCache(tk.Session().GetPlanCtx(), stmt)
+		require.NoError(t, err)
+		require.True(t, supported, reason)
+		paramSQL = result.ParamSQL
+	}
+	ctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestIssue43667{}, captureParamSQL)
+	observation := observeUnifiedPlanCacheQueryWithContext(ctx, t, tk, sql)
+	require.NotEmpty(t, paramSQL)
+	return observation, paramSQL
+}
+
+func newUnifiedPlanCacheMatrixTestKit(t *testing.T, store kv.Storage, mode string) *testkit.TestKit {
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_plan_cache_for_subquery=on")
+	tk.MustExec("set tidb_enable_plan_cache_for_param_limit=on")
+	switch mode {
+	case "cache-off":
+		tk.MustExec("set tidb_enable_non_prepared_plan_cache=off")
+		tk.MustExec("set tidb_enable_prepared_plan_cache=off")
+	case "prepared":
+		tk.MustExec("set tidb_enable_non_prepared_plan_cache=off")
+		tk.MustExec("set tidb_enable_prepared_plan_cache=on")
+	case "non-prepared":
+		tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+		tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+	default:
+		require.FailNow(t, "unknown plan cache matrix mode", mode)
+	}
+	return tk
+}
+
+func setUnifiedPlanCachePreparedArgs(tk *testkit.TestKit, args []string) string {
+	assignments := make([]string, 0, len(args))
+	using := make([]string, 0, len(args))
+	for i, value := range args {
+		name := fmt.Sprintf("@unified_matrix_arg_%d", i)
+		assignments = append(assignments, name+"="+value)
+		using = append(using, name)
+	}
+	tk.MustExec("set " + strings.Join(assignments, ", "))
+	return strings.Join(using, ", ")
+}
+
+type unifiedPlanCacheMatrixCase struct {
+	name        string
+	preparedSQL string
+	sql         [2]string
+	args        [2][]string
+}
+
+func runUnifiedPlanCacheQueryMatrix(t *testing.T, store kv.Storage, testCases []unifiedPlanCacheMatrixCase) {
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			baselineTK := newUnifiedPlanCacheMatrixTestKit(t, store, "cache-off")
+			baseline := [2]unifiedPlanCacheQueryObservation{
+				observeUnifiedPlanCacheQuery(t, baselineTK, testCase.sql[0]),
+				observeUnifiedPlanCacheQuery(t, baselineTK, testCase.sql[1]),
+			}
+			for i := range baseline {
+				require.False(t, baseline[i].cacheHit)
+				require.Empty(t, baseline[i].warnings)
+			}
+
+			orders := []struct {
+				name    string
+				indexes [2]int
+			}{
+				{name: "a_to_b", indexes: [2]int{0, 1}},
+				{name: "b_to_a", indexes: [2]int{1, 0}},
+			}
+			for _, order := range orders {
+				t.Run(order.name, func(t *testing.T) {
+					preparedTK := newUnifiedPlanCacheMatrixTestKit(t, store, "prepared")
+					preparedTK.MustExec(fmt.Sprintf("prepare unified_matrix_stmt from %q", testCase.preparedSQL))
+					for execution, index := range order.indexes {
+						using := setUnifiedPlanCachePreparedArgs(preparedTK, testCase.args[index])
+						actual := observeUnifiedPlanCacheQuery(t, preparedTK, "execute unified_matrix_stmt using "+using)
+						require.Equal(t, execution == 1, actual.cacheHit, "prepared execution %d", execution)
+						requireUnifiedPlanCacheQueryEqual(t, baseline[index], actual, fmt.Sprintf("prepared execution %d", execution))
+					}
+
+					nonPreparedTK := newUnifiedPlanCacheMatrixTestKit(t, store, "non-prepared")
+					for execution, index := range order.indexes {
+						actual := observeUnifiedPlanCacheQuery(t, nonPreparedTK, testCase.sql[index])
+						require.Equal(t, execution == 1, actual.cacheHit, "non-prepared execution %d", execution)
+						requireUnifiedPlanCacheQueryEqual(t, baseline[index], actual, fmt.Sprintf("non-prepared execution %d", execution))
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestNonPreparedPlanCacheUnifiedBehaviorMatrix(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, key(a))")
+	tk.MustExec("create table t2(a int, b int, key(a))")
+	tk.MustExec("create table t3(a int, b int, key(a))")
+	tk.MustExec(`create table t_special(
+		id int, j json, e enum('a', 'b'), s set('x', 'y'), bit_col bit(4), key(id))`)
+	tk.MustExec("insert into t values (1, 1), (1, 2), (2, 3), (3, 1)")
+	tk.MustExec("insert into t2 select * from t")
+	tk.MustExec("insert into t3 select * from t")
+	tk.MustExec(`insert into t_special values
+		(1, '{"k": 1}', 'a', 'x', b'0001'),
+		(2, '{"k": 2}', 'b', 'x,y', b'0010'),
+		(3, '{"k": 3}', 'a', 'y', b'0011')`)
+
+	runUnifiedPlanCacheQueryMatrix(t, store, []unifiedPlanCacheMatrixCase{
+		{
+			name:        "having",
+			preparedSQL: "select a, sum(b) as total from t where a > ? group by a having sum(b) > ? order by a",
+			sql: [2]string{
+				"select a, sum(b) as total from t where a > 0 group by a having sum(b) > 2 order by a",
+				"select a, sum(b) as total from t where a > 1 group by a having sum(b) > 1 order by a",
+			},
+			args: [2][]string{{"0", "2"}, {"1", "1"}},
+		},
+		{
+			name:        "window",
+			preparedSQL: "select a, b, sum(b) over (order by a, b rows 1 preceding) as running_sum from t where b > ? order by a, b",
+			sql: [2]string{
+				"select a, b, sum(b) over (order by a, b rows 1 preceding) as running_sum from t where b > 1 order by a, b",
+				"select a, b, sum(b) over (order by a, b rows 1 preceding) as running_sum from t where b > 2 order by a, b",
+			},
+			args: [2][]string{{"1"}, {"2"}},
+		},
+		{
+			name:        "cte",
+			preparedSQL: "with cte as (select a from t where b > ?) select a from cte where a > ? order by a",
+			sql: [2]string{
+				"with cte as (select a from t where b > 1) select a from cte where a > 0 order by a",
+				"with cte as (select a from t where b > 2) select a from cte where a > 1 order by a",
+			},
+			args: [2][]string{{"1", "0"}, {"2", "1"}},
+		},
+		{
+			name:        "set_operation",
+			preparedSQL: "select a from t where b > ? union select a from t where b < ? order by 1",
+			sql: [2]string{
+				"select a from t where b > 1 union select a from t where b < 3 order by 1",
+				"select a from t where b > 2 union select a from t where b < 2 order by 1",
+			},
+			args: [2][]string{{"1", "3"}, {"2", "2"}},
+		},
+		{
+			name:        "intersect",
+			preparedSQL: "select a from t where b > ? intersect select a from t where b < ? order by 1",
+			sql: [2]string{
+				"select a from t where b > 1 intersect select a from t where b < 3 order by 1",
+				"select a from t where b > 2 intersect select a from t where b < 2 order by 1",
+			},
+			args: [2][]string{{"1", "3"}, {"2", "2"}},
+		},
+		{
+			name:        "except",
+			preparedSQL: "select a from t where b > ? except select a from t where b < ? order by 1",
+			sql: [2]string{
+				"select a from t where b > 0 except select a from t where b < 2 order by 1",
+				"select a from t where b > 2 except select a from t where b < 4 order by 1",
+			},
+			args: [2][]string{{"0", "2"}, {"2", "4"}},
+		},
+		{
+			name:        "three_table_join",
+			preparedSQL: "select t.a, t.b, t2.b, t3.b from t join t2 on t.a=t2.a join t3 on t2.a=t3.a where t.b > ? order by t.a, t.b, t2.b, t3.b",
+			sql: [2]string{
+				"select t.a, t.b, t2.b, t3.b from t join t2 on t.a=t2.a join t3 on t2.a=t3.a where t.b > 1 order by t.a, t.b, t2.b, t3.b",
+				"select t.a, t.b, t2.b, t3.b from t join t2 on t.a=t2.a join t3 on t2.a=t3.a where t.b > 2 order by t.a, t.b, t2.b, t3.b",
+			},
+			args: [2][]string{{"1"}, {"2"}},
+		},
+		{
+			name:        "subquery",
+			preparedSQL: "select a, b from t where b > ? and a in (select a from t2 where b > ?) order by a, b",
+			sql: [2]string{
+				"select a, b from t where b > 0 and a in (select a from t2 where b > 1) order by a, b",
+				"select a, b from t where b > 1 and a in (select a from t2 where b > 2) order by a, b",
+			},
+			args: [2][]string{{"0", "1"}, {"1", "2"}},
+		},
+		{
+			name:        "limit",
+			preparedSQL: "select a, b from t where a > ? order by a, b limit 2",
+			sql: [2]string{
+				"select a, b from t where a > 0 order by a, b limit 2",
+				"select a, b from t where a > 1 order by a, b limit 2",
+			},
+			args: [2][]string{{"0"}, {"1"}},
+		},
+		{
+			name:        "preserved_null_bit_hex_literals",
+			preparedSQL: "select a, null as null_literal, b'1' as bit_literal, x'0a' as hex_literal from t where a > ? order by a",
+			sql: [2]string{
+				"select a, null as null_literal, b'1' as bit_literal, x'0a' as hex_literal from t where a > 0 order by a",
+				"select a, null as null_literal, b'1' as bit_literal, x'0a' as hex_literal from t where a > 1 order by a",
+			},
+			args: [2][]string{{"0"}, {"1"}},
+		},
+		{
+			name: "json_enum_set_bit_columns",
+			preparedSQL: "select id, j, e, s, bit_col from t_special " +
+				"where id > ? and j = ? and e = ? and s = ? and bit_col >= ? order by id",
+			sql: [2]string{
+				"select id, j, e, s, bit_col from t_special " +
+					"where id > 0 and j = '{\"k\": 1}' and e = 'a' and s = 'x' and bit_col >= 1 order by id",
+				"select id, j, e, s, bit_col from t_special " +
+					"where id > 1 and j = '{\"k\": 3}' and e = 'a' and s = 'y' and bit_col >= 3 order by id",
+			},
+			args: [2][]string{
+				{"0", "'{\"k\": 1}'", "'a'", "'x'", "1"},
+				{"1", "'{\"k\": 3}'", "'a'", "'y'", "3"},
+			},
+		},
+	})
+}
+
+func TestNonPreparedPlanCacheUnifiedPreservedLiteralsInFilters(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	setupTK := testkit.NewTestKit(t, store)
+	setupTK.MustExec("use test")
+	setupTK.MustExec("create table preserved_filter_literals(a int, key(a))")
+	setupTK.MustExec("insert into preserved_filter_literals values (1), (2), (3)")
+
+	cases := []struct {
+		name string
+		sql  string
+		rows [][]string
+	}{
+		{
+			name: "null",
+			sql:  "select a from preserved_filter_literals where a = null order by a",
+			rows: [][]string{},
+		},
+		{
+			name: "bit",
+			sql:  "select a from preserved_filter_literals where a > b'0' order by a",
+			rows: [][]string{{"1"}, {"2"}, {"3"}},
+		},
+		{
+			name: "hex",
+			sql:  "select a from preserved_filter_literals where a > x'00' order by a",
+			rows: [][]string{{"1"}, {"2"}, {"3"}},
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			baselineTK := newUnifiedPlanCacheMatrixTestKit(t, store, "cache-off")
+			baseline := observeUnifiedPlanCacheQuery(t, baselineTK, testCase.sql)
+			require.False(t, baseline.cacheHit)
+			require.Equal(t, testCase.rows, baseline.rows)
+
+			nonPreparedTK := newUnifiedPlanCacheMatrixTestKit(t, store, "non-prepared")
+			miss := observeUnifiedPlanCacheQuery(t, nonPreparedTK, testCase.sql)
+			require.False(t, miss.cacheHit)
+			requireUnifiedPlanCacheQueryEqual(t, baseline, miss, "non-prepared miss")
+
+			hit := observeUnifiedPlanCacheQuery(t, nonPreparedTK, testCase.sql)
+			require.True(t, hit.cacheHit)
+			requireUnifiedPlanCacheQueryEqual(t, baseline, hit, "non-prepared hit")
+		})
+	}
+}
+
+func TestNonPreparedPlanCacheUnifiedPreservedLiteralStatementLRUIdentity(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	setupTK := testkit.NewTestKit(t, store)
+	setupTK.MustExec("use test")
+	setupTK.MustExec("create table preserved_literal_lru_identity(a int, b int, key(a))")
+	setupTK.MustExec("insert into preserved_literal_lru_identity values (1, 30), (2, 10), (3, 20)")
+
+	cases := []struct {
+		name string
+		a    string
+		b    string
+	}{
+		{
+			name: "order by positional literal",
+			a:    "select a, b from preserved_literal_lru_identity order by 1",
+			b:    "select a, b from preserved_literal_lru_identity order by 2",
+		},
+		{
+			name: "limit literal",
+			a:    "select a, b from preserved_literal_lru_identity order by a limit 1",
+			b:    "select a, b from preserved_literal_lru_identity order by a limit 2",
+		},
+		{
+			name: "null projection literal",
+			a:    "select null as preserved_literal, a from preserved_literal_lru_identity order by a",
+			b:    "select 0 as preserved_literal, a from preserved_literal_lru_identity order by a",
+		},
+		{
+			name: "bit range literal",
+			a:    "select a from preserved_literal_lru_identity where a > b'0' order by a",
+			b:    "select a from preserved_literal_lru_identity where a > b'1' order by a",
+		},
+		{
+			name: "hex range literal",
+			a:    "select a from preserved_literal_lru_identity where a > x'00' order by a",
+			b:    "select a from preserved_literal_lru_identity where a > x'02' order by a",
+		},
+		{
+			name: "binary token spelling",
+			a:    "select a from preserved_literal_lru_identity where a > b'0001' and a < X'04' order by a",
+			b:    "select a from preserved_literal_lru_identity where a > b'1' and a < 0x04 order by a",
+		},
+		{
+			name: "window frame literal",
+			a:    "select a, sum(b) over (order by a rows 1 preceding) as running_sum from preserved_literal_lru_identity where a > 0 order by a",
+			b:    "select a, sum(b) over (order by a rows 2 preceding) as running_sum from preserved_literal_lru_identity where a > 0 order by a",
+		},
+		{
+			name: "named window frame literal",
+			a:    "select a, sum(b) over named_window as running_sum from preserved_literal_lru_identity where a > 0 window named_window as (order by a rows 1 preceding) order by a",
+			b:    "select a, sum(b) over named_window as running_sum from preserved_literal_lru_identity where a > 0 window named_window as (order by a rows 2 preceding) order by a",
+		},
+		{
+			name: "date format literal",
+			a:    "select a, date_format('2020-01-02', '%Y-%m-%d') as formatted from preserved_literal_lru_identity where a > 0 order by a",
+			b:    "select a, date_format('2020-01-02', '%d/%m/%Y') as formatted from preserved_literal_lru_identity where a > 0 order by a",
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			baselineTK := newUnifiedPlanCacheMatrixTestKit(t, store, "cache-off")
+			baselineA := observeUnifiedPlanCacheQuery(t, baselineTK, testCase.a)
+			baselineB := observeUnifiedPlanCacheQuery(t, baselineTK, testCase.b)
+			require.False(t, baselineA.cacheHit)
+			require.False(t, baselineB.cacheHit)
+
+			executeWithLookup := func(tk *testkit.TestKit, sql string) (unifiedPlanCacheQueryObservation, bool) {
+				lookups := make([]bool, 0, 1)
+				ctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestNonPreparedStmtLookup{}, func(hit bool) {
+					lookups = append(lookups, hit)
+				})
+				observation := observeUnifiedPlanCacheQueryWithContext(ctx, t, tk, sql)
+				require.Len(t, lookups, 1, "statement carrier lookup count")
+				return observation, lookups[0]
+			}
+
+			orders := []struct {
+				name           string
+				first          string
+				second         string
+				firstBaseline  unifiedPlanCacheQueryObservation
+				secondBaseline unifiedPlanCacheQueryObservation
+			}{
+				{name: "a_to_b", first: testCase.a, second: testCase.b, firstBaseline: baselineA, secondBaseline: baselineB},
+				{name: "b_to_a", first: testCase.b, second: testCase.a, firstBaseline: baselineB, secondBaseline: baselineA},
+			}
+			for _, order := range orders {
+				t.Run(order.name, func(t *testing.T) {
+					tk := newUnifiedPlanCacheMatrixTestKit(t, store, "non-prepared")
+
+					first, firstLookup := executeWithLookup(tk, order.first)
+					require.False(t, firstLookup, "first statement carrier lookup must miss")
+					require.False(t, first.cacheHit)
+					requireUnifiedPlanCacheQueryEqual(t, order.firstBaseline, first, "first execution")
+
+					second, secondLookup := executeWithLookup(tk, order.second)
+					require.False(t, secondLookup, "changed preserve literal must use a different statement carrier")
+					require.False(t, second.cacheHit)
+					requireUnifiedPlanCacheQueryEqual(t, order.secondBaseline, second, "changed literal execution")
+
+					firstAgain, firstAgainLookup := executeWithLookup(tk, order.first)
+					require.True(t, firstAgainLookup, "original statement carrier must be reusable")
+					require.True(t, firstAgain.cacheHit)
+					requireUnifiedPlanCacheQueryEqual(t, order.firstBaseline, firstAgain, "original literal execution")
+				})
+			}
+		})
+	}
+}
+
+func TestNonPreparedPlanCacheUnifiedParamSQLRestoreFallback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table param_restore_fallback(a int)")
+	tk.MustExec("insert into param_restore_fallback values (1), (2)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+
+	paramSQLRestoreFailed := false
+	injectFailure := func(stmt ast.StmtNode) {
+		paramSQLRestoreFailed = true
+		selectStmt := stmt.(*ast.SelectStmt)
+		badLiteral := ast.NewValueExpr(struct{}{}, "", "")
+		badLiteral.SetText(nil, "")
+		selectStmt.Fields.Fields[0].Expr = badLiteral
+	}
+	ctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestNonPreparedParam{}, injectFailure)
+
+	tk.MustQueryWithContext(ctx, "select 1 from param_restore_fallback where a = 1").Check(testkit.Rows("1"))
+	require.True(t, paramSQLRestoreFailed)
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func TestNonPreparedPlanCacheUnifiedASTRestoreFailure(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ast_restore_failure(a int)")
+	tk.MustExec("insert into ast_restore_failure values (1), (2)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+
+	const failpointName = "github.com/pingcap/tidb/pkg/planner/core/mockNonPreparedPlanCacheASTRestoreError"
+	require.NoError(t, failpoint.Enable(failpointName, `return(true)`))
+	defer func() { _ = failpoint.Disable(failpointName) }()
+
+	var parameterizedStmt ast.StmtNode
+	ctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestNonPreparedParam{}, func(stmt ast.StmtNode) {
+		parameterizedStmt = stmt
+	})
+	_, err := tk.ExecWithContext(ctx, "select a from ast_restore_failure where a = 1")
+	require.ErrorContains(t, err, "failed to restore ast.Node")
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	require.NotNil(t, parameterizedStmt)
+
+	// The restore error must not leave generated markers attached to the AST.
+	require.NoError(t, failpoint.Disable(failpointName))
+	result, supported, reason, err := plannercore.ParameterizeForNonPreparedPlanCache(
+		tk.Session().GetPlanCtx(), parameterizedStmt,
+	)
+	require.NoError(t, err)
+	require.True(t, supported, reason)
+	require.Equal(t, "SELECT a FROM `test`.`ast_restore_failure` WHERE `a`=?", result.ParamSQL)
+	require.Equal(t, int64(1), result.ParamValues[0].GetValue())
+}
+
+func TestNonPreparedPlanCacheUnifiedOriginalParamMarkerBypass(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table original_param_marker(a int)")
+	tk.MustExec("insert into original_param_marker values (1)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+
+	postParameterizationCalled := false
+	injectFailure := func(stmt ast.StmtNode) {
+		where := stmt.(*ast.SelectStmt).Where.(*ast.BinaryOperationExpr)
+		where.R = ast.NewParamMarkerExpr(-1)
+	}
+	ctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestNonPreparedParam{}, injectFailure)
+	ctx = context.WithValue(ctx, plannercore.PlanCacheKeyTestIssue43667{}, func(ast.StmtNode) {
+		postParameterizationCalled = true
+	})
+
+	rs, err := tk.ExecWithContext(ctx, "select 1 from original_param_marker where a = 1")
+	require.NoError(t, err)
+	if rs != nil {
+		require.NoError(t, rs.Close())
+	}
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	require.False(t, postParameterizationCalled)
+}
+
+func TestNonPreparedPlanCacheUnifiedLegacyCarrierIsolationE2E(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table unified_carrier_isolation(a int, key(a))")
+	tk.MustExec("insert into unified_carrier_isolation values (1), (2), (3)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=off")
+
+	query := "select a from unified_carrier_isolation where a > 0 order by a"
+	lookup := func(sql string) (unifiedPlanCacheQueryObservation, []bool) {
+		lookups := make([]bool, 0, 1)
+		ctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestNonPreparedStmtLookup{}, func(found bool) {
+			lookups = append(lookups, found)
+		})
+		return observeUnifiedPlanCacheQueryWithContext(ctx, t, tk, sql), lookups
+	}
+
+	unsupported := core_metrics.GetNonPrepPlanCacheUnsupportedCounter()
+	before := promtestutils.ToFloat64(unsupported)
+	legacyMiss, legacyMissLookup := lookup(query)
+	require.Equal(t, []bool{false}, legacyMissLookup)
+	require.False(t, legacyMiss.cacheHit)
+	legacyHit, legacyHitLookup := lookup(query)
+	require.Equal(t, []bool{true}, legacyHitLookup)
+	require.True(t, legacyHit.cacheHit)
+	require.Equal(t, legacyMiss.rows, legacyHit.rows)
+	require.Empty(t, legacyHit.warnings)
+
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+	unifiedMiss, unifiedMissLookup := lookup(query)
+	require.Equal(t, []bool{false}, unifiedMissLookup, "ON must not reuse the legacy carrier")
+	require.Equal(t, legacyMiss.rows, unifiedMiss.rows)
+	unifiedHit, unifiedHitLookup := lookup(query)
+	require.Equal(t, []bool{true}, unifiedHitLookup)
+	require.True(t, unifiedHit.cacheHit)
+	require.Equal(t, legacyMiss.rows, unifiedHit.rows)
+
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=off")
+	legacyAgain, legacyAgainLookup := lookup(query)
+	require.Equal(t, []bool{true}, legacyAgainLookup, "OFF must recover the legacy carrier")
+	require.True(t, legacyAgain.cacheHit)
+	require.Equal(t, legacyMiss.rows, legacyAgain.rows)
+	require.Equal(t, before, promtestutils.ToFloat64(unsupported), "valid carrier transitions must not bypass")
+}
+
+func TestNonPreparedPlanCacheUnifiedParamSQLParseFailureBypass(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table param_sql_parse_failure(a int)")
+	tk.MustExec("insert into param_sql_parse_failure values (1), (2)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+
+	corruptParamSQL := func(paramSQL *string) {
+		*paramSQL = "select !!!"
+	}
+	ctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestNonPreparedParamSQL{}, corruptParamSQL)
+	unsupported := core_metrics.GetNonPrepPlanCacheUnsupportedCounter()
+	before := promtestutils.ToFloat64(unsupported)
+
+	tk.MustQueryWithContext(ctx, "select a from param_sql_parse_failure where a = 1").Check(testkit.Rows("1"))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	require.Equal(t, before+1, promtestutils.ToFloat64(unsupported))
+
+	beforeExplain := promtestutils.ToFloat64(unsupported)
+	tk.MustExecWithContext(ctx, "explain format='plan_cache' select a from param_sql_parse_failure where a = 1")
+	warnings := tk.MustQuery("show warnings").Rows()
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0][2], "skip non-prepared plan-cache: failed to parse parameterized SQL")
+	require.Equal(t, beforeExplain+1, promtestutils.ToFloat64(unsupported))
+}
+
+type unifiedPlanCacheDMLObservation struct {
+	warnings     [][]any
+	affectedRows uint64
+	cacheHit     bool
+}
+
+func observeUnifiedPlanCacheDML(t *testing.T, tk *testkit.TestKit, sql string) unifiedPlanCacheDMLObservation {
+	rs, err := tk.Exec(sql)
+	require.NoError(t, err, sql)
+	if rs != nil {
+		require.NoError(t, rs.Close(), sql)
+	}
+	affectedRows := tk.Session().AffectedRows()
+	cacheHit := tk.Session().GetSessionVars().FoundInPlanCache
+	return unifiedPlanCacheDMLObservation{
+		warnings:     tk.MustQuery("show warnings").Rows(),
+		affectedRows: affectedRows,
+		cacheHit:     cacheHit,
+	}
+}
+
+func resetUnifiedPlanCacheDMLTable(t *testing.T, tk *testkit.TestKit, rows string) {
+	tk.MustExec("drop table if exists unified_dml_matrix")
+	tk.MustExec("create table unified_dml_matrix(a int, b int, key(a))")
+	tk.MustExec("insert into unified_dml_matrix values " + rows)
+}
+
+type unifiedPlanCacheDMLCase struct {
+	name        string
+	preparedSQL string
+	sql         [2]string
+	args        [2][]string
+	initialRows string
+	setupTables func(*testkit.TestKit)
+	finalQuery  string
+	finalRows   [][]any
+}
+
+func (testCase unifiedPlanCacheDMLCase) resetTables(t *testing.T, tk *testkit.TestKit) {
+	if testCase.setupTables != nil {
+		testCase.setupTables(tk)
+		return
+	}
+	resetUnifiedPlanCacheDMLTable(t, tk, testCase.initialRows)
+}
+
+func (testCase unifiedPlanCacheDMLCase) checkFinalRows(tk *testkit.TestKit) {
+	query := testCase.finalQuery
+	if query == "" {
+		query = "select a, b from unified_dml_matrix order by a"
+	}
+	tk.MustQuery(query).Check(testCase.finalRows)
+}
+
+func runUnifiedPlanCacheDMLMatrix(t *testing.T, store kv.Storage, testCases []unifiedPlanCacheDMLCase) {
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			baselineTK := newUnifiedPlanCacheMatrixTestKit(t, store, "cache-off")
+			baselineTK.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=on")
+			testCase.resetTables(t, baselineTK)
+			baseline := [2]unifiedPlanCacheDMLObservation{
+				observeUnifiedPlanCacheDML(t, baselineTK, testCase.sql[0]),
+				observeUnifiedPlanCacheDML(t, baselineTK, testCase.sql[1]),
+			}
+			for i := range baseline {
+				require.False(t, baseline[i].cacheHit)
+				require.Empty(t, baseline[i].warnings)
+			}
+			testCase.checkFinalRows(baselineTK)
+
+			orders := []struct {
+				name    string
+				indexes [2]int
+			}{
+				{name: "a_to_b", indexes: [2]int{0, 1}},
+				{name: "b_to_a", indexes: [2]int{1, 0}},
+			}
+			for _, order := range orders {
+				t.Run(order.name, func(t *testing.T) {
+					preparedTK := newUnifiedPlanCacheMatrixTestKit(t, store, "prepared")
+					preparedTK.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=on")
+					testCase.resetTables(t, preparedTK)
+					preparedTK.MustExec(fmt.Sprintf("prepare unified_dml_matrix_stmt from %q", testCase.preparedSQL))
+					for execution, index := range order.indexes {
+						using := setUnifiedPlanCachePreparedArgs(preparedTK, testCase.args[index])
+						actual := observeUnifiedPlanCacheDML(t, preparedTK, "execute unified_dml_matrix_stmt using "+using)
+						require.Equal(t, execution == 1, actual.cacheHit, "prepared execution %d", execution)
+						require.Equal(t, baseline[index].affectedRows, actual.affectedRows, "prepared affected rows %d", execution)
+						require.Equal(t, baseline[index].warnings, actual.warnings, "prepared warnings %d", execution)
+					}
+					testCase.checkFinalRows(preparedTK)
+
+					nonPreparedTK := newUnifiedPlanCacheMatrixTestKit(t, store, "non-prepared")
+					nonPreparedTK.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=on")
+					nonPreparedTK.MustExec("set tidb_enable_non_prepared_plan_cache=off")
+					testCase.resetTables(t, nonPreparedTK)
+					nonPreparedTK.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+					nonPreparedTK.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+					for execution, index := range order.indexes {
+						actual := observeUnifiedPlanCacheDML(t, nonPreparedTK, testCase.sql[index])
+						require.Equal(t, execution == 1, actual.cacheHit, "non-prepared execution %d", execution)
+						require.Equal(t, baseline[index].affectedRows, actual.affectedRows, "non-prepared affected rows %d", execution)
+						require.Equal(t, baseline[index].warnings, actual.warnings, "non-prepared warnings %d", execution)
+					}
+					testCase.checkFinalRows(nonPreparedTK)
+				})
+			}
+		})
+	}
+}
+
+func TestNonPreparedPlanCacheUnifiedDMLBehaviorMatrix(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	setupInsertSelect := func(tk *testkit.TestKit) {
+		tk.MustExec("drop table if exists unified_insert_select_source")
+		tk.MustExec("drop table if exists unified_insert_select_target")
+		tk.MustExec("create table unified_insert_select_source(a int, b int)")
+		tk.MustExec("create table unified_insert_select_target(a int, b int, primary key (a, b))")
+		tk.MustExec("insert into unified_insert_select_source values (1, 1), (2, 2), (3, 3)")
+	}
+	setupDuplicate := func(tk *testkit.TestKit) {
+		tk.MustExec("drop table if exists unified_duplicate_target")
+		tk.MustExec("create table unified_duplicate_target(a int primary key, b int)")
+		tk.MustExec("insert into unified_duplicate_target values (1, 0)")
+	}
+
+	runUnifiedPlanCacheDMLMatrix(t, store, []unifiedPlanCacheDMLCase{
+		{
+			name:        "insert",
+			preparedSQL: "insert into unified_dml_matrix values (?, ?)",
+			sql: [2]string{
+				"insert into unified_dml_matrix values (1, 10)",
+				"insert into unified_dml_matrix values (2, 20)",
+			},
+			args:        [2][]string{{"1", "10"}, {"2", "20"}},
+			initialRows: "(9, 90)",
+			finalRows:   testkit.Rows("1 10", "2 20", "9 90"),
+		},
+		{
+			name:        "update",
+			preparedSQL: "update unified_dml_matrix set b = ? where a = ?",
+			sql: [2]string{
+				"update unified_dml_matrix set b = 11 where a = 1",
+				"update unified_dml_matrix set b = 22 where a = 2",
+			},
+			args:        [2][]string{{"11", "1"}, {"22", "2"}},
+			initialRows: "(1, 10), (2, 20)",
+			finalRows:   testkit.Rows("1 11", "2 22"),
+		},
+		{
+			name:        "delete",
+			preparedSQL: "delete from unified_dml_matrix where a = ?",
+			sql: [2]string{
+				"delete from unified_dml_matrix where a = 1",
+				"delete from unified_dml_matrix where a = 2",
+			},
+			args:        [2][]string{{"1"}, {"2"}},
+			initialRows: "(1, 10), (2, 20)",
+			finalRows:   testkit.Rows(),
+		},
+		{
+			name:        "insert select",
+			preparedSQL: "insert into unified_insert_select_target(a, b) select a, b from unified_insert_select_source where a > ? and b < ?",
+			sql: [2]string{
+				"insert into unified_insert_select_target(a, b) select a, b from unified_insert_select_source where a > 1 and b < 3",
+				"insert into unified_insert_select_target(a, b) select a, b from unified_insert_select_source where a > 2 and b < 4",
+			},
+			args:        [2][]string{{"1", "3"}, {"2", "4"}},
+			setupTables: setupInsertSelect,
+			finalQuery:  "select a, b from unified_insert_select_target order by a, b",
+			finalRows:   testkit.Rows("2 2", "3 3"),
+		},
+		{
+			name:        "on duplicate key update",
+			preparedSQL: "insert into unified_duplicate_target(a, b) values (?, ?) on duplicate key update b = b + ?",
+			sql: [2]string{
+				"insert into unified_duplicate_target(a, b) values (1, 10) on duplicate key update b = b + 2",
+				"insert into unified_duplicate_target(a, b) values (2, 20) on duplicate key update b = b + 3",
+			},
+			args:        [2][]string{{"1", "10", "2"}, {"2", "20", "3"}},
+			setupTables: setupDuplicate,
+			finalQuery:  "select a, b from unified_duplicate_target order by a",
+			finalRows:   testkit.Rows("1 2", "2 20"),
+		},
+	})
+}
+
+func TestNonPreparedPlanCacheUnifiedMultiTableDMLGateE2E(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=on")
+
+	type dmlCase struct {
+		name       string
+		first      string
+		second     string
+		explain    string
+		reason     string
+		finalQuery string
+		finalRows  [][]any
+	}
+	cases := []dmlCase{
+		{
+			name:       "update",
+			first:      "update multi_gate_left l join multi_gate_right r on l.a=r.a set l.b=11 where l.a=1",
+			second:     "update multi_gate_left l join multi_gate_right r on l.a=r.a set l.b=12 where l.a=2",
+			explain:    "update multi_gate_left l join multi_gate_right r on l.a=r.a set l.b=11 where l.a=1",
+			reason:     "multiple-table UPDATE is not supported",
+			finalQuery: "select a, b from multi_gate_left order by a",
+			finalRows:  testkit.Rows("1 11", "2 12"),
+		},
+		{
+			name:       "delete",
+			first:      "delete l from multi_gate_left l join multi_gate_right r on l.a=r.a where l.a=1",
+			second:     "delete l from multi_gate_left l join multi_gate_right r on l.a=r.a where l.a=2",
+			explain:    "delete l from multi_gate_left l join multi_gate_right r on l.a=r.a where l.a=1",
+			reason:     "multiple-table DELETE is not supported",
+			finalQuery: "select a, b from multi_gate_left order by a",
+			finalRows:  testkit.Rows(),
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			tk.MustExec("drop table if exists multi_gate_left")
+			tk.MustExec("drop table if exists multi_gate_right")
+			tk.MustExec("create table multi_gate_left(a int primary key, b int)")
+			tk.MustExec("create table multi_gate_right(a int primary key)")
+			tk.MustExec("insert into multi_gate_left values (1, 10), (2, 20)")
+			tk.MustExec("insert into multi_gate_right values (1), (2)")
+
+			execute := func(sql string) (uint64, bool, []bool, [][]any) {
+				lookups := make([]bool, 0, 1)
+				ctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestNonPreparedStmtLookup{}, func(found bool) {
+					lookups = append(lookups, found)
+				})
+				rs, err := tk.ExecWithContext(ctx, sql)
+				require.NoError(t, err, sql)
+				if rs != nil {
+					require.NoError(t, rs.Close(), sql)
+				}
+				return tk.Session().AffectedRows(), tk.Session().GetSessionVars().FoundInPlanCache, lookups, tk.MustQuery("show warnings").Rows()
+			}
+
+			unsupported := core_metrics.GetNonPrepPlanCacheUnsupportedCounter()
+			before := promtestutils.ToFloat64(unsupported)
+			firstAffected, firstHit, firstLookups, firstWarnings := execute(testCase.first)
+			secondAffected, secondHit, secondLookups, secondWarnings := execute(testCase.second)
+			require.Equal(t, uint64(1), firstAffected)
+			require.Equal(t, uint64(1), secondAffected)
+			require.False(t, firstHit)
+			require.False(t, secondHit)
+			require.Empty(t, firstLookups)
+			require.Empty(t, secondLookups)
+			require.Empty(t, firstWarnings)
+			require.Empty(t, secondWarnings)
+			require.Greater(t, promtestutils.ToFloat64(unsupported), before, "multi-table DML precheck must increment unsupported metric")
+			tk.MustQuery(testCase.finalQuery).Check(testCase.finalRows)
+
+			beforeExplain := promtestutils.ToFloat64(unsupported)
+			tk.MustExec("explain format='plan_cache' " + testCase.explain)
+			warnings := tk.MustQuery("show warnings").Rows()
+			require.Len(t, warnings, 1)
+			require.Contains(t, warnings[0][2], "skip non-prepared plan-cache: "+testCase.reason)
+			require.Greater(t, promtestutils.ToFloat64(unsupported), beforeExplain, "Explain must count the multi-table DML bypass")
+		})
+	}
+}
+
+func TestNonPreparedPlanCacheUnifiedCacheabilityCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, key(a))")
+	tk.MustExec("create table t2(a int, b int, key(a))")
+	tk.MustExec("create table t3(a int, b int, key(a))")
+	tk.MustExec("insert into t values (1, 1), (1, 2), (2, 3), (3, 1)")
+	tk.MustExec("insert into t2 select * from t")
+	tk.MustExec("insert into t3 select * from t")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustQuery("select @@tidb_enable_non_prepared_plan_cache_unified_cacheability_check").Check(testkit.Rows("0"))
+
+	legacyHaving := "select a, sum(b) from t where a > 0 group by a having sum(b) > 2 order by a"
+	tk.MustQuery(legacyHaving).Check(testkit.Rows("1 3", "2 3"))
+	tk.MustQuery(legacyHaving).Check(testkit.Rows("1 3", "2 3"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+	tk.MustQuery(legacyHaving).Check(testkit.Rows("1 3", "2 3"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select a, sum(b) from t where a > 0 group by a having sum(b) > 3 order by a").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	testCases := []struct {
+		name   string
+		first  string
+		second string
+	}{
+		{
+			name:   "window",
+			first:  "select a, sum(b) over (order by a rows 1 preceding) from t where b > 1",
+			second: "select a, sum(b) over (order by a rows 1 preceding) from t where b > 2",
+		},
+		{
+			name:   "cte",
+			first:  "with cte as (select a from t where b > 1) select a from cte where a > 0 order by a",
+			second: "with cte as (select a from t where b > 2) select a from cte where a > 0 order by a",
+		},
+		{
+			name:   "set operation",
+			first:  "select a from t where b > 1 union select a from t where b < 3 order by 1",
+			second: "select a from t where b > 2 union select a from t where b < 2 order by 1",
+		},
+		{
+			name:   "three table join",
+			first:  "select t.a from t join t2 on t.a=t2.a join t3 on t2.a=t3.a where t.b > 1",
+			second: "select t.a from t join t2 on t.a=t2.a join t3 on t2.a=t3.a where t.b > 2",
+		},
+	}
+	for _, testCase := range testCases {
+		t.Logf("unified non-prepared plan cache case: %s", testCase.name)
+		tk.MustExec("set tidb_enable_non_prepared_plan_cache=off")
+		firstBaseline := tk.MustQuery(testCase.first).Sort()
+		secondBaseline := tk.MustQuery(testCase.second).Sort()
+		tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+		tk.MustQuery(testCase.first).Sort().Check(firstBaseline.Rows())
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		tk.MustQuery(testCase.second).Sort().Check(secondBaseline.Rows())
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	}
+
+	tk.MustExec("set tidb_enable_plan_cache_for_subquery=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=off")
+	subqueryFirstBaseline := tk.MustQuery("select a from t where b > 0 and a in (select a from t2 where b > 1)").Sort()
+	subquerySecondBaseline := tk.MustQuery("select a from t where b > 1 and a in (select a from t2 where b > 2)").Sort()
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustQuery("select a from t where b > 0 and a in (select a from t2 where b > 1)").Sort().Check(subqueryFirstBaseline.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select a from t where b > 1 and a in (select a from t2 where b > 2)").Sort().Check(subquerySecondBaseline.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_enable_plan_cache_for_subquery=off")
+	tk.MustQuery("select a from t where b > 2 and a in (select a from t2 where b > 3)")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_enable_plan_cache_for_subquery=on")
+	tk.MustQuery("select a from t where b > 3 and a in (select a from t2 where b > 4)")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("set tidb_enable_plan_cache_for_param_limit=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=off")
+	limitFirstBaseline := tk.MustQuery("select a from t where a > 0 order by a limit 2").Sort()
+	limitSecondBaseline := tk.MustQuery("select a from t where a > 1 order by a limit 2").Sort()
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustQuery("select a from t where a > 0 order by a limit 2").Sort().Check(limitFirstBaseline.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select a from t where a > 1 order by a limit 2").Sort().Check(limitSecondBaseline.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_enable_plan_cache_for_param_limit=off")
+	tk.MustQuery("select a from t where a > 2 order by a limit 2")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_enable_plan_cache_for_param_limit=on")
+	tk.MustQuery("select a from t where a > 3 order by a limit 2")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=off")
+	tk.MustQuery(legacyHaving).Check(testkit.Rows("1 3", "2 3"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+	tk.MustQuery(legacyHaving).Check(testkit.Rows("1 3", "2 3"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=off")
+	tk.MustExec("insert into t values (4, 4)")
+	tk.MustExec("insert into t values (5, 5)")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=on")
+	tk.MustExec("insert into t values (6, 6)")
+	tk.MustExec("insert into t values (7, 7)")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("update t set b=16 where a=6")
+	tk.MustExec("update t set b=17 where a=7")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("delete from t where a=6")
+	tk.MustExec("delete from t where a=7")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from t where a in (6, 7)").Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 1", "1 2", "2 3", "3 1", "4 4", "5 5"))
+
+	tk.MustQuery("select _utf8mb4'a' from t where a=1").Check(testkit.Rows("a", "a"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("explain format='plan_cache' select _utf8mb4'a' from t where a=1")
+	warnings := tk.MustQuery("show warnings").Rows()
+	require.NotEmpty(t, warnings)
+	require.Contains(t, warnings[0][2], "skip non-prepared plan-cache: query has values with under-score charset")
+}
+
+func TestNonPreparedPlanCacheUnifiedLimitOffset(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	setupTK := testkit.NewTestKit(t, store)
+	setupTK.MustExec("use test")
+	setupTK.MustExec("create table unified_limit_offset(a int, key(a))")
+	setupTK.MustExec("insert into unified_limit_offset values (1), (2), (3), (4)")
+
+	cases := []struct {
+		name   string
+		first  string
+		second string
+	}{
+		{
+			name:   "offset_count",
+			first:  "select a from unified_limit_offset where a > 0 order by a limit 1, 2",
+			second: "select a from unified_limit_offset where a > 1 order by a limit 1, 2",
+		},
+		{
+			name:   "limit_offset",
+			first:  "select a from unified_limit_offset where a > 0 order by a limit 2 offset 1",
+			second: "select a from unified_limit_offset where a > 1 order by a limit 2 offset 1",
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			baselineTK := newUnifiedPlanCacheMatrixTestKit(t, store, "cache-off")
+			baselineFirst := observeUnifiedPlanCacheQuery(t, baselineTK, testCase.first)
+			baselineSecond := observeUnifiedPlanCacheQuery(t, baselineTK, testCase.second)
+
+			nonPreparedTK := newUnifiedPlanCacheMatrixTestKit(t, store, "non-prepared")
+			miss := observeUnifiedPlanCacheQuery(t, nonPreparedTK, testCase.first)
+			require.False(t, miss.cacheHit)
+			requireUnifiedPlanCacheQueryEqual(t, baselineFirst, miss, "param-limit enabled miss")
+			hit := observeUnifiedPlanCacheQuery(t, nonPreparedTK, testCase.second)
+			require.True(t, hit.cacheHit)
+			requireUnifiedPlanCacheQueryEqual(t, baselineSecond, hit, "param-limit enabled hit")
+
+			bypassTK := newUnifiedPlanCacheMatrixTestKit(t, store, "non-prepared")
+			bypassTK.MustExec("set tidb_enable_plan_cache_for_param_limit=off")
+			unsupported := core_metrics.GetNonPrepPlanCacheUnsupportedCounter()
+			beforeBypass := promtestutils.ToFloat64(unsupported)
+			bypassFirst := observeUnifiedPlanCacheQuery(t, bypassTK, testCase.first)
+			require.False(t, bypassFirst.cacheHit)
+			requireUnifiedPlanCacheQueryEqual(t, baselineFirst, bypassFirst, "param-limit disabled first")
+			bypassSecond := observeUnifiedPlanCacheQuery(t, bypassTK, testCase.second)
+			require.False(t, bypassSecond.cacheHit)
+			requireUnifiedPlanCacheQueryEqual(t, baselineSecond, bypassSecond, "param-limit disabled second")
+			require.Equal(t, beforeBypass+2, promtestutils.ToFloat64(unsupported), "parameterization bypass must count once per execution")
+
+			beforeExplain := promtestutils.ToFloat64(unsupported)
+			bypassTK.MustExec("explain format='plan_cache' " + testCase.first)
+			warnings := bypassTK.MustQuery("show warnings").Rows()
+			require.Len(t, warnings, 1)
+			require.Contains(t, warnings[0][2], "skip non-prepared plan-cache: query has 'limit ?' is un-cacheable")
+			require.Equal(t, beforeExplain+1, promtestutils.ToFloat64(unsupported))
+		})
+	}
+}
+
+func TestNonPreparedPlanCacheUnifiedCacheabilityCheckGlobalVar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@session.tidb_enable_non_prepared_plan_cache_unified_cacheability_check").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+	tk.MustQuery("select @@session.tidb_enable_non_prepared_plan_cache_unified_cacheability_check").Check(testkit.Rows("0"))
+
+	newSession := testkit.NewTestKit(t, store)
+	newSession.MustQuery("select @@session.tidb_enable_non_prepared_plan_cache_unified_cacheability_check").Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedPlanCacheUnifiedCacheabilityCheckMetric(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=off")
+
+	unsupported := core_metrics.GetNonPrepPlanCacheUnsupportedCounter()
+	before := promtestutils.ToFloat64(unsupported)
+	tk.MustExec("insert into t values (1)")
+	require.Equal(t, before, promtestutils.ToFloat64(unsupported))
+
+	tk.MustQuery("select _utf8mb4'a'").Check(testkit.Rows("a"))
+	require.Equal(t, before+1, promtestutils.ToFloat64(unsupported))
+
+	tk.MustExec("set @a=1")
+	before = promtestutils.ToFloat64(unsupported)
+	tk.MustQuery("select * from t where a=@a").Check(testkit.Rows("1"))
+	require.Equal(t, before+1, promtestutils.ToFloat64(unsupported))
+}
+
+func TestNonPreparedPlanCacheUnifiedCacheabilityCheckRejects(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, key(a))")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+
+	// SELECT INTO is rejected before carrier construction and must continue with
+	// ordinary planning on every execution.
+	for i := 0; i < 2; i++ {
+		tk.MustExec("select a into @a from t where a=1")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+	// Locking reads are controlled by the DML gate even though they are SELECTs.
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=off")
+	for i := 0; i < 2; i++ {
+		tk.MustQuery("select * from t where a=1 for update").Check(testkit.Rows("1 1"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=on")
+
+	// Explicit ignore_plan_cache() and an uncacheable function are checked by the
+	// unified AST cacheability path.
+	for i := 0; i < 2; i++ {
+		tk.MustQuery("select /*+ ignore_plan_cache() */ * from t where a=1").Check(testkit.Rows("1 1"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		tk.MustQuery("select connection_id() from t where a=1")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+
+	// The unified switch must have no effect when the main non-prepared cache
+	// switch is disabled.
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=off")
+	tk.MustQuery("select * from t where a=1").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestNonPreparedPlanCacheUnifiedLockingReadWithDMLEnabled(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	setupTK := testkit.NewTestKit(t, store)
+	setupTK.MustExec("use test")
+	setupTK.MustExec("create table unified_locking_read(a int, b int, key(a))")
+	setupTK.MustExec("insert into unified_locking_read values (1, 10), (2, 20)")
+
+	for _, lockClause := range []string{"for update", "for share"} {
+		t.Run(lockClause, func(t *testing.T) {
+			query := "select a, b from unified_locking_read where a > 0 order by a " + lockClause
+			baselineTK := newUnifiedPlanCacheMatrixTestKit(t, store, "cache-off")
+			baselineTK.MustExec("set tidb_enable_noop_functions=on")
+			baseline := observeUnifiedPlanCacheQuery(t, baselineTK, query)
+			require.False(t, baseline.cacheHit)
+
+			tk := newUnifiedPlanCacheMatrixTestKit(t, store, "non-prepared")
+			tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=on")
+			tk.MustExec("set tidb_enable_noop_functions=on")
+			executeWithLookup := func(sql string) (unifiedPlanCacheQueryObservation, bool) {
+				lookups := make([]bool, 0, 1)
+				ctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestNonPreparedStmtLookup{}, func(found bool) {
+					lookups = append(lookups, found)
+				})
+				observation := observeUnifiedPlanCacheQueryWithContext(ctx, t, tk, sql)
+				require.Len(t, lookups, 1, "locking read statement carrier lookup count")
+				return observation, lookups[0]
+			}
+
+			first, firstLookup := executeWithLookup(query)
+			require.False(t, firstLookup, "first locking read must miss the statement carrier")
+			require.False(t, first.cacheHit)
+			requireUnifiedPlanCacheQueryEqual(t, baseline, first, "locking read miss")
+
+			second, secondLookup := executeWithLookup(query)
+			require.True(t, secondLookup, "second locking read must hit the statement carrier")
+			require.True(t, second.cacheHit)
+			requireUnifiedPlanCacheQueryEqual(t, baseline, second, "locking read hit")
+		})
+	}
+}
+
+func TestNonPreparedPlanCacheUnifiedDMLCTE(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values (1, 10), (2, 20)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=on")
+
+	updateQuery := "with cte(a) as (select 1) update t set b = b + 1 where a in (select a from cte)"
+	tk.MustExec(updateQuery)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("with cte(a) as (select 1) update t set b = b + 2 where a in (select a from cte)")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 13", "2 20"))
+
+	deleteQuery := "with cte(a) as (select 1) delete from t where a in (select a from cte)"
+	tk.MustExec("insert into t values (1, 30)")
+	tk.MustExec(deleteQuery)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("insert into t values (1, 40)")
+	tk.MustExec(deleteQuery)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("2 20"))
+}
+
+func TestNonPreparedPlanCacheUnifiedCacheabilityCheckStateChanges(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table tp (a int, b int, key(a)) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than maxvalue)`)
+	tk.MustExec("insert into tp values (1, 10), (11, 20), (21, 30)")
+	tk.MustExec("analyze table tp")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+	tk.MustExec("set tidb_partition_prune_mode=dynamic")
+
+	first := tk.MustQuery("select b from tp where a > 0").Sort()
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	second := tk.MustQuery("select b from tp where a > 10").Sort()
+	require.Equal(t, testkit.Rows("20", "30"), second.Rows())
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+
+	// The carrier remains in the statement LRU, but the current partition mode
+	// makes the same parameterized AST uncacheable.
+	tk.MustExec("set tidb_partition_prune_mode=static")
+	tk.MustQuery("select b from tp where a > 20").Sort().Check(testkit.Rows("30"))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	require.Equal(t, testkit.Rows("10", "20", "30"), first.Rows())
+
+	// A schema change must invalidate the plan value associated with the
+	// statement carrier before the next execution.
+	tk.MustExec("set tidb_partition_prune_mode=dynamic")
+	tk.MustExec("alter table tp add column c int")
+	tk.MustQuery("select b from tp where a > 10").Sort().Check(testkit.Rows("20", "30"))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+}
+
+func TestNonPreparedPlanCacheUnifiedFixControlStateChanges(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	setupTK := testkit.NewTestKit(t, store)
+	setupTK.MustExec("use test")
+	setupTK.MustExec("create table fix_plain(a int, key(a))")
+	setupTK.MustExec("insert into fix_plain values (1), (2), (3), (4)")
+	setupTK.MustExec(`create table fix_partition(a int, b int, key(a)) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than maxvalue)`)
+	setupTK.MustExec("insert into fix_partition values (1, 10), (11, 20), (21, 30)")
+	setupTK.MustExec("analyze table fix_partition")
+	setupTK.MustExec("create table fix_generated(a int, b int as (a + 1), key(a))")
+	setupTK.MustExec("insert into fix_generated(a) values (1), (2), (3)")
+
+	testCases := []struct {
+		name        string
+		fixControl  string
+		reason      string
+		firstSQL    string
+		hitSQL      string
+		rejectedSQL string
+		restoredSQL string
+	}{
+		{
+			name:        "Fix44823",
+			fixControl:  "44823:1",
+			reason:      "query has too many constants",
+			firstSQL:    "select a from fix_plain where a > 0 and a < 4 order by a",
+			hitSQL:      "select a from fix_plain where a > 1 and a < 5 order by a",
+			rejectedSQL: "select a from fix_plain where a > 2 and a < 5 order by a",
+			restoredSQL: "select a from fix_plain where a > 0 and a < 3 order by a",
+		},
+		{
+			name:        "Fix33031",
+			fixControl:  "33031:ON",
+			reason:      "Fix33031 fix-control set and partitioned table",
+			firstSQL:    "select b from fix_partition where a > 0 order by b",
+			hitSQL:      "select b from fix_partition where a > 10 order by b",
+			rejectedSQL: "select b from fix_partition where a > 20 order by b",
+			restoredSQL: "select b from fix_partition where a > 1 order by b",
+		},
+		{
+			name:        "Fix45798",
+			fixControl:  "45798:OFF",
+			reason:      "query accesses generated columns is un-cacheable",
+			firstSQL:    "select b from fix_generated where a > 0 order by b",
+			hitSQL:      "select b from fix_generated where a > 1 order by b",
+			rejectedSQL: "select b from fix_generated where a > 2 order by b",
+			restoredSQL: "select b from fix_generated where a > 0 order by b",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			baselineTK := newUnifiedPlanCacheMatrixTestKit(t, store, "cache-off")
+			baselineTK.MustExec("set tidb_partition_prune_mode=dynamic")
+			firstBaseline := observeUnifiedPlanCacheQuery(t, baselineTK, testCase.firstSQL)
+			hitBaseline := observeUnifiedPlanCacheQuery(t, baselineTK, testCase.hitSQL)
+			rejectedBaseline := observeUnifiedPlanCacheQuery(t, baselineTK, testCase.rejectedSQL)
+			restoredBaseline := observeUnifiedPlanCacheQuery(t, baselineTK, testCase.restoredSQL)
+
+			tk := newUnifiedPlanCacheMatrixTestKit(t, store, "non-prepared")
+			tk.MustExec("set tidb_partition_prune_mode=dynamic")
+			first, paramSQL := observeUnifiedPlanCacheQueryAndParamSQL(t, tk, testCase.firstSQL)
+			require.False(t, first.cacheHit)
+			requireUnifiedPlanCacheQueryEqual(t, firstBaseline, first, "initial cache miss")
+			carrier := tk.Session().GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
+			require.NotNil(t, carrier)
+
+			hit := observeUnifiedPlanCacheQuery(t, tk, testCase.hitSQL)
+			require.True(t, hit.cacheHit)
+			requireUnifiedPlanCacheQueryEqual(t, hitBaseline, hit, "initial cache hit")
+
+			tk.MustExec("set tidb_opt_fix_control='" + testCase.fixControl + "'")
+			require.Same(t, carrier, tk.Session().GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL))
+			unsupported := core_metrics.GetNonPrepPlanCacheUnsupportedCounter()
+			before := promtestutils.ToFloat64(unsupported)
+			rejected := observeUnifiedPlanCacheQuery(t, tk, testCase.rejectedSQL)
+			require.False(t, rejected.cacheHit)
+			requireUnifiedPlanCacheQueryEqual(t, rejectedBaseline, rejected, "fix-control rejection")
+			require.Equal(t, before+1, promtestutils.ToFloat64(unsupported))
+
+			beforeExplain := promtestutils.ToFloat64(unsupported)
+			tk.MustExec("explain format='plan_cache' " + testCase.rejectedSQL)
+			require.Equal(t, beforeExplain+1, promtestutils.ToFloat64(unsupported))
+			warnings := tk.MustQuery("show warnings").Rows()
+			require.Len(t, warnings, 1)
+			require.Contains(t, warnings[0][2], "skip non-prepared plan-cache: "+testCase.reason)
+
+			tk.MustExec("set tidb_opt_fix_control=''")
+			require.Same(t, carrier, tk.Session().GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL))
+			restored := observeUnifiedPlanCacheQuery(t, tk, testCase.restoredSQL)
+			require.True(t, restored.cacheHit)
+			requireUnifiedPlanCacheQueryEqual(t, restoredBaseline, restored, "restored fix-control cache hit")
+		})
+	}
+}
+
+func TestNonPreparedPlanCacheUnifiedStatementLRUHitAndCheckerReject(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table lru_generated(a int, b int as (a + 1), key(a))")
+	tk.MustExec("insert into lru_generated(a) values (1), (2), (3)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+
+	queries := []string{
+		"with source as (select a, b from lru_generated) select b from source where a > 0 order by b",
+		"with source as (select a, b from lru_generated) select b from source where a > 1 order by b",
+		"with source as (select a, b from lru_generated) select b from source where a > 2 order by b",
+	}
+	executeWithLookup := func(sql string) (unifiedPlanCacheQueryObservation, []bool) {
+		lookups := make([]bool, 0, 1)
+		ctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestNonPreparedStmtLookup{}, func(found bool) {
+			lookups = append(lookups, found)
+		})
+		observation := observeUnifiedPlanCacheQueryWithContext(ctx, t, tk, sql)
+		require.Len(t, lookups, 1, "statement carrier lookup count")
+		return observation, lookups
+	}
+
+	first, firstLookups := executeWithLookup(queries[0])
+	require.Equal(t, []bool{false}, firstLookups)
+	require.False(t, first.cacheHit)
+	require.Equal(t, [][]string{{"2"}, {"3"}, {"4"}}, first.rows)
+
+	hit, hitLookups := executeWithLookup(queries[1])
+	require.Equal(t, []bool{true}, hitLookups)
+	require.True(t, hit.cacheHit)
+	require.Equal(t, [][]string{{"3"}, {"4"}}, hit.rows)
+
+	tk.MustExec("set tidb_opt_fix_control='45798:OFF'")
+	unsupported := core_metrics.GetNonPrepPlanCacheUnsupportedCounter()
+	before := promtestutils.ToFloat64(unsupported)
+	rejected, rejectedLookups := executeWithLookup(queries[2])
+	require.Equal(t, []bool{true}, rejectedLookups)
+	require.False(t, rejected.cacheHit)
+	require.Equal(t, [][]string{{"4"}}, rejected.rows)
+	require.Equal(t, before+1, promtestutils.ToFloat64(unsupported))
+
+	tk.MustExec("explain format='plan_cache' " + queries[2])
+	warnings := tk.MustQuery("show warnings").Rows()
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0][2], "skip non-prepared plan-cache: query accesses generated columns is un-cacheable")
+
+	tk.MustExec("set tidb_opt_fix_control=''")
+	restored, restoredLookups := executeWithLookup(queries[1])
+	require.Equal(t, []bool{true}, restoredLookups)
+	require.True(t, restored.cacheHit)
+	require.Equal(t, hit.rows, restored.rows)
+}
+
+func TestNonPreparedPlanCacheUnifiedLegacyBehaviorMatrix(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	setupTK := testkit.NewTestKit(t, store)
+	setupTK.MustExec("use test")
+	setupTK.MustExec("create table legacy_matrix_t(a int, b int, key(a))")
+	setupTK.MustExec("create table legacy_matrix_t2(a int, b int, key(a))")
+	setupTK.MustExec("create table legacy_matrix_t3(a int, b int, key(a))")
+	setupTK.MustExec("insert into legacy_matrix_t values (1, 1), (2, 2), (3, 3)")
+	setupTK.MustExec("insert into legacy_matrix_t2 select * from legacy_matrix_t")
+	setupTK.MustExec("insert into legacy_matrix_t3 select * from legacy_matrix_t")
+
+	testCases := []struct {
+		name        string
+		first       string
+		second      string
+		reason      string
+		metricDelta float64
+	}{
+		{
+			name:        "window",
+			first:       "select a, sum(b) over (order by a rows 1 preceding) from legacy_matrix_t where b > 1",
+			second:      "select a, sum(b) over (order by a rows 1 preceding) from legacy_matrix_t where b > 2",
+			reason:      "query has some unsupported Node",
+			metricDelta: 2,
+		},
+		{
+			name:        "cte",
+			first:       "with source as (select a from legacy_matrix_t where b > 1) select a from source where a > 0 order by a",
+			second:      "with source as (select a from legacy_matrix_t where b > 2) select a from source where a > 0 order by a",
+			reason:      "query has some unsupported Node",
+			metricDelta: 2,
+		},
+		{
+			name:        "set operation",
+			first:       "select a from legacy_matrix_t where b > 1 union select a from legacy_matrix_t where b < 3 order by 1",
+			second:      "select a from legacy_matrix_t where b > 2 union select a from legacy_matrix_t where b < 2 order by 1",
+			reason:      "not a SELECT statement",
+			metricDelta: 0,
+		},
+		{
+			name:        "three table join",
+			first:       "select legacy_matrix_t.a from legacy_matrix_t join legacy_matrix_t2 on legacy_matrix_t.a=legacy_matrix_t2.a join legacy_matrix_t3 on legacy_matrix_t2.a=legacy_matrix_t3.a where legacy_matrix_t.b > 1",
+			second:      "select legacy_matrix_t.a from legacy_matrix_t join legacy_matrix_t2 on legacy_matrix_t.a=legacy_matrix_t2.a join legacy_matrix_t3 on legacy_matrix_t2.a=legacy_matrix_t3.a where legacy_matrix_t.b > 2",
+			reason:      "queries that have more than 2 tables are not supported",
+			metricDelta: 0,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			baselineTK := newUnifiedPlanCacheMatrixTestKit(t, store, "cache-off")
+			baselineFirst := observeUnifiedPlanCacheQuery(t, baselineTK, testCase.first)
+			baselineSecond := observeUnifiedPlanCacheQuery(t, baselineTK, testCase.second)
+
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+			tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=off")
+			tk.MustExec("set tidb_enable_plan_cache_for_subquery=on")
+			tk.MustExec("set tidb_enable_plan_cache_for_param_limit=on")
+
+			unsupported := core_metrics.GetNonPrepPlanCacheUnsupportedCounter()
+			before := promtestutils.ToFloat64(unsupported)
+			lookupEvents := make([]bool, 0, 2)
+			lookupCtx := func() context.Context {
+				return context.WithValue(context.Background(), plannercore.PlanCacheKeyTestNonPreparedStmtLookup{}, func(found bool) {
+					lookupEvents = append(lookupEvents, found)
+				})
+			}
+			first := tk.MustQueryWithContext(lookupCtx(), testCase.first)
+			require.Equal(t, fmt.Sprint(baselineFirst.rows), fmt.Sprint(first.Rows()))
+			require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+			require.Empty(t, tk.MustQuery("show warnings").Rows())
+			second := tk.MustQueryWithContext(lookupCtx(), testCase.second)
+			require.Equal(t, fmt.Sprint(baselineSecond.rows), fmt.Sprint(second.Rows()))
+			require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+			require.Empty(t, tk.MustQuery("show warnings").Rows())
+			require.Empty(t, lookupEvents, "legacy bypass must not perform unified statement-LRU lookup")
+			require.Equal(t, before+testCase.metricDelta, promtestutils.ToFloat64(unsupported), "legacy metric boundary")
+
+			tk.MustExec("explain format='plan_cache' " + testCase.first)
+			warnings := tk.MustQuery("show warnings").Rows()
+			require.Len(t, warnings, 1)
+			require.Contains(t, warnings[0][2], "skip non-prepared plan-cache: "+testCase.reason)
+		})
+	}
+}
+
+func TestNonPreparedPlanCacheUnifiedCharacterSetClientCarrierKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	setupTK := testkit.NewTestKit(t, store)
+	setupTK.MustExec("use test")
+	setupTK.MustExec("create table charset_t(a int, key(a))")
+	setupTK.MustExec("insert into charset_t values (1), (2)")
+	queryA := "select 'preserved' as literal_value, a from charset_t where a = 1"
+	queryB := "select 'preserved' as literal_value, a from charset_t where a = 2"
+
+	baselineTK := newUnifiedPlanCacheMatrixTestKit(t, store, "cache-off")
+	baselineTK.MustExec("set character_set_client=utf8mb4")
+	utf8BaselineA := observeUnifiedPlanCacheQuery(t, baselineTK, queryA)
+	utf8BaselineB := observeUnifiedPlanCacheQuery(t, baselineTK, queryB)
+	baselineTK.MustExec("set character_set_client=latin1")
+	latin1BaselineA := observeUnifiedPlanCacheQuery(t, baselineTK, queryA)
+	latin1BaselineB := observeUnifiedPlanCacheQuery(t, baselineTK, queryB)
+
+	tk := newUnifiedPlanCacheMatrixTestKit(t, store, "non-prepared")
+	tk.MustExec("set character_set_client=utf8mb4")
+	utf8Miss, paramSQL := observeUnifiedPlanCacheQueryAndParamSQL(t, tk, queryA)
+	require.Contains(t, paramSQL, "'preserved'")
+
+	require.False(t, utf8Miss.cacheHit)
+	requireUnifiedPlanCacheQueryEqual(t, utf8BaselineA, utf8Miss, "utf8mb4 cache miss")
+	utf8Carrier := tk.Session().GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
+	require.NotNil(t, utf8Carrier)
+
+	utf8Hit := observeUnifiedPlanCacheQuery(t, tk, queryB)
+	require.True(t, utf8Hit.cacheHit)
+	requireUnifiedPlanCacheQueryEqual(t, utf8BaselineB, utf8Hit, "utf8mb4 cache hit")
+
+	tk.MustExec("set character_set_client=latin1")
+	require.Nil(t, tk.Session().GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL))
+	latin1First := observeUnifiedPlanCacheQuery(t, tk, queryB)
+	requireUnifiedPlanCacheQueryEqual(t, latin1BaselineB, latin1First, "latin1 first execution")
+	latin1Carrier := tk.Session().GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
+	require.NotNil(t, latin1Carrier)
+	require.NotSame(t, utf8Carrier, latin1Carrier)
+	latin1Hit := observeUnifiedPlanCacheQuery(t, tk, queryA)
+	require.True(t, latin1Hit.cacheHit)
+	requireUnifiedPlanCacheQueryEqual(t, latin1BaselineA, latin1Hit, "latin1 cache hit")
+
+	tk.MustExec("set character_set_client=utf8mb4")
+	require.Same(t, utf8Carrier, tk.Session().GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL))
+	restored := observeUnifiedPlanCacheQuery(t, tk, queryB)
+	require.True(t, restored.cacheHit)
+	requireUnifiedPlanCacheQueryEqual(t, utf8BaselineB, restored, "restored utf8mb4 cache hit")
+}
+
+func TestNonPreparedPlanCacheUnifiedViewSystemTemporaryTables(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	setupTK := testkit.NewTestKit(t, store)
+	setupTK.MustExec("use test")
+	setupTK.MustExec("create table view_base(a int, b int, key(a))")
+	setupTK.MustExec("insert into view_base values (1, 10), (2, 20), (3, 30)")
+	setupTK.MustExec("create view unified_view as select a, b from view_base")
+	setupTK.MustExec("create table system_base(a int)")
+
+	t.Run("view caches and invalidates on schema change", func(t *testing.T) {
+		query := [3]string{
+			"select a, b from unified_view where a > 0 order by a",
+			"select a, b from unified_view where a > 1 order by a",
+			"select a, b from unified_view where a > 2 order by a",
+		}
+		baselineTK := newUnifiedPlanCacheMatrixTestKit(t, store, "cache-off")
+		baseline := [3]unifiedPlanCacheQueryObservation{
+			observeUnifiedPlanCacheQuery(t, baselineTK, query[0]),
+			observeUnifiedPlanCacheQuery(t, baselineTK, query[1]),
+			observeUnifiedPlanCacheQuery(t, baselineTK, query[2]),
+		}
+
+		tk := newUnifiedPlanCacheMatrixTestKit(t, store, "non-prepared")
+		first, paramSQL := observeUnifiedPlanCacheQueryAndParamSQL(t, tk, query[0])
+		require.False(t, first.cacheHit)
+		requireUnifiedPlanCacheQueryEqual(t, baseline[0], first, "view initial miss")
+		carrier := tk.Session().GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
+		require.NotNil(t, carrier)
+
+		hit := observeUnifiedPlanCacheQuery(t, tk, query[1])
+		require.True(t, hit.cacheHit)
+		requireUnifiedPlanCacheQueryEqual(t, baseline[1], hit, "view cache hit")
+
+		tk.MustExec("alter table view_base add column c int")
+		schemaMiss := observeUnifiedPlanCacheQuery(t, tk, query[2])
+		require.False(t, schemaMiss.cacheHit)
+		requireUnifiedPlanCacheQueryEqual(t, baseline[2], schemaMiss, "view schema-change miss")
+		require.NotNil(t, tk.Session().GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL))
+
+		postSchemaHit := observeUnifiedPlanCacheQuery(t, tk, query[1])
+		require.True(t, postSchemaHit.cacheHit)
+		requireUnifiedPlanCacheQueryEqual(t, baseline[1], postSchemaHit, "view post-schema cache hit")
+	})
+
+	t.Run("system table is rejected by physical checker", func(t *testing.T) {
+		query := [2]string{
+			"select table_name from information_schema.columns where table_schema = 'test' and table_name = 'system_base'",
+			"select table_name from information_schema.columns where table_schema = 'test' and table_name = 'missing_base'",
+		}
+		baselineTK := newUnifiedPlanCacheMatrixTestKit(t, store, "cache-off")
+		baseline := [2]unifiedPlanCacheQueryObservation{
+			observeUnifiedPlanCacheQuery(t, baselineTK, query[0]),
+			observeUnifiedPlanCacheQuery(t, baselineTK, query[1]),
+		}
+
+		tk := newUnifiedPlanCacheMatrixTestKit(t, store, "non-prepared")
+		before := promtestutils.ToFloat64(core_metrics.GetNonPrepPlanCacheUnsupportedCounter())
+		first, paramSQL := observeUnifiedPlanCacheQueryAndParamSQL(t, tk, query[0])
+		require.False(t, first.cacheHit)
+		requireUnifiedPlanCacheQueryEqual(t, baseline[0], first, "system table initial execution")
+		carrier, ok := tk.Session().GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL).(*plannercore.PlanCacheStmt)
+		require.True(t, ok)
+		// Physical-plan rejection must not turn the reusable statement carrier
+		// into an uncacheable carrier; the physical checker runs again per use.
+		require.True(t, carrier.StmtCacheable)
+		require.Equal(t, before, promtestutils.ToFloat64(core_metrics.GetNonPrepPlanCacheUnsupportedCounter()))
+
+		second := observeUnifiedPlanCacheQuery(t, tk, query[1])
+		require.False(t, second.cacheHit)
+		requireUnifiedPlanCacheQueryEqual(t, baseline[1], second, "system table second execution")
+		require.Equal(t, before, promtestutils.ToFloat64(core_metrics.GetNonPrepPlanCacheUnsupportedCounter()))
+
+		tk.MustExec("explain format='plan_cache' " + query[0])
+		warnings := tk.MustQuery("show warnings").Rows()
+		require.Len(t, warnings, 1)
+		require.Contains(t, warnings[0][2], "skip non-prepared plan-cache: PhysicalMemTable plan is un-cacheable")
+	})
+
+	t.Run("temporary table is rejected by AST checker", func(t *testing.T) {
+		tk := newUnifiedPlanCacheMatrixTestKit(t, store, "non-prepared")
+		tk.MustExec("create temporary table unified_tmp(a int, key(a))")
+		tk.MustExec("insert into unified_tmp values (1), (2)")
+		query := [2]string{
+			"select a from unified_tmp where a = 1",
+			"select a from unified_tmp where a = 2",
+		}
+		baselineTK := newUnifiedPlanCacheMatrixTestKit(t, store, "cache-off")
+		baselineTK.MustExec("create temporary table unified_tmp(a int, key(a))")
+		baselineTK.MustExec("insert into unified_tmp values (1), (2)")
+		baseline := [2]unifiedPlanCacheQueryObservation{
+			observeUnifiedPlanCacheQuery(t, baselineTK, query[0]),
+			observeUnifiedPlanCacheQuery(t, baselineTK, query[1]),
+		}
+		before := promtestutils.ToFloat64(core_metrics.GetNonPrepPlanCacheUnsupportedCounter())
+		first, paramSQL := observeUnifiedPlanCacheQueryAndParamSQL(t, tk, query[0])
+		require.False(t, first.cacheHit)
+		requireUnifiedPlanCacheQueryEqual(t, baseline[0], first, "temporary table initial execution")
+		require.Nil(t, tk.Session().GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL))
+		require.Equal(t, before+1, promtestutils.ToFloat64(core_metrics.GetNonPrepPlanCacheUnsupportedCounter()))
+
+		second := observeUnifiedPlanCacheQuery(t, tk, query[1])
+		require.False(t, second.cacheHit)
+		requireUnifiedPlanCacheQueryEqual(t, baseline[1], second, "temporary table second execution")
+		require.Equal(t, before+2, promtestutils.ToFloat64(core_metrics.GetNonPrepPlanCacheUnsupportedCounter()))
+
+		tk.MustExec("explain format='plan_cache' " + query[0])
+		warnings := tk.MustQuery("show warnings").Rows()
+		require.Len(t, warnings, 1)
+		require.Contains(t, warnings[0][2], "skip non-prepared plan-cache: query accesses temporary tables is un-cacheable")
+	})
+}
+
+func TestNonPreparedPlanCacheUnifiedDoesNotCacheUncacheableCarrier(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table tp (a int, b int) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than maxvalue)`)
+	tk.MustExec("insert into tp values (1, 10), (11, 20)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+	tk.MustExec("set tidb_partition_prune_mode=dynamic")
+	tk.MustExec("set tidb_opt_enable_selected_partition_stats=on")
+
+	stmt, err := parser.New().ParseOneStmt("select b from tp where a > 0", "", "")
+	require.NoError(t, err)
+	paramResult, supported, reason, err := plannercore.ParameterizeForNonPreparedPlanCache(tk.Session().GetPlanCtx(), stmt)
+	require.NoError(t, err)
+	require.True(t, supported, reason)
+
+	carrierBefore := promtestutils.ToFloat64(core_metrics.GetNonPrepPlanCacheUnsupportedCounter())
+	tk.MustQuery("select b from tp where a > 0").Sort().Check(testkit.Rows("10", "20"))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	require.Nil(t, tk.Session().GetSessionVars().GetNonPreparedPlanCacheStmt(paramResult.ParamSQL))
+	carrierRejected := promtestutils.ToFloat64(core_metrics.GetNonPrepPlanCacheUnsupportedCounter())
+	require.Equal(t, carrierBefore+1, carrierRejected)
+
+	tk.MustExec("explain format='plan_cache' select b from tp where a > 1")
+	warnings := tk.MustQuery("show warnings").Rows()
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0][2], "skip non-prepared plan-cache: static partition prune mode used")
+}
+
+func TestNonPreparedPlanCacheUnifiedUnsupportedMetricBoundaries(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, key(a))")
+	tk.MustExec("create table t2(a int, b int, key(a))")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+	tk.MustExec("insert into t2 select * from t")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=off")
+	tk.MustExec("set tidb_opt_enable_selected_partition_stats=on")
+
+	unsupported := core_metrics.GetNonPrepPlanCacheUnsupportedCounter()
+	before := promtestutils.ToFloat64(unsupported)
+	tk.MustExec("insert into t values (3, 3)")
+	require.Equal(t, before, promtestutils.ToFloat64(unsupported), "DML gate must not count")
+
+	tk.MustQuery("select _utf8mb4'a' from t where a=1").Check(testkit.Rows("a"))
+	precheckRejected := promtestutils.ToFloat64(unsupported)
+	require.Equal(t, before+1, precheckRejected, "parameterization precheck must count once")
+
+	tk.MustQuery("select /*+ ignore_plan_cache() */ a from t where a=1").Check(testkit.Rows("1"))
+	astRejected := promtestutils.ToFloat64(unsupported)
+	require.Equal(t, precheckRejected+1, astRejected, "public AST checker must count once")
+
+	tk.MustExec(`create table tp_metric (a int, b int) partition by range (a) (
+		partition p0 values less than (10), partition p1 values less than maxvalue)`)
+	tk.MustExec("insert into tp_metric values (1, 1), (11, 11)")
+	tk.MustExec("set tidb_partition_prune_mode=static")
+	tk.MustQuery("select b from tp_metric where a > 0").Sort().Check(testkit.Rows("1", "11"))
+	carrierRejected := promtestutils.ToFloat64(unsupported)
+	require.Equal(t, astRejected+1, carrierRejected, "carrier rejection must count once")
+
+	tk.MustExec("set tidb_enable_plan_cache_for_subquery=on")
+	physicalQuery := "select * from t t1 where t1.a > (select max(t2.a) from t t2 where t2.b < t1.b and t2.b < 2)"
+	physicalBefore := promtestutils.ToFloat64(unsupported)
+	tk.MustQuery(physicalQuery)
+	require.Equal(t, physicalBefore, promtestutils.ToFloat64(unsupported), "physical rejection must not duplicate unsupported count")
+
+	tk.MustExec("explain format='plan_cache' " + physicalQuery)
+	warnings := tk.MustQuery("show warnings").Rows()
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0][2], "skip non-prepared plan-cache:")
+	require.Contains(t, warnings[0][2], "PhysicalApply plan is un-cacheable")
+}
+
+func TestNonPreparedPlanCacheUnifiedReasonPriority(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_reason(a int)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=on")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=on")
+	query := "select _utf8mb4'a' into @reason_value from t_reason where a=1"
+
+	// Legacy mode remains the compatibility path; its reason is intentionally
+	// different from the unified parameterization-priority reason.
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=off")
+	tk.MustExec("explain format='plan_cache' " + query)
+	legacyWarnings := tk.MustQuery("show warnings").Rows()
+	require.NotEmpty(t, legacyWarnings)
+	for _, warning := range legacyWarnings {
+		require.Contains(t, warning[2], "skip non-prepared plan-cache:")
+	}
+
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=on")
+	tk.MustExec("explain format='plan_cache' " + query)
+	unifiedWarnings := tk.MustQuery("show warnings").Rows()
+	require.NotEmpty(t, unifiedWarnings)
+	require.Contains(t, unifiedWarnings[0][2], "skip non-prepared plan-cache: SELECT INTO is not supported")
+
+	tk.MustExec("set tidb_enable_plan_cache_for_param_limit=off")
+	precheckCases := []struct {
+		name           string
+		sql            string
+		expectedReason string
+	}{
+		{
+			name:           "charset beats limit",
+			sql:            "select _utf8mb4'a' from t_reason limit 1",
+			expectedReason: "query has values with under-score charset that cannot be preserved safely",
+		},
+	}
+	values := make([]string, 201)
+	for i := range values {
+		values[i] = fmt.Sprintf("%d", i)
+	}
+	precheckCases = append(precheckCases, struct {
+		name           string
+		sql            string
+		expectedReason string
+	}{
+		name:           "literal limit beats charset and limit clause",
+		sql:            "select _utf8mb4'a', " + strings.Join(values, ", ") + " from t_reason limit 1",
+		expectedReason: "query has too many constants",
+	})
+	for _, testCase := range precheckCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			stmt, err := parser.New().ParseOneStmt(testCase.sql, "", "")
+			require.NoError(t, err)
+			_, supported, reason, err := plannercore.ParameterizeForNonPreparedPlanCache(tk.Session().GetPlanCtx(), stmt)
+			require.NoError(t, err)
+			require.False(t, supported)
+			require.Equal(t, testCase.expectedReason, reason)
+		})
+	}
+
+	unsupported := core_metrics.GetNonPrepPlanCacheUnsupportedCounter()
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=off")
+	before := promtestutils.ToFloat64(unsupported)
+	tk.MustExec("explain format='plan_cache' select _utf8mb4'a' from t_reason where a=1 for update")
+	dmlWarnings := tk.MustQuery("show warnings").Rows()
+	require.Len(t, dmlWarnings, 1)
+	require.Contains(t, dmlWarnings[0][2], "skip non-prepared plan-cache: not a SELECT statement")
+	require.Equal(t, before, promtestutils.ToFloat64(unsupported), "DML entry gate must not increment unsupported metric")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=on")
+
+	before = promtestutils.ToFloat64(unsupported)
+	tk.MustQuery("select /*+ ignore_plan_cache() */ a from t_reason where a=1")
+	require.Equal(t, before+1, promtestutils.ToFloat64(unsupported), "AST checker rejection must increment unsupported metric")
+	tk.MustExec("explain format='plan_cache' select /*+ ignore_plan_cache() */ a from t_reason where a=1")
+	hintWarnings := tk.MustQuery("show warnings").Rows()
+	require.Len(t, hintWarnings, 1)
+	require.Contains(t, hintWarnings[0][2], "skip non-prepared plan-cache: ignore plan cache by hint")
+	require.GreaterOrEqual(t, promtestutils.ToFloat64(unsupported), before+2, "AST checker rejection must increment unsupported metric")
+
+	tk.MustExec(`create table priority_partition (a int) partition by range (a) (
+		partition p0 values less than (10), partition p1 values less than maxvalue)`)
+	tk.MustExec("insert into priority_partition values (1), (11)")
+	tk.MustExec("set tidb_partition_prune_mode=dynamic")
+	tk.MustExec("set tidb_opt_enable_selected_partition_stats=on")
+	before = promtestutils.ToFloat64(unsupported)
+	tk.MustExec("explain format='plan_cache' select a from priority_partition where a > 0")
+	physicalWarnings := tk.MustQuery("show warnings").Rows()
+	require.Len(t, physicalWarnings, 1)
+	require.Contains(t, physicalWarnings[0][2], "skip non-prepared plan-cache: static partition prune mode used")
+	require.GreaterOrEqual(t, promtestutils.ToFloat64(unsupported), before+1, "carrier rejection must increment unsupported metric")
 }
 
 func TestNonPreparedPlanCacheInternalSQL(t *testing.T) {
@@ -1869,6 +3702,7 @@ func BenchmarkNonPreparedPlanCacheDML(b *testing.B) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_unified_cacheability_check=1")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
