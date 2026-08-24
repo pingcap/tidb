@@ -1504,7 +1504,8 @@ pub fn run_create_table_in(
         });
     }
     for index in indexes {
-        table.add_index(index);
+        let clustered_primary = index.clustered_primary;
+        table.add_index(index, clustered_primary);
     }
     for foreign_key in table_foreign_keys(create, &columns, catalog, &database, foreign_key_checks)?
     {
@@ -1558,8 +1559,9 @@ pub fn run_create_table_in(
                 // Local to the table it constrains: an `FKInfo` carries no
                 // `GLOBAL` to record.
                 global: false,
+                clustered_primary: false,
                 visible: true,
-            });
+            }, false);
         }
         table.allocate_foreign_key_id();
         table.add_foreign_key(foreign_key);

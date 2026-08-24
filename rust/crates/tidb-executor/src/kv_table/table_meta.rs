@@ -532,6 +532,11 @@ pub struct KvIndex {
     /// partition. Always false on an unpartitioned table: Go's DDL records
     /// `GLOBAL` only where partitioning makes it mean something.
     pub global: bool,
+    /// Whether this entry IS the clustered record handle's PRIMARY key
+    /// (Go keeps the IndexInfo in metadata but never maintains `_i` entries
+    /// for it). Write paths skip it; the planner still reads its stats so
+    /// multi-column join NDV estimation sees the composite key.
+    pub clustered_primary: bool,
 }
 
 impl KvIndex {

@@ -881,7 +881,8 @@ fn tpcc_grouped_merge_join_keeps_order_through_pruning() {
         column_offsets: vec![1, 0],
         visible: true,
         global: false,
-    });
+        clustered_primary: false,
+    }, false);
     crate::run_create_table_on(
         "CREATE TABLE warehouse (w_id INT PRIMARY KEY, w_ytd DECIMAL(12,2) NOT NULL)",
         &mut catalog,
@@ -963,7 +964,8 @@ fn tpcc_grouped_common_handle_uses_partial_and_final_stream_agg() {
         column_offsets: vec![2, 1, 0],
         visible: true,
         global: false,
-    });
+        clustered_primary: false,
+    }, false);
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
         "INSERT INTO new_order VALUES (1,1,1),(2,1,1),(5,2,1),(7,2,1),(9,1,2)",
@@ -1038,7 +1040,8 @@ fn grouped_partial_count_carries_the_group_key() {
         column_offsets: vec![2, 1, 0, 3],
         visible: true,
         global: false,
-    });
+        clustered_primary: false,
+    }, false);
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
         "INSERT INTO order_line VALUES (1,1,1,1),(1,1,1,2),(2,2,1,1),(1,1,2,1)",
@@ -1110,7 +1113,8 @@ fn tpcc_condition_four_streams_across_a_grouped_derived_table() {
         column_offsets: vec![2, 1, 0],
         visible: true,
         global: false,
-    });
+        clustered_primary: false,
+    }, false);
     crate::run_create_table_on(
         "CREATE TABLE order_line (ol_o_id INT NOT NULL, ol_d_id INT NOT NULL, \
             ol_w_id INT NOT NULL, ol_number INT NOT NULL, \
@@ -1130,7 +1134,8 @@ fn tpcc_condition_four_streams_across_a_grouped_derived_table() {
         column_offsets: vec![2, 1, 0, 3],
         visible: true,
         global: false,
-    });
+        clustered_primary: false,
+    }, false);
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
         "INSERT INTO orders VALUES (1,1,1,2),(2,2,1,1)",
@@ -1300,7 +1305,8 @@ fn tpcc_condition_six_simplifies_and_pushes_through_derived_tables() {
         column_offsets: vec![2, 1, 0],
         visible: true,
         global: false,
-    });
+        clustered_primary: false,
+    }, false);
     crate::run_create_table_on(
         "CREATE TABLE order_line (ol_o_id INT NOT NULL, ol_d_id INT NOT NULL, \
             ol_w_id INT NOT NULL, ol_number INT NOT NULL, \
@@ -1320,7 +1326,8 @@ fn tpcc_condition_six_simplifies_and_pushes_through_derived_tables() {
         column_offsets: vec![2, 1, 0, 3],
         visible: true,
         global: false,
-    });
+        clustered_primary: false,
+    }, false);
 
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
@@ -1683,7 +1690,8 @@ fn tpcc_condition_nine_eliminates_the_unique_district_aggregation() {
         column_offsets: vec![1, 0],
         visible: true,
         global: false,
-    });
+        clustered_primary: false,
+    }, false);
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
         "INSERT INTO district VALUES (1,1,10.25),(2,1,NULL),(1,2,20.50)",
@@ -1760,7 +1768,8 @@ fn tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup() {
         column_offsets: vec![1, 0],
         visible: true,
         global: false,
-    });
+        clustered_primary: false,
+    }, false);
     crate::run_create_table_on(
         "CREATE TABLE history (h_c_id INT NOT NULL, h_c_d_id INT NOT NULL, \
             h_c_w_id INT NOT NULL, h_d_id INT NOT NULL, h_w_id INT NOT NULL, \
@@ -2053,7 +2062,8 @@ fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
                 column_offsets,
                 visible: true,
                 global: false,
-            });
+                clustered_primary: false,
+            }, false);
         }
     }
 
@@ -2397,7 +2407,8 @@ fn tpcc_condition_two_orders_group_uses_the_covering_index_range() {
         column_offsets: vec![2, 1, 0],
         visible: true,
         global: false,
-    });
+        clustered_primary: false,
+    }, false);
     orders.add_index(crate::kv_table::KvIndex {
         id: 2,
         name: "idx_order".to_owned(),
@@ -2407,7 +2418,8 @@ fn tpcc_condition_two_orders_group_uses_the_covering_index_range() {
         column_offsets: vec![2, 1, 3, 0],
         visible: true,
         global: false,
-    });
+        clustered_primary: false,
+    }, false);
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
         "INSERT INTO orders VALUES \
@@ -2484,7 +2496,8 @@ fn tpcc_condition_two_orders_group_uses_the_covering_index_range() {
         column_offsets: vec![1, 0],
         visible: true,
         global: false,
-    });
+        clustered_primary: false,
+    }, false);
     crate::run_create_table_on(
         "CREATE TABLE new_order (no_o_id INT NOT NULL, no_d_id INT NOT NULL, \
             no_w_id INT NOT NULL, PRIMARY KEY (no_w_id,no_d_id,no_o_id) CLUSTERED)",
@@ -2503,7 +2516,8 @@ fn tpcc_condition_two_orders_group_uses_the_covering_index_range() {
         column_offsets: vec![2, 1, 0],
         visible: true,
         global: false,
-    });
+        clustered_primary: false,
+    }, false);
     run_insert_on(
         "INSERT INTO district VALUES (1,1,5),(2,1,6),(1,2,10)",
         &mut catalog,

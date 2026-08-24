@@ -266,7 +266,8 @@ fn tpcc_check_five_keeps_only_the_cross_leaf_residual() {
             column_offsets,
             visible: true,
             global: false,
-        });
+            clustered_primary: false,
+        }, false);
     }
     let sql = "SELECT count(*) FROM orders LEFT JOIN new_order ON no_w_id=o_w_id AND o_d_id=no_d_id AND o_id=no_o_id WHERE o_w_id=1 AND ((o_carrier_id IS NULL and no_o_id IS NULL) OR (o_carrier_id IS NOT NULL and no_o_id IS NOT NULL))";
     let stmt = tidb_parser::parse(sql).unwrap();
@@ -361,7 +362,8 @@ fn tpcc_check_seven_propagates_the_warehouse_range_to_both_leaves() {
             column_offsets,
             visible: true,
             global: false,
-        });
+            clustered_primary: false,
+        }, false);
     }
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
@@ -728,7 +730,8 @@ fn tpcc_stock_level_bounds_both_join_leaves() {
             column_offsets,
             visible: true,
             global: false,
-        });
+            clustered_primary: false,
+        }, false);
     }
     let sql = "SELECT /*+ TIDB_INLJ(`order_line`, `stock`)*/ \
         COUNT(DISTINCT (`s_i_id`)) AS `stock_count` \
@@ -885,7 +888,8 @@ fn tpcc_customer_warehouse_join_uses_two_point_gets() {
         column_offsets: vec![2, 1, 0],
         visible: true,
         global: false,
-    });
+        clustered_primary: false,
+    }, false);
     crate::run_create_table_on(
         "CREATE TABLE warehouse (\
             w_id INT NOT NULL, w_name VARCHAR(10), w_street_1 VARCHAR(20), \

@@ -3878,11 +3878,13 @@ impl PlanTrace {
     /// The Projection Go's `InjectProjBelowAgg` injects BELOW a global
     /// StreamAgg whose argument is a scalar expression: it evaluates the
     /// written expression once per row so the aggregate folds a column.
+    /// Returns whether a Projection was actually added — the aggregate then
+    /// reads the projected column, not the written expression.
     pub(crate) fn injected_below_agg_projection(
         &mut self,
         select: &tidb_ast::SelectStmt,
         qualify: &Qualifier<'_>,
-    ) {
+    ) -> bool {
         // Each hoisted aggregate's ARGUMENT becomes the projected column:
         // Go prints e.g. `Projection mul(l_price, minus(1, l_disc))->Col#?`
         // directly below `StreamAgg funcs:sum(Col#?)->Col#?`.
@@ -3906,9 +3908,11 @@ impl PlanTrace {
                 }
             }
         }
-        if !lines.is_empty() {
+        let injected = !lines.is_empty();
+        if injected {
             self.wrap("Projection", Est::Inherit, lines.join(", "));
         }
+        injected
     }
 
     /// The visible Projection retained above an Aggregation after Go's

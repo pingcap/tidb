@@ -417,6 +417,11 @@ impl KvTable {
     ) -> Result<(), KvTableError> {
         let indexes = self.indexes.clone();
         for index in indexes.iter() {
+            // A clustered PRIMARY's key IS the record handle; there is no
+            // separate `_i` entry to write.
+            if index.clustered_primary {
+                continue;
+            }
             let (key, distinct) = self.index_key(index, row, handle, physical_id, zone)?;
             let value = self.index_entry_value(index, row, handle, distinct, zone)?;
             let key = Key::from_bytes(key);
@@ -443,6 +448,11 @@ impl KvTable {
     ) -> Result<(), KvTableError> {
         let indexes = self.indexes.clone();
         for index in indexes.iter() {
+            // A clustered PRIMARY's key IS the record handle; deleting the
+            // row already removed it.
+            if index.clustered_primary {
+                continue;
+            }
             let (key, _) = self.index_key(index, row, handle, physical_id, zone)?;
             self.store
                 .delete(Key::from_bytes(key))

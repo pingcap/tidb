@@ -520,6 +520,7 @@ pub fn build_table_info_with_context(
                     prefix_lengths,
                     visible: !index.invisible,
                     global: index.global,
+                    clustered_primary: false,
                 }
             })
             .collect::<Vec<_>>();

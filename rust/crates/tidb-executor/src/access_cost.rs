@@ -1337,7 +1337,7 @@ pub(crate) fn enumerate_paths(
         // same metadata as a secondary index creates an index lookup and one
         // point read per row, which is both the wrong physical plan and
         // catastrophic for broad primary-key prefixes.
-        if common_handle_primary == Some(index.id) {
+        if index.clustered_primary || common_handle_primary == Some(index.id) {
             continue;
         }
         // Go's restricted `available` and `removeIgnoredPaths`: an index a
@@ -3768,6 +3768,7 @@ mod tests {
             prefix_lengths: vec![prefix_len],
             visible: true,
             global: false,
+            clustered_primary: false,
         };
         assert!(!is_covering(&index(3), &table, &[0]));
         // No declared length, or one that already reaches the column's own
@@ -3811,6 +3812,7 @@ mod tests {
             ],
             visible: true,
             global: false,
+            clustered_primary: false,
         };
 
         assert!(is_covering(&secondary, &table, &[0, 1, 2, 3]));
@@ -4001,7 +4003,8 @@ mod tests {
             prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
             visible: true,
             global: false,
-        });
+            clustered_primary: false,
+        }, false);
         table.add_index(KvIndex {
             id: 8,
             name: "idx_ab".to_owned(),
@@ -4011,7 +4014,8 @@ mod tests {
             prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
             visible: true,
             global: false,
-        });
+            clustered_primary: false,
+        }, false);
 
         let column_stats = |id| ColumnStats {
             histogram: tidb_stats::Histogram {
@@ -4183,6 +4187,7 @@ mod tests {
                     prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                     visible: true,
                     global: false,
+                    clustered_primary: false,
                 },
                 &crate::StmtContext::for_query(),
             )
@@ -4367,6 +4372,7 @@ mod tests {
                         ],
                         visible: true,
                         global: false,
+                        clustered_primary: false,
                     },
                     &context,
                 )
@@ -4423,6 +4429,7 @@ mod tests {
                         ],
                         visible: true,
                         global: false,
+                        clustered_primary: false,
                     },
                     &context,
                 )
@@ -4745,7 +4752,8 @@ mod tests {
             ],
             visible: true,
             global: false,
-        });
+            clustered_primary: false,
+        }, false);
         table
     }
 

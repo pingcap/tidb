@@ -777,17 +777,15 @@ pub(crate) fn cluster_table(
             continue;
         }
         // A clustered PRIMARY is the record handle, not a secondary `_i`
-        // entry.  Go keeps the IndexInfo in its catalog so SHOW/metadata can
-        // report the key, but its write path never maintains a second index
-        // for it.  Loading it into KvTable::indexes made a Rust update write
-        // a non-clustered PRIMARY entry beside the clustered record and
-        // corrupted tables shared with a Go TiDB node.
-        if (table.pk_is_handle || table.is_common_handle)
-            && index.name.original().eq_ignore_ascii_case("PRIMARY")
-        {
-            continue;
-        }
-        kv_table.add_index(kv_index(&index, &columns)?);
+        // entry.  Go keeps the IndexInfo in its catalog so SHOW/metadata and
+        // the planner can see the key, but its write path never maintains a
+        // second index for it.  The entry is therefore loaded FLAGGED: the
+        // write path skips a `clustered_primary` index (writing one beside the
+        // clustered record corrupted tables shared with a Go TiDB node),
+        // while multi-column join NDV estimation still reads its stats.
+        let clustered_primary = (table.pk_is_handle || table.is_common_handle)
+            && index.name.original().eq_ignore_ascii_case("PRIMARY");
+        kv_table.add_index(kv_index(&index, &columns)?, clustered_primary);
         // Go `model.IndexInfo.MVIndex`: DDL set the flag when exactly one key
         // part is an ARRAY-typed hidden column, and that column's
         // `Dependences` names the source it indexes
@@ -959,6 +957,7 @@ pub(crate) fn kv_index(
         prefix_lengths,
         visible: !index.invisible,
         global: index.global,
+        clustered_primary: false,
     })
 }
 

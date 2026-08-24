@@ -1649,7 +1649,8 @@ fn tpcc_conditions_ten_and_twelve_decorrelate_scalar_sums() {
             column_offsets,
             visible: true,
             global: false,
-        });
+            clustered_primary: false,
+        }, false);
     }
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
@@ -1850,7 +1851,8 @@ fn tpcc_conditions_ten_and_twelve_decorrelate_scalar_sums() {
         column_offsets: vec![0, 1, 3, 2],
         visible: true,
         global: false,
-    });
+        clustered_primary: false,
+    }, false);
     scale_analyzed_tpcc_table(
         &mut catalog,
         "customer",

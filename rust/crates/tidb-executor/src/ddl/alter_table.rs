@@ -1020,7 +1020,8 @@ fn add_foreign_key_action(
             // A foreign key's auto-created index is local to the table it
             // constrains; Go's `FKInfo` carries no `GLOBAL` to record.
             global: false,
-        });
+            clustered_primary: false,
+        }, false);
     }
     table.add_foreign_key(foreign_key);
     Ok(())

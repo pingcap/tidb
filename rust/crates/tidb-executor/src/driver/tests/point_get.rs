@@ -1103,7 +1103,8 @@ fn residual_selection_uses_logical_rows_over_access_rows() {
         column_offsets: vec![2, 1, 0],
         visible: true,
         global: false,
-    });
+        clustered_primary: false,
+    }, false);
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
         "INSERT INTO customer VALUES \

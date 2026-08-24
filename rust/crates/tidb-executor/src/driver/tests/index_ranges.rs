@@ -42,7 +42,8 @@ fn ordered_limit_adjusts_the_common_handle_scan_estimate() {
         column_offsets: vec![2, 1, 0],
         visible: true,
         global: false,
-    });
+        clustered_primary: false,
+    }, false);
     scale_analyzed_tpcc_table(
         &mut catalog,
         "new_order",

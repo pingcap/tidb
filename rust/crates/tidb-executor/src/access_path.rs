@@ -3731,6 +3731,7 @@ mod tests {
                         prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                         visible: true,
                         global: false,
+                        clustered_primary: false,
                     },
                     &crate::StmtContext::for_query(),
                 )
@@ -3930,6 +3931,7 @@ mod tests {
                     prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
                     visible: true,
                     global: false,
+                    clustered_primary: false,
                 },
                 &tidb_expr::NoColumns,
             )
@@ -3992,6 +3994,7 @@ mod tests {
                     prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 4],
                     visible: true,
                     global: false,
+                    clustered_primary: false,
                 },
                 &tidb_expr::NoColumns,
             )
@@ -4226,6 +4229,7 @@ mod tests {
                     ],
                     visible: true,
                     global: false,
+                    clustered_primary: false,
                 },
                 &crate::StmtContext::for_query(),
             )
@@ -4414,6 +4418,7 @@ mod tests {
                     ],
                     visible: true,
                     global: false,
+                    clustered_primary: false,
                 },
                 &crate::StmtContext::for_query(),
             )

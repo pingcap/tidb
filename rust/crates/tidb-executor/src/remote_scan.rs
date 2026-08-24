@@ -1137,7 +1137,8 @@ mod tests {
             prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
             visible: true,
             global: false,
-        });
+            clustered_primary: false,
+        }, false);
         fixture
     }
 

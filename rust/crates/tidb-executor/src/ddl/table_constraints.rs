@@ -290,6 +290,7 @@ pub(crate) fn table_indexes(
             prefix_lengths,
             visible: is_visible(&index.options),
             global: index.options.global,
+            clustered_primary: false,
         });
     }
     for def in &create.columns {
@@ -314,6 +315,7 @@ pub(crate) fn table_indexes(
                             prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                             visible: true,
                             global: false,
+                            clustered_primary: false,
                         });
                     }
                     // A primary key that is not the row handle still needs an
@@ -335,6 +337,7 @@ pub(crate) fn table_indexes(
                                 prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                                 visible: true,
                                 global: false,
+                                clustered_primary: false,
                             });
                         }
                     }

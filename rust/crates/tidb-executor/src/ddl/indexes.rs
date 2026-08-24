@@ -347,6 +347,7 @@ pub(crate) fn add_index_to_table(
                 prefix_lengths,
                 visible,
                 global,
+                clustered_primary: false,
             },
             ctx,
         )

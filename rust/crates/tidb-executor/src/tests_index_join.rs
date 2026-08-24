@@ -92,6 +92,7 @@ fn inner_table(rows: &[(i64, i64)]) -> KvTable {
                 prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                 visible: true,
                 global: false,
+                clustered_primary: false,
             },
             &crate::StmtContext::for_query(),
         )
@@ -119,6 +120,7 @@ fn common_handle_table(rows: &[(i64, i64)]) -> KvTable {
                 prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
                 visible: true,
                 global: false,
+                clustered_primary: false,
             },
             &crate::StmtContext::for_query(),
         )
@@ -750,6 +752,7 @@ mod decision {
                     prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                     visible: true,
                     global: false,
+                    clustered_primary: false,
                 },
                 &crate::StmtContext::for_query(),
             )

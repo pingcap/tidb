@@ -4385,6 +4385,7 @@ fn build_aggregation(
                 {
                     trace.refuse("global StreamAgg child is not a point get or bare scan");
                 }
+                let mut injected_projection = false;
                 if !partial_stream_agg {
                     match stream_plan {
                         GlobalStreamAggPlan::IntegerSum { precision } => {
@@ -4394,7 +4395,8 @@ fn build_aggregation(
                             // Go's InjectProjBelowAgg: the scalar argument is
                             // evaluated by a Projection BELOW the aggregate,
                             // which reads the projected column.
-                            trace.injected_below_agg_projection(traced_select, &qualify);
+                            injected_projection = trace
+                                .injected_below_agg_projection(traced_select, &qualify);
                         }
                         _ => {}
                     }
@@ -4403,6 +4405,7 @@ fn build_aggregation(
                     traced_select,
                     &qualify,
                     partial_stream_agg
+                        || injected_projection
                         || matches!(stream_plan, GlobalStreamAggPlan::IntegerSum { .. }),
                 );
             } else if partial_grouped_sum {

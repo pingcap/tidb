@@ -2087,7 +2087,7 @@ impl KvTable {
             }
         }
         for index in self.indexes.as_ref().clone() {
-            if !index.unique {
+            if !index.unique || index.clustered_primary {
                 continue;
             }
             // A distinct entry's key does not carry the handle, so the
@@ -2140,7 +2140,7 @@ impl KvTable {
             }
         }
         for index in self.indexes.as_ref().clone() {
-            if !index.unique {
+            if !index.unique || index.clustered_primary {
                 continue;
             }
             let (key, distinct) =
@@ -2155,8 +2155,14 @@ impl KvTable {
         Err(KvTableError::Encode("no conflict to report".to_owned()))
     }
 
-    /// Adds an index, whose entries every later write maintains.
-    pub fn add_index(&mut self, index: KvIndex) {
+    /// Adds an index, whose entries every later write maintains. A
+    /// `clustered_primary` index is recorded for the planner but skipped by
+    /// every entry write: its key IS the record handle.
+    pub fn add_index(&mut self, index: KvIndex, clustered_primary: bool) {
+        let mut index = index;
+        if clustered_primary {
+            index.clustered_primary = true;
+        }
         self.indexes_mut().push(index);
     }
 
@@ -3210,7 +3216,8 @@ mod tests {
             prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
             visible: true,
             global: false,
-        });
+            clustered_primary: false,
+        }, false);
 
         table
             .insert_row(&[Datum::Int(1), Datum::Null], &tidb_expr::NoColumns)
@@ -3506,7 +3513,8 @@ mod tests {
             prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
             visible: true,
             global: false,
-        });
+            clustered_primary: false,
+        }, false);
         let written = t
             .insert_row(
                 &[

@@ -2541,6 +2541,7 @@ mod round_trip_tests {
             prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
             visible: true,
             global: true,
+            clustered_primary: false,
         }];
         let error = build_table_partitioning(
             create,
@@ -2589,6 +2590,7 @@ mod round_trip_tests {
             column_offsets: offsets,
             visible: true,
             global: false,
+            clustered_primary: false,
         };
 
         // k1: the primary key IS the handle.
