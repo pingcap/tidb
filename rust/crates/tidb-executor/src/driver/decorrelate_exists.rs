@@ -270,6 +270,7 @@ pub(crate) fn decorrelate_where(
             None,
             crate::driver::leaf_demand::FromDemand::none(),
             &tidb_planner::physical_property::PhysicalProperty::default(),
+            None,
         )?;
         debug_assert_eq!(built_scope.width(), prepared.inner_scope.width());
 
@@ -393,6 +394,7 @@ fn prepare<'a>(
         None,
         crate::driver::leaf_demand::FromDemand::none(),
         &tidb_planner::physical_property::PhysicalProperty::default(),
+        None,
     )?;
     let mut all_correlated = Vec::new();
     crate::driver::subquery::collect_correlated_columns_query(

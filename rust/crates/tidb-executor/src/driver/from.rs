@@ -769,6 +769,7 @@ fn leaf_can_keep_order(
 /// the FROM clause the driver actually built rather than a second guess at
 /// it. A shape the recorder has never printed (a derived table, a lateral
 /// join) marks the trace refused instead of inventing a node for it.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_from(
     node: &JoinNode,
     catalog: &Catalog,
@@ -777,6 +778,7 @@ pub(crate) fn build_from(
     trace: Option<&mut PlanTrace>,
     demand: crate::driver::leaf_demand::FromDemand<'_>,
     required: &tidb_planner::physical_property::PhysicalProperty,
+    scan_cap: Option<u64>,
 ) -> Result<(Box<dyn Executor>, FromScope, Delivered), DriverError> {
     // A multi-table FROM recurses build_from -> build_join -> build_from per
     // JOIN NODE without passing `run_select_traced`'s per-SELECT checkpoint,
@@ -788,12 +790,13 @@ pub(crate) fn build_from(
     // build_join round.
     let top = composite_inner_memo::enter_statement();
     let result = stacker::maybe_grow(2 * 1024 * 1024, 16 * 1024 * 1024, move || {
-        build_from_inner(node, catalog, current_db, ctx, trace, demand, required)
+        build_from_inner(node, catalog, current_db, ctx, trace, demand, required, scan_cap)
     });
     composite_inner_memo::exit_statement(top);
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_from_inner(
     node: &JoinNode,
     catalog: &Catalog,
@@ -802,6 +805,7 @@ fn build_from_inner(
     mut trace: Option<&mut PlanTrace>,
     demand: crate::driver::leaf_demand::FromDemand<'_>,
     required: &tidb_planner::physical_property::PhysicalProperty,
+    scan_cap: Option<u64>,
 ) -> Result<(Box<dyn Executor>, FromScope, Delivered), DriverError> {
     #[cfg(feature = "plan_counts")]
     plan_counts::BUILD_ENTRIES.with(|c| c.set(c.get() + 1));
@@ -1393,6 +1397,34 @@ fn build_from_inner(
             if access_residual_filter.is_none() && derived_trace_filter.is_none() {
                 access_residual_filter = scan_residual_filter;
             }
+            // Go `pushDownTopNToChild` + `sinkIntoIndexMerge`'s "limit
+            // embedded" reach this tier as a row cap on the PRESERVED side's
+            // leaf scan (`build_join_with_choice` computed it and every join
+            // level above here verified its own inner side is unique on the
+            // join keys). The offer keeps Go's soundness boundary: the leaf
+            // must already apply EVERY predicate the statement gives it --
+            // `scan_consumed_filter` with no access residual -- so a capped
+            // read drops exactly the rows the cop-side `Selection` would,
+            // and never a row the statement could still have kept.
+            if let Some(cap) = scan_cap {
+                // Sound when the LEAF SOURCE enforces every predicate it was
+                // given before emitting a row: either the whole `WHERE` half
+                // moved through `accept_scan_filter` with NOTHING left
+                // residual (`scan_consumed_filter`, no path filter). A
+                // residual conjunct -- today every `member of` shape, whose
+                // TiPB signature this catalog does not resolve yet -- stays
+                // applied ABOVE the join, where a capped read could drop
+                // rows the statement still owed, so such leaves refuse.
+                if scan_consumed_filter && access_residual_filter.is_none() {
+                    let accepted =
+                        exec.table_access().is_some_and(|access| access.accept_scan_limit(cap));
+                    if accepted {
+                        if let Some(trace) = trace.as_deref_mut() {
+                            trace.limit(0, cap);
+                        }
+                    }
+                }
+            }
             let has_access_residual = access_residual_filter.is_some();
             let trace_filter = match (access_residual_filter, derived_trace_filter) {
                 (Some(left), Some(right)) if left == right => Some(left),
@@ -1535,7 +1567,7 @@ fn build_from_inner(
         JoinNode::Join(join) => {
             // A nested join builds full width: see `build_join`'s `prune`.
             build_join(
-                join, catalog, current_db, ctx, trace, None, demand, required,
+                join, catalog, current_db, ctx, trace, None, demand, required, scan_cap,
             )
         }
         JoinNode::Derived {
@@ -3297,6 +3329,7 @@ fn apply_pushed_leaf_filters(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_join(
     join: &tidb_ast::Join,
     catalog: &Catalog,
@@ -3306,9 +3339,10 @@ pub(crate) fn build_join(
     prune: Option<&tidb_ast::SelectStmt>,
     demand: crate::driver::leaf_demand::FromDemand<'_>,
     required: &tidb_planner::physical_property::PhysicalProperty,
+    scan_cap: Option<u64>,
 ) -> Result<(Box<dyn Executor>, FromScope, Delivered), DriverError> {
     build_join_with_choice(
-        join, current_db, catalog, ctx, trace, prune, demand, required, None, None, None,
+        join, current_db, catalog, ctx, trace, prune, demand, required, None, None, None, scan_cap,
     )
 }
 
@@ -3369,9 +3403,13 @@ pub(crate) fn build_semi_join(
             matching_rows: matching_outer_rows,
             projection: outer_projection.cloned(),
         }),
+        // Go's semi/anti rewrite never carries a pushed limit into the inner
+        // side, and this tier's preserved side was already built by the caller.
+        None,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 fn build_join_with_choice(
     join: &tidb_ast::Join,
@@ -3385,6 +3423,7 @@ fn build_join_with_choice(
     committed_choice: Option<CostedJoinChoice>,
     kind_override: Option<JoinKind>,
     mut prebuilt_left: Option<PrebuiltJoinLeft>,
+    scan_cap: Option<u64>,
 ) -> Result<(Box<dyn Executor>, FromScope, Delivered), DriverError> {
     let source_join = join;
     let kind = kind_override.unwrap_or(match join.tp {
@@ -3414,10 +3453,32 @@ fn build_join_with_choice(
                 committed_choice,
                 kind_override,
                 prebuilt_left,
+                scan_cap,
             );
         }
     }
     let plan_only = trace.as_deref().is_some_and(PlanTrace::is_plan_only);
+    // Go's `PushDownTopNOptimizer` + `LogicalJoin.PushDownTopN`
+    // (`logical_join.go:428`, `pushDownTopNToChild:1272`): a bare LIMIT over
+    // an OUTER join whose inner side is unique on the join keys bounds the
+    // PRESERVED side's scan to `offset + count` rows -- every preserved row
+    // keeps its own output row, so the bound is sound -- and Go's own root
+    // limit disappears when the offset can travel too. This tier keeps the
+    // root `Limit` and only bounds the leaf read; the analysis lives in
+    // [`preserved_side_scan_cap`].
+    // The level holding the statement derives the verdict for the WHOLE
+    // tree; deeper levels (whose `prune` is deliberately `None`) inherit it.
+    // Only an all-LEFT chain survives the derivation, so a forwarded cap
+    // always rides the preserved side this level preserves too.
+    let scan_cap_for_children = match (scan_cap, prune) {
+        (incoming, Some(select)) => preserved_side_scan_cap(join, Some(select), catalog, current_db).or(incoming),
+        (incoming, None) => incoming,
+    };
+    let (left_scan_cap, right_scan_cap) = match (&kind, scan_cap_for_children) {
+        (JoinKind::Left, Some(cap)) => (Some(cap), None),
+        (JoinKind::Right, Some(cap)) => (None, Some(cap)),
+        _ => (None, None),
+    };
     let mut child_output_columns = demand.output_columns.cloned();
     if let Some(columns) = &mut child_output_columns {
         columns.add_current_join(join);
@@ -3592,6 +3653,7 @@ fn build_join_with_choice(
                 left_trace,
                 child_demand,
                 &left_required,
+                left_scan_cap,
             )?;
             (exec, scope, delivered, None, None, None, None)
         }
@@ -3794,6 +3856,7 @@ fn build_join_with_choice(
         right_trace,
         child_demand,
         &right_required,
+        right_scan_cap,
     )?;
     if !demand.plan_columns.is_empty() {
         right_scope.plan_columns = demand.plan_columns.to_vec();
@@ -4691,6 +4754,7 @@ fn build_join_with_choice(
             None,
             runtime_demand,
             &tidb_planner::physical_property::PhysicalProperty::default(),
+            None,
         )?;
         composite_inner_memo::put(memo_key, delivered.candidate.clone());
         composite_inner_candidates[decision_index] = delivered.candidate;
@@ -4725,6 +4789,7 @@ fn build_join_with_choice(
                 alternative_left_trace.as_mut(),
                 child_demand,
                 &alternative_left_required,
+                None,
             )?;
             let mut alternative_right_trace = plan_only.then(PlanTrace::planning);
             let (_, _, right) = build_from(
@@ -4738,6 +4803,7 @@ fn build_join_with_choice(
                 alternative_right_trace.as_mut(),
                 child_demand,
                 &alternative_right_required,
+                None,
             )?;
             if let (Some(rows), Some(checkpoint)) = (demand.rows, consumption_after_initial.clone())
             {
@@ -5076,6 +5142,9 @@ fn build_join_with_choice(
             Some(winning_choice),
             kind_override,
             None,
+            // The winning rebuild keeps whatever cap the entry analysis
+            // already derived for this join.
+            scan_cap_for_children,
         );
     }
 
@@ -5170,6 +5239,7 @@ fn build_join_with_choice(
             None,
             runtime_demand,
             &tidb_planner::physical_property::PhysicalProperty::default(),
+            None,
         )?;
         if let (Some(rows), Some(checkpoint)) = (demand.rows, checkpoint) {
             rows.restore_filter_consumption(checkpoint);
@@ -6198,6 +6268,434 @@ pub(crate) fn qualified_scope_column(scope: &FromScope, current_db: &str, offset
         }
     }
     String::new()
+}
+
+/// Go `LogicalJoin.PushDownTopN` / `pushDownTopNToChild`
+/// (`logical_join.go:428`, `logical_join.go:1272`) reduced to this tier's
+/// single sound move: a bare `LIMIT offset, count` over a chain of OUTER
+/// joins whose INNER side of every level matches each outer row AT MOST ONCE
+/// -- unique on every equal join key -- may bound the PRESERVED side's
+/// base-table read to `offset + count` rows without changing the answer,
+/// because every preserved row keeps its own output row.
+///
+/// Go goes further (it eliminates the root limit when the offset can travel
+/// too, and it embeds the limit into the coprocessor DAG); this tier keeps
+/// the root `Limit` executor and bounds only the leaf read, which is the
+/// same rows-read win without touching result shapes.
+///
+/// The analysis runs ONCE at the level that holds the statement (`prune`)
+/// and covers the WHOLE join tree beneath it; deeper levels then inherit the
+/// verdict through [`build_from_inner`]'s forwarded cap, because only the
+/// top level can see the statement's `WHERE`. Every refusal below is on the
+/// safe side -- an uncapped read:
+///
+/// * statement shape: bounded `LIMIT`, empty `ORDER BY`, no
+///   `DISTINCT`/`GROUP BY`/`HAVING`, no window function, no aggregate in the
+///   select list (anything else applies the limit ABOVE a row count this
+///   bound would change);
+/// * tree shape: EVERY join on the way down is `LEFT` with no
+///   `USING`/`NATURAL`, whose inner operand is ONE base table and whose `ON`
+///   is a conjunction of plain `column = column` pairs resolving one side
+///   into that table;
+/// * uniqueness: each such inner table's primary key -- handle, clustered
+///   key, or some visible UNIQUE index -- is COVERED BY its equal keys
+///   (Go `Schema.IsUnique(true|false, joinKeys...)`);
+/// * `WHERE`: every conjunct avoids EVERY inner table of the chain
+///   (qualified names never name them; bare names are none of their
+///   columns) and carries no subquery -- anything else could filter rows
+///   ABOVE the capped read.
+#[must_use]
+pub(crate) fn preserved_side_scan_cap(
+    join: &tidb_ast::Join,
+    prune: Option<&tidb_ast::SelectStmt>,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<u64> {
+    let select = prune?;
+    // Statement shape first: the limit must apply to exactly the rows this
+    // bound preserves.
+    if !select.order_by.is_empty()
+        || select.distinct
+        || select.having.is_some()
+        || !select.group_by.is_empty()
+        || crate::window::select_has_window(select)
+        || select.fields.fields().iter().any(|field| {
+            matches!(
+                field,
+                tidb_ast::SelectField::Expr { expr, .. } if expr.has_aggregate_flag()
+            )
+        })
+    {
+        return None;
+    }
+    let limit = select.limit.as_ref()?;
+    let count = eval_limit_bound(&limit.count).ok()?;
+    let offset = limit
+        .offset
+        .as_ref()
+        .map_or(Ok(0), eval_limit_bound)
+        .ok()?;
+    let cap = offset.checked_add(count)?;
+
+    // Every inner table along the all-LEFT chain: visible name -> columns.
+    let mut inners: Vec<(String, Vec<String>)> = Vec::new();
+    if !chain_preserved_and_unique(&join.left, join, catalog, current_db, &mut inners) {
+        return None;
+    }
+
+    // Every WHERE conjunct must stay clear of EVERY inner table: a predicate
+    // filtering ABOVE the capped read could drop rows the statement still
+    // owed. Subqueries anywhere in the WHERE refuse outright.
+    if let Some(where_clause) = &select.where_clause {
+        let mut conjuncts = Vec::new();
+        collect_on_conjuncts(where_clause, &mut conjuncts);
+        for conjunct in conjuncts {
+            let mut refs = ColumnRefCollector::default();
+            refs.walk(conjunct);
+            if refs.has_subquery {
+                return None;
+            }
+            for path in &refs.paths {
+                if path.len() >= 2
+                    && inners.iter().any(|(alias, _)| {
+                        path[path.len() - 2].eq_ignore_ascii_case(alias)
+                    })
+                {
+                    return None;
+                }
+                if path.len() == 1 {
+                    let bare = path[0].to_ascii_lowercase();
+                    if inners
+                        .iter()
+                        .any(|(_, columns)| columns.iter().any(|c| *c == bare))
+                    {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+    Some(cap)
+}
+
+/// The all-LEFT structural walk behind [`preserved_side_scan_cap`]: every
+/// node must be a plain `LEFT JOIN` onto ONE base table whose equal-join
+/// keys cover a declared key; `inners` collects each level's inner table
+/// (visible name and lowercase column names) for the caller's `WHERE` audit.
+fn chain_preserved_and_unique(
+    node: &JoinNode,
+    join: &tidb_ast::Join,
+    catalog: &Catalog,
+    current_db: &str,
+    inners: &mut Vec<(String, Vec<String>)>,
+) -> bool {
+    // Coalescing joins rename columns implicitly; AST-level key matching
+    // would misread them.
+    if join.natural || !join.using.is_empty() || join.tp != tidb_ast::JoinType::Left {
+        return false;
+    }
+    let Some(right) = join.right.as_ref() else {
+        return false;
+    };
+    let JoinNode::Table(inner_ref) = right else {
+        return false;
+    };
+    let Some(inner_visible) = (match &inner_ref.alias {
+        Some(alias) => Some(alias.clone()),
+        None => inner_ref.name.last().cloned(),
+    }) else {
+        return false;
+    };
+    let Some(on) = join.on.as_ref() else {
+        return false;
+    };
+    let mut conjuncts = Vec::new();
+    collect_on_conjuncts(on, &mut conjuncts);
+    if conjuncts.is_empty() {
+        return false;
+    }
+    let mut inner_keys: Vec<String> = Vec::with_capacity(conjuncts.len());
+    for conjunct in &conjuncts {
+        let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::Eq, left, right) = conjunct else {
+            return false;
+        };
+        let (tidb_ast::Expr::Column(left_path), tidb_ast::Expr::Column(right_path)) =
+            (left.as_ref(), right.as_ref())
+        else {
+            return false;
+        };
+        let left_inner = path_names_inner(left_path, &inner_visible);
+        let right_inner = path_names_inner(right_path, &inner_visible);
+        match (left_inner, right_inner) {
+            (true, false) => inner_keys.push(last_path_segment(left_path)),
+            (false, true) => inner_keys.push(last_path_segment(right_path)),
+            _ => return false,
+        }
+    }
+    let Ok((database, name)) = split_table_path(&inner_ref.name, current_db) else {
+        return false;
+    };
+    let Some(TableEntry::Kv(kv)) = catalog.get_in(database, name) else {
+        return false;
+    };
+    if !kv_unique_on(kv, &inner_keys) {
+        return false;
+    }
+    inners.push((
+        inner_visible,
+        kv.visible_columns()
+            .iter()
+            .map(|column| column.name.to_ascii_lowercase())
+            .collect(),
+    ));
+    match &join.left {
+        JoinNode::Table(_) => true,
+        JoinNode::Join(inner) => {
+            chain_preserved_and_unique(&inner.left, inner, catalog, current_db, inners)
+        }
+        JoinNode::Derived { .. } => false,
+    }
+}
+
+/// The last segment of a column path -- the column name.
+fn last_path_segment(path: &[String]) -> String {
+    path.last().cloned().unwrap_or_default()
+}
+
+/// Whether a column path NAMES the given relation: qualified as
+/// `[relation, column]` or `[db, relation, column]`; a bare name never
+/// qualifies at this AST level.
+fn path_names_inner(path: &[String], inner_visible: &str) -> bool {
+    path.len() >= 2 && path[path.len() - 2].eq_ignore_ascii_case(inner_visible)
+}
+
+/// Splits an expression into top-level `AND` conjuncts (parentheses and
+/// non-AND operators stay whole).
+fn collect_on_conjuncts<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
+    match expr {
+        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, left, right) => {
+            collect_on_conjuncts(left, out);
+            collect_on_conjuncts(right, out);
+        }
+        tidb_ast::Expr::Paren(inner) => collect_on_conjuncts(inner, out),
+        other => out.push(other),
+    }
+}
+
+/// Go `Schema.IsUnique(unique, cols...)` over catalog metadata: whether some
+/// declared key of `kv` -- the integer handle PK, the clustered common
+/// handle, or a visible UNIQUE index -- is COVERED by `cols`.
+fn kv_unique_on(kv: &crate::kv_table::KvTable, cols: &[String]) -> bool {
+    if cols.is_empty() {
+        return false;
+    }
+    let lowered: Vec<String> = cols.iter().map(|c| c.to_ascii_lowercase()).collect();
+    let offset_of = |name: &str| -> Option<usize> {
+        kv.visible_columns()
+            .iter()
+            .position(|column| column.name.eq_ignore_ascii_case(name))
+    };
+    let key_offsets: Vec<Option<usize>> =
+        lowered.iter().map(|name| offset_of(name)).collect();
+    if key_offsets.iter().any(Option::is_none) {
+        return false;
+    }
+    let key_offsets: Vec<usize> = key_offsets.into_iter().flatten().collect();
+    if kv.pk_handle_offset().is_some_and(|pk| key_offsets.contains(&pk)) {
+        return true;
+    }
+    let common = kv.common_handle_offsets();
+    if !common.is_empty() && common.iter().all(|offset| key_offsets.contains(offset)) {
+        return true;
+    }
+    kv.indexes().iter().any(|index| {
+        index.unique
+            && index.visible
+            && !index.global
+            && !index.column_offsets.is_empty()
+            && index
+                .column_offsets
+                .iter()
+                .all(|offset| key_offsets.contains(offset))
+    })
+}
+
+/// Every column path an expression names, plus whether ANY subquery hides
+/// inside it. Exhaustive over [`Expr`] the same walk
+/// [`crate::driver::leaf_demand`] holds itself to: a new variant is a compile
+/// error here rather than an unexamined subtree.
+#[derive(Default)]
+struct ColumnRefCollector {
+    paths: Vec<Vec<String>>,
+    has_subquery: bool,
+}
+
+impl ColumnRefCollector {
+    fn walk(&mut self, expr: &tidb_ast::Expr) {
+        match expr {
+            tidb_ast::Expr::Column(path) | tidb_ast::Expr::Default(Some(path)) => self.paths.push(path.clone()),
+            tidb_ast::Expr::MatchAgainst { columns, against, .. } => {
+                for path in columns {
+                    self.paths.push(path.clone());
+                }
+                self.walk(against);
+            }
+
+            // Leaves.
+            tidb_ast::Expr::Int(_)
+            | tidb_ast::Expr::Decimal(_)
+            | tidb_ast::Expr::Float(_)
+            | tidb_ast::Expr::Hex(_)
+            | tidb_ast::Expr::Bit(_)
+            | tidb_ast::Expr::String(_)
+            | tidb_ast::Expr::RawString(_)
+            | tidb_ast::Expr::CharsetString { .. }
+            | tidb_ast::Expr::Null
+            | tidb_ast::Expr::Bool(_)
+            | tidb_ast::Expr::Default(None)
+            | tidb_ast::Expr::ParamMarker { .. }
+            | tidb_ast::Expr::UserVar(_)
+            | tidb_ast::Expr::SysVar { .. } => {}
+
+            // Nested queries: presence alone refuses the cap.
+            tidb_ast::Expr::Subquery(_)
+            | tidb_ast::Expr::Exists { .. }
+            | tidb_ast::Expr::InSubquery { .. }
+            | tidb_ast::Expr::CompareSubquery { .. } => self.has_subquery = true,
+
+            // Recursions.
+            tidb_ast::Expr::Paren(inner)
+            | tidb_ast::Expr::Unary(_, inner)
+            | tidb_ast::Expr::Assign { value: inner, .. }
+            | tidb_ast::Expr::CharsetBinary { value: inner, .. }
+            | tidb_ast::Expr::Interval { value: inner, .. }
+            | tidb_ast::Expr::Extract { value: inner, .. }
+            | tidb_ast::Expr::WeightString { expr: inner, .. }
+            | tidb_ast::Expr::GetFormat { expr: inner, .. }
+            | tidb_ast::Expr::Is { expr: inner, .. }
+            | tidb_ast::Expr::ConvertUsing { expr: inner, .. }
+            | tidb_ast::Expr::Collate { expr: inner, .. } => self.walk(inner),
+            tidb_ast::Expr::Binary(_, left, right)
+            | tidb_ast::Expr::Position {
+                substr: left,
+                str: right,
+            }
+            | tidb_ast::Expr::TimestampAdd {
+                interval: left,
+                expr: right,
+                ..
+            }
+            | tidb_ast::Expr::TimestampDiff {
+                expr1: left,
+                expr2: right,
+                ..
+            }
+            | tidb_ast::Expr::Like {
+                expr: left,
+                pattern: right,
+                ..
+            }
+            | tidb_ast::Expr::Regexp {
+                expr: left,
+                pattern: right,
+                ..
+            }
+            | tidb_ast::Expr::MemberOf {
+                expr: left,
+                array: right,
+            } => {
+                self.walk(left);
+                self.walk(right);
+            }
+            tidb_ast::Expr::Trim {
+                expr,
+                remstr,
+                direction: _,
+            } => {
+                self.walk(expr);
+                if let Some(remstr) = remstr {
+                    self.walk(remstr);
+                }
+            }
+            tidb_ast::Expr::Row(items)
+            | tidb_ast::Expr::Func { args: items, .. }
+            | tidb_ast::Expr::GenericFuncCall { args: items, .. }
+            | tidb_ast::Expr::Aggregate { args: items, .. } => {
+                for item in items {
+                    self.walk(item);
+                }
+            }
+            tidb_ast::Expr::GroupConcat { args, order_by, .. } => {
+                for arg in args {
+                    self.walk(arg);
+                }
+                for item in order_by {
+                    self.walk(&item.expr);
+                }
+            }
+            tidb_ast::Expr::In { expr, list, not: _ } => {
+                self.walk(expr);
+                for item in list {
+                    self.walk(item);
+                }
+            }
+            tidb_ast::Expr::Between {
+                expr,
+                low,
+                high,
+                not: _,
+            } => {
+                self.walk(expr);
+                self.walk(low);
+                self.walk(high);
+            }
+            tidb_ast::Expr::Window { args, over, .. } => {
+                for arg in args {
+                    self.walk(arg);
+                }
+                match over {
+                    tidb_ast::WindowOver::Def(def) if def.base.is_none() => {
+                        for spec_expr in &def.spec.partition_by {
+                            self.walk(spec_expr);
+                        }
+                        for item in &def.spec.order_by {
+                            self.walk(&item.expr);
+                        }
+                        if let Some(frame) = &def.spec.frame {
+                            for bound in [&frame.start, &frame.end] {
+                                match bound {
+                                    tidb_ast::FrameBound::Preceding(expr)
+                                    | tidb_ast::FrameBound::Following(expr) => self.walk(expr),
+                                    tidb_ast::FrameBound::UnboundedPreceding
+                                    | tidb_ast::FrameBound::CurrentRow
+                                    | tidb_ast::FrameBound::UnboundedFollowing => {}
+                                }
+                            }
+                        }
+                    }
+                    tidb_ast::WindowOver::Name(_) | tidb_ast::WindowOver::Def(_) => {}
+                }
+            }
+            tidb_ast::Expr::Case {
+                value,
+                when_clauses,
+                else_clause,
+            } => {
+                if let Some(value) = &value {
+                    self.walk(value);
+                }
+                for (condition, result) in when_clauses {
+                    self.walk(condition);
+                    self.walk(result);
+                }
+                if let Some(else_clause) = else_clause {
+                    self.walk(else_clause);
+                }
+            }
+            tidb_ast::Expr::Cast(cast) => self.walk(&cast.expr),
+
+        }
+    }
 }
 
 #[cfg(test)]

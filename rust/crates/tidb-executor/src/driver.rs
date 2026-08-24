@@ -2095,6 +2095,9 @@ fn run_select_traced_with_delivery_choice_inner(
                 // rather than the written join, because a reorder renumbers
                 // the leaves and the offsets are the reordered ones.
                 source_required,
+                // Each join level derives its own preserved-side scan cap
+                // (`from::preserved_side_scan_cap`); none arrives from here.
+                None,
             )?;
             // Read the residue only after both leaves committed their
             // physical paths and reported which local filters those paths
