@@ -83,9 +83,6 @@ func mergeCountWithSamples(cs **countWithSamples, completed *countWithSamples) {
 
 // cleanupStats uses exported fields so zap.Any can encode them using their JSON tags.
 type cleanupStats struct {
-	CandidateTasks         int64             `json:"candidate-tasks,omitempty"`
-	RetainedTasks          int64             `json:"retained-tasks,omitempty"`
-	DeletedTasks           int64             `json:"deleted-tasks,omitempty"`
 	DeletedFiles           int64             `json:"deleted-files,omitempty"`
 	MissingTasks           *countWithSamples `json:"missing-tasks,omitempty"`
 	MissingTaskFiles       *countWithSamples `json:"missing-task-files,omitempty"`
@@ -98,13 +95,11 @@ func (stats *cleanupStats) recordUnparsedTaskIDFiles(files []string) {
 	recordCountWithSamples(&stats.UnparsedTaskIDFiles, files...)
 }
 
-func (stats *cleanupStats) recordTask(
+func (stats *cleanupStats) recordTaskDiagnostics(
 	taskID int64,
 	files []string,
 	info *storage.TaskCleanupInfo,
-	shouldDeleteFiles bool,
 ) {
-	stats.CandidateTasks++
 	switch {
 	case info == nil:
 		// Conflict-row files should not outlive their task metadata. This is
@@ -114,28 +109,19 @@ func (stats *cleanupStats) recordTask(
 		// A task ID collision with another task type should also be rare. These
 		// files cannot belong to IMPORT INTO, so record samples before deletion.
 		stats.recordNonImportIntoTask(files)
-	case shouldDeleteFiles:
-		stats.DeletedTasks++
-	default:
-		stats.RetainedTasks++
 	}
 }
 
 func (stats *cleanupStats) recordMissingTask(taskID int64, files []string) {
 	recordCountWithSamples(&stats.MissingTasks, strconv.FormatInt(taskID, 10))
 	recordCountWithSamples(&stats.MissingTaskFiles, files...)
-	stats.DeletedTasks++
 }
 
 func (stats *cleanupStats) recordNonImportIntoTask(files []string) {
 	recordCountWithSamples(&stats.NonImportIntoTaskFiles, files...)
-	stats.DeletedTasks++
 }
 
 func (stats *cleanupStats) mergeCompletedFlush(completed cleanupStats) {
-	stats.CandidateTasks += completed.CandidateTasks
-	stats.RetainedTasks += completed.RetainedTasks
-	stats.DeletedTasks += completed.DeletedTasks
 	stats.DeletedFiles += completed.DeletedFiles
 	mergeCountWithSamples(&stats.MissingTasks, completed.MissingTasks)
 	mergeCountWithSamples(&stats.MissingTaskFiles, completed.MissingTaskFiles)
@@ -222,7 +208,7 @@ func cleanFiles(
 			files := taskFiles[taskID]
 			info := infosByTaskID[taskID]
 			shouldDeleteFiles := info == nil || info.Type != proto.ImportInto || shouldDelete(*info, now)
-			flushStats.recordTask(taskID, files, info, shouldDeleteFiles)
+			flushStats.recordTaskDiagnostics(taskID, files, info)
 			if shouldDeleteFiles {
 				filesToDelete = append(filesToDelete, files...)
 			}

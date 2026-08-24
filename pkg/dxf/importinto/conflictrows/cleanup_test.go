@@ -181,49 +181,25 @@ func TestShouldDelete(t *testing.T) {
 func TestCleanFiles(t *testing.T) {
 	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
 
-	t.Run("record task decisions", func(t *testing.T) {
+	t.Run("record task diagnostics", func(t *testing.T) {
 		files := []string{"conflicted-rows/1/a", "conflicted-rows/1/b"}
 		testCases := []struct {
-			name              string
-			info              *storage.TaskCleanupInfo
-			shouldDeleteFiles bool
-			wantStats         cleanupStats
+			name      string
+			info      *storage.TaskCleanupInfo
+			wantStats cleanupStats
 		}{
 			{
-				name:              "missing task",
-				shouldDeleteFiles: true,
+				name: "missing task",
 				wantStats: cleanupStats{
-					CandidateTasks:   1,
-					DeletedTasks:     1,
 					MissingTasks:     &countWithSamples{Count: 1, Samples: []string{"1"}},
 					MissingTaskFiles: &countWithSamples{Count: 2, Samples: files},
 				},
 			},
 			{
-				name:              "non import into task",
-				info:              &storage.TaskCleanupInfo{Type: proto.TaskTypeExample},
-				shouldDeleteFiles: true,
+				name: "non import into task",
+				info: &storage.TaskCleanupInfo{Type: proto.TaskTypeExample},
 				wantStats: cleanupStats{
-					CandidateTasks:         1,
-					DeletedTasks:           1,
 					NonImportIntoTaskFiles: &countWithSamples{Count: 2, Samples: files},
-				},
-			},
-			{
-				name:              "delete import task files",
-				info:              &storage.TaskCleanupInfo{Type: proto.ImportInto},
-				shouldDeleteFiles: true,
-				wantStats: cleanupStats{
-					CandidateTasks: 1,
-					DeletedTasks:   1,
-				},
-			},
-			{
-				name: "retain task",
-				info: &storage.TaskCleanupInfo{Type: proto.ImportInto},
-				wantStats: cleanupStats{
-					CandidateTasks: 1,
-					RetainedTasks:  1,
 				},
 			},
 		}
@@ -231,7 +207,7 @@ func TestCleanFiles(t *testing.T) {
 		for _, testCase := range testCases {
 			t.Run(testCase.name, func(t *testing.T) {
 				stats := cleanupStats{}
-				stats.recordTask(1, files, testCase.info, testCase.shouldDeleteFiles)
+				stats.recordTaskDiagnostics(1, files, testCase.info)
 				require.Equal(t, testCase.wantStats, stats)
 			})
 		}
@@ -285,9 +261,6 @@ func TestCleanFiles(t *testing.T) {
 
 		stats, err := cleanFiles(context.Background(), store, getter, now)
 		require.NoError(t, err)
-		require.Equal(t, int64(4), stats.CandidateTasks)
-		require.Equal(t, int64(1), stats.RetainedTasks)
-		require.Equal(t, int64(3), stats.DeletedTasks)
 		require.Equal(t, int64(4), stats.DeletedFiles)
 		require.Nil(t, stats.MissingTasks)
 		require.Equal(t, int64(1), stats.NonImportIntoTaskFiles.Count)
@@ -408,9 +381,6 @@ func TestCleanFiles(t *testing.T) {
 
 		stats, err := cleanFiles(context.Background(), store, getter, now)
 		require.ErrorIs(t, err, deleteErr)
-		require.Equal(t, int64(1), stats.CandidateTasks)
-		require.Zero(t, stats.RetainedTasks)
-		require.Equal(t, int64(1), stats.DeletedTasks)
 		require.Equal(t, int64(maxObjectsPerFlush+1), stats.DeletedFiles)
 		require.Nil(t, stats.MissingTasks)
 		require.Equal(t, int64(1), stats.Failures)
@@ -437,9 +407,6 @@ func TestCleanFiles(t *testing.T) {
 				return map[int64]*storage.TaskCleanupInfo{}, nil
 			}), now)
 		require.NoError(t, err)
-		require.Equal(t, int64(20), stats.CandidateTasks)
-		require.Zero(t, stats.RetainedTasks)
-		require.Equal(t, int64(20), stats.DeletedTasks)
 		require.Equal(t, int64(20), stats.DeletedFiles)
 		require.Equal(t, int64(20), stats.MissingTasks.Count)
 		require.Equal(t, int64(20), stats.MissingTaskFiles.Count)
@@ -456,12 +423,12 @@ func TestCleanFiles(t *testing.T) {
 		fields := entries[0].ContextMap()
 		require.Len(t, fields, 1)
 		loggedStats, loggedFields := requireLoggedCleanupStats(t, fields["stats"])
-		require.Equal(t, int64(20), loggedStats.CandidateTasks)
-		require.Equal(t, int64(20), loggedStats.DeletedTasks)
 		require.Equal(t, int64(20), loggedStats.DeletedFiles)
 		requireLoggedCountWithSamples(t, loggedFields["missing-tasks"], stats.MissingTasks)
 		requireLoggedCountWithSamples(t, loggedFields["missing-task-files"], stats.MissingTaskFiles)
+		require.NotContains(t, loggedFields, "candidate-tasks")
 		require.NotContains(t, loggedFields, "retained-tasks")
+		require.NotContains(t, loggedFields, "deleted-tasks")
 		require.NotContains(t, loggedFields, "non-import-into-task-files")
 		require.NotContains(t, loggedFields, "unparsed-task-id-files")
 		require.NotContains(t, loggedFields, "failures")
@@ -487,8 +454,6 @@ func TestCleanFiles(t *testing.T) {
 
 		stats, err := cleanFiles(context.Background(), store, getter, now)
 		require.NoError(t, err)
-		require.Equal(t, int64(1), stats.CandidateTasks)
-		require.Equal(t, int64(1), stats.DeletedTasks)
 		require.Equal(t, int64(40), stats.DeletedFiles)
 		require.Equal(t, int64(20), stats.NonImportIntoTaskFiles.Count)
 		require.Equal(t, int64(20), stats.UnparsedTaskIDFiles.Count)
@@ -502,8 +467,6 @@ func TestCleanFiles(t *testing.T) {
 		fields := entries[0].ContextMap()
 		require.Len(t, fields, 1)
 		loggedStats, loggedFields := requireLoggedCleanupStats(t, fields["stats"])
-		require.Equal(t, int64(1), loggedStats.CandidateTasks)
-		require.Equal(t, int64(1), loggedStats.DeletedTasks)
 		require.Equal(t, int64(40), loggedStats.DeletedFiles)
 		requireLoggedCountWithSamples(t,
 			loggedFields["non-import-into-task-files"], stats.NonImportIntoTaskFiles)
@@ -527,7 +490,6 @@ func TestCleanFiles(t *testing.T) {
 				return nil, nil
 			}), now)
 		require.NoError(t, err)
-		require.Zero(t, stats.CandidateTasks)
 		require.Equal(t, int64(maxObjectsPerFlush+1), stats.UnparsedTaskIDFiles.Count)
 		require.Equal(t, int64(maxObjectsPerFlush+1), stats.DeletedFiles)
 		require.Len(t, store.deleteCalls, 1)
