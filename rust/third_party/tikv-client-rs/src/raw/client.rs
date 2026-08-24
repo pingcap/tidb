@@ -1354,7 +1354,10 @@ mod tests {
                 let context = req.context.as_ref().expect("request context");
                 assert_eq!(req.key, b"key");
                 assert_eq!(context.api_version, kvrpcpb::ApiVersion::V1 as i32);
-                assert_eq!(context.keyspace_id, 0);
+                assert_eq!(
+                    crate::request::context_keyspace_id(context),
+                    Some(crate::request::NULL_KEYSPACE_ID)
+                );
                 assert!(context.keyspace_name.is_empty());
                 Ok(Box::new(kvrpcpb::RawGetResponse {
                     not_found: true,
@@ -1385,7 +1388,10 @@ mod tests {
                     .expect("raw batch put request");
                 let context = req.context.as_ref().expect("request context");
                 assert_eq!(context.api_version, kvrpcpb::ApiVersion::V1 as i32);
-                assert_eq!(context.keyspace_id, 0);
+                assert_eq!(
+                    crate::request::context_keyspace_id(context),
+                    Some(crate::request::NULL_KEYSPACE_ID)
+                );
                 assert!(context.keyspace_name.is_empty());
                 Ok(Box::new(kvrpcpb::RawBatchPutResponse::default()) as Box<dyn Any>)
             },
@@ -1536,7 +1542,7 @@ mod tests {
                 if let Some(req) = req.downcast_ref::<kvrpcpb::RawBatchPutRequest>() {
                     let context = req.context.as_ref().unwrap();
                     assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
-                    assert_eq!(context.keyspace_id, 0);
+                    assert_eq!(crate::request::context_keyspace_id(context), Some(0));
                     assert_eq!(context.keyspace_name, "tenant");
                     assert_eq!(req.cf, "tenant_cf");
                     assert_eq!(req.ttl, 7);
@@ -1906,7 +1912,7 @@ mod tests {
                     .expect("raw scan request");
                 let context = req.context.as_ref().unwrap();
                 assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
-                assert_eq!(context.keyspace_id, 7);
+                assert_eq!(crate::request::context_keyspace_id(context), Some(7));
                 assert_eq!(context.keyspace_name, "tenant");
                 assert_eq!(req.start_key, b"r\0\0\x07\x01");
                 assert_eq!(req.end_key, b"r\0\0\x07\x02");
@@ -1947,7 +1953,7 @@ mod tests {
                     .expect("raw batch get request");
                 let context = req.context.as_ref().unwrap();
                 assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
-                assert_eq!(context.keyspace_id, 7);
+                assert_eq!(crate::request::context_keyspace_id(context), Some(7));
                 assert_eq!(context.keyspace_name, "tenant");
                 assert_eq!(
                     req.keys,
@@ -2086,7 +2092,7 @@ mod tests {
                     assert_eq!(req.copr_version_req, "0.1.0");
                     let context = req.context.as_ref().expect("request context");
                     assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
-                    assert_eq!(context.keyspace_id, 0);
+                    assert_eq!(crate::request::context_keyspace_id(context), Some(0));
                     assert_eq!(context.keyspace_name, "tenant");
                     let resp = kvrpcpb::RawCoprocessorResponse {
                         data: req.data.clone(),

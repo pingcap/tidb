@@ -1,6 +1,7 @@
 syntax = "proto3";
 package kvrpcpb;
 
+import "apipb.proto";
 import "deadlock.proto";
 import "errorpb.proto";
 import "gogoproto/gogo.proto";
@@ -939,9 +940,16 @@ message Context {
   // NOTE: This field is only meaningful while the api_version is V2.
   string keyspace_name = 31;
 
-  // The keyspace that the request is sent to.
-  // NOTE: This field is only meaningful while the api_version is V2.
-  uint32 keyspace_id = 32;
+  oneof keyspace {
+    // The keyspace that the request is sent to.
+    // NOTE: This field is only meaningful while the api_version is V2.
+    // V3 uses keyspace_identity and must not read this legacy field as the full identity.
+    uint32 keyspace_id = 32;
+    // The V3 keyspace identity that the request is sent to.
+    // V3 RPC key fields carry user key bytes; TiKV encodes the physical
+    // mode + namespace + keyspace prefix at the serving boundary.
+    apipb.KeyspaceIdentity keyspace_identity = 38;
+  }
 
   // The buckets version that the request is sent to.
   // NOTE: This field is only meaningful while enable buckets.
@@ -1037,6 +1045,12 @@ enum APIVersion {
   // V2 server accpets V2 requests and V1 transactional requests that statrts with TiDB key
   // prefix (`m` and `t`).
   V2 = 2;
+  //
+  // `V3` uses user-key wire semantics for normal KV RPCs. Servers encode an
+  // 8-byte physical prefix at the serving boundary:
+  // mode(1) + namespace_id(4 bytes, big endian) + keyspace_id(3 bytes, big endian).
+  // The keyspace identity is carried by Context.keyspace_identity.
+  V3 = 3;
 }
 
 message SourceStmt {
@@ -1341,6 +1355,87 @@ message ExecDetailsV2 {
 
   // RU (Request Unit) consumption details.
   RUV2 ru_v2 = 5;
+
+  // Scheduling and execution details for the request's read-pool task.
+  // Available when read-pool task tracking is enabled in TiKV.
+  PoolTaskDetails read_pool_task_details = 6;
+}
+
+// Scheduling and execution details collected across all polls of one task running in a pool.
+// The timing model is:
+//                            total_wall_nanos
+//     <--------------------------------------------------------------------->
+//
+//     submitted      worker starts       async event       worker starts   done
+//         │                │               completes             │          │
+//         ▼                ▼                   ▼                 ▼          ▼
+//     ┌──────────────┬─────────────────┬─────────────────┬──────────────┬──────┐
+//     │  Queue Wait  │ Poll Execution  │ Async/Wake Wait │  Queue Wait  │ Poll │
+//     │              │                 │                 │              │ Exec │
+//     │ task is      │ Future::poll    │ Future is       │ task is      │      │
+//     │ runnable,    │ returns Pending │ Pending, waiting│ runnable,    │Ready │
+//     │ waiting for  │                 │ for I/O, timer, │ waiting for  │      │
+//     │ a worker     │                 │ lock, etc.      │ a worker     │      │
+//     └──────────────┴─────────────────┴─────────────────┴──────────────┴──────┘
+//            │                │                  │
+//            │                │                  └─ total/max/min_wake_wait_nanos
+//            │                │
+//            │                ├─ poll_wall_nanos
+//            │                └─ poll_cpu_nanos
+//            │
+//            ├─ total/max/min_queue_wait_nanos
+//            └─ fair_queue_waited_task_slices
+message PoolTaskDetails {
+  // Number of Future::poll calls, including immediate repolls within one worker dispatch.
+  uint64 poll_count = 1;
+
+  // Number of worker dispatches. Immediate repolls in one dispatch are not counted separately.
+  uint64 dispatch_count = 2;
+
+  // Wall time from immediately before the initial pool submission until the final poll completes.
+  uint64 total_wall_nanos = 3;
+
+  // Total time from enqueueing a ready task until a worker starts dispatching it.
+  // Zero when no queue-wait sample was recorded.
+  uint64 total_queue_wait_nanos = 4;
+  // Maximum queue wait time among all dispatches.
+  uint64 max_queue_wait_nanos = 5;
+  // Minimum queue wait time among all dispatches.
+  uint64 min_queue_wait_nanos = 6;
+
+  // Total time from a pending poll's completion until the task is scheduled again.
+  // Zero when no wake-wait sample was recorded.
+  uint64 total_wake_wait_nanos = 7;
+  // Maximum wake wait time among all wakeups.
+  uint64 max_wake_wait_nanos = 8;
+  // Minimum wake wait time among all wakeups.
+  uint64 min_wake_wait_nanos = 9;
+
+  // Whether fair-queue waited-slice data was collected for this task.
+  bool fair_queue_enabled = 10;
+  // Total number of task slices dispatched ahead of this task while it waited in the fair queue.
+  // Zero when no fair-queue wait sample was recorded.
+  uint64 total_fair_queue_waited_task_slices = 11;
+  // Maximum number of task slices dispatched ahead of this task during one fair-queue wait.
+  uint64 max_fair_queue_waited_task_slices = 12;
+  // Minimum number of task slices dispatched ahead of this task during one fair-queue wait.
+  uint64 min_fair_queue_waited_task_slices = 13;
+
+  // Total thread CPU time consumed by Future::poll calls.
+  // Zero when no poll sample was recorded.
+  uint64 poll_cpu_nanos = 14;
+  // Maximum thread CPU time consumed by one Future::poll call.
+  uint64 max_poll_cpu_nanos = 15;
+  // Minimum thread CPU time consumed by one Future::poll call.
+  uint64 min_poll_cpu_nanos = 16;
+
+  // Total wall time consumed by Future::poll calls.
+  // Zero when no poll sample was recorded.
+  uint64 poll_wall_nanos = 17;
+  // Minimum wall time consumed by one Future::poll call.
+  uint64 min_poll_wall_nanos = 18;
+  // Maximum wall time consumed by one Future::poll call.
+  uint64 max_poll_wall_nanos = 19;
 }
 
 message RUV2 {
@@ -1701,8 +1796,14 @@ message CompactRequest {
 
   // API version of the request
   APIVersion api_version = 7;
-  // Keyspace of the table located in.
-  uint32 keyspace_id = 8;
+  oneof keyspace {
+    // Keyspace of the table located in.
+    // NOTE: This field is only meaningful for V1/V2 compatibility. V3 uses
+    // keyspace_identity and must not read this field as the full identity.
+    uint32 keyspace_id = 8;
+    // V3 keyspace identity of the table located in.
+    apipb.KeyspaceIdentity keyspace_identity = 9;
+  }
 }
 
 message CompactResponse {

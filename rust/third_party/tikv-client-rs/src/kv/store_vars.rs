@@ -105,6 +105,18 @@ impl ReplicaReadConfig {
         self.prefer_leader || matches!(self.read_type, ReplicaReadType::PreferLeader)
     }
 
+    /// Mirrors `disableReadFeaturesForNextGen`: the source build keeps the
+    /// read timestamp but disables replica/stale routing and busy-threshold
+    /// redirection before constructing its selector.
+    pub(crate) fn for_source_build(mut self) -> Self {
+        if cfg!(feature = "nextgen") {
+            self.read_type = ReplicaReadType::Leader;
+            self.stale_read = false;
+            self.busy_threshold_ms = 0;
+        }
+        self
+    }
+
     pub(crate) fn apply_adjustment(&mut self, adjustment: ReplicaReadAdjustment) {
         self.read_type = adjustment.read_type;
         match adjustment.selector {
@@ -238,5 +250,44 @@ mod tests {
             ..Default::default()
         };
         assert!(prefer.effective_prefer_leader());
+    }
+
+    #[test]
+    fn source_nextgen_build_disables_read_features_but_retains_selector_filters() {
+        let requested = ReplicaReadConfig {
+            read_type: ReplicaReadType::PreferLeader,
+            leader_only: true,
+            prefer_leader: true,
+            stale_read: true,
+            labels: vec![metapb::StoreLabel {
+                key: "zone".to_owned(),
+                value: "z1".to_owned(),
+            }],
+            stores: vec![7],
+            busy_threshold_ms: 500,
+        };
+        let effective = requested.clone().for_source_build();
+
+        if cfg!(feature = "nextgen") {
+            assert_eq!(effective.read_type, ReplicaReadType::Leader);
+            assert!(effective.prefer_leader);
+            assert!(!effective.stale_read);
+            assert_eq!(effective.busy_threshold_ms, 0);
+            assert!(effective.leader_only);
+            assert_eq!(effective.labels, requested.labels);
+            assert_eq!(effective.stores, requested.stores);
+        } else {
+            assert_eq!(effective, requested);
+        }
+
+        let derived_preference = ReplicaReadConfig {
+            read_type: ReplicaReadType::PreferLeader,
+            ..Default::default()
+        }
+        .for_source_build();
+        assert_eq!(
+            derived_preference.effective_prefer_leader(),
+            !cfg!(feature = "nextgen")
+        );
     }
 }

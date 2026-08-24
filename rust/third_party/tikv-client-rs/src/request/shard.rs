@@ -16,6 +16,7 @@ use crate::request::Plan;
 use crate::request::Process;
 use crate::request::ProcessResponse;
 use crate::request::ResolveLock;
+use crate::retry::RetryConfig;
 use crate::store::RegionStore;
 use crate::store::Request;
 use crate::Result;
@@ -48,8 +49,39 @@ macro_rules! impl_inner_shardable {
             self.inner.replica_selector_state()
         }
 
+        fn region_request_runtime_stats(&self) -> Option<Arc<$crate::RegionRequestRuntimeStats>> {
+            self.inner.region_request_runtime_stats()
+        }
+
+        fn set_region_request_runtime_stats(
+            &mut self,
+            stats: Option<Arc<$crate::RegionRequestRuntimeStats>>,
+        ) {
+            self.inner.set_region_request_runtime_stats(stats);
+        }
+
         fn record_replica_attempt(&mut self, peer_id: u64) {
             self.inner.record_replica_attempt(peer_id);
+        }
+
+        fn record_replica_attempted_time(&mut self, peer_id: u64, duration: std::time::Duration) {
+            self.inner.record_replica_attempted_time(peer_id, duration);
+        }
+
+        fn mark_replica_deadline_exceeded(&mut self, peer_id: u64) {
+            self.inner.mark_replica_deadline_exceeded(peer_id);
+        }
+
+        fn add_pending_backoff(&mut self, store_id: u64, config: RetryConfig, reason: String) {
+            self.inner.add_pending_backoff(store_id, config, reason);
+        }
+
+        fn take_pending_backoff(&mut self, store_id: u64) -> Option<(RetryConfig, String)> {
+            self.inner.take_pending_backoff(store_id)
+        }
+
+        fn largest_pending_backoff(&self) -> Option<(RetryConfig, String)> {
+            self.inner.largest_pending_backoff()
         }
 
         fn mark_retry_request(&mut self) {
@@ -141,7 +173,31 @@ pub trait Shardable {
         ReplicaSelectorState::default()
     }
 
+    fn region_request_runtime_stats(&self) -> Option<Arc<crate::RegionRequestRuntimeStats>> {
+        None
+    }
+
+    fn set_region_request_runtime_stats(
+        &mut self,
+        _stats: Option<Arc<crate::RegionRequestRuntimeStats>>,
+    ) {
+    }
+
     fn record_replica_attempt(&mut self, _peer_id: u64) {}
+
+    fn record_replica_attempted_time(&mut self, _peer_id: u64, _duration: std::time::Duration) {}
+
+    fn mark_replica_deadline_exceeded(&mut self, _peer_id: u64) {}
+
+    fn add_pending_backoff(&mut self, _store_id: u64, _config: RetryConfig, _reason: String) {}
+
+    fn take_pending_backoff(&mut self, _store_id: u64) -> Option<(RetryConfig, String)> {
+        None
+    }
+
+    fn largest_pending_backoff(&self) -> Option<(RetryConfig, String)> {
+        None
+    }
 
     /// Source `RegionRequestSender` marks every resend in the wire context.
     /// Plans without a TiKV request retain a no-op implementation.
@@ -294,6 +350,11 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
             ru_details: self.ru_details.clone(),
             store_token_count: self.store_token_count.clone(),
             store_token_store_id: self.store_token_store_id,
+            region_request_runtime_stats: self.region_request_runtime_stats.clone(),
+            logical_peer_id: self.logical_peer_id,
+            logical_store_id: self.logical_store_id,
+            request_stale_read: self.request_stale_read,
+            request_replica_read: self.request_replica_read,
             interceptor: self.interceptor.clone(),
             execution_details_trace_handler: self.execution_details_trace_handler.clone(),
             network_traffic_details: self.network_traffic_details.clone(),
@@ -315,8 +376,18 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         self.resource_control_access_location = store.resource_control_access_location;
         self.store_token_count = store.store_token_count.clone();
         self.store_token_store_id = store.target_peer.as_ref().map_or(0, |peer| peer.store_id);
+        self.logical_peer_id = store.target_peer.as_ref().map(|peer| peer.id);
+        self.logical_store_id = store.target_peer.as_ref().map(|peer| peer.store_id);
+        self.request_stale_read = store.stale_read;
+        self.request_replica_read = store.is_replica_read();
         if store.busy_threshold_disabled {
             self.replica_selector_state.disable_busy_threshold();
+        }
+        if store.restores_suspect_leader {
+            if let Some(leader) = store.region_with_leader.leader.as_ref() {
+                self.replica_selector_state
+                    .restore_suspect_leader(leader.id);
+            }
         }
         self.request.apply_store(store).map(|()| {
             self.request
@@ -332,8 +403,41 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         self.replica_selector_state.clone()
     }
 
+    fn region_request_runtime_stats(&self) -> Option<Arc<crate::RegionRequestRuntimeStats>> {
+        self.region_request_runtime_stats.clone()
+    }
+
+    fn set_region_request_runtime_stats(
+        &mut self,
+        stats: Option<Arc<crate::RegionRequestRuntimeStats>>,
+    ) {
+        self.region_request_runtime_stats = stats;
+    }
+
     fn record_replica_attempt(&mut self, peer_id: u64) {
         self.replica_selector_state.record_attempt(peer_id);
+    }
+
+    fn record_replica_attempted_time(&mut self, peer_id: u64, duration: std::time::Duration) {
+        self.replica_selector_state
+            .record_attempted_time(peer_id, duration);
+    }
+
+    fn mark_replica_deadline_exceeded(&mut self, peer_id: u64) {
+        self.replica_selector_state.mark_deadline_exceeded(peer_id);
+    }
+
+    fn add_pending_backoff(&mut self, store_id: u64, config: RetryConfig, reason: String) {
+        self.replica_selector_state
+            .add_pending_backoff(store_id, config, reason);
+    }
+
+    fn take_pending_backoff(&mut self, store_id: u64) -> Option<(RetryConfig, String)> {
+        self.replica_selector_state.take_pending_backoff(store_id)
+    }
+
+    fn largest_pending_backoff(&self) -> Option<(RetryConfig, String)> {
+        self.replica_selector_state.largest_pending_backoff()
     }
 
     fn mark_retry_request(&mut self) {
@@ -380,9 +484,7 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
     }
 
     fn record_server_busy(&mut self, peer_id: u64) {
-        if self.replica_read_config.busy_threshold_ms != 0 {
-            self.replica_selector_state.record_server_busy(peer_id);
-        }
+        self.replica_selector_state.record_server_busy(peer_id);
     }
 
     fn force_leader_after_flashback(&mut self) {
@@ -448,6 +550,17 @@ impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
 
     fn replica_selector_state(&self) -> ReplicaSelectorState {
         self.inner.replica_selector_state()
+    }
+
+    fn region_request_runtime_stats(&self) -> Option<Arc<crate::RegionRequestRuntimeStats>> {
+        self.inner.region_request_runtime_stats()
+    }
+
+    fn set_region_request_runtime_stats(
+        &mut self,
+        stats: Option<Arc<crate::RegionRequestRuntimeStats>>,
+    ) {
+        self.inner.set_region_request_runtime_stats(stats);
     }
 
     fn record_replica_attempt(&mut self, peer_id: u64) {
@@ -527,6 +640,17 @@ impl<P: Plan + Shardable, PdC: PdClient> Shardable for CleanupLocks<P, PdC> {
 
     fn mark_retry_request(&mut self) {
         self.inner.mark_retry_request();
+    }
+
+    fn region_request_runtime_stats(&self) -> Option<Arc<crate::RegionRequestRuntimeStats>> {
+        self.inner.region_request_runtime_stats()
+    }
+
+    fn set_region_request_runtime_stats(
+        &mut self,
+        stats: Option<Arc<crate::RegionRequestRuntimeStats>>,
+    ) {
+        self.inner.set_region_request_runtime_stats(stats);
     }
 }
 
@@ -730,6 +854,11 @@ mod test {
             ru_details: None,
             store_token_count: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             store_token_store_id: 0,
+            region_request_runtime_stats: None,
+            logical_peer_id: None,
+            logical_store_id: None,
+            request_stale_read: false,
+            request_replica_read: false,
             interceptor: None,
             execution_details_trace_handler: None,
             network_traffic_details: None,
@@ -749,7 +878,7 @@ mod test {
     }
 
     #[test]
-    fn source_dispatch_carries_cached_bucket_version_into_context() {
+    fn source_dispatch_applies_route_metadata_and_restores_suspect_leader() {
         let mut region = RegionWithLeader::default();
         region.region.id = 1;
         region.region.region_epoch = Some(metapb::RegionEpoch {
@@ -768,7 +897,8 @@ mod test {
         });
         let store = RegionStore::new(region, Arc::new(MockKvClient::default()))
             .with_target("proxy:20160")
-            .with_forwarded_host("leader:20160");
+            .with_forwarded_host("leader:20160")
+            .with_restored_suspect_leader();
         let mut dispatch = Dispatch {
             request: kvrpcpb::GetRequest::default(),
             kv_client: None,
@@ -788,6 +918,11 @@ mod test {
             ru_details: None,
             store_token_count: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             store_token_store_id: 0,
+            region_request_runtime_stats: None,
+            logical_peer_id: None,
+            logical_store_id: None,
+            request_stale_read: false,
+            request_replica_read: false,
             interceptor: None,
             execution_details_trace_handler: None,
             network_traffic_details: None,
@@ -796,6 +931,12 @@ mod test {
             response_codec: None,
             v1_response_codec: None,
         };
+
+        dispatch.replica_selector_state.record_attempt(2);
+        dispatch.replica_selector_state.record_attempt(2);
+        dispatch.replica_selector_state.record_busy_leader(2);
+        dispatch.replica_selector_state.record_busy_leader(2);
+        assert!(dispatch.replica_selector_state.should_probe_busy_leader(2));
 
         dispatch.apply_store(&store).unwrap();
         assert_eq!(dispatch.request.context.unwrap().buckets_version, 9);
@@ -806,6 +947,7 @@ mod test {
             &dispatch.store_token_count,
             &store.store_token_count
         ));
+        assert!(dispatch.replica_selector_state.is_leader_selectable(2));
     }
 
     #[test]

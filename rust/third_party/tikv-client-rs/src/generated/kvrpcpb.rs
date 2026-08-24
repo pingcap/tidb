@@ -1224,10 +1224,6 @@ pub struct Context {
     /// NOTE: This field is only meaningful while the api_version is V2.
     #[prost(string, tag = "31")]
     pub keyspace_name: ::prost::alloc::string::String,
-    /// The keyspace that the request is sent to.
-    /// NOTE: This field is only meaningful while the api_version is V2.
-    #[prost(uint32, tag = "32")]
-    pub keyspace_id: u32,
     /// The buckets version that the request is sent to.
     /// NOTE: This field is only meaningful while enable buckets.
     #[prost(uint64, tag = "33")]
@@ -1251,6 +1247,24 @@ pub struct Context {
     /// This field is set by client-go based on an extractor function provided by TiDB.
     #[prost(uint64, tag = "37")]
     pub trace_control_flags: u64,
+    #[prost(oneof = "context::Keyspace", tags = "32, 38")]
+    pub keyspace: ::core::option::Option<context::Keyspace>,
+}
+/// Nested message and enum types in `Context`.
+pub mod context {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// The keyspace that the request is sent to.
+        /// NOTE: This field is only meaningful while the api_version is V2.
+        /// V3 uses keyspace_identity and must not read this legacy field as the full identity.
+        #[prost(uint32, tag = "32")]
+        KeyspaceId(u32),
+        /// The V3 keyspace identity that the request is sent to.
+        /// V3 RPC key fields carry user key bytes; TiKV encodes the physical
+        /// mode + namespace + keyspace prefix at the serving boundary.
+        #[prost(message, tag = "38")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ResourceControlContext {
@@ -1685,6 +1699,101 @@ pub struct ExecDetailsV2 {
     /// RU (Request Unit) consumption details.
     #[prost(message, optional, tag = "5")]
     pub ru_v2: ::core::option::Option<Ruv2>,
+    /// Scheduling and execution details for the request's read-pool task.
+    /// Available when read-pool task tracking is enabled in TiKV.
+    #[prost(message, optional, tag = "6")]
+    pub read_pool_task_details: ::core::option::Option<PoolTaskDetails>,
+}
+/// Scheduling and execution details collected across all polls of one task running in a pool.
+/// The timing model is:
+/// total_wall_nanos
+/// \<--------------------------------------------------------------------->
+///
+/// ```text
+/// submitted      worker starts       async event       worker starts   done
+///      │                │               completes             │          │
+///      ▼                ▼                   ▼                 ▼          ▼
+/// ┌──────────────┬─────────────────┬─────────────────┬──────────────┬──────┐
+/// │  Queue Wait  │ Poll Execution  │ Async/Wake Wait │  Queue Wait  │ Poll │
+/// │              │                 │                 │              │ Exec │
+/// │ task is      │ Future::poll    │ Future is       │ task is      │      │
+/// │ runnable,    │ returns Pending │ Pending, waiting│ runnable,    │Ready │
+/// │ waiting for  │                 │ for I/O, timer, │ waiting for  │      │
+/// │ a worker     │                 │ lock, etc.      │ a worker     │      │
+/// └──────────────┴─────────────────┴─────────────────┴──────────────┴──────┘
+///         │                │                  │
+///         │                │                  └─ total/max/min_wake_wait_nanos
+///         │                │
+///         │                ├─ poll_wall_nanos
+///         │                └─ poll_cpu_nanos
+///         │
+///         ├─ total/max/min_queue_wait_nanos
+///         └─ fair_queue_waited_task_slices
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PoolTaskDetails {
+    /// Number of Future::poll calls, including immediate repolls within one worker dispatch.
+    #[prost(uint64, tag = "1")]
+    pub poll_count: u64,
+    /// Number of worker dispatches. Immediate repolls in one dispatch are not counted separately.
+    #[prost(uint64, tag = "2")]
+    pub dispatch_count: u64,
+    /// Wall time from immediately before the initial pool submission until the final poll completes.
+    #[prost(uint64, tag = "3")]
+    pub total_wall_nanos: u64,
+    /// Total time from enqueueing a ready task until a worker starts dispatching it.
+    /// Zero when no queue-wait sample was recorded.
+    #[prost(uint64, tag = "4")]
+    pub total_queue_wait_nanos: u64,
+    /// Maximum queue wait time among all dispatches.
+    #[prost(uint64, tag = "5")]
+    pub max_queue_wait_nanos: u64,
+    /// Minimum queue wait time among all dispatches.
+    #[prost(uint64, tag = "6")]
+    pub min_queue_wait_nanos: u64,
+    /// Total time from a pending poll's completion until the task is scheduled again.
+    /// Zero when no wake-wait sample was recorded.
+    #[prost(uint64, tag = "7")]
+    pub total_wake_wait_nanos: u64,
+    /// Maximum wake wait time among all wakeups.
+    #[prost(uint64, tag = "8")]
+    pub max_wake_wait_nanos: u64,
+    /// Minimum wake wait time among all wakeups.
+    #[prost(uint64, tag = "9")]
+    pub min_wake_wait_nanos: u64,
+    /// Whether fair-queue waited-slice data was collected for this task.
+    #[prost(bool, tag = "10")]
+    pub fair_queue_enabled: bool,
+    /// Total number of task slices dispatched ahead of this task while it waited in the fair queue.
+    /// Zero when no fair-queue wait sample was recorded.
+    #[prost(uint64, tag = "11")]
+    pub total_fair_queue_waited_task_slices: u64,
+    /// Maximum number of task slices dispatched ahead of this task during one fair-queue wait.
+    #[prost(uint64, tag = "12")]
+    pub max_fair_queue_waited_task_slices: u64,
+    /// Minimum number of task slices dispatched ahead of this task during one fair-queue wait.
+    #[prost(uint64, tag = "13")]
+    pub min_fair_queue_waited_task_slices: u64,
+    /// Total thread CPU time consumed by Future::poll calls.
+    /// Zero when no poll sample was recorded.
+    #[prost(uint64, tag = "14")]
+    pub poll_cpu_nanos: u64,
+    /// Maximum thread CPU time consumed by one Future::poll call.
+    #[prost(uint64, tag = "15")]
+    pub max_poll_cpu_nanos: u64,
+    /// Minimum thread CPU time consumed by one Future::poll call.
+    #[prost(uint64, tag = "16")]
+    pub min_poll_cpu_nanos: u64,
+    /// Total wall time consumed by Future::poll calls.
+    /// Zero when no poll sample was recorded.
+    #[prost(uint64, tag = "17")]
+    pub poll_wall_nanos: u64,
+    /// Minimum wall time consumed by one Future::poll call.
+    #[prost(uint64, tag = "18")]
+    pub min_poll_wall_nanos: u64,
+    /// Maximum wall time consumed by one Future::poll call.
+    #[prost(uint64, tag = "19")]
+    pub max_poll_wall_nanos: u64,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Ruv2 {
@@ -2116,9 +2225,22 @@ pub struct CompactRequest {
     /// API version of the request
     #[prost(enumeration = "ApiVersion", tag = "7")]
     pub api_version: i32,
-    /// Keyspace of the table located in.
-    #[prost(uint32, tag = "8")]
-    pub keyspace_id: u32,
+    #[prost(oneof = "compact_request::Keyspace", tags = "8, 9")]
+    pub keyspace: ::core::option::Option<compact_request::Keyspace>,
+}
+/// Nested message and enum types in `CompactRequest`.
+pub mod compact_request {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// Keyspace of the table located in.
+        /// NOTE: This field is only meaningful for V1/V2 compatibility. V3 uses
+        /// keyspace_identity and must not read this field as the full identity.
+        #[prost(uint32, tag = "8")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity of the table located in.
+        #[prost(message, tag = "9")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CompactResponse {
@@ -2431,6 +2553,11 @@ pub enum ApiVersion {
     /// V2 server accpets V2 requests and V1 transactional requests that statrts with TiDB key
     /// prefix (`m` and `t`).
     V2 = 2,
+    /// `V3` uses user-key wire semantics for normal KV RPCs. Servers encode an
+    /// 8-byte physical prefix at the serving boundary:
+    /// mode(1) + namespace_id(4 bytes, big endian) + keyspace_id(3 bytes, big endian).
+    /// The keyspace identity is carried by Context.keyspace_identity.
+    V3 = 3,
 }
 impl ApiVersion {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -2442,6 +2569,7 @@ impl ApiVersion {
             Self::V1 => "V1",
             Self::V1ttl => "V1TTL",
             Self::V2 => "V2",
+            Self::V3 => "V3",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -2450,6 +2578,7 @@ impl ApiVersion {
             "V1" => Some(Self::V1),
             "V1TTL" => Some(Self::V1ttl),
             "V2" => Some(Self::V2),
+            "V3" => Some(Self::V3),
             _ => None,
         }
     }

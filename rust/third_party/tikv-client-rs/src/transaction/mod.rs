@@ -39,7 +39,7 @@ pub(crate) mod latch;
 mod lock;
 pub mod lowering;
 mod priority;
-pub(crate) mod range_task;
+pub mod range_task;
 #[allow(dead_code)]
 mod rbt;
 mod requests;

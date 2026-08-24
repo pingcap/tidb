@@ -58,6 +58,15 @@ fn delete_range_retry_backoffer(cancellation: Cancellation) -> RetryBackoffer {
     RetryBackoffer::new(cancellation, DELETE_RANGE_ONE_REGION_MAX_BACKOFF_MS)
 }
 
+fn delete_range_request(
+    range: BoundRange,
+    notify_only: bool,
+) -> crate::proto::kvrpcpb::DeleteRangeRequest {
+    let mut request = new_delete_range_request(range);
+    request.notify_only = notify_only;
+    request
+}
+
 /// The TiKV transactional `Client` is used to interact with TiKV using transactional requests.
 ///
 /// Transactions support optimistic and pessimistic modes. For more details see the SIG-transaction
@@ -524,7 +533,19 @@ impl Client {
         concurrency: usize,
         notify_only: bool,
     ) -> Result<usize> {
-        let range = range.into().encode_keyspace(self.keyspace, KeyMode::Txn);
+        let (completed_regions, result) = self
+            .run_delete_range_task_with_progress(range.into(), concurrency, notify_only)
+            .await;
+        result.map(|()| completed_regions)
+    }
+
+    pub(crate) async fn run_delete_range_task_with_progress(
+        &self,
+        range: BoundRange,
+        concurrency: usize,
+        notify_only: bool,
+    ) -> (usize, Result<()>) {
+        let range = range.encode_keyspace(self.keyspace, KeyMode::Txn);
         let (start_key, end_key) = range.into_keys();
         let runner = Runner::new(
             if notify_only {
@@ -539,10 +560,10 @@ impl Client {
                 notify_only,
             },
         );
-        runner
+        let result = runner
             .run_on_range(start_key.into(), end_key.unwrap_or_default().into())
-            .await?;
-        Ok(runner.completed_regions())
+            .await;
+        (runner.completed_regions(), result)
     }
 
     fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
@@ -597,8 +618,7 @@ impl RangeTaskHandler for DeleteRangeHandler {
                 Err(error) => return (stat, Err(error)),
             };
             let range = BoundRange::from((start_key, end_key));
-            let mut request = new_delete_range_request(range);
-            request.notify_only = self.notify_only;
+            let request = delete_range_request(range, self.notify_only);
             match self
                 .client
                 .plan(request)
@@ -658,5 +678,19 @@ mod latch_config_tests {
             DELETE_RANGE_ONE_REGION_MAX_BACKOFF_MS
                 * (backoffer.variables().backoff_weight.max(1) as u64)
         );
+    }
+
+    #[test]
+    fn delete_range_request_preserves_bounds_and_notify_mode() {
+        let destructive =
+            delete_range_request(BoundRange::from("a".to_owned().."z".to_owned()), false);
+        assert_eq!(destructive.start_key, b"a");
+        assert_eq!(destructive.end_key, b"z");
+        assert!(!destructive.notify_only);
+
+        let notify = delete_range_request(BoundRange::from("a".to_owned().."z".to_owned()), true);
+        assert_eq!(notify.start_key, b"a");
+        assert_eq!(notify.end_key, b"z");
+        assert!(notify.notify_only);
     }
 }

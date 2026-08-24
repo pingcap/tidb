@@ -91,6 +91,11 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 ru_details: None,
                 store_token_count: Arc::new(std::sync::atomic::AtomicI64::new(0)),
                 store_token_store_id: 0,
+                region_request_runtime_stats: None,
+                logical_peer_id: None,
+                logical_store_id: None,
+                request_stale_read: false,
+                request_replica_read: false,
                 interceptor: None,
                 execution_details_trace_handler:
                     crate::trace::current_execution_details_trace_handler(),
@@ -151,8 +156,19 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
     /// Select replicas for this read using client-go's region selector. The
     /// setting is retained through shard and retry clones; leader is default.
     pub fn replica_read(mut self, config: ReplicaReadConfig) -> Self {
+        let config = config.for_source_build();
         self.plan.network_stale_read = config.stale_read;
         self.plan.replica_read_config = config;
+        self
+    }
+
+    /// Attach client-go-compatible physical request runtime statistics.
+    /// The collector is shared by every shard and sender retry.
+    pub fn region_request_runtime_stats(
+        mut self,
+        stats: Option<Arc<crate::RegionRequestRuntimeStats>>,
+    ) -> Self {
+        self.plan.region_request_runtime_stats = stats;
         self
     }
 
@@ -602,11 +618,16 @@ where
     /// Retry a snapshot read with the ordinary schedule while optionally
     /// reporting source retry-class sleeps to snapshot runtime statistics.
     pub(crate) fn retry_multi_region_with_snapshot_stats(
-        self,
+        mut self,
         backoff: Backoff,
         stats: Option<Arc<crate::SnapshotRuntimeStats>>,
         variables: Arc<crate::Variables>,
     ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, SnapshotRegionBackoff>, Targetted> {
+        self.plan.set_region_request_runtime_stats(
+            stats
+                .as_ref()
+                .map(|stats| stats.region_request_runtime_stats()),
+        );
         self.make_retry_multi_region(SnapshotRegionBackoff::new(backoff, stats, variables), false)
     }
 
@@ -744,8 +765,12 @@ fn set_single_region_store<PdC: PdClient, R: KvRequest>(
     plan.network_stale_read |= store.stale_read;
     plan.resource_control_replica_number = store.resource_control_replica_number;
     plan.resource_control_access_location = store.resource_control_access_location;
-    plan.store_token_count = store.store_token_count;
+    plan.logical_peer_id = store.target_peer.as_ref().map(|peer| peer.id);
+    plan.logical_store_id = store.target_peer.as_ref().map(|peer| peer.store_id);
+    plan.request_stale_read = store.stale_read;
+    plan.request_replica_read = store.is_replica_read();
     plan.store_token_store_id = store.target_peer.as_ref().map_or(0, |peer| peer.store_id);
+    plan.store_token_count = store.store_token_count;
     if store.busy_threshold_disabled {
         plan.replica_selector_state.disable_busy_threshold();
     }
@@ -866,6 +891,27 @@ mod tests {
     }
 
     #[test]
+    fn source_plan_builder_applies_nextgen_read_feature_gate_before_cloning() {
+        let requested = ReplicaReadConfig {
+            read_type: crate::kv::ReplicaReadType::PreferLeader,
+            stale_read: true,
+            prefer_leader: true,
+            busy_threshold_ms: 123,
+            ..Default::default()
+        };
+        let builder = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        )
+        .replica_read(requested.clone());
+        let expected = requested.for_source_build();
+
+        assert_eq!(builder.plan.replica_read_config, expected);
+        assert_eq!(builder.plan.network_stale_read, expected.stale_read);
+    }
+
+    #[test]
     fn api_v2_keyspace_id_is_written_with_the_api_version() {
         let builder = PlanBuilder::new(
             Arc::new(MockPdClient::default()),
@@ -875,7 +921,23 @@ mod tests {
 
         let context = builder.plan.request.context.unwrap();
         assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
-        assert_eq!(context.keyspace_id, 4242);
+        assert_eq!(crate::request::context_keyspace_id(&context), Some(4242));
+    }
+
+    #[test]
+    fn api_v1_writes_the_source_null_keyspace_oneof() {
+        let builder = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        );
+
+        let context = builder.plan.request.context.unwrap();
+        assert_eq!(context.api_version, kvrpcpb::ApiVersion::V1 as i32);
+        assert_eq!(
+            crate::request::context_keyspace_id(&context),
+            Some(crate::request::NULL_KEYSPACE_ID)
+        );
     }
 
     #[test]

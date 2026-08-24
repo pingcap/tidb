@@ -129,7 +129,10 @@ pub trait RetryClientTrait {
         Err(Error::Unimplemented)
     }
 
-    async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store>;
+    /// Returns `None` when PD has no store for the requested ID. Client-go
+    /// treats that outcome like a tombstone; retaining it explicitly avoids
+    /// panicking on an empty `GetStoreResponse`.
+    async fn get_store(self: Arc<Self>, id: StoreId) -> Result<Option<metapb::Store>>;
 
     async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>>;
 
@@ -400,12 +403,12 @@ impl RetryClientTrait for RetryClient<Cluster> {
         })
     }
 
-    async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store> {
+    async fn get_store(self: Arc<Self>, id: StoreId) -> Result<Option<metapb::Store>> {
         retry_mut!(self, "get_store", |cluster| async {
             cluster
                 .get_store(id, self.timeout)
                 .await
-                .map(|resp| resp.store.unwrap())
+                .map(|resp| resp.store)
         })
     }
 

@@ -11,13 +11,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use rand::{thread_rng, Rng};
-use thiserror::Error;
-
 use crate::async_util::Cancellation;
-use crate::error::{QueryInterruptedWithSignalError, StaticError};
+use crate::error::{QueryInterruptedWithSignalError, StaticError, MISMATCH_CLUSTER_ID};
 use crate::kv::{Variables, DEFAULT_VARIABLES};
 use crate::proto::errorpb;
+use rand::{thread_rng, Rng};
+
+/// Maximum number of recent retry errors retained for exhaustion diagnostics.
+pub const MAX_RECORD_BACKOFF_ERR_COUNT: usize = 3;
 
 /// Source jitter modes used by a retry class.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,6 +48,8 @@ impl fmt::Display for RetryTerminal {
     }
 }
 
+impl std::error::Error for RetryTerminal {}
+
 /// Immutable source retry-class definition.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RetryConfig {
@@ -56,6 +59,7 @@ pub struct RetryConfig {
     pub jitter: Jitter,
     pub terminal_error: RetryTerminal,
     pub excluded_budget_limit_ms: Option<u64>,
+    metric_label: Option<&'static str>,
 }
 
 impl RetryConfig {
@@ -73,6 +77,7 @@ impl RetryConfig {
             jitter,
             terminal_error: RetryTerminal::Static(terminal_error),
             excluded_budget_limit_ms: None,
+            metric_label: None,
         }
     }
 
@@ -89,6 +94,7 @@ impl RetryConfig {
             jitter,
             terminal_error: RetryTerminal::PdServerTimeout,
             excluded_budget_limit_ms: None,
+            metric_label: None,
         }
     }
 
@@ -97,21 +103,38 @@ impl RetryConfig {
         self
     }
 
-    fn metric_label(self) -> &'static str {
-        match self.name {
-            "tikvRPC" | "tiflashRPC" => "tikvRPC",
-            "txnLock" => "txnLock",
-            "txnLockFast" => "tikvLockFast",
-            "pdRPC" => "pdRPC",
-            "regionMiss" => "regionMiss",
-            "regionScheduling" => "regionScheduling",
-            "tikvServerBusy" | "tiflashServerBusy" => "serverBusy",
-            "tikvDiskFull" => "tikvDiskFull",
-            "regionRecoveryInProgress" => "regionRecoveryInProgress",
-            "staleCommand" => "staleCommand",
-            "isWitness" => "isWitness",
-            _ => "",
-        }
+    /// Returns the initial sleep selected by this retry class.
+    pub const fn base(self) -> u64 {
+        self.base_ms
+    }
+
+    /// Replaces the exponential-backoff parameters for a locally owned copy.
+    ///
+    /// This is Rust's value-semantic counterpart of client-go's mutable
+    /// `SetBackoffFnCfg`: the process-wide constants remain race-free while a
+    /// caller can install the same test- or request-specific policy.
+    pub const fn with_backoff_fn(mut self, base_ms: u64, cap_ms: u64, jitter: Jitter) -> Self {
+        self.base_ms = base_ms;
+        self.cap_ms = cap_ms;
+        self.jitter = jitter;
+        self
+    }
+
+    /// Replaces the terminal error for a locally owned copy.
+    pub const fn with_terminal(mut self, terminal_error: RetryTerminal) -> Self {
+        self.terminal_error = terminal_error;
+        self
+    }
+
+    const fn with_metric_label(mut self, metric_label: &'static str) -> Self {
+        self.metric_label = Some(metric_label);
+        self
+    }
+}
+
+impl fmt::Display for RetryConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.name)
     }
 }
 
@@ -121,36 +144,42 @@ pub const BO_TIKV_RPC: RetryConfig = RetryConfig::new(
     2_000,
     Jitter::Equal,
     StaticError::TiKvServerTimeout,
-);
+)
+.with_metric_label("tikvRPC");
 pub const BO_TIFLASH_RPC: RetryConfig = RetryConfig::new(
     "tiflashRPC",
     100,
     2_000,
     Jitter::Equal,
     StaticError::TiFlashServerTimeout,
-);
+)
+.with_metric_label("tikvRPC");
 pub const BO_TXN_LOCK: RetryConfig = RetryConfig::new(
     "txnLock",
     100,
     3_000,
     Jitter::Equal,
     StaticError::ResolveLockTimeout,
-);
-pub const BO_PD_RPC: RetryConfig = RetryConfig::new_pd_timeout("pdRPC", 500, 3_000, Jitter::Equal);
+)
+.with_metric_label("txnLock");
+pub const BO_PD_RPC: RetryConfig =
+    RetryConfig::new_pd_timeout("pdRPC", 500, 3_000, Jitter::Equal).with_metric_label("pdRPC");
 pub const BO_REGION_MISS: RetryConfig = RetryConfig::new(
     "regionMiss",
     2,
     500,
     Jitter::No,
     StaticError::RegionUnavailable,
-);
+)
+.with_metric_label("regionMiss");
 pub const BO_REGION_SCHEDULING: RetryConfig = RetryConfig::new(
     "regionScheduling",
     2,
     500,
     Jitter::No,
     StaticError::RegionUnavailable,
-);
+)
+.with_metric_label("regionScheduling");
 pub const BO_TIKV_SERVER_BUSY: RetryConfig = RetryConfig::new(
     "tikvServerBusy",
     2_000,
@@ -158,6 +187,7 @@ pub const BO_TIKV_SERVER_BUSY: RetryConfig = RetryConfig::new(
     Jitter::Equal,
     StaticError::TiKvServerBusy,
 )
+.with_metric_label("serverBusy")
 .excluding_budget(600_000);
 pub const BO_TIKV_DISK_FULL: RetryConfig = RetryConfig::new(
     "tikvDiskFull",
@@ -165,70 +195,80 @@ pub const BO_TIKV_DISK_FULL: RetryConfig = RetryConfig::new(
     5_000,
     Jitter::No,
     StaticError::TiKvDiskFull,
-);
+)
+.with_metric_label("tikvDiskFull");
 pub const BO_REGION_RECOVERY_IN_PROGRESS: RetryConfig = RetryConfig::new(
     "regionRecoveryInProgress",
     100,
     10_000,
     Jitter::Equal,
     StaticError::RegionRecoveryInProgress,
-);
+)
+.with_metric_label("regionRecoveryInProgress");
 pub const BO_TIFLASH_SERVER_BUSY: RetryConfig = RetryConfig::new(
     "tiflashServerBusy",
     2_000,
     10_000,
     Jitter::Equal,
     StaticError::TiFlashServerBusy,
-);
+)
+.with_metric_label("serverBusy");
 pub const BO_TXN_NOT_FOUND: RetryConfig = RetryConfig::new(
     "txnNotFound",
     2,
     500,
     Jitter::No,
     StaticError::ResolveLockTimeout,
-);
+)
+.with_metric_label("");
 pub const BO_STALE_CMD: RetryConfig = RetryConfig::new(
     "staleCommand",
     2,
     1_000,
     Jitter::No,
     StaticError::TiKvStaleCommand,
-);
+)
+.with_metric_label("staleCommand");
 pub const BO_MAX_TS_NOT_SYNCED: RetryConfig = RetryConfig::new(
     "maxTsNotSynced",
     2,
     500,
     Jitter::No,
     StaticError::TiKvMaxTimestampNotSynced,
-);
+)
+.with_metric_label("");
 pub const BO_COMMIT_TS_LAG: RetryConfig = RetryConfig::new(
     "commitTSLag",
     2,
     500,
     Jitter::No,
     StaticError::CommitTimestampLag,
-);
+)
+.with_metric_label("");
 pub const BO_MAX_REGION_NOT_INITIALIZED: RetryConfig = RetryConfig::new(
     "regionNotInitialized",
     2,
     1_000,
     Jitter::No,
     StaticError::RegionNotInitialized,
-);
+)
+.with_metric_label("");
 pub const BO_IS_WITNESS: RetryConfig = RetryConfig::new(
     "isWitness",
     1_000,
     10_000,
     Jitter::Equal,
     StaticError::IsWitness,
-);
+)
+.with_metric_label("isWitness");
 pub const BO_TXN_LOCK_FAST: RetryConfig = RetryConfig::new(
     "txnLockFast",
     2,
     3_000,
     Jitter::Equal,
     StaticError::ResolveLockTimeout,
-);
+)
+.with_metric_label("tikvLockFast");
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BackoffRecord {
@@ -236,18 +276,34 @@ pub struct BackoffRecord {
     pub time: SystemTime,
 }
 
-#[derive(Debug, Error)]
+impl fmt::Display for BackoffRecord {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{} at {}",
+            self.reason,
+            format_rfc3339_nanos(self.time)
+        )
+    }
+}
+
+#[derive(Debug)]
 pub enum RetryError {
     /// client-go returns the triggering error unchanged when its context is
     /// already cancelled before a backoff begins.
-    #[error("{reason}")]
-    Cancelled { reason: String },
+    Cancelled {
+        reason: String,
+    },
     /// Source noop backoffers return their triggering error directly.
-    #[error("{reason}")]
-    Noop { reason: String },
-    #[error(transparent)]
-    Interrupted(#[from] QueryInterruptedWithSignalError),
-    #[error("backoff budget of {max_sleep_ms}ms exhausted; terminal class {terminal:?}; reason: {reason}")]
+    Noop {
+        reason: String,
+    },
+    /// A cluster mismatch is fatal to this retry owner. Rust returns it to the
+    /// embedding process instead of terminating the process from a library.
+    ClusterIdMismatch {
+        reason: String,
+    },
+    Interrupted(QueryInterruptedWithSignalError),
     Exhausted {
         max_sleep_ms: u64,
         /// The non-excluded class that consumed the most sleep. `None`
@@ -257,8 +313,43 @@ pub enum RetryError {
         reason: String,
         recent_errors: Vec<BackoffRecord>,
     },
-    #[error("kill-signal handler failed: {0}")]
-    KillHandler(#[source] crate::Error),
+    KillHandler(crate::Error),
+}
+
+impl fmt::Display for RetryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Cancelled { reason } | Self::Noop { reason } => formatter.write_str(reason),
+            Self::ClusterIdMismatch { reason } => write!(formatter, "critical error: {reason}"),
+            Self::Interrupted(error) => error.fmt(formatter),
+            Self::Exhausted {
+                terminal: Some(terminal),
+                ..
+            } => terminal.fmt(formatter),
+            Self::Exhausted { reason, .. } => formatter.write_str(reason),
+            Self::KillHandler(error) => write!(formatter, "kill-signal handler failed: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for RetryError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Interrupted(error) => Some(error),
+            Self::Exhausted {
+                terminal: Some(terminal),
+                ..
+            } => Some(terminal),
+            Self::KillHandler(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<QueryInterruptedWithSignalError> for RetryError {
+    fn from(error: QueryInterruptedWithSignalError) -> Self {
+        Self::Interrupted(error)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -329,8 +420,13 @@ impl RetryBackoffer {
         self.total_sleep_ms
     }
 
+    #[cfg(test)]
     pub(crate) fn max_sleep_ms(&self) -> u64 {
         self.max_sleep_ms
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
     }
     pub fn excluded_sleep_ms(&self) -> u64 {
         self.excluded_sleep_ms
@@ -354,6 +450,19 @@ impl RetryBackoffer {
         &self.variables
     }
 
+    /// Returns the cancellation scope bound to this retry owner.
+    pub fn cancellation(&self) -> &Cancellation {
+        &self.cancellation
+    }
+
+    /// Replaces the cancellation scope while preserving retry accounting.
+    ///
+    /// This is the native async equivalent of client-go's `SetCtx`; unrelated
+    /// context values are passed explicitly by Rust callers.
+    pub fn set_cancellation(&mut self, cancellation: Cancellation) {
+        self.cancellation = cancellation;
+    }
+
     /// Returns this backoffer's types followed by every ancestor's types.
     ///
     /// A fork first copies the parent's configs, so—as in client-go—the
@@ -371,7 +480,8 @@ impl RetryBackoffer {
         config: RetryConfig,
         reason: impl Into<String>,
     ) -> Result<(), RetryError> {
-        self.backoff_with_max_sleep(config, None, reason).await
+        self.backoff_with_config_and_max_sleep(config, None, reason)
+            .await
     }
 
     /// Source `BackoffWithMaxSleepTxnLockFast`: preserves the class's
@@ -381,17 +491,26 @@ impl RetryBackoffer {
         max_sleep_ms: u64,
         reason: impl Into<String>,
     ) -> Result<(), RetryError> {
-        self.backoff_with_max_sleep(BO_TXN_LOCK_FAST, Some(max_sleep_ms), reason)
+        self.backoff_with_config_and_max_sleep(BO_TXN_LOCK_FAST, Some(max_sleep_ms), reason)
             .await
     }
 
-    async fn backoff_with_max_sleep(
+    /// Sleeps according to `config`, optionally capping this one sleep without
+    /// resetting the class's exponential state.
+    ///
+    /// `None` maps to client-go's `-1` sentinel in
+    /// `BackoffWithCfgAndMaxSleep`.
+    pub async fn backoff_with_config_and_max_sleep(
         &mut self,
         config: RetryConfig,
         max_single_sleep_ms: Option<u64>,
         reason: impl Into<String>,
     ) -> Result<(), RetryError> {
         let reason = reason.into();
+        if reason.contains(MISMATCH_CLUSTER_ID) {
+            log::error!("critical error: {reason}");
+            return Err(RetryError::ClusterIdMismatch { reason });
+        }
         if self.cancellation.is_cancelled() {
             return Err(RetryError::Cancelled { reason });
         }
@@ -399,38 +518,64 @@ impl RetryBackoffer {
             return Err(RetryError::Noop { reason });
         }
         if self.budget_exhausted(config) {
-            return Err(self.exhausted(reason));
+            let error = self.exhausted(reason);
+            log::warn!(
+                "{} backoffer.maxSleep {}ms is exceeded; total-backoff-times: {}; backoff-detail: {:?}; recent-errors: {:?}",
+                config,
+                self.max_sleep_ms,
+                self.total_backoff_times(),
+                self.times_by_type,
+                self.errors
+            );
+            return Err(error);
         }
         self.push_error(reason.clone());
         self.configs.push(config);
-        let delay_ms = self.next_delay_ms(config);
-        let delay_ms = max_single_sleep_ms.map_or(delay_ms, |limit| delay_ms.min(limit));
+        let selected_delay_ms = self.next_delay_ms(config);
+        let delay_ms =
+            max_single_sleep_ms.map_or(selected_delay_ms, |limit| selected_delay_ms.min(limit));
         // Go checks its context before constructing the backoff function. If
         // the context is cancelled while `time.After` is already pending, the
         // function returns a zero sleep and this call still records that
         // retry; the following Backoff call observes cancellation. Preserve
         // that transition rather than returning early from this wait.
-        let interrupted = tokio::select! {
-            _ = tokio::time::sleep(Duration::from_millis(delay_ms)) => false,
-            _ = self.cancellation.cancelled() => true,
+        let interrupted = if fail::eval("fastBackoffBySkipSleep", |_| ()).is_some() {
+            false
+        } else {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(delay_ms)) => false,
+                _ = self.cancellation.cancelled() => true,
+            }
         };
         let real_sleep_ms = (!interrupted).then_some(delay_ms).unwrap_or(0);
+        if !interrupted {
+            // The source keeps the uncapped jitter result as `lastSleep`; the
+            // one-call cap changes only wall-clock/accounting duration.
+            self.complete_delay(config, selected_delay_ms);
+        }
         self.total_sleep_ms = self.total_sleep_ms.saturating_add(real_sleep_ms);
         if config.excluded_budget_limit_ms.is_some() {
             self.excluded_sleep_ms = self.excluded_sleep_ms.saturating_add(real_sleep_ms);
         }
         *self.sleep_by_type.entry(config.name).or_default() += real_sleep_ms;
         *self.times_by_type.entry(config.name).or_default() += 1;
-        crate::stats::observe_retry_backoff(
-            config.metric_label(),
-            Duration::from_millis(real_sleep_ms),
+        if let Some(metric_label) = config.metric_label {
+            crate::stats::observe_retry_backoff(metric_label, Duration::from_millis(real_sleep_ms));
+        }
+        self.check_killed()?;
+        log::debug!(
+            "retry later: reason={reason}; totalSleep={}; excludedSleep={}; maxSleep={}; type={config}",
+            self.total_sleep_ms,
+            self.excluded_sleep_ms,
+            self.max_sleep_ms
         );
-        self.check_killed()
+        Ok(())
     }
 
     pub fn check_killed(&self) -> Result<(), RetryError> {
         let signal = self.variables.killed.load(Ordering::Acquire);
         if signal != 0 {
+            log::info!("backoff stops because a killed signal is received: signal={signal}");
             return Err(QueryInterruptedWithSignalError { signal }.into());
         }
         if let Some(handler) = &self.variables.kill_signal_handler {
@@ -455,11 +600,7 @@ impl RetryBackoffer {
         let Some(error) = error else {
             return Ok(());
         };
-        let real_epoch_mismatch = error
-            .epoch_not_match
-            .as_ref()
-            .is_some_and(|mismatch| !mismatch.current_regions.is_empty());
-        if real_epoch_mismatch {
+        if error.epoch_not_match.is_some() && !is_fake_region_error(Some(error)) {
             Ok(())
         } else {
             self.backoff(BO_REGION_MISS, format!("{error:?}")).await
@@ -569,7 +710,7 @@ impl RetryBackoffer {
             reason,
             time: SystemTime::now(),
         });
-        if self.errors.len() > 3 {
+        if self.errors.len() > MAX_RECORD_BACKOFF_ERR_COUNT {
             self.errors.remove(0);
         }
     }
@@ -596,10 +737,71 @@ impl RetryBackoffer {
                 .gen_range(base..state.last_sleep_ms.saturating_mul(3).max(base + 1))
                 .min(config.cap_ms),
         };
-        state.attempts += 1;
-        state.last_sleep_ms = delay;
+        log::debug!(
+            "backoff: base={base}; sleep={delay}; attempts={}",
+            state.attempts
+        );
         delay
     }
+
+    fn complete_delay(&mut self, config: RetryConfig, delay_ms: u64) {
+        let state = self
+            .functions
+            .get_mut(config.name)
+            .expect("backoff function state is created before sleeping");
+        state.attempts += 1;
+        state.last_sleep_ms = delay_ms;
+    }
+}
+
+/// Returns whether TiKV supplied an empty/fake `EpochNotMatch` region error.
+pub fn is_fake_region_error(error: Option<&errorpb::Error>) -> bool {
+    error
+        .and_then(|error| error.epoch_not_match.as_ref())
+        .is_some_and(|mismatch| mismatch.current_regions.is_empty())
+}
+
+fn format_rfc3339_nanos(time: SystemTime) -> String {
+    let nanoseconds = match time.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(duration) => {
+            i128::from(duration.as_secs()) * 1_000_000_000 + i128::from(duration.subsec_nanos())
+        }
+        Err(error) => {
+            let duration = error.duration();
+            -(i128::from(duration.as_secs()) * 1_000_000_000 + i128::from(duration.subsec_nanos()))
+        }
+    };
+    let seconds = nanoseconds.div_euclid(1_000_000_000);
+    let subsecond = nanoseconds.rem_euclid(1_000_000_000) as u32;
+    let days = seconds.div_euclid(86_400) as i64;
+    let seconds_of_day = seconds.rem_euclid(86_400) as u32;
+    let (year, month, day) = civil_date_from_days(days);
+    let hour = seconds_of_day / 3_600;
+    let minute = seconds_of_day % 3_600 / 60;
+    let second = seconds_of_day % 60;
+    let fraction = if subsecond == 0 {
+        String::new()
+    } else {
+        format!(".{subsecond:09}").trim_end_matches('0').to_owned()
+    };
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}{fraction}Z")
+}
+
+fn civil_date_from_days(days_since_epoch: i64) -> (i64, i64, i64) {
+    let shifted = days_since_epoch + 719_468;
+    let era = shifted.div_euclid(146_097);
+    let day_of_era = shifted - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    if month <= 2 {
+        year += 1;
+    }
+    (year, month, day)
 }
 
 impl Clone for RetryBackoffer {
@@ -644,7 +846,261 @@ impl fmt::Display for RetryBackoffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicU32;
+    use std::sync::atomic::{AtomicU32, AtomicUsize};
+
+    struct CountingKillHandler {
+        calls: Arc<AtomicUsize>,
+        fail: bool,
+    }
+
+    impl crate::kv::KillSignalHandler for CountingKillHandler {
+        fn handle_signal(&self) -> crate::Result<()> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.fail {
+                Err(crate::Error::StringError("killed by handler".to_owned()))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn source_retry_config_matrix_and_value_semantic_setters_are_complete() {
+        let configs = [
+            (
+                BO_TIKV_RPC,
+                "tikvRPC",
+                100,
+                2_000,
+                Jitter::Equal,
+                RetryTerminal::Static(StaticError::TiKvServerTimeout),
+            ),
+            (
+                BO_TIFLASH_RPC,
+                "tiflashRPC",
+                100,
+                2_000,
+                Jitter::Equal,
+                RetryTerminal::Static(StaticError::TiFlashServerTimeout),
+            ),
+            (
+                BO_TXN_LOCK,
+                "txnLock",
+                100,
+                3_000,
+                Jitter::Equal,
+                RetryTerminal::Static(StaticError::ResolveLockTimeout),
+            ),
+            (
+                BO_PD_RPC,
+                "pdRPC",
+                500,
+                3_000,
+                Jitter::Equal,
+                RetryTerminal::PdServerTimeout,
+            ),
+            (
+                BO_REGION_MISS,
+                "regionMiss",
+                2,
+                500,
+                Jitter::No,
+                RetryTerminal::Static(StaticError::RegionUnavailable),
+            ),
+            (
+                BO_REGION_SCHEDULING,
+                "regionScheduling",
+                2,
+                500,
+                Jitter::No,
+                RetryTerminal::Static(StaticError::RegionUnavailable),
+            ),
+            (
+                BO_TIKV_SERVER_BUSY,
+                "tikvServerBusy",
+                2_000,
+                10_000,
+                Jitter::Equal,
+                RetryTerminal::Static(StaticError::TiKvServerBusy),
+            ),
+            (
+                BO_TIKV_DISK_FULL,
+                "tikvDiskFull",
+                500,
+                5_000,
+                Jitter::No,
+                RetryTerminal::Static(StaticError::TiKvDiskFull),
+            ),
+            (
+                BO_REGION_RECOVERY_IN_PROGRESS,
+                "regionRecoveryInProgress",
+                100,
+                10_000,
+                Jitter::Equal,
+                RetryTerminal::Static(StaticError::RegionRecoveryInProgress),
+            ),
+            (
+                BO_TIFLASH_SERVER_BUSY,
+                "tiflashServerBusy",
+                2_000,
+                10_000,
+                Jitter::Equal,
+                RetryTerminal::Static(StaticError::TiFlashServerBusy),
+            ),
+            (
+                BO_TXN_NOT_FOUND,
+                "txnNotFound",
+                2,
+                500,
+                Jitter::No,
+                RetryTerminal::Static(StaticError::ResolveLockTimeout),
+            ),
+            (
+                BO_STALE_CMD,
+                "staleCommand",
+                2,
+                1_000,
+                Jitter::No,
+                RetryTerminal::Static(StaticError::TiKvStaleCommand),
+            ),
+            (
+                BO_MAX_TS_NOT_SYNCED,
+                "maxTsNotSynced",
+                2,
+                500,
+                Jitter::No,
+                RetryTerminal::Static(StaticError::TiKvMaxTimestampNotSynced),
+            ),
+            (
+                BO_COMMIT_TS_LAG,
+                "commitTSLag",
+                2,
+                500,
+                Jitter::No,
+                RetryTerminal::Static(StaticError::CommitTimestampLag),
+            ),
+            (
+                BO_MAX_REGION_NOT_INITIALIZED,
+                "regionNotInitialized",
+                2,
+                1_000,
+                Jitter::No,
+                RetryTerminal::Static(StaticError::RegionNotInitialized),
+            ),
+            (
+                BO_IS_WITNESS,
+                "isWitness",
+                1_000,
+                10_000,
+                Jitter::Equal,
+                RetryTerminal::Static(StaticError::IsWitness),
+            ),
+            (
+                BO_TXN_LOCK_FAST,
+                "txnLockFast",
+                2,
+                3_000,
+                Jitter::Equal,
+                RetryTerminal::Static(StaticError::ResolveLockTimeout),
+            ),
+        ];
+
+        for (config, name, base, cap, jitter, terminal) in configs {
+            assert_eq!(config.to_string(), name);
+            assert_eq!(config.base(), base);
+            assert_eq!(config.cap_ms, cap);
+            assert_eq!(config.jitter, jitter);
+            assert_eq!(config.terminal_error, terminal);
+        }
+        assert_eq!(BO_TIKV_SERVER_BUSY.excluded_budget_limit_ms, Some(600_000));
+        assert_eq!(BO_TIFLASH_SERVER_BUSY.excluded_budget_limit_ms, None);
+        assert_eq!(
+            [
+                BO_TIKV_RPC.metric_label,
+                BO_TIFLASH_RPC.metric_label,
+                BO_TXN_LOCK.metric_label,
+                BO_PD_RPC.metric_label,
+                BO_REGION_MISS.metric_label,
+                BO_REGION_SCHEDULING.metric_label,
+                BO_TIKV_SERVER_BUSY.metric_label,
+                BO_TIKV_DISK_FULL.metric_label,
+                BO_REGION_RECOVERY_IN_PROGRESS.metric_label,
+                BO_TIFLASH_SERVER_BUSY.metric_label,
+                BO_TXN_NOT_FOUND.metric_label,
+                BO_STALE_CMD.metric_label,
+                BO_MAX_TS_NOT_SYNCED.metric_label,
+                BO_COMMIT_TS_LAG.metric_label,
+                BO_MAX_REGION_NOT_INITIALIZED.metric_label,
+                BO_IS_WITNESS.metric_label,
+                BO_TXN_LOCK_FAST.metric_label,
+            ],
+            [
+                Some("tikvRPC"),
+                Some("tikvRPC"),
+                Some("txnLock"),
+                Some("pdRPC"),
+                Some("regionMiss"),
+                Some("regionScheduling"),
+                Some("serverBusy"),
+                Some("tikvDiskFull"),
+                Some("regionRecoveryInProgress"),
+                Some("serverBusy"),
+                Some(""),
+                Some("staleCommand"),
+                Some(""),
+                Some(""),
+                Some(""),
+                Some("isWitness"),
+                Some("tikvLockFast"),
+            ]
+        );
+
+        let custom = BO_REGION_MISS
+            .with_backoff_fn(7, 11, Jitter::Decorrelated)
+            .with_terminal(RetryTerminal::Static(StaticError::Unknown));
+        assert_eq!(custom.base(), 7);
+        assert_eq!(custom.cap_ms, 11);
+        assert_eq!(custom.jitter, Jitter::Decorrelated);
+        assert_eq!(
+            custom.terminal_error,
+            RetryTerminal::Static(StaticError::Unknown)
+        );
+        assert_eq!(
+            RetryConfig::new("custom", 2, 4, Jitter::No, StaticError::Unknown).metric_label,
+            None
+        );
+        assert_eq!(BO_REGION_MISS.base(), 2);
+    }
+
+    #[test]
+    fn check_killed_prefers_the_signal_then_runs_the_handler() {
+        let killed = Arc::new(AtomicU32::new(7));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut variables = Variables::new(killed.clone());
+        variables.kill_signal_handler = Some(Arc::new(CountingKillHandler {
+            calls: calls.clone(),
+            fail: true,
+        }));
+        let backoffer =
+            RetryBackoffer::with_variables(Cancellation::default(), 1, Arc::new(variables));
+
+        assert!(matches!(
+            backoffer.check_killed(),
+            Err(RetryError::Interrupted(QueryInterruptedWithSignalError {
+                signal: 7
+            }))
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        killed.store(0, Ordering::SeqCst);
+        let error = backoffer.check_killed().unwrap_err();
+        assert!(matches!(error, RetryError::KillHandler(_)));
+        assert_eq!(
+            error.to_string(),
+            "kill-signal handler failed: killed by handler"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
 
     #[tokio::test]
     async fn budget_history_exclusion_and_terminal_class_match_client_go() {
@@ -739,6 +1195,81 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancellation_during_sleep_does_not_advance_the_exponential_sequence() {
+        let config = RetryConfig::new(
+            "cancelProgression",
+            20,
+            100,
+            Jitter::No,
+            StaticError::RegionUnavailable,
+        );
+        let cancellation = Cancellation::default();
+        let mut backoffer = RetryBackoffer::new(cancellation.clone(), 1_000);
+        let retry = tokio::spawn(async move {
+            backoffer.backoff(config, "cancel first sleep").await?;
+            Ok::<RetryBackoffer, RetryError>(backoffer)
+        });
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        cancellation.cancel();
+        let mut backoffer = retry.await.unwrap().unwrap();
+        assert_eq!(backoffer.total_sleep_ms(), 0);
+        assert_eq!(backoffer.times_by_type().get(config.name), Some(&1));
+
+        let replacement = Cancellation::default();
+        backoffer.set_cancellation(replacement.clone());
+        assert!(!backoffer.cancellation().is_cancelled());
+        backoffer.backoff(config, "retry from base").await.unwrap();
+        assert_eq!(backoffer.total_sleep_ms(), 20);
+        assert_eq!(backoffer.times_by_type().get(config.name), Some(&2));
+    }
+
+    #[tokio::test]
+    async fn longest_non_excluded_sleep_selects_the_terminal_error() {
+        let short = RetryConfig::new("short", 2, 2, Jitter::No, StaticError::RegionUnavailable);
+        let long = RetryConfig::new("long", 4, 4, Jitter::No, StaticError::ResolveLockTimeout);
+        let variables = Arc::new(Variables::new(Arc::new(AtomicU32::new(0))));
+        let mut backoffer = RetryBackoffer::with_variables(Cancellation::default(), 4, variables);
+
+        backoffer.backoff(short, "short").await.unwrap();
+        backoffer.backoff(long, "long one").await.unwrap();
+        backoffer.backoff(long, "long two").await.unwrap();
+        let error = backoffer.backoff(short, "exhausted").await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            StaticError::ResolveLockTimeout.to_string()
+        );
+        assert_eq!(
+            std::error::Error::source(&error).unwrap().to_string(),
+            StaticError::ResolveLockTimeout.to_string()
+        );
+        assert!(matches!(
+            error,
+            RetryError::Exhausted {
+                terminal: Some(RetryTerminal::Static(StaticError::ResolveLockTimeout)),
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn cluster_id_mismatch_is_immediately_non_retryable() {
+        let mut backoffer = RetryBackoffer::new(Cancellation::default(), 10);
+        let reason = format!("PD response: {MISMATCH_CLUSTER_ID}");
+        let error = backoffer
+            .backoff(BO_PD_RPC, reason.clone())
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            RetryError::ClusterIdMismatch { reason: ref actual } if actual == &reason
+        ));
+        assert_eq!(error.to_string(), format!("critical error: {reason}"));
+        assert_eq!(backoffer.total_sleep_ms(), 0);
+        assert_eq!(backoffer.errors_num(), 0);
+    }
+
+    #[tokio::test]
     async fn fork_inherits_budget_cancels_independently_and_merges_only_to_its_parent() {
         let mut parent = RetryBackoffer::new(Cancellation::default(), 4);
         parent.backoff(BO_REGION_MISS, "parent").await.unwrap();
@@ -788,6 +1319,46 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(backoffer.total_sleep_ms(), 2);
+
+        for error in [
+            errorpb::Error {
+                not_leader: Some(errorpb::NotLeader::default()),
+                ..Default::default()
+            },
+            errorpb::Error {
+                server_is_busy: Some(errorpb::ServerIsBusy::default()),
+                ..Default::default()
+            },
+            errorpb::Error {
+                max_timestamp_not_synced: Some(errorpb::MaxTimestampNotSynced::default()),
+                ..Default::default()
+            },
+        ] {
+            let before = backoffer.total_backoff_times();
+            backoffer
+                .may_backoff_region_error(Some(&error))
+                .await
+                .unwrap();
+            assert_eq!(backoffer.total_backoff_times(), before + 1);
+        }
+        backoffer.may_backoff_region_error(None).await.unwrap();
+
+        assert!(!is_fake_region_error(None));
+        assert!(is_fake_region_error(Some(&fake)));
+        assert!(!is_fake_region_error(Some(&real)));
+
+        let cancelled = Cancellation::default();
+        cancelled.cancel();
+        let mut cancelled_backoffer = RetryBackoffer::new(cancelled, 10);
+        let expected_reason = format!("{fake:?}");
+        let error = cancelled_backoffer
+            .may_backoff_region_error(Some(&fake))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            RetryError::Cancelled { reason } if reason == expected_reason
+        ));
     }
 
     #[tokio::test]
@@ -815,6 +1386,27 @@ mod tests {
         assert_eq!(backoffer.total_sleep_ms(), 6);
         backoffer.reset_max_sleep(1);
         assert_eq!(backoffer.total_sleep_ms(), 0);
+    }
+
+    #[tokio::test]
+    async fn one_sleep_cap_does_not_replace_decorrelated_jitter_history() {
+        let config = RetryConfig::new(
+            "decorrelatedCap",
+            20,
+            100,
+            Jitter::Decorrelated,
+            StaticError::RegionUnavailable,
+        );
+        let mut backoffer = RetryBackoffer::new(Cancellation::default(), 100);
+        backoffer
+            .backoff_with_config_and_max_sleep(config, Some(1), "capped")
+            .await
+            .unwrap();
+
+        assert_eq!(backoffer.total_sleep_ms(), 1);
+        let state = backoffer.functions.get(config.name).unwrap();
+        assert_eq!(state.attempts, 1);
+        assert!((20..=59).contains(&state.last_sleep_ms));
     }
 
     #[tokio::test]
@@ -849,7 +1441,10 @@ mod tests {
         }
 
         assert_eq!(backoffer.errors_num(), 5);
-        assert_eq!(backoffer.latest_errors().len(), 3);
+        assert_eq!(
+            backoffer.latest_errors().len(),
+            MAX_RECORD_BACKOFF_ERR_COUNT
+        );
         assert_eq!(backoffer.latest_errors()[0].reason, "region miss 2");
         assert_eq!(backoffer.latest_errors()[2].reason, "region miss 4");
 
@@ -910,5 +1505,16 @@ mod tests {
             fork.variables().backoff_weight,
             crate::kv::DEF_BACKOFF_WEIGHT
         );
+    }
+
+    #[test]
+    fn backoff_record_formats_rfc3339_nanoseconds() {
+        let record = BackoffRecord {
+            reason: "mockErr".to_owned(),
+            time: SystemTime::UNIX_EPOCH
+                + Duration::from_secs(4 * 3_600 + 1_234)
+                + Duration::from_nanos(123_400_000),
+        };
+        assert_eq!(record.to_string(), "mockErr at 1970-01-01T04:20:34.1234Z");
     }
 }

@@ -11,11 +11,11 @@ use prost::Message;
 
 use crate::kv::AccessLocationType;
 use crate::proto::{coprocessor, kvrpcpb, resource_manager};
-use crate::store::Request;
+use crate::store::{CoprocessorStreamResponse, Request};
 use crate::Result;
 
-/// Source RU pre-charge inputs independent of the unfinished dynamic request
-/// wrapper. A write byte count of `None` denotes a read request.
+/// Source RU pre-charge inputs translated from Rust's typed request and route
+/// boundaries. A write byte count of `None` denotes a read request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RequestInfo {
     pub write_bytes: Option<u64>,
@@ -29,61 +29,14 @@ pub struct RequestInfo {
 }
 
 impl RequestInfo {
-    pub(crate) fn read(store_id: u64, request_size: u64, bypass: bool) -> Self {
+    /// Creates precomputed source admission information. `None` represents a
+    /// read request; `Some(0)` remains a zero-byte write.
+    pub fn new(write_bytes: Option<u64>, store_id: u64, replica_number: i64, bypass: bool) -> Self {
         Self {
-            write_bytes: None,
-            store_id,
-            replica_number: 0,
-            request_size,
-            access_location: AccessLocationType::Unknown,
-            predicted_read_bytes: 0,
-            is_coprocessor: false,
-            bypass,
-        }
-    }
-
-    pub(crate) fn prewrite(
-        request: &kvrpcpb::PrewriteRequest,
-        store_id: u64,
-        replica_number: i64,
-        request_size: u64,
-        bypass: bool,
-    ) -> Self {
-        let write_bytes = request
-            .mutations
-            .iter()
-            .map(|mutation| (mutation.key.len() + mutation.value.len()) as u64)
-            .sum::<u64>()
-            + request.primary_lock.len() as u64
-            + request
-                .secondaries
-                .iter()
-                .map(|key| key.len() as u64)
-                .sum::<u64>();
-        Self {
-            write_bytes: Some(write_bytes),
+            write_bytes,
             store_id,
             replica_number,
-            request_size,
-            access_location: AccessLocationType::Unknown,
-            predicted_read_bytes: 0,
-            is_coprocessor: false,
-            bypass,
-        }
-    }
-
-    pub(crate) fn commit(
-        request: &kvrpcpb::CommitRequest,
-        store_id: u64,
-        replica_number: i64,
-        request_size: u64,
-        bypass: bool,
-    ) -> Self {
-        Self {
-            write_bytes: Some(request.keys.iter().map(|key| key.len() as u64).sum()),
-            store_id,
-            replica_number,
-            request_size,
+            request_size: 0,
             access_location: AccessLocationType::Unknown,
             predicted_read_bytes: 0,
             is_coprocessor: false,
@@ -92,18 +45,17 @@ impl RequestInfo {
     }
 
     /// Extracts source `resourcecontrol.MakeRequestInfo` fields from the
-    /// concrete typed TiKV request. Access location and predicted bytes live
-    /// on client-go's dynamic `tikvrpc.Request` wrapper; Rust does not yet
-    /// expose those caller-owned knobs, so they remain their source defaults
-    /// here while command/context data is preserved exactly.
+    /// concrete typed TiKV request. Route-owned replica/location fields and
+    /// the caller's predicted read hint are installed by `select` after this
+    /// request-local extraction step.
     pub(crate) fn from_store_request(request: &dyn Request) -> Self {
         let context = request.tikv_context();
         let store_id = context
             .and_then(|context| context.peer.as_ref())
             .map_or(0, |peer| peer.store_id);
         let bypass = should_bypass(request);
-        let request_size = request.encoded_request_size();
-        let is_coprocessor = request.label() == "coprocessor";
+        let request_size = request.network_request_size();
+        let is_coprocessor = request.is_resource_control_coprocessor();
         if !request.is_resource_control_write() {
             return Self {
                 write_bytes: None,
@@ -147,11 +99,39 @@ impl RequestInfo {
         }
     }
 
-    pub(crate) fn is_write(self) -> bool {
+    pub fn is_write(&self) -> bool {
         self.write_bytes.is_some()
     }
-    pub(crate) fn write_bytes(self) -> u64 {
+    pub fn write_bytes(&self) -> u64 {
         self.write_bytes.unwrap_or_default()
+    }
+
+    pub fn replica_number(&self) -> i64 {
+        self.replica_number
+    }
+
+    pub fn bypass(&self) -> bool {
+        self.bypass
+    }
+
+    pub fn store_id(&self) -> u64 {
+        self.store_id
+    }
+
+    pub fn request_size(&self) -> u64 {
+        self.request_size
+    }
+
+    pub fn access_location_type(&self) -> AccessLocationType {
+        self.access_location
+    }
+
+    pub fn predicted_read_bytes(&self) -> u64 {
+        self.predicted_read_bytes
+    }
+
+    pub fn is_cop(&self) -> bool {
+        self.is_coprocessor
     }
 }
 
@@ -159,16 +139,13 @@ fn should_bypass(request: &dyn Request) -> bool {
     let request_source = request
         .tikv_context()
         .map_or("", |context| context.request_source.as_str());
-    if request_source.contains("internal_others") {
+    if cfg!(feature = "nextgen")
+        && request_source.contains("stats")
+        && request.resource_control_coprocessor_type() == Some(104)
+    {
         return true;
     }
-    cfg!(feature = "nextgen")
-        && request_source.contains("internal_stats")
-        && request.label() == "coprocessor"
-        && request
-            .as_any()
-            .downcast_ref::<coprocessor::Request>()
-            .is_some_and(|request| request.tp == 104)
+    request_source.contains("internal_others")
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -180,6 +157,7 @@ pub struct ResponseInfo {
 
 pub(crate) enum Response<'a> {
     Cop(&'a coprocessor::Response),
+    CopStream(Option<&'a coprocessor::Response>),
     Get(&'a kvrpcpb::GetResponse),
     BatchGet(&'a kvrpcpb::BatchGetResponse),
     Scan(&'a kvrpcpb::ScanResponse),
@@ -209,6 +187,23 @@ impl ResponseInfo {
                     response_size: response.encoded_len() as u64,
                 }
             }
+            Response::CopStream(response) => {
+                let Some(response) = response else {
+                    return Self::default();
+                };
+                let details = response.exec_details_v2.as_ref();
+                Self {
+                    read_bytes: details
+                        .and_then(|details| details.scan_detail_v2.as_ref())
+                        .map(scan_read_bytes)
+                        .unwrap_or(response.data.len() as u64),
+                    kv_cpu: kv_cpu(details, response.exec_details.as_ref()),
+                    // `tikvrpc.Response.GetSize` does not include the
+                    // CopStream wrapper even though its embedded first
+                    // response supplies bytes and execution details.
+                    response_size: 0,
+                }
+            }
             Response::Get(response) => {
                 Self::from_details(response.exec_details_v2.as_ref(), response.encoded_len())
             }
@@ -235,6 +230,8 @@ impl ResponseInfo {
     pub(crate) fn from_dispatch_response(response: &dyn Any) -> Self {
         if let Some(response) = response.downcast_ref::<coprocessor::Response>() {
             Self::from_response(Response::Cop(response))
+        } else if let Some(response) = response.downcast_ref::<CoprocessorStreamResponse>() {
+            Self::from_response(Response::CopStream(response.first.as_ref()))
         } else if let Some(response) = response.downcast_ref::<kvrpcpb::GetResponse>() {
             Self::from_response(Response::Get(response))
         } else if let Some(response) = response.downcast_ref::<kvrpcpb::BatchGetResponse>() {
@@ -255,6 +252,22 @@ impl ResponseInfo {
             kv_cpu: kv_cpu(details, None),
             response_size: size as u64,
         }
+    }
+
+    pub fn read_bytes(&self) -> u64 {
+        self.read_bytes
+    }
+
+    pub fn kv_cpu(&self) -> Duration {
+        self.kv_cpu
+    }
+
+    pub const fn succeed(&self) -> bool {
+        true
+    }
+
+    pub fn response_size(&self) -> u64 {
+        self.response_size
     }
 }
 
@@ -365,7 +378,11 @@ pub(crate) fn select(
     }
     let mut request_info = RequestInfo::from_store_request(request);
     request_info.replica_number = replica_number;
-    request_info.access_location = access_location;
+    request_info.access_location = match access_location {
+        AccessLocationType::LocalZone => AccessLocationType::LocalZone,
+        AccessLocationType::CrossZone => AccessLocationType::CrossZone,
+        AccessLocationType::Unknown | AccessLocationType::Other(_) => AccessLocationType::Unknown,
+    };
     if !request_info.is_write() {
         request_info.predicted_read_bytes = predicted_read_bytes;
     }
@@ -404,8 +421,12 @@ fn kv_cpu(
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::store::{BatchCoprocessorStreamRequest, CoprocessorStreamRequest};
 
-    struct NoopController;
+    #[derive(Default)]
+    struct NoopController {
+        background: bool,
+    }
 
     #[async_trait]
     impl ResourceGroupController for NoopController {
@@ -424,6 +445,10 @@ mod test {
             _: ResponseInfo,
         ) -> crate::Result<ResponseWaitResult> {
             Ok(ResponseWaitResult::default())
+        }
+
+        fn is_background_request(&self, _: &str, _: &str) -> bool {
+            self.background
         }
     }
 
@@ -460,6 +485,21 @@ mod test {
                     ..Default::default()
                 },
                 coprocessor::StoreBatchTaskResponse {
+                    exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                        scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
+                            processed_versions_size: 20,
+                            total_versions_size: 25,
+                            ..Default::default()
+                        }),
+                        time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
+                            process_wall_time_ns: 200,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                coprocessor::StoreBatchTaskResponse {
                     data: b"12345678".to_vec(),
                     ..Default::default()
                 },
@@ -468,13 +508,49 @@ mod test {
         };
         let info = ResponseInfo::from_response(Response::Cop(&response));
         let expected = if cfg!(feature = "nextgen") {
-            100 + 15 + 8
+            100 + 15 + 25 + 8
         } else {
-            80 + 10 + 8
+            80 + 10 + 20 + 8
         };
         assert_eq!(info.read_bytes, expected);
-        assert_eq!(info.kv_cpu, Duration::from_nanos(1_100));
+        assert_eq!(info.kv_cpu, Duration::from_nanos(1_300));
         assert_eq!(info.response_size, response.encoded_len() as u64);
+
+        let stream = ResponseInfo::from_response(Response::CopStream(Some(&response)));
+        assert_eq!(
+            stream.read_bytes(),
+            if cfg!(feature = "nextgen") { 100 } else { 80 }
+        );
+        assert_eq!(stream.kv_cpu(), Duration::from_nanos(1_000));
+        assert_eq!(stream.response_size(), 0);
+        let dispatch_stream =
+            CoprocessorStreamResponse::from_first_for_test(Some(response.clone()));
+        assert_eq!(
+            ResponseInfo::from_dispatch_response(&dispatch_stream),
+            stream
+        );
+        assert_eq!(
+            ResponseInfo::from_response(Response::CopStream(None)),
+            ResponseInfo::default()
+        );
+
+        if cfg!(feature = "nextgen") {
+            let compatibility = coprocessor::Response {
+                exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                    scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
+                        processed_versions_size: 100,
+                        total_versions_size: 80,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            assert_eq!(
+                ResponseInfo::from_response(Response::Cop(&compatibility)).read_bytes(),
+                100
+            );
+        }
     }
 
     #[test]
@@ -559,6 +635,124 @@ mod test {
     }
 
     #[test]
+    fn original_request_info_matrix() {
+        let read = kvrpcpb::BatchGetRequest {
+            context: Some(kvrpcpb::Context {
+                peer: Some(crate::proto::metapb::Peer {
+                    store_id: 1,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let info = RequestInfo::from_store_request(&read);
+        assert!(!info.is_write());
+        assert_eq!(info.write_bytes(), 0);
+        assert!(!info.bypass());
+        assert_eq!(info.store_id(), 1);
+        assert_eq!(info.request_size(), read.encoded_len() as u64);
+
+        let prewrite = kvrpcpb::PrewriteRequest {
+            mutations: vec![kvrpcpb::Mutation {
+                key: b"foo".to_vec(),
+                value: b"bar".to_vec(),
+                ..Default::default()
+            }],
+            primary_lock: b"baz".to_vec(),
+            context: Some(kvrpcpb::Context {
+                peer: Some(crate::proto::metapb::Peer {
+                    store_id: 2,
+                    ..Default::default()
+                }),
+                request_source: "xxx_internal_others".to_owned(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let info = RequestInfo::from_store_request(&prewrite);
+        assert!(info.is_write());
+        assert_eq!(info.write_bytes(), 9);
+        assert!(info.bypass());
+        assert_eq!(info.store_id(), 2);
+
+        let commit = kvrpcpb::CommitRequest {
+            keys: vec![b"qux".to_vec()],
+            context: Some(kvrpcpb::Context {
+                peer: Some(crate::proto::metapb::Peer {
+                    store_id: 3,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let info = RequestInfo::from_store_request(&commit);
+        assert!(info.is_write());
+        assert_eq!(info.write_bytes(), 3);
+        assert!(!info.bypass());
+        assert_eq!(info.store_id(), 3);
+
+        let mut nil_peer = commit;
+        nil_peer.context = Some(kvrpcpb::Context::default());
+        assert_eq!(RequestInfo::from_store_request(&nil_peer).store_id(), 0);
+
+        let raw_delete = kvrpcpb::RawDeleteRequest {
+            key: b"raw-key".to_vec(),
+            ..Default::default()
+        };
+        assert!(raw_delete.encoded_len() > 0);
+        assert_eq!(
+            RequestInfo::from_store_request(&raw_delete).request_size(),
+            0
+        );
+    }
+
+    #[test]
+    fn source_transactional_and_raw_write_command_matrix() {
+        let writes: Vec<Box<dyn Request>> = vec![
+            Box::new(kvrpcpb::PessimisticLockRequest::default()),
+            Box::new(kvrpcpb::PrewriteRequest::default()),
+            Box::new(kvrpcpb::CommitRequest::default()),
+            Box::new(kvrpcpb::BatchRollbackRequest::default()),
+            Box::new(kvrpcpb::PessimisticRollbackRequest::default()),
+            Box::new(kvrpcpb::CheckTxnStatusRequest::default()),
+            Box::new(kvrpcpb::CheckSecondaryLocksRequest::default()),
+            Box::new(kvrpcpb::CleanupRequest::default()),
+            Box::new(kvrpcpb::TxnHeartBeatRequest::default()),
+            Box::new(kvrpcpb::ResolveLockRequest::default()),
+            Box::new(kvrpcpb::FlashbackToVersionRequest::default()),
+            Box::new(kvrpcpb::PrepareFlashbackToVersionRequest::default()),
+            Box::new(kvrpcpb::FlushRequest::default()),
+            Box::new(kvrpcpb::RawPutRequest::default()),
+            Box::new(kvrpcpb::RawBatchPutRequest::default()),
+            Box::new(kvrpcpb::RawDeleteRequest::default()),
+        ];
+        for request in writes {
+            assert!(
+                RequestInfo::from_store_request(request.as_ref()).is_write(),
+                "{} should be a resource-control write",
+                request.label()
+            );
+        }
+
+        let reads: Vec<Box<dyn Request>> = vec![
+            Box::new(kvrpcpb::GetRequest::default()),
+            Box::new(kvrpcpb::RawGetRequest::default()),
+            Box::new(kvrpcpb::RawBatchDeleteRequest::default()),
+            Box::new(kvrpcpb::RawDeleteRangeRequest::default()),
+            Box::new(kvrpcpb::DeleteRangeRequest::default()),
+        ];
+        for request in reads {
+            assert!(
+                !RequestInfo::from_store_request(request.as_ref()).is_write(),
+                "{} should retain source read accounting",
+                request.label()
+            );
+        }
+    }
+
+    #[test]
     fn source_resource_control_selection_uses_routed_replica_and_zone() {
         let request = kvrpcpb::GetRequest {
             context: Some(kvrpcpb::Context {
@@ -570,7 +764,7 @@ mod test {
             }),
             ..Default::default()
         };
-        let controller: ResourceGroupControllerHandle = Arc::new(NoopController);
+        let controller: ResourceGroupControllerHandle = Arc::new(NoopController::default());
         let selected = select(
             &controller,
             &request,
@@ -585,6 +779,17 @@ mod test {
             AccessLocationType::CrossZone
         );
         assert_eq!(selected.request.predicted_read_bytes, 256 * 1024);
+
+        let selected_without_hint =
+            select(&controller, &request, 3, AccessLocationType::CrossZone, 0).unwrap();
+        assert_eq!(selected_without_hint.request.predicted_read_bytes(), 0);
+
+        let selected_unknown =
+            select(&controller, &request, 3, AccessLocationType::Other(9), 0).unwrap();
+        assert_eq!(
+            selected_unknown.request.access_location_type(),
+            AccessLocationType::Unknown
+        );
 
         let write = kvrpcpb::PrewriteRequest {
             context: Some(kvrpcpb::Context {
@@ -605,6 +810,14 @@ mod test {
         )
         .unwrap();
         assert_eq!(selected.request.predicted_read_bytes, 0);
+
+        let mut bypass = request.clone();
+        bypass.context.as_mut().unwrap().request_source = "tidb_internal_others".to_owned();
+        assert!(select(&controller, &bypass, 3, AccessLocationType::CrossZone, 0,).is_none());
+
+        let background: ResourceGroupControllerHandle =
+            Arc::new(NoopController { background: true });
+        assert!(select(&background, &request, 3, AccessLocationType::CrossZone, 0,).is_none());
     }
 
     #[test]
@@ -622,6 +835,30 @@ mod test {
             cfg!(feature = "nextgen")
         );
         assert!(RequestInfo::from_store_request(&request).is_coprocessor);
+
+        let stream = CoprocessorStreamRequest::new(request.clone());
+        let stream_info = RequestInfo::from_store_request(&stream);
+        assert_eq!(stream_info.bypass, cfg!(feature = "nextgen"));
+        assert!(stream_info.is_cop());
+
+        let batch = BatchCoprocessorStreamRequest::new(coprocessor::BatchRequest {
+            tp: 104,
+            context: request.context.clone(),
+            ..Default::default()
+        });
+        let batch_info = RequestInfo::from_store_request(&batch);
+        assert_eq!(batch_info.bypass, cfg!(feature = "nextgen"));
+        assert!(!batch_info.is_cop());
+    }
+
+    #[test]
+    fn original_is_cop_request_matrix() {
+        let cop = coprocessor::Request::default();
+        assert!(RequestInfo::from_store_request(&cop).is_cop());
+        assert!(RequestInfo::from_store_request(&CoprocessorStreamRequest::new(cop)).is_cop());
+        assert!(!RequestInfo::from_store_request(&kvrpcpb::GetRequest::default()).is_cop());
+        assert!(!RequestInfo::from_store_request(&kvrpcpb::BatchGetRequest::default()).is_cop());
+        assert!(!RequestInfo::from_store_request(&kvrpcpb::ScanRequest::default()).is_cop());
     }
 
     #[test]
@@ -652,22 +889,21 @@ mod test {
             secondaries: vec![b"secondary".to_vec()],
             ..Default::default()
         };
-        let info = RequestInfo::prewrite(&prewrite, 2, 1, 99, true);
+        let info = RequestInfo::from_store_request(&prewrite);
         assert!(info.is_write());
         assert_eq!(info.write_bytes(), 18);
-        assert_eq!(info.store_id, 2);
-        assert!(info.bypass);
-        let commit = RequestInfo::commit(
-            &kvrpcpb::CommitRequest {
-                keys: vec![b"qux".to_vec()],
-                ..Default::default()
-            },
-            3,
-            2,
-            10,
-            false,
-        );
-        assert_eq!(commit.write_bytes(), 3);
-        assert!(!RequestInfo::read(1, 4, false).is_write());
+        let constructed = RequestInfo::new(Some(3), 3, 2, false);
+        assert!(constructed.is_write());
+        assert_eq!(constructed.write_bytes(), 3);
+        assert_eq!(constructed.store_id(), 3);
+        assert_eq!(constructed.replica_number(), 2);
+        assert!(!constructed.bypass());
+        assert!(!RequestInfo::new(None, 1, 0, false).is_write());
+
+        let response = ResponseInfo::default();
+        assert_eq!(response.read_bytes(), 0);
+        assert_eq!(response.kv_cpu(), Duration::ZERO);
+        assert!(response.succeed());
+        assert_eq!(response.response_size(), 0);
     }
 }

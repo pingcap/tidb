@@ -190,7 +190,7 @@ where
             .await
     }
 
-    async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store> {
+    async fn get_store(self: Arc<Self>, id: StoreId) -> Result<Option<metapb::Store>> {
         self.inner.clone().get_store(id).await
     }
 
@@ -353,11 +353,11 @@ mod tests {
             })
         }
 
-        async fn get_store(self: Arc<Self>, id: StoreId) -> Result<metapb::Store> {
-            Ok(metapb::Store {
+        async fn get_store(self: Arc<Self>, id: StoreId) -> Result<Option<metapb::Store>> {
+            Ok(Some(metapb::Store {
                 id,
                 ..Default::default()
-            })
+            }))
         }
 
         async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>> {

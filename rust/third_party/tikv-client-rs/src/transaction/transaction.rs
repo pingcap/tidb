@@ -4021,6 +4021,10 @@ mod tests {
         assert_eq!(stats.backoff_count("tikvServerBusy"), 1);
         assert!(stats.backoff_duration("tikvServerBusy") >= Duration::from_millis(1_000));
         assert!(stats.backoff_duration("tikvServerBusy") < Duration::from_millis(2_000));
+        assert_eq!(stats.request_error_stats().error_count("server_is_busy"), 1);
+        let access = stats.replica_access_stats().access_infos();
+        assert_eq!(access.len(), 1);
+        assert_eq!(access[0].error, "server_is_busy");
     }
 
     #[tokio::test]
@@ -5030,7 +5034,7 @@ mod tests {
                     panic!("unexpected request while testing transaction keyspace context")
                 };
                 assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
-                assert_eq!(context.keyspace_id, 7);
+                assert_eq!(crate::request::context_keyspace_id(context), Some(7));
                 assert_eq!(context.keyspace_name, "tenant");
 
                 if req.is::<kvrpcpb::GetRequest>() {
@@ -5070,7 +5074,7 @@ mod tests {
                     assert_eq!(req.keys, vec![b"x\0\0\x07a"]);
                     let context = req.context.as_ref().unwrap();
                     assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
-                    assert_eq!(context.keyspace_id, 7);
+                    assert_eq!(crate::request::context_keyspace_id(context), Some(7));
                     return Ok(Box::new(kvrpcpb::BatchGetResponse {
                         pairs: vec![kvrpcpb::KvPair {
                             key: req.keys[0].clone(),

@@ -1,8 +1,10 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::collections::HashSet;
 use std::time::Duration;
 use std::time::Instant;
 
+use prometheus::core::Collector;
 use prometheus::register_gauge;
 use prometheus::register_gauge_vec;
 use prometheus::register_histogram;
@@ -126,14 +128,14 @@ pub(crate) fn observe_retry_backoff(kind: &'static str, duration: Duration) {
 
 /// Mirrors client-go's range-task completed/failed region gauges. Completed
 /// work is reset when a runner exits; failed work remains cumulative.
-pub(crate) fn reset_range_task_completed(task_type: &'static str) {
+pub(crate) fn reset_range_task_completed(task_type: &str) {
     TIKV_RANGE_TASK_STATS
         .with_label_values(&[task_type, "completed-regions"])
         .set(0.0);
 }
 
 pub(crate) fn add_range_task_stats(
-    task_type: &'static str,
+    task_type: &str,
     completed_regions: usize,
     failed_regions: usize,
 ) {
@@ -147,7 +149,7 @@ pub(crate) fn add_range_task_stats(
 
 /// Records client-go's time spent waiting to enqueue a range subtask for a
 /// worker. This is deliberately the channel-send duration, not handler time.
-pub(crate) fn observe_range_task_push_duration(task_type: &'static str, duration: Duration) {
+pub(crate) fn observe_range_task_push_duration(task_type: &str, duration: Duration) {
     TIKV_RANGE_TASK_PUSH_DURATION
         .with_label_values(&[task_type])
         .observe(duration_to_sec(duration));
@@ -190,6 +192,90 @@ pub(crate) fn increment_store_limit_error(address: &str, store_id: u64) {
     TIKV_STORE_LIMIT_ERROR_COUNTER
         .with_label_values(&[address, &store_id])
         .inc();
+}
+
+/// Source `TiKVRegionErrorCounter`, emitted before request-sender retry
+/// classification for every region-error response.
+pub(crate) fn increment_region_error(error_type: &str, store_id: Option<u64>) {
+    let store_id = store_id.map_or_else(|| "nil".to_owned(), |store_id| store_id.to_string());
+    TIKV_REGION_ERROR_COUNTER
+        .with_label_values(&[error_type, &store_id])
+        .inc();
+}
+
+#[cfg(test)]
+pub(crate) fn region_error_count(error_type: &str, store_id: Option<u64>) -> u64 {
+    let store_id = store_id.map_or_else(|| "nil".to_owned(), |store_id| store_id.to_string());
+    TIKV_REGION_ERROR_COUNTER
+        .with_label_values(&[error_type, &store_id])
+        .get()
+}
+
+pub(crate) fn set_prefer_leader_flows(destination: &str, store_id: u64, flows: u64) {
+    let store_id = store_id.to_string();
+    TIKV_PREFER_LEADER_FLOWS
+        .with_label_values(&[destination, &store_id])
+        .set(flows as f64);
+}
+
+pub(crate) fn set_store_liveness(store_id: u64, liveness: u8) {
+    let store_id = store_id.to_string();
+    TIKV_STORE_LIVENESS
+        .with_label_values(&[&store_id])
+        .set(f64::from(liveness));
+}
+
+pub(crate) fn set_store_slow_scores(store_id: u64, client_side: i64, tikv_side: i64) {
+    let store_id = store_id.to_string();
+    TIKV_STORE_SLOW_SCORE
+        .with_label_values(&[&store_id])
+        .set(client_side as f64);
+    TIKV_FEEDBACK_SLOW_SCORE
+        .with_label_values(&[&store_id])
+        .set(tikv_side as f64);
+}
+
+pub(crate) fn increment_health_feedback_operation(store_id: u64, operation: &str) {
+    let store_id = store_id.to_string();
+    TIKV_HEALTH_FEEDBACK_OPERATIONS
+        .with_label_values(&[&store_id, operation])
+        .inc();
+}
+
+pub(crate) fn remove_store_metrics(store_id: u64) {
+    let store_id = store_id.to_string();
+    let _ = TIKV_STORE_LIVENESS.remove_label_values(&[&store_id]);
+    let _ = TIKV_STORE_SLOW_SCORE.remove_label_values(&[&store_id]);
+    let _ = TIKV_FEEDBACK_SLOW_SCORE.remove_label_values(&[&store_id]);
+    for destination in ["ToLeader", "ToFollower"] {
+        let _ = TIKV_PREFER_LEADER_FLOWS.remove_label_values(&[destination, &store_id]);
+    }
+}
+
+/// Finds one store represented by the source liveness collector but absent
+/// from PD's current non-tombstone store set. Looking at metric labels rather
+/// than cache entries also catches labels retained by a replaced cache.
+pub(crate) fn find_next_stale_store_id(valid_store_ids: &HashSet<u64>) -> Option<u64> {
+    TIKV_STORE_LIVENESS
+        .collect()
+        .into_iter()
+        .flat_map(|family| family.get_metric().to_vec())
+        .flat_map(|metric| metric.get_label().to_vec())
+        .find_map(|label| {
+            if label.get_name() != "store" {
+                return None;
+            }
+            let store_id = label.get_value().parse::<u64>().ok()?;
+            (store_id != 0 && !valid_store_ids.contains(&store_id)).then_some(store_id)
+        })
+}
+
+#[cfg(test)]
+pub(crate) fn prefer_leader_flows(destination: &str, store_id: u64) -> f64 {
+    let store_id = store_id.to_string();
+    TIKV_PREFER_LEADER_FLOWS
+        .with_label_values(&[destination, &store_id])
+        .get()
 }
 
 pub(crate) fn observe_stale_read_request(size: u64, cross_zone: bool) {
@@ -413,14 +499,14 @@ pub(crate) fn store_limit_error_count(address: &str, store_id: u64) -> u64 {
 }
 
 #[cfg(test)]
-pub(crate) fn range_task_stat(task_type: &'static str, result: &'static str) -> f64 {
+pub(crate) fn range_task_stat(task_type: &str, result: &str) -> f64 {
     TIKV_RANGE_TASK_STATS
         .with_label_values(&[task_type, result])
         .get()
 }
 
 #[cfg(test)]
-pub(crate) fn range_task_push_duration_samples(task_type: &'static str) -> u64 {
+pub(crate) fn range_task_push_duration_samples(task_type: &str) -> u64 {
     TIKV_RANGE_TASK_PUSH_DURATION
         .with_label_values(&[task_type])
         .get_sample_count()
@@ -800,6 +886,42 @@ lazy_static::lazy_static! {
         "tikv_client_go_get_store_limit_token_error_total",
         "Store token is up to the limit, probably because the store is hot or unavailable",
         &["address", "store"]
+    )
+    .unwrap();
+    static ref TIKV_REGION_ERROR_COUNTER: IntCounterVec = register_int_counter_vec!(
+        "tikv_client_go_region_err_total",
+        "Counter of region errors.",
+        &["type", "store"]
+    )
+    .unwrap();
+    static ref TIKV_PREFER_LEADER_FLOWS: GaugeVec = register_gauge_vec!(
+        "tikv_client_go_prefer_leader_flows_gauge",
+        "Counter of flows under PreferLeader mode.",
+        &["type", "store"]
+    )
+    .unwrap();
+    static ref TIKV_STORE_LIVENESS: GaugeVec = register_gauge_vec!(
+        "tikv_client_go_store_liveness_state",
+        "Liveness state of each tikv",
+        &["store"]
+    )
+    .unwrap();
+    static ref TIKV_STORE_SLOW_SCORE: GaugeVec = register_gauge_vec!(
+        "tikv_client_go_store_slow_score",
+        "Slow scores of each tikv node based on RPC timecosts",
+        &["store"]
+    )
+    .unwrap();
+    static ref TIKV_FEEDBACK_SLOW_SCORE: GaugeVec = register_gauge_vec!(
+        "tikv_client_go_feedback_slow_score",
+        "Slow scores calculated by TiKV and sent through health feedback",
+        &["store"]
+    )
+    .unwrap();
+    static ref TIKV_HEALTH_FEEDBACK_OPERATIONS: IntCounterVec = register_int_counter_vec!(
+        "tikv_client_go_health_feedback_ops_counter",
+        "Counter of operations about TiKV health feedback",
+        &["scope", "type"]
     )
     .unwrap();
     static ref TIKV_STALE_READ_REQUESTS: IntCounterVec = register_int_counter_vec!(

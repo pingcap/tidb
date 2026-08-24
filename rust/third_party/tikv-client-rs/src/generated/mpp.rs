@@ -29,9 +29,6 @@ pub struct TaskMeta {
     /// mpp version
     #[prost(int64, tag = "9")]
     pub mpp_version: i64,
-    /// keyspace id of the request
-    #[prost(uint32, tag = "10")]
-    pub keyspace_id: u32,
     /// coordinator_address of this query
     #[prost(string, tag = "11")]
     pub coordinator_address: ::prost::alloc::string::String,
@@ -53,6 +50,20 @@ pub struct TaskMeta {
     pub sql_digest: ::prost::alloc::string::String,
     #[prost(string, tag = "21")]
     pub plan_digest: ::prost::alloc::string::String,
+    #[prost(oneof = "task_meta::Keyspace", tags = "10, 22")]
+    pub keyspace: ::core::option::Option<task_meta::Keyspace>,
+}
+/// Nested message and enum types in `TaskMeta`.
+pub mod task_meta {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id of the request. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "10")]
+        KeyspaceId(u32),
+        /// V3 keyspace identity of the request.
+        #[prost(message, tag = "22")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct IsAliveRequest {}

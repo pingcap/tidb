@@ -2879,7 +2879,7 @@ mod tests {
                 if let Some(req) = req.downcast_ref::<kvrpcpb::CheckTxnStatusRequest>() {
                     let context = req.context.as_ref().unwrap();
                     assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
-                    assert_eq!(context.keyspace_id, 7);
+                    assert_eq!(crate::request::context_keyspace_id(context), Some(7));
                     assert_eq!(context.keyspace_name, "tenant");
                     assert_eq!(context.max_execution_duration_ms, 20_000);
                     assert_eq!(
@@ -2901,7 +2901,7 @@ mod tests {
                 if let Some(req) = req.downcast_ref::<kvrpcpb::ResolveLockRequest>() {
                     let context = req.context.as_ref().unwrap();
                     assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
-                    assert_eq!(context.keyspace_id, 7);
+                    assert_eq!(crate::request::context_keyspace_id(context), Some(7));
                     assert_eq!(context.keyspace_name, "tenant");
                     assert_eq!(context.max_execution_duration_ms, 20_000);
                     assert_eq!(

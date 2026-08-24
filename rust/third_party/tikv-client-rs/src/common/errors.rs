@@ -101,6 +101,12 @@ pub enum Error {
     /// Wraps a per-key error returned by TiKV.
     #[error("{0:?}")]
     KeyError(Box<ProtoKeyError>),
+    /// A malformed memcomparable region key returned by PD or TiKV.
+    ///
+    /// This preserves client-go's `internal/apicodec.decodeError`
+    /// classification while displaying the underlying codec failure unchanged.
+    #[error(transparent)]
+    ApiCodecDecode(Box<Error>),
     /// Multiple errors generated from the ExtractError plan.
     #[error("Multiple errors: {0:?}")]
     ExtractedErrors(Vec<Error>),

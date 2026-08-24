@@ -9,6 +9,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use crate::retry::RetryConfig;
+
 use crate::kv::ReplicaReadType;
 use rand::seq::SliceRandom;
 
@@ -294,6 +296,15 @@ impl StoreHealthStatus {
         self.update_slow_flag();
     }
 
+    pub(crate) fn needs_active_feedback(&self, now: Instant) -> bool {
+        let tikv = self.tikv_side_slow_score.lock().unwrap();
+        tikv.has_feedback
+            && tikv.score > 1
+            && tikv.last_update.is_some_and(|last| {
+                now.saturating_duration_since(last) >= TIKV_SLOW_SCORE_ACTIVE_UPDATE_INTERVAL
+            })
+    }
+
     /// Source `updateTiKVServerSideSlowScore`; `now` is supplied so callers
     /// and tests can preserve its timing gates deterministically.
     pub(crate) fn record_tikv_slow_score(&self, score: i64, now: Instant) {
@@ -385,14 +396,27 @@ pub(crate) struct ReplicaCandidate {
 #[doc(hidden)]
 pub struct ReplicaSelectorState {
     attempts: HashMap<u64, u8>,
+    attempted_time: HashMap<u64, Duration>,
+    deadline_exceeded: HashSet<u64>,
     data_is_not_ready: HashSet<u64>,
     leader_busy_peer_id: Option<u64>,
     leader_busy_count: u8,
     leader_busy_probed: bool,
+    suspect_not_leader: HashSet<u64>,
     force_leader: bool,
     no_leader: HashSet<u64>,
     server_busy: HashSet<u64>,
     busy_threshold_disabled: bool,
+    pending_backoffs: HashMap<u64, PendingBackoff>,
+}
+
+const MAX_REPLICA_ATTEMPTS: u8 = 10;
+const MAX_REPLICA_ATTEMPT_TIME: Duration = Duration::from_secs(50);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PendingBackoff {
+    config: RetryConfig,
+    reason: String,
 }
 
 impl ReplicaSelectorState {
@@ -404,11 +428,69 @@ impl ReplicaSelectorState {
         self.data_is_not_ready.contains(&peer_id)
     }
 
+    pub(crate) fn attempted_time(&self, peer_id: u64) -> Duration {
+        self.attempted_time
+            .get(&peer_id)
+            .copied()
+            .unwrap_or_default()
+    }
+
     pub(crate) fn record_attempt(&mut self, peer_id: u64) {
         self.attempts
             .entry(peer_id)
             .and_modify(|attempts| *attempts = attempts.saturating_add(1))
             .or_insert(1);
+    }
+
+    /// Source records wall-clock RPC duration against both the logical target
+    /// and a forwarding proxy. Saturation keeps a pathological duration from
+    /// wrapping the selector's 50-second exhaustion boundary.
+    pub(crate) fn record_attempted_time(&mut self, peer_id: u64, duration: Duration) {
+        self.attempted_time
+            .entry(peer_id)
+            .and_modify(|elapsed| *elapsed = elapsed.saturating_add(duration))
+            .or_insert(duration);
+    }
+
+    pub(crate) fn is_exhausted(
+        &self,
+        peer_id: u64,
+        max_attempts: u8,
+        max_attempt_time: Option<Duration>,
+    ) -> bool {
+        self.attempts(peer_id) >= max_attempts
+            || max_attempt_time.is_some_and(|limit| self.attempted_time(peer_id) >= limit)
+    }
+
+    pub(crate) fn mark_deadline_exceeded(&mut self, peer_id: u64) {
+        self.deadline_exceeded.insert(peer_id);
+    }
+
+    pub(crate) fn deadline_exceeded(&self, peer_id: u64) -> bool {
+        self.deadline_exceeded.contains(&peer_id)
+    }
+
+    pub(crate) fn has_deadline_exceeded(&self) -> bool {
+        !self.deadline_exceeded.is_empty()
+    }
+
+    /// The source leader strategy permits ten sends or fifty cumulative RPC
+    /// seconds, unless a selector-local error flag makes the peer unsuitable.
+    pub(crate) fn is_leader_candidate(&self, peer_id: u64) -> bool {
+        !self.is_exhausted(
+            peer_id,
+            MAX_REPLICA_ATTEMPTS,
+            Some(MAX_REPLICA_ATTEMPT_TIME),
+        ) && !self.deadline_exceeded(peer_id)
+            && !self.has_no_leader(peer_id)
+    }
+
+    /// Source leader selection treats the busy-probe suspicion as a
+    /// temporary skip layered on top of ordinary leader eligibility. Keeping
+    /// the predicates separate is important because the mixed strategy may
+    /// clear the suspicion and restore an otherwise healthy cached leader.
+    pub(crate) fn is_leader_selectable(&self, peer_id: u64) -> bool {
+        self.is_leader_candidate(peer_id) && !self.should_probe_busy_leader(peer_id)
     }
 
     pub(crate) fn mark_data_is_not_ready(&mut self, peer_id: u64) {
@@ -432,31 +514,56 @@ impl ReplicaSelectorState {
     /// cached leader make the next leader read probe a follower for a
     /// `NotLeader` hint. The counter is owned by the current cached leader.
     pub(crate) fn record_busy_leader(&mut self, leader_peer_id: u64) {
+        if self.leader_busy_probed {
+            return;
+        }
         if self.leader_busy_peer_id != Some(leader_peer_id) {
             self.leader_busy_peer_id = Some(leader_peer_id);
             self.leader_busy_count = 0;
-            self.leader_busy_probed = false;
         }
         self.leader_busy_count = self.leader_busy_count.saturating_add(1);
         if self.leader_busy_count >= 2 {
+            self.suspect_not_leader.insert(leader_peer_id);
             self.leader_busy_probed = true;
         }
     }
 
     pub(crate) fn should_probe_busy_leader(&self, leader_peer_id: u64) -> bool {
-        self.leader_busy_probed && self.leader_busy_peer_id == Some(leader_peer_id)
+        self.suspect_not_leader.contains(&leader_peer_id)
+    }
+
+    /// Clears source's selector-local suspicion after every follower probe is
+    /// exhausted. The shared region cache remains valid and the old leader is
+    /// retried with the ordinary server-busy backoff behavior.
+    pub(crate) fn restore_suspect_leader(&mut self, leader_peer_id: u64) -> bool {
+        self.suspect_not_leader.remove(&leader_peer_id) && self.is_leader_candidate(leader_peer_id)
     }
 
     /// A concrete replacement leader switches client-go's selector to
     /// leader-read mode when that peer has not already been exhausted.
     pub(crate) fn record_not_leader(&mut self, target_peer_id: u64, leader_peer_id: u64) {
-        if target_peer_id != leader_peer_id && self.attempts(leader_peer_id) == 0 {
+        self.no_leader.insert(target_peer_id);
+
+        // `replica.onUpdateLeader` gives an exhausted hinted leader one final
+        // chance, then clears only the NotLeader/suspect flags.
+        if self.is_exhausted(
+            leader_peer_id,
+            MAX_REPLICA_ATTEMPTS,
+            Some(MAX_REPLICA_ATTEMPT_TIME),
+        ) {
+            self.attempts
+                .insert(leader_peer_id, MAX_REPLICA_ATTEMPTS - 1);
+            self.attempted_time.remove(&leader_peer_id);
+        }
+        self.no_leader.remove(&leader_peer_id);
+        self.suspect_not_leader.remove(&leader_peer_id);
+        if self.is_leader_candidate(leader_peer_id) {
             self.force_leader = true;
         }
     }
 
     pub(crate) fn should_force_leader(&self, leader_peer_id: u64) -> bool {
-        self.force_leader && self.attempts(leader_peer_id) == 0
+        self.force_leader && self.is_leader_selectable(leader_peer_id)
     }
 
     /// A hintless NotLeader reply marks only the current selector's attempted
@@ -497,6 +604,39 @@ impl ReplicaSelectorState {
         self.busy_threshold_disabled
     }
 
+    /// Defers a fast-retry delay until the selector returns to the same
+    /// logical store. A newer error for that store replaces the old one.
+    pub(crate) fn add_pending_backoff(
+        &mut self,
+        store_id: u64,
+        config: RetryConfig,
+        reason: String,
+    ) {
+        self.pending_backoffs
+            .insert(store_id, PendingBackoff { config, reason });
+    }
+
+    pub(crate) fn take_pending_backoff(&mut self, store_id: u64) -> Option<(RetryConfig, String)> {
+        self.pending_backoffs
+            .remove(&store_id)
+            .map(|pending| (pending.config, pending.reason))
+    }
+
+    /// Source charges one pending delay when selection is exhausted: the
+    /// class with the largest base delay wins. It deliberately leaves the map
+    /// intact because this selector terminates immediately afterward.
+    pub(crate) fn largest_pending_backoff(&self) -> Option<(RetryConfig, String)> {
+        self.pending_backoffs
+            .values()
+            .max_by_key(|pending| pending.config.base_ms)
+            .map(|pending| (pending.config, pending.reason.clone()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_backoff_count(&self) -> usize {
+        self.pending_backoffs.len()
+    }
+
     /// Source `onFlashbackInProgress` abandons a replica read and retries
     /// through the leader without a busy threshold.
     pub(crate) fn force_leader_after_flashback(&mut self) {
@@ -505,9 +645,11 @@ impl ReplicaSelectorState {
     }
 
     /// Source stale-read retries switch to a normal replica read once the
-    /// leader has already been attempted and is not marked busy.
+    /// leader has already been attempted and is neither timed out nor busy.
     pub(crate) fn should_retry_stale_as_replica(&self, leader_peer_id: u64) -> bool {
-        self.attempts(leader_peer_id) > 0 && !self.is_server_busy(leader_peer_id)
+        self.attempts(leader_peer_id) > 0
+            && !self.deadline_exceeded(leader_peer_id)
+            && !self.is_server_busy(leader_peer_id)
     }
 }
 
@@ -853,13 +995,53 @@ mod tests {
         let mut state = ReplicaSelectorState::default();
         state.record_busy_leader(1);
         assert!(!state.should_probe_busy_leader(1));
-        state.record_busy_leader(1);
-        assert!(state.should_probe_busy_leader(1));
-        assert!(!state.should_probe_busy_leader(2));
-
+        // A leader change before the probe restarts the count.
         state.record_busy_leader(2);
         assert!(!state.should_probe_busy_leader(1));
         assert!(!state.should_probe_busy_leader(2));
+        state.record_busy_leader(2);
+        assert!(state.should_probe_busy_leader(2));
+
+        // The probe is selector-global. A hinted leader clears its replica
+        // flag, but this request never fires a second probe.
+        state.record_not_leader(1, 2);
+        assert!(!state.should_probe_busy_leader(2));
+        state.record_busy_leader(2);
+        state.record_busy_leader(2);
+        assert!(!state.should_probe_busy_leader(2));
+
+        let mut direct = ReplicaSelectorState::default();
+        direct.record_busy_leader(1);
+        assert!(!direct.should_probe_busy_leader(1));
+        direct.record_busy_leader(1);
+        assert!(direct.should_probe_busy_leader(1));
+        assert!(!direct.should_probe_busy_leader(2));
+    }
+
+    #[test]
+    fn source_suspect_leader_is_temporarily_skipped_then_restored() {
+        let mut state = ReplicaSelectorState::default();
+        state.record_attempt(1);
+        state.record_attempt(1);
+        state.record_busy_leader(1);
+        state.record_busy_leader(1);
+
+        // Go's `isLeaderCandidate` deliberately ignores the temporary
+        // suspect flag; only leader selection applies that extra skip.
+        assert!(state.is_leader_candidate(1));
+        assert!(!state.is_leader_selectable(1));
+        assert!(state.restore_suspect_leader(1));
+        assert!(state.is_leader_selectable(1));
+
+        let mut exhausted = ReplicaSelectorState::default();
+        for _ in 0..10 {
+            exhausted.record_attempt(1);
+        }
+        exhausted.record_busy_leader(1);
+        exhausted.record_busy_leader(1);
+        assert!(!exhausted.restore_suspect_leader(1));
+        assert!(!exhausted.should_probe_busy_leader(1));
+        assert!(!exhausted.is_leader_candidate(1));
     }
 
     #[test]
@@ -868,14 +1050,19 @@ mod tests {
         state.record_attempt(1);
         state.record_not_leader(1, 2);
         assert!(state.should_force_leader(2));
-        state.record_attempt(2);
+        for _ in 0..10 {
+            state.record_attempt(2);
+        }
         assert!(!state.should_force_leader(2));
 
         let mut exhausted = ReplicaSelectorState::default();
         exhausted.record_attempt(1);
-        exhausted.record_attempt(2);
+        for _ in 0..10 {
+            exhausted.record_attempt(2);
+        }
         exhausted.record_not_leader(1, 2);
-        assert!(!exhausted.should_force_leader(2));
+        assert!(exhausted.should_force_leader(2));
+        assert_eq!(exhausted.attempts(2), 9);
     }
 
     #[test]
@@ -910,6 +1097,11 @@ mod tests {
         assert!(!state.should_retry_stale_as_replica(1));
         state.record_attempt(1);
         assert!(state.should_retry_stale_as_replica(1));
+
+        let mut deadline = state.clone();
+        deadline.mark_deadline_exceeded(1);
+        assert!(!deadline.should_retry_stale_as_replica(1));
+
         state.record_server_busy(1);
         assert!(!state.should_retry_stale_as_replica(1));
     }
@@ -922,6 +1114,65 @@ mod tests {
 
         state.record_attempt(1);
         assert!(!state.force_leader_after_region_not_found(1));
-        assert!(!state.should_force_leader(1));
+        assert!(state.should_force_leader(1));
+    }
+
+    #[test]
+    fn source_leader_exhaustion_combines_attempt_count_time_and_error_flags() {
+        let mut attempts = ReplicaSelectorState::default();
+        for _ in 0..9 {
+            attempts.record_attempt(1);
+        }
+        assert!(attempts.is_leader_candidate(1));
+        attempts.record_attempt(1);
+        assert!(!attempts.is_leader_candidate(1));
+
+        let mut elapsed = ReplicaSelectorState::default();
+        elapsed.record_attempt(1);
+        elapsed.record_attempted_time(1, Duration::from_secs(49));
+        assert!(elapsed.is_leader_candidate(1));
+        elapsed.record_attempted_time(1, Duration::from_secs(1));
+        assert_eq!(elapsed.attempted_time(1), Duration::from_secs(50));
+        assert!(!elapsed.is_leader_candidate(1));
+
+        let mut deadline = ReplicaSelectorState::default();
+        deadline.record_attempt(1);
+        deadline.mark_deadline_exceeded(1);
+        assert!(deadline.deadline_exceeded(1));
+        assert!(deadline.has_deadline_exceeded());
+        assert!(!deadline.is_leader_candidate(1));
+
+        let mut not_leader = ReplicaSelectorState::default();
+        not_leader.record_attempt(1);
+        not_leader.mark_no_leader(1);
+        assert!(!not_leader.is_leader_candidate(1));
+    }
+
+    #[test]
+    fn source_pending_backoff_replaces_by_store_consumes_on_retry_and_chooses_largest() {
+        use crate::retry::{
+            BO_REGION_SCHEDULING, BO_TIKV_DISK_FULL, BO_TIKV_RPC, BO_TIKV_SERVER_BUSY,
+        };
+
+        let mut state = ReplicaSelectorState::default();
+        assert_eq!(state.take_pending_backoff(1), None);
+        assert_eq!(state.largest_pending_backoff(), None);
+
+        state.add_pending_backoff(0, BO_REGION_SCHEDULING, "err-0".to_owned());
+        state.add_pending_backoff(1, BO_TIKV_RPC, "err-1".to_owned());
+        state.add_pending_backoff(2, BO_TIKV_DISK_FULL, "err-2".to_owned());
+        state.add_pending_backoff(1, BO_TIKV_SERVER_BUSY, "err-3".to_owned());
+        assert_eq!(state.pending_backoff_count(), 3);
+
+        assert_eq!(
+            state.take_pending_backoff(0),
+            Some((BO_REGION_SCHEDULING, "err-0".to_owned()))
+        );
+        assert_eq!(state.pending_backoff_count(), 2);
+        assert_eq!(state.take_pending_backoff(10), None);
+        assert_eq!(
+            state.largest_pending_backoff(),
+            Some((BO_TIKV_SERVER_BUSY, "err-3".to_owned()))
+        );
     }
 }

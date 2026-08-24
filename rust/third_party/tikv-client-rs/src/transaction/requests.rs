@@ -2087,6 +2087,17 @@ mod tests {
     }
 
     #[test]
+    fn source_delete_range_counts_successful_region_responses() {
+        let completed = Collect
+            .merge(vec![
+                Ok(kvrpcpb::DeleteRangeResponse::default()),
+                Ok(kvrpcpb::DeleteRangeResponse::default()),
+            ])
+            .unwrap();
+        assert_eq!(completed, 2);
+    }
+
+    #[test]
     fn api_v2_decoder_runs_before_pessimistic_lock_errors_are_extracted() {
         let codec = ApiV2Codec::new(KeyMode::Txn, 7).unwrap();
         let request = kvrpcpb::PessimisticLockRequest::default();
@@ -2549,7 +2560,10 @@ mod tests {
             codec.encode_key(b"region-end")
         );
         let meta = mpp.meta.unwrap();
-        assert_eq!(meta.keyspace_id, 7);
+        assert_eq!(
+            meta.keyspace,
+            Some(crate::proto::mpp::task_meta::Keyspace::KeyspaceId(7))
+        );
         assert_eq!(meta.api_version, kvrpcpb::ApiVersion::V2 as i32);
 
         let mut dispatch_request = crate::proto::mpp::DispatchTaskRequest {
@@ -2560,7 +2574,10 @@ mod tests {
         dispatch_request.set_keyspace_id(Some(9));
         assert_eq!(dispatch_request.label(), "dispatch_mpp_task");
         let meta = dispatch_request.meta.unwrap();
-        assert_eq!(meta.keyspace_id, 9);
+        assert_eq!(
+            meta.keyspace,
+            Some(crate::proto::mpp::task_meta::Keyspace::KeyspaceId(9))
+        );
         assert_eq!(meta.api_version, kvrpcpb::ApiVersion::V2 as i32);
     }
 

@@ -94,6 +94,8 @@ pub struct MockPdClient {
     keyspace_meta: Arc<Mutex<Option<keyspacepb::KeyspaceMeta>>>,
     #[new(default)]
     loaded_keyspaces: Arc<Mutex<Vec<String>>>,
+    #[new(default)]
+    regions: Arc<Mutex<Option<Vec<RegionWithLeader>>>>,
 }
 
 #[async_trait]
@@ -133,7 +135,14 @@ impl MockPdClient {
             bucket_updates: Arc::default(),
             keyspace_meta: Arc::default(),
             loaded_keyspaces: Arc::default(),
+            regions: Arc::default(),
         }
+    }
+
+    pub(crate) fn with_regions(regions: Vec<RegionWithLeader>) -> MockPdClient {
+        let client = Self::default();
+        *client.regions.lock().unwrap() = Some(regions);
+        client
     }
 
     pub fn region1() -> RegionWithLeader {
@@ -228,6 +237,17 @@ impl PdClient for MockPdClient {
 
     async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
         let bytes: &[_] = key.into();
+        if let Some(regions) = self.regions.lock().unwrap().as_ref() {
+            return regions
+                .iter()
+                .find(|region| {
+                    region.region.start_key.as_slice() <= bytes
+                        && (region.region.end_key.is_empty()
+                            || bytes < region.region.end_key.as_slice())
+                })
+                .cloned()
+                .ok_or_else(|| Error::StringError("mock region not found for key".to_owned()));
+        }
         let region = if bytes.is_empty() || bytes < &[10][..] {
             Self::region1()
         } else if bytes >= &[10][..] && bytes < &[250, 250][..] {
@@ -241,6 +261,17 @@ impl PdClient for MockPdClient {
 
     async fn region_for_end_key(&self, key: &Key) -> Result<RegionWithLeader> {
         let bytes: &[_] = key.into();
+        if let Some(regions) = self.regions.lock().unwrap().as_ref() {
+            return regions
+                .iter()
+                .find(|region| {
+                    (bytes.is_empty() || region.region.start_key.as_slice() < bytes)
+                        && (region.region.end_key.is_empty()
+                            || bytes <= region.region.end_key.as_slice())
+                })
+                .cloned()
+                .ok_or_else(|| Error::StringError("mock region not found for end key".to_owned()));
+        }
         let region = if bytes.is_empty() || bytes <= &[10][..] {
             Self::region1()
         } else if bytes <= &[250, 250][..] {
@@ -252,6 +283,13 @@ impl PdClient for MockPdClient {
     }
 
     async fn region_for_id(&self, id: RegionId) -> Result<RegionWithLeader> {
+        if let Some(regions) = self.regions.lock().unwrap().as_ref() {
+            return regions
+                .iter()
+                .find(|region| region.id() == id)
+                .cloned()
+                .ok_or(Error::RegionNotFoundInResponse { region_id: id });
+        }
         match id {
             1 => Ok(Self::region1()),
             2 => Ok(Self::region2()),

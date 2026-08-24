@@ -183,7 +183,7 @@ impl Cancellation {
     /// Cancels current and future waits.
     pub fn cancel(&self) {
         self.inner.cancelled.store(true, Ordering::Release);
-        self.inner.notify.notify_one();
+        self.inner.notify.notify_waiters();
     }
 
     /// Returns whether cancellation has been requested.
@@ -595,6 +595,24 @@ mod tests {
         );
         assert_eq!(loop_.state(), State::Idle);
         assert_eq!(loop_.num_runnable(), 0);
+    }
+
+    #[tokio::test]
+    async fn parent_cancellation_wakes_all_child_waiters() {
+        let parent = Cancellation::default();
+        let first = parent.child();
+        let second = parent.child();
+        let first = tokio::spawn(async move { first.cancelled().await });
+        let second = tokio::spawn(async move { second.cancelled().await });
+        tokio::task::yield_now().await;
+
+        parent.cancel();
+        tokio::time::timeout(Duration::from_millis(100), async {
+            first.await.unwrap();
+            second.await.unwrap();
+        })
+        .await
+        .expect("all child cancellation waiters should wake together");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

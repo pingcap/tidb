@@ -1,8 +1,8 @@
 diff --git a/src/lib.rs b/src/lib.rs
-index 4d71b52..24dd12f 100644
+index ac51d2c..bdd0152 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -115,20 +115,20 @@ mod common;
+@@ -116,21 +116,21 @@ mod common;
  mod compat;
  pub mod config;
  pub mod kv;
@@ -16,6 +16,7 @@ index 4d71b52..24dd12f 100644
 -mod region_cache;
 +pub mod region;
 +pub mod region_cache;
+ mod region_request;
  mod resource_control;
  mod stats;
 -mod store;
@@ -31,10 +32,10 @@ index 4d71b52..24dd12f 100644
  mod proptests;
  
 diff --git a/src/pd/retry.rs b/src/pd/retry.rs
-index d30d329..77b41fb 100644
+index f7c5572..62966bb 100644
 --- a/src/pd/retry.rs
 +++ b/src/pd/retry.rs
-@@ -90,7 +90,7 @@ pub struct RetryClient<Cl = Cluster> {
+@@ -157,7 +157,7 @@ pub struct RetryClient<Cl = Cluster> {
      timeout: Duration,
  }
  
@@ -44,7 +45,7 @@ index d30d329..77b41fb 100644
      pub fn new_with_cluster(
          security_mgr: Arc<SecurityManager>,
 diff --git a/src/store/mod.rs b/src/store/mod.rs
-index d539f67..6862886 100644
+index 2542863..fd178bb 100644
 --- a/src/store/mod.rs
 +++ b/src/store/mod.rs
 @@ -5,8 +5,8 @@ mod client;

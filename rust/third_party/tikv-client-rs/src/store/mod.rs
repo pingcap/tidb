@@ -79,6 +79,10 @@ pub struct RegionStore {
     /// Force a follower transport route to retain source leader-read context.
     /// This is used only by the busy-leader NotLeader-hint probe.
     pub(crate) force_leader_read: bool,
+    /// The mixed selector exhausted every probe and restored its temporarily
+    /// suspected cached leader. Applying this route must clear the
+    /// request-local suspicion just as client-go mutates its replica object.
+    pub(crate) restores_suspect_leader: bool,
     /// Source prefer-leader latency sampling targets the logical store even
     /// when an RPC is physically sent through a forwarding proxy.
     pub(crate) health_status: Option<Arc<StoreHealthStatus>>,
@@ -109,6 +113,7 @@ impl RegionStore {
             busy_threshold_ms: 0,
             busy_threshold_disabled: false,
             force_leader_read: false,
+            restores_suspect_leader: false,
             health_status: None,
             record_client_side_slow_score: false,
             resource_control_replica_number,
@@ -163,6 +168,11 @@ impl RegionStore {
 
     pub(crate) fn with_force_leader_read(mut self) -> Self {
         self.force_leader_read = true;
+        self
+    }
+
+    pub(crate) fn with_restored_suspect_leader(mut self) -> Self {
+        self.restores_suspect_leader = true;
         self
     }
 

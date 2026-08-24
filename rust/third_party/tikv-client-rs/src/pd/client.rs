@@ -2,24 +2,26 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::prelude::*;
 use futures::stream::BoxStream;
 use log::info;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{watch, Mutex, RwLock};
 use tonic::codegen::http::uri::PathAndQuery;
 use tonic_prost::ProstCodec;
 
 use crate::compat::stream_fn;
 use crate::kv::{ReplicaReadConfig, ReplicaReadType};
+use crate::locate::ReplicaFlowsType;
 use crate::locate::{MixedReplicaSelection, ReplicaSelectorState};
 use crate::pd::codec::{CodecPdClient, PdRegionCodec};
 use crate::pd::retry::RetryClientTrait;
 use crate::pd::Cluster;
 use crate::pd::RetryClient;
+use crate::proto::errorpb;
 use crate::proto::keyspacepb;
 use crate::proto::kvrpcpb;
 use crate::proto::metapb;
@@ -332,6 +334,10 @@ pub trait PdClient: Send + Sync + 'static {
     /// do not own a region/store cache retain a no-op default.
     fn record_server_load(&self, _store_id: StoreId, _estimated_wait_ms: u32) {}
 
+    /// Remembers the physical proxy that successfully forwarded a logical
+    /// leader request. Custom clients without a region cache retain a no-op.
+    async fn record_forwarding_proxy(&self, _ver_id: RegionVerId, _store_id: StoreId) {}
+
     /// Handles a TiKV transport failure after a physical route has been
     /// selected. Returning `true` retains the legacy generic cache eviction;
     /// the concrete PD client checks source store liveness and keeps the
@@ -353,6 +359,70 @@ pub trait PdClient: Send + Sync + 'static {
 struct CachedKvClient<C> {
     client: C,
     version: u64,
+}
+
+struct StoreHealthFeedbackRequester<KvC: KvConnect + Clone + Send + Sync + 'static> {
+    kv_connect: KvC,
+    kv_client_cache: Arc<RwLock<HashMap<String, CachedKvClient<KvC::KvClient>>>>,
+    kv_client_versions: Arc<RwLock<HashMap<String, u64>>>,
+    kv_client_lifecycle: Arc<Mutex<()>>,
+    kv_client_closed: Arc<AtomicBool>,
+    event_listener: Arc<dyn crate::store::ClientEventListener>,
+}
+
+impl<KvC: KvConnect + Clone + Send + Sync + 'static> StoreHealthFeedbackRequester<KvC> {
+    async fn kv_client(&self, address: &str) -> Result<KvC::KvClient> {
+        if self.kv_client_closed.load(Ordering::Acquire) {
+            return Err(crate::Error::StringError("rpc client is closed".to_owned()));
+        }
+        if let Some(cached) = self.kv_client_cache.read().await.get(address) {
+            return Ok(cached.client.clone());
+        }
+        let _lifecycle = self.kv_client_lifecycle.lock().await;
+        if self.kv_client_closed.load(Ordering::Acquire) {
+            return Err(crate::Error::StringError("rpc client is closed".to_owned()));
+        }
+        if let Some(cached) = self.kv_client_cache.read().await.get(address) {
+            return Ok(cached.client.clone());
+        }
+        let client = self.kv_connect.connect(address).await?;
+        let version = {
+            let mut versions = self.kv_client_versions.write().await;
+            let version = versions.get(address).copied().unwrap_or(0).wrapping_add(1);
+            versions.insert(address.to_owned(), version);
+            version
+        };
+        let client = client.with_connection_info(address.to_owned(), version);
+        self.kv_client_cache.write().await.insert(
+            address.to_owned(),
+            CachedKvClient {
+                client: client.clone(),
+                version,
+            },
+        );
+        Ok(client)
+    }
+
+    async fn request(&self, address: &str) -> Result<()> {
+        let client = self.kv_client(address).await?;
+        client.set_event_listener(self.event_listener.clone());
+        let response = client
+            .dispatch_with_timeout(
+                &kvrpcpb::GetHealthFeedbackRequest::default(),
+                Some(Duration::from_secs(2)),
+            )
+            .await?
+            .downcast::<kvrpcpb::GetHealthFeedbackResponse>()
+            .map_err(|_| {
+                crate::Error::StringError(
+                    "GetHealthFeedback returned an unexpected response type".to_owned(),
+                )
+            })?;
+        if let Some(region_error) = response.region_error {
+            return Err(crate::Error::RegionError(Box::new(region_error)));
+        }
+        Ok(())
+    }
 }
 
 /// This client converts requests for the logical TiKV cluster into requests
@@ -389,12 +459,75 @@ const HEALTH_SERVING: i32 = 1;
 const HEALTH_UNKNOWN: i32 = 0;
 const HEALTH_SERVICE_UNKNOWN: i32 = 3;
 const STORE_RE_RESOLVE_INTERVAL: Duration = Duration::from_secs(30);
+static STORE_LIVENESS_FLIGHTS: LazyLock<
+    Mutex<HashMap<String, watch::Receiver<Option<StoreLiveness>>>>,
+> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn source_health_status_liveness(status: i32) -> StoreLiveness {
     match status {
         HEALTH_SERVING => StoreLiveness::Reachable,
         HEALTH_UNKNOWN | HEALTH_SERVICE_UNKNOWN => StoreLiveness::Unknown,
         _ => StoreLiveness::Unreachable,
+    }
+}
+
+async fn probe_store_liveness(
+    security_mgr: Arc<SecurityManager>,
+    target: String,
+    timeout: Duration,
+) -> StoreLiveness {
+    let request = async {
+        let channel = security_mgr.connect(&target, |channel| channel).await?;
+        let mut client = tonic::client::Grpc::new(channel);
+        client
+            .unary(
+                tonic::Request::new(HealthCheckRequest {
+                    service: String::new(),
+                }),
+                PathAndQuery::from_static("/grpc.health.v1.Health/Check"),
+                ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
+            )
+            .await
+            .map_err(crate::Error::from)
+    };
+    match tokio::time::timeout(timeout, request).await {
+        Ok(Ok(response)) => source_health_status_liveness(response.into_inner().status),
+        Ok(Err(error)) => {
+            log::debug!("source store liveness check failed for {target}: {error}");
+            StoreLiveness::Unreachable
+        }
+        Err(_) => StoreLiveness::Unreachable,
+    }
+}
+
+async fn request_store_liveness_singleflight<F, Fut>(target: String, probe: F) -> StoreLiveness
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = StoreLiveness> + Send + 'static,
+{
+    let mut receiver = {
+        let mut flights = STORE_LIVENESS_FLIGHTS.lock().await;
+        if let Some(receiver) = flights.get(&target) {
+            receiver.clone()
+        } else {
+            let (sender, receiver) = watch::channel(None);
+            flights.insert(target.clone(), receiver.clone());
+            let flight_target = target.clone();
+            tokio::spawn(async move {
+                let liveness = probe().await;
+                let _ = sender.send(Some(liveness));
+                STORE_LIVENESS_FLIGHTS.lock().await.remove(&flight_target);
+            });
+            receiver
+        }
+    };
+    loop {
+        if let Some(liveness) = *receiver.borrow() {
+            return liveness;
+        }
+        if receiver.changed().await.is_err() {
+            return StoreLiveness::Unknown;
+        }
     }
 }
 
@@ -484,20 +617,35 @@ where
         Ok(route)
     }
 
-    async fn map_leader_route(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
+    async fn map_leader_route(
+        self: Arc<Self>,
+        region: RegionWithLeader,
+        selector_state: &ReplicaSelectorState,
+    ) -> Result<RegionStore> {
         let leader = region
             .leader
             .clone()
             .ok_or_else(|| crate::Error::LeaderNotFound {
                 region: region.ver_id(),
             })?;
+        self.region_cache.get_store_by_id(leader.store_id).await?;
+        let leader_liveness = self.region_cache.store_liveness(leader.store_id);
         let proxy = if self.enable_forwarding {
             self.region_cache
-                .proxy_for_unreachable_leader(&region)
+                .proxy_for_unavailable_leader(&region, selector_state)
                 .await?
         } else {
             None
         };
+        if source_forwarding_exhausted(
+            self.enable_forwarding,
+            leader_liveness,
+            selector_state,
+            leader.id,
+            proxy.is_some(),
+        ) {
+            return Err(selector_exhausted_error());
+        }
         self.map_region_to_route(region, leader, proxy).await
     }
 
@@ -507,39 +655,25 @@ where
         {
             return StoreLiveness::Unknown;
         }
+        let Some(physical_store_id) = route.physical_store_id else {
+            return StoreLiveness::Unknown;
+        };
+        if self.region_cache.store_resolve_state(physical_store_id)
+            != Some(crate::region_cache::StoreResolveState::Resolved)
+        {
+            return StoreLiveness::Unknown;
+        }
         if self.store_liveness_timeout.is_zero() {
             return StoreLiveness::Unreachable;
         }
-
-        let request = async {
-            let channel = self
-                .security_mgr
-                .connect(&route.target, |channel| channel)
-                .await?;
-            let mut client = tonic::client::Grpc::new(channel);
-            client
-                .unary(
-                    tonic::Request::new(HealthCheckRequest {
-                        service: String::new(),
-                    }),
-                    PathAndQuery::from_static("/grpc.health.v1.Health/Check"),
-                    ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
-                )
-                .await
-                .map_err(crate::Error::from)
-        };
-
-        match tokio::time::timeout(self.store_liveness_timeout, request).await {
-            Ok(Ok(response)) => source_health_status_liveness(response.into_inner().status),
-            Ok(Err(error)) => {
-                log::debug!(
-                    "source store liveness check failed for {}: {error}",
-                    route.target
-                );
-                StoreLiveness::Unreachable
-            }
-            Err(_) => StoreLiveness::Unreachable,
-        }
+        let target = route.target.clone();
+        let probe_target = target.clone();
+        let security_mgr = self.security_mgr.clone();
+        let timeout = self.store_liveness_timeout;
+        request_store_liveness_singleflight(target, move || {
+            probe_store_liveness(security_mgr, probe_target, timeout)
+        })
+        .await
     }
 
     fn start_store_health_check_loop(self: Arc<Self>, store_id: StoreId, route: RegionStore) {
@@ -559,10 +693,14 @@ where
                 if last_resolve.elapsed() >= STORE_RE_RESOLVE_INTERVAL {
                     last_resolve = std::time::Instant::now();
                     match client.region_cache.refresh_store_by_id(store_id).await {
-                        Ok(store) => {
+                        Ok(Some(store)) => {
                             let endpoint_type = crate::store::EndpointType::from_store(&store);
                             route.target = store.address;
                             route.physical_endpoint_type = endpoint_type;
+                        }
+                        Ok(None) => {
+                            client.region_cache.finish_store_health_check(store_id);
+                            return;
                         }
                         Err(error) => {
                             log::debug!(
@@ -587,7 +725,8 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     type KvClient = KvC::KvClient;
 
     async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
-        self.map_leader_route(region).await
+        self.map_leader_route(region, &ReplicaSelectorState::default())
+            .await
     }
 
     async fn on_send_failure(self: Arc<Self>, route: Option<&RegionStore>) -> bool {
@@ -641,10 +780,17 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         selector_state: ReplicaSelectorState,
         is_read_request: bool,
     ) -> Result<RegionStore> {
+        let config = config.for_source_build();
         let busy_threshold_ms = if selector_state.busy_threshold_disabled() {
             0
         } else {
             config.busy_threshold_ms
+        };
+        let leader_liveness = if let Some(leader) = region.leader.as_ref() {
+            self.region_cache.get_store_by_id(leader.store_id).await?;
+            self.region_cache.store_liveness(leader.store_id)
+        } else {
+            None
         };
         let leader_epoch_stale = match region.leader.as_ref() {
             Some(leader) => {
@@ -661,7 +807,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
                     == Some(StoreLiveness::Reachable)
                 {
                     return self
-                        .map_leader_route(region)
+                        .map_leader_route(region, &selector_state)
                         .await
                         .map(|route| route.with_busy_threshold(busy_threshold_ms));
                 }
@@ -669,8 +815,13 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         }
         if matches!(config.read_type, ReplicaReadType::Leader) && !config.stale_read {
             if let Some(leader) = region.leader.clone().filter(|leader| {
-                leader_epoch_stale
-                    || source_leader_falls_back_to_follower(&selector_state, leader.id)
+                source_leader_needs_mixed_fallback(
+                    self.enable_forwarding,
+                    leader_epoch_stale,
+                    leader_liveness,
+                    &selector_state,
+                    leader.id,
+                )
             }) {
                 if !config.leader_only {
                     if let Some(follower) = self
@@ -694,24 +845,64 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
                         // with leader-read wire context after the leader is
                         // exhausted or returns a hintless NotLeader; it is a
                         // probe, not a replica read.
-                        return Ok(self
+                        let route = self
                             .map_region_to_route(region, follower, None)
                             .await?
-                            .with_force_leader_read()
-                            .with_busy_threshold(busy_threshold_ms));
+                            .with_busy_threshold(busy_threshold_ms);
+                        return Ok(
+                            if source_leader_fallback_uses_replica_read(&selector_state, leader.id)
+                            {
+                                // A caller-configured read deadline switches the
+                                // source retry to a genuine follower read.
+                                route
+                            } else {
+                                // Ordinary exhaustion and hintless NotLeader use
+                                // the follower only as a leader-read probe.
+                                route.with_force_leader_read()
+                            },
+                        );
                     }
-                    return Err(crate::Error::StringError(
-                        "no eligible follower after leader fallback".to_owned(),
-                    ));
+                    // `ReplicaSelectMixedStrategy.next` gives a leader that
+                    // was skipped only for the busy-leader probe another
+                    // chance after every follower is unavailable or has
+                    // replied without a leader hint. This is deliberately
+                    // before cache invalidation: reloading the unchanged
+                    // region from PD would only resume hammering the same
+                    // cached leader.
+                    self.region_cache.get_store_by_id(leader.store_id).await?;
+                    if source_can_restore_suspect_leader(
+                        &selector_state,
+                        leader.id,
+                        leader_epoch_stale,
+                        leader_liveness,
+                    ) {
+                        return self
+                            .map_leader_route(region, &selector_state)
+                            .await
+                            .map(|route| {
+                                route
+                                    .with_busy_threshold(busy_threshold_ms)
+                                    .with_restored_suspect_leader()
+                            });
+                    }
+                    if !selector_state.has_deadline_exceeded() {
+                        self.region_cache
+                            .invalidate_region_cache(region.ver_id())
+                            .await;
+                    }
+                    return Err(selector_exhausted_error());
                 }
                 // Source `leaderOnly` still applies after
                 // `ReplicaSelectLeaderStrategy` exhausts the leader. Mixed
                 // fallback has no eligible candidate in that mode, so return
                 // to the sender/cache refresh path rather than resending the
                 // known exhausted leader.
-                return Err(crate::Error::StringError(
-                    "no eligible replica after exhausted leader".to_owned(),
-                ));
+                if !selector_state.has_deadline_exceeded() {
+                    self.region_cache
+                        .invalidate_region_cache(region.ver_id())
+                        .await;
+                }
+                return Err(selector_exhausted_error());
             }
             if is_read_request && busy_threshold_ms != 0 {
                 if let Some(leader) = region.leader.as_ref() {
@@ -737,9 +928,12 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
                                 .await
                                 .map(|route| route.with_busy_threshold(busy_threshold_ms));
                         }
-                        return self.map_region_to_store(region).await.map(|route| {
-                            route.with_busy_threshold(0).with_busy_threshold_disabled()
-                        });
+                        return self
+                            .map_leader_route(region, &selector_state)
+                            .await
+                            .map(|route| {
+                                route.with_busy_threshold(0).with_busy_threshold_disabled()
+                            });
                     }
                 }
             }
@@ -775,7 +969,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
                 }
             }
             return self
-                .map_region_to_store(region)
+                .map_leader_route(region, &selector_state)
                 .await
                 .map(|route| route.with_busy_threshold(busy_threshold_ms));
         }
@@ -813,14 +1007,36 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
                 },
             )
             .await?
-            .ok_or_else(|| {
-                crate::Error::StringError("no eligible TiKV replica for request".to_owned())
-            })?;
+            .ok_or_else(selector_exhausted_error);
+        let peer = match peer {
+            Ok(peer) => peer,
+            Err(error) => {
+                if !selector_state.has_deadline_exceeded() {
+                    self.region_cache
+                        .invalidate_region_cache(region.ver_id())
+                        .await;
+                }
+                return Err(error);
+            }
+        };
         let stale_read = config.stale_read
             && !region
                 .leader
                 .as_ref()
                 .is_some_and(|leader| selector_state.should_retry_stale_as_replica(leader.id));
+        if config.effective_prefer_leader() {
+            let destination = if region
+                .leader
+                .as_ref()
+                .is_some_and(|leader| leader.id == peer.id)
+            {
+                ReplicaFlowsType::ToLeader
+            } else {
+                ReplicaFlowsType::ToFollower
+            };
+            self.region_cache
+                .record_store_replica_flow(peer.store_id, destination);
+        }
         Ok(self
             .map_region_to_route(region, peer, None)
             .await?
@@ -912,6 +1128,12 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
             .record_server_load(store_id, estimated_wait_ms);
     }
 
+    async fn record_forwarding_proxy(&self, ver_id: RegionVerId, store_id: StoreId) {
+        self.region_cache
+            .set_region_proxy_store(&ver_id, Some(store_id))
+            .await;
+    }
+
     async fn invalidate_region_cache(&self, ver_id: RegionVerId) {
         self.region_cache.invalidate_region_cache(ver_id).await
     }
@@ -971,6 +1193,7 @@ impl PdRpcClient<TikvConnect, Cluster> {
     ) -> Result<PdRpcClient> {
         let enable_preload = config.enable_preload;
         let regions_refresh_interval = config.regions_refresh_interval;
+        let stores_refresh_interval = config.stores_refresh_interval;
         let client = PdRpcClient::new_with_codec_resolver(
             config.clone(),
             |security_mgr| {
@@ -1032,6 +1255,23 @@ impl PdRpcClient<TikvConnect, Cluster> {
         } else {
             client.region_cache.start_background_gc();
         }
+        let health_feedback_requester = Arc::new(StoreHealthFeedbackRequester {
+            kv_connect: client.kv_connect.clone(),
+            kv_client_cache: client.kv_client_cache.clone(),
+            kv_client_versions: client.kv_client_versions.clone(),
+            kv_client_lifecycle: client.kv_client_lifecycle.clone(),
+            kv_client_closed: client.kv_client_closed.clone(),
+            event_listener: client.region_cache.client_event_listener(),
+        });
+        client
+            .region_cache
+            .set_health_feedback_callback(Arc::new(move |address| {
+                let requester = health_feedback_requester.clone();
+                Box::pin(async move { requester.request(&address).await })
+            }));
+        client
+            .region_cache
+            .start_background_store_maintenance(Duration::from_secs(stores_refresh_interval));
         Ok(client)
     }
 }
@@ -1122,7 +1362,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         crate::kv::STORE_LIMIT.store(config.tikv_client.store_limit, Ordering::Relaxed);
         let codec_pd = Arc::new(CodecPdClient::new(pd.clone(), region_codec));
         let region_cache = Arc::new(RegionCache::new(codec_pd));
-        Ok(PdRpcClient {
+        let client = PdRpcClient {
             pd: pd.clone(),
             kv_client_cache,
             kv_client_versions,
@@ -1136,7 +1376,8 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             security_mgr,
             store_liveness_timeout,
             region_cache,
-        })
+        };
+        Ok(client)
     }
 
     pub(crate) fn keyspace_meta(&self) -> Option<&keyspacepb::KeyspaceMeta> {
@@ -1214,7 +1455,58 @@ fn source_leader_falls_back_to_follower(
     selector_state: &ReplicaSelectorState,
     leader_peer_id: u64,
 ) -> bool {
-    selector_state.has_no_leader(leader_peer_id) || selector_state.attempts(leader_peer_id) > 0
+    !selector_state.is_leader_selectable(leader_peer_id)
+}
+
+fn source_leader_needs_mixed_fallback(
+    forwarding_enabled: bool,
+    leader_epoch_stale: bool,
+    leader_liveness: Option<StoreLiveness>,
+    selector_state: &ReplicaSelectorState,
+    leader_peer_id: u64,
+) -> bool {
+    leader_epoch_stale
+        || (!forwarding_enabled && leader_liveness != Some(StoreLiveness::Reachable))
+        || source_leader_falls_back_to_follower(selector_state, leader_peer_id)
+}
+
+fn source_can_restore_suspect_leader(
+    selector_state: &ReplicaSelectorState,
+    leader_peer_id: u64,
+    leader_epoch_stale: bool,
+    leader_liveness: Option<StoreLiveness>,
+) -> bool {
+    selector_state.should_probe_busy_leader(leader_peer_id)
+        && selector_state.is_leader_candidate(leader_peer_id)
+        && !leader_epoch_stale
+        && leader_liveness == Some(StoreLiveness::Reachable)
+}
+
+fn source_forwarding_exhausted(
+    forwarding_enabled: bool,
+    leader_liveness: Option<StoreLiveness>,
+    selector_state: &ReplicaSelectorState,
+    leader_peer_id: u64,
+    has_proxy: bool,
+) -> bool {
+    forwarding_enabled
+        && leader_liveness != Some(StoreLiveness::Reachable)
+        && !selector_state.has_no_leader(leader_peer_id)
+        && !has_proxy
+}
+
+fn source_leader_fallback_uses_replica_read(
+    selector_state: &ReplicaSelectorState,
+    leader_peer_id: u64,
+) -> bool {
+    selector_state.deadline_exceeded(leader_peer_id)
+}
+
+fn selector_exhausted_error() -> crate::Error {
+    crate::Error::RegionError(Box::new(errorpb::Error {
+        epoch_not_match: Some(errorpb::EpochNotMatch::default()),
+        ..Default::default()
+    }))
 }
 
 fn make_key_range(start_key: Vec<u8>, end_key: Vec<u8>) -> kvrpcpb::KeyRange {
@@ -1244,6 +1536,10 @@ pub mod test {
         let mut selector_state = ReplicaSelectorState::default();
         assert!(!source_leader_falls_back_to_follower(&selector_state, 11));
 
+        for _ in 0..9 {
+            selector_state.record_attempt(11);
+        }
+        assert!(!source_leader_falls_back_to_follower(&selector_state, 11));
         selector_state.record_attempt(11);
         assert!(source_leader_falls_back_to_follower(&selector_state, 11));
 
@@ -1251,6 +1547,128 @@ pub mod test {
         hintless.mark_no_leader(11);
         assert!(source_leader_falls_back_to_follower(&hintless, 11));
         assert!(!source_leader_falls_back_to_follower(&hintless, 12));
+
+        let mut deadline = ReplicaSelectorState::default();
+        deadline.record_attempt(11);
+        deadline.mark_deadline_exceeded(11);
+        assert!(source_leader_falls_back_to_follower(&deadline, 11));
+        assert!(source_leader_fallback_uses_replica_read(&deadline, 11));
+        assert!(!source_leader_fallback_uses_replica_read(&hintless, 11));
+    }
+
+    #[test]
+    fn source_unavailable_leader_uses_mixed_selection_without_forwarding() {
+        let state = ReplicaSelectorState::default();
+        assert!(!source_leader_needs_mixed_fallback(
+            false,
+            false,
+            Some(StoreLiveness::Reachable),
+            &state,
+            11,
+        ));
+        for liveness in [
+            None,
+            Some(StoreLiveness::Unknown),
+            Some(StoreLiveness::Unreachable),
+        ] {
+            assert!(source_leader_needs_mixed_fallback(
+                false, false, liveness, &state, 11,
+            ));
+            assert!(!source_leader_needs_mixed_fallback(
+                true, false, liveness, &state, 11,
+            ));
+        }
+        assert!(source_leader_needs_mixed_fallback(
+            true,
+            true,
+            Some(StoreLiveness::Reachable),
+            &state,
+            11,
+        ));
+    }
+
+    #[test]
+    fn source_busy_probe_restores_only_an_eligible_reachable_leader() {
+        let mut selector_state = ReplicaSelectorState::default();
+        selector_state.record_attempt(11);
+        selector_state.record_attempt(11);
+        selector_state.record_busy_leader(11);
+        selector_state.record_busy_leader(11);
+
+        assert!(source_leader_falls_back_to_follower(&selector_state, 11));
+        assert!(source_can_restore_suspect_leader(
+            &selector_state,
+            11,
+            false,
+            Some(StoreLiveness::Reachable),
+        ));
+        assert!(!source_can_restore_suspect_leader(
+            &selector_state,
+            11,
+            true,
+            Some(StoreLiveness::Reachable),
+        ));
+        assert!(!source_can_restore_suspect_leader(
+            &selector_state,
+            11,
+            false,
+            Some(StoreLiveness::Unreachable),
+        ));
+        assert!(!source_can_restore_suspect_leader(
+            &selector_state,
+            12,
+            false,
+            Some(StoreLiveness::Reachable),
+        ));
+
+        selector_state.mark_deadline_exceeded(11);
+        assert!(!source_can_restore_suspect_leader(
+            &selector_state,
+            11,
+            false,
+            Some(StoreLiveness::Reachable),
+        ));
+    }
+
+    #[test]
+    fn source_forwarding_exhausts_only_after_every_unavailable_leader_proxy() {
+        let clean = ReplicaSelectorState::default();
+        for liveness in [
+            None,
+            Some(StoreLiveness::Unknown),
+            Some(StoreLiveness::Unreachable),
+        ] {
+            assert!(source_forwarding_exhausted(
+                true, liveness, &clean, 11, false,
+            ));
+            assert!(!source_forwarding_exhausted(
+                true, liveness, &clean, 11, true,
+            ));
+        }
+        assert!(!source_forwarding_exhausted(
+            true,
+            Some(StoreLiveness::Reachable),
+            &clean,
+            11,
+            false,
+        ));
+        assert!(!source_forwarding_exhausted(
+            false,
+            Some(StoreLiveness::Unreachable),
+            &clean,
+            11,
+            false,
+        ));
+
+        let mut hintless = ReplicaSelectorState::default();
+        hintless.mark_no_leader(11);
+        assert!(!source_forwarding_exhausted(
+            true,
+            Some(StoreLiveness::Unreachable),
+            &hintless,
+            11,
+            false,
+        ));
     }
 
     #[test]
@@ -1278,6 +1696,27 @@ pub mod test {
         );
         assert_eq!(parse_source_duration("0s"), Some(Duration::ZERO));
         assert_eq!(parse_source_duration("bad"), None);
+    }
+
+    #[tokio::test]
+    async fn source_store_liveness_requests_are_singleflight_by_address() {
+        let probes = Arc::new(AtomicUsize::new(0));
+        let first_probes = probes.clone();
+        let second_probes = probes.clone();
+        let target = "singleflight-store-address".to_owned();
+        let first = request_store_liveness_singleflight(target.clone(), move || async move {
+            first_probes.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            StoreLiveness::Reachable
+        });
+        let second = request_store_liveness_singleflight(target, move || async move {
+            second_probes.fetch_add(1, Ordering::SeqCst);
+            StoreLiveness::Unreachable
+        });
+        let (first, second) = tokio::join!(first, second);
+        assert_eq!(first, StoreLiveness::Reachable);
+        assert_eq!(second, StoreLiveness::Reachable);
+        assert_eq!(probes.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

@@ -30,6 +30,7 @@ use crate::proto::kvrpcpb;
 use crate::proto::pdpb::Timestamp;
 use crate::region::StoreId;
 use crate::region::{RegionVerId, RegionWithLeader};
+use crate::region_request::{region_error_access_message, region_error_label};
 use crate::request::shard::HasNextBatch;
 use crate::request::NextBatch;
 use crate::request::Shardable;
@@ -42,6 +43,7 @@ use crate::retry::{
     BO_TIKV_SERVER_BUSY,
 };
 use crate::stats::tikv_stats;
+use crate::store::CommandType;
 use crate::store::HasRegionError;
 use crate::store::HasRegionErrors;
 use crate::store::KvClient;
@@ -113,6 +115,13 @@ pub struct Dispatch<Req: KvRequest> {
     pub(crate) ru_details: Option<Arc<crate::RuDetails>>,
     pub(crate) store_token_count: Arc<AtomicI64>,
     pub(crate) store_token_store_id: StoreId,
+    /// Optional source request-sender statistics shared by every shard and
+    /// retry owned by this logical request.
+    pub(crate) region_request_runtime_stats: Option<Arc<crate::RegionRequestRuntimeStats>>,
+    pub(crate) logical_peer_id: Option<u64>,
+    pub(crate) logical_store_id: Option<StoreId>,
+    pub(crate) request_stale_read: bool,
+    pub(crate) request_replica_read: bool,
     /// Optional transaction-level decorator for this physical RPC.
     pub interceptor: Option<RpcInterceptorChain>,
     /// Task-scoped execution-detail trace sink captured before this dispatch
@@ -222,6 +231,26 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             Some(interceptor) => interceptor.dispatch(&self.target, &request, next).await,
             None => next().await,
         };
+        if let Some(runtime_stats) = &self.region_request_runtime_stats {
+            if let Some(command) = CommandType::from_request_label(self.request.label()) {
+                runtime_stats.record_rpc(command, started_at.elapsed());
+            }
+            if let Err(error) = &result {
+                let error = request_error_message(error);
+                runtime_stats.record_error(error.clone());
+                if let (Some(peer_id), Some(store_id)) =
+                    (self.logical_peer_id, self.logical_store_id)
+                {
+                    runtime_stats.record_replica_access(
+                        self.request_stale_read,
+                        self.request_replica_read,
+                        peer_id,
+                        store_id,
+                        error,
+                    );
+                }
+            }
+        }
         let network_collector = crate::traffic::NetworkCollector {
             stale_read: self.network_stale_read || self.replica_read_config.stale_read,
             access_location: self.resource_control_access_location,
@@ -304,6 +333,10 @@ impl<Req: KvRequest + StoreRequest> StoreRequest for Dispatch<Req> {
         self.store_health = None;
         self.record_client_side_slow_score = false;
         self.physical_endpoint_type = crate::store::EndpointType::TiKv;
+        self.logical_peer_id = None;
+        self.logical_store_id = None;
+        self.request_stale_read = false;
+        self.request_replica_read = false;
         self.request.apply_store(store);
     }
 }
@@ -314,6 +347,13 @@ const MULTI_STORES_CONCURRENCY: usize = 16;
 pub(crate) fn is_grpc_error(e: &Error) -> bool {
     matches!(e, Error::GrpcAPI(_) | Error::Grpc(_))
         || matches!(e, Error::Connection { source, .. } if is_grpc_error(source))
+}
+
+fn request_error_message(error: &Error) -> String {
+    match error {
+        Error::Connection { source, .. } => request_error_message(source),
+        _ => error.to_string(),
+    }
 }
 
 fn is_grpc_deadline_exceeded(e: &Error) -> bool {
@@ -396,6 +436,12 @@ pub(crate) trait RegionRetryState: Clone + Send + Sync + 'static {
     /// again, and resends. Ordinary request plans leave that error visible to
     /// their callers.
     fn retries_terminal_region_errors(&self) -> bool {
+        false
+    }
+
+    /// Whether the source request context was cancelled. Implementations
+    /// without a cancellable context retain the legacy `false` default.
+    fn is_cancelled(&self) -> bool {
         false
     }
 }
@@ -510,6 +556,10 @@ impl RegionRetryState for SnapshotRegionBackoff {
     fn update_using_forked(&mut self, forked: &Self) {
         self.backoff.update_using_forked(&forked.backoff);
     }
+
+    fn is_cancelled(&self) -> bool {
+        self.backoff.is_cancelled()
+    }
 }
 
 /// Snapshot lock waits use a source-shaped cumulative backoffer. client-go
@@ -597,6 +647,10 @@ impl RegionRetryState for RetryBackoffer {
 
     fn retries_terminal_region_errors(&self) -> bool {
         true
+    }
+
+    fn is_cancelled(&self) -> bool {
+        RetryBackoffer::is_cancelled(self)
     }
 }
 
@@ -716,6 +770,12 @@ where
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
     ) -> (Result<<Self as Plan>::Result>, R) {
+        if backoff.is_cancelled() {
+            return (
+                Err(Error::StringError("context canceled".to_owned())),
+                backoff,
+            );
+        }
         let region_ver_id = region.ver_id();
         let store_id = region.get_store_id().ok();
         debug!(
@@ -739,6 +799,15 @@ where
                 Ok(region_store)
             }) {
             Ok(region_store) => region_store,
+            Err(err) if is_selector_exhausted_error(&err) => {
+                if let Some((config, reason)) = plan.largest_pending_backoff() {
+                    match backoff.backoff(config, reason).await {
+                        Ok(_) => {}
+                        Err(backoff_error) => return (Err(backoff_error), backoff),
+                    }
+                }
+                return (Err(err), backoff);
+            }
             Err(err) => {
                 debug!("single_shard_handler::sharding, error: {:?}", err);
                 return Self::handle_other_error(
@@ -758,15 +827,60 @@ where
         if let Some(peer) = region_store.target_peer.as_ref() {
             plan.record_replica_attempt(peer.id);
         }
+        let proxy_peer_id = region_store
+            .physical_store_id
+            .and_then(|physical_store_id| {
+                region_store
+                    .region_with_leader
+                    .region
+                    .peers
+                    .iter()
+                    .find(|peer| peer.store_id == physical_store_id)
+                    .map(|peer| peer.id)
+            });
+        let proxy_peer_id = proxy_peer_id.filter(|proxy_peer_id| {
+            region_store
+                .target_peer
+                .as_ref()
+                .is_none_or(|target| target.id != *proxy_peer_id)
+        });
+        if let Some(proxy_peer_id) = proxy_peer_id {
+            plan.record_replica_attempt(proxy_peer_id);
+        }
+
+        // A fast ServerIsBusy retry defers its delay until this selector
+        // returns to the same logical store. Context construction increments
+        // the source attempt counter before this wait, so preserve that order.
+        if let Some(store_id) = region_store.target_peer.as_ref().map(|peer| peer.store_id) {
+            if let Some((config, reason)) = plan.take_pending_backoff(store_id) {
+                match backoff.backoff(config, reason.clone()).await {
+                    Ok(true) => {}
+                    Ok(false) => return (Err(Error::StringError(reason)), backoff),
+                    Err(error) => return (Err(error), backoff),
+                }
+            }
+        }
 
         // limit concurrent requests
         let permit = permits.acquire().await.unwrap();
+        let rpc_started_at = Instant::now();
         let res = plan.execute().await;
+        let rpc_duration = rpc_started_at.elapsed();
         drop(permit);
+
+        if let Some(peer) = region_store.target_peer.as_ref() {
+            plan.record_replica_attempted_time(peer.id, rpc_duration);
+        }
+        if let Some(proxy_peer_id) = proxy_peer_id {
+            plan.record_replica_attempted_time(proxy_peer_id, rpc_duration);
+        }
 
         let mut resp = match res {
             Ok(resp) => resp,
             Err(e) if is_grpc_deadline_exceeded(&e) && source_configurable_read_timeout(&plan) => {
+                if let Some(peer) = region_store.target_peer.as_ref() {
+                    plan.mark_replica_deadline_exceeded(peer.id);
+                }
                 debug!(
                     "single_shard_handler: configurable read timeout, reselection without backoff: {:?}",
                     e
@@ -813,7 +927,30 @@ where
                 "single_shard_handler:execute: region error: {:?}, region: {:?}",
                 e, region_ver_id
             );
+            let region_error_label = region_error_label(&e);
+            if region_error_label == "unknown" {
+                info!("unknown region error: {e:?}");
+            }
+            crate::stats::increment_region_error(
+                region_error_label,
+                region_store.target_peer.as_ref().map(|peer| peer.store_id),
+            );
+            if let Some(runtime_stats) = plan.region_request_runtime_stats() {
+                runtime_stats.record_error(region_error_label);
+                if let Some(peer) = region_store.target_peer.as_ref() {
+                    runtime_stats.record_replica_access(
+                        region_store.stale_read,
+                        region_store.is_replica_read(),
+                        peer.id,
+                        peer.store_id,
+                        region_error_access_message(&e, region_error_label),
+                    );
+                }
+            }
             if source_configurable_server_busy_timeout(&plan, &e) {
+                if let Some(peer) = region_store.target_peer.as_ref() {
+                    plan.mark_replica_deadline_exceeded(peer.id);
+                }
                 debug!(
                     "single_shard_handler: configurable server-busy deadline, reselection without backoff: {:?}",
                     e
@@ -829,6 +966,22 @@ where
                 )
                 .await;
             }
+            if let (Some(busy), Some(target_peer)) =
+                (e.server_is_busy.as_ref(), region_store.target_peer.as_ref())
+            {
+                if source_batched_coprocessor_busy_is_terminal(
+                    &plan.replica_read_config(),
+                    is_read_request,
+                    plan.is_batched_coprocessor_read(),
+                    busy.estimated_wait_ms,
+                ) {
+                    // `onServerIsBusy` updates the load estimate, then leaves
+                    // a batched Cop response to its task owner. Retrying it as
+                    // a single replica request would manufacture region misses.
+                    pd_client.record_server_load(target_peer.store_id, busy.estimated_wait_ms);
+                    return (Ok(vec![Ok(resp)]), backoff);
+                }
+            }
             if e.data_is_not_ready.is_some() {
                 if let Some(peer) = region_store.target_peer.as_ref() {
                     plan.mark_replica_data_not_ready(peer.id);
@@ -841,11 +994,17 @@ where
             ) {
                 plan.record_busy_leader(target_peer.id, leader.id, busy.estimated_wait_ms);
             }
-            if !plan.is_batched_coprocessor_read() {
-                if let (Some(busy), Some(target_peer)) =
-                    (e.server_is_busy.as_ref(), region_store.target_peer.as_ref())
-                {
-                    plan.record_server_busy(target_peer.id);
+            if let (Some(busy), Some(target_peer)) =
+                (e.server_is_busy.as_ref(), region_store.target_peer.as_ref())
+            {
+                if !plan.is_batched_coprocessor_read() {
+                    let config = plan.replica_read_config();
+                    if busy.estimated_wait_ms != 0
+                        && config.busy_threshold_ms != 0
+                        && is_read_request
+                    {
+                        plan.record_server_busy(target_peer.id);
+                    }
                     if busy.estimated_wait_ms != 0 {
                         pd_client.record_server_load(target_peer.store_id, busy.estimated_wait_ms);
                     }
@@ -874,14 +1033,30 @@ where
             let fast_server_busy_retry = e.server_is_busy.as_ref().is_some_and(|busy| {
                 source_fast_server_busy_retry(
                     &plan.replica_read_config(),
+                    &plan.replica_selector_state(),
                     &region_store,
                     is_read_request,
                     plan.is_batched_coprocessor_read(),
                     busy.estimated_wait_ms,
                 )
             });
+            if fast_server_busy_retry {
+                if let Some(target_peer) = region_store.target_peer.as_ref() {
+                    plan.record_server_busy(target_peer.id);
+                    plan.add_pending_backoff(
+                        target_peer.store_id,
+                        source_server_busy_backoff_config(&region_store),
+                        format!("server is busy: {e:?}"),
+                    );
+                }
+            }
             let configurable_region_error_timeout =
                 source_configurable_region_error_timeout(&plan, &e);
+            if configurable_region_error_timeout {
+                if let Some(peer) = region_store.target_peer.as_ref() {
+                    plan.mark_replica_deadline_exceeded(peer.id);
+                }
+            }
             let region_error_action = if retry_flashback_through_leader {
                 Ok(RegionErrorRetry::Immediate)
             } else if retry_region_not_found_at_leader {
@@ -994,6 +1169,16 @@ where
                 }
             }
         } else {
+            if !region_store.forwarded_host.is_empty() {
+                if let Some(proxy_store_id) = region_store.physical_store_id {
+                    pd_client
+                        .record_forwarding_proxy(
+                            region_store.region_with_leader.ver_id(),
+                            proxy_store_id,
+                        )
+                        .await;
+                }
+            }
             if let Some(leader) = region_store.successful_forced_leader_peer() {
                 // Source `onSendSuccess` updates its cached working leader
                 // after a forced follower leader-read succeeds. Cache update
@@ -1026,6 +1211,12 @@ where
         e: Error,
     ) -> (Result<<Self as Plan>::Result>, R) {
         debug!("handle_other_error: {:?}", e);
+        // A cancelled caller does not say anything about TiKV liveness. The
+        // source returns immediately without invalidating store/region state
+        // or charging a transport backoff.
+        if is_request_cancelled_error(&e, backoff.is_cancelled()) {
+            return (Err(e), backoff);
+        }
         let invalidate_region = pd_client.clone().on_send_failure(route.as_ref()).await;
         let transport_backoff = source_transport_backoff_config(route.as_ref());
         let retained_region = (!invalidate_region)
@@ -1079,17 +1270,57 @@ where
 /// uses the server-busy backoff; its later suspect-leader probe is separate.
 fn source_fast_server_busy_retry(
     config: &ReplicaReadConfig,
+    selector_state: &ReplicaSelectorState,
     region_store: &RegionStore,
     is_read_request: bool,
     is_batched_coprocessor_read: bool,
     estimated_wait_ms: u32,
 ) -> bool {
-    !matches!(config.read_type, crate::kv::ReplicaReadType::Leader)
+    if estimated_wait_ms != 0 && is_batched_coprocessor_read {
+        return false;
+    }
+    if !matches!(config.read_type, crate::kv::ReplicaReadType::Leader)
         || region_store.force_leader_read
-        || (estimated_wait_ms != 0
-            && config.busy_threshold_ms != 0
-            && is_read_request
-            && !is_batched_coprocessor_read)
+    {
+        return true;
+    }
+    let threshold_redirect =
+        estimated_wait_ms != 0 && config.busy_threshold_ms != 0 && is_read_request;
+    let Some(leader) = region_store.region_with_leader.leader.as_ref() else {
+        return true;
+    };
+    threshold_redirect
+        || !selector_state.is_leader_selectable(leader.id)
+        || selector_state.is_server_busy(leader.id)
+}
+
+fn source_batched_coprocessor_busy_is_terminal(
+    config: &ReplicaReadConfig,
+    is_read_request: bool,
+    is_batched_coprocessor_read: bool,
+    estimated_wait_ms: u32,
+) -> bool {
+    estimated_wait_ms != 0
+        && config.busy_threshold_ms != 0
+        && is_read_request
+        && is_batched_coprocessor_read
+}
+
+fn is_selector_exhausted_error(error: &Error) -> bool {
+    matches!(error, Error::RegionError(region_error) if region_error.epoch_not_match.is_some())
+}
+
+fn is_request_cancelled_error(error: &Error, request_context_cancelled: bool) -> bool {
+    match error {
+        Error::GrpcAPI(status) => {
+            status.code() == tonic::Code::Cancelled && request_context_cancelled
+        }
+        Error::Connection { source, .. } => {
+            is_request_cancelled_error(source, request_context_cancelled)
+        }
+        Error::StringError(message) => message == "context canceled",
+        _ => false,
+    }
 }
 
 /// Source `onSendFail` uses TiFlash's distinct terminal timeout/backoff class
@@ -2622,37 +2853,62 @@ mod test {
     fn source_server_busy_fast_retry_keeps_healthy_leader_backoff() {
         let region = region_store();
         let mut config = ReplicaReadConfig::default();
+        let state = ReplicaSelectorState::default();
         assert!(!source_fast_server_busy_retry(
-            &config, &region, true, false, 0
+            &config, &state, &region, true, false, 0
         ));
 
         config.read_type = crate::kv::ReplicaReadType::Follower;
         assert!(source_fast_server_busy_retry(
-            &config, &region, true, false, 0
+            &config, &state, &region, true, false, 0
         ));
         config.read_type = crate::kv::ReplicaReadType::Mixed;
         assert!(source_fast_server_busy_retry(
-            &config, &region, true, false, 0
+            &config, &state, &region, true, false, 0
         ));
         config.read_type = crate::kv::ReplicaReadType::PreferLeader;
         assert!(source_fast_server_busy_retry(
-            &config, &region, true, false, 0
+            &config, &state, &region, true, false, 0
         ));
 
         config.read_type = crate::kv::ReplicaReadType::Leader;
         config.busy_threshold_ms = 10;
         assert!(source_fast_server_busy_retry(
-            &config, &region, true, false, 1
+            &config, &state, &region, true, false, 1
         ));
         assert!(!source_fast_server_busy_retry(
-            &config, &region, true, true, 1
+            &config, &state, &region, true, true, 1
+        ));
+        assert!(source_batched_coprocessor_busy_is_terminal(
+            &config, true, true, 1
+        ));
+        assert!(!source_batched_coprocessor_busy_is_terminal(
+            &config, true, false, 1
         ));
         assert!(source_fast_server_busy_retry(
             &config,
-            &region.with_force_leader_read(),
+            &state,
+            &region.clone().with_force_leader_read(),
             true,
             false,
             0
+        ));
+
+        let leader_id = region.region_with_leader.leader.as_ref().unwrap().id;
+        let mut exhausted = ReplicaSelectorState::default();
+        for _ in 0..10 {
+            exhausted.record_attempt(leader_id);
+        }
+        config.busy_threshold_ms = 0;
+        assert!(source_fast_server_busy_retry(
+            &config, &exhausted, &region, true, false, 0
+        ));
+
+        let mut suspect = ReplicaSelectorState::default();
+        suspect.record_busy_leader(leader_id);
+        suspect.record_busy_leader(leader_id);
+        assert!(source_fast_server_busy_retry(
+            &config, &suspect, &region, true, false, 0
         ));
 
         assert!(source_fast_selector_retry(
@@ -2666,6 +2922,35 @@ mod test {
             &errorpb::Error::default(),
             false
         ));
+    }
+
+    #[test]
+    fn source_request_cancellation_is_terminal_without_store_failure_handling() {
+        let cancelled = Error::GrpcAPI(tonic::Status::cancelled("context canceled"));
+        assert!(!is_request_cancelled_error(&cancelled, false));
+        assert!(is_request_cancelled_error(&cancelled, true));
+        assert!(is_request_cancelled_error(
+            &Error::Connection {
+                source: Box::new(cancelled),
+                address: "store-1".to_owned(),
+                version: 7,
+            },
+            true
+        ));
+        assert!(is_request_cancelled_error(
+            &Error::StringError("context canceled".to_owned()),
+            false
+        ));
+        assert!(!is_request_cancelled_error(
+            &Error::GrpcAPI(tonic::Status::deadline_exceeded("deadline")),
+            true
+        ));
+
+        let cancellation = Cancellation::default();
+        let state = RetryBackoffer::new(cancellation.clone(), 100);
+        assert!(!RegionRetryState::is_cancelled(&state));
+        cancellation.cancel();
+        assert!(RegionRetryState::is_cancelled(&state));
     }
 
     #[test]

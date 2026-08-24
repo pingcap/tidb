@@ -13,6 +13,7 @@ use futures::future::BoxFuture;
 use crate::interceptor::{RpcDispatchResult, RpcInterceptor, RpcNext};
 use crate::proto::kvrpcpb;
 use crate::store::Request;
+use crate::util::format_duration;
 
 /// Snapshot RPC commands that contribute to [`SnapshotRuntimeStats`].
 ///
@@ -184,6 +185,7 @@ impl SnapshotTimeDetail {
 #[derive(Default)]
 pub struct SnapshotRuntimeStats {
     inner: Mutex<SnapshotRuntimeStatsInner>,
+    region_request_stats: Arc<crate::RegionRequestRuntimeStats>,
 }
 
 impl Clone for SnapshotRuntimeStats {
@@ -195,6 +197,7 @@ impl Clone for SnapshotRuntimeStats {
                     .expect("snapshot stats lock poisoned")
                     .clone(),
             ),
+            region_request_stats: Arc::new((*self.region_request_stats).clone()),
         }
     }
 }
@@ -273,9 +276,22 @@ impl SnapshotRuntimeStats {
             .map_or(Duration::ZERO, |stat| stat.duration)
     }
 
+    /// Return bounded region- and transport-error counts collected by the
+    /// physical region sender.
+    pub fn request_error_stats(&self) -> crate::RequestErrorStats {
+        self.region_request_stats.error_stats()
+    }
+
+    /// Return the first failed replica attempts and their peer-level overflow
+    /// counts for this snapshot.
+    pub fn replica_access_stats(&self) -> crate::ReplicaAccessStats {
+        self.region_request_stats.replica_access_stats()
+    }
+
     /// Merge another collector into this one, matching client-go's
     /// `SnapshotRuntimeStats.Merge` ownership model.
     pub fn merge(&self, other: &Self) {
+        let other_region_request_stats = (*other.region_request_stats).clone();
         let other = other
             .inner
             .lock()
@@ -295,6 +311,12 @@ impl SnapshotRuntimeStats {
             merged.count += stat.count;
             merged.duration += stat.duration;
         }
+        drop(inner);
+        self.region_request_stats.merge(&other_region_request_stats);
+    }
+
+    pub(crate) fn region_request_runtime_stats(&self) -> Arc<crate::RegionRequestRuntimeStats> {
+        Arc::clone(&self.region_request_stats)
     }
 
     pub(crate) fn interceptor(self: &Arc<Self>) -> Arc<dyn RpcInterceptor> {
@@ -338,6 +360,7 @@ impl SnapshotRuntimeStats {
 impl fmt::Display for SnapshotRuntimeStats {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let inner = self.inner.lock().expect("snapshot stats lock poisoned");
+        let request_errors = self.region_request_stats.error_stats();
         let mut output = String::new();
         for (index, (command, stat)) in inner.rpc.iter().enumerate() {
             let separator = if index == 0 { "" } else { "," };
@@ -346,6 +369,10 @@ impl fmt::Display for SnapshotRuntimeStats {
                 stat.count,
                 format_duration(stat.duration)
             ));
+        }
+        if request_errors.distinct_error_count() > 0 {
+            output.push_str(", rpc_errors:");
+            output.push_str(&request_errors.to_string());
         }
         for (retry_type, stat) in &inner.backoff {
             if !output.is_empty() {
@@ -372,43 +399,6 @@ impl fmt::Display for SnapshotRuntimeStats {
         }
         formatter.write_str(&output)?;
         Ok(())
-    }
-}
-
-/// Render a non-negative duration with client-go's `util.FormatDuration`
-/// precision policy. This is deliberately separate from Rust's `Debug` and
-/// `Display` implementations, whose precision rules differ from Go's.
-fn format_duration(duration: Duration) -> String {
-    let nanos = duration.as_nanos();
-    if nanos <= 1_000 {
-        return match nanos {
-            0 => "0s".to_owned(),
-            1_000 => "1µs".to_owned(),
-            nanos => format!("{nanos}ns"),
-        };
-    }
-
-    let (unit, suffix) = if nanos >= 1_000_000_000 {
-        (1_000_000_000_u128, "s")
-    } else if nanos >= 1_000_000 {
-        (1_000_000_u128, "ms")
-    } else {
-        (1_000_u128, "µs")
-    };
-    let integer = nanos / unit;
-    let precision = if integer < 10 { 100 } else { 10 };
-    let scaled = ((nanos % unit) * precision + unit / 2) / unit;
-    let rounded = integer * precision + scaled;
-    let whole = rounded / precision;
-    let fraction = rounded % precision;
-    if fraction == 0 {
-        format!("{whole}{suffix}")
-    } else if precision == 100 && fraction % 10 == 0 {
-        format!("{whole}.{}{suffix}", fraction / 10)
-    } else if precision == 100 {
-        format!("{whole}.{fraction:02}{suffix}")
-    } else {
-        format!("{whole}.{fraction}{suffix}")
     }
 }
 
@@ -668,6 +658,7 @@ mod tests {
         });
         stats.record_resolve_lock(Duration::from_millis(6));
         stats.record_backoff("regionMiss", Duration::from_millis(7));
+        stats.region_request_stats.record_error("region_not_found");
         let cloned = stats.clone();
         stats.record_rpc(SnapshotRpcCommand::Get, Duration::from_millis(2));
 
@@ -680,6 +671,10 @@ mod tests {
         assert_eq!(cloned.scan_detail().processed_keys, 5);
         assert_eq!(cloned.resolve_lock_duration(), Duration::from_millis(6));
         assert_eq!(cloned.backoff_count("regionMiss"), 1);
+        assert_eq!(
+            cloned.request_error_stats().error_count("region_not_found"),
+            1
+        );
         assert_eq!(
             cloned.backoff_duration("regionMiss"),
             Duration::from_millis(7)
@@ -696,6 +691,10 @@ mod tests {
         assert_eq!(cloned.resolve_lock_duration(), Duration::from_millis(12));
         assert_eq!(cloned.backoff_count("regionMiss"), 2);
         assert_eq!(
+            cloned.request_error_stats().error_count("region_not_found"),
+            2
+        );
+        assert_eq!(
             cloned.backoff_duration("regionMiss"),
             Duration::from_millis(14)
         );
@@ -705,6 +704,7 @@ mod tests {
     fn display_matches_client_go_runtime_stat_format() {
         let stats = SnapshotRuntimeStats::new();
         stats.record_rpc(SnapshotRpcCommand::Get, Duration::from_nanos(9_412_345));
+        stats.region_request_stats.record_error("region_not_found");
         stats.record_backoff("regionMiss", Duration::from_nanos(10_412_345));
         stats.record_resolve_lock(Duration::from_nanos(100_450));
         stats.record_exec_detail(&kvrpcpb::ExecDetailsV2 {
@@ -732,7 +732,7 @@ mod tests {
 
         assert_eq!(
             stats.to_string(),
-            "Get:{num_rpc:1, total_time:9.41ms},regionMiss_backoff:{num:1, total_time:10.4ms}, time_detail: {total_process_time: 6ms}, resolve_lock_time:100.5µs, scan_detail: {total_process_keys: 5, total_process_keys_size: 12, total_keys: 9, get_snapshot_time: 1.23ms, ia: {cache_hit_count: 3, remote_read_segment_bytes: 1.50 KB, remote_read_segment_wait_time: 11µs}, rocksdb: {delete_skipped_count: 1, block: {cache_hit_count: 2, read_byte: 1.50 KB, read_time: 12.3µs}}}"
+            "Get:{num_rpc:1, total_time:9.41ms}, rpc_errors:{region_not_found:1},regionMiss_backoff:{num:1, total_time:10.4ms}, time_detail: {total_process_time: 6ms}, resolve_lock_time:100.5µs, scan_detail: {total_process_keys: 5, total_process_keys_size: 12, total_keys: 9, get_snapshot_time: 1.23ms, ia: {cache_hit_count: 3, remote_read_segment_bytes: 1.50 KB, remote_read_segment_wait_time: 11µs}, rocksdb: {delete_skipped_count: 1, block: {cache_hit_count: 2, read_byte: 1.50 KB, read_time: 12.3µs}}}"
         );
     }
 

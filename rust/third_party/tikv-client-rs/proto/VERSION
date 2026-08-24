@@ -1,3 +1,6 @@
 pingcap/kvproto 059694ae4472 (client-go go.mod: kvproto v0.0.0-20260724054804-059694ae4472)
-Matches client-go@52c1e76cec993571493c81de442bcbef90cdc106.
-Re-vendor: copy proto/*.proto (matching names only) and include/ from that revision, then `make generate`.
+The API-codec key-bearing inputs apipb, coprocessor, errorpb, keyspacepb,
+kvrpcpb, metapb, mpp, and tikvpb match this revision. Other generated-root
+inputs remain tracked by the repository-level parity artifact gate.
+Re-vendor from this revision, then run
+`cargo +nightly-2026-08-22 run -p tikv-client-proto-build`.

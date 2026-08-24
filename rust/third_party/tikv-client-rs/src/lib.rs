@@ -122,6 +122,7 @@ pub mod pd;
 mod proto;
 pub mod region;
 pub mod region_cache;
+mod region_request;
 mod resource_control;
 mod stats;
 pub mod store;
@@ -211,6 +212,11 @@ pub use crate::raw::ColumnFamily;
 #[doc(inline)]
 pub use crate::raw::RawChecksum;
 #[doc(inline)]
+pub use crate::region_request::{
+    RegionRequestRuntimeStats, ReplicaAccessInfo, ReplicaAccessStats, RequestErrorStats,
+    RequestReadType, RpcRuntimeStats,
+};
+#[doc(inline)]
 pub use crate::request::RetryOptions;
 #[doc(inline)]
 pub use crate::resource_control::{
@@ -219,6 +225,8 @@ pub use crate::resource_control::{
     RequestWaitResult, ResourceGroupController, ResourceGroupControllerHandle,
     ResponseInfo as ResourceControlResponseInfo, ResponseWaitResult,
 };
+#[doc(inline)]
+pub use crate::store::CommandType;
 #[doc(inline)]
 pub use crate::timestamp::Timestamp;
 #[doc(inline)]

@@ -29,19 +29,134 @@ pub mod keyspace_meta {
         KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
     }
 }
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct NamespaceMeta {
+    #[prost(uint32, tag = "1")]
+    pub id: u32,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(enumeration = "KeyspaceState", tag = "3")]
+    pub state: i32,
+    #[prost(int64, tag = "4")]
+    pub created_at: i64,
+    #[prost(int64, tag = "5")]
+    pub state_changed_at: i64,
+    #[prost(map = "string, string", tag = "7")]
+    pub config: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct NamespaceRef {
+    #[prost(oneof = "namespace_ref::Namespace", tags = "1, 2")]
+    pub namespace: ::core::option::Option<namespace_ref::Namespace>,
+}
+/// Nested message and enum types in `NamespaceRef`.
+pub mod namespace_ref {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Namespace {
+        /// API V3 namespace id.
+        #[prost(uint32, tag = "1")]
+        NamespaceId(u32),
+        /// API V3 namespace name.
+        #[prost(string, tag = "2")]
+        NamespaceName(::prost::alloc::string::String),
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateNamespaceRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(map = "string, string", tag = "3")]
+    pub config: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateNamespaceResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub namespace: ::core::option::Option<NamespaceMeta>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct LoadNamespaceRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub namespace: ::core::option::Option<NamespaceRef>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LoadNamespaceResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub namespace: ::core::option::Option<NamespaceMeta>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetAllNamespacesRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    #[prost(uint32, tag = "2")]
+    pub start_id: u32,
+    #[prost(uint32, tag = "3")]
+    pub limit: u32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetAllNamespacesResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
+    #[prost(message, repeated, tag = "2")]
+    pub namespaces: ::prost::alloc::vec::Vec<NamespaceMeta>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct UpdateNamespaceStateRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub namespace: ::core::option::Option<NamespaceRef>,
+    #[prost(enumeration = "KeyspaceState", tag = "3")]
+    pub state: i32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateNamespaceStateResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
+    #[prost(message, optional, tag = "2")]
+    pub namespace: ::core::option::Option<NamespaceMeta>,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LoadKeyspaceRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
     #[prost(string, tag = "2")]
     pub name: ::prost::alloc::string::String,
+    /// V3 namespace-scoped name lookup. If unset, V3 name-only lookup should use LookupKeyspace and may return multiple keyspaces.
+    #[prost(message, optional, tag = "3")]
+    pub namespace: ::core::option::Option<NamespaceRef>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LoadKeyspaceByIdRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
-    #[prost(uint32, tag = "2")]
-    pub id: u32,
+    #[prost(oneof = "load_keyspace_by_id_request::Keyspace", tags = "2, 3")]
+    pub keyspace: ::core::option::Option<load_keyspace_by_id_request::Keyspace>,
+}
+/// Nested message and enum types in `LoadKeyspaceByIDRequest`.
+pub mod load_keyspace_by_id_request {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        Id(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "3")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LoadKeyspaceResponse {
@@ -49,6 +164,20 @@ pub struct LoadKeyspaceResponse {
     pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
     #[prost(message, optional, tag = "2")]
     pub keyspace: ::core::option::Option<KeyspaceMeta>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct LookupKeyspaceRequest {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::RequestHeader>,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LookupKeyspaceResponse {
+    #[prost(message, optional, tag = "1")]
+    pub header: ::core::option::Option<super::pdpb::ResponseHeader>,
+    #[prost(message, repeated, tag = "2")]
+    pub keyspaces: ::prost::alloc::vec::Vec<KeyspaceMeta>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct WatchKeyspacesRequest {
@@ -66,10 +195,22 @@ pub struct WatchKeyspacesResponse {
 pub struct UpdateKeyspaceStateRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
-    #[prost(uint32, tag = "2")]
-    pub id: u32,
     #[prost(enumeration = "KeyspaceState", tag = "3")]
     pub state: i32,
+    #[prost(oneof = "update_keyspace_state_request::Keyspace", tags = "2, 4")]
+    pub keyspace: ::core::option::Option<update_keyspace_state_request::Keyspace>,
+}
+/// Nested message and enum types in `UpdateKeyspaceStateRequest`.
+pub mod update_keyspace_state_request {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Keyspace {
+        /// V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        Id(u32),
+        /// V3 keyspace identity.
+        #[prost(message, tag = "4")]
+        KeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UpdateKeyspaceStateResponse {
@@ -82,10 +223,25 @@ pub struct UpdateKeyspaceStateResponse {
 pub struct GetAllKeyspacesRequest {
     #[prost(message, optional, tag = "1")]
     pub header: ::core::option::Option<super::pdpb::RequestHeader>,
-    #[prost(uint32, tag = "2")]
-    pub start_id: u32,
     #[prost(uint32, tag = "3")]
     pub limit: u32,
+    /// V3 namespace-scoped pagination. Must be non-zero in V3.
+    #[prost(message, optional, tag = "4")]
+    pub namespace: ::core::option::Option<NamespaceRef>,
+    #[prost(oneof = "get_all_keyspaces_request::StartKeyspace", tags = "2, 5")]
+    pub start_keyspace: ::core::option::Option<get_all_keyspaces_request::StartKeyspace>,
+}
+/// Nested message and enum types in `GetAllKeyspacesRequest`.
+pub mod get_all_keyspaces_request {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum StartKeyspace {
+        /// V1/V2 compatibility pagination cursor. V3 should use namespace_id and start_keyspace_identity.
+        #[prost(uint32, tag = "2")]
+        StartId(u32),
+        /// V3 pagination cursor within namespace_id.
+        #[prost(message, tag = "5")]
+        StartKeyspaceIdentity(super::super::apipb::KeyspaceIdentity),
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetAllKeyspacesResponse {
@@ -124,6 +280,537 @@ impl KeyspaceState {
             "TOMBSTONE" => Some(Self::Tombstone),
             _ => None,
         }
+    }
+}
+/// Generated client implementations.
+pub mod namespace_client {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
+    /// Namespace provides services to manage namespaces.
+    #[derive(Debug, Clone)]
+    pub struct NamespaceClient<T> {
+        inner: tonic::client::Grpc<T>,
+    }
+    impl NamespaceClient<tonic::transport::Channel> {
+        /// Attempt to create a new client by connecting to a given endpoint.
+        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
+        where
+            D: TryInto<tonic::transport::Endpoint>,
+            D::Error: Into<StdError>,
+        {
+            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
+            Ok(Self::new(conn))
+        }
+    }
+    impl<T> NamespaceClient<T>
+    where
+        T: tonic::client::GrpcService<tonic::body::Body>,
+        T::Error: Into<StdError>,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
+    {
+        pub fn new(inner: T) -> Self {
+            let inner = tonic::client::Grpc::new(inner);
+            Self { inner }
+        }
+        pub fn with_origin(inner: T, origin: Uri) -> Self {
+            let inner = tonic::client::Grpc::with_origin(inner, origin);
+            Self { inner }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> NamespaceClient<InterceptedService<T, F>>
+        where
+            F: tonic::service::Interceptor,
+            T::ResponseBody: Default,
+            T: tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
+                >,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
+        {
+            NamespaceClient::new(InterceptedService::new(inner, interceptor))
+        }
+        /// Compress requests with the given encoding.
+        ///
+        /// This requires the server to support it otherwise it might respond with an
+        /// error.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.send_compressed(encoding);
+            self
+        }
+        /// Enable decompressing responses.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.accept_compressed(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
+        pub async fn create_namespace(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CreateNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateNamespaceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/keyspacepb.Namespace/CreateNamespace",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("keyspacepb.Namespace", "CreateNamespace"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn load_namespace(
+            &mut self,
+            request: impl tonic::IntoRequest<super::LoadNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::LoadNamespaceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/keyspacepb.Namespace/LoadNamespace",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("keyspacepb.Namespace", "LoadNamespace"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_all_namespaces(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetAllNamespacesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetAllNamespacesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/keyspacepb.Namespace/GetAllNamespaces",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("keyspacepb.Namespace", "GetAllNamespaces"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn update_namespace_state(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpdateNamespaceStateRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UpdateNamespaceStateResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/keyspacepb.Namespace/UpdateNamespaceState",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("keyspacepb.Namespace", "UpdateNamespaceState"));
+            self.inner.unary(req, path, codec).await
+        }
+    }
+}
+/// Generated server implementations.
+#[allow(non_camel_case_types)]
+pub mod namespace_server {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with NamespaceServer.
+    #[async_trait]
+    pub trait Namespace: std::marker::Send + std::marker::Sync + 'static {
+        async fn create_namespace(
+            &self,
+            request: tonic::Request<super::CreateNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateNamespaceResponse>,
+            tonic::Status,
+        >;
+        async fn load_namespace(
+            &self,
+            request: tonic::Request<super::LoadNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::LoadNamespaceResponse>,
+            tonic::Status,
+        >;
+        async fn get_all_namespaces(
+            &self,
+            request: tonic::Request<super::GetAllNamespacesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetAllNamespacesResponse>,
+            tonic::Status,
+        >;
+        async fn update_namespace_state(
+            &self,
+            request: tonic::Request<super::UpdateNamespaceStateRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UpdateNamespaceStateResponse>,
+            tonic::Status,
+        >;
+    }
+    /// Namespace provides services to manage namespaces.
+    #[derive(Debug)]
+    pub struct NamespaceServer<T> {
+        inner: Arc<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    impl<T> NamespaceServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for NamespaceServer<T>
+    where
+        T: Namespace,
+        B: Body + std::marker::Send + 'static,
+        B::Error: Into<StdError> + std::marker::Send + 'static,
+    {
+        type Response = http::Response<tonic::body::Body>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            match req.uri().path() {
+                "/keyspacepb.Namespace/CreateNamespace" => {
+                    #[allow(non_camel_case_types)]
+                    struct CreateNamespaceSvc<T: Namespace>(pub Arc<T>);
+                    impl<
+                        T: Namespace,
+                    > tonic::server::UnaryService<super::CreateNamespaceRequest>
+                    for CreateNamespaceSvc<T> {
+                        type Response = super::CreateNamespaceResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CreateNamespaceRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Namespace>::create_namespace(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CreateNamespaceSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/keyspacepb.Namespace/LoadNamespace" => {
+                    #[allow(non_camel_case_types)]
+                    struct LoadNamespaceSvc<T: Namespace>(pub Arc<T>);
+                    impl<
+                        T: Namespace,
+                    > tonic::server::UnaryService<super::LoadNamespaceRequest>
+                    for LoadNamespaceSvc<T> {
+                        type Response = super::LoadNamespaceResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::LoadNamespaceRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Namespace>::load_namespace(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = LoadNamespaceSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/keyspacepb.Namespace/GetAllNamespaces" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetAllNamespacesSvc<T: Namespace>(pub Arc<T>);
+                    impl<
+                        T: Namespace,
+                    > tonic::server::UnaryService<super::GetAllNamespacesRequest>
+                    for GetAllNamespacesSvc<T> {
+                        type Response = super::GetAllNamespacesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetAllNamespacesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Namespace>::get_all_namespaces(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetAllNamespacesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/keyspacepb.Namespace/UpdateNamespaceState" => {
+                    #[allow(non_camel_case_types)]
+                    struct UpdateNamespaceStateSvc<T: Namespace>(pub Arc<T>);
+                    impl<
+                        T: Namespace,
+                    > tonic::server::UnaryService<super::UpdateNamespaceStateRequest>
+                    for UpdateNamespaceStateSvc<T> {
+                        type Response = super::UpdateNamespaceStateResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::UpdateNamespaceStateRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Namespace>::update_namespace_state(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = UpdateNamespaceStateSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        let mut response = http::Response::new(
+                            tonic::body::Body::default(),
+                        );
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
+                    })
+                }
+            }
+        }
+    }
+    impl<T> Clone for NamespaceServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    /// Generated gRPC service name
+    pub const SERVICE_NAME: &str = "keyspacepb.Namespace";
+    impl<T> tonic::server::NamedService for NamespaceServer<T> {
+        const NAME: &'static str = SERVICE_NAME;
     }
 }
 /// Generated client implementations.
@@ -240,6 +927,30 @@ pub mod keyspace_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("keyspacepb.Keyspace", "LoadKeyspace"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn lookup_keyspace(
+            &mut self,
+            request: impl tonic::IntoRequest<super::LookupKeyspaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::LookupKeyspaceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/keyspacepb.Keyspace/LookupKeyspace",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("keyspacepb.Keyspace", "LookupKeyspace"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn load_keyspace_by_id(
@@ -361,6 +1072,13 @@ pub mod keyspace_server {
             request: tonic::Request<super::LoadKeyspaceRequest>,
         ) -> std::result::Result<
             tonic::Response<super::LoadKeyspaceResponse>,
+            tonic::Status,
+        >;
+        async fn lookup_keyspace(
+            &self,
+            request: tonic::Request<super::LookupKeyspaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::LookupKeyspaceResponse>,
             tonic::Status,
         >;
         async fn load_keyspace_by_id(
@@ -507,6 +1225,51 @@ pub mod keyspace_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = LoadKeyspaceSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/keyspacepb.Keyspace/LookupKeyspace" => {
+                    #[allow(non_camel_case_types)]
+                    struct LookupKeyspaceSvc<T: Keyspace>(pub Arc<T>);
+                    impl<
+                        T: Keyspace,
+                    > tonic::server::UnaryService<super::LookupKeyspaceRequest>
+                    for LookupKeyspaceSvc<T> {
+                        type Response = super::LookupKeyspaceResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::LookupKeyspaceRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Keyspace>::lookup_keyspace(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = LookupKeyspaceSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

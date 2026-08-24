@@ -3,12 +3,15 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, RwLock as StdRwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use log::debug;
 use rand::Rng;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::Notify;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
@@ -17,8 +20,8 @@ use crate::async_util::Cancellation;
 use crate::common::Error;
 use crate::kv::ReplicaReadType;
 use crate::locate::{
-    HealthStatusDetail, MixedReplicaSelection, ReplicaCandidate, ReplicaSelectorState,
-    StoreHealthStatus,
+    HealthStatusDetail, MixedReplicaSelection, ReplicaCandidate, ReplicaFlowsType,
+    ReplicaSelectorState, StoreHealthStatus,
 };
 use crate::pd::Cluster;
 use crate::pd::RegionScanOptions;
@@ -41,6 +44,8 @@ const MAX_RETRY_WAITING_CONCURRENT_REQUEST: usize = 4;
 const REGION_CACHE_TTL_SECS: i64 = 600;
 const REGION_CACHE_TTL_JITTER_SECS: i64 = 60;
 const CLEAN_CACHE_INTERVAL: Duration = Duration::from_secs(1);
+const REFRESH_STORE_LIST_INTERVAL: Duration = Duration::from_secs(10);
+const CLEAN_STORE_METRICS_INTERVAL: Duration = Duration::from_secs(60);
 const CLEAN_REGION_NUM_PER_ROUND: usize = 50;
 const DEFAULT_REGIONS_PER_BATCH: usize = 128;
 const MAX_RANGES_PER_BATCH: usize = 16 * DEFAULT_REGIONS_PER_BATCH;
@@ -48,6 +53,9 @@ const NEED_RELOAD_ON_ACCESS: u8 = 1 << 0;
 const NEED_EXPIRE_AFTER_TTL: u8 = 1 << 1;
 const NEED_DELAYED_RELOAD_PENDING: u8 = 1 << 2;
 const NEED_DELAYED_RELOAD_READY: u8 = 1 << 3;
+
+pub(crate) type HealthFeedbackCallback =
+    Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>> + Send + Sync>;
 
 /// Cache-local state that client-go keeps beside immutable PD region metadata.
 #[derive(Clone, Debug)]
@@ -63,6 +71,9 @@ struct CachedRegion {
     /// cache lock, so this does not need client-go's atomic representation.
     sync_flags: u8,
     tiflash_cursor: Arc<AtomicUsize>,
+    /// Last forwarding proxy that completed successfully for this cached
+    /// region. Source prefers it before walking the remaining replicas.
+    proxy_store_id: Option<StoreId>,
 }
 
 impl CachedRegion {
@@ -78,6 +89,7 @@ impl CachedRegion {
             ttl: next_region_cache_ttl(now),
             sync_flags,
             tiflash_cursor: Arc::new(AtomicUsize::new(0)),
+            proxy_store_id: None,
         }
     }
 
@@ -313,17 +325,74 @@ struct RegionCacheMap {
 
 struct CachedStore {
     meta: Store,
+    resolve_state: AtomicU8,
     health_status: Arc<StoreHealthStatus>,
     epoch: AtomicU32,
     liveness: AtomicU8,
     health_check_running: AtomicBool,
+    unreachable_since: StdMutex<Option<Instant>>,
     load_stats: StdMutex<Option<StoreLoadStats>>,
+    replica_flows: [AtomicU64; 2],
+}
+
+/// Source `resolveState`. A failed store remains routable with its last known
+/// address while `NeedCheck`; only `Tombstone` removes it from selection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub(crate) enum StoreResolveState {
+    Unresolved = 0,
+    Resolved = 1,
+    NeedCheck = 2,
+    Tombstone = 3,
+}
+
+impl StoreResolveState {
+    fn from_encoded(value: u8) -> Self {
+        match value {
+            0 => Self::Unresolved,
+            1 => Self::Resolved,
+            2 => Self::NeedCheck,
+            3 => Self::Tombstone,
+            _ => Self::Unresolved,
+        }
+    }
+}
+
+impl std::fmt::Display for StoreResolveState {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unresolved => formatter.write_str("unresolved"),
+            Self::Resolved => formatter.write_str("resolved"),
+            Self::NeedCheck => formatter.write_str("needCheck"),
+            Self::Tombstone => formatter.write_str("tombstone"),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
 struct StoreLoadStats {
     estimated_wait: Duration,
     updated_at: Instant,
+}
+
+struct TiFlashComputeStoreCache {
+    need_reload: bool,
+    stores: Vec<Store>,
+}
+
+#[derive(Default)]
+struct StoreMetricsCleanupState {
+    last_cleanup: Option<Instant>,
+    next_store: Option<StoreId>,
+}
+
+impl Default for TiFlashComputeStoreCache {
+    fn default() -> Self {
+        Self {
+            need_reload: true,
+            stores: Vec::new(),
+        }
+    }
 }
 
 fn is_down_peer(region: &RegionWithLeader, candidate: &metapb::Peer) -> bool {
@@ -345,14 +414,52 @@ fn is_unroutable_peer(region: &RegionWithLeader, candidate: &metapb::Peer) -> bo
 
 impl CachedStore {
     fn new(meta: Store) -> Self {
+        let resolve_state = if is_tombstone_store(&meta) {
+            StoreResolveState::Tombstone
+        } else {
+            StoreResolveState::Resolved
+        };
         Self {
             meta,
+            resolve_state: AtomicU8::new(resolve_state as u8),
             health_status: Arc::new(StoreHealthStatus::default()),
             epoch: AtomicU32::new(0),
             liveness: AtomicU8::new(StoreLiveness::Reachable as u8),
             health_check_running: AtomicBool::new(false),
+            unreachable_since: StdMutex::new(None),
             load_stats: StdMutex::new(None),
+            replica_flows: std::array::from_fn(|_| AtomicU64::new(0)),
         }
+    }
+
+    fn unresolved(id: StoreId) -> Self {
+        let store = Self::new(Store {
+            id,
+            ..Default::default()
+        });
+        store
+            .resolve_state
+            .store(StoreResolveState::Unresolved as u8, Ordering::Release);
+        store
+    }
+
+    fn resolve_state(&self) -> StoreResolveState {
+        StoreResolveState::from_encoded(self.resolve_state.load(Ordering::Acquire))
+    }
+
+    fn set_resolve_state(&self, state: StoreResolveState) {
+        self.resolve_state.store(state as u8, Ordering::Release);
+    }
+
+    fn mark_need_check(&self) -> bool {
+        self.resolve_state
+            .compare_exchange(
+                StoreResolveState::Resolved as u8,
+                StoreResolveState::NeedCheck as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
     }
 
     fn update_metadata(&mut self, meta: Store) {
@@ -375,6 +482,14 @@ impl CachedStore {
         stats
             .estimated_wait
             .saturating_sub(now.saturating_duration_since(stats.updated_at))
+    }
+
+    fn update_liveness_metric(&self) {
+        if self.resolve_state() == StoreResolveState::Resolved
+            && EndpointType::from_store(&self.meta) == EndpointType::TiKv
+        {
+            crate::stats::set_store_liveness(self.meta.id, self.liveness.load(Ordering::Acquire));
+        }
     }
 }
 
@@ -423,10 +538,17 @@ impl RegionCacheMap {
 pub struct RegionCache<Client = RetryClient<Cluster>> {
     region_cache: RwLock<RegionCacheMap>,
     store_cache: StdRwLock<HashMap<StoreId, CachedStore>>,
+    store_resolve_locks: AsyncMutex<HashMap<StoreId, Arc<AsyncMutex<()>>>>,
+    tiflash_compute_store_cache: StdRwLock<TiFlashComputeStoreCache>,
+    store_check_notify: Notify,
+    store_metrics_cleanup: StdMutex<StoreMetricsCleanupState>,
+    health_feedback_callback: StdRwLock<Option<HealthFeedbackCallback>>,
     bucket_refreshes: StdMutex<HashSet<RegionId>>,
     gc_cursor: StdMutex<Option<Key>>,
     background_cancellation: Cancellation,
-    background_task: StdMutex<Option<JoinHandle<()>>>,
+    background_tasks: StdMutex<Vec<JoinHandle<()>>>,
+    region_background_started: AtomicBool,
+    store_background_started: AtomicBool,
     inner_client: Arc<Client>,
 }
 
@@ -435,10 +557,17 @@ impl<Client> RegionCache<Client> {
         RegionCache {
             region_cache: RwLock::new(RegionCacheMap::new()),
             store_cache: StdRwLock::new(HashMap::new()),
+            store_resolve_locks: AsyncMutex::new(HashMap::new()),
+            tiflash_compute_store_cache: StdRwLock::new(TiFlashComputeStoreCache::default()),
+            store_check_notify: Notify::new(),
+            store_metrics_cleanup: StdMutex::new(StoreMetricsCleanupState::default()),
+            health_feedback_callback: StdRwLock::new(None),
             bucket_refreshes: StdMutex::new(HashSet::new()),
             gc_cursor: StdMutex::new(None),
             background_cancellation: Cancellation::default(),
-            background_task: StdMutex::new(None),
+            background_tasks: StdMutex::new(Vec::new()),
+            region_background_started: AtomicBool::new(false),
+            store_background_started: AtomicBool::new(false),
             inner_client,
         }
     }
@@ -449,13 +578,16 @@ impl<C: Send + Sync> RegionCache<C> {
     where
         C: 'static,
     {
-        let mut task = self.background_task.lock().unwrap();
-        if task.is_some() {
+        if self
+            .region_background_started
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
             return;
         }
         let cache = Arc::downgrade(self);
         let cancellation = self.background_cancellation.child();
-        *task = Some(tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             loop {
                 tokio::select! {
                     _ = cancellation.cancelled() => return,
@@ -468,13 +600,14 @@ impl<C: Send + Sync> RegionCache<C> {
                     .gc_round_at(now_epoch_secs(), CLEAN_REGION_NUM_PER_ROUND)
                     .await;
             }
-        }));
+        });
+        self.background_tasks.lock().unwrap().push(task);
     }
 
     pub(crate) async fn close_background_task(&self) {
         self.background_cancellation.cancel();
-        let task = self.background_task.lock().unwrap().take();
-        if let Some(task) = task {
+        let tasks = std::mem::take(&mut *self.background_tasks.lock().unwrap());
+        for task in tasks {
             let _ = task.await;
         }
     }
@@ -564,13 +697,16 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         if interval.is_zero() {
             return;
         }
-        let mut task = self.background_task.lock().unwrap();
-        if task.is_some() {
+        if self
+            .region_background_started
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
             return;
         }
         let cache = Arc::downgrade(self);
         let cancellation = self.background_cancellation.child();
-        *task = Some(tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             loop {
                 tokio::select! {
                     _ = cancellation.cancelled() => return,
@@ -585,7 +721,246 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     debug!("periodic region-cache refresh failed: {error}");
                 }
             }
+        });
+        self.background_tasks.lock().unwrap().push(task);
+    }
+
+    /// Starts client-go's independent store-cache maintenance schedules. A
+    /// slow PD re-resolution must not delay health ticks, flow reporting, or
+    /// full-store discovery. A zero refresh interval disables the first three
+    /// schedules while retaining the fixed ten-second discovery schedule.
+    pub(crate) fn start_background_store_maintenance(
+        self: &Arc<Self>,
+        stores_refresh_interval: Duration,
+    ) where
+        C: 'static,
+    {
+        if self
+            .store_background_started
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        let mut tasks = Vec::with_capacity(4);
+        if !stores_refresh_interval.is_zero() {
+            let check_interval = stores_refresh_interval / 4;
+            if !check_interval.is_zero() {
+                let cache = Arc::downgrade(self);
+                let cancellation = self.background_cancellation.child();
+                tasks.push(tokio::spawn(async move {
+                    let mut tick = tokio::time::interval(check_interval);
+                    tick.tick().await;
+                    loop {
+                        let Some(cache) = cache.upgrade() else {
+                            return;
+                        };
+                        tokio::select! {
+                            _ = cancellation.cancelled() => return,
+                            _ = cache.store_check_notify.notified() => {
+                                cache.refresh_store_cache(true).await;
+                            }
+                            _ = tick.tick() => {
+                                cache.refresh_store_cache(false).await;
+                            }
+                        }
+                    }
+                }));
+
+                let cache = Arc::downgrade(self);
+                let cancellation = self.background_cancellation.child();
+                tasks.push(tokio::spawn(async move {
+                    let mut tick = tokio::time::interval(check_interval);
+                    tick.tick().await;
+                    loop {
+                        tokio::select! {
+                            _ = cancellation.cancelled() => return,
+                            _ = tick.tick() => {}
+                        }
+                        let Some(cache) = cache.upgrade() else {
+                            return;
+                        };
+                        cache.tick_store_health_with_callback(Instant::now()).await;
+                    }
+                }));
+            }
+
+            let flow_interval = stores_refresh_interval / 2;
+            if !flow_interval.is_zero() {
+                let cache = Arc::downgrade(self);
+                let cancellation = self.background_cancellation.child();
+                tasks.push(tokio::spawn(async move {
+                    let mut tick = tokio::time::interval(flow_interval);
+                    tick.tick().await;
+                    loop {
+                        tokio::select! {
+                            _ = cancellation.cancelled() => return,
+                            _ = tick.tick() => {}
+                        }
+                        let Some(cache) = cache.upgrade() else {
+                            return;
+                        };
+                        cache.report_store_replica_flows();
+                    }
+                }));
+            }
+        }
+
+        let cache = Arc::downgrade(self);
+        let cancellation = self.background_cancellation.child();
+        tasks.push(tokio::spawn(async move {
+            let mut tick = tokio::time::interval(REFRESH_STORE_LIST_INTERVAL);
+            tick.tick().await;
+            loop {
+                tokio::select! {
+                    _ = cancellation.cancelled() => return,
+                    _ = tick.tick() => {}
+                }
+                let Some(cache) = cache.upgrade() else {
+                    return;
+                };
+                if let Err(error) = cache.insert_missing_stores().await {
+                    debug!("periodic store-list refresh failed: {error}");
+                }
+            }
         }));
+        self.background_tasks.lock().unwrap().extend(tasks);
+    }
+
+    async fn refresh_store_cache(&self, need_check_only: bool) {
+        let store_ids = self
+            .store_cache
+            .read()
+            .unwrap()
+            .iter()
+            .filter_map(|(id, store)| {
+                let state = store.resolve_state();
+                let selected = if need_check_only {
+                    state == StoreResolveState::NeedCheck
+                } else {
+                    !matches!(
+                        state,
+                        StoreResolveState::Unresolved | StoreResolveState::Tombstone
+                    )
+                };
+                selected.then_some(*id)
+            })
+            .collect::<Vec<_>>();
+        for store_id in store_ids {
+            if let Err(error) = self.refresh_store_by_id(store_id).await {
+                debug!("failed to re-resolve store {store_id}: {error}");
+            }
+        }
+    }
+
+    async fn insert_missing_stores(&self) -> Result<()> {
+        let stores = self.inner_client.clone().get_all_stores().await?;
+        self.insert_missing_stores_from_list(&stores);
+        self.clean_up_stale_store_metrics(&stores, Instant::now())
+            .await;
+        Ok(())
+    }
+
+    fn insert_missing_stores_from_list(&self, stores: &[Store]) {
+        {
+            let mut cache = self.store_cache.write().unwrap();
+            for store in stores {
+                if is_tombstone_store(store) || cache.contains_key(&store.id) {
+                    continue;
+                }
+                if store.address.is_empty() {
+                    debug!("ignoring store {} with an empty PD address", store.id);
+                    cache.insert(store.id, CachedStore::unresolved(store.id));
+                    continue;
+                }
+                let cached = CachedStore::new(store.clone());
+                cached.update_liveness_metric();
+                cache.insert(cached.meta.id, cached);
+            }
+        }
+    }
+
+    async fn clean_up_stale_store_metrics(
+        &self,
+        stores: &[Store],
+        now: Instant,
+    ) -> Option<StoreId> {
+        let valid_store_ids = stores
+            .iter()
+            .filter(|store| store.id != 0 && !is_tombstone_store(store))
+            .map(|store| store.id)
+            .collect::<HashSet<_>>();
+        let confirm = {
+            let mut cleanup = self.store_metrics_cleanup.lock().unwrap();
+            if cleanup.last_cleanup.is_some_and(|last| {
+                now.saturating_duration_since(last) < CLEAN_STORE_METRICS_INTERVAL
+            }) {
+                return None;
+            }
+            cleanup.last_cleanup = Some(now);
+            if let Some(store_id) = cleanup.next_store.take() {
+                Some(store_id)
+            } else {
+                cleanup.next_store = crate::stats::find_next_stale_store_id(&valid_store_ids);
+                return None;
+            }
+        };
+        let store_id = confirm?;
+        match self.inner_client.clone().get_store(store_id).await {
+            Ok(Some(store)) if !is_tombstone_store(&store) => None,
+            Ok(_) => {
+                crate::stats::remove_store_metrics(store_id);
+                Some(store_id)
+            }
+            Err(error) => {
+                debug!("cannot confirm stale store {store_id}: {error}");
+                None
+            }
+        }
+    }
+
+    async fn store_resolve_lock(&self, store_id: StoreId) -> Arc<AsyncMutex<()>> {
+        self.store_resolve_locks
+            .lock()
+            .await
+            .entry(store_id)
+            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+            .clone()
+    }
+
+    async fn fetch_and_update_store(
+        &self,
+        store_id: StoreId,
+        advance_epoch_for_tombstone: bool,
+    ) -> Result<Option<Store>> {
+        let store = self.inner_client.clone().get_store(store_id).await?;
+        let mut cache = self.store_cache.write().unwrap();
+        let cached = cache
+            .entry(store_id)
+            .or_insert_with(|| CachedStore::unresolved(store_id));
+        let Some(store) = store.filter(|store| !is_tombstone_store(store)) else {
+            if advance_epoch_for_tombstone && cached.resolve_state() != StoreResolveState::Tombstone
+            {
+                cached.epoch.fetch_add(1, Ordering::AcqRel);
+            }
+            cached.set_resolve_state(StoreResolveState::Tombstone);
+            cached.health_check_running.store(false, Ordering::Release);
+            return Ok(None);
+        };
+        if store.address.is_empty() {
+            return Err(Error::StringError(format!(
+                "empty store({store_id}) address"
+            )));
+        }
+        if cached.resolve_state() == StoreResolveState::Unresolved
+            || cached.meta.address != store.address
+            || !store_labels_are_same(&cached.meta.labels, &store.labels)
+        {
+            cached.update_metadata(store);
+        }
+        cached.set_resolve_state(StoreResolveState::Resolved);
+        cached.update_liveness_metric();
+        Ok(Some(cached.meta.clone()))
     }
 
     // Retrieve cache entry by key. If there's no entry, query PD and update cache.
@@ -802,16 +1177,22 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
     }
 
     pub async fn get_store_by_id(&self, id: StoreId) -> Result<Store> {
-        let store = self
+        if let Some((state, store)) = self
             .store_cache
             .read()
             .unwrap()
             .get(&id)
-            .map(|store| store.meta.clone());
-        match store {
-            Some(store) => Ok(store),
-            None => self.read_through_store_by_id(id).await,
+            .map(|store| (store.resolve_state(), store.meta.clone()))
+        {
+            match state {
+                StoreResolveState::Resolved | StoreResolveState::NeedCheck => return Ok(store),
+                StoreResolveState::Tombstone => return Err(store_tombstone_error(id)),
+                StoreResolveState::Unresolved => {}
+            }
         }
+        self.read_through_store_by_id(id)
+            .await?
+            .ok_or_else(|| store_tombstone_error(id))
     }
 
     /// Force read through (query from PD) and update cache
@@ -1428,23 +1809,41 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         result
     }
 
-    async fn read_through_store_by_id(&self, id: StoreId) -> Result<Store> {
-        let store = self.inner_client.clone().get_store(id).await?;
-        let mut cache = self.store_cache.write().unwrap();
-        match cache.get_mut(&id) {
-            Some(cached) => cached.update_metadata(store.clone()),
-            None => {
-                cache.insert(id, CachedStore::new(store.clone()));
+    async fn read_through_store_by_id(&self, id: StoreId) -> Result<Option<Store>> {
+        let resolve_lock = self.store_resolve_lock(id).await;
+        let _resolve = resolve_lock.lock().await;
+        if let Some((state, store)) = self
+            .store_cache
+            .read()
+            .unwrap()
+            .get(&id)
+            .map(|store| (store.resolve_state(), store.meta.clone()))
+        {
+            match state {
+                StoreResolveState::Resolved | StoreResolveState::NeedCheck => {
+                    return Ok(Some(store));
+                }
+                StoreResolveState::Tombstone => return Ok(None),
+                StoreResolveState::Unresolved => {}
             }
         }
-        Ok(store)
+        {
+            self.store_cache
+                .write()
+                .unwrap()
+                .entry(id)
+                .or_insert_with(|| CachedStore::unresolved(id));
+        }
+        self.fetch_and_update_store(id, false).await
     }
 
     /// Source `Store.reResolve` updates address, peer/status addresses, type,
     /// and labels on the existing cache entry. Health, liveness, failure
     /// epoch, token/load state, and in-flight references must survive.
-    pub(crate) async fn refresh_store_by_id(&self, id: StoreId) -> Result<Store> {
-        self.read_through_store_by_id(id).await
+    pub(crate) async fn refresh_store_by_id(&self, id: StoreId) -> Result<Option<Store>> {
+        let resolve_lock = self.store_resolve_lock(id).await;
+        let _resolve = resolve_lock.lock().await;
+        self.fetch_and_update_store(id, true).await
     }
 
     /// Insert a PD region unless it is older than the cached region epoch.
@@ -1663,6 +2062,22 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             })
     }
 
+    pub(crate) async fn set_region_proxy_store(
+        &self,
+        ver_id: &RegionVerId,
+        proxy_store_id: Option<StoreId>,
+    ) -> bool {
+        self.region_cache
+            .write()
+            .await
+            .ver_id_to_region
+            .get_mut(ver_id)
+            .is_some_and(|region| {
+                region.proxy_store_id = proxy_store_id;
+                true
+            })
+    }
+
     pub(crate) async fn mark_region_delayed_reload(&self, ver_id: &RegionVerId) -> bool {
         self.region_cache
             .write()
@@ -1676,33 +2091,175 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
     }
 
     pub async fn invalidate_store_cache(&self, store_id: StoreId) -> Option<Store> {
-        let mut cache = self.store_cache.write().unwrap();
-        let removed = cache.remove(&store_id).map(|store| store.meta);
-        if removed.is_some() {
-            debug!("invalidated store cache entry, store: {:?}", store_id);
+        let store = self
+            .store_cache
+            .read()
+            .unwrap()
+            .get(&store_id)
+            .map(|store| store.meta.clone());
+        self.mark_store_need_check(store_id);
+        store
+    }
+
+    /// Source `markStoreNeedCheck` retains the old address and all runtime
+    /// state while scheduling an immediate PD metadata check.
+    pub(crate) fn mark_store_need_check(&self, store_id: StoreId) -> bool {
+        let changed = self
+            .store_cache
+            .read()
+            .unwrap()
+            .get(&store_id)
+            .is_some_and(CachedStore::mark_need_check);
+        if changed {
+            self.store_check_notify.notify_one();
         }
-        removed
+        changed
     }
 
     pub async fn read_through_all_stores(&self) -> Result<Vec<Store>> {
+        let stores = self.inner_client.clone().get_all_stores().await?;
+        // Full discovery initializes only stores absent from the registry.
+        // Existing entries retain their identity, metadata, and terminal
+        // tombstone state until the normal re-resolution lifecycle updates
+        // them, matching `storeCacheUpdater.insertMissingStores`.
+        self.insert_missing_stores_from_list(&stores);
+        Ok(stores.into_iter().filter(is_valid_data_store).collect())
+    }
+
+    pub(crate) fn store_resolve_state(&self, store_id: StoreId) -> Option<StoreResolveState> {
+        self.store_cache
+            .read()
+            .unwrap()
+            .get(&store_id)
+            .map(CachedStore::resolve_state)
+    }
+
+    /// Source `GetStoresByType`/`GetAllStores` cache view. Only fully resolved
+    /// stores are visible, so tombstones and entries awaiting initialization
+    /// cannot leak to callers.
+    pub fn cached_stores_by_type(&self, endpoint_type: EndpointType) -> Vec<Store> {
+        self.store_cache
+            .read()
+            .unwrap()
+            .values()
+            .filter(|store| {
+                store.resolve_state() == StoreResolveState::Resolved
+                    && EndpointType::from_store(&store.meta) == endpoint_type
+            })
+            .map(|store| store.meta.clone())
+            .collect()
+    }
+
+    pub fn cached_data_stores(&self) -> Vec<Store> {
+        self.store_cache
+            .read()
+            .unwrap()
+            .values()
+            .filter(|store| {
+                store.resolve_state() == StoreResolveState::Resolved
+                    && matches!(
+                        EndpointType::from_store(&store.meta),
+                        EndpointType::TiKv | EndpointType::TiFlash
+                    )
+            })
+            .map(|store| store.meta.clone())
+            .collect()
+    }
+
+    pub fn cached_tiflash_stores(&self, labels: &[metapb::StoreLabel]) -> Vec<Store> {
+        self.store_cache
+            .read()
+            .unwrap()
+            .values()
+            .filter(|store| {
+                store.resolve_state() == StoreResolveState::Resolved
+                    && EndpointType::from_store(&store.meta) == EndpointType::TiFlash
+                    && store_labels_match(&store.meta.labels, labels)
+            })
+            .map(|store| store.meta.clone())
+            .collect()
+    }
+
+    /// Source's independent TiFlash-compute cache. It is populated only by
+    /// explicit all-store discovery and remains separate from region peers.
+    pub async fn get_tiflash_compute_stores(&self) -> Result<Vec<Store>> {
+        {
+            let cache = self.tiflash_compute_store_cache.read().unwrap();
+            if !cache.need_reload {
+                return Ok(cache.stores.clone());
+            }
+        }
         let stores = self
             .inner_client
             .clone()
             .get_all_stores()
             .await?
             .into_iter()
-            .filter(is_valid_data_store)
+            .filter(|store| {
+                metapb::StoreState::try_from(store.state)
+                    .is_ok_and(|state| state == metapb::StoreState::Up)
+                    && EndpointType::from_store(store) == EndpointType::TiFlashCompute
+            })
             .collect::<Vec<_>>();
-        let mut cache = self.store_cache.write().unwrap();
-        for store in &stores {
-            match cache.get_mut(&store.id) {
-                Some(cached) => cached.update_metadata(store.clone()),
-                None => {
-                    cache.insert(store.id, CachedStore::new(store.clone()));
-                }
+        let mut cache = self.tiflash_compute_store_cache.write().unwrap();
+        cache.stores.clone_from(&stores);
+        cache.need_reload = false;
+        Ok(stores)
+    }
+
+    pub fn invalidate_tiflash_compute_stores(&self) {
+        self.tiflash_compute_store_cache
+            .write()
+            .unwrap()
+            .need_reload = true;
+    }
+
+    pub fn invalidate_tiflash_compute_stores_if_grpc_error(&self, error: &Error) -> bool {
+        if !is_grpc_unavailable(error) {
+            return false;
+        }
+        self.invalidate_tiflash_compute_stores();
+        true
+    }
+
+    pub(crate) fn record_store_replica_flow(
+        &self,
+        store_id: StoreId,
+        destination: ReplicaFlowsType,
+    ) {
+        let index = destination as usize;
+        if index >= 2 {
+            return;
+        }
+        if let Some(store) = self.store_cache.read().unwrap().get(&store_id) {
+            store.replica_flows[index].fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) fn take_store_replica_flows(&self, store_id: StoreId) -> Option<[u64; 2]> {
+        self.store_cache
+            .read()
+            .unwrap()
+            .get(&store_id)
+            .map(|store| {
+                std::array::from_fn(|index| store.replica_flows[index].swap(0, Ordering::AcqRel))
+            })
+    }
+
+    fn report_store_replica_flows(&self) {
+        let store_ids = self
+            .store_cache
+            .read()
+            .unwrap()
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        for store_id in store_ids {
+            if let Some([leader, follower]) = self.take_store_replica_flows(store_id) {
+                crate::stats::set_prefer_leader_flows("ToLeader", store_id, leader);
+                crate::stats::set_prefer_leader_flows("ToFollower", store_id, follower);
             }
         }
-        Ok(stores)
     }
 
     /// Records client-go's stream-delivered TiKV health feedback for the
@@ -1754,7 +2311,15 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             .unwrap()
             .get(&store_id)
             .map(|store| {
-                store.liveness.store(liveness as u8, Ordering::Release);
+                let previous = StoreLiveness::from_encoded(
+                    store.liveness.swap(liveness as u8, Ordering::AcqRel),
+                );
+                if previous == StoreLiveness::Reachable && liveness != StoreLiveness::Reachable {
+                    *store.unreachable_since.lock().unwrap() = Some(Instant::now());
+                } else if liveness == StoreLiveness::Reachable {
+                    *store.unreachable_since.lock().unwrap() = None;
+                }
+                store.update_liveness_metric();
             });
         store.is_some()
     }
@@ -1804,7 +2369,8 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         let Some(expected) = expected else {
             return false;
         };
-        self.store_cache
+        let advanced = self
+            .store_cache
             .read()
             .unwrap()
             .get(&store_id)
@@ -1822,7 +2388,11 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     store.health_status.mark_already_slow();
                 }
                 advanced
-            })
+            });
+        if advanced {
+            self.mark_store_need_check(store_id);
+        }
+        advanced
     }
 
     /// Claims the single source health-check loop for an unhealthy TiKV
@@ -1874,17 +2444,72 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
     /// Runs the source store-health periodic update for every cached store.
     /// The owning region-cache scheduler will call this at its configured
     /// health-check cadence once store liveness is transcreated.
+    pub(crate) fn set_health_feedback_callback(&self, callback: HealthFeedbackCallback) {
+        *self.health_feedback_callback.write().unwrap() = Some(callback);
+    }
+
     pub(crate) fn tick_store_health(&self, now: Instant) {
         let health_statuses = self
             .store_cache
             .read()
             .unwrap()
             .values()
-            .map(|store| store.health_status.clone())
+            .map(|store| (store.meta.id, store.health_status.clone()))
             .collect::<Vec<_>>();
-        for health_status in health_statuses {
+        for (store_id, health_status) in health_statuses {
+            crate::stats::increment_health_feedback_operation(store_id, "tick");
             health_status.tick(now);
+            Self::publish_store_health_metrics(store_id, &health_status);
         }
+    }
+
+    async fn tick_store_health_with_callback(&self, now: Instant) {
+        let callback = self.health_feedback_callback.read().unwrap().clone();
+        let stores = self
+            .store_cache
+            .read()
+            .unwrap()
+            .values()
+            .map(|store| {
+                (
+                    store.meta.id,
+                    store.meta.address.clone(),
+                    StoreLiveness::from_encoded(store.liveness.load(Ordering::Acquire)),
+                    store.health_status.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        for (store_id, address, liveness, health_status) in stores {
+            crate::stats::increment_health_feedback_operation(store_id, "tick");
+            if health_status.needs_active_feedback(now)
+                && liveness == StoreLiveness::Reachable
+                && !address.is_empty()
+            {
+                if let Some(callback) = callback.as_ref() {
+                    crate::stats::increment_health_feedback_operation(store_id, "active_update");
+                    if let Err(error) = callback(address).await {
+                        crate::stats::increment_health_feedback_operation(
+                            store_id,
+                            "active_update_err",
+                        );
+                        debug!(
+                            "active health feedback request failed for store {store_id}: {error}"
+                        );
+                    }
+                }
+            }
+            health_status.tick(now);
+            Self::publish_store_health_metrics(store_id, &health_status);
+        }
+    }
+
+    fn publish_store_health_metrics(store_id: StoreId, health_status: &StoreHealthStatus) {
+        let detail = health_status.detail();
+        crate::stats::set_store_slow_scores(
+            store_id,
+            detail.client_side_slow_score,
+            detail.tikv_side_slow_score,
+        );
     }
 
     /// Produces source replica-selector input snapshots from a cached region
@@ -1898,7 +2523,12 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         selector_state: &ReplicaSelectorState,
     ) -> Result<Vec<ReplicaCandidate>> {
         for peer in &region.region.peers {
-            self.get_store_by_id(peer.store_id).await?;
+            if let Err(error) = self.get_store_by_id(peer.store_id).await {
+                if self.store_resolve_state(peer.store_id) == Some(StoreResolveState::Tombstone) {
+                    continue;
+                }
+                return Err(error);
+            }
         }
         let leader_peer_id = region.leader.as_ref().map(|leader| leader.id);
         let store_epochs = self
@@ -1935,6 +2565,12 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                         return None;
                     }
                     let store = cached_stores.get(&peer.store_id)?;
+                    if !matches!(
+                        store.resolve_state(),
+                        StoreResolveState::Resolved | StoreResolveState::NeedCheck
+                    ) {
+                        return None;
+                    }
                     if store_epochs
                         .get(&peer.store_id)
                         .is_some_and(|epoch| *epoch != store.epoch.load(Ordering::Acquire))
@@ -1999,9 +2635,11 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         };
 
         for peer in &region.region.peers {
-            self.get_store_by_id(peer.store_id)
-                .await
-                .map_err(|_| TiFlashSelectionError::NoTiFlashPeer)?;
+            if self.get_store_by_id(peer.store_id).await.is_err()
+                && self.store_resolve_state(peer.store_id) != Some(StoreResolveState::Tombstone)
+            {
+                return Err(TiFlashSelectionError::NoTiFlashPeer);
+            }
         }
         let stores = self.store_cache.read().unwrap();
         let peers = region
@@ -2013,7 +2651,10 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     return false;
                 }
                 stores.get(&peer.store_id).is_some_and(|store| {
-                    EndpointType::from_store(&store.meta) == EndpointType::TiFlash
+                    matches!(
+                        store.resolve_state(),
+                        StoreResolveState::Resolved | StoreResolveState::NeedCheck
+                    ) && EndpointType::from_store(&store.meta) == EndpointType::TiFlash
                 })
             })
             .collect::<Vec<_>>();
@@ -2070,7 +2711,10 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             let Some(store) = stores.get(&peer.store_id) else {
                 continue;
             };
-            if peer.store_id != current_store_id
+            if matches!(
+                store.resolve_state(),
+                StoreResolveState::Resolved | StoreResolveState::NeedCheck
+            ) && peer.store_id != current_store_id
                 && EndpointType::from_store(&store.meta) == EndpointType::TiFlash
                 && labels.iter().all(|wanted| {
                     store
@@ -2170,37 +2814,55 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             .cloned())
     }
 
-    /// Returns a source-compatible forwarding proxy only for a leader known
-    /// to be unreachable. Unknown leader liveness deliberately does not
-    /// authorize forwarding. The returned peer is always a non-leader whose
+    /// Returns a source-compatible forwarding proxy whenever the leader is
+    /// not known reachable. The returned peer is always a non-leader whose
     /// cached store is reachable; callers retain the leader as the logical
-    /// request peer.
-    pub(crate) async fn proxy_for_unreachable_leader(
+    /// request peer. A prior hintless NotLeader bypasses forwarding so mixed
+    /// selection can probe another logical peer directly.
+    pub(crate) async fn proxy_for_unavailable_leader(
         &self,
         region: &RegionWithLeader,
+        selector_state: &ReplicaSelectorState,
     ) -> Result<Option<metapb::Peer>> {
         let Some(leader) = region.leader.as_ref() else {
             return Ok(None);
         };
-        if self.store_liveness(leader.store_id) != Some(StoreLiveness::Unreachable) {
+        if self.store_liveness(leader.store_id) == Some(StoreLiveness::Reachable)
+            || selector_state.has_no_leader(leader.id)
+        {
+            self.set_region_proxy_store(&region.ver_id(), None).await;
             return Ok(None);
         }
-        let proxy = self
-            .select_mixed_replica(
-                region,
-                &[],
-                &[],
-                &ReplicaSelectorState::default(),
-                MixedReplicaSelection {
-                    read_type: ReplicaReadType::Follower,
-                    leader_only: false,
-                    prefer_leader: false,
-                    labels_requested: false,
-                },
-            )
-            .await?
-            .filter(|peer| peer.id != leader.id);
+        let cached_proxy_store_id = self
+            .region_cache
+            .read()
+            .await
+            .ver_id_to_region
+            .get(&region.ver_id())
+            .and_then(|cached| cached.proxy_store_id);
+        let candidates = self
+            .replica_candidates(region, &[], &[], selector_state)
+            .await?;
+        let is_proxy_candidate = |peer: &&metapb::Peer| {
+            peer.id != leader.id
+                && candidates.iter().any(|candidate| {
+                    candidate.peer_id == peer.id && candidate.reachable && candidate.attempts == 0
+                })
+        };
+        let proxy = cached_proxy_store_id
+            .and_then(|store_id| {
+                region
+                    .region
+                    .peers
+                    .iter()
+                    .find(|peer| peer.store_id == store_id)
+                    .filter(is_proxy_candidate)
+                    .cloned()
+            })
+            .or_else(|| region.region.peers.iter().find(is_proxy_candidate).cloned());
         if proxy.is_none() {
+            self.invalidate_store_epoch_for_region(&region.ver_id(), leader.store_id)
+                .await;
             self.mark_region_reload_on_access(&region.ver_id()).await;
         }
         Ok(proxy)
@@ -2232,13 +2894,42 @@ impl<Client: RetryClientTrait + Send + Sync + 'static> RegionCache<Client> {
 /// Source `RegionCache.GetAllStores` exposes resolved TiKV and TiFlash stores
 /// but excludes tombstones and TiFlash-compute nodes.
 fn is_valid_data_store(store: &metapb::Store) -> bool {
-    if metapb::StoreState::try_from(store.state).unwrap() == metapb::StoreState::Tombstone {
+    if is_tombstone_store(store) {
         return false;
     }
     matches!(
         EndpointType::from_store(store),
         EndpointType::TiKv | EndpointType::TiFlash
     )
+}
+
+fn is_tombstone_store(store: &metapb::Store) -> bool {
+    metapb::StoreState::try_from(store.state)
+        .is_ok_and(|state| state == metapb::StoreState::Tombstone)
+}
+
+fn store_tombstone_error(store_id: StoreId) -> Error {
+    Error::StringError(format!("store {store_id} is a tombstone or was removed"))
+}
+
+fn store_labels_match(current: &[metapb::StoreLabel], requested: &[metapb::StoreLabel]) -> bool {
+    requested.iter().all(|wanted| {
+        current
+            .iter()
+            .any(|label| label.key == wanted.key && label.value == wanted.value)
+    })
+}
+
+fn store_labels_are_same(left: &[metapb::StoreLabel], right: &[metapb::StoreLabel]) -> bool {
+    left.len() == right.len() && store_labels_match(left, right)
+}
+
+fn is_grpc_unavailable(error: &Error) -> bool {
+    match error {
+        Error::GrpcAPI(status) => status.code() == tonic::Code::Unavailable,
+        Error::Connection { source, .. } => is_grpc_unavailable(source),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -2258,12 +2949,13 @@ mod test {
     use super::{
         now_epoch_secs, ranges_after_key, regions_have_gap_in_ranges, BatchLocateRegionMerger,
         CachedStore, MixedReplicaSelection, RegionCache, ReplicaCandidate, ReplicaSelectorState,
-        StoreLiveness, NEED_DELAYED_RELOAD_READY, NEED_EXPIRE_AFTER_TTL, NEED_RELOAD_ON_ACCESS,
-        REGION_CACHE_TTL_SECS,
+        StoreLiveness, StoreResolveState, CLEAN_STORE_METRICS_INTERVAL, NEED_DELAYED_RELOAD_READY,
+        NEED_EXPIRE_AFTER_TTL, NEED_RELOAD_ON_ACCESS, REGION_CACHE_TTL_SECS,
     };
     use crate::async_util::Cancellation;
     use crate::common::Error;
     use crate::kv::ReplicaReadType;
+    use crate::locate::ReplicaFlowsType;
     use crate::pd::RegionScanOptions;
     use crate::pd::RetryClientTrait;
     use crate::proto::keyspacepb;
@@ -2274,6 +2966,7 @@ mod test {
     use crate::region::RegionWithLeader;
     use crate::region_cache::is_valid_data_store;
     use crate::retry::RetryBackoffer;
+    use crate::store::EndpointType;
     use crate::Key;
     use crate::Result;
 
@@ -2286,6 +2979,9 @@ mod test {
         pub get_region_responses: Mutex<VecDeque<Result<RegionWithLeader>>>,
         pub get_prev_region_responses: Mutex<VecDeque<Result<RegionWithLeader>>>,
         pub get_region_by_id_responses: Mutex<VecDeque<Result<RegionWithLeader>>>,
+        pub get_store_count: AtomicU64,
+        pub get_store_responses: Mutex<VecDeque<Result<Option<metapb::Store>>>>,
+        pub get_all_stores_count: AtomicU64,
         pub batch_scan_count: AtomicU64,
         pub batch_scan_unimplemented: AtomicBool,
         pub batch_scan_options: StdMutex<Vec<RegionScanOptions>>,
@@ -2422,17 +3118,22 @@ mod test {
         async fn get_store(
             self: Arc<Self>,
             id: crate::region::StoreId,
-        ) -> Result<crate::proto::metapb::Store> {
-            self.stores
+        ) -> Result<Option<crate::proto::metapb::Store>> {
+            self.get_store_count.fetch_add(1, SeqCst);
+            if let Some(response) = self.get_store_responses.lock().await.pop_front() {
+                return response;
+            }
+            Ok(self
+                .stores
                 .lock()
                 .await
                 .iter()
                 .find(|store| store.id == id)
-                .cloned()
-                .ok_or_else(|| Error::StringError("MockRetryClient: store not found".to_owned()))
+                .cloned())
         }
 
         async fn get_all_stores(self: Arc<Self>) -> Result<Vec<crate::proto::metapb::Store>> {
+            self.get_all_stores_count.fetch_add(1, SeqCst);
             Ok(self.stores.lock().await.clone())
         }
 
@@ -2959,9 +3660,9 @@ mod test {
             .contains_key(&unhealthy.ver_id()));
 
         cache.start_background_gc();
-        assert!(cache.background_task.lock().unwrap().is_some());
+        assert_eq!(cache.background_tasks.lock().unwrap().len(), 1);
         cache.close_background_task().await;
-        assert!(cache.background_task.lock().unwrap().is_none());
+        assert!(cache.background_tasks.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -3019,7 +3720,7 @@ mod test {
         .await
         .expect("periodic region refresh should run");
         periodic.close_background_task().await;
-        assert!(periodic.background_task.lock().unwrap().is_none());
+        assert!(periodic.background_tasks.lock().unwrap().is_empty());
         Ok(())
     }
 
@@ -3092,6 +3793,61 @@ mod test {
     }
 
     #[tokio::test]
+    async fn source_health_tick_actively_refreshes_only_reachable_stale_feedback() {
+        let cache = Arc::new(RegionCache::new(Arc::new(MockRetryClient::default())));
+        cache.store_cache.write().unwrap().insert(
+            9,
+            CachedStore::new(metapb::Store {
+                id: 9,
+                address: "store-9".to_owned(),
+                ..Default::default()
+            }),
+        );
+        let start = std::time::Instant::now();
+        cache.record_health_feedback_at(
+            &crate::proto::kvrpcpb::HealthFeedback {
+                store_id: 9,
+                slow_score: 100,
+                ..Default::default()
+            },
+            start,
+        );
+        let requests = Arc::new(AtomicU64::new(0));
+        let callback_cache = Arc::downgrade(&cache);
+        let callback_requests = requests.clone();
+        cache.set_health_feedback_callback(Arc::new(move |address| {
+            let cache = callback_cache.clone();
+            let requests = callback_requests.clone();
+            Box::pin(async move {
+                assert_eq!(address, "store-9");
+                requests.fetch_add(1, SeqCst);
+                cache.upgrade().unwrap().record_health_feedback_at(
+                    &crate::proto::kvrpcpb::HealthFeedback {
+                        store_id: 9,
+                        slow_score: 100,
+                        ..Default::default()
+                    },
+                    start + Duration::from_secs(15),
+                );
+                Ok(())
+            })
+        }));
+
+        cache
+            .tick_store_health_with_callback(start + Duration::from_secs(15))
+            .await;
+        assert_eq!(requests.load(SeqCst), 1);
+        assert_eq!(cache.store_health(9).unwrap().tikv_side_slow_score, 100);
+
+        assert!(cache.set_store_liveness(9, StoreLiveness::Unreachable));
+        cache
+            .tick_store_health_with_callback(start + Duration::from_secs(30))
+            .await;
+        assert_eq!(requests.load(SeqCst), 1);
+        assert_eq!(cache.store_health(9).unwrap().tikv_side_slow_score, 95);
+    }
+
+    #[tokio::test]
     async fn source_store_reresolve_updates_metadata_without_resetting_runtime_state() -> Result<()>
     {
         let client = Arc::new(MockRetryClient::default());
@@ -3131,11 +3887,16 @@ mod test {
             }],
             ..Default::default()
         }];
-        let refreshed = cache.refresh_store_by_id(7).await?;
+        let refreshed = cache.refresh_store_by_id(7).await?.unwrap();
         assert_eq!(refreshed.address, "new-address");
         assert_eq!(refreshed.peer_address, "new-peer");
         assert_eq!(refreshed.status_address, "new-status");
         assert_eq!(refreshed.labels[0].value, "new");
+        client.stores.lock().await[0].peer_address = "peer-only-change".to_owned();
+        client.stores.lock().await[0].status_address = "status-only-change".to_owned();
+        let unchanged = cache.refresh_store_by_id(7).await?.unwrap();
+        assert_eq!(unchanged.peer_address, "new-peer");
+        assert_eq!(unchanged.status_address, "new-status");
         assert!(Arc::ptr_eq(&health, &cache.store_health_status(7).unwrap()));
         assert_eq!(cache.store_health(7).unwrap().tikv_side_slow_score, 80);
         assert_eq!(cache.store_liveness(7), Some(StoreLiveness::Unreachable));
@@ -3146,6 +3907,309 @@ mod test {
             9
         );
         assert!(cache.estimated_store_wait(7).unwrap() > Duration::ZERO);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_store_resolve_state_transition_matrix() -> Result<()> {
+        let client = Arc::new(MockRetryClient::default());
+        client.stores.lock().await.push(metapb::Store {
+            id: 1,
+            address: "store-1".to_owned(),
+            ..Default::default()
+        });
+        let cache = RegionCache::new(client.clone());
+
+        assert_eq!(cache.store_resolve_state(1), None);
+        assert_eq!(cache.get_store_by_id(1).await?.address, "store-1");
+        assert_eq!(
+            cache.store_resolve_state(1),
+            Some(StoreResolveState::Resolved)
+        );
+        assert_eq!(client.get_store_count.load(SeqCst), 1);
+
+        assert!(cache.mark_store_need_check(1));
+        assert!(!cache.mark_store_need_check(1));
+        assert_eq!(
+            cache.store_resolve_state(1),
+            Some(StoreResolveState::NeedCheck)
+        );
+        // NeedCheck retains the old address while the background refresh is
+        // pending and therefore does not issue another foreground PD read.
+        assert_eq!(cache.get_store_by_id(1).await?.address, "store-1");
+        assert_eq!(client.get_store_count.load(SeqCst), 1);
+        cache.refresh_store_cache(true).await;
+        assert_eq!(
+            cache.store_resolve_state(1),
+            Some(StoreResolveState::Resolved)
+        );
+        assert_eq!(client.get_store_count.load(SeqCst), 2);
+
+        let epoch = cache.store_cache.read().unwrap()[&1]
+            .epoch
+            .load(std::sync::atomic::Ordering::Acquire);
+        client.stores.lock().await[0].state = metapb::StoreState::Tombstone.into();
+        assert!(cache.mark_store_need_check(1));
+        cache.refresh_store_cache(true).await;
+        assert_eq!(
+            cache.store_resolve_state(1),
+            Some(StoreResolveState::Tombstone)
+        );
+        assert_eq!(
+            cache.store_cache.read().unwrap()[&1]
+                .epoch
+                .load(std::sync::atomic::Ordering::Acquire),
+            epoch + 1
+        );
+        assert!(cache.get_store_by_id(1).await.is_err());
+        assert_eq!(client.get_store_count.load(SeqCst), 3);
+
+        // An absent PD store follows the same terminal state and repeated
+        // access never retries an already-known tombstone.
+        assert!(cache.get_store_by_id(2).await.is_err());
+        assert_eq!(
+            cache.store_resolve_state(2),
+            Some(StoreResolveState::Tombstone)
+        );
+        assert!(cache.get_store_by_id(2).await.is_err());
+        assert_eq!(client.get_store_count.load(SeqCst), 4);
+
+        client.stores.lock().await.push(metapb::Store {
+            id: 3,
+            address: String::new(),
+            ..Default::default()
+        });
+        assert_eq!(
+            cache.get_store_by_id(3).await.unwrap_err().to_string(),
+            "empty store(3) address"
+        );
+        assert_eq!(
+            cache.store_resolve_state(3),
+            Some(StoreResolveState::Unresolved)
+        );
+
+        client.stores.lock().await.push(metapb::Store {
+            id: 4,
+            address: "store-4".to_owned(),
+            ..Default::default()
+        });
+        let before = client.get_store_count.load(SeqCst);
+        let (first, second) = tokio::join!(cache.get_store_by_id(4), cache.get_store_by_id(4));
+        assert_eq!(first?.address, "store-4");
+        assert_eq!(second?.address, "store-4");
+        assert_eq!(client.get_store_count.load(SeqCst), before + 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_store_background_trigger_and_periodic_refresh_share_one_lifecycle() -> Result<()>
+    {
+        let client = Arc::new(MockRetryClient::default());
+        client.stores.lock().await.push(metapb::Store {
+            id: 7,
+            address: "initial".to_owned(),
+            ..Default::default()
+        });
+        let cache = Arc::new(RegionCache::new(client.clone()));
+        cache.get_store_by_id(7).await?;
+        cache.start_background_store_maintenance(Duration::from_millis(400));
+
+        client.stores.lock().await[0].address = "triggered".to_owned();
+        client.stores.lock().await[0].labels = vec![metapb::StoreLabel {
+            key: "generation".to_owned(),
+            value: "1".to_owned(),
+        }];
+        assert!(cache.mark_store_need_check(7));
+        tokio::time::timeout(Duration::from_millis(200), async {
+            loop {
+                if cache.get_store_by_id(7).await.unwrap().address == "triggered"
+                    && cache.store_resolve_state(7) == Some(StoreResolveState::Resolved)
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("triggered store check should not wait for the periodic tick");
+
+        client.stores.lock().await[0].address = "periodic".to_owned();
+        client.stores.lock().await[0].labels[0].value = "2".to_owned();
+        tokio::time::timeout(Duration::from_millis(300), async {
+            loop {
+                if cache.get_store_by_id(7).await.unwrap().address == "periodic" {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("periodic store check should refresh resolved stores");
+
+        cache.close_background_task().await;
+        assert!(cache.background_tasks.lock().unwrap().is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_zero_store_refresh_interval_disables_refresh_health_and_flow_schedules(
+    ) -> Result<()> {
+        let client = Arc::new(MockRetryClient::default());
+        client.stores.lock().await.push(metapb::Store {
+            id: 7,
+            address: "initial".to_owned(),
+            ..Default::default()
+        });
+        let cache = Arc::new(RegionCache::new(client.clone()));
+        cache.get_store_by_id(7).await?;
+        cache.start_background_store_maintenance(Duration::ZERO);
+        assert_eq!(cache.background_tasks.lock().unwrap().len(), 1);
+
+        client.stores.lock().await[0].address = "must-not-refresh".to_owned();
+        assert!(cache.mark_store_need_check(7));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(
+            cache.store_resolve_state(7),
+            Some(StoreResolveState::NeedCheck)
+        );
+        assert_eq!(cache.get_store_by_id(7).await?.address, "initial");
+        assert_eq!(client.get_store_count.load(SeqCst), 1);
+
+        cache.close_background_task().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_store_list_compute_cache_labels_and_replica_flows() -> Result<()> {
+        let client = Arc::new(MockRetryClient::default());
+        *client.stores.lock().await = vec![
+            metapb::Store {
+                id: 1,
+                address: "tikv".to_owned(),
+                labels: vec![metapb::StoreLabel {
+                    key: "zone".to_owned(),
+                    value: "a".to_owned(),
+                }],
+                ..Default::default()
+            },
+            metapb::Store {
+                id: 2,
+                address: "compute".to_owned(),
+                labels: vec![metapb::StoreLabel {
+                    key: "engine".to_owned(),
+                    value: "tiflash_compute".to_owned(),
+                }],
+                ..Default::default()
+            },
+            metapb::Store {
+                id: 3,
+                address: "removed".to_owned(),
+                state: metapb::StoreState::Tombstone.into(),
+                ..Default::default()
+            },
+            metapb::Store {
+                id: 4,
+                address: String::new(),
+                ..Default::default()
+            },
+        ];
+        let cache = RegionCache::new(client.clone());
+        cache.insert_missing_stores().await?;
+        assert_eq!(
+            cache
+                .cached_data_stores()
+                .into_iter()
+                .map(|store| store.id)
+                .collect::<Vec<_>>(),
+            vec![1]
+        );
+        assert_eq!(
+            cache
+                .cached_stores_by_type(EndpointType::TiFlashCompute)
+                .into_iter()
+                .map(|store| store.id)
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+        assert!(!cache.store_cache.read().unwrap().contains_key(&3));
+        assert_eq!(
+            cache.store_resolve_state(4),
+            Some(StoreResolveState::Unresolved)
+        );
+
+        assert_eq!(
+            cache
+                .get_tiflash_compute_stores()
+                .await?
+                .into_iter()
+                .map(|store| store.id)
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+        assert_eq!(client.get_all_stores_count.load(SeqCst), 2);
+        cache.get_tiflash_compute_stores().await?;
+        assert_eq!(client.get_all_stores_count.load(SeqCst), 2);
+        assert!(
+            !cache.invalidate_tiflash_compute_stores_if_grpc_error(&Error::GrpcAPI(
+                tonic::Status::invalid_argument("not a transport outage"),
+            ))
+        );
+        cache.get_tiflash_compute_stores().await?;
+        assert_eq!(client.get_all_stores_count.load(SeqCst), 2);
+        assert!(
+            cache.invalidate_tiflash_compute_stores_if_grpc_error(&Error::Connection {
+                source: Box::new(Error::GrpcAPI(tonic::Status::unavailable("down"))),
+                address: "compute".to_owned(),
+                version: 1,
+            })
+        );
+        cache.get_tiflash_compute_stores().await?;
+        assert_eq!(client.get_all_stores_count.load(SeqCst), 3);
+
+        assert!(super::store_labels_match(
+            &client.stores.lock().await[0].labels,
+            &[metapb::StoreLabel {
+                key: "zone".to_owned(),
+                value: "a".to_owned(),
+            }]
+        ));
+        assert!(cache.cached_tiflash_stores(&[]).is_empty());
+        cache.record_store_replica_flow(1, ReplicaFlowsType::ToLeader);
+        cache.record_store_replica_flow(1, ReplicaFlowsType::ToFollower);
+        cache.record_store_replica_flow(1, ReplicaFlowsType::ToFollower);
+        cache.report_store_replica_flows();
+        assert_eq!(crate::stats::prefer_leader_flows("ToLeader", 1), 1.0);
+        assert_eq!(crate::stats::prefer_leader_flows("ToFollower", 1), 2.0);
+        assert_eq!(cache.take_store_replica_flows(1), Some([0, 0]));
+
+        client.stores.lock().await.retain(|store| store.id != 1);
+        let current_stores = client.stores.lock().await.clone();
+        *cache.store_metrics_cleanup.lock().unwrap() = Default::default();
+        let cleanup_start = std::time::Instant::now();
+        assert_eq!(
+            cache
+                .clean_up_stale_store_metrics(&current_stores, cleanup_start)
+                .await,
+            None
+        );
+        let cleanup_candidate = cache
+            .store_metrics_cleanup
+            .lock()
+            .unwrap()
+            .next_store
+            .expect("the liveness collector should expose a stale store label");
+        assert!(!current_stores
+            .iter()
+            .any(|store| store.id == cleanup_candidate));
+        assert_eq!(
+            cache
+                .clean_up_stale_store_metrics(
+                    &current_stores,
+                    cleanup_start + CLEAN_STORE_METRICS_INTERVAL,
+                )
+                .await,
+            Some(cleanup_candidate)
+        );
         Ok(())
     }
 
@@ -3335,8 +4399,164 @@ mod test {
         assert_eq!(selected, region.leader.clone());
 
         assert!(cache.set_store_liveness(1, StoreLiveness::Unreachable));
-        let proxy = cache.proxy_for_unreachable_leader(&region).await.unwrap();
+        let proxy = cache
+            .proxy_for_unavailable_leader(&region, &ReplicaSelectorState::default())
+            .await
+            .unwrap();
         assert_eq!(proxy, Some(follower));
+    }
+
+    #[tokio::test]
+    async fn source_forwarding_prefers_cached_proxy_then_walks_untried_replicas() {
+        let cache = RegionCache::new(Arc::new(MockRetryClient::default()));
+        for store_id in 1..=3 {
+            cache.store_cache.write().unwrap().insert(
+                store_id,
+                CachedStore::new(metapb::Store {
+                    id: store_id,
+                    address: format!("store-{store_id}"),
+                    ..Default::default()
+                }),
+            );
+        }
+        let leader = metapb::Peer {
+            id: 11,
+            store_id: 1,
+            ..Default::default()
+        };
+        let first_proxy = metapb::Peer {
+            id: 12,
+            store_id: 2,
+            ..Default::default()
+        };
+        let cached_proxy = metapb::Peer {
+            id: 13,
+            store_id: 3,
+            ..Default::default()
+        };
+        let mut region = region(1, vec![], vec![]);
+        region.region.peers = vec![leader.clone(), first_proxy.clone(), cached_proxy.clone()];
+        region.leader = Some(leader.clone());
+        cache.add_region(region.clone()).await;
+
+        assert!(cache.set_store_liveness(1, StoreLiveness::Unknown));
+        assert_eq!(
+            cache
+                .proxy_for_unavailable_leader(&region, &ReplicaSelectorState::default())
+                .await
+                .unwrap(),
+            Some(first_proxy.clone())
+        );
+        let mut hintless_not_leader = ReplicaSelectorState::default();
+        hintless_not_leader.mark_no_leader(11);
+        assert_eq!(
+            cache
+                .proxy_for_unavailable_leader(&region, &hintless_not_leader)
+                .await
+                .unwrap(),
+            None
+        );
+
+        assert!(cache.set_store_liveness(1, StoreLiveness::Unreachable));
+
+        assert_eq!(
+            cache
+                .proxy_for_unavailable_leader(&region, &ReplicaSelectorState::default())
+                .await
+                .unwrap(),
+            Some(first_proxy.clone())
+        );
+        assert!(
+            cache
+                .set_region_proxy_store(&region.ver_id(), Some(cached_proxy.store_id))
+                .await
+        );
+        assert_eq!(
+            cache
+                .proxy_for_unavailable_leader(&region, &ReplicaSelectorState::default())
+                .await
+                .unwrap(),
+            Some(cached_proxy.clone())
+        );
+
+        let mut attempted = ReplicaSelectorState::default();
+        attempted.record_attempt(cached_proxy.id);
+        assert_eq!(
+            cache
+                .proxy_for_unavailable_leader(&region, &attempted)
+                .await
+                .unwrap(),
+            Some(first_proxy.clone())
+        );
+        attempted.record_attempt(first_proxy.id);
+        assert_eq!(
+            cache
+                .proxy_for_unavailable_leader(&region, &attempted)
+                .await
+                .unwrap(),
+            None
+        );
+        assert!(
+            cache
+                .store_epoch_is_stale(&region.ver_id(), leader.store_id)
+                .await
+        );
+        assert!(cache
+            .region_cache
+            .read()
+            .await
+            .ver_id_to_region
+            .get(&region.ver_id())
+            .unwrap()
+            .has_sync_flags(NEED_RELOAD_ON_ACCESS));
+    }
+
+    #[tokio::test]
+    async fn source_replica_candidates_skip_tombstone_and_removed_stores() -> Result<()> {
+        let client = Arc::new(MockRetryClient::default());
+        *client.stores.lock().await = vec![
+            metapb::Store {
+                id: 1,
+                address: "removed".to_owned(),
+                state: metapb::StoreState::Tombstone.into(),
+                ..Default::default()
+            },
+            metapb::Store {
+                id: 2,
+                address: "healthy".to_owned(),
+                ..Default::default()
+            },
+        ];
+        let cache = RegionCache::new(client);
+        let removed = metapb::Peer {
+            id: 11,
+            store_id: 1,
+            ..Default::default()
+        };
+        let healthy = metapb::Peer {
+            id: 12,
+            store_id: 2,
+            ..Default::default()
+        };
+        let mut region = region(1, vec![], vec![]);
+        region.region.peers = vec![removed.clone(), healthy.clone()];
+        region.leader = Some(removed);
+
+        let candidates = cache
+            .replica_candidates(&region, &[], &[], &ReplicaSelectorState::default())
+            .await?;
+        assert_eq!(
+            candidates
+                .into_iter()
+                .map(|candidate| candidate.peer_id)
+                .collect::<Vec<_>>(),
+            vec![healthy.id]
+        );
+        assert_eq!(
+            cache.store_resolve_state(1),
+            Some(StoreResolveState::Tombstone)
+        );
+        Ok(())
     }
 
     #[tokio::test]
@@ -4016,15 +5236,17 @@ mod test {
     }
 
     #[tokio::test]
-    async fn source_all_store_refresh_caches_tikv_and_tiflash_not_compute() {
+    async fn source_all_store_refresh_caches_every_store_but_exposes_only_data_stores() {
         let client = Arc::new(MockRetryClient::default());
         client.stores.lock().await.extend([
             metapb::Store {
                 id: 1,
+                address: "tikv".to_owned(),
                 ..Default::default()
             },
             metapb::Store {
                 id: 2,
+                address: "tiflash".to_owned(),
                 labels: vec![metapb::StoreLabel {
                     key: "engine".to_owned(),
                     value: "tiflash".to_owned(),
@@ -4033,6 +5255,7 @@ mod test {
             },
             metapb::Store {
                 id: 3,
+                address: "compute".to_owned(),
                 labels: vec![metapb::StoreLabel {
                     key: "engine".to_owned(),
                     value: "tiflash_compute".to_owned(),
@@ -4054,6 +5277,25 @@ mod test {
         );
         assert!(cache.store_cache.read().unwrap().contains_key(&1));
         assert!(cache.store_cache.read().unwrap().contains_key(&2));
-        assert!(!cache.store_cache.read().unwrap().contains_key(&3));
+        assert!(cache.store_cache.read().unwrap().contains_key(&3));
+
+        cache
+            .store_cache
+            .read()
+            .unwrap()
+            .get(&1)
+            .unwrap()
+            .set_resolve_state(StoreResolveState::Tombstone);
+        cache.inner_client.stores.lock().await[0].address = "restarted".to_owned();
+        cache
+            .read_through_all_stores()
+            .await
+            .expect("repeat full-store discovery");
+        assert_eq!(
+            cache.store_resolve_state(1),
+            Some(StoreResolveState::Tombstone),
+            "full discovery must not revive a terminal cached store"
+        );
+        assert_eq!(cache.store_cache.read().unwrap()[&1].meta.address, "tikv");
     }
 }

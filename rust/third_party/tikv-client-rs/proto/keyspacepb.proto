@@ -15,9 +15,18 @@ option (gogoproto.sizer_all) = true;
 option (gogoproto.unmarshaler_all) = true;
 option (rustproto.lite_runtime_all) = true;
 
+// Namespace provides services to manage namespaces.
+service Namespace {
+  rpc CreateNamespace(CreateNamespaceRequest) returns (CreateNamespaceResponse) {}
+  rpc LoadNamespace(LoadNamespaceRequest) returns (LoadNamespaceResponse) {}
+  rpc GetAllNamespaces(GetAllNamespacesRequest) returns (GetAllNamespacesResponse) {}
+  rpc UpdateNamespaceState(UpdateNamespaceStateRequest) returns (UpdateNamespaceStateResponse) {}
+}
+
 // Keyspace provides services to manage keyspaces.
 service Keyspace {
   rpc LoadKeyspace(LoadKeyspaceRequest) returns (LoadKeyspaceResponse) {}
+  rpc LookupKeyspace(LookupKeyspaceRequest) returns (LookupKeyspaceResponse) {}
   rpc LoadKeyspaceByID(LoadKeyspaceByIDRequest) returns (LoadKeyspaceResponse) {}
   // WatchKeyspaces first return all current keyspaces' metadata as its first response.
   // Then, it returns responses containing keyspaces that had their metadata changed.
@@ -47,19 +56,97 @@ enum KeyspaceState {
   TOMBSTONE = 3;
 }
 
+message NamespaceMeta {
+  uint32 id = 1;
+  string name = 2;
+  KeyspaceState state = 3;
+  int64 created_at = 4;
+  int64 state_changed_at = 5;
+  map<string, string> config = 7;
+}
+
+message NamespaceRef {
+  oneof namespace {
+    // API V3 namespace id.
+    uint32 namespace_id = 1;
+    // API V3 namespace name.
+    string namespace_name = 2;
+  }
+}
+
+message CreateNamespaceRequest {
+  pdpb.RequestHeader header = 1;
+  string name = 2;
+  map<string, string> config = 3;
+}
+
+message CreateNamespaceResponse {
+  pdpb.ResponseHeader header = 1;
+  NamespaceMeta namespace = 2;
+}
+
+message LoadNamespaceRequest {
+  pdpb.RequestHeader header = 1;
+  NamespaceRef namespace = 2;
+}
+
+message LoadNamespaceResponse {
+  pdpb.ResponseHeader header = 1;
+  NamespaceMeta namespace = 2;
+}
+
+message GetAllNamespacesRequest {
+  pdpb.RequestHeader header = 1;
+  uint32 start_id = 2;
+  uint32 limit = 3;
+}
+
+message GetAllNamespacesResponse {
+  pdpb.ResponseHeader header = 1;
+  repeated NamespaceMeta namespaces = 2;
+}
+
+message UpdateNamespaceStateRequest {
+  pdpb.RequestHeader header = 1;
+  NamespaceRef namespace = 2;
+  KeyspaceState state = 3;
+}
+
+message UpdateNamespaceStateResponse {
+  pdpb.ResponseHeader header = 1;
+  NamespaceMeta namespace = 2;
+}
+
 message LoadKeyspaceRequest {
   pdpb.RequestHeader header = 1;
   string name = 2;
+  // V3 namespace-scoped name lookup. If unset, V3 name-only lookup should use LookupKeyspace and may return multiple keyspaces.
+  NamespaceRef namespace = 3;
 }
 
 message LoadKeyspaceByIDRequest {
   pdpb.RequestHeader header = 1;
-  uint32 id = 2;
+  oneof keyspace {
+    // V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+    uint32 id = 2;
+    // V3 keyspace identity.
+    apipb.KeyspaceIdentity keyspace_identity = 3;
+  }
 }
 
 message LoadKeyspaceResponse {
   pdpb.ResponseHeader header = 1;
   KeyspaceMeta keyspace = 2;
+}
+
+message LookupKeyspaceRequest {
+  pdpb.RequestHeader header = 1;
+  string name = 2;
+}
+
+message LookupKeyspaceResponse {
+  pdpb.ResponseHeader header = 1;
+  repeated KeyspaceMeta keyspaces = 2;
 }
 
 message WatchKeyspacesRequest {
@@ -73,7 +160,12 @@ message WatchKeyspacesResponse {
 
 message UpdateKeyspaceStateRequest {
   pdpb.RequestHeader header = 1;
-  uint32 id = 2;
+  oneof keyspace {
+    // V1/V2 compatibility keyspace id. V3 should use keyspace_identity.
+    uint32 id = 2;
+    // V3 keyspace identity.
+    apipb.KeyspaceIdentity keyspace_identity = 4;
+  }
   KeyspaceState state = 3;
 }
 
@@ -84,8 +176,15 @@ message UpdateKeyspaceStateResponse {
 
 message GetAllKeyspacesRequest {
   pdpb.RequestHeader header = 1;
-  uint32 start_id = 2;
+  oneof start_keyspace {
+    // V1/V2 compatibility pagination cursor. V3 should use namespace_id and start_keyspace_identity.
+    uint32 start_id = 2;
+    // V3 pagination cursor within namespace_id.
+    apipb.KeyspaceIdentity start_keyspace_identity = 5;
+  }
   uint32 limit = 3;
+  // V3 namespace-scoped pagination. Must be non-zero in V3.
+  NamespaceRef namespace = 4;
 }
 
 message GetAllKeyspacesResponse {

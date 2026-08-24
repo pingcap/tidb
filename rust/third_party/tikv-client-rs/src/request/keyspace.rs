@@ -14,6 +14,10 @@ pub const TXN_KEY_PREFIX: u8 = b'x';
 pub const KEYSPACE_PREFIX_LEN: usize = 4;
 /// The numeric API V2 keyspace namespace occupies the final three prefix bytes.
 pub const MAX_KEYSPACE_ID: u32 = 0x00ff_ffff;
+/// Numeric identifier of client-go's default API V2 keyspace.
+pub const DEFAULT_KEYSPACE_ID: u32 = 0;
+/// API V1's keyspace-agnostic sentinel from the pinned PD client constants.
+pub const NULL_KEYSPACE_ID: u32 = u32::MAX;
 /// Client-go's canonical name for the default API V2 keyspace.
 pub const DEFAULT_KEYSPACE_NAME: &str = "DEFAULT";
 
@@ -51,7 +55,7 @@ impl Keyspace {
     pub fn try_enable(keyspace_id: u32) -> crate::Result<Self> {
         if keyspace_id > MAX_KEYSPACE_ID {
             return Err(crate::Error::StringError(format!(
-                "keyspace ID {keyspace_id} is out of range, maximum is {MAX_KEYSPACE_ID}"
+                "keyspaceID {keyspace_id} is out of range, maximum is {MAX_KEYSPACE_ID}"
             )));
         }
         Ok(Self::Enable { keyspace_id })
@@ -66,15 +70,16 @@ impl Keyspace {
         }
     }
 
-    /// Returns the numeric API V2 keyspace carried in a request context.
+    /// Returns the source keyspace oneof value carried with a request.
     ///
     /// The no-prefix embedding mode still addresses the default (zero) V2
-    /// keyspace; it merely leaves already-physical key bytes untouched.
+    /// keyspace; it merely leaves already-physical key bytes untouched. API
+    /// V1/V1TTL use PD's all-ones null-keyspace sentinel.
     pub fn context_keyspace_id(&self) -> Option<u32> {
         match self {
             Self::Enable { keyspace_id } => Some(*keyspace_id),
             Self::ApiV2NoPrefix => Some(0),
-            Self::Disable | Self::V1Ttl => None,
+            Self::Disable | Self::V1Ttl => Some(NULL_KEYSPACE_ID),
         }
     }
 
@@ -155,6 +160,14 @@ pub fn api_v2_prefixes() -> [[u8; 1]; 2] {
     [[RAW_KEY_PREFIX], [TXN_KEY_PREFIX]]
 }
 
+/// Returns prefixes excluded from API V1 mixed deployments.
+///
+/// This is intentionally a separate API even though the pinned source list
+/// currently equals [`api_v2_prefixes`].
+pub fn api_v1_excluded_prefixes() -> [[u8; 1]; 2] {
+    api_v2_prefixes()
+}
+
 /// Extracts the numeric keyspace identifier from an API V2 physical key.
 pub fn parse_keyspace_id(key: &[u8]) -> crate::Result<u32> {
     let prefix = api_v2_key_prefix(key)?;
@@ -167,11 +180,70 @@ pub fn decode_api_key(
     api_version: kvrpcpb::ApiVersion,
 ) -> crate::Result<(Option<[u8; KEYSPACE_PREFIX_LEN]>, Vec<u8>)> {
     match api_version {
-        kvrpcpb::ApiVersion::V1 | kvrpcpb::ApiVersion::V1ttl => Ok((None, key.to_vec())),
+        kvrpcpb::ApiVersion::V1 => Ok((None, key.to_vec())),
         kvrpcpb::ApiVersion::V2 => {
             let prefix = api_v2_key_prefix(key)?;
             Ok((Some(prefix), key[KEYSPACE_PREFIX_LEN..].to_vec()))
         }
+        unsupported => Err(crate::Error::StringError(format!(
+            "unsupported api version {}",
+            unsupported.as_str_name()
+        ))),
+    }
+}
+
+/// Reports whether an error chain contains a malformed memcomparable region key.
+///
+/// This is the Rust counterpart of client-go's exported `IsDecodeError` helper.
+/// Region-cache callers use the classification to stop retrying corrupt PD/TiKV
+/// region metadata while allowing ordinary PD failures to retain their budget.
+pub fn is_decode_error(mut error: &(dyn std::error::Error + 'static)) -> bool {
+    loop {
+        if let Some(error) = error.downcast_ref::<crate::Error>() {
+            if crate_error_contains_decode(error) {
+                return true;
+            }
+        }
+        match error.source() {
+            Some(source) => error = source,
+            None => return false,
+        }
+    }
+}
+
+fn crate_error_contains_decode(error: &crate::Error) -> bool {
+    match error {
+        crate::Error::ApiCodecDecode(_) => true,
+        crate::Error::Connection { source, .. }
+        | crate::Error::UndeterminedError(source)
+        | crate::Error::PessimisticLockError { inner: source, .. } => {
+            crate_error_contains_decode(source)
+        }
+        crate::Error::ExtractedErrors(errors) | crate::Error::MultipleKeyErrors(errors) => {
+            errors.iter().any(crate_error_contains_decode)
+        }
+        _ => false,
+    }
+}
+
+fn decode_memcomparable_key(encoded_key: &[u8]) -> crate::Result<Vec<u8>> {
+    let mut decoded = Vec::new();
+    crate::kv::codec::decode_bytes(encoded_key, &mut decoded)
+        .map_err(|error| crate::Error::ApiCodecDecode(Box::new(error)))?;
+    Ok(decoded)
+}
+
+/// Writes the legacy numeric V2 arm of the pinned context keyspace oneof.
+pub(crate) fn set_context_keyspace_id(context: &mut kvrpcpb::Context, keyspace_id: u32) {
+    context.keyspace = Some(kvrpcpb::context::Keyspace::KeyspaceId(keyspace_id));
+}
+
+/// Reads the legacy numeric V2 arm without treating a V3 identity as ID zero.
+#[cfg(test)]
+pub(crate) fn context_keyspace_id(context: &kvrpcpb::Context) -> Option<u32> {
+    match context.keyspace.as_ref() {
+        Some(kvrpcpb::context::Keyspace::KeyspaceId(keyspace_id)) => Some(*keyspace_id),
+        Some(kvrpcpb::context::Keyspace::KeyspaceIdentity(_)) | None => None,
     }
 }
 
@@ -235,9 +307,7 @@ impl ApiV1Codec {
         if key.is_empty() || matches!(self.mode, KeyMode::Raw) {
             return Ok(key.to_vec());
         }
-        let mut decoded = Vec::new();
-        crate::kv::codec::decode_bytes(key, &mut decoded)?;
-        Ok(decoded)
+        decode_memcomparable_key(key)
     }
 
     pub fn encode_region_range(&self, start: &[u8], end: &[u8]) -> (Vec<u8>, Vec<u8>) {
@@ -272,9 +342,6 @@ impl ApiV1Codec {
                 (region.start_key, region.end_key) =
                     self.decode_region_range(&region.start_key, &region.end_key)?;
             }
-        }
-        if let Some(bucket_mismatch) = &mut error.bucket_version_not_match {
-            bucket_mismatch.keys = self.decode_bucket_keys(&bucket_mismatch.keys)?;
         }
         Ok(())
     }
@@ -513,7 +580,9 @@ impl ApiV2Codec {
         request.regions = self.encode_cop_region_infos(&request.regions);
         request.table_regions = self.encode_cop_table_regions(&request.table_regions);
         if let Some(meta) = &mut request.meta {
-            meta.keyspace_id = self.keyspace_id;
+            meta.keyspace = Some(crate::proto::mpp::task_meta::Keyspace::KeyspaceId(
+                self.keyspace_id,
+            ));
             meta.api_version = crate::proto::kvrpcpb::ApiVersion::V2 as i32;
         }
         request
@@ -561,8 +630,7 @@ impl ApiV2Codec {
     }
 
     pub fn decode_region_key(&self, encoded_key: &[u8]) -> crate::Result<Vec<u8>> {
-        let mut decoded = Vec::new();
-        crate::kv::codec::decode_bytes(encoded_key, &mut decoded)?;
+        let decoded = decode_memcomparable_key(encoded_key)?;
         self.decode_key(&decoded)
     }
 
@@ -580,14 +648,16 @@ impl ApiV2Codec {
         start: &[u8],
         end: &[u8],
     ) -> crate::Result<(Vec<u8>, Vec<u8>)> {
-        let mut decoded_start = Vec::new();
-        if !start.is_empty() {
-            crate::kv::codec::decode_bytes(start, &mut decoded_start)?;
-        }
-        let mut decoded_end = Vec::new();
-        if !end.is_empty() {
-            crate::kv::codec::decode_bytes(end, &mut decoded_end)?;
-        }
+        let decoded_start = if start.is_empty() {
+            Vec::new()
+        } else {
+            decode_memcomparable_key(start)?
+        };
+        let decoded_end = if end.is_empty() {
+            Vec::new()
+        } else {
+            decode_memcomparable_key(end)?
+        };
         self.decode_range(&decoded_start, &decoded_end)
     }
 
@@ -633,9 +703,6 @@ impl ApiV2Codec {
             epoch_not_match.current_regions = decoded_regions;
         }
 
-        if let Some(bucket_mismatch) = &mut error.bucket_version_not_match {
-            bucket_mismatch.keys = self.decode_bucket_keys(&bucket_mismatch.keys)?;
-        }
         Ok(())
     }
 
@@ -643,10 +710,11 @@ impl ApiV2Codec {
     pub fn decode_bucket_keys(&self, keys: &[Vec<u8>]) -> crate::Result<Vec<Vec<u8>>> {
         let mut decoded_keys = Vec::with_capacity(keys.len());
         for (index, key) in keys.iter().enumerate() {
-            let mut decoded = Vec::new();
-            if !key.is_empty() {
-                crate::kv::codec::decode_bytes(key, &mut decoded)?;
-            }
+            let decoded = if key.is_empty() {
+                Vec::new()
+            } else {
+                decode_memcomparable_key(key)?
+            };
 
             let outside_start = index == 0 && decoded.as_slice() < self.prefix.as_slice();
             let outside_end = index + 1 == keys.len()
@@ -1068,6 +1136,7 @@ mod tests {
 
     #[test]
     fn keyspace_id_is_limited_to_the_api_v2_uint24_namespace() {
+        assert_eq!(DEFAULT_KEYSPACE_ID, 0);
         assert_eq!(
             Keyspace::try_enable(MAX_KEYSPACE_ID).unwrap(),
             Keyspace::Enable {
@@ -1075,7 +1144,10 @@ mod tests {
             }
         );
         let error = Keyspace::try_enable(MAX_KEYSPACE_ID + 1).unwrap_err();
-        assert!(error.to_string().contains("out of range"));
+        assert_eq!(
+            error.to_string(),
+            "keyspaceID 16777216 is out of range, maximum is 16777215"
+        );
     }
 
     #[test]
@@ -1283,6 +1355,30 @@ mod tests {
     }
 
     #[test]
+    fn malformed_region_keys_retain_the_source_decode_error_classification() {
+        let malformed = ApiV1Codec::new(KeyMode::Txn)
+            .decode_region_key(b"not-memcomparable")
+            .unwrap_err();
+        assert!(is_decode_error(&malformed));
+
+        let wrapped = crate::Error::Connection {
+            source: Box::new(malformed),
+            address: "127.0.0.1:20160".to_owned(),
+            version: 7,
+        };
+        assert!(is_decode_error(&wrapped));
+        assert!(!is_decode_error(&crate::Error::StringError(
+            "ordinary PD failure".to_owned()
+        )));
+
+        let malformed_v2 = ApiV2Codec::new(KeyMode::Txn, 1)
+            .unwrap()
+            .decode_region_range(b"short", b"")
+            .unwrap_err();
+        assert!(is_decode_error(&malformed_v2));
+    }
+
+    #[test]
     fn api_v1_codec_decodes_transactional_region_error_ranges() {
         use crate::proto::{errorpb, metapb};
 
@@ -1328,10 +1424,30 @@ mod tests {
         let after = ApiV2Codec::new(KeyMode::Raw, 0x103)
             .unwrap()
             .encode_region_key(b"");
+        let physical_bucket_keys = vec![
+            before.clone(),
+            prefix.clone(),
+            inside.clone(),
+            after.clone(),
+        ];
         assert_eq!(
-            v2.decode_bucket_keys(&[before, prefix, inside, after])
-                .unwrap(),
+            v2.decode_bucket_keys(&physical_bucket_keys).unwrap(),
             [Vec::new(), b"middle".to_vec(), Vec::new()]
+        );
+
+        // Bucket mismatch keys are consumed by RegionCache as region keys.
+        // The source response switch does not run DecodeBucketKeys on them.
+        let mut region_error = crate::proto::errorpb::Error {
+            bucket_version_not_match: Some(crate::proto::errorpb::BucketVersionNotMatch {
+                keys: physical_bucket_keys.clone(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        v2.decode_region_error(&mut region_error).unwrap();
+        assert_eq!(
+            region_error.bucket_version_not_match.unwrap().keys,
+            physical_bucket_keys
         );
     }
 
@@ -1608,13 +1724,121 @@ mod tests {
     #[test]
     fn test_v1ttl_uses_the_v1_codec_and_context_version() {
         assert_eq!(Keyspace::V1Ttl.api_version(), kvrpcpb::ApiVersion::V1);
-        assert!(Keyspace::V1Ttl.context_keyspace_id().is_none());
+        assert_eq!(
+            Keyspace::V1Ttl.context_keyspace_id(),
+            Some(NULL_KEYSPACE_ID)
+        );
+        assert_eq!(
+            Keyspace::Disable.context_keyspace_id(),
+            Some(NULL_KEYSPACE_ID)
+        );
         assert!(Keyspace::V1Ttl.response_codec(KeyMode::Raw).is_none());
         assert!(Keyspace::V1Ttl.v1_response_codec(KeyMode::Raw).is_some());
+        assert!(decode_api_key(b"raw-key", kvrpcpb::ApiVersion::V1ttl).is_err());
+        assert!(decode_api_key(b"raw-key", kvrpcpb::ApiVersion::V3).is_err());
+        assert_eq!(api_v1_excluded_prefixes(), api_v2_prefixes());
+    }
+
+    #[test]
+    fn v3_context_identity_is_never_reinterpreted_as_a_numeric_v2_id() {
+        let context = kvrpcpb::Context {
+            api_version: kvrpcpb::ApiVersion::V3 as i32,
+            keyspace: Some(kvrpcpb::context::Keyspace::KeyspaceIdentity(
+                crate::proto::apipb::KeyspaceIdentity {
+                    namespace_id: 11,
+                    keyspace_id: 22,
+                },
+            )),
+            ..Default::default()
+        };
+        assert_eq!(context_keyspace_id(&context), None);
+    }
+
+    #[test]
+    fn pinned_v3_namespace_and_keyspace_schema_inputs_are_generated() {
+        use crate::proto::{apipb, keyspacepb, mpp};
+
+        let identity = apipb::KeyspaceIdentity {
+            namespace_id: 11,
+            keyspace_id: 22,
+        };
+        let namespace = keyspacepb::NamespaceRef {
+            namespace: Some(keyspacepb::namespace_ref::Namespace::NamespaceId(11)),
+        };
+        let load = keyspacepb::LoadKeyspaceRequest {
+            name: "tenant".to_owned(),
+            namespace: Some(namespace.clone()),
+            ..Default::default()
+        };
+        assert_eq!(load.namespace, Some(namespace.clone()));
+
+        let by_id = keyspacepb::LoadKeyspaceByIdRequest {
+            keyspace: Some(
+                keyspacepb::load_keyspace_by_id_request::Keyspace::KeyspaceIdentity(
+                    identity.clone(),
+                ),
+            ),
+            ..Default::default()
+        };
+        assert!(matches!(
+            by_id.keyspace,
+            Some(keyspacepb::load_keyspace_by_id_request::Keyspace::KeyspaceIdentity(_))
+        ));
+
+        let all = keyspacepb::GetAllKeyspacesRequest {
+            namespace: Some(namespace),
+            start_keyspace: Some(
+                keyspacepb::get_all_keyspaces_request::StartKeyspace::StartKeyspaceIdentity(
+                    identity.clone(),
+                ),
+            ),
+            ..Default::default()
+        };
+        assert!(matches!(
+            all.start_keyspace,
+            Some(keyspacepb::get_all_keyspaces_request::StartKeyspace::StartKeyspaceIdentity(_))
+        ));
         assert_eq!(
-            decode_api_key(b"raw-key", kvrpcpb::ApiVersion::V1ttl).unwrap(),
-            (None, b"raw-key".to_vec())
+            keyspacepb::LookupKeyspaceRequest {
+                name: "tenant".to_owned(),
+                ..Default::default()
+            }
+            .name,
+            "tenant"
         );
+        let _namespace_client = std::any::type_name::<
+            keyspacepb::namespace_client::NamespaceClient<tonic::transport::Channel>,
+        >();
+
+        let compact = kvrpcpb::CompactRequest {
+            api_version: kvrpcpb::ApiVersion::V3 as i32,
+            keyspace: Some(kvrpcpb::compact_request::Keyspace::KeyspaceIdentity(
+                identity.clone(),
+            )),
+            ..Default::default()
+        };
+        assert!(matches!(
+            compact.keyspace,
+            Some(kvrpcpb::compact_request::Keyspace::KeyspaceIdentity(_))
+        ));
+        let task = mpp::TaskMeta {
+            api_version: kvrpcpb::ApiVersion::V3 as i32,
+            keyspace: Some(mpp::task_meta::Keyspace::KeyspaceIdentity(identity)),
+            ..Default::default()
+        };
+        assert!(matches!(
+            task.keyspace,
+            Some(mpp::task_meta::Keyspace::KeyspaceIdentity(_))
+        ));
+        assert!(kvrpcpb::ExecDetailsV2 {
+            read_pool_task_details: Some(kvrpcpb::PoolTaskDetails {
+                poll_count: 1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+        .read_pool_task_details
+        .is_some());
     }
 
     #[test]
