@@ -1208,6 +1208,19 @@ impl KvTable {
         // The compact layout is the source's current schema after column
         // pruning. An absent value is represented by usize::MAX and causes a
         // predicate/order key that needs it to fail closed below.
+        //
+        // A common-handle table appends EVERY primary-key column after the
+        // indexed columns, duplicates included: Go builds the same executor
+        // schema with `is.InitSchema(append(path.FullIdxCols,
+        // ds.CommonHandleCols...), ...)` (`exhaust_physical_plans.go`), and
+        // TiKV reads the executor as [index datums..., handle datums...] by
+        // subtracting `primary_column_ids.len()` from the column count
+        // (`initIdxScanCtx`). Deduplicating a key column that the index
+        // already carries shrinks that layout -- an executor naming
+        // [a, b, d, c] over PRIMARY(a, b, c) makes TiKV cut one index datum
+        // and decode `b, d` as the handle, so an int read from a bytes datum
+        // fails the whole region with "Unsupported datum flag 1 for Int
+        // vector".
         let mut table_offsets = index
             .column_offsets
             .iter()
@@ -1215,9 +1228,7 @@ impl KvTable {
             .map(Some)
             .collect::<Vec<_>>();
         for offset in &self.common_handle_offsets {
-            if !table_offsets.contains(&Some(*offset)) {
-                table_offsets.push(Some(*offset));
-            }
+            table_offsets.push(Some(*offset));
         }
         if let Some(offset) = self.pk_handle_offset {
             if !table_offsets.contains(&Some(offset)) {
@@ -1302,9 +1313,12 @@ impl KvTable {
             self.common_handle_offsets
                 .iter()
                 .filter_map(|offset| {
+                    // The trailing duplicate is the HANDLE copy of the key
+                    // column; an indexed copy can differ from it under a
+                    // prefix length or new-collation sort-key encoding.
                     table_offsets
                         .iter()
-                        .position(|candidate| *candidate == Some(*offset))
+                        .rposition(|candidate| *candidate == Some(*offset))
                 })
                 .collect()
         };
@@ -3439,6 +3453,51 @@ fn append_partial_remote_chunk(
 impl crate::table_access::TableAccess for TableScanExec {
     fn accept_scan_estimate(&mut self, rows: f64) {
         self.estimated_rows = Some(rows);
+    }
+
+    /// Go `checkColCanUseIndex`: a record-key walk ranks by the clustered
+    /// handle, or by the single integer handle column, and by nothing else --
+    /// so the MaxMinEliminate bounded reverse read is only offered for those
+    /// columns. A clustered handle's later columns need every earlier one
+    /// pinned to one value across the read's ranges.
+    fn accept_extreme_boundary(&mut self, order_offset: usize, desc: bool) -> bool {
+        if self.limit.is_some()
+            || self.partial_aggregate.is_some()
+            || self.remote_topn.is_some()
+            || !self.pushed.is_empty()
+            || self.handle_ranges.as_ref().is_some_and(|ranges| ranges.len() != 1)
+        {
+            return false;
+        }
+        let Some(physical) = self.keep.get(order_offset) else {
+            return false;
+        };
+        let common = self.table.common_handle_offsets();
+        if common.is_empty() {
+            // Go's int-handle arm accepts ONLY the handle column itself.
+            if self.table.pk_handle_offset() != Some(*physical) {
+                return false;
+            }
+        } else {
+            let Some(rank) = common.iter().position(|offset| offset == physical) else {
+                return false;
+            };
+            if rank > 0 {
+                let Some(ranges) = self.handle_ranges.as_ref() else {
+                    return false;
+                };
+                let range = &ranges[0];
+                let fixed = range.low.len() >= rank
+                    && range.high.len() >= rank
+                    && !range.low_exclusive
+                    && !range.high_exclusive
+                    && (0..rank).all(|i| range.low[i] == range.high[i]);
+                if !fixed {
+                    return false;
+                }
+            }
+        }
+        self.accept_keep_order(desc) && self.accept_scan_limit(1)
     }
 
     fn accept_partial_aggregate(
