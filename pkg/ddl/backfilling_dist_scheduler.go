@@ -210,15 +210,7 @@ func getUserTableFromTaskStore(
 	})
 	useNewCollate := job.ReorgMeta.GetUseNewCollateOrDefault(defaultUseNewCollate)
 	failpoint.InjectCall("afterResolveUserTableNewCollateForBackfillStep", job, defaultUseNewCollate, useNewCollate)
-	tbl, err := tables.TableFromMetaWithCollate(
-		useNewCollate,
-		autoid.NewAllocators(tblInfo.SepAutoInc()),
-		tblInfo,
-	)
-	if err != nil {
-		return nil, err
-	}
-	return tbl, nil
+	return tables.TableFromMetaWithCollate(useNewCollate, autoid.NewAllocators(tblInfo.SepAutoInc()), tblInfo)
 }
 
 // GetNextStep implements scheduler.Extension interface.
