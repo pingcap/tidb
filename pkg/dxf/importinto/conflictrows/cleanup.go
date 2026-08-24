@@ -83,9 +83,11 @@ func mergeCountWithSamples(cs **countWithSamples, completed *countWithSamples) {
 
 // cleanupStats uses exported fields so zap.Any can encode them using their JSON tags.
 type cleanupStats struct {
-	DeletedFiles           int64             `json:"deleted-files,omitempty"`
-	MissingTasks           *countWithSamples `json:"missing-tasks,omitempty"`
-	MissingTaskFiles       *countWithSamples `json:"missing-task-files,omitempty"`
+	DeletedFiles     int64             `json:"deleted-files,omitempty"`
+	MissingTasks     *countWithSamples `json:"missing-tasks,omitempty"`
+	MissingTaskFiles *countWithSamples `json:"missing-task-files,omitempty"`
+	// These two cases should be very rare. Keep bounded path samples in the
+	// cleanup log so operators can identify any unexpected files.
 	NonImportIntoTaskFiles *countWithSamples `json:"non-import-into-task-files,omitempty"`
 	UnparsedTaskIDFiles    *countWithSamples `json:"unparsed-task-id-files,omitempty"`
 	Failures               int64             `json:"failures,omitempty"`
