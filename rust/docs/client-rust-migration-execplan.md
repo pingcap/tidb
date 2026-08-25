@@ -308,13 +308,69 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       --workspace` clean, `cargo check --lib --features mock -p tikv-client`
       (standalone, since it is workspace-excluded) clean, `cargo test -p
       tidb-pd-client` 43/43 passed.
-- [ ] Phase 3: rewire `tidb-distsql`'s RPC/region-retry layer onto the vendored
-      crate's `request::Plan`/`Shardable`/retry framework, porting the
-      documented parity fixes from `rust/docs/distsql-coprocessor-parity.md`.
-      **Not investigated this session** — `tidb-distsql` depends on
-      `tidb-txnkv`'s `region`/`rpc` modules (per the original research), so
-      it is naturally gated behind Phase 2's transport-layer decisions above
-      rather than independently startable.
+- [x] (2026-08-25, dedicated session) **Phase 2 integration landed.** With
+      every tracked upstream package `complete`, the swap moved from
+      investigation to code, in verified increments (one commit each):
+      1. Merged TiDB's `hparser-integration` branch (148 commits) so the
+         swap lands on current upstream TiDB (`e84a492`).
+      2. **Phase 2a — `TikvMemBufferBackend`** (`198606c`):
+         `driver/tikv_mem_buffer.rs` implements the existing
+         `MemBufferBackend` trait over the transcreated client-go memdb
+         (`tikv_client::transaction::unionstore::MemDb`) — the first
+         production code path where tidb-txnkv consumes the vendored crate.
+         Flag-bit masks are derived at runtime from upstream's own
+         `apply_flags_ops`, so upstream re-layouts fail a pinned test
+         instead of corrupting reads. 5 connected source tests over the
+         real buffer (staging rollback/release/inspect, tombstones,
+         iteration bounds, snapshot-excludes-stage, pipelined-empty views).
+      3. **Phase 2b — the engine differential gate** (`2c8858e`,
+         `52a2339`): `tests/tikv_client_transaction_stack_source.rs` runs
+         the vendored crate's complete transaction stack over its
+         in-process mocktikv cluster — the same way Go gates client-go via
+         `tikv.NewTestTiKVStore` over `mockstore/mocktikv`. Optimistic 2PC
+         round trip, rollback invisibility, first-committer-wins conflicts,
+         pessimistic lock/write/commit + rollback lock release, ordered
+         snapshot scans: 5/5 pass in-workspace.
+      4. **`TikvTransactionDriver`** (`b339a7c`):
+         `driver/tikv_transaction.rs`, the Go
+         `pkg/store/driver/txn.tikvTxn` counterpart — TiDB's staged buffer
+         contract (statement staging, flags, assertions, tombstones) over
+         client-go 2PC. Commit drains surviving entries into the
+         transaction, mapping flags exactly as client-go's
+         `initKeysAndMutations` (presume-key-not-exists → `Op_Insert`,
+         assertions/constraint-checks → per-mutation options). 3 e2e tests.
+      5. **Phase 3 — the coprocessor transport gate** (`5e325e4`):
+         `tests/tikv_client_coprocessor_transport_source.rs` proves the
+         seam `tidb-distsql` rides on, split exactly as Go splits it: task
+         building stays TiDB-owned (`pkg/store/copr`), the client supplies
+         region resolution + single-region sends
+         (`single_region_with_store`), and an externally implemented
+         `CoprocessorHandler` (the seat `tidb-unistore`'s executor takes)
+         serves the request; a post-resolution split surfaces as a region
+         error for the copr layer to retry. 2/2 pass.
+- [ ] Phase 2/3 remainder — the facade swap and deletion. The measured
+      migration surface (2026-08-25 census): tidb-exec/executor/server are
+      fully **generic** over `StoreWriteClient`/`StoreWriteLoader`/
+      `StorePdCapability`; only **three construction sites** bind concrete
+      engines (`tidb-exec/src/real_tikv_read.rs:718`,
+      `tidb-server/src/unistore_node.rs:163`,
+      `tidb-unistore/src/client.rs:417`). The consumer-facing transaction
+      API to reproduce over `tikv_client` is ~35 methods
+      (begin/begin_at/begin_read_only/begin_pessimistic variants,
+      commit/rollback/finish_without_writes, acquire_locks/fair locking/
+      for-update-ts advancement, snapshot get/scan, lock keep-alive,
+      commit-protocol selection). Executing the swap means: reimplement the
+      opener/transaction facade over `tikv_client::Transaction`, adapt
+      `tidb-unistore` to serve as the tikv_client in-process backend
+      (mocktikv `CoprocessorHandler` + MVCC engine seat), rebind the three
+      construction sites, port `tidb-distsql`'s task loop onto the gated
+      transport, then **delete** `tidb-txnkv`'s own coordinator (8.8K
+      lines), `rpc/` (7.8K), `region/` (6.4K), `lock/` (1.9K) and the
+      client-go-equivalent parts of `tidb-pd-client` — with their old-seam
+      tests (their behavioral responsibility lives upstream now). Gated on
+      upstream unifying `Transaction`'s buffer with the memdb
+      (`GetMemBuffer` surface) for exact Go semantics without the
+      drain-at-commit bridge.
 - [ ] Phase 4: full-workspace build, targeted + aggregate test pass, `make
       bazel_prepare` (Go-file-count is unaffected, but Bazel metadata for the
       Rust crates does not apply — confirm scope; see `Concrete Steps`),
@@ -323,6 +379,49 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       final commit.
 
 ## Surprises & Discoveries
+
+- Observation (2026-08-25, integration session): **divergence ledger vs
+  client-go, from running the code rather than reading status words.** Every
+  item below was found by the differential gates; upstream (same-day
+  maintainer loop) absorbed several within hours of being flagged.
+  - *Behavioral bugs found and fixed:* (1) mocktikv's transactional
+    `handle_get` never set `GetResponse.not_found`, so an absent key read
+    back as `Some(empty)` — real TiKV sets it and the client's own response
+    processor requires it; carried as patch 070 until upstream absorbed it
+    (`68fdf1c`). (2) `new_tikv_and_pd_client` wires the coprocessor handler
+    onto the returned `RpcClient`, but `MockPdClient` built its own
+    handler-less client internally, so region-routed dispatch returned
+    `Unimplemented` instead of reaching the handler — client-go's mockstore
+    shares one RPC client; carried as patch 090, flagged for upstream.
+  - *API gaps vs what client-go gives TiDB, since closed upstream:* proto
+    was private (Go's kvproto is shared/public; external
+    `CoprocessorHandler` impls were impossible) — upstream made it pub in
+    `34f4c13` with its own public-proto tests; `Transaction::new` over an
+    injected PD client was `#[cfg(test)] pub(crate)` (Go publicly ships
+    `tikv.NewTestTiKVStore`) — carried as patch 060 until upstream absorbed
+    it as the documented `NewTestTiKVStore` counterpart.
+  - *API gap still patch-carried:* `PlanBuilder`'s `NoTarget`/`Targetted`
+    phase markers were `pub(crate)`, making
+    `single_region_with_store(...).plan()` — the client-go `SendReq`
+    equivalent — unusable downstream (patch 080).
+  - *The one remaining architectural divergence that matters:*
+    **`Transaction`'s internal buffer is not the memdb.** Client-go's
+    `KVTxn` commits directly out of the `unionstore.MemDB` TiDB stages
+    into and exposes it via `GetMemBuffer()`; client-rust's `Transaction`
+    still uses a separate flat `Buffer` with no staging/flags surface,
+    while its faithful memdb transcreation sits unwired next to it.
+    `TikvTransactionDriver` bridges this with a drain-at-commit step;
+    upstream unification collapses the bridge. This is the top item for
+    the upstream agent (also encoded in the re-armed check-in trigger).
+  - *Verified parity-correct, not divergences:* `coprocessor::Request`
+    deliberately not `Shardable` (task splitting is TiDB's job in Go too);
+    conflict/rollback/pessimistic/scan/insert semantics all match
+    client-go over mocktikv (14/14 gate + driver tests).
+  - *Structural note for the distsql phase:* client-rust vendors its own
+    generated protos rather than sharing a kvproto crate, so `tidb-proto`
+    types and `tikv_client::proto` types are distinct Rust types for the
+    same wire messages; the boundary needs an encode/decode round trip or
+    type unification where Go simply shares kvproto.
 
 - Observation (2026-08-25, user-flagged update): **`txnkv/txnlock` and
   `txnkv/txnsnapshot` both reached `complete` upstream too**, the same day

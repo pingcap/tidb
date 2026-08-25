@@ -27,7 +27,7 @@ rust/
 | `tidb-codec` | dependency-leaf scalar, datum-key, rowcodec, and table-key framing | `pkg/util/codec` and shared table-key wire framing |
 | `tidb-proto` | checked protocol definitions | kvproto/tipb inputs |
 | `tidb-protocol` | MySQL packet and command framing | server packet/protocol packages |
-| `tidb-txnkv` | PD/region/TiKV transport and transaction primitives | `pkg/kv`, `pkg/store`, client-go, pd-client |
+| `tidb-txnkv` | PD/region/TiKV transport and transaction primitives; migrating onto the vendored `tikv-client` crate (`third_party/tikv-client-rs`, client-go's Rust transcreation) via `driver/tikv_mem_buffer` and `driver/tikv_transaction`, mirroring Go's `pkg/store/driver` over client-go | `pkg/kv`, `pkg/store`, client-go, pd-client |
 | `tidb-tablecodec` | table row/index formats using canonical KV handles | `pkg/tablecodec` |
 | `tidb-distsql` | coprocessor request/response lifecycle | `pkg/distsql` |
 | `tidb-expr` | expression construction and evaluation | `pkg/expression` |
