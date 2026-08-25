@@ -1773,6 +1773,12 @@ fn build_dnf_ranges<'a>(
     // what `hasOnlyEqualPredicatesInDNF` decides for the whole disjunction.
     let mut min_access_conds = usize::MAX;
     let mut only_equal = true;
+    // Go's `hasResidual`: a branch that detaches only PART of its conjuncts
+    // (say `id1 = ? AND id2 = ? AND type = 3` where `type` is a VARCHAR and
+    // `3` an INT, so the mixed-type equality stays behind) still contributes
+    // its ranges -- only the WHOLE disjunction then has to stay among the
+    // filters to re-check what the ranges gloss over.
+    let mut has_residual = false;
     let mut access_columns: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
     for branch in branches {
         let mut conjuncts = Vec::new();
@@ -1784,9 +1790,9 @@ fn build_dnf_ranges<'a>(
             like_default_escape,
             convert_to_sort_key,
         );
-        // A branch that constrains nothing, or that keeps a residual of its
-        // own, makes the disjunction unusable for access.
-        if built.access_count == 0 || built.access_count != conjuncts.len() {
+        // Go `detachDNFCondAndBuildRangeForIndex`: a branch with NO access
+        // condition of its own poisons the disjunction into a full range.
+        if built.access_count == 0 {
             return None;
         }
         min_access_conds = min_access_conds.min(built.access_count);
@@ -1794,6 +1800,11 @@ fn build_dnf_ranges<'a>(
         // Go's access condition for a DNF is the WHOLE disjunction, so every
         // index column any branch names lands in `accessCondsColMap`.
         access_columns.extend(built.access_columns.iter().copied());
+        if !built.residual.is_empty() {
+            has_residual = true;
+        }
+        // A branch whose CNF builds no range is always-false; go drops it
+        // from the union rather than emptying it.
         if built.ranges.is_empty() {
             continue;
         }
@@ -1818,10 +1829,249 @@ fn build_dnf_ranges<'a>(
         } else {
             min_access_conds.saturating_sub(1)
         },
-        // The DNF branch is only taken when the WHOLE `WHERE` is one `OR`, so
-        // there is no conjunct left over beside it.
-        residual: Vec::new(),
+        // The DNF branch is taken when the WHOLE `WHERE` is one `OR`; a
+        // partial branch leaves nothing beside the disjunction itself, but
+        // the whole disjunction must stay among the filters.
+        residual: if has_residual { vec![disjunct] } else { Vec::new() },
     })
+}
+
+/// Go `detachColumnCNFConditions` + `detachColumnDNFConditions`, projected
+/// onto the FIRST index column: how far each top-level conjunct bounds that
+/// column, and whether part of the conjunct had to be left behind.
+///
+/// * A leaf contributes the points it puts on the column; a leaf that puts
+///   none (another column's predicate, an uncheckable form) contributes
+///   nothing.
+/// * An `AND` intersects its sides. A side that says nothing about the
+///   column is left behind as a filter rather than read as "unbounded", so
+///   `(a = 1 AND b = 2)` projects to `[1,1]` with a residual.
+/// * An `OR` unions its branches, and EVERY branch must say something about
+///   the column -- go turns a disjunction with an unrelated branch into a
+///   plain filter instead of a range, because `(a = 1 OR b = 2)` bounds `a`
+///   only as "rows with a = 1" plus "rows with b = 2".
+///
+/// `None` therefore means "this conjunct does not bound the column"; the
+/// bool alongside `Some` marks partially-used conjuncts whose ORIGINAL text
+/// must stay among the filters.
+fn conjunct_points_on_first_column<'a>(
+    expr: &'a Expr,
+    column: &RangeColumn,
+    zone: &tidb_datatype::SessionTimeZone,
+    like_default_escape: u8,
+    convert_to_sort_key: bool,
+) -> Option<(Vec<Point>, bool)> {
+    match expr {
+        Expr::Paren(inner) => conjunct_points_on_first_column(
+            inner,
+            column,
+            zone,
+            like_default_escape,
+            convert_to_sort_key,
+        ),
+        Expr::Binary(op @ (BinaryOp::LogicAnd | BinaryOp::LogicOr), lhs, rhs) => {
+            let left = conjunct_points_on_first_column(
+                lhs,
+                column,
+                zone,
+                like_default_escape,
+                convert_to_sort_key,
+            );
+            let right = conjunct_points_on_first_column(
+                rhs,
+                column,
+                zone,
+                like_default_escape,
+                convert_to_sort_key,
+            );
+            let collation = column.field_type.collation();
+            if matches!(op, BinaryOp::LogicAnd) {
+                match (left, right) {
+                    (Some((mut lp, lr)), Some((mut rp, rr))) => {
+                        lp = intersection(&lp, &rp, collation);
+                        Some((lp, lr || rr))
+                    }
+                    (Some((lp, lr)), None) => Some((lp, true)),
+                    (None, Some((rp, rr))) => Some((rp, true)),
+                    (None, None) => None,
+                }
+            } else {
+                let (lp, rp, left_behind) = match (left, right) {
+                    (Some((lp, lr)), Some((rp, rr))) => (lp, rp, lr || rr),
+                    _ => return None,
+                };
+                let points = union_points(&lp, &rp, collation);
+                Some((points, left_behind))
+            }
+        }
+        // Go's expression rewriter lowers `(c1, c2, ..) op (v1, v2, ..)` into
+        // `c1 op v1 OR (c1 = v1 AND c2 op v2) OR ..` BEFORE ranger runs
+        // (`constructBinaryOpFunctions`); this tier still passes the raw row
+        // comparison here, so project it the same way: the leading column's
+        // bound is `c1 op v1` UNION `c1 = v1` -- every tuple satisfying the
+        // full comparison has its leading element strictly past `v1`, equal
+        // to it, or filtered, and which of those applies is decided by the
+        // deeper columns that stay behind as a residual.
+        Expr::Binary(
+            op @ (BinaryOp::Gt | BinaryOp::Ge | BinaryOp::Lt | BinaryOp::Le),
+            lhs,
+            rhs,
+        ) if row_items(lhs).is_some_and(|items| {
+            !items.is_empty() && is_column(&items[0], &column.name)
+        }) && row_items(lhs).map(|l| l.len()) == row_items(rhs).map(|r| r.len()) => {
+            let items = row_items(lhs).unwrap_or(&[]);
+            let values = row_items(rhs).unwrap_or(&[]);
+            let head = Expr::Binary(
+                *op,
+                Box::new(items[0].clone()),
+                Box::new(values[0].clone()),
+            );
+            let Some(head_points) =
+                points_for_condition(&head, column, zone, like_default_escape, convert_to_sort_key)
+                    .map(|column_points| typed_points(column_points.points, column))
+            else {
+                return None;
+            };
+            if items.len() == 1 {
+                return Some((head_points, false));
+            }
+            let equality = Expr::Binary(
+                BinaryOp::Eq,
+                Box::new(items[0].clone()),
+                Box::new(values[0].clone()),
+            );
+            let Some(tail_points) = points_for_condition(
+                &equality,
+                column,
+                zone,
+                like_default_escape,
+                convert_to_sort_key,
+            )
+            .map(|column_points| typed_points(column_points.points, column))
+            else {
+                // The leading equality holds nothing here (a NULL literal,
+                // say): the whole comparison degrades to its filter.
+                return None;
+            };
+            let points = union_points(
+                &head_points,
+                &tail_points,
+                column.field_type.collation(),
+            );
+            Some((points, true))
+        }
+        other => points_for_condition(
+            other,
+            column,
+            zone,
+            like_default_escape,
+            convert_to_sort_key,
+        )
+        .map(|column_points| {
+            // Go's `shouldReserve`: a comparison on a prefix column also
+            // stays in the filters, because the range was cut.
+            let reserve = !is_full_length_column(column);
+            (typed_points(column_points.points, column), reserve)
+        }),
+    }
+}
+
+/// Go `buildFromBinOp` converts every constant into the COLUMN's own domain
+/// before any point leaves the builder (`datum.ConvertTo(newFieldType(ft))`),
+/// so every later set operation compares TYPED values. This tier defers that
+/// conversion to the tail of the walk (`convert_points_in_place` at
+/// [`build_first_column_projection_ranges`]), which orders two conjuncts'
+/// RAW constants against each other first -- `(id1) > '848250056731'` and
+/// `(id1) < '900000000000'` intersect correctly as strings by accident, but
+/// widen the ceiling to `'2000000000000'` and lexicographic order excludes
+/// every row (`"8..." > "2..."). Converting each leaf's points as they are
+/// produced restores go's ordering; on a STRING column nothing changes (the
+/// values already carry the column's domain, and a sort-key conversion has
+/// possibly already run).
+fn typed_points(mut points: Vec<Point>, column: &RangeColumn) -> Vec<Point> {
+    if column.field_type.eval_type() != tidb_datatype::EvalType::String {
+        convert_points_in_place(&mut points, &column.field_type);
+    }
+    points
+}
+
+/// The element list of a row-value expression, through any parentheses.
+fn row_items(expr: &Expr) -> Option<&[Expr]> {
+    match expr {
+        Expr::Row(items) => Some(items),
+        Expr::Paren(inner) => row_items(inner),
+        _ => None,
+    }
+}
+
+/// Go's `eqOrInCount == 0` tail of `detachCNFCondAndBuildRangeForIndex`:
+/// project every conjunct onto the first index column and INTERSECT the
+/// projections. `(row) > (l, ..) AND (row) < (h, ..)` -- the batch-read
+/// shape of taobench -- then reads `[[l,l] (l,h) [h,h]]` on the leading
+/// column exactly as go prints it, instead of falling back to a full scan.
+fn build_first_column_projection_ranges<'a>(
+    index_columns: &[RangeColumn],
+    conjuncts: &[&'a Expr],
+    zone: &tidb_datatype::SessionTimeZone,
+    like_default_escape: u8,
+    convert_to_sort_key: bool,
+) -> IndexRanges<'a> {
+    if index_columns.is_empty() {
+        return IndexRanges {
+            ranges: Vec::new(),
+            access_count: 0,
+            column_count: 0,
+            access_columns: Vec::new(),
+            eq_or_in_count: 0,
+            residual: conjuncts.to_vec(),
+        };
+    }
+    let column = &index_columns[0];
+    let collation = column.field_type.collation();
+    let mut total: Option<Vec<Point>> = None;
+    let mut access_count = 0usize;
+    let mut residual: Vec<&'a Expr> = Vec::new();
+    for condition in conjuncts {
+        match conjunct_points_on_first_column(
+            condition,
+            column,
+            zone,
+            like_default_escape,
+            convert_to_sort_key,
+        ) {
+            Some((points, has_residual)) => {
+                if has_residual {
+                    residual.push(*condition);
+                }
+                total = Some(match total {
+                    Some(existing) => intersection(&existing, &points, collation),
+                    None => points,
+                });
+                access_count += 1;
+            }
+            None => residual.push(*condition),
+        }
+    }
+    let mut ranges = Vec::new();
+    if let Some(points) = total.as_mut() {
+        convert_points_in_place(points, &column.field_type);
+        ranges = points_to_ranges(points, column);
+        if column.prefix_len != UNSPECIFIED_LENGTH {
+            ranges = union_ranges(ranges, true);
+        }
+    }
+    IndexRanges {
+        ranges,
+        access_count,
+        column_count: usize::from(access_count > 0),
+        access_columns: if access_count > 0 {
+            vec![0]
+        } else {
+            Vec::new()
+        },
+        eq_or_in_count: 0,
+        residual,
+    }
 }
 
 /// Go `ranger.ExtractAccessConditionsForColumn` + `ranger.BuildColumnRange`
@@ -2115,7 +2365,21 @@ fn detach_conjuncts_and_build_range_for_index_with_like_default_escape<'a>(
         like_default_escape,
         convert_to_sort_key,
     );
-    (built.access_count > 0).then_some(built)
+    if built.access_count > 0 {
+        return Some(built);
+    }
+    // Go `detachCNFCondAndBuildRangeForIndex`'s `eqOrInCount == 0` tail: the
+    // walk consumed nothing, so every conjunct is projected onto the FIRST
+    // index column (`detachColumnCNFConditions` + `buildCNFIndexRange`) and
+    // the projections are intersected into one single-column range.
+    let projected = build_first_column_projection_ranges(
+        index_columns,
+        &conjuncts,
+        zone,
+        like_default_escape,
+        convert_to_sort_key,
+    );
+    (projected.access_count > 0).then_some(projected)
 }
 
 /// Go's `PredicateSimplification` / `unsatisfiable`
@@ -2311,6 +2575,49 @@ mod tests {
             Some(built) => render(&built.ranges),
             None => "<no range>".to_owned(),
         }
+    }
+
+    /// Go keeps a DNF branch that detaches only PART of its conjuncts: the
+    /// branch's ranges still join the union and the WHOLE disjunction stays
+    /// among the filters (`detachDNFCondAndBuildRangeForIndex`: only an arm
+    /// with no access condition at all poisons it into `FullRange`).
+    ///
+    /// The live shape is taobench's edge-add guard over
+    /// `PRIMARY(id1, id2, type)` with a VARCHAR `type`:
+    /// `id1 = ? OR id1 = ? AND id2 = ? AND type = 3 OR ...`, whose
+    /// mixed-type equality stays behind in every extended arm. Before this
+    /// port allowed partial arms the whole disjunction was dropped and the
+    /// statement degraded to a full index scan.
+    #[test]
+    fn dnf_branch_with_residual_conjunct_keeps_its_ranges() {
+        let typed: Vec<RangeColumn> = vec![
+            RangeColumn::whole("id1".to_owned(), FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
+            RangeColumn::whole("id2".to_owned(), FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
+            RangeColumn::whole("tp".to_owned(), FieldType::new(tidb_datatype::FieldTypeCode::VarString)),
+        ];
+        // String-literal arms detach fully; the union collapses onto the
+        // shared `id1` point exactly as go prints it.
+        assert_eq!(
+            derive_with_columns(
+                &typed,
+                "id1 = 1 OR id1 = 1 AND id2 = 2 AND tp = '3' OR id1 = 1 AND id2 = 2 AND tp = '0'",
+            ),
+            "[1,1]"
+        );
+        // Mixed-type arms keep the `tp = 3` equality behind but still bound
+        // `id1`/`id2`; go prints the same single leading-column point.
+        assert_eq!(
+            derive_with_columns(
+                &typed,
+                "id1 = 1 OR id1 = 1 AND id2 = 2 AND tp = 3 OR id1 = 1 AND id2 = 2 AND tp = 0",
+            ),
+            "[1,1]"
+        );
+        // An arm with NOTHING accessible still poisons the disjunction.
+        assert_eq!(
+            derive_with_columns(&typed, "id1 = 1 OR id2 = 2"),
+            "<no range>"
+        );
     }
 
     /// Every `range:` cell Go's EXPLAIN prints for these `WHERE` shapes,
