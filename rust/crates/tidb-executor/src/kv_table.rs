@@ -2638,7 +2638,7 @@ impl KvTable {
             .map_err(|error| KvTableError::Decode(format!("{error:?}")));
         }
         let decoder = RowDecoder::for_table_read(
-            self.columns.as_ref().clone(),
+            self.columns.clone(),
             self.pk_handle_offset,
             self.common_handle_offsets.clone(),
             None,

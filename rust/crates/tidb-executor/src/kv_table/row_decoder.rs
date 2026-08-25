@@ -15,6 +15,7 @@
 //! Stored-row decoding shared by scans, point reads, DDL reorg, and ADMIN.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use tidb_codec::table_key::RECORD_ROW_KEY_LEN;
 use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
@@ -65,8 +66,15 @@ impl DecodedRow {
 /// Everything needed to turn one record key/value pair into a table row.
 #[derive(Clone)]
 pub struct RowDecoder {
-    columns: Vec<KvColumn>,
-    evaluation_columns: Vec<KvColumn>,
+    /// The table schema this decoder reads, SHARED with the catalog's
+    /// `KvTable` (`Arc`): building the decoder per execute must not deep-copy
+    /// every column's name and collation strings again.
+    columns: Arc<Vec<KvColumn>>,
+    /// Columns for generated-column evaluation: the shared schema when any
+    /// virtual generated column is decoded, with every non-generated entry's
+    /// expression nulled; `None` when there is nothing to evaluate, so the
+    /// common no-generated-columns case never copies the schema at all.
+    evaluation_columns: Option<Arc<Vec<KvColumn>>>,
     column_types: BTreeMap<i64, FieldType>,
     decoded_offsets: BTreeSet<usize>,
     generated_offsets: BTreeSet<usize>,
@@ -318,7 +326,7 @@ impl RowDecoder {
         context: RowDecodeContext,
     ) -> Result<Self, KvTableError> {
         Self::build(
-            columns,
+            Arc::new(columns),
             pk_handle_offset,
             common_handle_offsets,
             generated,
@@ -339,7 +347,7 @@ impl RowDecoder {
         context: RowDecodeContext,
     ) -> Result<Self, KvTableError> {
         Self::build(
-            columns,
+            Arc::new(columns),
             pk_handle_offset,
             common_handle_offsets,
             generated,
@@ -350,7 +358,7 @@ impl RowDecoder {
     }
 
     pub(crate) fn for_table_read(
-        columns: Vec<KvColumn>,
+        columns: Arc<Vec<KvColumn>>,
         pk_handle_offset: Option<usize>,
         common_handle_offsets: Vec<usize>,
         keep: Option<&[usize]>,
@@ -369,7 +377,7 @@ impl RowDecoder {
     }
 
     pub(crate) fn for_recomputed_read(
-        columns: Vec<KvColumn>,
+        columns: Arc<Vec<KvColumn>>,
         pk_handle_offset: Option<usize>,
         common_handle_offsets: Vec<usize>,
         use_new_collation: bool,
@@ -387,7 +395,7 @@ impl RowDecoder {
     }
 
     fn build(
-        columns: Vec<KvColumn>,
+        columns: Arc<Vec<KvColumn>>,
         pk_handle_offset: Option<usize>,
         common_handle_offsets: Vec<usize>,
         generated: GeneratedColumnSelection,
@@ -471,12 +479,21 @@ impl RowDecoder {
             .iter()
             .map(|offset| (columns[*offset].id, columns[*offset].field_type.clone()))
             .collect();
-        let mut evaluation_columns = columns.clone();
-        for (offset, column) in evaluation_columns.iter_mut().enumerate() {
-            if !generated_offsets.contains(&offset) {
-                column.generated = None;
+        // Only a DECODED virtual generated column needs evaluation. When
+        // there is none -- the common table -- `evaluation_columns` stays
+        // `None` and no copy of the schema is made for it; when there is,
+        // the copy nulls every non-evaluated expression exactly as before.
+        let evaluation_columns = if generated_offsets.is_empty() {
+            None
+        } else {
+            let mut evaluation_columns = (*columns).clone();
+            for (offset, column) in evaluation_columns.iter_mut().enumerate() {
+                if !generated_offsets.contains(&offset) {
+                    column.generated = None;
+                }
             }
-        }
+            Some(Arc::new(evaluation_columns))
+        };
 
         Ok(Self {
             columns,
@@ -673,8 +690,13 @@ impl RowDecoder {
     /// Evaluates the configured generated columns left-to-right and adds
     /// their values to the column-id map.
     pub fn eval_remaining(&self, row: &mut DecodedRow) -> Result<(), KvTableError> {
+        let Some(evaluation_columns) = &self.evaluation_columns else {
+            // No decoded virtual generated column: every value in `row` is
+            // already final, so there is nothing left to evaluate.
+            return Ok(());
+        };
         crate::generated_column::materialize_with_conversion_flags(
-            &self.evaluation_columns,
+            evaluation_columns,
             &mut row.values,
             false,
             self.context.expression(),

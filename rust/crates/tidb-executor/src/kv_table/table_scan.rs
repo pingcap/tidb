@@ -68,7 +68,7 @@ impl KvTable {
         context: &RowDecodeContext,
     ) -> Result<RowDecoder, KvTableError> {
         let decoder = RowDecoder::for_table_read(
-            self.columns.as_ref().clone(),
+            self.columns.clone(),
             self.pk_handle_offset,
             self.common_handle_offsets.clone(),
             keep,
@@ -84,7 +84,7 @@ impl KvTable {
         context: &RowDecodeContext,
     ) -> Result<RowDecoder, KvTableError> {
         RowDecoder::for_recomputed_read(
-            self.columns.as_ref().clone(),
+            self.columns.clone(),
             self.pk_handle_offset,
             self.common_handle_offsets.clone(),
             self.use_new_collation,
