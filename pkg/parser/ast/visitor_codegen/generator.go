@@ -1615,7 +1615,7 @@ func (t *methodTransformer) rewriteHelperCalls(node ast.Node) error {
 			return true
 		}
 		selector, ok := call.Fun.(*ast.SelectorExpr)
-		if ok && selector.Sel.Name == "acceptInPlace" {
+		if ok && selector.Sel.Name == "accept" {
 			typeExpr, _, err := t.resolveExprType(selector.X)
 			if err != nil {
 				rewriteErr = t.errorAt(call.Pos(), "cannot classify helper call %s: %v", expressionString(call), err)
@@ -1629,14 +1629,14 @@ func (t *methodTransformer) rewriteHelperCalls(node ast.Node) error {
 				rewriteErr = t.errorAt(call.Pos(), "cannot classify helper receiver %s", expressionString(selector.X))
 				return false
 			}
-			if t.pkg.methods[receiver]["acceptInPlace"] == "" {
+			if t.pkg.methods[receiver]["accept"] == "" {
 				return true
 			}
-			if t.pkg.methods[receiver]["acceptInPlace"] != "Visitor" || t.pkg.methods[receiver]["walkInPlace"] != "InPlaceVisitor" {
-				rewriteErr = t.errorAt(call.Pos(), "helper %s must pair acceptInPlace(Visitor) with walkInPlace(InPlaceVisitor)", expressionString(selector.X))
+			if t.pkg.methods[receiver]["accept"] != "Visitor" || t.pkg.methods[receiver]["acceptInPlace"] != "InPlaceVisitor" {
+				rewriteErr = t.errorAt(call.Pos(), "helper %s must pair accept(Visitor) with acceptInPlace(InPlaceVisitor)", expressionString(selector.X))
 				return false
 			}
-			selector.Sel = ast.NewIdent("walkInPlace")
+			selector.Sel = ast.NewIdent("acceptInPlace")
 		}
 		return true
 	})

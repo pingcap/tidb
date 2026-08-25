@@ -496,7 +496,7 @@ func TestWalkWritebackInventory(t *testing.T) {
 	entries, err := traversalSources.ReadDir(".")
 	require.NoError(t, err)
 
-	var acceptCount, acceptInPlaceCount, legacyInPlaceHelperCount int
+	var acceptCount, acceptInPlaceCount, legacyHelperCount int
 	var functionsWithWritebacks int
 	var candidates []writebackCandidate
 	var cacheIssues []string
@@ -542,12 +542,12 @@ func TestWalkWritebackInventory(t *testing.T) {
 						decl:     function,
 					})
 				}
-			case "acceptInPlace":
+			case "accept":
 				if function.Type.Params == nil || len(function.Type.Params.List) != 1 ||
 					renderExpr(t, fset, function.Type.Params.List[0].Type) != "Visitor" {
 					continue
 				}
-				legacyInPlaceHelperCount++
+				legacyHelperCount++
 			case "AcceptInPlace":
 				if function.Type.Params == nil || len(function.Type.Params.List) != 1 ||
 					renderExpr(t, fset, function.Type.Params.List[0].Type) != "InPlaceVisitor" {
@@ -609,8 +609,8 @@ func TestWalkWritebackInventory(t *testing.T) {
 
 	require.Equal(t, 213, acceptCount)
 	require.Equal(t, 213, acceptInPlaceCount)
-	require.Equal(t, 6, legacyInPlaceHelperCount)
-	require.Equal(t, 219, acceptCount+legacyInPlaceHelperCount)
+	require.Equal(t, 6, legacyHelperCount)
+	require.Equal(t, 219, acceptCount+legacyHelperCount)
 	require.Equal(t, 140, functionsWithWritebacks)
 	require.Empty(t, cacheIssues, "replacement-mode cache issues: %s", formatCacheIssues(cacheIssues))
 	require.Empty(t, forbiddenSymbols, "removed in-place replacement symbols remain: %s", strings.Join(forbiddenSymbols, ", "))
@@ -636,7 +636,7 @@ func hasChildTraversalCall(body *goast.BlockStmt) bool {
 		selector, ok := call.Fun.(*goast.SelectorExpr)
 		if ok {
 			switch selector.Sel.Name {
-			case "Accept", "acceptInPlace":
+			case "Accept", "accept":
 				found = true
 				return false
 			case "Enter":

@@ -89,7 +89,7 @@ func TestGenerateTraversalGrammar(t *testing.T) {
 			}
 		}
 	}`,
-		`if !n.Helper.walkInPlace(v) {
+		`if !n.Helper.acceptInPlace(v) {
 		return false
 	}`,
 		`if n.Optional != nil {
@@ -582,8 +582,8 @@ type LockInfo struct {
 
 type replacementHelper struct{}
 
-func (replacementHelper) acceptInPlace(Visitor) bool { return true }
-func (replacementHelper) walkInPlace(InPlaceVisitor) bool { return true }
+func (replacementHelper) accept(Visitor) bool { return true }
+func (replacementHelper) acceptInPlace(InPlaceVisitor) bool { return true }
 
 type FixtureNode struct {
 	Concrete *ConcreteChild
@@ -683,7 +683,7 @@ func (n *FixtureNode) Accept(v Visitor) (Node, bool) {
 		}
 	}
 
-	if !n.Helper.acceptInPlace(v) {
+	if !n.Helper.accept(v) {
 		return n, false
 	}
 

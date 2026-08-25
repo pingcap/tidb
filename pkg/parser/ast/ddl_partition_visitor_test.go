@@ -115,11 +115,11 @@ func TestPartitionVisitorHelpersPreserveChildOrder(t *testing.T) {
 	}
 
 	legacy := &partitionLegacyVisitor{names: names}
-	require.True(t, method.acceptInPlace(legacy))
+	require.True(t, method.accept(legacy))
 	require.Equal(t, expected, legacy.events)
 
 	inPlace := &partitionInPlaceVisitor{names: names}
-	require.True(t, method.walkInPlace(inPlace))
+	require.True(t, method.acceptInPlace(inPlace))
 	require.Equal(t, expected, inPlace.events)
 }
 
@@ -172,11 +172,11 @@ func TestPartitionDefinitionVisitorHelpersPreserveClauseOrder(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			legacy := &partitionLegacyVisitor{names: testCase.names}
-			require.True(t, testCase.definition.acceptInPlace(legacy))
+			require.True(t, testCase.definition.accept(legacy))
 			require.Equal(t, testCase.expected, legacy.events)
 
 			inPlace := &partitionInPlaceVisitor{names: testCase.names}
-			require.True(t, testCase.definition.walkInPlace(inPlace))
+			require.True(t, testCase.definition.acceptInPlace(inPlace))
 			require.Equal(t, testCase.expected, inPlace.events)
 		})
 	}
@@ -192,11 +192,11 @@ func TestPartitionVisitorHelpersPreserveSkipAndStop(t *testing.T) {
 		expected := []string{"enter expr", "leave expr", "enter column", "leave column"}
 
 		legacy := &partitionLegacyVisitor{names: names, skip: expr}
-		require.True(t, method.acceptInPlace(legacy))
+		require.True(t, method.accept(legacy))
 		require.Equal(t, expected, legacy.events)
 
 		inPlace := &partitionInPlaceVisitor{names: names, skip: expr}
-		require.True(t, method.walkInPlace(inPlace))
+		require.True(t, method.acceptInPlace(inPlace))
 		require.Equal(t, expected, inPlace.events)
 	})
 
@@ -208,11 +208,11 @@ func TestPartitionVisitorHelpersPreserveSkipAndStop(t *testing.T) {
 		expected := []string{"enter expr", "leave expr"}
 
 		legacy := &partitionLegacyVisitor{names: names, stop: expr}
-		require.False(t, method.acceptInPlace(legacy))
+		require.False(t, method.accept(legacy))
 		require.Equal(t, expected, legacy.events)
 
 		inPlace := &partitionInPlaceVisitor{names: names, stop: expr}
-		require.False(t, method.walkInPlace(inPlace))
+		require.False(t, method.acceptInPlace(inPlace))
 		require.Equal(t, expected, inPlace.events)
 	})
 
@@ -230,16 +230,16 @@ func TestPartitionVisitorHelpersPreserveSkipAndStop(t *testing.T) {
 		}
 
 		legacy := &partitionLegacyVisitor{names: names, stop: second}
-		require.False(t, definition.acceptInPlace(legacy))
+		require.False(t, definition.accept(legacy))
 		require.Equal(t, expected, legacy.events)
 
 		inPlace := &partitionInPlaceVisitor{names: names, stop: second}
-		require.False(t, definition.walkInPlace(inPlace))
+		require.False(t, definition.acceptInPlace(inPlace))
 		require.Equal(t, expected, inPlace.events)
 	})
 }
 
-func TestPartitionWalkInPlaceMutatesWithoutFrameworkWriteback(t *testing.T) {
+func TestPartitionAcceptInPlaceMutatesWithoutFrameworkWriteback(t *testing.T) {
 	t.Run("direct_mutation", func(t *testing.T) {
 		methodColumn := &ColumnName{Name: NewCIStr("method")}
 		clauseColumn := &ColumnName{Name: NewCIStr("clause")}
@@ -256,8 +256,8 @@ func TestPartitionWalkInPlaceMutatesWithoutFrameworkWriteback(t *testing.T) {
 			},
 		}
 
-		require.True(t, method.walkInPlace(visitor))
-		require.True(t, definition.walkInPlace(visitor))
+		require.True(t, method.acceptInPlace(visitor))
+		require.True(t, definition.acceptInPlace(visitor))
 		require.Equal(t, NewCIStr("changed"), methodColumn.Name)
 		require.Equal(t, NewCIStr("changed"), clauseColumn.Name)
 	})
@@ -274,8 +274,8 @@ func TestPartitionWalkInPlaceMutatesWithoutFrameworkWriteback(t *testing.T) {
 			clauseOriginal: "clause original",
 		}}
 
-		require.True(t, method.walkInPlace(visitor))
-		require.True(t, clause.walkInPlace(visitor))
+		require.True(t, method.acceptInPlace(visitor))
+		require.True(t, clause.acceptInPlace(visitor))
 		require.Same(t, methodOriginal, method.Expr)
 		require.Same(t, clauseOriginal, clause.Exprs[0])
 	})
@@ -298,8 +298,8 @@ func TestPartitionWalkInPlaceMutatesWithoutFrameworkWriteback(t *testing.T) {
 			},
 		}
 
-		require.True(t, method.acceptInPlace(visitor))
-		require.True(t, clause.acceptInPlace(visitor))
+		require.True(t, method.accept(visitor))
+		require.True(t, clause.accept(visitor))
 		require.Same(t, methodReplacement, method.Expr)
 		require.Same(t, clauseReplacement, clause.Exprs[0])
 	})

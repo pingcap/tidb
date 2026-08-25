@@ -463,7 +463,7 @@ func (n *AlterTableSpec) AcceptInPlace(v InPlaceVisitor) bool {
 		}
 	}
 	for _, def := range n.PartDefinitions {
-		if !def.walkInPlace(v) {
+		if !def.acceptInPlace(v) {
 			return false
 		}
 	}
@@ -496,14 +496,14 @@ func (n *PartitionOptions) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
-	if !n.PartitionMethod.walkInPlace(v) {
+	if !n.PartitionMethod.acceptInPlace(v) {
 		return false
 	}
-	if n.Sub != nil && !n.Sub.walkInPlace(v) {
+	if n.Sub != nil && !n.Sub.acceptInPlace(v) {
 		return false
 	}
 	for _, def := range n.Definitions {
-		if !def.walkInPlace(v) {
+		if !def.acceptInPlace(v) {
 			return false
 		}
 	}
