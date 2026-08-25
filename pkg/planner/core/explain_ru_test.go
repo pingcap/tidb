@@ -70,7 +70,6 @@ func TestExplainAnalyzeRUFormatIncreasesWithScannedBytes(t *testing.T) {
 
 	tk.MustExec("drop table if exists t_unistore_ru_scan_bytes")
 	tk.MustExec("create table t_unistore_ru_scan_bytes(a int primary key, b varchar(4096))")
-	tk.MustExec("insert into t_unistore_ru_scan_bytes values (1, repeat('a', 4096)), (2, repeat('b', 4096))")
 	getReaderCumRU := func() float64 {
 		rows := tk.MustQuery("explain analyze format = 'ru' select * from t_unistore_ru_scan_bytes").Rows()
 		require.NotEmpty(t, rows)
@@ -78,7 +77,13 @@ func TestExplainAnalyzeRUFormatIncreasesWithScannedBytes(t *testing.T) {
 		require.NoError(t, err)
 		return ru
 	}
-	beforeInsertRU := getReaderCumRU()
-	tk.MustExec("insert into t_unistore_ru_scan_bytes values (3, repeat('c', 4096)), (4, repeat('d', 4096))")
-	require.Greater(t, getReaderCumRU(), beforeInsertRU)
+
+	previousRU := getReaderCumRU()
+	for i := 0; i < 20; i++ {
+		firstID := i*2 + 1
+		tk.MustExec("insert into t_unistore_ru_scan_bytes values (" + strconv.Itoa(firstID) + ", repeat('a', 4096)), (" + strconv.Itoa(firstID+1) + ", repeat('b', 4096))")
+		currentRU := getReaderCumRU()
+		require.Greater(t, currentRU, previousRU)
+		previousRU = currentRU
+	}
 }
