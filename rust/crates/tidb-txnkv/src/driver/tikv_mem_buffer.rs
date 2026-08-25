@@ -266,7 +266,9 @@ impl TikvMemBufferBackend {
     /// Creates an empty transaction buffer.
     #[must_use]
     pub fn new() -> Self {
-        Self { memdb: MemDb::new() }
+        Self {
+            memdb: MemDb::new(),
+        }
     }
 
     /// Borrows the wrapped client-go buffer for client-specific operations.

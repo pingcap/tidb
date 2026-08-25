@@ -517,10 +517,13 @@ where
             KvrpcPessimisticLockWakeUpMode::WakeUpModeNormal
         };
         let wait_started_at = Instant::now();
-        let mut queue: VecDeque<(
-            RegionKeyBatch,
-            Option<KvrpcPessimisticLockResponse>,
-        )> = VecDeque::from(self.group(&sorted)?.into_iter().map(|batch| (batch, None)).collect::<Vec<_>>());
+        let mut queue: VecDeque<(RegionKeyBatch, Option<KvrpcPessimisticLockResponse>)> =
+            VecDeque::from(
+                self.group(&sorted)?
+                    .into_iter()
+                    .map(|batch| (batch, None))
+                    .collect::<Vec<_>>(),
+            );
         // Go `KVTxn.LockKeys` dispatches every region batch's lock request
         // before waiting on any of them (`lockKeys` via `doBatches`), so a
         // statement spanning several regions costs one round trip instead of
@@ -555,8 +558,7 @@ where
                         mutations,
                         primary_lock: primary_key.to_vec(),
                         start_version: self.start_ts(),
-                        lock_ttl: elapsed_ms(self.opened_at)
-                            .saturating_add(MANAGED_LOCK_TTL_MS),
+                        lock_ttl: elapsed_ms(self.opened_at).saturating_add(MANAGED_LOCK_TTL_MS),
                         for_update_ts: self.for_update_ts,
                         is_first_lock,
                         wait_timeout: wait.wait_timeout_ms(waited),
@@ -879,7 +881,7 @@ where
                                 );
                             }
                         }
-                        return Ok(BatchOutcome::Locked { conflicts })
+                        return Ok(BatchOutcome::Locked { conflicts });
                     }
                     // TiKV refused this key. It reports why in `errors`, and
                     // the same blocker handling as Normal mode decides whether

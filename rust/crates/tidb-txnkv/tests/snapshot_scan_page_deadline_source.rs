@@ -38,10 +38,10 @@ use tidb_proto::{
     KvrpcBatchRollbackResponse, KvrpcCheckSecondaryLocksRequest, KvrpcCheckSecondaryLocksResponse,
     KvrpcCheckTxnStatusRequest, KvrpcCheckTxnStatusResponse, KvrpcCommitRequest,
     KvrpcCommitResponse, KvrpcContext, KvrpcGetRequest, KvrpcGetResponse, KvrpcKvPair,
-    KvrpcPessimisticLockRequest, KvrpcPessimisticLockResponse,
-    KvrpcPessimisticRollbackRequest, KvrpcPessimisticRollbackResponse, KvrpcPrewriteRequest,
-    KvrpcPrewriteResponse, KvrpcResolveLockRequest, KvrpcResolveLockResponse, KvrpcScanRequest,
-    KvrpcScanResponse, KvrpcTxnHeartBeatRequest, KvrpcTxnHeartBeatResponse,
+    KvrpcPessimisticLockRequest, KvrpcPessimisticLockResponse, KvrpcPessimisticRollbackRequest,
+    KvrpcPessimisticRollbackResponse, KvrpcPrewriteRequest, KvrpcPrewriteResponse,
+    KvrpcResolveLockRequest, KvrpcResolveLockResponse, KvrpcScanRequest, KvrpcScanResponse,
+    KvrpcTxnHeartBeatRequest, KvrpcTxnHeartBeatResponse,
 };
 use tidb_txnkv::lock::{LockRecoveryClient, TimestampSource};
 use tidb_txnkv::region::{
@@ -49,8 +49,8 @@ use tidb_txnkv::region::{
     RegionMetadata, RegionRecoveryLoader, RegionVerId, Store,
 };
 use tidb_txnkv::rpc::{
-    BatchCommandTag, DirectUnaryClientError, TransactionBatchPublication,
-    TransactionBatchResponse, UnaryCallContext,
+    BatchCommandTag, DirectUnaryClientError, TransactionBatchPublication, TransactionBatchResponse,
+    UnaryCallContext,
 };
 use tidb_txnkv::transaction::{
     PublishedCommand, RealOptimisticTransaction, TransactionCommandClient,
@@ -168,11 +168,9 @@ impl PagingScanClient {
 /// silently shaping the outcome.
 macro_rules! never_published {
     ($self:ident, $name:literal) => {
-        PublishedCommand::BeforePublication(concat!(
-            "this regression never publishes ",
-            $name
+        PublishedCommand::BeforePublication(
+            concat!("this regression never publishes ", $name).to_owned(),
         )
-        .to_owned())
     };
 }
 

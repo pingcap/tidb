@@ -367,17 +367,10 @@ where
             // meets a pessimistic lock resolves it through that lock's own
             // protocol instead of refusing it. `true` is the reader's
             // step-over permission, as at every other read site.
-            let recovery =
-                resolve_blocking_locks(
-                    runtime,
-                    &locked,
-                    read_ts,
-                    &context,
-                    &page_call,
-                    timestamps,
-                    true,
-                )
-                    .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+            let recovery = resolve_blocking_locks(
+                runtime, &locked, read_ts, &context, &page_call, timestamps, true,
+            )
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
             resolved_locks.absorb(&recovery);
             if recovery.is_alive() {
                 let delay = lock_backoff

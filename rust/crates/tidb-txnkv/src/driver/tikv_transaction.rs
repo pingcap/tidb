@@ -214,7 +214,9 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
                     .insert_with_options(raw_key, value, options)
                     .await?;
             } else {
-                self.transaction.put_with_options(raw_key, value, options).await?;
+                self.transaction
+                    .put_with_options(raw_key, value, options)
+                    .await?;
             }
         }
         Ok(self.transaction.commit().await?)

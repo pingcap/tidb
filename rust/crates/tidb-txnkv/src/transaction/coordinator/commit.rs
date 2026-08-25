@@ -32,8 +32,8 @@ use crate::region::RegionRecoveryLoader;
 use crate::rpc::UnaryCallContext;
 
 use super::super::command_client::{
-    OwnedTransactionCommitRequest, PublishedCommand, TransactionCommitRequest,
-    TransactionCommandClient, TransactionPrewriteRequest,
+    PublishedCommand, TransactionCommandClient, TransactionCommitRequest,
+    TransactionPrewriteRequest,
 };
 use super::super::mutation::{validate_and_sort, MutationSetError, OptimisticMutation};
 use super::super::state::{
@@ -918,8 +918,7 @@ where
             let mut requests = Vec::with_capacity(round.len());
             for batch in &round {
                 receipt.region_attempts.push(batch.region());
-                let holds_primary =
-                    batch.keys().iter().any(|key| key.as_slice() == primary_key);
+                let holds_primary = batch.keys().iter().any(|key| key.as_slice() == primary_key);
                 requests.push(TransactionCommitRequest {
                     address: batch.address(),
                     request: KvrpcCommitRequest {
@@ -955,9 +954,7 @@ where
                 match published {
                     PublishedCommand::BeforePublication(error) => {
                         let cause = TransactionCause::Transport {
-                            detail: format!(
-                                "secondary Commit failed before publication: {error}"
-                            ),
+                            detail: format!("secondary Commit failed before publication: {error}"),
                         };
                         record_attempt(
                             receipt,

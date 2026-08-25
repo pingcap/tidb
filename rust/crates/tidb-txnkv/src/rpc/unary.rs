@@ -25,10 +25,10 @@
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-use std::sync::atomic::Ordering;
-use tokio::sync::watch;
 use bytes::{Buf, BufMut};
+use std::sync::atomic::Ordering;
 use tidb_pd_client::ClusterSecurity;
+use tokio::sync::watch;
 use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 
 use crate::client::PhysicalChannelIdentity;
@@ -277,7 +277,10 @@ impl Clone for RawTransportClient {
         // A clone is a NEW session lease over the same process authorities.
         // Pinning it to the next shard spreads sessions across the fleet; a
         // process owner (which never clones) always serves from shard 0.
-        let route = self.next_route.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % self.routes.len().max(1);
+        let route = self
+            .next_route
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            % self.routes.len().max(1);
         Self {
             routes: self.routes.clone(),
             next_route: std::sync::Arc::clone(&self.next_route),
@@ -333,9 +336,7 @@ impl RawTransportClient {
             routes,
             // The process owner itself serves from shard 0; every clone claims
             // the next shard from the shared cursor.
-            next_route: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(
-                1 % shards.max(1),
-            )),
+            next_route: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(1 % shards.max(1))),
             route: 0,
             shutdown_cancellation: cancellation,
             owner: Some(owners),
@@ -379,8 +380,7 @@ impl RawTransportClient {
         entries: Vec<BatchCommandEntry>,
         call: &UnaryCallContext,
     ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
-        self.route()?
-            .batch_submit_with_call(address, entries, call)
+        self.route()?.batch_submit_with_call(address, entries, call)
     }
 
     pub(super) fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
@@ -423,7 +423,9 @@ impl RawTransportClient {
     }
 
     pub(super) fn inspect(&self, address: &str) -> (Option<u64>, usize) {
-        self.routes.first().map_or((None, 0), |handle| handle.inspect(address))
+        self.routes
+            .first()
+            .map_or((None, 0), |handle| handle.inspect(address))
     }
 
     pub(super) fn inspect_batch(
@@ -456,7 +458,6 @@ impl RawTransportClient {
         self.routes.clear();
         result
     }
-
 }
 
 /// Immutable in-flight ownership split from the worker-owned channel pool.

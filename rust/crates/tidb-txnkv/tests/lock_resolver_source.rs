@@ -536,7 +536,8 @@ fn cancellation_after_check_or_resolve_wins_before_followup_mutation() {
 #[test]
 fn caller_cancelled_rpc_is_typed_at_both_lock_commands() {
     let (check_runtime, _) = runtime(vec![KvrpcCheckTxnStatusResponse::default()]);
-    check_runtime.client().lock().unwrap().check_error = Some(DirectUnaryClientError::CallerCancelled);
+    check_runtime.client().lock().unwrap().check_error =
+        Some(DirectUnaryClientError::CallerCancelled);
     assert_eq!(
         resolve_optimistic_locks(
             &check_runtime,
@@ -1605,7 +1606,10 @@ fn the_snapshot_read_path_stamps_its_lock_sets_on_every_send() {
     // where Go bounds each `SendReq(bo, .., ReadTimeoutMedium)` separately.
     for (command, expected_tail) in [
         ("begin_get(", "&route, &context, &request, call"),
-        ("begin_scan_direct(", "&route, &context, &request, &page_call"),
+        (
+            "begin_scan_direct(",
+            "&route, &context, &request, &page_call",
+        ),
     ] {
         // `let response = ` selects the CALL sites; the `fn` definitions
         // spell the same name and are not argument lists.
