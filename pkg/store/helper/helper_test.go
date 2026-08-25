@@ -19,6 +19,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -265,6 +266,63 @@ func TestRegionSizePaginationStopsAtTerminalRegion(t *testing.T) {
 			})
 		})
 	}
+}
+
+type foreignKeyspacePDClient struct {
+	pd.Client
+	calls         int
+	foreignEndKey string
+}
+
+func (c *foreignKeyspacePDClient) WithCallerID(string) pd.Client {
+	return c
+}
+
+func (c *foreignKeyspacePDClient) GetRegionsByKeyRange(
+	context.Context,
+	*pd.KeyRange,
+	int,
+) (*pd.RegionsInfo, error) {
+	c.calls++
+	if c.calls > 1 {
+		return nil, fmt.Errorf("unexpected request after terminal region")
+	}
+	return &pd.RegionsInfo{
+		Regions: []pd.RegionInfo{{
+			EndKey:            c.foreignEndKey,
+			ApproximateSize:   1,
+			ApproximateKvSize: 2,
+		}},
+	}, nil
+}
+
+// TestRegionSizeStopsAtForeignKeyspaceBoundary reproduces the last region
+// holding data for our keyspace reporting a raw end key that decodes as
+// belonging to a different (adjacent) keyspace, since keyspaces are packed
+// back to back with no gap. RegionApproximateSizes must treat that as "no
+// more data for us past this point", the same as an empty end key, rather
+// than failing the whole scan.
+func TestRegionSizeStopsAtForeignKeyspaceBoundary(t *testing.T) {
+	ourCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 1},
+		Name:     "our_keyspace",
+	})
+	require.NoError(t, err)
+	otherCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 2},
+		Name:     "other_keyspace",
+	})
+	require.NoError(t, err)
+	foreignEndKey := otherCodec.EncodeRegionKey([]byte("z"))
+
+	start, end := kv.Key("a"), kv.Key("z")
+	pdCli := &foreignKeyspacePDClient{foreignEndKey: hex.EncodeToString(foreignEndKey)}
+	h := helper.NewHelper(&terminalRegionStorage{codec: ourCodec, pdCli: pdCli})
+	endKeys, sizes, err := h.RegionApproximateSizes(t.Context(), start, end)
+	require.NoError(t, err)
+	require.Equal(t, []kv.Key{end}, endKeys)
+	require.Equal(t, []int64{2 * 1024 * 1024}, sizes)
+	require.Equal(t, 1, pdCli.calls)
 }
 
 // TestGetPDRegionStatsKeyspaceEncoding verifies that GetPDRegionStats encodes the table
