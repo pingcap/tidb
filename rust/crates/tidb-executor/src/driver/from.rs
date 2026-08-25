@@ -1402,20 +1402,18 @@ fn build_from_inner(
             // leaf scan (`build_join_with_choice` computed it and every join
             // level above here verified its own inner side is unique on the
             // join keys). The offer keeps Go's soundness boundary: the leaf
-            // must already apply EVERY predicate the statement gives it --
-            // `scan_consumed_filter` with no access residual -- so a capped
-            // read drops exactly the rows the cop-side `Selection` would,
-            // and never a row the statement could still have kept.
+            // must already apply EVERY predicate the statement gives it.
+            // When `offer_leaf_filter` succeeded, the accepted probe enforces
+            // the WHOLE `leaf_where` -- `residual.is_none()` is its own
+            // acceptance condition -- so any index-side or path residual
+            // still riding along is a redundant copy of an already-pushed
+            // conjunct, never an unenforced predicate. A capped read
+            // therefore drops exactly the rows a Selection above this source
+            // would, whether TiKV answers the descriptions or the probe
+            // filters locally (`lookup_filter_complete` keeps both paths
+            // equivalent).
             if let Some(cap) = scan_cap {
-                // Sound when the LEAF SOURCE enforces every predicate it was
-                // given before emitting a row: either the whole `WHERE` half
-                // moved through `accept_scan_filter` with NOTHING left
-                // residual (`scan_consumed_filter`, no path filter). A
-                // residual conjunct -- today every `member of` shape, whose
-                // TiPB signature this catalog does not resolve yet -- stays
-                // applied ABOVE the join, where a capped read could drop
-                // rows the statement still owed, so such leaves refuse.
-                if scan_consumed_filter && access_residual_filter.is_none() {
+                if scan_consumed_filter {
                     let accepted =
                         exec.table_access().is_some_and(|access| access.accept_scan_limit(cap));
                     if accepted {

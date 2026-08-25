@@ -4033,6 +4033,16 @@ fn scan_operand_call(
             tidb_expr::scalar_function::binary_op_name(*op).to_owned(),
             vec![lhs, rhs],
         ),
+        // Go's parser lowers `candidate MEMBER OF (document)` into the plain
+        // builtin call `FuncCallExpr{FnName: json_memberof}`
+        // (`pkg/parser/expr_parser.go:200`), so `scan_predicate` sees it
+        // through the same fallthrough every other function takes -- which is
+        // why Go's cop Selection carries `json_memberof`. This tree keeps a
+        // distinct node; naming the call here restores that equivalence.
+        tidb_ast::Expr::MemberOf { expr, array } => (
+            "json_memberof".to_owned(),
+            vec![expr, array],
+        ),
         _ => return None,
     };
     let operands = args

@@ -154,6 +154,9 @@ enum ScalarFuncSig {
   // `builtinLikeSig` over (string, pattern, escape). The numeric id is the
   // upstream tipb ScalarFuncSig contract.
   LikeSig = 4310;
+  // `builtinJSONMemberOfSig` over (json, json). The numeric id is the
+  // upstream tipb ScalarFuncSig contract (`JsonMemberOfSig = 5029`).
+  JsonMemberOfSig = 5029;
 
   // The implicit casts `newBaseBuiltinFuncWithTp` inserts when a builtin's
   // argument does not already evaluate as the type the chosen signature

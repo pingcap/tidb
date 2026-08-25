@@ -655,6 +655,24 @@ pub const CATALOG: &[BuiltinSignature] = &[
     // 51877). That shape cannot be built here at all -- `CAST` is not in this
     // catalog -- so the refusal is structural, and
     // `tikv_refuses_what_go_refuses` pins `conv(cast(bt as binary), i, i)`.
+    // `builtin_json.go` `jsonMemberOfFunctionClass.getFunction`: both
+    // operands are coerced to `ETJson` (`argTps := []types.EvalType{
+    // types.ETJson, types.ETJson}`) and the result is `ETInt` with
+    // `sig.setPbCode(tipb.ScalarFuncSig_JsonMemberOfSig)`. The candidate
+    // argument arrives as any JSON-coercible literal or column -- Go wraps it
+    // in the implicit cast `newBaseBuiltinFuncWithTp` inserts -- so its slot
+    // matches anything and the lowering asks `coerced_to_pb` for the cast.
+    // A JSON operand's TiPB leaf is one this tier does not build, so the
+    // call refuses to encode and the scan source filters locally; refusing
+    // there costs network only.
+    signature(
+        "json_memberof",
+        &[ArgPattern::ANY, ArgPattern::eval(EvalType::Json)],
+        &[EvalType::Json, EvalType::Json],
+        EvalType::Int,
+        ScalarFuncSig::JsonMemberOfSig,
+        false,
+    ),
     string_signature(
         "conv",
         &[ArgPattern::any_string(), ArgPattern::ANY, ArgPattern::ANY],
