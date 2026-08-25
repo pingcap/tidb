@@ -3248,7 +3248,8 @@ pub struct IndexJoinLookupExec {
     probes: Vec<Vec<Datum>>,
     /// The next probe to open a cursor over.
     next_probe: usize,
-    /// The open cursor over `probes[next_probe - 1]` (index object only).
+    /// The open cursor over the current batch of probe ranges (index object
+    /// only).
     cursor: Option<IndexRangeCursor>,
     /// The open local fallback over one batch of common-handle ranges.
     record_cursor: Option<RowCursor>,
@@ -3686,8 +3687,17 @@ impl IndexJoinLookupExec {
         }
     }
 
-    /// The next handle the probe list reaches, opening the next secondary-index
-    /// cursor when the current one runs out.
+    /// The next handle the probe list reaches, opening the next
+    /// secondary-index cursor when the current one runs out.
+    ///
+    /// One cursor now covers a BATCH of probe ranges instead of one probe:
+    /// Go's inner reader receives every range its outer task batch decided
+    /// (`buildRangesForIndexJoin` over the whole chunk, one DistSQL request
+    /// per region set), so walking one range per outer row would multiply
+    /// the round trips by the outer row count and dominate these joins.
+    /// [`KvTable::index_lookup_ranges_cursor`] is the unordered multi-range
+    /// form Go's task read uses; the join matches rows by key values, so the
+    /// probe-major ordering it gives up is unobservable here.
     fn next_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
         loop {
             if let Some(cursor) = self.cursor.as_mut() {
@@ -3699,19 +3709,30 @@ impl IndexJoinLookupExec {
                 }
                 self.cursor = None;
             }
-            let Some((probe, bounds)) = self.next_probe_with_bounds() else {
-                return Ok(None);
-            };
-            match &self.object {
+            match self.object.clone() {
                 LookupObject::Index(index_id) => {
-                    // Go's `IndexRangeScan` over the range the outer row
+                    // Go's `IndexRangeScan`s over the ranges the outer rows
                     // decided: a POINT range over the key columns when no
                     // outer-derived bound exists, otherwise Go's
-                    // `buildRangesForIndexJoin` last-slot extension.
-                    let range = self.probe_index_range(&probe, &bounds);
+                    // `buildRangesForIndexJoin` last-slot extension. One
+                    // batch of outer rows becomes one multi-range walk.
+                    let mut ranges = Vec::with_capacity(INDEX_LOOKUP_BATCH_SIZE);
+                    while ranges.len() < INDEX_LOOKUP_BATCH_SIZE {
+                        let Some((probe, bounds)) = self.next_probe_with_bounds() else {
+                            break;
+                        };
+                        ranges.push(self.probe_index_range(&probe, &bounds));
+                    }
+                    if ranges.is_empty() {
+                        return Ok(None);
+                    }
                     self.cursor = Some(
                         self.table
-                            .index_range_cursor(*index_id, &range, self.decode_context.zone())
+                            .index_lookup_ranges_cursor(
+                                index_id,
+                                &ranges,
+                                self.decode_context.zone(),
+                            )
                             .map_err(|error| {
                                 ExecError::unsupported(format!(
                                     "index range is not scannable: {error:?}"
@@ -3724,6 +3745,9 @@ impl IndexJoinLookupExec {
                     // integer handle reads nothing rather than erroring:
                     // Go's `BuildTableRange` produces an empty range for it,
                     // and an empty range is no rows.
+                    let Some((probe, _bounds)) = self.next_probe_with_bounds() else {
+                        return Ok(None);
+                    };
                     let [value] = probe.as_slice() else {
                         continue;
                     };
