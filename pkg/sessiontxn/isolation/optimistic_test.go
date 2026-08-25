@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -70,7 +71,7 @@ func BenchmarkOptimisticTxnContextProviderAdvisePreparedPointGet(b *testing.B) {
 
 	sctx := mock.NewContext()
 	var providers [2]isolation.OptimisticTxnContextProvider
-	plan := &plannercore.Execute{Plan: &plannercore.PointGetPlan{}}
+	plan := &plannercore.Execute{Plan: &physicalop.PointGetPlan{}}
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -103,7 +104,7 @@ func TestOptimisticTxnContextProviderPointGetDebugLog(t *testing.T) {
 	provider.ResetForNewTxn(sctx, false)
 
 	err = provider.AdviseOptimizeWithPlan(
-		&plannercore.Execute{Plan: &plannercore.PointGetPlan{}},
+		&plannercore.Execute{Plan: &physicalop.PointGetPlan{}},
 	)
 	require.NoError(t, err)
 	require.NoError(t, logger.Sync())

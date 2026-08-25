@@ -32,7 +32,7 @@ func BenchmarkClientConnAddMetricsPointSelect(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		cc.addMetrics(mysql.ComStmtExecute, startTime, nil)
+		cc.addQueryMetrics(mysql.ComStmtExecute, startTime, nil)
 	}
 }
 
@@ -53,7 +53,7 @@ func BenchmarkClientConnAddMetricsChangingLabels(b *testing.B) {
 			vars.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 			vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 		}
-		cc.addMetrics(mysql.ComStmtExecute, startTime, nil)
+		cc.addQueryMetrics(mysql.ComStmtExecute, startTime, nil)
 	}
 }
 
