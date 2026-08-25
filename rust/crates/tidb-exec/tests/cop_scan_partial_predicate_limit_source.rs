@@ -541,6 +541,8 @@ fn a_descending_scan_marks_both_the_dag_and_dist_sql_request() {
         keep_order: true,
         allow_unordered_response: false,
         desc: true,
+        // A globally ordered scan cannot accept unordered region responses.
+        allow_unordered_response: false,
         read_ahead_batches: tidb_executor::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
         snapshot_ts: 4_242,
         ranges: vec![(Key::from_bytes(b"a"), Key::from_bytes(b"z"))],
