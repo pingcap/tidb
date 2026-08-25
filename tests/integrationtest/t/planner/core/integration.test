@@ -990,6 +990,7 @@ CREATE TABLE tab(i INT);
 CREATE TABLE tab2(j INT);
 insert into tab values(1),(2),(3);
 insert into tab2 values(1),(2),(3),(15);
+-- error 1055
 SELECT m.i,
        (SELECT COUNT(n.j)
            FROM tab2 WHERE j=15) AS o
