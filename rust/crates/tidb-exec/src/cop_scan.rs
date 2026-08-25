@@ -599,6 +599,11 @@ where
         if request.limit == Some(1) {
             serve_scan(&factory, plan, &rows, &node_rows);
         } else {
+            // A dedicated thread per scan is deliberate: each serve_scan
+            // streams its WHOLE region for the query's lifetime (tens to
+            // hundreds of ms), so the one-time spawn cost amortizes to
+            // noise while the pool would convoy long streams behind short
+            // tasks and serialize concurrent region fetches.
             thread::Builder::new()
                 .name("cop-scan".to_owned())
                 .spawn(move || serve_scan(&factory, plan, &rows, &node_rows))

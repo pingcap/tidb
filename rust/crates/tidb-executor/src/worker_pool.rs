@@ -72,6 +72,11 @@ fn worker_loop(shared: Arc<Shared>) {
     }
 }
 
+/// [`enqueue`] for out-of-crate callers (see `crate::worker_pool_spawn`).
+pub fn enqueue_public(task: Box<dyn FnOnce() + Send>) {
+    enqueue(task);
+}
+
 fn enqueue(task: Box<dyn FnOnce() + Send>) {
     let shared = shared();
     {
@@ -116,6 +121,14 @@ where
         let _ = result_tx.send(task());
     }));
     result_rx
+}
+
+/// Whether the persistent pool exists in this process (it always does once
+/// initialized; this gate lets callers fall back to a dedicated thread when
+/// the pool feature is compiled out).
+#[must_use]
+pub fn available() -> bool {
+    true
 }
 
 /// Runs one task per item across at most `concurrency` workers and returns

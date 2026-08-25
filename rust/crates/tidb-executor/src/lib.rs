@@ -45,6 +45,20 @@ pub mod access_cost;
 pub mod access_path;
 pub mod admin_check;
 pub mod worker_pool;
+
+/// Submits a fire-and-forget task to the persistent exec pool.
+pub fn worker_pool_spawn<F>(task: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    worker_pool::enqueue_public(Box::new(task));
+}
+
+/// Whether the persistent exec pool is available.
+#[must_use]
+pub fn worker_pool_available() -> bool {
+    worker_pool::available()
+}
 pub mod agg_spill;
 pub mod analyze;
 pub mod analyze_col_sampling;

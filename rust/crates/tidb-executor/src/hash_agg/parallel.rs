@@ -188,7 +188,7 @@ impl PipelineStats {
 
 enum FinalMsg {
     /// One final worker's merged map.
-    Maps(HashMap<Vec<u8>, PipelineGroup>),
+    Maps(PipelineMap),
     /// A worker surfaced an error (Go's `AfFinalResult{err}`).
     Err(ExecError),
 }
@@ -219,6 +219,30 @@ struct PipelinePlan<C: Columns + Send + Sync + Clone + 'static> {
     agg_funcs: Vec<AggFunc>,
 }
 
+/// A pipeline group-map key. The single-signed-integer shape (q18's
+/// `group by l_orderkey`, 1.5M groups) keys by the raw `Option<i64>` so no
+/// per-group key allocation happens; every other shape keeps the encoded
+/// `Vec<u8>` key.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum PipelineMapKey {
+    Int(Option<i64>),
+    Bytes(Vec<u8>),
+}
+
+impl PipelineMapKey {
+    /// The byte length `new_group_bytes` was charging under the encoded
+    /// representation, kept for tracker continuity.
+    fn charge_len(&self) -> usize {
+        match self {
+            // 8-byte varint body + flag + separator.
+            PipelineMapKey::Int(_) => 10,
+            PipelineMapKey::Bytes(bytes) => bytes.len(),
+        }
+    }
+}
+
+type PipelineMap = HashMap<PipelineMapKey, PipelineGroup, BuildHasherDefault<super::ParallelIntHasher>>;
+
 /// One group inside a worker's map: the global row sequence of the first
 /// contributing row plus the group's aggregate states.
 struct PipelineGroup {
@@ -227,12 +251,18 @@ struct PipelineGroup {
 }
 
 impl PipelineGroup {
-    fn new(funcs: &[AggFunc], seq: u64, key_len: usize, tracker: &Arc<Tracker>) -> Self {
-        tracker.consume(new_group_bytes(key_len, funcs.len()));
-        PipelineGroup {
-            first_seq: seq,
-            states: funcs.iter().map(AggState::new).collect(),
-        }
+    /// Creates the group; the CALLER batches the tracker consume (one
+    /// round-trip per chunk, not per group — 1.5M-group shapes showed the
+    /// lock in profiles).
+    fn new(funcs: &[AggFunc], seq: u64, key_len: usize) -> (Self, i64) {
+        let bytes = new_group_bytes(key_len, funcs.len());
+        (
+            PipelineGroup {
+                first_seq: seq,
+                states: funcs.iter().map(AggState::new).collect(),
+            },
+            bytes,
+        )
     }
 }
 
@@ -433,7 +463,7 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
         let mut shuffle_rxs = Vec::with_capacity(final_concurrency);
         for _ in 0..final_concurrency {
             let (tx, rx) =
-                sync_channel::<HashMap<Vec<u8>, PipelineGroup>>(partial_concurrency.max(1));
+                sync_channel::<PipelineMap>(partial_concurrency.max(1));
             shuffle_txs.push(tx);
             shuffle_rxs.push(rx);
         }
@@ -482,8 +512,8 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
                 let plan = Arc::clone(&plan);
                 partial_handles.push(crate::worker_pool::spawn(move || {
                     stats_ref.record_partial_worker();
-                    let mut maps: Vec<HashMap<Vec<u8>, PipelineGroup>> =
-                        (0..shuffle_txs.len()).map(|_| HashMap::new()).collect();
+                    let mut maps: Vec<PipelineMap> =
+                        (0..shuffle_txs.len()).map(|_| PipelineMap::default()).collect();
                     let mut error: Option<ExecError> = None;
                     while let Ok((chunk, base)) = lane_rx.recv() {
                         if error.is_none() {
@@ -532,11 +562,11 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
                 let shuffle_rx = shuffle_rxs.pop().expect("one receiver per final worker");
                 let final_tx = final_tx.clone();
                 final_handles.push(crate::worker_pool::spawn(move || {
-                    let mut acc: Option<HashMap<Vec<u8>, PipelineGroup>> = None;
+                    let mut acc: Option<PipelineMap> = None;
                     while let Ok(map) = shuffle_rx.recv() {
                         // Go `mergeInputIntoResultMap`: the FIRST map becomes
                         // the accumulator directly; later maps merge in.
-                        let merged = acc.get_or_insert_with(HashMap::new);
+                        let merged = acc.get_or_insert_with(PipelineMap::default);
                         if let Err(error) = merge_map(merged, map) {
                             let _ = final_tx.send(FinalMsg::Err(error));
                         }
@@ -617,7 +647,7 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
 
         // Merge the final workers' bucket maps into one global map, keeping
         // each group's minimum first-seen sequence.
-        let mut global: HashMap<Vec<u8>, PipelineGroup> = HashMap::new();
+        let mut global = PipelineMap::default();
         for map in merged_maps {
             merge_map(&mut global, map)?;
         }
@@ -681,7 +711,7 @@ struct FoldInputs<'a, C> {
 /// the group on first sight (charging the tracker), and update its states.
 fn fold_chunk<C: Columns>(
     inputs: FoldInputs<'_, C>,
-    maps: &mut [HashMap<Vec<u8>, PipelineGroup>],
+    maps: &mut [PipelineMap],
     bucket_count: usize,
     tracker: &Arc<Tracker>,
     chunk: &Chunk,
@@ -694,31 +724,65 @@ fn fold_chunk<C: Columns>(
         integer_columns,
         agg_funcs,
     } = inputs;
+    let mut new_group_bytes_total = 0i64;
     for row_index in 0..chunk.num_rows() {
         let row = chunk.get_row(row_index);
         let seq = base_seq.saturating_add(row_index as u64);
-        let mut key = Vec::new();
-        match integer_columns {
-            Some(columns) => {
-                for &(index, unsigned) in columns {
-                    append_integer_group_key_part(row, index, unsigned, &mut key);
-                    key.push(0xff);
-                }
+        let (key, key_len): (PipelineMapKey, usize) = match integer_columns {
+            Some([(index, false)]) => {
+                let index = *index;
+                let value = if row.is_null(index) {
+                    None
+                } else {
+                    Some(row.get_int64(index))
+                };
+                let key = PipelineMapKey::Int(value);
+                let len = key.charge_len();
+                (key, len)
             }
-            None => {
-                for (expr, collation) in group_by.iter().zip(group_collations) {
-                    let datum = expr.eval(ctx, row)?;
-                    append_group_key_part(collation, &datum, &mut key);
-                    key.push(0xff); // separator: key parts are length-coded
+            _ => {
+                let mut key = Vec::new();
+                match integer_columns {
+                    Some(columns) => {
+                        for &(index, unsigned) in columns {
+                            append_integer_group_key_part(row, index, unsigned, &mut key);
+                            key.push(0xff);
+                        }
+                    }
+                    None => {
+                        for (expr, collation) in group_by.iter().zip(group_collations) {
+                            let datum = expr.eval(ctx, row)?;
+                            append_group_key_part(collation, &datum, &mut key);
+                            key.push(0xff); // separator: key parts are length-coded
+                        }
+                    }
                 }
+                let len = key.len();
+                (PipelineMapKey::Bytes(key), len)
             }
-        }
-        let bucket = key_bucket(&key, bucket_count);
-        let key_len = key.len();
-        let entry = maps[bucket]
-            .entry(key)
-            .or_insert_with(|| PipelineGroup::new(agg_funcs, seq, key_len, tracker));
+        };
+        let bucket = match &key {
+            PipelineMapKey::Int(value) => key_bucket(
+                &match value {
+                    Some(v) => v.to_le_bytes().to_vec(),
+                    None => vec![NIL_FLAG],
+                },
+                bucket_count,
+            ),
+            PipelineMapKey::Bytes(bytes) => key_bucket(bytes, bucket_count),
+        };
+        let entry = match maps[bucket].entry(key) {
+            std::collections::hash_map::Entry::Occupied(occupied) => occupied.into_mut(),
+            std::collections::hash_map::Entry::Vacant(vacant) => {
+                let (group, bytes) = PipelineGroup::new(agg_funcs, seq, key_len);
+                new_group_bytes_total += bytes;
+                vacant.insert(group)
+            }
+        };
         update_group(entry, agg_funcs, ctx, row, tracker)?;
+    }
+    if new_group_bytes_total > 0 {
+        tracker.consume(new_group_bytes_total);
     }
     Ok(())
 }
@@ -782,8 +846,8 @@ fn update_group<C: Columns>(
 /// `mergeInputIntoResultMap`: a fresh accumulator adopts the first map
 /// as-is).
 fn merge_map(
-    global: &mut HashMap<Vec<u8>, PipelineGroup>,
-    incoming: HashMap<Vec<u8>, PipelineGroup>,
+    global: &mut PipelineMap,
+    incoming: PipelineMap,
 ) -> Result<(), ExecError> {
     for (key, group) in incoming {
         match global.entry(key) {
