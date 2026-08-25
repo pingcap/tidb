@@ -128,12 +128,30 @@ shapes remain on the existing general executor.
   aligned with Go (R32 only differs in unspecified tie order). The repeat
   receipt improved R34 to `254.971 ms` vs Go `148.261 ms` (`1.72x`), while
   R35 stayed at `162.565 ms` vs Go `110.591 ms` (`1.47x`).
+- [x] (2026-08-25) Rebuilt the clean `d62b8d393b5` release binary and ran two
+  alternating eight-sample, one-client matrices over all eleven Web3Bench
+  queries plus deterministic `R32det`. Across the combined sixteen samples,
+  Rust/Go medians were: R1 `0.685/0.481 ms` (`1.43x`), R21
+  `1.978/2.040 ms` (`0.97x`), R22 `0.938/0.812 ms` (`1.15x`), R23
+  `1.195/1.333 ms` (`0.90x`), R24 `1.030/0.966 ms` (`1.07x`), R25
+  `0.729/0.736 ms` (`0.99x`), R31 `1.753/1.447 ms` (`1.21x`), R32
+  `5.288/4.055 ms` (`1.30x`), R33 `143.464/142.517 ms` (`1.01x`), R34
+  `221.278/149.611 ms` (`1.48x`), R35 `159.899/105.038 ms` (`1.52x`),
+  and R32det `6.024/3.946 ms` (`1.53x`). Every deterministic result is
+  exact and every normalized plan operator skeleton is equal; R32's result
+  differs only at the unspecified timestamp-tie LIMIT boundary. Receipts:
+  `/tmp/web3_d62_clean_all_perf.json`,
+  `/tmp/web3_d62_clean_all_perf_repeat.json`,
+  `/tmp/web3_d62_clean_go_results.json`,
+  `/tmp/web3_d62_clean_rust_results.json`,
+  `/tmp/web3_d62_clean_go_plans.json`, and
+  `/tmp/web3_d62_clean_rust_plans.json`.
 
 ## Validation commands
 
 The shared playground currently uses PD `127.0.0.1:14379`, TiKV
 `127.0.0.1:32160`, Go TiDB `127.0.0.1:16000`, and Rust TiDB
-`127.0.0.1:16003`.  The exact query/result/performance scripts live under
+`127.0.0.1:16009`.  The exact query/result/performance scripts live under
 `/tmp` in the current test session.  Targeted Rust checks are run from
 `rust/`:
 
