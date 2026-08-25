@@ -256,24 +256,38 @@ func TestGetSet(t *testing.T) {
 var benchmarkCopCacheResponse *copResponse
 
 func BenchmarkHandleCopCachePagingHit(b *testing.B) {
-	req := &kv.Request{}
-	req.Paging.Enable = true
-	worker := &copIteratorWorker{req: req}
-	cacheValue := &coprCacheValue{
-		Data:      make([]byte, 100<<10),
-		PageStart: make([]byte, 16),
-		PageEnd:   make([]byte, 16),
+	cases := []struct {
+		name  string
+		start []byte
+		end   []byte
+	}{
+		{name: "both", start: make([]byte, 16), end: make([]byte, 16)},
+		{name: "start-only", start: make([]byte, 16)},
+		{name: "end-only", end: make([]byte, 16)},
+		{name: "neither"},
 	}
-	resp := &copResponse{pbResp: &coprocessor.Response{IsCacheHit: true}}
+	for _, testCase := range cases {
+		b.Run(testCase.name, func(b *testing.B) {
+			req := &kv.Request{}
+			req.Paging.Enable = true
+			worker := &copIteratorWorker{req: req}
+			cacheValue := &coprCacheValue{
+				Data:      make([]byte, 128),
+				PageStart: testCase.start,
+				PageEnd:   testCase.end,
+			}
+			resp := &copResponse{pbResp: &coprocessor.Response{IsCacheHit: true}}
 
-	b.ReportAllocs()
-	b.SetBytes(int64(len(cacheValue.Data)))
-	for range b.N {
-		if err := worker.handleCopCache(nil, resp, nil, cacheValue); err != nil {
-			b.Fatal(err)
-		}
+			b.ReportAllocs()
+			b.SetBytes(int64(len(cacheValue.Data)))
+			for range b.N {
+				if err := worker.handleCopCache(nil, resp, nil, cacheValue); err != nil {
+					b.Fatal(err)
+				}
+			}
+			benchmarkCopCacheResponse = resp
+		})
 	}
-	benchmarkCopCacheResponse = resp
 }
 
 func TestHandleCopCachePagingHitOwnsRangeKeys(t *testing.T) {
@@ -297,6 +311,44 @@ func TestHandleCopCachePagingHitOwnsRangeKeys(t *testing.T) {
 
 	resp.pbResp.Range.Start = append(resp.pbResp.Range.Start, 10)
 	require.Equal(t, []byte{7, 6}, resp.pbResp.Range.End)
+}
+
+func TestHandleCopCachePagingRangeShapes(t *testing.T) {
+	cases := []struct {
+		name      string
+		start     []byte
+		end       []byte
+		wantRange bool
+	}{
+		{name: "both", start: []byte{1}, end: []byte{2}, wantRange: true},
+		{name: "start-only", start: []byte{1}, wantRange: true},
+		{name: "end-only", end: []byte{2}, wantRange: true},
+		{name: "empty-but-non-nil", start: []byte{}, end: []byte{}, wantRange: true},
+		{name: "neither"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			req := &kv.Request{}
+			req.Paging.Enable = true
+			worker := &copIteratorWorker{req: req}
+			cacheValue := &coprCacheValue{
+				Data:      []byte{3},
+				PageStart: testCase.start,
+				PageEnd:   testCase.end,
+			}
+			resp := &copResponse{pbResp: &coprocessor.Response{IsCacheHit: true}}
+			require.NoError(t, worker.handleCopCache(nil, resp, nil, cacheValue))
+			if !testCase.wantRange {
+				require.Nil(t, resp.pbResp.Range)
+				return
+			}
+			require.NotNil(t, resp.pbResp.Range)
+			require.Equal(t, testCase.start, resp.pbResp.Range.Start)
+			require.Equal(t, testCase.end, resp.pbResp.Range.End)
+			require.Equal(t, testCase.start == nil, resp.pbResp.Range.Start == nil)
+			require.Equal(t, testCase.end == nil, resp.pbResp.Range.End == nil)
+		})
+	}
 }
 
 func TestIssue24118(t *testing.T) {

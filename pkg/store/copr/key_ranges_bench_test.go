@@ -16,6 +16,7 @@ package copr
 
 import (
 	"encoding/binary"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
@@ -33,13 +34,42 @@ func BenchmarkKeyRangesSplitRetainedRight(b *testing.B) {
 		binary.BigEndian.PutUint64(end, uint64(i*2+2))
 		ranges[i] = kv.KeyRange{StartKey: start, EndKey: end}
 	}
-	splitKey := make([]byte, 8)
-	binary.BigEndian.PutUint64(splitKey, rangeCount+1)
 	keyRanges := NewKeyRanges(ranges)
+	keys := map[string][]byte{
+		"inside":   make([]byte, 8),
+		"boundary": make([]byte, 8),
+	}
+	binary.BigEndian.PutUint64(keys["inside"], rangeCount+1)
+	binary.BigEndian.PutUint64(keys["boundary"], rangeCount)
+	factories := []struct {
+		name string
+		fn   func(*KeyRanges, []byte) *KeyRanges
+	}{
+		{name: "left/legacy", fn: func(ranges *KeyRanges, key []byte) *KeyRanges {
+			left, _ := ranges.Split(key)
+			return left
+		}},
+		{name: "left/one-sided", fn: func(ranges *KeyRanges, key []byte) *KeyRanges {
+			return ranges.splitLeft(key)
+		}},
+		{name: "right/legacy", fn: func(ranges *KeyRanges, key []byte) *KeyRanges {
+			_, right := ranges.Split(key)
+			return right
+		}},
+		{name: "right/one-sided", fn: func(ranges *KeyRanges, key []byte) *KeyRanges {
+			return ranges.splitRight(key)
+		}},
+	}
 
-	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
-		benchmarkSplitResult = keyRanges.splitRight(splitKey)
+	for keyName, splitKey := range keys {
+		for _, factory := range factories {
+			b.Run(fmt.Sprintf("%s/%s", keyName, factory.name), func(b *testing.B) {
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					benchmarkSplitResult = factory.fn(keyRanges, splitKey)
+				}
+			})
+		}
 	}
 }

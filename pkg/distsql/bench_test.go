@@ -16,6 +16,7 @@ package distsql
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
@@ -41,14 +42,58 @@ func (r *fixedFetchResponse) Next(context.Context) (kv.ResultSubset, error) {
 func (*fixedFetchResponse) Close() error { return nil }
 
 func BenchmarkSelectResultFetchRespReuse(b *testing.B) {
-	data, err := (&tipb.SelectResponse{
+	for _, rowsDataSize := range []int{4, 4096} {
+		b.Run(fmt.Sprintf("bytes=%d", rowsDataSize), func(b *testing.B) {
+			data, err := (&tipb.SelectResponse{
+				Chunks: []tipb.Chunk{{RowsData: make([]byte, rowsDataSize)}},
+			}).Marshal()
+			if err != nil {
+				b.Fatal(err)
+			}
+			for _, responseCount := range []int{1, 2, 8} {
+				b.Run(fmt.Sprintf("responses=%d", responseCount), func(b *testing.B) {
+					subsets := make([]kv.ResultSubset, responseCount)
+					for i := range subsets {
+						subsets[i] = &mockResultSubset{data}
+					}
+					response := &fixedFetchResponse{subsets: subsets}
+					result := selectResult{
+						label:   "dag",
+						sqlType: "general",
+						resp:    response,
+						ctx:     newMockSessionContext().GetDistSQLCtx(),
+					}
+
+					b.ReportAllocs()
+					b.ResetTimer()
+					for b.Loop() {
+						response.index = 0
+						result.selectResp = nil
+						result.selectRespSize = 0
+						for range responseCount {
+							if err := result.fetchResp(context.Background()); err != nil {
+								b.Fatal(err)
+							}
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestSelectResultFetchRespReuseAfterUnmarshalError(t *testing.T) {
+	valid, err := (&tipb.SelectResponse{
 		Chunks: []tipb.Chunk{{RowsData: []byte{1, 2, 3, 4}}},
 	}).Marshal()
 	if err != nil {
-		b.Fatal(err)
+		t.Fatal(err)
 	}
 	response := &fixedFetchResponse{
-		subsets: []kv.ResultSubset{&mockResultSubset{data}, &mockResultSubset{data}},
+		subsets: []kv.ResultSubset{
+			&mockResultSubset{[]byte{0xff}},
+			&mockResultSubset{valid},
+		},
 	}
 	result := selectResult{
 		label:   "dag",
@@ -57,17 +102,14 @@ func BenchmarkSelectResultFetchRespReuse(b *testing.B) {
 		ctx:     newMockSessionContext().GetDistSQLCtx(),
 	}
 
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		response.index = 0
-		result.selectResp = nil
-		result.selectRespSize = 0
-		for range 2 {
-			if err := result.fetchResp(context.Background()); err != nil {
-				b.Fatal(err)
-			}
-		}
+	if err := result.fetchResp(context.Background()); err == nil {
+		t.Fatal("expected malformed response error")
+	}
+	if err := result.fetchResp(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.selectResp.Chunks) != 1 {
+		t.Fatalf("unexpected chunk count after reuse: %d", len(result.selectResp.Chunks))
 	}
 }
 
