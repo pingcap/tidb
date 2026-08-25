@@ -258,6 +258,118 @@ pub fn parse_multi_with_sql_mode(sql: &str, sql_mode: SqlMode) -> PResult<Vec<St
     parse_multi_with_configuration(sql, false, sql_mode)
 }
 
+/// Whether `sql` provably holds EXACTLY ONE statement, decided without a
+/// parse.
+///
+/// Go parses the COM_QUERY text once (`pkg/server/conn.go` feeds
+/// `ParseMultiStmt`'s ASTs straight to execution). This tier re-parses each
+/// statement's source text, so the multi-statement admission pass doubles the
+/// lexing+parse cost of the overwhelmingly common single-statement text. A
+/// statement delimiter can only separate statements when it stands OUTSIDE
+/// quotes and comments, BETWEEN two token runs -- leading and trailing
+/// delimiters are inert (`;; SELECT 1 ;` parses to ONE statement) -- so this
+/// scanner answers "one statement" exactly when no such separating delimiter
+/// exists AND at least one token byte exists (comment-only or empty texts are
+/// the ZERO-statement answer, which admission must still see).
+///
+/// The scan is deliberately conservative -- any shape it does not model
+/// (escapes inside strings, a `;` inside any comment) answers `false`, and
+/// the caller falls back to the full admission parse, so the two paths cannot
+/// disagree about a text either one accepts.
+#[must_use]
+pub fn is_sole_statement(sql: &str) -> bool {
+    let bytes = sql.as_bytes();
+    // Leading and trailing delimiters are inert (`;; SELECT 1 ;` parses to
+    // ONE statement); only a delimiter BETWEEN two token runs splits.
+    let mut saw_token = false;
+    let mut delimited_after_token = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' | b'"' | b'`' => {
+                if delimited_after_token {
+                    return false;
+                }
+                let quote = bytes[i];
+                i += 1;
+                let mut closed = false;
+                while i < bytes.len() {
+                    if bytes[i] == b'\\' {
+                        // Escape handling inside strings is sql-mode
+                        // dependent (`NO_BACKSLASH_ESCAPES`); decline.
+                        return false;
+                    }
+                    if bytes[i] == quote {
+                        // A doubled quote is the literal itself.
+                        if quote != b'`' && bytes.get(i + 1) == Some(&quote) {
+                            i += 2;
+                            continue;
+                        }
+                        i += 1;
+                        closed = true;
+                        break;
+                    }
+                    i += 1;
+                }
+                if !closed {
+                    // Unterminated literal: no delimiter can follow what the
+                    // lexer itself will end at the input's edge.
+                    return saw_token;
+                }
+                saw_token = true;
+            }
+            b';' => {
+                if saw_token {
+                    delimited_after_token = true;
+                }
+                i += 1;
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                let executable = bytes.get(i + 2) == Some(&b'!');
+                let mut j = i + 2;
+                while j + 1 < bytes.len() && !(bytes[j] == b'*' && bytes[j + 1] == b'/') {
+                    // A PLAIN comment's body is lexer-inert, delimiters
+                    // included. An EXECUTABLE one (`/*! ... */`) hands its
+                    // body to the parser, so a delimiter inside it is a
+                    // shape this scan declines rather than models.
+                    if executable && bytes[j] == b';' {
+                        return false;
+                    }
+                    j += 1;
+                }
+                i = if j + 1 < bytes.len() { j + 2 } else { bytes.len() };
+            }
+            b'-'
+                if bytes.get(i + 1) == Some(&b'-')
+                    && bytes.get(i + 2).is_some_and(u8::is_ascii_whitespace) =>
+            {
+                i += 3;
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'#' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            _ => {
+                // Whitespace separates tokens; it is neither a token itself
+                // nor a statement boundary.
+                if !bytes[i].is_ascii_whitespace() {
+                    if delimited_after_token {
+                        return false;
+                    }
+                    saw_token = true;
+                }
+                i += 1;
+            }
+        }
+    }
+    saw_token
+}
+
 /// Parses SQL bytes using TiDB's `CharsetClient` decoding boundary.
 ///
 /// This covers every client encoding with a dedicated Go parser

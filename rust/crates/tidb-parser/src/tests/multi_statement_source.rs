@@ -125,3 +125,67 @@ fn generated_column_fixture_restores_all_insert_statements() {
         .collect::<Vec<_>>();
     assert_eq!(restores(sql), expected);
 }
+
+/// The admission fast path's contract, against the parser itself: whenever
+/// [`is_sole_statement`](crate::is_sole_statement) answers `true`, the
+/// multi-statement parse must agree that the text holds exactly one
+/// statement (or fail -- a failure the caller answers with the same
+/// whole-text fallback). A `false` answer claims nothing and only costs the
+/// caller the parse it would have run anyway.
+#[test]
+fn is_sole_statement_agrees_with_the_multi_statement_parse() {
+    let single = [
+        "SELECT 1",
+        "SELECT 1;",
+        "select c_discount from bmsql_customer where c_id = ?",
+        "UPDATE t SET a = a + 1 WHERE b = 'x;y;z'",
+        "INSERT INTO t VALUES ('a''b')",
+        "INSERT INTO t VALUES (\"double;quoted\")",
+        "SELECT `we;ird` FROM t",
+        "/* leading comment */ SELECT 1",
+        "SELECT 1 /* trailing ; comment */",
+        "-- line comment with a semicolon;\nSELECT 1",
+        "# hash comment with a semicolon;\nSELECT 1",
+        // The `;` here sits INSIDE the hash comment and a newline is not a
+        // delimiter, so the multi-parse fails ("expected ';' between
+        // statements") -- which this tier answers with the text WHOLE, the
+        // same answer the sole-statement fast path gives.
+        "SELECT 1 # trailing;\nSELECT 2",
+        "SELECT '--not-a-comment'",
+        "BEGIN",
+        "COMMIT",
+    ];
+    for sql in single {
+        assert!(crate::is_sole_statement(sql), "{sql} is one statement");
+        // One statement or a parse failure: either way the caller returns
+        // the text whole.
+        assert!(
+            matches!(parse_multi_with_sql_mode(sql, SqlMode::default()), Ok(stmts) if stmts.len() == 1)
+                || parse_multi_with_sql_mode(sql, SqlMode::default()).is_err(),
+            "{sql} must not silently become zero statements"
+        );
+    }
+
+    let multiple = [
+        "",
+        "   ",
+        "/* only a comment */",
+        ";",
+        " ;; ",
+        "SELECT 1; SELECT 2",
+        "SELECT 'a;b'; SELECT 'c;d'",
+        "SELECT 1;-- trailing\nSELECT 2",
+    ];
+    for sql in multiple {
+        assert!(!crate::is_sole_statement(sql), "{sql} is not one statement");
+    }
+
+    // Conservative declines: escape sequences inside strings are
+    // sql-mode dependent, so the scanner refuses to answer.
+    for sql in [
+        "SELECT 'a\\'; SELECT 2 -- b'",
+        "INSERT INTO t VALUES ('\\'; ')",
+    ] {
+        assert!(!crate::is_sole_statement(sql), "{sql} must be declined");
+    }
+}
