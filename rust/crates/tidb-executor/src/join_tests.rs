@@ -61,6 +61,33 @@ fn compact_count_join_key_and_decimal_comparison_are_bounded() {
 }
 
 #[test]
+fn sorted_compact_decimal_counts_match_pairwise_comparison() {
+    let values = [-3, -1, -1, 0, 4, 9];
+    for build_on_left in [false, true] {
+        for probe in [-4, -1, 0, 5, 10] {
+            for op in 0..=5 {
+                let expected = values
+                    .iter()
+                    .filter(|&&value| {
+                        let ordering = if build_on_left {
+                            value.cmp(&probe)
+                        } else {
+                            probe.cmp(&value)
+                        };
+                        compact_matches(op, ordering)
+                    })
+                    .count() as u64;
+                assert_eq!(
+                    count_sorted_compact_matches(&values, probe, build_on_left, op),
+                    expected,
+                    "op={op}, build_on_left={build_on_left}, probe={probe}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn compact_binary_join_key_matches_go_pad_space_and_null_rules() {
     let field_type = FieldType::new(FieldTypeCode::Varchar)
         .with_flen(42)

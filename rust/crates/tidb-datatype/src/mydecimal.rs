@@ -1515,7 +1515,9 @@ impl MyDecimal {
         // coefficient is exactly the value at `digits_frac` scale.
         let fraction_padding =
             fraction_words * DIGITS_PER_WORD as usize - usize::try_from(self.digits_frac).ok()?;
-        magnitude /= i128::from(POWERS10[fraction_padding]);
+        if fraction_padding > 0 {
+            magnitude /= i128::from(POWERS10[fraction_padding]);
+        }
         let signed = if self.negative {
             magnitude.checked_neg()?
         } else {
@@ -1557,7 +1559,9 @@ impl MyDecimal {
         }
         let fraction_padding = fraction_words * DIGITS_PER_WORD as usize
             - usize::try_from(digits_frac).ok()?;
-        magnitude /= i128::from(POWERS10[fraction_padding]);
+        if fraction_padding > 0 {
+            magnitude /= i128::from(POWERS10[fraction_padding]);
+        }
         if bytes[3] == 1 {
             magnitude = magnitude.checked_neg()?;
         }

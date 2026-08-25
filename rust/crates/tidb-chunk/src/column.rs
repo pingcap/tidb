@@ -449,6 +449,14 @@ impl Column {
         MyDecimal::i128_scaled_from_raw_bytes(&data[start..start + MYDECIMAL_STRUCT_SIZE])
     }
 
+    /// Borrows the packed decimal bytes once for a columnar hot loop. The
+    /// regular row accessor must reacquire the backing view for every row;
+    /// count-only residual joins can safely keep one read view while they
+    /// scan the complete chunk.
+    pub fn with_my_decimal_data<R>(&self, f: impl FnOnce(&[u8]) -> R) -> R {
+        f(self.data.read().as_ref())
+    }
+
     /// Go `GetTime`: the `types.Time` in the specific row.
     ///
     /// # Panics

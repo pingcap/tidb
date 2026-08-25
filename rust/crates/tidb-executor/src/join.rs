@@ -252,6 +252,70 @@ fn compact_matches(op: u8, ordering: Ordering) -> bool {
     }
 }
 
+/// Counts a sorted DECIMAL residual bucket without visiting every matching
+/// pair.  The count-only aggregate path uses this for Web3Bench's
+/// `build.value < probe.value` predicate; keeping the six comparison forms
+/// here preserves the generic helper's SQL semantics for the other supported
+/// operators as well.
+#[inline]
+fn count_sorted_compact_matches(
+    values: &[i128],
+    probe: i128,
+    build_on_left: bool,
+    op: u8,
+) -> u64 {
+    if values.len() <= 8 {
+        return values
+            .iter()
+            .filter(|value| {
+                let ordering = if build_on_left {
+                    (*value).cmp(&probe)
+                } else {
+                    probe.cmp(*value)
+                };
+                compact_matches(op, ordering)
+            })
+            .count() as u64;
+    }
+    let lower = values.partition_point(|value| *value < probe);
+    let upper = values.partition_point(|value| *value <= probe);
+    let len = values.len();
+    let count = match op {
+        0 => upper - lower,
+        1 => len - (upper - lower),
+        2 => {
+            if build_on_left {
+                lower
+            } else {
+                len - upper
+            }
+        }
+        3 => {
+            if build_on_left {
+                upper
+            } else {
+                len - lower
+            }
+        }
+        4 => {
+            if build_on_left {
+                len - upper
+            } else {
+                lower
+            }
+        }
+        5 => {
+            if build_on_left {
+                len - lower
+            } else {
+                upper
+            }
+        }
+        _ => unreachable!(),
+    };
+    count as u64
+}
+
 /// Which side, if any, keeps rows that match nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JoinKind {
@@ -3984,7 +4048,11 @@ impl<C: Columns> JoinExec<C> {
                     field_type.decimal() == 0 && (0..=38).contains(&field_type.flen())
                 })
         {
-            let mut build_values: CompactBinaryMap<Vec<i128>> =
+            const DECIMAL_CELL_BYTES: usize = tidb_chunk::column::MY_DECIMAL_STRUCT_SIZE as usize;
+            // Web3Bench addresses are high-cardinality; most equality
+            // buckets contain only one or two rows. Keep those values inline
+            // to avoid a heap allocation per distinct address.
+            let mut build_values: CompactBinaryMap<smallvec::SmallVec<[i128; 4]>> =
                 CompactBinaryMap::with_capacity_and_hasher(100_000, BuildHasherDefault::default());
             let build: &mut dyn Executor = if build_is_left {
                 self.left.as_mut()
@@ -3997,38 +4065,53 @@ impl<C: Columns> JoinExec<C> {
                 if chunk.num_rows() == 0 {
                     break;
                 }
-                for row_index in 0..chunk.num_rows() {
-                    let physical_row =
-                        chunk.sel().map_or(row_index, |selection| selection[row_index]);
-                    if chunk.column(build_offset).is_null(physical_row) {
-                        continue;
+                let decimal_column = chunk.column(build_offset);
+                let supported = decimal_column.with_my_decimal_data(|data| -> Result<bool, ExecError> {
+                    for row_index in 0..chunk.num_rows() {
+                        let physical_row =
+                            chunk.sel().map_or(row_index, |selection| selection[row_index]);
+                        if decimal_column.is_null(physical_row) {
+                            continue;
+                        }
+                        let Some(key) = compact_key(
+                            &chunk,
+                            row_index,
+                            &build_types,
+                            if build_is_left {
+                                self.keys[0].left
+                            } else {
+                                self.keys[0].right
+                            },
+                            collation,
+                        )?
+                        else {
+                            continue;
+                        };
+                        let start = physical_row * DECIMAL_CELL_BYTES;
+                        let Some((coefficient, scale)) =
+                            data.get(start..start + DECIMAL_CELL_BYTES)
+                                .and_then(tidb_datatype::MyDecimal::i128_scaled_from_raw_bytes)
+                        else {
+                            return Ok(false);
+                        };
+                        if scale != 0 {
+                            return Ok(false);
+                        }
+                        build_values.entry(key).or_default().push(coefficient);
                     }
-                    let Some(key) = compact_key(
-                        &chunk,
-                        row_index,
-                        &build_types,
-                        if build_is_left {
-                            self.keys[0].left
-                        } else {
-                            self.keys[0].right
-                        },
-                        collation,
-                    )?
-                    else {
-                        continue;
-                    };
-                    let Some((coefficient, scale)) =
-                        chunk.column(build_offset).get_my_decimal_i128_scaled(physical_row)
-                    else {
-                        return Ok(None);
-                    };
-                    if scale != 0 {
-                        return Ok(None);
-                    }
-                    build_values.entry(key).or_default().push(coefficient);
+                    Ok(true)
+                })?;
+                if !supported {
+                    return Ok(None);
                 }
+                drop(decimal_column);
                 self.memory.check()?;
                 chunk.reset();
+            }
+            for values in build_values.values_mut() {
+                if values.len() > 8 {
+                    values.sort_unstable();
+                }
             }
             let probe: &mut dyn Executor = if build_is_left {
                 self.right.as_mut()
@@ -4042,50 +4125,55 @@ impl<C: Columns> JoinExec<C> {
                 if probe_chunk.num_rows() == 0 {
                     break;
                 }
-                for row_index in 0..probe_chunk.num_rows() {
-                    let physical_row = probe_chunk
-                        .sel()
-                        .map_or(row_index, |selection| selection[row_index]);
-                    if probe_chunk.column(probe_offset).is_null(physical_row) {
-                        continue;
-                    }
-                    let Some(key) = compact_key(
-                        &probe_chunk,
-                        row_index,
-                        &probe_types,
-                        if build_is_left {
-                            self.keys[0].right
-                        } else {
-                            self.keys[0].left
-                        },
-                        collation,
-                    )?
-                    else {
-                        continue;
-                    };
-                    let Some(values) = build_values.get(&key) else {
-                        continue;
-                    };
-                    let Some((coefficient, scale)) = probe_chunk
-                        .column(probe_offset)
-                        .get_my_decimal_i128_scaled(physical_row)
-                    else {
-                        return Ok(None);
-                    };
-                    if scale != 0 {
-                        return Ok(None);
-                    }
-                    for build_value in values {
-                        let ordering = if build_on_left {
-                            build_value.cmp(&coefficient)
-                        } else {
-                            coefficient.cmp(build_value)
-                        };
-                        if compact_matches(op, ordering) {
-                            total = total.saturating_add(1);
+                let decimal_column = probe_chunk.column(probe_offset);
+                let supported = decimal_column.with_my_decimal_data(|data| -> Result<bool, ExecError> {
+                    for row_index in 0..probe_chunk.num_rows() {
+                        let physical_row = probe_chunk
+                            .sel()
+                            .map_or(row_index, |selection| selection[row_index]);
+                        if decimal_column.is_null(physical_row) {
+                            continue;
                         }
+                        let Some(key) = compact_key(
+                            &probe_chunk,
+                            row_index,
+                            &probe_types,
+                            if build_is_left {
+                                self.keys[0].right
+                            } else {
+                                self.keys[0].left
+                            },
+                            collation,
+                        )?
+                        else {
+                            continue;
+                        };
+                        let Some(values) = build_values.get(&key) else {
+                            continue;
+                        };
+                        let start = physical_row * DECIMAL_CELL_BYTES;
+                        let Some((coefficient, scale)) =
+                            data.get(start..start + DECIMAL_CELL_BYTES)
+                                .and_then(tidb_datatype::MyDecimal::i128_scaled_from_raw_bytes)
+                        else {
+                            return Ok(false);
+                        };
+                        if scale != 0 {
+                            return Ok(false);
+                        }
+                        total = total.saturating_add(count_sorted_compact_matches(
+                            values,
+                            coefficient,
+                            build_on_left,
+                            op,
+                        ));
                     }
+                    Ok(true)
+                })?;
+                if !supported {
+                    return Ok(None);
                 }
+                drop(decimal_column);
                 self.memory.check()?;
                 probe_chunk.reset();
             }
