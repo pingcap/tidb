@@ -104,6 +104,11 @@ shapes remain on the existing general executor.
   Against the clean Rust `884e16945ed` baseline, R34 improved from
   `4013.787 ms` to `353.144 ms` and R35 remained within measurement noise
   (`164.660 ms` to `158.905 ms`); the complete receipts are recorded below.
+- [x] (2026-08-25) Rebuilt the clean worktree at the final pushed branch after
+  the remote `eb9937320cb`/`7f3acc686e8` updates and reran the acceptance
+  matrix. Results and all normalized plan skeletons stayed aligned; the
+  isolated repeat medians were R34 `321.100 ms` vs Go `154.159 ms` (`2.08x`)
+  and R35 `163.627 ms` vs Go `108.207 ms` (`1.51x`).
 
 ## Validation commands
 
@@ -178,6 +183,12 @@ Final post-fix receipts after the remote rebase and empty-result writer fix:
     /tmp/web3_clean_baseline_perf.json
     /tmp/web3_final_clean_default5_perf_isolated.json
     /tmp/web3_final_clean_default5_perf_isolated_repeat.json
+    /tmp/web3_final_pushed_go_results.json
+    /tmp/web3_final_pushed_rust_results.json
+    /tmp/web3_final_pushed_go_plans.json
+    /tmp/web3_final_pushed_rust_plans.json
+    /tmp/web3_final_pushed_perf.json
+    /tmp/web3_final_pushed_perf_repeat.json
 
 The last performance receipt is an alternating one-client run against the
 clean Rust baseline (`884e16945ed`) and the final Rust endpoint. Small-query
