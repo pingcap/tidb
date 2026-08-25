@@ -1605,3 +1605,82 @@ fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
          prints them inside `range: decided by [...]`: {plan:#?}",
     );
 }
+
+/// Go's `rule_join_elimination.doOptimize` retries the rule at the surviving
+/// root until it stops being a join (`for join, isJoin := p.
+/// (*logicalop.LogicalJoin); isJoin;`), so a left-deep chain whose inner
+/// sides are unique-keyed and unread by every clause above collapses
+/// entirely: `(a LOJ b) LOJ c` plans as `a` alone. One elimination round is
+/// not enough -- the outer round drops only `c`, and a remaining `a LOJ b`
+/// keeps probing `b` once per surviving row, which also stops a bare LIMIT
+/// from bounding the preserved-side read the way Go's eliminated plan does.
+#[test]
+fn nested_unread_left_join_chain_eliminates_to_fixpoint() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE jc_a (pk VARCHAR(32) PRIMARY KEY, v BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE jc_b (pk VARCHAR(32) PRIMARY KEY)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE jc_c (pk VARCHAR(32) PRIMARY KEY)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+
+    let plan_mentions = |sql: &str, table: &str| {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &stmt else {
+            panic!("not a query")
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("not a select")
+        };
+        let (_, rows) =
+            explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+        rows.iter().flatten().any(|value| match value {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).contains(table),
+            _ => false,
+        })
+    };
+
+    // Both inner sides are unread and unique-keyed on their join key: the
+    // whole chain disappears from the plan.
+    let sql = "SELECT jc_a.v FROM (jc_a LEFT JOIN jc_b ON jc_a.pk = jc_b.pk) \
+               LEFT JOIN jc_c ON jc_b.pk = jc_c.pk WHERE jc_a.v < 10 LIMIT 200";
+    assert!(
+        !plan_mentions(sql, "jc_b"),
+        "the middle inner side must be eliminated: unread and PK-joined"
+    );
+    assert!(
+        !plan_mentions(sql, "jc_c"),
+        "the outer inner side must be eliminated: unread and PK-joined"
+    );
+
+    // Reading one column of the middle side keeps that join (and with it the
+    // chain shape) -- Go's parent-column set at that level is non-empty too.
+    let sql_read = "SELECT jc_a.v, jc_b.pk FROM (jc_a LEFT JOIN jc_b ON jc_a.pk = jc_b.pk) \
+                    LEFT JOIN jc_c ON jc_b.pk = jc_c.pk WHERE jc_a.v < 10 LIMIT 200";
+    assert!(
+        plan_mentions(sql_read, "jc_b"),
+        "a read inner side must stay"
+    );
+
+    // Parens are syntax, not structure: `ON (a.pk = b.pk)` parses as an
+    // `Expr::Paren` wrapper the Go expression tree never carries, so it must
+    // not hide the join key from the uniqueness proof.
+    let sql_paren = "SELECT jc_a.v FROM jc_a LEFT JOIN jc_b \
+                    ON (jc_a.pk = jc_b.pk) WHERE jc_a.v < 10 LIMIT 200";
+    assert!(
+        !plan_mentions(sql_paren, "jc_b"),
+        "a parenthesized ON equality must still prove the join key"
+    );
+}

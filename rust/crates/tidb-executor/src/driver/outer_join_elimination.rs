@@ -62,12 +62,10 @@
 //!
 //! # Refusals
 //!
-//! * anything but the TOP node of the `FROM` -- a nested join needs the
-//!   parent-column set at ITS level, which the statement text does not carry;
-//! * `NATURAL`/`USING`, which coalesce column names across the two sides, so
-//!   dropping one side changes what a bare name means;
 //! * an inner side that is not one plain base table with row storage (a
 //!   derived table, a view, a nested join: no unique keys to check);
+//! * `NATURAL`/`USING`, which coalesce column names across the two sides, so
+//!   dropping one side changes what a bare name means;
 //! * an inner table carrying index hints, `PARTITION`, `AS OF` or
 //!   `TABLESAMPLE`, or a statement carrying `/*+ ... */` hints -- dropping
 //!   the table would drop the hint reporting that names it;
@@ -84,9 +82,37 @@ use tidb_ast::{Expr, Join, JoinNode, JoinType, SelectField, SelectStmt};
 use super::catalog::{Catalog, TableEntry};
 use super::leaf_demand::LeafDemand;
 
-/// The statement with its top-level outer join replaced by its outer side, or
-/// `None` when no elimination is provable.
+/// The statement with every eliminable top-level outer join replaced by its
+/// outer side, or `None` when no elimination is provable.
+///
+/// Go's `doOptimize` re-tries the rule at the surviving root until it stops
+/// being a join (`for join, isJoin := p.(*logicalop.LogicalJoin); isJoin;`),
+/// because eliminating `(R LOJ S1) LOJ S2`'s outer level exposes the inner
+/// level as the new top. The statement-level walk iterates for the same
+/// reason: each round re-runs the FULL proof (parent-clause demand over the
+/// new inner side, then uniqueness or duplicate-agnosticism) against the
+/// same parent clauses, which are exactly the parent-column set Go carries
+/// into every level of a chain whose joins add nothing above them.
 pub(crate) fn eliminate(
+    select: &SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    parent_duplicate_agnostic: bool,
+) -> Option<SelectStmt> {
+    let mut current = select.clone();
+    let mut eliminated = false;
+    while let Some(rewritten) =
+        eliminate_once(&current, catalog, current_db, parent_duplicate_agnostic)
+    {
+        current = rewritten;
+        eliminated = true;
+    }
+    eliminated.then_some(current)
+}
+
+/// One round of [`eliminate`]: the statement with its top-level outer join
+/// replaced by its outer side, or `None` when no elimination is provable.
+fn eliminate_once(
     select: &SelectStmt,
     catalog: &Catalog,
     current_db: &str,
@@ -204,13 +230,15 @@ fn split_name<'a>(path: &'a [String], current_db: &'a str) -> Option<(&'a str, &
 ///
 /// `None` for any conjunct that is not `qualified_col = qualified_col` with
 /// exactly one side qualified by `inner`, which is this port's stricter
-/// reading of Go's `extractInnerJoinKeys` (see the module doc).
+/// reading of Go's `extractInnerJoinKeys` (see the module doc). Parens are
+/// transparent: `ON (a.b = c.d)` parses as `Expr::Paren` around the equality,
+/// and Go's expression tree never carries that wrapper.
 fn inner_join_keys(on: &Expr, inner: &str) -> Option<Vec<String>> {
     let inner = inner.to_ascii_lowercase();
     let mut keys = Vec::new();
     let mut stack = vec![on];
     while let Some(expr) = stack.pop() {
-        match expr {
+        match unwrap_paren(expr) {
             Expr::Binary(tidb_ast::BinaryOp::LogicAnd, left, right) => {
                 stack.push(left);
                 stack.push(right);
@@ -233,9 +261,19 @@ fn inner_join_keys(on: &Expr, inner: &str) -> Option<Vec<String>> {
     (!keys.is_empty()).then_some(keys)
 }
 
+/// Parens are syntax, not structure: Go's resolved expression tree has no
+/// `Expr::Paren`, so every shape match here sees through them.
+fn unwrap_paren(expr: &Expr) -> &Expr {
+    let mut current = expr;
+    while let Expr::Paren(inner) = current {
+        current = inner;
+    }
+    current
+}
+
 /// `(qualifier, column)` of a written `t.c` / `db.t.c`, both lowercased.
 fn qualified_column(expr: &Expr) -> Option<(String, String)> {
-    match expr {
+    match unwrap_paren(expr) {
         Expr::Column(path) => match path.as_slice() {
             [table, column] | [_, table, column] => {
                 Some((table.to_ascii_lowercase(), column.to_ascii_lowercase()))
