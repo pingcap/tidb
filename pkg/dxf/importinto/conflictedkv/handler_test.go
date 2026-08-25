@@ -174,7 +174,7 @@ func TestHandler(t *testing.T) {
 			require.NoError(t, fixtureEncoder.Close())
 		})
 		fixturePairs, err := fixtureEncoder.Encode(
-			[]types.Datum{types.NewIntDatum(1), types.NewIntDatum(10), types.Datum{}},
+			[]types.Datum{types.NewIntDatum(1), types.NewIntDatum(10), {}},
 			1,
 		)
 		require.NoError(t, err)
