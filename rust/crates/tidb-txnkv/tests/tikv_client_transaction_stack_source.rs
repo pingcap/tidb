@@ -148,3 +148,91 @@ fn first_committer_wins_on_a_write_conflict() {
         reader.rollback().await.unwrap();
     });
 }
+
+#[test]
+fn pessimistic_lock_write_commit_and_unlock_after_rollback() {
+    runtime().block_on(async {
+        let pd = mock_store();
+
+        // A pessimistic transaction locks at statement time, writes, commits.
+        let ts = pd.clone().get_timestamp().await.unwrap();
+        let mut txn = Transaction::new(
+            ts,
+            pd.clone(),
+            TransactionOptions::new_pessimistic(),
+            Keyspace::Disable,
+        );
+        assert_eq!(txn.get_for_update("locked".to_owned()).await.unwrap(), None);
+        txn.put("locked".to_owned(), "v1".to_owned()).await.unwrap();
+        txn.commit().await.expect("pessimistic commit succeeds");
+
+        let mut reader = begin_optimistic(&pd).await;
+        assert_eq!(
+            reader.get("locked".to_owned()).await.unwrap(),
+            Some(b"v1".to_vec())
+        );
+        reader.rollback().await.unwrap();
+
+        // A rolled-back pessimistic transaction releases its locks: a later
+        // pessimistic transaction locks and commits the same key.
+        let ts = pd.clone().get_timestamp().await.unwrap();
+        let mut aborted = Transaction::new(
+            ts,
+            pd.clone(),
+            TransactionOptions::new_pessimistic(),
+            Keyspace::Disable,
+        );
+        aborted
+            .get_for_update("locked".to_owned())
+            .await
+            .unwrap();
+        aborted.rollback().await.expect("pessimistic rollback releases locks");
+
+        let ts = pd.clone().get_timestamp().await.unwrap();
+        let mut successor = Transaction::new(
+            ts,
+            pd.clone(),
+            TransactionOptions::new_pessimistic(),
+            Keyspace::Disable,
+        );
+        assert_eq!(
+            successor.get_for_update("locked".to_owned()).await.unwrap(),
+            Some(b"v1".to_vec())
+        );
+        successor
+            .put("locked".to_owned(), "v2".to_owned())
+            .await
+            .unwrap();
+        successor.commit().await.expect("successor lock acquisition and commit succeed");
+    });
+}
+
+#[test]
+fn snapshot_scans_return_ordered_committed_pairs() {
+    runtime().block_on(async {
+        let pd = mock_store();
+
+        let mut seed = begin_optimistic(&pd).await;
+        for (key, value) in [("sa", "1"), ("sb", "2"), ("sc", "3"), ("sd", "4")] {
+            seed.put(key.to_owned(), value.to_owned()).await.unwrap();
+        }
+        seed.commit().await.unwrap();
+
+        let mut reader = begin_optimistic(&pd).await;
+        let pairs: Vec<(Vec<u8>, Vec<u8>)> = reader
+            .scan("sa".to_owned().."sd".to_owned(), 100)
+            .await
+            .unwrap()
+            .map(|pair| (pair.0.into(), pair.1))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                (b"sa".to_vec(), b"1".to_vec()),
+                (b"sb".to_vec(), b"2".to_vec()),
+                (b"sc".to_vec(), b"3".to_vec()),
+            ]
+        );
+        reader.rollback().await.unwrap();
+    });
+}
