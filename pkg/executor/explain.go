@@ -155,9 +155,45 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 					RUVersion: ruVersion,
 				})
 			}
+			e.registerExplainRUOperatorStats(coll, ruv2Metrics, err == nil)
 		}
 	}
 	return err
+}
+
+func (e *ExplainExec) registerExplainRUOperatorStats(
+	coll *execdetails.RuntimeStatsColl,
+	metrics *execdetails.RUV2Metrics,
+	rootEOF bool,
+) {
+	if e.explain == nil || e.explain.Format != "ru" || coll == nil {
+		return
+	}
+	flat := core.FlattenPhysicalPlan(e.explain.TargetPlan, true)
+	setup := statementRUCalculationSetup{}
+	if e.explain.ExecStmt != nil {
+		setup.frontendCompileBytes = statementRUFrontendCompileBytes(&ExecStmt{
+			Ctx:      e.Ctx(),
+			Plan:     e.explain.TargetPlan,
+			StmtNode: e.explain.ExecStmt,
+		})
+	}
+	_, operatorRUs, ok := calculateStatementRUWithOperators(
+		flat,
+		coll,
+		metrics,
+		setup,
+		rootEOF,
+	)
+	if !ok {
+		return
+	}
+	for planID, operatorRU := range operatorRUs {
+		coll.RegisterStats(planID, &execdetails.ExplainRURuntimeStats{
+			SelfRU: operatorRU.selfRU,
+			CumRU:  operatorRU.cumRU,
+		})
+	}
 }
 
 func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
