@@ -11,8 +11,8 @@ func BenchmarkNewFixedLenColumnDominantLegacy(b *testing.B) {
 	benchmarkFixedLenColumnFactory(b, func() *Column {
 		return &Column{
 			elemBuf:    make([]byte, sizeInt64),
-			data:       make([]byte, 0, getDataMemCap(InitialCapacity, sizeInt64)),
-			nullBitmap: make([]byte, 0, getNullBitmapCap(InitialCapacity)),
+			data:       make([]byte, 0, getInitDataMemCap(InitialCapacity, sizeInt64)),
+			nullBitmap: make([]byte, 0, getInitNullBitmapCap(InitialCapacity)),
 		}
 	})
 }
@@ -80,10 +80,10 @@ func validateFixedLenColumnBenchmark(
 	if len(col.elemBuf) != elemLen || cap(col.elemBuf) != elemLen {
 		b.Fatalf("unexpected element buffer: len=%d cap=%d", len(col.elemBuf), cap(col.elemBuf))
 	}
-	if len(col.data) != 0 || int64(cap(col.data)) != getDataMemCap(capacity, elemLen) {
+	if len(col.data) != 0 || int64(cap(col.data)) != getInitDataMemCap(capacity, elemLen) {
 		b.Fatalf("unexpected data buffer: len=%d cap=%d", len(col.data), cap(col.data))
 	}
-	if len(col.nullBitmap) != 0 || int64(cap(col.nullBitmap)) != getNullBitmapCap(capacity) {
+	if len(col.nullBitmap) != 0 || int64(cap(col.nullBitmap)) != getInitNullBitmapCap(capacity) {
 		b.Fatalf("unexpected null bitmap: len=%d cap=%d", len(col.nullBitmap), cap(col.nullBitmap))
 	}
 }
