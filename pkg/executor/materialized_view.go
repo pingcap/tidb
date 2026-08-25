@@ -652,7 +652,7 @@ func checkOperateViewOnMLog(
 func checkRefreshMaterializedViewBaseTableSelect(
 	ctx sessionctx.Context,
 	is infoschema.InfoSchema,
-	mvInfo *model.MaterializedViewInfo,
+	mviewInfo *model.MaterializedViewInfo,
 ) error {
 	sessVars := ctx.GetSessionVars()
 	if sessVars.InMaterializedViewMaintenance {
@@ -669,10 +669,10 @@ func checkRefreshMaterializedViewBaseTableSelect(
 
 	pm := privilege.GetPrivilegeManager(ctx)
 	user := sessVars.User
-	if pm == nil || user == nil || mvInfo == nil {
+	if pm == nil || user == nil || mviewInfo == nil {
 		return nil
 	}
-	for _, id := range mvInfo.BaseTableIDs {
+	for _, id := range mviewInfo.BaseTableIDs {
 		baseTable, ok := is.TableByID(context.Background(), id)
 		if !ok {
 			continue
@@ -714,15 +714,15 @@ WHERE REFRESH_JOB_ID = %?
 		return "", "", false, nil
 	}
 	mviewID := rows[0].GetInt64(0)
-	mvTable, ok := is.TableByID(context.Background(), mviewID)
+	mviewTable, ok := is.TableByID(context.Background(), mviewID)
 	if !ok {
 		return "", "", false, errors.Errorf("refresh materialized view: cannot resolve target materialized view %d for cancel job %d", mviewID, refreshJobID)
 	}
-	dbInfo, ok := infoschema.SchemaByTable(is, mvTable.Meta())
+	dbInfo, ok := infoschema.SchemaByTable(is, mviewTable.Meta())
 	if !ok {
 		return "", "", false, errors.Errorf("refresh materialized view: cannot resolve schema for materialized view %d", mviewID)
 	}
-	return dbInfo.Name.L, mvTable.Meta().Name.L, true, nil
+	return dbInfo.Name.L, mviewTable.Meta().Name.L, true, nil
 }
 
 func resolveCancelPurgeJobPrivilegeTarget(
@@ -2814,8 +2814,8 @@ func calcMaterializedViewLogSafePurgeTSO(
 	}
 
 	publicIDs := make([]int64, 0, len(publicMVIDs))
-	for mvID := range publicMVIDs {
-		publicIDs = append(publicIDs, mvID)
+	for mviewID := range publicMVIDs {
+		publicIDs = append(publicIDs, mviewID)
 	}
 	if len(publicIDs) > 0 {
 		// Public MVs should always have a refresh record. If not, treat it as metadata inconsistency and abort.
@@ -2847,15 +2847,15 @@ func calcMaterializedViewLogSafePurgeTSO(
 	}
 
 	allMVIDs := make(map[int64]struct{}, len(publicMVIDs)+len(buildingMVIDs))
-	for mvID := range publicMVIDs {
-		allMVIDs[mvID] = struct{}{}
+	for mviewID := range publicMVIDs {
+		allMVIDs[mviewID] = struct{}{}
 	}
-	for mvID := range buildingMVIDs {
-		allMVIDs[mvID] = struct{}{}
+	for mviewID := range buildingMVIDs {
+		allMVIDs[mviewID] = struct{}{}
 	}
 	allIDs := make([]int64, 0, len(allMVIDs))
-	for mvID := range allMVIDs {
-		allIDs = append(allIDs, mvID)
+	for mviewID := range allMVIDs {
+		allIDs = append(allIDs, mviewID)
 	}
 	if len(allIDs) > 0 {
 		minSQL := fmt.Sprintf(
@@ -6064,7 +6064,7 @@ func deriveRuntimeMaterializedScheduleNextUnixSeconds(
 
 func logRuntimeMaterializedViewRefreshNextUnixSecondsUpdateNull(
 	schemaName string,
-	mvName string,
+	mviewName string,
 	nextExpr string,
 ) {
 	if strings.TrimSpace(nextExpr) == "" {
@@ -6073,7 +6073,7 @@ func logRuntimeMaterializedViewRefreshNextUnixSecondsUpdateNull(
 	logutil.BgLogger().Error(
 		"refresh materialized view: automatic refresh schedule disabled because NEXT expression evaluated to NULL, updating NEXT_REFRESH_UNIX_SECONDS to NULL",
 		zap.String("schemaName", schemaName),
-		zap.String("tableName", mvName),
+		zap.String("tableName", mviewName),
 		zap.String("refreshNext", nextExpr),
 	)
 }
@@ -6157,15 +6157,15 @@ func markRefreshFailedAlertState(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
 	mviewID int64,
-	mvSchema string,
-	mvName string,
+	mviewSchema string,
+	mviewName string,
 ) error {
 	_, err := sqlExec.ExecuteInternal(
 		kctx,
 		`INSERT INTO mysql.tidb_mview_refresh_alert (
 	MVIEW_ID,
-	MV_SCHEMA,
-	MV_NAME,
+	MVIEW_SCHEMA,
+	MVIEW_NAME,
 	REFRESH_FAILED,
 	UPDATE_TIME
 ) VALUES (
@@ -6175,13 +6175,13 @@ func markRefreshFailedAlertState(
 	'YES',
 	NOW(6)
 ) ON DUPLICATE KEY UPDATE
-MV_SCHEMA = VALUES(MV_SCHEMA),
-MV_NAME = VALUES(MV_NAME),
+MVIEW_SCHEMA = VALUES(MVIEW_SCHEMA),
+MVIEW_NAME = VALUES(MVIEW_NAME),
 REFRESH_FAILED = VALUES(REFRESH_FAILED),
 UPDATE_TIME = VALUES(UPDATE_TIME)`,
 		mviewID,
-		mvSchema,
-		mvName,
+		mviewSchema,
+		mviewName,
 	)
 	if err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
@@ -6197,8 +6197,8 @@ func reportMVRefreshFailed(
 	sqlExec sqlexec.SQLExecutor,
 	reportRefreshFailed bool,
 	mviewID int64,
-	mvSchema string,
-	mvName string,
+	mviewSchema string,
+	mviewName string,
 	refreshJobID uint64,
 	refreshMethod string,
 	isInternalSQL bool,
@@ -6207,19 +6207,19 @@ func reportMVRefreshFailed(
 	if !reportRefreshFailed {
 		return
 	}
-	if alertErr := markRefreshFailedAlertState(kctx, sqlExec, mviewID, mvSchema, mvName); alertErr != nil {
+	if alertErr := markRefreshFailedAlertState(kctx, sqlExec, mviewID, mviewSchema, mviewName); alertErr != nil {
 		logutil.BgLogger().Warn("refresh materialized view: failed to mark refresh_failed alert",
 			zap.Int64("mviewID", mviewID),
-			zap.String("schema", mvSchema),
-			zap.String("mview", mvName),
+			zap.String("schema", mviewSchema),
+			zap.String("mview", mviewName),
 			zap.Uint64("refreshJobID", refreshJobID),
 			zap.Error(alertErr),
 		)
 	}
 	logutil.BgLogger().Error("Materialized_view_refresh_failed",
 		zap.Int64("mview_id", mviewID),
-		zap.String("schema", mvSchema),
-		zap.String("mview", mvName),
+		zap.String("schema", mviewSchema),
+		zap.String("mview", mviewName),
 		zap.Uint64("refresh_job_id", refreshJobID),
 		zap.String("refresh_method", refreshMethod),
 		zap.Bool("internal_sql", isInternalSQL),
@@ -6251,16 +6251,16 @@ func insertRefreshHistRunning(
 	sqlExec sqlexec.SQLExecutor,
 	refreshJobID uint64,
 	mviewID int64,
-	mvSchema string,
-	mvName string,
+	mviewSchema string,
+	mviewName string,
 	refreshMethod string,
 	refreshStartAt time.Time,
 ) error {
 	insertSQL := `INSERT INTO mysql.tidb_mview_refresh_hist (
 	REFRESH_JOB_ID,
 	MVIEW_ID,
-	MV_SCHEMA,
-	MV_NAME,
+	MVIEW_SCHEMA,
+	MVIEW_NAME,
 	REFRESH_METHOD,
 	REFRESH_START_TIME,
 	REFRESH_STATUS,
@@ -6280,8 +6280,8 @@ func insertRefreshHistRunning(
 		insertSQL,
 		refreshJobID,
 		mviewID,
-		mvSchema,
-		mvName,
+		mviewSchema,
+		mviewName,
 		refreshMethod,
 		refreshStartAt,
 		refreshHistStatusRunning,
@@ -6300,8 +6300,8 @@ func insertRefreshHistFailed(
 	sqlExec sqlexec.SQLExecutor,
 	refreshJobID uint64,
 	mviewID int64,
-	mvSchema string,
-	mvName string,
+	mviewSchema string,
+	mviewName string,
 	refreshMethod string,
 	refreshStartAt time.Time,
 	refreshEndAt time.Time,
@@ -6324,8 +6324,8 @@ func insertRefreshHistFailed(
 	insertSQL := `INSERT INTO mysql.tidb_mview_refresh_hist (
 	REFRESH_JOB_ID,
 	MVIEW_ID,
-	MV_SCHEMA,
-	MV_NAME,
+	MVIEW_SCHEMA,
+	MVIEW_NAME,
 	REFRESH_METHOD,
 	REFRESH_START_TIME,
 	REFRESH_END_TIME,
@@ -6353,8 +6353,8 @@ func insertRefreshHistFailed(
 		insertSQL,
 		refreshJobID,
 		mviewID,
-		mvSchema,
-		mvName,
+		mviewSchema,
+		mviewName,
 		refreshMethod,
 		refreshStartAt,
 		refreshEndAt,
@@ -6376,8 +6376,8 @@ func (e *RefreshMaterializedViewExec) insertRefreshHistFailedFallback(
 	kctx context.Context,
 	releaseCtx context.Context,
 	mviewID int64,
-	mvSchema string,
-	mvName string,
+	mviewSchema string,
+	mviewName string,
 	refreshMethod string,
 	refreshReadTSO *uint64,
 	refreshJobID *uint64,
@@ -6407,15 +6407,15 @@ func (e *RefreshMaterializedViewExec) insertRefreshHistFailedFallback(
 	if refreshFailedReason != nil {
 		refreshErrMsg = *refreshFailedReason
 	}
-	reportMVRefreshFailed(kctx, histSQLExec, reportRefreshFailed, mviewID, mvSchema, mvName, *refreshJobID, refreshMethod, isInternalSQL, refreshErrMsg)
+	reportMVRefreshFailed(kctx, histSQLExec, reportRefreshFailed, mviewID, mviewSchema, mviewName, *refreshJobID, refreshMethod, isInternalSQL, refreshErrMsg)
 	refreshEndAt := time.Now()
 	if err := insertRefreshHistFailed(
 		kctx,
 		histSQLExec,
 		*refreshJobID,
 		mviewID,
-		mvSchema,
-		mvName,
+		mviewSchema,
+		mviewName,
 		refreshMethod,
 		histTime(refreshStart, histLoc),
 		histTime(refreshEndAt, histLoc),

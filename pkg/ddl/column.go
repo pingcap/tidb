@@ -283,13 +283,13 @@ func checkDropColumnWithMLogBaseConstraint(
 		return nil
 	}
 
-	mlogTblInfo, err := t.GetTable(schemaID, tblInfo.MaterializedViewBase.MLogID)
-	if err != nil || mlogTblInfo == nil || mlogTblInfo.MaterializedViewLog == nil {
+	mlogTableInfo, err := t.GetTable(schemaID, tblInfo.MaterializedViewBase.MLogID)
+	if err != nil || mlogTableInfo == nil || mlogTableInfo.MaterializedViewLog == nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 			"ALTER TABLE on base table with invalid materialized view log metadata",
 		)
 	}
-	for _, mlogCol := range mlogTblInfo.MaterializedViewLog.Columns {
+	for _, mlogCol := range mlogTableInfo.MaterializedViewLog.Columns {
 		if mlogCol.L == colName.L {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				fmt.Sprintf("ALTER TABLE on base table column %s referenced by materialized view log", colName.L),

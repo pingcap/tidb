@@ -153,7 +153,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 
 	require.NotNil(t, mvTable.Meta().MaterializedView)
 	require.Equal(t, []int64{baseTable.Meta().ID}, mvTable.Meta().MaterializedView.BaseTableIDs)
-	require.Equal(t, model.MVInitBuildReady, mvTable.Meta().MaterializedView.GetInitBuildState())
+	require.Equal(t, model.MViewInitBuildReady, mvTable.Meta().MaterializedView.GetInitBuildState())
 	require.Equal(t, "FAST", mvTable.Meta().MaterializedView.RefreshMethod)
 	require.Equal(t, "", mvTable.Meta().MaterializedView.RefreshStartWith)
 	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 1 HOUR)", mvTable.Meta().MaterializedView.RefreshNext)
@@ -1390,7 +1390,7 @@ func TestAlterMaterializedViewRefreshDisableScheduleClearsAlert(t *testing.T) {
 	mviewID := mvTable.Meta().ID
 
 	tk.MustExec(fmt.Sprintf(
-		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MV_SCHEMA, MV_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
 		mviewID,
 	))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where MVIEW_ID = %d", mviewID)).
@@ -1419,7 +1419,7 @@ func TestAlterMaterializedViewRefreshDisableSchedulePreservesRefreshFailedAlert(
 	mviewID := mvTable.Meta().ID
 
 	tk.MustExec(fmt.Sprintf(
-		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MV_SCHEMA, MV_NAME, ALERT_LEVEL, REFRESH_FAILED, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, 'test', 'mv', 'warning', 'YES', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, REFRESH_FAILED, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, 'test', 'mv', 'warning', 'YES', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
 		mviewID,
 	))
 
@@ -1446,7 +1446,7 @@ func TestAlterMaterializedViewRefreshDisableScheduleIgnoresAlertDeleteFailure(t 
 	mviewID := mvTable.Meta().ID
 
 	tk.MustExec(fmt.Sprintf(
-		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MV_SCHEMA, MV_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
 		mviewID,
 	))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where MVIEW_ID = %d", mviewID)).
@@ -1822,7 +1822,7 @@ func TestCreateMaterializedViewBlocksReadAndRefreshBeforeReady(t *testing.T) {
 			return false
 		}
 		return mvTable.Meta().MaterializedView != nil &&
-			mvTable.Meta().MaterializedView.GetInitBuildState() == model.MVInitBuildBuilding
+			mvTable.Meta().MaterializedView.GetInitBuildState() == model.MViewInitBuildBuilding
 	}, 30*time.Second, 100*time.Millisecond)
 
 	tk.MustQuery("show tables like 'mv_not_ready'").Check(testkit.Rows("mv_not_ready"))
@@ -1859,7 +1859,7 @@ func TestCreateMaterializedViewBlocksReadAndRefreshBeforeReady(t *testing.T) {
 			return false
 		}
 		return mvTable.Meta().MaterializedView != nil &&
-			mvTable.Meta().MaterializedView.GetInitBuildState() == model.MVInitBuildReady
+			mvTable.Meta().MaterializedView.GetInitBuildState() == model.MViewInitBuildReady
 	}, 30*time.Second, 100*time.Millisecond)
 }
 
@@ -2224,7 +2224,7 @@ func TestDropDatabaseCleansMaterializedViewAndLogInfo(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where mlog_id = %d", mlogID)).
 		Check(testkit.Rows("1"))
 	tk.MustExec(fmt.Sprintf(
-		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MV_SCHEMA, MV_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, '%s', 'mv', 'overdue', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, '%s', 'mv', 'overdue', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
 		mvID,
 		dbName,
 	))
@@ -2255,7 +2255,7 @@ func TestDropMaterializedViewCleansRefreshAlert(t *testing.T) {
 	mvID := mvTable.Meta().ID
 
 	tk.MustExec(fmt.Sprintf(
-		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MV_SCHEMA, MV_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
 		mvID,
 	))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where mview_id = %d", mvID)).
@@ -2290,7 +2290,7 @@ func TestDropDatabaseIgnoresRefreshAlertDeleteFailure(t *testing.T) {
 	mvID := mvTable.Meta().ID
 
 	tk.MustExec(fmt.Sprintf(
-		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MV_SCHEMA, MV_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, '%s', 'mv', 'overdue', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, '%s', 'mv', 'overdue', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
 		mvID,
 		dbName,
 	))
@@ -2324,7 +2324,7 @@ func TestDropMaterializedViewIgnoresRefreshAlertDeleteFailure(t *testing.T) {
 	mvID := mvTable.Meta().ID
 
 	tk.MustExec(fmt.Sprintf(
-		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MV_SCHEMA, MV_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
 		mvID,
 	))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where mview_id = %d", mvID)).

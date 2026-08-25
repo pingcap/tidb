@@ -66,10 +66,10 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 		Check(testkit.Rows("refresh_job_id"))
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_mview_start_time' order by seq_in_index").
 		Check(testkit.Rows("mview_id", "refresh_start_time"))
-	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_mv_name_start_time' order by seq_in_index").
-		Check(testkit.Rows("mv_schema", "mv_name", "refresh_start_time"))
-	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_mv_name_commit_tso' order by seq_in_index").
-		Check(testkit.Rows("mv_schema", "mv_name", "refresh_commit_tso"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_mview_name_start_time' order by seq_in_index").
+		Check(testkit.Rows("mview_schema", "mview_name", "refresh_start_time"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_mview_name_commit_tso' order by seq_in_index").
+		Check(testkit.Rows("mview_schema", "mview_name", "refresh_commit_tso"))
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_mview_status_start_time' order by seq_in_index").
 		Check(testkit.Rows("mview_id", "refresh_status", "refresh_start_time"))
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_refresh_duration_sec' order by seq_in_index").
@@ -84,16 +84,16 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 		Check(testkit.Rows("refresh_job_id"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='REFRESH_JOB_ID'").
 		Check(testkit.Rows("bigint(20) unsigned"))
-	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name in ('MV_SCHEMA', 'MV_NAME') order by column_name").
+	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name in ('MVIEW_SCHEMA', 'MVIEW_NAME') order by column_name").
 		Check(testkit.Rows("varchar(64)", "varchar(64)"))
-	tk.MustQuery("select lower(collation_name) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name in ('MV_SCHEMA', 'MV_NAME') order by column_name").
+	tk.MustQuery("select lower(collation_name) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name in ('MVIEW_SCHEMA', 'MVIEW_NAME') order by column_name").
 		Check(testkit.Rows("utf8mb4_general_ci", "utf8mb4_general_ci"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='REFRESH_READ_TSO'").
 		Check(testkit.Rows("bigint(20) unsigned"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='REFRESH_COMMIT_TSO'").
 		Check(testkit.Rows("bigint(20) unsigned"))
 	tk.MustQuery("select lower(column_name) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and ordinal_position between 2 and 9 order by ordinal_position").
-		Check(testkit.Rows("mview_id", "mv_schema", "mv_name", "refresh_method", "refresh_start_time", "refresh_end_time", "refresh_duration_sec", "refresh_schedule_duration_sec"))
+		Check(testkit.Rows("mview_id", "mview_schema", "mview_name", "refresh_method", "refresh_start_time", "refresh_end_time", "refresh_duration_sec", "refresh_schedule_duration_sec"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='REFRESH_DURATION_SEC'").
 		Check(testkit.Rows("decimal(18,6)"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='REFRESH_SCHEDULE_DURATION_SEC'").
@@ -108,9 +108,9 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 		Check(testkit.Rows("6"))
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and index_name='PRIMARY' order by seq_in_index").
 		Check(testkit.Rows("mview_id"))
-	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and column_name in ('MV_SCHEMA', 'MV_NAME') order by column_name").
+	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and column_name in ('MVIEW_SCHEMA', 'MVIEW_NAME') order by column_name").
 		Check(testkit.Rows("varchar(64)", "varchar(64)"))
-	tk.MustQuery("select lower(collation_name) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and column_name in ('MV_SCHEMA', 'MV_NAME') order by column_name").
+	tk.MustQuery("select lower(collation_name) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and column_name in ('MVIEW_SCHEMA', 'MVIEW_NAME') order by column_name").
 		Check(testkit.Rows("utf8mb4_general_ci", "utf8mb4_general_ci"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and column_name='ALERT_LEVEL'").
 		Check(testkit.Rows("varchar(16)"))
@@ -227,16 +227,16 @@ func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {
 		Check(testkit.Rows("bigint(20)"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='REFRESH_JOB_ID'").
 		Check(testkit.Rows("bigint(20) unsigned"))
-	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name in ('MV_SCHEMA', 'MV_NAME') order by column_name").
+	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name in ('MVIEW_SCHEMA', 'MVIEW_NAME') order by column_name").
 		Check(testkit.Rows("varchar(64)", "varchar(64)"))
-	tk.MustQuery("select lower(collation_name) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name in ('MV_SCHEMA', 'MV_NAME') order by column_name").
+	tk.MustQuery("select lower(collation_name) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name in ('MVIEW_SCHEMA', 'MVIEW_NAME') order by column_name").
 		Check(testkit.Rows("utf8mb4_general_ci", "utf8mb4_general_ci"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='REFRESH_READ_TSO'").
 		Check(testkit.Rows("bigint(20) unsigned"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='REFRESH_COMMIT_TSO'").
 		Check(testkit.Rows("bigint(20) unsigned"))
-	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_mv_name_commit_tso' order by seq_in_index").
-		Check(testkit.Rows("mv_schema", "mv_name", "refresh_commit_tso"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_mview_name_commit_tso' order by seq_in_index").
+		Check(testkit.Rows("mview_schema", "mview_name", "refresh_commit_tso"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='REFRESH_DURATION_SEC'").
 		Check(testkit.Rows("decimal(18,6)"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='REFRESH_SCHEDULE_DURATION_SEC'").

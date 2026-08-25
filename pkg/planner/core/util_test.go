@@ -385,7 +385,7 @@ func TestCheckMViewReadable(t *testing.T) {
 	mvReady := &metamodel.TableInfo{
 		Name: model.NewCIStr("mv_ready"),
 		MaterializedView: &metamodel.MaterializedViewInfo{
-			InitBuildState: metamodel.MVInitBuildReady,
+			InitBuildState: metamodel.MViewInitBuildReady,
 		},
 	}
 	mvLegacy := &metamodel.TableInfo{
@@ -395,13 +395,13 @@ func TestCheckMViewReadable(t *testing.T) {
 	mvBuilding := &metamodel.TableInfo{
 		Name: model.NewCIStr("mv_building"),
 		MaterializedView: &metamodel.MaterializedViewInfo{
-			InitBuildState: metamodel.MVInitBuildBuilding,
+			InitBuildState: metamodel.MViewInitBuildBuilding,
 		},
 	}
 	mvDeferred := &metamodel.TableInfo{
 		Name: model.NewCIStr("mv_deferred"),
 		MaterializedView: &metamodel.MaterializedViewInfo{
-			InitBuildState: metamodel.MVInitBuildDeferred,
+			InitBuildState: metamodel.MViewInitBuildDeferred,
 		},
 	}
 	base := &metamodel.TableInfo{Name: model.NewCIStr("t")}

@@ -724,34 +724,34 @@ func (i *MaterializedViewBaseInfo) Clone() *MaterializedViewBaseInfo {
 	return &ni
 }
 
-// MVInitBuildState records the initial-build state of a materialized view.
+// MViewInitBuildState records the initial-build state of a materialized view.
 //
-// Keep MVInitBuildReady as the zero value for compatibility with existing clusters,
+// Keep MViewInitBuildReady as the zero value for compatibility with existing clusters,
 // whose persisted materialized view metadata does not contain this field.
-type MVInitBuildState byte
+type MViewInitBuildState byte
 
 const (
-	// MVInitBuildReady means the MV is ready for normal query and refresh.
-	MVInitBuildReady MVInitBuildState = iota
-	// MVInitBuildDeferred means the MV exists but its initial build has not started yet.
-	MVInitBuildDeferred
-	// MVInitBuildBuilding means the MV initial build is currently in progress.
-	MVInitBuildBuilding
+	// MViewInitBuildReady means the MV is ready for normal query and refresh.
+	MViewInitBuildReady MViewInitBuildState = iota
+	// MViewInitBuildDeferred means the MV exists but its initial build has not started yet.
+	MViewInitBuildDeferred
+	// MViewInitBuildBuilding means the MV initial build is currently in progress.
+	MViewInitBuildBuilding
 )
 
 // IsReady returns whether the initial build state allows normal query and refresh.
-func (s MVInitBuildState) IsReady() bool {
-	return s == MVInitBuildReady
+func (s MViewInitBuildState) IsReady() bool {
+	return s == MViewInitBuildReady
 }
 
 // String implements fmt.Stringer.
-func (s MVInitBuildState) String() string {
+func (s MViewInitBuildState) String() string {
 	switch s {
-	case MVInitBuildReady:
+	case MViewInitBuildReady:
 		return "ready"
-	case MVInitBuildDeferred:
+	case MViewInitBuildDeferred:
 		return "deferred"
-	case MVInitBuildBuilding:
+	case MViewInitBuildBuilding:
 		return "building"
 	default:
 		return fmt.Sprintf("unknown(%d)", byte(s))
@@ -759,11 +759,11 @@ func (s MVInitBuildState) String() string {
 }
 
 // AccessErrorMessage returns the user-facing error message for a non-ready MV access.
-func (s MVInitBuildState) AccessErrorMessage(objectName string) string {
+func (s MViewInitBuildState) AccessErrorMessage(objectName string) string {
 	switch s {
-	case MVInitBuildDeferred:
+	case MViewInitBuildDeferred:
 		return fmt.Sprintf("materialized view %s is not ready: initial build has not completed", objectName)
-	case MVInitBuildBuilding:
+	case MViewInitBuildBuilding:
 		return fmt.Sprintf("materialized view %s initial build is in progress", objectName)
 	default:
 		return ""
@@ -779,7 +779,7 @@ type MaterializedViewInfo struct {
 
 	// InitBuildState controls whether the MV is ready for normal query/refresh.
 	// Zero value means ready for backward compatibility with legacy persisted metadata.
-	InitBuildState MVInitBuildState `json:"init_build_state,omitempty"`
+	InitBuildState MViewInitBuildState `json:"init_build_state,omitempty"`
 
 	// SQLContent is the SELECT statement in CREATE MATERIALIZED VIEW.
 	SQLContent string `json:"sql_content"`
@@ -827,9 +827,9 @@ func (i *MaterializedViewInfo) Clone() *MaterializedViewInfo {
 }
 
 // GetInitBuildState returns the effective initial-build state.
-func (i *MaterializedViewInfo) GetInitBuildState() MVInitBuildState {
+func (i *MaterializedViewInfo) GetInitBuildState() MViewInitBuildState {
 	if i == nil {
-		return MVInitBuildReady
+		return MViewInitBuildReady
 	}
 	return i.InitBuildState
 }

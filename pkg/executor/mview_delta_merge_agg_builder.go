@@ -107,7 +107,7 @@ func (b *executorBuilder) buildMViewDeltaMerge(v *plannercore.MViewDeltaMerge) e
 
 	sourceFieldTypes := sourceExec.RetFieldTypes()
 	deltaAggColCount := v.DeltaColumnCount
-	mvTable, ok := b.is.TableByID(context.Background(), v.MVTableID)
+	mviewTable, ok := b.is.TableByID(context.Background(), v.MVTableID)
 	if !ok {
 		b.err = errors.Errorf("MViewDeltaMerge target table id %d not found in infoschema", v.MVTableID)
 		return nil
@@ -137,8 +137,8 @@ func (b *executorBuilder) buildMViewDeltaMerge(v *plannercore.MViewDeltaMerge) e
 		BaseExecutor:     exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), sourceExec),
 		AggMappings:      aggMappings,
 		DeltaAggColCount: deltaAggColCount,
-		TargetTable:      mvTable,
-		TargetInfo:       mvTable.Meta(),
+		TargetTable:      mviewTable,
+		TargetInfo:       mviewTable.Meta(),
 		TargetHandleCols: v.MVTablePKCols,
 		MinMaxRecompute:  minMaxRecompute,
 	}

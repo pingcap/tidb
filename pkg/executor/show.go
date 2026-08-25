@@ -766,16 +766,16 @@ func (e *ShowExec) fetchShowMaterializedViewRemainLogs(ctx context.Context) erro
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
 	}
 
-	mvTable, err := e.getTable()
+	mviewTable, err := e.getTable()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	mvMeta := mvTable.Meta()
-	if mvMeta.MaterializedView == nil {
-		return exeerrors.ErrWrongObject.GenWithStackByArgs(db.Name.O, mvMeta.Name.O, "MATERIALIZED VIEW")
+	mviewMeta := mviewTable.Meta()
+	if mviewMeta.MaterializedView == nil {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(db.Name.O, mviewMeta.Name.O, "MATERIALIZED VIEW")
 	}
-	if len(mvMeta.MaterializedView.BaseTableIDs) == 0 {
-		return errors.Errorf("base table does not exist for materialized view %s.%s", db.Name.O, mvMeta.Name.O)
+	if len(mviewMeta.MaterializedView.BaseTableIDs) == 0 {
+		return errors.Errorf("base table does not exist for materialized view %s.%s", db.Name.O, mviewMeta.Name.O)
 	}
 
 	type mlogShowTarget struct {
@@ -783,12 +783,12 @@ func (e *ShowExec) fetchShowMaterializedViewRemainLogs(ctx context.Context) erro
 		meta   *model.TableInfo
 	}
 
-	seenMLogIDs := make(map[int64]struct{}, len(mvMeta.MaterializedView.BaseTableIDs))
-	mlogs := make([]mlogShowTarget, 0, len(mvMeta.MaterializedView.BaseTableIDs))
-	for _, baseTableID := range mvMeta.MaterializedView.BaseTableIDs {
+	seenMLogIDs := make(map[int64]struct{}, len(mviewMeta.MaterializedView.BaseTableIDs))
+	mlogs := make([]mlogShowTarget, 0, len(mviewMeta.MaterializedView.BaseTableIDs))
+	for _, baseTableID := range mviewMeta.MaterializedView.BaseTableIDs {
 		baseTable, ok := e.is.TableByID(ctx, baseTableID)
 		if !ok {
-			return errors.Errorf("base table does not exist for materialized view %s.%s", db.Name.O, mvMeta.Name.O)
+			return errors.Errorf("base table does not exist for materialized view %s.%s", db.Name.O, mviewMeta.Name.O)
 		}
 		baseMeta := baseTable.Meta()
 		if baseMeta.MaterializedViewBase == nil || baseMeta.MaterializedViewBase.MLogID == 0 {
@@ -822,7 +822,7 @@ func (e *ShowExec) fetchShowMaterializedViewRemainLogs(ctx context.Context) erro
 
 	rows, err := sqlexec.ExecSQL(execCtx, sqlExec,
 		"SELECT LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
-		mvMeta.ID,
+		mviewMeta.ID,
 	)
 	if err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
@@ -831,10 +831,10 @@ func (e *ShowExec) fetchShowMaterializedViewRemainLogs(ctx context.Context) erro
 		return errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		return errors.Errorf("show materialized view remain logs: refresh info row missing for materialized view %s.%s", db.Name.O, mvMeta.Name.O)
+		return errors.Errorf("show materialized view remain logs: refresh info row missing for materialized view %s.%s", db.Name.O, mviewMeta.Name.O)
 	}
 	if rows[0].IsNull(0) {
-		return errors.Errorf("show materialized view remain logs: last success read tso is null for materialized view %s.%s", db.Name.O, mvMeta.Name.O)
+		return errors.Errorf("show materialized view remain logs: last success read tso is null for materialized view %s.%s", db.Name.O, mviewMeta.Name.O)
 	}
 	lastSuccessReadTSO := rows[0].GetUint64(0)
 
@@ -853,7 +853,7 @@ func (e *ShowExec) fetchShowMaterializedViewRemainLogs(ctx context.Context) erro
 		if len(countRows) > 0 && !countRows[0].IsNull(0) {
 			remainLogs = countRows[0].GetInt64(0)
 		}
-		e.appendRow([]any{mvMeta.ID, mvMeta.Name.O, mlog.meta.ID, mlog.meta.Name.O, remainLogs})
+		e.appendRow([]any{mviewMeta.ID, mviewMeta.Name.O, mlog.meta.ID, mlog.meta.Name.O, remainLogs})
 	}
 	return nil
 }
@@ -2033,8 +2033,8 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 
 func fetchShowCreateTable4MaterializedView(ctx sessionctx.Context, tb *model.TableInfo, buf *bytes.Buffer) {
 	sqlMode := ctx.GetSessionVars().SQLMode
-	mvInfo := tb.MaterializedView
-	if mvInfo == nil {
+	mviewInfo := tb.MaterializedView
+	if mviewInfo == nil {
 		return
 	}
 
@@ -2055,17 +2055,17 @@ func fetchShowCreateTable4MaterializedView(ctx sessionctx.Context, tb *model.Tab
 		fmt.Fprintf(buf, " COMMENT = '%s'", format.OutputFormat(tb.Comment))
 	}
 
-	refreshMethod := mvInfo.RefreshMethod
+	refreshMethod := mviewInfo.RefreshMethod
 	if refreshMethod == "" {
 		refreshMethod = "FAST"
 	}
 	fmt.Fprintf(buf, " REFRESH %s", refreshMethod)
 	if strings.EqualFold(refreshMethod, "FAST") {
-		if mvInfo.RefreshStartWith != "" {
-			fmt.Fprintf(buf, " START WITH %s", mvInfo.RefreshStartWith)
+		if mviewInfo.RefreshStartWith != "" {
+			fmt.Fprintf(buf, " START WITH %s", mviewInfo.RefreshStartWith)
 		}
-		if mvInfo.RefreshNext != "" {
-			fmt.Fprintf(buf, " NEXT %s", mvInfo.RefreshNext)
+		if mviewInfo.RefreshNext != "" {
+			fmt.Fprintf(buf, " NEXT %s", mviewInfo.RefreshNext)
 		}
 	}
 
@@ -2076,19 +2076,19 @@ func fetchShowCreateTable4MaterializedView(ctx sessionctx.Context, tb *model.Tab
 		fmt.Fprintf(buf, " PRE_SPLIT_REGIONS = %d", tb.PreSplitRegions)
 	}
 	attrPairs := make([]string, 0, 3)
-	if mvInfo.AlertWarningSec > 0 {
-		attrPairs = append(attrPairs, fmt.Sprintf("mview_alert_warning=%d", mvInfo.AlertWarningSec))
+	if mviewInfo.AlertWarningSec > 0 {
+		attrPairs = append(attrPairs, fmt.Sprintf("mview_alert_warning=%d", mviewInfo.AlertWarningSec))
 	}
-	if mvInfo.AlertOverdueSec > 0 {
-		attrPairs = append(attrPairs, fmt.Sprintf("mview_alert_overdue=%d", mvInfo.AlertOverdueSec))
+	if mviewInfo.AlertOverdueSec > 0 {
+		attrPairs = append(attrPairs, fmt.Sprintf("mview_alert_overdue=%d", mviewInfo.AlertOverdueSec))
 	}
-	if mvInfo.AlertRefreshFailed {
+	if mviewInfo.AlertRefreshFailed {
 		attrPairs = append(attrPairs, "mview_alert_refresh_failed=yes")
 	}
 	if len(attrPairs) > 0 {
 		fmt.Fprintf(buf, " ATTRIBUTES='%s'", strings.Join(attrPairs, ","))
 	}
-	fmt.Fprintf(buf, " AS %s", mvInfo.SQLContent)
+	fmt.Fprintf(buf, " AS %s", mviewInfo.SQLContent)
 }
 
 func fetchShowCreateTable4MaterializedViewLog(

@@ -783,8 +783,8 @@ const (
 	CreateTiDBMViewRefreshHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_hist (
 		REFRESH_JOB_ID bigint unsigned NOT NULL,
 		MVIEW_ID bigint NOT NULL,
-		MV_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-		MV_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		MVIEW_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		MVIEW_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
 		REFRESH_METHOD varchar(32) NOT NULL,
 		REFRESH_START_TIME datetime(6) DEFAULT NULL,
 		REFRESH_END_TIME datetime(6) DEFAULT NULL,
@@ -800,8 +800,8 @@ const (
 		LAST_HEARTBEAT_TIME datetime(6) DEFAULT NULL,
 		PRIMARY KEY(REFRESH_JOB_ID),
 		KEY idx_mview_start_time (MVIEW_ID, REFRESH_START_TIME),
-		KEY idx_mv_name_start_time (MV_SCHEMA, MV_NAME, REFRESH_START_TIME),
-		KEY idx_mv_name_commit_tso (MV_SCHEMA, MV_NAME, REFRESH_COMMIT_TSO),
+		KEY idx_mview_name_start_time (MVIEW_SCHEMA, MVIEW_NAME, REFRESH_START_TIME),
+		KEY idx_mview_name_commit_tso (MVIEW_SCHEMA, MVIEW_NAME, REFRESH_COMMIT_TSO),
 		KEY idx_mview_status_start_time (MVIEW_ID, REFRESH_STATUS, REFRESH_START_TIME),
 		KEY idx_refresh_duration_sec (REFRESH_DURATION_SEC),
 		KEY idx_refresh_schedule_duration_sec (REFRESH_SCHEDULE_DURATION_SEC),
@@ -811,8 +811,8 @@ const (
 	// CreateTiDBMViewRefreshAlertTable is a table to store the current refresh alert level for each materialized view.
 	CreateTiDBMViewRefreshAlertTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_alert (
 		MVIEW_ID bigint NOT NULL,
-		MV_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-		MV_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		MVIEW_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		MVIEW_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
 		ALERT_LEVEL varchar(16) DEFAULT NULL,
 		REFRESH_FAILED varchar(3) DEFAULT NULL,
 		LAST_SUCCESS_SNAPSHOT_TIME datetime(6) DEFAULT NULL,
