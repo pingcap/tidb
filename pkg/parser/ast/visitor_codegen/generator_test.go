@@ -42,6 +42,9 @@ func TestGenerateTraversalGrammar(t *testing.T) {
 	}
 
 	source := string(result.Source)
+	if got, want := strings.Count(source, "\n\nfunc ("), len(result.Receivers); got != want {
+		t.Fatalf("got %d blank-line-separated generated methods, want %d", got, want)
+	}
 	for _, exact := range []string{
 		`func (n *LeafNode) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)

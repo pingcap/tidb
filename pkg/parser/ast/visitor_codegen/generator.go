@@ -343,8 +343,14 @@ func Generate(request GenerateRequest) (GenerateResult, error) {
 	clearTokenPositions(reflect.ValueOf(generated), make(map[uintptr]bool))
 
 	var body bytes.Buffer
-	if err := format.Node(&body, pkg.fset, generated); err != nil {
-		return GenerateResult{}, fmt.Errorf("format generated AST: %w", err)
+	fmt.Fprintf(&body, "package %s\n\n", pkg.name)
+	for i, decl := range generated.Decls {
+		if i > 0 {
+			body.WriteString("\n\n")
+		}
+		if err := format.Node(&body, pkg.fset, decl); err != nil {
+			return GenerateResult{}, fmt.Errorf("format generated declaration: %w", err)
+		}
 	}
 	const header = `// Copyright 2026 PingCAP, Inc.
 //

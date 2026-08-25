@@ -20,18 +20,22 @@ func (n *CreateDatabaseStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *AlterDatabaseStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *DropDatabaseStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *FlashBackDatabaseStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *IndexPartSpecification) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -47,6 +51,7 @@ func (n *IndexPartSpecification) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ReferenceDef) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -69,14 +74,17 @@ func (n *ReferenceDef) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *OnDeleteOpt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *OnUpdateOpt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *ColumnOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -88,6 +96,7 @@ func (n *ColumnOption) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *IndexOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -99,6 +108,7 @@ func (n *IndexOption) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *Constraint) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -125,6 +135,7 @@ func (n *Constraint) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ColumnDef) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -139,6 +150,7 @@ func (n *ColumnDef) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *CreateTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -183,6 +195,7 @@ func (n *CreateTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *DropTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -194,18 +207,22 @@ func (n *DropTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *DropPlacementPolicyStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *DropResourceGroupStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *OptimizeTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *DropSequenceStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -217,6 +234,7 @@ func (n *DropSequenceStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *RenameTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -228,6 +246,7 @@ func (n *RenameTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *TableToTable) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -240,6 +259,7 @@ func (n *TableToTable) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *CreateViewStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -252,10 +272,12 @@ func (n *CreateViewStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *CreatePlacementPolicyStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *CreateMaskingPolicyStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -277,10 +299,12 @@ func (n *CreateMaskingPolicyStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *CreateResourceGroupStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *CreateSequenceStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -290,10 +314,12 @@ func (n *CreateSequenceStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *IndexLockAndAlgorithm) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *CreateIndexStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -318,6 +344,7 @@ func (n *CreateIndexStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *DropIndexStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -332,6 +359,7 @@ func (n *DropIndexStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *LockTablesStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -343,10 +371,12 @@ func (n *LockTablesStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *UnlockTablesStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *CleanupTableLockStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -358,6 +388,7 @@ func (n *CleanupTableLockStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *RepairTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -370,12 +401,14 @@ func (n *RepairTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ResourceGroupRunawayActionOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	return v.Leave(n)
 }
+
 func (n *TableOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -392,6 +425,7 @@ func (n *TableOption) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ColumnPosition) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -403,6 +437,7 @@ func (n *ColumnPosition) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *AlterTableSpec) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -469,6 +504,7 @@ func (n *AlterTableSpec) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *AlterTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -483,6 +519,7 @@ func (n *AlterTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *TruncateTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -492,6 +529,7 @@ func (n *TruncateTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *PartitionOptions) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -509,6 +547,7 @@ func (n *PartitionOptions) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *RecoverTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -520,6 +559,7 @@ func (n *RecoverTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *FlashBackToTimestampStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -538,6 +578,7 @@ func (n *FlashBackToTimestampStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *FlashBackTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -549,22 +590,27 @@ func (n *FlashBackTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *AttributesSpec) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *StatsOptionsSpec) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *AlterPlacementPolicyStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *AlterResourceGroupStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *AlterSequenceStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -574,6 +620,7 @@ func (n *AlterSequenceStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *Join) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -598,6 +645,7 @@ func (n *Join) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *TableName) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -614,6 +662,7 @@ func (n *TableName) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *DeleteTableList) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -627,6 +676,7 @@ func (n *DeleteTableList) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *OnCondition) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -636,6 +686,7 @@ func (n *OnCondition) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *TableSource) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -645,10 +696,12 @@ func (n *TableSource) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *WildCardField) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *SelectField) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -660,6 +713,7 @@ func (n *SelectField) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *FieldList) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -671,6 +725,7 @@ func (n *FieldList) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *TableRefsClause) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -680,6 +735,7 @@ func (n *TableRefsClause) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ByItem) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -689,6 +745,7 @@ func (n *ByItem) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *GroupByClause) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -700,6 +757,7 @@ func (n *GroupByClause) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *HavingClause) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -709,6 +767,7 @@ func (n *HavingClause) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *OrderByClause) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -720,6 +779,7 @@ func (n *OrderByClause) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (s *TableSample) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(s); skipChildren {
 		return v.Leave(s)
@@ -736,6 +796,7 @@ func (s *TableSample) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(s)
 }
+
 func (c *CommonTableExpression) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(c); skipChildren {
 		return v.Leave(c)
@@ -745,6 +806,7 @@ func (c *CommonTableExpression) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(c)
 }
+
 func (n *WithClause) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -756,6 +818,7 @@ func (n *WithClause) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *SelectStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -826,6 +889,7 @@ func (n *SelectStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *SetOprSelectList) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -852,6 +916,7 @@ func (n *SetOprSelectList) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *SetOprStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -878,6 +943,7 @@ func (n *SetOprStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *Assignment) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -890,6 +956,7 @@ func (n *Assignment) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ColumnNameOrUserVar) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChild := v.Enter(n); skipChild {
 		return v.Leave(n)
@@ -906,6 +973,7 @@ func (n *ColumnNameOrUserVar) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *LoadDataStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -932,6 +1000,7 @@ func (n *LoadDataStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ImportIntoStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -958,6 +1027,7 @@ func (n *ImportIntoStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *CallStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -969,6 +1039,7 @@ func (n *CallStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *InsertStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1005,6 +1076,7 @@ func (n *InsertStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *DeleteStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1044,6 +1116,7 @@ func (n *DeleteStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *NonTransactionalDMLStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1060,6 +1133,7 @@ func (n *NonTransactionalDMLStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *UpdateStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1099,6 +1173,7 @@ func (n *UpdateStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *Limit) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1115,6 +1190,7 @@ func (n *Limit) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ShowStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1146,6 +1222,7 @@ func (n *ShowStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *WindowSpec) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1167,12 +1244,14 @@ func (n *WindowSpec) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *SelectIntoOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	return v.Leave(n)
 }
+
 func (n *PartitionByClause) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1184,6 +1263,7 @@ func (n *PartitionByClause) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *FrameClause) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1196,6 +1276,7 @@ func (n *FrameClause) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *FrameBound) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1207,6 +1288,7 @@ func (n *FrameBound) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *DistributeTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1216,6 +1298,7 @@ func (n *DistributeTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *SplitRegionStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1230,6 +1313,7 @@ func (n *SplitRegionStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *SplitOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1253,6 +1337,7 @@ func (n *SplitOption) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *SplitIndexOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1262,6 +1347,7 @@ func (n *SplitIndexOption) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *AsOfClause) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1271,6 +1357,7 @@ func (n *AsOfClause) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *BetweenExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1286,6 +1373,7 @@ func (n *BetweenExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *BinaryOperationExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1298,6 +1386,7 @@ func (n *BinaryOperationExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *WhenClause) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1310,6 +1399,7 @@ func (n *WhenClause) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *CaseExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1331,6 +1421,7 @@ func (n *CaseExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *SubqueryExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1340,6 +1431,7 @@ func (n *SubqueryExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *CompareSubqueryExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1352,6 +1444,7 @@ func (n *CompareSubqueryExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *TableNameExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1361,10 +1454,12 @@ func (n *TableNameExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ColumnName) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *ColumnNameExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1374,10 +1469,12 @@ func (n *ColumnNameExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *DefaultExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *ExistsSubqueryExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1387,6 +1484,7 @@ func (n *ExistsSubqueryExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *PatternInExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1406,6 +1504,7 @@ func (n *PatternInExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *IsNullExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1415,6 +1514,7 @@ func (n *IsNullExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *IsTruthExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1424,6 +1524,7 @@ func (n *IsTruthExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *PatternLikeOrIlikeExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1440,6 +1541,7 @@ func (n *PatternLikeOrIlikeExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ParenthesesExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1451,6 +1553,7 @@ func (n *ParenthesesExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *PositionExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1462,6 +1565,7 @@ func (n *PositionExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *PatternRegexpExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1474,6 +1578,7 @@ func (n *PatternRegexpExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *RowExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1485,6 +1590,7 @@ func (n *RowExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *UnaryOperationExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1494,6 +1600,7 @@ func (n *UnaryOperationExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ValuesExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1503,6 +1610,7 @@ func (n *ValuesExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *VariableExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1515,12 +1623,14 @@ func (n *VariableExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *MaxValueExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	return v.Leave(n)
 }
+
 func (n *MatchAgainst) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1535,6 +1645,7 @@ func (n *MatchAgainst) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *SetCollationExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1544,6 +1655,7 @@ func (n *SetCollationExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *FuncCallExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1555,6 +1667,7 @@ func (n *FuncCallExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *JSONSumCrc32Expr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1564,6 +1677,7 @@ func (n *JSONSumCrc32Expr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *FuncCastExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1573,12 +1687,14 @@ func (n *FuncCastExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *TrimDirectionExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	return v.Leave(n)
 }
+
 func (n *AggregateFuncExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1595,6 +1711,7 @@ func (n *AggregateFuncExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *WindowFuncExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1609,18 +1726,21 @@ func (n *WindowFuncExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *TimeUnitExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	return v.Leave(n)
 }
+
 func (n *GetFormatSelectorExpr) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
 	return v.Leave(n)
 }
+
 func (n *TraceStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1630,10 +1750,12 @@ func (n *TraceStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ExplainForStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *ExplainStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1645,6 +1767,7 @@ func (n *ExplainStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *PlanReplayerStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1680,10 +1803,12 @@ func (n *PlanReplayerStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *TrafficStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *CompactTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1693,6 +1818,7 @@ func (n *CompactTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *PrepareStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1704,10 +1830,12 @@ func (n *PrepareStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *DeallocateStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *ExecuteStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1719,6 +1847,7 @@ func (n *ExecuteStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *BeginStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1730,22 +1859,27 @@ func (n *BeginStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *BinlogStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *CommitStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *RollbackStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *UseStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *VariableAssignment) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1755,6 +1889,7 @@ func (n *VariableAssignment) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *FlushStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1766,18 +1901,22 @@ func (n *FlushStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *KillStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *SavepointStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *ReleaseSavepointStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *SetStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1789,6 +1928,7 @@ func (n *SetStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *SetConfigStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1798,42 +1938,52 @@ func (n *SetConfigStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *SetSessionStatesStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *SetPwdStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *SetRoleStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *SetDefaultRoleStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *CreateUserStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *AlterUserStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *AlterInstanceStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *AlterRangeStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *DropUserStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *StringOrUserVar) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChild := v.Enter(n); skipChild {
 		return v.Leave(n)
@@ -1845,10 +1995,12 @@ func (n *StringOrUserVar) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *RecommendIndexStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *CreateBindingStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1869,6 +2021,7 @@ func (n *CreateBindingStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *DropBindingStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1891,6 +2044,7 @@ func (n *DropBindingStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *SetBindingStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1907,6 +2061,7 @@ func (n *SetBindingStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *CreateStatisticsStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1921,10 +2076,12 @@ func (n *CreateStatisticsStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *DropStatisticsStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *DoStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1936,6 +2093,7 @@ func (n *DoStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *AdminStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1952,6 +2110,7 @@ func (n *AdminStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *PrivElem) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1963,6 +2122,7 @@ func (n *PrivElem) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *RevokeStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1974,10 +2134,12 @@ func (n *RevokeStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *RevokeRoleStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *GrantStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -1989,26 +2151,32 @@ func (n *GrantStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *GrantProxyStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *GrantRoleStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *ShutdownStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *RestartStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *HelpStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *RenameUserStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2020,10 +2188,12 @@ func (n *RenameUserStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *UserToUser) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *BRIEStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2035,22 +2205,27 @@ func (n *BRIEStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ImportIntoActionStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *CancelDistributionJobStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *TableOptimizerHint) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *SetResourceGroupStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *CalibrateResourceStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2062,6 +2237,7 @@ func (n *CalibrateResourceStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *DynamicCalibrateResourceOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2073,10 +2249,12 @@ func (n *DynamicCalibrateResourceOption) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *DropQueryWatchStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *AddQueryWatchStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	for _, val := range n.QueryWatchOptionList {
@@ -2086,6 +2264,7 @@ func (n *AddQueryWatchStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *QueryWatchOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2107,6 +2286,7 @@ func (n *QueryWatchOption) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *QueryWatchTextOption) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2118,10 +2298,12 @@ func (n *QueryWatchTextOption) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *StoreParameter) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *ProcedureDecl) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2133,6 +2315,7 @@ func (n *ProcedureDecl) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ProcedureBlock) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2144,6 +2327,7 @@ func (n *ProcedureBlock) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ProcedureInfo) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2158,10 +2342,12 @@ func (n *ProcedureInfo) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *DropProcedureStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *ProcedureIfInfo) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2171,6 +2357,7 @@ func (n *ProcedureIfInfo) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ProcedureElseIfBlock) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2180,10 +2367,12 @@ func (n *ProcedureElseIfBlock) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ProcedureElseBlock) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *ProcedureIfBlock) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2200,6 +2389,7 @@ func (n *ProcedureIfBlock) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *SimpleWhenThenStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2211,6 +2401,7 @@ func (n *SimpleWhenThenStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *SimpleCaseStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2232,6 +2423,7 @@ func (n *SimpleCaseStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *SearchWhenThenStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2243,6 +2435,7 @@ func (n *SearchWhenThenStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *SearchCaseStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2254,6 +2447,7 @@ func (n *SearchCaseStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ProcedureRepeatStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2268,6 +2462,7 @@ func (n *ProcedureRepeatStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ProcedureWhileStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2282,10 +2477,12 @@ func (n *ProcedureWhileStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ProcedureCursor) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *ProcedureErrorControl) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2297,30 +2494,37 @@ func (n *ProcedureErrorControl) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ProcedureOpenCur) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *ProcedureCloseCur) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *ProcedureFetchInto) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *ProcedureErrorVal) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *ProcedureErrorState) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *ProcedureErrorCon) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *ProcedureLabelBlock) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2330,6 +2534,7 @@ func (n *ProcedureLabelBlock) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ProcedureLabelLoop) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2339,10 +2544,12 @@ func (n *ProcedureLabelLoop) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *ProcedureJump) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *AnalyzeTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2354,6 +2561,7 @@ func (n *AnalyzeTableStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *DropStatsStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2365,10 +2573,12 @@ func (n *DropStatsStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *LoadStatsStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
 }
+
 func (n *LockStatsStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2380,6 +2590,7 @@ func (n *LockStatsStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *UnlockStatsStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2391,6 +2602,7 @@ func (n *UnlockStatsStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	}
 	return v.Leave(n)
 }
+
 func (n *RefreshStatsStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	v.Enter(n)
 	return v.Leave(n)
