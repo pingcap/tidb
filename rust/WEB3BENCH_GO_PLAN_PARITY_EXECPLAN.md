@@ -468,3 +468,45 @@ global-aggregate medians vary materially with local process contention across
 the saved runs, so a strict per-query no-regression claim needs a repeated
 isolated baseline run. Rust is still slower than Go on R32/R34/R35/R32det, so
 these receipts do not claim cross-implementation latency equality.
+
+## 2026-08-25 crossover audit (current Rust versus handoff baseline and Go)
+
+To remove the fixed-order/shared-TiKV cache bias found in an earlier A/B
+attempt, each query was measured in two rounds with four warmups and sixteen
+sample pairs. The first server in each pair alternated between runs; each
+query opened fresh connections and used one client. The database was the
+official Web3Bench scale-factor-10 load (`web3bench_ab_20260825`: 10,000
+blocks, 7,000 contracts, 800,000 transactions, 180,000 token transfers, and
+2,000 temp-table rows). Values below are median-of-round-medians in ms; the
+ratio is current Rust divided by the comparison server.
+
+| Query | Rust current | Rust c300 baseline | current/c300 | Go nightly | current/Go |
+|---|---:|---:|---:|---:|---:|
+| R1 | 0.496 | 0.497 | 1.00x | 0.553 | 0.99x |
+| R21 | 1.517 | 1.492 | 1.02x | 1.425 | 1.05x |
+| R22 | 0.957 | 1.071 | 0.89x | 0.976 | 0.76x |
+| R23 | 1.162 | 1.165 | 1.00x | 1.262 | 0.92x |
+| R24 | 1.190 | 1.277 | 0.93x | 1.077 | 1.06x |
+| R25 | 0.992 | 1.019 | 0.97x | 0.855 | 1.11x |
+| R31 | 1.661 | 1.766 | 0.94x | 1.671 | 1.01x |
+| R32 | 5.219 | 5.169 | 1.01x | 3.919 | 1.33x |
+| R33 | 76.882 | 103.006 | 0.75x | 186.081 | 0.42x |
+| R34 | 154.607 | 255.007 | 0.61x | 224.505 | 0.71x |
+| R35 | 139.053 | 143.886 | 0.97x | 104.283 | 1.43x |
+| R32det | 5.558 | 5.456 | 1.02x | 3.743 | 1.49x |
+
+Receipts are `/tmp/web3_perf_crossover_c300_current_2x16.json` and
+`/tmp/web3_perf_crossover_go_current_2x16.json`. Current Rust and c300 return
+identical rows for all eleven entries. Current Rust and Go return identical
+rows for all deterministic entries; R32 without a tie-breaker may select a
+different row subset/order at the timestamp tie boundary, while R32det is
+identical. After removing generated `Column#N` labels and estimate text, all
+current-vs-Go operator skeletons match; current-vs-c300 also matches, with the
+intentional R34 TopN expression spelling change from the aggregate-plan fix.
+
+The first fixed-order A/B run appeared to make current R33 slower (about
+1.5x), but that signal disappeared—and reversed—when query order was balanced:
+the second scan benefited from shared TiKV state. The crossover audit is the
+receipt used for the no-regression conclusion. Against c300, no query exceeds
+1.02x and R33/R34 improve substantially; against Go, R32/R35/R32det remain
+slower and are performance follow-ups rather than correctness regressions.
