@@ -46,11 +46,15 @@ fail = "0.4"
 futures = { version = "0.3" }
 lazy_static = "1"
 log = "0.4"
+openssl = "0.10"
 pin-project = "1"
 prometheus = { version = "0.13", default-features = false }
 prost = "0.14"
 rand = "0.8"
 regex = "1"
+crc32fast = "1"
+farmhash = "1"
+reqwest = { version = "0.11", features = ["json", "native-tls-vendored"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-pemfile = "2"
 semver = "1.0"
@@ -68,10 +72,8 @@ url = "2"
 clap = "2"
 env_logger = "0.10"
 fail = { version = "0.4", features = ["failpoints"] }
-openssl = "0.10"
 proptest = "1"
 proptest-derive = "0.5.1"
-reqwest = { version = "0.11", features = ["json", "native-tls-vendored"] }
 rstest = "0.18.2"
 serde_json = "1"
 serial_test = "0.5.0"

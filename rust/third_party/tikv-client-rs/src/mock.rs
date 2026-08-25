@@ -96,6 +96,8 @@ pub struct MockPdClient {
     loaded_keyspaces: Arc<Mutex<Vec<String>>>,
     #[new(default)]
     regions: Arc<Mutex<Option<Vec<RegionWithLeader>>>>,
+    #[new(default)]
+    split_region_keys: Arc<Mutex<Vec<Vec<Vec<u8>>>>>,
 }
 
 #[async_trait]
@@ -136,6 +138,7 @@ impl MockPdClient {
             keyspace_meta: Arc::default(),
             loaded_keyspaces: Arc::default(),
             regions: Arc::default(),
+            split_region_keys: Arc::default(),
         }
     }
 
@@ -225,6 +228,10 @@ impl MockPdClient {
     pub(crate) fn loaded_keyspaces(&self) -> Vec<String> {
         self.loaded_keyspaces.lock().unwrap().clone()
     }
+
+    pub(crate) fn split_region_keys(&self) -> Vec<Vec<Vec<u8>>> {
+        self.split_region_keys.lock().unwrap().clone()
+    }
 }
 
 #[async_trait]
@@ -304,6 +311,15 @@ impl PdClient for MockPdClient {
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
         Ok(self.timestamp.lock().unwrap().clone())
+    }
+
+    async fn split_regions(
+        self: Arc<Self>,
+        split_keys: Vec<Vec<u8>>,
+        _retry_limit: u64,
+    ) -> Result<Vec<u64>> {
+        self.split_region_keys.lock().unwrap().push(split_keys);
+        Ok(Vec::new())
     }
 
     async fn update_safepoint(self: Arc<Self>, _safepoint: u64) -> Result<bool> {

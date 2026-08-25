@@ -4,6 +4,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::plan::CountLockResolverAction;
 use super::plan::PreserveShard;
 use super::Keyspace;
 use crate::backoff::Backoff;
@@ -370,6 +371,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 snapshot_runtime_stats: None,
                 snapshot_lock_backoff: None,
                 response_locks_only: false,
+                prewrite_lock_conflict: None,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -425,6 +427,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 )),
                 snapshot_runtime_stats,
                 response_locks_only: false,
+                prewrite_lock_conflict: None,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -477,6 +480,7 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 )),
                 snapshot_runtime_stats,
                 response_locks_only: true,
+                prewrite_lock_conflict: None,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,
@@ -592,6 +596,54 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
             phantom: PhantomData,
         }
     }
+
+    pub(crate) fn count_lock_resolver_action(
+        self,
+        action: &'static str,
+    ) -> PlanBuilder<PdC, CountLockResolverAction<P>, Ph>
+    where
+        P: Plan,
+    {
+        PlanBuilder {
+            pd_client: self.pd_client.clone(),
+            plan: CountLockResolverAction {
+                inner: self.plan,
+                action,
+            },
+            keyspace_name: self.keyspace_name,
+            rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<PdC, P, Ph> PlanBuilder<PdC, ResolveLock<P, PdC>, Ph>
+where
+    PdC: PdClient,
+    P: Plan + Shardable,
+    P::Result: HasLocks,
+    Ph: PlanBuilderPhase,
+{
+    /// Apply client-go's prewrite-only lock policy before generic resolution.
+    /// `NoResolvePolicy` rejects every holder, while optimistic prewrite also
+    /// rejects a holder newer than the transaction because resolution cannot
+    /// make that transaction commit successfully.
+    pub(crate) fn prewrite_lock_conflict(
+        mut self,
+        caller_start_ts: u64,
+        no_resolve: bool,
+        optimistic: bool,
+    ) -> Self {
+        self.plan.prewrite_lock_conflict = Some(crate::request::plan::PrewriteLockConflict {
+            caller_start_ts,
+            no_resolve,
+            optimistic,
+        });
+        self
+    }
 }
 
 impl<PdC: PdClient, P: Plan + Shardable> PlanBuilder<PdC, P, NoTarget>
@@ -613,6 +665,15 @@ where
         backoff: Backoff,
     ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC>, Targetted> {
         self.make_retry_multi_region(backoff, true)
+    }
+
+    /// Split and retry a request with a caller-owned region concurrency cap.
+    pub(crate) fn retry_multi_region_with_concurrency(
+        self,
+        backoff: Backoff,
+        concurrency: usize,
+    ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC>, Targetted> {
+        self.make_retry_multi_region_with_concurrency(backoff, false, concurrency)
     }
 
     /// Retry a snapshot read with the ordinary schedule while optionally
@@ -645,6 +706,19 @@ where
         backoff: R,
         preserve_region_results: bool,
     ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, R>, Targetted> {
+        self.make_retry_multi_region_with_concurrency(
+            backoff,
+            preserve_region_results,
+            crate::request::plan::MULTI_REGION_CONCURRENCY,
+        )
+    }
+
+    fn make_retry_multi_region_with_concurrency<R: RegionRetryState>(
+        self,
+        backoff: R,
+        preserve_region_results: bool,
+        concurrency: usize,
+    ) -> PlanBuilder<PdC, RetryableMultiRegion<P, PdC, R>, Targetted> {
         PlanBuilder {
             pd_client: self.pd_client.clone(),
             plan: RetryableMultiRegion {
@@ -652,6 +726,7 @@ where
                 pd_client: self.pd_client,
                 backoff,
                 preserve_region_results,
+                concurrency: concurrency.max(1),
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,

@@ -434,7 +434,13 @@ pub fn is_key_exists(error: &(dyn StdError + 'static)) -> bool {
 }
 
 pub fn is_write_conflict(error: &(dyn StdError + 'static)) -> bool {
-    error_chain(error).any(|error| error.is::<WriteConflictError>())
+    error_chain(error).any(|error| {
+        error.is::<WriteConflictError>()
+            || matches!(
+                error.downcast_ref::<crate::Error>(),
+                Some(crate::Error::WriteConflict(_))
+            )
+    })
 }
 
 fn has_static_error(error: &(dyn StdError + 'static), expected: StaticError) -> bool {

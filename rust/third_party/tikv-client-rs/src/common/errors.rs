@@ -26,6 +26,16 @@ pub use crate::proto::kvrpcpb::KeyError as ProtoKeyError;
 #[derive(Debug, Error)]
 #[allow(clippy::large_enum_variant)]
 pub enum Error {
+    /// A source-compatible singleton error category.
+    #[error(transparent)]
+    Static(#[from] crate::error::StaticError),
+    /// PD did not advance beyond a transaction's commit-wait timestamp.
+    #[error("{message}: {source}")]
+    CommitTimestampLag {
+        message: String,
+        #[source]
+        source: crate::error::StaticError,
+    },
     /// Feature is not implemented.
     #[error("Unimplemented feature")]
     Unimplemented,
@@ -44,6 +54,33 @@ pub enum Error {
     /// An optimistic transaction became stale while waiting for local latches.
     #[error(transparent)]
     WriteConflictInLatch(#[from] crate::error::WriteConflictInLatchError),
+    /// TiKV or the transaction client detected a transactional write conflict.
+    #[error(transparent)]
+    WriteConflict(#[from] crate::error::WriteConflictError),
+    /// TiKV rejected an insert because the key already exists.
+    #[error(transparent)]
+    KeyExists(#[from] crate::error::KeyExistsError),
+    /// TiKV requested that the caller retry the transaction.
+    #[error(transparent)]
+    RetryableKey(#[from] crate::error::RetryableError),
+    /// A mutation assertion was contradicted by an acquired pessimistic lock
+    /// or by TiKV during prewrite.
+    #[error(transparent)]
+    AssertionFailed(#[from] crate::error::AssertionFailedError),
+    /// A query kill signal or pessimistic-lock execution deadline interrupted
+    /// the operation.
+    #[error(transparent)]
+    QueryInterruptedWithSignal(#[from] crate::error::QueryInterruptedWithSignalError),
+    /// `LockOnlyIfExists` requires return-value information from TiKV.
+    #[error(transparent)]
+    LockOnlyIfExistsNoReturnValue(#[from] crate::error::LockOnlyIfExistsNoReturnValueError),
+    /// A multi-key `LockOnlyIfExists` request cannot select a possibly absent
+    /// key as its transaction primary.
+    #[error(transparent)]
+    LockOnlyIfExistsNoPrimaryKey(#[from] crate::error::LockOnlyIfExistsNoPrimaryKeyError),
+    /// TiKV detected a pessimistic-lock deadlock.
+    #[error(transparent)]
+    Deadlock(#[from] crate::error::DeadlockError),
     /// We tried to use 1pc for a transaction, but it didn't work. Probably should have used 2pc.
     #[error("1PC transaction could not be committed.")]
     OnePcFailure,
@@ -182,8 +219,31 @@ impl From<ProtoRegionError> for Error {
 }
 
 impl From<ProtoKeyError> for Error {
-    fn from(e: ProtoKeyError) -> Error {
-        Error::KeyError(Box::new(e))
+    fn from(mut error: ProtoKeyError) -> Error {
+        crate::redact::redact_key_error_if_necessary(&mut error);
+        if let Some(already_exist) = error.already_exist.take() {
+            return crate::error::KeyExistsError {
+                already_exist,
+                value: Vec::new(),
+            }
+            .into();
+        }
+        if let Some(conflict) = error.conflict.take() {
+            return crate::error::new_write_conflict(conflict).into();
+        }
+        if !error.retryable.is_empty() {
+            return crate::error::RetryableError {
+                message: error.retryable,
+            }
+            .into();
+        }
+        if let Some(assertion_failed) = error.assertion_failed.take() {
+            return crate::error::AssertionFailedError { assertion_failed }.into();
+        }
+        if let Some(not_found) = error.txn_not_found.take() {
+            return Error::TxnNotFound(not_found);
+        }
+        Error::KeyError(Box::new(error))
     }
 }
 

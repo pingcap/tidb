@@ -145,6 +145,15 @@ pub trait PdClient: Send + Sync + 'static {
 
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp>;
 
+    /// Split regions at logical keys for large-transaction write spreading.
+    async fn split_regions(
+        self: Arc<Self>,
+        _split_keys: Vec<Vec<u8>>,
+        _retry_limit: u64,
+    ) -> Result<Vec<u64>> {
+        Err(crate::Error::Unimplemented)
+    }
+
     /// PD cluster identifier retained by the connected client.
     ///
     /// Mock and custom PD implementations that do not model PD membership may
@@ -723,6 +732,18 @@ where
 #[async_trait]
 impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     type KvClient = KvC::KvClient;
+
+    async fn split_regions(
+        self: Arc<Self>,
+        split_keys: Vec<Vec<u8>>,
+        retry_limit: u64,
+    ) -> Result<Vec<u64>> {
+        Ok(self
+            .region_cache
+            .split_regions(split_keys, retry_limit)
+            .await?
+            .regions_id)
+    }
 
     async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
         self.map_leader_route(region, &ReplicaSelectorState::default())

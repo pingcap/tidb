@@ -2,6 +2,7 @@
 
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::future::Future;
 
@@ -13,12 +14,18 @@ use crate::Result;
 use crate::Value;
 use crate::ValueEntry;
 
-use super::transaction::Mutation;
+use super::transaction::{Mutation, MutationFlags, MutationOptions};
 
 /// A caching layer which buffers reads and writes in a transaction.
 pub struct Buffer {
     primary_key: Option<Key>,
     entry_map: BTreeMap<Key, BufferEntry>,
+    /// Keys with an acquired pessimistic lock; the value is true for shared mode.
+    locked_keys: BTreeMap<Key, bool>,
+    /// Existence observed while acquiring a pessimistic lock. A plain lock
+    /// implies existence in client-go unless TiKV explicitly reports a miss.
+    locked_value_exists: BTreeMap<Key, bool>,
+    mutation_options: BTreeMap<Key, MutationOptions>,
     is_pessimistic: bool,
     snapshot_cache_hits: usize,
 }
@@ -28,9 +35,16 @@ impl Buffer {
         Buffer {
             primary_key: None,
             entry_map: BTreeMap::new(),
+            locked_keys: BTreeMap::new(),
+            locked_value_exists: BTreeMap::new(),
+            mutation_options: BTreeMap::new(),
             is_pessimistic,
             snapshot_cache_hits: 0,
         }
+    }
+
+    pub(crate) fn set_pessimistic(&mut self, pessimistic: bool) {
+        self.is_pessimistic = pessimistic;
     }
 
     /// Get the primary key of the buffer.
@@ -38,10 +52,31 @@ impl Buffer {
         self.primary_key.clone()
     }
 
+    pub(crate) fn len(&self) -> usize {
+        self.entry_map
+            .values()
+            .filter(|entry| !matches!(entry, BufferEntry::Cached(_)))
+            .count()
+    }
+
+    pub(crate) fn memory_footprint(&self) -> u64 {
+        self.entry_map.iter().fold(0_u64, |total, (key, entry)| {
+            let value_size = match entry {
+                BufferEntry::Cached(_) => return total,
+                BufferEntry::Locked(_) | BufferEntry::SharedLocked(_) => 0,
+                BufferEntry::Put(value) | BufferEntry::Insert(value) => value.len(),
+                BufferEntry::Del | BufferEntry::CheckNotExist => 0,
+            };
+            total.saturating_add((key.len() + value_size) as u64)
+        })
+    }
+
     /// Discard values cached by snapshot reads while retaining transaction mutations.
     pub(crate) fn clear_cached_reads(&mut self) {
         self.entry_map
             .retain(|_, entry| !matches!(entry, BufferEntry::Cached(_)));
+        self.mutation_options
+            .retain(|key, _| self.entry_map.contains_key(key));
     }
 
     /// Return the number of source snapshot-cache hits observed by this
@@ -409,22 +444,101 @@ impl Buffer {
 
     /// Lock the given key if necessary.
     pub fn lock(&mut self, key: Key) {
-        self.primary_key.get_or_insert_with(|| key.clone());
-        let value = self
-            .entry_map
-            .entry(key)
-            // Mutated keys don't need a lock.
-            .or_insert(BufferEntry::Locked(None));
-        // But values which we have only read, but not written, do.
-        if let BufferEntry::Cached(v) = value {
-            *value = BufferEntry::Locked(Some(v.take()))
+        self.lock_with_returned_value(key, false, None)
+            .expect("exclusive lock cannot violate lock-mode invariants");
+    }
+
+    pub(crate) fn lock_with_returned_value(
+        &mut self,
+        key: Key,
+        shared: bool,
+        returned: Option<&crate::ReturnedValue>,
+    ) -> std::result::Result<(), &'static str> {
+        let returned_exists = returned.map(|value| value.exists);
+        let returned = returned.map(|value| {
+            value
+                .exists
+                .then(|| ValueEntry::new(value.value.clone(), 0))
+        });
+        if !shared {
+            self.primary_key.get_or_insert_with(|| key.clone());
+        } else if self.primary_key.is_none() {
+            return Err("pessimistic lock in share mode requires primary key to be selected");
         }
+        if matches!(self.locked_keys.get(&key), Some(true)) && !shared {
+            return Err("upgrading a shared lock to an exclusive lock is not supported");
+        }
+        let effective_shared = shared && !matches!(self.locked_keys.get(&key), Some(false));
+        self.locked_keys.insert(key.clone(), effective_shared);
+        if let Some(exists) = returned_exists {
+            self.locked_value_exists.insert(key.clone(), exists);
+        } else {
+            self.locked_value_exists.entry(key.clone()).or_insert(true);
+        }
+        let entry = self.entry_map.entry(key);
+        match entry {
+            Entry::Vacant(entry) => {
+                if shared {
+                    entry.insert(BufferEntry::SharedLocked(returned));
+                } else {
+                    entry.insert(BufferEntry::Locked(returned));
+                }
+            }
+            Entry::Occupied(mut entry) => match entry.get_mut() {
+                BufferEntry::Cached(value) => {
+                    let value = returned.or_else(|| Some(value.take()));
+                    if shared {
+                        entry.insert(BufferEntry::SharedLocked(value));
+                    } else {
+                        entry.insert(BufferEntry::Locked(value));
+                    }
+                }
+                BufferEntry::SharedLocked(_) if !shared => {
+                    return Err("upgrading a shared lock to an exclusive lock is not supported");
+                }
+                BufferEntry::Locked(_) if shared => {
+                    // An already acquired exclusive lock satisfies a shared
+                    // lock request without downgrading its mode.
+                }
+                BufferEntry::Locked(_) | BufferEntry::SharedLocked(_) => {}
+                _ => {}
+            },
+        }
+        Ok(())
+    }
+
+    /// Mark a pessimistically acquired shared lock. Shared locks never select
+    /// the primary key; an exclusive primary must already exist.
+    #[cfg(test)]
+    pub(crate) fn lock_shared(&mut self, key: Key) -> std::result::Result<(), &'static str> {
+        self.lock_with_returned_value(key, true, None)
+    }
+
+    pub(crate) fn has_shared_locks(&self) -> bool {
+        self.locked_keys.values().any(|shared| *shared)
+    }
+
+    pub(crate) fn is_shared_locked(&self, key: &Key) -> bool {
+        self.locked_keys.get(key) == Some(&true)
+    }
+
+    pub(crate) fn is_locked(&self, key: &Key) -> bool {
+        self.locked_keys.contains_key(key)
+    }
+
+    pub(crate) fn pessimistic_lock_keys(&self) -> BTreeSet<Vec<u8>> {
+        self.locked_keys
+            .keys()
+            .map(|key| <&[u8]>::from(key).to_vec())
+            .collect()
     }
 
     /// Unlock the given key if locked.
     pub fn unlock(&mut self, key: &Key) {
+        self.locked_keys.remove(key);
+        self.locked_value_exists.remove(key);
         if let Some(value) = self.entry_map.get_mut(key) {
-            if let BufferEntry::Locked(v) = value {
+            if let BufferEntry::Locked(v) | BufferEntry::SharedLocked(v) = value {
                 if let Some(v) = v {
                     *value = BufferEntry::Cached(v.take());
                 } else {
@@ -436,6 +550,7 @@ impl Buffer {
 
     /// Put a value into the buffer (does not write through).
     pub fn put(&mut self, key: Key, value: Value) {
+        self.reset_transient_mutation_options(&key);
         let mut entry = self.entry_map.entry(key.clone());
         match entry {
             Entry::Occupied(ref mut o)
@@ -450,6 +565,7 @@ impl Buffer {
 
     /// Mark a value as Insert mutation into the buffer (does not write through).
     pub fn insert(&mut self, key: Key, value: Value) {
+        self.reset_transient_mutation_options(&key);
         let mut entry = self.entry_map.entry(key.clone());
         match entry {
             Entry::Occupied(ref mut o) if matches!(o.get(), BufferEntry::Del) => {
@@ -461,6 +577,7 @@ impl Buffer {
 
     /// Mark a value as deleted.
     pub fn delete(&mut self, key: Key) {
+        self.reset_transient_mutation_options(&key);
         let is_pessimistic = self.is_pessimistic;
         let mut entry = self.entry_map.entry(key.clone());
 
@@ -487,8 +604,95 @@ impl Buffer {
     pub fn to_proto_mutations(&self) -> Vec<kvrpcpb::Mutation> {
         self.entry_map
             .iter()
-            .filter_map(|(key, mutation)| mutation.to_proto_with_key(key))
+            .filter_map(|(key, entry)| {
+                let mut mutation = entry.to_proto_with_key(key)?;
+                mutation.assertion = self
+                    .mutation_options
+                    .get(key)
+                    .copied()
+                    .unwrap_or_default()
+                    .mutation_assertion()
+                    .to_proto() as i32;
+                Some(mutation)
+            })
             .collect()
+    }
+
+    pub(crate) fn set_mutation_options(
+        &mut self,
+        key: &Key,
+        options: MutationOptions,
+    ) -> Result<()> {
+        if !self
+            .entry_map
+            .get(key)
+            .is_some_and(|entry| !matches!(entry, BufferEntry::Cached(_)))
+        {
+            return Err(crate::Error::StringError(
+                "mutation options require an existing buffered mutation".to_owned(),
+            ));
+        }
+        self.mutation_options.insert(key.clone(), options);
+        Ok(())
+    }
+
+    pub(crate) fn mutation_flags(&self, key: &Key) -> MutationFlags {
+        MutationFlags {
+            options: self.mutation_options.get(key).copied().unwrap_or_default(),
+            pessimistic_locked: self.locked_keys.contains_key(key),
+            shared_locked: self.locked_keys.get(key) == Some(&true),
+            presume_key_not_exists: matches!(
+                self.entry_map.get(key),
+                Some(BufferEntry::Insert(_) | BufferEntry::CheckNotExist)
+            ),
+        }
+    }
+
+    pub(crate) fn constraint_check_keys(&self) -> BTreeSet<Vec<u8>> {
+        self.mutation_options
+            .iter()
+            .filter(|(key, options)| {
+                options.needs_constraint_check_in_prewrite()
+                    && self
+                        .entry_map
+                        .get(*key)
+                        .is_some_and(|entry| !matches!(entry, BufferEntry::Cached(_)))
+            })
+            .map(|(key, _)| <&[u8]>::from(key).to_vec())
+            .collect()
+    }
+
+    pub(crate) fn assertion_failure(
+        &self,
+        key: &Key,
+        start_timestamp: u64,
+    ) -> Option<kvrpcpb::AssertionFailed> {
+        let exists = self.locked_value_exists.get(key).copied()?;
+        let assertion = self
+            .mutation_options
+            .get(key)
+            .copied()
+            .unwrap_or_default()
+            .mutation_assertion();
+        let failed = match assertion {
+            super::MutationAssertion::Exist => !exists,
+            super::MutationAssertion::NotExist => exists,
+            super::MutationAssertion::None | super::MutationAssertion::Unknown => false,
+        };
+        failed.then(|| kvrpcpb::AssertionFailed {
+            start_ts: start_timestamp,
+            key: <&[u8]>::from(key).to_vec(),
+            assertion: assertion.to_proto() as i32,
+            ..Default::default()
+        })
+    }
+
+    fn reset_transient_mutation_options(&mut self, key: &Key) {
+        if let Some(options) = self.mutation_options.get_mut(key) {
+            // MemDB Set clears this temporary flag unless the same write sets
+            // it again; assertion flags survive ordinary value updates.
+            options.need_constraint_check_in_prewrite = false;
+        }
     }
 
     pub fn get_write_size(&self) -> usize {
@@ -496,8 +700,11 @@ impl Buffer {
             .iter()
             .map(|(k, v)| match v {
                 BufferEntry::Put(val) | BufferEntry::Insert(val) => val.len() + k.len(),
-                BufferEntry::Del => k.len(),
-                _ => 0,
+                BufferEntry::Del
+                | BufferEntry::Locked(_)
+                | BufferEntry::SharedLocked(_)
+                | BufferEntry::CheckNotExist => k.len(),
+                BufferEntry::Cached(_) => 0,
             })
             .sum()
     }
@@ -518,10 +725,16 @@ impl Buffer {
             Some(BufferEntry::Locked(None)) => {
                 self.entry_map.insert(key, BufferEntry::Locked(Some(value)));
             }
+            Some(BufferEntry::SharedLocked(None)) => {
+                self.entry_map
+                    .insert(key, BufferEntry::SharedLocked(Some(value)));
+            }
             None => {
                 self.entry_map.insert(key, BufferEntry::Cached(value));
             }
-            Some(BufferEntry::Cached(v)) | Some(BufferEntry::Locked(Some(v))) => {
+            Some(BufferEntry::Cached(v))
+            | Some(BufferEntry::Locked(Some(v)))
+            | Some(BufferEntry::SharedLocked(Some(v))) => {
                 assert!(&value == v);
             }
             Some(BufferEntry::Put(v)) => {
@@ -588,6 +801,9 @@ enum BufferEntry {
     // In pessimistic transaction:
     //   The key is locked by `get_for_update` or `batch_get_for_update`
     Locked(Option<Option<ValueEntry>>),
+    // A pessimistic shared lock. It is prewritten as `SharedLock` and cannot
+    // become the transaction primary.
+    SharedLocked(Option<Option<ValueEntry>>),
     // Value has been written.
     Put(Value),
     // Value has been deleted.
@@ -609,6 +825,7 @@ impl BufferEntry {
             }
             BufferEntry::Del => pb.op = kvrpcpb::Op::Del.into(),
             BufferEntry::Locked(_) => pb.op = kvrpcpb::Op::Lock.into(),
+            BufferEntry::SharedLocked(_) => pb.op = kvrpcpb::Op::SharedLock.into(),
             BufferEntry::Insert(v) => {
                 pb.op = kvrpcpb::Op::Insert.into();
                 pb.value.clone_from(v);
@@ -628,6 +845,10 @@ impl BufferEntry {
             BufferEntry::Del => MutationValue::Determined(None),
             BufferEntry::Locked(None) => MutationValue::Undetermined,
             BufferEntry::Locked(Some(value)) => {
+                MutationValue::Determined(value.as_ref().map(|entry| entry.value.clone()))
+            }
+            BufferEntry::SharedLocked(None) => MutationValue::Undetermined,
+            BufferEntry::SharedLocked(Some(value)) => {
                 MutationValue::Determined(value.as_ref().map(|entry| entry.value.clone()))
             }
             BufferEntry::Insert(value) => MutationValue::Determined(Some(value.clone())),
@@ -712,6 +933,31 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_write_preserves_assertion_and_clears_constraint_check() {
+        let key = Key::from(b"key".to_vec());
+        let mut buffer = Buffer::new(false);
+        buffer.put(key.clone(), b"value1".to_vec());
+        buffer
+            .set_mutation_options(
+                &key,
+                MutationOptions::default()
+                    .assertion(super::super::MutationAssertion::Exist)
+                    .need_constraint_check_in_prewrite(true),
+            )
+            .unwrap();
+
+        buffer.put(key.clone(), b"value2".to_vec());
+
+        let flags = buffer.mutation_flags(&key);
+        assert_eq!(flags.assertion(), super::super::MutationAssertion::Exist);
+        assert!(!flags.needs_constraint_check_in_prewrite());
+        assert_eq!(
+            buffer.to_proto_mutations()[0].assertion,
+            kvrpcpb::Assertion::Exist as i32
+        );
+    }
+
+    #[test]
     fn repeat_reads_are_cached() {
         let k1: Key = b"key1".to_vec().into();
         let k1_ = k1.clone();
@@ -756,6 +1002,59 @@ mod tests {
     }
 
     #[test]
+    fn source_buffer_batch_getter_local_precedence_delete_and_commit_ts() {
+        let keys = ["a", "b", "c", "d", "e"]
+            .into_iter()
+            .map(|key| Key::from(key.as_bytes().to_vec()))
+            .collect::<Vec<_>>();
+        let mut buffer = Buffer::new(false);
+        buffer.insert(keys[0].clone(), b"a1".to_vec());
+        buffer.delete(keys[1].clone());
+
+        let fetched = block_on(buffer.batch_get_snapshot_entries_or_else(
+            keys.clone().into_iter(),
+            true,
+            true,
+            |missing| {
+                assert_eq!(missing.collect::<Vec<_>>(), keys[2..].to_vec());
+                ready(Ok(BTreeMap::from([
+                    (keys[2].clone(), ValueEntry::new(b"c".to_vec(), 3)),
+                    (keys[3].clone(), ValueEntry::new(b"d".to_vec(), 4)),
+                ])))
+            },
+        ))
+        .unwrap();
+        assert_eq!(
+            fetched,
+            BTreeMap::from([
+                (keys[0].clone(), ValueEntry::new(b"a1".to_vec(), 0)),
+                (keys[2].clone(), ValueEntry::new(b"c".to_vec(), 3)),
+                (keys[3].clone(), ValueEntry::new(b"d".to_vec(), 4)),
+            ])
+        );
+
+        let without_commit_ts = block_on(buffer.batch_get_snapshot_entries_or_else(
+            keys.clone().into_iter(),
+            false,
+            true,
+            |_| {
+                ready(Err(internal_err!(
+                    "all snapshot entries and misses are cached"
+                )))
+            },
+        ))
+        .unwrap();
+        assert_eq!(
+            without_commit_ts,
+            BTreeMap::from([
+                (keys[0].clone(), ValueEntry::new(b"a1".to_vec(), 0)),
+                (keys[2].clone(), ValueEntry::new(b"c".to_vec(), 0)),
+                (keys[3].clone(), ValueEntry::new(b"d".to_vec(), 0)),
+            ])
+        );
+    }
+
+    #[test]
     fn source_snapshot_cache_observability_counts_values_and_misses() {
         let key: Key = b"missing".to_vec().into();
         let mut buffer = Buffer::new(false);
@@ -778,6 +1077,29 @@ mod tests {
         buffer.clear_cached_reads();
         assert_eq!(buffer.snapshot_cache_hit_count(), 1);
         assert_eq!(buffer.snapshot_cache_size(), 0);
+    }
+
+    #[test]
+    fn source_len_size_and_memory_exclude_snapshot_cache_but_include_flag_only_entries() {
+        let cached: Key = b"cached".to_vec().into();
+        let missing: Key = b"missing".to_vec().into();
+        let mut buffer = Buffer::new(true);
+        buffer.update_snapshot_cache(
+            vec![cached.clone(), missing],
+            &BTreeMap::from([(cached, ValueEntry::new(b"snapshot".to_vec(), 7))]),
+        );
+        assert_eq!(buffer.len(), 0);
+        assert_eq!(buffer.get_write_size(), 0);
+        assert_eq!(buffer.memory_footprint(), 0);
+
+        buffer.lock(b"lock".to_vec().into());
+        buffer.insert(b"check".to_vec().into(), b"value".to_vec());
+        buffer.delete(b"check".to_vec().into());
+        buffer.put(b"put".to_vec().into(), b"value".to_vec());
+
+        assert_eq!(buffer.len(), 3);
+        assert_eq!(buffer.get_write_size(), 4 + 5 + 3 + 5);
+        assert_eq!(buffer.memory_footprint(), 4 + 5 + 3 + 5);
     }
 
     #[test]

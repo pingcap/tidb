@@ -22,14 +22,28 @@ pub use sync_client::SyncTransactionClient;
 pub use sync_snapshot::SyncSnapshot;
 pub use sync_snapshot::SyncSnapshotIterator;
 pub use sync_transaction::SyncTransaction;
+pub use transaction::BinlogExecutor;
+pub use transaction::BinlogWriteResult;
 pub use transaction::CheckLevel;
 #[doc(hidden)]
 pub use transaction::HeartbeatOption;
+pub use transaction::KvFilter;
+pub use transaction::LifecycleHooks;
 pub use transaction::Mutation;
+pub use transaction::MutationAssertion;
+pub use transaction::MutationFlags;
+pub use transaction::MutationOptions;
+pub use transaction::PipelinedTxnOptions;
+pub use transaction::PrewriteEncounterLockPolicy;
+pub use transaction::RelatedSchemaChange;
+pub use transaction::RequestSource;
+pub use transaction::SchemaLeaseChecker;
+pub use transaction::SchemaVersion;
 pub use transaction::SnapshotRequestType;
 pub use transaction::SnapshotResourceGroupTagger;
 pub use transaction::Transaction;
 pub use transaction::TransactionOptions;
+pub use transaction::TransactionResourceGroupTagger;
 
 #[allow(dead_code)]
 mod art;
@@ -62,6 +76,11 @@ mod snapshot_stats;
 mod sync_client;
 mod sync_snapshot;
 mod sync_transaction;
+mod txn_file;
+pub use txn_file::{
+    build_txn_file_max_backoff_ms, close_txn_file_idle_connections, is_request_source_use_txn_file,
+    set_build_txn_file_max_backoff_ms,
+};
 #[allow(clippy::module_inception)]
 mod transaction;
 #[allow(dead_code)]

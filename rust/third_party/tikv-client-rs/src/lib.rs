@@ -276,4 +276,14 @@ pub use crate::transaction::SyncTransactionClient;
 pub use crate::transaction::Transaction;
 #[doc(inline)]
 pub use crate::transaction::TransactionOptions;
+pub use crate::transaction::TransactionResourceGroupTagger;
+pub use crate::transaction::{
+    build_txn_file_max_backoff_ms, close_txn_file_idle_connections, is_request_source_use_txn_file,
+    set_build_txn_file_max_backoff_ms,
+};
 pub use crate::transaction::{extract_lock_from_key_error, extract_locks_from_key_error};
+pub use crate::transaction::{
+    BinlogExecutor, BinlogWriteResult, KvFilter, LifecycleHooks, MutationAssertion, MutationFlags,
+    MutationOptions, PipelinedTxnOptions, PrewriteEncounterLockPolicy, RelatedSchemaChange,
+    RequestSource, SchemaLeaseChecker, SchemaVersion,
+};

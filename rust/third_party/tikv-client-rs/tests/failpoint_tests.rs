@@ -350,14 +350,11 @@ async fn txn_resolve_locks() -> Result<()> {
     Ok(())
 }
 
-// Regression test for #545: a pessimistic transaction whose commit fails after
-// prewrite has placed its 2PC lock must have that lock cleared by `rollback()`.
-// Previously the terminal pessimistic rollback sent `PessimisticRollback`, which
-// only removes `LockType::Pessimistic` locks, so the prewrite lock was left
-// behind (and `rollback()` still returned `Ok`).
+// A failed public commit closes the transaction and schedules source-style
+// cleanup. The caller cannot re-enter rollback after that first attempt.
 #[tokio::test]
 #[serial]
-async fn txn_pessimistic_rollback_clears_prewrite_locks() -> Result<()> {
+async fn txn_failed_commit_closes_and_cleans_prewrite_locks() -> Result<()> {
     init().await?;
     let scenario = FailScenario::setup();
 
@@ -382,58 +379,8 @@ async fn txn_pessimistic_rollback_clears_prewrite_locks() -> Result<()> {
     txn.put(key.clone(), b"value".to_vec()).await?;
     // The commit fails after prewrite has placed the (2PC) lock.
     assert!(txn.commit().await.is_err());
-    // rollback() must clear that prewrite lock.
-    txn.rollback().await?;
-    assert_eq!(count_locks(&client).await?, 0);
-
-    scenario.teardown();
-    Ok(())
-}
-
-// Regression test for #545 (retry path): `rollback()` may be re-entered from
-// `StartedRollback` after a failed first attempt. The "already started
-// committing" fact must survive that transition so the retry still uses
-// `BatchRollback`; if it were recomputed from the (now `StartedRollback`)
-// status, a pessimistic txn would fall back to `PessimisticRollback` and leak
-// the prewrite lock again.
-#[tokio::test]
-#[serial]
-async fn txn_pessimistic_rollback_retry_clears_prewrite_locks() -> Result<()> {
-    init().await?;
-    let scenario = FailScenario::setup();
-
-    // Commit fails after prewrite places the 2PC lock.
-    fail::cfg("after-prewrite", "return").unwrap();
-    // The first rollback attempt fails; the retry must still clear the lock.
-    fail::cfg("before-rollback", "1*return").unwrap();
-    defer! {{
-        fail::cfg("after-prewrite", "off").unwrap();
-        fail::cfg("before-rollback", "off").unwrap();
-    }}
-
-    let client =
-        TransactionClient::new_with_config(pd_addrs(), Config::default().with_default_keyspace())
-            .await?;
-    let key = b"pessimistic-rollback-retry-key".to_vec();
-
-    let mut txn = client
-        .begin_with_options(
-            TransactionOptions::new_pessimistic()
-                .heartbeat_option(HeartbeatOption::NoHeartbeat)
-                .drop_check(CheckLevel::Warn),
-        )
-        .await?;
-    txn.get_for_update(key.clone()).await?;
-    txn.put(key.clone(), b"value".to_vec()).await?;
-    // The commit fails after prewrite has placed the (2PC) lock.
-    assert!(txn.commit().await.is_err());
-    // First rollback fails at the failpoint; status stays `StartedRollback`.
     assert!(txn.rollback().await.is_err());
-    // The retry must persist `prewritten` and use `BatchRollback` to clear the
-    // 2PC lock — recomputing it from status here would fall back to
-    // `PessimisticRollback` and leave the lock behind.
-    txn.rollback().await?;
-    assert_eq!(count_locks(&client).await?, 0);
+    assert_eq!(wait_for_locks_count(&client, 0).await?, 0);
 
     scenario.teardown();
     Ok(())

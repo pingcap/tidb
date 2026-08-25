@@ -10,6 +10,7 @@ use crate::locate::ReplicaSelectorState;
 use crate::pd::PdClient;
 use crate::region::RegionWithLeader;
 use crate::request::plan::CleanupLocks;
+use crate::request::plan::CountLockResolverAction;
 use crate::request::Dispatch;
 use crate::request::KvRequest;
 use crate::request::Plan;
@@ -250,6 +251,13 @@ impl<P, Pr> Shardable for ProcessResponse<P, Pr>
 where
     P: Plan + Shardable,
     Pr: Process<P::Result>,
+{
+    impl_inner_shardable!();
+}
+
+impl<P> Shardable for CountLockResolverAction<P>
+where
+    P: Plan + Shardable,
 {
     impl_inner_shardable!();
 }

@@ -942,6 +942,18 @@ impl<C: Send + Sync> RegionCache<C> {
 }
 
 impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
+    /// Split at logical region keys through the codec-aware PD client.
+    pub(crate) async fn split_regions(
+        &self,
+        split_keys: Vec<Vec<u8>>,
+        retry_limit: u64,
+    ) -> Result<pdpb::SplitRegionsResponse> {
+        self.inner_client
+            .clone()
+            .split_regions(split_keys, retry_limit)
+            .await
+    }
+
     pub(crate) fn start_background_refresh(self: &Arc<Self>, interval: Duration)
     where
         C: 'static,

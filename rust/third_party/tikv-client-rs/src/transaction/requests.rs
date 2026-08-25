@@ -4,7 +4,6 @@ use std::cmp;
 use std::iter;
 use std::sync::Arc;
 
-use either::Either;
 use futures::stream::BoxStream;
 use futures::stream::{self};
 use futures::StreamExt;
@@ -49,6 +48,7 @@ use crate::transaction::requests::kvrpcpb::prewrite_request::PessimisticAction;
 use crate::transaction::HasLocks;
 use crate::util::iter::FlatMapOkIterExt;
 use crate::Error;
+use crate::Key;
 use crate::KvPair;
 use crate::Result;
 use crate::Value;
@@ -526,13 +526,17 @@ impl Shardable for kvrpcpb::PrewriteRequest {
     }
 
     fn apply_shard(&mut self, shard: Self::Shard) {
+        let full_txn_size = self.txn_size;
+        let has_primary = shard
+            .iter()
+            .any(|mutation| mutation.key == self.primary_lock);
         // Only need to set secondary keys if we're sending the primary key.
-        if self.use_async_commit && !self.mutations.iter().any(|m| m.key == self.primary_lock) {
+        if self.use_async_commit && !has_primary {
             self.secondaries = vec![];
         }
 
         // Only if there is only one request to send
-        if self.try_one_pc && shard.len() != self.secondaries.len() + 1 {
+        if self.try_one_pc && (!has_primary || shard.len() as u64 != full_txn_size) {
             self.try_one_pc = false;
         }
 
@@ -694,11 +698,11 @@ pub fn new_pessimistic_lock_request(
     req.start_version = start_version;
     req.lock_ttl = lock_ttl;
     req.for_update_ts = for_update_ts;
-    // FIXME: make them configurable
+    // The transaction owner fills call-specific first-lock, wait, wake-up,
+    // existence, and minimum-commit fields after lowering the typed keys.
     req.is_first_lock = false;
     req.wait_timeout = 0;
     req.return_values = need_value;
-    // FIXME: support large transaction
     req.min_commit_ts = 0;
 
     req
@@ -739,8 +743,97 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
     }
 }
 
-// PessimisticLockResponse returns values that preserves the order with keys in request, thus the
-// kvpair result should be produced by zipping the keys in request and the values in respponse.
+#[derive(Clone, Copy)]
+pub(crate) struct CollectPessimisticLock;
+
+pub(crate) struct PessimisticLockOutput {
+    pub(crate) pairs: Vec<KvPair>,
+    pub(crate) returned_values: Vec<(Key, crate::ReturnedValue)>,
+    pub(crate) max_locked_with_conflict_ts: u64,
+}
+
+fn collect_pessimistic_lock(
+    input: Vec<Result<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>>,
+) -> Result<PessimisticLockOutput> {
+    if input.iter().any(Result::is_err) {
+        let (success, mut errors): (Vec<_>, Vec<_>) = input.into_iter().partition(Result::is_ok);
+        let first_err = errors.pop().unwrap();
+        let success_keys = success
+            .into_iter()
+            .map(Result::unwrap)
+            .flat_map(|ResponseWithShard(_resp, mutations)| {
+                mutations.into_iter().map(|mutation| mutation.key)
+            })
+            .collect();
+        return Err(PessimisticLockError {
+            inner: Box::new(first_err.unwrap_err()),
+            success_keys,
+        });
+    }
+
+    let mut pairs = Vec::new();
+    let mut returned_values = Vec::new();
+    let mut max_locked_with_conflict_ts = 0;
+    for ResponseWithShard(response, mutations) in input.into_iter().map(Result::unwrap) {
+        if !response.results.is_empty() {
+            assert_eq!(response.results.len(), mutations.len());
+            for (mutation, result) in mutations.into_iter().zip(response.results) {
+                max_locked_with_conflict_ts =
+                    max_locked_with_conflict_ts.max(result.locked_with_conflict_ts);
+                returned_values.push((
+                    Key::from(mutation.key.clone()),
+                    crate::ReturnedValue {
+                        value: result.value.clone(),
+                        exists: result.existence,
+                        locked_with_conflict_ts: result.locked_with_conflict_ts,
+                        already_locked: false,
+                    },
+                ));
+                if result.existence {
+                    pairs.push(KvPair::new(Key::from(mutation.key), result.value));
+                }
+            }
+            continue;
+        }
+
+        if response.values.is_empty() && response.not_founds.is_empty() {
+            continue;
+        }
+
+        assert!(response.values.is_empty() || response.values.len() == mutations.len());
+        if !response.not_founds.is_empty() {
+            assert_eq!(response.not_founds.len(), mutations.len());
+        }
+        for (index, mutation) in mutations.into_iter().enumerate() {
+            let value = response.values.get(index).cloned().unwrap_or_default();
+            let not_found = response
+                .not_founds
+                .get(index)
+                .copied()
+                .unwrap_or_else(|| value.is_empty());
+            returned_values.push((
+                Key::from(mutation.key.clone()),
+                crate::ReturnedValue {
+                    value: value.clone(),
+                    exists: !not_found,
+                    locked_with_conflict_ts: 0,
+                    already_locked: false,
+                },
+            ));
+            if !not_found {
+                pairs.push(KvPair::new(Key::from(mutation.key), value));
+            }
+        }
+    }
+    Ok(PessimisticLockOutput {
+        pairs,
+        returned_values,
+        max_locked_with_conflict_ts,
+    })
+}
+
+// PessimisticLockResponse preserves request order in both the legacy
+// values/not_founds representation and ForceLock's per-key results.
 impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>
     for CollectWithShard
 {
@@ -752,53 +845,22 @@ impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Muta
             Result<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>,
         >,
     ) -> Result<Self::Out> {
-        if input.iter().any(Result::is_err) {
-            let (success, mut errors): (Vec<_>, Vec<_>) =
-                input.into_iter().partition(Result::is_ok);
-            let first_err = errors.pop().unwrap();
-            let success_keys = success
-                .into_iter()
-                .map(Result::unwrap)
-                .flat_map(|ResponseWithShard(_resp, mutations)| {
-                    mutations.into_iter().map(|m| m.key)
-                })
-                .collect();
-            Err(PessimisticLockError {
-                inner: Box::new(first_err.unwrap_err()),
-                success_keys,
-            })
-        } else {
-            Ok(input
-                .into_iter()
-                .map(Result::unwrap)
-                .flat_map(|ResponseWithShard(resp, mutations)| {
-                    let values: Vec<Vec<u8>> = resp.values;
-                    let values_len = values.len();
-                    let not_founds = resp.not_founds;
-                    let kvpairs = mutations
-                        .into_iter()
-                        .map(|m| m.key)
-                        .zip(values)
-                        .map(KvPair::from);
-                    assert_eq!(kvpairs.len(), values_len);
-                    if not_founds.is_empty() {
-                        // Legacy TiKV does not distinguish not existing key and existing key
-                        // that with empty value. We assume that key does not exist if value
-                        // is empty.
-                        Either::Left(kvpairs.filter(|kvpair| !kvpair.value().is_empty()))
-                    } else {
-                        assert_eq!(kvpairs.len(), not_founds.len());
-                        Either::Right(kvpairs.zip(not_founds).filter_map(|(kvpair, not_found)| {
-                            if not_found {
-                                None
-                            } else {
-                                Some(kvpair)
-                            }
-                        }))
-                    }
-                })
-                .collect())
-        }
+        collect_pessimistic_lock(input).map(|output| output.pairs)
+    }
+}
+
+impl Merge<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>
+    for CollectPessimisticLock
+{
+    type Out = PessimisticLockOutput;
+
+    fn merge(
+        &self,
+        input: Vec<
+            Result<ResponseWithShard<kvrpcpb::PessimisticLockResponse, Vec<kvrpcpb::Mutation>>>,
+        >,
+    ) -> Result<Self::Out> {
+        collect_pessimistic_lock(input)
     }
 }
 
@@ -1167,6 +1229,33 @@ pub struct SecondaryLocksStatus {
 }
 
 impl SecondaryLocksStatus {
+    pub(crate) fn empty() -> Self {
+        Self {
+            locks: Vec::new(),
+            missing_lock: false,
+            missing_commit_ts: 0,
+            fallback_2pc: false,
+        }
+    }
+
+    pub(crate) fn merge_from(&mut self, mut other: Self) -> Result<()> {
+        if other.missing_lock {
+            if self.missing_lock && self.missing_commit_ts != other.missing_commit_ts {
+                return Err(Error::InternalError {
+                    message: format!(
+                        "commit TS mismatch in async commit recovery: {} and {}",
+                        self.missing_commit_ts, other.missing_commit_ts
+                    ),
+                });
+            }
+            self.missing_lock = true;
+            self.missing_commit_ts = other.missing_commit_ts;
+        }
+        self.fallback_2pc |= other.fallback_2pc;
+        self.locks.append(&mut other.locks);
+        Ok(())
+    }
+
     /// Returns `None` when a returned secondary is not an async-commit lock,
     /// in which case client-go retries CheckTxnStatus in forced 2PC mode.
     pub fn determine_commit_ts(
@@ -1262,6 +1351,13 @@ impl HasLocks for kvrpcpb::PrewriteResponse {
         self.errors
             .iter_mut()
             .filter_map(|error| error.locked.take())
+            .flat_map(|lock| {
+                if lock.shared_lock_infos.is_empty() {
+                    vec![lock]
+                } else {
+                    lock.shared_lock_infos
+                }
+            })
             .collect()
     }
 }
@@ -1848,6 +1944,38 @@ impl Merge<kvrpcpb::UnsafeDestroyRangeResponse> for Collect {
 
     fn merge(&self, input: Vec<Result<kvrpcpb::UnsafeDestroyRangeResponse>>) -> Result<Self::Out> {
         let _: Vec<kvrpcpb::UnsafeDestroyRangeResponse> =
+            input.into_iter().collect::<Result<Vec<_>>>()?;
+        Ok(())
+    }
+}
+
+impl KvRequest for kvrpcpb::BroadcastTxnStatusRequest {
+    type Response = kvrpcpb::BroadcastTxnStatusResponse;
+}
+
+impl StoreRequest for kvrpcpb::BroadcastTxnStatusRequest {
+    fn apply_store(&mut self, _store: &Store) {}
+}
+
+impl crate::store::HasKeyErrors for kvrpcpb::BroadcastTxnStatusResponse {
+    fn key_errors(&mut self) -> Option<Vec<Error>> {
+        None
+    }
+}
+
+impl crate::store::HasRegionError for kvrpcpb::BroadcastTxnStatusResponse {
+    fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
+        None
+    }
+}
+
+impl HasLocks for kvrpcpb::BroadcastTxnStatusResponse {}
+
+impl Merge<kvrpcpb::BroadcastTxnStatusResponse> for Collect {
+    type Out = ();
+
+    fn merge(&self, input: Vec<Result<kvrpcpb::BroadcastTxnStatusResponse>>) -> Result<Self::Out> {
+        let _: Vec<kvrpcpb::BroadcastTxnStatusResponse> =
             input.into_iter().collect::<Result<Vec<_>>>()?;
         Ok(())
     }

@@ -231,6 +231,22 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       `request::RetryableMultiRegion` deep-read, full type/method mapping
       against `tidb-txnkv/region`'s ~9,100 lines and 5+ downstream
       consumers). Full findings in `Surprises & Discoveries`.
+- [x] (2026-08-25, scheduled check-in) **`txnkv/transaction` reached
+      `complete`** -- the single largest blocker this plan has tracked (the
+      2PC engine itself). Verified, by reading the code and not trusting the
+      status word, that this session's specific acceptance condition is met:
+      `tikv_client::transaction::Transaction::commit()` reproduces the
+      undetermined-commit signal from `two-phase-commit-vs-client-go.md`
+      (suppressed cleanup, distinct `Error::UndeterminedError` variant
+      reaching the caller). This is now the highest-priority Phase 2 target.
+      **Not started this check-in** -- adopting it means rewiring
+      `tidb-txnkv/src/transaction/coordinator/*.rs` and ~160 `tidb-exec` call
+      sites, plus a RealTiKV validation pass this workspace's own policy
+      requires for storage semantics ("mocks are not release evidence") --
+      a dedicated-session undertaking. `txnkv/txnlock`/`txnkv/txnsnapshot`
+      (lock resolution / reads, both dependencies of a working transaction)
+      are still `seed`. Full findings, including exact file:line evidence
+      and what remains unverified, in `Surprises & Discoveries`.
 - [ ] Phase 3: rewire `tidb-distsql`'s RPC/region-retry layer onto the vendored
       crate's `request::Plan`/`Shardable`/retry framework, porting the
       documented parity fixes from `rust/docs/distsql-coprocessor-parity.md`.
@@ -247,6 +263,81 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
 
 ## Surprises & Discoveries
 
+- Observation (2026-08-25, scheduled check-in): **`txnkv/transaction` reached
+  `complete` upstream.** This is the single largest blocker this plan has
+  tracked -- the 2PC/commit engine itself, previously `unassessed` with the
+  note "Largest behavior package; complete only with differential
+  transaction tests." The new receipt claims "Normal, pessimistic, shared,
+  aggressive, async/1PC, pipelined, transaction-file, binlog, schema/filter/
+  callback, mutation-assertion, retry/cleanup, and all 33 original
+  package-test declarations," backed by a 16-artifact/11,766-line mapping
+  doc (`txnkv-transaction-source-artifact-audit.md`).
+
+  This session's Decision Log recorded a specific, non-negotiable acceptance
+  condition for this exact package: it must reproduce the undetermined-commit
+  signal documented in `rust/docs/two-phase-commit-vs-client-go.md` (client-go
+  `commit.go:127-180`/`2pc.go:2062-2069` -- a primary-batch commit RPC that
+  fails ambiguously must suppress cleanup and surface a distinct, callable-out
+  outcome rather than an ordinary error, because retrying an ambiguously-
+  committed write is a real correctness bug, not a cosmetic one). Verified by
+  reading `third_party/tikv-client-rs/src/transaction/transaction.rs`
+  directly, not by trusting the status word:
+
+  - `self.undetermined` is set `true` when the primary batch's commit RPC
+    fails with a transport-level error (`Error::Grpc`/`GrpcAPI`/
+    `Connection`/`Channel`) or when its response carries a region error with
+    `undetermined_result.is_some()` (lines ~5218-5238) -- this is exactly
+    client-go's `sender.GetRPCError() != nil` / region-error-on-primary
+    check.
+  - Post-failure cleanup is suppressed precisely when undetermined
+    (`if result.is_err() && !self.committed && !self.undetermined` around
+    line 4251) -- matches client-go's `if !committed && !undetermined {
+    c.cleanup(ctx) }` exactly.
+  - The caller of `commit()` receives a **distinct, public error variant**:
+    `Error::UndeterminedError(Box<Error>)` (`src/common/errors.rs` line 141,
+    doc comment "Whether the transaction is committed or not is
+    undetermined"), not a generic error indistinguishable from an ordinary
+    failure (`transaction.rs` line ~4428:
+    `if self.undetermined { Err(Error::UndeterminedError(...)) }`).
+
+  All three pieces of the acceptance condition are present and structurally
+  faithful. This is a genuinely different situation from every other package
+  this plan has evaluated: not "seed," not "API-shape mismatch," not
+  "confirmed missing method" -- a real, specific, correctness-critical
+  behavior this plan set as a bar, verified present by reading the code.
+
+  **What is NOT yet verified, and why this is not a "start the swap now"
+  finding despite the above:** (1) `txnkv/txnlock` (lock resolution) and
+  `txnkv/txnsnapshot` (reads) -- both dependencies of a working end-to-end
+  transaction -- are still `seed`, not `complete`; the receipt itself notes
+  "High-level `txnkv`, lock, snapshot, root `tikv`, and live differential
+  gates retain independent statuses." (2) Prewrite's own failure-handling
+  parity was not checked this session (only commit's was, since that is
+  where the documented fix lives). (3) `rust/docs/architecture/workspace.md`'s
+  own stated policy -- "Real PD/TiKV checks are mandatory for storage
+  semantics; mocks are focused tests, not release evidence" -- has not been
+  satisfied for this finding; everything above is source reading, the same
+  method the original `two-phase-commit-vs-client-go.md` audit used, but
+  that audit's own text is explicit that source reading is a starting point,
+  not a substitute for observing a real cluster. (4) Actually adopting this
+  means rewiring `tidb-txnkv/src/transaction/coordinator/*.rs` and every one
+  of `tidb-exec`'s ~160 call sites (the heaviest consumer of
+  `tidb_txnkv::transaction::*` per the original Phase 2 research), then
+  re-running the full existing test suite plus RealTiKV differential tests
+  -- a multi-hour, dedicated-session undertaking, not a check-in task.
+
+  Recommendation: this is now the highest-priority Phase 2 target, and
+  should be the subject of the next dedicated session -- but that session
+  should start by re-verifying this finding is still current (upstream moves
+  fast; re-sync first) and reading prewrite's parity + `txnkv/txnlock`'s
+  actual gap list before writing any integration code, then plan for a
+  RealTiKV validation pass before calling the swap done, per this
+  workspace's own policy.
+  Evidence: `third_party/tikv-client-rs/doc/client-go-parity-ledger.md` row
+  `txnkv/transaction`; `third_party/tikv-client-rs/src/transaction/
+  transaction.rs` lines 4214-4438, 5195-5245; `third_party/tikv-client-rs/
+  src/common/errors.rs` line 141; `rust/docs/two-phase-commit-vs-client-go.md`
+  section 0.
 - Observation (2026-08-24, user-flagged upstream update): `internal/locate`
   reached `complete` upstream -- the exact threshold this plan's Decision Log
   named for revisiting PD failover. Investigated what it actually covers,

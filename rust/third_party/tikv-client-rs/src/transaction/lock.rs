@@ -4,6 +4,9 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::future::Future;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex as StdMutex;
@@ -14,10 +17,11 @@ use fail::fail_point;
 use log::debug;
 use log::error;
 use log::warn;
-use tokio::sync::{Mutex, RwLock, Semaphore};
+use tokio::sync::{oneshot, Mutex, Notify, RwLock, Semaphore};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
+use crate::async_util::Cancellation;
 use crate::backoff::Backoff;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::backoff::OPTIMISTIC_BACKOFF;
@@ -63,6 +67,108 @@ const LOCK_RESOLVER_MAX_WRITE_EXECUTION_DURATION: Duration = Duration::from_secs
 const ASYNC_READ_RESOLVE_LOCK_LIMIT: usize = 10_000;
 static ASYNC_READ_RESOLVE_LOCKS: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(ASYNC_READ_RESOLVE_LOCK_LIMIT)));
+
+#[derive(Clone)]
+struct AsyncResolveTaskPool {
+    inner: Arc<AsyncResolveTaskPoolInner>,
+}
+
+struct AsyncResolveTaskPoolInner {
+    semaphore: Arc<Semaphore>,
+    cancellation: Cancellation,
+    closed: AtomicBool,
+    active: AtomicUsize,
+    idle: Notify,
+}
+
+impl AsyncResolveTaskPool {
+    fn new(semaphore: Arc<Semaphore>) -> Self {
+        Self {
+            inner: Arc::new(AsyncResolveTaskPoolInner {
+                semaphore,
+                cancellation: Cancellation::default(),
+                closed: AtomicBool::new(false),
+                active: AtomicUsize::new(0),
+                idle: Notify::new(),
+            }),
+        }
+    }
+
+    /// Admit one detached resolver task without waiting for capacity.
+    ///
+    /// Returning the future on rejection lets the caller execute the exact
+    /// same cleanup inline, matching client-go's saturation fallback.
+    fn try_spawn<F>(
+        &self,
+        resolve: F,
+        task_kind: &'static str,
+    ) -> std::result::Result<JoinHandle<()>, F>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        if self.inner.closed.load(Ordering::Acquire) {
+            return Err(resolve);
+        }
+        let permit = match self.inner.semaphore.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => return Err(resolve),
+        };
+        self.inner.active.fetch_add(1, Ordering::AcqRel);
+        if self.inner.closed.load(Ordering::Acquire) {
+            self.inner.active.fetch_sub(1, Ordering::AcqRel);
+            self.inner.idle.notify_waiters();
+            return Err(resolve);
+        }
+
+        let inner = self.inner.clone();
+        Ok(tokio::spawn(async move {
+            let cancellation = inner.cancellation.clone();
+            stats::add_lock_resolver_async_running_tasks(task_kind, 1);
+            let _completion = AsyncResolveTaskCompletion { inner, task_kind };
+            let _permit = permit;
+            tokio::select! {
+                _ = resolve => {}
+                _ = cancellation.cancelled() => {}
+            }
+        }))
+    }
+
+    fn close_now(&self) {
+        if !self.inner.closed.swap(true, Ordering::AcqRel) {
+            self.inner.cancellation.cancel();
+        }
+    }
+
+    async fn close(&self) {
+        self.close_now();
+        loop {
+            let idle = self.inner.idle.notified();
+            if self.inner.active.load(Ordering::Acquire) == 0 {
+                return;
+            }
+            idle.await;
+        }
+    }
+
+    #[cfg(test)]
+    fn active(&self) -> usize {
+        self.inner.active.load(Ordering::Acquire)
+    }
+}
+
+struct AsyncResolveTaskCompletion {
+    inner: Arc<AsyncResolveTaskPoolInner>,
+    task_kind: &'static str,
+}
+
+impl Drop for AsyncResolveTaskCompletion {
+    fn drop(&mut self) {
+        stats::add_lock_resolver_async_running_tasks(self.task_kind, -1);
+        let previous = self.inner.active.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(previous > 0, "async resolver task count underflow");
+        self.inner.idle.notify_waiters();
+    }
+}
 
 #[derive(Default)]
 struct ResolvedStatusCache {
@@ -407,42 +513,28 @@ async fn resolve_locks_with_context_inner(
                         }
 
                         commit_versions.insert(lock.lock_version, commit_version);
-                        for key in secondary_status.keys_to_resolve(&lock.primary_lock) {
-                            let region_ver_id = pd_client
-                                .region_for_key(&key.clone().into())
-                                .await?
-                                .ver_id();
-                            if clean_regions
-                                .get(&lock.lock_version)
-                                .map(|regions| regions.contains(&region_ver_id))
-                                .unwrap_or(false)
-                            {
-                                continue;
-                            }
-                            let cleaned_region = resolve_lock_with_retry(
-                                &key,
-                                lock.lock_version,
-                                commit_version,
-                                lock.is_txn_file,
-                                // Async-commit recovery supplies the complete
-                                // region key set itself; it must not use the
-                                // ordinary single-key lite path.
-                                u64::MAX,
-                                pd_client.clone(),
-                                keyspace,
-                                keyspace_name,
-                                lock_resolver.ctx.rpc_interceptor.clone(),
-                                lock_resolver.ctx.resource_group_name.as_deref(),
-                                lock_resolver.ctx.resource_control.clone(),
-                                lock_resolver.ctx.ru_details.clone(),
-                                OPTIMISTIC_BACKOFF,
-                            )
-                            .await?;
-                            clean_regions
-                                .entry(lock.lock_version)
-                                .or_default()
-                                .insert(cleaned_region);
-                        }
+                        schedule_grouped_read_cleanup(
+                            secondary_status.keys_to_resolve(&lock.primary_lock),
+                            lock.primary_lock.clone(),
+                            false,
+                            lock.lock_version,
+                            commit_version,
+                            lock.is_txn_file,
+                            pd_client.clone(),
+                            keyspace,
+                            keyspace_name.map(ToOwned::to_owned),
+                            lock_resolver.ctx.rpc_interceptor.clone(),
+                            lock_resolver.ctx.resource_group_name.clone(),
+                            lock_resolver.ctx.resource_control.clone(),
+                            lock_resolver.ctx.ru_details.clone(),
+                            lock_resolver.ctx.async_resolve_pool.clone(),
+                            OPTIMISTIC_BACKOFF,
+                            true,
+                            false,
+                            "resolve_async_commit_region",
+                            "async_resolve_async_commit_region_fallback",
+                        )
+                        .await?;
                         continue;
                     }
 
@@ -701,6 +793,7 @@ async fn schedule_read_lock_cleanup(
     let resource_group_name = context.resource_group_name.clone();
     let resource_control = context.resource_control.clone();
     let ru_details = context.ru_details.clone();
+    let async_resolve_pool = context.async_resolve_pool.clone();
     let resolve = Box::pin(async move {
         let _ = resolve_lock_with_retry_for_read_cleanup(
             &key,
@@ -723,8 +816,13 @@ async fn schedule_read_lock_cleanup(
         .await;
     });
 
-    let _ =
-        schedule_read_cleanup_task(resolve, "read_resolve", "read_async_resolve_fallback").await;
+    let _ = schedule_read_cleanup_task(
+        async_resolve_pool,
+        resolve,
+        "read_resolve",
+        "read_async_resolve_fallback",
+    )
+    .await;
 }
 
 /// Resolve the collected lite keys once per current region. The source defers
@@ -748,8 +846,10 @@ async fn schedule_read_lite_cleanup(
     let resource_group_name = context.resource_group_name.clone();
     let resource_control = context.resource_control.clone();
     let ru_details = context.ru_details.clone();
+    let async_resolve_pool = context.async_resolve_pool.clone();
+    let region_pool = async_resolve_pool.clone();
     let resolve = Box::pin(async move {
-        schedule_grouped_read_cleanup(
+        let _ = schedule_grouped_read_cleanup(
             keys,
             primary_lock,
             true,
@@ -763,14 +863,23 @@ async fn schedule_read_lite_cleanup(
             resource_group_name,
             resource_control,
             ru_details,
+            region_pool,
+            Backoff::no_jitter_backoff(2, 500, 87),
+            false,
+            true,
             "read_resolve",
             "read_async_resolve_fallback",
         )
         .await;
     });
 
-    let _ =
-        schedule_read_cleanup_task(resolve, "read_resolve", "read_async_resolve_fallback").await;
+    let _ = schedule_read_cleanup_task(
+        async_resolve_pool,
+        resolve,
+        "read_resolve",
+        "read_async_resolve_fallback",
+    )
+    .await;
 }
 
 /// Expired async-commit recovery determines the full transaction outcome, so
@@ -794,8 +903,10 @@ async fn schedule_read_async_commit_cleanup(
     let resource_group_name = context.resource_group_name.clone();
     let resource_control = context.resource_control.clone();
     let ru_details = context.ru_details.clone();
+    let async_resolve_pool = context.async_resolve_pool.clone();
+    let region_pool = async_resolve_pool.clone();
     let resolve = Box::pin(async move {
-        schedule_grouped_read_cleanup(
+        let _ = schedule_grouped_read_cleanup(
             keys,
             primary_lock,
             false,
@@ -809,6 +920,10 @@ async fn schedule_read_async_commit_cleanup(
             resource_group_name,
             resource_control,
             ru_details,
+            region_pool,
+            Backoff::no_jitter_backoff(2, 500, 87),
+            true,
+            false,
             "resolve_async_commit_region",
             "async_resolve_async_commit_region_fallback",
         )
@@ -816,6 +931,7 @@ async fn schedule_read_async_commit_cleanup(
     });
 
     let _ = schedule_read_cleanup_task(
+        async_resolve_pool,
         resolve,
         "resolve_async_commit",
         "async_resolve_async_commit_fallback",
@@ -824,6 +940,7 @@ async fn schedule_read_async_commit_cleanup(
 }
 
 async fn schedule_read_cleanup_task<F>(
+    pool: AsyncResolveTaskPool,
     resolve: F,
     task_kind: &'static str,
     fallback_action: &'static str,
@@ -831,34 +948,9 @@ async fn schedule_read_cleanup_task<F>(
 where
     F: Future<Output = ()> + Send + 'static,
 {
-    schedule_read_cleanup_task_with_semaphore(
-        ASYNC_READ_RESOLVE_LOCKS.clone(),
-        resolve,
-        task_kind,
-        fallback_action,
-    )
-    .await
-}
-
-async fn schedule_read_cleanup_task_with_semaphore<F>(
-    semaphore: Arc<Semaphore>,
-    resolve: F,
-    task_kind: &'static str,
-    fallback_action: &'static str,
-) -> Option<JoinHandle<()>>
-where
-    F: Future<Output = ()> + Send + 'static,
-{
-    match semaphore.try_acquire_owned() {
-        Ok(permit) => {
-            stats::add_lock_resolver_async_running_tasks(task_kind, 1);
-            Some(tokio::spawn(async move {
-                let _permit = permit;
-                resolve.await;
-                stats::add_lock_resolver_async_running_tasks(task_kind, -1);
-            }))
-        }
-        Err(_) => {
+    match pool.try_spawn(resolve, task_kind) {
+        Ok(task) => Some(task),
+        Err(resolve) => {
             stats::increment_lock_resolver_action(fallback_action);
             resolve.await;
             None
@@ -884,11 +976,15 @@ async fn schedule_grouped_read_cleanup(
     resource_group_name: Option<String>,
     resource_control: Option<ResourceGroupControllerHandle>,
     ru_details: Option<Arc<crate::RuDetails>>,
+    async_resolve_pool: AsyncResolveTaskPool,
+    region_backoff: Backoff,
+    always_fan_out: bool,
+    lite_batch: bool,
     region_task_kind: &'static str,
     region_fallback_action: &'static str,
-) {
-    if keys.len() == 1 {
-        let _ = resolve_lite_locks_with_retry_for_read_cleanup(
+) -> Result<()> {
+    if keys.len() == 1 && !always_fan_out {
+        return resolve_lite_locks_with_retry_for_read_cleanup(
             &keys,
             &primary_lock,
             skip_checked_primary,
@@ -902,24 +998,23 @@ async fn schedule_grouped_read_cleanup(
             resource_group_name.as_deref(),
             resource_control,
             ru_details,
-            Backoff::no_jitter_backoff(2, 500, 87),
+            region_backoff,
+            lite_batch,
+            lite_batch,
         )
         .await;
-        return;
     }
 
     let mut regions: HashMap<RegionVerId, Vec<Vec<u8>>> = HashMap::new();
     for key in &keys {
-        let Ok(store) = pd_client.clone().store_for_key(&key.clone().into()).await else {
-            return;
-        };
+        let store = pd_client.clone().store_for_key(&key.clone().into()).await?;
         regions
             .entry(store.region_with_leader.ver_id())
             .or_default()
             .push(key.clone());
     }
 
-    let mut region_tasks = Vec::with_capacity(regions.len());
+    let mut region_results = Vec::with_capacity(regions.len());
     for region_keys in regions.into_values() {
         let primary_lock = primary_lock.clone();
         let pd_client = pd_client.clone();
@@ -928,8 +1023,10 @@ async fn schedule_grouped_read_cleanup(
         let resource_group_name = resource_group_name.clone();
         let resource_control = resource_control.clone();
         let ru_details = ru_details.clone();
+        let backoff = region_backoff.clone();
+        let (result_tx, result_rx) = oneshot::channel();
         let resolve = async move {
-            let _ = resolve_lite_locks_with_retry_for_read_cleanup(
+            let result = resolve_lite_locks_with_retry_for_read_cleanup(
                 &region_keys,
                 &primary_lock,
                 false,
@@ -943,19 +1040,37 @@ async fn schedule_grouped_read_cleanup(
                 resource_group_name.as_deref(),
                 resource_control,
                 ru_details,
-                Backoff::no_jitter_backoff(2, 500, 87),
+                backoff,
+                false,
+                lite_batch,
             )
             .await;
+            let _ = result_tx.send(result);
         };
-        if let Some(task) =
-            schedule_read_cleanup_task(resolve, region_task_kind, region_fallback_action).await
-        {
-            region_tasks.push(task);
+        match async_resolve_pool.try_spawn(resolve, region_task_kind) {
+            Ok(_) => {}
+            Err(resolve) => {
+                stats::increment_lock_resolver_action(region_fallback_action);
+                resolve.await;
+            }
         }
+        region_results.push(result_rx);
     }
 
-    for task in region_tasks {
-        let _ = task.await;
+    let mut errors = Vec::new();
+    for result in region_results {
+        match result.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => errors.push(error.to_string()),
+            Err(_) => errors.push("async resolver task was cancelled".to_owned()),
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::StringError(format!(
+            "async commit recovery finished with errors: {errors:?}"
+        )))
     }
 }
 
@@ -975,6 +1090,8 @@ async fn resolve_lite_locks_with_retry_for_read_cleanup(
     resource_control: Option<ResourceGroupControllerHandle>,
     ru_details: Option<Arc<crate::RuDetails>>,
     mut backoff: Backoff,
+    count_resolve: bool,
+    count_lite: bool,
 ) -> Result<()> {
     // `resolveLock(lite=true)` skips its already-checked primary. A multi-key
     // batch deliberately retains the primary, matching client-go's
@@ -999,6 +1116,12 @@ async fn resolve_lite_locks_with_retry_for_read_cleanup(
             let mut request =
                 requests::new_resolve_lock_request(start_version, commit_version, is_txn_file);
             request.keys = region_keys;
+            if count_resolve {
+                stats::increment_lock_resolver_action("query_resolve_locks");
+            }
+            if count_lite {
+                stats::increment_lock_resolver_action("query_resolve_lock_lite");
+            }
             let plan_builder =
                 match crate::request::PlanBuilder::new(pd_client.clone(), keyspace, request)
                     .keyspace_name_option(keyspace_name)
@@ -1058,6 +1181,31 @@ async fn resolve_lite_locks_with_retry_for_read_cleanup(
             }
         }
     }
+}
+
+async fn check_secondary_locks_with_retry(
+    keys: Vec<Vec<u8>>,
+    txn_id: u64,
+    pd_client: Arc<impl PdClient>,
+    keyspace: Keyspace,
+    keyspace_name: Option<String>,
+    context: ResolveLocksContext,
+) -> Result<SecondaryLocksStatus> {
+    let request = new_check_secondary_locks_request(keys, txn_id);
+    let plan = crate::request::PlanBuilder::new(pd_client, keyspace, request)
+        .keyspace_name_option(keyspace_name.as_deref())
+        .rpc_interceptor_option(context.rpc_interceptor)
+        .resource_group_option(context.resource_group_name.as_deref())
+        .resource_control_option(context.resource_control)
+        .ru_details_option(context.ru_details)
+        .max_execution_duration(LOCK_RESOLVER_MAX_WRITE_EXECUTION_DURATION)
+        .preserve_shard()
+        .count_lock_resolver_action("query_check_secondary_locks")
+        .retry_multi_region(DEFAULT_REGION_BACKOFF)
+        .extract_error()
+        .merge(CollectWithShard)
+        .plan();
+    plan.execute().await
 }
 
 async fn resolve_lock_with_retry(
@@ -1244,7 +1392,7 @@ async fn resolve_lock_with_retry_inner(
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct ResolveLocksContext {
     // Record the status of each transaction.
     resolved: Arc<Mutex<ResolvedStatusCache>>,
@@ -1254,6 +1402,22 @@ pub struct ResolveLocksContext {
     pub(crate) resource_group_name: Option<String>,
     pub(crate) resource_control: Option<ResourceGroupControllerHandle>,
     pub(crate) ru_details: Option<Arc<crate::RuDetails>>,
+    async_resolve_pool: AsyncResolveTaskPool,
+}
+
+impl Default for ResolveLocksContext {
+    fn default() -> Self {
+        Self {
+            resolved: Arc::new(Mutex::new(ResolvedStatusCache::default())),
+            resolving: Arc::new(StdMutex::new(ResolvingLocks::default())),
+            clean_regions: Arc::new(RwLock::new(HashMap::new())),
+            rpc_interceptor: None,
+            resource_group_name: None,
+            resource_control: None,
+            ru_details: None,
+            async_resolve_pool: AsyncResolveTaskPool::new(ASYNC_READ_RESOLVE_LOCKS.clone()),
+        }
+    }
 }
 
 /// Per-snapshot transaction IDs carried in TiKV read contexts.
@@ -1313,6 +1477,15 @@ impl Default for ResolveLocksOptions {
 }
 
 impl ResolveLocksContext {
+    /// Cancel and join every detached cleanup owned by this resolver.
+    ///
+    /// The transaction client calls this before closing its shared transport,
+    /// which is the Rust ownership counterpart of `KVStore.Close` calling
+    /// `LockResolver.Close` in client-go.
+    pub async fn close(&self) {
+        self.async_resolve_pool.close().await;
+    }
+
     pub async fn get_resolved(&self, txn_id: u64) -> Option<Arc<TransactionStatus>> {
         self.resolved.lock().await.statuses.get(&txn_id).cloned()
     }
@@ -1513,6 +1686,11 @@ impl LockResolver {
         Self { ctx }
     }
 
+    /// Cancel and join this resolver's detached cleanup tasks.
+    pub async fn close(&self) {
+        self.ctx.close().await;
+    }
+
     /// Source `RecordResolvingLocks` compatibility entry point.
     pub async fn record_resolving_locks(
         &self,
@@ -1556,6 +1734,7 @@ impl LockResolver {
         keyspace_name: Option<&str>,
         lock: &kvrpcpb::LockInfo,
     ) -> Result<()> {
+        stats::increment_lock_resolver_action("query_resolve_locks");
         if lock.key == lock.primary_lock {
             return Ok(());
         }
@@ -1612,6 +1791,7 @@ impl LockResolver {
             {
                 continue;
             }
+            stats::increment_lock_resolver_action("expired");
 
             // Use currentTS = math.MaxUint64 means rollback the txn, no matter the lock is expired or not!
             let mut status = self
@@ -1770,7 +1950,6 @@ impl LockResolver {
         // 2.1 Txn Committed
         // 2.2 Txn Rollbacked -- rollback itself, rollback by others, GC tomb etc.
         // 2.3 No lock -- pessimistic lock rollback, concurrence prewrite.
-        stats::increment_lock_resolver_action("query_txn_status");
         let req = new_check_txn_status_request(
             primary,
             txn_id,
@@ -1788,6 +1967,7 @@ impl LockResolver {
             .resource_control_option(self.ctx.resource_control.clone())
             .ru_details_option(self.ctx.ru_details.clone())
             .max_execution_duration(LOCK_RESOLVER_MAX_WRITE_EXECUTION_DURATION)
+            .count_lock_resolver_action("query_txn_status")
             .retry_multi_region(DEFAULT_REGION_BACKOFF)
             .merge(CollectSingle)
             .extract_error()
@@ -1835,20 +2015,59 @@ impl LockResolver {
         keys: Vec<Vec<u8>>,
         txn_id: u64,
     ) -> Result<SecondaryLocksStatus> {
-        let req = new_check_secondary_locks_request(keys, txn_id);
-        let plan = crate::request::PlanBuilder::new(pd_client.clone(), keyspace, req)
-            .keyspace_name_option(keyspace_name)
-            .rpc_interceptor_option(self.ctx.rpc_interceptor.clone())
-            .resource_group_option(self.ctx.resource_group_name.as_deref())
-            .resource_control_option(self.ctx.resource_control.clone())
-            .ru_details_option(self.ctx.ru_details.clone())
-            .max_execution_duration(LOCK_RESOLVER_MAX_WRITE_EXECUTION_DURATION)
-            .preserve_shard()
-            .retry_multi_region(DEFAULT_REGION_BACKOFF)
-            .extract_error()
-            .merge(CollectWithShard)
-            .plan();
-        plan.execute().await
+        if keys.is_empty() {
+            return Ok(SecondaryLocksStatus::empty());
+        }
+
+        let mut regions: HashMap<RegionVerId, Vec<Vec<u8>>> = HashMap::new();
+        for key in keys {
+            let store = pd_client.clone().store_for_key(&key.clone().into()).await?;
+            regions
+                .entry(store.region_with_leader.ver_id())
+                .or_default()
+                .push(key);
+        }
+
+        let mut region_results = Vec::with_capacity(regions.len());
+        for keys in regions.into_values() {
+            let pd_client = pd_client.clone();
+            let keyspace_name = keyspace_name.map(ToOwned::to_owned);
+            let context = self.ctx.clone();
+            let (result_tx, result_rx) = oneshot::channel();
+            let check = async move {
+                let result = check_secondary_locks_with_retry(
+                    keys,
+                    txn_id,
+                    pd_client,
+                    keyspace,
+                    keyspace_name,
+                    context,
+                )
+                .await;
+                let _ = result_tx.send(result);
+            };
+            match self
+                .ctx
+                .async_resolve_pool
+                .try_spawn(check, "check_secondaries")
+            {
+                Ok(_) => {}
+                Err(check) => {
+                    stats::increment_lock_resolver_action("async_check_secondaries_fallback");
+                    check.await;
+                }
+            }
+            region_results.push(result_rx);
+        }
+
+        let mut combined = SecondaryLocksStatus::empty();
+        for result in region_results {
+            let status = result.await.map_err(|_| {
+                Error::StringError("check-secondary resolver task was cancelled".to_owned())
+            })??;
+            combined.merge_from(status)?;
+        }
+        Ok(combined)
     }
 
     async fn batch_resolve_locks(
@@ -2158,6 +2377,85 @@ mod tests {
             .await
             .is_some());
         assert!(context.clone().get_resolved(1).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn source_action_metric_is_visible_before_physical_dispatch() {
+        const ACTION: &str = "source_pre_send_metric_test";
+        let before = crate::stats::lock_resolver_action_count(ACTION);
+        let client = MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+            assert!(request.is::<kvrpcpb::GetRequest>());
+            assert_eq!(crate::stats::lock_resolver_action_count(ACTION), before + 1);
+            Ok(Box::<kvrpcpb::GetResponse>::default() as Box<dyn Any>)
+        });
+        crate::request::PlanBuilder::new(
+            Arc::new(MockPdClient::new(client)),
+            Keyspace::Disable,
+            kvrpcpb::GetRequest::default(),
+        )
+        .count_lock_resolver_action(ACTION)
+        .retry_multi_region(Backoff::no_backoff())
+        .merge(CollectSingle)
+        .plan()
+        .execute()
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn source_cached_async_commit_status_skips_secondary_recovery() {
+        let check_requests = Arc::new(AtomicUsize::new(0));
+        let resolve_requests = Arc::new(AtomicUsize::new(0));
+        let checks = check_requests.clone();
+        let resolves = resolve_requests.clone();
+        let client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if request.is::<kvrpcpb::CheckTxnStatusRequest>()
+                    || request.is::<kvrpcpb::CheckSecondaryLocksRequest>()
+                {
+                    checks.fetch_add(1, Ordering::SeqCst);
+                    panic!("a determined cached status must bypass status recovery");
+                }
+                if request.is::<kvrpcpb::ResolveLockRequest>() {
+                    resolves.fetch_add(1, Ordering::SeqCst);
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request type while using the resolver cache");
+            },
+        )));
+        let mut context = ResolveLocksContext::default();
+        context
+            .save_resolved(
+                1,
+                Arc::new(TransactionStatus {
+                    kind: TransactionStatusKind::Committed(Timestamp::from_version(10)),
+                    action: kvrpcpb::Action::NoAction,
+                    is_expired: false,
+                }),
+            )
+            .await;
+
+        let result = resolve_locks_with_context(
+            vec![kvrpcpb::LockInfo {
+                key: b"secondary".to_vec(),
+                primary_lock: b"primary".to_vec(),
+                lock_version: 1,
+                use_async_commit: true,
+                min_commit_ts: 2,
+                ..Default::default()
+            }],
+            Timestamp::from_version(5),
+            client,
+            Keyspace::Disable,
+            None,
+            context,
+        )
+        .await
+        .unwrap();
+
+        assert!(result.is_empty());
+        assert_eq!(check_requests.load(Ordering::SeqCst), 0);
+        assert_eq!(resolve_requests.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -2654,13 +2952,14 @@ mod tests {
         const TEST_TASK_KIND: &str = "source_metrics_test";
         const TEST_FALLBACK_ACTION: &str = "source_metrics_test_fallback";
         let semaphore = Arc::new(Semaphore::new(1));
+        let pool = AsyncResolveTaskPool::new(semaphore.clone());
         let running_before = crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND);
         let started = Arc::new(tokio::sync::Notify::new());
         let started_by_task = Arc::clone(&started);
         let release = Arc::new(tokio::sync::Notify::new());
         let release_by_task = Arc::clone(&release);
-        schedule_read_cleanup_task_with_semaphore(
-            Arc::clone(&semaphore),
+        schedule_read_cleanup_task(
+            pool.clone(),
             async move {
                 started_by_task.notify_one();
                 release_by_task.notified().await;
@@ -2689,18 +2988,14 @@ mod tests {
             .try_acquire_owned()
             .expect("test owns its cleanup permit");
         let before = crate::stats::lock_resolver_action_count(TEST_FALLBACK_ACTION);
-        schedule_read_cleanup_task_with_semaphore(
-            semaphore,
-            async {},
-            TEST_TASK_KIND,
-            TEST_FALLBACK_ACTION,
-        )
-        .await;
+        schedule_read_cleanup_task(pool.clone(), async {}, TEST_TASK_KIND, TEST_FALLBACK_ACTION)
+            .await;
         assert_eq!(
             crate::stats::lock_resolver_action_count(TEST_FALLBACK_ACTION),
             before + 1
         );
         drop(permits);
+        pool.close().await;
     }
 
     #[tokio::test]
@@ -2709,6 +3004,7 @@ mod tests {
         const TEST_TASK_KIND: &str = "source_pool_test";
         const TEST_FALLBACK_ACTION: &str = "source_pool_test_fallback";
         let semaphore = Arc::new(Semaphore::new(5));
+        let pool = AsyncResolveTaskPool::new(semaphore);
         let running_before = crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND);
         let fallback_before = crate::stats::lock_resolver_action_count(TEST_FALLBACK_ACTION);
         let latches = (0..6)
@@ -2717,14 +3013,22 @@ mod tests {
 
         for latch in latches.iter().take(3) {
             let latch = Arc::clone(latch);
-            assert!(schedule_read_cleanup_task_with_semaphore(
-                Arc::clone(&semaphore),
+            assert!(schedule_read_cleanup_task(
+                pool.clone(),
                 async move { latch.notified().await },
                 TEST_TASK_KIND,
                 TEST_FALLBACK_ACTION,
             )
             .await
             .is_some());
+        }
+        for _ in 0..10 {
+            if crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND)
+                == running_before + 3.0
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
         }
         assert_eq!(
             crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND),
@@ -2747,8 +3051,8 @@ mod tests {
 
         for latch in latches.iter().skip(3).take(3) {
             let latch = Arc::clone(latch);
-            assert!(schedule_read_cleanup_task_with_semaphore(
-                Arc::clone(&semaphore),
+            assert!(schedule_read_cleanup_task(
+                pool.clone(),
                 async move { latch.notified().await },
                 TEST_TASK_KIND,
                 TEST_FALLBACK_ACTION,
@@ -2756,14 +3060,22 @@ mod tests {
             .await
             .is_some());
         }
+        for _ in 0..10 {
+            if crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND)
+                == running_before + 5.0
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
         assert_eq!(
             crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND),
             running_before + 5.0
         );
 
         for _ in 0..3 {
-            assert!(schedule_read_cleanup_task_with_semaphore(
-                Arc::clone(&semaphore),
+            assert!(schedule_read_cleanup_task(
+                pool.clone(),
                 async {},
                 TEST_TASK_KIND,
                 TEST_FALLBACK_ACTION,
@@ -2785,8 +3097,8 @@ mod tests {
             }
             tokio::task::yield_now().await;
         }
-        assert!(schedule_read_cleanup_task_with_semaphore(
-            Arc::clone(&semaphore),
+        assert!(schedule_read_cleanup_task(
+            pool.clone(),
             async {},
             TEST_TASK_KIND,
             TEST_FALLBACK_ACTION,
@@ -2807,6 +3119,23 @@ mod tests {
             crate::stats::lock_resolver_async_running_tasks(TEST_TASK_KIND),
             running_before
         );
+
+        let never = Arc::new(tokio::sync::Notify::new());
+        assert!(pool
+            .try_spawn(
+                {
+                    let never = never.clone();
+                    async move { never.notified().await }
+                },
+                TEST_TASK_KIND,
+            )
+            .is_ok());
+        assert_eq!(pool.active(), 1);
+        tokio::time::timeout(Duration::from_secs(1), pool.close())
+            .await
+            .expect("closing the resolver cancels and joins active cleanup");
+        assert_eq!(pool.active(), 0);
+        assert!(pool.try_spawn(async {}, TEST_TASK_KIND).is_err());
     }
 
     #[test]
