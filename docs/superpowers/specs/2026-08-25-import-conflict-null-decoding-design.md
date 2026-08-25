@@ -48,4 +48,3 @@ Sizing the cache from the maximum projected offset would work but duplicates
 the table metadata offset invariant. Replacing the slice with a map keyed by
 column ID would remove offset coupling but broadens a shared helper contract
 and adds unnecessary hot-path overhead.
-
