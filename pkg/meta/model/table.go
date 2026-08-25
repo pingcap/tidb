@@ -324,7 +324,7 @@ func (t *TableInfo) Clone() *TableInfo {
 	if t.Affinity != nil {
 		nt.Affinity = t.Affinity.Clone()
 	}
-	nt.StorageClassTransitionPendingHistory = make([]StorageClassTransitionHistory, len(t.StorageClassTransitionPendingHistory))
+	nt.StorageClassTransitionPendingHistory = slices.Clone(t.StorageClassTransitionPendingHistory)
 	for i := range t.StorageClassTransitionPendingHistory {
 		nt.StorageClassTransitionPendingHistory[i] = t.StorageClassTransitionPendingHistory[i].Clone()
 	}

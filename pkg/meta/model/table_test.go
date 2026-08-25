@@ -212,6 +212,8 @@ func TestTTLInfoClone(t *testing.T) {
 }
 
 func TestTableInfoCloneStorageClassTransitionHistory(t *testing.T) {
+	require.Nil(t, (&TableInfo{}).Clone().StorageClassTransitionPendingHistory)
+
 	tblInfo := &TableInfo{
 		StorageClassTransitionPendingHistory: []StorageClassTransitionHistory{{
 			Target: StorageClassTierIA,

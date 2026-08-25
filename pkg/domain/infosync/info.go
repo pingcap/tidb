@@ -957,7 +957,6 @@ func CollectStorageClassStatus(ctx context.Context, tableID int64, target string
 			continue
 		}
 		requestCount++
-		store := store
 		go func() {
 			status, err := helper.CollectStorageClassStatusWithCtx(
 				ctx, store.Store.StatusAddress, is.tikvCodec.GetKeyspaceID(), tableID, target)
