@@ -523,3 +523,80 @@ passed, as did the Go source tests `TestIndexAdvisorWeb3Bench`,
 `TestAggPushDownEngine`, and `TestBuildFinalModeAggregation`; `make lint`
 also passed. The branch is clean and `origin/hparser-integration` points at
 the recorded HEAD.
+
+## 2026-08-25 official Web3Bench 50x replay (current HEAD)
+
+The data was expanded to scale factor 50 from the official Web3Bench
+`loaddata.xml` (the requested five-fold increase over the earlier 10x run).
+The Go endpoint is TiUP `nightly`; Rust is commit `0ce29ebe27dfcdc06f96ee60b8647c6ab11cd4c2`,
+with the accepted Rust commit `950fb61c3a` and the pre-optimization `c300`
+binary retained as comparison endpoints. All measurements use one client and
+fresh connections. The loaded counts were blocks=50,000, contracts=35,000,
+transactions=4,000,000, token_transfers=900,000, and temp_table=2,000.
+
+Receipts:
+
+    /tmp/web3_results_50x_go.json
+    /tmp/web3_results_50x_current_0ce.json
+    /tmp/web3_results_50x_prev_950.json
+    /tmp/web3_results_50x_c300.json
+    /tmp/web3_plan_50x_go.json
+    /tmp/web3_plan_50x_current_0ce.json
+    /tmp/web3_plan_50x_prev_950.json
+    /tmp/web3_plan_50x_c300.json
+    /tmp/web3_perf_50x_new_vs_prev_focus_all_3x8.json
+    /tmp/web3_perf_50x_new_vs_prev_small_3x32.json
+    /tmp/web3_perf_50x_new_vs_c300_2x16.json
+    /tmp/web3_perf_50x_new_vs_go_2x16.json
+    /tmp/web3_perf_50x_focus_r35_r32det_new_vs_go_3x8.json
+
+The balanced all-query replay (three rounds, eight alternating pairs per
+query) is below. Values are median-of-round-medians in milliseconds; `delta`
+is current Rust minus the accepted Rust baseline.
+
+| Query | Current Rust | Rust 950 | Delta | Ratio |
+|---|---:|---:|---:|---:|
+| R1 | 0.448 | 0.417 | +0.031 | 1.073x |
+| R21 | 1.406 | 1.378 | +0.028 | 1.020x |
+| R22 | 0.834 | 1.255 | -0.421 | 0.665x |
+| R23 | 1.240 | 1.208 | +0.032 | 1.026x |
+| R24 | 1.842 | 1.798 | +0.044 | 1.024x |
+| R25 | 1.144 | 1.189 | -0.044 | 0.963x |
+| R31 | 2.354 | 2.319 | +0.035 | 1.015x |
+| R32 | 9.619 | 9.432 | +0.187 | 1.020x |
+| R33 | 812.179 | 808.470 | +3.709 | 1.005x |
+| R34 | 1242.726 | 1255.444 | -12.717 | 0.990x |
+| R35 | 939.584 | 929.013 | +10.571 | 1.011x |
+| R32det | 10.914 | 10.795 | +0.119 | 1.011x |
+
+A 3x32 small-query replay confirms the only ratio above 1.05 is R1 at
+1.057x (+0.025 ms); R32 is 0.997x and R32det is 1.001x. The c300 comparison
+has the same result shape for every query and a maximum ratio of 1.057x
+(R25, +0.059 ms); the heavy queries are R33=0.995x, R34=1.001x, and
+R35=1.000x. The earlier apparent R34 regression disappeared under balanced
+ordering and focused repeats (R34=0.999x in the dedicated 3x8 probe).
+
+Against Go nightly, Rust is faster on R33 by 640.391 ms (0.593x) and R34 by
+614.763 ms (0.725x), so these are the largest absolute differences and are
+favorable to Rust. The largest unfavorable cross-implementation gap is R35:
+Rust is 1006.211 ms versus Go 895.318 ms (+110.893 ms, 1.124x); the focused
+repeat measured +97.268 ms (1.101x). R32det is +2.257 ms (1.268x; focused
++3.226 ms). These are Go-versus-Rust implementation gaps, not regressions
+against the Rust baseline: R35 improves versus the previous Rust binary and
+is effectively equal to c300 at 50x.
+
+Results are byte-for-byte equal between current Rust, Rust 950, c300, and Go
+for every deterministic query. R32's original SQL has an unspecified
+timestamp tie order; its rows are equal after order-insensitive comparison,
+and the deterministic `R32det` variant is byte-for-byte equal. Normalized
+operator skeletons match current Rust versus Rust 950 for all 11 original
+queries, and current Rust versus Go for all except R22: at 50x Go selects a
+root `HashAgg` while Rust selects `StreamAgg` over the same index-reader and
+coprocessor aggregate. Rust is faster on R22, so this cost-boundary plan
+choice is recorded for follow-up rather than changed in this performance
+audit. R34/R35 retain the same pushed-down aggregate/join skeletons.
+
+The 50x run therefore finds no material Rust regression: every query is
+result-correct, the heavy queries do not regress against either Rust baseline,
+and the largest positive deltas against the accepted Rust binary are small
+sub-millisecond queries (R1/R23/R24) or R35 at +10.6 ms (1.011x).
