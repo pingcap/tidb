@@ -199,7 +199,14 @@ impl TemporaryTableOverlay {
     /// so what comes out at attach is empty and what goes back at detach can
     /// be the empty store that came out.
     fn swap_global_storage(&mut self, catalog: &mut Catalog) {
-        for (database, name) in catalog.global_temporary_table_ids() {
+        // Memoized walk (Go answers this from `temptable`'s session map, not
+        // by iterating infoschema): a session with no global temporary tables
+        // -- every OLTP workload -- pays one epoch compare per call.
+        let ids = catalog.global_temporary_table_ids_memo();
+        if ids.is_empty() {
+            return;
+        }
+        for (database, name) in ids.to_vec() {
             let Some(table) = catalog.temporary_overlay_table_mut(&database, &name) else {
                 continue;
             };

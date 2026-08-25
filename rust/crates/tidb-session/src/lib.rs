@@ -1278,6 +1278,15 @@ impl Session {
         const DISABLED: &str = "client has multi-statement capability disabled. Run SET \
                                 GLOBAL tidb_multi_statement_mode='ON' after you understand \
                                 the security risk";
+        // Go parses this text ONCE; the admission parse below is this tier's
+        // second pass over every COM_QUERY. A text that provably holds exactly
+        // one statement needs no admission answer from a parser -- the
+        // single-statement arm returns it whole either way (parse success AND
+        // parse failure both land on `vec![sql.to_owned()]`) -- so the scan
+        // below skips that second pass entirely, sql_mode read included.
+        if tidb_parser::is_sole_statement(sql) {
+            return Ok(vec![sql.to_owned()]);
+        }
         let mode = crate::stmt_ctx::scanner_sql_mode_of(
             &self.vars().get_system("sql_mode").unwrap_or_default(),
         );
