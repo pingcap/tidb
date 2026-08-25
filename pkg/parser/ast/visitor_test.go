@@ -555,6 +555,8 @@ func TestWalkWritebackInventory(t *testing.T) {
 	var forbiddenSymbols []string
 	var leafAcceptMethods []leafAcceptMethod
 	var acceptInPlaceContractViolations []string
+	var inPlaceStopContractViolations []string
+	var inPlaceTraversalCallCount int
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -608,6 +610,22 @@ func TestWalkWritebackInventory(t *testing.T) {
 						"%s:%d %s", name, fset.Position(function.Pos()).Line, renderExpr(t, fset, function.Recv.List[0].Type),
 					))
 				}
+				callCount, violations := unpropagatedInPlaceTraversalCalls(function)
+				inPlaceTraversalCallCount += callCount
+				for _, call := range violations {
+					inPlaceStopContractViolations = append(inPlaceStopContractViolations, fmt.Sprintf(
+						"%s:%d %s", name, fset.Position(call.Pos()).Line, renderExpr(t, fset, call),
+					))
+				}
+				continue
+			case "acceptInPlace":
+				callCount, violations := unpropagatedInPlaceTraversalCalls(function)
+				inPlaceTraversalCallCount += callCount
+				for _, call := range violations {
+					inPlaceStopContractViolations = append(inPlaceStopContractViolations, fmt.Sprintf(
+						"%s:%d %s", name, fset.Position(call.Pos()).Line, renderExpr(t, fset, call),
+					))
+				}
 				continue
 			default:
 				continue
@@ -640,6 +658,26 @@ func TestWalkWritebackInventory(t *testing.T) {
 		}
 	}
 
+	t.Run("stop_contract_checker_rejects_ignored_result", func(t *testing.T) {
+		const source = `package fixture
+
+func (n *fixtureNode) AcceptInPlace(v InPlaceVisitor) bool {
+	n.First.AcceptInPlace(v)
+	if n.Child.AcceptInPlace(v) {
+		return true
+	}
+	return true
+}`
+		fset := token.NewFileSet()
+		file, err := goparser.ParseFile(fset, "fixture.go", source, 0)
+		require.NoError(t, err)
+		function := file.Decls[0].(*goast.FuncDecl)
+
+		callCount, violations := unpropagatedInPlaceTraversalCalls(function)
+		require.Equal(t, 2, callCount)
+		require.Len(t, violations, 2)
+	})
+
 	t.Run("leaf_accept_fast_path", func(t *testing.T) {
 		sort.Slice(leafAcceptMethods, func(i, j int) bool {
 			if leafAcceptMethods[i].file != leafAcceptMethods[j].file {
@@ -671,6 +709,10 @@ func TestWalkWritebackInventory(t *testing.T) {
 	require.Empty(t, acceptInPlaceContractViolations,
 		"AcceptInPlace methods must branch on Enter's skipChildren result and call Leave: %s",
 		strings.Join(acceptInPlaceContractViolations, ", "))
+	require.Positive(t, inPlaceTraversalCallCount)
+	require.Empty(t, inPlaceStopContractViolations,
+		"in-place child traversal results must stop the current traversal when false: %s",
+		strings.Join(inPlaceStopContractViolations, ", "))
 	require.Len(t, candidates, 271, "writeback candidates: %s", formatWritebackCandidates(candidates))
 
 	var guarded []writebackCandidate
@@ -681,6 +723,102 @@ func TestWalkWritebackInventory(t *testing.T) {
 	}
 	require.Empty(t, guarded, "guarded writebacks: %s", formatWritebackCandidates(guarded))
 	require.Equal(t, 271, len(candidates)-len(guarded), "unguarded writebacks: %s", formatWritebackCandidates(candidates))
+}
+
+func unpropagatedInPlaceTraversalCalls(function *goast.FuncDecl) (int, []*goast.CallExpr) {
+	allCalls := make(map[*goast.CallExpr]struct{})
+	propagatedCalls := make(map[*goast.CallExpr]struct{})
+	goast.Inspect(function.Body, func(node goast.Node) bool {
+		call, ok := node.(*goast.CallExpr)
+		if ok && isInPlaceTraversalCall(call) {
+			allCalls[call] = struct{}{}
+		}
+		return true
+	})
+	goast.Inspect(function.Body, func(node goast.Node) bool {
+		switch node := node.(type) {
+		case *goast.ReturnStmt:
+			if len(node.Results) != 1 {
+				return true
+			}
+			if call, ok := unparen(node.Results[0]).(*goast.CallExpr); ok && isInPlaceTraversalCall(call) {
+				propagatedCalls[call] = struct{}{}
+			}
+		case *goast.IfStmt:
+			if call := stoppedInPlaceTraversalCall(node); call != nil {
+				propagatedCalls[call] = struct{}{}
+			}
+		}
+		return true
+	})
+
+	violations := make([]*goast.CallExpr, 0, len(allCalls))
+	for call := range allCalls {
+		if _, ok := propagatedCalls[call]; !ok {
+			violations = append(violations, call)
+		}
+	}
+	sort.Slice(violations, func(i, j int) bool { return violations[i].Pos() < violations[j].Pos() })
+	return len(allCalls), violations
+}
+
+func stoppedInPlaceTraversalCall(statement *goast.IfStmt) *goast.CallExpr {
+	if len(statement.Body.List) != 1 {
+		return nil
+	}
+	result, ok := statement.Body.List[0].(*goast.ReturnStmt)
+	if !ok || len(result.Results) != 1 || !isIdentifierNamed(result.Results[0], "false") {
+		return nil
+	}
+	return falseStoppingInPlaceTraversalCall(statement.Cond)
+}
+
+func falseStoppingInPlaceTraversalCall(condition goast.Expr) *goast.CallExpr {
+	condition = unparen(condition)
+	if conjunction, ok := condition.(*goast.BinaryExpr); ok && conjunction.Op == token.LAND {
+		if containsInPlaceTraversalCall(conjunction.X) {
+			return nil
+		}
+		return falseStoppingInPlaceTraversalCall(conjunction.Y)
+	}
+	negation, ok := condition.(*goast.UnaryExpr)
+	if !ok || negation.Op != token.NOT {
+		return nil
+	}
+	call, ok := unparen(negation.X).(*goast.CallExpr)
+	if !ok || !isInPlaceTraversalCall(call) {
+		return nil
+	}
+	return call
+}
+
+func containsInPlaceTraversalCall(node goast.Node) bool {
+	var found bool
+	goast.Inspect(node, func(node goast.Node) bool {
+		call, ok := node.(*goast.CallExpr)
+		if ok && isInPlaceTraversalCall(call) {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func isInPlaceTraversalCall(call *goast.CallExpr) bool {
+	selector, ok := call.Fun.(*goast.SelectorExpr)
+	return ok && len(call.Args) == 1 &&
+		(selector.Sel.Name == "AcceptInPlace" || selector.Sel.Name == "acceptInPlace")
+}
+
+func unparen(expression goast.Expr) goast.Expr {
+	for {
+		parenthesized, ok := expression.(*goast.ParenExpr)
+		if !ok {
+			return expression
+		}
+		expression = parenthesized.X
+	}
 }
 
 func hasAcceptInPlaceSkipChildrenGuard(function *goast.FuncDecl) bool {
