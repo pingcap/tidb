@@ -1485,6 +1485,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		ResourceGroupName:     s.sessionVars.StmtCtx.ResourceGroupName,
 		SessionAlias:          s.sessionVars.SessionAlias,
 		CursorTracker:         s.cursorTracker,
+		ProxyHost:             s.sessionVars.ProxyHost,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {

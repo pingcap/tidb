@@ -233,6 +233,7 @@ func TestSelectClusterTable(t *testing.T) {
 				ID:           1,
 				User:         "root",
 				Host:         "127.0.0.1",
+				ProxyHost:    "10.0.0.1:12345",
 				Command:      mysql.ComQuery,
 				SessionAlias: "alias456",
 			},
@@ -256,6 +257,9 @@ func TestSelectClusterTable(t *testing.T) {
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("2"))
 	tk.MustQuery("select time from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testkit.RowsWithSep("|", "2019-02-12 19:33:56.571953"))
 	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
+	// The cluster RPC returns both the forwarded client address and the actual
+	// proxy peer from the remote TiDB node without conflating their semantics.
+	tk.MustQuery("select host, proxy_host from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("127.0.0.1 10.0.0.1:12345"))
 	// skip instance and host column because it now includes the TCP socket details (unstable)
 	tk.MustQuery("select id, user, db, command, time, state, info, digest, mem, disk, txnstart, session_alias from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf("1 root <nil> Query 9223372036 %s <nil>  0 0  alias456", "")))
 	tk.MustQuery("select query_time, conn_id, session_alias from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6 "))
@@ -377,7 +381,7 @@ select * from t3;
 	tk.MustQuery("select count(*) from `SLOW_QUERY`").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf(
-		":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 0    <nil> 0 0", "")))
+		":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 0    <nil> 0 0 <nil>", "")))
 	tk.MustExec("create user user1")
 	tk.MustExec("create user user2")
 	user1 := testkit.NewTestKit(t, s.store)

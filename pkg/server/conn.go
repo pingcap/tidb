@@ -187,6 +187,7 @@ type clientConn struct {
 	serverHost    string                // server host
 	peerHost      string                // peer host
 	peerPort      string                // peer port
+	proxyHost     string                // actual TCP peer address before PROXY Protocol replaces RemoteAddr
 	countedUser   string                // counted user identity for max_user_connections tracking
 	status        int32                 // dispatching/reading/shutdown/waitshutdown
 	lastCode      uint16                // last error code
@@ -198,6 +199,8 @@ type clientConn struct {
 	rsEncoder     *column.ResultEncoder // rsEncoder is used to encode the string result to different charsets
 	inputDecoder  *util2.InputDecoder   // inputDecoder is used to decode the different charsets of incoming strings to utf-8
 	socketCredUID uint32                // UID from the other end of the Unix Socket
+
+	proxyHostState *proxyHostState // connection-level PROXY Protocol header detection state
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
 		sync.RWMutex
@@ -229,6 +232,7 @@ func (cc *clientConn) getCtx() *TiDBContext {
 
 func (cc *clientConn) SetCtx(ctx *TiDBContext) {
 	cc.ctx.Lock()
+	cc.setProxyHost(ctx)
 	cc.ctx.TiDBContext = ctx
 	cc.ctx.Unlock()
 }

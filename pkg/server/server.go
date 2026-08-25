@@ -39,7 +39,6 @@ import (
 	_ "net/http/pprof" // #nosec G108 for pprof
 	"os"
 	"os/user"
-	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -231,6 +230,7 @@ func (s *Server) SetDomain(dom *domain.Domain) {
 // It allocates a connection ID and random salt data for authentication.
 func (s *Server) newConn(conn net.Conn) *clientConn {
 	cc := newClientConn(s)
+	cc.captureProxyHost(conn)
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
 		if err := tcpConn.SetKeepAlive(s.cfg.Performance.TCPKeepAlive); err != nil {
 			logutil.BgLogger().Error("failed to set tcp keep alive option", zap.Error(err))
@@ -358,7 +358,7 @@ func (s *Server) initTiDBListener() (err error) {
 		if proxyTarget == nil {
 			proxyTarget = s.socket
 		}
-		ppListener, err := proxyprotocol.NewLazyListener(proxyTarget, s.cfg.ProxyProtocol.Networks,
+		ppListener, err := newProxyProtocolListener(proxyTarget, s.cfg.ProxyProtocol.Networks,
 			int(s.cfg.ProxyProtocol.HeaderTimeout), s.cfg.ProxyProtocol.Fallbackable)
 		if err != nil {
 			logutil.BgLogger().Error("ProxyProtocol networks parameter invalid")
@@ -569,10 +569,7 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 				ok bool
 			)
 			if clientConn.ppEnabled {
-				// Using reflect to get Raw Conn object from proxy protocol wrapper connection object
-				ppv := reflect.ValueOf(conn)
-				vconn := ppv.Elem().FieldByName("Conn")
-				rconn := vconn.Interface()
+				rconn := unwrapProxyHostTrackingConn(conn)
 				uc, ok = rconn.(*net.UnixConn)
 			} else {
 				uc, ok = conn.(*net.UnixConn)

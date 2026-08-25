@@ -3077,6 +3077,8 @@ func (p *mockProxyProtocolProxy) generateProxyProtocolHeaderV2(network, srcAddr,
 }
 
 func TestProxyProtocolWithIpFallbackable(t *testing.T) {
+	// This scenario connects both through a PROXY Protocol proxy and directly to
+	// verify the forwarded HOST remains compatible while PROXY_HOST is observable.
 	cfg := util2.NewTestConfig()
 	cfg.Port = 4999
 	cfg.Status.ReportStatus = false
@@ -3125,6 +3127,11 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 			rows := dbt.MustQuery("SHOW PROCESSLIST;")
 			records := cli.Rows(t, rows)
 			require.Contains(t, records[0], "192.168.1.2:60055")
+
+			rows = dbt.MustQuery("SELECT HOST, PROXY_HOST FROM INFORMATION_SCHEMA.PROCESSLIST WHERE ID = CONNECTION_ID()")
+			records = cli.Rows(t, rows)
+			require.Len(t, records, 1)
+			require.Regexp(t, `^192\.168\.1\.2:60055 127\.0\.0\.1:[0-9]+$`, records[0])
 		},
 	)
 
@@ -3135,9 +3142,15 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 			config.User = "root"
 		},
 		func(dbt *testkit.DBTestKit) {
+			// Connect directly without a PROXY header, then query this fallback
+			// session and verify its direct peer is not exposed as PROXY_HOST.
 			rows := dbt.MustQuery("SHOW PROCESSLIST;")
-			records := cli.Rows(t, rows)
+			records := cli2.Rows(t, rows)
 			require.Contains(t, records[0], "127.0.0.1:")
+
+			rows = dbt.MustQuery("SELECT PROXY_HOST IS NULL FROM INFORMATION_SCHEMA.PROCESSLIST WHERE ID = CONNECTION_ID()")
+			records = cli2.Rows(t, rows)
+			require.Equal(t, []string{"1"}, records)
 		},
 	)
 }

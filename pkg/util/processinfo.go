@@ -81,6 +81,9 @@ type ProcessInfo struct {
 	MaxExecutionTime uint64
 	State            uint16
 	Command          byte
+	// ProxyHost is the actual TCP peer address before PROXY Protocol replaces the client address.
+	// It is empty when PROXY Protocol is disabled for the connection.
+	ProxyHost string
 }
 
 // Clone return a shallow clone copy of this processInfo.
@@ -158,8 +161,12 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 	if pi.SQLCPUUsage != nil {
 		cpuUsages = pi.SQLCPUUsage.GetCPUUsages()
 	}
+	var proxyHost any
+	if pi.ProxyHost != "" {
+		proxyHost = pi.ProxyHost
+	}
 	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed,
-		pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias, affectedRows, cpuUsages.TidbCPUTime.Nanoseconds(), cpuUsages.TikvCPUTime.Nanoseconds())
+		pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias, affectedRows, cpuUsages.TidbCPUTime.Nanoseconds(), cpuUsages.TikvCPUTime.Nanoseconds(), proxyHost)
 }
 
 // ascServerStatus is a slice of all defined server status in ascending order.

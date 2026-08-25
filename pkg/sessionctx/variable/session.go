@@ -1830,6 +1830,8 @@ type SessionVars struct {
 	// EnableSPPlanCache indicates whether to enable the stored-routine hidden prepared plan-cache path
 	// and the related compatibility behavior added for it.
 	EnableSPPlanCache bool
+	// ProxyHost is the actual TCP peer address captured before PROXY Protocol parsing.
+	ProxyHost string
 	// CreateFromSelectUsingImport indicates whether to use import into to create table as select.
 	CreateFromSelectUsingImport bool
 

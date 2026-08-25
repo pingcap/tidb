@@ -888,6 +888,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "ROWS_AFFECTED", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "TIDB_CPU", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, deflt: 0},
 	{name: "TIKV_CPU", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, deflt: 0},
+	{name: "PROXY_HOST", tp: mysql.TypeVarchar, size: 64},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
