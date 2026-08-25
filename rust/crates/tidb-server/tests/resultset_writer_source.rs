@@ -170,6 +170,25 @@ fn empty_first_next_still_emits_metadata_then_finishes_and_emits_eof() {
 }
 
 #[test]
+fn connection_empty_result_finishes_closes_and_emits_terminal_eof() {
+    let mut source = Source::default();
+    let mut sink = Sink::default();
+    let outcome = write_connection_result_set_to_sink(
+        &mut source,
+        &mut sink,
+        ResultSetOptions::default(),
+        32,
+    )
+    .unwrap();
+
+    assert_eq!(source.log, ["next", "columns", "finish", "close"]);
+    assert_eq!(outcome.rows_written, 0);
+    assert_eq!(sink.payloads.len(), 4);
+    assert_eq!(sink.flushes, 1);
+    assert_eq!(sink.payloads.last().unwrap()[0], 0xfe);
+}
+
+#[test]
 fn second_next_error_is_nonretryable_after_metadata_and_rows_escape() {
     let mut source = Source {
         events: [

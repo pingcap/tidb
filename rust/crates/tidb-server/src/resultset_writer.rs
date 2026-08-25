@@ -205,6 +205,35 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         })?;
     }
 
+    // An empty first pull still has a complete result-set lifecycle. The
+    // prefetch path below emits the terminal packet when the *next* pull is
+    // empty, but there is no row batch to enter that loop for an empty result
+    // set. Finish the source and write EOF explicitly so clients do not wait
+    // forever for the response terminator.
+    if batch.is_empty() {
+        source
+            .finish()
+            .map_err(|message| tracked_after_pull(message, sink, true))?;
+        let terminal = stream
+            .finish_packet()
+            .map_err(|error| tracked_after_pull(error.to_string(), sink, true))?;
+        sink.write_payloads(&[terminal.as_slice()]).map_err(|error| {
+            tracked(
+                ResultSetWriteError {
+                    message: error.message,
+                    retryable: false,
+                    bytes_escaped: sink.packets_written() > 0 || error.bytes_escaped,
+                },
+                true,
+            )
+        })?;
+        flush_sink(sink).map_err(|error| tracked(error, true))?;
+        return Ok(ResultSetWriteOutcome {
+            rows_written: 0,
+            packets_written: sink.packets_written(),
+        });
+    }
+
     loop {
         if batch.is_empty() {
             break;

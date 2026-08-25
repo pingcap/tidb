@@ -88,6 +88,22 @@ shapes remain on the existing general executor.
   `230.737 ms` vs Go `154.765 ms` (`1.49x`) and R35 `160.028 ms` vs Go
   `113.508 ms` (`1.41x`); the full matrix is in
   `/tmp/web3_final_current_default5_perf.json`.
+- [x] (2026-08-25) After rebasing onto the newer remote hash-aggregation and
+  result-writer commits, the final release binary exposed an empty-result
+  lifecycle bug: an initial empty pull returned before `finish()` and the
+  terminal EOF packet, so Web3Bench R23 could hang. The writer now completes
+  the source and emits the terminal packet on that path; the existing direct
+  writer regression plus `connection_empty_result_finishes_closes_and_emits_terminal_eof`
+  cover both layers.
+- [x] (2026-08-25) Re-ran the final post-fix ten-times-data matrix against the
+  task-owned Go nightly and Rust endpoint. R1, R21-R35, and `R32det` are exact
+  (R32 alone is tie-order dependent); every plan operator skeleton is equal.
+  In an isolated repeat (no baseline server left running), the post-fix
+  default-settings medians were R34 `314.691 ms` vs Go `151.839 ms`
+  (`2.07x`) and R35 `163.018 ms` vs Go `110.458 ms` (`1.48x`).
+  Against the clean Rust `884e16945ed` baseline, R34 improved from
+  `4013.787 ms` to `353.144 ms` and R35 remained within measurement noise
+  (`164.660 ms` to `158.905 ms`); the complete receipts are recorded below.
 
 ## Validation commands
 
@@ -151,6 +167,24 @@ Current fresh-release receipts (commit `09725ac0bf`, after cache reset) are:
     /tmp/web3_current_nostats_plans_rust.json
     /tmp/web3_current_nostats_perf.json
 
+Final post-fix receipts after the remote rebase and empty-result writer fix:
+
+    /tmp/web3_final_rebased_go_results.json
+    /tmp/web3_final_rebased_rust_results.json
+    /tmp/web3_final_rebased_go_plans.json
+    /tmp/web3_final_rebased_rust_plans.json
+    /tmp/web3_final_rebased_default5_perf.json
+    /tmp/web3_final_rebased_default5_perf_repeat.json
+    /tmp/web3_clean_baseline_perf.json
+    /tmp/web3_final_clean_default5_perf_isolated.json
+    /tmp/web3_final_clean_default5_perf_isolated_repeat.json
+
+The last performance receipt is an alternating one-client run against the
+clean Rust baseline (`884e16945ed`) and the final Rust endpoint. Small-query
+outliers are visible in R23 under local process contention; the dedicated R23
+probe returned in 6 ms after the fix, and the exact-result/plan receipts are
+not affected by those latency samples.
+
 Final default-settings receipts after the qualified-wildcard projection fix:
 
     /tmp/web3_final_current_default5_go_results.json
@@ -190,9 +224,9 @@ At the current checkpoint the R35 result is correct (`161859`). The final
 default-settings one-client matrix has exact deterministic rows and matching
 operator skeletons for all Web3Bench queries; R32 remains tie-order
 non-deterministic by SQL semantics, with R32det exact. The direct-string worker
-path improves the pushed-down R34 receipt over the prior scalar release while
+path improves the pushed-down R34 receipt over the clean Rust baseline while
 keeping the exact DECIMAL fallback and a serial path for one-worker execution.
-The remaining performance risk is that Rust's R34/R35 medians are still above
-Go's on this local TiKV/CPU run (`1.49x`/`1.41x`), so the receipts establish no
-new regression against the prior Rust release rather than claiming identical
-latency.
+Rust's R34/R35 medians remain above Go's on this local TiKV/CPU run, so the
+receipts establish correctness and no regression against the clean Rust
+baseline, not identical latency to Go. The result-set writer now also has an
+explicit empty-result terminal path, eliminating the R23 liveness failure.
