@@ -514,6 +514,38 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       `lock_statement_keys` with `AcquiredStatementLocks`) is committed and
       tested. Consumer files were reverted to keep the tree compiling rather
       than land a half-migration.
+- [ ] **Removal scope across all three crates, evidenced (2026-08-25).** The
+      original framing was "remove tidb-txnkv / tidb-pd-client / tidb-distsql,
+      ~98K LOC". Checking each module against the Go source it cites cuts
+      that roughly to a quarter, because two of the three crates are largely
+      TiDB-owned in Go and must survive.
+      **`tidb-txnkv` -- remove ~20.4K of 40.6K.** `transaction/coordinator/`
+      (4.4K), `rpc/` (7.8K), `region/` (6.4K), `lock/` (1.9K), `pd_loader`,
+      `gc_state` (its header cites client-go's `tikv/kv.go` and
+      `tikv/safepoint.go`), and `transaction/mutation_buffer` (440 lines, no
+      Go counterpart at all). Everything else is `pkg/kv` and
+      `pkg/store/driver` and stays.
+      **`tidb-pd-client` -- remove ~4.3K of 5.4K.** `client/{mod,failover,
+      worker,topology,requests}`, `tso.rs`, `security.rs` (its own header
+      says "transcreated from client-go's"). TiDB Go does not implement a PD
+      client: it imports `github.com/tikv/pd/client`, constructs one, and
+      hands it to `tikv.NewKVStore`. The Rust equivalent of that library is
+      client-rust's own `pd` module, so these are a re-implementation of
+      something TiDB does not own. **Keep** `etcd.rs` (1.2K -- TiDB Go uses
+      `go.etcd.io/etcd/client/v3` directly, and this is already rewritten
+      onto the `etcd-client` crate) and `engine.rs` (`pkg/util/engine`).
+      **`tidb-distsql` -- remove essentially nothing.** This is the
+      correction that matters most. `pkg/store/copr` is TiDB's package, not
+      client-go's: coprocessor task building, `copr_cache.rs`
+      (`pkg/store/copr/coprocessor_cache.go`), adaptive paging, and region
+      task splitting are all TiDB-owned, as is `pkg/distsql` itself. Only
+      the RPC send crosses into client-go, and that is a rewiring of
+      `transport.rs`, not a deletion. All ~12.1K stays.
+      **`tidb-unistore` -- remove nothing, add instead.** Go has
+      `pkg/store/mockstore/unistore`; the work here is implementing
+      `PdClient`/`KvClient` over it, as `unistore.New` does in Go.
+      So the realistic deletion is ~25K, not ~98K, and it is all gated on
+      the same consumer chain plus the unistore backend.
 - [ ] Phase 4: full-workspace build, targeted + aggregate test pass, `make
       bazel_prepare` (Go-file-count is unaffected, but Bazel metadata for the
       Rust crates does not apply — confirm scope; see `Concrete Steps`),
