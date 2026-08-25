@@ -1,3 +1,4 @@
+use crate::pd::{PdClient, PdRpcClient};
 use crate::transaction::sync_client::safe_block_on;
 use crate::{
     transaction::Mutation, BoundRange, Key, KvPair, Priority, Result, RpcInterceptorHandle,
@@ -9,14 +10,44 @@ use std::sync::Arc;
 ///
 /// This is a wrapper around the async [`Transaction`] that provides blocking methods.
 /// All operations block the current thread until completed.
-pub struct SyncTransaction {
-    inner: Transaction,
+///
+/// The PD client is a type parameter, mirroring [`Transaction`], so downstream
+/// synchronous consumers (client-go's `KVTxn` is natively synchronous, and
+/// TiDB's store driver is written against that shape) can run the same wrapper
+/// over an injected in-process client instead of only over a live cluster.
+pub struct SyncTransaction<PdC: PdClient = PdRpcClient> {
+    inner: Transaction<PdC>,
     runtime: Arc<tokio::runtime::Runtime>,
 }
 
-impl SyncTransaction {
-    pub(crate) fn new(inner: Transaction, runtime: Arc<tokio::runtime::Runtime>) -> Self {
+impl<PdC: PdClient> SyncTransaction<PdC> {
+    /// Wraps one async transaction with a runtime that blocks on its futures.
+    pub fn new(inner: Transaction<PdC>, runtime: Arc<tokio::runtime::Runtime>) -> Self {
         Self { inner, runtime }
+    }
+
+    /// Borrows the wrapped asynchronous transaction.
+    pub fn inner_mut(&mut self) -> &mut Transaction<PdC> {
+        &mut self.inner
+    }
+
+    /// Runs one asynchronous transaction operation to completion on this
+    /// wrapper's runtime, under the same nested-runtime guard as every other
+    /// method here.
+    ///
+    /// The blocking methods below cover client-go's `KVTxn` surface; this is
+    /// the escape hatch for the option-carrying variants (mutation
+    /// assertions, prewrite constraint checks) that a store driver needs
+    /// without having to build a second runtime beside this one.
+    pub fn block_on<'a, F, T>(
+        &'a mut self,
+        operation: impl FnOnce(&'a mut Transaction<PdC>) -> F,
+    ) -> Result<T>
+    where
+        F: std::future::Future<Output = Result<T>> + 'a,
+    {
+        let runtime = self.runtime.clone();
+        safe_block_on(&runtime, operation(&mut self.inner))
     }
 
     /// Set the priority for subsequent read and write requests.
@@ -134,6 +165,11 @@ impl SyncTransaction {
     /// Apply multiple mutations atomically.
     pub fn batch_mutate(&mut self, mutations: impl IntoIterator<Item = Mutation>) -> Result<()> {
         safe_block_on(&self.runtime, self.inner.batch_mutate(mutations))
+    }
+
+    /// Returns the exact staged MemDB used by reads and commit.
+    pub fn get_mem_buffer(&mut self) -> &mut crate::transaction::unionstore::MemDb {
+        self.inner.get_mem_buffer()
     }
 
     /// Lock the given keys without associating any values.

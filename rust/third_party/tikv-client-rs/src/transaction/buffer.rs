@@ -5,8 +5,11 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::future::Future;
+use std::ops::Bound;
 
+use crate::kv::{FlagsOp, KeyFlags};
 use crate::proto::kvrpcpb;
+use crate::request::{EncodeKeyspace, KeyMode, Keyspace, TruncateKeyspace};
 use crate::BoundRange;
 use crate::Key;
 use crate::KvPair;
@@ -15,6 +18,7 @@ use crate::Value;
 use crate::ValueEntry;
 
 use super::transaction::{Mutation, MutationFlags, MutationOptions};
+use super::unionstore::MemDb;
 
 const SNAPSHOT_CACHE_SIZE_LIMIT: i64 = 10 << 30;
 
@@ -27,16 +31,62 @@ fn snapshot_cache_entry_size(key: &Key, value: &Option<ValueEntry>) -> i64 {
             })
 }
 
+fn key_in_range(key: &Key, range: &BoundRange) -> bool {
+    let after_start = match &range.from {
+        Bound::Included(start) => key >= start,
+        Bound::Excluded(start) => key > start,
+        Bound::Unbounded => true,
+    };
+    let before_end = match &range.to {
+        Bound::Included(end) => key <= end,
+        Bound::Excluded(end) => key < end,
+        Bound::Unbounded => true,
+    };
+    after_start && before_end
+}
+
+fn lock_operation(flags: KeyFlags) -> kvrpcpb::Op {
+    if flags.has_locked_in_share_mode() {
+        kvrpcpb::Op::SharedLock
+    } else {
+        kvrpcpb::Op::Lock
+    }
+}
+
+fn assertion_from_flags(flags: KeyFlags) -> super::MutationAssertion {
+    if flags.has_assert_exist() {
+        super::MutationAssertion::Exist
+    } else if flags.has_assert_not_exist() {
+        super::MutationAssertion::NotExist
+    } else if flags.has_assert_unknown() {
+        super::MutationAssertion::Unknown
+    } else {
+        super::MutationAssertion::None
+    }
+}
+
+fn mutation_flags_from_key_flags(flags: KeyFlags) -> MutationFlags {
+    MutationFlags {
+        options: MutationOptions::default()
+            .assertion(assertion_from_flags(flags))
+            .need_constraint_check_in_prewrite(flags.has_need_constraint_check_in_prewrite()),
+        pessimistic_locked: flags.has_locked(),
+        shared_locked: flags.has_locked_in_share_mode(),
+        presume_key_not_exists: flags.has_presume_key_not_exists(),
+    }
+}
+
 /// A caching layer which buffers reads and writes in a transaction.
 pub struct Buffer {
+    /// The transaction's single authoritative mutation store. Keys are kept
+    /// logical here, like client-go's MemBuffer; physical keyspace prefixes
+    /// are added only when constructing TiKV requests.
+    memdb: MemDb,
+    keyspace: Keyspace,
     primary_key: Option<Key>,
+    /// Snapshot and pessimistic-lock returned-value cache only. Transaction
+    /// mutations and all key flags live exclusively in `memdb`.
     entry_map: BTreeMap<Key, BufferEntry>,
-    /// Keys with an acquired pessimistic lock; the value is true for shared mode.
-    locked_keys: BTreeMap<Key, bool>,
-    /// Existence observed while acquiring a pessimistic lock. A plain lock
-    /// implies existence in client-go unless TiKV explicitly reports a miss.
-    locked_value_exists: BTreeMap<Key, bool>,
-    mutation_options: BTreeMap<Key, MutationOptions>,
     is_pessimistic: bool,
     snapshot_cache_hits: usize,
     snapshot_cache_size_bytes: i64,
@@ -44,12 +94,15 @@ pub struct Buffer {
 
 impl Buffer {
     pub fn new(is_pessimistic: bool) -> Buffer {
+        Self::new_with_keyspace(is_pessimistic, Keyspace::Disable)
+    }
+
+    pub(crate) fn new_with_keyspace(is_pessimistic: bool, keyspace: Keyspace) -> Buffer {
         Buffer {
+            memdb: MemDb::new(),
+            keyspace,
             primary_key: None,
             entry_map: BTreeMap::new(),
-            locked_keys: BTreeMap::new(),
-            locked_value_exists: BTreeMap::new(),
-            mutation_options: BTreeMap::new(),
             is_pessimistic,
             snapshot_cache_hits: 0,
             snapshot_cache_size_bytes: 0,
@@ -66,30 +119,27 @@ impl Buffer {
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.entry_map
-            .values()
-            .filter(|entry| !matches!(entry, BufferEntry::Cached(_)))
-            .count()
+        self.memdb.len()
     }
 
     pub(crate) fn memory_footprint(&self) -> u64 {
-        self.entry_map.iter().fold(0_u64, |total, (key, entry)| {
-            let value_size = match entry {
-                BufferEntry::Cached(_) => return total,
-                BufferEntry::Locked(_) | BufferEntry::SharedLocked(_) => 0,
-                BufferEntry::Put(value) | BufferEntry::Insert(value) => value.len(),
-                BufferEntry::Del | BufferEntry::CheckNotExist => 0,
-            };
-            total.saturating_add((key.len() + value_size) as u64)
-        })
+        self.memdb.memory_footprint()
+    }
+
+    /// Returns the exact MemDB committed by this transaction. Its public key
+    /// surface is logical for both API V1 and V2, matching client-go.
+    pub(crate) fn mem_buffer(&mut self) -> &mut MemDb {
+        &mut self.memdb
+    }
+
+    pub(crate) fn memdb_memory_hook_is_set(&self) -> bool {
+        self.memdb.memory_hook_is_set()
     }
 
     /// Discard values cached by snapshot reads while retaining transaction mutations.
     pub(crate) fn clear_cached_reads(&mut self) {
         self.entry_map
             .retain(|_, entry| !matches!(entry, BufferEntry::Cached(_)));
-        self.mutation_options
-            .retain(|key, _| self.entry_map.contains_key(key));
         // SetSnapshotTS drops the source cache map but deliberately leaves its
         // cachedSize accounting untouched, just as it preserves hitCnt.
     }
@@ -136,6 +186,9 @@ impl Buffer {
     ) {
         for key in keys {
             let value = values.get(&key).cloned();
+            if !matches!(self.memdb_value(&key), MutationValue::Undetermined) {
+                continue;
+            }
             match self.entry_map.get(&key) {
                 None | Some(BufferEntry::Cached(_)) => {
                     self.update_source_snapshot_cache_entry(key, value);
@@ -171,6 +224,42 @@ impl Buffer {
         self.primary_key.get_or_insert_with(|| key.clone());
     }
 
+    fn logical_key(&self, key: &Key) -> Vec<u8> {
+        let key = key.clone().truncate_keyspace(self.keyspace);
+        <&[u8]>::from(&key).to_vec()
+    }
+
+    fn physical_key(&self, key: &[u8]) -> Key {
+        Key::from(key.to_vec()).encode_keyspace(self.keyspace, KeyMode::Txn)
+    }
+
+    fn memdb_value(&self, key: &Key) -> MutationValue {
+        match self.memdb.get_readonly(&self.logical_key(key)) {
+            Ok(value) if value.is_empty() => MutationValue::Determined(None),
+            Ok(value) => MutationValue::Determined(Some(value)),
+            Err(_) => MutationValue::Undetermined,
+        }
+    }
+
+    fn memdb_flags(&self, key: &Key) -> KeyFlags {
+        self.memdb
+            .get_flags_readonly(&self.logical_key(key))
+            .unwrap_or_default()
+    }
+
+    fn memdb_has_flag(&self, predicate: impl Fn(KeyFlags) -> bool) -> bool {
+        let mut iterator = self.memdb.iter_with_flags(None, None);
+        while iterator.valid() {
+            if predicate(iterator.flags()) {
+                return true;
+            }
+            iterator
+                .next()
+                .expect("owned MemDB iterator advances deterministically");
+        }
+        false
+    }
+
     /// Get a value from the buffer.
     /// If the returned value is None, it means the key doesn't exist in buffer yet.
     pub fn get(&self, key: &Key) -> Option<Value> {
@@ -202,14 +291,17 @@ impl Buffer {
         F: FnOnce(Key) -> Fut,
         Fut: Future<Output = Result<Option<Value>>>,
     {
-        let cached = matches!(self.entry_map.get(&key), Some(BufferEntry::Cached(_)));
-        let value = self.get_from_mutations(&key);
-        if cached {
-            self.snapshot_cache_hits += 1;
-        }
-        match value {
+        match self.memdb_value(&key) {
             MutationValue::Determined(value) => Ok(value),
             MutationValue::Undetermined => {
+                if let Some(entry) = self.entry_map.get(&key) {
+                    if matches!(entry, BufferEntry::Cached(_)) {
+                        self.snapshot_cache_hits += 1;
+                    }
+                    if let MutationValue::Determined(value) = entry.get_value() {
+                        return Ok(value);
+                    }
+                }
                 let value = f(key.clone()).await?;
                 if cache_result {
                     self.update_point_snapshot_cache_entry(
@@ -236,6 +328,10 @@ impl Buffer {
         F: FnOnce(Key) -> Fut,
         Fut: Future<Output = Result<Option<ValueEntry>>>,
     {
+        if let MutationValue::Determined(value) = self.memdb_value(&key) {
+            return Ok(value.map(|value| ValueEntry::new(value, 0)));
+        }
+
         if let Some(BufferEntry::Cached(value)) = self.entry_map.get(&key) {
             let eligible = value
                 .as_ref()
@@ -258,7 +354,12 @@ impl Buffer {
             return Ok(value);
         }
 
-        match self.get_from_mutations(&key) {
+        match self
+            .entry_map
+            .get(&key)
+            .map(BufferEntry::get_value)
+            .unwrap_or(MutationValue::Undetermined)
+        {
             MutationValue::Determined(value) => Ok(value.map(|value| ValueEntry::new(value, 0))),
             MutationValue::Undetermined => {
                 let value = f(key.clone()).await?;
@@ -309,21 +410,27 @@ impl Buffer {
         let mut undetermined_keys = Vec::new();
         let mut cached_results = Vec::new();
         for key in keys {
-            match self.entry_map.get(&key) {
-                Some(BufferEntry::Cached(value)) => {
-                    self.snapshot_cache_hits += 1;
-                    if let Some(value) = value {
-                        cached_results.push(KvPair(key, value.value.clone()));
-                    }
+            match self.memdb_value(&key) {
+                MutationValue::Determined(Some(value)) => {
+                    cached_results.push(KvPair(key, value));
                 }
-                Some(entry) => match entry.get_value() {
-                    MutationValue::Determined(Some(value)) => {
-                        cached_results.push(KvPair(key, value));
+                MutationValue::Determined(None) => {}
+                MutationValue::Undetermined => match self.entry_map.get(&key) {
+                    Some(BufferEntry::Cached(value)) => {
+                        self.snapshot_cache_hits += 1;
+                        if let Some(value) = value {
+                            cached_results.push(KvPair(key, value.value.clone()));
+                        }
                     }
-                    MutationValue::Determined(None) => {}
-                    MutationValue::Undetermined => undetermined_keys.push(key),
+                    Some(entry) => match entry.get_value() {
+                        MutationValue::Determined(Some(value)) => {
+                            cached_results.push(KvPair(key, value));
+                        }
+                        MutationValue::Determined(None) => {}
+                        MutationValue::Undetermined => undetermined_keys.push(key),
+                    },
+                    None => undetermined_keys.push(key),
                 },
-                None => undetermined_keys.push(key),
             }
         }
 
@@ -359,32 +466,38 @@ impl Buffer {
         let mut cached_results = BTreeMap::new();
         let mut undetermined_keys = Vec::new();
         for key in keys {
-            match self.entry_map.get(&key) {
-                Some(BufferEntry::Cached(value)) => {
-                    let eligible = value
-                        .as_ref()
-                        .is_none_or(|entry| !return_commit_ts || entry.commit_ts > 0);
-                    if eligible {
-                        self.snapshot_cache_hits += 1;
-                        if let Some(value) = value {
-                            let mut value = value.clone();
-                            if !return_commit_ts {
-                                value.commit_ts = 0;
-                            }
-                            cached_results.insert(key, value);
-                        }
-                    } else {
-                        undetermined_keys.push(key);
-                    }
+            match self.memdb_value(&key) {
+                MutationValue::Determined(Some(value)) => {
+                    cached_results.insert(key, ValueEntry::new(value, 0));
                 }
-                Some(entry) => match entry.get_value() {
-                    MutationValue::Determined(Some(value)) => {
-                        cached_results.insert(key, ValueEntry::new(value, 0));
+                MutationValue::Determined(None) => {}
+                MutationValue::Undetermined => match self.entry_map.get(&key) {
+                    Some(BufferEntry::Cached(value)) => {
+                        let eligible = value
+                            .as_ref()
+                            .is_none_or(|entry| !return_commit_ts || entry.commit_ts > 0);
+                        if eligible {
+                            self.snapshot_cache_hits += 1;
+                            if let Some(value) = value {
+                                let mut value = value.clone();
+                                if !return_commit_ts {
+                                    value.commit_ts = 0;
+                                }
+                                cached_results.insert(key, value);
+                            }
+                        } else {
+                            undetermined_keys.push(key);
+                        }
                     }
-                    MutationValue::Determined(None) => {}
-                    MutationValue::Undetermined => undetermined_keys.push(key),
+                    Some(entry) => match entry.get_value() {
+                        MutationValue::Determined(Some(value)) => {
+                            cached_results.insert(key, ValueEntry::new(value, 0));
+                        }
+                        MutationValue::Determined(None) => {}
+                        MutationValue::Undetermined => undetermined_keys.push(key),
+                    },
+                    None => undetermined_keys.push(key),
                 },
-                None => undetermined_keys.push(key),
             }
         }
 
@@ -419,15 +532,29 @@ impl Buffer {
         F: FnOnce(BoundRange, u32) -> Fut,
         Fut: Future<Output = Result<Vec<KvPair>>>,
     {
-        // read from local buffer
-        let mutation_range = self.entry_map.range(range.clone());
+        // Collect the authoritative MemDB view before awaiting the remote
+        // fetch. The owned ART iterator includes tombstones and direct writes
+        // made through Transaction::get_mem_buffer().
+        let mut local_mutations = Vec::new();
+        let mut iterator = self.memdb.iter_with_flags(None, None);
+        while iterator.valid() {
+            if iterator.has_value() {
+                let key = self.physical_key(iterator.key());
+                if key_in_range(&key, &range) {
+                    local_mutations.push((key, iterator.value().to_vec()));
+                }
+            }
+            iterator
+                .next()
+                .expect("owned MemDB iterator advances deterministically");
+        }
 
         // fetch from TiKV
         // fetch more entries because some of them may be deleted.
         let deleted_count = u32::try_from(
-            mutation_range
-                .clone()
-                .filter(|(_, m)| matches!(m, BufferEntry::Del))
+            local_mutations
+                .iter()
+                .filter(|(_, value)| value.is_empty())
                 .count(),
         )
         .unwrap_or(u32::MAX);
@@ -440,15 +567,11 @@ impl Buffer {
             .collect::<HashMap<Key, Value>>();
 
         // override using local data
-        for (k, m) in mutation_range {
-            match m {
-                BufferEntry::Put(v) => {
-                    results.insert(k.clone(), v.clone());
-                }
-                BufferEntry::Del => {
-                    results.remove(k);
-                }
-                _ => {}
+        for (key, value) in local_mutations {
+            if value.is_empty() {
+                results.remove(&key);
+            } else {
+                results.insert(key, value);
             }
         }
 
@@ -497,21 +620,17 @@ impl Buffer {
         } else if self.primary_key.is_none() {
             return Err("pessimistic lock in share mode requires primary key to be selected");
         }
-        if matches!(self.locked_keys.get(&key), Some(true)) && !shared {
+        let current_flags = self.memdb_flags(&key);
+        if current_flags.has_locked_in_share_mode() && !shared {
             return Err("upgrading a shared lock to an exclusive lock is not supported");
         }
-        let effective_shared = shared && !matches!(self.locked_keys.get(&key), Some(false));
-        self.locked_keys.insert(key.clone(), effective_shared);
-        if let Some(exists) = returned_exists {
-            self.locked_value_exists.insert(key.clone(), exists);
-        } else {
-            self.locked_value_exists.entry(key.clone()).or_insert(true);
-        }
+        let effective_shared =
+            shared && (!current_flags.has_locked() || current_flags.has_locked_in_share_mode());
         let cache_key = key.clone();
         let entry = self.entry_map.entry(key);
         match entry {
             Entry::Vacant(entry) => {
-                if shared {
+                if effective_shared {
                     entry.insert(BufferEntry::SharedLocked(returned));
                 } else {
                     entry.insert(BufferEntry::Locked(returned));
@@ -523,23 +642,44 @@ impl Buffer {
                         .snapshot_cache_size_bytes
                         .saturating_sub(snapshot_cache_entry_size(&cache_key, value));
                     let value = returned.or_else(|| Some(value.take()));
-                    if shared {
+                    if effective_shared {
                         entry.insert(BufferEntry::SharedLocked(value));
                     } else {
                         entry.insert(BufferEntry::Locked(value));
                     }
                 }
-                BufferEntry::SharedLocked(_) if !shared => {
-                    return Err("upgrading a shared lock to an exclusive lock is not supported");
+                BufferEntry::SharedLocked(value) if !effective_shared => {
+                    let value = value.take();
+                    entry.insert(BufferEntry::Locked(value));
                 }
-                BufferEntry::Locked(_) if shared => {
-                    // An already acquired exclusive lock satisfies a shared
-                    // lock request without downgrading its mode.
+                BufferEntry::Locked(value) if effective_shared => {
+                    let value = value.take();
+                    entry.insert(BufferEntry::SharedLocked(value));
                 }
                 BufferEntry::Locked(_) | BufferEntry::SharedLocked(_) => {}
-                _ => {}
             },
         }
+        let logical_key = self.logical_key(&cache_key);
+        let value_exists = returned_exists.unwrap_or(true);
+        let value_flag = if value_exists {
+            FlagsOp::SetKeyLockedValueExists
+        } else {
+            FlagsOp::SetKeyLockedValueNotExists
+        };
+        let mode_flag = if effective_shared {
+            FlagsOp::SetKeyLockedInShareMode
+        } else {
+            FlagsOp::SetKeyLockedInExclusiveMode
+        };
+        self.memdb.update_flags(
+            &logical_key,
+            &[
+                FlagsOp::SetKeyLocked,
+                FlagsOp::DelNeedCheckExists,
+                value_flag,
+                mode_flag,
+            ],
+        );
         Ok(())
     }
 
@@ -551,28 +691,57 @@ impl Buffer {
     }
 
     pub(crate) fn has_shared_locks(&self) -> bool {
-        self.locked_keys.values().any(|shared| *shared)
+        self.memdb_has_flag(KeyFlags::has_locked_in_share_mode)
     }
 
     pub(crate) fn is_shared_locked(&self, key: &Key) -> bool {
-        self.locked_keys.get(key) == Some(&true)
+        self.memdb_flags(key).has_locked_in_share_mode()
     }
 
     pub(crate) fn is_locked(&self, key: &Key) -> bool {
-        self.locked_keys.contains_key(key)
+        self.memdb_flags(key).has_locked()
     }
 
     pub(crate) fn pessimistic_lock_keys(&self) -> BTreeSet<Vec<u8>> {
-        self.locked_keys
-            .keys()
-            .map(|key| <&[u8]>::from(key).to_vec())
-            .collect()
+        let mut keys = BTreeSet::new();
+        let mut iterator = self.memdb.iter_with_flags(None, None);
+        while iterator.valid() {
+            if iterator.flags().has_locked() {
+                keys.insert(<Key as Into<Vec<u8>>>::into(
+                    self.physical_key(iterator.key()),
+                ));
+            }
+            iterator
+                .next()
+                .expect("owned MemDB iterator advances deterministically");
+        }
+        keys
     }
 
     /// Unlock the given key if locked.
     pub fn unlock(&mut self, key: &Key) {
-        self.locked_keys.remove(key);
-        self.locked_value_exists.remove(key);
+        let logical_key = self.logical_key(key);
+        let preserve_constraint = self
+            .memdb
+            .get_flags_readonly(&logical_key)
+            .is_ok_and(KeyFlags::has_need_constraint_check_in_prewrite);
+        let mut operations = vec![
+            FlagsOp::DelKeyLocked,
+            FlagsOp::SetKeyLockedInExclusiveMode,
+            FlagsOp::SetKeyLockedValueNotExists,
+        ];
+        if preserve_constraint {
+            operations.push(FlagsOp::SetNeedConstraintCheckInPrewrite);
+        }
+        self.memdb.update_flags(&logical_key, &operations);
+        let remove_flags_only = self
+            .memdb
+            .get_flags_readonly(&logical_key)
+            .is_ok_and(|flags| flags.bits() == 0)
+            && self.memdb.get_readonly(&logical_key).is_err();
+        if remove_flags_only {
+            self.memdb.remove_from_buffer(&logical_key);
+        }
         if let Some(value) = self.entry_map.get_mut(key) {
             if let BufferEntry::Locked(v) | BufferEntry::SharedLocked(v) = value {
                 if let Some(v) = v {
@@ -589,73 +758,111 @@ impl Buffer {
     }
 
     /// Put a value into the buffer (does not write through).
-    pub fn put(&mut self, key: Key, value: Value) {
-        self.reset_transient_mutation_options(&key);
-        let mut entry = self.entry_map.entry(key.clone());
-        match entry {
-            Entry::Occupied(ref mut o)
-                if matches!(o.get(), BufferEntry::Insert(_))
-                    || matches!(o.get(), BufferEntry::CheckNotExist) =>
-            {
-                o.insert(BufferEntry::Insert(value));
-            }
-            _ => self.insert_entry(key, BufferEntry::Put(value)),
-        }
+    pub fn put(&mut self, key: Key, value: Value) -> Result<()> {
+        let logical_key = self.logical_key(&key);
+        self.remove_cached_entry(&key);
+        self.primary_key_or(&key);
+        self.memdb
+            .set(&logical_key, &value)
+            .map_err(|error| crate::Error::StringError(error.to_string()))
     }
 
     /// Mark a value as Insert mutation into the buffer (does not write through).
-    pub fn insert(&mut self, key: Key, value: Value) {
-        self.reset_transient_mutation_options(&key);
-        let mut entry = self.entry_map.entry(key.clone());
-        match entry {
-            Entry::Occupied(ref mut o) if matches!(o.get(), BufferEntry::Del) => {
-                o.insert(BufferEntry::Put(value));
-            }
-            _ => self.insert_entry(key, BufferEntry::Insert(value)),
-        }
+    pub fn insert(&mut self, key: Key, value: Value) -> Result<()> {
+        let logical_key = self.logical_key(&key);
+        let was_plain_tombstone = self
+            .memdb
+            .get_readonly(&logical_key)
+            .is_ok_and(|value| value.is_empty())
+            && self
+                .memdb
+                .get_flags_readonly(&logical_key)
+                .is_ok_and(|flags| !flags.has_presume_key_not_exists());
+        self.remove_cached_entry(&key);
+        self.primary_key_or(&key);
+        let result = if was_plain_tombstone {
+            self.memdb.set(&logical_key, &value)
+        } else {
+            self.memdb
+                .set_with_flags(&logical_key, &value, &[FlagsOp::SetPresumeKeyNotExists])
+        };
+        result.map_err(|error| crate::Error::StringError(error.to_string()))
     }
 
     /// Mark a value as deleted.
-    pub fn delete(&mut self, key: Key) {
-        self.reset_transient_mutation_options(&key);
-        let is_pessimistic = self.is_pessimistic;
-        let mut entry = self.entry_map.entry(key.clone());
-
-        match entry {
-            Entry::Occupied(ref mut o)
-                if !is_pessimistic
-                    && (matches!(o.get(), BufferEntry::Insert(_))
-                        || matches!(o.get(), BufferEntry::CheckNotExist)) =>
-            {
-                o.insert(BufferEntry::CheckNotExist);
-            }
-            _ => self.insert_entry(key, BufferEntry::Del),
-        }
+    pub fn delete(&mut self, key: Key) -> Result<()> {
+        let logical_key = self.logical_key(&key);
+        self.remove_cached_entry(&key);
+        self.primary_key_or(&key);
+        self.memdb
+            .delete(&logical_key)
+            .map_err(|error| crate::Error::StringError(error.to_string()))
     }
 
-    pub(crate) fn mutate(&mut self, m: Mutation) {
+    pub(crate) fn mutate(&mut self, m: Mutation) -> Result<()> {
         match m {
             Mutation::Put(key, value) => self.put(key, value),
             Mutation::Delete(key) => self.delete(key),
-        };
+        }
     }
 
     /// Converts the buffered mutations to the proto buffer version
     pub fn to_proto_mutations(&self) -> Vec<kvrpcpb::Mutation> {
-        self.entry_map
-            .iter()
-            .filter_map(|(key, entry)| {
-                let mut mutation = entry.to_proto_with_key(key)?;
-                mutation.assertion = self
-                    .mutation_options
-                    .get(key)
-                    .copied()
-                    .unwrap_or_default()
-                    .mutation_assertion()
-                    .to_proto() as i32;
-                Some(mutation)
-            })
-            .collect()
+        let mut mutations = Vec::with_capacity(self.memdb.len());
+        let mut iterator = self.memdb.iter_with_flags(None, None);
+        while iterator.valid() {
+            let flags = iterator.flags();
+            let mut mutation = kvrpcpb::Mutation {
+                key: self.physical_key(iterator.key()).into(),
+                assertion: assertion_from_flags(flags).to_proto() as i32,
+                ..Default::default()
+            };
+            let operation = if !iterator.has_value() {
+                flags.has_locked().then(|| lock_operation(flags))
+            } else if !iterator.value().is_empty() {
+                mutation.value = iterator.value().to_vec();
+                Some(if flags.has_presume_key_not_exists() {
+                    kvrpcpb::Op::Insert
+                } else {
+                    kvrpcpb::Op::Put
+                })
+            } else if !self.is_pessimistic && flags.has_presume_key_not_exists() {
+                Some(kvrpcpb::Op::CheckNotExists)
+            } else if flags.has_newly_inserted() {
+                flags.has_locked().then(|| lock_operation(flags))
+            } else {
+                Some(kvrpcpb::Op::Del)
+            };
+            if let Some(operation) = operation {
+                mutation.op = operation as i32;
+                mutations.push(mutation);
+            }
+            iterator
+                .next()
+                .expect("owned MemDB iterator advances deterministically");
+        }
+        mutations
+    }
+
+    /// Returns every value-bearing MemDB entry in source iteration order for
+    /// `KvFilter`. This deliberately includes tombstones that mutation
+    /// lowering may later omit, matching client-go's `initKeysAndMutations`.
+    pub(crate) fn value_entries_for_filter(&self) -> Vec<(Vec<u8>, Value, MutationFlags)> {
+        let mut entries = Vec::with_capacity(self.memdb.len());
+        let mut iterator = self.memdb.iter_with_flags(None, None);
+        while iterator.valid() {
+            if iterator.has_value() {
+                entries.push((
+                    iterator.key().to_vec(),
+                    iterator.value().to_vec(),
+                    mutation_flags_from_key_flags(iterator.flags()),
+                ));
+            }
+            iterator
+                .next()
+                .expect("owned MemDB iterator advances deterministically");
+        }
+        entries
     }
 
     pub(crate) fn set_mutation_options(
@@ -663,43 +870,44 @@ impl Buffer {
         key: &Key,
         options: MutationOptions,
     ) -> Result<()> {
-        if !self
-            .entry_map
-            .get(key)
-            .is_some_and(|entry| !matches!(entry, BufferEntry::Cached(_)))
-        {
+        let logical_key = self.logical_key(key);
+        if self.memdb.get_flags_readonly(&logical_key).is_err() {
             return Err(crate::Error::StringError(
                 "mutation options require an existing buffered mutation".to_owned(),
             ));
         }
-        self.mutation_options.insert(key.clone(), options);
+        let assertion = match options.mutation_assertion() {
+            super::MutationAssertion::None => FlagsOp::SetAssertNone,
+            super::MutationAssertion::Exist => FlagsOp::SetAssertExist,
+            super::MutationAssertion::NotExist => FlagsOp::SetAssertNotExist,
+            super::MutationAssertion::Unknown => FlagsOp::SetAssertUnknown,
+        };
+        let constraint = if options.needs_constraint_check_in_prewrite() {
+            FlagsOp::SetNeedConstraintCheckInPrewrite
+        } else {
+            FlagsOp::DelNeedConstraintCheckInPrewrite
+        };
+        self.memdb
+            .update_flags(&logical_key, &[assertion, constraint]);
         Ok(())
     }
 
     pub(crate) fn mutation_flags(&self, key: &Key) -> MutationFlags {
-        MutationFlags {
-            options: self.mutation_options.get(key).copied().unwrap_or_default(),
-            pessimistic_locked: self.locked_keys.contains_key(key),
-            shared_locked: self.locked_keys.get(key) == Some(&true),
-            presume_key_not_exists: matches!(
-                self.entry_map.get(key),
-                Some(BufferEntry::Insert(_) | BufferEntry::CheckNotExist)
-            ),
-        }
+        mutation_flags_from_key_flags(self.memdb_flags(key))
     }
 
     pub(crate) fn constraint_check_keys(&self) -> BTreeSet<Vec<u8>> {
-        self.mutation_options
-            .iter()
-            .filter(|(key, options)| {
-                options.needs_constraint_check_in_prewrite()
-                    && self
-                        .entry_map
-                        .get(*key)
-                        .is_some_and(|entry| !matches!(entry, BufferEntry::Cached(_)))
-            })
-            .map(|(key, _)| <&[u8]>::from(key).to_vec())
-            .collect()
+        let mut keys = BTreeSet::new();
+        let mut iterator = self.memdb.iter_with_flags(None, None);
+        while iterator.valid() {
+            if iterator.flags().has_need_constraint_check_in_prewrite() {
+                keys.insert(self.physical_key(iterator.key()).into());
+            }
+            iterator
+                .next()
+                .expect("owned MemDB iterator advances deterministically");
+        }
+        keys
     }
 
     pub(crate) fn assertion_failure(
@@ -707,13 +915,12 @@ impl Buffer {
         key: &Key,
         start_timestamp: u64,
     ) -> Option<kvrpcpb::AssertionFailed> {
-        let exists = self.locked_value_exists.get(key).copied()?;
-        let assertion = self
-            .mutation_options
-            .get(key)
-            .copied()
-            .unwrap_or_default()
-            .mutation_assertion();
+        let flags = self.memdb_flags(key);
+        if !flags.has_locked() {
+            return None;
+        }
+        let exists = flags.has_locked_value_exists();
+        let assertion = assertion_from_flags(flags);
         let failed = match assertion {
             super::MutationAssertion::Exist => !exists,
             super::MutationAssertion::NotExist => exists,
@@ -727,33 +934,19 @@ impl Buffer {
         })
     }
 
-    fn reset_transient_mutation_options(&mut self, key: &Key) {
-        if let Some(options) = self.mutation_options.get_mut(key) {
-            // MemDB Set clears this temporary flag unless the same write sets
-            // it again; assertion flags survive ordinary value updates.
-            options.need_constraint_check_in_prewrite = false;
-        }
-    }
-
     pub fn get_write_size(&self) -> usize {
-        self.entry_map
-            .iter()
-            .map(|(k, v)| match v {
-                BufferEntry::Put(val) | BufferEntry::Insert(val) => val.len() + k.len(),
-                BufferEntry::Del
-                | BufferEntry::Locked(_)
-                | BufferEntry::SharedLocked(_)
-                | BufferEntry::CheckNotExist => k.len(),
-                BufferEntry::Cached(_) => 0,
-            })
-            .sum()
+        self.memdb.size()
     }
 
     fn get_from_mutations(&self, key: &Key) -> MutationValue {
-        self.entry_map
-            .get(key)
-            .map(BufferEntry::get_value)
-            .unwrap_or(MutationValue::Undetermined)
+        match self.memdb_value(key) {
+            MutationValue::Undetermined => self
+                .entry_map
+                .get(key)
+                .map(BufferEntry::get_value)
+                .unwrap_or(MutationValue::Undetermined),
+            determined => determined,
+        }
     }
 
     fn update_cache(&mut self, key: Key, value: Option<Value>) {
@@ -761,6 +954,9 @@ impl Buffer {
     }
 
     fn update_cache_entry(&mut self, key: Key, value: Option<ValueEntry>) {
+        if !matches!(self.memdb_value(&key), MutationValue::Undetermined) {
+            return;
+        }
         match self.entry_map.get(&key) {
             Some(BufferEntry::Locked(None)) => {
                 self.entry_map.insert(key, BufferEntry::Locked(Some(value)));
@@ -777,18 +973,6 @@ impl Buffer {
             | Some(BufferEntry::SharedLocked(Some(v))) => {
                 assert!(&value == v);
             }
-            Some(BufferEntry::Put(v)) => {
-                assert!(value.as_ref().map(|entry| &entry.value) == Some(v))
-            }
-            Some(BufferEntry::Del) => {
-                assert!(value.is_none());
-            }
-            Some(BufferEntry::Insert(v)) => {
-                assert!(value.as_ref().map(|entry| &entry.value) == Some(v))
-            }
-            Some(BufferEntry::CheckNotExist) => {
-                assert!(value.is_none());
-            }
         }
     }
 
@@ -802,6 +986,9 @@ impl Buffer {
         value: Option<ValueEntry>,
         size_limit: i64,
     ) {
+        if !matches!(self.memdb_value(&key), MutationValue::Undetermined) {
+            return;
+        }
         match self.entry_map.get(&key) {
             None | Some(BufferEntry::Cached(_)) => {
                 let needed = BTreeMap::from([(key.clone(), value.clone().unwrap_or_default())]);
@@ -873,9 +1060,6 @@ impl Buffer {
 
     fn insert_entry(&mut self, key: impl Into<Key>, entry: BufferEntry) {
         let key = key.into();
-        if !matches!(entry, BufferEntry::Cached(_) | BufferEntry::CheckNotExist) {
-            self.primary_key.get_or_insert_with(|| key.clone());
-        }
         if matches!(self.entry_map.get(&key), Some(BufferEntry::Cached(_))) {
             self.remove_cached_entry(&key);
         }
@@ -886,12 +1070,9 @@ impl Buffer {
 // The state of a key-value pair in the buffer.
 // It includes two kinds of state:
 //
-// Mutations:
-//   - `Put`
-//   - `Del`
-//   - `Insert`
-//   - `CheckNotExist`, a constraint to ensure the key doesn't exist. See https://github.com/pingcap/tidb/pull/14968.
-// Cache of read requests:
+// This map contains only the cache of read requests. Mutation values and
+// flags live in the authoritative MemDB above.
+//
 //   - `Cached`, generated by normal read requests
 //   - `ReadLockCached`, generated by lock commands (`lock_keys`, `get_for_update`) and optionally read requests
 //
@@ -917,45 +1098,14 @@ enum BufferEntry {
     // A pessimistic shared lock. It is prewritten as `SharedLock` and cannot
     // become the transaction primary.
     SharedLocked(Option<Option<ValueEntry>>),
-    // Value has been written.
-    Put(Value),
-    // Value has been deleted.
-    Del,
-    // Key should be check not exists before.
-    Insert(Value),
-    // Key should be check not exists before.
-    CheckNotExist,
 }
 
 impl BufferEntry {
-    fn to_proto_with_key(&self, key: &Key) -> Option<kvrpcpb::Mutation> {
-        let mut pb = kvrpcpb::Mutation::default();
-        match self {
-            BufferEntry::Cached(_) => return None,
-            BufferEntry::Put(v) => {
-                pb.op = kvrpcpb::Op::Put.into();
-                pb.value.clone_from(v);
-            }
-            BufferEntry::Del => pb.op = kvrpcpb::Op::Del.into(),
-            BufferEntry::Locked(_) => pb.op = kvrpcpb::Op::Lock.into(),
-            BufferEntry::SharedLocked(_) => pb.op = kvrpcpb::Op::SharedLock.into(),
-            BufferEntry::Insert(v) => {
-                pb.op = kvrpcpb::Op::Insert.into();
-                pb.value.clone_from(v);
-            }
-            BufferEntry::CheckNotExist => pb.op = kvrpcpb::Op::CheckNotExists.into(),
-        };
-        pb.key = key.clone().into();
-        Some(pb)
-    }
-
     fn get_value(&self) -> MutationValue {
         match self {
             BufferEntry::Cached(value) => {
                 MutationValue::Determined(value.as_ref().map(|entry| entry.value.clone()))
             }
-            BufferEntry::Put(value) => MutationValue::Determined(Some(value.clone())),
-            BufferEntry::Del => MutationValue::Determined(None),
             BufferEntry::Locked(None) => MutationValue::Undetermined,
             BufferEntry::Locked(Some(value)) => {
                 MutationValue::Determined(value.as_ref().map(|entry| entry.value.clone()))
@@ -964,8 +1114,6 @@ impl BufferEntry {
             BufferEntry::SharedLocked(Some(value)) => {
                 MutationValue::Determined(value.as_ref().map(|entry| entry.value.clone()))
             }
-            BufferEntry::Insert(value) => MutationValue::Determined(Some(value.clone())),
-            BufferEntry::CheckNotExist => MutationValue::Determined(None),
         }
     }
 }
@@ -990,8 +1138,12 @@ mod tests {
     #[test]
     fn set_and_get_from_buffer() {
         let mut buffer = Buffer::new(false);
-        buffer.put(b"key1".to_vec().into(), b"value1".to_vec());
-        buffer.put(b"key2".to_vec().into(), b"value2".to_vec());
+        buffer
+            .put(b"key1".to_vec().into(), b"value1".to_vec())
+            .unwrap();
+        buffer
+            .put(b"key2".to_vec().into(), b"value2".to_vec())
+            .unwrap();
         assert_eq!(
             block_on(
                 buffer.get_or_else(b"key1".to_vec().into(), move |_| ready(Err(internal_err!(
@@ -1003,8 +1155,10 @@ mod tests {
             b"value1".to_vec()
         );
 
-        buffer.delete(b"key2".to_vec().into());
-        buffer.put(b"key1".to_vec().into(), b"value".to_vec());
+        buffer.delete(b"key2".to_vec().into()).unwrap();
+        buffer
+            .put(b"key1".to_vec().into(), b"value".to_vec())
+            .unwrap();
         assert_eq!(
             block_on(buffer.batch_get_or_else(
                 vec![b"key2".to_vec().into(), b"key1".to_vec().into()].into_iter(),
@@ -1019,8 +1173,12 @@ mod tests {
     #[test]
     fn insert_and_get_from_buffer() {
         let mut buffer = Buffer::new(false);
-        buffer.insert(b"key1".to_vec().into(), b"value1".to_vec());
-        buffer.insert(b"key2".to_vec().into(), b"value2".to_vec());
+        buffer
+            .insert(b"key1".to_vec().into(), b"value1".to_vec())
+            .unwrap();
+        buffer
+            .insert(b"key2".to_vec().into(), b"value2".to_vec())
+            .unwrap();
         assert_eq!(
             block_on(
                 buffer.get_or_else(b"key1".to_vec().into(), move |_| ready(Err(internal_err!(
@@ -1032,8 +1190,10 @@ mod tests {
             b"value1".to_vec()
         );
 
-        buffer.delete(b"key2".to_vec().into());
-        buffer.insert(b"key1".to_vec().into(), b"value".to_vec());
+        buffer.delete(b"key2".to_vec().into()).unwrap();
+        buffer
+            .insert(b"key1".to_vec().into(), b"value".to_vec())
+            .unwrap();
         assert_eq!(
             block_on(buffer.batch_get_or_else(
                 vec![b"key2".to_vec().into(), b"key1".to_vec().into()].into_iter(),
@@ -1049,7 +1209,7 @@ mod tests {
     fn ordinary_write_preserves_assertion_and_clears_constraint_check() {
         let key = Key::from(b"key".to_vec());
         let mut buffer = Buffer::new(false);
-        buffer.put(key.clone(), b"value1".to_vec());
+        buffer.put(key.clone(), b"value1".to_vec()).unwrap();
         buffer
             .set_mutation_options(
                 &key,
@@ -1059,7 +1219,7 @@ mod tests {
             )
             .unwrap();
 
-        buffer.put(key.clone(), b"value2".to_vec());
+        buffer.put(key.clone(), b"value2".to_vec()).unwrap();
 
         let flags = buffer.mutation_flags(&key);
         assert_eq!(flags.assertion(), super::super::MutationAssertion::Exist);
@@ -1068,6 +1228,29 @@ mod tests {
             buffer.to_proto_mutations()[0].assertion,
             kvrpcpb::Assertion::Exist as i32
         );
+    }
+
+    #[test]
+    fn local_unlock_clears_only_lock_metadata() {
+        let key = Key::from(b"key".to_vec());
+        let mut buffer = Buffer::new(true);
+        buffer.put(key.clone(), b"value".to_vec()).unwrap();
+        buffer.lock(key.clone());
+        buffer
+            .set_mutation_options(
+                &key,
+                MutationOptions::default()
+                    .assertion(super::super::MutationAssertion::Exist)
+                    .need_constraint_check_in_prewrite(true),
+            )
+            .unwrap();
+
+        buffer.unlock(&key);
+
+        let flags = buffer.mutation_flags(&key);
+        assert!(!flags.is_pessimistic_locked());
+        assert!(flags.needs_constraint_check_in_prewrite());
+        assert_eq!(flags.assertion(), super::super::MutationAssertion::Exist);
     }
 
     #[test]
@@ -1121,8 +1304,8 @@ mod tests {
             .map(|key| Key::from(key.as_bytes().to_vec()))
             .collect::<Vec<_>>();
         let mut buffer = Buffer::new(false);
-        buffer.insert(keys[0].clone(), b"a1".to_vec());
-        buffer.delete(keys[1].clone());
+        buffer.insert(keys[0].clone(), b"a1".to_vec()).unwrap();
+        buffer.delete(keys[1].clone()).unwrap();
 
         let fetched = block_on(buffer.batch_get_snapshot_entries_or_else(
             keys.clone().into_iter(),
@@ -1208,13 +1391,19 @@ mod tests {
         assert_eq!(buffer.memory_footprint(), 0);
 
         buffer.lock(b"lock".to_vec().into());
-        buffer.insert(b"check".to_vec().into(), b"value".to_vec());
-        buffer.delete(b"check".to_vec().into());
-        buffer.put(b"put".to_vec().into(), b"value".to_vec());
+        buffer
+            .insert(b"check".to_vec().into(), b"value".to_vec())
+            .unwrap();
+        buffer.delete(b"check".to_vec().into()).unwrap();
+        buffer
+            .put(b"put".to_vec().into(), b"value".to_vec())
+            .unwrap();
 
         assert_eq!(buffer.len(), 3);
         assert_eq!(buffer.get_write_size(), 4 + 5 + 3 + 5);
-        assert_eq!(buffer.memory_footprint(), 4 + 5 + 3 + 5);
+        // MemDB retains the overwritten insert value in its value-log
+        // history, so memory can exceed the current logical write size.
+        assert_eq!(buffer.memory_footprint(), 4 + 5 + 3 + 5 + 5);
     }
 
     #[test]
@@ -1336,7 +1525,7 @@ mod tests {
     #[test]
     fn scan_and_fetch_redundant_limit_does_not_overflow() {
         let mut buffer = Buffer::new(false);
-        buffer.delete(b"key1".to_vec().into());
+        buffer.delete(b"key1".to_vec().into()).unwrap();
 
         let range: BoundRange = (..).into();
         let res =
@@ -1357,9 +1546,16 @@ mod tests {
     fn state_machine() {
         let mut buffer = Buffer::new(false);
 
-        macro_rules! assert_entry {
-            ($key: ident, $p: pat) => {
-                assert!(matches!(buffer.entry_map.get(&$key), Some(&$p),))
+        macro_rules! assert_operation {
+            ($key: ident, $operation: expr) => {
+                assert_eq!(
+                    buffer
+                        .to_proto_mutations()
+                        .into_iter()
+                        .find(|mutation| mutation.key == <&[u8]>::from(&$key))
+                        .and_then(|mutation| kvrpcpb::Op::try_from(mutation.op).ok()),
+                    Some($operation),
+                )
             };
         }
 
@@ -1371,29 +1567,29 @@ mod tests {
 
         // Insert + Delete = CheckNotExists
         let key: Key = b"key1".to_vec().into();
-        buffer.insert(key.clone(), b"value1".to_vec());
-        buffer.delete(key.clone());
-        assert_entry!(key, BufferEntry::CheckNotExist);
+        buffer.insert(key.clone(), b"value1".to_vec()).unwrap();
+        buffer.delete(key.clone()).unwrap();
+        assert_operation!(key, kvrpcpb::Op::CheckNotExists);
 
         // CheckNotExists + Delete = CheckNotExists
-        buffer.delete(key.clone());
-        assert_entry!(key, BufferEntry::CheckNotExist);
+        buffer.delete(key.clone()).unwrap();
+        assert_operation!(key, kvrpcpb::Op::CheckNotExists);
 
         // CheckNotExists + Put = Insert
-        buffer.put(key.clone(), b"value2".to_vec());
-        assert_entry!(key, BufferEntry::Insert(_));
+        buffer.put(key.clone(), b"value2".to_vec()).unwrap();
+        assert_operation!(key, kvrpcpb::Op::Insert);
 
         // Insert + Put = Insert
         let key: Key = b"key2".to_vec().into();
-        buffer.insert(key.clone(), b"value1".to_vec());
-        buffer.put(key.clone(), b"value2".to_vec());
-        assert_entry!(key, BufferEntry::Insert(_));
+        buffer.insert(key.clone(), b"value1".to_vec()).unwrap();
+        buffer.put(key.clone(), b"value2".to_vec()).unwrap();
+        assert_operation!(key, kvrpcpb::Op::Insert);
 
         // Delete + Insert = Put
         let key: Key = b"key3".to_vec().into();
-        buffer.delete(key.clone());
-        buffer.insert(key.clone(), b"value1".to_vec());
-        assert_entry!(key, BufferEntry::Put(_));
+        buffer.delete(key.clone()).unwrap();
+        buffer.insert(key.clone(), b"value1".to_vec()).unwrap();
+        assert_operation!(key, kvrpcpb::Op::Put);
 
         // Lock + Unlock = None
         let key: Key = b"key4".to_vec().into();
@@ -1409,12 +1605,110 @@ mod tests {
         assert_eq!(r.unwrap().unwrap(), val);
         buffer.lock(key.clone());
         buffer.unlock(&key);
-        assert_entry!(key, BufferEntry::Cached(Some(_)));
+        assert!(matches!(
+            buffer.entry_map.get(&key),
+            Some(BufferEntry::Cached(Some(_)))
+        ));
         assert_eq!(
             block_on(buffer.get_or_else(key, move |_| ready(Err(internal_err!("")))))
                 .unwrap()
                 .unwrap(),
             val
         );
+    }
+
+    #[test]
+    fn source_transaction_uses_the_exact_staged_memdb_for_reads_flags_and_commit() {
+        let key = Key::from(b"direct".to_vec());
+        let mut buffer = Buffer::new(false);
+
+        let discarded = buffer.mem_buffer().staging();
+        buffer
+            .mem_buffer()
+            .set_with_flags(
+                b"direct",
+                b"discarded",
+                &[
+                    FlagsOp::SetPresumeKeyNotExists,
+                    FlagsOp::SetAssertNotExist,
+                    FlagsOp::SetNeedConstraintCheckInPrewrite,
+                ],
+            )
+            .unwrap();
+        assert_eq!(buffer.get(&key), Some(b"discarded".to_vec()));
+        assert_eq!(
+            buffer.to_proto_mutations()[0].op,
+            kvrpcpb::Op::Insert as i32
+        );
+        buffer.mem_buffer().cleanup(discarded);
+        assert_eq!(buffer.get(&key), None);
+        assert!(buffer.to_proto_mutations().is_empty());
+
+        let committed = buffer.mem_buffer().staging();
+        buffer
+            .mem_buffer()
+            .set_with_flags(
+                b"direct",
+                b"committed",
+                &[
+                    FlagsOp::SetPresumeKeyNotExists,
+                    FlagsOp::SetAssertNotExist,
+                    FlagsOp::SetNeedConstraintCheckInPrewrite,
+                ],
+            )
+            .unwrap();
+        buffer.mem_buffer().release(committed);
+
+        let mutation = &buffer.to_proto_mutations()[0];
+        assert_eq!(mutation.key, b"direct");
+        assert_eq!(mutation.value, b"committed");
+        assert_eq!(mutation.op, kvrpcpb::Op::Insert as i32);
+        assert_eq!(mutation.assertion, kvrpcpb::Assertion::NotExist as i32);
+        assert!(buffer
+            .constraint_check_keys()
+            .contains(b"direct".as_slice()));
+        assert_eq!(buffer.len(), 1);
+        assert_eq!(
+            buffer.get_write_size(),
+            b"direct".len() + b"committed".len()
+        );
+    }
+
+    #[test]
+    fn source_api_v2_memdb_surface_keeps_logical_keys_and_commit_encodes_once() {
+        let keyspace = Keyspace::try_enable(42).unwrap();
+        let mut buffer = Buffer::new_with_keyspace(false, keyspace);
+        buffer.mem_buffer().set(b"key", b"value").unwrap();
+
+        let physical = Key::from(b"key".to_vec()).encode_keyspace(keyspace, KeyMode::Txn);
+        assert_eq!(buffer.get(&physical), Some(b"value".to_vec()));
+        assert_eq!(buffer.mem_buffer().get(b"key").unwrap(), b"value");
+
+        let mutation = &buffer.to_proto_mutations()[0];
+        assert_eq!(mutation.key, [b'x', 0, 0, 42, b'k', b'e', b'y']);
+        assert_eq!(mutation.value, b"value");
+    }
+
+    #[test]
+    fn source_direct_memdb_lock_flags_are_authoritative() {
+        let mut buffer = Buffer::new(true);
+        buffer.mem_buffer().update_flags(
+            b"shared",
+            &[
+                FlagsOp::SetKeyLocked,
+                FlagsOp::SetKeyLockedInShareMode,
+                FlagsOp::SetKeyLockedValueExists,
+            ],
+        );
+
+        assert!(buffer.is_locked(&Key::from(b"shared".to_vec())));
+        assert!(buffer.has_shared_locks());
+        assert_eq!(
+            buffer.to_proto_mutations()[0].op,
+            kvrpcpb::Op::SharedLock as i32
+        );
+        assert!(buffer
+            .pessimistic_lock_keys()
+            .contains(b"shared".as_slice()));
     }
 }

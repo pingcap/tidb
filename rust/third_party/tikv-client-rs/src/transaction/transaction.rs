@@ -60,7 +60,7 @@ use crate::transaction::txn_file::{
     build_txn_chunks, request_source_allows_txn_file, txn_file_max_chunks_in_parallel,
     txn_file_pre_split_keys, ChunkBatch, TxnChunkSlice,
 };
-use crate::transaction::unionstore::{FORCE_FLUSH_MEMORY, MIN_FLUSH_KEYS, MIN_FLUSH_MEMORY};
+use crate::transaction::unionstore::{MemDb, FORCE_FLUSH_MEMORY, MIN_FLUSH_KEYS, MIN_FLUSH_MEMORY};
 use crate::transaction::ReadLockContext;
 use crate::transaction::ResolveLocksContext;
 use crate::transaction::SnapshotRuntimeStats;
@@ -675,7 +675,6 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     aggressive_locking: Option<AggressiveLockingContext>,
     aggressive_locking_dirty: bool,
     pipelined_state: PipelinedTransactionState,
-    memory_footprint_hook: Option<Arc<dyn Fn(u64) + Send + Sync>>,
     start_instant: Instant,
     latches: Option<Arc<LatchesScheduler>>,
 }
@@ -727,7 +726,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         Transaction {
             status: Arc::new(AtomicU8::new(status as u8)),
             timestamp,
-            buffer: Buffer::new(options.is_pessimistic()),
+            buffer: Buffer::new_with_keyspace(options.is_pessimistic(), keyspace),
             rpc,
             options,
             commit_settings,
@@ -763,7 +762,6 @@ impl<PdC: PdClient> Transaction<PdC> {
             aggressive_locking: None,
             aggressive_locking_dirty: false,
             pipelined_state: PipelinedTransactionState::default(),
-            memory_footprint_hook: None,
             start_instant: std::time::Instant::now(),
             latches,
         }
@@ -968,12 +966,6 @@ impl<PdC: PdClient> Transaction<PdC> {
                 self.pipelined_state.flushed_mutations.get(&mutation.key) != Some(mutation)
             })
             .collect()
-    }
-
-    fn notify_memory_footprint_change(&self) {
-        if let Some(hook) = &self.memory_footprint_hook {
-            hook(self.buffer.memory_footprint());
-        }
     }
 
     async fn maybe_flush_pipelined(&mut self, force: bool) -> Result<bool> {
@@ -2072,11 +2064,10 @@ impl<PdC: PdClient> Transaction<PdC> {
             )
             .await?;
         }
-        self.buffer.put(key.clone(), value);
+        self.buffer.put(key.clone(), value)?;
         if let Some(options) = options {
             self.buffer.set_mutation_options(&key, options)?;
         }
-        self.notify_memory_footprint_change();
         self.maybe_flush_pipelined(false).await?;
         Ok(())
     }
@@ -2137,11 +2128,10 @@ impl<PdC: PdClient> Transaction<PdC> {
             )
             .await?;
         }
-        self.buffer.insert(key.clone(), value);
+        self.buffer.insert(key.clone(), value)?;
         if let Some(options) = options {
             self.buffer.set_mutation_options(&key, options)?;
         }
-        self.notify_memory_footprint_change();
         self.maybe_flush_pipelined(false).await?;
         Ok(())
     }
@@ -2191,11 +2181,10 @@ impl<PdC: PdClient> Transaction<PdC> {
             )
             .await?;
         }
-        self.buffer.delete(key.clone());
+        self.buffer.delete(key.clone())?;
         if let Some(options) = options {
             self.buffer.set_mutation_options(&key, options)?;
         }
-        self.notify_memory_footprint_change();
         self.maybe_flush_pipelined(false).await?;
         Ok(())
     }
@@ -2251,14 +2240,13 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.pessimistic_lock(mutations.iter().map(|m| m.key().clone()), false)
                 .await?;
             for m in mutations {
-                self.buffer.mutate(m);
+                self.buffer.mutate(m)?;
             }
         } else {
             for m in mutations.into_iter() {
-                self.buffer.mutate(m);
+                self.buffer.mutate(m)?;
             }
         }
-        self.notify_memory_footprint_change();
         self.maybe_flush_pipelined(false).await?;
         Ok(())
     }
@@ -2413,7 +2401,6 @@ impl<PdC: PdClient> Transaction<PdC> {
             for key in pending {
                 self.buffer.lock(key);
             }
-            self.notify_memory_footprint_change();
             self.maybe_flush_pipelined(false).await?;
             return Ok(());
         }
@@ -2472,7 +2459,6 @@ impl<PdC: PdClient> Transaction<PdC> {
         };
         self.pessimistic_lock_with_context_options(pending, lock_type, wake_up_mode, context)
             .await?;
-        self.notify_memory_footprint_change();
         self.maybe_flush_pipelined(false).await?;
         Ok(())
     }
@@ -2527,7 +2513,6 @@ impl<PdC: PdClient> Transaction<PdC> {
                 .lock_with_returned_value(key, false, Some(&entry.value))
                 .expect("aggressive exclusive lock cannot violate lock-mode invariants");
         }
-        self.notify_memory_footprint_change();
         Ok(())
     }
 
@@ -2633,33 +2618,33 @@ impl<PdC: PdClient> Transaction<PdC> {
 
         let mut mutations = Vec::new();
         let mut stashed_assertion = None;
+        // client-go invokes KvFilter while walking every value-bearing MemDB
+        // entry, before operation lowering. In particular, filtered
+        // tombstones are observed even when newly-inserted semantics would
+        // otherwise omit them from the mutation list.
+        let mut filtered_keys = BTreeSet::new();
+        if let Some(filter) = &self.commit_settings.kv_filter {
+            for (logical_key, value, flags) in self.buffer.value_entries_for_filter() {
+                if filter.is_unnecessary_key_value(&logical_key, &value, flags)? {
+                    filtered_keys.insert(logical_key);
+                }
+            }
+        }
         for mut mutation in self.buffer.to_proto_mutations() {
             if self.commit_settings.assertion_level == kvrpcpb::AssertionLevel::Off {
                 mutation.assertion = kvrpcpb::Assertion::None as i32;
             }
-            let operation = kvrpcpb::Op::try_from(mutation.op).unwrap_or(kvrpcpb::Op::Put);
-            let filterable = matches!(
-                operation,
-                kvrpcpb::Op::Put
-                    | kvrpcpb::Op::Insert
-                    | kvrpcpb::Op::Del
-                    | kvrpcpb::Op::CheckNotExists
-            );
-            let filtered = if filterable {
-                match &self.commit_settings.kv_filter {
-                    Some(filter) => filter.is_unnecessary_key_value(
-                        &mutation.key,
-                        &mutation.value,
-                        self.buffer.mutation_flags(&Key::from(mutation.key.clone())),
-                    )?,
-                    None => false,
-                }
-            } else {
-                false
-            };
+            let physical_key = Key::from(mutation.key.clone());
+            let logical_key = physical_key.clone().truncate_keyspace(self.keyspace);
+            let flags = self.buffer.mutation_flags(&physical_key);
+            let filtered = filtered_keys.contains(<&[u8]>::from(&logical_key));
             if filtered {
-                if self.is_pessimistic() && operation != kvrpcpb::Op::CheckNotExists {
-                    mutation.op = kvrpcpb::Op::Lock as i32;
+                if !mutation.value.is_empty() && flags.pessimistic_locked {
+                    mutation.op = if flags.shared_locked {
+                        kvrpcpb::Op::SharedLock
+                    } else {
+                        kvrpcpb::Op::Lock
+                    } as i32;
                     mutation.value.clear();
                 } else {
                     continue;
@@ -2729,6 +2714,11 @@ impl<PdC: PdClient> Transaction<PdC> {
             }
             return Err(Error::NoPrimaryKey);
         }
+        // Direct MemDB writers intentionally do not maintain a second primary
+        // field. Once commit selects the first eligible mutation, retain that
+        // source primary for heartbeat and rollback ownership.
+        self.buffer
+            .primary_key_or(primary_key.as_ref().expect("primary checked above"));
         if self.timestamp.version() == u64::MAX {
             return Err(Error::StringError(format!(
                 "try to commit with invalid txnStartTS: {}",
@@ -3031,7 +3021,9 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     pub fn set_memory_footprint_change_hook(&mut self, hook: impl Fn(u64) + Send + Sync + 'static) {
-        self.memory_footprint_hook = Some(Arc::new(hook));
+        self.buffer
+            .mem_buffer()
+            .set_memory_footprint_change_hook(Arc::new(hook));
     }
 
     pub fn memory_footprint(&self) -> u64 {
@@ -3039,7 +3031,14 @@ impl<PdC: PdClient> Transaction<PdC> {
     }
 
     pub fn memory_hook_set(&self) -> bool {
-        self.memory_footprint_hook.is_some()
+        self.buffer.memdb_memory_hook_is_set()
+    }
+
+    /// Returns the exact staged MemDB used by transaction reads and commit.
+    /// Keys on this surface are logical in both API V1 and API V2, matching
+    /// client-go's `KVTxn.GetMemBuffer` contract.
+    pub fn get_mem_buffer(&mut self) -> &mut MemDb {
+        self.buffer.mem_buffer()
     }
 
     pub fn set_request_source_internal(&mut self, internal: bool) {
@@ -6916,7 +6915,10 @@ mod tests {
                 }),
             )
             .unwrap();
-        transaction.buffer.put(key.clone(), b"value".to_vec());
+        transaction
+            .buffer
+            .put(key.clone(), b"value".to_vec())
+            .unwrap();
         transaction
             .buffer
             .set_mutation_options(
@@ -9667,6 +9669,65 @@ mod tests {
         assert_eq!(scan, vec![KvPair(vec![b'b'].into(), b"scan".to_vec())]);
         assert_eq!(*calls.lock().unwrap(), vec!["batch-get", "scan"]);
         txn.rollback().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn source_api_v2_direct_memdb_commit_filters_logical_and_dispatches_physical_keys() {
+        struct LogicalKeyFilter(Arc<Mutex<Vec<Vec<u8>>>>);
+        impl super::KvFilter for LogicalKeyFilter {
+            fn is_unnecessary_key_value(
+                &self,
+                key: &[u8],
+                _value: &[u8],
+                _flags: super::MutationFlags,
+            ) -> crate::Result<bool> {
+                self.0.lock().unwrap().push(key.to_vec());
+                Ok(key == b"skipped")
+            }
+        }
+
+        let dispatched = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&dispatched);
+        let pd_client = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if let Some(request) = request.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                    assert_eq!(request.mutations.len(), 1);
+                    assert_eq!(request.mutations[0].key, b"x\0\0\x07direct");
+                    assert_eq!(request.mutations[0].value, b"value");
+                    captured.lock().unwrap().push("prewrite");
+                    Ok(Box::new(kvrpcpb::PrewriteResponse::default()) as Box<dyn Any>)
+                } else if request.is::<kvrpcpb::CommitRequest>() {
+                    captured.lock().unwrap().push("commit");
+                    Ok(Box::new(kvrpcpb::CommitResponse::default()) as Box<dyn Any>)
+                } else {
+                    panic!("unexpected request while committing direct API-V2 MemDB write")
+                }
+            },
+        )));
+        let filtered = Arc::new(Mutex::new(Vec::new()));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            pd_client,
+            TransactionOptions::new_optimistic().heartbeat_option(HeartbeatOption::NoHeartbeat),
+            Keyspace::try_enable(7).unwrap(),
+        );
+        transaction.set_kv_filter(Arc::new(LogicalKeyFilter(Arc::clone(&filtered))));
+        transaction
+            .get_mem_buffer()
+            .set(b"direct", b"value")
+            .unwrap();
+        transaction.get_mem_buffer().delete(b"skipped").unwrap();
+
+        assert_eq!(
+            transaction.get("direct".to_owned()).await.unwrap(),
+            Some(b"value".to_vec())
+        );
+        transaction.commit().await.unwrap();
+        assert_eq!(
+            *filtered.lock().unwrap(),
+            vec![b"direct".to_vec(), b"skipped".to_vec()]
+        );
+        assert_eq!(*dispatched.lock().unwrap(), vec!["prewrite", "commit"]);
     }
 
     #[tokio::test]

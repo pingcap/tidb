@@ -257,39 +257,35 @@ impl Getter for TikvMemBufferSnapshotGetter {
 }
 
 /// TiKV-client concrete backend for [`super::mem_buffer::MemBufferDriver`].
-#[derive(Default)]
-pub struct TikvMemBufferBackend {
-    memdb: MemDb,
+///
+/// The buffer is borrowed, never owned, so this adapter can be attached to
+/// the *authoritative* staged buffer a transaction commits out of
+/// (`Transaction::get_mem_buffer`, client-go's `KVTxn.GetMemBuffer`) rather
+/// than to a second buffer that would then need reconciling.
+pub struct TikvMemBufferBackend<'a> {
+    memdb: &'a mut MemDb,
 }
 
-impl TikvMemBufferBackend {
-    /// Creates an empty transaction buffer.
+impl<'a> TikvMemBufferBackend<'a> {
+    /// Attaches the TiDB buffer contract to one client-go buffer.
     #[must_use]
-    pub fn new() -> Self {
-        Self {
-            memdb: MemDb::new(),
-        }
+    pub fn new(memdb: &'a mut MemDb) -> Self {
+        Self { memdb }
     }
 
     /// Borrows the wrapped client-go buffer for client-specific operations.
     #[must_use]
-    pub const fn memdb(&self) -> &MemDb {
-        &self.memdb
+    pub fn memdb(&self) -> &MemDb {
+        self.memdb
     }
 
     /// Mutably borrows the wrapped client-go buffer.
     pub fn memdb_mut(&mut self) -> &mut MemDb {
-        &mut self.memdb
-    }
-
-    /// Returns the wrapped client-go buffer.
-    #[must_use]
-    pub fn into_memdb(self) -> MemDb {
         self.memdb
     }
 }
 
-impl MemBufferBackend for TikvMemBufferBackend {
+impl MemBufferBackend for TikvMemBufferBackend<'_> {
     type Error = TikvMemBufferError;
     type Iter = TikvMemBufferIterator;
     type SnapshotGetter = TikvMemBufferSnapshotGetter;

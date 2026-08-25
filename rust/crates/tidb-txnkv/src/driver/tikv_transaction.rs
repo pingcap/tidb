@@ -15,37 +15,34 @@
 //! TiDB transaction driver over the vendored client-rust transaction engine.
 //!
 //! This is the Rust counterpart of Go's `pkg/store/driver/txn.tikvTxn`: TiDB
-//! keeps its full typed transaction-buffer contract — staging scopes for
-//! statement commit/rollback, key flags, assertions, tombstones, buffer
-//! iteration — while two-phase commit, lock resolution, and snapshot reads
-//! are delegated to `tikv_client::transaction::Transaction`, the transcreated
-//! client-go engine.
+//! keeps its typed transaction-buffer contract — staging scopes for statement
+//! commit/rollback, key flags, assertions, tombstones, buffer iteration —
+//! while two-phase commit, lock resolution, and snapshot reads are delegated
+//! to `tikv_client`, the transcreated client-go engine.
 //!
-//! One deliberate difference from Go, pending upstream unification: client-go
-//! commits directly out of the memdb that TiDB staged into, while client-rust
-//! `Transaction` still owns a separate mutation buffer. This driver therefore
-//! stages into [`MemBufferDriver`]`<`[`TikvMemBufferBackend`]`>` (itself the
-//! transcreated client-go memdb) and drains the surviving entries — values,
-//! tombstones, and their flags — into the transaction at commit, mapping
-//! flags exactly as client-go's `initKeysAndMutations` does: a
-//! presume-key-not-exists flag becomes an insert (`Op_Insert`), assertions
-//! and prewrite constraint checks become per-mutation options. When upstream
-//! merges its transaction buffer with its memdb, the drain step collapses
-//! away without changing this driver's surface.
+//! Staging goes into the transaction's own authoritative buffer
+//! (`get_mem_buffer`, client-go's `KVTxn.GetMemBuffer`), so what TiDB stages
+//! *is* what the engine commits: there is no second buffer and no
+//! reconciliation step. Flags therefore reach prewrite the way client-go's
+//! `initKeysAndMutations` reads them off the memdb — a presume-key-not-exists
+//! flag makes the mutation an insert, assertions and prewrite constraint
+//! checks ride along as per-key state.
 //!
-//! The driver is optimistic-transaction scoped: pessimistic lock acquisition
-//! has its own driver seam because locks must be taken at statement time, not
-//! commit time.
+//! The driver's API is synchronous, like client-go's `KVTxn` and like the
+//! TiDB transaction consumers it stands in for; the vendored crate's
+//! `SyncTransaction` supplies the runtime and its nested-runtime guard.
+
+use std::sync::Arc;
 
 use tikv_client::pd::PdClient;
-use tikv_client::transaction::{MutationAssertion, MutationOptions, Transaction};
-use tikv_client::Timestamp;
+use tikv_client::transaction::{MutationAssertion, MutationOptions, SyncTransaction, Transaction};
+use tikv_client::TimestampExt;
 
 use crate::batch_getter::GetOptions;
 use crate::driver::mem_buffer::{MemBufferDriver, StagingHandle};
 use crate::driver::tikv_mem_buffer::{TikvMemBufferBackend, TikvMemBufferError};
 use crate::key_flags::AssertionState;
-use crate::{FlagsOp, Key, KeyFlags, KvIterator, MemBufferBackend};
+use crate::{AssertionOp, FlagsOp, Key, KeyFlags, MemBufferBackend};
 
 /// Error surface of the transaction driver: a buffer-level failure or a
 /// client-engine failure, kept distinct so callers can classify retries the
@@ -88,7 +85,10 @@ impl From<tikv_client::Error> for TikvTransactionError {
     }
 }
 
-fn mutation_options_from_flags(flags: KeyFlags) -> MutationOptions {
+/// Per-mutation controls carried by one staged key, for callers that set them
+/// through the engine's mutation surface rather than through buffer flags.
+#[must_use]
+pub fn mutation_options_from_flags(flags: KeyFlags) -> MutationOptions {
     let assertion = match flags.assertion() {
         AssertionState::Unset => MutationAssertion::None,
         AssertionState::Exists => MutationAssertion::Exist,
@@ -100,50 +100,82 @@ fn mutation_options_from_flags(flags: KeyFlags) -> MutationOptions {
         .need_constraint_check_in_prewrite(flags.has_need_constraint_check_in_prewrite())
 }
 
-/// TiDB-facing optimistic transaction over the client-rust engine.
+/// TiDB-facing transaction over the client-rust engine.
 pub struct TikvTransactionDriver<PdC: PdClient> {
-    buffer: MemBufferDriver<TikvMemBufferBackend>,
-    transaction: Transaction<PdC>,
+    transaction: SyncTransaction<PdC>,
+    start_ts: u64,
+    pipelined_dml: bool,
 }
 
 impl<PdC: PdClient> TikvTransactionDriver<PdC> {
-    /// Wraps one begun client transaction with an empty staged buffer.
+    /// Wraps one begun client transaction.
     #[must_use]
-    pub fn new(transaction: Transaction<PdC>) -> Self {
+    pub fn new(transaction: Transaction<PdC>, runtime: Arc<tokio::runtime::Runtime>) -> Self {
+        // The start timestamp is captured here because the source exposes it
+        // on the async transaction, while every later call goes through the
+        // blocking wrapper.
+        let start_ts = transaction.start_timestamp().version();
+        let pipelined_dml = transaction.is_pipelined();
         Self {
-            buffer: MemBufferDriver::new(TikvMemBufferBackend::new(), false),
-            transaction,
+            transaction: SyncTransaction::new(transaction, runtime),
+            start_ts,
+            pipelined_dml,
         }
     }
 
-    /// The staged transaction buffer: staging scopes, flags, tombstones, and
-    /// ordered iteration, exactly the Go `MemBuffer` contract.
-    pub fn mem_buffer(&mut self) -> &mut MemBufferDriver<TikvMemBufferBackend> {
-        &mut self.buffer
-    }
-
-    /// Read-only view of the staged buffer.
-    #[must_use]
-    pub fn mem_buffer_ref(&self) -> &MemBufferDriver<TikvMemBufferBackend> {
-        &self.buffer
+    /// The transaction's staged buffer under TiDB's typed contract: staging
+    /// scopes, flags, assertions, tombstones, and ordered iteration.
+    ///
+    /// This borrows the *same* buffer the engine commits out of, so a caller
+    /// holding this view is staging directly into the transaction, exactly
+    /// like Go's `txn.GetMemBuffer()`.
+    pub fn mem_buffer(&mut self) -> MemBufferDriver<TikvMemBufferBackend<'_>> {
+        MemBufferDriver::new(
+            TikvMemBufferBackend::new(self.transaction.get_mem_buffer()),
+            self.pipelined_dml,
+        )
     }
 
     /// The wrapped client transaction, for engine options TiDB sets directly
     /// (priorities, resource groups, schema hooks).
-    pub fn transaction_mut(&mut self) -> &mut Transaction<PdC> {
+    pub fn transaction_mut(&mut self) -> &mut SyncTransaction<PdC> {
         &mut self.transaction
     }
 
-    /// The transaction's start timestamp.
+    /// The transaction's start timestamp, as Go `KVTxn.StartTS`.
     #[must_use]
-    pub fn start_timestamp(&self) -> Timestamp {
-        self.transaction.start_timestamp()
+    pub const fn start_ts(&self) -> u64 {
+        self.start_ts
+    }
+
+    /// Number of keys staged in the transaction buffer.
+    pub fn len(&mut self) -> usize {
+        self.transaction.get_mem_buffer().len()
+    }
+
+    /// Whether the transaction has staged no keys.
+    pub fn is_empty(&mut self) -> bool {
+        self.len() == 0
+    }
+
+    /// Approximate staged size in bytes, as Go `KVTxn.Size`.
+    pub fn size(&mut self) -> usize {
+        self.transaction.get_mem_buffer().size()
     }
 
     /// Union read: the staged buffer overlays the transaction snapshot, and a
     /// buffered tombstone hides a committed value, like Go's union store.
-    pub async fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, TikvTransactionError> {
-        match self.buffer.backend_mut().get(key, GetOptions::default()) {
+    ///
+    /// The engine's own `get` already consults the staged buffer first, since
+    /// that buffer is authoritative; the tombstone mapping is this driver's,
+    /// because TiDB reads an empty buffered value as "deleted", not as an
+    /// empty value.
+    pub fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, TikvTransactionError> {
+        match self
+            .mem_buffer()
+            .backend_mut()
+            .get(key, GetOptions::default())
+        {
             Ok(entry) => {
                 if entry.is_value_empty() {
                     return Ok(None);
@@ -153,97 +185,97 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
             Err(TikvMemBufferError::NotFound) => {}
             Err(error) => return Err(error.into()),
         }
-        Ok(self.transaction.get(key.as_bytes().to_vec()).await?)
+        Ok(self.transaction.get(key.as_bytes().to_vec())?)
+    }
+
+    /// Snapshot range read, as Go `Snapshot.Iter`: committed data only, with
+    /// the staged buffer overlaid by the caller's own buffer scan.
+    pub fn scan(
+        &mut self,
+        start: &Key,
+        end: &Key,
+        limit: u32,
+    ) -> Result<Vec<(Key, Vec<u8>)>, TikvTransactionError> {
+        let range = start.as_bytes().to_vec()..end.as_bytes().to_vec();
+        Ok(self
+            .transaction
+            .scan(range, limit)?
+            .map(|pair| (Key::from(Vec::<u8>::from(pair.0)), pair.1))
+            .collect())
     }
 
     /// Stages one value into the transaction buffer.
     pub fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), TikvTransactionError> {
-        self.buffer.backend_mut().set(key, value)?;
+        self.mem_buffer().backend_mut().set(key, value)?;
         Ok(())
     }
 
-    /// Stages one value with typed flags.
+    /// Stages one value and applies typed flags to its key.
     pub fn set_with_flags(
         &mut self,
         key: Key,
         value: Vec<u8>,
         operations: &[FlagsOp],
     ) -> Result<(), TikvTransactionError> {
-        self.buffer.set_with_flags(key, value, operations)?;
+        self.mem_buffer()
+            .backend_mut()
+            .set_with_flags(key, value, operations)?;
         Ok(())
     }
 
     /// Stages one deletion tombstone.
     pub fn delete(&mut self, key: Key) -> Result<(), TikvTransactionError> {
-        self.buffer.backend_mut().delete(key)?;
+        self.mem_buffer().backend_mut().delete(key)?;
         Ok(())
+    }
+
+    /// Applies one assertion to a staged key, as Go's mutation assertions.
+    pub fn update_assertion_flags(&mut self, key: &Key, operation: AssertionOp) {
+        self.mem_buffer()
+            .backend_mut()
+            .update_assertion_flags(key, operation);
+    }
+
+    /// Returns the typed flags currently carried by one staged key.
+    pub fn get_flags(&mut self, key: &Key) -> Result<KeyFlags, TikvTransactionError> {
+        Ok(self.mem_buffer().backend_mut().get_flags(key)?)
     }
 
     /// Starts a statement staging scope (Go `StmtCommit`/`StmtRollback`).
     pub fn staging(&mut self) -> StagingHandle {
-        self.buffer.staging()
+        self.mem_buffer().staging()
     }
 
     /// Rolls one staging scope back.
     pub fn cleanup(&mut self, handle: StagingHandle) {
-        self.buffer.cleanup(handle);
+        self.mem_buffer().cleanup(handle);
     }
 
     /// Commits one staging scope into its parent.
     pub fn release(&mut self, handle: StagingHandle) {
-        self.buffer.release(handle);
+        self.mem_buffer().release(handle);
     }
 
-    /// Drains the surviving buffer entries into the client transaction and
-    /// runs client-go two-phase commit. Returns the commit timestamp for a
-    /// non-empty transaction.
-    pub async fn commit(&mut self) -> Result<Option<Timestamp>, TikvTransactionError> {
-        let entries = self.drain_entries()?;
-        for (key, value, flags) in entries {
-            let raw_key = key.as_bytes().to_vec();
-            let options = mutation_options_from_flags(flags);
-            if value.is_empty() {
-                // A tombstone commits as a delete; assertions still apply.
-                self.transaction
-                    .delete_with_options(raw_key, options)
-                    .await?;
-            } else if flags.has_presume_key_not_exists() {
-                // Client-go's initKeysAndMutations turns the
-                // presume-key-not-exists flag into Op_Insert.
-                self.transaction
-                    .insert_with_options(raw_key, value, options)
-                    .await?;
-            } else {
-                self.transaction
-                    .put_with_options(raw_key, value, options)
-                    .await?;
-            }
-        }
-        Ok(self.transaction.commit().await?)
-    }
-
-    /// Rolls the transaction back; staged entries never reach the store.
-    pub async fn rollback(&mut self) -> Result<(), TikvTransactionError> {
-        self.transaction.rollback().await?;
+    /// Acquires pessimistic locks at statement time, as Go `KVTxn.LockKeys`
+    /// does for `SELECT ... FOR UPDATE` and for pessimistic DML.
+    pub fn lock_keys(&mut self, keys: &[Key]) -> Result<(), TikvTransactionError> {
+        self.transaction
+            .lock_keys(keys.iter().map(|key| key.as_bytes().to_vec()))?;
         Ok(())
     }
 
-    fn drain_entries(&mut self) -> Result<Vec<(Key, Vec<u8>, KeyFlags)>, TikvTransactionError> {
-        let backend = self.buffer.backend_mut();
-        let mut entries = Vec::with_capacity(backend.len());
-        let start = Key::from(Vec::new());
-        let mut iterator = backend.iter(&start, None)?;
-        while iterator.valid() {
-            entries.push((iterator.key().clone(), iterator.value().to_vec()));
-            iterator.next()?;
-        }
-        drop(iterator);
-        Ok(entries
-            .into_iter()
-            .map(|(key, value)| {
-                let flags = backend.get_flags(&key).unwrap_or_default();
-                (key, value, flags)
-            })
-            .collect())
+    /// Runs client-go two-phase commit over the staged buffer. Returns the
+    /// commit timestamp for a transaction that wrote anything.
+    pub fn commit(&mut self) -> Result<Option<u64>, TikvTransactionError> {
+        Ok(self
+            .transaction
+            .commit()?
+            .map(|timestamp| timestamp.version()))
+    }
+
+    /// Rolls the transaction back; staged entries never reach the store.
+    pub fn rollback(&mut self) -> Result<(), TikvTransactionError> {
+        self.transaction.rollback()?;
+        Ok(())
     }
 }

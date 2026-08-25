@@ -1,6 +1,6 @@
 # `txnkv/transaction` source-artifact audit
 
-This was the atomic completion receipt for client-go package `txnkv/transaction`, pinned at commit `52c1e76cec993571493c81de442bcbef90cdc106`. Runtime downstream testing reopened the claim because Rust's transaction does not yet use or expose the completed staged `MemDb` as its committing buffer. The Rust implementation remains in the `tikv-client` crate and is validated with `nightly-2026-08-22`; the injected-client test surface is now externally usable under `internal-tests`, but the row remains `in-progress` until the authoritative-buffer architectural gap closes.
+This is the atomic completion receipt for client-go package `txnkv/transaction`, pinned at commit `52c1e76cec993571493c81de442bcbef90cdc106`. Runtime downstream testing previously reopened the claim because Rust's transaction did not use or expose the completed staged `MemDb` as its committing buffer. That gap is closed: the Rust implementation in `tikv-client` now uses one authoritative `MemDb`, exposes it through `Transaction::get_mem_buffer` and `SyncTransaction::get_mem_buffer`, and is validated with `nightly-2026-08-22`. The injected-client test surface remains externally usable under `internal-tests`.
 
 ## Complete source inventory
 
@@ -32,7 +32,7 @@ There is no package `doc.go`, build-tag or platform variant, generated source/in
 | client-go surface | Rust behavior and integration decision |
 | --- | --- |
 | Mutation collection, primary selection, sizing, lock TTL, min/max commit timestamps, schema checks, callbacks, binlog, resource tags, request source, disk-full and transaction-source fields | `Transaction`, `CommitSettings`, and `Committer` preserve the complete commit state machine and protocol inputs. Safe owned `Vec<kvrpcpb::Mutation>` replaces `CommitterMutations`/`PlainMutations`; source range-selection and transaction-file helpers operate on that native representation. |
-| Mem-buffer flags and exported `GetMemBuffer` use | Reopened gap: Rust faithfully implements staged `MemDb`, but `Transaction` still commits from a separate flat `Buffer` and exposes no `GetMemBuffer`-equivalent handle. Existing mutation options preserve many flag outcomes only for writes made through the native transaction methods; downstream TiDB staging currently needs an out-of-tree drain. Completion requires one authoritative transaction MemDB for reads, staging, flags, and commit. |
+| Mem-buffer flags and exported `GetMemBuffer` use | `Transaction::get_mem_buffer` and the sync façade return the exact `MemDb` used by transaction reads, scans, sizing, memory hooks, filtering, lock/constraint/assertion decisions, and commit traversal. `Buffer.entry_map` retains only snapshot and lock-return caching; it has no mutation variants or mutation-option map. Direct staging cleanup/release and every `KeyFlags` operation therefore affect commit without copying or draining. MemDB keys stay logical under API-v2 and are encoded exactly once when lowering mutations to physical requests. |
 | `BufferBatchGetter` and `BufferSnapshotBatchGetter` | `Buffer` point/batch read methods merge local writes, deletes, locks, and cached snapshot values before fetching missing keys. Cached misses, commit timestamps, update/no-update cache modes, and local precedence are retained. Rust iterators/futures replace Go callback interfaces. |
 | Optimistic/pessimistic locking | Lock wait modes, timeout/deadline recalculation, return values, `LockOnlyIfExists`, shared locks, deadlock callbacks, force-lock results, farmhash deadlock keys, aggressive locking, rollback, and independently retained lock provenance are implemented. Shared-only transactions cannot select a primary. |
 | Prewrite | Per-region sharding carries physical `TxnSize`, pessimistic/constraint actions, assertions, async/1PC fields, secondaries, min/max commit timestamps, keyspace/resource metadata, retry budgets, and typed key errors. Shared holders are expanded. `NoResolvePolicy` and newer optimistic locks return typed write conflicts before any resolver RPC. |
@@ -47,7 +47,7 @@ Rust ownership intentionally consolidates source mechanics that do not carry dis
 
 The source's many failpoints are injection sites, not additional production protocols. Deterministic `MockKvClient`/`MockPdClient` response hooks, atomic threshold setters, lifecycle hooks, and focused Rust failpoints cover their observable branches: transport/region/key failures, lock responses, commit ambiguity, fallback, schema/binlog/resource failures, timing, cancellation, and cleanup. Go's `test_probe.go` field mutators map to direct package-private construction and assertions; exported configuration probes map to public constants/setters. `test_util.go`'s hundreds of panic-only interface stubs map to narrow Rust traits and mocks that implement only the method under test, so unsupported methods are unrepresentable instead of runtime panics.
 
-The completed unionstore dependency remains reusable and includes a `unistore`-backed remote-buffer test. The source ART `RemoveFromBuffer` is itself an explicit unsupported test function and panics; Rust preserves that contract. Transaction production does not call it. No extra UniStore server is required by this package's original test boundary.
+The completed unionstore dependency remains reusable and includes a `unistore`-backed remote-buffer test. Rust's default ART implements physical `RemoveFromBuffer`, matching the source's public MemBuffer and functional RBT contract; transaction lock-cache cleanup can therefore remove an empty flags-only record. Pipelined MemDB retains its source-declared unsupported panic. No extra UniStore server is required by this package's original test boundary.
 
 ## Original test declaration mapping
 
@@ -104,20 +104,19 @@ The complete `internal/locate`, `internal/client`, `internal/apicodec`, `tikvrpc
 
 ## Validation boundary
 
-Final validation on `nightly-2026-08-22` used the exact batch code:
+Final re-closure validation on `nightly-2026-08-22` used the exact batch code:
 
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib transaction:: --quiet`: 198 passed.
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib --quiet`: 585 passed.
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib --all-features --quiet`: 585 passed.
-- `cargo +nightly-2026-08-22 check -p tikv-client --all-targets --all-features`: passed with the existing warning backlog.
-- `cargo +nightly-2026-08-22 clippy -p tikv-client --lib --all-features --message-format short`: passed with the existing warning backlog.
-- `cargo +nightly-2026-08-22 doc -p tikv-client --no-deps --all-features`: passed with one pre-existing `src/raw/client.rs` invalid-HTML warning.
-- `cargo +nightly-2026-08-22 test -p tikv-client --doc --all-features --quiet`: 50 passed.
-- `cargo +nightly-2026-08-22 fmt --all -- --check` and `git diff --check`: passed.
+- `cargo test --all-features --test mocktikv_transaction_tests`: 2 passed, including direct staged MemDB commit without a drain.
+- `cargo test --lib --all-features transaction::buffer::tests`: 17 passed, including staging cleanup/release, direct flags, local-unlock flag preservation, and API-v2 logical-key coverage.
+- `cargo test --lib --all-features source_api_v2_direct_memdb_commit_filters_logical_and_dispatches_physical_keys`: passed.
+- `make check`: clean protocol generation; workspace all-target/all-feature check; rustfmt; strict workspace Clippy with warnings denied.
+- `make unit-test`: 747 no-default workspace tests and 741 all-feature library tests passed; one test was intentionally skipped in each matrix.
+- `make doc`: strict private-item workspace rustdoc passed; all 51 doctests passed.
+- `git diff --check`: passed.
 - Mechanical declaration comparison: 33 pinned source tests and 33 documented tests, with no missing or extra name.
 
 Package-owned behavior is covered through deterministic request-level mocks and source-derived state-machine tests. The configured Go 1.25.12 toolchain subsequently passed the complete pinned local and race suites, and the repository integration workflow passed the transactional package against matching API-v1 PD/TiKV.
 
 A live TiKV/PD cluster is not required by any of the four package-local source test files. End-to-end cross-client differential runs for transaction, snapshot, lock resolver, safe point, and root-store orchestration remain a repository completion gate owned by their high-level packages; they are not an omitted artifact of this atomic package receipt.
 
-Post-reopening remediation exposes `Transaction::new` only for crate tests or the explicit `internal-tests` feature and re-exports its `Keyspace` selector through `testutils`. This supplies client-go's public injected-client test capability without widening the production constructor surface. The external `mocktikv_transaction_tests` target constructs `Transaction<MockPdClient>` and exercises a real transaction read through the mock transport. This closes the injected-client API gap; it does not close or obscure the remaining disconnected-`MemDb` gap.
+Post-reopening remediation exposes `Transaction::new` only for crate tests or the explicit `internal-tests` feature and re-exports its `Keyspace` selector through `testutils`. This supplies client-go's public injected-client test capability without widening the production constructor surface. The external `mocktikv_transaction_tests` target constructs `Transaction<MockPdClient>`, proves missing reads remain distinct from empty values, and proves a direct staged `MemDb` write is read and committed while a cleaned stage remains absent. Together with API-v2 request-level coverage, this closes both runtime gaps without an out-of-tree adapter.

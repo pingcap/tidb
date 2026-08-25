@@ -21,6 +21,7 @@
 //! snapshot semantics come from the transcreated client-go `MemDB` in the
 //! vendored `tikv-client` crate — the composition Go ships in production.
 
+use tikv_client::transaction::unionstore::MemDb;
 use tidb_txnkv::{
     AssertionOp, BatchGetOptions, FlagsOp, Getter, GetOptions, Key, KvIterator, MemBufferBackend,
     MemBufferDriver, TikvMemBufferBackend, TikvMemBufferError,
@@ -41,7 +42,8 @@ fn drain<I: KvIterator<Error = TikvMemBufferError>>(iterator: &mut I) -> Vec<(Ke
 
 #[test]
 fn reads_writes_and_tombstones_match_the_fake_backend_contract() {
-    let mut backend = TikvMemBufferBackend::new();
+    let mut memdb = MemDb::new();
+    let mut backend = TikvMemBufferBackend::new(&mut memdb);
     assert!(backend.is_empty());
 
     backend.set(k("a"), b"1".to_vec()).unwrap();
@@ -97,7 +99,8 @@ fn reads_writes_and_tombstones_match_the_fake_backend_contract() {
 
 #[test]
 fn flags_round_trip_through_the_client_go_bit_layout() {
-    let mut backend = TikvMemBufferBackend::new();
+    let mut memdb = MemDb::new();
+    let mut backend = TikvMemBufferBackend::new(&mut memdb);
 
     backend
         .set_with_flags(k("a"), b"1".to_vec(), &[FlagsOp::SetPresumeKeyNotExists])
@@ -138,7 +141,8 @@ fn flags_round_trip_through_the_client_go_bit_layout() {
 
 #[test]
 fn staging_rolls_back_releases_and_exposes_touched_entries() {
-    let mut backend = TikvMemBufferBackend::new();
+    let mut memdb = MemDb::new();
+    let mut backend = TikvMemBufferBackend::new(&mut memdb);
     backend.set(k("base"), b"0".to_vec()).unwrap();
 
     // A cleaned-up stage rolls its writes back.
@@ -194,7 +198,8 @@ fn staging_rolls_back_releases_and_exposes_touched_entries() {
 
 #[test]
 fn iteration_bounds_match_the_source_driver_contract() {
-    let mut backend = TikvMemBufferBackend::new();
+    let mut memdb = MemDb::new();
+    let mut backend = TikvMemBufferBackend::new(&mut memdb);
     for (key, value) in [("a", "1"), ("b", "2"), ("c", "3"), ("d", "4")] {
         backend.set(k(key), value.as_bytes().to_vec()).unwrap();
     }
@@ -220,7 +225,8 @@ fn iteration_bounds_match_the_source_driver_contract() {
 
 #[test]
 fn buffer_snapshots_exclude_the_active_stage_and_pipelined_views_are_empty() {
-    let mut backend = TikvMemBufferBackend::new();
+    let mut memdb = MemDb::new();
+    let mut backend = TikvMemBufferBackend::new(&mut memdb);
     backend.set(k("a"), b"committed".to_vec()).unwrap();
     let _stage = backend.staging();
     backend.set(k("a"), b"staged".to_vec()).unwrap();

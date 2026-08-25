@@ -29,6 +29,12 @@ pub trait KvIterator {
     fn valid(&self) -> bool;
     fn key(&self) -> &[u8];
     fn value(&self) -> &[u8];
+    fn has_value(&self) -> bool {
+        true
+    }
+    fn flags(&self) -> KeyFlags {
+        KeyFlags::default()
+    }
     fn next(&mut self) -> Result<(), &'static str>;
 
     /// Rust iterators own their backing data, so dropping one releases it.
@@ -49,6 +55,14 @@ impl KvIterator for ArtBufferIterator {
 
     fn value(&self) -> &[u8] {
         self.0.value().unwrap_or_default()
+    }
+
+    fn has_value(&self) -> bool {
+        self.0.has_value()
+    }
+
+    fn flags(&self) -> KeyFlags {
+        self.0.flags()
     }
 
     fn next(&mut self) -> Result<(), &'static str> {
@@ -239,6 +253,16 @@ impl MemDb {
 
     pub fn iter(&self, lower: Option<&[u8]>, upper: Option<&[u8]>) -> Box<dyn KvIterator> {
         Box::new(ArtBufferIterator(self.art.iter(lower, upper)))
+    }
+
+    /// Iterates both value-bearing and flags-only entries, matching
+    /// client-go's `MemDB.IterWithFlags` commit traversal.
+    pub fn iter_with_flags(
+        &self,
+        lower: Option<&[u8]>,
+        upper: Option<&[u8]>,
+    ) -> Box<dyn KvIterator> {
+        Box::new(ArtBufferIterator(self.art.iter_with_flags(lower, upper)))
     }
 
     pub fn iter_reverse(&self, upper: Option<&[u8]>, lower: Option<&[u8]>) -> Box<dyn KvIterator> {
@@ -500,6 +524,14 @@ impl KvIterator for RbtBufferIterator {
 
     fn value(&self) -> &[u8] {
         self.0.value().unwrap_or_default()
+    }
+
+    fn has_value(&self) -> bool {
+        self.0.has_value()
+    }
+
+    fn flags(&self) -> KeyFlags {
+        self.0.flags()
     }
 
     fn next(&mut self) -> Result<(), &'static str> {

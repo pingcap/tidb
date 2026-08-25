@@ -13,8 +13,14 @@
 // limitations under the License.
 
 //! Connected source tests for the Go `pkg/store/driver/txn.tikvTxn` shape:
-//! TiDB's staged transaction buffer paired with client-go two-phase commit,
-//! run end-to-end over the vendored crate's in-process mocktikv cluster.
+//! TiDB's typed staged-buffer contract paired with client-go two-phase
+//! commit, run end-to-end over the vendored crate's in-process mocktikv
+//! cluster.
+//!
+//! The driver stages into the transaction's own authoritative buffer, so
+//! these tests also pin that there is exactly one buffer: what a statement
+//! stages is what commit writes, and a rolled-back statement leaves nothing
+//! behind for commit to find.
 
 use std::sync::Arc;
 
@@ -27,11 +33,13 @@ use tikv_client::TransactionOptions;
 
 use tidb_txnkv::{FlagsOp, Key, TikvTransactionDriver};
 
-fn runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("current-thread runtime builds")
+fn runtime() -> Arc<tokio::runtime::Runtime> {
+    Arc::new(
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("current-thread runtime builds"),
+    )
 }
 
 fn mock_store() -> Arc<MockPdClient> {
@@ -40,18 +48,30 @@ fn mock_store() -> Arc<MockPdClient> {
     Arc::new(pd)
 }
 
-async fn begin(pd: &Arc<MockPdClient>) -> Transaction<MockPdClient> {
-    let timestamp = pd
-        .clone()
-        .get_timestamp()
-        .await
-        .expect("mock PD allocates a timestamp");
-    Transaction::new(
-        timestamp,
-        pd.clone(),
-        TransactionOptions::new_optimistic(),
-        Keyspace::Disable,
-    )
+/// Begins one optimistic transaction. The engine's `begin` is asynchronous,
+/// so it runs on the runtime; every later driver call is blocking, exactly
+/// how TiDB's synchronous transaction consumers use it.
+fn begin(pd: &Arc<MockPdClient>, runtime: &Arc<tokio::runtime::Runtime>) -> Transaction<MockPdClient> {
+    runtime.block_on(async {
+        let timestamp = pd
+            .clone()
+            .get_timestamp()
+            .await
+            .expect("mock PD allocates a timestamp");
+        Transaction::new(
+            timestamp,
+            pd.clone(),
+            TransactionOptions::new_optimistic(),
+            Keyspace::Disable,
+        )
+    })
+}
+
+fn driver(
+    pd: &Arc<MockPdClient>,
+    runtime: &Arc<tokio::runtime::Runtime>,
+) -> TikvTransactionDriver<MockPdClient> {
+    TikvTransactionDriver::new(begin(pd, runtime), runtime.clone())
 }
 
 fn k(value: &str) -> Key {
@@ -60,131 +80,170 @@ fn k(value: &str) -> Key {
 
 #[test]
 fn staged_statements_commit_through_client_go_two_phase_commit() {
-    runtime().block_on(async {
-        let pd = mock_store();
+    let runtime = runtime();
+    let pd = mock_store();
 
-        // Seed committed data through the raw engine path.
-        let mut seed = begin(&pd).await;
-        seed.put("seeded".to_owned(), "old".to_owned()).await.unwrap();
-        seed.put("victim".to_owned(), "doomed".to_owned())
-            .await
-            .unwrap();
-        seed.commit().await.unwrap();
+    // Seed committed data.
+    let mut seed = driver(&pd, &runtime);
+    seed.set(k("seeded"), b"old".to_vec()).unwrap();
+    seed.set(k("victim"), b"doomed".to_vec()).unwrap();
+    seed.commit().unwrap();
 
-        let mut driver = TikvTransactionDriver::new(begin(&pd).await);
+    let mut txn = driver(&pd, &runtime);
 
-        // Statement one commits: an insert and an overwrite survive.
-        let statement = driver.staging();
-        driver.set(k("fresh"), b"v1".to_vec()).unwrap();
-        driver.set(k("seeded"), b"new".to_vec()).unwrap();
-        driver.release(statement);
+    // Statement one commits: an insert and an overwrite survive.
+    let statement = txn.staging();
+    txn.set(k("fresh"), b"v1".to_vec()).unwrap();
+    txn.set(k("seeded"), b"new".to_vec()).unwrap();
+    txn.release(statement);
 
-        // Statement two rolls back: its write never reaches the store.
-        let statement = driver.staging();
-        driver.set(k("aborted"), b"never".to_vec()).unwrap();
-        driver.cleanup(statement);
+    // Statement two rolls back: its write never reaches the store, and is
+    // gone from the very buffer commit reads.
+    let statement = txn.staging();
+    txn.set(k("aborted"), b"never".to_vec()).unwrap();
+    txn.cleanup(statement);
+    assert_eq!(txn.get(&k("aborted")).unwrap(), None);
 
-        // A tombstone deletes committed data at commit.
-        driver.delete(k("victim")).unwrap();
+    // A tombstone deletes committed data at commit.
+    txn.delete(k("victim")).unwrap();
 
-        let commit_timestamp = driver.commit().await.expect("2PC commits the staged buffer");
-        assert!(commit_timestamp.is_some());
+    let commit_ts = txn.commit().expect("2PC commits the staged buffer");
+    assert!(commit_ts.is_some());
 
-        // A fresh transaction observes exactly the surviving statements.
-        let mut reader = begin(&pd).await;
-        assert_eq!(
-            reader.get("fresh".to_owned()).await.unwrap(),
-            Some(b"v1".to_vec())
-        );
-        assert_eq!(
-            reader.get("seeded".to_owned()).await.unwrap(),
-            Some(b"new".to_vec())
-        );
-        assert_eq!(reader.get("aborted".to_owned()).await.unwrap(), None);
-        assert_eq!(reader.get("victim".to_owned()).await.unwrap(), None);
-        reader.rollback().await.unwrap();
-    });
+    // A fresh transaction observes exactly the surviving statements.
+    let mut reader = driver(&pd, &runtime);
+    assert_eq!(reader.get(&k("fresh")).unwrap(), Some(b"v1".to_vec()));
+    assert_eq!(reader.get(&k("seeded")).unwrap(), Some(b"new".to_vec()));
+    assert_eq!(reader.get(&k("aborted")).unwrap(), None);
+    assert_eq!(reader.get(&k("victim")).unwrap(), None);
+    reader.rollback().unwrap();
 }
+
 
 #[test]
 fn union_reads_overlay_the_buffer_on_the_transaction_snapshot() {
-    runtime().block_on(async {
-        let pd = mock_store();
+    let runtime = runtime();
+    let pd = mock_store();
 
-        let mut seed = begin(&pd).await;
-        seed.put("base".to_owned(), "committed".to_owned())
-            .await
-            .unwrap();
-        seed.commit().await.unwrap();
+    let mut seed = driver(&pd, &runtime);
+    seed.set(k("base"), b"committed".to_vec()).unwrap();
+    seed.commit().unwrap();
 
-        let mut driver = TikvTransactionDriver::new(begin(&pd).await);
+    let mut txn = driver(&pd, &runtime);
 
-        // A miss in the buffer falls through to the snapshot.
-        assert_eq!(
-            driver.get(&k("base")).await.unwrap(),
-            Some(b"committed".to_vec())
-        );
-        assert_eq!(driver.get(&k("absent")).await.unwrap(), None);
+    // A miss in the buffer falls through to the snapshot.
+    assert_eq!(txn.get(&k("base")).unwrap(), Some(b"committed".to_vec()));
+    assert_eq!(txn.get(&k("absent")).unwrap(), None);
 
-        // A buffered write overlays the committed value.
-        driver.set(k("base"), b"local".to_vec()).unwrap();
-        assert_eq!(driver.get(&k("base")).await.unwrap(), Some(b"local".to_vec()));
+    // A buffered write overlays the committed value.
+    txn.set(k("base"), b"local".to_vec()).unwrap();
+    assert_eq!(txn.get(&k("base")).unwrap(), Some(b"local".to_vec()));
 
-        // A buffered tombstone hides the committed value.
-        driver.delete(k("base")).unwrap();
-        assert_eq!(driver.get(&k("base")).await.unwrap(), None);
+    // A buffered tombstone hides the committed value.
+    txn.delete(k("base")).unwrap();
+    assert_eq!(txn.get(&k("base")).unwrap(), None);
 
-        driver.rollback().await.unwrap();
-    });
+    txn.rollback().unwrap();
 }
 
 #[test]
 fn presume_key_not_exists_maps_to_insert_semantics() {
-    runtime().block_on(async {
-        let pd = mock_store();
+    let runtime = runtime();
+    let pd = mock_store();
 
-        let mut seed = begin(&pd).await;
-        seed.put("occupied".to_owned(), "existing".to_owned())
-            .await
-            .unwrap();
-        seed.commit().await.unwrap();
+    let mut seed = driver(&pd, &runtime);
+    seed.set(k("occupied"), b"existing".to_vec()).unwrap();
+    seed.commit().unwrap();
 
-        // Inserting over an existing key must fail, exactly like Go's lazy
-        // existence check turning PresumeKeyNotExists into Op_Insert.
-        let mut driver = TikvTransactionDriver::new(begin(&pd).await);
-        driver
-            .set_with_flags(
-                k("occupied"),
-                b"conflict".to_vec(),
-                &[FlagsOp::SetPresumeKeyNotExists],
-            )
-            .unwrap();
-        let conflict = driver.commit().await;
-        assert!(
-            conflict.is_err(),
-            "insert over an existing key must fail, got {conflict:?}"
-        );
+    // Inserting over an existing key must fail, exactly like Go's lazy
+    // existence check turning PresumeKeyNotExists into Op_Insert.
+    let mut conflicting = driver(&pd, &runtime);
+    conflicting
+        .set_with_flags(
+            k("occupied"),
+            b"conflict".to_vec(),
+            &[FlagsOp::SetPresumeKeyNotExists],
+        )
+        .unwrap();
+    let conflict = conflicting.commit();
+    assert!(
+        conflict.is_err(),
+        "insert over an existing key must fail, got {conflict:?}"
+    );
 
-        // The same insert on a free key commits.
-        let mut driver = TikvTransactionDriver::new(begin(&pd).await);
-        driver
-            .set_with_flags(
-                k("free"),
-                b"inserted".to_vec(),
-                &[FlagsOp::SetPresumeKeyNotExists],
-            )
-            .unwrap();
-        driver.commit().await.expect("insert on a free key commits");
+    // The same insert on a free key commits.
+    let mut inserting = driver(&pd, &runtime);
+    inserting
+        .set_with_flags(
+            k("free"),
+            b"inserted".to_vec(),
+            &[FlagsOp::SetPresumeKeyNotExists],
+        )
+        .unwrap();
+    inserting.commit().expect("insert on a free key commits");
 
-        let mut reader = begin(&pd).await;
-        assert_eq!(
-            reader.get("occupied".to_owned()).await.unwrap(),
-            Some(b"existing".to_vec())
-        );
-        assert_eq!(
-            reader.get("free".to_owned()).await.unwrap(),
-            Some(b"inserted".to_vec())
-        );
-        reader.rollback().await.unwrap();
-    });
+    let mut reader = driver(&pd, &runtime);
+    assert_eq!(
+        reader.get(&k("occupied")).unwrap(),
+        Some(b"existing".to_vec())
+    );
+    assert_eq!(reader.get(&k("free")).unwrap(), Some(b"inserted".to_vec()));
+    reader.rollback().unwrap();
+}
+
+#[test]
+fn the_staged_buffer_is_the_buffer_commit_reads() {
+    let runtime = runtime();
+    let pd = mock_store();
+    let mut txn = driver(&pd, &runtime);
+
+    // Staging through TiDB's typed buffer view is visible to the engine's own
+    // size/length accounting: there is one buffer, not two.
+    assert!(txn.is_empty());
+    txn.set(k("a"), b"1".to_vec()).unwrap();
+    txn.set(k("b"), b"2".to_vec()).unwrap();
+    assert_eq!(txn.len(), 2);
+    assert!(txn.size() > 0);
+
+    // Flags applied through the typed view survive on the same buffer.
+    txn
+        .set_with_flags(k("c"), b"3".to_vec(), &[FlagsOp::SetNeedLocked])
+        .unwrap();
+    assert!(txn.get_flags(&k("c")).unwrap().has_need_locked());
+    assert_eq!(txn.len(), 3);
+
+    txn.commit().expect("the staged keys commit");
+
+    let mut reader = driver(&pd, &runtime);
+    assert_eq!(reader.get(&k("a")).unwrap(), Some(b"1".to_vec()));
+    assert_eq!(reader.get(&k("c")).unwrap(), Some(b"3".to_vec()));
+    reader.rollback().unwrap();
+}
+
+#[test]
+fn pessimistic_locks_are_acquired_at_statement_time() {
+    let runtime = runtime();
+    let pd = mock_store();
+
+    let mut seed = driver(&pd, &runtime);
+    seed.set(k("row"), b"v1".to_vec()).unwrap();
+    seed.commit().unwrap();
+
+    let timestamp = runtime.block_on(pd.clone().get_timestamp()).unwrap();
+    let pessimistic = Transaction::new(
+        timestamp,
+        pd.clone(),
+        TransactionOptions::new_pessimistic(),
+        Keyspace::Disable,
+    );
+    let mut txn = TikvTransactionDriver::new(pessimistic, runtime.clone());
+
+    // Statement-time lock acquisition, then a write under that lock.
+    txn.lock_keys(&[k("row")]).unwrap();
+    txn.set(k("row"), b"v2".to_vec()).unwrap();
+    txn.commit().expect("pessimistic commit succeeds");
+
+    let mut reader = driver(&pd, &runtime);
+    assert_eq!(reader.get(&k("row")).unwrap(), Some(b"v2".to_vec()));
+    reader.rollback().unwrap();
 }
