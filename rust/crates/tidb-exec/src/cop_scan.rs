@@ -255,11 +255,6 @@ where
         // declared direction (`spec.desc`) -- routing it here instead of a
         // bespoke refusal is what lets a descending keep-order lookup answer
         // n rows without materializing the whole bounded range locally.
-        if request.output_offsets.is_some() {
-            return Err(refuse(
-                "this coprocessor lowering does not narrow output columns",
-            ));
-        }
         let columns = request
             .columns
             .iter()
@@ -287,6 +282,36 @@ where
             wide_scan_selection_conditions(&lowered, &columns).map_err(|error| {
                 PushdownScannerError::Backend(StorageError::Backend(error.to_string()))
             })?
+        };
+
+        // Go's `ConstructDAGReq` narrows a projected scan by sending
+        // `DAGRequest.output_offsets`, so TiKV encodes only the projected
+        // columns. The caller's contract
+        // (`PushdownScanRequest::output_offsets`) lets a backend refuse a
+        // narrowing it cannot answer exactly -- once the narrower row crosses
+        // the wire, no residual conjunct can be repeated locally over the
+        // dropped columns. So the narrowing travels when EVERY predicate
+        // lowers and the executor stack stays [Scan, Selection?]: an
+        // aggregate replaces the output schema the offsets index into, and
+        // either aggregate or TopN must keep today's refusal.
+        let wire_output_offsets: Option<Vec<u32>> = match request.output_offsets.as_ref() {
+            None => None,
+            Some(offsets)
+                if predicates_applied && request.aggregate.is_none() && request.topn.is_none() =>
+            {
+                if offsets
+                    .iter()
+                    .any(|offset| *offset >= request.columns.len())
+                {
+                    return Err(refuse("an output offset is outside the scan output"));
+                }
+                Some(offsets.iter().map(|offset| *offset as u32).collect())
+            }
+            Some(_) => {
+                return Err(refuse(
+                    "this coprocessor lowering does not narrow output columns",
+                ))
+            }
         };
 
         // The cap may only travel with a predicate that travelled WHOLE. A
@@ -386,7 +411,17 @@ where
                 })
             }
         };
-        let output_offsets: Vec<u32> = (0..field_types.len() as u32).collect();
+        let output_offsets: Vec<u32> = wire_output_offsets
+            .clone()
+            .unwrap_or_else(|| (0..field_types.len() as u32).collect());
+        // The response is encoded against the DAG's (possibly narrowed) output
+        // offsets, so both decoders below see the WIRE width.
+        if let Some(offsets) = &wire_output_offsets {
+            field_types = offsets
+                .iter()
+                .map(|offset| request.columns[*offset as usize].field_type.clone())
+                .collect();
+        }
 
         if request.topn.is_some() && !predicates_applied {
             return Err(refuse(
