@@ -65,11 +65,13 @@ type PacketIO struct {
 	// maxAllowedPacket is the maximum size of one packet in ReadPacket.
 	maxAllowedPacket uint64
 	// accumulatedLength count the length of totally received 'payload' in ReadPacket.
-	accumulatedLength     uint64
-	compressionAlgorithm  int
-	zstdLevel             zstd.EncoderLevel
-	sequence              uint8
-	compressedSequence    uint8
+	accumulatedLength    uint64
+	compressionAlgorithm int
+	zstdLevel            zstd.EncoderLevel
+	sequence             uint8
+	compressedSequence   uint8
+	// pendingOutPacketBytes batches uncompressed OutPacketBytes metric updates
+	// until the protocol flush boundary.
 	pendingOutPacketBytes int
 }
 
@@ -125,6 +127,7 @@ func (p *PacketIO) SetCompressionAlgorithm(ca int) {
 	p.compressedWriter.zstdLevel = p.zstdLevel
 	p.compressedReader = newCompressedReader(p.bufReadConn, ca, &p.compressedSequence)
 	p.compressedReader.zstdLevel = p.zstdLevel
+	p.flushOutPacketBytesMetric()
 	p.bufWriter.Flush()
 }
 

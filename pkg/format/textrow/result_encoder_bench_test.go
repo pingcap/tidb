@@ -15,6 +15,7 @@
 package textrow
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -23,16 +24,27 @@ import (
 var benchmarkEncodedLengthSink int
 
 func BenchmarkEncodeWithWideRows(b *testing.B) {
-	encoder := NewResultEncoder(charset.CharsetUTF8MB4)
-	c := make([]byte, 119)
-	pad := make([]byte, 59)
-	total := 0
-	b.ReportAllocs()
-	for range b.N {
-		for range 510 {
-			total += len(encoder.encodeWith(c, charset.EncodingBinImpl))
-			total += len(encoder.encodeWith(pad, charset.EncodingBinImpl))
-		}
+	cases := []struct {
+		name   string
+		enc    charset.Encoding
+		first  []byte
+		second []byte
+	}{
+		{name: "binary-noop", enc: charset.EncodingBinImpl, first: make([]byte, 119), second: make([]byte, 59)},
+		{name: "gbk-transform", enc: charset.EncodingGBKImpl, first: bytes.Repeat([]byte("一"), 39), second: bytes.Repeat([]byte("二"), 19)},
 	}
-	benchmarkEncodedLengthSink = total
+	for _, testCase := range cases {
+		b.Run(testCase.name, func(b *testing.B) {
+			encoder := NewResultEncoder(charset.CharsetUTF8MB4)
+			total := 0
+			b.ReportAllocs()
+			for range b.N {
+				for range 510 {
+					total += len(encoder.encodeWith(testCase.first, testCase.enc))
+					total += len(encoder.encodeWith(testCase.second, testCase.enc))
+				}
+			}
+			benchmarkEncodedLengthSink = total
+		})
+	}
 }

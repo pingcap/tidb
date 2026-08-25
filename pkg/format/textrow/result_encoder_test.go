@@ -45,15 +45,50 @@ func BenchmarkNewResultEncoder(b *testing.B) {
 }
 
 func BenchmarkUpdateDataEncodingWideRows(b *testing.B) {
-	encoder := textrow.NewResultEncoder(charset.CharsetUTF8MB4)
-	b.ReportAllocs()
-	for range b.N {
-		for range 510 {
-			encoder.UpdateDataEncoding(mysql.DefaultCollationID)
-			encoder.UpdateDataEncoding(mysql.DefaultCollationID)
-		}
+	gbkCollation, err := charset.GetCollationByName(charset.CollationGBKBin)
+	require.NoError(b, err)
+	cases := []struct {
+		name string
+		ids  []uint16
+	}{
+		{name: "repeated", ids: []uint16{mysql.DefaultCollationID, mysql.DefaultCollationID}},
+		{name: "changing", ids: []uint16{mysql.DefaultCollationID, uint16(gbkCollation.ID)}},
 	}
-	benchmarkResultEncoderSink = encoder
+	for _, testCase := range cases {
+		b.Run(testCase.name, func(b *testing.B) {
+			encoder := textrow.NewResultEncoder(charset.CharsetUTF8MB4)
+			b.ReportAllocs()
+			for range b.N {
+				for range 510 {
+					for _, id := range testCase.ids {
+						encoder.UpdateDataEncoding(id)
+					}
+				}
+			}
+			benchmarkResultEncoderSink = encoder
+		})
+	}
+}
+
+func TestUpdateDataEncodingTransitions(t *testing.T) {
+	gbkCollation, err := charset.GetCollationByName(charset.CollationGBKBin)
+	require.NoError(t, err)
+
+	encoder := textrow.NewResultEncoder(charset.CharsetBin)
+	src := []byte("一")
+	gbk := []byte{0xd2, 0xbb}
+
+	encoder.UpdateDataEncoding(uint16(gbkCollation.ID))
+	require.Equal(t, gbk, encoder.EncodeData(src))
+	encoder.UpdateDataEncoding(uint16(gbkCollation.ID))
+	require.Equal(t, gbk, encoder.EncodeData(src))
+
+	encoder.UpdateDataEncoding(mysql.DefaultCollationID)
+	require.Equal(t, src, encoder.EncodeData(src))
+	encoder.UpdateDataEncoding(^uint16(0))
+	require.Equal(t, src, encoder.EncodeData(src))
+	encoder.UpdateDataEncoding(uint16(gbkCollation.ID))
+	require.Equal(t, gbk, encoder.EncodeData(src))
 }
 
 func TestResultEncoder(t *testing.T) {

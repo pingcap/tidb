@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/zlib"
+	"fmt"
 	"io"
 	"testing"
 
@@ -25,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
+	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,22 +41,53 @@ func BenchmarkPacketIOWrite(b *testing.B) {
 }
 
 func BenchmarkPacketIOWriteRows(b *testing.B) {
-	const rows = 510
 	packet := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
-	pkt := &PacketIO{bufWriter: bufio.NewWriterSize(io.Discard, defaultWriterSize)}
-	b.ReportAllocs()
-	b.SetBytes(rows * int64(len(packet)))
-	b.ResetTimer()
-	for b.Loop() {
-		for range rows {
-			if err := pkt.WritePacket(packet); err != nil {
-				b.Fatal(err)
+	for _, packetCount := range []int{1, 8, 510} {
+		b.Run(fmt.Sprintf("packets=%d", packetCount), func(b *testing.B) {
+			pkt := &PacketIO{bufWriter: bufio.NewWriterSize(io.Discard, defaultWriterSize)}
+			b.ReportAllocs()
+			b.SetBytes(int64(packetCount * len(packet)))
+			b.ResetTimer()
+			for b.Loop() {
+				for range packetCount {
+					if err := pkt.WritePacket(packet); err != nil {
+						b.Fatal(err)
+					}
+				}
+				if err := pkt.Flush(); err != nil {
+					b.Fatal(err)
+				}
 			}
-		}
-		if err := pkt.Flush(); err != nil {
-			b.Fatal(err)
-		}
+		})
 	}
+}
+
+type failingPacketWriter struct{}
+
+func (failingPacketWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestPacketIOOutPacketBytesMetricBatching(t *testing.T) {
+	packet := []byte{0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8}
+	pkt := &PacketIO{bufWriter: bufio.NewWriterSize(io.Discard, defaultWriterSize)}
+
+	before := promtestutil.ToFloat64(server_metrics.OutPacketBytes)
+	require.NoError(t, pkt.WritePacket(packet))
+	require.Equal(t, before, promtestutil.ToFloat64(server_metrics.OutPacketBytes))
+	require.NoError(t, pkt.Flush())
+	require.Equal(t, before+float64(len(packet)), promtestutil.ToFloat64(server_metrics.OutPacketBytes))
+	require.NoError(t, pkt.Flush())
+	require.Equal(t, before+float64(len(packet)), promtestutil.ToFloat64(server_metrics.OutPacketBytes))
+
+	pkt = &PacketIO{bufWriter: bufio.NewWriterSize(failingPacketWriter{}, 1)}
+	before = promtestutil.ToFloat64(server_metrics.OutPacketBytes)
+	require.Error(t, pkt.WritePacket(packet))
+	require.Equal(t, before+float64(len(packet)), promtestutil.ToFloat64(server_metrics.OutPacketBytes))
+
+	pkt = &PacketIO{bufWriter: bufio.NewWriterSize(io.Discard, defaultWriterSize)}
+	before = promtestutil.ToFloat64(server_metrics.OutPacketBytes)
+	require.NoError(t, pkt.WritePacket(packet))
+	pkt.SetCompressionAlgorithm(mysql.CompressionZlib)
+	require.Equal(t, before+float64(len(packet)), promtestutil.ToFloat64(server_metrics.OutPacketBytes))
 }
 
 func TestPacketIOWrite(t *testing.T) {
