@@ -910,7 +910,7 @@ mod tests {
     /// it: what COMMIT does to the two halves of a cluster read.
     fn commit(buffer: &MutationBuffer, snapshot: &Arc<Mutex<MockSnapshot>>) {
         let mut snapshot = snapshot.lock().unwrap();
-        for (key, value) in buffer.staged() {
+        for (key, value) in buffer.snapshot() {
             match value {
                 Some(value) => snapshot.data.insert(key.as_bytes().to_vec(), value),
                 None => snapshot.data.remove(key.as_bytes()),

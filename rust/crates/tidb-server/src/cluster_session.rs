@@ -1697,7 +1697,7 @@ mod tests {
         // snapshot, and start over: that is what a COMMIT leaves behind for the
         // next statement to read.
         session.run("INSERT INTO t (id, v) VALUES (9, 90)").unwrap();
-        let staged = storage.buffer().staged();
+        let staged = storage.buffer().snapshot();
         assert_eq!(staged.len(), 1);
         for (key, value) in staged {
             snapshot

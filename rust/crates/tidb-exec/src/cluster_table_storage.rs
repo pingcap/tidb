@@ -1557,7 +1557,7 @@ pub fn statement_storage<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCap
 fn staged_mutations(
     buffer: &MutationBuffer,
 ) -> Result<(Vec<OptimisticMutation>, usize), OptimisticCoordinatorError> {
-    let staged = buffer.staged();
+    let staged = buffer.snapshot();
     // Keys an INSERT staged presumed absent (`kv.SetPresumeKeyNotExists`)
     // prewrite as Go's own lazy inserts do: `Op_Insert`, which TiKV rejects
     // when a committed version of the key turns out to exist. This is the

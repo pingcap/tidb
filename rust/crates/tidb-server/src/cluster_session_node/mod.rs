@@ -178,7 +178,7 @@ use tidb_exec::real_tikv_ddl::prepare_cluster_ddl_with_context;
 use tidb_exec::stats_watch::SharedStats;
 use tidb_executor::access_path::StatementReadShape;
 use tidb_executor::cluster_storage::{
-    BufferImage, ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
+    BufferCheckpoint, ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
 };
 use tidb_executor::remote_scan::PushdownScanner;
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
@@ -710,7 +710,7 @@ pub struct ClusterServerSession {
     /// The two stacks stay in step because both apply the same rules to the
     /// same statement sequence, and the session's error arm runs FIRST -- a
     /// name this stack could not find is one the session already refused.
-    savepoints: Vec<(String, BufferImage)>,
+    savepoints: Vec<(String, BufferCheckpoint)>,
     /// Tables of the cluster this connection's catalog could not include,
     /// answered by name when a statement names one. Rebuilt with the catalog.
     skipped: Vec<SkippedTable>,
@@ -836,7 +836,7 @@ impl ClusterServerSession {
         let _statement_pin = self
             .schema_pins
             .hold(self.connection_id, self.schema_version);
-        let savepoint = self.buffer.staged();
+        let savepoint = self.buffer.checkpoint();
         let mut retried: u32 = 0;
         let outcome = loop {
             match self.attempt_statement(shape, savepoint.clone(), &prelock_keys, &mut run) {
@@ -883,7 +883,7 @@ impl ClusterServerSession {
     fn attempt_statement<T>(
         &mut self,
         shape: StatementReadShape,
-        savepoint: BufferImage,
+        savepoint: BufferCheckpoint,
         prelock_keys: &[Vec<u8>],
         run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
@@ -912,7 +912,7 @@ impl ClusterServerSession {
     fn attempt_statement_inner<T>(
         &mut self,
         shape: StatementReadShape,
-        savepoint: &BufferImage,
+        savepoint: &BufferCheckpoint,
         prelock_keys: &[Vec<u8>],
         run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
         read_ts: &transactions::StatementReadTs,
@@ -1117,7 +1117,7 @@ impl ClusterServerSession {
     /// what the transaction says about the keys it staged.
     fn lock_pessimistic_statement_keys(
         &mut self,
-        savepoint: &BufferImage,
+        savepoint: &BufferCheckpoint,
         statement_locked: &mut Vec<Vec<u8>>,
     ) -> Result<PessimisticStep, SqlQueryError> {
         let Some(transaction) = self.explicit.as_ref() else {
@@ -1126,10 +1126,8 @@ impl ClusterServerSession {
         if !transaction.is_pessimistic() {
             return Ok(PessimisticStep::Done);
         }
-        let keys = tidb_exec::cluster_table_storage::pessimistic_lock_delta(
-            savepoint,
-            &self.buffer.staged(),
-        );
+        let (before, after) = self.buffer.delta_since(*savepoint);
+        let keys = tidb_exec::cluster_table_storage::pessimistic_lock_delta(&before, &after);
         if keys.is_empty() {
             return Ok(PessimisticStep::Done);
         }
@@ -1473,7 +1471,7 @@ impl ClusterServerSession {
                     return Ok(());
                 }
                 let name = name.to_lowercase();
-                let image = self.buffer.staged();
+                let image = self.buffer.checkpoint();
                 self.savepoints.retain(|(existing, _)| *existing != name);
                 self.savepoints.push((name, image));
             }

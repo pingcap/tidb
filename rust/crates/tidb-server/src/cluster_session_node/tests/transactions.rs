@@ -342,7 +342,7 @@ fn a_failed_autocommit_statement_publishes_nothing() {
 fn staged_handles(session: &ClusterServerSession, table_id: i64) -> Vec<i64> {
     session
         .buffer
-        .staged()
+        .snapshot()
         .into_iter()
         .filter_map(|(key, _)| {
             match tidb_tablecodec::table_key::decode_record_key(key.as_bytes()) {
@@ -381,7 +381,7 @@ fn a_failed_statement_leaves_no_bytes_of_its_own_in_the_mutation_buffer() {
     session
         .execute_write("INSERT INTO t (id, v) VALUES (3, 30)")
         .expect("first insert");
-    let staged_before = session.buffer.staged();
+    let staged_before = session.buffer.snapshot();
     assert_eq!(staged_handles(&session, 101), vec![3]);
 
     assert!(session
@@ -389,7 +389,7 @@ fn a_failed_statement_leaves_no_bytes_of_its_own_in_the_mutation_buffer() {
         .is_err());
     // Not merely "no new rows are visible": the staged bytes ARE the ones
     // the failing statement started from.
-    assert_eq!(session.buffer.staged(), staged_before);
+    assert_eq!(session.buffer.snapshot(), staged_before);
 
     session.control_transaction("COMMIT").expect("commit");
     assert_eq!(cluster.rows(), 1);
@@ -461,7 +461,7 @@ fn rollback_to_a_savepoint_restores_the_buffer_and_keeps_the_transaction_open() 
         session.control_transaction("SAVEPOINT s1").unwrap(),
         Some(true)
     );
-    let staged_at_savepoint = session.buffer.staged();
+    let staged_at_savepoint = session.buffer.snapshot();
     session
         .execute_write("INSERT INTO t (id, v) VALUES (2, 20)")
         .expect("second insert");
@@ -472,7 +472,7 @@ fn rollback_to_a_savepoint_restores_the_buffer_and_keeps_the_transaction_open() 
         session.control_transaction("ROLLBACK TO s1").unwrap(),
         Some(true)
     );
-    assert_eq!(session.buffer.staged(), staged_at_savepoint);
+    assert_eq!(session.buffer.snapshot(), staged_at_savepoint);
     assert_eq!(staged_handles(&session, 101), vec![1]);
     assert_eq!(cluster.publications.load(Ordering::Acquire), 0);
 

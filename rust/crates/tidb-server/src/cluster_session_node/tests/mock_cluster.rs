@@ -358,7 +358,7 @@ impl ClusterTransactions for MockTransactions {
     }
 
     fn commit(&self, buffer: &MutationBuffer, read_ts: Option<u64>) -> Result<(), SqlQueryError> {
-        let staged = buffer.staged();
+        let staged = buffer.snapshot();
         if staged.is_empty() {
             return Ok(());
         }
@@ -451,7 +451,7 @@ impl OpenClusterTransaction for MockSessionTransaction {
     }
 
     fn commit(self: Box<Self>, buffer: &MutationBuffer) -> Result<(), SqlQueryError> {
-        let staged = buffer.staged();
+        let staged = buffer.snapshot();
         if staged.is_empty() {
             return Ok(());
         }

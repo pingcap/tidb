@@ -159,12 +159,34 @@ pub trait ClusterSnapshot: fmt::Debug + Send {
     }
 }
 
-/// A whole [`MutationBuffer`] as of one moment, in key order: what
-/// [`MutationBuffer::staged`] produces and [`MutationBuffer::restore`] puts
-/// back. Go's counterpart is a `tikv.MemDBCheckpoint` -- a position in the
-/// membuffer rather than a copy of it -- which a statement rollback or a
+/// A whole [`MutationBuffer`] as of one moment: what
+/// [`MutationBuffer::checkpoint`] produces and [`MutationBuffer::restore`]
+/// puts back. Go's counterpart is a `tikv.MemDBCheckpoint` -- a position in
+/// the membuffer rather than a copy of it -- which a statement rollback or a
 /// savepoint returns to.
-pub type BufferImage = Vec<(Key, Option<Vec<u8>>)>;
+///
+/// The position indexes an undo log the buffer keeps alongside its staged
+/// map: taking a checkpoint copies NOTHING (Go's `Staging()` is equally
+/// O(1)), and rolling back replays only the log entries written after it,
+/// so a failed statement pays for its own writes and never for the bytes
+/// earlier statements of the transaction already staged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BufferCheckpoint {
+    undo_len: usize,
+}
+
+/// One recorded prior state in the buffer's undo log.
+#[derive(Clone, Debug)]
+enum UndoEntry {
+    /// A `set`/`delete` overwrote this key; `prior` is the entry the map held
+    /// before (`None` = the key was not staged).
+    Write {
+        key: Key,
+        prior: Option<Option<Vec<u8>>>,
+    },
+    /// A presumption mark newly added for this key.
+    Presume { key: Key },
+}
 
 /// Raw keys actually consumed by the current statement.
 ///
@@ -238,6 +260,9 @@ pub struct MutationBuffer {
     /// version turns out to exist; the pessimistic lock step reads the same
     /// set as Go's `KeysNeedToLock` reads its flags.
     presume_not_exists: Arc<Mutex<BTreeSet<Key>>>,
+    /// Prior states of every write since the last `reset`, oldest first:
+    /// what [`Self::checkpoint`] positions and [`Self::restore`] unwinds.
+    undo: Arc<Mutex<Vec<UndoEntry>>>,
 }
 
 impl MutationBuffer {
@@ -249,13 +274,21 @@ impl MutationBuffer {
 
     /// Stages a write, replacing any earlier staged value or tombstone.
     pub fn set(&self, key: Key, value: Vec<u8>) {
-        self.lock().insert(key, Some(value));
+        let prior = self.lock().insert(key.clone(), Some(value));
+        self.undo()
+            .push(UndoEntry::Write { key, prior });
     }
 
     /// Stages a delete as a tombstone, so the read path stops seeing the
     /// snapshot's value for the key.
     pub fn delete(&self, key: Key) {
-        self.lock().insert(key, None);
+        let prior = self.lock().insert(key.clone(), None);
+        self.undo()
+            .push(UndoEntry::Write { key, prior });
+    }
+
+    fn undo(&self) -> std::sync::MutexGuard<'_, Vec<UndoEntry>> {
+        self.undo.lock().unwrap_or_else(|poison| poison.into_inner())
     }
 
     /// The staged entry for `key`: `None` if the key was never touched,
@@ -270,8 +303,11 @@ impl MutationBuffer {
     /// `AddRecord`'s lazy check finds no local entry, and never on a tombstone
     /// overwrite, whose plain `Set` must stay one.
     pub fn mark_presume_key_not_exists(&self, key: &Key) {
-        self.presume()
-            .insert(key.clone());
+        if self.presume().insert(key.clone()) {
+            // Newly marked: a rollback past this point withdraws the mark
+            // with the insert that carried it.
+            self.undo().push(UndoEntry::Presume { key: key.clone() });
+        }
     }
 
     /// Drains every presumption mark, in no particular order. COMMIT consumes
@@ -291,13 +327,62 @@ impl MutationBuffer {
             .collect()
     }
 
+    /// A checkpoint of the current moment: O(1), no copying. Go's
+    /// `MemBuffer.Staging()`.
+    #[must_use]
+    pub fn checkpoint(&self) -> BufferCheckpoint {
+        BufferCheckpoint {
+            undo_len: self.undo().len(),
+        }
+    }
+
     /// Every staged entry, in key order: the COMMIT mutation set.
     #[must_use]
-    pub fn staged(&self) -> BufferImage {
+    pub fn snapshot(&self) -> Vec<(Key, Option<Vec<u8>>)> {
         self.lock()
             .iter()
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect()
+    }
+
+    /// What changed since `checkpoint`, as the `(before, after)` pair the
+    /// pessimistic lock diff consumes: each side holds one entry per touched
+    /// key -- the value the checkpoint would restore, and the value staged
+    /// now. Cost is O(writes since the checkpoint), never O(staged bytes).
+    #[must_use]
+    pub fn delta_since(
+        &self,
+        checkpoint: BufferCheckpoint,
+    ) -> (Vec<(Key, Option<Vec<u8>>)>, Vec<(Key, Option<Vec<u8>>)>) {
+        let undo = self.undo();
+        let mut keys: BTreeMap<Key, (Option<Option<Vec<u8>>>, ())> = BTreeMap::new();
+        for entry in undo.iter().skip(checkpoint.undo_len) {
+            match entry {
+                UndoEntry::Write { key, prior } => {
+                    keys.entry(key.clone())
+                        .or_insert_with(|| (prior.clone(), ()));
+                }
+                UndoEntry::Presume { .. } => {}
+            }
+        }
+        drop(undo);
+        let staged = self.lock();
+        let before: Vec<(Key, Option<Vec<u8>>)> = keys
+            .iter()
+            .map(|(key, (prior, _))| {
+                (
+                    key.clone(),
+                    prior
+                        .clone()
+                        .unwrap_or(None),
+                )
+            })
+            .collect();
+        let after: Vec<(Key, Option<Vec<u8>>)> = keys
+            .keys()
+            .map(|key| (key.clone(), staged.get(key).cloned().unwrap_or(None)))
+            .collect();
+        (before, after)
     }
 
     /// How many keys the buffer stages, tombstones included.
@@ -317,26 +402,38 @@ impl MutationBuffer {
     pub fn reset(&self) {
         self.lock().clear();
         self.presume().clear();
+        self.undo().clear();
     }
 
-    /// Replaces the whole buffer with `entries`, which [`Self::staged`]
-    /// produced before a statement ran.
+    /// Rewinds the buffer to `checkpoint`: entries the log recorded after it
+    /// are undone newest-first, so a key written several times lands back on
+    /// the value it had at the checkpoint and a key the checkpoint never held
+    /// leaves the map entirely.
     ///
     /// This is statement-level rollback: Go undoes a failed statement's writes
     /// back to the `MemBuffer` staging handle it took at statement start, so a
     /// failure inside an explicit transaction discards that statement's writes
-    /// and keeps every earlier one. Restoring a whole snapshot has the same
-    /// effect at this seam, which records no per-key undo log.
-    pub fn restore(&self, entries: BufferImage) {
-        let mut staged = self.lock();
-        staged.clear();
-        staged.extend(entries);
-        // A statement rollback withdraws the statement's presumptions with
-        // its writes: only marks on keys the restored image still stages can
-        // name rows earlier statements of this transaction inserted.
-        let live: BTreeSet<Key> = staged.keys().cloned().collect();
-        let mut marks = self.presume();
-        *marks = marks.intersection(&live).cloned().collect();
+    /// and keeps every earlier one. The rewind pays for the failed
+    /// statement's OWN writes -- Go's checkpoint revert is the same shape --
+    /// and never re-copies bytes earlier statements already staged.
+    pub fn restore(&self, checkpoint: BufferCheckpoint) {
+        let mut undo = self.undo();
+        while undo.len() > checkpoint.undo_len {
+            match undo.pop() {
+                Some(UndoEntry::Write { key, prior }) => match prior {
+                    None => {
+                        self.lock().remove(&key);
+                    }
+                    Some(value) => {
+                        self.lock().insert(key, value);
+                    }
+                },
+                Some(UndoEntry::Presume { key }) => {
+                    self.presume().remove(&key);
+                }
+                None => break,
+            }
+        }
     }
 
     fn presume(&self) -> std::sync::MutexGuard<'_, BTreeSet<Key>> {
@@ -1072,7 +1169,7 @@ mod tests {
         buffer.mark_presume_key_not_exists(&first);
         buffer.set(first.clone(), b"v1".to_vec());
         // The statement's savepoint: the mark and its write are both in.
-        let savepoint = buffer.staged();
+        let savepoint = buffer.checkpoint();
         // A second statement inserts another presumed-absent row ...
         buffer.mark_presume_key_not_exists(&second);
         buffer.set(second.clone(), b"v2".to_vec());
@@ -1159,7 +1256,8 @@ mod tests {
         // through another, exactly as two `table.Table` handles of one Go
         // transaction see one `MemBuffer`.
         assert_eq!(store.get(&key(b"b")).unwrap(), b"2".to_vec());
-        assert_eq!(buffer.staged().len(), 1);
+        assert_eq!(buffer.snapshot().len(), 1);
+        assert_eq!(buffer.len(), 1);
         assert_eq!(store.key_count(), 1);
         buffer.reset();
         assert!(buffer.is_empty());
@@ -1185,7 +1283,7 @@ mod tests {
     fn restore_puts_the_buffer_back_where_a_statement_found_it() {
         let buffer = MutationBuffer::new();
         buffer.set(key(b"a"), b"1".to_vec());
-        let savepoint = buffer.staged();
+        let savepoint = buffer.checkpoint();
         // A statement writes, deletes, and overwrites; restoring undoes all
         // three and leaves the earlier write exactly as it was.
         buffer.set(key(b"b"), b"2".to_vec());
