@@ -112,6 +112,7 @@ pub mod raw;
 pub mod redact;
 pub mod request;
 pub mod retry;
+pub mod tikv;
 pub mod trace;
 pub mod traffic;
 #[doc(hidden)]

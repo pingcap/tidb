@@ -1995,9 +1995,18 @@ impl Merge<kvrpcpb::UnsafeDestroyRangeResponse> for Collect {
     type Out = ();
 
     fn merge(&self, input: Vec<Result<kvrpcpb::UnsafeDestroyRangeResponse>>) -> Result<Self::Out> {
-        let _: Vec<kvrpcpb::UnsafeDestroyRangeResponse> =
-            input.into_iter().collect::<Result<Vec<_>>>()?;
-        Ok(())
+        let errors: Vec<_> = input
+            .into_iter()
+            .filter_map(|result| result.err().map(|error| error.to_string()))
+            .collect();
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(crate::Error::StringError(format!(
+                "[unsafe destroy range] destroy range finished with errors: [{}]",
+                errors.join(" ")
+            )))
+        }
     }
 }
 
@@ -2056,6 +2065,21 @@ mod tests {
     use std::any::Any;
     use std::sync::Arc;
     use std::sync::Mutex;
+
+    #[test]
+    fn unsafe_destroy_range_aggregates_every_store_failure() {
+        let error = Collect
+            .merge(vec![
+                Err(crate::Error::StringError("store 1".to_owned())),
+                Ok(kvrpcpb::UnsafeDestroyRangeResponse::default()),
+                Err(crate::Error::StringError("store 3".to_owned())),
+            ])
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "[unsafe destroy range] destroy range finished with errors: [store 1 store 3]"
+        );
+    }
 
     #[test]
     fn source_lock_resolver_caches_only_determined_statuses() {

@@ -585,8 +585,27 @@ impl Art {
         ArtSnapshot { entries }
     }
 
-    pub(crate) fn remove_from_buffer(&mut self, _: &[u8]) -> ! {
-        panic!("unimplemented")
+    /// Removes a record completely from the test buffer.
+    ///
+    /// Pinned client-go's ART still panics here, although its RBT backend and
+    /// public `MemBuffer` contract implement the operation. Rust keeps ART as
+    /// the source-default backend and supplies the missing test-only behavior.
+    pub(crate) fn remove_from_buffer(&mut self, key: &[u8]) {
+        assert!(!self.values_discarded, "vlog is resetted");
+        self.bump_write_sequence();
+        let Some(entry) = self.entries.remove(key) else {
+            return;
+        };
+        self.handles.remove(&entry.handle);
+        self.logical_size = self.logical_size.saturating_sub(contribution(
+            key.len(),
+            entry.value.as_deref(),
+            entry.deleted,
+        ));
+        if self.last_key.as_deref() == Some(key) {
+            self.last_key = None;
+        }
+        self.notify_memory_change();
     }
 }
 

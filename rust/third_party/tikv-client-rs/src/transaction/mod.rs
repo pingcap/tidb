@@ -47,6 +47,7 @@ pub use transaction::SnapshotResourceGroupTagger;
 pub use transaction::Transaction;
 pub use transaction::TransactionOptions;
 pub use transaction::TransactionResourceGroupTagger;
+pub use transaction::MAX_TXN_TIME_USE;
 
 #[allow(dead_code)]
 mod art;
@@ -87,4 +88,4 @@ pub use txn_file::{
 #[allow(clippy::module_inception)]
 mod transaction;
 #[allow(dead_code)]
-mod unionstore;
+pub mod unionstore;

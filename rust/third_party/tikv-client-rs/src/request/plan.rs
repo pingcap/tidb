@@ -1813,6 +1813,7 @@ pub struct RetryableAllStores<P: Plan, PdC: PdClient> {
     pub(super) inner: P,
     pub pd_client: Arc<PdC>,
     pub backoff: Backoff,
+    pub tikv_only: bool,
 }
 
 impl<P: Plan, PdC: PdClient> Clone for RetryableAllStores<P, PdC> {
@@ -1821,6 +1822,7 @@ impl<P: Plan, PdC: PdClient> Clone for RetryableAllStores<P, PdC> {
             inner: self.inner.clone(),
             pd_client: self.pd_client.clone(),
             backoff: self.backoff.clone(),
+            tikv_only: self.tikv_only,
         }
     }
 }
@@ -1838,7 +1840,18 @@ where
 
     async fn execute(&self) -> Result<Self::Result> {
         let concurrency_permits = Arc::new(Semaphore::new(MULTI_STORES_CONCURRENCY));
-        let stores = self.pd_client.clone().all_stores().await?;
+        let mut stores = match self.pd_client.clone().all_stores().await {
+            Ok(stores) => stores,
+            Err(error) => {
+                if self.tikv_only {
+                    crate::stats::increment_unsafe_destroy_range_failure("get_stores");
+                }
+                return Err(error);
+            }
+        };
+        if self.tikv_only {
+            stores.retain(|store| store.endpoint_type == crate::store::EndpointType::TiKv);
+        }
         let stores_len = stores.len();
         let mut join_set = JoinSet::new();
         for (idx, store) in stores.into_iter().enumerate() {
@@ -1855,7 +1868,20 @@ where
         }
 
         let results =
-            collect_join_set_results(join_set, stores_len, "single_store_handler").await?;
+            match collect_join_set_results(join_set, stores_len, "single_store_handler").await {
+                Ok(results) => results,
+                Err(error) => {
+                    if self.tikv_only {
+                        crate::stats::increment_unsafe_destroy_range_failure("send");
+                    }
+                    return Err(error);
+                }
+            };
+        if self.tikv_only {
+            for _ in results.iter().filter(|result| result.is_err()) {
+                crate::stats::increment_unsafe_destroy_range_failure("send");
+            }
+        }
         Ok(results)
     }
 }

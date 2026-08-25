@@ -1,0 +1,21 @@
+diff --git a/src/tikv.rs b/src/tikv.rs
+index e50b782..b4ef63a 100644
+--- a/src/tikv.rs
++++ b/src/tikv.rs
+@@ -21,6 +21,7 @@ use tokio::task::JoinHandle;
+ use tonic::codegen::http::uri::PathAndQuery;
+ use tonic::transport::Channel;
+ use tonic::Request as TonicRequest;
++use tonic_prost::ProstCodec;
+ 
+ use crate::async_util::Cancellation;
+ use crate::config::Config;
+@@ -316,7 +317,7 @@ impl EtcdSafePointKv {
+             .unary(
+                 request,
+                 PathAndQuery::from_static(path),
+-                tonic::codec::ProstCodec::default(),
++                ProstCodec::default(),
+             )
+             .await?
+             .into_inner())

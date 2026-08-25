@@ -187,6 +187,12 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
         self
     }
 
+    /// Override the physical RPC deadline for a non-region request.
+    pub(crate) fn request_timeout(mut self, timeout: Duration) -> Self {
+        self.plan.request_timeout = Some(timeout);
+        self
+    }
+
     /// Configure a source snapshot's initial and retry deadlines. The source
     /// uses an optional `SetKVReadTimeout` override only for the initial Get
     /// or BatchGet send; every resend returns to `retry_timeout`.
@@ -855,6 +861,30 @@ where
                 inner: self.plan,
                 pd_client: self.pd_client,
                 backoff,
+                tikv_only: false,
+            },
+            keyspace_name: self.keyspace_name,
+            rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
+            phantom: PhantomData,
+        }
+    }
+
+    /// Target every non-tombstone ordinary TiKV store, excluding TiFlash and
+    /// TiFlash compute nodes as client-go's unsafe range destruction does.
+    pub fn all_tikv_stores(
+        self,
+        backoff: Backoff,
+    ) -> PlanBuilder<PdC, RetryableAllStores<P, PdC>, Targetted> {
+        PlanBuilder {
+            pd_client: self.pd_client.clone(),
+            plan: RetryableAllStores {
+                inner: self.plan,
+                pd_client: self.pd_client,
+                backoff,
+                tikv_only: true,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,

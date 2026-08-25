@@ -209,6 +209,11 @@ static TIKV_BATCH_MORE_REQUESTS: ClientObserverVec = ClientObserverVec("TiKVBatc
 static TIKV_BATCH_WAIT_OVERLOAD: ClientCounter = ClientCounter("TiKVBatchWaitOverLoad");
 static TIKV_NO_AVAILABLE_BATCH_CONNECTION_COUNTER: ClientCounter =
     ClientCounter("TiKVNoAvailableConnectionCounter");
+static TIKV_LOAD_TXN_SAFE_POINT: ClientCounterVec = ClientCounterVec("TiKVLoadTxnSafePointCounter");
+static TIKV_SAFE_TS_UPDATE: ClientCounterVec = ClientCounterVec("TiKVSafeTSUpdateCounter");
+static TIKV_MIN_SAFE_TS_GAP_SECONDS: ClientGaugeVec = ClientGaugeVec("TiKVMinSafeTSGapSeconds");
+static TIKV_UNSAFE_DESTROY_RANGE_FAILURES: ClientCounterVec =
+    ClientCounterVec("TiKVUnsafeDestroyRangeFailuresCounterVec");
 
 pub struct RequestStats {
     start: Instant,
@@ -320,6 +325,36 @@ pub(crate) fn increment_validate_read_ts_from_pd() {
 
 pub(crate) fn set_low_resolution_tso_update_interval(interval: Duration) {
     TIKV_LOW_RESOLUTION_TSO_UPDATE_INTERVAL_SECONDS.set(duration_to_sec(interval));
+}
+
+pub(crate) fn increment_load_txn_safe_point(result: &'static str) {
+    TIKV_LOAD_TXN_SAFE_POINT.with_label_values(&[result]).inc();
+}
+
+pub(crate) fn record_safe_ts_update(result: &'static str, store: &str, safe_ts: u64) {
+    TIKV_SAFE_TS_UPDATE
+        .with_label_values(&[result, store])
+        .inc();
+    let safe_time = crate::oracle::get_time_from_timestamp(safe_ts);
+    let gap = match std::time::SystemTime::now().duration_since(safe_time) {
+        Ok(duration) => duration_to_sec(duration),
+        Err(error) => -duration_to_sec(error.duration()),
+    };
+    TIKV_MIN_SAFE_TS_GAP_SECONDS
+        .with_label_values(&[store])
+        .set(gap);
+}
+
+pub(crate) fn increment_safe_ts_update_failure(store: &str) {
+    TIKV_SAFE_TS_UPDATE
+        .with_label_values(&["fail", store])
+        .inc();
+}
+
+pub(crate) fn increment_unsafe_destroy_range_failure(kind: &'static str) {
+    TIKV_UNSAFE_DESTROY_RANGE_FAILURES
+        .with_label_values(&[kind])
+        .inc();
 }
 
 /// Records the three observations emitted by client-go's pipelined MemDB

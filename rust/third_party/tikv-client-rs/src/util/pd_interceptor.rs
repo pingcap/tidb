@@ -140,6 +140,46 @@ where
         self.inner.clone().update_safepoint(safepoint).await
     }
 
+    async fn update_safepoint_value(self: Arc<Self>, safepoint: u64) -> Result<u64> {
+        self.inner.clone().update_safepoint_value(safepoint).await
+    }
+
+    async fn get_gc_state(self: Arc<Self>) -> Result<crate::proto::pdpb::GcState> {
+        self.inner.clone().get_gc_state().await
+    }
+
+    async fn advance_transaction_safe_point(
+        self: Arc<Self>,
+        target: u64,
+    ) -> Result<crate::proto::pdpb::AdvanceTxnSafePointResponse> {
+        self.inner
+            .clone()
+            .advance_transaction_safe_point(target)
+            .await
+    }
+
+    async fn advance_gc_safe_point(
+        self: Arc<Self>,
+        target: u64,
+    ) -> Result<crate::proto::pdpb::AdvanceGcSafePointResponse> {
+        self.inner.clone().advance_gc_safe_point(target).await
+    }
+
+    async fn scatter_regions(
+        self: Arc<Self>,
+        region_ids: Vec<u64>,
+        group: Option<String>,
+    ) -> Result<crate::proto::pdpb::ScatterRegionResponse> {
+        self.inner.clone().scatter_regions(region_ids, group).await
+    }
+
+    async fn get_operator(
+        self: Arc<Self>,
+        region_id: u64,
+    ) -> Result<crate::proto::pdpb::GetOperatorResponse> {
+        self.inner.clone().get_operator(region_id).await
+    }
+
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
         self.inner.load_keyspace(keyspace).await
     }

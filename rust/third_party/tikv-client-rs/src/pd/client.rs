@@ -25,6 +25,7 @@ use crate::proto::errorpb;
 use crate::proto::keyspacepb;
 use crate::proto::kvrpcpb;
 use crate::proto::metapb;
+use crate::proto::pdpb;
 use crate::region::RegionId;
 use crate::region::RegionVerId;
 use crate::region::RegionWithLeader;
@@ -181,6 +182,41 @@ pub trait PdClient: Send + Sync + 'static {
     }
 
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool>;
+
+    async fn update_safepoint_value(self: Arc<Self>, _safepoint: u64) -> Result<u64> {
+        Err(crate::Error::Unimplemented)
+    }
+
+    /// Modern PD GC-state API used by root `tikv` visibility checks.
+    async fn get_gc_state(self: Arc<Self>) -> Result<pdpb::GcState> {
+        Err(crate::Error::Unimplemented)
+    }
+
+    async fn advance_transaction_safe_point(
+        self: Arc<Self>,
+        _target: u64,
+    ) -> Result<pdpb::AdvanceTxnSafePointResponse> {
+        Err(crate::Error::Unimplemented)
+    }
+
+    async fn advance_gc_safe_point(
+        self: Arc<Self>,
+        _target: u64,
+    ) -> Result<pdpb::AdvanceGcSafePointResponse> {
+        Err(crate::Error::Unimplemented)
+    }
+
+    async fn scatter_regions(
+        self: Arc<Self>,
+        _region_ids: Vec<u64>,
+        _group: Option<String>,
+    ) -> Result<pdpb::ScatterRegionResponse> {
+        Err(crate::Error::Unimplemented)
+    }
+
+    async fn get_operator(self: Arc<Self>, _region_id: u64) -> Result<pdpb::GetOperatorResponse> {
+        Err(crate::Error::Unimplemented)
+    }
 
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta>;
 
@@ -1098,7 +1134,18 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         for store in pb_stores {
             let client = self.kv_client(&store.address).await?;
             client.set_event_listener(self.region_cache.client_event_listener());
-            stores.push(Store::new(Arc::new(client)).with_target(store.address));
+            let mut target = Store::new(Arc::new(client))
+                .with_target(store.address.clone())
+                .with_metadata(&store);
+            if target.endpoint_type == crate::store::EndpointType::TiFlash
+                && !target.peer_address.is_empty()
+                && target.peer_address != target.target
+            {
+                let safe_ts_client = self.kv_client(&target.peer_address).await?;
+                safe_ts_client.set_event_listener(self.region_cache.client_event_listener());
+                target = target.with_safe_ts_client(Arc::new(safe_ts_client));
+            }
+            stores.push(target);
         }
         Ok(stores)
     }
@@ -1125,6 +1172,56 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 
     async fn update_safepoint(self: Arc<Self>, safepoint: u64) -> Result<bool> {
         self.pd.clone().update_safepoint(safepoint).await
+    }
+
+    async fn update_safepoint_value(self: Arc<Self>, safepoint: u64) -> Result<u64> {
+        self.pd.clone().update_safepoint_value(safepoint).await
+    }
+
+    async fn get_gc_state(self: Arc<Self>) -> Result<pdpb::GcState> {
+        self.pd
+            .clone()
+            .get_gc_state(self.gc_keyspace_id()?)
+            .await?
+            .gc_state
+            .ok_or_else(|| {
+                crate::Error::StringError("PD GetGCState response has no state".to_owned())
+            })
+    }
+
+    async fn advance_transaction_safe_point(
+        self: Arc<Self>,
+        target: u64,
+    ) -> Result<pdpb::AdvanceTxnSafePointResponse> {
+        self.pd
+            .clone()
+            .advance_txn_safe_point(self.gc_keyspace_id()?, target)
+            .await
+    }
+
+    async fn advance_gc_safe_point(
+        self: Arc<Self>,
+        target: u64,
+    ) -> Result<pdpb::AdvanceGcSafePointResponse> {
+        self.pd
+            .clone()
+            .advance_gc_safe_point(self.gc_keyspace_id()?, target)
+            .await
+    }
+
+    async fn scatter_regions(
+        self: Arc<Self>,
+        region_ids: Vec<u64>,
+        group: Option<String>,
+    ) -> Result<pdpb::ScatterRegionResponse> {
+        self.pd
+            .clone()
+            .scatter_regions(region_ids, group.unwrap_or_default())
+            .await
+    }
+
+    async fn get_operator(self: Arc<Self>, region_id: u64) -> Result<pdpb::GetOperatorResponse> {
+        self.pd.clone().get_operator(region_id).await
     }
 
     async fn update_leader(&self, ver_id: RegionVerId, leader: metapb::Peer) -> Result<()> {
@@ -1307,6 +1404,31 @@ enum PdCodecConfig {
 }
 
 impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
+    pub(crate) async fn advance_transaction_safe_point_for_keyspace(
+        &self,
+        keyspace_id: u32,
+        target: u64,
+    ) -> Result<pdpb::AdvanceTxnSafePointResponse>
+    where
+        Cl: Send + Sync + 'static,
+        RetryClient<Cl>: RetryClientTrait,
+    {
+        self.pd
+            .clone()
+            .advance_txn_safe_point(keyspace_id, target)
+            .await
+    }
+
+    fn gc_keyspace_id(&self) -> Result<u32> {
+        match self.keyspace_meta.as_ref() {
+            Some(meta) => match keyspace_from_pd_meta(meta)? {
+                Keyspace::Enable { keyspace_id } => Ok(keyspace_id),
+                _ => Ok(crate::request::NULL_KEYSPACE_ID),
+            },
+            None => Ok(crate::request::NULL_KEYSPACE_ID),
+        }
+    }
+
     async fn close_cached_kv_client_addr_ver(&self, address: &str, version: u64) {
         let _lifecycle = self.kv_client_lifecycle.lock().await;
         let retired = {

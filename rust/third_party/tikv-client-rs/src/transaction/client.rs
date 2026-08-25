@@ -1,6 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::sync::Arc;
+use std::sync::RwLock;
 
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -110,13 +111,16 @@ impl Clone for Client {
 /// Owns the client-go-shaped PD read-timestamp validator for all snapshots
 /// derived from a transaction client. Dropping the last client or transaction
 /// reference closes the oracle's refresh worker.
-struct PdReadTimestampValidator(PdOracle);
+struct PdReadTimestampValidator {
+    oracle: PdOracle,
+    safe_point: RwLock<Option<Arc<crate::tikv::TxnSafePointCache>>>,
+}
 
 impl Drop for PdReadTimestampValidator {
     fn drop(&mut self) {
         use crate::oracle::Oracle;
 
-        self.0.close();
+        self.oracle.close();
     }
 }
 
@@ -128,9 +132,20 @@ impl ReadTimestampValidator for PdReadTimestampValidator {
         is_stale_read: bool,
         option: &OracleOption,
     ) -> std::result::Result<(), OracleError> {
-        self.0
+        self.oracle
             .validate_read_timestamp(read_timestamp, is_stale_read, option)
-            .await
+            .await?;
+        if let Some(safe_point) = self
+            .safe_point
+            .read()
+            .expect("read timestamp validator lock poisoned")
+            .as_ref()
+        {
+            safe_point
+                .check_visibility(read_timestamp)
+                .map_err(|error| Box::new(error) as OracleError)?;
+        }
+        Ok(())
     }
 }
 
@@ -207,11 +222,12 @@ impl Client {
             None => PdRpcClient::connect(&pd_endpoints, config.clone(), true).await?,
         };
         let pd = Arc::new(pd);
-        let read_timestamp_validator = Arc::new(PdReadTimestampValidator(
-            PdOracle::from_pd_client(pd.clone(), PdOracleOptions::default())
+        let read_timestamp_validator = Arc::new(PdReadTimestampValidator {
+            oracle: PdOracle::from_pd_client(pd.clone(), PdOracleOptions::default())
                 .await
                 .map_err(|error| crate::Error::StringError(error.to_string()))?,
-        ));
+            safe_point: RwLock::new(None),
+        });
         let (keyspace, keyspace_name) = match configured_keyspace {
             Some(_) => {
                 let meta = pd
@@ -249,11 +265,12 @@ impl Client {
         debug!("creating new transactional client (api-v2-no-prefix)");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), true).await?);
-        let read_timestamp_validator = Arc::new(PdReadTimestampValidator(
-            PdOracle::from_pd_client(pd.clone(), PdOracleOptions::default())
+        let read_timestamp_validator = Arc::new(PdReadTimestampValidator {
+            oracle: PdOracle::from_pd_client(pd.clone(), PdOracleOptions::default())
                 .await
                 .map_err(|error| crate::Error::StringError(error.to_string()))?,
-        ));
+            safe_point: RwLock::new(None),
+        });
         Ok(Client {
             pd,
             read_timestamp_validator,
@@ -337,8 +354,11 @@ impl Client {
     /// # });
     /// ```
     pub async fn begin_with_options(&self, options: TransactionOptions) -> Result<Transaction> {
-        let timestamp = self.current_timestamp().await?;
         options.validate()?;
+        let timestamp = match options.configured_start_timestamp() {
+            Some(timestamp) => timestamp,
+            None => self.current_timestamp().await?,
+        };
         debug!("began transaction, start_ts: {}", timestamp.version());
         Ok(self.new_transaction(timestamp, options))
     }
@@ -425,6 +445,34 @@ impl Client {
         plan.execute().await
     }
 
+    /// Runs lock cleanup as client-go's GC range-task runner: ordered region
+    /// discovery with at most `concurrency` independent range handlers.
+    pub(crate) async fn cleanup_locks_with_concurrency(
+        &self,
+        safepoint: Timestamp,
+        concurrency: usize,
+        batch_size: u32,
+    ) -> Result<()> {
+        if concurrency == 0 {
+            return Err(crate::Error::StringError(
+                "GC concurrency must be greater than zero".to_owned(),
+            ));
+        }
+        Runner::new_with_id(
+            "resolve-locks-runner",
+            format!("resolve-locks-runner-{}", safepoint.version()),
+            self.pd.clone(),
+            concurrency,
+            GcResolveLocksHandler {
+                client: self.clone(),
+                safepoint,
+                batch_size,
+            },
+        )
+        .run_on_range(Vec::new(), Vec::new())
+        .await
+    }
+
     // Note: `batch_size` must be >= expected number of locks.
     pub async fn scan_locks(
         &self,
@@ -494,7 +542,8 @@ impl Client {
         let req = new_unsafe_destroy_range_request(range);
         let plan = self
             .plan(req)
-            .all_stores(DEFAULT_STORE_BACKOFF)
+            .request_timeout(std::time::Duration::from_secs(5 * 60))
+            .all_tikv_stores(DEFAULT_STORE_BACKOFF)
             .merge(crate::request::Collect)
             .plan();
         plan.execute().await
@@ -592,6 +641,26 @@ impl Client {
         transaction
     }
 
+    pub(crate) fn pd_client(&self) -> Arc<PdRpcClient> {
+        self.pd.clone()
+    }
+
+    pub(crate) fn keyspace(&self) -> Keyspace {
+        self.keyspace
+    }
+
+    pub(crate) fn keyspace_name(&self) -> Option<&str> {
+        self.keyspace_name.as_deref()
+    }
+
+    pub(crate) fn attach_safe_point_cache(&self, cache: Arc<crate::tikv::TxnSafePointCache>) {
+        *self
+            .read_timestamp_validator
+            .safe_point
+            .write()
+            .expect("read timestamp validator lock poisoned") = Some(cache);
+    }
+
     fn plan<Req: KvRequest>(
         &self,
         request: Req,
@@ -605,6 +674,55 @@ impl Client {
 struct DeleteRangeHandler {
     client: Client,
     notify_only: bool,
+}
+
+#[derive(Clone)]
+struct GcResolveLocksHandler {
+    client: Client,
+    safepoint: Timestamp,
+    batch_size: u32,
+}
+
+#[async_trait]
+impl RangeTaskHandler for GcResolveLocksHandler {
+    async fn handle(
+        &self,
+        cancellation: Cancellation,
+        range: (Vec<u8>, Vec<u8>),
+    ) -> (TaskStat, Result<()>) {
+        let mut stat = TaskStat::default();
+        let regions = region_stream_for_range(range, self.client.pd.clone());
+        futures::pin_mut!(regions);
+
+        while let Some(region) = regions.next().await {
+            if cancellation.is_cancelled() {
+                return (
+                    stat,
+                    Err(crate::Error::StringError("range task cancelled".to_owned())),
+                );
+            }
+            let ((start_key, end_key), _) = match region {
+                Ok(region) => region,
+                Err(error) => return (stat, Err(error)),
+            };
+            let result = self
+                .client
+                .cleanup_locks(
+                    BoundRange::from((start_key, end_key)),
+                    &self.safepoint,
+                    ResolveLocksOptions {
+                        batch_size: self.batch_size,
+                        ..Default::default()
+                    },
+                )
+                .await;
+            match result {
+                Ok(_) => stat.completed_regions += 1,
+                Err(error) => return (stat, Err(error)),
+            }
+        }
+        (stat, Ok(()))
+    }
 }
 
 #[async_trait]

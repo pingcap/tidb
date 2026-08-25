@@ -268,6 +268,46 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       reasons as the `txnkv/transaction` entry above (dedicated session +
       RealTiKV validation required). Full findings in
       `Surprises & Discoveries`.
+- [x] (2026-08-25, user-flagged update) **`tikv` reached `complete`** -- the
+      last tracked ledger row -- **and `MemDb::remove_from_buffer` in
+      `art.rs` is no longer a stub.** All six packages this plan tracks
+      (`internal/client`, `internal/locate`, `txnkv/transaction`,
+      `txnkv/txnlock`, `txnkv/txnsnapshot`, `tikv`) are now `complete`
+      upstream. Verified by reading the code, not the status word: `tikv`
+      added a real public `src/tikv.rs` facade (etcd-backed safe-point KV,
+      store lifecycle) and `art.rs:593`'s `remove_from_buffer` now has a
+      genuine implementation (removes the ART entry, its handle, adjusts
+      logical size, notifies memory change) instead of `panic!`. This
+      resync required real maintenance, not just acceptance: (1) upstream's
+      own new `get_gc_state` (added as part of `tikv` completion) collided
+      with this workspace's forward-looking patch 040 seed of the same
+      name/RPC -- same class of redundancy as the earlier
+      `batch_scan_regions` case, so patch 040 was deleted rather than
+      rebased (verified zero TiDB-crate impact first: `tidb-pd-client`'s own
+      `get_gc_state` in `client/requests.rs` is a hand-written direct pdpb
+      call, never routed through `tikv_client`); (2) upstream's new
+      `src/tikv.rs` used `tonic::codec::ProstCodec`, which does not exist
+      under this workspace's tonic 0.14/tonic-prost bump (patch 020) --
+      same class of break fixed twice before in `pd/client.rs` and
+      `store/mockserver.rs` -- fixed with a new patch
+      `050-fix-tikv-etcd-safepoint-kv-prostcodec.patch` (`use
+      tonic_prost::ProstCodec;` + drop the `tonic::codec::` qualifier).
+      A second occurrence in `store/batch.rs:2020` was left unpatched: it is
+      inside upstream's own `#[cfg(test)]` block, never compiled by this
+      workspace since we only run `cargo test -p tidb-pd-client`, not
+      `cargo test -p tikv-client`. **This is the single biggest unlock this
+      plan has tracked**: the whole core transactional-KV stack is
+      upstream-complete AND the specific stub blocking the
+      `MemBufferBackend` zero-regression-risk seed opportunity
+      (`tidb-txnkv/src/driver/mem_buffer.rs`) is resolved. **Still not
+      started this check-in**: `tikv`'s own receipt notes "Production
+      control-plane calls use only mock/loopback validation... live-cluster
+      differential gates retain independent statuses", and lock
+      resolution/snapshot-read semantics from the previous entry remain
+      unverified at source-reading depth. Verified: `cargo check
+      --workspace` clean, `cargo check --lib --features mock -p tikv-client`
+      (standalone, since it is workspace-excluded) clean, `cargo test -p
+      tidb-pd-client` 43/43 passed.
 - [ ] Phase 3: rewire `tidb-distsql`'s RPC/region-retry layer onto the vendored
       crate's `request::Plan`/`Shardable`/retry framework, porting the
       documented parity fixes from `rust/docs/distsql-coprocessor-parity.md`.

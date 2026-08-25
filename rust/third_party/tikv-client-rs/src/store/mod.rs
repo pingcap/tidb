@@ -309,21 +309,67 @@ fn source_access_location(
 #[derive(Clone)]
 pub struct Store {
     pub client: Arc<dyn KvClient + Send + Sync>,
+    /// Transport used by `StoreSafeTS`. TiFlash exposes that RPC on its peer
+    /// service address, while ordinary all-store requests use `target`.
+    pub safe_ts_client: Arc<dyn KvClient + Send + Sync>,
     /// Network address of the TiKV target, when the PD implementation has it.
     pub target: String,
+    /// PD store identifier. Custom clients that construct a bare store retain zero.
+    pub id: StoreId,
+    /// Endpoint class derived from PD's engine labels.
+    pub endpoint_type: EndpointType,
+    /// PD labels retained for transaction-scope safe-TS aggregation.
+    pub labels: Vec<metapb::StoreLabel>,
+    /// TiFlash's peer service address. Ordinary TiKV stores leave this empty.
+    pub peer_address: String,
 }
 
 impl Store {
     pub fn new(client: Arc<dyn KvClient + Send + Sync>) -> Self {
         Self {
+            safe_ts_client: client.clone(),
             client,
             target: String::new(),
+            id: 0,
+            endpoint_type: EndpointType::TiKv,
+            labels: Vec::new(),
+            peer_address: String::new(),
         }
     }
 
     pub fn with_target(mut self, target: impl Into<String>) -> Self {
         self.target = target.into();
         self
+    }
+
+    /// Retains the PD metadata needed by root `tikv` store-wide operations.
+    pub fn with_metadata(mut self, store: &metapb::Store) -> Self {
+        self.id = store.id;
+        self.endpoint_type = EndpointType::from_store(store);
+        self.labels = store.labels.clone();
+        self.peer_address = store.peer_address.clone();
+        self
+    }
+
+    pub fn with_safe_ts_client(mut self, client: Arc<dyn KvClient + Send + Sync>) -> Self {
+        self.safe_ts_client = client;
+        self
+    }
+
+    /// Address used by TiKV's StoreSafeTS RPC.
+    pub fn safe_ts_target(&self) -> &str {
+        if self.endpoint_type == EndpointType::TiFlash && !self.peer_address.is_empty() {
+            &self.peer_address
+        } else {
+            &self.target
+        }
+    }
+
+    pub fn label_value(&self, key: &str) -> Option<&str> {
+        self.labels
+            .iter()
+            .find(|label| label.key == key)
+            .map(|label| label.value.as_str())
     }
 }
 

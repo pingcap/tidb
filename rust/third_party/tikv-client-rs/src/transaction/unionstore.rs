@@ -21,11 +21,11 @@ use super::rbt::{Rbt, RbtIterator, RbtSnapshot};
 
 /// Source-compatible tombstone predicate: an empty value deletes a key from a
 /// union view while remaining visible in its mutation buffer.
-pub(crate) const fn is_tombstone(value: &[u8]) -> bool {
+pub const fn is_tombstone(value: &[u8]) -> bool {
     value.is_empty()
 }
 
-pub(crate) trait KvIterator {
+pub trait KvIterator {
     fn valid(&self) -> bool;
     fn key(&self) -> &[u8];
     fn value(&self) -> &[u8];
@@ -139,7 +139,7 @@ impl KvIterator for ErrorIterator {
 }
 
 /// MemDB-facing adapter for the source-default ART index.
-pub(crate) struct MemDb {
+pub struct MemDb {
     art: Art,
 }
 
@@ -150,31 +150,27 @@ impl Default for MemDb {
 }
 
 impl MemDb {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self { art: Art::new() }
     }
 
-    pub(crate) fn get(&mut self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
+    pub fn get(&mut self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
         self.art.get(key)
     }
 
     /// MemBuffer implements `Getter`, but client-go guarantees the local
     /// buffer never supplies a commit timestamp, regardless of read options.
-    pub(crate) fn get_entry(
-        &mut self,
-        key: &[u8],
-        _: &[GetOption],
-    ) -> Result<ValueEntry, StaticError> {
+    pub fn get_entry(&mut self, key: &[u8], _: &[GetOption]) -> Result<ValueEntry, StaticError> {
         self.get(key).map(|value| ValueEntry::new(value, 0))
     }
 
-    pub(crate) fn get_readonly(&self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
+    pub fn get_readonly(&self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
         self.art.get_readonly(key)
     }
 
     /// Source `BatchGet`: absent keys are omitted, and an empty buffer avoids
     /// per-key lookups entirely.
-    pub(crate) fn batch_get(&mut self, keys: &[Vec<u8>]) -> BTreeMap<Vec<u8>, Vec<u8>> {
+    pub fn batch_get(&mut self, keys: &[Vec<u8>]) -> BTreeMap<Vec<u8>, Vec<u8>> {
         if self.len() == 0 {
             return BTreeMap::new();
         }
@@ -183,7 +179,7 @@ impl MemDb {
             .collect()
     }
 
-    pub(crate) fn batch_get_entries(
+    pub fn batch_get_entries(
         &mut self,
         keys: &[Vec<u8>],
         _: &[GetOption],
@@ -194,15 +190,15 @@ impl MemDb {
             .collect()
     }
 
-    pub(crate) fn get_flags(&mut self, key: &[u8]) -> Result<KeyFlags, StaticError> {
+    pub fn get_flags(&mut self, key: &[u8]) -> Result<KeyFlags, StaticError> {
         self.art.flags(key)
     }
 
-    pub(crate) fn get_flags_readonly(&self, key: &[u8]) -> Result<KeyFlags, StaticError> {
+    pub fn get_flags_readonly(&self, key: &[u8]) -> Result<KeyFlags, StaticError> {
         self.art.flags_readonly(key)
     }
 
-    pub(crate) fn set(
+    pub fn set(
         &mut self,
         key: &[u8],
         value: &[u8],
@@ -213,7 +209,7 @@ impl MemDb {
         self.art.set(key, Some(value), &[])
     }
 
-    pub(crate) fn set_with_flags(
+    pub fn set_with_flags(
         &mut self,
         key: &[u8],
         value: &[u8],
@@ -225,14 +221,11 @@ impl MemDb {
         self.art.set(key, Some(value), operations)
     }
 
-    pub(crate) fn delete(
-        &mut self,
-        key: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn delete(&mut self, key: &[u8]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.art.set(key, Some(&[]), &[])
     }
 
-    pub(crate) fn delete_with_flags(
+    pub fn delete_with_flags(
         &mut self,
         key: &[u8],
         operations: &[FlagsOp],
@@ -240,35 +233,31 @@ impl MemDb {
         self.art.set(key, Some(&[]), operations)
     }
 
-    pub(crate) fn update_flags(&mut self, key: &[u8], operations: &[FlagsOp]) {
+    pub fn update_flags(&mut self, key: &[u8], operations: &[FlagsOp]) {
         self.art.set(key, None, operations).unwrap();
     }
 
-    pub(crate) fn iter(&self, lower: Option<&[u8]>, upper: Option<&[u8]>) -> Box<dyn KvIterator> {
+    pub fn iter(&self, lower: Option<&[u8]>, upper: Option<&[u8]>) -> Box<dyn KvIterator> {
         Box::new(ArtBufferIterator(self.art.iter(lower, upper)))
     }
 
-    pub(crate) fn iter_reverse(
-        &self,
-        upper: Option<&[u8]>,
-        lower: Option<&[u8]>,
-    ) -> Box<dyn KvIterator> {
+    pub fn iter_reverse(&self, upper: Option<&[u8]>, lower: Option<&[u8]>) -> Box<dyn KvIterator> {
         Box::new(ArtBufferIterator(self.art.iter_reverse(upper, lower)))
     }
 
-    pub(crate) fn staging(&mut self) -> usize {
+    pub fn staging(&mut self) -> usize {
         self.art.staging()
     }
 
-    pub(crate) fn cleanup(&mut self, handle: usize) {
+    pub fn cleanup(&mut self, handle: usize) {
         self.art.cleanup(handle);
     }
 
-    pub(crate) fn release(&mut self, handle: usize) {
+    pub fn release(&mut self, handle: usize) {
         self.art.release(handle);
     }
 
-    pub(crate) fn snapshot(&self) -> MemDbSnapshot {
+    pub fn snapshot(&self) -> MemDbSnapshot {
         MemDbSnapshot {
             snapshot: self.art.snapshot(),
             expected_sequence: self.art.snapshot_sequence(),
@@ -278,15 +267,15 @@ impl MemDb {
 
     /// Deprecated source `SnapshotGetter` mapping; callers receive an owned,
     /// validity-checked snapshot rather than a borrowed getter.
-    pub(crate) fn snapshot_getter(&self) -> MemDbSnapshot {
+    pub fn snapshot_getter(&self) -> MemDbSnapshot {
         self.snapshot()
     }
 
-    pub(crate) fn get_memdb(&mut self) -> &mut Self {
+    pub fn get_memdb(&mut self) -> &mut Self {
         self
     }
 
-    pub(crate) fn snapshot_iter(
+    pub fn snapshot_iter(
         &mut self,
         lower: Option<&[u8]>,
         upper: Option<&[u8]>,
@@ -294,7 +283,7 @@ impl MemDb {
         self.snapshot().iter(lower, upper, false)
     }
 
-    pub(crate) fn snapshot_iter_reverse(
+    pub fn snapshot_iter_reverse(
         &self,
         upper: Option<&[u8]>,
         lower: Option<&[u8]>,
@@ -302,7 +291,7 @@ impl MemDb {
         self.snapshot().iter(lower, upper, true)
     }
 
-    pub(crate) fn batched_snapshot_iter(
+    pub fn batched_snapshot_iter(
         &self,
         lower: Option<&[u8]>,
         upper: Option<&[u8]>,
@@ -311,7 +300,7 @@ impl MemDb {
         self.snapshot().batched_iter(lower, upper, reverse)
     }
 
-    pub(crate) fn for_each_in_snapshot_range(
+    pub fn for_each_in_snapshot_range(
         &self,
         lower: Option<&[u8]>,
         upper: Option<&[u8]>,
@@ -321,75 +310,72 @@ impl MemDb {
         self.snapshot().for_each(lower, upper, reverse, function)
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.art.len()
     }
 
-    pub(crate) fn size(&self) -> usize {
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn size(&self) -> usize {
         self.art.size()
     }
 
-    pub(crate) fn dirty(&self) -> bool {
+    pub fn dirty(&self) -> bool {
         self.art.dirty()
     }
 
-    pub(crate) fn cache_hit_count(&self) -> u64 {
+    pub fn cache_hit_count(&self) -> u64 {
         self.art.cache_hit_count()
     }
 
-    pub(crate) fn cache_miss_count(&self) -> u64 {
+    pub fn cache_miss_count(&self) -> u64 {
         self.art.cache_miss_count()
     }
 
-    pub(crate) fn is_staging(&self) -> bool {
+    pub fn is_staging(&self) -> bool {
         self.art.is_staging()
     }
 
-    pub(crate) fn set_entry_size_limit(&mut self, entry_limit: u64, buffer_limit: u64) {
+    pub fn set_entry_size_limit(&mut self, entry_limit: u64, buffer_limit: u64) {
         self.art.set_entry_size_limit(entry_limit, buffer_limit);
     }
 
-    pub(crate) fn checkpoint(&self) -> usize {
+    pub fn checkpoint(&self) -> usize {
         self.art.checkpoint()
     }
 
-    pub(crate) fn revert_to_checkpoint(&mut self, checkpoint: usize) {
+    pub fn revert_to_checkpoint(&mut self, checkpoint: usize) {
         self.art.revert_to_checkpoint(checkpoint);
     }
 
-    pub(crate) fn inspect_stage(
-        &self,
-        handle: usize,
-        function: impl FnMut(&[u8], KeyFlags, &[u8]),
-    ) {
+    pub fn inspect_stage(&self, handle: usize, function: impl FnMut(&[u8], KeyFlags, &[u8])) {
         self.art.inspect_stage(handle, function);
     }
 
-    /// ART deliberately retains client-go's unsupported test-only operation.
-    pub(crate) fn remove_from_buffer(&mut self, key: &[u8]) -> ! {
+    /// Removes a record completely from the test buffer.
+    pub fn remove_from_buffer(&mut self, key: &[u8]) {
         self.art.remove_from_buffer(key)
     }
 
-    pub(crate) fn set_memory_footprint_change_hook(
-        &mut self,
-        hook: Arc<dyn Fn(u64) + Send + Sync>,
-    ) {
+    pub fn set_memory_footprint_change_hook(&mut self, hook: Arc<dyn Fn(u64) + Send + Sync>) {
         self.art.set_memory_footprint_change_hook(hook);
     }
 
-    pub(crate) fn memory_hook_is_set(&self) -> bool {
+    pub fn memory_hook_is_set(&self) -> bool {
         self.art.memory_hook_is_set()
     }
 
-    pub(crate) fn memory_footprint(&self) -> u64 {
+    pub fn memory_footprint(&self) -> u64 {
         self.art.memory_footprint()
     }
 
-    pub(crate) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.art.reset();
     }
 
-    pub(crate) fn select_value_history(
+    pub fn select_value_history(
         &mut self,
         key: &[u8],
         predicate: impl FnMut(&[u8]) -> bool,
@@ -397,15 +383,15 @@ impl MemDb {
         self.art.select_value_history(key, predicate)
     }
 
-    pub(crate) fn flush(&self, _: bool) -> Result<bool, String> {
+    pub fn flush(&self, _: bool) -> Result<bool, String> {
         Ok(false)
     }
 
-    pub(crate) fn flush_wait(&self) -> Result<(), String> {
+    pub fn flush_wait(&self) -> Result<(), String> {
         Ok(())
     }
 
-    pub(crate) fn metrics(&self) -> PipelinedMetrics {
+    pub fn metrics(&self) -> PipelinedMetrics {
         PipelinedMetrics {
             flush_wait_duration: Duration::ZERO,
             total_duration: Duration::ZERO,
@@ -415,14 +401,14 @@ impl MemDb {
     }
 }
 
-pub(crate) struct MemDbSnapshot {
+pub struct MemDbSnapshot {
     snapshot: ArtSnapshot,
     expected_sequence: u64,
     sequence: Arc<AtomicU64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum SnapshotError {
+pub enum SnapshotError {
     NotExist,
     Invalidated,
 }
@@ -442,21 +428,17 @@ impl MemDbSnapshot {
         }
     }
 
-    pub(crate) fn get(&self, key: &[u8]) -> Result<Vec<u8>, SnapshotError> {
+    pub fn get(&self, key: &[u8]) -> Result<Vec<u8>, SnapshotError> {
         self.check_sequence()
             .map_err(|_| SnapshotError::Invalidated)?;
         self.snapshot.get(key).map_err(SnapshotError::from)
     }
 
-    pub(crate) fn get_entry(
-        &self,
-        key: &[u8],
-        _: &[GetOption],
-    ) -> Result<ValueEntry, SnapshotError> {
+    pub fn get_entry(&self, key: &[u8], _: &[GetOption]) -> Result<ValueEntry, SnapshotError> {
         self.get(key).map(|value| ValueEntry::new(value, 0))
     }
 
-    pub(crate) fn iter(
+    pub fn iter(
         &self,
         lower: Option<&[u8]>,
         upper: Option<&[u8]>,
@@ -467,7 +449,7 @@ impl MemDbSnapshot {
         ))
     }
 
-    pub(crate) fn batched_iter(
+    pub fn batched_iter(
         &self,
         lower: Option<&[u8]>,
         upper: Option<&[u8]>,
@@ -480,7 +462,7 @@ impl MemDbSnapshot {
         }
     }
 
-    pub(crate) fn for_each(
+    pub fn for_each(
         &self,
         lower: Option<&[u8]>,
         upper: Option<&[u8]>,
@@ -502,7 +484,7 @@ impl MemDbSnapshot {
 
     /// Source snapshots release resources on `Close`; this owned Rust view has
     /// no external allocation to release before `Drop`.
-    pub(crate) fn close(self) {}
+    pub fn close(self) {}
 }
 
 struct RbtBufferIterator(RbtIterator);
@@ -532,7 +514,7 @@ impl KvIterator for RbtBufferIterator {
 /// Source-compatible wrapper for the optional RBT MemBuffer implementation.
 /// Unlike ART, its native iterator is intentionally a stable owned traversal
 /// view and its snapshots do not use a sequence-number invalidation check.
-pub(crate) struct RbtMemDb {
+pub struct RbtMemDb {
     rbt: Rbt,
 }
 
@@ -543,23 +525,19 @@ impl Default for RbtMemDb {
 }
 
 impl RbtMemDb {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self { rbt: Rbt::new() }
     }
 
-    pub(crate) fn get(&mut self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
+    pub fn get(&mut self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
         self.rbt.get(key)
     }
 
-    pub(crate) fn get_entry(
-        &mut self,
-        key: &[u8],
-        _: &[GetOption],
-    ) -> Result<ValueEntry, StaticError> {
+    pub fn get_entry(&mut self, key: &[u8], _: &[GetOption]) -> Result<ValueEntry, StaticError> {
         self.get(key).map(|value| ValueEntry::new(value, 0))
     }
 
-    pub(crate) fn batch_get(&mut self, keys: &[Vec<u8>]) -> BTreeMap<Vec<u8>, Vec<u8>> {
+    pub fn batch_get(&mut self, keys: &[Vec<u8>]) -> BTreeMap<Vec<u8>, Vec<u8>> {
         if self.len() == 0 {
             return BTreeMap::new();
         }
@@ -568,7 +546,7 @@ impl RbtMemDb {
             .collect()
     }
 
-    pub(crate) fn batch_get_entries(
+    pub fn batch_get_entries(
         &mut self,
         keys: &[Vec<u8>],
         _: &[GetOption],
@@ -579,11 +557,11 @@ impl RbtMemDb {
             .collect()
     }
 
-    pub(crate) fn get_flags(&mut self, key: &[u8]) -> Result<KeyFlags, StaticError> {
+    pub fn get_flags(&mut self, key: &[u8]) -> Result<KeyFlags, StaticError> {
         self.rbt.flags(key)
     }
 
-    pub(crate) fn set(
+    pub fn set(
         &mut self,
         key: &[u8],
         value: &[u8],
@@ -594,7 +572,7 @@ impl RbtMemDb {
         self.rbt.set(key, Some(value), &[])
     }
 
-    pub(crate) fn set_with_flags(
+    pub fn set_with_flags(
         &mut self,
         key: &[u8],
         value: &[u8],
@@ -606,14 +584,11 @@ impl RbtMemDb {
         self.rbt.set(key, Some(value), flags)
     }
 
-    pub(crate) fn delete(
-        &mut self,
-        key: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn delete(&mut self, key: &[u8]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.rbt.set(key, Some(&[]), &[])
     }
 
-    pub(crate) fn delete_with_flags(
+    pub fn delete_with_flags(
         &mut self,
         key: &[u8],
         flags: &[FlagsOp],
@@ -621,58 +596,50 @@ impl RbtMemDb {
         self.rbt.set(key, Some(&[]), flags)
     }
 
-    pub(crate) fn update_flags(&mut self, key: &[u8], flags: &[FlagsOp]) {
+    pub fn update_flags(&mut self, key: &[u8], flags: &[FlagsOp]) {
         self.rbt.update_flags(key, flags);
     }
 
-    pub(crate) fn iter(&self, lower: Option<&[u8]>, upper: Option<&[u8]>) -> Box<dyn KvIterator> {
+    pub fn iter(&self, lower: Option<&[u8]>, upper: Option<&[u8]>) -> Box<dyn KvIterator> {
         Box::new(RbtBufferIterator(self.rbt.iter(lower, upper)))
     }
 
-    pub(crate) fn iter_reverse(
-        &self,
-        upper: Option<&[u8]>,
-        lower: Option<&[u8]>,
-    ) -> Box<dyn KvIterator> {
+    pub fn iter_reverse(&self, upper: Option<&[u8]>, lower: Option<&[u8]>) -> Box<dyn KvIterator> {
         Box::new(RbtBufferIterator(self.rbt.iter_reverse(upper, lower)))
     }
 
-    pub(crate) fn staging(&mut self) -> usize {
+    pub fn staging(&mut self) -> usize {
         self.rbt.staging()
     }
 
-    pub(crate) fn cleanup(&mut self, handle: usize) {
+    pub fn cleanup(&mut self, handle: usize) {
         self.rbt.cleanup(handle);
     }
 
-    pub(crate) fn release(&mut self, handle: usize) {
+    pub fn release(&mut self, handle: usize) {
         self.rbt.release(handle);
     }
 
-    pub(crate) fn snapshot(&self) -> RbtMemDbSnapshot {
+    pub fn snapshot(&self) -> RbtMemDbSnapshot {
         RbtMemDbSnapshot {
             snapshot: self.rbt.snapshot(),
         }
     }
 
-    pub(crate) fn snapshot_getter(&self) -> RbtMemDbSnapshot {
+    pub fn snapshot_getter(&self) -> RbtMemDbSnapshot {
         self.snapshot()
     }
 
     /// Client-go's optional RBT wrapper returns a nil `*MemDB` here.
-    pub(crate) fn get_memdb(&mut self) -> Option<&mut MemDb> {
+    pub fn get_memdb(&mut self) -> Option<&mut MemDb> {
         None
     }
 
-    pub(crate) fn snapshot_iter(
-        &self,
-        lower: Option<&[u8]>,
-        upper: Option<&[u8]>,
-    ) -> Box<dyn KvIterator> {
+    pub fn snapshot_iter(&self, lower: Option<&[u8]>, upper: Option<&[u8]>) -> Box<dyn KvIterator> {
         self.snapshot().iter(lower, upper, false)
     }
 
-    pub(crate) fn snapshot_iter_reverse(
+    pub fn snapshot_iter_reverse(
         &self,
         upper: Option<&[u8]>,
         lower: Option<&[u8]>,
@@ -680,7 +647,7 @@ impl RbtMemDb {
         self.snapshot().iter(lower, upper, true)
     }
 
-    pub(crate) fn batched_snapshot_iter(
+    pub fn batched_snapshot_iter(
         &self,
         lower: Option<&[u8]>,
         upper: Option<&[u8]>,
@@ -689,7 +656,7 @@ impl RbtMemDb {
         self.snapshot().iter(lower, upper, reverse)
     }
 
-    pub(crate) fn for_each_in_snapshot_range(
+    pub fn for_each_in_snapshot_range(
         &self,
         lower: Option<&[u8]>,
         upper: Option<&[u8]>,
@@ -706,62 +673,59 @@ impl RbtMemDb {
         Ok(())
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.rbt.len()
     }
 
-    pub(crate) fn size(&self) -> usize {
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn size(&self) -> usize {
         self.rbt.size()
     }
 
-    pub(crate) fn dirty(&self) -> bool {
+    pub fn dirty(&self) -> bool {
         self.rbt.dirty()
     }
 
-    pub(crate) fn set_entry_size_limit(&mut self, entry_limit: u64, buffer_limit: u64) {
+    pub fn set_entry_size_limit(&mut self, entry_limit: u64, buffer_limit: u64) {
         self.rbt.set_entry_size_limit(entry_limit, buffer_limit);
     }
 
-    pub(crate) fn checkpoint(&self) -> usize {
+    pub fn checkpoint(&self) -> usize {
         self.rbt.checkpoint()
     }
 
-    pub(crate) fn revert_to_checkpoint(&mut self, checkpoint: usize) {
+    pub fn revert_to_checkpoint(&mut self, checkpoint: usize) {
         self.rbt.revert_to_checkpoint(checkpoint);
     }
 
-    pub(crate) fn inspect_stage(
-        &self,
-        handle: usize,
-        function: impl FnMut(&[u8], KeyFlags, &[u8]),
-    ) {
+    pub fn inspect_stage(&self, handle: usize, function: impl FnMut(&[u8], KeyFlags, &[u8])) {
         self.rbt.inspect_stage(handle, function);
     }
 
-    pub(crate) fn remove_from_buffer(&mut self, key: &[u8]) {
+    pub fn remove_from_buffer(&mut self, key: &[u8]) {
         self.rbt.remove_from_buffer(key);
     }
 
-    pub(crate) fn set_memory_footprint_change_hook(
-        &mut self,
-        hook: Arc<dyn Fn(u64) + Send + Sync>,
-    ) {
+    pub fn set_memory_footprint_change_hook(&mut self, hook: Arc<dyn Fn(u64) + Send + Sync>) {
         self.rbt.set_memory_footprint_change_hook(hook);
     }
 
-    pub(crate) fn memory_hook_is_set(&self) -> bool {
+    pub fn memory_hook_is_set(&self) -> bool {
         self.rbt.memory_hook_is_set()
     }
 
-    pub(crate) fn memory_footprint(&self) -> u64 {
+    pub fn memory_footprint(&self) -> u64 {
         self.rbt.memory_footprint()
     }
 
-    pub(crate) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.rbt.reset();
     }
 
-    pub(crate) fn select_value_history(
+    pub fn select_value_history(
         &mut self,
         key: &[u8],
         predicate: impl FnMut(&[u8]) -> bool,
@@ -769,15 +733,15 @@ impl RbtMemDb {
         self.rbt.select_value_history(key, predicate)
     }
 
-    pub(crate) fn flush(&self, _: bool) -> Result<bool, String> {
+    pub fn flush(&self, _: bool) -> Result<bool, String> {
         Ok(false)
     }
 
-    pub(crate) fn flush_wait(&self) -> Result<(), String> {
+    pub fn flush_wait(&self) -> Result<(), String> {
         Ok(())
     }
 
-    pub(crate) fn metrics(&self) -> PipelinedMetrics {
+    pub fn metrics(&self) -> PipelinedMetrics {
         PipelinedMetrics {
             flush_wait_duration: Duration::ZERO,
             total_duration: Duration::ZERO,
@@ -787,20 +751,20 @@ impl RbtMemDb {
     }
 }
 
-pub(crate) struct RbtMemDbSnapshot {
+pub struct RbtMemDbSnapshot {
     snapshot: RbtSnapshot,
 }
 
 impl RbtMemDbSnapshot {
-    pub(crate) fn get(&self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
+    pub fn get(&self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
         self.snapshot.get(key)
     }
 
-    pub(crate) fn get_entry(&self, key: &[u8], _: &[GetOption]) -> Result<ValueEntry, StaticError> {
+    pub fn get_entry(&self, key: &[u8], _: &[GetOption]) -> Result<ValueEntry, StaticError> {
         self.get(key).map(|value| ValueEntry::new(value, 0))
     }
 
-    pub(crate) fn iter(
+    pub fn iter(
         &self,
         lower: Option<&[u8]>,
         upper: Option<&[u8]>,
@@ -814,14 +778,14 @@ impl RbtMemDbSnapshot {
         Box::new(RbtBufferIterator(iterator))
     }
 
-    pub(crate) fn close(self) {}
+    pub fn close(self) {}
 }
 
 /// Native stable-view mapping of client-go's growing snapshot batch iterator.
 /// The immutable snapshot is already owned, so it does not need to rebuild an
 /// underlying unsafe ART iterator between batches; its validity still follows
 /// client-go's stage-0 sequence contract.
-pub(crate) struct BatchedSnapshotIterator {
+pub struct BatchedSnapshotIterator {
     inner: SnapshotIterator,
     expected_sequence: u64,
     sequence: Arc<AtomicU64>,
@@ -836,19 +800,20 @@ impl BatchedSnapshotIterator {
         }
     }
 
-    pub(crate) fn valid(&self) -> bool {
+    pub fn valid(&self) -> bool {
         self.check_sequence().is_ok() && self.inner.valid()
     }
 
-    pub(crate) fn key(&self) -> &[u8] {
+    pub fn key(&self) -> &[u8] {
         self.inner.key()
     }
 
-    pub(crate) fn value(&self) -> &[u8] {
+    pub fn value(&self) -> &[u8] {
         self.inner.value()
     }
 
-    pub(crate) fn next(&mut self) -> Result<(), &'static str> {
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> Result<(), &'static str> {
         self.check_sequence()?;
         self.inner.next()
     }
@@ -856,26 +821,22 @@ impl BatchedSnapshotIterator {
 
 /// Immutable in-process snapshot used by the native union-store adapter.
 #[derive(Clone, Default)]
-pub(crate) struct MapSnapshot {
+pub struct MapSnapshot {
     entries: BTreeMap<Vec<u8>, Vec<u8>>,
 }
 
 impl MapSnapshot {
-    pub(crate) fn insert(&mut self, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) {
+    pub fn insert(&mut self, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) {
         self.entries.insert(key.into(), value.into());
     }
 
-    pub(crate) fn get(&self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
+    pub fn get(&self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
         self.entries.get(key).cloned().ok_or(StaticError::NotExist)
     }
 
     /// Native form of client-go's `mockSnapshot.Get`: the test snapshot only
     /// fabricates a commit timestamp when callers explicitly request it.
-    pub(crate) fn get_entry(
-        &self,
-        key: &[u8],
-        options: &[GetOption],
-    ) -> Result<ValueEntry, StaticError> {
+    pub fn get_entry(&self, key: &[u8], options: &[GetOption]) -> Result<ValueEntry, StaticError> {
         let mut entry = ValueEntry::new(self.get(key)?, 0);
         if options.contains(&GetOption::ReturnCommitTs) {
             entry.commit_ts = 1;
@@ -887,13 +848,13 @@ impl MapSnapshot {
     }
 
     /// Source mock snapshot batch reads omit missing keys.
-    pub(crate) fn batch_get(&self, keys: &[Vec<u8>]) -> BTreeMap<Vec<u8>, Vec<u8>> {
+    pub fn batch_get(&self, keys: &[Vec<u8>]) -> BTreeMap<Vec<u8>, Vec<u8>> {
         keys.iter()
             .filter_map(|key| self.get(key).ok().map(|value| (key.clone(), value)))
             .collect()
     }
 
-    pub(crate) fn batch_get_entries(
+    pub fn batch_get_entries(
         &self,
         keys: &[Vec<u8>],
         options: &[GetOption],
@@ -907,7 +868,7 @@ impl MapSnapshot {
             .collect()
     }
 
-    pub(crate) fn iter(
+    pub fn iter(
         &self,
         lower: Option<&[u8]>,
         upper: Option<&[u8]>,
@@ -927,7 +888,7 @@ impl MapSnapshot {
 
 /// A merge iterator where MemDB updates override snapshot values and empty
 /// values are tombstones.
-pub(crate) struct UnionIterator {
+pub struct UnionIterator {
     dirty: Box<dyn KvIterator>,
     snapshot: Box<dyn KvIterator>,
     dirty_valid: bool,
@@ -938,7 +899,7 @@ pub(crate) struct UnionIterator {
 }
 
 impl UnionIterator {
-    pub(crate) fn new(
+    pub fn new(
         dirty: Box<dyn KvIterator>,
         snapshot: Box<dyn KvIterator>,
         reverse: bool,
@@ -1022,11 +983,11 @@ impl UnionIterator {
         }
     }
 
-    pub(crate) fn valid(&self) -> bool {
+    pub fn valid(&self) -> bool {
         self.valid
     }
 
-    pub(crate) fn key(&self) -> &[u8] {
+    pub fn key(&self) -> &[u8] {
         if self.current_is_dirty {
             self.dirty.key()
         } else {
@@ -1034,7 +995,7 @@ impl UnionIterator {
         }
     }
 
-    pub(crate) fn value(&self) -> &[u8] {
+    pub fn value(&self) -> &[u8] {
         if self.current_is_dirty {
             self.dirty.value()
         } else {
@@ -1042,7 +1003,8 @@ impl UnionIterator {
         }
     }
 
-    pub(crate) fn next(&mut self) -> Result<(), &'static str> {
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> Result<(), &'static str> {
         if !self.valid {
             return Err("iterator is finished");
         }
@@ -1056,14 +1018,14 @@ impl UnionIterator {
 }
 
 /// Source-equivalent local-write/snapshot-read union store.
-pub(crate) struct UnionStore {
+pub struct UnionStore {
     mem: MemDb,
     snapshot: MapSnapshot,
 }
 
-pub(crate) const MIN_FLUSH_KEYS: usize = 10_000;
-pub(crate) const MIN_FLUSH_MEMORY: u64 = 16 * 1024 * 1024;
-pub(crate) const FORCE_FLUSH_MEMORY: u64 = 128 * 1024 * 1024;
+pub const MIN_FLUSH_KEYS: usize = 10_000;
+pub const MIN_FLUSH_MEMORY: u64 = 16 * 1024 * 1024;
+pub const FORCE_FLUSH_MEMORY: u64 = 128 * 1024 * 1024;
 
 type FlushFunction = Arc<dyn Fn(u64, Arc<MemDb>) -> Result<(), PipelinedError> + Send + Sync>;
 type RemoteBatchGetter =
@@ -1075,13 +1037,13 @@ type RemoteBatchGetter =
 /// already-exists key, the error is enriched with the value still held in the
 /// immutable flushing MemDB.
 #[derive(Debug)]
-pub(crate) enum PipelinedError {
+pub enum PipelinedError {
     Message(String),
     KeyExists(KeyExistsError),
 }
 
 impl PipelinedError {
-    pub(crate) fn message(message: impl Into<String>) -> Self {
+    pub fn message(message: impl Into<String>) -> Self {
         Self::Message(message.into())
     }
 }
@@ -1109,7 +1071,7 @@ impl StdError for PipelinedError {
 /// The current generation remains mutable while an immutable `Arc<MemDb>` is
 /// handed to one flush worker. Reads prefer mutable state, then that flushing
 /// generation, then the caller-provided remote buffer getter.
-pub(crate) struct PipelinedMemDb {
+pub struct PipelinedMemDb {
     mem: MemDb,
     flushing: Option<Arc<MemDb>>,
     completion: Option<mpsc::Receiver<Result<(), PipelinedError>>>,
@@ -1132,7 +1094,7 @@ pub(crate) struct PipelinedMemDb {
 }
 
 impl PipelinedMemDb {
-    pub(crate) fn new(remote_batch_get: RemoteBatchGetter, flush: FlushFunction) -> Self {
+    pub fn new(remote_batch_get: RemoteBatchGetter, flush: FlushFunction) -> Self {
         Self {
             mem: MemDb::new(),
             flushing: None,
@@ -1163,19 +1125,23 @@ impl PipelinedMemDb {
         self.force_flush_memory = force_memory;
     }
 
-    pub(crate) fn dirty(&self) -> bool {
+    pub fn dirty(&self) -> bool {
         self.mem.dirty() || self.accumulated_len > 0
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.accumulated_len + self.mem.len()
     }
 
-    pub(crate) fn size(&self) -> usize {
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn size(&self) -> usize {
         self.accumulated_size + self.mem.size()
     }
 
-    pub(crate) fn memory_footprint(&self) -> u64 {
+    pub fn memory_footprint(&self) -> u64 {
         self.mem.memory_footprint()
             + self
                 .flushing
@@ -1183,22 +1149,22 @@ impl PipelinedMemDb {
                 .map_or(0, |buffer| buffer.memory_footprint())
     }
 
-    pub(crate) fn on_flushing(&self) -> bool {
+    pub fn on_flushing(&self) -> bool {
         self.is_flushing.load(Ordering::Acquire)
     }
 
-    pub(crate) fn set_entry_size_limit(&mut self, entry_limit: u64) {
+    pub fn set_entry_size_limit(&mut self, entry_limit: u64) {
         self.entry_limit = entry_limit;
         self.mem.set_entry_size_limit(entry_limit, u64::MAX);
     }
 
     /// The source intentionally ignores its total-buffer argument because the
     /// force-flush threshold is the buffer limit for pipelined mode.
-    pub(crate) fn set_entry_size_limits(&mut self, entry_limit: u64, _: u64) {
+    pub fn set_entry_size_limits(&mut self, entry_limit: u64, _: u64) {
         self.set_entry_size_limit(entry_limit);
     }
 
-    pub(crate) fn set(
+    pub fn set(
         &mut self,
         key: &[u8],
         value: &[u8],
@@ -1208,7 +1174,7 @@ impl PipelinedMemDb {
         result
     }
 
-    pub(crate) fn set_with_flags(
+    pub fn set_with_flags(
         &mut self,
         key: &[u8],
         value: &[u8],
@@ -1219,16 +1185,13 @@ impl PipelinedMemDb {
         result
     }
 
-    pub(crate) fn delete(
-        &mut self,
-        key: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn delete(&mut self, key: &[u8]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let result = self.mem.delete(key);
         self.on_mem_change();
         result
     }
 
-    pub(crate) fn delete_with_flags(
+    pub fn delete_with_flags(
         &mut self,
         key: &[u8],
         flags: &[FlagsOp],
@@ -1238,7 +1201,7 @@ impl PipelinedMemDb {
         result
     }
 
-    pub(crate) fn get_local(&mut self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
+    pub fn get_local(&mut self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
         match self.mem.get(key) {
             Ok(value) => Ok(value),
             Err(StaticError::NotExist) => self
@@ -1250,7 +1213,7 @@ impl PipelinedMemDb {
         }
     }
 
-    pub(crate) fn get_flags(&mut self, key: &[u8]) -> Result<KeyFlags, StaticError> {
+    pub fn get_flags(&mut self, key: &[u8]) -> Result<KeyFlags, StaticError> {
         match self.mem.get_flags(key) {
             Ok(flags) => Ok(flags),
             Err(StaticError::NotExist) => self
@@ -1262,11 +1225,11 @@ impl PipelinedMemDb {
         }
     }
 
-    pub(crate) fn update_flags(&mut self, key: &[u8], flags: &[FlagsOp]) {
+    pub fn update_flags(&mut self, key: &[u8], flags: &[FlagsOp]) {
         self.mem.update_flags(key, flags);
     }
 
-    pub(crate) fn get(&mut self, key: &[u8]) -> Result<Vec<u8>, String> {
+    pub fn get(&mut self, key: &[u8]) -> Result<Vec<u8>, String> {
         match self.get_local(key) {
             Ok(value) => Ok(value),
             Err(StaticError::NotExist) => {
@@ -1284,14 +1247,11 @@ impl PipelinedMemDb {
 
     /// Pipelined MemDB, like its source counterpart, ignores read options and
     /// returns zero commit timestamps for both local and flushed values.
-    pub(crate) fn get_entry(&mut self, key: &[u8], _: &[GetOption]) -> Result<ValueEntry, String> {
+    pub fn get_entry(&mut self, key: &[u8], _: &[GetOption]) -> Result<ValueEntry, String> {
         self.get(key).map(|value| ValueEntry::new(value, 0))
     }
 
-    pub(crate) fn batch_get(
-        &mut self,
-        keys: &[Vec<u8>],
-    ) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, String> {
+    pub fn batch_get(&mut self, keys: &[Vec<u8>]) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, String> {
         let mut result = BTreeMap::new();
         let mut remote_keys = Vec::new();
         let mut cache_updates = BTreeMap::new();
@@ -1323,7 +1283,7 @@ impl PipelinedMemDb {
         Ok(result)
     }
 
-    pub(crate) fn batch_get_entries(
+    pub fn batch_get_entries(
         &mut self,
         keys: &[Vec<u8>],
         _: &[GetOption],
@@ -1336,24 +1296,24 @@ impl PipelinedMemDb {
         })
     }
 
-    pub(crate) fn staging(&mut self) -> usize {
+    pub fn staging(&mut self) -> usize {
         self.mem.staging()
     }
 
-    pub(crate) fn cleanup(&mut self, handle: usize) {
+    pub fn cleanup(&mut self, handle: usize) {
         self.mem.cleanup(handle);
     }
 
-    pub(crate) fn release(&mut self, handle: usize) {
+    pub fn release(&mut self, handle: usize) {
         self.mem.release(handle);
     }
 
     /// The source forbids callers from bypassing pipelined generations.
-    pub(crate) fn get_memdb(&mut self) -> ! {
+    pub fn get_memdb(&mut self) -> ! {
         panic!("GetMemDB should not be invoked for PipelinedMemDB")
     }
 
-    pub(crate) fn iter(
+    pub fn iter(
         &self,
         _: Option<&[u8]>,
         _: Option<&[u8]>,
@@ -1361,7 +1321,7 @@ impl PipelinedMemDb {
         Err("pipelined memdb does not support Iter")
     }
 
-    pub(crate) fn iter_reverse(
+    pub fn iter_reverse(
         &self,
         _: Option<&[u8]>,
         _: Option<&[u8]>,
@@ -1369,7 +1329,7 @@ impl PipelinedMemDb {
         Err("pipelined memdb does not support IterReverse")
     }
 
-    pub(crate) fn for_each_in_snapshot_range(
+    pub fn for_each_in_snapshot_range(
         &self,
         _: Option<&[u8]>,
         _: Option<&[u8]>,
@@ -1379,58 +1339,51 @@ impl PipelinedMemDb {
         Err("pipelined memdb does not support ForEachInSnapshotRange")
     }
 
-    pub(crate) fn snapshot_iter(&self, _: Option<&[u8]>, _: Option<&[u8]>) -> Box<dyn KvIterator> {
+    pub fn snapshot_iter(&self, _: Option<&[u8]>, _: Option<&[u8]>) -> Box<dyn KvIterator> {
         Box::new(ErrorIterator {
             error: "SnapshotIter is not supported for PipelinedMemDB",
         })
     }
 
-    pub(crate) fn snapshot_iter_reverse(
-        &self,
-        _: Option<&[u8]>,
-        _: Option<&[u8]>,
-    ) -> Box<dyn KvIterator> {
+    pub fn snapshot_iter_reverse(&self, _: Option<&[u8]>, _: Option<&[u8]>) -> Box<dyn KvIterator> {
         Box::new(ErrorIterator {
             error: "SnapshotIter is not supported for PipelinedMemDB",
         })
     }
 
-    pub(crate) fn snapshot_getter(&self) -> ! {
+    pub fn snapshot_getter(&self) -> ! {
         panic!("SnapshotGetter is not supported for PipelinedMemDB")
     }
 
-    pub(crate) fn get_snapshot(&self) -> ! {
+    pub fn get_snapshot(&self) -> ! {
         panic!("GetSnapshot is not supported for PipelinedMemDB")
     }
 
-    pub(crate) fn remove_from_buffer(&mut self, _: &[u8]) -> ! {
+    pub fn remove_from_buffer(&mut self, _: &[u8]) -> ! {
         panic!("RemoveFromBuffer is not supported for PipelinedMemDB")
     }
 
-    pub(crate) fn inspect_stage(&self, _: usize, _: impl FnMut(&[u8], KeyFlags, &[u8])) -> ! {
+    pub fn inspect_stage(&self, _: usize, _: impl FnMut(&[u8], KeyFlags, &[u8])) -> ! {
         panic!("InspectStage is not supported for PipelinedMemDB")
     }
 
-    pub(crate) fn checkpoint(&self) -> ! {
+    pub fn checkpoint(&self) -> ! {
         panic!("Checkpoint is not supported for PipelinedMemDB")
     }
 
-    pub(crate) fn revert_to_checkpoint(&mut self, _: usize) -> ! {
+    pub fn revert_to_checkpoint(&mut self, _: usize) -> ! {
         panic!("RevertToCheckpoint is not supported for PipelinedMemDB")
     }
 
-    pub(crate) fn batched_snapshot_iter(&self, _: Option<&[u8]>, _: Option<&[u8]>, _: bool) -> ! {
+    pub fn batched_snapshot_iter(&self, _: Option<&[u8]>, _: Option<&[u8]>, _: bool) -> ! {
         panic!("BatchedSnapshotIter is not supported for PipelinedMemDB")
     }
 
-    pub(crate) fn set_memory_footprint_change_hook(
-        &mut self,
-        hook: Arc<dyn Fn(u64) + Send + Sync>,
-    ) {
+    pub fn set_memory_footprint_change_hook(&mut self, hook: Arc<dyn Fn(u64) + Send + Sync>) {
         self.mem_change_hook = Some(hook);
     }
 
-    pub(crate) fn memory_hook_is_set(&self) -> bool {
+    pub fn memory_hook_is_set(&self) -> bool {
         self.mem_change_hook.is_some()
     }
 
@@ -1473,7 +1426,7 @@ impl PipelinedMemDb {
     /// Flushes when the configured key/memory condition is met, or
     /// unconditionally when `force` is true. A second flush waits for the
     /// prior generation when the current buffer crossed the force threshold.
-    pub(crate) fn flush(&mut self, force: bool) -> Result<bool, PipelinedError> {
+    pub fn flush(&mut self, force: bool) -> Result<bool, PipelinedError> {
         self.batch_cache = None;
         if self.mem.is_staging() {
             return Err(PipelinedError::message(
@@ -1522,11 +1475,11 @@ impl PipelinedMemDb {
         Ok(true)
     }
 
-    pub(crate) fn flush_wait(&mut self) -> Result<(), PipelinedError> {
+    pub fn flush_wait(&mut self) -> Result<(), PipelinedError> {
         self.wait_for_flush()
     }
 
-    pub(crate) fn metrics(&self) -> PipelinedMetrics {
+    pub fn metrics(&self) -> PipelinedMetrics {
         PipelinedMetrics {
             flush_wait_duration: self.flush_wait_duration,
             total_duration: self.started_at.elapsed(),
@@ -1537,27 +1490,27 @@ impl PipelinedMemDb {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct PipelinedMetrics {
-    pub(crate) flush_wait_duration: Duration,
-    pub(crate) total_duration: Duration,
-    pub(crate) memdb_hit_count: u64,
-    pub(crate) memdb_miss_count: u64,
+pub struct PipelinedMetrics {
+    pub flush_wait_duration: Duration,
+    pub total_duration: Duration,
+    pub memdb_hit_count: u64,
+    pub memdb_miss_count: u64,
 }
 
 impl UnionStore {
-    pub(crate) fn new(mem: MemDb, snapshot: MapSnapshot) -> Self {
+    pub fn new(mem: MemDb, snapshot: MapSnapshot) -> Self {
         Self { mem, snapshot }
     }
 
-    pub(crate) fn mem_buffer(&mut self) -> &mut MemDb {
+    pub fn mem_buffer(&mut self) -> &mut MemDb {
         &mut self.mem
     }
 
-    pub(crate) fn get(&mut self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
+    pub fn get(&mut self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
         self.get_entry(key, &[]).map(|entry| entry.value)
     }
 
-    pub(crate) fn get_entry(
+    pub fn get_entry(
         &mut self,
         key: &[u8],
         options: &[GetOption],
@@ -1570,7 +1523,7 @@ impl UnionStore {
         }
     }
 
-    pub(crate) fn iter(
+    pub fn iter(
         &self,
         lower: Option<&[u8]>,
         upper: Option<&[u8]>,
@@ -1582,7 +1535,7 @@ impl UnionStore {
         )
     }
 
-    pub(crate) fn iter_reverse(
+    pub fn iter_reverse(
         &self,
         upper: Option<&[u8]>,
         lower: Option<&[u8]>,
@@ -1594,20 +1547,20 @@ impl UnionStore {
         )
     }
 
-    pub(crate) fn has_presume_key_not_exists(&mut self, key: &[u8]) -> bool {
+    pub fn has_presume_key_not_exists(&mut self, key: &[u8]) -> bool {
         self.mem
             .get_flags(key)
             .is_ok_and(|flags| flags.has_presume_key_not_exists())
     }
 
-    pub(crate) fn unmark_presume_key_not_exists(&mut self, key: &[u8]) {
+    pub fn unmark_presume_key_not_exists(&mut self, key: &[u8]) {
         self.mem
             .update_flags(key, &[FlagsOp::DelPresumeKeyNotExists]);
     }
 
     /// Matches `KVUnionStore.SetEntrySizeLimit`: zero means unlimited rather
     /// than a zero-byte limit.
-    pub(crate) fn set_entry_size_limit(&mut self, entry_limit: u64, buffer_limit: u64) {
+    pub fn set_entry_size_limit(&mut self, entry_limit: u64, buffer_limit: u64) {
         self.mem.set_entry_size_limit(
             if entry_limit == 0 {
                 u64::MAX
@@ -2069,6 +2022,9 @@ mod tests {
                 (b"tombstone".to_vec(), Vec::new()),
             ]
         );
+        db.remove_from_buffer(b"present");
+        assert_eq!(db.get(b"present"), Err(StaticError::NotExist));
+        assert_eq!(db.len(), 1);
 
         let stage = db.staging();
         let checkpoint = db.checkpoint();

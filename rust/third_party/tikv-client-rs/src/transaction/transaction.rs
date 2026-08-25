@@ -68,6 +68,9 @@ use crate::transaction::SnapshotVisibilityValidator;
 pub use crate::util::RequestSource;
 use crate::BoundRange;
 
+/// Maximum transaction lifetime before commit is refused, in milliseconds.
+pub const MAX_TXN_TIME_USE: u64 = 24 * 60 * 60 * 1_000;
+
 /// Result returned by a transaction binlog prewrite.
 pub trait BinlogWriteResult: Send + Sync {
     fn skipped(&self) -> bool;
@@ -4272,6 +4275,8 @@ pub struct TransactionOptions {
     priority: Priority,
     /// Transaction timestamp scope retained by commit timestamp allocation.
     scope: String,
+    /// Optional caller-supplied start timestamp, matching root `tikv.WithStartTS`.
+    start_timestamp: Option<Timestamp>,
     /// Optional pipelined transaction protocol.
     pipelined: PipelinedTxnOptions,
     #[doc(hidden)]
@@ -4325,6 +4330,7 @@ impl TransactionOptions {
             check_level: CheckLevel::Panic,
             priority: Priority::Normal,
             scope: crate::oracle::GLOBAL_TXN_SCOPE.to_owned(),
+            start_timestamp: None,
             pipelined: PipelinedTxnOptions::default(),
             heartbeat_option: HeartbeatOption::FixedTime(DEFAULT_HEARTBEAT_INTERVAL),
         }
@@ -4341,6 +4347,7 @@ impl TransactionOptions {
             check_level: CheckLevel::Panic,
             priority: Priority::Normal,
             scope: crate::oracle::GLOBAL_TXN_SCOPE.to_owned(),
+            start_timestamp: None,
             pipelined: PipelinedTxnOptions::default(),
             heartbeat_option: HeartbeatOption::FixedTime(DEFAULT_HEARTBEAT_INTERVAL),
         }
@@ -4406,6 +4413,17 @@ impl TransactionOptions {
     pub fn scope(mut self, scope: impl Into<String>) -> TransactionOptions {
         self.scope = scope.into();
         self
+    }
+
+    /// Begin at an explicit timestamp instead of allocating one from PD.
+    #[must_use]
+    pub fn start_timestamp(mut self, timestamp: Timestamp) -> TransactionOptions {
+        self.start_timestamp = Some(timestamp);
+        self
+    }
+
+    pub(crate) fn configured_start_timestamp(&self) -> Option<Timestamp> {
+        self.start_timestamp.clone()
     }
 
     #[must_use]
@@ -5743,7 +5761,7 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 
     fn validate_commit_timestamp(&self, commit_timestamp: &Timestamp) -> Result<()> {
-        if self.start_instant.elapsed() > Duration::from_millis(24 * 60 * 60 * 1_000) {
+        if self.start_instant.elapsed() > Duration::from_millis(MAX_TXN_TIME_USE) {
             return Err(Error::StringError(format!(
                 "session {} txn takes too much time, txnStartTS: {}, comm: {}",
                 self.settings.session_id,
@@ -6579,6 +6597,13 @@ mod tests {
         assert_eq!(
             invalid_ratio.validate().unwrap_err().to_string(),
             "invalid write throttle ratio: 1"
+        );
+        let configured_start = Timestamp::from_version(42);
+        assert_eq!(
+            TransactionOptions::new_optimistic()
+                .start_timestamp(configured_start.clone())
+                .configured_start_timestamp(),
+            Some(configured_start)
         );
 
         let pipelined = TransactionOptions::new_optimistic()

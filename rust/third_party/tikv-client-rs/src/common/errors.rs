@@ -36,6 +36,12 @@ pub enum Error {
         #[source]
         source: crate::error::StaticError,
     },
+    /// The requested transaction timestamp is older than PD's transaction safe point.
+    #[error(transparent)]
+    TransactionAbortedByGc(#[from] crate::error::TransactionAbortedByGcError),
+    /// PD state was not refreshed within the source safety window.
+    #[error(transparent)]
+    PdServerTimeout(#[from] crate::error::PdServerTimeoutError),
     /// Feature is not implemented.
     #[error("Unimplemented feature")]
     Unimplemented,
