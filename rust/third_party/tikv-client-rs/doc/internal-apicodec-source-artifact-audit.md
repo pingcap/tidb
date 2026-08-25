@@ -33,7 +33,7 @@ Client-go pins `github.com/pingcap/kvproto` at commit `059694ae4472276644613accc
 | `proto/mpp.proto` | `479798510cbd229b718bf5699e58bc6eea45d9d917d53b9313f6b4af8d81a166` | MPP TaskMeta numeric/V3 keyspace identity oneof |
 | `proto/tikvpb.proto` | `4549bc2657d6ecb67407f4aa6f18a6cce41e9485cca975a6ee6dbbbd7efe2615` | TiKV RPC service request/response bindings |
 
-`keyspacepb`, `kvrpcpb`, and `mpp` were stale and were copied from the pinned kvproto checkout. `cargo +nightly-2026-08-22 run -p tikv-client-proto-build` regenerated `src/generated/{keyspacepb,kvrpcpb,mpp}.rs`; generated bindings now expose Namespace, LookupKeyspace, V3 metadata/context/Compact/MPP identities, and the pinned execution-detail additions. Other kvproto inputs not used to represent this package remain a repository-level generated-artifact gate and are not silently claimed here.
+`keyspacepb`, `kvrpcpb`, and `mpp` were stale and were copied from the pinned kvproto checkout. `cargo +nightly-2026-08-22 run -p tikv-client-proto-build` regenerated `kvproto/src/generated/{keyspacepb,kvrpcpb,mpp}.rs`; generated bindings now expose Namespace, LookupKeyspace, V3 metadata/context/Compact/MPP identities, and the pinned execution-detail additions. Other kvproto inputs not used to represent this package remain a repository-level generated-artifact gate and are not silently claimed here.
 
 ## Production mapping
 

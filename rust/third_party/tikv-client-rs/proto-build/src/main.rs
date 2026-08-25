@@ -8,7 +8,7 @@ use std::{
     process::Command,
 };
 
-const GENERATED_DIR: &str = "src/generated";
+const GENERATED_DIR: &str = "kvproto/src/generated";
 const DESCRIPTOR_FILE: &str = "file_descriptor_set.bin";
 const PROTOC_VERSION: &str = "libprotoc 35.1";
 
@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     verify_protoc_version()?;
     let staging = tempfile::Builder::new()
         .prefix(".generated-")
-        .tempdir_in("src")?;
+        .tempdir_in("kvproto/src")?;
     let mut protos = glob::glob("proto/*.proto")?.collect::<Result<Vec<_>, _>>()?;
     protos.sort();
 

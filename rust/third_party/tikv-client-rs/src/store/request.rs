@@ -191,7 +191,6 @@ impl CoprocessorStreamRequest {
         self
     }
 
-    #[cfg(any(test, feature = "internal-tests"))]
     pub(crate) fn inner_for_mock(&self) -> &coprocessor::Request {
         &self.request
     }
@@ -235,7 +234,6 @@ impl BatchCoprocessorStreamRequest {
         self
     }
 
-    #[cfg(any(test, feature = "internal-tests"))]
     pub(crate) fn inner_for_mock(&self) -> &coprocessor::BatchRequest {
         &self.request
     }

@@ -3845,11 +3845,22 @@ dependencies = [
  "serde_json",
  "take_mut",
  "thiserror 1.0.69",
+ "tikv-client-kvproto",
  "tokio",
  "tonic",
  "tonic-prost",
  "unistore",
  "url",
+]
+
+[[package]]
+name = "tikv-client-kvproto"
+version = "0.1.0"
+dependencies = [
+ "prost 0.14.4",
+ "prost-types 0.14.4",
+ "tonic",
+ "tonic-prost",
 ]
 
 [[package]]

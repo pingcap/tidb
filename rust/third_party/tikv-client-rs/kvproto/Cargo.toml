@@ -1,0 +1,16 @@
+[package]
+name = "tikv-client-kvproto"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.93.0"
+license = "Apache-2.0"
+authors = ["The TiKV Project Authors"]
+repository = "https://github.com/tikv/client-rust"
+description = "Shared prost/tonic bindings for the kvproto revision used by tikv-client"
+publish = false
+
+[dependencies]
+prost = "0.14"
+prost-types = "0.14"
+tonic = "0.14"
+tonic-prost = "0.14"

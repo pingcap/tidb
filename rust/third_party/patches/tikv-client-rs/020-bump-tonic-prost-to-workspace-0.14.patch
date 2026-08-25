@@ -1,5 +1,5 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 6b0a799..4cfc321 100644
+index d391817..e236dda 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -11,6 +11,10 @@ rust-version = "1.93.0"
@@ -13,7 +13,7 @@ index 6b0a799..4cfc321 100644
  prometheus = ["prometheus/push", "prometheus/process"]
  # Enable integration tests with a running TiKV and PD instance.
  # Use $PD_ADDRS, comma separated, to set the addresses the tests use.
-@@ -33,6 +37,7 @@ members = [
+@@ -34,6 +38,7 @@ members = [
  ]
  
  [dependencies]
@@ -21,7 +21,7 @@ index 6b0a799..4cfc321 100644
  async-recursion = "0.3"
  async-trait = "0.1"
  chrono = { version = "0.4", default-features = false, features = ["std"] }
-@@ -45,9 +50,9 @@ log = "0.4"
+@@ -46,9 +51,9 @@ log = "0.4"
  openssl = "0.10"
  pin-project = "1"
  prometheus = { version = "0.13", default-features = false }
@@ -33,8 +33,8 @@ index 6b0a799..4cfc321 100644
  rand = "0.8"
  regex = "1"
  crc32fast = "1"
-@@ -63,7 +68,8 @@ take_mut = "0.2.2"
- thiserror = "1"
+@@ -65,7 +70,8 @@ thiserror = "1"
+ tikv-client-kvproto = { path = "kvproto" }
  unistore = { path = "unistore" }
  tokio = { version = "1.21", features = ["sync", "rt-multi-thread", "macros", "time", "net", "io-util"] }
 -tonic = { version = "0.12", features = ["tls", "gzip"] }
@@ -43,6 +43,21 @@ index 6b0a799..4cfc321 100644
  url = "2"
  
  [dev-dependencies]
+diff --git a/kvproto/Cargo.toml b/kvproto/Cargo.toml
+index dab675a..dfa99f1 100644
+--- a/kvproto/Cargo.toml
++++ b/kvproto/Cargo.toml
+@@ -10,6 +10,7 @@ description = "Shared prost/tonic bindings for the kvproto revision used by tikv
+ publish = false
+ 
+ [dependencies]
+-prost = "0.13"
+-prost-types = "0.13"
+-tonic = "0.12"
++prost = "0.14"
++prost-types = "0.14"
++tonic = "0.14"
++tonic-prost = "0.14"
 diff --git a/proto-build/Cargo.toml b/proto-build/Cargo.toml
 index a3a5a7a..91a927a 100644
 --- a/proto-build/Cargo.toml
@@ -58,10 +73,10 @@ index a3a5a7a..91a927a 100644
  # Keep this compatible with rust-toolchain 1.84.1.
  tempfile = "=3.14.0"
 diff --git a/proto-build/src/main.rs b/proto-build/src/main.rs
-index 9dd58cf..d44da78 100644
+index cf347df..03c3b85 100644
 --- a/proto-build/src/main.rs
 +++ b/proto-build/src/main.rs
-@@ -20,14 +20,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+@@ -23,14 +23,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
      let mut prost = prost_build::Config::new();
      prost.enable_type_names();
  

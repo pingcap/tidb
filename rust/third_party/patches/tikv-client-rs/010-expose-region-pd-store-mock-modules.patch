@@ -1,5 +1,5 @@
 diff --git a/src/lib.rs b/src/lib.rs
-index cff95e3..68d83ce 100644
+index 2b86705..61e1839 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -153,20 +153,20 @@ mod common;
@@ -11,10 +11,10 @@ index cff95e3..68d83ce 100644
  pub mod oracle;
 -mod pd;
 +pub mod pd;
- // client-go consumes kvproto as a separate public module. Keep the generated
- // namespace public as well: public mock/test-support APIs expose these wire
- // types, and downstream crates must be able to name them to implement traits
- // such as `CoprocessorHandler`.
+ // client-go consumes kvproto as a separate public module. Re-export the shared
+ // workspace crate's exact type identity: public mock/test-support APIs expose
+ // these wire types, and downstream crates must be able to name them to
+ // implement traits such as `CoprocessorHandler`.
  pub mod proto;
 -mod region;
 -mod region_cache;

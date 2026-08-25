@@ -28,7 +28,7 @@ There is no `doc.go`, source test, benchmark, example, fixture, metadata/`OWNERS
 
 ## Required generated dependency
 
-The existing proto builder enables Prost type names and emits `src/generated/file_descriptor_set.bin` from the complete checked-in schema set during the same regeneration that writes Rust messages. The clean generated surface contains exactly 977 `prost::Name` implementations across 39 files. The descriptor set contains 1,029 message declarations, is 728,127 bytes, and has SHA-256 `24f76f184559153b03af0ac526e7d9663771d5a8f9c592c1fb433d3ecc079853`; `prost-reflect` 0.15.3 decodes it once into the process-wide pool. Generation and compilation therefore prove that the formatter's type name and runtime descriptor come from one source graph.
+The existing proto builder enables Prost type names and emits `kvproto/src/generated/file_descriptor_set.bin` from the complete checked-in schema set during the same regeneration that writes Rust messages. The clean generated surface contains exactly 977 `prost::Name` implementations across 39 files. The descriptor set contains 1,029 message declarations, is 728,127 bytes, and has SHA-256 `24f76f184559153b03af0ac526e7d9663771d5a8f9c592c1fb433d3ecc079853`; `prost-reflect` 0.15.3 decodes it once into the process-wide pool. Generation and compilation therefore prove that the formatter's type name and runtime descriptor come from one source graph.
 
 ## Direct consumers
 

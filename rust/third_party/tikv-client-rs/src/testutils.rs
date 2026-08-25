@@ -2,22 +2,20 @@
 
 //! Public test-support facade over the in-process mock TiKV implementation.
 //!
-//! This is the Rust counterpart of client-go's `testutils` package. It stays
-//! behind the `internal-tests` feature so production users do not compile the
-//! mock transport unless they explicitly request test support.
+//! This is the Rust counterpart of client-go's ordinary-build `testutils`
+//! package. Embedded and downstream test stores can reuse the same mock
+//! transport without enabling crate-internal test behavior.
 
 use std::sync::Arc;
 
 pub use crate::mock::cluster::Cluster;
 pub use crate::mock::mocktikv::{
     bootstrap_with_multi_regions, bootstrap_with_multi_stores, bootstrap_with_single_store,
-    Cluster as MockCluster, CoprocessorHandler as CoprRpcHandler, Pair as MvccPair,
-    RpcClient as MockClient, Session as RpcSession,
+    Cluster as MockCluster, CoprocessorHandler as CoprRpcHandler, MockError, MockPdClient,
+    Pair as MvccPair, RpcClient as MockClient, Session as RpcSession,
 };
 pub use crate::request::Keyspace;
 pub use unistore::MockEngine as MvccStore;
-
-use crate::mock::mocktikv::{MockError, MockPdClient};
 
 /// Rust consolidates the source mock error structs into one typed enum; the
 /// source `ErrLocked` contract is its `Locked` variant.

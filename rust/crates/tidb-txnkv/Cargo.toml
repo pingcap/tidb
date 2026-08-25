@@ -26,12 +26,6 @@ tokio.workspace = true
 tokio-stream.workspace = true
 tonic.workspace = true
 
-[dev-dependencies]
-# `internal-tests` exposes the vendored client-go mocktikv/unistore in-process
-# store and the injected-PD `Transaction` constructor, matching how client-go
-# test stores run the full transaction stack without a live cluster.
-tikv-client = { workspace = true, features = ["internal-tests"] }
-
 [[test]]
 name = "all"
 path = "tests/all.rs"

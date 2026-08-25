@@ -2,15 +2,16 @@
 
 //! Downstream-crate behavioral checks for the public mock TiKV test facade.
 
-#![cfg(feature = "internal-tests")]
-
 use std::sync::Arc;
 
-use tikv_client::testutils::{bootstrap_with_single_store, new_mock_tikv, Keyspace};
+use tikv_client::testutils::{bootstrap_with_single_store, new_mock_tikv, Keyspace, MockPdClient};
 use tikv_client::{FlagsOp, Timestamp, TimestampExt, Transaction, TransactionOptions};
 
 #[tokio::test]
 async fn transactional_get_distinguishes_missing_from_empty_value() {
+    fn assert_pd_client<T: tikv_client::PdClient>() {}
+    assert_pd_client::<MockPdClient>();
+
     let (_client, cluster, pd) = new_mock_tikv("", None).unwrap();
     bootstrap_with_single_store(&cluster);
     let mut transaction = Transaction::new(

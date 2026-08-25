@@ -18,7 +18,7 @@ use prost_reflect::{
 
 use crate::trace::TraceContext;
 
-const DESCRIPTOR_BYTES: &[u8] = include_bytes!("generated/file_descriptor_set.bin");
+const DESCRIPTOR_BYTES: &[u8] = tikv_client_kvproto::FILE_DESCRIPTOR_SET;
 
 lazy_static! {
     static ref PROTOBUF_DESCRIPTORS: DescriptorPool = DescriptorPool::decode(DESCRIPTOR_BYTES)
