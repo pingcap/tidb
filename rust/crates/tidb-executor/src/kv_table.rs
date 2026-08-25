@@ -2602,6 +2602,85 @@ impl KvTable {
         Ok(Some(self.decode_row_entry(handle, &entry, context)?))
     }
 
+    /// Every stored record inside half-open RECORD-KEY `ranges`, decoded by
+    /// [`PreparedPointGetRowDecoder`] with each record's handle parsed from
+    /// its key. This is the row source of a prepared point read whose pins
+    /// name only a leading prefix of a CLUSTERED primary key -- the same
+    /// immutable reader the single-row arm uses, walked over several keys.
+    pub(crate) fn prepared_rows_in_record_ranges(
+        &mut self,
+        ranges: &[(Key, Key)],
+        decoder: &PreparedPointGetRowDecoder,
+        context: &PreparedPointGetDecodeContext,
+        max_rows: usize,
+    ) -> Result<Option<Vec<Vec<Datum>>>, KvTableError> {
+        let mut rows = Vec::new();
+        for (low, upper) in ranges {
+            let mut iterator = self
+                .store
+                .iter(Some(low), Some(upper))
+                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+            while iterator.valid() {
+                if rows.len() > max_rows {
+                    iterator.close();
+                    return Ok(None);
+                }
+                let key = iterator.key().as_bytes().to_vec();
+                let value = iterator.value().to_vec();
+                iterator
+                    .next()
+                    .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+                let handle = decoder.record_handle(&key)?;
+                rows.push(decoder.decode(&handle, &value, context)?);
+            }
+            iterator.close();
+        }
+        Ok(Some(rows))
+    }
+
+    /// Several stored-record reads decoded by the immutable projection
+    /// retained on a prepared PointGet plan, through ONE batched storage call
+    /// per physical partition -- Go's `IndexLookUpExecutor` fetching every
+    /// handle of a lookup task with a single `BatchGet`, not one point read
+    /// per entry. Slots preserve input order; `None` marks an absent record.
+    pub(crate) fn get_prepared_point_rows(
+        &mut self,
+        handles: &[TableHandle],
+        decoder: &PreparedPointGetRowDecoder,
+        context: &PreparedPointGetDecodeContext,
+    ) -> Result<Vec<Option<Vec<Datum>>>, KvTableError> {
+        if handles.is_empty() {
+            return Ok(Vec::new());
+        }
+        let physical_ids = self.record_physical_ids();
+        let mut probes = Vec::with_capacity(handles.len() * physical_ids.len());
+        for handle in handles {
+            for physical_id in &physical_ids {
+                probes.push((
+                    Key::from_bytes(encode_row_key_with_handle(
+                        *physical_id,
+                        &handle.record_handle(),
+                    )),
+                    handle,
+                ));
+            }
+        }
+        let keys: Vec<Key> = probes.iter().map(|(key, _)| key.clone()).collect();
+        let entries = self
+            .store
+            .batch_get(&keys)
+            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+        let mut rows = Vec::with_capacity(handles.len());
+        for (key, handle) in probes {
+            let Some(entry) = entries.get(&key) else {
+                rows.push(None);
+                continue;
+            };
+            rows.push(decoder.decode(handle, entry, context).map(Some)?);
+        }
+        Ok(rows)
+    }
+
     /// One stored-record read decoded by the immutable projection retained on
     /// a prepared PointGet plan.
     pub fn get_prepared_point_row(

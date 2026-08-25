@@ -108,8 +108,11 @@ pub fn run_fast_prepared_insert(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Option<(u64, Option<u64>)>, DriverError> {
-    if !insert.ignore
-        || insert.replace
+    // A PLAIN single-row insert belongs here as much as an IGNORE one: the
+    // duplicate-key outcome is the only difference between them (IGNORE
+    // answers zero rows, a plain INSERT raises 1062), and both outcomes are
+    // decided at the one `insert_row` call below.
+    if insert.replace
         || !insert.on_duplicate.is_empty()
         || insert.source.is_some()
         || insert.set_syntax
@@ -134,17 +137,19 @@ pub fn run_fast_prepared_insert(
         return Ok(None);
     };
     let handles = kv.common_handle_offsets();
+    // `insert_row` builds the clustered handle from the ROW ITSELF -- one
+    // column or a composite primary key alike -- maintains every index of
+    // the table, and runs the eager duplicate check on each unique secondary
+    // entry. A composite common handle and an indexed table no longer refuse
+    // this arm: Go's cached insert plan writes both shapes.
     if kv.visible_column_count() != kv.columns.len()
-        || handles.len() != 1
-        || !kv.indexes().is_empty()
+        || handles.is_empty()
         || !kv.foreign_keys().is_empty()
         || kv.auto_increment_offset().is_some()
         || kv.partition().is_some()
-        || kv.columns.iter().enumerate().any(|(offset, column)| {
-            column.generated.is_some()
-                || column.default_value.is_some()
-                || (offset != handles[0] && column.field_type.flags() & 1 != 0)
-        })
+        || kv.columns
+            .iter()
+            .any(|column| column.generated.is_some() || column.default_value.is_some())
     {
         return Ok(None);
     }
@@ -184,7 +189,9 @@ pub fn run_fast_prepared_insert(
     // the single writer-owned check still preserves that outcome.
     match kv.insert_row(&row, ctx) {
         Ok(_) => Ok(Some((1, None))),
-        Err(crate::kv_table::KvTableError::DuplicateEntry { .. }) => Ok(Some((0, None))),
+        Err(crate::kv_table::KvTableError::DuplicateEntry { .. }) if insert.ignore => {
+            Ok(Some((0, None)))
+        }
         Err(error) => Err(kv_write_error(error)),
     }
 }
@@ -1754,7 +1761,11 @@ pub fn run_fast_prepared_update(
     let (database, name) = single_table_name(table_ref, current_db)?;
     let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else { return Ok(None) };
     let handles = kv.common_handle_offsets();
-    if handles.len() != 1 || !kv.indexes().is_empty() || !kv.foreign_keys().is_empty()
+    // Secondary indexes are maintained by `update_row_with_old` itself (old
+    // entries deleted, new written, rolled back on failure), so an indexed
+    // table no longer refuses the fast arm -- Go's cached point-update plan
+    // keeps every index of the table up to date too.
+    if handles.len() != 1 || !kv.foreign_keys().is_empty()
         || kv.visible_columns().iter().any(|column| column.generated.is_some()) { return Ok(None); }
     let qualifier = table_ref.alias.as_deref().or_else(|| table_ref.name.last().map(String::as_str));
     let columns = kv.visible_columns().to_vec();
@@ -1769,7 +1780,17 @@ pub fn run_fast_prepared_update(
         if offset == handle_offset { return Ok(None); }
         assignment_offsets.push(offset);
     }
-    let Some(key_expr) = point_get_key_expr(update.where_clause.as_ref(), &handle_column.name, qualifier) else { return Ok(None) };
+    // The WHERE pins the handle once; every other conjunct must be a simple
+    // column equality, which filters the OLD row before the assignments land
+    // (`WHERE prdaccno = ? AND stsrcd = ?` reads exactly one row or none).
+    let mut residual_eqs = Vec::new();
+    let Some(key_expr) = point_update_where(
+        update.where_clause.as_ref(),
+        &handle_column.name,
+        qualifier,
+        &columns,
+        &mut residual_eqs,
+    ) else { return Ok(None) };
     let Some(key_value) = prepared_or_literal(key_expr, params)? else { return Ok(None) };
     let encoded = tidb_codec::encode_key_in_timezone(&ctx.session_zone(), &[key_value])
         .map_err(|error| DriverError::unsupported(format!("cannot encode common handle: {error:?}")))?;
@@ -1781,6 +1802,22 @@ pub fn run_fast_prepared_update(
     };
     let field_types: Vec<FieldType> = columns.iter().map(|column| column.field_type.clone()).collect();
     let names: Vec<String> = columns.iter().map(|column| column.name.clone()).collect();
+    for (offset, bound) in &residual_eqs {
+        let expected = match bound {
+            ResidualEq::Param(order) => params.get(*order).cloned(),
+            ResidualEq::Constant(value) => Some(value.clone()),
+        };
+        let Some(mut expected) = expected else { return Ok(None) };
+        if expected.is_null() || old_row.get(*offset).is_none_or(Datum::is_null) {
+            // `<column> = NULL` matches nothing under SQL semantics.
+            return Ok(Some(0));
+        }
+        expected = cast_value_for_update_assignment(expected, &field_types[*offset], &names[*offset], 0, ctx)?;
+        match old_row[*offset].compare(&expected, field_types[*offset].collation()) {
+            Ok(std::cmp::Ordering::Equal) => {}
+            _ => return Ok(Some(0)),
+        }
+    }
     let mut row = old_row.clone();
     for (assignment, offset) in update.assignments.iter().zip(assignment_offsets) {
         let Some(value) = prepared_or_literal(&assignment.value, params)? else { return Ok(None) };
@@ -1806,17 +1843,99 @@ fn assignment_qualifier_matches(path: &[String], qualifier: Option<&str>) -> boo
         || qualifier.is_some_and(|qualifier| path[path.len() - 2].eq_ignore_ascii_case(qualifier))
 }
 
-fn point_get_key_expr<'a>(
+/// One `column = ?`/`column = constant` conjunct beside a fast prepared
+/// update's handle pin: the OLD row must answer it before anything changes.
+#[derive(Clone, Debug)]
+enum ResidualEq {
+    Param(usize),
+    Constant(tidb_datatype::Datum),
+}
+
+/// Walks a fast prepared update's WHERE conjunction: the handle column is
+/// pinned exactly once by one `=` (returned as the key expression), and every
+/// remaining conjunct must be a plain column equality pushed onto
+/// `residual_eqs`. Any other shape declines the whole fast arm.
+fn point_update_where<'a>(
     predicate: Option<&'a tidb_ast::Expr>,
     column: &str,
     qualifier: Option<&str>,
+    columns: &[crate::kv_table::KvColumn],
+    residual_eqs: &mut Vec<(usize, ResidualEq)>,
 ) -> Option<&'a tidb_ast::Expr> {
-    let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::Eq, left, right) = predicate? else {
-        return None;
-    };
-    if is_key_column(left, column, qualifier) { return Some(right); }
-    if is_key_column(right, column, qualifier) { return Some(left); }
-    None
+    fn unparenthesized(expr: &tidb_ast::Expr) -> &tidb_ast::Expr {
+        match expr {
+            tidb_ast::Expr::Paren(inner) => unparenthesized(inner),
+            other => other,
+        }
+    }
+    let mut key_expr: Option<&tidb_ast::Expr> = None;
+    let mut conjuncts = Vec::new();
+    fn flatten<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
+        match expr {
+            tidb_ast::Expr::Paren(inner) => flatten(inner, out),
+            tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, lhs, rhs) => {
+                flatten(lhs, out);
+                flatten(rhs, out);
+            }
+            other => out.push(other),
+        }
+    }
+    flatten(predicate?, &mut conjuncts);
+    for conjunct in conjuncts {
+        let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::Eq, left, right) = conjunct else {
+            return None;
+        };
+        if is_key_column(left, column, qualifier) || is_key_column(right, column, qualifier) {
+            // The handle pin: exactly one, or the shape declines.
+            if key_expr.is_some() {
+                return None;
+            }
+            key_expr = Some(if is_key_column(left, column, qualifier) {
+                right
+            } else {
+                left
+            });
+            continue;
+        }
+        // A residual equality names one other column; its value side must be
+        // a marker or a constant.
+        let path = match (left.as_ref(), right.as_ref()) {
+            (tidb_ast::Expr::Column(path), _) => path,
+            (_, tidb_ast::Expr::Column(path)) => path,
+            _ => return None,
+        };
+        if !assignment_qualifier_matches(path, qualifier) {
+            return None;
+        }
+        let offset = columns.iter().position(|column| {
+            column.name.eq_ignore_ascii_case(path.last().map_or("", String::as_str))
+        })?;
+        match unparenthesized(if matches!(left.as_ref(), tidb_ast::Expr::Column(_)) {
+            right.as_ref()
+        } else {
+            left.as_ref()
+        }) {
+            tidb_ast::Expr::ParamMarker { order, .. } => {
+                residual_eqs.push((offset, ResidualEq::Param(*order)));
+            }
+            constant => {
+                let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
+                    constant,
+                    &tidb_expr::rewriter::ZonedNoResolver::new(
+                        // A constant references no column, so the zone only
+                        // fixes temporal literals.
+                        crate::StmtContext::for_query().session_zone(),
+                    ),
+                )
+                .ok()?;
+                let tidb_expr::expression::Expression::Constant(constant) = rewritten else {
+                    return None;
+                };
+                residual_eqs.push((offset, ResidualEq::Constant(constant.eval().ok()?)));
+            }
+        }
+    }
+    key_expr
 }
 
 fn is_key_column(expr: &tidb_ast::Expr, column: &str, qualifier: Option<&str>) -> bool {

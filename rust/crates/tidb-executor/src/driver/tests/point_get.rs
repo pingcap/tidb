@@ -342,6 +342,182 @@ fn prepared_fast_point_get_binds_common_handle_without_cloning_template() {
     assert_eq!(datum_text_for_test(&fast.1[0][1]), "value-1");
 }
 
+
+
+/// The prepared point cache answers a SECONDARY-INDEX prefix pin with one
+/// closed index range, fetching each entry's row and filtering the residual
+/// equalities on the decoded rows -- Go's cached IndexLookUp shape.
+#[test]
+fn prepared_point_cache_answers_a_secondary_index_prefix() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE idx_pin (\
+            id VARCHAR(8) PRIMARY KEY, \
+            a VARCHAR(8) NOT NULL COLLATE utf8mb4_bin, \
+            b VARCHAR(8) NOT NULL COLLATE utf8mb4_bin, \
+            v BIGINT NOT NULL, \
+            INDEX ia (a, b))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO idx_pin VALUES ('k1','a1','b1',10),('k2','a1','b2',20),('k3','a2','b1',30)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+
+    let stmt =
+        tidb_parser::parse("SELECT id, v FROM idx_pin WHERE a = ? AND b = ? AND v = ?").unwrap();
+    let plan = std::sync::Arc::new(
+        build_prepared_point_get_plan(&stmt, 3, &catalog, DEFAULT_DATABASE, &Default::default())
+            .expect("an index-prefix pin is a reusable prepared plan"),
+    );
+    assert!(matches!(
+        plan.target,
+        crate::driver::access::PreparedPointTarget::IndexPrefix { .. }
+    ));
+
+    // The same answer the ordinary scan gives.
+    let zone: tidb_datatype::SessionTimeZone = Default::default();
+    let ctx = crate::kv_table::PreparedPointGetDecodeContext::for_query(false, zone.clone());
+    let expected = run_select_on(
+        "SELECT id, v FROM idx_pin WHERE a = 'a1' AND b = 'b2' AND v = 20",
+        &catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let got = cached_rows(&plan, &mut catalog, &ctx, &zone, &[Datum::Bytes(b"a1".to_vec()), Datum::Bytes(b"b2".to_vec()), Datum::Int(20)]);
+    assert_eq!(got.len(), 1);
+    assert_eq!(datum_text_for_test(&got[0][0]), datum_text_for_test(&expected[0][0]));
+
+    // A residual that no row satisfies reads nothing even though the index
+    // range itself matched.
+    let got = cached_rows(&plan, &mut catalog, &ctx, &zone, &[Datum::Bytes(b"a1".to_vec()), Datum::Bytes(b"b1".to_vec()), Datum::Int(999)]);
+    assert!(got.is_empty());
+
+    // A NULL pin matches no row under SQL semantics and reads nothing.
+    assert!(cached_rows(&plan, &mut catalog, &ctx, &zone, &[Datum::Null, Datum::Bytes(b"b1".to_vec()), Datum::Int(10)]).is_empty());
+}
+
+/// A leading prefix of a CLUSTERED primary key narrows the ROW-KEY space to
+/// closed record ranges; every unpinned equality filters the decoded rows.
+#[test]
+fn prepared_point_cache_answers_a_clustered_key_prefix() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE clustered_pin (\
+            custacc VARCHAR(8) NOT NULL COLLATE utf8mb4_bin, \
+            seq BIGINT NOT NULL, \
+            stsrcd VARCHAR(4) NOT NULL COLLATE utf8mb4_bin, \
+            v BIGINT NOT NULL, \
+            PRIMARY KEY (custacc, seq) CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO clustered_pin VALUES ('c1',1,'1',100),('c1',2,'1',200),('c2',1,'1',300)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    // The prefix guard reads loaded statistics; a partial key pin without
+    // them declines, so give the table analyzed NDVs like production has.
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "clustered_pin",
+        1_000,
+        &[("custacc", 2), ("seq", 1_000), ("stsrcd", 1), ("v", 1_000)],
+        &crate::StmtContext::for_query(),
+    );
+
+    // Every residual equality must survive into the projection -- the cached
+    // read filters decoded OUTPUT rows only.
+    let stmt = tidb_parser::parse(
+        "SELECT seq, v, stsrcd FROM clustered_pin WHERE custacc = ? AND stsrcd = ?",
+    )
+    .unwrap();
+    let plan = std::sync::Arc::new(
+        build_prepared_point_get_plan(&stmt, 2, &catalog, DEFAULT_DATABASE, &Default::default())
+            .expect("a clustered-key prefix pin is a reusable prepared plan"),
+    );
+    assert!(matches!(
+        plan.target,
+        crate::driver::access::PreparedPointTarget::ClusteredPrefix
+    ));
+
+    let zone: tidb_datatype::SessionTimeZone = Default::default();
+    let ctx = crate::kv_table::PreparedPointGetDecodeContext::for_query(false, zone.clone());
+    let rows = cached_rows(&plan, &mut catalog, &ctx, &zone, &[Datum::Bytes(b"c1".to_vec()), Datum::Bytes(b"1".to_vec())]);
+    assert_eq!(rows.len(), 2);
+
+    // The residual `stsrcd = ?` filters the decoded rows of the range: a
+    // value no row under `custacc = 'c2'` carries reads nothing.
+    let rows = cached_rows(&plan, &mut catalog, &ctx, &zone, &[Datum::Bytes(b"c2".to_vec()), Datum::Bytes(b"9".to_vec())]);
+    assert!(rows.is_empty());
+}
+
+/// Binds one EXECUTE of a prepared point plan and drains its cached read.
+fn cached_rows(
+    plan: &std::sync::Arc<crate::driver::access::PreparedPointGetPlan>,
+    catalog: &mut Catalog,
+    ctx: &crate::kv_table::PreparedPointGetDecodeContext,
+    zone: &tidb_datatype::SessionTimeZone,
+    values: &[Datum],
+) -> Vec<Vec<Datum>> {
+    let execution = plan.bind(values, zone).expect("binds");
+    run_prepared_point_get(&execution, catalog, DEFAULT_DATABASE, ctx)
+        .unwrap()
+        .expect("the cached read")
+        .1
+}
+
+
+/// `col IS NULL` beside the pins is a row-level residual: it never pins a
+/// key, and the cached read answers only rows whose decoded slot is NULL.
+#[test]
+fn prepared_point_cache_answers_an_is_null_residual() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE null_pin (\
+            alwcobj VARCHAR(8) NOT NULL COLLATE utf8mb4_bin, \
+            alwcnum VARCHAR(8) NOT NULL COLLATE utf8mb4_bin, \
+            lmtdms VARCHAR(8), \
+            flgval VARCHAR(2) NOT NULL COLLATE utf8mb4_bin, \
+            PRIMARY KEY (alwcobj, alwcnum) CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO null_pin VALUES ('o1','n1',NULL,'1'),('o1','n2','dms','1')",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "null_pin",
+        100,
+        &[("alwcobj", 2), ("alwcnum", 100)],
+        &crate::StmtContext::for_query(),
+    );
+
+    let stmt = tidb_parser::parse(
+        "SELECT alwcobj, alwcnum, lmtdms, flgval FROM null_pin WHERE alwcobj = ? AND lmtdms IS NULL AND flgval = ?",
+    )
+    .unwrap();
+    let plan = std::sync::Arc::new(
+        build_prepared_point_get_plan(&stmt, 2, &catalog, DEFAULT_DATABASE, &Default::default())
+            .expect("an equality pin beside IS NULL is a reusable prepared plan"),
+    );
+
+    let zone: tidb_datatype::SessionTimeZone = Default::default();
+    let ctx = crate::kv_table::PreparedPointGetDecodeContext::for_query(false, zone.clone());
+    let rows = cached_rows(&plan, &mut catalog, &ctx, &zone, &[Datum::Bytes(b"o1".to_vec()), Datum::Bytes(b"1".to_vec())]);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(datum_text_for_test(&rows[0][1]), "n1");
+}
+
 /// The YCSB E scan fast path reads one clustered-handle range row and refuses
 /// a wider limit, leaving every non-admitted shape on the general planner.
 #[test]

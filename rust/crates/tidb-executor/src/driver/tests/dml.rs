@@ -586,3 +586,130 @@ fn update_and_delete_rows() {
         );
     }
 }
+
+
+/// The fast prepared UPDATE keeps a table WITH secondary indexes on the fast
+/// arm -- `update_row_with_old` maintains the entries -- and its residual
+/// equalities answer against the OLD row before any assignment lands.
+#[test]
+fn fast_prepared_update_maintains_indexes_and_answers_residuals() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE upi (\
+            id VARCHAR(8) PRIMARY KEY, \
+            a VARCHAR(8) NOT NULL COLLATE utf8mb4_bin, \
+            v BIGINT NOT NULL, \
+            INDEX ia (a))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO upi VALUES ('k1','a1',10),('k2','a2',20)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+
+    let parse_update = |sql: &str| -> tidb_ast::UpdateStmt {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        match &stmt {
+            Stmt::Dml(dml) => match &**dml {
+                tidb_ast::DmlStmt::Update(update) => update.as_ref().clone(),
+                _ => panic!("expected an update"),
+            },
+            _ => panic!("expected a dml"),
+        }
+    };
+    let ctx = crate::StmtContext::for_query();
+    let run = |sql: &str, params: &[Datum], catalog: &mut Catalog| {
+        let update = parse_update(sql);
+        run_fast_prepared_update(&update, params, catalog, DEFAULT_DATABASE, &ctx)
+            .unwrap()
+            .expect("the fast prepared update")
+    };
+
+    // Handle pin plus a residual the row answers: one row updated.
+    let affected = run(
+        "UPDATE upi SET v = ? WHERE id = ? AND a = ?",
+        &[Datum::Int(99), Datum::Bytes(b"k1".to_vec()), Datum::Bytes(b"a1".to_vec())],
+        &mut catalog,
+    );
+    assert_eq!(affected, 1);
+    assert_eq!(
+        run_select_on("SELECT v FROM upi WHERE id = 'k1'", &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(99)]]
+    );
+    // The secondary index still finds the row after the maintenance.
+    assert_eq!(
+        run_select_on("SELECT id FROM upi WHERE a = 'a1'", &catalog, &ctx).unwrap().len(),
+        1
+    );
+
+    // A residual no row answers changes nothing.
+    let affected = run(
+        "UPDATE upi SET v = ? WHERE id = ? AND a = ?",
+        &[Datum::Int(50), Datum::Bytes(b"k1".to_vec()), Datum::Bytes(b"zz".to_vec())],
+        &mut catalog,
+    );
+    assert_eq!(affected, 0);
+    // A NULL residual matches nothing under SQL semantics.
+    let affected = run(
+        "UPDATE upi SET v = ? WHERE id = ? AND a = ?",
+        &[Datum::Int(50), Datum::Bytes(b"k1".to_vec()), Datum::Null],
+        &mut catalog,
+    );
+    assert_eq!(affected, 0);
+}
+
+/// The fast prepared INSERT writes a table WITH secondary indexes, and a
+/// duplicate of a unique indexed value is reported as zero rows rather than
+/// corrupting the index.
+#[test]
+fn fast_prepared_insert_maintains_secondary_indexes() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE ini (\
+            id VARCHAR(8) PRIMARY KEY, \
+            code VARCHAR(8) NOT NULL COLLATE utf8mb4_bin UNIQUE, \
+            v BIGINT NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO ini VALUES ('k1','c1',10)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+
+    let stmt = tidb_parser::parse("INSERT INTO ini (id, code, v) VALUES (?, ?, ?)").unwrap();
+    let insert = match &stmt {
+        Stmt::Dml(dml) => match &**dml {
+            tidb_ast::DmlStmt::Insert(insert) => insert.as_ref().clone(),
+            _ => panic!("expected an insert"),
+        },
+        _ => panic!("expected a dml"),
+    };
+    let ctx = crate::StmtContext::for_query();
+    let mut bind = |values: &[Datum]| -> Result<Option<u64>, DriverError> {
+        run_fast_prepared_insert(&insert, values, &mut catalog, DEFAULT_DATABASE, &ctx)
+            .map(|result| result.map(|(affected, _)| affected))
+    };
+
+    let affected = bind(&[Datum::Bytes(b"k2".to_vec()), Datum::Bytes(b"c2".to_vec()), Datum::Int(20)])
+        .unwrap()
+        .expect("fast insert");
+    assert_eq!(affected, 1);
+
+    // The unique index sees the new entry: a second 'c2' under a PLAIN
+    // insert raises the duplicate-key error instead of writing.
+    let duplicated = bind(&[Datum::Bytes(b"k3".to_vec()), Datum::Bytes(b"c2".to_vec()), Datum::Int(30)]);
+    match duplicated {
+        Err(DriverError::DuplicateEntry { .. }) => {}
+        other => panic!("expected a duplicate-key error, got {other:?}"),
+    }
+    assert_eq!(
+        run_select_on("SELECT id FROM ini WHERE code = 'c2'", &catalog, &ctx).unwrap().len(),
+        1
+    );
+}

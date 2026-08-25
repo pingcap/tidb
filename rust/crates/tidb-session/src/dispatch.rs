@@ -493,6 +493,17 @@ impl Session {
         let DmlStmt::Insert(insert) = &**dml else {
             return Ok(None);
         };
+        // The ordinary funnel records every touched table on the transaction
+        // metadata-lock map from its single preprocess walk. This arm skips
+        // that walk, so it records its one target here -- a write is never
+        // exempt (only an autocommit READ is), and skipping the record would
+        // let a DDL slip past a live transaction writer.
+        let (db, table) = match insert.table.as_slice() {
+            [table] => (String::new(), table.clone()),
+            [db, table] => (db.clone(), table.clone()),
+            slice => (String::new(), slice.last().cloned().unwrap_or_default()),
+        };
+        self.record_mdl_related_table_names(&[(db, table)]);
         let current_db = self.current_db.clone();
         let ctx = self
             .fast_statement_context(true, insert.ignore)
@@ -532,6 +543,16 @@ impl Session {
         let DmlStmt::Update(update) = &**dml else {
             return Ok(None);
         };
+        // Same MDL duty as the insert arm above: this fast path skips the
+        // preprocess walk that would otherwise record the target table.
+        if let tidb_ast::UpdateKind::Single(table_ref) = &update.kind {
+            let (db, table) = match table_ref.name.as_slice() {
+                [table] => (String::new(), table.clone()),
+                [db, table] => (db.clone(), table.clone()),
+                slice => (String::new(), slice.last().cloned().unwrap_or_default()),
+            };
+            self.record_mdl_related_table_names(&[(db, table)]);
+        }
         let current_db = self.current_db.clone();
         let ctx = self
             .fast_statement_context(true, update.ignore)

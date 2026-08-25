@@ -109,6 +109,8 @@ pub(crate) enum PointResidualBound {
     Literal(Datum),
     /// A `?` marker resolved against each EXECUTE's parameters.
     Param(usize),
+    /// `column IS NULL`: the decoded row must carry a NULL in its slot.
+    IsNull,
 }
 
 /// The immutable part of Go's cached `PointGetPlan` for one prepared handle
@@ -127,14 +129,17 @@ pub struct PreparedPointGetPlan {
     database: String,
     table: String,
     table_id: i64,
-    /// One marker order per handle column, aligned with [`Self::handle_types`]
-    /// — an integer PK carries one entry, a composite common handle one per
-    /// prefix column. `None` pins that column to the matching
-    /// [`Self::handle_literals`] constant instead of an EXECUTE parameter.
+    /// One marker order per PINNED key column, aligned with
+    /// [`Self::pin_types`] — the full row handle for [`PreparedPointTarget::
+    /// RowHandle`], or the leading columns of a narrower key otherwise.
+    /// `None` pins that column to the matching [`Self::handle_literals`]
+    /// constant instead of an EXECUTE parameter.
     parameter_orders: Vec<Option<usize>>,
-    /// The handle columns' field types, in handle order; `bind` moves each
+    /// The pinned columns' field types, in key order; `bind` moves each
     /// execute's value into this domain before encoding the key.
-    handle_types: Vec<FieldType>,
+    pin_types: Vec<FieldType>,
+    /// Which key the pins name, and so which single read answers them all.
+    pub(crate) target: PreparedPointTarget,
     /// The literal constants pinning handle columns, aligned with
     /// [`Self::parameter_orders`]; `None` where a marker pins instead. A NULL
     /// literal never matches, so it binds to an empty execution.
@@ -184,7 +189,7 @@ impl PreparedPointGetPlan {
         zone: &tidb_datatype::SessionTimeZone,
     ) -> Option<PreparedPointGetExecution> {
         let mut key_values = Vec::with_capacity(self.parameter_orders.len());
-        for (index, handle_type) in self.handle_types.iter().enumerate() {
+        for (index, handle_type) in self.pin_types.iter().enumerate() {
             let value = match (&self.parameter_orders[index], &self.handle_literals[index]) {
                 (Some(order), _) => values.get(*order)?,
                 (None, Some(literal)) => literal,
@@ -196,6 +201,7 @@ impl PreparedPointGetPlan {
                 return Some(PreparedPointGetExecution {
                     plan: Arc::clone(self),
                     handle: None,
+                    range_values: None,
                     residuals: Vec::new(),
                 });
             }
@@ -203,8 +209,9 @@ impl PreparedPointGetPlan {
         }
         let mut residuals = Vec::with_capacity(self.residuals.len());
         for (position, bound) in &self.residuals {
-            let value = match bound {
-                PointResidualBound::Literal(value) => value.clone(),
+            let check = match bound {
+                PointResidualBound::IsNull => ResidualCheck::IsNull,
+                PointResidualBound::Literal(value) => ResidualCheck::Equal(value.clone()),
                 PointResidualBound::Param(order) => {
                     let value = values.get(*order)?;
                     if value.is_null() {
@@ -212,29 +219,43 @@ impl PreparedPointGetPlan {
                         return Some(PreparedPointGetExecution {
                             plan: Arc::clone(self),
                             handle: None,
+                            range_values: None,
                             residuals: Vec::new(),
                         });
                     }
-                    point_get_value(&self.output.columns[*position].1, value)?
+                    ResidualCheck::Equal(
+                        point_get_value(&self.output.columns[*position].1, value)?,
+                    )
                 }
             };
-            residuals.push((*position, value));
+            residuals.push((*position, check));
         }
-        let first = key_values.first()?;
-        let handle = if self.common_handle_offsets.is_empty() {
-            match first {
-                Datum::Int(value) => Some(TableHandle::Int(*value)),
-                Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
-                _ => None,
-            }
-        } else {
-            let encoded = tidb_codec::encode_key_in_timezone(zone, &key_values).ok()?;
-            let handle = tidb_txnkv::CommonHandle::new(encoded).ok()?;
-            Some(TableHandle::Common(handle.encoded().to_vec()))
-        };
+        // A full-handle pin rebuilds the one record key; a narrower key
+        // carries its pinned values into the run as a closed point range.
+        if matches!(self.target, PreparedPointTarget::RowHandle) {
+            let first = key_values.first()?;
+            let handle = if self.common_handle_offsets.is_empty() {
+                match first {
+                    Datum::Int(value) => Some(TableHandle::Int(*value)),
+                    Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
+                    _ => None,
+                }
+            } else {
+                let encoded = tidb_codec::encode_key_in_timezone(zone, &key_values).ok()?;
+                let handle = tidb_txnkv::CommonHandle::new(encoded).ok()?;
+                Some(TableHandle::Common(handle.encoded().to_vec()))
+            };
+            return Some(PreparedPointGetExecution {
+                plan: Arc::clone(self),
+                handle,
+                range_values: None,
+                residuals,
+            });
+        }
         Some(PreparedPointGetExecution {
             plan: Arc::clone(self),
-            handle,
+            handle: None,
+            range_values: Some(key_values),
             residuals,
         })
     }
@@ -258,13 +279,43 @@ impl PreparedPointGetPlan {
 /// One cache hit after its execute-time parameter has been rebuilt into a
 /// handle. The executor itself is still created fresh by
 /// [`run_prepared_point_get`].
+/// Which key a prepared point plan's pins name, and so which single read
+/// answers them: the full row handle, a leading prefix of one secondary
+/// index, or a leading prefix of the clustered primary key itself. Go's plan
+/// cache keeps whatever `IndexLookUp`/`TableRangeScan`/`PointGet` the
+/// optimizer chose; this enum is that choice, kept immutable per PREPARE.
+#[derive(Clone, Debug)]
+pub(crate) enum PreparedPointTarget {
+    /// The pins cover every handle column: ONE record-key read.
+    RowHandle,
+    /// The pins cover a leading prefix of this secondary index: one closed
+    /// single-point index range, each entry's handle then fetched.
+    IndexPrefix { index_id: i64 },
+    /// The pins cover a leading prefix of the clustered primary key: closed
+    /// record-key ranges, walked like any narrowed table scan.
+    ClusteredPrefix,
+}
+
 #[derive(Clone, Debug)]
 pub struct PreparedPointGetExecution {
     plan: Arc<PreparedPointGetPlan>,
+    /// [`PreparedPointTarget::RowHandle`] only: the execute's rebuilt handle.
+    /// `None` here — or in [`Self::range_values`] on the other arms — binds a
+    /// NULL pin, which matches no row and reads nothing.
     handle: Option<TableHandle>,
-    /// This execute's residual equalities, parameters already resolved into
-    /// row domains: `(offset into the output row, expected value)`.
-    residuals: Vec<(usize, Datum)>,
+    /// The narrower-key arms: this execute's pinned key values, already moved
+    /// into their columns' domains.
+    range_values: Option<Vec<Datum>>,
+    /// This execute's residual predicates, parameters already resolved:
+    /// `(offset into the output row, the check the decoded slot must pass)`.
+    residuals: Vec<(usize, ResidualCheck)>,
+}
+
+/// One residual predicate bound to an EXECUTE's parameters.
+#[derive(Clone, Debug)]
+enum ResidualCheck {
+    Equal(Datum),
+    IsNull,
 }
 
 impl PreparedPointGetExecution {
@@ -354,9 +405,17 @@ pub fn build_prepared_point_get_plan(
     let conjuncts = prepared_point_eq_conjuncts(select.where_clause.as_ref()?, &scope, zone)?;
     let mut resolver = ScopeResolver { scope: &scope };
     let mut resolved = Vec::with_capacity(conjuncts.len());
-    for (path, marker_order, literal) in conjuncts {
-        let (offset, _, _) = resolver.resolve(&path)?;
-        resolved.push((offset, marker_order, literal));
+    for conjunct in conjuncts {
+        match conjunct {
+            PreparedPointConjunct::Eq { path, order, literal } => {
+                let (offset, _, _) = resolver.resolve(&path)?;
+                resolved.push((offset, PreparedPointPredicate::Eq(order, literal)));
+            }
+            PreparedPointConjunct::IsNull { path } => {
+                let (offset, _, _) = resolver.resolve(&path)?;
+                resolved.push((offset, PreparedPointPredicate::IsNull));
+            }
+        }
     }
     drop(resolver);
     let handle_offsets: Vec<usize> = match handle_offset {
@@ -366,55 +425,75 @@ pub fn build_prepared_point_get_plan(
     if handle_offsets.is_empty() {
         return None;
     }
-    let mut parameter_orders = Vec::with_capacity(handle_offsets.len());
-    let mut handle_literals = Vec::with_capacity(handle_offsets.len());
-    for offset in &handle_offsets {
-        let mut hits = resolved.iter().filter(|(pinned, ..)| pinned == offset);
-        let (_, marker_order, literal) = hits.next()?;
+    // Which key do the pins name? A FULL handle keeps today's single-row
+    // read; anything less looks for a narrower key whose LEADING columns the
+    // pins still answer -- Go's plan cache would keep whatever access path
+    // the optimizer chose here, so this port caches that narrowed access
+    // instead of re-running resolve and cost model on every EXECUTE.
+    let (target, pin_offsets) =
+        match prepared_range_key(catalog, &table, &common_handle_offsets, &resolved) {
+            Some((target, pins)) if !handle_offsets.iter().all(|offset| column_pinned_once(*offset, &resolved)) => {
+                (target, pins)
+            }
+            _ => (PreparedPointTarget::RowHandle, handle_offsets.clone()),
+        };
+    let mut parameter_orders = Vec::with_capacity(pin_offsets.len());
+    let mut handle_literals = Vec::with_capacity(pin_offsets.len());
+    for offset in &pin_offsets {
+        let mut hits = resolved
+            .iter()
+            .filter(|(pinned, kind)| *pinned == *offset && kind.eq_parts().is_some());
+        let Some((_, predicate)) = hits.next() else {
+            return None;
+        };
+        let (marker_order, literal) = predicate.eq_parts()?;
         if hits.next().is_some() {
             return None;
         }
-        parameter_orders.push(*marker_order);
-        handle_literals.push(literal.clone());
+        // The pin value is encoded into a KEY, so its domain has to order
+        // like its bytes; otherwise the cache declines to the planner.
+        if !point_byte_safe(&columns[*offset].1) {
+            return None;
+        }
+        parameter_orders.push(marker_order);
+        handle_literals.push(literal);
     }
     // Whatever equality the key lookup does not answer filters the decoded
     // row. Each residual column must survive into the output row and compare
     // byte-wise (or natively for non-strings), so the cached check is exactly
     // the scan's own `=`; anything else declines to the ordinary planner.
     let mut residuals = Vec::new();
-    for (offset, marker_order, literal) in &resolved {
-        if handle_offsets.contains(offset) {
+    for (offset, kind) in &resolved {
+        if pin_offsets.contains(offset) {
             continue;
         }
         let position = output.offsets.iter().position(|o| o == offset)?;
-        let column_type = &output.columns[position].1;
-        let string_safe = column_type.eval_type() != tidb_datatype::EvalType::String
-            || matches!(
-                column_type.collation(),
-                tidb_datatype::Collation::Binary
-                    | tidb_datatype::Collation::AsciiBin
-                    | tidb_datatype::Collation::Latin1Bin
-                    | tidb_datatype::Collation::Utf8Bin
-                    | tidb_datatype::Collation::Utf8Mb4Bin
-                    | tidb_datatype::Collation::Utf8Mb40900Bin
-            );
-        if !string_safe {
-            return None;
-        }
-        let bound = match marker_order {
-            Some(order) => PointResidualBound::Param(*order),
-            None => {
-                let value = literal.as_ref()?;
-                if value.is_null() {
-                    // `residual = NULL` matches no row under SQL semantics;
-                    // leave such statements to the ordinary planner rather
-                    // than caching an always-empty answer.
+        match kind {
+            PreparedPointPredicate::IsNull => {
+                residuals.push((position, PointResidualBound::IsNull));
+            }
+            PreparedPointPredicate::Eq(marker_order, literal) => {
+                let column_type = &output.columns[position].1;
+                if !point_byte_safe(column_type) {
                     return None;
                 }
-                PointResidualBound::Literal(value.clone())
+                let bound = match marker_order {
+                    Some(order) => PointResidualBound::Param(*order),
+                    None => {
+                        let value = literal.as_ref()?;
+                        if value.is_null() {
+                            // `residual = NULL` matches no row under SQL
+                            // semantics; leave such statements to the ordinary
+                            // planner rather than caching an always-empty
+                            // answer.
+                            return None;
+                        }
+                        PointResidualBound::Literal(value.clone())
+                    }
+                };
+                residuals.push((position, bound));
             }
-        };
-        residuals.push((position, bound));
+        }
     }
     // Every referenced marker must exist when the parameters arrive.
     let max_order = parameter_orders
@@ -423,7 +502,7 @@ pub fn build_prepared_point_get_plan(
         .copied()
         .chain(residuals.iter().filter_map(|(_, bound)| match bound {
             PointResidualBound::Param(order) => Some(*order),
-            PointResidualBound::Literal(_) => None,
+            _ => None,
         }))
         .max();
     if max_order.is_some_and(|order| order >= parameter_count) {
@@ -437,11 +516,12 @@ pub fn build_prepared_point_get_plan(
         table: table_name.to_owned(),
         table_id: table.table_id,
         parameter_orders,
-        handle_types: handle_offsets
+        pin_types: pin_offsets
             .iter()
             .map(|offset| columns.get(*offset).map(|column| column.1.clone()))
             .collect::<Option<Vec<_>>>()?,
         handle_literals,
+        target,
         row_decoder: crate::kv_table::PreparedPointGetRowDecoder::new_with_handles(
             table.visible_columns(),
             handle_offset,
@@ -455,14 +535,35 @@ pub fn build_prepared_point_get_plan(
     })
 }
 
-/// One `column = ?`/`column = const` conjunct of a prepared point read's
-/// WHERE, its column path kept UNRESOLVED until the builder maps it through
-/// the statement's scope.
-type PreparedPointConjunct = (
-    Vec<String>,
-    Option<usize>,
-    Option<Datum>,
-);
+/// One `column = ?`, `column = const`, or `column IS NULL` conjunct of a
+/// prepared point read's WHERE, its column path kept UNRESOLVED until the
+/// builder maps it through the statement's scope.
+enum PreparedPointConjunct {
+    Eq {
+        path: Vec<String>,
+        order: Option<usize>,
+        literal: Option<Datum>,
+    },
+    IsNull { path: Vec<String> },
+}
+
+/// One WHERE conjunct RESOLVED to its column offset. `Eq` may pin a key;
+/// `IsNull` is inherently a row-level check (NULL never equals a key value).
+enum PreparedPointPredicate {
+    Eq(Option<usize>, Option<Datum>),
+    IsNull,
+}
+
+type ResolvedConjunct = (usize, PreparedPointPredicate);
+
+impl PreparedPointPredicate {
+    fn eq_parts(&self) -> Option<(Option<usize>, Option<Datum>)> {
+        match self {
+            PreparedPointPredicate::Eq(order, literal) => Some((*order, literal.clone())),
+            PreparedPointPredicate::IsNull => None,
+        }
+    }
+}
 
 /// Flattens a WHERE conjunction into `(column path, ? order, literal datum)`
 /// triples — exactly [`point_equal_pairs`]' shape rule with markers kept
@@ -503,7 +604,11 @@ fn prepared_point_eq_conjuncts(
                 }
                 match unparenthesized(value_expr) {
                     Expr::ParamMarker { order, .. } => {
-                        out.push((column.clone(), Some(*order), None));
+                        out.push(PreparedPointConjunct::Eq {
+                            path: column.clone(),
+                            order: Some(*order),
+                            literal: None,
+                        });
                         true
                     }
                     _ => {
@@ -519,10 +624,26 @@ fn prepared_point_eq_conjuncts(
                         let Ok(value) = constant.eval() else {
                             return false;
                         };
-                        out.push((column.clone(), None, Some(value)));
+                        out.push(PreparedPointConjunct::Eq {
+                            path: column.clone(),
+                            order: None,
+                            literal: Some(value),
+                        });
                         true
                     }
                 }
+            }
+            Expr::Is { expr, target, not } if matches!(target, tidb_ast::IsTarget::Null) && !*not => {
+                // `col IS NULL`: a row-level check (NULL never equals, so it
+                // can never pin a key), admitted beside the equalities.
+                let Expr::Column(path) = unparenthesized(expr) else {
+                    return false;
+                };
+                if path.is_empty() {
+                    return false;
+                }
+                out.push(PreparedPointConjunct::IsNull { path: path.clone() });
+                true
             }
             _ => false,
         }
@@ -570,34 +691,279 @@ pub fn run_prepared_point_get(
         return Ok(None);
     };
     // A NULL key bound to an always-empty execution; no read may run.
-    let Some(handle) = execution.handle.as_ref() else {
+    if execution.handle.is_none() && execution.range_values.is_none() {
         return Ok(Some((plan.output.columns.clone(), Vec::new())));
+    }
+    // The residual equalities the key lookup could not answer decide per row,
+    // comparing in each column's own domain — the same `=` the ordinary scan
+    // would have evaluated.
+    let matches_residuals =
+        |row: &[Datum]| residuals_pass(row, &plan.output.columns, &execution.residuals);
+    let _ = matches_residuals;
+    let decode_error = |error: crate::kv_table::KvTableError| {
+        ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
     };
-    let residuals = &execution.residuals;
-    let rows = match table
-        .get_prepared_point_row(handle, &plan.row_decoder, ctx)
-        .map_err(|error| {
-            ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
-        })? {
-        None => Vec::new(),
-        Some(row) => {
-            // The residual equalities the key lookup could not answer decide
-            // here, comparing in each column's own domain — the same `=` the
-            // ordinary scan would have evaluated.
-            if !residuals.iter().all(|(position, expected)| {
-                row.get(*position).is_some_and(|actual| {
-                    actual
-                        .compare(expected, (&plan.output.columns[*position].1).collation())
-                        .is_ok_and(|ordering| ordering == std::cmp::Ordering::Equal)
-                })
-            }) {
-                Vec::new()
-            } else {
-                vec![row]
+    let rows = match plan.target {
+        PreparedPointTarget::RowHandle => {
+            let handle = execution.handle.as_ref().expect("row-handle arm binds one");
+            match table
+                .get_prepared_point_row(handle, &plan.row_decoder, ctx)
+                .map_err(decode_error)?
+            {
+                None => Vec::new(),
+                Some(row) if matches_residuals(&row) => vec![row],
+                Some(_) => Vec::new(),
             }
+        }
+        PreparedPointTarget::IndexPrefix { index_id } => {
+            let values = execution
+                .range_values
+                .as_deref()
+                .expect("index-prefix arm binds key values");
+            let range = crate::kv_table::IndexRange {
+                low: values.to_vec(),
+                high: values.to_vec(),
+                low_exclusive: false,
+                high_exclusive: false,
+            };
+            let mut cursor = table
+                .index_range_cursor(index_id, &range, ctx.zone())
+                .map_err(decode_error)?;
+            let mut handles = Vec::new();
+            loop {
+                let Some(handle) = cursor.next_handle().map_err(decode_error)? else {
+                    break;
+                };
+                handles.push(handle);
+                if handles.len() > PREPARED_RANGE_ROW_CAP {
+                    // A wider range than any estimate defended: give the
+                    // statement back to the cost model instead of fetching
+                    // an unbounded handle stream.
+                    return Ok(None);
+                }
+            }
+            drop(cursor);
+            // Go's index LOOKUP batches its handle fetches; a range holding
+            // more than a handful of entries pays far less through one
+            // batched read than one point read per entry.
+            const INLINE_HANDLES: usize = 4;
+            let fetched = if handles.len() <= INLINE_HANDLES {
+                let mut fetched = Vec::with_capacity(handles.len());
+                for handle in &handles {
+                    fetched.push(
+                        table
+                            .get_prepared_point_row(handle, &plan.row_decoder, ctx)
+                            .map_err(decode_error)?,
+                    );
+                }
+                fetched
+            } else {
+                table
+                    .get_prepared_point_rows(&handles, &plan.row_decoder, ctx)
+                    .map_err(decode_error)?
+            };
+            let mut rows = Vec::with_capacity(fetched.len());
+            for row in fetched.into_iter().flatten() {
+                if matches_residuals(&row) {
+                    rows.push(row);
+                }
+            }
+            rows
+        }
+        PreparedPointTarget::ClusteredPrefix => {
+            let values = execution
+                .range_values
+                .as_deref()
+                .expect("clustered-prefix arm binds key values");
+            let range = crate::kv_table::IndexRange {
+                low: values.to_vec(),
+                high: values.to_vec(),
+                low_exclusive: false,
+                high_exclusive: false,
+            };
+            let encoded =
+                crate::handle_range::record_key_ranges(table, std::slice::from_ref(&range), ctx.zone(), false)
+                    .map_err(|error| {
+                        ExecError::unsupported(format!(
+                            "prepared point read failed to encode its range: {error:?}"
+                        ))
+                    })?;
+            // An unencodable bound has no narrowed read; re-plan rather than
+            // guess at a fallback range here.
+            let Some(ranges) = encoded else {
+                return Ok(None);
+            };
+            let Some(rows) = table
+                .prepared_rows_in_record_ranges(&ranges, &plan.row_decoder, ctx, PREPARED_RANGE_ROW_CAP)
+                .map_err(decode_error)?
+            else {
+                return Ok(None);
+            };
+            let mut rows = rows;
+            rows.retain(|row| matches_residuals(row));
+            rows
         }
     };
     Ok(Some((plan.output.columns.clone(), rows)))
+}
+
+/// The residual gate shared by every prepared point-read arm: each unconsumed
+/// predicate must hold on the decoded row -- an `=` compared in its own
+/// domain, or a NULL present where `IS NULL` demanded one.
+fn residuals_pass(
+    row: &[Datum],
+    columns: &[(String, FieldType)],
+    residuals: &[(usize, ResidualCheck)],
+) -> bool {
+    residuals.iter().all(|(position, check)| match check {
+        ResidualCheck::IsNull => row.get(*position).is_some_and(Datum::is_null),
+        ResidualCheck::Equal(expected) => row.get(*position).is_some_and(|actual| {
+            actual
+                .compare(expected, (&columns[*position].1).collation())
+                .is_ok_and(|ordering| ordering == std::cmp::Ordering::Equal)
+        }),
+    })
+}
+
+/// Whether ONE equality conjunct names this column (an `IS NULL` beside it
+/// does not compete for a key). The column pins a key only if exactly one
+/// such equality exists and nothing else touches it.
+fn column_pinned_once(offset: usize, resolved: &[ResolvedConjunct]) -> bool {
+    let mut hits = resolved
+        .iter()
+        .filter(|(pinned, kind)| *pinned == offset && kind.eq_parts().is_some());
+    hits.next().is_some() && hits.next().is_none()
+}
+
+/// Whether equality over this column's domain can be answered from KEY BYTES
+/// alone: a binary collation (or a non-string domain). A key PIN needs this
+/// because its value is encoded into the lookup key, and a residual
+/// comparison needs it because it compares decoded bytes against the bound.
+fn point_byte_safe(field_type: &FieldType) -> bool {
+    field_type.eval_type() != tidb_datatype::EvalType::String
+        || matches!(
+            field_type.collation(),
+            tidb_datatype::Collation::Binary
+                | tidb_datatype::Collation::AsciiBin
+                | tidb_datatype::Collation::Latin1Bin
+                | tidb_datatype::Collation::Utf8Bin
+                | tidb_datatype::Collation::Utf8Mb4Bin
+                | tidb_datatype::Collation::Utf8Mb40900Bin
+        )
+}
+
+/// The longest leading prefix of `key_offsets` whose every column is pinned
+/// exactly once by the resolved equalities and byte-order safe as a key.
+fn prepared_prefix_pins(
+    key_offsets: &[usize],
+    table: &crate::kv_table::KvTable,
+    resolved: &[ResolvedConjunct],
+) -> Vec<usize> {
+    let mut pins = Vec::with_capacity(key_offsets.len());
+    for offset in key_offsets {
+        if !column_pinned_once(*offset, resolved) {
+            break;
+        }
+        let Some(column) = table.visible_columns().get(*offset) else {
+            break;
+        };
+        if !point_byte_safe(&column.field_type) {
+            break;
+        }
+        pins.push(*offset);
+    }
+    pins
+}
+
+/// The estimated row count ONE closed point range over this pinned prefix
+/// reads. Loaded statistics decide it column by column against `key_len`,
+/// the full width of the key; a table without them admits only a FULL-key
+/// pin (every entry sharing those values is a duplicate of one logical key),
+/// because an estimate this port cannot defend must not replace the cost
+/// model. `None` declines the candidate.
+fn prepared_prefix_estimate(
+    catalog: &Catalog,
+    table: &crate::kv_table::KvTable,
+    pins: &[usize],
+    key_len: usize,
+) -> Option<f64> {
+    let stats = catalog.table_statistics(table.table_id);
+    let Some(stats) = stats.filter(|stats| !stats.pseudo) else {
+        // Without defensible statistics the estimate cannot be made -- but a
+        // FULL-key pin is bounded by duplicate entries alone, and any other
+        // prefix is admitted PROVISIONALLY: the run caps its reads at
+        // [`PREPARED_RANGE_ROW_CAP`] and falls back to the planner the moment
+        // a range proves wider. Correctness never depended on the estimate;
+        // only the worst-case latency does, and the fallback keeps that at
+        // the ordinary path's own.
+        return Some(PREPARED_RANGE_ROW_CAP as f64);
+    };
+    let rows = stats.row_count as f64;
+    if rows <= 0.0 {
+        return Some(0.0);
+    }
+    let full_columns = stats.columns.keys().copied().collect::<std::collections::BTreeSet<_>>();
+    let full_indexes = stats.indexes.keys().copied().collect::<std::collections::BTreeSet<_>>();
+    let mut estimate = rows;
+    for offset in pins {
+        let column = table.visible_columns().get(*offset)?;
+        let ndv = stats.estimate_column_ndv(column.id, &full_columns, &full_indexes)?;
+        if ndv < 1.0 {
+            return None;
+        }
+        estimate /= ndv.min(rows);
+    }
+    (estimate <= PREPARED_RANGE_ROW_CAP as f64).then(|| estimate.max(1.0))
+}
+
+/// The row count one cached range may read before the arm gives up and lets
+/// the cost model answer instead (`Ok(None)` -> re-plan).
+const PREPARED_RANGE_ROW_CAP: usize = 4096;
+
+/// Finds the narrower key the WHERE's equalities answer best: one secondary
+/// index or the clustered primary key whose LEADING columns are all pinned
+/// exactly once, over at most [`prepared_prefix_estimate`]'s row cap. The
+/// cheapest candidate wins; `None` leaves the statement on the planner.
+fn prepared_range_key(
+    catalog: &Catalog,
+    table: &crate::kv_table::KvTable,
+    common_handle_offsets: &[usize],
+    resolved: &[ResolvedConjunct],
+) -> Option<(PreparedPointTarget, Vec<usize>)> {
+    let mut best: Option<(f64, PreparedPointTarget, Vec<usize>)> = None;
+    let mut consider =
+        |pins: Vec<usize>, key_len: usize, target: PreparedPointTarget| {
+            if pins.is_empty() {
+                return;
+            }
+            let Some(estimate) = prepared_prefix_estimate(catalog, table, &pins, key_len)
+            else {
+                return;
+            };
+            if best.as_ref().is_none_or(|(best_estimate, _, _)| estimate < *best_estimate) {
+                best = Some((estimate, target, pins));
+            }
+        };
+    for index in table.indexes() {
+        // A PREFIX key part changes what the entry MEANS (`'ab'` stored where
+        // the row holds `'abc'`), so its equality cannot be answered from the
+        // entry alone.
+        if index.has_prefix() || index.column_offsets.is_empty() {
+            continue;
+        }
+        let pins = prepared_prefix_pins(&index.column_offsets, table, resolved);
+        consider(
+            pins,
+            index.column_offsets.len(),
+            PreparedPointTarget::IndexPrefix { index_id: index.id },
+        );
+    }
+    consider(
+        prepared_prefix_pins(common_handle_offsets, table, resolved),
+        common_handle_offsets.len(),
+        PreparedPointTarget::ClusteredPrefix,
+    );
+    best.map(|(_, target, pins)| (target, pins))
 }
 
 /// Go `planner.optimize` calls `TryFastPlan` before constructing the ordinary

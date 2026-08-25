@@ -736,6 +736,21 @@ impl RowDecoder {
 }
 
 /// The integer handle at the end of an encoded record key.
+impl PreparedPointGetRowDecoder {
+    /// The handle at the tail of an encoded record key, for the row-range arm
+    /// of a prepared point read (a clustered primary-key prefix).
+    pub(crate) fn record_handle(&self, key: &[u8]) -> Result<TableHandle, KvTableError> {
+        if self.common_handle_offsets.is_empty() {
+            return decode_int_handle(key).map(TableHandle::Int);
+        }
+        let bytes = key
+            .get(RECORD_ROW_KEY_LEN - 8..)
+            .ok_or_else(|| KvTableError::Decode("record key is too short".to_owned()))?;
+        Ok(TableHandle::Common(bytes.to_vec()))
+    }
+}
+
+/// The integer handle at the end of an encoded record key.
 pub(crate) fn decode_int_handle(key: &[u8]) -> Result<i64, KvTableError> {
     let tail: [u8; 8] = key
         .get(key.len().wrapping_sub(8)..)
